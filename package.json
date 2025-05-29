@@ -1,0 +1,39 @@
+{
+  "name": "agent-cli",
+  "version": "1.0.0",
+  "description": "命令行工具",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "agent": "bin/agent.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "dev": "tsup --watch",
+    "build": "tsup",
+    "start": "node bin/agent.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "cli",
+    "agent",
+    "tool"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/inquirer": "^9.0.8",
+    "@types/node": "^22.15.24",
+    "ts-node": "^10.9.2",
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^14.0.0",
+    "inquirer": "^12.6.3"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "test-project",
+  "version": "0.1.0",
+  "description": "test-project project created by agent-cli",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}
