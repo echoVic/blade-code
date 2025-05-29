@@ -1,21 +1,26 @@
-import { Component } from './Agent.js';
-
 /**
  * 组件基类
  * 提供组件的基本实现，可被具体组件继承
  */
-export abstract class BaseComponent implements Component {
-  private _name: string;
+export abstract class BaseComponent {
+  protected id: string;
 
-  constructor(name: string) {
-    this._name = name;
+  constructor(id: string) {
+    this.id = id;
   }
 
   /**
-   * 获取组件名称
+   * 获取组件ID
+   */
+  public getId(): string {
+    return this.id;
+  }
+
+  /**
+   * 获取组件名称（兼容性方法）
    */
   get name(): string {
-    return this._name;
+    return this.id;
   }
 
   /**

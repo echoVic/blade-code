@@ -7,6 +7,7 @@ export interface LLMProviderConfig {
   apiKey: string;
   defaultModel: string;
   baseURL?: string;
+  supportedModels: string[];
 }
 
 export interface DefaultConfig {
@@ -25,12 +26,31 @@ export const DEFAULT_CONFIG: DefaultConfig = {
     qwen: {
       apiKey: process.env.QWEN_API_KEY || 'sk-c23da72a37234d68af0b48fc6d685e8b',
       defaultModel: process.env.QWEN_DEFAULT_MODEL || 'qwen3-235b-a22b',
-      baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+      baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      supportedModels: [
+        'qwen3-235b-a22b',
+        'qwen-plus-latest',
+        'qwen-turbo-latest',
+        'qwen-max-latest',
+        'qwen-max-longcontext',
+        'qwen-72b-chat',
+        'qwen-14b-chat',
+        'qwen-7b-chat',
+        'qwen-1.8b-chat',
+        'qwen-32b-chat',
+        'qwen-vl-plus',
+        'qwen-vl-max',
+        'qwen-audio-chat',
+        'qwen-coder-plus'
+      ]
     },
     volcengine: {
       apiKey: process.env.VOLCENGINE_API_KEY || '1ddfaee1-1350-46b0-ab87-2db988d24d4b',
       defaultModel: process.env.VOLCENGINE_DEFAULT_MODEL || 'ep-20250417144747-rgffm',
-      baseURL: 'https://ark.cn-beijing.volces.com/api/v3'
+      baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
+      supportedModels: [
+        'ep-20250417144747-rgffm'
+      ]
     }
   }
 };
@@ -69,12 +89,14 @@ export function loadConfigFromEnv(): Partial<DefaultConfig> {
       qwen: {
         apiKey: process.env.QWEN_API_KEY || DEFAULT_CONFIG.llm.qwen.apiKey,
         defaultModel: process.env.QWEN_DEFAULT_MODEL || DEFAULT_CONFIG.llm.qwen.defaultModel,
-        baseURL: process.env.QWEN_BASE_URL || DEFAULT_CONFIG.llm.qwen.baseURL
+        baseURL: process.env.QWEN_BASE_URL || DEFAULT_CONFIG.llm.qwen.baseURL,
+        supportedModels: DEFAULT_CONFIG.llm.qwen.supportedModels
       },
       volcengine: {
         apiKey: process.env.VOLCENGINE_API_KEY || DEFAULT_CONFIG.llm.volcengine.apiKey,
         defaultModel: process.env.VOLCENGINE_DEFAULT_MODEL || DEFAULT_CONFIG.llm.volcengine.defaultModel,
-        baseURL: process.env.VOLCENGINE_BASE_URL || DEFAULT_CONFIG.llm.volcengine.baseURL
+        baseURL: process.env.VOLCENGINE_BASE_URL || DEFAULT_CONFIG.llm.volcengine.baseURL,
+        supportedModels: DEFAULT_CONFIG.llm.volcengine.supportedModels
       }
     }
   };

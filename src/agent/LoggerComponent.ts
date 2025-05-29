@@ -9,9 +9,28 @@ export class LoggerComponent extends BaseComponent {
   private enabled: boolean = false;
   private logLevel: 'debug' | 'info' | 'warn' | 'error' = 'info';
   
-  constructor(logLevel: 'debug' | 'info' | 'warn' | 'error' = 'info') {
-    super('logger');
+  constructor(idOrLogLevel?: string | 'debug' | 'info' | 'warn' | 'error') {
+    // 向后兼容：如果传入的是日志级别，使用默认ID 'logger'
+    let id: string;
+    let logLevel: 'debug' | 'info' | 'warn' | 'error' = 'info';
+    
+    if (!idOrLogLevel || ['debug', 'info', 'warn', 'error'].includes(idOrLogLevel)) {
+      id = 'logger';
+      logLevel = idOrLogLevel as 'debug' | 'info' | 'warn' | 'error' || 'info';
+    } else {
+      id = idOrLogLevel;
+      logLevel = 'info';
+    }
+    
+    super(id);
     this.logLevel = logLevel;
+  }
+  
+  /**
+   * 设置日志级别
+   */
+  public setLogLevel(level: 'debug' | 'info' | 'warn' | 'error'): void {
+    this.logLevel = level;
   }
   
   /**
