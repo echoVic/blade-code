@@ -56,7 +56,7 @@ export abstract class BaseLLM extends BaseComponent {
       maxRetries: 3,
       baseDelay: 1000,
       maxDelay: 10000,
-      backoffFactor: 2
+      backoffFactor: 2,
     };
   }
 
@@ -90,13 +90,13 @@ export abstract class BaseLLM extends BaseComponent {
    * 便捷方法：发送单条消息
    */
   public async sendMessage(
-    content: string, 
+    content: string,
     role: 'user' | 'system' = 'user',
     options?: Partial<LLMRequest>
   ): Promise<string> {
     const request: LLMRequest = {
       messages: [{ role, content }],
-      ...options
+      ...options,
     };
 
     const response = await this.chat(request);
@@ -106,10 +106,13 @@ export abstract class BaseLLM extends BaseComponent {
   /**
    * 便捷方法：多轮对话
    */
-  public async conversation(messages: LLMMessage[], options?: Partial<LLMRequest>): Promise<string> {
+  public async conversation(
+    messages: LLMMessage[],
+    options?: Partial<LLMRequest>
+  ): Promise<string> {
     const request: LLMRequest = {
       messages,
-      ...options
+      ...options,
     };
 
     const response = await this.chat(request);
@@ -121,13 +124,13 @@ export abstract class BaseLLM extends BaseComponent {
    */
   protected async withRetry<T>(operation: () => Promise<T>): Promise<T> {
     let lastError: Error;
-    
+
     for (let attempt = 0; attempt <= this.retryConfig.maxRetries; attempt++) {
       try {
         return await operation();
       } catch (error) {
         lastError = error as Error;
-        
+
         // 如果是最后一次尝试，直接抛出错误
         if (attempt === this.retryConfig.maxRetries) {
           throw lastError;
@@ -153,23 +156,27 @@ export abstract class BaseLLM extends BaseComponent {
   protected shouldRetry(error: Error): boolean {
     // 检查错误类型，某些错误不应该重试
     const errorMessage = error.message.toLowerCase();
-    
+
     // 网络错误或临时服务错误应该重试
-    if (errorMessage.includes('network') || 
-        errorMessage.includes('timeout') ||
-        errorMessage.includes('rate limit') ||
-        errorMessage.includes('503') ||
-        errorMessage.includes('502') ||
-        errorMessage.includes('500')) {
+    if (
+      errorMessage.includes('network') ||
+      errorMessage.includes('timeout') ||
+      errorMessage.includes('rate limit') ||
+      errorMessage.includes('503') ||
+      errorMessage.includes('502') ||
+      errorMessage.includes('500')
+    ) {
       return true;
     }
 
     // 认证错误、参数错误等不应该重试
-    if (errorMessage.includes('unauthorized') ||
-        errorMessage.includes('invalid') ||
-        errorMessage.includes('400') ||
-        errorMessage.includes('401') ||
-        errorMessage.includes('403')) {
+    if (
+      errorMessage.includes('unauthorized') ||
+      errorMessage.includes('invalid') ||
+      errorMessage.includes('400') ||
+      errorMessage.includes('401') ||
+      errorMessage.includes('403')
+    ) {
       return false;
     }
 
@@ -206,4 +213,4 @@ export abstract class BaseLLM extends BaseComponent {
       }
     }
   }
-} 
+}

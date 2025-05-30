@@ -107,7 +107,13 @@ export interface WorkflowConfig {
 /**
  * 叙述性更新类型
  */
-export type NarrativeType = 'thinking' | 'planning' | 'action' | 'result' | 'reflection' | 'decision';
+export type NarrativeType =
+  | 'thinking'
+  | 'planning'
+  | 'action'
+  | 'result'
+  | 'reflection'
+  | 'decision';
 
 /**
  * 叙述性更新条目
@@ -177,4 +183,4 @@ export interface PromptBuildResult {
     buildTimestamp: Date;
     estimatedTokens: number;
   };
-} 
+}

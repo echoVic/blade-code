@@ -38,4 +38,4 @@ export abstract class BaseComponent {
   public async destroy(): Promise<void> {
     // 基础实现，子类应重写
   }
-} 
+}

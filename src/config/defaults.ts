@@ -41,18 +41,16 @@ export const DEFAULT_CONFIG: DefaultConfig = {
         'qwen-vl-plus',
         'qwen-vl-max',
         'qwen-audio-chat',
-        'qwen-coder-plus'
-      ]
+        'qwen-coder-plus',
+      ],
     },
     volcengine: {
       apiKey: process.env.VOLCENGINE_API_KEY || '1ddfaee1-1350-46b0-ab87-2db988d24d4b',
       defaultModel: process.env.VOLCENGINE_DEFAULT_MODEL || 'ep-20250417144747-rgffm',
       baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
-      supportedModels: [
-        'ep-20250417144747-rgffm'
-      ]
-    }
-  }
+      supportedModels: ['ep-20250417144747-rgffm'],
+    },
+  },
 };
 
 /**
@@ -90,14 +88,15 @@ export function loadConfigFromEnv(): Partial<DefaultConfig> {
         apiKey: process.env.QWEN_API_KEY || DEFAULT_CONFIG.llm.qwen.apiKey,
         defaultModel: process.env.QWEN_DEFAULT_MODEL || DEFAULT_CONFIG.llm.qwen.defaultModel,
         baseURL: process.env.QWEN_BASE_URL || DEFAULT_CONFIG.llm.qwen.baseURL,
-        supportedModels: DEFAULT_CONFIG.llm.qwen.supportedModels
+        supportedModels: DEFAULT_CONFIG.llm.qwen.supportedModels,
       },
       volcengine: {
         apiKey: process.env.VOLCENGINE_API_KEY || DEFAULT_CONFIG.llm.volcengine.apiKey,
-        defaultModel: process.env.VOLCENGINE_DEFAULT_MODEL || DEFAULT_CONFIG.llm.volcengine.defaultModel,
+        defaultModel:
+          process.env.VOLCENGINE_DEFAULT_MODEL || DEFAULT_CONFIG.llm.volcengine.defaultModel,
         baseURL: process.env.VOLCENGINE_BASE_URL || DEFAULT_CONFIG.llm.volcengine.baseURL,
-        supportedModels: DEFAULT_CONFIG.llm.volcengine.supportedModels
-      }
-    }
+        supportedModels: DEFAULT_CONFIG.llm.volcengine.supportedModels,
+      },
+    },
   };
-} 
+}

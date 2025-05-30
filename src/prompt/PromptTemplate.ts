@@ -85,21 +85,21 @@ export class PromptTemplateManager {
             type: 'string',
             required: true,
             description: '用户的输入请求',
-            validation: { minLength: 1, maxLength: 2000 }
+            validation: { minLength: 1, maxLength: 2000 },
           },
           {
             name: 'expectedResult',
             type: 'string',
             required: true,
             description: '预期的执行结果',
-            validation: { minLength: 1, maxLength: 500 }
+            validation: { minLength: 1, maxLength: 500 },
           },
           {
             name: 'constraints',
             type: 'array',
             required: false,
             description: '执行限制条件',
-            defaultValue: []
+            defaultValue: [],
           },
           {
             name: 'priority',
@@ -107,14 +107,14 @@ export class PromptTemplateManager {
             required: false,
             description: '任务优先级',
             defaultValue: 'medium',
-            validation: { options: ['low', 'medium', 'high', 'critical'] }
+            validation: { options: ['low', 'medium', 'high', 'critical'] },
           },
           {
             name: 'workflowFile',
             type: 'string',
             required: false,
             description: '工作流文件路径',
-            defaultValue: 'todo.md'
+            defaultValue: 'todo.md',
           },
           {
             name: 'maxConcurrentTasks',
@@ -122,15 +122,15 @@ export class PromptTemplateManager {
             required: false,
             description: '最大并发任务数',
             defaultValue: 3,
-            validation: { min: 1, max: 10 }
+            validation: { min: 1, max: 10 },
           },
           {
             name: 'timeTracking',
             type: 'boolean',
             required: false,
             description: '是否启用时间跟踪',
-            defaultValue: true
-          }
+            defaultValue: true,
+          },
         ],
         metadata: {
           createdAt: new Date(),
@@ -139,8 +139,8 @@ export class PromptTemplateManager {
           author: 'agent-cli',
           tags: ['execution', 'workflow', 'structured'],
           category: 'core',
-          optimizedFor: ['qwen', 'volcengine', 'openai', 'claude']
-        }
+          optimizedFor: ['qwen', 'volcengine', 'openai', 'claude'],
+        },
       },
 
       // 代码审查模板
@@ -207,23 +207,23 @@ export class PromptTemplateManager {
             type: 'string',
             required: true,
             description: '要审查的代码内容',
-            validation: { minLength: 1 }
+            validation: { minLength: 1 },
           },
           {
             name: 'language',
             type: 'string',
             required: true,
             description: '编程语言',
-            validation: { 
-              options: ['javascript', 'typescript', 'python', 'java', 'go', 'rust', 'c++', 'c#'] 
-            }
+            validation: {
+              options: ['javascript', 'typescript', 'python', 'java', 'go', 'rust', 'c++', 'c#'],
+            },
           },
           {
             name: 'fileName',
             type: 'string',
             required: false,
             description: '文件名',
-            defaultValue: 'unknown'
+            defaultValue: 'unknown',
           },
           {
             name: 'changeType',
@@ -231,8 +231,8 @@ export class PromptTemplateManager {
             required: false,
             description: '变更类型',
             defaultValue: 'modification',
-            validation: { options: ['new', 'modification', 'refactor', 'bugfix'] }
-          }
+            validation: { options: ['new', 'modification', 'refactor', 'bugfix'] },
+          },
         ],
         metadata: {
           createdAt: new Date(),
@@ -241,8 +241,8 @@ export class PromptTemplateManager {
           author: 'agent-cli',
           tags: ['code-review', 'quality', 'analysis'],
           category: 'development',
-          optimizedFor: ['qwen', 'volcengine', 'openai', 'claude']
-        }
+          optimizedFor: ['qwen', 'volcengine', 'openai', 'claude'],
+        },
       },
 
       // 问题解决模板
@@ -322,7 +322,7 @@ export class PromptTemplateManager {
             type: 'string',
             required: true,
             description: '问题的详细描述',
-            validation: { minLength: 10, maxLength: 1000 }
+            validation: { minLength: 10, maxLength: 1000 },
           },
           {
             name: 'problemType',
@@ -330,9 +330,9 @@ export class PromptTemplateManager {
             required: false,
             description: '问题类型',
             defaultValue: 'general',
-            validation: { 
-              options: ['technical', 'business', 'process', 'strategy', 'communication', 'general'] 
-            }
+            validation: {
+              options: ['technical', 'business', 'process', 'strategy', 'communication', 'general'],
+            },
           },
           {
             name: 'urgency',
@@ -340,22 +340,22 @@ export class PromptTemplateManager {
             required: false,
             description: '紧急程度',
             defaultValue: 'medium',
-            validation: { options: ['low', 'medium', 'high', 'critical'] }
+            validation: { options: ['low', 'medium', 'high', 'critical'] },
           },
           {
             name: 'availableResources',
             type: 'array',
             required: false,
             description: '可用资源列表',
-            defaultValue: []
+            defaultValue: [],
           },
           {
             name: 'timeConstraint',
             type: 'string',
             required: false,
             description: '时间限制',
-            defaultValue: 'flexible'
-          }
+            defaultValue: 'flexible',
+          },
         ],
         metadata: {
           createdAt: new Date(),
@@ -364,9 +364,9 @@ export class PromptTemplateManager {
           author: 'agent-cli',
           tags: ['problem-solving', 'analysis', 'structured-thinking'],
           category: 'analysis',
-          optimizedFor: ['qwen', 'volcengine', 'openai', 'claude']
-        }
-      }
+          optimizedFor: ['qwen', 'volcengine', 'openai', 'claude'],
+        },
+      },
     };
   }
 
@@ -388,8 +388,8 @@ export class PromptTemplateManager {
       ...template,
       metadata: {
         ...template.metadata,
-        updatedAt: new Date()
-      }
+        updatedAt: new Date(),
+      },
     });
   }
 
@@ -411,24 +411,27 @@ export class PromptTemplateManager {
    * 按类别获取模板
    */
   public getTemplatesByCategory(category: string): PromptTemplate[] {
-    return Array.from(this.templates.values())
-      .filter(template => template.metadata.category === category);
+    return Array.from(this.templates.values()).filter(
+      template => template.metadata.category === category
+    );
   }
 
   /**
    * 按标签获取模板
    */
   public getTemplatesByTag(tag: string): PromptTemplate[] {
-    return Array.from(this.templates.values())
-      .filter(template => template.metadata.tags.includes(tag));
+    return Array.from(this.templates.values()).filter(template =>
+      template.metadata.tags.includes(tag)
+    );
   }
 
   /**
    * 按模型提供商获取优化的模板
    */
   public getTemplatesForProvider(provider: ModelProvider): PromptTemplate[] {
-    return Array.from(this.templates.values())
-      .filter(template => template.metadata.optimizedFor.includes(provider));
+    return Array.from(this.templates.values()).filter(template =>
+      template.metadata.optimizedFor.includes(provider)
+    );
   }
 
   /**
@@ -562,9 +565,12 @@ export class PromptTemplateManager {
   /**
    * 合并默认值
    */
-  private mergeWithDefaults(template: PromptTemplate, variables: Record<string, any>): Record<string, any> {
+  private mergeWithDefaults(
+    template: PromptTemplate,
+    variables: Record<string, any>
+  ): Record<string, any> {
     const merged = { ...variables };
-    
+
     template.variables.forEach(varDef => {
       if (merged[varDef.name] === undefined && varDef.defaultValue !== undefined) {
         merged[varDef.name] = varDef.defaultValue;
@@ -594,14 +600,15 @@ export class PromptTemplateManager {
     const templates = Array.from(this.templates.values());
     const categories = new Set(templates.map(t => t.metadata.category));
     const tags = new Set(templates.flatMap(t => t.metadata.tags));
-    
+
     return {
       totalTemplates: templates.length,
       builtInTemplates: Object.keys(this.builtInTemplates).length,
       customTemplates: templates.length - Object.keys(this.builtInTemplates).length,
       categories: Array.from(categories),
       tags: Array.from(tags),
-      averageVariables: templates.reduce((sum, t) => sum + t.variables.length, 0) / templates.length
+      averageVariables:
+        templates.reduce((sum, t) => sum + t.variables.length, 0) / templates.length,
     };
   }
-} 
+}

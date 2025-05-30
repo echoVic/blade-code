@@ -33,9 +33,9 @@ export class Agent extends EventEmitter {
     super();
     this.config = {
       debug: false,
-      ...config
+      ...config,
     };
-    
+
     this.log('Agent 实例已创建');
   }
 
@@ -68,7 +68,6 @@ export class Agent extends EventEmitter {
       this.isInitialized = true;
       this.log('Agent 初始化完成');
       this.emit('initialized');
-
     } catch (error) {
       this.log(`初始化失败: ${error}`);
       throw error;
@@ -82,14 +81,14 @@ export class Agent extends EventEmitter {
     if (!this.config.llm) return;
 
     const { provider, apiKey, model, baseURL } = this.config.llm;
-    
+
     // 获取默认配置
     const defaultConfig = getProviderConfig(provider);
-    
+
     // 使用提供的配置或默认配置
     const finalApiKey = apiKey || defaultConfig.apiKey;
     const finalModel = model || defaultConfig.defaultModel;
-    
+
     if (!finalApiKey) {
       throw new Error(`${provider} API key 未配置`);
     }
@@ -99,16 +98,22 @@ export class Agent extends EventEmitter {
     // 创建 LLM 实例
     switch (provider) {
       case 'qwen':
-        this.llm = new QwenLLM({
-          apiKey: finalApiKey,
-          baseURL: baseURL || defaultConfig.baseURL
-        }, finalModel);
+        this.llm = new QwenLLM(
+          {
+            apiKey: finalApiKey,
+            baseURL: baseURL || defaultConfig.baseURL,
+          },
+          finalModel
+        );
         break;
       case 'volcengine':
-        this.llm = new VolcEngineLLM({
-          apiKey: finalApiKey,
-          baseURL: baseURL || defaultConfig.baseURL
-        }, finalModel);
+        this.llm = new VolcEngineLLM(
+          {
+            apiKey: finalApiKey,
+            baseURL: baseURL || defaultConfig.baseURL,
+          },
+          finalModel
+        );
         break;
       default:
         throw new Error(`不支持的 LLM 提供商: ${provider}`);
@@ -145,7 +150,6 @@ export class Agent extends EventEmitter {
       this.isDestroyed = true;
       this.log('Agent 已销毁');
       this.emit('destroyed');
-
     } catch (error) {
       this.log(`销毁失败: ${error}`);
       throw error;
@@ -157,7 +161,7 @@ export class Agent extends EventEmitter {
    */
   public registerComponent(component: BaseComponent): void {
     const id = component.getId();
-    
+
     if (this.components.has(id)) {
       throw new Error(`组件 "${id}" 已存在`);
     }
@@ -250,7 +254,7 @@ export class Agent extends EventEmitter {
    * 流式聊天
    */
   public async streamChat(
-    messages: LLMMessage[], 
+    messages: LLMMessage[],
     onChunk: (chunk: string) => void
   ): Promise<string> {
     if (!this.llm) {
@@ -278,7 +282,7 @@ export class Agent extends EventEmitter {
   public async chatWithSystem(systemPrompt: string, userMessage: string): Promise<string> {
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage }
+      { role: 'user', content: userMessage },
     ];
     return await this.conversation(messages);
   }
@@ -347,7 +351,7 @@ ${code}
       destroyed: this.isDestroyed,
       componentCount: this.components.size,
       hasLLM: this.hasLLM(),
-      llmProvider: this.getLLMProvider()
+      llmProvider: this.getLLMProvider(),
     };
   }
 
@@ -359,4 +363,4 @@ ${code}
       console.log(`[Agent] ${message}`);
     }
   }
-} 
+}

@@ -25,7 +25,7 @@ export class NarrativeManager {
     this.autoSave = options.autoSave ?? true;
     this.maxEntries = options.maxEntries ?? 1000;
     this.narrativeFilePath = join(workingDirectory, options.narrativeFile ?? 'narrative.md');
-    
+
     this.loadNarrativeFile();
   }
 
@@ -135,8 +135,8 @@ export class NarrativeManager {
         taskId: metadata?.taskId,
         actionType: metadata?.actionType,
         severity: metadata?.severity || 'info',
-        tags: metadata?.tags || []
-      }
+        tags: metadata?.tags || [],
+      },
     };
 
     this.entries.push(entry);
@@ -161,14 +161,19 @@ export class NarrativeManager {
     context?: Record<string, any>,
     taskId?: string
   ): NarrativeEntry {
-    return this.addEntry('thinking', `🤔 **思考过程**
+    return this.addEntry(
+      'thinking',
+      `🤔 **思考过程**
 
 ${thought}
 
 **思考要点:**
 - 问题分析: ${this.extractAnalysis(thought)}
 - 关键考虑: ${this.extractConsiderations(thought)}
-- 潜在风险: ${this.extractRisks(thought)}`, context, { taskId, severity: 'info', tags: ['思考'] });
+- 潜在风险: ${this.extractRisks(thought)}`,
+      context,
+      { taskId, severity: 'info', tags: ['思考'] }
+    );
   }
 
   /**
@@ -196,7 +201,7 @@ ${steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}
     return this.addEntry('planning', planningContent, context, {
       taskId,
       severity: 'info',
-      tags: ['规划', '执行计划']
+      tags: ['规划', '执行计划'],
     });
   }
 
@@ -227,7 +232,7 @@ ${steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}
       taskId,
       actionType: action,
       severity: 'info',
-      tags: ['执行', '行动']
+      tags: ['执行', '行动'],
     });
   }
 
@@ -248,7 +253,13 @@ ${steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}
 **执行状态:** ${success ? '✅ 成功' : '❌ 失败'}
 
 **性能指标:**
-${metrics ? Object.entries(metrics).map(([key, value]) => `- ${key}: ${value}`).join('\n') : '- 无指标数据'}
+${
+  metrics
+    ? Object.entries(metrics)
+        .map(([key, value]) => `- ${key}: ${value}`)
+        .join('\n')
+    : '- 无指标数据'
+}
 
 **结果分析:**
 - 与预期对比: ${success ? '符合预期' : '存在偏差'}
@@ -258,7 +269,7 @@ ${metrics ? Object.entries(metrics).map(([key, value]) => `- ${key}: ${value}`).
     return this.addEntry('result', resultContent, context, {
       taskId,
       severity: success ? 'success' : 'error',
-      tags: ['结果', success ? '成功' : '失败']
+      tags: ['结果', success ? '成功' : '失败'],
     });
   }
 
@@ -291,7 +302,7 @@ ${improvements.map((improvement, index) => `${index + 1}. ${improvement}`).join(
     return this.addEntry('reflection', reflectionContent, context, {
       taskId,
       severity: 'info',
-      tags: ['反思', '改进', '学习']
+      tags: ['反思', '改进', '学习'],
     });
   }
 
@@ -310,11 +321,15 @@ ${improvements.map((improvement, index) => `${index + 1}. ${improvement}`).join(
 **决策内容:** ${decision}
 
 **可选方案:**
-${options.map((opt, index) => `
+${options
+  .map(
+    (opt, index) => `
 **方案 ${index + 1}: ${opt.option}**
 - 优点: ${opt.pros.join(', ')}
 - 缺点: ${opt.cons.join(', ')}
-`).join('\n')}
+`
+  )
+  .join('\n')}
 
 **选择理由:** ${rationale}
 
@@ -327,7 +342,7 @@ ${options.map((opt, index) => `
     return this.addEntry('decision', decisionContent, context, {
       taskId,
       severity: 'warning',
-      tags: ['决策', '重要', '选择']
+      tags: ['决策', '重要', '选择'],
     });
   }
 
@@ -364,9 +379,10 @@ ${options.map((opt, index) => `
    */
   public searchEntries(query: string): NarrativeEntry[] {
     const lowercaseQuery = query.toLowerCase();
-    return this.entries.filter(entry =>
-      entry.content.toLowerCase().includes(lowercaseQuery) ||
-      entry.metadata.tags.some(tag => tag.toLowerCase().includes(lowercaseQuery))
+    return this.entries.filter(
+      entry =>
+        entry.content.toLowerCase().includes(lowercaseQuery) ||
+        entry.metadata.tags.some(tag => tag.toLowerCase().includes(lowercaseQuery))
     );
   }
 
@@ -374,25 +390,34 @@ ${options.map((opt, index) => `
    * 获取条目统计
    */
   public getStatistics() {
-    const typeStats = this.entries.reduce((stats, entry) => {
-      stats[entry.type] = (stats[entry.type] || 0) + 1;
-      return stats;
-    }, {} as Record<NarrativeType, number>);
+    const typeStats = this.entries.reduce(
+      (stats, entry) => {
+        stats[entry.type] = (stats[entry.type] || 0) + 1;
+        return stats;
+      },
+      {} as Record<NarrativeType, number>
+    );
 
-    const severityStats = this.entries.reduce((stats, entry) => {
-      const severity = entry.metadata.severity!;
-      stats[severity] = (stats[severity] || 0) + 1;
-      return stats;
-    }, {} as Record<string, number>);
+    const severityStats = this.entries.reduce(
+      (stats, entry) => {
+        const severity = entry.metadata.severity!;
+        stats[severity] = (stats[severity] || 0) + 1;
+        return stats;
+      },
+      {} as Record<string, number>
+    );
 
     return {
       totalEntries: this.entries.length,
       typeBreakdown: typeStats,
       severityBreakdown: severityStats,
-      timeRange: this.entries.length > 0 ? {
-        earliest: this.entries[0].timestamp,
-        latest: this.entries[this.entries.length - 1].timestamp
-      } : null
+      timeRange:
+        this.entries.length > 0
+          ? {
+              earliest: this.entries[0].timestamp,
+              latest: this.entries[this.entries.length - 1].timestamp,
+            }
+          : null,
     };
   }
 
@@ -400,9 +425,7 @@ ${options.map((opt, index) => `
    * 生成叙述性报告
    */
   public generateNarrativeReport(taskId?: string): string {
-    const relevantEntries = taskId 
-      ? this.getEntriesByTask(taskId)
-      : this.entries;
+    const relevantEntries = taskId ? this.getEntriesByTask(taskId) : this.entries;
 
     const stats = this.getStatistics();
 
@@ -413,7 +436,9 @@ ${options.map((opt, index) => `
 - 时间范围: ${stats.timeRange ? `${stats.timeRange.earliest.toLocaleString()} - ${stats.timeRange.latest.toLocaleString()}` : 'N/A'}
 
 ## 📈 更新类型分布
-${Object.entries(stats.typeBreakdown).map(([type, count]) => `- ${this.getTypeEmoji(type as NarrativeType)} ${type}: ${count}`).join('\n')}
+${Object.entries(stats.typeBreakdown)
+  .map(([type, count]) => `- ${this.getTypeEmoji(type as NarrativeType)} ${type}: ${count}`)
+  .join('\n')}
 
 ## 🎯 更新详情
 `;
@@ -448,7 +473,7 @@ ${entry.content}
   private generateNarrativeFileContent(): string {
     const template = this.generateNarrativeTemplate();
     const templateParts = template.split('<!-- 更新条目将自动添加到这里 -->');
-    
+
     let entriesContent = '';
     this.entries.slice(-50).forEach((entry, index) => {
       entriesContent += `
@@ -487,7 +512,7 @@ ${entry.content}
       action: '🚀',
       result: '📊',
       reflection: '🔄',
-      decision: '🎯'
+      decision: '🎯',
     };
     return emojiMap[type] || '📝';
   }
@@ -502,7 +527,7 @@ ${entry.content}
       action: '执行行动',
       result: '执行结果',
       reflection: '行动反思',
-      decision: '重要决策'
+      decision: '重要决策',
     };
     return nameMap[type] || type;
   }
@@ -515,7 +540,7 @@ ${entry.content}
       info: '🔵 信息',
       warning: '🟡 警告',
       error: '🔴 错误',
-      success: '🟢 成功'
+      success: '🟢 成功',
     };
     return badges[severity as keyof typeof badges] || severity;
   }
@@ -574,16 +599,16 @@ ${entry.content}
   public cleanup(daysToKeep: number = 30): number {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
-    
+
     const originalLength = this.entries.length;
     this.entries = this.entries.filter(entry => entry.timestamp > cutoffDate);
-    
+
     const removedCount = originalLength - this.entries.length;
-    
+
     if (removedCount > 0 && this.autoSave) {
       this.saveNarrativeFile();
     }
-    
+
     return removedCount;
   }
-} 
+}

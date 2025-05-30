@@ -20,7 +20,7 @@ export class QwenLLM extends BaseLLM {
   constructor(config: QwenConfig, defaultModel: string = 'qwen3-235b-a22b') {
     super('qwen-llm', defaultModel);
     this.config = config;
-    
+
     // 初始化 OpenAI 客户端，使用阿里云百练的 API 端点
     this.client = new OpenAI({
       apiKey: config.apiKey,
@@ -35,7 +35,7 @@ export class QwenLLM extends BaseLLM {
     if (!this.config.apiKey) {
       throw new Error('Qwen API key is required');
     }
-    
+
     // 验证 API 连接
     try {
       await this.testConnection();
@@ -50,27 +50,27 @@ export class QwenLLM extends BaseLLM {
    */
   private isQwen3Model(model: string): boolean {
     const lowerModel = model.toLowerCase();
-    
+
     // 明确的 Qwen3 模型
     if (lowerModel.startsWith('qwen3')) {
       return true;
     }
-    
+
     // Latest 版本都是 Qwen3
     if (lowerModel.includes('latest')) {
       return true;
     }
-    
+
     // 2025年版本都是 Qwen3
     if (lowerModel.includes('2025-04-28')) {
       return true;
     }
-    
+
     // 当前的 turbo 和 plus 也是 Qwen3
     if (lowerModel === 'qwen-turbo' || lowerModel === 'qwen-plus') {
       return true;
     }
-    
+
     // 其他旧版本可能不是 Qwen3
     return false;
   }
@@ -87,7 +87,7 @@ export class QwenLLM extends BaseLLM {
     if (model === 'qwen3-235b-a22b') {
       return false;
     }
-    
+
     // 其他 Qwen3 模型，根据是否为商业版决定
     // 这里假设大多数是商业版，默认为 false
     // 如果遇到其他模型的问题，可以在这里添加特殊处理
@@ -106,11 +106,11 @@ export class QwenLLM extends BaseLLM {
         model: model,
         messages: request.messages.map(msg => ({
           role: msg.role,
-          content: msg.content
+          content: msg.content,
         })),
         temperature: request.temperature || 0.7,
         max_tokens: request.maxTokens || 2048,
-        stream: false
+        stream: false,
       };
 
       // 对于 Qwen3 模型，设置 enable_thinking 参数
@@ -127,12 +127,14 @@ export class QwenLLM extends BaseLLM {
 
       return {
         content: choice.message.content || '',
-        usage: completion.usage ? {
-          promptTokens: completion.usage.prompt_tokens,
-          completionTokens: completion.usage.completion_tokens,
-          totalTokens: completion.usage.total_tokens
-        } : undefined,
-        model: completion.model
+        usage: completion.usage
+          ? {
+              promptTokens: completion.usage.prompt_tokens,
+              completionTokens: completion.usage.completion_tokens,
+              totalTokens: completion.usage.total_tokens,
+            }
+          : undefined,
+        model: completion.model,
       };
     } catch (error) {
       if (error instanceof Error) {
@@ -150,7 +152,7 @@ export class QwenLLM extends BaseLLM {
       const requestParams: any = {
         model: this.defaultModel,
         messages: [{ role: 'user', content: 'Hello' }],
-        max_tokens: 10
+        max_tokens: 10,
       };
 
       // 对于 Qwen3 模型，设置 enable_thinking 参数
@@ -180,11 +182,11 @@ export class QwenLLM extends BaseLLM {
           model: model,
           messages: request.messages.map(msg => ({
             role: msg.role,
-            content: msg.content
+            content: msg.content,
           })),
           temperature: request.temperature || 0.7,
           max_tokens: request.maxTokens || 2048,
-          stream: true
+          stream: true,
         };
 
         // 对于 Qwen3 模型，设置 enable_thinking 参数
@@ -192,7 +194,7 @@ export class QwenLLM extends BaseLLM {
           requestParams.enable_thinking = this.getEnableThinkingValue(model);
         }
 
-        const stream = await this.client.chat.completions.create(requestParams) as any;
+        const stream = (await this.client.chat.completions.create(requestParams)) as any;
 
         let fullContent = '';
         let usage: any = undefined;
@@ -204,11 +206,11 @@ export class QwenLLM extends BaseLLM {
             fullContent += delta.content;
             onChunk(delta.content);
           }
-          
+
           if (chunk.usage) {
             usage = chunk.usage;
           }
-          
+
           if (chunk.model) {
             model_response = chunk.model;
           }
@@ -216,12 +218,14 @@ export class QwenLLM extends BaseLLM {
 
         return {
           content: fullContent,
-          usage: usage ? {
-            promptTokens: usage.prompt_tokens,
-            completionTokens: usage.completion_tokens,
-            totalTokens: usage.total_tokens
-          } : undefined,
-          model: model_response
+          usage: usage
+            ? {
+                promptTokens: usage.prompt_tokens,
+                completionTokens: usage.completion_tokens,
+                totalTokens: usage.total_tokens,
+              }
+            : undefined,
+          model: model_response,
         };
       } catch (error) {
         if (error instanceof Error) {
@@ -239,26 +243,26 @@ export class QwenLLM extends BaseLLM {
     // Qwen 官方模型列表（基于最新官方文档）
     return [
       // 动态更新版本（Latest）
-      'qwen-plus-latest',    // 通义千问-Plus-Latest (Qwen3)
-      'qwen-turbo-latest',   // 通义千问-Turbo-Latest (Qwen3)
-      
+      'qwen-plus-latest', // 通义千问-Plus-Latest (Qwen3)
+      'qwen-turbo-latest', // 通义千问-Turbo-Latest (Qwen3)
+
       // 快照版本（Snapshot） - Qwen3 系列
-      'qwen3-235b-a22b',     // 通义千问3-235B-A22B (默认)
-      'qwen3-30b-a3b',       // 通义千问3-30B-A3B
-      'qwen3-32b',           // 通义千问3-32B
-      'qwen3-14b',           // 通义千问3-14B
-      'qwen3-8b',            // 通义千问3-8B
-      'qwen3-4b',            // 通义千问3-4B
-      'qwen3-1.7b',          // 通义千问3-1.7B
-      'qwen3-0.6b',          // 通义千问3-0.6B
-      
+      'qwen3-235b-a22b', // 通义千问3-235B-A22B (默认)
+      'qwen3-30b-a3b', // 通义千问3-30B-A3B
+      'qwen3-32b', // 通义千问3-32B
+      'qwen3-14b', // 通义千问3-14B
+      'qwen3-8b', // 通义千问3-8B
+      'qwen3-4b', // 通义千问3-4B
+      'qwen3-1.7b', // 通义千问3-1.7B
+      'qwen3-0.6b', // 通义千问3-0.6B
+
       // 时间快照版本
-      'qwen-turbo-2025-04-28',  // 通义千问-Turbo-2025-04-28 (Qwen3)
-      'qwen-plus-2025-04-28',   // 通义千问-Plus-2025-04-28 (Qwen3)
-      
+      'qwen-turbo-2025-04-28', // 通义千问-Turbo-2025-04-28 (Qwen3)
+      'qwen-plus-2025-04-28', // 通义千问-Plus-2025-04-28 (Qwen3)
+
       // 兼容性别名（指向 Latest 版本）
-      'qwen-turbo',          // 指向 qwen-turbo-latest
-      'qwen-plus'            // 指向 qwen-plus-latest
+      'qwen-turbo', // 指向 qwen-turbo-latest
+      'qwen-plus', // 指向 qwen-plus-latest
     ];
   }
 
@@ -273,9 +277,9 @@ export class QwenLLM extends BaseLLM {
     const request: LLMRequest = {
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage }
+        { role: 'user', content: userMessage },
       ],
-      ...options
+      ...options,
     };
 
     const response = await this.chat(request);
@@ -297,7 +301,7 @@ export class QwenLLM extends BaseLLM {
         functions: functions,
         function_call: 'auto',
         temperature: options?.temperature || 0.7,
-        max_tokens: options?.maxTokens || 2048
+        max_tokens: options?.maxTokens || 2048,
       } as any);
 
       return completion;
@@ -319,7 +323,7 @@ export class QwenLLM extends BaseLLM {
     this.validateRequest(request);
 
     const model = request.model || this.defaultModel;
-    
+
     if (!this.isQwen3Model(model)) {
       // 非 Qwen3 模型，使用普通聊天
       return this.chat(request);
@@ -331,11 +335,11 @@ export class QwenLLM extends BaseLLM {
           model: model,
           messages: request.messages.map(msg => ({
             role: msg.role,
-            content: msg.content
+            content: msg.content,
           })),
           temperature: request.temperature || 0.7,
           max_tokens: request.maxTokens || 2048,
-          stream: false
+          stream: false,
         };
 
         // 如果指定了 enableThinking，使用指定值，否则使用默认逻辑
@@ -354,12 +358,14 @@ export class QwenLLM extends BaseLLM {
 
         return {
           content: choice.message.content || '',
-          usage: completion.usage ? {
-            promptTokens: completion.usage.prompt_tokens,
-            completionTokens: completion.usage.completion_tokens,
-            totalTokens: completion.usage.total_tokens
-          } : undefined,
-          model: completion.model
+          usage: completion.usage
+            ? {
+                promptTokens: completion.usage.prompt_tokens,
+                completionTokens: completion.usage.completion_tokens,
+                totalTokens: completion.usage.total_tokens,
+              }
+            : undefined,
+          model: completion.model,
         };
       } catch (error) {
         if (error instanceof Error) {
@@ -369,4 +375,4 @@ export class QwenLLM extends BaseLLM {
       }
     });
   }
-} 
+}

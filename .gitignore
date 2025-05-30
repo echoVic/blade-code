@@ -2,6 +2,14 @@
 node_modules/
 dist/
 
+# pnpm 相关文件
+.pnpm/
+.pnpm-store/
+
+# 锁定文件 (保留 pnpm-lock.yaml，但忽略其他)
+yarn.lock
+package-lock.json
+
 # 日志文件
 logs
 *.log
@@ -10,9 +18,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# 编辑器目录和文件
+# 编辑器目录和文件 (注释掉 .vscode，因为我们要提交配置)
 .idea/
-.vscode/
+# .vscode/
 *.suo
 *.ntvs*
 *.njsproj
@@ -31,4 +39,18 @@ test-project/
 .env.local
 .env.development.local
 .env.test.local
-.env.production.local 
+.env.production.local
+
+# 构建输出
+build/
+coverage/
+.nyc_output/
+
+# 临时文件
+.tmp/
+*.tmp
+*.temp
+
+# 其他
+.cache/
+.parcel-cache/ 

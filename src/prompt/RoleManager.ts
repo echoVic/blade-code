@@ -59,22 +59,16 @@ export class RoleManager {
           '技术选型',
           '调试和问题排查',
           '技术文档编写',
-          '团队技术指导'
+          '团队技术指导',
         ],
         restrictions: [
           '不提供低质量或不安全的代码',
           '不推荐过时或废弃的技术',
           '不给出未经验证的技术建议',
-          '不忽视代码的可维护性'
+          '不忽视代码的可维护性',
         ],
-        personalityTraits: [
-          '严谨负责',
-          '技术导向',
-          '注重细节',
-          '乐于分享',
-          '持续学习'
-        ],
-        communicationStyle: '专业、详细、循序渐进，注重实践指导'
+        personalityTraits: ['严谨负责', '技术导向', '注重细节', '乐于分享', '持续学习'],
+        communicationStyle: '专业、详细、循序渐进，注重实践指导',
       },
 
       // 产品经理
@@ -117,22 +111,16 @@ export class RoleManager {
           '竞品分析',
           '商业模式设计',
           '跨团队协调',
-          '产品文档编写'
+          '产品文档编写',
         ],
         restrictions: [
           '不忽视技术实现的复杂性',
           '不提供违反法律法规的产品建议',
           '不推荐损害用户利益的功能',
-          '不忽视数据隐私和安全问题'
+          '不忽视数据隐私和安全问题',
         ],
-        personalityTraits: [
-          '用户导向',
-          '数据敏感',
-          '沟通协调',
-          '战略思维',
-          '执行力强'
-        ],
-        communicationStyle: '逻辑清晰、重点突出，善于用实际案例说明问题'
+        personalityTraits: ['用户导向', '数据敏感', '沟通协调', '战略思维', '执行力强'],
+        communicationStyle: '逻辑清晰、重点突出，善于用实际案例说明问题',
       },
 
       // 项目管理专家
@@ -177,22 +165,16 @@ export class RoleManager {
           '进度跟踪',
           '质量控制',
           '沟通管理',
-          '变更管理'
+          '变更管理',
         ],
         restrictions: [
           '不忽视项目约束条件',
           '不提供不切实际的时间安排',
           '不忽视团队成员的工作负荷',
-          '不忽略项目风险评估'
+          '不忽略项目风险评估',
         ],
-        personalityTraits: [
-          '组织性强',
-          '责任心强',
-          '沟通协调',
-          '问题解决',
-          '适应性强'
-        ],
-        communicationStyle: '条理清晰、重点明确，注重可执行性和时间管理'
+        personalityTraits: ['组织性强', '责任心强', '沟通协调', '问题解决', '适应性强'],
+        communicationStyle: '条理清晰、重点明确，注重可执行性和时间管理',
       },
 
       // 数据分析师
@@ -237,22 +219,16 @@ export class RoleManager {
           'A/B测试设计',
           '预测分析',
           '报表制作',
-          '数据解读和洞察'
+          '数据解读和洞察',
         ],
         restrictions: [
           '不进行无根据的数据推测',
           '不忽视数据质量问题',
           '不提供违反数据隐私的分析方法',
-          '不忽略统计显著性检验'
+          '不忽略统计显著性检验',
         ],
-        personalityTraits: [
-          '逻辑严谨',
-          '细致入微',
-          '客观理性',
-          '好奇心强',
-          '持续学习'
-        ],
-        communicationStyle: '逻辑清晰、数据支撑，善于将分析结果转化为业务洞察'
+        personalityTraits: ['逻辑严谨', '细致入微', '客观理性', '好奇心强', '持续学习'],
+        communicationStyle: '逻辑清晰、数据支撑，善于将分析结果转化为业务洞察',
       },
 
       // 系统架构师
@@ -297,23 +273,17 @@ export class RoleManager {
           '微服务架构',
           '云原生技术',
           '系统集成',
-          '架构审查'
+          '架构审查',
         ],
         restrictions: [
           '不推荐过度设计的架构方案',
           '不忽视系统的实际业务需求',
           '不提供不成熟的技术方案',
-          '不忽略系统的运维复杂性'
+          '不忽略系统的运维复杂性',
         ],
-        personalityTraits: [
-          '全局思维',
-          '技术前瞻',
-          '严谨务实',
-          '持续创新',
-          '团队协作'
-        ],
-        communicationStyle: '全面深入、逻辑严密，注重技术方案的可行性和扩展性'
-      }
+        personalityTraits: ['全局思维', '技术前瞻', '严谨务实', '持续创新', '团队协作'],
+        communicationStyle: '全面深入、逻辑严密，注重技术方案的可行性和扩展性',
+      },
     };
   }
 
@@ -353,9 +323,7 @@ export class RoleManager {
    */
   public searchRolesByCapability(capability: string): Role[] {
     return Array.from(this.roles.values()).filter(role =>
-      role.capabilities.some(cap => 
-        cap.toLowerCase().includes(capability.toLowerCase())
-      )
+      role.capabilities.some(cap => cap.toLowerCase().includes(capability.toLowerCase()))
     );
   }
 
@@ -455,12 +423,12 @@ ${basePrompt}
    */
   public getRecommendedRoles(taskType: string): Role[] {
     const taskRoleMapping: Record<string, string[]> = {
-      'code': ['senior-developer', 'system-architect'],
-      'product': ['product-manager', 'data-analyst'],
-      'project': ['project-manager', 'product-manager'],
-      'analysis': ['data-analyst', 'system-architect'],
-      'design': ['system-architect', 'senior-developer'],
-      'management': ['project-manager', 'product-manager']
+      code: ['senior-developer', 'system-architect'],
+      product: ['product-manager', 'data-analyst'],
+      project: ['project-manager', 'product-manager'],
+      analysis: ['data-analyst', 'system-architect'],
+      design: ['system-architect', 'senior-developer'],
+      management: ['project-manager', 'product-manager'],
     };
 
     const recommendedIds = taskRoleMapping[taskType.toLowerCase()] || [];
@@ -484,7 +452,7 @@ ${basePrompt}
       totalCapabilities: capabilities.size,
       totalPersonalityTraits: personalityTraits.size,
       averageCapabilities: roles.reduce((sum, r) => sum + r.capabilities.length, 0) / roles.length,
-      currentRole: this.currentRole?.name || 'None'
+      currentRole: this.currentRole?.name || 'None',
     };
   }
 
@@ -507,4 +475,4 @@ ${basePrompt}
       this.roles.set(role.id, role);
     });
   }
-} 
+}

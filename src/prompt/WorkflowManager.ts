@@ -19,11 +19,11 @@ export class WorkflowManager {
       trackTime: true,
       generateReports: true,
       templatePath: 'todo.md',
-      ...config
+      ...config,
     };
     this.workingDirectory = workingDirectory;
     this.todoFilePath = join(workingDirectory, this.config.templatePath);
-    
+
     this.loadTodoFile();
   }
 
@@ -152,17 +152,17 @@ export class WorkflowManager {
   private parseTaskLine(line: string, section: string): Partial<WorkflowTask> {
     const isCompleted = line.includes('- [x]');
     const taskText = line.replace(/^- \[[x ]\]\s*/, '').trim();
-    
+
     // 提取任务ID（如果存在）
     const idMatch = taskText.match(/\[ID:([^\]]+)\]/);
     const id = idMatch ? idMatch[1] : this.generateTaskId();
-    
+
     // 提取优先级
     const priorityMatch = taskText.match(/\[优先级:([^\]]+)\]/);
     const priority = this.mapPriority(priorityMatch ? priorityMatch[1] : 'medium');
-    
+
     // 提取任务标题
-    let title = taskText
+    const title = taskText
       .replace(/\[ID:[^\]]+\]/g, '')
       .replace(/\[优先级:[^\]]+\]/g, '')
       .replace(/\[估时:[^\]]+\]/g, '')
@@ -174,7 +174,13 @@ export class WorkflowManager {
       status = 'completed';
     } else if (section) {
       // 验证section是否为有效的TaskStatus
-      const validStatuses: TaskStatus[] = ['todo', 'in-progress', 'completed', 'blocked', 'cancelled'];
+      const validStatuses: TaskStatus[] = [
+        'todo',
+        'in-progress',
+        'completed',
+        'blocked',
+        'cancelled',
+      ];
       if (validStatuses.includes(section as TaskStatus)) {
         status = section as TaskStatus;
       }
@@ -189,7 +195,7 @@ export class WorkflowManager {
       tags: [],
       notes: [],
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
   }
 
@@ -198,7 +204,7 @@ export class WorkflowManager {
    */
   private parseTaskDetails(task: Partial<WorkflowTask>, line: string): void {
     const trimmedLine = line.trim();
-    
+
     if (trimmedLine.startsWith('**描述**:')) {
       task.description = trimmedLine.replace('**描述**:', '').trim();
     } else if (trimmedLine.startsWith('**依赖**:')) {
@@ -244,7 +250,7 @@ export class WorkflowManager {
       createdAt: taskData.createdAt || new Date(),
       updatedAt: taskData.updatedAt || new Date(),
       completedAt: taskData.status === 'completed' ? new Date() : undefined,
-      notes: taskData.notes || []
+      notes: taskData.notes || [],
     };
 
     this.tasks.set(task.id, task);
@@ -279,11 +285,11 @@ export class WorkflowManager {
       ...task,
       id,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
 
     this.tasks.set(id, newTask);
-    
+
     if (this.config.autoSave) {
       this.saveTodoFile();
     }
@@ -294,7 +300,10 @@ export class WorkflowManager {
   /**
    * 更新任务
    */
-  public updateTask(id: string, updates: Partial<Omit<WorkflowTask, 'id' | 'createdAt'>>): WorkflowTask {
+  public updateTask(
+    id: string,
+    updates: Partial<Omit<WorkflowTask, 'id' | 'createdAt'>>
+  ): WorkflowTask {
     const task = this.tasks.get(id);
     if (!task) {
       throw new Error(`任务不存在: ${id}`);
@@ -304,11 +313,11 @@ export class WorkflowManager {
       ...task,
       ...updates,
       updatedAt: new Date(),
-      completedAt: updates.status === 'completed' ? new Date() : task.completedAt
+      completedAt: updates.status === 'completed' ? new Date() : task.completedAt,
     };
 
     this.tasks.set(id, updatedTask);
-    
+
     if (this.config.autoSave) {
       this.saveTodoFile();
     }
@@ -321,7 +330,7 @@ export class WorkflowManager {
    */
   public deleteTask(id: string): boolean {
     const deleted = this.tasks.delete(id);
-    
+
     if (deleted && this.config.autoSave) {
       this.saveTodoFile();
     }
@@ -363,7 +372,7 @@ export class WorkflowManager {
   public getExecutableTasks(): WorkflowTask[] {
     return Array.from(this.tasks.values()).filter(task => {
       if (task.status !== 'todo' && task.status !== 'blocked') return false;
-      
+
       // 检查依赖是否都已完成
       return task.dependencies.every(depId => {
         const depTask = this.tasks.get(depId);
@@ -402,7 +411,7 @@ export class WorkflowManager {
   public completeTask(id: string, actualTime?: number): WorkflowTask {
     const updates: Partial<WorkflowTask> = {
       status: 'completed',
-      completedAt: new Date()
+      completedAt: new Date(),
     };
 
     if (actualTime !== undefined) {
@@ -457,7 +466,7 @@ export class WorkflowManager {
   private generateTodoContent(): string {
     const tasks = Array.from(this.tasks.values());
     const stats = this.getStatistics();
-    
+
     let content = `# 📋 工作流任务管理
 
 > 更新时间: ${new Date().toISOString().split('T')[0]}
@@ -480,12 +489,12 @@ export class WorkflowManager {
       { status: 'in-progress' as TaskStatus, title: '⚡ 进行中 (IN PROGRESS)' },
       { status: 'completed' as TaskStatus, title: '✅ 已完成 (COMPLETED)' },
       { status: 'blocked' as TaskStatus, title: '🚫 阻塞 (BLOCKED)' },
-      { status: 'cancelled' as TaskStatus, title: '❌ 已取消 (CANCELLED)' }
+      { status: 'cancelled' as TaskStatus, title: '❌ 已取消 (CANCELLED)' },
     ];
 
     statusSections.forEach(section => {
       content += `### ${section.title}\n\n`;
-      
+
       const sectionTasks = tasks
         .filter(task => task.status === section.status)
         .sort((a, b) => {
@@ -528,48 +537,48 @@ export class WorkflowManager {
       critical: '🔥',
       high: '⚡',
       medium: '📋',
-      low: '💤'
+      low: '💤',
     };
-    
+
     let item = `- ${checkbox} ${priorityEmoji[task.priority]} ${task.title} [ID:${task.id}] [优先级:${task.priority}]`;
-    
+
     if (task.estimatedTime) {
       item += ` [估时:${task.estimatedTime}min]`;
     }
-    
+
     item += '\n';
 
     // 添加详细信息
     if (task.description) {
       item += `  **描述**: ${task.description}\n`;
     }
-    
+
     if (task.dependencies.length > 0) {
       item += `  **依赖**: ${task.dependencies.join(', ')}\n`;
     }
-    
+
     if (task.tags.length > 0) {
       item += `  **标签**: ${task.tags.join(', ')}\n`;
     }
-    
+
     if (task.estimatedTime) {
       item += `  **预估时间**: ${task.estimatedTime} 分钟\n`;
     }
-    
+
     if (task.actualTime) {
       item += `  **实际时间**: ${task.actualTime} 分钟\n`;
     }
-    
+
     if (task.assignee) {
       item += `  **负责人**: ${task.assignee}\n`;
     }
-    
+
     if (task.notes.length > 0) {
       task.notes.forEach(note => {
         item += `  **备注**: ${note}\n`;
       });
     }
-    
+
     item += '\n';
     return item;
   }
@@ -583,23 +592,29 @@ export class WorkflowManager {
     const completedTasks = tasks.filter(t => t.status === 'completed');
     const inProgressTasks = tasks.filter(t => t.status === 'in-progress');
     const blockedTasks = tasks.filter(t => t.status === 'blocked');
-    
+
     // 计算平均完成时间
     const completedWithTime = completedTasks.filter(t => t.actualTime);
-    const averageCompletionTime = completedWithTime.length > 0
-      ? Math.round(completedWithTime.reduce((sum, t) => sum + (t.actualTime || 0), 0) / completedWithTime.length)
-      : null;
-    
+    const averageCompletionTime =
+      completedWithTime.length > 0
+        ? Math.round(
+            completedWithTime.reduce((sum, t) => sum + (t.actualTime || 0), 0) /
+              completedWithTime.length
+          )
+        : null;
+
     // 计算成功率
     const finishedTasks = tasks.filter(t => t.status === 'completed' || t.status === 'cancelled');
-    const successRate = finishedTasks.length > 0
-      ? Math.round((completedTasks.length / finishedTasks.length) * 100)
-      : 0;
-    
+    const successRate =
+      finishedTasks.length > 0
+        ? Math.round((completedTasks.length / finishedTasks.length) * 100)
+        : 0;
+
     // 计算当前负载
-    const currentLoad = this.config.maxConcurrentTasks > 0
-      ? Math.round((inProgressTasks.length / this.config.maxConcurrentTasks) * 100)
-      : 0;
+    const currentLoad =
+      this.config.maxConcurrentTasks > 0
+        ? Math.round((inProgressTasks.length / this.config.maxConcurrentTasks) * 100)
+        : 0;
 
     return {
       totalTasks,
@@ -611,7 +626,7 @@ export class WorkflowManager {
       averageCompletionTime: averageCompletionTime ? `${averageCompletionTime}min` : null,
       successRate,
       currentLoad,
-      executableTasks: this.getExecutableTasks().length
+      executableTasks: this.getExecutableTasks().length,
     };
   }
 
@@ -620,8 +635,8 @@ export class WorkflowManager {
    */
   public generateReport(): string {
     const stats = this.getStatistics();
-    const tasks = Array.from(this.tasks.values());
-    
+    // const tasks = Array.from(this.tasks.values());
+
     return `# 📊 工作流报告
 
 ## 总体概况
@@ -642,12 +657,15 @@ export class WorkflowManager {
 - 最大并发数: ${this.config.maxConcurrentTasks}
 
 ## 高优先级任务
-${this.getTasksByPriority('critical').concat(this.getTasksByPriority('high'))
-  .slice(0, 5)
-  .map(task => `- ${task.title} (${task.status})`)
-  .join('\n') || '无'}
+${
+  this.getTasksByPriority('critical')
+    .concat(this.getTasksByPriority('high'))
+    .slice(0, 5)
+    .map(task => `- ${task.title} (${task.status})`)
+    .join('\n') || '无'
+}
 
 生成时间: ${new Date().toLocaleString()}
 `;
   }
-} 
+}

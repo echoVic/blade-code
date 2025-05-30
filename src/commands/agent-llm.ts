@@ -21,7 +21,7 @@ export function agentLlmCommand(program: Command) {
     .option('--demo', '运行场景演示', false)
     .action(async (questionArgs, options) => {
       console.log(chalk.blue('🤖 启动智能 Agent...'));
-      
+
       try {
         // 验证提供商
         if (!isProviderSupported(options.provider)) {
@@ -32,15 +32,15 @@ export function agentLlmCommand(program: Command) {
         // 获取配置
         const providerConfig = getProviderConfig(options.provider);
         let apiKey = options.apiKey || providerConfig.apiKey;
-        
-        if (!apiKey || apiKey.startsWith('sk-') && apiKey.length < 20) {
+
+        if (!apiKey || (apiKey.startsWith('sk-') && apiKey.length < 20)) {
           const answers = await inquirer.prompt([
             {
               type: 'password',
               name: 'apiKey',
               message: `请输入 ${options.provider} 的 API 密钥:`,
-              mask: '*'
-            }
+              mask: '*',
+            },
           ]);
           apiKey = answers.apiKey;
         }
@@ -53,15 +53,15 @@ export function agentLlmCommand(program: Command) {
           llm: {
             provider: options.provider,
             apiKey: apiKey,
-            model: model
-          }
+            model: model,
+          },
         };
 
         console.log(chalk.green(`✅ 使用 ${options.provider} (${model})`));
 
         // 判断聊天模式
         const question = questionArgs.join(' ');
-        
+
         if (options.demo) {
           // 演示模式
           agentConfig.debug = true; // 演示时显示调试信息
@@ -76,7 +76,6 @@ export function agentLlmCommand(program: Command) {
           // 默认：启动交互式聊天
           await startInteractiveChat(agentConfig, options.scenario);
         }
-
       } catch (error) {
         console.error(chalk.red('❌ 启动失败:'), error);
       }
@@ -92,10 +91,10 @@ async function answerSingleQuestion(config: AgentConfig, question: string, scena
 
   try {
     let response: string;
-    
+
     switch (scenario) {
       case 'customer':
-        const systemPrompt = `你是专业的客服代表，友好耐心地解答问题`;
+        const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
         response = await agent.chatWithSystem(systemPrompt, question);
         break;
       case 'code':
@@ -108,7 +107,6 @@ async function answerSingleQuestion(config: AgentConfig, question: string, scena
     }
 
     console.log(chalk.green(`\n💬 AI: ${response}`));
-    
   } catch (error) {
     console.error(chalk.red('❌ 回答失败:'), error);
   } finally {
@@ -132,8 +130,8 @@ async function startInteractiveChat(config: AgentConfig, scenario: string) {
         {
           type: 'input',
           name: 'message',
-          message: '你:'
-        }
+          message: '你:',
+        },
       ]);
 
       if (!message.trim()) {
@@ -147,14 +145,18 @@ async function startInteractiveChat(config: AgentConfig, scenario: string) {
 
       try {
         let response: string;
-        
+
         switch (scenario) {
           case 'customer':
-            const systemPrompt = `你是专业的客服代表，友好耐心地解答问题`;
+            const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
             response = await agent.chatWithSystem(systemPrompt, message);
             break;
           case 'code':
-            if (message.includes('```') || message.includes('function') || message.includes('class')) {
+            if (
+              message.includes('```') ||
+              message.includes('function') ||
+              message.includes('class')
+            ) {
               response = await agent.reviewCode(message, 'auto-detect');
             } else {
               response = await agent.ask(`作为代码助手，${message}`);
@@ -167,7 +169,6 @@ async function startInteractiveChat(config: AgentConfig, scenario: string) {
         }
 
         console.log(chalk.green(`AI: ${response}\n`));
-        
       } catch (error) {
         console.error(chalk.red('❌ 聊天错误:'), error);
       }
@@ -202,10 +203,14 @@ async function runScenarioDemo(config: AgentConfig, scenario: string) {
  */
 function getScenarioName(scenario: string): string {
   switch (scenario) {
-    case 'customer': return '智能客服';
-    case 'code': return '代码助手';
-    case 'assistant': return '智能助手';
-    default: return '智能助手';
+    case 'customer':
+      return '智能客服';
+    case 'code':
+      return '代码助手';
+    case 'assistant':
+      return '智能助手';
+    default:
+      return '智能助手';
   }
 }
 
@@ -214,21 +219,21 @@ function getScenarioName(scenario: string): string {
  */
 async function startCustomerService(config: AgentConfig) {
   console.log(chalk.cyan('\n=== 🎧 智能客服 Agent ==='));
-  
+
   const agent = new Agent(config);
   await agent.init();
 
   const scenarios = [
     '我想了解你们的退货政策',
     '这个产品质量太差了，我要求退款！',
-    '请问你们有什么优惠活动吗？'
+    '请问你们有什么优惠活动吗？',
   ];
 
   for (const inquiry of scenarios) {
     console.log(chalk.yellow(`\n客户: ${inquiry}`));
-    
+
     try {
-      const systemPrompt = `你是专业的客服代表，友好耐心地解答问题`;
+      const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
       const response = await agent.chatWithSystem(systemPrompt, inquiry);
       console.log(chalk.green(`客服: ${response}`));
 
@@ -251,7 +256,7 @@ async function startCustomerService(config: AgentConfig) {
  */
 async function startCodeAssistant(config: AgentConfig) {
   console.log(chalk.cyan('\n=== 💻 代码助手 Agent ==='));
-  
+
   const agent = new Agent(config);
   await agent.init();
 
@@ -278,7 +283,6 @@ function calculateTotal(items) {
     const tests = await agent.chat(prompt);
     console.log(chalk.green('\n🔬 生成的测试用例:'));
     console.log(tests);
-
   } catch (error) {
     console.error(chalk.red('❌ 代码分析失败:'), error);
   }
@@ -292,7 +296,7 @@ function calculateTotal(items) {
  */
 async function startBasicAssistant(config: AgentConfig) {
   console.log(chalk.cyan('\n=== 🤖 智能助手 Agent ==='));
-  
+
   const agent = new Agent(config);
   await agent.init();
 
@@ -314,16 +318,15 @@ async function startBasicAssistant(config: AgentConfig) {
     // 流式回答
     console.log(chalk.yellow('\n流式问答: 解释区块链技术'));
     process.stdout.write(chalk.green('AI: '));
-    
+
     const messages: LLMMessage[] = [
-      { role: 'user' as const, content: '请简单解释什么是区块链技术' }
+      { role: 'user' as const, content: '请简单解释什么是区块链技术' },
     ];
-    
-    await agent.streamChat(messages, (chunk) => {
+
+    await agent.streamChat(messages, chunk => {
       process.stdout.write(chunk);
     });
     console.log('\n');
-
   } catch (error) {
     console.error(chalk.red('❌ 助手操作失败:'), error);
   }
