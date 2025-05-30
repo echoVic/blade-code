@@ -48,7 +48,11 @@ export const DEFAULT_CONFIG: DefaultConfig = {
       apiKey: process.env.VOLCENGINE_API_KEY || '1ddfaee1-1350-46b0-ab87-2db988d24d4b',
       defaultModel: process.env.VOLCENGINE_DEFAULT_MODEL || 'ep-20250417144747-rgffm',
       baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
-      supportedModels: ['ep-20250417144747-rgffm'],
+      supportedModels: [
+        'ep-20250417144747-rgffm',
+        'ep-20250530171307-rrcc5', // DeepSeek R1 250528
+        'ep-20250530171222-q42h8', // DeepSeek V3
+      ],
     },
   },
 };
