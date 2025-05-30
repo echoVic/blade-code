@@ -1,6 +1,7 @@
 // 工具系统核心模块
-export { ToolManager } from './ToolManager.js';
-export { ToolValidator } from './validator.js';
+export * from './ToolManager.js';
+export * from './types.js';
+export * from './validator.js';
 
 // 类型定义
 export type {
@@ -23,6 +24,7 @@ export {
   fileSystemTools,
   gitTools,
   networkTools,
+  smartTools,
   textProcessingTools,
   utilityTools,
 } from './builtin/index.js';
@@ -33,6 +35,7 @@ import {
   fileSystemTools,
   gitTools,
   networkTools,
+  smartTools,
   textProcessingTools,
   utilityTools,
 } from './builtin/index.js';
@@ -55,6 +58,7 @@ export async function createToolManager(
       ...networkTools,
       ...utilityTools,
       ...gitTools,
+      ...smartTools,
     ];
 
     for (const tool of allBuiltinTools) {
@@ -75,6 +79,7 @@ export function getBuiltinToolsByCategory(): Record<string, ToolDefinition[]> {
     network: networkTools,
     utility: utilityTools,
     git: gitTools,
+    smart: smartTools,
   };
 }
 
@@ -88,5 +93,6 @@ export function getAllBuiltinTools(): ToolDefinition[] {
     ...networkTools,
     ...utilityTools,
     ...gitTools,
+    ...smartTools,
   ];
 }

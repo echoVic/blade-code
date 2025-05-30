@@ -490,6 +490,8 @@ ${toolDescriptions}
 - 如果用户问"你好吗？"，应该返回：{"needsTool": false, "toolCalls": [], "reasoning": "这是普通问候，无需工具"}
 - 如果用户说"查看现在的变更，生成commit信息并提交"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "git_smart_commit", "parameters": {"autoAdd": true}}], "reasoning": "需要智能分析Git变更并提交"}
 - 如果用户说"查看git状态"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "git_status", "parameters": {}}], "reasoning": "需要查看Git仓库状态"}
+- 如果用户说"审查这个文件的代码"或"检查代码质量"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "smart_code_review", "parameters": {"path": "待指定文件路径"}}], "reasoning": "需要使用智能代码审查工具"}
+- 如果用户说"生成这个项目的文档"或"写个README"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "smart_doc_generator", "parameters": {"sourcePath": "待指定路径"}}], "reasoning": "需要使用智能文档生成工具"}
 `;
 
     try {
@@ -529,32 +531,33 @@ ${toolDescriptions}
 
       const response = await toolComponent.callTool(request);
 
-      // 特殊处理：如果是git_smart_commit工具需要LLM分析
-      if (
-        toolCall.toolName === 'git_smart_commit' &&
-        response.result.error === 'need_llm_analysis' &&
-        response.result.data?.needsLLMAnalysis
-      ) {
-        this.log('Git智能提交需要LLM分析变更内容...');
+      // 特殊处理：如果工具需要LLM分析
+      if (response.result.error === 'need_llm_analysis' && response.result.data?.needsLLMAnalysis) {
+        this.log(`${toolCall.toolName} 需要LLM分析...`);
 
         // 使用LLM分析变更内容
         const analysisPrompt = response.result.data.analysisPrompt;
         const llmAnalysis = await this.chat(analysisPrompt);
 
-        // 提取commit信息（移除可能的格式化符号）
-        const commitMessage = llmAnalysis
-          .replace(/```\w*\n?|\n?```/g, '')
-          .split('\n')[0]
-          .trim();
+        this.log(`LLM分析完成`);
 
-        this.log(`LLM生成的提交信息: ${commitMessage}`);
+        // 处理不同工具的分析结果
+        let processedAnalysis = llmAnalysis;
+        if (toolCall.toolName === 'git_smart_commit') {
+          // Git智能提交：提取commit信息
+          processedAnalysis = llmAnalysis
+            .replace(/```\w*\n?|\n?```/g, '')
+            .split('\n')[0]
+            .trim();
+        }
+        // smart_code_review 和 smart_doc_generator 直接使用原始分析结果
 
         // 使用LLM分析结果重新调用工具
         const retryRequest: ToolCallRequest = {
           toolName: toolCall.toolName,
           parameters: {
             ...toolCall.parameters,
-            llmAnalysis: commitMessage,
+            llmAnalysis: processedAnalysis,
           },
         };
 

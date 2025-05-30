@@ -43,7 +43,7 @@ export const gitSmartCommit: ToolDefinition = {
     },
   },
 
-  async execute(parameters, context) {
+  async execute(parameters: Record<string, any>) {
     const { path = '.', autoAdd = true, dryRun = false, llmAnalysis = '' } = parameters;
 
     try {
