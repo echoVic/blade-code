@@ -20,39 +20,54 @@ export function llmCommand(program: Command) {
     .option('-m, --model <model>', '指定模型')
     .option('-s, --stream', '启用流式输出', false)
     .action(async options => {
-      console.log(chalk.blue('💬 启动 LLM 聊天模式...'));
-
       try {
-        // 验证提供商
         if (!isProviderSupported(options.provider)) {
           console.log(chalk.red(`❌ 不支持的提供商: ${options.provider}`));
+          console.log(chalk.gray('支持的提供商: qwen, volcengine'));
           return;
         }
 
-        // 获取配置
-        const providerConfig = getProviderConfig(options.provider);
-        let apiKey = options.apiKey || providerConfig.apiKey;
-
-        if (!apiKey || (apiKey.startsWith('sk-') && apiKey.length < 20)) {
-          const answers = await inquirer.prompt([
-            {
-              type: 'password',
-              name: 'apiKey',
-              message: `请输入 ${options.provider} 的 API 密钥:`,
-              mask: '*',
-            },
-          ]);
-          apiKey = answers.apiKey;
+        // 验证API密钥
+        let apiKey: string;
+        try {
+          const { validateApiKey } = await import('../config/defaults.js');
+          apiKey = validateApiKey(options.provider, options.apiKey);
+        } catch (error) {
+          console.log(chalk.red('\n❌ API密钥配置错误'));
+          console.log(chalk.yellow('\n💡 配置API密钥的方法:'));
+          console.log(chalk.gray('1. 命令行参数: --api-key your-api-key'));
+          console.log(
+            chalk.gray(
+              '2. 环境变量: export QWEN_API_KEY=your-key 或 export VOLCENGINE_API_KEY=your-key'
+            )
+          );
+          console.log(chalk.gray('3. .env 文件: 复制 config.env.example 为 .env 并填入密钥'));
+          console.log(chalk.gray('\n📖 获取API密钥:'));
+          if (options.provider === 'qwen') {
+            console.log(chalk.gray('千问: https://dashscope.console.aliyun.com/apiKey'));
+          } else if (options.provider === 'volcengine') {
+            console.log(
+              chalk.gray(
+                '火山引擎: https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey'
+              )
+            );
+          }
+          return;
         }
 
+        const providerConfig = getProviderConfig(options.provider);
         const model = options.model || providerConfig.defaultModel;
 
-        // 创建 LLM 实例
-        let llm: BaseLLM;
+        console.log(chalk.blue(`\n🤖 启动 ${options.provider.toUpperCase()} LLM 聊天`));
+        console.log(chalk.green(`📱 模型: ${model}`));
+        console.log(chalk.gray('💡 输入 "quit" 或 "exit" 退出聊天\n'));
+
+        // 创建LLM实例
+        let llm: QwenLLM | VolcEngineLLM;
         if (options.provider === 'qwen') {
-          llm = new QwenLLM({ apiKey }, model);
+          llm = new QwenLLM({ apiKey, baseURL: providerConfig.baseURL }, model);
         } else {
-          llm = new VolcEngineLLM({ apiKey }, model);
+          llm = new VolcEngineLLM({ apiKey, baseURL: providerConfig.baseURL }, model);
         }
 
         await llm.init();

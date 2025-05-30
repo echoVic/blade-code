@@ -61,17 +61,44 @@ npm install
 npm run build
 ```
 
-### 配置 API 密钥
+### 🔐 配置 API 密钥
 
-创建 `.env` 文件：
+**重要提示：为了安全起见，Agent CLI 不包含硬编码的API密钥。您需要通过以下方式之一提供API密钥：**
 
+#### 方法1：环境变量（推荐）
 ```bash
 # 千问 API 密钥
-QWEN_API_KEY=your_qwen_api_key
+export QWEN_API_KEY="your-qwen-api-key"
 
-# 豆包 API 密钥  
-VOLCENGINE_API_KEY=your_volcengine_api_key
+# 火山引擎 API 密钥  
+export VOLCENGINE_API_KEY="your-volcengine-api-key"
 ```
+
+#### 方法2：.env 文件
+```bash
+# 复制配置示例文件
+cp config.env.example .env
+
+# 编辑 .env 文件，填入真实的API密钥
+# QWEN_API_KEY=your-qwen-api-key-here
+# VOLCENGINE_API_KEY=your-volcengine-api-key-here
+```
+
+#### 方法3：命令行参数
+```bash
+# 每次使用时通过 --api-key 参数提供
+node dist/index.js chat --api-key your-api-key "你好"
+```
+
+#### 📖 API密钥获取地址
+- **千问 (Qwen)**: https://dashscope.console.aliyun.com/apiKey
+- **火山引擎 (VolcEngine)**: https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey
+
+### 🔒 安全注意事项
+- ❌ **永远不要**将API密钥提交到代码仓库
+- ✅ 使用 `.env` 文件存储敏感信息（已加入 `.gitignore`）
+- ✅ 定期轮换您的API密钥
+- ✅ 为不同项目使用不同的API密钥
 
 ## 🎯 使用指南
 
@@ -354,16 +381,26 @@ npm install
 npm run build
 ```
 
-### 2. 配置密钥
+### 2. 配置API密钥 ⚠️ 必需步骤
 ```bash
-# 创建配置文件
-echo "QWEN_API_KEY=your_qwen_api_key" > .env
+# 方法1: 设置环境变量（推荐）
+export QWEN_API_KEY="your-qwen-api-key"
+
+# 方法2: 创建 .env 文件
+cp config.env.example .env
+# 然后编辑 .env 文件，填入真实的API密钥
 ```
+
+**⚠️ 重要：没有配置API密钥将无法使用任何AI功能！**
+
+获取API密钥：
+- 千问: https://dashscope.console.aliyun.com/apiKey
+- 火山引擎: https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey
 
 ### 3. 开始使用
 
 ```bash
-# 最简单的用法 - 直接问答
+# 检查配置（如果没有配置API密钥会有友好提示）
 node dist/index.js chat 你好
 
 # 智能代码审查
@@ -374,6 +411,30 @@ node dist/index.js tools list
 
 # 查看帮助
 node dist/index.js --help
+```
+
+### 4. 常见问题
+
+**Q: 出现"API密钥配置错误"怎么办？**
+
+A: 请确保已正确配置API密钥：
+```bash
+# 检查环境变量
+echo $QWEN_API_KEY
+
+# 或使用命令行参数
+node dist/index.js chat --api-key your-api-key "测试"
+```
+
+**Q: 如何更换不同的模型？**
+
+A: 使用 --model 参数：
+```bash
+# 千问模型
+node dist/index.js chat --model qwen-max-latest "你好"
+
+# 火山引擎模型  
+node dist/index.js chat --provider volcengine --model ep-20250530171222-q42h8 "你好"
 ```
 
 ## 💡 使用技巧

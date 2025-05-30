@@ -131,13 +131,17 @@ export class Agent extends EventEmitter {
     // 获取默认配置
     const defaultConfig = getProviderConfig(provider);
 
-    // 使用提供的配置或默认配置
-    const finalApiKey = apiKey || defaultConfig.apiKey;
-    const finalModel = model || defaultConfig.defaultModel;
-
-    if (!finalApiKey) {
-      throw new Error(`${provider} API key 未配置`);
+    // 验证API密钥（优先使用传入的，然后是环境变量）
+    let finalApiKey: string;
+    try {
+      // 导入validateApiKey函数
+      const { validateApiKey } = await import('../config/defaults.js');
+      finalApiKey = validateApiKey(provider, apiKey);
+    } catch (error) {
+      throw new Error(`API密钥验证失败: ${(error as Error).message}`);
     }
+
+    const finalModel = model || defaultConfig.defaultModel;
 
     this.log(`初始化 ${provider} LLM...`);
 

@@ -20,40 +20,21 @@ export function agentLlmCommand(program: Command) {
     .option('-i, --interactive', '启动交互式聊天模式', false)
     .option('--demo', '运行场景演示', false)
     .action(async (questionArgs, options) => {
-      console.log(chalk.blue('🤖 启动智能 Agent...'));
-
       try {
         // 验证提供商
         if (!isProviderSupported(options.provider)) {
           console.log(chalk.red(`❌ 不支持的提供商: ${options.provider}`));
+          console.log(chalk.gray('支持的提供商: qwen, volcengine'));
           return;
         }
 
-        // 获取配置
-        const providerConfig = getProviderConfig(options.provider);
-        let apiKey = options.apiKey || providerConfig.apiKey;
-
-        if (!apiKey || (apiKey.startsWith('sk-') && apiKey.length < 20)) {
-          const answers = await inquirer.prompt([
-            {
-              type: 'password',
-              name: 'apiKey',
-              message: `请输入 ${options.provider} 的 API 密钥:`,
-              mask: '*',
-            },
-          ]);
-          apiKey = answers.apiKey;
-        }
-
-        const model = options.model || providerConfig.defaultModel;
-
         // 创建 Agent 配置
         const agentConfig: AgentConfig = {
-          debug: false, // 直接聊天时关闭调试日志
+          debug: false,
           llm: {
             provider: options.provider,
-            apiKey: apiKey,
-            model: model,
+            apiKey: options.apiKey,
+            model: options.model,
           },
           tools: {
             enabled: true,
@@ -61,7 +42,42 @@ export function agentLlmCommand(program: Command) {
           },
         };
 
-        console.log(chalk.green(`✅ 使用 ${options.provider} (${model})`));
+        // 初始化 Agent
+        console.log(chalk.blue('🤖 启动智能 Agent...'));
+        const agent = new Agent(agentConfig);
+
+        try {
+          await agent.init();
+        } catch (error) {
+          // 检查是否是API密钥相关错误
+          const errorMessage = (error as Error).message;
+          if (errorMessage.includes('API密钥') || errorMessage.includes('API key')) {
+            console.log(chalk.red('\n❌ API密钥配置错误'));
+            console.log(chalk.yellow('\n💡 配置API密钥的方法:'));
+            console.log(chalk.gray('1. 命令行参数: --api-key your-api-key'));
+            console.log(
+              chalk.gray(
+                '2. 环境变量: export QWEN_API_KEY=your-key 或 export VOLCENGINE_API_KEY=your-key'
+              )
+            );
+            console.log(chalk.gray('3. .env 文件: 复制 config.env.example 为 .env 并填入密钥'));
+            console.log(chalk.gray('\n📖 获取API密钥:'));
+            if (options.provider === 'qwen') {
+              console.log(chalk.gray('千问: https://dashscope.console.aliyun.com/apiKey'));
+            } else if (options.provider === 'volcengine') {
+              console.log(
+                chalk.gray(
+                  '火山引擎: https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey'
+                )
+              );
+            }
+            return;
+          }
+          throw error;
+        }
+
+        const modelName = options.model || getProviderConfig(options.provider).defaultModel;
+        console.log(chalk.green(`✅ 使用 ${options.provider} (${modelName})`));
 
         // 判断聊天模式
         const question = questionArgs.join(' ');

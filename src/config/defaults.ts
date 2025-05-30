@@ -19,12 +19,12 @@ export interface DefaultConfig {
 
 /**
  * 默认配置
- * 基于测试成功的配置设定
+ * 注意：API密钥必须通过环境变量或--api-key参数提供
  */
 export const DEFAULT_CONFIG: DefaultConfig = {
   llm: {
     qwen: {
-      apiKey: process.env.QWEN_API_KEY || 'sk-c23da72a37234d68af0b48fc6d685e8b',
+      apiKey: process.env.QWEN_API_KEY || '',
       defaultModel: process.env.QWEN_DEFAULT_MODEL || 'qwen3-235b-a22b',
       baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       supportedModels: [
@@ -45,7 +45,7 @@ export const DEFAULT_CONFIG: DefaultConfig = {
       ],
     },
     volcengine: {
-      apiKey: process.env.VOLCENGINE_API_KEY || '1ddfaee1-1350-46b0-ab87-2db988d24d4b',
+      apiKey: process.env.VOLCENGINE_API_KEY || '',
       defaultModel: process.env.VOLCENGINE_DEFAULT_MODEL || 'ep-20250417144747-rgffm',
       baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
       supportedModels: [
@@ -89,13 +89,13 @@ export function loadConfigFromEnv(): Partial<DefaultConfig> {
   return {
     llm: {
       qwen: {
-        apiKey: process.env.QWEN_API_KEY || DEFAULT_CONFIG.llm.qwen.apiKey,
+        apiKey: process.env.QWEN_API_KEY || '',
         defaultModel: process.env.QWEN_DEFAULT_MODEL || DEFAULT_CONFIG.llm.qwen.defaultModel,
         baseURL: process.env.QWEN_BASE_URL || DEFAULT_CONFIG.llm.qwen.baseURL,
         supportedModels: DEFAULT_CONFIG.llm.qwen.supportedModels,
       },
       volcengine: {
-        apiKey: process.env.VOLCENGINE_API_KEY || DEFAULT_CONFIG.llm.volcengine.apiKey,
+        apiKey: process.env.VOLCENGINE_API_KEY || '',
         defaultModel:
           process.env.VOLCENGINE_DEFAULT_MODEL || DEFAULT_CONFIG.llm.volcengine.defaultModel,
         baseURL: process.env.VOLCENGINE_BASE_URL || DEFAULT_CONFIG.llm.volcengine.baseURL,
@@ -103,4 +103,28 @@ export function loadConfigFromEnv(): Partial<DefaultConfig> {
       },
     },
   };
+}
+
+/**
+ * 验证API密钥是否存在
+ */
+export function validateApiKey(provider: 'qwen' | 'volcengine', apiKey?: string): string {
+  // 优先使用传入的apiKey
+  if (apiKey) {
+    return apiKey;
+  }
+
+  // 然后检查环境变量
+  const config = getProviderConfig(provider);
+  if (config.apiKey) {
+    return config.apiKey;
+  }
+
+  // 如果都没有，抛出错误
+  throw new Error(
+    `${provider} API密钥未配置。请通过以下方式之一提供API密钥：\n` +
+      `1. 使用 --api-key 参数\n` +
+      `2. 设置环境变量 ${provider.toUpperCase()}_API_KEY\n` +
+      `3. 在 .env 文件中配置`
+  );
 }
