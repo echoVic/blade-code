@@ -7,4 +7,5 @@ export { gitBranch } from './git-branch.js';
 export { gitCommit } from './git-commit.js';
 export { gitDiff } from './git-diff.js';
 export { gitLog } from './git-log.js';
+export { gitSmartCommit } from './git-smart-commit.js';
 export { gitStatus } from './git-status.js';

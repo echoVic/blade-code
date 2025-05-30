@@ -181,6 +181,33 @@ agent tools call git_commit --params '{"message": "feat: 新功能", "dryRun": t
 agent tools call git_commit --params '{"message": "chore: 触发CI", "allowEmpty": true}'
 ```
 
+### 7. git_smart_commit - Git 智能提交
+使用LLM智能分析变更内容并生成合适的提交信息，然后执行提交。
+
+**参数：**
+- `path` (可选): 仓库路径，默认为当前目录
+- `autoAdd` (可选): 是否自动添加所有修改的文件到暂存区，默认true
+- `dryRun` (可选): 干运行，只分析并生成提交信息，不实际提交
+- `llmAnalysis` (可选): LLM分析的变更内容（由Agent自动填充）
+
+**示例：**
+```bash
+# 智能分析并提交当前所有变更
+agent tools call git_smart_commit
+
+# 只分析生成提交信息，不实际提交
+agent tools call git_smart_commit --params '{"dryRun": true}'
+
+# 不自动添加文件，只提交已暂存的变更
+agent tools call git_smart_commit --params '{"autoAdd": false}'
+```
+
+**智能特性：**
+- 🤖 **LLM分析**：自动分析变更内容，理解代码修改意图
+- 📝 **规范格式**：生成符合Conventional Commits规范的提交信息
+- 🎯 **精准描述**：根据实际变更内容生成准确的描述
+- 🚀 **一键提交**：自动完成添加、分析、提交的完整流程
+
 ## 智能助手中的使用
 
 你也可以在智能助手聊天中直接询问 Git 相关问题，助手会自动选择合适的工具来回答：

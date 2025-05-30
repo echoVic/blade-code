@@ -1,5 +1,13 @@
 import type { ToolDefinition } from '../types.js';
-import { gitAdd, gitBranch, gitCommit, gitDiff, gitLog, gitStatus } from './git/index.js';
+import {
+  gitAdd,
+  gitBranch,
+  gitCommit,
+  gitDiff,
+  gitLog,
+  gitSmartCommit,
+  gitStatus,
+} from './git/index.js';
 
 /**
  * Git 工具集合
@@ -12,4 +20,5 @@ export const gitTools: ToolDefinition[] = [
   gitBranch,
   gitAdd,
   gitCommit,
+  gitSmartCommit,
 ];

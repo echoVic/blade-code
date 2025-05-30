@@ -526,6 +526,48 @@ ${toolDescriptions}
       };
 
       const response = await toolComponent.callTool(request);
+
+      // 特殊处理：如果是git_smart_commit工具需要LLM分析
+      if (
+        toolCall.toolName === 'git_smart_commit' &&
+        response.result.error === 'need_llm_analysis' &&
+        response.result.data?.needsLLMAnalysis
+      ) {
+        this.log('Git智能提交需要LLM分析变更内容...');
+
+        // 使用LLM分析变更内容
+        const analysisPrompt = response.result.data.analysisPrompt;
+        const llmAnalysis = await this.chat(analysisPrompt);
+
+        // 提取commit信息（移除可能的格式化符号）
+        const commitMessage = llmAnalysis
+          .replace(/```\w*\n?|\n?```/g, '')
+          .split('\n')[0]
+          .trim();
+
+        this.log(`LLM生成的提交信息: ${commitMessage}`);
+
+        // 使用LLM分析结果重新调用工具
+        const retryRequest: ToolCallRequest = {
+          toolName: toolCall.toolName,
+          parameters: {
+            ...toolCall.parameters,
+            llmAnalysis: commitMessage,
+          },
+        };
+
+        const retryResponse = await toolComponent.callTool(retryRequest);
+        const duration = Date.now() - startTime;
+
+        return {
+          toolName: toolCall.toolName,
+          success: retryResponse.result.success,
+          result: retryResponse.result.data,
+          error: retryResponse.result.error,
+          duration,
+        };
+      }
+
       const duration = Date.now() - startTime;
 
       return {
