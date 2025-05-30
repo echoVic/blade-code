@@ -488,6 +488,8 @@ ${toolDescriptions}
 示例：
 - 如果用户问"现在是几点？"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "timestamp", "parameters": {"operation": "now", "format": "local"}}], "reasoning": "需要获取当前时间"}
 - 如果用户问"你好吗？"，应该返回：{"needsTool": false, "toolCalls": [], "reasoning": "这是普通问候，无需工具"}
+- 如果用户说"查看现在的变更，生成commit信息并提交"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "git_smart_commit", "parameters": {"autoAdd": true}}], "reasoning": "需要智能分析Git变更并提交"}
+- 如果用户说"查看git状态"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "git_status", "parameters": {}}], "reasoning": "需要查看Git仓库状态"}
 `;
 
     try {
