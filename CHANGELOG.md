@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.2.2] - 2025-06-03
+
+### ✨ 新功能
+
+- 新增配置管理功能，支持设置和切换LLM提供商 (a05dd47)
+
+### 🐛 问题修复
+
+- 将变量声明从let更改为const，以提高代码可读性和安全性 (4dcd781)
+
+
 ## [1.2.1] - 2025-06-03
 
 ### ✨ 新功能
