@@ -23,7 +23,12 @@
     "format": "prettier --write src/**/*.ts",
     "format:check": "prettier --check src/**/*.ts",
     "type-check": "tsc --noEmit",
-    "check": "npm run type-check && npm run lint && npm run format:check"
+    "check": "npm run type-check && npm run lint && npm run format:check",
+    "release": "node scripts/release.js",
+    "release:dry": "node scripts/release.js --dry-run",
+    "release:major": "node scripts/release.js --major",
+    "release:minor": "node scripts/release.js --minor",
+    "release:patch": "node scripts/release.js --patch"
   },
   "keywords": [
     "cli",
