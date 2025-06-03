@@ -21,6 +21,7 @@ export { ToolExecutionError, ToolRegistrationError, ToolValidationError } from '
 
 // 内置工具
 export {
+  commandConfirmationTools,
   fileSystemTools,
   gitTools,
   networkTools,
@@ -32,6 +33,7 @@ export {
 // 工具管理器工厂函数
 import { ToolManager } from './ToolManager.js';
 import {
+  commandConfirmationTools,
   fileSystemTools,
   gitTools,
   networkTools,
@@ -59,6 +61,7 @@ export async function createToolManager(
       ...utilityTools,
       ...gitTools,
       ...smartTools,
+      ...commandConfirmationTools,
     ];
 
     for (const tool of allBuiltinTools) {
@@ -80,6 +83,7 @@ export function getBuiltinToolsByCategory(): Record<string, ToolDefinition[]> {
     utility: utilityTools,
     git: gitTools,
     smart: smartTools,
+    command: commandConfirmationTools,
   };
 }
 
@@ -94,5 +98,6 @@ export function getAllBuiltinTools(): ToolDefinition[] {
     ...utilityTools,
     ...gitTools,
     ...smartTools,
+    ...commandConfirmationTools,
   ];
 }
