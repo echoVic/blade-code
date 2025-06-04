@@ -1,10 +1,12 @@
 import { EventEmitter } from 'events';
 import { getProviderConfig } from '../config/defaults.js';
+import type { ContextFilter, ToolCall as ContextToolCall } from '../context/index.js';
 import type { LLMMessage, LLMRequest } from '../llm/BaseLLM.js';
 import { QwenLLM } from '../llm/QwenLLM.js';
 import { VolcEngineLLM } from '../llm/VolcEngineLLM.js';
 import type { ToolCallRequest, ToolDefinition } from '../tools/index.js';
 import { BaseComponent } from './BaseComponent.js';
+import { ContextComponent, type ContextComponentConfig } from './ContextComponent.js';
 import { ToolComponent } from './ToolComponent.js';
 
 /**
@@ -24,6 +26,7 @@ export interface AgentConfig {
     excludeTools?: string[];
     includeCategories?: string[];
   };
+  context?: ContextComponentConfig;
 }
 
 /**
@@ -66,10 +69,22 @@ export class Agent extends EventEmitter {
         includeBuiltinTools: true,
         ...config.tools,
       },
+      context: {
+        enabled: true,
+        debug: config.debug,
+        ...config.context,
+      },
       ...config,
     };
 
     this.log('Agent 实例已创建');
+
+    // 如果启用了上下文管理，自动注册上下文组件
+    if (this.config.context?.enabled !== false) {
+      const contextComponent = new ContextComponent('context', this.config.context);
+      this.registerComponent(contextComponent);
+      this.log('上下文组件已自动注册');
+    }
 
     // 如果启用了工具，自动注册工具组件
     if (this.config.tools?.enabled) {
@@ -639,6 +654,230 @@ ${toolResultsText}
    */
   public getToolComponent(): ToolComponent | undefined {
     return this.getComponent<ToolComponent>('tools');
+  }
+
+  /**
+   * 获取上下文组件
+   */
+  public getContextComponent(): ContextComponent | undefined {
+    return this.getComponent<ContextComponent>('context');
+  }
+
+  /**
+   * 创建新的上下文会话
+   */
+  public async createContextSession(
+    userId?: string,
+    preferences: Record<string, any> = {},
+    configuration: Record<string, any> = {},
+    customSessionId?: string
+  ): Promise<string> {
+    const contextComponent = this.getContextComponent();
+    if (!contextComponent) {
+      throw new Error('上下文组件未启用');
+    }
+    return await contextComponent.createSession(
+      userId,
+      preferences,
+      configuration,
+      customSessionId
+    );
+  }
+
+  /**
+   * 加载现有的上下文会话
+   */
+  public async loadContextSession(sessionId: string): Promise<boolean> {
+    const contextComponent = this.getContextComponent();
+    if (!contextComponent) {
+      throw new Error('上下文组件未启用');
+    }
+    return await contextComponent.loadSession(sessionId);
+  }
+
+  /**
+   * 获取当前上下文会话ID
+   */
+  public getCurrentSessionId(): string | undefined {
+    const contextComponent = this.getContextComponent();
+    return contextComponent?.getCurrentSessionId();
+  }
+
+  /**
+   * 搜索历史会话
+   */
+  public async searchContextSessions(
+    query: string,
+    limit: number = 10
+  ): Promise<
+    Array<{
+      sessionId: string;
+      summary: string;
+      lastActivity: number;
+      relevanceScore: number;
+    }>
+  > {
+    const contextComponent = this.getContextComponent();
+    if (!contextComponent) {
+      return [];
+    }
+    return await contextComponent.searchSessions(query, limit);
+  }
+
+  /**
+   * 带上下文的智能聊天
+   */
+  public async chatWithContext(
+    message: string,
+    systemPrompt?: string,
+    options?: ContextFilter
+  ): Promise<string> {
+    const contextComponent = this.getContextComponent();
+
+    if (!contextComponent || !contextComponent.isContextReady()) {
+      // 如果没有上下文组件或未就绪，降级到普通聊天
+      this.log('上下文组件未就绪，使用普通聊天模式');
+      return systemPrompt
+        ? await this.chatWithSystem(systemPrompt, message)
+        : await this.chat(message);
+    }
+
+    try {
+      // 构建包含上下文的消息列表
+      const messages = await contextComponent.buildMessagesWithContext(
+        message,
+        systemPrompt,
+        options
+      );
+
+      // 转换为LLM消息格式
+      const llmMessages: LLMMessage[] = messages.map(msg => ({
+        role: msg.role as 'user' | 'assistant' | 'system',
+        content: msg.content,
+      }));
+
+      // 进行对话
+      const response = await this.conversation(llmMessages);
+
+      // 将助手回复添加到上下文
+      await contextComponent.addAssistantMessage(response);
+
+      return response;
+    } catch (error) {
+      this.log(`上下文聊天失败，降级到普通聊天: ${error}`);
+      // 降级到普通聊天
+      return systemPrompt
+        ? await this.chatWithSystem(systemPrompt, message)
+        : await this.chat(message);
+    }
+  }
+
+  /**
+   * 带上下文的智能工具调用聊天
+   */
+  public async smartChatWithContext(message: string): Promise<AgentResponse> {
+    const contextComponent = this.getContextComponent();
+
+    if (!contextComponent || !contextComponent.isContextReady()) {
+      // 如果没有上下文组件或未就绪，降级到普通智能聊天
+      this.log('上下文组件未就绪，使用普通智能聊天模式');
+      return await this.smartChat(message);
+    }
+
+    try {
+      // 构建包含上下文的消息列表
+      const messages = await contextComponent.buildMessagesWithContext(message);
+
+      // 转换为LLM消息格式
+      const llmMessages: LLMMessage[] = messages.map(msg => ({
+        role: msg.role as 'user' | 'assistant' | 'system',
+        content: msg.content,
+      }));
+
+      // 分析是否需要工具调用（基于包含上下文的消息）
+      const toolAnalysis = await this.analyzeToolNeed(message);
+
+      if (!toolAnalysis.needsTool) {
+        // 不需要工具，使用上下文进行对话
+        const response = await this.conversation(llmMessages);
+
+        // 将助手回复添加到上下文
+        await contextComponent.addAssistantMessage(response);
+
+        return {
+          content: response,
+          reasoning: '基于上下文的对话，无需工具调用',
+        };
+      }
+
+      // 需要工具调用，执行工具
+      const toolResults: ToolCallResult[] = [];
+
+      for (const toolCall of toolAnalysis.toolCalls) {
+        try {
+          this.log(`调用工具: ${toolCall.toolName}`);
+          const result = await this.callToolSmart(toolCall);
+          toolResults.push(result);
+        } catch (error) {
+          const errorResult: ToolCallResult = {
+            toolName: toolCall.toolName,
+            success: false,
+            result: null,
+            error: (error as Error).message,
+          };
+          toolResults.push(errorResult);
+        }
+      }
+
+      // 基于工具结果和上下文生成最终回答
+      const finalAnswer = await this.generateAnswerWithToolResults(message, toolResults);
+
+      // 将助手回复添加到上下文
+      await contextComponent.addAssistantMessage(finalAnswer);
+
+      // 记录工具调用到上下文
+      if (toolResults.length > 0) {
+        for (const toolCallResult of toolResults) {
+          const toolCall: ContextToolCall = {
+            id: `tool_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: toolCallResult.toolName,
+            input: {}, // 这里可以从toolCallResult获取输入参数
+            output: toolCallResult.result,
+            timestamp: Date.now(),
+            status: toolCallResult.success ? 'success' : 'error',
+            error: toolCallResult.error,
+          };
+
+          await contextComponent.addToolCall(toolCall);
+        }
+      }
+
+      return {
+        content: finalAnswer,
+        toolCalls: toolResults,
+        reasoning: `基于上下文对话，使用了 ${toolResults.length} 个工具协助回答`,
+      };
+    } catch (error) {
+      this.log(`上下文智能聊天失败，降级到普通智能聊天: ${error}`);
+      // 降级到普通智能聊天
+      return await this.smartChat(message);
+    }
+  }
+
+  /**
+   * 获取上下文统计信息
+   */
+  public async getContextStats(): Promise<{
+    currentSession: string | null;
+    memory: any;
+    cache: any;
+    storage: any;
+  } | null> {
+    const contextComponent = this.getContextComponent();
+    if (!contextComponent) {
+      return null;
+    }
+    return await contextComponent.getStats();
   }
 
   /**

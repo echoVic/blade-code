@@ -6,6 +6,7 @@
 
 - 🎯 **专注 LLM**：纯粹的 LLM CLI Agent，无其他干扰功能
 - 💬 **多种聊天模式**：直接问答、交互式聊天、场景演示
+- 🧠 **上下文记忆**：智能对话历史管理，AI记住之前的所有对话内容
 - 🎭 **智能场景**：智能助手、客服、代码助手等专业场景
 - 🔄 **流式聊天**：支持实时流式输出
 - 🌟 **多提供商**：支持千问(Qwen)和豆包(VolcEngine)
@@ -222,6 +223,12 @@ npx blade-ai chat "查看当前的代码变更并智能提交"
 blade chat "请使用命令确认工具帮我查看当前目录文件"
 npx blade-ai chat "用命令确认工具执行 git status"
 
+# 🧠 上下文记忆对话（AI会记住之前的对话）
+blade chat --context "我的名字是李明，我是前端工程师"
+blade chat --context "你记得我的名字和职业吗？"
+blade chat --context --context-session "my-work" "今天我在学习React"
+blade chat --context --context-session "my-work" "刚才我们聊了什么？"
+
 # 场景化问答
 blade chat --scenario customer 我想要退货
 npx blade-ai chat --scenario customer 我想要退货
@@ -275,6 +282,11 @@ blade chat -i --scenario assistant
 # 场景化 + 流式输出
 blade chat -i --scenario assistant --stream
 blade chat -i --scenario customer --stream
+
+# 🧠 带上下文记忆的交互式聊天
+blade chat -i --context
+blade chat -i --context --context-session "learning-session"
+blade chat -i --context --context-user "john" --stream
 
 # 指定提供商的交互式聊天
 blade chat -i --provider volcengine
@@ -348,6 +360,9 @@ blade chat [question...] [options]
   -i, --interactive          启动交互式聊天模式
   --stream                   启用流式输出（实时显示回答）
   --demo                     运行场景演示
+  --context                  启用上下文管理（记住对话历史）
+  --context-session <sessionId>  加载指定的上下文会话
+  --context-user <userId>    指定用户ID用于上下文管理 (默认: "default-user")
   -h, --help                 显示帮助信息
 ```
 

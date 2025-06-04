@@ -21,6 +21,9 @@ export function agentLlmCommand(program: Command) {
     .option('-i, --interactive', '启动交互式聊天模式', false)
     .option('--stream', '启用流式输出', false)
     .option('--demo', '运行场景演示', false)
+    .option('--context', '启用上下文管理（记住对话历史）', false)
+    .option('--context-session <sessionId>', '加载指定的上下文会话')
+    .option('--context-user <userId>', '指定用户ID用于上下文管理', 'default-user')
     .action(async (questionArgs, options) => {
       try {
         // 使用用户配置作为默认值
@@ -50,10 +53,36 @@ export function agentLlmCommand(program: Command) {
             enabled: true,
             includeBuiltinTools: true,
           },
+          context: options.context
+            ? {
+                enabled: true,
+                debug: false,
+                storage: {
+                  maxMemorySize: 1000,
+                  persistentPath: './blade-context',
+                  cacheSize: 100,
+                  compressionEnabled: true,
+                },
+                defaultFilter: {
+                  maxTokens: 4000,
+                  maxMessages: 50,
+                  timeWindow: 24 * 60 * 60 * 1000, // 24小时
+                  includeTools: true,
+                  includeWorkspace: true,
+                },
+                compressionThreshold: 6000,
+              }
+            : {
+                enabled: false,
+              },
         };
 
         // 初始化 Agent
         console.log(chalk.blue('🤖 启动智能 Agent...'));
+        if (options.context) {
+          console.log(chalk.cyan('🧠 上下文管理已启用'));
+        }
+
         const agent = new Agent(agentConfig);
 
         try {
@@ -89,6 +118,35 @@ export function agentLlmCommand(program: Command) {
         const modelDescription = getModelDescription(provider, model);
         console.log(chalk.green(`✅ 使用 ${provider} (${modelDescription})`));
 
+        // 处理上下文会话
+        if (options.context) {
+          if (options.contextSession) {
+            // 加载指定会话
+            const loaded = await agent.loadContextSession(options.contextSession);
+            if (loaded) {
+              console.log(chalk.green(`📂 已加载会话: ${options.contextSession}`));
+            } else {
+              console.log(chalk.yellow(`⚠️ 会话不存在，将创建新会话: ${options.contextSession}`));
+              await agent.createContextSession(
+                options.contextUser,
+                {
+                  sessionId: options.contextSession,
+                  scenario: options.scenario,
+                },
+                {},
+                options.contextSession // 传递自定义sessionId
+              );
+            }
+          } else {
+            // 创建新会话
+            const sessionId = await agent.createContextSession(options.contextUser, {
+              scenario: options.scenario,
+              startTime: Date.now(),
+            });
+            console.log(chalk.cyan(`📋 已创建会话: ${sessionId}`));
+          }
+        }
+
         // 判断聊天模式
         const question = questionArgs.join(' ');
 
@@ -98,14 +156,23 @@ export function agentLlmCommand(program: Command) {
           await runScenarioDemo(agentConfig, options.scenario);
         } else if (question) {
           // 单次问答模式
-          await answerSingleQuestion(agentConfig, question, options.scenario, options.stream);
+          await answerSingleQuestion(
+            agent,
+            question,
+            options.scenario,
+            options.stream,
+            options.context
+          );
         } else if (options.interactive) {
           // 交互式聊天模式
-          await startInteractiveChat(agentConfig, options.scenario, options.stream);
+          await startInteractiveChat(agent, options.scenario, options.stream, options.context);
         } else {
           // 默认：启动交互式聊天
-          await startInteractiveChat(agentConfig, options.scenario, options.stream);
+          await startInteractiveChat(agent, options.scenario, options.stream, options.context);
         }
+
+        // 确保清理资源
+        await agent.destroy();
       } catch (error) {
         console.error(chalk.red('❌ 启动失败:'), error);
       }
@@ -116,14 +183,12 @@ export function agentLlmCommand(program: Command) {
  * 单次问答
  */
 async function answerSingleQuestion(
-  config: AgentConfig,
+  agent: Agent,
   question: string,
   scenario: string,
-  useStream: boolean = false
+  useStream: boolean = false,
+  useContext: boolean = false
 ) {
-  const agent = new Agent(config);
-  await agent.init();
-
   try {
     let response: string;
 
@@ -133,13 +198,21 @@ async function answerSingleQuestion(
 
       switch (scenario) {
         case 'customer':
-          const messages: LLMMessage[] = [
-            { role: 'system', content: '你是专业的客服代表，友好耐心地解答问题' },
-            { role: 'user', content: question },
-          ];
-          response = await agent.streamChat(messages, chunk => {
-            process.stdout.write(chunk);
-          });
+          if (useContext) {
+            response = await agent.chatWithContext(
+              question,
+              '你是专业的客服代表，友好耐心地解答问题'
+            );
+            console.log(response);
+          } else {
+            const messages: LLMMessage[] = [
+              { role: 'system', content: '你是专业的客服代表，友好耐心地解答问题' },
+              { role: 'user', content: question },
+            ];
+            response = await agent.streamChat(messages, chunk => {
+              process.stdout.write(chunk);
+            });
+          }
           break;
         case 'code':
           // 代码场景直接使用非流式，因为需要工具调用
@@ -149,33 +222,51 @@ async function answerSingleQuestion(
         case 'assistant':
         default:
           // 智能助手模式的流式输出
-          const smartResponse = await agent.smartChat(question);
+          if (useContext) {
+            const smartResponse = await agent.smartChatWithContext(question);
 
-          if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-            // 如果使用了工具，先显示工具信息，再流式输出结果
-            const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-            console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-            if (smartResponse.reasoning) {
-              console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+            if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+              const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+              console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+              if (smartResponse.reasoning) {
+                console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+              }
             }
-            console.log(chalk.green('\n💬 AI: '));
             console.log(smartResponse.content);
           } else {
-            // 没有工具调用，尝试流式输出
-            const messages: LLMMessage[] = [{ role: 'user', content: question }];
-            response = await agent.streamChat(messages, chunk => {
-              process.stdout.write(chunk);
-            });
+            const smartResponse = await agent.smartChat(question);
+
+            if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+              const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+              console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+              if (smartResponse.reasoning) {
+                console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+              }
+              console.log(chalk.green('\n💬 AI: '));
+              console.log(smartResponse.content);
+            } else {
+              const messages: LLMMessage[] = [{ role: 'user', content: question }];
+              response = await agent.streamChat(messages, chunk => {
+                process.stdout.write(chunk);
+              });
+            }
           }
           break;
       }
       console.log('\n'); // 流式输出后换行
     } else {
-      // 普通输出模式（原有逻辑）
+      // 普通输出模式
       switch (scenario) {
         case 'customer':
-          const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
-          response = await agent.chatWithSystem(systemPrompt, question);
+          if (useContext) {
+            response = await agent.chatWithContext(
+              question,
+              '你是专业的客服代表，友好耐心地解答问题'
+            );
+          } else {
+            const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
+            response = await agent.chatWithSystem(systemPrompt, question);
+          }
           break;
         case 'code':
           response = await agent.reviewCode(question, 'auto-detect');
@@ -183,15 +274,27 @@ async function answerSingleQuestion(
         case 'assistant':
         default:
           // 使用智能聊天，支持工具调用
-          const smartResponse = await agent.smartChat(question);
-          response = smartResponse.content;
+          if (useContext) {
+            const smartResponse = await agent.smartChatWithContext(question);
+            response = smartResponse.content;
 
-          // 如果使用了工具，显示额外信息
-          if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-            const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-            console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-            if (smartResponse.reasoning) {
-              console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+            if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+              const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+              console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+              if (smartResponse.reasoning) {
+                console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+              }
+            }
+          } else {
+            const smartResponse = await agent.smartChat(question);
+            response = smartResponse.content;
+
+            if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+              const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+              console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+              if (smartResponse.reasoning) {
+                console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+              }
             }
           }
           break;
@@ -199,9 +302,7 @@ async function answerSingleQuestion(
       console.log(chalk.green(`\n💬 AI: ${response}`));
     }
   } catch (error) {
-    console.error(chalk.red('❌ 回答失败:'), error);
-  } finally {
-    await agent.destroy();
+    console.error(chalk.red('❌ 聊天错误:'), error);
   }
 }
 
@@ -209,15 +310,24 @@ async function answerSingleQuestion(
  * 交互式聊天
  */
 async function startInteractiveChat(
-  config: AgentConfig,
+  agent: Agent,
   scenario: string,
-  useStream: boolean = false
+  useStream: boolean = false,
+  useContext: boolean = false
 ) {
   console.log(chalk.cyan(`\n=== 🤖 ${getScenarioName(scenario)} ===`));
-  console.log(chalk.gray('输入 "quit" 或 "exit" 退出聊天\n'));
+  if (useContext) {
+    console.log(chalk.gray('🧠 上下文记忆已启用 - 我会记住我们的对话'));
 
-  const agent = new Agent(config);
-  await agent.init();
+    // 显示当前会话信息
+    const sessionId = agent.getCurrentSessionId();
+    if (sessionId) {
+      console.log(chalk.gray(`📋 当前会话: ${sessionId}`));
+    }
+  }
+  console.log(chalk.gray('输入 "quit" 或 "exit" 退出聊天'));
+  console.log(chalk.gray('输入 "stats" 查看上下文统计信息'));
+  console.log(chalk.gray('输入 "sessions" 搜索历史会话\n'));
 
   try {
     while (true) {
@@ -238,6 +348,41 @@ async function startInteractiveChat(
         break;
       }
 
+      // 特殊命令处理
+      if (message.toLowerCase() === 'stats' && useContext) {
+        const stats = await agent.getContextStats();
+        if (stats) {
+          console.log(chalk.cyan('\n📊 上下文统计信息:'));
+          console.log(chalk.gray(`- 当前会话: ${stats.currentSession}`));
+          console.log(chalk.gray(`- 内存消息数: ${stats.memory.messageCount}`));
+          console.log(chalk.gray(`- 缓存大小: ${stats.cache.size}`));
+          console.log(chalk.gray(`- 存储会话数: ${stats.storage.totalSessions}\n`));
+        }
+        continue;
+      }
+
+      if (message.toLowerCase() === 'sessions' && useContext) {
+        try {
+          const sessions = await agent.searchContextSessions('', 5);
+          if (sessions.length > 0) {
+            console.log(chalk.cyan('\n📂 最近的会话:'));
+            sessions.forEach((session, index) => {
+              const date = new Date(session.lastActivity).toLocaleString();
+              console.log(chalk.gray(`${index + 1}. ${session.sessionId} (${date})`));
+              if (session.summary) {
+                console.log(chalk.gray(`   ${session.summary}`));
+              }
+            });
+            console.log();
+          } else {
+            console.log(chalk.yellow('📂 暂无历史会话\n'));
+          }
+        } catch (error) {
+          console.log(chalk.red('❌ 获取会话列表失败\n'));
+        }
+        continue;
+      }
+
       try {
         let response: string;
 
@@ -247,13 +392,21 @@ async function startInteractiveChat(
 
           switch (scenario) {
             case 'customer':
-              const customerMessages: LLMMessage[] = [
-                { role: 'system', content: '你是专业的客服代表，友好耐心地解答问题' },
-                { role: 'user', content: message },
-              ];
-              response = await agent.streamChat(customerMessages, chunk => {
-                process.stdout.write(chunk);
-              });
+              if (useContext) {
+                response = await agent.chatWithContext(
+                  message,
+                  '你是专业的客服代表，友好耐心地解答问题'
+                );
+                console.log(response);
+              } else {
+                const customerMessages: LLMMessage[] = [
+                  { role: 'system', content: '你是专业的客服代表，友好耐心地解答问题' },
+                  { role: 'user', content: message },
+                ];
+                response = await agent.streamChat(customerMessages, chunk => {
+                  process.stdout.write(chunk);
+                });
+              }
               break;
             case 'code':
               if (
@@ -264,44 +417,68 @@ async function startInteractiveChat(
                 response = await agent.reviewCode(message, 'auto-detect');
                 console.log(response);
               } else {
-                const codeMessages: LLMMessage[] = [
-                  { role: 'user', content: `作为代码助手，${message}` },
-                ];
-                response = await agent.streamChat(codeMessages, chunk => {
-                  process.stdout.write(chunk);
-                });
+                if (useContext) {
+                  response = await agent.chatWithContext(`作为代码助手，${message}`);
+                  console.log(response);
+                } else {
+                  const codeMessages: LLMMessage[] = [
+                    { role: 'user', content: `作为代码助手，${message}` },
+                  ];
+                  response = await agent.streamChat(codeMessages, chunk => {
+                    process.stdout.write(chunk);
+                  });
+                }
               }
               break;
             case 'assistant':
             default:
-              // 智能助手模式的流式输出
-              const smartResponse = await agent.smartChat(message);
+              // 智能助手模式
+              if (useContext) {
+                const smartResponse = await agent.smartChatWithContext(message);
 
-              if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-                // 如果使用了工具，先显示工具信息，再显示结果
-                const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-                console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-                if (smartResponse.reasoning) {
-                  console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+                if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+                  const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+                  console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+                  if (smartResponse.reasoning) {
+                    console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+                  }
                 }
                 console.log(chalk.green('AI: '));
                 console.log(smartResponse.content);
               } else {
-                // 没有工具调用，使用流式输出
-                const assistantMessages: LLMMessage[] = [{ role: 'user', content: message }];
-                response = await agent.streamChat(assistantMessages, chunk => {
-                  process.stdout.write(chunk);
-                });
+                const smartResponse = await agent.smartChat(message);
+
+                if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+                  const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+                  console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+                  if (smartResponse.reasoning) {
+                    console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+                  }
+                  console.log(chalk.green('AI: '));
+                  console.log(smartResponse.content);
+                } else {
+                  const assistantMessages: LLMMessage[] = [{ role: 'user', content: message }];
+                  response = await agent.streamChat(assistantMessages, chunk => {
+                    process.stdout.write(chunk);
+                  });
+                }
               }
               break;
           }
           console.log('\n'); // 流式输出后换行
         } else {
-          // 普通输出模式（原有逻辑）
+          // 普通输出模式
           switch (scenario) {
             case 'customer':
-              const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
-              response = await agent.chatWithSystem(systemPrompt, message);
+              if (useContext) {
+                response = await agent.chatWithContext(
+                  message,
+                  '你是专业的客服代表，友好耐心地解答问题'
+                );
+              } else {
+                const systemPrompt = '你是专业的客服代表，友好耐心地解答问题';
+                response = await agent.chatWithSystem(systemPrompt, message);
+              }
               break;
             case 'code':
               if (
@@ -311,21 +488,37 @@ async function startInteractiveChat(
               ) {
                 response = await agent.reviewCode(message, 'auto-detect');
               } else {
-                response = await agent.ask(`作为代码助手，${message}`);
+                if (useContext) {
+                  response = await agent.chatWithContext(`作为代码助手，${message}`);
+                } else {
+                  response = await agent.ask(`作为代码助手，${message}`);
+                }
               }
               break;
             case 'assistant':
             default:
               // 使用智能聊天，支持工具调用
-              const smartResponse = await agent.smartChat(message);
-              response = smartResponse.content;
+              if (useContext) {
+                const smartResponse = await agent.smartChatWithContext(message);
+                response = smartResponse.content;
 
-              // 如果使用了工具，显示额外信息
-              if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
-                const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
-                console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
-                if (smartResponse.reasoning) {
-                  console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+                if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+                  const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+                  console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+                  if (smartResponse.reasoning) {
+                    console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+                  }
+                }
+              } else {
+                const smartResponse = await agent.smartChat(message);
+                response = smartResponse.content;
+
+                if (smartResponse.toolCalls && smartResponse.toolCalls.length > 0) {
+                  const toolNames = smartResponse.toolCalls.map(t => t.toolName).join(', ');
+                  console.log(chalk.gray(`🔧 使用的工具: ${toolNames}`));
+                  if (smartResponse.reasoning) {
+                    console.log(chalk.gray(`💭 推理过程: ${smartResponse.reasoning}`));
+                  }
                 }
               }
               break;
@@ -337,7 +530,7 @@ async function startInteractiveChat(
       }
     }
   } finally {
-    await agent.destroy();
+    // Agent会在主函数中被销毁
   }
 }
 
@@ -345,6 +538,9 @@ async function startInteractiveChat(
  * 运行场景演示
  */
 async function runScenarioDemo(config: AgentConfig, scenario: string) {
+  console.log(chalk.cyan('🎭 场景演示模式'));
+  console.log(chalk.gray('注意：演示模式暂不支持上下文管理\n'));
+
   switch (scenario) {
     case 'customer':
       await startCustomerService(config);

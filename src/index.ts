@@ -103,6 +103,13 @@ program.on('--help', () => {
   console.log('  $ blade chat -i --scenario code --stream');
   console.log('');
 
+  console.log(chalk.green('  🧠 带上下文记忆的聊天:'));
+  console.log('  $ blade chat --context --interactive');
+  console.log('  $ blade chat --context "你还记得我之前问的问题吗？"');
+  console.log('  $ blade chat --context --context-session my-session');
+  console.log('  $ blade chat --context --context-user john --interactive');
+  console.log('');
+
   console.log(chalk.green('  🎭 场景演示:'));
   console.log('  $ blade chat --demo --scenario assistant');
   console.log('  $ blade chat --demo --scenario customer');

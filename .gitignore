@@ -33,6 +33,8 @@ Thumbs.db
 
 # 测试目录
 test-project/
+test-context*/
+example-context*/
 
 # 环境变量
 .env
@@ -50,6 +52,11 @@ coverage/
 .tmp/
 *.tmp
 *.temp
+
+# 上下文存储目录（用户数据）
+blade-context/
+*-context/
+*.context/
 
 # 其他
 .cache/
