@@ -1,12 +1,11 @@
 import { EventEmitter } from 'events';
-import { getProviderConfig } from '../config/defaults.js';
 import type { ContextFilter, ToolCall as ContextToolCall } from '../context/index.js';
-import type { LLMMessage, LLMRequest } from '../llm/BaseLLM.js';
-import { QwenLLM } from '../llm/QwenLLM.js';
-import { VolcEngineLLM } from '../llm/VolcEngineLLM.js';
+import type { LLMMessage } from '../llm/BaseLLM.js';
 import type { ToolCallRequest, ToolDefinition } from '../tools/index.js';
 import { BaseComponent } from './BaseComponent.js';
+import { ComponentManager, type ComponentManagerConfig } from './ComponentManager.js';
 import { ContextComponent, type ContextComponentConfig } from './ContextComponent.js';
+import { LLMManager, type LLMConfig } from './LLMManager.js';
 import { ToolComponent } from './ToolComponent.js';
 
 /**
@@ -14,12 +13,7 @@ import { ToolComponent } from './ToolComponent.js';
  */
 export interface AgentConfig {
   debug?: boolean;
-  llm?: {
-    provider: 'qwen' | 'volcengine';
-    apiKey?: string;
-    model?: string;
-    baseURL?: string;
-  };
+  llm?: LLMConfig;
   tools?: {
     enabled?: boolean;
     includeBuiltinTools?: boolean;
@@ -27,6 +21,7 @@ export interface AgentConfig {
     includeCategories?: string[];
   };
   context?: ContextComponentConfig;
+  components?: ComponentManagerConfig;
 }
 
 /**
@@ -50,15 +45,15 @@ export interface AgentResponse {
 }
 
 /**
- * Agent 主类 - 智能代理的核心控制器
- * 内置 LLM 功能，提供完整的 AI 能力
+ * Agent 主类 - 智能代理的核心协调器
+ * 专注于代理协调逻辑，LLM 和组件管理由专门的管理器负责
  */
 export class Agent extends EventEmitter {
   private config: AgentConfig;
-  private components = new Map<string, BaseComponent>();
+  private llmManager: LLMManager;
+  private componentManager: ComponentManager;
   private isInitialized = false;
   private isDestroyed = false;
-  private llm?: QwenLLM | VolcEngineLLM;
 
   constructor(config: AgentConfig = {}) {
     super();
@@ -74,34 +69,34 @@ export class Agent extends EventEmitter {
         debug: config.debug,
         ...config.context,
       },
+      components: {
+        debug: config.debug,
+        autoInit: true,
+        ...config.components,
+      },
       ...config,
     };
 
+    // 初始化管理器
+    this.llmManager = new LLMManager(this.config.debug);
+    this.componentManager = new ComponentManager(this.config.components);
+
+    // 转发管理器事件
+    this.setupManagerEventForwarding();
+
     this.log('Agent 实例已创建');
 
-    // 如果启用了上下文管理，自动注册上下文组件
-    if (this.config.context?.enabled !== false) {
-      const contextComponent = new ContextComponent('context', this.config.context);
-      this.registerComponent(contextComponent);
-      this.log('上下文组件已自动注册');
+    // 配置 LLM
+    if (this.config.llm) {
+      this.llmManager.configure(this.config.llm);
     }
 
-    // 如果启用了工具，自动注册工具组件
-    if (this.config.tools?.enabled) {
-      const toolComponent = new ToolComponent('tools', {
-        debug: this.config.debug,
-        includeBuiltinTools: this.config.tools.includeBuiltinTools,
-        excludeTools: this.config.tools.excludeTools,
-        includeCategories: this.config.tools.includeCategories,
-      });
-
-      this.registerComponent(toolComponent);
-      this.log('工具组件已自动注册');
-    }
+    // 自动注册默认组件
+    this.autoRegisterComponents();
   }
 
   /**
-   * 初始化 Agent 和所有组件
+   * 初始化 Agent 和所有管理器
    */
   public async init(): Promise<void> {
     if (this.isInitialized) {
@@ -115,16 +110,13 @@ export class Agent extends EventEmitter {
     this.log('初始化 Agent...');
 
     try {
-      // 初始化 LLM（如果配置了）
+      // 初始化 LLM 管理器
       if (this.config.llm) {
-        await this.initLLM();
+        await this.llmManager.init();
       }
 
-      // 初始化所有组件
-      for (const [name, component] of this.components) {
-        this.log(`初始化组件: ${name}`);
-        await component.init();
-      }
+      // 初始化组件管理器
+      await this.componentManager.init();
 
       this.isInitialized = true;
       this.log('Agent 初始化完成');
@@ -136,61 +128,7 @@ export class Agent extends EventEmitter {
   }
 
   /**
-   * 初始化 LLM
-   */
-  private async initLLM(): Promise<void> {
-    if (!this.config.llm) return;
-
-    const { provider, apiKey, model, baseURL } = this.config.llm;
-
-    // 获取默认配置
-    const defaultConfig = getProviderConfig(provider);
-
-    // 验证API密钥（优先使用传入的，然后是环境变量）
-    let finalApiKey: string;
-    try {
-      // 导入validateApiKey函数
-      const { validateApiKey } = await import('../config/defaults.js');
-      finalApiKey = validateApiKey(provider, apiKey);
-    } catch (error) {
-      throw new Error(`API密钥验证失败: ${(error as Error).message}`);
-    }
-
-    const finalModel = model || defaultConfig.defaultModel;
-
-    this.log(`初始化 ${provider} LLM...`);
-
-    // 创建 LLM 实例
-    switch (provider) {
-      case 'qwen':
-        this.llm = new QwenLLM(
-          {
-            apiKey: finalApiKey,
-            baseURL: baseURL || defaultConfig.baseURL,
-          },
-          finalModel
-        );
-        break;
-      case 'volcengine':
-        this.llm = new VolcEngineLLM(
-          {
-            apiKey: finalApiKey,
-            baseURL: baseURL || defaultConfig.baseURL,
-          },
-          finalModel
-        );
-        break;
-      default:
-        throw new Error(`不支持的 LLM 提供商: ${provider}`);
-    }
-
-    // 初始化 LLM
-    await this.llm.init();
-    this.log(`${provider} LLM 初始化完成`);
-  }
-
-  /**
-   * 销毁 Agent 和所有组件
+   * 销毁 Agent 和所有管理器
    */
   public async destroy(): Promise<void> {
     if (this.isDestroyed) {
@@ -200,17 +138,11 @@ export class Agent extends EventEmitter {
     this.log('销毁 Agent...');
 
     try {
-      // 销毁所有组件
-      for (const [name, component] of this.components) {
-        this.log(`销毁组件: ${name}`);
-        await component.destroy();
-      }
+      // 销毁组件管理器
+      await this.componentManager.destroy();
 
-      // 销毁 LLM
-      if (this.llm) {
-        await this.llm.destroy();
-        this.log('LLM 已销毁');
-      }
+      // 销毁 LLM 管理器
+      await this.llmManager.destroy();
 
       this.isDestroyed = true;
       this.log('Agent 已销毁');
@@ -221,98 +153,50 @@ export class Agent extends EventEmitter {
     }
   }
 
+  // ======================== 管理器访问方法 ========================
+
   /**
-   * 注册组件
+   * 获取 LLM 管理器
    */
-  public registerComponent(component: BaseComponent): void {
-    const id = component.getId();
-
-    if (this.components.has(id)) {
-      throw new Error(`组件 "${id}" 已存在`);
-    }
-
-    this.components.set(id, component);
-    this.log(`组件 "${id}" 已注册`);
-    this.emit('componentRegistered', { id, component });
+  public getLLMManager(): LLMManager {
+    return this.llmManager;
   }
 
   /**
-   * 获取组件
+   * 获取组件管理器
    */
-  public getComponent<T extends BaseComponent>(id: string): T | undefined {
-    return this.components.get(id) as T;
+  public getComponentManager(): ComponentManager {
+    return this.componentManager;
   }
 
-  /**
-   * 移除组件
-   */
-  public async removeComponent(id: string): Promise<boolean> {
-    const component = this.components.get(id);
-    if (!component) {
-      return false;
-    }
-
-    // 如果组件已初始化，先销毁它
-    if (this.isInitialized) {
-      await component.destroy();
-    }
-
-    this.components.delete(id);
-    this.log(`组件 "${id}" 已移除`);
-    this.emit('componentRemoved', { id });
-    return true;
-  }
-
-  /**
-   * 获取所有组件ID
-   */
-  public getComponentIds(): string[] {
-    return Array.from(this.components.keys());
-  }
-
-  // ======================== LLM 功能 ========================
+  // ======================== LLM 功能代理方法 ========================
 
   /**
    * 检查 LLM 是否可用
    */
   public hasLLM(): boolean {
-    return !!this.llm;
+    return this.llmManager.isAvailable();
   }
 
   /**
    * 获取 LLM 提供商名称
    */
   public getLLMProvider(): string | null {
-    if (!this.llm) return null;
-    return this.llm instanceof QwenLLM ? 'qwen' : 'volcengine';
+    return this.llmManager.getProvider();
   }
 
   /**
    * 基础聊天
    */
   public async chat(message: string): Promise<string> {
-    if (!this.llm) {
-      throw new Error('LLM 未配置');
-    }
-
-    this.log(`发送消息: ${message.substring(0, 50)}...`);
-    const response = await this.llm.sendMessage(message);
-    this.log(`收到回复: ${response.substring(0, 50)}...`);
-    return response;
+    return await this.llmManager.chat(message);
   }
 
   /**
    * 多轮对话
    */
   public async conversation(messages: LLMMessage[]): Promise<string> {
-    if (!this.llm) {
-      throw new Error('LLM 未配置');
-    }
-
-    this.log(`开始多轮对话，消息数: ${messages.length}`);
-    const response = await this.llm.conversation(messages);
-    this.log(`对话完成: ${response.substring(0, 50)}...`);
-    return response;
+    return await this.llmManager.conversation(messages);
   }
 
   /**
@@ -322,98 +206,90 @@ export class Agent extends EventEmitter {
     messages: LLMMessage[],
     onChunk: (chunk: string) => void
   ): Promise<string> {
-    if (!this.llm) {
-      throw new Error('LLM 未配置');
-    }
-
-    if (this.llm instanceof QwenLLM && this.llm.streamChat) {
-      this.log('开始流式对话...');
-      const response = await this.llm.streamChat({ messages }, onChunk);
-      this.log('流式对话完成');
-      return response.content;
-    } else {
-      // 降级到普通聊天
-      this.log('流式聊天不支持，降级到普通聊天');
-      const request: LLMRequest = { messages };
-      const response = await this.llm.chat(request);
-      onChunk(response.content);
-      return response.content;
-    }
+    return await this.llmManager.streamChat(messages, onChunk);
   }
 
   /**
    * 系统提示词聊天
    */
   public async chatWithSystem(systemPrompt: string, userMessage: string): Promise<string> {
-    const messages: LLMMessage[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage },
-    ];
-    return await this.conversation(messages);
+    return await this.llmManager.chatWithSystem(systemPrompt, userMessage);
   }
 
   /**
    * 代码生成
    */
   public async generateCode(description: string, language: string = 'javascript'): Promise<string> {
-    const prompt = `请用 ${language} 语言生成代码，要求：${description}。只返回代码，不要解释。`;
-    return await this.chat(prompt);
+    return await this.llmManager.generateCode(description, language);
   }
 
   /**
    * 文本摘要
    */
   public async summarize(text: string): Promise<string> {
-    const prompt = `请总结以下内容的要点：\n\n${text}`;
-    return await this.chat(prompt);
+    return await this.llmManager.summarize(text);
   }
 
   /**
    * 代码审查
    */
   public async reviewCode(code: string, language: string): Promise<string> {
-    const prompt = `请审查以下 ${language} 代码，指出潜在问题和改进建议：
-
-\`\`\`${language}
-${code}
-\`\`\`
-
-请从以下角度分析：
-1. 代码质量
-2. 性能优化
-3. 安全性
-4. 可维护性`;
-
-    return await this.chat(prompt);
+    return await this.llmManager.reviewCode(code, language);
   }
 
   /**
    * 情绪分析
    */
   public async analyzeSentiment(text: string): Promise<string> {
-    const prompt = `请分析以下文本的情绪倾向（积极/消极/中性），并给出简短分析：\n\n"${text}"`;
-    return await this.chat(prompt);
+    return await this.llmManager.analyzeSentiment(text);
   }
 
   /**
    * 智能问答
    */
   public async ask(question: string): Promise<string> {
-    this.log(`收到问题: ${question}`);
-    const response = await this.chat(question);
-    this.log(`生成回答: ${response.substring(0, 50)}...`);
-    return response;
+    return await this.llmManager.ask(question);
   }
 
-  // ======================== 智能工具调用 ========================
+  // ======================== 组件管理代理方法 ========================
+
+  /**
+   * 注册组件
+   */
+  public async registerComponent(component: BaseComponent): Promise<void> {
+    return await this.componentManager.registerComponent(component);
+  }
+
+  /**
+   * 获取组件
+   */
+  public getComponent<T extends BaseComponent>(id: string): T | undefined {
+    return this.componentManager.getComponent<T>(id);
+  }
+
+  /**
+   * 移除组件
+   */
+  public async removeComponent(id: string): Promise<boolean> {
+    return await this.componentManager.removeComponent(id);
+  }
+
+  /**
+   * 获取所有组件ID
+   */
+  public getComponentIds(): string[] {
+    return this.componentManager.getComponentIds();
+  }
+
+  // ======================== 核心代理协调逻辑 ========================
 
   /**
    * 智能聊天 - 支持工具调用的完整流程
-   * 用户提问 -> 模型识别 -> 调用工具 -> 工具返回模型 -> 模型返回给用户
+   * 这是 Agent 的核心协调逻辑
    */
   public async smartChat(message: string): Promise<AgentResponse> {
-    if (!this.llm) {
-      throw new Error('LLM 未配置');
+    if (!this.llmManager.isAvailable()) {
+      throw new Error('LLM 未配置或不可用');
     }
 
     this.log(`开始智能聊天: ${message.substring(0, 50)}...`);
@@ -423,7 +299,7 @@ ${code}
 
     if (!toolAnalysis.needsTool) {
       // 不需要工具，直接回答
-      const content = await this.chat(message);
+      const content = await this.llmManager.chat(message);
       return {
         content,
         reasoning: '无需工具调用，直接回答',
@@ -514,7 +390,7 @@ ${toolDescriptions}
 `;
 
     try {
-      const response = await this.chat(analysisPrompt);
+      const response = await this.llmManager.chat(analysisPrompt);
 
       // 尝试解析JSON响应
       const cleanResponse = response.replace(/```json\n?|\n?```/g, '').trim();
@@ -556,7 +432,7 @@ ${toolDescriptions}
 
         // 使用LLM分析变更内容
         const analysisPrompt = response.result.data.analysisPrompt;
-        const llmAnalysis = await this.chat(analysisPrompt);
+        const llmAnalysis = await this.llmManager.chat(analysisPrompt);
 
         this.log(`LLM分析完成`);
 
@@ -645,9 +521,11 @@ ${toolResultsText}
 
 回答:`;
 
-    const finalAnswer = await this.chat(contextPrompt);
+    const finalAnswer = await this.llmManager.chat(contextPrompt);
     return finalAnswer;
   }
+
+  // ======================== 专用组件访问方法 ========================
 
   /**
    * 获取工具组件
@@ -662,6 +540,8 @@ ${toolResultsText}
   public getContextComponent(): ContextComponent | undefined {
     return this.getComponent<ContextComponent>('context');
   }
+
+  // ======================== 上下文管理协调方法 ========================
 
   /**
    * 创建新的上下文会话
@@ -738,8 +618,8 @@ ${toolResultsText}
       // 如果没有上下文组件或未就绪，降级到普通聊天
       this.log('上下文组件未就绪，使用普通聊天模式');
       return systemPrompt
-        ? await this.chatWithSystem(systemPrompt, message)
-        : await this.chat(message);
+        ? await this.llmManager.chatWithSystem(systemPrompt, message)
+        : await this.llmManager.chat(message);
     }
 
     try {
@@ -757,7 +637,7 @@ ${toolResultsText}
       }));
 
       // 进行对话
-      const response = await this.conversation(llmMessages);
+      const response = await this.llmManager.conversation(llmMessages);
 
       // 将助手回复添加到上下文
       await contextComponent.addAssistantMessage(response);
@@ -767,8 +647,8 @@ ${toolResultsText}
       this.log(`上下文聊天失败，降级到普通聊天: ${error}`);
       // 降级到普通聊天
       return systemPrompt
-        ? await this.chatWithSystem(systemPrompt, message)
-        : await this.chat(message);
+        ? await this.llmManager.chatWithSystem(systemPrompt, message)
+        : await this.llmManager.chat(message);
     }
   }
 
@@ -799,7 +679,7 @@ ${toolResultsText}
 
       if (!toolAnalysis.needsTool) {
         // 不需要工具，使用上下文进行对话
-        const response = await this.conversation(llmMessages);
+        const response = await this.llmManager.conversation(llmMessages);
 
         // 将助手回复添加到上下文
         await contextComponent.addAssistantMessage(response);
@@ -880,6 +760,8 @@ ${toolResultsText}
     return await contextComponent.getStats();
   }
 
+  // ======================== 工具管理协调方法 ========================
+
   /**
    * 手动调用工具
    */
@@ -917,7 +799,7 @@ ${toolResultsText}
     return toolComponent.searchTools(query);
   }
 
-  // ======================== 工具方法 ========================
+  // ======================== 状态和工具方法 ========================
 
   /**
    * 获取 Agent 状态
@@ -926,10 +808,82 @@ ${toolResultsText}
     return {
       initialized: this.isInitialized,
       destroyed: this.isDestroyed,
-      componentCount: this.components.size,
+      llm: this.llmManager.getStatus(),
+      components: this.componentManager.getStatus(),
       hasLLM: this.hasLLM(),
       llmProvider: this.getLLMProvider(),
     };
+  }
+
+  /**
+   * 获取健康状态
+   */
+  public async getHealthStatus() {
+    const componentHealth = await this.componentManager.getHealthStatus();
+    const llmStatus = this.llmManager.getStatus();
+
+    return {
+      healthy:
+        this.isInitialized && !this.isDestroyed && componentHealth.healthy && llmStatus.isAvailable,
+      agent: {
+        initialized: this.isInitialized,
+        destroyed: this.isDestroyed,
+      },
+      llm: llmStatus,
+      components: componentHealth,
+    };
+  }
+
+  // ======================== 私有方法 ========================
+
+  /**
+   * 自动注册默认组件
+   */
+  private autoRegisterComponents(): void {
+    // 如果启用了上下文管理，自动注册上下文组件
+    if (this.config.context?.enabled !== false) {
+      const contextComponent = new ContextComponent('context', this.config.context);
+      this.componentManager.registerComponent(contextComponent);
+      this.log('上下文组件已自动注册');
+    }
+
+    // 如果启用了工具，自动注册工具组件
+    if (this.config.tools?.enabled) {
+      const toolComponent = new ToolComponent('tools', {
+        debug: this.config.debug,
+        includeBuiltinTools: this.config.tools.includeBuiltinTools,
+        excludeTools: this.config.tools.excludeTools,
+        includeCategories: this.config.tools.includeCategories,
+      });
+
+      this.componentManager.registerComponent(toolComponent);
+      this.log('工具组件已自动注册');
+    }
+  }
+
+  /**
+   * 设置管理器事件转发
+   */
+  private setupManagerEventForwarding(): void {
+    // 转发 LLM 管理器事件
+    // 这里可以根据需要转发特定事件
+
+    // 转发组件管理器事件
+    this.componentManager.on('componentRegistered', event => {
+      this.emit('componentRegistered', event);
+    });
+
+    this.componentManager.on('componentRemoved', event => {
+      this.emit('componentRemoved', event);
+    });
+
+    this.componentManager.on('componentInitialized', event => {
+      this.emit('componentInitialized', event);
+    });
+
+    this.componentManager.on('componentDestroyed', event => {
+      this.emit('componentDestroyed', event);
+    });
   }
 
   /**
