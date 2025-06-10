@@ -661,7 +661,9 @@ async function startBasicAssistant(config: AgentConfig) {
 
   // 显示 Agent 状态
   const status = agent.getStatus();
-  console.log(chalk.gray(`Agent 状态: LLM=${status.llmProvider}, 组件数=${status.componentCount}`));
+  console.log(
+    chalk.gray(`Agent 状态: LLM=${status.llmProvider}, 组件数=${status.components.componentCount}`)
+  );
 
   try {
     // 智能问答
