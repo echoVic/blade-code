@@ -1,5 +1,6 @@
 // 工具系统核心模块
 export * from './ToolManager.js';
+export * from './format-converter.js';
 export * from './types.js';
 export * from './validator.js';
 

@@ -314,6 +314,300 @@ export class QwenLLM extends BaseLLM {
   }
 
   /**
+   * 现代 Tools 格式的函数调用（推荐使用）
+   * 支持 Qwen 最新的 tools 接口
+   */
+  public async toolsCall(
+    messages: any[],
+    tools: any[],
+    options?: Partial<LLMRequest>
+  ): Promise<any> {
+    try {
+      const model = options?.model || this.defaultModel;
+      const requestParams: any = {
+        model: model,
+        messages: messages,
+        tools: tools,
+        tool_choice: 'auto',
+        temperature: options?.temperature || 0.7,
+        max_tokens: options?.maxTokens || 2048,
+        stream: false,
+      };
+
+      // 对于 Qwen3 模型，设置 enable_thinking 参数
+      if (this.isQwen3Model(model)) {
+        requestParams.enable_thinking = this.getEnableThinkingValue(model);
+      }
+
+      const completion = await this.client.chat.completions.create(requestParams);
+
+      return completion;
+    } catch (error) {
+      if (error instanceof Error) {
+        throw new Error(`Qwen tools call error: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 自动选择最佳的函数调用方式
+   * 优先使用 tools 格式，如果不支持则回退到 functions 格式
+   */
+  public async smartFunctionCall(
+    messages: any[],
+    toolsOrFunctions: any[],
+    options?: Partial<LLMRequest>
+  ): Promise<any> {
+    try {
+      // 首先尝试使用现代 tools 格式
+      const tools = this.convertToToolsFormat(toolsOrFunctions);
+      return await this.toolsCall(messages, tools, options);
+    } catch (error) {
+      // 如果 tools 格式失败，回退到 functions 格式
+      if (error instanceof Error && error.message.includes('tools')) {
+        console.warn('Qwen: Tools 格式不支持，回退到 functions 格式');
+        const functions = this.convertToFunctionsFormat(toolsOrFunctions);
+        return await this.functionCall(messages, functions, options);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 将工具定义转换为 OpenAI Tools 格式
+   */
+  private convertToToolsFormat(toolsOrFunctions: any[]): any[] {
+    return toolsOrFunctions.map(item => {
+      // 如果已经是 tools 格式，直接返回
+      if (item.type === 'function' && item.function) {
+        return item;
+      }
+
+      // 如果是 functions 格式，转换为 tools 格式
+      if (item.name && item.description && item.parameters) {
+        return {
+          type: 'function',
+          function: {
+            name: item.name,
+            description: item.description,
+            parameters: item.parameters,
+          },
+        };
+      }
+
+      // 如果是项目内部的 ToolDefinition 格式，转换为 tools 格式
+      if (item.name && item.description && item.parameters) {
+        return {
+          type: 'function',
+          function: {
+            name: item.name,
+            description: item.description,
+            parameters: {
+              type: 'object',
+              properties: item.parameters,
+              required: item.required || [],
+            },
+          },
+        };
+      }
+
+      return item;
+    });
+  }
+
+  /**
+   * 将工具定义转换为旧的 Functions 格式（向后兼容）
+   */
+  private convertToFunctionsFormat(toolsOrFunctions: any[]): any[] {
+    return toolsOrFunctions.map(item => {
+      // 如果已经是 functions 格式，直接返回
+      if (item.name && item.description && item.parameters && !item.type) {
+        return item;
+      }
+
+      // 如果是 tools 格式，转换为 functions 格式
+      if (item.type === 'function' && item.function) {
+        return {
+          name: item.function.name,
+          description: item.function.description,
+          parameters: item.function.parameters,
+        };
+      }
+
+      // 如果是项目内部的 ToolDefinition 格式，转换为 functions 格式
+      if (item.name && item.description && item.parameters) {
+        return {
+          name: item.name,
+          description: item.description,
+          parameters: {
+            type: 'object',
+            properties: item.parameters,
+            required: item.required || [],
+          },
+        };
+      }
+
+      return item;
+    });
+  }
+
+  /**
+   * 解析 function call 或 tool call 的结果
+   */
+  public parseToolCallResult(completion: any): {
+    hasToolCalls: boolean;
+    toolCalls: Array<{
+      id?: string;
+      type?: string;
+      function: {
+        name: string;
+        arguments: string;
+      };
+    }>;
+    content?: string;
+  } {
+    const choice = completion.choices?.[0];
+    if (!choice) {
+      return { hasToolCalls: false, toolCalls: [], content: undefined };
+    }
+
+    const message = choice.message;
+
+    // 检查新格式的 tool_calls
+    if (message.tool_calls && message.tool_calls.length > 0) {
+      return {
+        hasToolCalls: true,
+        toolCalls: message.tool_calls,
+        content: message.content,
+      };
+    }
+
+    // 检查旧格式的 function_call
+    if (message.function_call) {
+      return {
+        hasToolCalls: true,
+        toolCalls: [
+          {
+            type: 'function',
+            function: {
+              name: message.function_call.name,
+              arguments: message.function_call.arguments,
+            },
+          },
+        ],
+        content: message.content,
+      };
+    }
+
+    return {
+      hasToolCalls: false,
+      toolCalls: [],
+      content: message.content,
+    };
+  }
+
+  /**
+   * 执行完整的工具调用流程
+   * 包括调用 LLM、解析工具调用、执行工具、返回结果
+   */
+  public async executeToolWorkflow(
+    messages: any[],
+    availableTools: any[],
+    toolExecutor: (toolName: string, args: any) => Promise<any>,
+    options?: Partial<LLMRequest>
+  ): Promise<{
+    finalResponse: string;
+    toolExecutions: Array<{
+      toolName: string;
+      arguments: any;
+      result: any;
+      success: boolean;
+      error?: string;
+    }>;
+  }> {
+    const toolExecutions: Array<{
+      toolName: string;
+      arguments: any;
+      result: any;
+      success: boolean;
+      error?: string;
+    }> = [];
+
+    // 调用 LLM 获取工具调用建议
+    const completion = await this.smartFunctionCall(messages, availableTools, options);
+    const parseResult = this.parseToolCallResult(completion);
+
+    // 如果没有工具调用，直接返回 LLM 的回复
+    if (!parseResult.hasToolCalls) {
+      return {
+        finalResponse: parseResult.content || '',
+        toolExecutions: [],
+      };
+    }
+
+    // 执行所有工具调用
+    const updatedMessages = [...messages];
+
+    // 添加 LLM 的回复（包含工具调用）
+    updatedMessages.push({
+      role: 'assistant',
+      content: parseResult.content,
+      tool_calls: parseResult.toolCalls,
+    });
+
+    for (const toolCall of parseResult.toolCalls) {
+      try {
+        const args = JSON.parse(toolCall.function.arguments);
+        const result = await toolExecutor(toolCall.function.name, args);
+
+        toolExecutions.push({
+          toolName: toolCall.function.name,
+          arguments: args,
+          result: result,
+          success: true,
+        });
+
+        // 添加工具执行结果到消息历史
+        updatedMessages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id || `call_${Date.now()}`,
+          content: JSON.stringify(result),
+        });
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        toolExecutions.push({
+          toolName: toolCall.function.name,
+          arguments: JSON.parse(toolCall.function.arguments),
+          result: null,
+          success: false,
+          error: errorMsg,
+        });
+
+        // 添加错误结果到消息历史
+        updatedMessages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id || `call_${Date.now()}`,
+          content: `Error: ${errorMsg}`,
+        });
+      }
+    }
+
+    // 让 LLM 基于工具执行结果生成最终回复
+    const finalCompletion = await this.chat({
+      messages: updatedMessages,
+      model: options?.model,
+      temperature: options?.temperature,
+      maxTokens: options?.maxTokens,
+    });
+
+    return {
+      finalResponse: finalCompletion.content,
+      toolExecutions,
+    };
+  }
+
+  /**
    * 带 thinking 模式控制的聊天（仅适用于 Qwen3 模型）
    */
   public async chatWithThinking(
