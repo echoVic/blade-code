@@ -3,6 +3,25 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.2.5] - 2025-06-10
+
+### ✨ 新功能
+
+- 新增功能改进验证文档 (8061b24)
+
+### ♻️ 代码重构
+
+- 将git-smart-commit工具重构为可确认的工具基类 (ca958a9)
+- 优化组件健康检查循环逻辑 (bbfeccd)
+- 优化Agent状态日志输出格式 (aa2409c)
+- 重构README.md结构，大幅精简内容并优化展示 (5ff463e)
+- Agent架构重构，拆分LLM和组件管理逻辑 (4c941b4)
+
+### 🔧 其他更改
+
+- 删除功能改进测试相关文件 (97f56e7)
+
+
 ## [1.2.4] - 2025-06-06
 
 ### ✨ 新功能
