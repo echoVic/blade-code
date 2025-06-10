@@ -317,7 +317,7 @@ export class ComponentManager extends EventEmitter {
     const components: { [id: string]: { healthy: boolean; error?: string } } = {};
     let overallHealthy = true;
 
-    for (const [id, component] of this.components) {
+    for (const [id] of this.components) {
       try {
         // 这里可以添加组件健康检查逻辑
         // 目前简单检查组件是否存在
