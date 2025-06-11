@@ -61,6 +61,7 @@
   "devDependencies": {
     "@types/inquirer": "^9.0.8",
     "@types/node": "^22.15.24",
+    "@types/ws": "^8.5.12",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
     "@typescript-eslint/parser": "^6.21.0",
     "eslint": "^8.57.0",
@@ -74,6 +75,8 @@
     "chalk": "^5.4.1",
     "commander": "^14.0.0",
     "inquirer": "^12.6.3",
-    "openai": "^4.103.0"
+    "openai": "^4.103.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ws": "^8.18.0"
   }
 }

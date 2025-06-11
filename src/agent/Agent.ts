@@ -6,6 +6,7 @@ import { BaseComponent } from './BaseComponent.js';
 import { ComponentManager, type ComponentManagerConfig } from './ComponentManager.js';
 import { ContextComponent, type ContextComponentConfig } from './ContextComponent.js';
 import { LLMManager, type LLMConfig } from './LLMManager.js';
+import { MCPComponent, type MCPComponentConfig } from './MCPComponent.js';
 import { ToolComponent } from './ToolComponent.js';
 
 /**
@@ -21,6 +22,7 @@ export interface AgentConfig {
     includeCategories?: string[];
   };
   context?: ContextComponentConfig;
+  mcp?: MCPComponentConfig;
   components?: ComponentManagerConfig;
 }
 
@@ -68,6 +70,10 @@ export class Agent extends EventEmitter {
         enabled: true,
         debug: config.debug,
         ...config.context,
+      },
+      mcp: {
+        enabled: true,
+        ...config.mcp,
       },
       components: {
         debug: config.debug,
@@ -587,6 +593,13 @@ ${toolResultsText}
     return this.getComponent<ContextComponent>('context');
   }
 
+  /**
+   * 获取 MCP 组件
+   */
+  public getMCPComponent(): MCPComponent | undefined {
+    return this.getComponent<MCPComponent>('mcp');
+  }
+
   // ======================== 上下文管理协调方法 ========================
 
   /**
@@ -886,24 +899,29 @@ ${toolResultsText}
    * 自动注册默认组件
    */
   private autoRegisterComponents(): void {
-    // 如果启用了上下文管理，自动注册上下文组件
-    if (this.config.context?.enabled !== false) {
-      const contextComponent = new ContextComponent('context', this.config.context);
-      this.componentManager.registerComponent(contextComponent);
-      this.log('上下文组件已自动注册');
-    }
-
-    // 如果启用了工具，自动注册工具组件
+    // 注册工具组件
     if (this.config.tools?.enabled) {
-      const toolComponent = new ToolComponent('tools', {
-        debug: this.config.debug,
-        includeBuiltinTools: this.config.tools.includeBuiltinTools,
+      const toolConfig = {
+        includeBuiltinTools: this.config.tools.includeBuiltinTools ?? true,
         excludeTools: this.config.tools.excludeTools,
         includeCategories: this.config.tools.includeCategories,
-      });
+        debug: this.config.debug,
+      };
 
+      const toolComponent = new ToolComponent('tools', toolConfig);
       this.componentManager.registerComponent(toolComponent);
-      this.log('工具组件已自动注册');
+    }
+
+    // 注册上下文组件
+    if (this.config.context?.enabled) {
+      const contextComponent = new ContextComponent('context', this.config.context);
+      this.componentManager.registerComponent(contextComponent);
+    }
+
+    // 注册 MCP 组件
+    if (this.config.mcp?.enabled) {
+      const mcpComponent = new MCPComponent('mcp', this.config.mcp);
+      this.componentManager.registerComponent(mcpComponent);
     }
   }
 

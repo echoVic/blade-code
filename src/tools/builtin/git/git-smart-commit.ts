@@ -53,12 +53,81 @@ export class GitSmartCommitTool extends ConfirmableToolBase {
     const { llmAnalysis } = params;
 
     if (!llmAnalysis) {
-      throw new Error('需要LLM分析结果来生成提交信息');
+      throw new Error('缺少LLM分析结果，无法生成提交信息');
     }
 
     // 返回最终的commit命令
     const commitMessage = llmAnalysis.trim();
     return `git commit -m "${commitMessage.replace(/"/g, '\\"')}"`;
+  }
+
+  /**
+   * 生成 Git 变更分析提示
+   */
+  private async generateGitAnalysisPrompt(workingDirectory: string): Promise<string> {
+    try {
+      // 获取 Git 状态
+      const { stdout: statusOutput } = await execAsync('git status --porcelain', {
+        cwd: workingDirectory,
+      });
+
+      // 获取文件差异
+      let diffOutput = '';
+      try {
+        const { stdout: diff } = await execAsync('git diff --cached HEAD', {
+          cwd: workingDirectory,
+        });
+        diffOutput = diff;
+
+        // 如果暂存区没有内容，获取工作目录的差异
+        if (!diffOutput.trim()) {
+          const { stdout: workingDiff } = await execAsync('git diff HEAD', {
+            cwd: workingDirectory,
+          });
+          diffOutput = workingDiff;
+        }
+      } catch {
+        // 如果获取差异失败，使用状态信息
+        diffOutput = '无法获取详细差异信息';
+      }
+
+      // 获取变更文件列表
+      const changedFiles = statusOutput
+        .split('\n')
+        .filter(line => line.trim())
+        .map(line => {
+          const status = line.substring(0, 2);
+          const fileName = line.substring(3);
+          return { status: status.trim(), fileName };
+        });
+
+      // 构造分析提示
+      const prompt = `请分析以下 Git 变更内容，生成一个简洁、符合 Conventional Commits 规范的提交信息。
+
+变更文件:
+${changedFiles.map(f => `  ${f.status} ${f.fileName}`).join('\n')}
+
+代码差异:
+${diffOutput.length > 2000 ? diffOutput.substring(0, 2000) + '\n...(差异内容已截取)' : diffOutput}
+
+请生成一个符合以下规范的提交信息：
+- 格式：<type>(<scope>): <description>
+- type：feat/fix/docs/style/refactor/test/chore 等
+- scope：可选，影响的模块或功能
+- description：简洁描述变更内容
+
+要求：
+1. 只返回提交信息，不要其他说明文字
+2. 提交信息应该简洁明了，不超过 80 个字符
+3. 用中文描述，除非是英文项目
+4. 如果有多个不相关的变更，选择最主要的变更作为提交信息主题
+
+提交信息：`;
+
+      return prompt;
+    } catch (error) {
+      return `请为以下 Git 变更生成合适的提交信息。由于无法获取详细的变更信息（${(error as Error).message}），请生成一个通用的提交信息。要求使用 Conventional Commits 格式：<type>: <description>`;
+    }
   }
 
   protected getConfirmationOptions(params: Record<string, any>) {
@@ -96,15 +165,7 @@ export class GitSmartCommitTool extends ConfirmableToolBase {
       };
     }
 
-    // 2. 检查是否有LLM分析结果
-    if (!llmAnalysis) {
-      return {
-        valid: false,
-        message: '缺少LLM分析结果，无法生成提交信息',
-      };
-    }
-
-    // 3. 检查是否有变更
+    // 2. 检查是否有变更
     const { stdout: statusOutput } = await execAsync('git status --porcelain', {
       cwd: workingDirectory,
     });
@@ -123,6 +184,13 @@ export class GitSmartCommitTool extends ConfirmableToolBase {
       };
     }
 
+    // 3. 如果有LLM分析结果，进行额外验证
+    if (llmAnalysis) {
+      // 已有分析结果，可以继续
+      return { valid: true };
+    }
+
+    // 没有LLM分析结果时，也允许通过，因为buildCommand会处理这种情况
     return { valid: true };
   }
 
@@ -176,6 +244,52 @@ export class GitSmartCommitTool extends ConfirmableToolBase {
       return `将要提交的文件:\n${changedFiles.map(f => `  - ${f}`).join('\n')}\n\n变更统计:\n${diffStat}`;
     } catch (error) {
       return `预览信息获取失败: ${(error as Error).message}`;
+    }
+  }
+
+  /**
+   * 重写执行方法，处理特殊的 need_llm_analysis 错误
+   */
+  async execute(params: Record<string, any>): Promise<any> {
+    console.log('🔧 git_smart_commit: 开始执行, params:', JSON.stringify(params, null, 2));
+
+    const { llmAnalysis, path = '.' } = params;
+
+    // 如果没有LLM分析结果，返回需要分析的信号
+    if (!llmAnalysis) {
+      console.log('🔧 git_smart_commit: 没有LLM分析，准备生成分析提示...');
+      try {
+        const analysisPrompt = await this.generateGitAnalysisPrompt(path);
+        console.log('🔧 git_smart_commit: 分析提示生成完成，返回 need_llm_analysis');
+        return {
+          success: false,
+          error: 'need_llm_analysis',
+          data: {
+            needsLLMAnalysis: true,
+            analysisPrompt,
+          },
+        };
+      } catch (error) {
+        console.log('🔧 git_smart_commit: 生成分析提示失败:', error);
+        return {
+          success: false,
+          error: `生成分析提示失败: ${(error as Error).message}`,
+        };
+      }
+    }
+
+    // 有LLM分析结果，继续执行正常流程
+    console.log('🔧 git_smart_commit: 有LLM分析结果，执行正常流程');
+    try {
+      const result = await super.execute(params);
+      console.log('🔧 git_smart_commit: 执行完成, result:', JSON.stringify(result, null, 2));
+      return result;
+    } catch (error: any) {
+      console.log('🔧 git_smart_commit: 执行出错:', error);
+      return {
+        success: false,
+        error: `Git smart commit failed: ${(error as Error).message}`,
+      };
     }
   }
 

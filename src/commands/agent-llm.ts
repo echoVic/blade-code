@@ -24,6 +24,7 @@ export function agentLlmCommand(program: Command) {
     .option('--context', '启用上下文管理（记住对话历史）', false)
     .option('--context-session <sessionId>', '加载指定的上下文会话')
     .option('--context-user <userId>', '指定用户ID用于上下文管理', 'default-user')
+    .option('--mcp [servers...]', '启用 MCP 并连接到指定服务器（可指定多个）')
     .action(async (questionArgs, options) => {
       try {
         // 使用用户配置作为默认值
@@ -75,12 +76,30 @@ export function agentLlmCommand(program: Command) {
             : {
                 enabled: false,
               },
+          mcp: options.mcp
+            ? {
+                enabled: true,
+                servers: Array.isArray(options.mcp) ? options.mcp : [],
+                autoConnect: true,
+                debug: false,
+              }
+            : {
+                enabled: false,
+              },
         };
 
         // 初始化 Agent
         console.log(chalk.blue('🤖 启动智能 Agent...'));
         if (options.context) {
           console.log(chalk.cyan('🧠 上下文管理已启用'));
+        }
+        if (options.mcp) {
+          const serverList = Array.isArray(options.mcp) ? options.mcp : [];
+          if (serverList.length > 0) {
+            console.log(chalk.cyan(`🔗 MCP 已启用，将连接到: ${serverList.join(', ')}`));
+          } else {
+            console.log(chalk.cyan('🔗 MCP 已启用'));
+          }
         }
 
         const agent = new Agent(agentConfig);

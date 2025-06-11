@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { agentLlmCommand } from './commands/agent-llm.js';
 import { configCommand } from './commands/config.js';
 import { llmCommand } from './commands/llm.js';
+import { mcpCommand } from './commands/mcp.js';
 import { toolsCommand } from './commands/tools.js';
 
 // 获取当前模块的目录路径
@@ -71,6 +72,9 @@ export type {
 // 类型定义
 export type { LLMMessage, LLMRequest, LLMResponse } from './llm/BaseLLM.js';
 
+// MCP 模块
+export * from './mcp/index.js';
+
 const program = new Command();
 
 // 设置基本信息
@@ -85,6 +89,9 @@ configCommand(program);
 
 // 注册工具相关命令
 toolsCommand(program);
+
+// 注册 MCP 相关命令
+mcpCommand(program);
 
 // 添加帮助信息
 program.on('--help', () => {
@@ -140,6 +147,13 @@ program.on('--help', () => {
   console.log('  $ blade tools call uuid');
   console.log('  $ blade tools call command_confirmation \\');
   console.log('    --params \'{"command": "ls -la", "description": "查看文件"}\'');
+  console.log('');
+
+  console.log(chalk.green('  🔗 MCP 支持:'));
+  console.log('  $ blade mcp server start');
+  console.log('  $ blade mcp config add');
+  console.log('  $ blade mcp client connect my-server');
+  console.log('  $ blade chat --mcp my-server "使用外部资源分析"');
   console.log('');
 
   console.log(chalk.blue('✨ 命令确认功能:'));
