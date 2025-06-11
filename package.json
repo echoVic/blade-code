@@ -1,6 +1,6 @@
 {
   "name": "blade-ai",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "description": "🗡️ Blade - 智能 AI 助手命令行工具",
   "type": "module",
   "main": "dist/index.js",

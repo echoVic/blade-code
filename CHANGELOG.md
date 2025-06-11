@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.2.7] - 2025-06-11
+
+
 ## [1.2.6] - 2025-06-11
 
 
