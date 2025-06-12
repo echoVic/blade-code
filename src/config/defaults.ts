@@ -97,10 +97,10 @@ export const DEFAULT_CONFIG: DefaultConfig = {
     },
     volcengine: {
       apiKey: process.env.VOLCENGINE_API_KEY || '',
-      defaultModel: process.env.VOLCENGINE_DEFAULT_MODEL || 'ep-20250417144747-rgffm',
+      defaultModel: process.env.VOLCENGINE_DEFAULT_MODEL || 'ep-20250612135125-br9k7',
       baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
       supportedModels: [
-        'ep-20250417144747-rgffm',
+        'ep-20250417144747-rgffm', // Doubao-1.5-thinking-pro
         'ep-20250530171307-rrcc5', // DeepSeek R1 250528
         'ep-20250530171222-q42h8', // DeepSeek V3
         'ep-20250612135125-br9k7', // Doubao-Seed-1.6-thinking

@@ -76,8 +76,16 @@ export function saveUserConfig(config: Partial<UserConfig>): void {
  * 设置当前 provider
  */
 export function setCurrentProvider(provider: 'qwen' | 'volcengine'): void {
-  saveUserConfig({ currentProvider: provider });
+  // 导入默认配置以获取默认模型
+  const { getProviderConfig } = require('./defaults.js');
+  const providerConfig = getProviderConfig(provider);
+
+  saveUserConfig({
+    currentProvider: provider,
+    currentModel: providerConfig.defaultModel,
+  });
   console.log(chalk.green(`✅ 已设置当前 LLM 提供商为: ${provider}`));
+  console.log(chalk.green(`✅ 已自动设置模型为: ${providerConfig.defaultModel}`));
 }
 
 /**
