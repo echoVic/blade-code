@@ -4,10 +4,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@blade-ai/types': link:packages/types
+
 importers:
 
   .:
     dependencies:
+      '@blade-ai/types':
+        specifier: link:packages/types
+        version: link:packages/types
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.17.4
@@ -69,6 +75,74 @@ importers:
       ts-node:
         specifier: ^10.9.2
         version: 10.9.2(@types/node@22.18.0)(typescript@5.9.2)
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.0(typescript@5.9.2)
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.2
+
+  packages/cli:
+    dependencies:
+      '@blade-ai/core':
+        specifier: workspace:*
+        version: link:../core
+      chalk:
+        specifier: ^5.4.1
+        version: 5.6.0
+      commander:
+        specifier: ^14.0.0
+        version: 14.0.0
+      ink:
+        specifier: ^6.2.3
+        version: 6.2.3(@types/react@19.1.12)(react@19.1.1)
+      inquirer:
+        specifier: ^12.6.3
+        version: 12.9.4(@types/node@22.18.0)
+      react:
+        specifier: ^19.1.1
+        version: 19.1.1
+      react-dom:
+        specifier: ^19.1.1
+        version: 19.1.1(react@19.1.1)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.24
+        version: 22.18.0
+      '@types/react':
+        specifier: ^19.1.12
+        version: 19.1.12
+      '@types/react-dom':
+        specifier: ^19.1.9
+        version: 19.1.9(@types/react@19.1.12)
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.0(typescript@5.9.2)
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.2
+
+  packages/core:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.0.0
+        version: 1.17.4
+      axios:
+        specifier: ^1.9.0
+        version: 1.11.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.24
+        version: 22.18.0
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.0(typescript@5.9.2)
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.2
+
+  packages/types:
+    devDependencies:
       tsup:
         specifier: ^8.5.0
         version: 8.5.0(typescript@5.9.2)

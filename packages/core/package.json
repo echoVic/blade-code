@@ -1,0 +1,25 @@
+{
+  "name": "@blade-ai/core",
+  "version": "1.2.8",
+  "description": "Blade AI Core - 智能AI代理核心库",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "axios": "^1.9.0",
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.24",
+    "typescript": "^5.9.2",
+    "tsup": "^8.5.0"
+  }
+}

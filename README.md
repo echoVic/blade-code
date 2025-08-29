@@ -243,7 +243,7 @@ blade chat -i --stream
 ### Agent 使用
 
 ```typescript
-import { Agent } from 'blade-ai';
+import { Agent } from '@blade-ai/core';
 
 const agent = new Agent({
   llm: { provider: 'qwen', apiKey: 'your-key' },
@@ -264,7 +264,7 @@ await agent.destroy();
 ### 工具管理
 
 ```typescript
-import { createToolManager } from 'blade-ai';
+import { createToolManager } from '@blade-ai/core';
 
 const toolManager = await createToolManager();
 const result = await toolManager.callTool({
@@ -278,12 +278,11 @@ const result = await toolManager.callTool({
 ### 项目结构
 
 ```
-src/
-├── agent/           # Agent 核心
-├── llm/            # LLM 实现
-├── tools/          # 工具系统
-├── commands/       # CLI 命令
-└── config/         # 配置管理
+packages/
+├── core/            # 核心AI功能 (@blade-ai/core)
+├── cli/             # 命令行界面 (@blade-ai/cli)
+├── types/           # 共享类型定义 (@blade-ai/types)
+└── blade/           # 旧版代码（将被移除）
 ```
 
 ### 开发命令
@@ -292,8 +291,11 @@ src/
 # 开发模式
 npm run dev
 
-# 构建
+# 构建所有包
 npm run build
+
+# 构建特定包
+cd packages/core && npm run build
 
 # 类型检查
 npm run type-check
@@ -301,6 +303,7 @@ npm run type-check
 # 代码格式化
 npm run format
 ```
+
 
 ## 🤝 贡献
 

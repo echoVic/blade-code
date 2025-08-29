@@ -1,6 +1,10 @@
 {
   "name": "blade-ai",
   "version": "1.2.8",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "description": "🗡️ Blade - 智能 AI 助手命令行工具",
   "type": "module",
   "main": "dist/index.js",
