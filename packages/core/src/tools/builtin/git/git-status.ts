@@ -6,6 +6,10 @@ import {
   ConfirmationOptions,
   RiskLevel,
 } from '../../base/ConfirmableToolBase.js';
+import {
+  ErrorFactory,
+  globalErrorMonitor
+} from '../../../../error/index.js';
 
 const execAsync = promisify(exec);
 
@@ -103,6 +107,22 @@ class GitStatusTool extends ConfirmableToolBase {
         };
       }
 
+      const gitError = ErrorFactory.createNotFoundError(
+        'Git仓库',
+        workingDirectory,
+        {
+          context: { workingDirectory, error: error.message },
+          retryable: false,
+          suggestions: [
+            '检查当前目录是否为Git仓库',
+            '运行git init初始化仓库',
+            '确认Git已正确安装'
+          ]
+        }
+      );
+      
+      globalErrorMonitor.monitor(gitError);
+      
       return {
         valid: false,
         message: `Git 预检查失败: ${error.message}`,

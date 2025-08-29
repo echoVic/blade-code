@@ -16,6 +16,10 @@ export class GitSmartCommitTool extends ConfirmableToolBase {
   readonly author = 'Agent CLI';
   readonly tags = ['git', 'commit', 'smart', 'llm', 'auto'];
 
+  constructor() {
+    super();
+  }
+
   readonly parameters = {
     path: {
       type: 'string' as const,
@@ -302,7 +306,11 @@ ${diffOutput.length > 2000 ? diffOutput.substring(0, 2000) + '\n...(差异内容
 
         if (statusOutput.trim()) {
           await execAsync('git add -A', { cwd: workingDirectory });
-          console.log('📦 已自动添加所有变更文件到暂存区');
+          this.logger.info('已自动添加所有变更文件到暂存区', {
+            component: 'GitSmartCommitTool',
+            action: 'executeCommand',
+            autoAdd: true
+          });
         }
       }
 

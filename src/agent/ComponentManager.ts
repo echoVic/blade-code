@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { BaseComponent } from './BaseComponent.js';
+import { LoggerComponent } from './LoggerComponent.js';
 
 /**
  * 组件管理器配置
@@ -27,6 +28,7 @@ export class ComponentManager extends EventEmitter {
   private config: ComponentManagerConfig;
   private isInitialized = false;
   private isDestroyed = false;
+  private logger: LoggerComponent = new LoggerComponent('component-manager');
 
   constructor(config: ComponentManagerConfig = {}) {
     super();
@@ -364,7 +366,10 @@ export class ComponentManager extends EventEmitter {
    */
   private log(message: string): void {
     if (this.config.debug) {
-      console.log(`[ComponentManager] ${message}`);
+      this.logger.debug(`[ComponentManager] ${message}`, { 
+        component: 'component-manager', 
+        action: 'log' 
+      });
     }
   }
 }

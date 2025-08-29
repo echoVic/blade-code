@@ -92,6 +92,10 @@ class FileWriteTool extends ConfirmableToolBase {
   readonly category = 'filesystem';
   readonly tags = ['file', 'write', 'create'];
 
+  constructor() {
+    super();
+  }
+
   readonly parameters = {
     path: {
       type: 'string' as const,

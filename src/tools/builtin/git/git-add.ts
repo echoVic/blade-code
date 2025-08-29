@@ -19,6 +19,10 @@ class GitAddTool extends ConfirmableToolBase {
   readonly category = 'git';
   readonly tags = ['git', 'add', 'stage', 'index'];
 
+  constructor() {
+    super();
+  }
+
   readonly parameters = {
     path: {
       type: 'string' as const,

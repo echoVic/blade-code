@@ -4,6 +4,12 @@
  */
 
 import type { BladeConfig } from '../config/types.js';
+import {
+  ErrorFactory,
+  LLMError,
+  NetworkError,
+  globalRetryManager
+} from '../error/index.js';
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
@@ -61,13 +67,16 @@ export class LLMManager {
     
     // 验证必要配置
     if (!config.apiKey) {
-      throw new Error('API密钥未配置');
+      throw ErrorFactory.createLLMError('API_KEY_MISSING', 'API密钥未配置');
     }
     if (!config.baseUrl) {
-      throw new Error('Base URL未配置');
+      throw ErrorFactory.createLLMError('BASE_URL_MISSING', 'Base URL未配置');
+    }
+    if (!config.modelName) {
+      throw ErrorFactory.createLLMError('MODEL_NAME_MISSING', '模型名称未配置');
     }
     if (!config.messages) {
-      throw new Error('消息内容不能为空');
+      throw ErrorFactory.createLLMError('REQUEST_FAILED', '消息内容不能为空');
     }
 
     // 构造请求
@@ -84,29 +93,48 @@ export class LLMManager {
       'Authorization': `Bearer ${config.apiKey}`,
     };
 
-    try {
-      // 通用API调用实现
-      const response = await fetch(config.baseUrl!, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(config.timeout || 30000),
-      });
+    // 使用重试管理器执行API调用
+    return globalRetryManager.execute(async () => {
+      try {
+        // 通用API调用实现
+        const response = await fetch(config.baseUrl!, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(config.timeout || 30000),
+        });
 
-      if (!response.ok) {
-        throw new Error(`API错误: ${response.status} ${response.statusText}`);
+        if (!response.ok) {
+          throw ErrorFactory.createHttpError(
+            response.status,
+            config.baseUrl!,
+            response.statusText
+          );
+        }
+
+        const data = await response.json();
+        
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+          throw ErrorFactory.createLLMError('RESPONSE_PARSE_ERROR', '响应格式错误');
+        }
+        
+        return {
+          content: data.choices[0].message.content || '',
+          usage: data.usage,
+          model: data.model,
+        };
+      } catch (error) {
+        if (error instanceof LLMError || error instanceof NetworkError) {
+          throw error;
+        }
+        
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw ErrorFactory.createTimeoutError('LLM API调用', config.timeout || 30000);
+        }
+        
+        throw ErrorFactory.fromNativeError(error as Error, 'LLM调用失败');
       }
-
-      const data = await response.json();
-      
-      return {
-        content: data.choices?.[0]?.message?.content || '',
-        usage: data.usage,
-        model: data.model,
-      };
-    } catch (error) {
-      throw new Error(`LLM调用失败: ${(error as Error).message}`);
-    }
+    }, 'LLM_API_CALL');
   }
 
   /**

@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import { basename, dirname, extname, join, resolve } from 'path';
+import { ErrorFactory, FileSystemError, globalErrorMonitor } from '../../../error/index.js';
 import {
   CommandPreCheckResult,
   ConfirmableToolBase,
@@ -74,9 +75,21 @@ const fileReadTool: ToolDefinition = {
         },
       };
     } catch (error: any) {
+      const fileSystemError = ErrorFactory.createFileSystemError(
+        'FILE_READ_FAILED',
+        `文件读取失败: ${error.message}`,
+        {
+          context: { path, encoding },
+          retryable: true,
+          suggestions: ['检查文件路径是否正确', '确认文件权限设置', '确认文件未被其他程序占用'],
+        }
+      );
+
+      globalErrorMonitor.monitor(fileSystemError);
+
       return {
         success: false,
-        error: `文件读取失败: ${error.message}`,
+        error: fileSystemError.message,
       };
     }
   },
@@ -147,14 +160,21 @@ class FileWriteTool extends ConfirmableToolBase {
     if (path.includes('..') || path.startsWith('/') || path.includes('\\')) {
       // 允许相对路径但需要确认
       if (path.includes('..')) {
-        throw new Error('不允许使用相对路径（..）');
+        throw ErrorFactory.createValidationError('path', path, '不能包含相对路径操作符', {
+          suggestions: ['使用相对路径而不是绝对路径'],
+          retryable: false,
+        });
       }
     }
 
     // 验证内容长度
     if (content.length > 10 * 1024 * 1024) {
       // 10MB
-      throw new Error('文件内容过大（超过10MB）');
+      throw ErrorFactory.createFileSystemError('FILE_TOO_LARGE', '文件内容过大（超过10MB）', {
+        context: { contentLength: content.length, maxSize: 10 * 1024 * 1024 },
+        suggestions: ['减少内容大小', '分批处理大文件'],
+        retryable: false,
+      });
     }
 
     return params;
@@ -319,7 +339,22 @@ class FileWriteTool extends ConfirmableToolBase {
       // 创建目录结构
       if (createDirectories) {
         const dir = dirname(resolvedPath);
-        await fs.mkdir(dir, { recursive: true });
+        try {
+          await fs.mkdir(dir, { recursive: true });
+        } catch (error: any) {
+          const mkdirError = ErrorFactory.createFileSystemError(
+            'DISK_FULL',
+            `创建目录失败: ${error.message}`,
+            {
+              context: { directory: dir },
+              retryable: false,
+              suggestions: ['检查磁盘空间', '确认目录权限'],
+            }
+          );
+
+          globalErrorMonitor.monitor(mkdirError);
+          throw mkdirError;
+        }
       }
 
       await fs.writeFile(resolvedPath, content, encoding as BufferEncoding);
@@ -338,9 +373,25 @@ class FileWriteTool extends ConfirmableToolBase {
         },
       };
     } catch (error: any) {
+      if (error instanceof FileSystemError) {
+        throw error;
+      }
+
+      const fileSystemError = ErrorFactory.createFileSystemError(
+        'FILE_WRITE_FAILED',
+        `文件写入失败: ${error.message}`,
+        {
+          context: { path, encoding },
+          retryable: true,
+          suggestions: ['检查磁盘空间', '确认文件权限', '确认目录是否存在'],
+        }
+      );
+
+      globalErrorMonitor.monitor(fileSystemError);
+
       return {
         success: false,
-        error: `文件写入失败: ${error.message}`,
+        error: fileSystemError.message,
       };
     }
   }
@@ -400,44 +451,59 @@ const directoryListTool: ToolDefinition = {
       const files: any[] = [];
 
       async function listDirectory(dirPath: string, depth = 0): Promise<void> {
-        const items = await fs.readdir(dirPath);
+        try {
+          const items = await fs.readdir(dirPath);
 
-        for (const item of items) {
-          // 跳过隐藏文件
-          if (!includeHidden && item.startsWith('.')) {
-            continue;
-          }
-
-          const itemPath = join(dirPath, item);
-          const itemStats = await fs.stat(itemPath);
-          const relativePath = itemPath.replace(resolvedPath, '').replace(/^[/\\]/, '');
-
-          const fileInfo = {
-            name: item,
-            path: itemPath,
-            relativePath: relativePath || item,
-            type: itemStats.isDirectory() ? 'directory' : 'file',
-            size: itemStats.size,
-            modified: itemStats.mtime,
-            created: itemStats.birthtime,
-            extension: itemStats.isFile() ? extname(item) : null,
-            depth,
-          };
-
-          // 文件类型过滤
-          if (fileTypes && fileTypes.length > 0 && itemStats.isFile()) {
-            const ext = extname(item).toLowerCase();
-            if (!fileTypes.includes(ext)) {
+          for (const item of items) {
+            // 跳过隐藏文件
+            if (!includeHidden && item.startsWith('.')) {
               continue;
             }
-          }
 
-          files.push(fileInfo);
+            const itemPath = join(dirPath, item);
+            const itemStats = await fs.stat(itemPath);
+            const relativePath = itemPath.replace(resolvedPath, '').replace(/^[/\\]/, '');
 
-          // 递归处理子目录
-          if (recursive && itemStats.isDirectory()) {
-            await listDirectory(itemPath, depth + 1);
+            const fileInfo = {
+              name: item,
+              path: itemPath,
+              relativePath: relativePath || item,
+              type: itemStats.isDirectory() ? 'directory' : 'file',
+              size: itemStats.size,
+              modified: itemStats.mtime,
+              created: itemStats.birthtime,
+              extension: itemStats.isFile() ? extname(item) : null,
+              depth,
+            };
+
+            // 文件类型过滤
+            if (fileTypes && fileTypes.length > 0 && itemStats.isFile()) {
+              const ext = extname(item).toLowerCase();
+              if (!fileTypes.includes(ext)) {
+                continue;
+              }
+            }
+
+            files.push(fileInfo);
+
+            // 递归处理子目录
+            if (recursive && itemStats.isDirectory()) {
+              await listDirectory(itemPath, depth + 1);
+            }
           }
+        } catch (error: any) {
+          const listError = ErrorFactory.createFileSystemError(
+            'PERMISSION_DENIED',
+            `读取目录失败: ${error.message}`,
+            {
+              context: { directory: dirPath },
+              retryable: false,
+              suggestions: ['检查目录权限', '确认目录是否存在'],
+            }
+          );
+
+          globalErrorMonitor.monitor(listError);
+          throw listError;
         }
       }
 
@@ -465,9 +531,25 @@ const directoryListTool: ToolDefinition = {
         },
       };
     } catch (error: any) {
+      if (error instanceof FileSystemError) {
+        throw error;
+      }
+
+      const directoryError = ErrorFactory.createFileSystemError(
+        'DIRECTORY_LIST_FAILED',
+        `目录列表失败: ${error.message}`,
+        {
+          context: { path },
+          retryable: true,
+          suggestions: ['检查路径是否正确', '确认目录权限设置', '确认目录未被其他程序占用'],
+        }
+      );
+
+      globalErrorMonitor.monitor(directoryError);
+
       return {
         success: false,
-        error: `目录列表失败: ${error.message}`,
+        error: directoryError.message,
       };
     }
   },
@@ -529,9 +611,25 @@ const fileInfoTool: ToolDefinition = {
         data: info,
       };
     } catch (error: any) {
+      const fileInfoError = ErrorFactory.createFileSystemError(
+        'FILE_NOT_FOUND',
+        `获取文件信息失败: ${error.message}`,
+        {
+          context: { path },
+          retryable: false,
+          suggestions: [
+            '检查文件路径是否正确',
+            '确认文件是否存在',
+            '确认文件权限设置'
+          ]
+        }
+      );
+      
+      globalErrorMonitor.monitor(fileInfoError);
+      
       return {
         success: false,
-        error: `获取文件信息失败: ${error.message}`,
+        error: fileInfoError.message,
       };
     }
   },

@@ -4,6 +4,7 @@ import { ContextFilter } from './processors/ContextFilter.js';
 import { CacheStore } from './storage/CacheStore.js';
 import { MemoryStore } from './storage/MemoryStore.js';
 import { PersistentStore } from './storage/PersistentStore.js';
+import { LoggerComponent } from '../agent/LoggerComponent.js';
 import {
   CompressedContext,
   ContextData,
@@ -25,6 +26,7 @@ export class ContextManager {
   private readonly compressor: ContextCompressor;
   private readonly filter: ContextFilter;
   private readonly options: ContextManagerOptions;
+  private readonly logger: LoggerComponent = new LoggerComponent('context-manager');
 
   private currentSessionId: string | null = null;
   private initialized = false;
@@ -73,13 +75,24 @@ export class ContextManager {
       // 检查存储健康状态
       const health = await this.persistent.checkStorageHealth();
       if (!health.isAvailable) {
-        console.warn('警告：持久化存储不可用，将仅使用内存存储');
+        this.logger.warn('警告：持久化存储不可用，将仅使用内存存储', { 
+          component: 'context-manager', 
+          action: 'initialize',
+          health 
+        });
       }
 
       this.initialized = true;
-      console.log('上下文管理器初始化完成');
+      this.logger.info('上下文管理器初始化完成', { 
+        component: 'context-manager', 
+        action: 'initialize' 
+      });
     } catch (error) {
-      console.error('上下文管理器初始化失败:', error);
+      this.logger.error('上下文管理器初始化失败', { 
+        component: 'context-manager', 
+        action: 'initialize',
+        error: (error as Error).message 
+      });
       throw error;
     }
   }
@@ -132,7 +145,7 @@ export class ContextManager {
 
     this.currentSessionId = sessionId;
 
-    console.log(`新会话已创建: ${sessionId}`);
+    this.logger.info(`新会话已创建: ${sessionId}`, { component: "context-manager", action: "createSession", sessionId });
     return sessionId;
   }
 
@@ -179,10 +192,10 @@ export class ContextManager {
       }
 
       this.currentSessionId = sessionId;
-      console.log(`会话已加载: ${sessionId}`);
+      this.logger.info(`会话已加载: ${sessionId}`, { component: "context-manager", action: "loadSession", sessionId });
       return true;
     } catch (error) {
-      console.error('加载会话失败:', error);
+      this.logger.error("加载会话失败:", { component: "context-manager", action: "loadSession", error: (error as Error).message });
       return false;
     }
   }
@@ -381,7 +394,7 @@ export class ContextManager {
     await this.persistent.cleanupOldSessions();
 
     this.currentSessionId = null;
-    console.log('上下文管理器资源清理完成');
+    this.logger.info("上下文管理器资源清理完成", { component: "context-manager", action: "destroy" });
   }
 
   // 私有方法
@@ -453,7 +466,7 @@ export class ContextManager {
   private saveCurrentSessionAsync(): void {
     // 异步保存，不阻塞主流程
     this.saveCurrentSession().catch(error => {
-      console.warn('异步保存会话失败:', error);
+      this.logger.warn("异步保存会话失败:", { component: "context-manager", action: "saveCurrentSession", error: (error as Error).message });
     });
   }
 

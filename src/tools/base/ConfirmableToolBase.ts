@@ -78,6 +78,12 @@ export abstract class ConfirmableToolBase implements ToolDefinition {
   abstract readonly parameters: Record<string, any>;
   /** 必需参数列表 */
   readonly required?: string[];
+  /** 日志组件 */
+  protected logger: LoggerComponent;
+
+  constructor() {
+    this.logger = new LoggerComponent(`tool-${this.name}`);
+  }
 
   /**
    * 工具执行入口
@@ -193,10 +199,17 @@ export abstract class ConfirmableToolBase implements ToolDefinition {
     workingDirectory: string,
     confirmationOptions: ConfirmationOptions
   ): Promise<CommandExecutionResult> {
-    console.log(chalk.yellow(`⚠️  预检查发现问题: ${preCheckResult.message}`));
+    this.logger.warn(`预检查发现问题: ${preCheckResult.message}`, {
+      component: 'ConfirmableToolBase',
+      action: 'handlePreCheckFailure'
+    });
 
     if (preCheckResult.suggestions && preCheckResult.suggestions.length > 0) {
-      console.log(chalk.blue('\n💡 建议的替代方案:'));
+      this.logger.info('显示建议的替代方案', {
+        component: 'ConfirmableToolBase',
+        action: 'handlePreCheckFailure',
+        suggestionCount: preCheckResult.suggestions.length
+      });
 
       const choices = preCheckResult.suggestions.map((suggestion, index) => ({
         name: `${chalk.cyan(suggestion.command)} ${chalk.gray(`- ${suggestion.description}`)}`,
@@ -217,6 +230,10 @@ export abstract class ConfirmableToolBase implements ToolDefinition {
       ]);
 
       if (selectedIndex === -1) {
+        this.logger.info('用户取消执行', {
+          component: 'ConfirmableToolBase',
+          action: 'handlePreCheckFailure'
+        });
         return {
           success: false,
           error: '用户取消执行',
@@ -236,6 +253,12 @@ export abstract class ConfirmableToolBase implements ToolDefinition {
       );
     }
 
+    this.logger.error('预检查失败', {
+      component: 'ConfirmableToolBase',
+      action: 'handlePreCheckFailure',
+      message: preCheckResult.message
+    });
+    
     return {
       success: false,
       error: preCheckResult.message || '预检查失败',
@@ -252,24 +275,39 @@ export abstract class ConfirmableToolBase implements ToolDefinition {
     params: Record<string, any>
   ): Promise<boolean> {
     // 显示命令信息
-    console.log(chalk.blue('\n📋 建议执行以下命令:'));
-    console.log(chalk.cyan(`  ${command}`));
+    this.logger.info('建议执行命令', {
+      component: 'ConfirmableToolBase',
+      action: 'confirmExecution',
+      command,
+      workingDirectory
+    });
 
     // 显示额外信息
     const description = this.getExecutionDescription(params);
     if (description) {
-      console.log(chalk.gray(`  说明: ${description}`));
+      this.logger.info('命令说明', {
+        component: 'ConfirmableToolBase',
+        action: 'confirmExecution',
+        description
+      });
     }
 
-    console.log(chalk.gray(`  工作目录: ${workingDirectory}`));
-    console.log(chalk.gray(`  风险级别: ${this.getRiskLevelDisplay(options.riskLevel!)}`));
+    this.logger.info('风险级别信息', {
+      component: 'ConfirmableToolBase',
+      action: 'confirmExecution',
+      riskLevel: options.riskLevel,
+      workingDirectory
+    });
 
     // 显示预览信息
     if (options.showPreview) {
       const previewInfo = await this.getExecutionPreview(command, workingDirectory, params);
       if (previewInfo) {
-        console.log(chalk.blue('\n🔍 执行预览:'));
-        console.log(chalk.gray(previewInfo));
+        this.logger.info('执行预览', {
+          component: 'ConfirmableToolBase',
+          action: 'confirmExecution',
+          previewInfo
+        });
       }
     }
 
@@ -283,6 +321,12 @@ export abstract class ConfirmableToolBase implements ToolDefinition {
       },
     ]);
 
+    this.logger.info('用户确认结果', {
+      component: 'ConfirmableToolBase',
+      action: 'confirmExecution',
+      confirmed: confirm
+    });
+
     return confirm;
   }
 
@@ -295,7 +339,13 @@ export abstract class ConfirmableToolBase implements ToolDefinition {
     options: ConfirmationOptions,
     params: Record<string, any>
   ): Promise<CommandExecutionResult> {
-    console.log(chalk.blue('\n⚡ 正在执行命令...'));
+    this.logger.info('正在执行命令', {
+      component: 'ConfirmableToolBase',
+      action: 'executeCommand',
+      command,
+      workingDirectory
+    });
+    
     const startTime = Date.now();
 
     try {
@@ -306,11 +356,21 @@ export abstract class ConfirmableToolBase implements ToolDefinition {
 
       const duration = Date.now() - startTime;
 
-      console.log(chalk.green(`✅ 命令执行成功 (${duration}ms)`));
+      this.logger.info('命令执行成功', {
+        component: 'ConfirmableToolBase',
+        action: 'executeCommand',
+        command,
+        duration,
+        success: true
+      });
 
       if (result.stdout) {
-        console.log('\n📤 输出:');
-        console.log(result.stdout);
+        this.logger.debug('命令输出', {
+          component: 'ConfirmableToolBase',
+          action: 'executeCommand',
+          command,
+          stdout: result.stdout
+        });
       }
 
       // 后处理结果
@@ -326,16 +386,30 @@ export abstract class ConfirmableToolBase implements ToolDefinition {
         data: processedResult,
       };
     } catch (error: any) {
-      console.log(chalk.red(`❌ 命令执行失败: ${error.message}`));
+      this.logger.error('命令执行失败', {
+        component: 'ConfirmableToolBase',
+        action: 'executeCommand',
+        command,
+        error: error.message,
+        stack: error.stack
+      });
 
       if (error.stdout) {
-        console.log('\n📤 标准输出:');
-        console.log(error.stdout);
+        this.logger.debug('标准输出', {
+          component: 'ConfirmableToolBase',
+          action: 'executeCommand',
+          command,
+          stdout: error.stdout
+        });
       }
 
       if (error.stderr) {
-        console.log('\n🚨 错误输出:');
-        console.log(error.stderr);
+        this.logger.warn('错误输出', {
+          component: 'ConfirmableToolBase',
+          action: 'executeCommand',
+          command,
+          stderr: error.stderr
+        });
       }
 
       return {

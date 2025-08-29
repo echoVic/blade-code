@@ -19,6 +19,10 @@ class GitStatusTool extends ConfirmableToolBase {
   readonly category = 'git';
   readonly tags = ['git', 'status', 'repository'];
 
+  constructor() {
+    super();
+  }
+
   readonly parameters = {
     path: {
       type: 'string' as const,

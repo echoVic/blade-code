@@ -7,6 +7,7 @@ import chalk from 'chalk';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { LoggerComponent } from '../agent/LoggerComponent.js';
 
 /**
  * 用户配置接口
@@ -21,6 +22,11 @@ export interface UserConfig {
  * 配置文件路径
  */
 const CONFIG_FILE_PATH = join(homedir(), '.blade-config.json');
+
+/**
+ * 全局日志实例
+ */
+const logger = new LoggerComponent('user-config');
 
 /**
  * 默认用户配置
@@ -49,7 +55,7 @@ export function getUserConfig(): UserConfig {
       ...config,
     };
   } catch (error) {
-    console.warn(chalk.yellow('⚠️ 读取用户配置失败，使用默认配置'));
+    logger.warn('读取用户配置失败，使用默认配置', { error: (error as Error).message });
     return DEFAULT_USER_CONFIG;
   }
 }
@@ -84,8 +90,8 @@ export function setCurrentProvider(provider: 'qwen' | 'volcengine'): void {
     currentProvider: provider,
     currentModel: providerConfig.defaultModel,
   });
-  console.log(chalk.green(`✅ 已设置当前 LLM 提供商为: ${provider}`));
-  console.log(chalk.green(`✅ 已自动设置模型为: ${providerConfig.defaultModel}`));
+  logger.info(`已设置当前 LLM 提供商为: ${provider}`, { component: 'user-config', action: 'setCurrentProvider' });
+  logger.info(`已自动设置模型为: ${providerConfig.defaultModel}`, { component: 'user-config', action: 'setCurrentProvider' });
 }
 
 /**
@@ -96,7 +102,7 @@ export function setCurrentModel(provider: 'qwen' | 'volcengine', model: string):
     currentProvider: provider,
     currentModel: model,
   });
-  console.log(chalk.green(`✅ 已设置当前模型为: ${model} (${provider})`));
+  logger.info(`已设置当前模型为: ${model} (${provider})`, { component: 'user-config', action: 'setCurrentModel' });
 }
 
 /**
@@ -127,7 +133,7 @@ export function getCurrentModel(provider?: 'qwen' | 'volcengine'): string | unde
  */
 export function resetUserConfig(): void {
   saveUserConfig(DEFAULT_USER_CONFIG);
-  console.log(chalk.green('✅ 已重置用户配置为默认值'));
+  logger.info('已重置用户配置为默认值', { component: 'user-config', action: 'resetUserConfig' });
 }
 
 /**
@@ -136,9 +142,12 @@ export function resetUserConfig(): void {
 export function showCurrentConfig(): void {
   const config = getUserConfig();
 
-  console.log(chalk.blue('\n📋 当前配置:'));
-  console.log(chalk.green(`Provider: ${config.currentProvider || '未设置'}`));
-  console.log(chalk.green(`Model: ${config.currentModel || '使用默认模型'}`));
-  console.log(chalk.gray(`最后更新: ${config.lastUpdated || '未知'}`));
-  console.log(chalk.gray(`配置文件: ${CONFIG_FILE_PATH}`));
+  logger.info('当前配置:', { 
+    component: 'user-config', 
+    action: 'showCurrentConfig',
+    provider: config.currentProvider || '未设置',
+    model: config.currentModel || '使用默认模型',
+    lastUpdated: config.lastUpdated || '未知',
+    configFilePath: CONFIG_FILE_PATH
+  });
 }

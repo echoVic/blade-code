@@ -5,6 +5,7 @@ import {
   type ToolDefinition,
 } from '../tools/index.js';
 import { UIDisplay, UIInput, UILayout, UIList, UIProgress } from '../ui/index.js';
+import { LoggerComponent } from '../agent/LoggerComponent.js';
 
 /**
  * 工具相关命令

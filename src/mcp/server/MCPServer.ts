@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { createServer, Server } from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { ToolManager } from '../../tools/ToolManager.js';
+import { LoggerComponent } from '../../agent/LoggerComponent.js';
 import {
   MCPClientInfo,
   MCPMessage,
@@ -53,6 +54,8 @@ export class MCPServer extends EventEmitter {
     },
   };
 
+  private readonly logger: LoggerComponent = new LoggerComponent('mcp-server');
+
   constructor(
     private config: MCPServerConfig,
     toolManager?: ToolManager
@@ -77,7 +80,12 @@ export class MCPServer extends EventEmitter {
       });
 
       this.server.listen(port, host, () => {
-        console.log(`MCP Server listening on ws://${host}:${port}`);
+        this.logger.info(`MCP Server listening on ws://${host}:${port}`, { 
+          component: 'mcp-server', 
+          action: 'start',
+          host,
+          port
+        });
         this.emit('started', { host, port });
       });
     } else if (this.config.transport === 'stdio') {
@@ -106,7 +114,7 @@ export class MCPServer extends EventEmitter {
     const clientId = `client-${Date.now()}-${Math.random()}`;
     this.clients.set(clientId, ws);
 
-    console.log(`Client connected: ${clientId}`);
+    this.logger.info(`Client connected: ${clientId}`, { component: "mcp-server", action: "handleConnection", clientId });
 
     ws.on('message', async data => {
       try {
@@ -119,11 +127,11 @@ export class MCPServer extends EventEmitter {
 
     ws.on('close', () => {
       this.clients.delete(clientId);
-      console.log(`Client disconnected: ${clientId}`);
+      this.logger.info(`Client disconnected: ${clientId}`, { component: "mcp-server", action: "handleConnection", clientId });
     });
 
     ws.on('error', error => {
-      console.error(`WebSocket error for ${clientId}:`, error);
+      this.logger.error(`WebSocket error for ${clientId}:`, { error: (error as Error).message, clientId });
       this.clients.delete(clientId);
     });
   }
@@ -146,7 +154,7 @@ export class MCPServer extends EventEmitter {
       }
     });
 
-    console.log('MCP Server listening on stdio');
+    this.logger.info("MCP Server listening on stdio", { component: "mcp-server", action: "handleStdioConnection" });
     this.emit('started', { transport: 'stdio' });
   }
 
@@ -203,8 +211,14 @@ export class MCPServer extends EventEmitter {
       },
     });
 
-    console.log(
-      `Client initialized: ${clientInfo?.name || 'Unknown'} v${clientInfo?.version || '0.0.0'}`
+    this.logger.info(
+      `Client initialized: ${clientInfo?.name || 'Unknown'} v${clientInfo?.version || '0.0.0'}`,
+      { 
+        component: 'mcp-server', 
+        action: 'sendInitializedNotification',
+        clientName: clientInfo?.name,
+        clientVersion: clientInfo?.version 
+      }
     );
   }
 
