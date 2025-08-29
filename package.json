@@ -72,11 +72,16 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
     "axios": "^1.9.0",
     "chalk": "^5.4.1",
     "commander": "^14.0.0",
+    "ink": "^6.2.3",
     "inquirer": "^12.6.3",
     "openai": "^4.103.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
     "ws": "^8.18.0"
   }
 }

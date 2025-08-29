@@ -7,72 +7,72 @@ import { Theme } from './theme.js';
 export interface SemanticColorMapping {
   // 文本语义色
   text: {
-    heading: string;        // 标题文本
-    body: string;          // 正文文本
-    caption: string;       // 辅助文本
-    link: string;          // 链接文本
-    success: string;       // 成功文本
-    warning: string;       // 警告文本
-    error: string;         // 错误文本
-    info: string;          // 信息文本
-    disabled: string;      // 禁用文本
-    inverted: string;      // 反转文本
+    heading: string; // 标题文本
+    body: string; // 正文文本
+    caption: string; // 辅助文本
+    link: string; // 链接文本
+    success: string; // 成功文本
+    warning: string; // 警告文本
+    error: string; // 错误文本
+    info: string; // 信息文本
+    disabled: string; // 禁用文本
+    inverted: string; // 反转文本
   };
-  
+
   // 背景语义色
   background: {
-    page: string;          // 页面背景
-    card: string;          // 卡片背景
-    modal: string;         // 模态框背景
-    popover: string;       // 弹出层背景
-    success: string;       // 成功背景
-    warning: string;       // 警告背景
-    error: string;         // 错误背景
-    info: string;          // 信息背景
-    disabled: string;      // 禁用背景
-    inverted: string;      // 反转背景
+    page: string; // 页面背景
+    card: string; // 卡片背景
+    modal: string; // 模态框背景
+    popover: string; // 弹出层背景
+    success: string; // 成功背景
+    warning: string; // 警告背景
+    error: string; // 错误背景
+    info: string; // 信息背景
+    disabled: string; // 禁用背景
+    inverted: string; // 反转背景
   };
-  
+
   // 边框语义色
   border: {
-    default: string;       // 默认边框
-    focus: string;         // 焦点边框
-    success: string;       // 成功边框
-    warning: string;       // 警告边框
-    error: string;         // 错误边框
-    info: string;          // 信息边框
-    disabled: string;      // 禁用边框
-    divider: string;       // 分割线
+    default: string; // 默认边框
+    focus: string; // 焦点边框
+    success: string; // 成功边框
+    warning: string; // 警告边框
+    error: string; // 错误边框
+    info: string; // 信息边框
+    disabled: string; // 禁用边框
+    divider: string; // 分割线
   };
-  
+
   // 交互语义色
   interactive: {
-    primary: string;       // 主要交互色
-    secondary: string;     // 次要交互色
-    accent: string;        // 强调交互色
-    hover: string;         // 悬停状态
-    active: string;        // 激活状态
-    focus: string;         // 焦点状态
-    disabled: string;      // 禁用状态
+    primary: string; // 主要交互色
+    secondary: string; // 次要交互色
+    accent: string; // 强调交互色
+    hover: string; // 悬停状态
+    active: string; // 激活状态
+    focus: string; // 焦点状态
+    disabled: string; // 禁用状态
   };
-  
+
   // 状态语义色
   status: {
-    success: string;       // 成功状态
-    warning: string;       // 警告状态
-    error: string;         // 错误状态
-    info: string;          // 信息状态
-    pending: string;       // 待处理状态
-    draft: string;         // 草稿状态
+    success: string; // 成功状态
+    warning: string; // 警告状态
+    error: string; // 错误状态
+    info: string; // 信息状态
+    pending: string; // 待处理状态
+    draft: string; // 草稿状态
   };
-  
+
   // 功能语义色
   functional: {
-    highlight: string;     // 高亮色
-    selection: string;     // 选中色
-    overlay: string;       // 遮罩色
-    shadow: string;        // 阴影色
-    backdrop: string;      // 背景色
+    highlight: string; // 高亮色
+    selection: string; // 选中色
+    overlay: string; // 遮罩色
+    shadow: string; // 阴影色
+    backdrop: string; // 背景色
   };
 }
 
@@ -93,7 +93,7 @@ export class SemanticColorManager {
    */
   private generateSemanticColors(theme: Theme): SemanticColorMapping {
     const { colors } = theme;
-    
+
     return {
       text: {
         heading: colors.text.primary,
@@ -165,17 +165,17 @@ export class SemanticColorManager {
   private adjustColorBrightness(color: string, amount: number): string {
     // 移除 # 前缀
     const c = color.replace('#', '');
-    
+
     // 解析 RGB 值
     let r = parseInt(c.substring(0, 2), 16);
     let g = parseInt(c.substring(2, 4), 16);
     let b = parseInt(c.substring(4, 6), 16);
-    
+
     // 调整亮度
     r = Math.min(255, Math.max(0, r + amount * 255));
     g = Math.min(255, Math.max(0, g + amount * 255));
     b = Math.min(255, Math.max(0, b + amount * 255));
-    
+
     // 转换回十六进制
     return `#${Math.round(r).toString(16).padStart(2, '0')}${Math.round(g).toString(16).padStart(2, '0')}${Math.round(b).toString(16).padStart(2, '0')}`;
   }
@@ -265,6 +265,3 @@ export class SemanticColorManager {
     return this.semanticColors.functional[key];
   }
 }
-
-// 导出类型
-export type { SemanticColorMapping };

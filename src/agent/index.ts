@@ -1,6 +1,6 @@
 // Agent 核心类
 export { Agent } from './Agent.js';
-export type { AgentConfig, AgentResponse, ToolCallResult } from './Agent.js';
+export type { BladeConfig } from '../config/types.js';
 
 // 管理器类
 export { LLMManager } from './LLMManager.js';
