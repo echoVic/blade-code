@@ -2,28 +2,21 @@ import { EventEmitter } from 'events';
 import type { ContextFilter, ToolCall as ContextToolCall } from '../context/index.js';
 import type { LLMMessage } from '../llm/BaseLLM.js';
 import type { ToolCallRequest, ToolDefinition } from '../tools/index.js';
+import type { BladeConfig } from '../config/types.js';
+import { ConfigManager } from '../config/ConfigManager.js';
 import { BaseComponent } from './BaseComponent.js';
-import { ComponentManager, type ComponentManagerConfig } from './ComponentManager.js';
+import { ComponentManager } from './ComponentManager.js';
 import { ContextComponent, type ContextComponentConfig } from './ContextComponent.js';
 import { LLMManager, type LLMConfig } from './LLMManager.js';
 import { MCPComponent, type MCPComponentConfig } from './MCPComponent.js';
 import { ToolComponent } from './ToolComponent.js';
 
 /**
- * Agent 配置接口
+ * Agent 配置接口（向后兼容）
+ * @deprecated 使用 BladeConfig 代替
  */
-export interface AgentConfig {
-  debug?: boolean;
-  llm?: LLMConfig;
-  tools?: {
-    enabled?: boolean;
-    includeBuiltinTools?: boolean;
-    excludeTools?: string[];
-    includeCategories?: string[];
-  };
-  context?: ContextComponentConfig;
-  mcp?: MCPComponentConfig;
-  components?: ComponentManagerConfig;
+export interface AgentConfig extends Partial<BladeConfig> {
+  // 保持向后兼容性，现在扩展自 BladeConfig
 }
 
 /**
@@ -51,7 +44,7 @@ export interface AgentResponse {
  * 专注于代理协调逻辑，LLM 和组件管理由专门的管理器负责
  */
 export class Agent extends EventEmitter {
-  private config: AgentConfig;
+  private configManager: ConfigManager;
   private llmManager: LLMManager;
   private componentManager: ComponentManager;
   private isInitialized = false;
@@ -59,43 +52,32 @@ export class Agent extends EventEmitter {
 
   constructor(config: AgentConfig = {}) {
     super();
-    this.config = {
-      debug: false,
-      tools: {
-        enabled: true,
-        includeBuiltinTools: true,
-        ...config.tools,
-      },
-      context: {
-        enabled: true,
-        debug: config.debug,
-        ...config.context,
-      },
-      mcp: {
-        enabled: true,
-        ...config.mcp,
-      },
-      components: {
-        debug: config.debug,
-        autoInit: true,
-        ...config.components,
-      },
-      ...config,
-    };
+    
+    // 创建配置管理器，支持向后兼容的旧 AgentConfig
+    this.configManager = new ConfigManager();
+    
+    // 处理向后兼容的配置转换
+    if (config) {
+      const transformer = new AgentConfigTransformer();
+      const bladeConfig = transformer.toBladeConfig(config);
+      this.configManager.mergeCliArgs(bladeConfig);
+    }
 
     // 初始化管理器
-    this.llmManager = new LLMManager(this.config.debug);
-    this.componentManager = new ComponentManager(this.config.components);
+    const bladeConfig = this.configManager.getConfig();
+    this.llmManager = new LLMManager(!!bladeConfig.debug);
+    this.componentManager = new ComponentManager({ 
+      debug: bladeConfig.debug,
+      autoInit: true 
+    });
 
     // 转发管理器事件
     this.setupManagerEventForwarding();
 
     this.log('Agent 实例已创建');
 
-    // 配置 LLM
-    if (this.config.llm) {
-      this.llmManager.configure(this.config.llm);
-    }
+    // 配置验证
+    this.validateAndConfigureLLM();
 
     // 自动注册默认组件
     this.autoRegisterComponents();
@@ -115,9 +97,16 @@ export class Agent extends EventEmitter {
 
     this.log('初始化 Agent...');
 
+    // 验证配置
+    const validation = this.configManager.validate();
+    if (!validation.valid) {
+      this.log(`配置验证失败: ${validation.errors.join(', ')}`);
+    }
+
     try {
       // 初始化 LLM 管理器
-      if (this.config.llm) {
+      const bladeConfig = this.configManager.getConfig();
+      if (bladeConfig.llm) {
         await this.llmManager.init();
       }
 
@@ -899,13 +888,16 @@ ${toolResultsText}
    * 自动注册默认组件
    */
   private autoRegisterComponents(): void {
+    const bladeConfig = this.configManager.getConfig();
+    
     // 注册工具组件
-    if (this.config.tools?.enabled) {
+    if (bladeConfig.tools?.enabled) {
       const toolConfig = {
-        includeBuiltinTools: this.config.tools.includeBuiltinTools ?? true,
-        excludeTools: this.config.tools.excludeTools,
-        includeCategories: this.config.tools.includeCategories,
-        debug: this.config.debug,
+        includeBuiltinTools: bladeConfig.tools.includeBuiltinTools ?? true,
+        excludeTools: bladeConfig.tools.excludeTools,
+        includeCategories: bladeConfig.tools.includeCategories,
+        debug: bladeConfig.debug,
+        autoConfirm: bladeConfig.tools.autoConfirm,
       };
 
       const toolComponent = new ToolComponent('tools', toolConfig);
@@ -913,14 +905,27 @@ ${toolResultsText}
     }
 
     // 注册上下文组件
-    if (this.config.context?.enabled) {
-      const contextComponent = new ContextComponent('context', this.config.context);
+    if (bladeConfig.context?.enabled) {
+      const contextConfig: ContextComponentConfig = {
+        enabled: true,
+        storagePath: bladeConfig.context.storagePath,
+        maxTurns: bladeConfig.context.maxTurns,
+        compressionEnabled: bladeConfig.context.compressionEnabled,
+        customSessionId: bladeConfig.context.customSessionId,
+      };
+      const contextComponent = new ContextComponent('context', contextConfig);
       this.componentManager.registerComponent(contextComponent);
     }
 
     // 注册 MCP 组件
-    if (this.config.mcp?.enabled) {
-      const mcpComponent = new MCPComponent('mcp', this.config.mcp);
+    if (bladeConfig.mcp?.enabled) {
+      const mcpConfig: MCPComponentConfig = {
+        enabled: true,
+        servers: bladeConfig.mcp.servers,
+        configPath: bladeConfig.mcp.configPath,
+        timeout: bladeConfig.mcp.timeout,
+      };
+      const mcpComponent = new MCPComponent('mcp', mcpConfig);
       this.componentManager.registerComponent(mcpComponent);
     }
   }
@@ -929,33 +934,103 @@ ${toolResultsText}
    * 设置管理器事件转发
    */
   private setupManagerEventForwarding(): void {
-    // 转发 LLM 管理器事件
-    // 这里可以根据需要转发特定事件
+    // 使用临时的事件转发代理以避免类型问题
+    const setupEventForwarding = (manager: any, eventName: string) => {
+      if (manager && typeof manager.on === 'function') {
+        manager.on(eventName, (event: any) => {
+          this.emit(eventName, event);
+        });
+      }
+    };
 
-    // 转发组件管理器事件
-    this.componentManager.on('componentRegistered', event => {
-      this.emit('componentRegistered', event);
-    });
-
-    this.componentManager.on('componentRemoved', event => {
-      this.emit('componentRemoved', event);
-    });
-
-    this.componentManager.on('componentInitialized', event => {
-      this.emit('componentInitialized', event);
-    });
-
-    this.componentManager.on('componentDestroyed', event => {
-      this.emit('componentDestroyed', event);
-    });
+    // 设置组件管理器的事件转发
+    setupEventForwarding(this.componentManager, 'componentRegistered');
+    setupEventForwarding(this.componentManager, 'componentRemoved');
+    setupEventForwarding(this.componentManager, 'componentInitialized');
+    setupEventForwarding(this.componentManager, 'componentDestroyed');
   }
 
   /**
    * 内部日志记录
    */
   private log(message: string): void {
-    if (this.config.debug) {
+    const bladeConfig = this.configManager.getConfig();
+    if (bladeConfig.debug) {
       console.log(`[Agent] ${message}`);
     }
+  }
+
+  /**
+   * 验证LLM配置并应用
+   */
+  private validateAndConfigureLLM(): void {
+    const bladeConfig = this.configManager.getConfig();
+    
+    if (bladeConfig.llm?.provider && bladeConfig.llm?.apiKey) {
+      // 强制类型转换以解决LLMConfig接口不兼容问题
+      const llmConfig = {
+        provider: bladeConfig.llm.provider as 'qwen' | 'volcengine',
+        apiKey: bladeConfig.llm.apiKey,
+        modelName: bladeConfig.llm.modelName,
+        temperature: bladeConfig.llm.temperature,
+        maxTokens: bladeConfig.llm.maxTokens,
+        baseUrl: bladeConfig.llm.baseUrl,
+        stream: bladeConfig.llm.stream,
+        timeout: bladeConfig.llm.timeout,
+        retryCount: bladeConfig.llm.retryCount,
+      };
+      this.llmManager.configure(llmConfig);
+    }
+  }
+}
+
+/**
+ * AgentConfig 到 BladeConfig 的转换器
+ * 用于保持向后兼容性
+ */
+class AgentConfigTransformer {
+  /**
+   * 将旧版 AgentConfig 转换为新的 BladeConfig 格式
+   */
+  toBladeConfig(agentConfig: AgentConfig): Partial<BladeConfig> {
+    const bladeConfig: Partial<BladeConfig> = {
+      debug: agentConfig.debug,
+      llm: agentConfig.llm,
+      tools: {
+        enabled: agentConfig.tools?.enabled ?? true,
+        includeBuiltinTools: agentConfig.tools?.includeBuiltinTools ?? true,
+        excludeTools: agentConfig.tools?.excludeTools,
+        includeCategories: agentConfig.tools?.includeCategories,
+        autoConfirm: agentConfig.tools?.autoConfirm ?? false,
+      },
+      context: {
+        enabled: agentConfig.context?.enabled ?? true,
+        storagePath: agentConfig.context?.storagePath,
+        maxTurns: agentConfig.context?.maxTurns,
+        compressionEnabled: agentConfig.context?.compressionEnabled,
+        customSessionId: agentConfig.context?.customSessionId,
+      },
+      mcp: {
+        enabled: agentConfig.mcp?.enabled ?? true,
+        servers: agentConfig.mcp?.servers,
+        configPath: agentConfig.mcp?.configPath,
+        timeout: agentConfig.mcp?.timeout,
+      },
+    };
+
+    return bladeConfig;
+  }
+
+  /**
+   * 从 BladeConfig 提取旧版 AgentConfig
+   */
+  fromBladeConfig(bladeConfig: BladeConfig): AgentConfig {
+    return {
+      debug: bladeConfig.debug,
+      llm: bladeConfig.llm,
+      tools: bladeConfig.tools,
+      context: bladeConfig.context as ContextComponentConfig,
+      mcp: bladeConfig.mcp as MCPComponentConfig,
+    };
   }
 }
