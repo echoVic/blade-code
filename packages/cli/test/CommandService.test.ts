@@ -1,16 +1,17 @@
 import { CommandService } from '../src/services/CommandService.js';
+import { vi } from 'vitest';
 
 describe('CommandService', () => {
   let commandService: CommandService;
   
   beforeEach(() => {
     // 重置模块缓存以获取新的单例实例
-    jest.resetModules();
+    vi.resetModules();
     commandService = CommandService.getInstance();
   });
   
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
   
   it('should be a singleton', () => {
@@ -28,7 +29,7 @@ describe('CommandService', () => {
       usage: 'test',
       aliases: ['t'],
       hidden: false,
-      handler: jest.fn(),
+      handler: vi.fn(),
     };
     
     await commandService.registerCommand(testCommand);
@@ -48,7 +49,7 @@ describe('CommandService', () => {
       usage: 'command1',
       aliases: [],
       hidden: false,
-      handler: jest.fn(),
+      handler: vi.fn(),
     };
     
     const command2 = {
@@ -58,7 +59,7 @@ describe('CommandService', () => {
       usage: 'command2',
       aliases: [],
       hidden: false,
-      handler: jest.fn(),
+      handler: vi.fn(),
     };
     
     await commandService.registerCommand(command1);
@@ -77,7 +78,7 @@ describe('CommandService', () => {
       usage: 'test',
       aliases: [],
       hidden: false,
-      handler: jest.fn(),
+      handler: vi.fn(),
     };
     
     const otherCommand = {
@@ -87,7 +88,7 @@ describe('CommandService', () => {
       usage: 'other',
       aliases: [],
       hidden: false,
-      handler: jest.fn(),
+      handler: vi.fn(),
     };
     
     await commandService.registerCommand(testCommand);
@@ -99,7 +100,7 @@ describe('CommandService', () => {
   });
   
   it('should execute commands', async () => {
-    const handler = jest.fn().mockResolvedValue(undefined);
+    const handler = vi.fn().mockResolvedValue(undefined);
     
     const testCommand = {
       name: 'test',
@@ -121,7 +122,7 @@ describe('CommandService', () => {
   });
   
   it('should handle command execution errors', async () => {
-    const handler = jest.fn().mockRejectedValue(new Error('执行失败'));
+    const handler = vi.fn().mockRejectedValue(new Error('执行失败'));
     
     const testCommand = {
       name: 'test',
@@ -157,7 +158,7 @@ describe('CommandService', () => {
       usage: 'build',
       aliases: ['b'],
       hidden: false,
-      handler: jest.fn(),
+      handler: vi.fn(),
     };
     
     const command2 = {
@@ -167,7 +168,7 @@ describe('CommandService', () => {
       usage: 'test',
       aliases: ['t'],
       hidden: false,
-      handler: jest.fn(),
+      handler: vi.fn(),
     };
     
     await commandService.registerCommand(command1);
@@ -189,7 +190,7 @@ describe('CommandService', () => {
       usage: 'test [options]',
       aliases: ['t'],
       hidden: false,
-      handler: jest.fn(),
+      handler: vi.fn(),
       options: [
         {
           name: 'verbose',
@@ -227,7 +228,7 @@ describe('CommandService', () => {
       usage: 'test',
       aliases: ['t'],
       hidden: false,
-      handler: jest.fn(),
+      handler: vi.fn(),
     };
     
     await commandService.registerCommand(testCommand);

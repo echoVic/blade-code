@@ -21,7 +21,7 @@ describe('RetryManager', () => {
   });
 
   test('应该成功执行无错误的操作', async () => {
-    const operation = jest.fn().mockResolvedValue('成功');
+    const operation = vi.fn().mockResolvedValue('成功');
     const result = await retryManager.execute(operation);
     
     expect(result).toBe('成功');
@@ -29,7 +29,7 @@ describe('RetryManager', () => {
   });
 
   test('应该在操作失败后重试', async () => {
-    const operation = jest.fn()
+    const operation = vi.fn()
       .mockRejectedValueOnce(new Error('第一次失败'))
       .mockRejectedValueOnce(new Error('第二次失败'))
       .mockResolvedValue('成功');
@@ -41,14 +41,14 @@ describe('RetryManager', () => {
   });
 
   test('应该在达到最大重试次数后抛出错误', async () => {
-    const operation = jest.fn().mockRejectedValue(new Error('总是失败'));
+    const operation = vi.fn().mockRejectedValue(new Error('总是失败'));
     
     await expect(retryManager.execute(operation)).rejects.toThrow('总是失败');
     expect(operation).toHaveBeenCalledTimes(3);
   });
 
   test('应该只重试可重试的错误', async () => {
-    const operation = jest.fn()
+    const operation = vi.fn()
       .mockRejectedValueOnce(
         new BladeError(
           ErrorCodeModule.LLM,
@@ -88,7 +88,7 @@ describe('RetryManager', () => {
   });
 
   test('应该正确重置状态', async () => {
-    const operation = jest.fn().mockResolvedValue('成功');
+    const operation = vi.fn().mockResolvedValue('成功');
     await retryManager.execute(operation, 'test-op');
     
     const state = retryManager.getRetryState('test-op');
@@ -100,14 +100,14 @@ describe('RetryManager', () => {
   });
 
   test('应该正确执行带超时的操作', async () => {
-    const operation = jest.fn().mockResolvedValue('成功');
+    const operation = vi.fn().mockResolvedValue('成功');
     const result = await retryManager.executeWithTimeout(operation, 1000);
     
     expect(result).toBe('成功');
   });
 
   test('应该在超时时抛出错误', async () => {
-    const operation = jest.fn(() => new Promise(resolve => {
+    const operation = vi.fn(() => new Promise(resolve => {
       setTimeout(() => resolve('成功'), 100);
     }));
     
