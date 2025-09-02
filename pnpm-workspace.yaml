@@ -1,5 +1,2 @@
 packages:
   - packages/*
-
-overrides:
-  '@blade-ai/types': link:packages/types

@@ -3,7 +3,7 @@
  * 平铺式一体化默认配置
  */
 
-import type { BladeConfig } from '@blade-ai/types';
+import type { BladeConfig } from '../types/shared.js';
 
 export const DEFAULT_CONFIG: BladeConfig = {
   // 核心配置 (必须)

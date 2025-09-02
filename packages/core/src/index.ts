@@ -25,6 +25,23 @@ export type {
   ConfigLayer
 } from './types/config.js';
 
+// 共享类型定义（从 @blade-ai/types 迁移而来）
+export type {
+  BladeConfig,
+  LLMMessage,
+  LLMRequest,
+  LLMResponse,
+  ToolConfig,
+  ToolResult,
+  ContextConfig,
+  AgentConfig
+} from './types/shared.js';
+
+export {
+  unifiedConfigToBladeConfig,
+  bladeConfigToUnifiedConfig
+} from './types/shared.js';
+
 // 工具函数
 export { deepMerge } from './utils/deep-merge.js';
 export { secureHttpClient } from './utils/secure-http-client.js';

@@ -4,7 +4,7 @@
  */
 
 // import { UnifiedConfigManager } from './UnifiedConfigManager.js';
-import type { BladeConfig } from '@blade-ai/types';
+import type { BladeConfig } from '../types/shared.js';
 import {
   ErrorFactory,
   ConfigError,

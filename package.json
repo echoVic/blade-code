@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "dev": "tsup --watch",
-    "build": "tsup",
+    "build": "pnpm -r build",
     "start": "node bin/blade.js",
     "test": "vitest",
     "test:watch": "vitest --watch",

@@ -3,8 +3,7 @@
  * 验证核心包导出和功能
  */
 
-import { Agent } from '@blade-ai/core';
-import { BladeConfig } from '@blade-ai/types';
+import { Agent, BladeConfig } from '@blade-ai/core';
 
 // 测试类型导入
 const config = {
