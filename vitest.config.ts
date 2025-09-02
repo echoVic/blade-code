@@ -38,7 +38,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@blade-ai/core': resolve(__dirname, 'packages/core/src'),
-      '@blade-ai/ui': resolve(__dirname, 'packages/ui/src'),
       '@blade-ai/cli': resolve(__dirname, 'packages/cli/src')
     }
   }
