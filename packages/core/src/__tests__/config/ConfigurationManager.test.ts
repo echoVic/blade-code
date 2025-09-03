@@ -2,17 +2,18 @@
  * ConfigurationManager 单元测试
  */
 
-import { ConfigurationManager } from '../ConfigurationManager.js';
-import { ConfigLayer, ConfigEventType } from '../types/index.js';
-import { BladeUnifiedConfigSchema } from '../types/schemas.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { ConfigurationManager } from '../../ConfigurationManager.js';
+import { ConfigLayer, ConfigEventType } from '../../types/index.js';
+import { BladeUnifiedConfigSchema } from '../../types/schemas.js';
 
 // 模拟文件系统
 const mockFs = {
-  access: jest.fn(),
-  readFile: jest.fn(),
-  writeFile: jest.fn(),
-  mkdir: jest.fn(),
-  watch: jest.fn(),
+  access: vi.fn(),
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
+  mkdir: vi.fn(),
+  watch: vi.fn(),
 };
 
 // 模拟环境变量
@@ -34,15 +35,15 @@ describe('ConfigurationManager', () => {
     process.env = originalEnv;
     
     // 清理模拟
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('初始化', () => {
-    test('应该成功创建配置管理器实例', () => {
+    it('应该成功创建配置管理器实例', () => {
       expect(configManager).toBeInstanceOf(ConfigurationManager);
     });
 
-    test('应该正确初始化状态', () => {
+    it('应该正确初始化状态', () => {
       const state = configManager.getState();
       expect(state.isValid).toBe(false);
       expect(state.errors).toEqual([]);
@@ -52,7 +53,7 @@ describe('ConfigurationManager', () => {
   });
 
   describe('配置加载', () => {
-    test('应该能够加载默认全局配置', async () => {
+    it('应该能够加载默认全局配置', async () => {
       const config = await configManager.loadAllConfigs();
       expect(config).toBeDefined();
       expect(config.auth).toBeDefined();
@@ -60,7 +61,7 @@ describe('ConfigurationManager', () => {
       expect(config.security).toBeDefined();
     });
 
-    test('应该能够从环境变量加载配置', async () => {
+    it('应该能够从环境变量加载配置', async () => {
       // 设置环境变量
       process.env.BLADE_API_KEY = 'test-api-key';
       process.env.BLADE_THEME = 'dark';
@@ -72,7 +73,7 @@ describe('ConfigurationManager', () => {
       expect(config.debug.debug).toBe(true);
     });
 
-    test('应该处理无效的环境变量值', async () => {
+    it('应该处理无效的环境变量值', async () => {
       // 设置无效的环境变量值
       process.env.BLADE_TIMEOUT = 'invalid-number';
       process.env.BLADE_MAX_TOKENS = '1000';
@@ -84,13 +85,13 @@ describe('ConfigurationManager', () => {
   });
 
   describe('配置验证', () => {
-    test('应该验证配置结构', async () => {
+    it('应该验证配置结构', async () => {
       const config = await configManager.loadAllConfigs();
       const result = BladeUnifiedConfigSchema.safeParse(config);
       expect(result.success).toBe(true);
     });
 
-    test('应该检测无效配置', async () => {
+    it('应该检测无效配置', async () => {
       const invalidConfig: any = {
         auth: {
           apiKey: '',
@@ -113,7 +114,7 @@ describe('ConfigurationManager', () => {
   });
 
   describe('配置更新', () => {
-    test('应该能够更新配置', async () => {
+    it('应该能够更新配置', async () => {
       const updates = {
         ui: {
           theme: 'dark' as const,
@@ -128,7 +129,7 @@ describe('ConfigurationManager', () => {
       expect(config.ui.hideTips).toBe(true);
     });
 
-    test('应该拒绝无效的配置更新', async () => {
+    it('应该拒绝无效的配置更新', async () => {
       const invalidUpdates = {
         auth: {
           baseUrl: 'invalid-url', // 无效的URL格式
@@ -142,7 +143,7 @@ describe('ConfigurationManager', () => {
   });
 
   describe('配置合并', () => {
-    test('应该正确合并多层配置', async () => {
+    it('应该正确合并多层配置', async () => {
       // 设置不同层级的配置
       process.env.BLADE_THEME = 'dark'; // 环境变量层（最高优先级）
       
@@ -159,7 +160,7 @@ describe('ConfigurationManager', () => {
       expect(config.ui.hideTips).toBe(true); // 来自用户配置
     });
 
-    test('应该正确处理配置冲突', async () => {
+    it('应该正确处理配置冲突', async () => {
       // 设置环境变量
       process.env.BLADE_THEME = 'light';
       
@@ -178,8 +179,8 @@ describe('ConfigurationManager', () => {
   });
 
   describe('配置事件', () => {
-    test('应该能够订阅配置事件', async () => {
-      const mockCallback = jest.fn();
+    it('应该能够订阅配置事件', async () => {
+      const mockCallback = vi.fn();
       const unsubscribe = configManager.subscribe(mockCallback);
 
       // 触发配置变更
@@ -198,8 +199,8 @@ describe('ConfigurationManager', () => {
       unsubscribe();
     });
 
-    test('应该发送配置加载事件', async () => {
-      const mockCallback = jest.fn();
+    it('应该发送配置加载事件', async () => {
+      const mockCallback = vi.fn();
       configManager.subscribe(mockCallback);
 
       await configManager.loadAllConfigs();
@@ -213,7 +214,7 @@ describe('ConfigurationManager', () => {
   });
 
   describe('配置热重载', () => {
-    test('应该能够启用和禁用热重载', () => {
+    it('应该能够启用和禁用热重载', () => {
       // 启用热重载
       configManager.enable();
       expect(configManager.isEnabledHotReload()).toBe(true);
@@ -223,7 +224,7 @@ describe('ConfigurationManager', () => {
       expect(configManager.isEnabledHotReload()).toBe(false);
     });
 
-    test('应该能够添加和移除监听路径', () => {
+    it('应该能够添加和移除监听路径', () => {
       configManager.enable();
       
       // 添加监听路径
@@ -235,7 +236,7 @@ describe('ConfigurationManager', () => {
   });
 
   describe('工具方法', () => {
-    test('应该能够获取嵌套配置值', () => {
+    it('应该能够获取嵌套配置值', () => {
       const config = {
         auth: {
           apiKey: 'test-key',
@@ -249,18 +250,18 @@ describe('ConfigurationManager', () => {
       // 实际应用中会通过公共接口间接测试
     });
 
-    test('应该正确解析环境变量值', () => {
+    it('应该正确解析环境变量值', () => {
       // 这些方法是私有的，我们在测试中模拟调用
     });
 
-    test('应该正确处理文件存在性检查', async () => {
+    it('应该正确处理文件存在性检查', async () => {
       // 这些方法是私有的，我们在测试中模拟调用
     });
   });
 
   describe('错误处理', () => {
-    test('应该正确处理配置加载错误', async () => {
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+    it('应该正确处理配置加载错误', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation();
       
       // 模拟错误情况
       try {
@@ -274,8 +275,8 @@ describe('ConfigurationManager', () => {
       consoleSpy.mockRestore();
     });
 
-    test('应该正确处理配置更新错误', async () => {
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+    it('应该正确处理配置更新错误', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation();
       
       try {
         await configManager.updateConfig({ invalid: 'config' } as any, ConfigLayer.USER);
@@ -289,8 +290,8 @@ describe('ConfigurationManager', () => {
   });
 
   describe('资源清理', () => {
-    test('应该能够正确销毁配置管理器', async () => {
-      const destroySpy = jest.spyOn(configManager, 'destroy');
+    it('应该能够正确销毁配置管理器', async () => {
+      const destroySpy = vi.spyOn(configManager, 'destroy');
       
       await configManager.destroy();
       

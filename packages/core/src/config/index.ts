@@ -83,22 +83,31 @@ export function createConfig(
   const errors: string[] = [];
 
   try {
-    // 按照优先级合并配置层
-    const merged = mergeConfigLayers(layers, priority);
-
-    // 验证配置
-    if (validate) {
-      const validationResult = validateConfig(merged);
-      warnings.push(...validationResult.warnings);
-      errors.push(...validationResult.errors);
-
-      if (errors.length > 0 && throwOnError) {
-        throw new Error(`配置验证失败: ${errors.join(', ')}`);
+    const reversedPriority = priority.slice().reverse();
+    let merged: any = {};
+    for (const layer of reversedPriority) {
+      const layerConfig = layers[layer.toLowerCase() as keyof ConfigLayers];
+      if (layerConfig) {
+        merged = deepMerge(merged, layerConfig, new WeakSet());
       }
     }
 
+    const configWithDefaults = ensureRequiredFields(merged);
+
+    if (validate) {
+      const validationResult = BladeUnifiedConfigSchema.safeParse(configWithDefaults);
+      if (!validationResult.success) {
+          const formattedErrors = validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`);
+          errors.push(...formattedErrors);
+      }
+    }
+
+    if (errors.length > 0 && throwOnError) {
+      throw new Error(`配置验证失败: ${errors.join(', ')}`);
+    }
+
     return {
-      config: merged,
+      config: configWithDefaults,
       warnings,
       errors
     };
@@ -109,7 +118,6 @@ export function createConfig(
     
     errors.push(error instanceof Error ? error.message : '未知配置合并错误');
     
-    // 返回一个安全的默认配置
     return {
       config: createDefaultConfig(),
       warnings,
@@ -127,8 +135,8 @@ function mergeConfigLayers(
 ): BladeUnifiedConfig {
   let merged: any = {};
 
-  // 按照优先级顺序合并
-  for (const layer of priority) {
+  // 按照优先级顺序从低到高合并
+  for (const layer of priority.slice().reverse()) {
     const layerConfig = layers[layer.toLowerCase() as keyof ConfigLayers];
     if (layerConfig) {
       merged = deepMerge(merged, layerConfig);
@@ -142,10 +150,15 @@ function mergeConfigLayers(
 /**
  * 深度合并对象
  */
-function deepMerge(target: any, source: any): any {
+function deepMerge(target: any, source: any, seen = new WeakSet()): any {
   if (source === null || typeof source !== 'object') {
     return source;
   }
+
+  if (seen.has(source)) {
+    return '[Circular]';
+  }
+  seen.add(source);
 
   if (Array.isArray(source)) {
     return [...(Array.isArray(target) ? target : []), ...source];
@@ -159,7 +172,7 @@ function deepMerge(target: any, source: any): any {
     }
 
     if (key in result && typeof result[key] === 'object' && typeof value === 'object') {
-      result[key] = deepMerge(result[key], value);
+      result[key] = deepMerge(result[key], value, seen);
     } else {
       result[key] = value;
     }

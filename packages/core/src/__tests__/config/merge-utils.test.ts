@@ -2,6 +2,7 @@
  * 配置合并工具函数测试
  */
 
+import { describe, it, expect } from 'vitest';
 import { 
   deepMerge, 
   mergeConfigsByPriority, 
@@ -11,12 +12,12 @@ import {
   deleteConfigValue,
   flattenConfig,
   unflattenConfig
-} from '../utils/merge-utils.js';
-import { ConfigLayer } from '../types/index.js';
+} from '../../utils/merge-utils.js';
+import { ConfigLayer } from '../../types/index.js';
 
 describe('配置合并工具函数', () => {
   describe('deepMerge', () => {
-    test('应该正确深度合并两个对象', () => {
+    it('应该正确深度合并两个对象', () => {
       const target = {
         a: 1,
         b: {
@@ -46,12 +47,12 @@ describe('配置合并工具函数', () => {
       });
     });
 
-    test('应该处理空对象', () => {
+    it('应该处理空对象', () => {
       const result = deepMerge({}, { a: 1 });
       expect(result).toEqual({ a: 1 });
     });
 
-    test('应该保持原始对象不变', () => {
+    it('应该保持原始对象不变', () => {
       const target = { a: 1 };
       const source = { b: 2 };
       
@@ -64,7 +65,7 @@ describe('配置合并工具函数', () => {
   });
 
   describe('mergeConfigsByPriority', () => {
-    test('应该按优先级合并配置', () => {
+    it('应该按优先级合并配置', () => {
       const configs = {
         [ConfigLayer.GLOBAL]: {
           theme: 'light',
@@ -92,7 +93,7 @@ describe('配置合并工具函数', () => {
       });
     });
 
-    test('应该处理数组合并', () => {
+    it('应该处理数组合并', () => {
       const configs = {
         [ConfigLayer.GLOBAL]: {
           trustedFolders: ['/global'],
@@ -109,7 +110,7 @@ describe('配置合并工具函数', () => {
       expect(result2.merged.trustedFolders).toEqual(['/global', '/user']);
     });
 
-    test('应该检测配置冲突', () => {
+    it('应该检测配置冲突', () => {
       const configs = {
         [ConfigLayer.GLOBAL]: { theme: 'light' },
         [ConfigLayer.USER]: { theme: 'dark' },
@@ -124,14 +125,14 @@ describe('配置合并工具函数', () => {
   });
 
   describe('isEqual', () => {
-    test('应该正确比较基本类型', () => {
+    it('应该正确比较基本类型', () => {
       expect(isEqual(1, 1)).toBe(true);
       expect(isEqual('a', 'a')).toBe(true);
       expect(isEqual(true, true)).toBe(true);
       expect(isEqual(1, 2)).toBe(false);
     });
 
-    test('应该正确比较对象', () => {
+    it('应该正确比较对象', () => {
       const obj1 = { a: 1, b: { c: 2 } };
       const obj2 = { a: 1, b: { c: 2 } };
       const obj3 = { a: 1, b: { c: 3 } };
@@ -140,12 +141,12 @@ describe('配置合并工具函数', () => {
       expect(isEqual(obj1, obj3)).toBe(false);
     });
 
-    test('应该正确比较数组', () => {
+    it('应该正确比较数组', () => {
       expect(isEqual([1, 2, 3], [1, 2, 3])).toBe(true);
       expect(isEqual([1, 2, 3], [1, 2, 4])).toBe(false);
     });
 
-    test('应该处理null和undefined', () => {
+    it('应该处理null和undefined', () => {
       expect(isEqual(null, null)).toBe(true);
       expect(isEqual(undefined, undefined)).toBe(true);
       expect(isEqual(null, undefined)).toBe(false);
@@ -153,7 +154,7 @@ describe('配置合并工具函数', () => {
   });
 
   describe('配置路径操作', () => {
-    test('应该正确获取嵌套配置值', () => {
+    it('应该正确获取嵌套配置值', () => {
       const config = {
         auth: {
           apiKey: 'test-key',
@@ -168,7 +169,7 @@ describe('配置合并工具函数', () => {
       expect(getConfigValue(config, 'auth.nonexistent')).toBeUndefined();
     });
 
-    test('应该正确设置嵌套配置值', () => {
+    it('应该正确设置嵌套配置值', () => {
       const config: any = {
         auth: {
           existing: 'value',
@@ -182,7 +183,7 @@ describe('配置合并工具函数', () => {
       expect(config.auth.nested.value).toBe('nested-value');
     });
 
-    test('应该正确删除配置值', () => {
+    it('应该正确删除配置值', () => {
       const config: any = {
         auth: {
           apiKey: 'test-key',
@@ -197,7 +198,7 @@ describe('配置合并工具函数', () => {
   });
 
   describe('配置扁平化', () => {
-    test('应该正确扁平化配置对象', () => {
+    it('应该正确扁平化配置对象', () => {
       const config = {
         auth: {
           apiKey: 'test-key',
@@ -219,7 +220,7 @@ describe('配置合并工具函数', () => {
       });
     });
 
-    test('应该正确展开扁平化配置', () => {
+    it('应该正确展开扁平化配置', () => {
       const flatConfig = {
         'auth.apiKey': 'test-key',
         'auth.nested.value': 'nested-value',
@@ -241,7 +242,7 @@ describe('配置合并工具函数', () => {
       });
     });
 
-    test('应该正确处理扁平化和展开的往返转换', () => {
+    it('应该正确处理扁平化和展开的往返转换', () => {
       const original = {
         auth: {
           apiKey: 'test-key',

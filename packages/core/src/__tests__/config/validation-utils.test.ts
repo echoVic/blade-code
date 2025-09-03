@@ -2,6 +2,7 @@
  * 配置验证工具函数测试
  */
 
+import { describe, it, expect } from 'vitest';
 import { 
   validateConfig, 
   safeParseConfigValue, 
@@ -10,12 +11,12 @@ import {
   validateEnvironmentVariables,
   validateConfigFormat,
   validateConfigPermissions
-} from '../utils/validation-utils.js';
-import { BladeUnifiedConfigSchema } from '../types/schemas.js';
+} from '../../utils/validation-utils.js';
+import { BladeUnifiedConfigSchema } from '../../types/schemas.js';
 
 describe('配置验证工具函数', () => {
   describe('validateConfig', () => {
-    test('应该验证有效的配置', () => {
+    it('应该验证有效的配置', () => {
       const validConfig = {
         auth: {
           apiKey: 'test-key',
@@ -45,7 +46,7 @@ describe('配置验证工具函数', () => {
       expect(result.errors).toHaveLength(0);
     });
 
-    test('应该检测无效的配置', () => {
+    it('应该检测无效的配置', () => {
       const invalidConfig: any = {
         auth: {
           baseUrl: 'invalid-url', // 无效的URL
@@ -60,7 +61,7 @@ describe('配置验证工具函数', () => {
       expect(result.errors).toHaveLength(2);
     });
 
-    test('应该返回标准化的配置', () => {
+    it('应该返回标准化的配置', () => {
       const config = {
         auth: {
           apiKey: 'test-key',
@@ -77,12 +78,12 @@ describe('配置验证工具函数', () => {
   });
 
   describe('safeParseConfigValue', () => {
-    test('应该正确解析数字值', () => {
+    it('应该正确解析数字值', () => {
       expect(safeParseConfigValue('123')).toBe(123);
       expect(safeParseConfigValue('123.45')).toBe(123.45);
     });
 
-    test('应该正确解析布尔值', () => {
+    it('应该正确解析布尔值', () => {
       expect(safeParseConfigValue('true')).toBe(true);
       expect(safeParseConfigValue('false')).toBe(false);
       expect(safeParseConfigValue('TRUE')).toBe(true);
@@ -90,19 +91,19 @@ describe('配置验证工具函数', () => {
       expect(safeParseConfigValue('0')).toBe(false);
     });
 
-    test('应该正确解析JSON对象', () => {
+    it('应该正确解析JSON对象', () => {
       const jsonStr = '{"key": "value"}';
       const result = safeParseConfigValue(jsonStr);
       expect(result).toEqual({ key: 'value' });
     });
 
-    test('应该正确解析数组', () => {
+    it('应该正确解析数组', () => {
       const arrayStr = '[1, 2, 3]';
       const result = safeParseConfigValue(arrayStr);
       expect(result).toEqual([1, 2, 3]);
     });
 
-    test('应该返回原始字符串对于无法解析的值', () => {
+    it('应该返回原始字符串对于无法解析的值', () => {
       const invalidJson = '{invalid: json}';
       const result = safeParseConfigValue(invalidJson);
       expect(result).toBe(invalidJson);
@@ -110,13 +111,13 @@ describe('配置验证工具函数', () => {
   });
 
   describe('validateConfigPath', () => {
-    test('应该验证有效的配置路径', () => {
+    it('应该验证有效的配置路径', () => {
       expect(validateConfigPath('auth.apiKey')).toBe(true);
       expect(validateConfigPath('ui.theme')).toBe(true);
       expect(validateConfigPath('nested.config.value')).toBe(true);
     });
 
-    test('应该拒绝无效的配置路径', () => {
+    it('应该拒绝无效的配置路径', () => {
       expect(validateConfigPath('')).toBe(false);
       expect(validateConfigPath('.invalid')).toBe(false);
       expect(validateConfigPath('invalid.')).toBe(false);
@@ -125,18 +126,18 @@ describe('配置验证工具函数', () => {
   });
 
   describe('validateConfigValue', () => {
-    test('应该验证配置值', () => {
+    it('应该验证配置值', () => {
       const result = validateConfigValue('auth.timeout', 30000);
       expect(result.valid).toBe(true);
     });
 
-    test('应该检测无效的配置值', () => {
+    it('应该检测无效的配置值', () => {
       const result = validateConfigValue('auth.timeout', -1);
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('auth.timeout: 值太小，最小值 1000');
     });
 
-    test('应该为大值提供警告', () => {
+    it('应该为大值提供警告', () => {
       const longString = 'a'.repeat(1001);
       const result = validateConfigValue('test.value', longString);
       expect(result.suggestions).toContain('test.value: 字符串长度较大，考虑优化');
@@ -144,28 +145,28 @@ describe('配置验证工具函数', () => {
   });
 
   describe('validateConfigFormat', () => {
-    test('应该验证有效的JSON格式', () => {
+    it('应该验证有效的JSON格式', () => {
       const jsonContent = '{"key": "value"}';
       const result = validateConfigFormat(jsonContent, 'json');
       expect(result.valid).toBe(true);
       expect(result.parsed).toEqual({ key: 'value' });
     });
 
-    test('应该拒绝无效的JSON格式', () => {
+    it('应该拒绝无效的JSON格式', () => {
       const invalidJson = '{invalid: json}';
       const result = validateConfigFormat(invalidJson, 'json');
       expect(result.valid).toBe(false);
       expect(result.error).toBeDefined();
     });
 
-    test('应该拒绝不支持的格式', () => {
+    it('应该拒绝不支持的格式', () => {
       const result = validateConfigFormat('content', 'yaml' as any);
       expect(result.valid).toBe(false);
     });
   });
 
   describe('validateEnvironmentVariables', () => {
-    test('应该验证环境变量', () => {
+    it('应该验证环境变量', () => {
       // 保存原始环境变量
       const originalEnv = process.env;
       
@@ -183,7 +184,7 @@ describe('配置验证工具函数', () => {
       process.env = originalEnv;
     });
 
-    test('应该为缺失的必需环境变量提供警告', () => {
+    it('应该为缺失的必需环境变量提供警告', () => {
       // 保存原始环境变量
       const originalEnv = process.env;
       
@@ -202,7 +203,7 @@ describe('配置验证工具函数', () => {
   });
 
   describe('validateConfigPermissions', () => {
-    test('应该检测敏感信息', () => {
+    it('应该检测敏感信息', () => {
       const configWithSensitiveData = {
         auth: {
           apiKey: 'secret-api-key',
@@ -218,7 +219,7 @@ describe('配置验证工具函数', () => {
       expect(result.privacyWarnings).toContain('配置中包含敏感信息字段: auth.apiKey, auth.password');
     });
 
-    test('应该检查网络安全性', () => {
+    it('应该检查网络安全性', () => {
       const insecureConfig = {
         auth: {
           baseUrl: 'http://insecure-api.com', // 不安全的HTTP
@@ -229,7 +230,7 @@ describe('配置验证工具函数', () => {
       expect(result.securityWarnings).toContain('基础 URL 应使用 HTTPS 协议');
     });
 
-    test('应该验证安全配置', () => {
+    it('应该验证安全配置', () => {
       const secureConfig = {
         auth: {
           apiKey: '',

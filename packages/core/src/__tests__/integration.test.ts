@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createConfig, initializeCore, VERSION } from '../src/index.js';
+import { createConfig, initializeCore, VERSION } from '../index.js';
 
 describe('Core 包集成测试', () => {
   it('应该正确导出版本信息', () => {

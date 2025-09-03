@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { createConfig, ConfigLayers } from '../src/config/index.js';
-import { ConfigLayer } from '../src/types/config.js';
+import { createConfig, ConfigLayers } from '../config/index.js';
+import { ConfigLayer } from '../types/config.js';
 
 describe('配置系统', () => {
   describe('createConfig', () => {

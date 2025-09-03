@@ -2,78 +2,79 @@
  * Agent 单元测试
  */
 
-import { Agent } from '../src/agent/Agent.js';
-import { BaseComponent } from '../src/agent/BaseComponent.js';
-import { LLMManager } from '../src/agent/LLMManager.js';
-import { ToolComponent } from '../src/agent/ToolComponent.js';
-import { ContextComponent } from '../src/agent/ContextComponent.js';
-import { LoggerComponent } from '../src/agent/LoggerComponent.js';
-import { MCPComponent } from '../src/agent/MCPComponent.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { Agent } from '../../agent/Agent.js';
+import { BaseComponent } from '../../agent/BaseComponent.js';
+import { LLMManager } from '../../agent/LLMManager.js';
+import { ToolComponent } from '../../agent/ToolComponent.js';
+import { ContextComponent } from '../../agent/ContextComponent.js';
+import { LoggerComponent } from '../../agent/LoggerComponent.js';
+import { MCPComponent } from '../../agent/MCPComponent.js';
 
 // Mock 组件
 const mockLLMManager = {
-  initialize: jest.fn().mockResolvedValue(undefined),
-  chat: jest.fn().mockResolvedValue({ content: 'Mock response' }),
-  destroy: jest.fn().mockResolvedValue(undefined)
+  initialize: vi.fn().mockResolvedValue(undefined),
+  chat: vi.fn().mockResolvedValue({ content: 'Mock response' }),
+  destroy: vi.fn().mockResolvedValue(undefined)
 };
 
 const mockToolComponent = {
-  initialize: jest.fn().mockResolvedValue(undefined),
-  registerTool: jest.fn().mockReturnValue(true),
-  executeTool: jest.fn().mockResolvedValue({ success: true, result: 'Tool executed' }),
-  destroy: jest.fn().mockResolvedValue(undefined)
+  initialize: vi.fn().mockResolvedValue(undefined),
+  registerTool: vi.fn().mockReturnValue(true),
+  executeTool: vi.fn().mockResolvedValue({ success: true, result: 'Tool executed' }),
+  destroy: vi.fn().mockResolvedValue(undefined)
 };
 
 const mockContextComponent = {
-  initialize: jest.fn().mockResolvedValue(undefined),
-  addContext: jest.fn().mockReturnValue(undefined),
-  getContext: jest.fn().mockReturnValue({}),
-  destroy: jest.fn().mockResolvedValue(undefined)
+  initialize: vi.fn().mockResolvedValue(undefined),
+  addContext: vi.fn().mockReturnValue(undefined),
+  getContext: vi.fn().mockReturnValue({}),
+  destroy: vi.fn().mockResolvedValue(undefined)
 };
 
 const mockLoggerComponent = {
-  initialize: jest.fn().mockResolvedValue(undefined),
-  info: jest.fn(),
-  error: jest.fn(),
-  debug: jest.fn(),
-  destroy: jest.fn().mockResolvedValue(undefined)
+  initialize: vi.fn().mockResolvedValue(undefined),
+  info: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+  destroy: vi.fn().mockResolvedValue(undefined)
 };
 
 const mockMCPComponent = {
-  initialize: jest.fn().mockResolvedValue(undefined),
-  connect: jest.fn().mockResolvedValue({ success: true }),
-  disconnect: jest.fn().mockResolvedValue(undefined),
-  destroy: jest.fn().mockResolvedValue(undefined)
+  initialize: vi.fn().mockResolvedValue(undefined),
+  connect: vi.fn().mockResolvedValue({ success: true }),
+  disconnect: vi.fn().mockResolvedValue(undefined),
+  destroy: vi.fn().mockResolvedValue(undefined)
 };
 
 // Mock 组件管理器
-jest.mock('../src/agent/LLMManager.js', () => {
+vi.mock('../../agent/LLMManager.js', () => {
   return {
-    LLMManager: jest.fn().mockImplementation(() => mockLLMManager)
+    LLMManager: vi.fn().mockImplementation(() => mockLLMManager)
   };
 });
 
-jest.mock('../src/agent/ToolComponent.js', () => {
+vi.mock('../../agent/ToolComponent.js', () => {
   return {
-    ToolComponent: jest.fn().mockImplementation(() => mockToolComponent)
+    ToolComponent: vi.fn().mockImplementation(() => mockToolComponent)
   };
 });
 
-jest.mock('../src/agent/ContextComponent.js', () => {
+vi.mock('../../agent/ContextComponent.js', () => {
   return {
-    ContextComponent: jest.fn().mockImplementation(() => mockContextComponent)
+    ContextComponent: vi.fn().mockImplementation(() => mockContextComponent)
   };
 });
 
-jest.mock('../src/agent/LoggerComponent.js', () => {
+vi.mock('../../agent/LoggerComponent.js', () => {
   return {
-    LoggerComponent: jest.fn().mockImplementation(() => mockLoggerComponent)
+    LoggerComponent: vi.fn().mockImplementation(() => mockLoggerComponent)
   };
 });
 
-jest.mock('../src/agent/MCPComponent.js', () => {
+vi.mock('../../agent/MCPComponent.js', () => {
   return {
-    MCPComponent: jest.fn().mockImplementation(() => mockMCPComponent)
+    MCPComponent: vi.fn().mockImplementation(() => mockMCPComponent)
   };
 });
 
@@ -82,7 +83,7 @@ describe('Agent', () => {
   
   beforeEach(() => {
     // 重置所有 mock
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     
     // 创建新的 Agent 实例
     agent = new Agent({
@@ -101,11 +102,11 @@ describe('Agent', () => {
   });
   
   describe('初始化', () => {
-    test('应该成功创建 Agent 实例', () => {
+    it('应该成功创建 Agent 实例', () => {
       expect(agent).toBeInstanceOf(Agent);
     });
     
-    test('应该正确初始化配置', () => {
+    it('应该正确初始化配置', () => {
       const config = agent.getConfig();
       expect(config).toBeDefined();
       expect(config.llm).toBeDefined();
@@ -113,7 +114,7 @@ describe('Agent', () => {
       expect(config.llm.apiKey).toBe('test-key');
     });
     
-    test('应该能够正确初始化所有组件', async () => {
+    it('应该能够正确初始化所有组件', async () => {
       await agent.init();
       
       expect(LLMManager).toHaveBeenCalled();
@@ -129,7 +130,7 @@ describe('Agent', () => {
       expect(mockMCPComponent.initialize).toHaveBeenCalled();
     });
     
-    test('应该正确设置状态', async () => {
+    it('应该正确设置状态', async () => {
       expect(agent.isInitialized()).toBe(false);
       
       await agent.init();
@@ -142,7 +143,7 @@ describe('Agent', () => {
       await agent.init();
     });
     
-    test('应该能够发送消息并接收响应', async () => {
+    it('应该能够发送消息并接收响应', async () => {
       const response = await agent.chat('Hello, world!');
       
       expect(response).toBeDefined();
@@ -150,7 +151,7 @@ describe('Agent', () => {
       expect(mockLLMManager.chat).toHaveBeenCalledWith('Hello, world!');
     });
     
-    test('应该能够处理对话上下文', async () => {
+    it('应该能够处理对话上下文', async () => {
       await agent.chat('First message');
       await agent.chat('Second message');
       
@@ -169,7 +170,7 @@ describe('Agent', () => {
       );
     });
     
-    test('应该在错误时正确处理', async () => {
+    it('应该在错误时正确处理', async () => {
       mockLLMManager.chat.mockRejectedValueOnce(new Error('LLM Error'));
       
       await expect(agent.chat('Hello')).rejects.toThrow('LLM Error');
@@ -182,7 +183,7 @@ describe('Agent', () => {
       await agent.init();
     });
     
-    test('应该能够执行工具', async () => {
+    it('应该能够执行工具', async () => {
       const result = await agent.executeTool('test-tool', { param: 'value' });
       
       expect(result).toBeDefined();
@@ -191,7 +192,7 @@ describe('Agent', () => {
       expect(mockToolComponent.executeTool).toHaveBeenCalledWith('test-tool', { param: 'value' });
     });
     
-    test('应该在工具执行错误时正确处理', async () => {
+    it('应该在工具执行错误时正确处理', async () => {
       mockToolComponent.executeTool.mockRejectedValueOnce(new Error('Tool Error'));
       
       await expect(agent.executeTool('test-tool', {})).rejects.toThrow('Tool Error');
@@ -204,7 +205,7 @@ describe('Agent', () => {
       await agent.init();
     });
     
-    test('应该能够添加上下文', () => {
+    it('应该能够添加上下文', () => {
       agent.addContext({ type: 'test', content: 'test content' });
       
       expect(mockContextComponent.addContext).toHaveBeenCalledWith({
@@ -213,7 +214,7 @@ describe('Agent', () => {
       });
     });
     
-    test('应该能够获取上下文', () => {
+    it('应该能够获取上下文', () => {
       const context = agent.getContext();
       
       expect(context).toBeDefined();
@@ -226,7 +227,7 @@ describe('Agent', () => {
       await agent.init();
     });
     
-    test('应该能够连接到 MCP 服务器', async () => {
+    it('应该能够连接到 MCP 服务器', async () => {
       const result = await agent.connectMCP('ws://localhost:3000');
       
       expect(result).toBeDefined();
@@ -234,7 +235,7 @@ describe('Agent', () => {
       expect(mockMCPComponent.connect).toHaveBeenCalledWith('ws://localhost:3000');
     });
     
-    test('应该能够断开 MCP 连接', async () => {
+    it('应该能够断开 MCP 连接', async () => {
       await agent.disconnectMCP();
       
       expect(mockMCPComponent.disconnect).toHaveBeenCalled();
@@ -242,11 +243,11 @@ describe('Agent', () => {
   });
   
   describe('组件管理', () => {
-    test('应该能够注册自定义组件', async () => {
+    it('应该能够注册自定义组件', async () => {
       class CustomComponent extends BaseComponent {
         name = 'custom';
-        initialize = jest.fn().mockResolvedValue(undefined);
-        destroy = jest.fn().mockResolvedValue(undefined);
+        initialize = vi.fn().mockResolvedValue(undefined);
+        destroy = vi.fn().mockResolvedValue(undefined);
       }
       
       const customComponent = new CustomComponent(agent as any);
@@ -257,11 +258,11 @@ describe('Agent', () => {
       expect(customComponent.initialize).toHaveBeenCalled();
     });
     
-    test('应该防止重复注册组件', async () => {
+    it('应该防止重复注册组件', async () => {
       class CustomComponent extends BaseComponent {
         name = 'custom';
-        initialize = jest.fn().mockResolvedValue(undefined);
-        destroy = jest.fn().mockResolvedValue(undefined);
+        initialize = vi.fn().mockResolvedValue(undefined);
+        destroy = vi.fn().mockResolvedValue(undefined);
       }
       
       const component = new CustomComponent(agent as any);
@@ -280,7 +281,7 @@ describe('Agent', () => {
       await agent.init();
     });
     
-    test('应该正确销毁所有组件', async () => {
+    it('应该正确销毁所有组件', async () => {
       await agent.destroy();
       
       expect(mockLLMManager.destroy).toHaveBeenCalled();
@@ -292,7 +293,7 @@ describe('Agent', () => {
       expect(agent.isInitialized()).toBe(false);
     });
     
-    test('应该能够多次安全调用销毁', async () => {
+    it('应该能够多次安全调用销毁', async () => {
       await agent.destroy();
       await agent.destroy(); // 第二次调用
       
@@ -302,14 +303,14 @@ describe('Agent', () => {
   });
   
   describe('错误处理', () => {
-    test('应该在初始化失败时正确处理', async () => {
+    it('应该在初始化失败时正确处理', async () => {
       mockLLMManager.initialize.mockRejectedValueOnce(new Error('Init Error'));
       
       await expect(agent.init()).rejects.toThrow('Init Error');
       expect(agent.isInitialized()).toBe(false);
     });
     
-    test('应该在组件初始化失败时正确清理', async () => {
+    it('应该在组件初始化失败时正确清理', async () => {
       mockToolComponent.initialize.mockRejectedValueOnce(new Error('Tool Init Error'));
       
       await expect(agent.init()).rejects.toThrow('Tool Init Error');
@@ -321,7 +322,7 @@ describe('Agent', () => {
   });
   
   describe('配置管理', () => {
-    test('应该能够更新配置', () => {
+    it('应该能够更新配置', () => {
       const newConfig = {
         llm: {
           provider: 'new-provider',
@@ -340,7 +341,7 @@ describe('Agent', () => {
       expect(config.ui.theme).toBe('dark');
     });
     
-    test('应该能够获取特定配置', () => {
+    it('应该能够获取特定配置', () => {
       const llmConfig = agent.getConfig().llm;
       expect(llmConfig).toBeDefined();
       expect(llmConfig.provider).toBe('test');

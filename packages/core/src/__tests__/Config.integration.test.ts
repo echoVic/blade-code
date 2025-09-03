@@ -2,14 +2,14 @@
  * 配置管理集成测试
  */
 
-import { ConfigurationManager } from '../../packages/core/src/config/ConfigurationManager.js';
-import { ConfigLayer } from '../../packages/core/src/config/types/index.js';
+import { ConfigurationManager } from '../src/config/ConfigurationManager.js';
+import { ConfigLayer } from '../src/config/types/index.js';
 
 describe('配置管理集成测试', () => {
   let configManager: ConfigurationManager;
   
   beforeAll(async () => {
-    jest.setTimeout(30000);
+    // jest.setTimeout(30000);
   });
   
   beforeEach(async () => {
@@ -132,7 +132,7 @@ describe('配置管理集成测试', () => {
     });
     
     test('应该正确处理配置文件更新事件', async () => {
-      const mockCallback = jest.fn();
+      const mockCallback = vi.fn();
       const unsubscribe = configManager.subscribe(mockCallback);
       
       // 触发配置变更
@@ -185,7 +185,7 @@ describe('配置管理集成测试', () => {
     test('应该在配置文件损坏时优雅降级', async () => {
       // 模拟配置文件读取错误
       const fs = await import('fs');
-      jest.spyOn(fs.promises, 'readFile').mockRejectedValueOnce(
+      vi.spyOn(fs.promises, 'readFile').mockRejectedValueOnce(
         new Error('Permission denied')
       );
       
@@ -202,7 +202,7 @@ describe('配置管理集成测试', () => {
     test('应该正确处理配置解析错误', async () => {
       // 模拟无效的JSON配置文件
       const fs = await import('fs');
-      jest.spyOn(fs.promises, 'readFile').mockResolvedValueOnce(
+      vi.spyOn(fs.promises, 'readFile').mockResolvedValueOnce(
         'invalid json content' as any
       );
       
