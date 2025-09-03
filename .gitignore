@@ -47,6 +47,7 @@ config.env
 
 # 构建输出
 build/
+bin/
 coverage/
 .nyc_output/
 
