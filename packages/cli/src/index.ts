@@ -1,15 +1,15 @@
 // CLI包入口文件
 
 // 核心组件
-export { BladeApp, runBladeApp } from './App.js';
+export { BladeApp, runBladeApp } from './ui/App.js';
 
 // UI组件
-export { CommandPalette } from './components/CommandPalette.js';
-export { MainLayout } from './components/MainLayout.js';
-export { NotificationSystem, useNotify } from './components/NotificationSystem.js';
-export { PerformanceMonitor, PerformanceMonitorStatic } from './components/PerformanceMonitor.js';
-export { SplashScreen } from './components/SplashScreen.js';
-export { StatusBar } from './components/StatusBar.js';
+export { CommandPalette } from './ui/components/CommandPalette.js';
+export { MainLayout } from './ui/components/MainLayout.js';
+export { NotificationSystem, useNotify } from './ui/components/NotificationSystem.js';
+export { PerformanceMonitor, PerformanceMonitorStatic } from './ui/components/PerformanceMonitor.js';
+export { SplashScreen } from './ui/components/SplashScreen.js';
+export { StatusBar } from './ui/components/StatusBar.js';
 
 // Hooks
 export { useAppNavigation } from './hooks/useAppNavigation.js';
