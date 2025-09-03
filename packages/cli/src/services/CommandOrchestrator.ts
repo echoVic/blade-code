@@ -160,7 +160,7 @@ export class CommandOrchestrator {
    * 清除命令
    */
   private async executeClearCommand(): Promise<CommandResult> {
-    if (this.contextComponent) {
+    if (this.contextComponent && typeof this.contextComponent.clear === 'function') {
       this.contextComponent.clear();
     }
     
@@ -178,8 +178,8 @@ export class CommandOrchestrator {
     const status = {
       agent: this.agent ? '已初始化' : '未初始化',
       llm: config.auth.modelName || '未设置',
-      tools: this.toolComponent ? this.toolComponent.getToolCount() : 0,
-      context: this.contextComponent ? this.contextComponent.getMessageCount() : 0,
+      tools: (this.toolComponent && typeof this.toolComponent.getToolCount === 'function') ? this.toolComponent.getToolCount() : 0,
+      context: (this.contextComponent && typeof this.contextComponent.getMessageCount === 'function') ? this.contextComponent.getMessageCount() : 0,
     };
 
     const statusText = `
@@ -268,6 +268,13 @@ export class CommandOrchestrator {
       return {
         success: false,
         error: '工具组件未初始化',
+      };
+    }
+
+    if (!this.toolComponent || typeof this.toolComponent.listTools !== 'function') {
+      return {
+        success: true,
+        output: `🛠️ 可用工具 (0 个): 工具组件未初始化`,
       };
     }
 

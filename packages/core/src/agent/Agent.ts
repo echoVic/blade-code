@@ -34,6 +34,14 @@ export class Agent {
   }
 
   /**
+   * 初始化Agent
+   */
+  public async init(): Promise<void> {
+    // 这里可以添加初始化逻辑，目前为空实现
+    await Promise.resolve();
+  }
+
+  /**
    * 基础聊天
    */
   public async chat(message: string): Promise<string> {
@@ -73,5 +81,34 @@ export class Agent {
       baseUrl: config.baseUrl,
       modelName: config.modelName,
     });
+  }
+
+  /**
+   * 获取LLM管理器
+   */
+  public getLLMManager(): LLMManager {
+    return this.llmManager;
+  }
+
+  /**
+   * 获取上下文组件 - 临时返回null
+   */
+  public getContextComponent(): any {
+    return null;
+  }
+
+  /**
+   * 获取工具组件 - 临时返回null
+   */
+  public getToolComponent(): any {
+    return null;
+  }
+
+  /**
+   * 销毁Agent
+   */
+  public async destroy(): Promise<void> {
+    // 清理资源
+    await Promise.resolve();
   }
 }
