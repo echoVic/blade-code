@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
-import { MCPClient, MCPServer, MCPConnectionConfig } from '@modelcontextprotocol/sdk';
+import { Client, Server } from '@modelcontextprotocol/sdk';
 import { ToolComponent } from '@blade-ai/core';
 import { UIDisplay, UIInput, UILayout, UIList, UIProgress } from '../ui/index.js';
 
@@ -54,7 +54,7 @@ export function mcpCommand(program: Command): void {
         spinner = UIProgress.spinner('正在启动 MCP 服务器...');
         spinner.start();
 
-        const server = new MCPServer(config, toolManager);
+        const server = new Server(config, toolManager);
         await server.start();
 
         server.on('started', info => {
@@ -121,7 +121,7 @@ export function mcpCommand(program: Command): void {
         spinner = UIProgress.spinner('正在连接到 MCP 服务器...');
         spinner.start();
 
-        const client = new MCPClient();
+        const client = new Client();
         const session = await client.connect(serverConfig);
 
         spinner.succeed('连接成功');
@@ -353,7 +353,7 @@ export function mcpCommand(program: Command): void {
 /**
  * 运行交互式客户端
  */
-async function runInteractiveClient(client: MCPClient, sessionId: string): Promise<void> {
+async function runInteractiveClient(client: Client, sessionId: string): Promise<void> {
   console.log(chalk.blue('\n🎮 进入交互式模式 (输入 "exit" 退出)'));
   console.log('');
 
@@ -403,7 +403,7 @@ async function runInteractiveClient(client: MCPClient, sessionId: string): Promi
 /**
  * 显示服务器信息
  */
-async function showServerInfo(client: MCPClient, sessionId: string): Promise<void> {
+async function showServerInfo(client: Client, sessionId: string): Promise<void> {
   try {
     console.log(chalk.blue('\n📋 服务器信息:'));
 
@@ -431,7 +431,7 @@ async function showServerInfo(client: MCPClient, sessionId: string): Promise<voi
 /**
  * 列出资源
  */
-async function listResources(client: MCPClient, sessionId: string): Promise<void> {
+async function listResources(client: Client, sessionId: string): Promise<void> {
   try {
     const resources = await client.listResources(sessionId);
 
@@ -463,7 +463,7 @@ async function listResources(client: MCPClient, sessionId: string): Promise<void
 /**
  * 读取资源
  */
-async function readResource(client: MCPClient, sessionId: string): Promise<void> {
+async function readResource(client: Client, sessionId: string): Promise<void> {
   try {
     const resources = await client.listResources(sessionId);
 
@@ -497,7 +497,7 @@ async function readResource(client: MCPClient, sessionId: string): Promise<void>
 /**
  * 列出工具
  */
-async function listTools(client: MCPClient, sessionId: string): Promise<void> {
+async function listTools(client: Client, sessionId: string): Promise<void> {
   try {
     const tools = await client.listTools(sessionId);
 
@@ -532,7 +532,7 @@ async function listTools(client: MCPClient, sessionId: string): Promise<void> {
 /**
  * 调用工具
  */
-async function callTool(client: MCPClient, sessionId: string): Promise<void> {
+async function callTool(client: Client, sessionId: string): Promise<void> {
   try {
     const tools = await client.listTools(sessionId);
 

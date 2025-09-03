@@ -18,11 +18,11 @@
     "README.md"
   ],
   "scripts": {
-    "dev": "tsc --build --watch",
-    "build": "pnpm -r build",
-    "build:bundle": "node scripts/build-bundle.js --all",
-    "build:bundle:core": "node scripts/build-bundle.js core",
-    "build:bundle:cli": "node scripts/build-bundle.js cli",
+    "dev": "node esbuild.config.js --watch",
+    "build": "node esbuild.config.js",
+    "build:packages": "pnpm -r build",
+    "build:bundle": "npm run build",
+    "bundle": "npm run build",
     "start": "node bin/blade.js",
     "test": "vitest",
     "test:watch": "vitest --watch",
@@ -53,7 +53,10 @@
     "test:summary": "node scripts/test-report.js",
     "release:major": "node scripts/release.js --major",
     "release:minor": "node scripts/release.js --minor",
-    "release:patch": "node scripts/release.js --patch"
+    "release:patch": "node scripts/release.js --patch",
+    "clean": "rm -rf dist bin bundle node_modules/.cache",
+    "prepare": "npm run build",
+    "preflight": "npm run clean && pnpm install && npm run format && npm run lint && npm run build && npm run typecheck && npm run test:ci"
   },
   "keywords": [
     "cli",
@@ -108,7 +111,7 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.17.4",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
     "axios": "^1.9.0",
