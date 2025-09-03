@@ -3,8 +3,82 @@
  */
 
 import React, { createContext, useContext, useMemo } from 'react';
-import type { ThemeConfig } from '@blade/ui/src/types/design-tokens';
-import { builtinThemes } from '@blade/ui/src/themes/builtin-themes';
+// 临时主题配置类型定义
+interface ThemeConfig {
+  colors: {
+    primary: string;
+    secondary: string;
+    background: string;
+    text: string;
+    border: string;
+  };
+  typography: {
+    fontSize: number;
+    lineHeight: number;
+    fontFamily: string;
+  };
+  tokens: {
+    [key: string]: any;
+  };
+  components: {
+    [key: string]: any;
+  };
+}
+
+// 内置主题
+const builtinThemes = {
+  default: {
+    colors: {
+      primary: '#007acc',
+      secondary: '#6c757d',
+      background: '#ffffff',
+      text: '#333333',
+      border: '#dee2e6'
+    },
+    typography: {
+      fontSize: 14,
+      lineHeight: 1.5,
+      fontFamily: 'monospace'
+    },
+    tokens: {
+      colors: {
+        primary: '#007acc',
+        secondary: '#6c757d',
+        background: '#ffffff',
+        text: '#333333',
+        border: '#dee2e6'
+      },
+      spacing: {
+        xs: 4,
+        sm: 8,
+        md: 16,
+        lg: 24,
+        xl: 32
+      },
+      typography: {
+        fontSize: {
+          sm: 12,
+          md: 14,
+          lg: 16,
+          xl: 18
+        }
+      }
+    },
+    components: {
+      Text: {
+        primary: { color: '#333333' },
+        secondary: { color: '#6c757d' },
+        success: { color: '#28a745' },
+        warning: { color: '#ffc107' },
+        error: { color: '#dc3545' }
+      },
+      Box: {
+        default: { backgroundColor: '#ffffff' },
+        card: { backgroundColor: '#f8f9fa', border: '1px solid #dee2e6' }
+      }
+    }
+  } as ThemeConfig
+};
 
 // 创建主题上下文
 interface ThemeContextType {

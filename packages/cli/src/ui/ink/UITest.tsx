@@ -151,7 +151,7 @@ const TestApp = () => {
               <Text>这是一个卡片布局测试</Text>
             </Layout>
             
-            <Layout type="divider" title="分隔线测试" marginY={1} />
+            <Layout type="divider" title="分隔线测试" margin={1} />
           </Box>
           
           {/* 虚拟滚动测试 */}

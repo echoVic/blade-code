@@ -135,7 +135,7 @@ export const Animation: React.FC<AnimationProps> = ({
     };
 
     return (
-      <Text style={animationStyle}>
+      <Text>
         {content}
       </Text>
     );

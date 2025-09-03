@@ -1,19 +1,18 @@
-import { promises as fs } from 'fs';
-import path from 'path';
-import os from 'os';
-import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
-import { 
-  BladeConfig, 
-  ConfigStatus, 
-  ConfigError, 
-  EnvMapping, 
-  DEFAULT_CONFIG,
-  ConfigLocations,
-  UserConfigOverride,
-  ConfigMigration 
-} from './types.js';
+import { promises as fs } from 'fs';
+import os from 'os';
+import path from 'path';
 import { performance } from 'perf_hooks';
+import {
+  BladeConfig,
+  ConfigError,
+  ConfigLocations,
+  ConfigMigration,
+  ConfigStatus,
+  DEFAULT_CONFIG,
+  EnvMapping,
+  UserConfigOverride,
+} from './types.js';
 
 export class ConfigManager {
   private static instance: ConfigManager;
@@ -55,27 +54,27 @@ export class ConfigManager {
     try {
       // 1. 加载默认配置
       this.config = await this.loadDefaultConfig();
-      
+
       // 2. 应用环境变量
       this.config = this.applyEnvVariables(this.config);
-      
+
       // 3. 加载用户配置文件
       const userConfigData = await this.loadUserConfigFile();
       if (userConfigData) {
         this.config = this.mergeConfig(this.config, userConfigData);
       }
-      
+
       // 4. 应用用户传入的配置
       if (userConfig) {
         this.config = this.mergeConfig(this.config, userConfig);
       }
-      
+
       // 5. 运行配置迁移
       this.config = await this.runMigrations(this.config);
-      
+
       // 6. 验证配置
       const { isValid, errors, warnings } = this.validateConfig(this.config);
-      
+
       // 7. 更新配置状态
       this.configStatus = {
         isValid,
@@ -88,7 +87,7 @@ export class ConfigManager {
 
       // 8. 创建必要的目录
       await this.ensureConfigDirectories();
-      
+
       // 9. 保存配置（如果验证通过）
       if (isValid) {
         await this.saveConfig(this.config);
@@ -99,7 +98,7 @@ export class ConfigManager {
 
       this.configLoaded = true;
       const loadTime = performance.now() - startTime;
-      
+
       if (this.config.core.debug) {
         console.log(`配置加载完成，耗时: ${loadTime.toFixed(2)}ms`);
       }
@@ -129,30 +128,32 @@ export class ConfigManager {
     return this.configStatus;
   }
 
-  public async updateConfig(updates: Partial<BladeConfig> | UserConfigOverride): Promise<ConfigStatus> {
+  public async updateConfig(
+    updates: Partial<BladeConfig> | UserConfigOverride
+  ): Promise<ConfigStatus> {
     if (!this.config) {
       throw new Error('配置尚未初始化');
     }
 
     const startTime = performance.now();
-    
+
     try {
       // 创建配置副本
       const newConfig = this.cloneConfig(this.config);
-      
+
       // 应用更新
       const mergedConfig = this.mergeConfig(newConfig, updates);
-      
+
       // 验证新配置
       const { isValid, errors, warnings } = this.validateConfig(mergedConfig);
-      
+
       if (isValid) {
         // 更新内存中的配置
         this.config = mergedConfig;
-        
+
         // 保存到文件
         await this.saveConfig(this.config);
-        
+
         // 更新状态
         this.configStatus = {
           isValid,
@@ -162,7 +163,7 @@ export class ConfigManager {
           lastModified: Date.now(),
           checksum: this.generateConfigChecksum(this.config),
         };
-        
+
         if (this.config.core.debug) {
           const update_time = performance.now() - startTime;
           console.log(`配置更新完成，耗时: ${update_time.toFixed(2)}ms`);
@@ -174,7 +175,7 @@ export class ConfigManager {
         });
       }
 
-      return this.configStatus;
+      return this.configStatus!;
     } catch (error) {
       console.error('配置更新失败:', error);
       throw error;
@@ -245,11 +246,11 @@ export class ConfigManager {
         if (await this.fileExists(configPath)) {
           const content = await fs.readFile(configPath, 'utf-8');
           const config = JSON.parse(content) as Partial<BladeConfig>;
-          
-          if (this.config.core.debug) {
+
+          if (this.config?.core.debug) {
             console.log(`加载配置文件: ${configPath}`);
           }
-          
+
           return config;
         }
       } catch (error) {
@@ -265,13 +266,13 @@ export class ConfigManager {
 
     for (const [envKey, mapping] of Object.entries(this.envMapping)) {
       const envValue = process.env[envKey];
-      
+
       if (envValue !== undefined) {
         try {
           const value = this.parseEnvValue(envValue, mapping.type, mapping.default);
           this.setConfigValue(result, mapping.path, value);
-          
-          if (this.config.core.debug) {
+
+          if (this.config?.core.debug) {
             console.log(`应用环境变量: ${envKey} -> ${mapping.path} = ${value}`);
           }
         } catch (error) {
@@ -317,14 +318,22 @@ export class ConfigManager {
     current[keys[keys.length - 1]] = value;
   }
 
-  private mergeConfig(base: BladeConfig, override: Partial<BladeConfig> | UserConfigOverride): BladeConfig {
+  private mergeConfig(
+    base: BladeConfig,
+    override: Partial<BladeConfig> | UserConfigOverride
+  ): BladeConfig {
     const result = this.cloneConfig(base);
     this.deepMerge(result, override);
     return result;
   }
 
   private deepMerge(target: any, source: any): void {
-    if (typeof target !== 'object' || target === null || typeof source !== 'object' || source === null) {
+    if (
+      typeof target !== 'object' ||
+      target === null ||
+      typeof source !== 'object' ||
+      source === null
+    ) {
       return;
     }
 
@@ -348,7 +357,11 @@ export class ConfigManager {
     return JSON.parse(JSON.stringify(config));
   }
 
-  private validateConfig(config: BladeConfig): { isValid: boolean; errors: ConfigError[]; warnings: ConfigError[] } {
+  private validateConfig(config: BladeConfig): {
+    isValid: boolean;
+    errors: ConfigError[];
+    warnings: ConfigError[];
+  } {
     const errors: ConfigError[] = [];
     const warnings: ConfigError[] = [];
 
@@ -413,11 +426,11 @@ export class ConfigManager {
 
   private async runMigrations(config: BladeConfig): Promise<BladeConfig> {
     const result = this.cloneConfig(config);
-    
+
     for (const migration of this.migrations) {
       if (config.version === migration.from) {
         console.log(`运行配置迁移: ${migration.from} -> ${migration.to}`);
-        
+
         for (const change of migration.changes) {
           if (change.migrationScript) {
             try {
@@ -427,7 +440,7 @@ export class ConfigManager {
             }
           }
         }
-        
+
         result.version = migration.to;
       }
     }
@@ -513,7 +526,7 @@ export class ConfigManager {
 
   private getConfigLocations(): ConfigLocations {
     const homeDir = os.homedir();
-    
+
     return {
       userConfigPath: path.join(homeDir, '.blade', 'config.json'),
       globalConfigPath: path.join('/usr', 'local', 'etc', 'blade', 'config.json'),
@@ -524,61 +537,61 @@ export class ConfigManager {
 
   private getEnvMapping(): EnvMapping {
     return {
-      'BLADE_DEBUG': {
+      BLADE_DEBUG: {
         path: 'core.debug',
         type: 'boolean',
         default: false,
         description: '启用调试模式',
       },
-      'BLADE_API_KEY': {
+      BLADE_API_KEY: {
         path: 'auth.apiKey',
         type: 'string',
         required: false,
         description: 'API密钥',
       },
-      'BLADE_THEME': {
+      BLADE_THEME: {
         path: 'ui.theme',
         type: 'string',
         default: 'default',
         description: 'UI主题',
       },
-      'BLADE_LANGUAGE': {
+      BLADE_LANGUAGE: {
         path: 'ui.language',
         type: 'string',
         default: 'zh-CN',
         description: '界面语言',
       },
-      'BLADE_WORKING_DIR': {
+      BLADE_WORKING_DIR: {
         path: 'core.workingDirectory',
         type: 'string',
         default: process.cwd(),
         description: '工作目录',
       },
-      'BLADE_MAX_MEMORY': {
+      BLADE_MAX_MEMORY: {
         path: 'core.maxMemory',
         type: 'number',
         default: 1024 * 1024 * 1024,
         description: '最大内存使用量',
       },
-      'BLADE_LLM_PROVIDER': {
+      BLADE_LLM_PROVIDER: {
         path: 'llm.provider',
         type: 'string',
         default: 'qwen',
         description: 'LLM提供商',
       },
-      'BLADE_LLM_MODEL': {
+      BLADE_LLM_MODEL: {
         path: 'llm.model',
         type: 'string',
         default: 'qwen-turbo',
         description: 'LLM模型',
       },
-      'BLADE_TELEMETRY': {
+      BLADE_TELEMETRY: {
         path: 'core.telemetry',
         type: 'boolean',
         default: true,
         description: '遥测数据收集',
       },
-      'BLADE_AUTO_UPDATE': {
+      BLADE_AUTO_UPDATE: {
         path: 'core.autoUpdate',
         type: 'boolean',
         default: true,

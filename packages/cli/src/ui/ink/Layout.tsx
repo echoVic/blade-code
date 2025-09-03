@@ -8,7 +8,7 @@ import { themeManager } from '../themes/theme-manager.js';
 import { UIStyles } from '../themes/styles.js';
 
 interface LayoutProps {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   type?: 'header' | 'footer' | 'sidebar' | 'card' | 'panel' | 'grid' | 'divider';
   title?: string;
   subtitle?: string;

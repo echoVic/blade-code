@@ -13,7 +13,7 @@ import { useAppNavigation } from './hooks/useAppNavigation.js';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts.js';
 import { PerformanceProvider } from './ui/ink/PerformanceOptimizer.js';
 import { ResponsiveProvider } from './ui/ink/ResponsiveAdapter.js';
-import { ThemeProvider } from './ui/themes/theme-manager.js';
+import { ThemeProvider } from './ui/ink/ThemeAdapter.js';
 import { SessionProvider, useSession } from './contexts/SessionContext.js';
 // import { useTheme } from './ui/themes/theme-manager.js';
 

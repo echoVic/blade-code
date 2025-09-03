@@ -140,7 +140,7 @@ export const InputManager: React.FC<InputManagerProps> = ({
         setSelectedChoice(prev => (prev > 0 ? prev - 1 : choices.length - 1));
       } else if (key.downArrow) {
         setSelectedChoice(prev => (prev < choices.length - 1 ? prev + 1 : 0));
-      } else if (key.space && type === 'multiselect') {
+      } else if (input === ' ' && type === 'multiselect') {
         setSelectedChoices(prev => {
           if (prev.includes(selectedChoice)) {
             return prev.filter(index => index !== selectedChoice);
@@ -155,9 +155,9 @@ export const InputManager: React.FC<InputManagerProps> = ({
     // 处理文本输入
     if (type === 'text' || type === 'password' || type === 'number' || type === 'confirm') {
       if (key.backspace || key.delete) {
-        setInputValue(prev => prev.slice(0, -1));
+        setInputValue((prev: string) => prev.slice(0, -1));
       } else if (input.length === 1) {
-        setInputValue(prev => prev + input);
+        setInputValue((prev: string) => prev + input);
       }
     }
   });

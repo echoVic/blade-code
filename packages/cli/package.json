@@ -21,17 +21,22 @@
   },
   "dependencies": {
     "@blade-ai/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.17.4",
     "commander": "^14.0.0",
     "ink": "^6.2.3",
+    "lodash-es": "^4.17.21",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.2.0",
+    "@types/lodash-es": "^4.17.12",
     "@types/node": "^22.15.24",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
+    "@types/uuid": "^10.0.0",
     "typescript": "^5.9.2",
-    "@testing-library/react": "^16.2.0",
     "vitest": "^3.0.0"
   }
 }

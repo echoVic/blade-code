@@ -303,7 +303,7 @@ export class FileCommandLoader {
       // 获取默认导出或命名导出的命令
       const command: Command = module.default || module.command;
       
-      if (command && command.name && command.handler) {
+      if (command && command.name && typeof command.handler === 'function') {
         await this.commandService.registerCommand(command);
         console.log(`加载命令: ${command.name} (${filePath})`);
       } else {

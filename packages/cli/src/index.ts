@@ -40,7 +40,7 @@ export { CommandService } from './services/CommandService.js';
 export { McpPromptLoader } from './services/McpPromptLoader.js';
 
 // 主题系统
-export { ThemeProvider, themes, useTheme, useThemeManager } from './ui/themes/theme-manager.js';
+export { ThemeManager, themeManager, defaultTheme, darkTheme } from './ui/themes/theme-manager.js';
 export type { Theme } from './ui/themes/theme-manager.js';
 
 // 工具函数

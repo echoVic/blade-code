@@ -15,7 +15,7 @@ export const useMemoryCleanup = (
   memorySize: number,
   cleanupCallback?: () => void
 ): void => {
-  const cleanupRef = useRef<() => void>();
+  const cleanupRef = useRef<(() => void) | undefined>(undefined);
 
   useEffect(() => {
     // 注册内存使用

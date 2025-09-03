@@ -4,10 +4,12 @@
  */
 import { Text as InkText } from 'ink';
 import React from 'react';
-import type { ColorScale, TextColors } from '@blade/ui/src/types/design-tokens';
+// 临时类型定义
+type ColorScale = string;
+type TextColors = string;
 
 interface TextProps {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   /**
    * 颜色值 - 支持主题令牌路径或直接颜色值
    * @example 'colors.semantic.primary.500' | '#FF0000'
@@ -42,9 +44,17 @@ interface TextProps {
    */
   wrap?: 'wrap' | 'truncate' | 'truncate-start' | 'truncate-middle' | 'truncate-end';
   /**
-   * 主题变体
+   * 文本变体样式
    */
   variant?: 'primary' | 'secondary' | 'success' | 'warning' | 'error' | 'info';
+  /**
+   * 左边距
+   */
+  marginLeft?: number;
+  /**
+   * 上边距
+   */
+  marginTop?: number;
 }
 
 export const Text: React.FC<TextProps> = ({
@@ -105,7 +115,6 @@ export const Text: React.FC<TextProps> = ({
       strikethrough={strikethrough}
       dimColor={dim}
       wrap={wrap}
-      style={textStyle}
     >
       {children}
     </InkText>

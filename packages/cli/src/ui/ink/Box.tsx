@@ -4,7 +4,9 @@
  */
 import { Box as InkBox } from 'ink';
 import React from 'react';
-import type { SpacingTokens } from '@blade/ui/src/types/design-tokens';
+import { toNumber } from 'lodash-es';
+// 临时类型定义
+type SpacingTokens = string;
 
 interface BoxProps {
   /**
@@ -15,6 +17,10 @@ interface BoxProps {
    * Flex方向
    */
   flexDirection?: 'row' | 'row-reverse' | 'column' | 'column-reverse';
+  /**
+   * Gap间距
+   */
+  gap?: number | string;
   /**
    * 主轴对齐方式
    */
@@ -155,9 +161,21 @@ interface BoxProps {
    */
   style?: React.CSSProperties;
   /**
-   * 布局变体
+   * 样式变体
    */
   variant?: 'card' | 'section' | 'container' | 'flex' | 'inline';
+  /**
+   * 点击事件
+   */
+  onPress?: () => void;
+  /**
+   * 鼠标进入事件
+   */
+  onMouseEnter?: () => void;
+  /**
+   * 鼠标离开事件
+   */
+  onMouseLeave?: () => void;
 }
 
 export const Box: React.FC<BoxProps> = ({
@@ -197,6 +215,13 @@ export const Box: React.FC<BoxProps> = ({
   style,
   variant,
 }) => {
+  // 使用 lodash-es 的 toNumber 函数进行类型转换
+  const convertToNumber = (value: string | number | undefined): number | undefined => {
+    if (value === undefined) return undefined;
+    const converted = toNumber(value);
+    return isNaN(converted) ? undefined : converted;
+  };
+
   // 根据变体获取默认样式
   const getVariantStyles = () => {
     // 这里应该从主题上下文中获取样式
@@ -210,11 +235,9 @@ export const Box: React.FC<BoxProps> = ({
       },
       section: {
         padding: 1,
-        marginY: 1,
       },
       container: {
-        paddingX: 2,
-        paddingY: 1,
+        padding: 1,
       },
       flex: {
         display: 'flex',
@@ -234,7 +257,7 @@ export const Box: React.FC<BoxProps> = ({
   const boxStyle: React.CSSProperties = {
     flexDirection,
     justifyContent,
-    alignItems,
+    alignItems: alignItems === 'baseline' ? 'flex-start' : alignItems,
     alignContent,
     flexGrow,
     flexShrink,
@@ -267,37 +290,33 @@ export const Box: React.FC<BoxProps> = ({
     <InkBox
       flexDirection={flexDirection}
       justifyContent={justifyContent}
-      alignItems={alignItems}
-      alignContent={alignContent}
+      alignItems={alignItems === 'baseline' ? 'flex-start' : alignItems}
+      flexWrap={flexWrap}
       flexGrow={flexGrow}
       flexShrink={flexShrink}
       flexBasis={flexBasis}
-      flexWrap={flexWrap}
       width={width}
       height={height}
       minWidth={minWidth}
       minHeight={minHeight}
-      maxWidth={maxWidth}
-      maxHeight={maxHeight}
-      padding={padding}
-      paddingX={paddingX}
-      paddingY={paddingY}
-      paddingTop={paddingTop}
-      paddingBottom={paddingBottom}
-      paddingLeft={paddingLeft}
-      paddingRight={paddingRight}
-      margin={margin}
-      marginX={marginX}
-      marginY={marginY}
-      marginTop={marginTop}
-      marginBottom={marginBottom}
-      marginLeft={marginLeft}
-      marginRight={marginRight}
+      padding={convertToNumber(padding)}
+      paddingX={convertToNumber(paddingX)}
+      paddingY={convertToNumber(paddingY)}
+      paddingTop={convertToNumber(paddingTop)}
+      paddingBottom={convertToNumber(paddingBottom)}
+      paddingLeft={convertToNumber(paddingLeft)}
+      paddingRight={convertToNumber(paddingRight)}
+      margin={convertToNumber(margin)}
+      marginX={convertToNumber(marginX)}
+      marginY={convertToNumber(marginY)}
+      marginTop={convertToNumber(marginTop)}
+      marginBottom={convertToNumber(marginBottom)}
+      marginLeft={convertToNumber(marginLeft)}
+      marginRight={convertToNumber(marginRight)}
       borderStyle={borderStyle || (variantStyles.borderStyle as any)}
       borderColor={borderColor || (variantStyles.borderColor as string)}
       backgroundColor={backgroundColor || (variantStyles.backgroundColor as string)}
       display={display}
-      style={boxStyle}
     >
       {children}
     </InkBox>

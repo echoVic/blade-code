@@ -67,9 +67,11 @@ export const StatusBar: React.FC<StatusBarProps> = ({
             <Text color="#D1D5DB" dimColor>
               MEM: {memoryUsage}
             </Text>
-            <Text color="#D1D5DB" dimColor marginLeft={2}>
-              {fps}
-            </Text>
+            <Box marginLeft={2}>
+              <Text color="#D1D5DB" dimColor>
+                {fps}
+              </Text>
+            </Box>
           </>
         )}
       </Box>

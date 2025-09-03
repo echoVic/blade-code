@@ -65,7 +65,7 @@ export const Spinner: React.FC<SpinnerProps> = ({
   }, [frames.length]);
 
   return (
-    <Text color={color} style={style}>
+    <Text color={color}>
       {frames[frame]} {label}
     </Text>
   );

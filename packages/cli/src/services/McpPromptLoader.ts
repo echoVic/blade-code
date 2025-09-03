@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { McpClient } from '@modelcontextprotocol/sdk/client/index.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { BladeConfig } from '../config/types.js';
 
 export interface McpPrompt {
@@ -20,7 +20,7 @@ export interface McpPrompt {
 
 export class McpPromptLoader {
   private config: BladeConfig;
-  private mcpClient: McpClient | null = null;
+  private mcpClient: Client | null = null;
   private localPrompts: Map<string, McpPrompt> = new Map();
   private remotePrompts: Map<string, McpPrompt> = new Map();
 
