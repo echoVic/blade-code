@@ -9,15 +9,16 @@ interface AppProps {
   testMode?: boolean;
 }
 
-// Claude Code 风格的简洁界面组件
-const ClaudeCodeInterface: React.FC<{ 
+// Blade AI 界面组件
+const BladeInterface: React.FC<{ 
   isInitialized: boolean;
   sessionState: any;
   addUserMessage: (message: string) => void;
   addAssistantMessage: (message: string) => void;
   debug: boolean;
   testMode: boolean;
-}> = ({ isInitialized, sessionState, addUserMessage, addAssistantMessage, testMode }) => {
+  hasApiKey: boolean;
+}> = ({ isInitialized, sessionState, addUserMessage, addAssistantMessage, testMode, hasApiKey }) => {
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const { exit } = useApp();
@@ -89,9 +90,16 @@ const ClaudeCodeInterface: React.FC<{
       </Box>
       
       {/* Input Hint Area */}
-      <Box flexDirection="row" paddingX={2} paddingY={1} borderStyle="round" borderColor="gray">
+      <Box flexDirection="row" paddingX={2} paddingY={0} borderStyle="round" borderColor="gray">
         <Text color="blue" bold>{'> '}</Text>
         <Text color="gray" dimColor>请在终端中直接输入...</Text>
+      </Box>
+      
+      {/* Status Area */}
+      <Box flexDirection="row" justifyContent="flex-end" paddingX={2} paddingTop={1}>
+        {!hasApiKey && (
+          <Text color="red">⚠ API 密钥未配置</Text>
+        )}
       </Box>
     </Box>
   );
@@ -103,6 +111,7 @@ export const BladeApp: React.FC<AppProps> = ({
 }) => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState('正在初始化...');
+  const [hasApiKey, setHasApiKey] = useState(false);
   
   const { state: sessionState, addUserMessage, addAssistantMessage } = useSession();
 
@@ -120,14 +129,17 @@ export const BladeApp: React.FC<AppProps> = ({
       
       // 检查 API 密钥配置
       if (!config.auth.apiKey || config.auth.apiKey.trim() === '') {
+        setHasApiKey(false);
         setIsInitialized(true);
         addAssistantMessage('🚀 欢迎使用 Blade AI 助手！');
-        addAssistantMessage('⚠️  检测到尚未配置 API 密钥');
-        addAssistantMessage('请先配置 API 密钥后使用：\n\n1. 获取 API 密钥：https://apis.iflow.cn\n2. 配置密钥：export BLADE_API_KEY="your-api-key"\n3. 重新启动 Blade');
+        addAssistantMessage('/help for help, /status for your current setup');
+        addAssistantMessage(`Cwd: ${process.cwd()}`);
+        addAssistantMessage('API Base URL: https://apis.iflow.cn\n\n1. 配置密钥：export BLADE_API_KEY="your-api-key"\n2. 重新启动 Blade');
         return;
       }
 
       setLoadingStatus('初始化完成!');
+      setHasApiKey(true);
       setIsInitialized(true);
       
       addAssistantMessage('🚀 Blade AI 助手已就绪！');
@@ -158,13 +170,14 @@ export const BladeApp: React.FC<AppProps> = ({
   }
 
   return (
-    <ClaudeCodeInterface 
+    <BladeInterface 
       isInitialized={isInitialized}
       sessionState={sessionState}
       addUserMessage={addUserMessage}
       addAssistantMessage={addAssistantMessage}
       debug={debug}
       testMode={testMode}
+      hasApiKey={hasApiKey}
     />
   );
 };
