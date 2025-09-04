@@ -60,6 +60,24 @@ export class CommandOrchestrator {
   }
 
   /**
+   * 统一命令执行入口
+   */
+  async executeCommand(input: string): Promise<CommandResult> {
+    const trimmedInput = input.trim();
+    
+    if (trimmedInput.startsWith('/')) {
+      // 斜杠命令
+      const parts = trimmedInput.slice(1).split(' ');
+      const command = parts[0];
+      const args = parts.slice(1);
+      return await this.executeSlashCommand(command, args);
+    } else {
+      // 自然语言
+      return await this.executeNaturalLanguage(trimmedInput);
+    }
+  }
+
+  /**
    * 执行斜杠命令
    */
   async executeSlashCommand(command: string, args: string[] = []): Promise<CommandResult> {

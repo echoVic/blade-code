@@ -1,8 +1,9 @@
 import { useMemoizedFn } from 'ahooks';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text, useApp, useInput } from 'ink';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ConfigService } from '../config/ConfigService.js';
 import { SessionProvider, useSession } from '../contexts/SessionContext.js';
+import { CommandOrchestrator, CommandResult } from '../services/CommandOrchestrator.js';
 
 interface AppProps {
   debug?: boolean;
@@ -18,28 +19,129 @@ const BladeInterface: React.FC<{
   debug: boolean;
   testMode: boolean;
   hasApiKey: boolean;
-}> = ({ isInitialized, sessionState, addUserMessage, addAssistantMessage, testMode, hasApiKey }) => {
+}> = ({ isInitialized, sessionState, addUserMessage, addAssistantMessage, debug, testMode, hasApiKey }) => {
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
   const { exit } = useApp();
+  const { dispatch } = useSession();
+  
+  // 初始化命令协调器
+  const [commandOrchestrator] = useState(() => {
+    try {
+      return CommandOrchestrator.getInstance();
+    } catch (error) {
+      console.error('Failed to initialize CommandOrchestrator:', error);
+      return null;
+    }
+  });
 
-  // 简化版本不处理交互式输入，只显示信息
-  const handleSubmit = useCallback(async (_text: string) => {
-    // 这里不处理任何输入
-  }, []);
-
-  // TODO: 在简化版本中，我们不处理实时输入
-  // 用户可以直接在终端中按 Ctrl+C 退出
-  useEffect(() => {
-    const handleExit = () => {
-      exit();
-    };
+  // 处理命令提交
+  const handleCommandSubmit = useCallback(async (command: string): Promise<CommandResult> => {
+    if (!commandOrchestrator) {
+      return { success: false, error: 'Command orchestrator not available' };
+    }
     
-    process.on('SIGINT', handleExit);
-    return () => {
-      process.off('SIGINT', handleExit);
-    };
+    try {
+      addUserMessage(command);
+      const result = await commandOrchestrator.executeCommand(command);
+      
+      if (result.success && result.output) {
+        addAssistantMessage(result.output);
+      }
+      
+      return result;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      const errorResult = { success: false, error: errorMessage };
+      addAssistantMessage(`❌ ${errorMessage}`);
+      return errorResult;
+    }
+  }, [commandOrchestrator, addUserMessage, addAssistantMessage]);
+
+  // 处理提交
+  const handleSubmit = useCallback(async () => {
+    if (input.trim() && !isProcessing) {
+      const command = input.trim();
+      
+      // 立即清空输入框
+      setInput('');
+      
+      // 添加到历史记录
+      setCommandHistory(prev => [...prev, command]);
+      setHistoryIndex(-1);
+      
+      setIsProcessing(true);
+      dispatch({ type: 'SET_THINKING', payload: true });
+      
+      try {
+        const result = await handleCommandSubmit(command);
+        
+        if (!result.success && result.error) {
+          dispatch({ type: 'SET_ERROR', payload: result.error });
+        }
+        
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : '未知错误';
+        dispatch({ type: 'SET_ERROR', payload: `执行失败: ${errorMessage}` });
+      } finally {
+        setIsProcessing(false);
+        dispatch({ type: 'SET_THINKING', payload: false });
+      }
+    }
+  }, [input, isProcessing, handleCommandSubmit, dispatch]);
+
+  // 处理清屏
+  const handleClear = useCallback(() => {
+    dispatch({ type: 'CLEAR_MESSAGES' });
+    dispatch({ type: 'SET_ERROR', payload: null });
+  }, [dispatch]);
+
+  // 处理退出
+  const handleExit = useCallback(() => {
+    exit();
   }, [exit]);
+
+  // 持续的输入监听
+  useInput((inputKey, key) => {
+    if (key.return) {
+      // 回车键提交命令
+      handleSubmit();
+    } else if ((key.ctrl && inputKey === 'c') || (key.meta && inputKey === 'c')) {
+      // Ctrl+C 退出
+      handleExit();
+    } else if ((key.ctrl && inputKey === 'd') || (key.meta && inputKey === 'd')) {
+      // Ctrl+D 退出
+      handleExit();
+    } else if ((key.ctrl && inputKey === 'l') || (key.meta && inputKey === 'l')) {
+      // Ctrl+L 清屏
+      handleClear();
+    } else if (key.upArrow && commandHistory.length > 0) {
+      // 上箭头 - 命令历史
+      const newIndex = historyIndex === -1 ? commandHistory.length - 1 : Math.max(0, historyIndex - 1);
+      setHistoryIndex(newIndex);
+      setInput(commandHistory[newIndex] || '');
+    } else if (key.downArrow) {
+      // 下箭头 - 命令历史
+      if (historyIndex !== -1) {
+        const newIndex = historyIndex + 1;
+        if (newIndex >= commandHistory.length) {
+          setHistoryIndex(-1);
+          setInput('');
+        } else {
+          setHistoryIndex(newIndex);
+          setInput(commandHistory[newIndex] || '');
+        }
+      }
+    } else if (key.backspace || key.delete) {
+      // 退格键删除字符
+      setInput(prev => prev.slice(0, -1));
+    } else if (inputKey && inputKey !== '\u001b') {
+      // 普通字符输入（排除 Escape 键）
+      setInput(prev => prev + inputKey);
+    }
+  });
 
   return (
     <Box flexDirection="column" width="100%" height="100%">
@@ -69,13 +171,8 @@ const BladeInterface: React.FC<{
             <Box flexDirection="column">
               {sessionState.messages.map((msg: any, index: number) => (
                 <Box key={index} marginBottom={1}>
-                  {msg.role === 'user' && (
-                    <Box marginBottom={0}>
-                      <Text color="cyan" bold>❯ User:</Text>
-                    </Box>
-                  )}
-                  <Text color={msg.role === 'user' ? 'white' : 'green'}>
-                    {msg.content}
+                  <Text color={msg.role === 'user' ? 'cyan' : 'green'}>
+                    {msg.role === 'user' ? '❯ ' : '🤖 '}{msg.content}
                   </Text>
                 </Box>
               ))}
@@ -89,17 +186,26 @@ const BladeInterface: React.FC<{
         </Box>
       </Box>
       
-      {/* Input Hint Area */}
+      {/* 交互式输入区域 */}
       <Box flexDirection="row" paddingX={2} paddingY={0} borderStyle="round" borderColor="gray">
         <Text color="blue" bold>{'> '}</Text>
-        <Text color="gray" dimColor>请在终端中直接输入...</Text>
+        <Text>{input}</Text>
+        {isProcessing && <Text color="yellow">█</Text>}
       </Box>
       
-      {/* Status Area */}
-      <Box flexDirection="row" justifyContent="flex-end" paddingX={2} paddingTop={1}>
-        {!hasApiKey && (
-          <Text color="red">⚠ API 密钥未配置</Text>
-        )}
+      {/* 状态栏 */}
+      <Box flexDirection="row" justifyContent="space-between" paddingX={2} paddingY={0}>
+        <Box flexDirection="row" gap={2}>
+          {!hasApiKey && (
+            <Text color="red">⚠ API 密钥未配置</Text>
+          )}
+          {sessionState.messages.length > 0 && (
+            <Text color="gray" dimColor>{sessionState.messages.length} messages</Text>
+          )}
+        </Box>
+        <Text color="gray" dimColor>
+          {isProcessing ? 'Processing...' : 'Ready'}
+        </Text>
       </Box>
     </Box>
   );

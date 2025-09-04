@@ -29,22 +29,30 @@ export async function main() {
   mcpCommand(program);
   toolsCommand(program);
 
-  // 设置默认动作：如果没有提供子命令，则启动交互式UI
-  program.action((options) => {
-    render(React.createElement(BladeApp, { 
-      debug: options.debug,
-      testMode: options.test 
+  // 检查是否提供了有效的子命令
+  const args = process.argv.slice(2);
+  const hasValidCommand = args.length > 0 && 
+    (args.includes('chat') || args.includes('c') || 
+     args.includes('config') || args.includes('llm') || 
+     args.includes('mcp') || args.includes('tools') ||
+     args.includes('help') || args.includes('-h') || 
+     args.includes('--help') || args.includes('-v') || 
+     args.includes('--version'));
+
+  if (!hasValidCommand) {
+    // 没有提供命令，启动交互式UI
+    const { unmount } = render(React.createElement(BladeApp, { 
+      debug: args.includes('-d') || args.includes('--debug'),
+      testMode: args.includes('-t') || args.includes('--test')
     }));
-  });
-
-  await program.parseAsync(process.argv);
-
-  // 如果解析后没有匹配到任何已知命令（除了默认的 help, version），则也启动交互式UI
-  // commander 在没有匹配到命令时，args 数组会是空的
-  if (program.args.length === 0) {
-     render(React.createElement(BladeApp, { 
-       debug: program.opts().debug,
-       testMode: program.opts().test 
-     }));
+    
+    // 保持应用运行，直到用户退出
+    process.on('SIGINT', () => {
+      unmount();
+      process.exit(0);
+    });
+  } else {
+    // 有命令，正常解析
+    await program.parseAsync(process.argv);
   }
 }
