@@ -2,20 +2,19 @@ import {
   CompressedContext,
   ContextData,
   ContextFilter,
-  ContextManager,
   ContextManagerOptions,
   ContextMessage,
   createContextManager,
   formatContextForPrompt,
+  ContextManager as InternalContextManager,
   ToolCall,
   WorkspaceContext,
-} from '../context/index.js';
-import { BaseComponent } from './BaseComponent.js';
+} from '../../context/index.js';
 
 /**
- * 上下文组件配置
+ * 上下文管理器配置
  */
-export interface ContextComponentConfig {
+export interface ContextConfig {
   debug?: boolean;
   enabled?: boolean;
   storage?: {
@@ -36,16 +35,15 @@ export interface ContextComponentConfig {
 }
 
 /**
- * 上下文组件 - 管理对话历史、工具调用记录和工作空间状态
+ * 上下文管理器 - 管理对话历史、工具调用记录和工作空间状态
  */
-export class ContextComponent extends BaseComponent {
-  private contextManager?: ContextManager;
-  private config: ContextComponentConfig;
+export class ContextManager {
+  private internalContextManager?: InternalContextManager;
+  private config: ContextConfig;
   private currentSessionId?: string;
   private isReady = false;
 
-  constructor(id: string = 'context', config: ContextComponentConfig = {}) {
-    super(id);
+  constructor(config: ContextConfig = {}) {
     this.config = {
       debug: false,
       enabled: true,
@@ -68,24 +66,19 @@ export class ContextComponent extends BaseComponent {
       enableVectorSearch: false,
       ...config,
     };
-
-    this.log('上下文组件已创建');
   }
 
   /**
-   * 初始化上下文组件
+   * 初始化上下文管理器
    */
   public async init(): Promise<void> {
     if (!this.config.enabled) {
-      this.log('上下文组件已禁用，跳过初始化');
       return;
     }
 
     if (this.isReady) {
-      throw new Error('上下文组件已经初始化');
+      throw new Error('上下文管理器已经初始化');
     }
-
-    this.log('初始化上下文组件...');
 
     try {
       // 创建上下文管理器配置
@@ -101,39 +94,34 @@ export class ContextComponent extends BaseComponent {
         enableVectorSearch: this.config.enableVectorSearch,
       };
 
-      // 创建并初始化上下文管理器
-      this.contextManager = createContextManager(managerOptions);
-      await this.contextManager.initialize();
+      // 创建并初始化内部上下文管理器
+      this.internalContextManager = createContextManager(managerOptions);
+      await this.internalContextManager.initialize();
 
       this.isReady = true;
-      this.log('上下文组件初始化完成');
     } catch (error) {
-      this.log(`上下文组件初始化失败: ${error}`);
       throw error;
     }
   }
 
   /**
-   * 销毁上下文组件
+   * 销毁上下文管理器
    */
   public async destroy(): Promise<void> {
     if (!this.isReady) {
       return;
     }
 
-    this.log('销毁上下文组件...');
-
     try {
-      if (this.contextManager) {
-        await this.contextManager.cleanup();
-        this.contextManager = undefined;
+      if (this.internalContextManager) {
+        await this.internalContextManager.cleanup();
+        this.internalContextManager = undefined;
       }
 
       this.currentSessionId = undefined;
       this.isReady = false;
-      this.log('上下文组件已销毁');
     } catch (error) {
-      this.log(`销毁上下文组件时出错: ${error}`);
+      // 静默处理错误
     }
   }
 
@@ -146,37 +134,33 @@ export class ContextComponent extends BaseComponent {
     configuration: Record<string, any> = {},
     customSessionId?: string
   ): Promise<string> {
-    if (!this.isReady || !this.contextManager) {
-      throw new Error('上下文组件未初始化或已被禁用');
+    if (!this.isReady || !this.internalContextManager) {
+      throw new Error('上下文管理器未初始化');
     }
 
     // 如果提供了自定义会话ID，先尝试加载
     if (customSessionId) {
       const loadSuccess = await this.loadSession(customSessionId);
       if (loadSuccess) {
-        this.log(`会话已存在，加载成功: ${customSessionId}`);
         return customSessionId;
       }
     }
 
     // 创建新会话，如果提供了自定义ID则使用
     if (customSessionId) {
-      // 将自定义ID放入配置中
       configuration.sessionId = customSessionId;
     }
 
-    this.currentSessionId = await this.contextManager!.createSession(
+    this.currentSessionId = await this.internalContextManager.createSession(
       userId,
       preferences,
       configuration
     );
 
-    // 如果指定了自定义ID但创建的ID不匹配，尝试重新设置
     if (customSessionId && this.currentSessionId !== customSessionId) {
       this.currentSessionId = customSessionId;
     }
 
-    this.log(`创建新会话: ${this.currentSessionId}`);
     return this.currentSessionId;
   }
 
@@ -184,16 +168,13 @@ export class ContextComponent extends BaseComponent {
    * 加载现有会话
    */
   public async loadSession(sessionId: string): Promise<boolean> {
-    if (!this.isReady || !this.contextManager) {
-      throw new Error('上下文组件未初始化或已被禁用');
+    if (!this.isReady || !this.internalContextManager) {
+      throw new Error('上下文管理器未初始化');
     }
 
-    const success = await this.contextManager!.loadSession(sessionId);
+    const success = await this.internalContextManager.loadSession(sessionId);
     if (success) {
       this.currentSessionId = sessionId;
-      this.log(`加载会话成功: ${sessionId}`);
-    } else {
-      this.log(`加载会话失败: ${sessionId}`);
     }
 
     return success;
@@ -211,7 +192,7 @@ export class ContextComponent extends BaseComponent {
    */
   public async addUserMessage(content: string, metadata?: Record<string, any>): Promise<void> {
     this.ensureReady();
-    await this.contextManager!.addMessage('user', content, metadata);
+    await this.internalContextManager!.addMessage('user', content, metadata);
     this.log(`添加用户消息: ${content.substring(0, 50)}...`);
   }
 
@@ -220,7 +201,7 @@ export class ContextComponent extends BaseComponent {
    */
   public async addAssistantMessage(content: string, metadata?: Record<string, any>): Promise<void> {
     this.ensureReady();
-    await this.contextManager!.addMessage('assistant', content, metadata);
+    await this.internalContextManager!.addMessage('assistant', content, metadata);
     this.log(`添加助手消息: ${content.substring(0, 50)}...`);
   }
 
@@ -229,7 +210,7 @@ export class ContextComponent extends BaseComponent {
    */
   public async addSystemMessage(content: string, metadata?: Record<string, any>): Promise<void> {
     this.ensureReady();
-    await this.contextManager!.addMessage('system', content, metadata);
+    await this.internalContextManager!.addMessage('system', content, metadata);
     this.log(`添加系统消息: ${content.substring(0, 50)}...`);
   }
 
@@ -238,7 +219,7 @@ export class ContextComponent extends BaseComponent {
    */
   public async addToolCall(toolCall: ToolCall): Promise<void> {
     this.ensureReady();
-    await this.contextManager!.addToolCall(toolCall);
+    await this.internalContextManager!.addToolCall(toolCall);
     this.log(`添加工具调用: ${toolCall.name} (${toolCall.status})`);
   }
 
@@ -247,7 +228,7 @@ export class ContextComponent extends BaseComponent {
    */
   public updateToolState(toolName: string, state: any): void {
     this.ensureReady();
-    this.contextManager!.updateToolState(toolName, state);
+    this.internalContextManager!.updateToolState(toolName, state);
     this.log(`更新工具状态: ${toolName}`);
   }
 
@@ -256,7 +237,7 @@ export class ContextComponent extends BaseComponent {
    */
   public updateWorkspace(updates: Partial<WorkspaceContext>): void {
     this.ensureReady();
-    this.contextManager!.updateWorkspace(updates);
+    this.internalContextManager!.updateWorkspace(updates);
     this.log('工作空间信息已更新');
   }
 
@@ -269,7 +250,7 @@ export class ContextComponent extends BaseComponent {
     tokenCount: number;
   }> {
     this.ensureReady();
-    return await this.contextManager!.getFormattedContext(filterOptions);
+    return await this.internalContextManager!.getFormattedContext(filterOptions);
   }
 
   /**
@@ -305,7 +286,7 @@ export class ContextComponent extends BaseComponent {
     }>
   > {
     this.ensureReady();
-    return await this.contextManager!.searchSessions(query, limit);
+    return await this.internalContextManager!.searchSessions(query, limit);
   }
 
   /**
@@ -313,7 +294,7 @@ export class ContextComponent extends BaseComponent {
    */
   public getCachedToolResult(toolName: string, input: any): any {
     this.ensureReady();
-    return this.contextManager!.getCachedToolResult(toolName, input);
+    return this.internalContextManager!.getCachedToolResult(toolName, input);
   }
 
   /**
@@ -326,7 +307,7 @@ export class ContextComponent extends BaseComponent {
     storage: any;
   }> {
     this.ensureReady();
-    return await this.contextManager!.getStats();
+    return await this.internalContextManager!.getStats();
   }
 
   /**
@@ -381,21 +362,21 @@ export class ContextComponent extends BaseComponent {
    * 检查上下文组件是否已准备就绪
    */
   public isContextReady(): boolean {
-    return this.isReady && !!this.contextManager && !!this.currentSessionId;
+    return this.isReady && !!this.internalContextManager && !!this.currentSessionId;
   }
 
   /**
    * 获取上下文管理器实例（用于高级操作）
    */
-  public getContextManager(): ContextManager | undefined {
-    return this.contextManager;
+  public getInternalContextManager(): InternalContextManager | undefined {
+    return this.internalContextManager;
   }
 
   /**
    * 确保组件已准备就绪
    */
   private ensureReady(): void {
-    if (!this.isReady || !this.contextManager) {
+    if (!this.isReady || !this.internalContextManager) {
       throw new Error('上下文组件未初始化或已被禁用');
     }
 

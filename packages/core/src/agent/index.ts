@@ -1,58 +1,21 @@
 /**
- * Agent模块导出 - 新架构
+ * Agent模块导出 - 简化架构
  */
 
-import { Agent } from 'http';
-import type { BladeConfig } from '../config/types/index.js';
-import { MainAgent } from './MainAgent.js';
-
-// 主要Agent类
-export { MainAgent } from './MainAgent.js';
-export type { AgentResponse, AgentTask, ExecutionStep, SubAgentResult } from './MainAgent.js';
-
-// 子Agent系统
-export { BaseSubAgent, SubAgentRegistry } from './SubAgentRegistry.js';
-export type {
-    SubAgentDefinition,
-    SubAgentInstance,
-    TaskRequest,
-    TaskResult
-} from './SubAgentRegistry.js';
-
-// 核心组件
-export { TaskPlanner } from './TaskPlanner.js';
-export type { PlanningContext, TaskComplexity } from './TaskPlanner.js';
-
-export { SteeringController } from './SteeringController.js';
-export type { SteeringAdjustment, SteeringResult } from './SteeringController.js';
-
-// 内置子Agent
-export { AnalysisAgent } from './subagents/AnalysisAgent.js';
-export { CodeAgent } from './subagents/CodeAgent.js';
-
-// Agent工具
-export { AgentTool } from './tools/AgentTool.js';
-export type { AgentToolParams, AgentToolResult } from './tools/AgentTool.js';
-
-// 向后兼容 - 保留原有的简单Agent
+// 核心Agent类
 export { Agent } from './Agent.js';
-export { BaseComponent } from './BaseComponent.js';
-export { ComponentManager } from './ComponentManager.js';
-export { ContextComponent } from './ContextComponent.js';
-export { LoggerComponent } from './LoggerComponent.js';
-export { MCPComponent } from './MCPComponent.js';
-export { ToolComponent } from './ToolComponent.js';
+export type { AgentConfig, AgentResponse, AgentTask } from './types.js';
+
+// 上下文管理
+export { ContextCompressor } from './context/Compressor.js';
+export { ContextManager } from './context/ContextManager.js';
 
 // 创建Agent的便捷函数
-export async function createMainAgent(config: BladeConfig): Promise<MainAgent> {
-  const agent = new MainAgent(config);
-  await agent.initialize();
-  return agent;
-}
-
-// 创建传统Agent的便捷函数（向后兼容）
-export async function createAgent(config?: any): Promise<Agent> {
+export async function createAgent(
+  config: import('./types.js').AgentConfig
+): Promise<import('./Agent.js').Agent> {
+  const { Agent } = await import('./Agent.js');
   const agent = new Agent(config);
-  await agent.init();
+  await agent.initialize();
   return agent;
 }

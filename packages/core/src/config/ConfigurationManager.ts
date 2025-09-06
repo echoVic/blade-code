@@ -3,46 +3,46 @@
  * 支持分层配置加载、合并、验证和热重载
  */
 
-import fs from 'fs/promises';
-import { watch, FSWatcher } from 'fs';
-import path from 'path';
 import { EventEmitter } from 'events';
-import { 
-  ConfigLayer, 
-  CONFIG_PRIORITY, 
-  CONFIG_PATHS, 
-  ConfigEventType, 
-  ConfigEvent, 
-  ConfigState, 
-  ConfigLoadResult,
-  ConfigMergeResult,
-  ConfigConflict,
-  ConfigHotReload,
-  ConfigObserver,
-  ConfigLoader,
-  ConfigPersister,
-  ConfigValidator,
-  ConfigMergeStrategy,
-  ConfigEventListener
-} from './types/index.js';
-import {
-  BladeUnifiedConfigSchema,
-  GlobalConfigSchema,
-  EnvConfigSchema,
-  UserConfigSchema,
-  ProjectConfigSchema,
-  ENV_MAPPING,
-  BladeUnifiedConfig,
-  GlobalConfig,
-  EnvConfig,
-  UserConfig,
-  ProjectConfig
-} from './types/schemas.js';
+import { FSWatcher, watch } from 'fs';
+import fs from 'fs/promises';
+import path from 'path';
 import { DEFAULT_CONFIG } from './defaults.js';
-import { ZodValidation } from './validators/ZodValidation.js';
-import { DeepMergeStrategy } from './strategies/DeepMergeStrategy.js';
 import { JsonLoader } from './loaders/JsonLoader.js';
 import { JsonPersister } from './persisters/JsonPersister.js';
+import { DeepMergeStrategy } from './strategies/DeepMergeStrategy.js';
+import {
+  CONFIG_PATHS,
+  CONFIG_PRIORITY,
+  ConfigConflict,
+  ConfigEvent,
+  ConfigEventListener,
+  ConfigEventType,
+  ConfigHotReload,
+  ConfigLayer,
+  ConfigLoader,
+  ConfigLoadResult,
+  ConfigMergeResult,
+  ConfigMergeStrategy,
+  ConfigObserver,
+  ConfigPersister,
+  ConfigState,
+  ConfigValidator,
+} from './types/index.js';
+import {
+  BladeUnifiedConfig,
+  BladeUnifiedConfigSchema,
+  ENV_MAPPING,
+  EnvConfig,
+  EnvConfigSchema,
+  GlobalConfig,
+  GlobalConfigSchema,
+  ProjectConfig,
+  ProjectConfigSchema,
+  UserConfig,
+  UserConfigSchema,
+} from './types/schemas.js';
+import { ZodValidation } from './validators/ZodValidation.js';
 
 export class ConfigurationManager extends EventEmitter implements ConfigHotReload, ConfigObserver {
   private config: BladeUnifiedConfig | null = null;
@@ -50,12 +50,12 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
   private watchers: Map<string, FSWatcher> = new Map();
   private configEventListeners: Set<ConfigEventListener> = new Set();
   private hotReloadEnabled: boolean = false;
-  
+
   private loader: ConfigLoader;
   private persister: ConfigPersister;
   private validator: ConfigValidator;
   private mergeStrategy: ConfigMergeStrategy;
-  
+
   private loadHistory: Array<{
     timestamp: string;
     layer: ConfigLayer;
@@ -73,13 +73,13 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
       configVersion: '1.0.0',
       loadedLayers: [],
     };
-    
+
     // 初始化组件
     this.loader = new JsonLoader();
     this.persister = new JsonPersister();
     this.validator = new ZodValidation();
     this.mergeStrategy = new DeepMergeStrategy();
-    
+
     // 设置最大监听器数量
     this.setMaxListeners(100);
   }
@@ -120,10 +120,10 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
 
     // 合并配置
     const merged = this.mergeConfigs(loadResults);
-    
+
     // 验证合并后的配置
     const validationResult = this.validator.validate(merged.merged, BladeUnifiedConfigSchema);
-    
+
     // 更新状态
     this.state = {
       isValid: validationResult.valid,
@@ -133,7 +133,7 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
       configVersion: '1.0.0',
       loadedLayers: Object.entries(loadResults)
         .filter(([, result]) => result.success)
-      .map(([layer]) => layer as ConfigLayer),
+        .map(([layer]) => layer as ConfigLayer),
     };
 
     this.config = merged.merged;
@@ -179,6 +179,10 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
           maxTokens: 4000,
           temperature: 0.7,
           stream: true,
+          topP: 1,
+          topK: 50,
+          frequencyPenalty: 0,
+          presencePenalty: 0,
         },
         ui: {
           theme: DEFAULT_CONFIG.theme || 'GitHub',
@@ -273,7 +277,7 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
       };
 
       const validated = GlobalConfigSchema.parse(globalConfig);
-      
+
       return {
         success: true,
         config: validated,
@@ -298,7 +302,7 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
   private async loadEnvConfig(): Promise<ConfigLoadResult> {
     try {
       const envConfig: Partial<EnvConfig> = {};
-      
+
       // 从环境变量加载配置
       Object.entries(ENV_MAPPING).forEach(([envKey, configPath]) => {
         const value = process.env[envKey];
@@ -308,7 +312,7 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
       });
 
       const validated = EnvConfigSchema.parse(envConfig);
-      
+
       return {
         success: true,
         config: validated,
@@ -331,10 +335,7 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
    * 加载用户配置
    */
   private async loadUserConfig(): Promise<ConfigLoadResult> {
-    const configPaths = [
-      CONFIG_PATHS.global.userConfig,
-      CONFIG_PATHS.global.userConfigLegacy,
-    ];
+    const configPaths = [CONFIG_PATHS.global.userConfig, CONFIG_PATHS.global.userConfigLegacy];
 
     for (const configPath of configPaths) {
       try {
@@ -424,13 +425,15 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
     const sources: string[] = [];
 
     // 按优先级从低到高合并配置
-    CONFIG_PRIORITY.slice().reverse().forEach(layer => {
-      const result = loadResults[layer];
-      if (result?.success && result.config) {
-        sources.push(...result.loadedFrom);
-        Object.assign(merged, result.config);
-      }
-    });
+    CONFIG_PRIORITY.slice()
+      .reverse()
+      .forEach(layer => {
+        const result = loadResults[layer];
+        if (result?.success && result.config) {
+          sources.push(...result.loadedFrom);
+          Object.assign(merged, result.config);
+        }
+      });
 
     return {
       merged,
@@ -460,16 +463,19 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
   /**
    * 更新配置
    */
-  async updateConfig(updates: Partial<BladeUnifiedConfig>, layer: ConfigLayer = ConfigLayer.USER): Promise<void> {
+  async updateConfig(
+    updates: Partial<BladeUnifiedConfig>,
+    layer: ConfigLayer = ConfigLayer.USER
+  ): Promise<void> {
     try {
       if (!this.config) {
         throw new Error('配置未初始化');
       }
       Object.assign(this.config, updates);
-      
+
       // 验证更新后的配置
       const validationResult = this.validator.validate(this.config, BladeUnifiedConfigSchema);
-      
+
       if (!validationResult.valid) {
         throw new Error(`配置验证失败: ${validationResult.errors.join(', ')}`);
       }
@@ -492,7 +498,6 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
         layer,
         data: { updates, config: this.config },
       });
-
     } catch (error) {
       this.handleError('配置更新失败', error);
       throw error;
@@ -539,7 +544,7 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
         timestamp: new Date().toISOString(),
         layer: ConfigLayer.GLOBAL,
       });
-      
+
       return await this.loadAllConfigs();
     } catch (error) {
       this.handleError('重新加载失败', error);
@@ -552,16 +557,16 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
    */
   enable(): void {
     if (this.hotReloadEnabled) return;
-    
+
     this.hotReloadEnabled = true;
-    
+
     // 监听用户配置文件
     this.addWatchPath(CONFIG_PATHS.global.userConfig);
-    
+
     // 监听项目配置文件
     this.addWatchPath(CONFIG_PATHS.project.bladeConfig);
     this.addWatchPath(CONFIG_PATHS.project.packageJson);
-    
+
     console.log('配置热重载已启用');
   }
 
@@ -570,15 +575,15 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
    */
   disable(): void {
     if (!this.hotReloadEnabled) return;
-    
+
     this.hotReloadEnabled = false;
-    
+
     // 关闭所有文件监听
     this.watchers.forEach((watcher, path) => {
       watcher.close();
       console.log(`停止监听配置文件: ${path}`);
     });
-    
+
     this.watchers.clear();
     console.log('配置热重载已禁用');
   }
@@ -595,20 +600,20 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
    */
   addWatchPath(configPath: string): void {
     if (!this.hotReloadEnabled) return;
-    
+
     // 解析相对路径
     const resolvedPath = path.resolve(configPath);
-    
+
     if (this.watchers.has(resolvedPath)) return;
-    
+
     try {
-      const watcher = watch(resolvedPath, { persistent: false }, async (eventType) => {
+      const watcher = watch(resolvedPath, { persistent: false }, async eventType => {
         if (eventType === 'change') {
           console.log(`检测到配置文件变更: ${resolvedPath}`);
           await this.debouncedReload();
         }
       });
-      
+
       this.watchers.set(resolvedPath, watcher);
       console.log(`开始监听配置文件: ${resolvedPath}`);
     } catch (error) {
@@ -622,7 +627,7 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
   removeWatchPath(configPath: string): void {
     const resolvedPath = path.resolve(configPath);
     const watcher = this.watchers.get(resolvedPath);
-    
+
     if (watcher) {
       watcher.close();
       this.watchers.delete(resolvedPath);
@@ -666,7 +671,7 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
   private setNestedValue(obj: any, path: string, value: any): void {
     const keys = path.split('.');
     let current = obj;
-    
+
     for (let i = 0; i < keys.length - 1; i++) {
       const key = keys[i];
       if (!(key in current)) {
@@ -674,7 +679,7 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
       }
       current = current[key];
     }
-    
+
     current[keys[keys.length - 1]] = value;
   }
 
@@ -686,16 +691,16 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
     if (/^\d+$/.test(value)) {
       return parseInt(value, 10);
     }
-    
+
     // 尝试解析为浮点数
     if (/^\d+\.\d+$/.test(value)) {
       return parseFloat(value);
     }
-    
+
     // 尝试解析为布尔值
     if (value.toLowerCase() === 'true') return true;
     if (value.toLowerCase() === 'false') return false;
-    
+
     // 尝试解析为 JSON
     try {
       return JSON.parse(value);
@@ -747,7 +752,7 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
     if (this.reloadTimeout) {
       clearTimeout(this.reloadTimeout);
     }
-    
+
     this.reloadTimeout = setTimeout(async () => {
       try {
         await this.reload();
@@ -762,7 +767,7 @@ export class ConfigurationManager extends EventEmitter implements ConfigHotReloa
    */
   private handleError(message: string, error: any): void {
     console.error(message, error);
-    
+
     this.notify({
       type: ConfigEventType.ERROR,
       timestamp: new Date().toISOString(),
