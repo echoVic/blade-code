@@ -27,7 +27,6 @@ export type {
 
 // 共享类型定义（从 @blade-ai/types 迁移而来）
 export type {
-  AgentConfig,
   BladeConfig,
   ContextConfig,
   LLMMessage,
@@ -78,21 +77,16 @@ export type {
   ToolValidationError,
 } from './types/tools.js';
 
-// Agent 核心组件 (旧架构 - 向后兼容)
+// Agent核心系统 (简化架构)
 export { Agent } from './agent/Agent.js';
-export { ContextComponent } from './agent/ContextComponent.js';
-export { LLMManager } from './agent/LLMManager.js';
-export { LoggerComponent } from './agent/LoggerComponent.js';
-export { MCPComponent } from './agent/MCPComponent.js';
-export { ToolComponent } from './agent/ToolComponent.js';
+export type { AgentConfig, AgentResponse, AgentTask } from './agent/types.js';
 
-// 新Agent架构 (基于Claude Code设计)
-export { AgentTool, AnalysisAgent, CodeAgent, MainAgent, createMainAgent } from './agent/index.js';
-export type { AgentResponse, AgentTask, ExecutionStep, SubAgentResult } from './agent/index.js';
+// 上下文管理
+export { ContextManager } from './agent/context/ContextManager.js';
 
-// LLM系统 (新架构)
-export { LLMContextManager, createLLMContextManager } from './llm/index.js';
-export type { ContextStrategy, ContextWindow, ConversationSession } from './llm/index.js';
+// Chat服务 (统一的LLM接口)
+export { ChatService } from './services/ChatService.js';
+export type { ChatConfig, ChatMessage, ChatResponse } from './services/ChatService.js';
 
 // 迁移工具
 export { AgentMigrator, fullMigrate, quickMigrate } from './migration/agent-migration.js';

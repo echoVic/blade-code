@@ -42,7 +42,8 @@
       "Bash(pnpm add:*)",
       "WebFetch(domain:github.com)",
       "mcp__github__search_code",
-      "Bash(BLADE_API_KEY=\"sk-efbb8602dc97babd486676797ed2ec28\" ./bin/blade.js --version)"
+      "Bash(BLADE_API_KEY=\"sk-efbb8602dc97babd486676797ed2ec28\" ./bin/blade.js --version)",
+      "Bash(tree:*)"
     ],
     "deny": [],
     "ask": [],

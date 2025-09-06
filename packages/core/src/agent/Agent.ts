@@ -1,114 +1,239 @@
 /**
- * 平铺配置Agent入口
- * 直接使用三要素配置驱动LLM调用
+ * Agent核心类 - 简化架构，基于chat统一调用
+ * 负责任务执行和上下文管理
  */
 
-import { ConfigManager } from '../config/ConfigManager.js';
-import { LLMManager, type LLMMessage } from '../llm/LLMManager.js';
-import type { BladeConfig } from '../config/types/index.js';
+import { EventEmitter } from 'events';
+import { ChatService, type ChatMessage } from '../services/ChatService.js';
+import { ContextCompressor } from './context/Compressor.js';
+import { ContextManager } from './context/ContextManager.js';
+import type { AgentConfig, AgentResponse, AgentTask } from './types.js';
+
+export interface SubAgentResult {
+  agentName: string;
+  taskType: string;
+  result: unknown;
+  executionTime: number;
+}
+
+export interface ExecutionStep {
+  id: string;
+  type: 'llm' | 'tool' | 'subagent';
+  description: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  result?: unknown;
+  error?: string;
+  metadata?: Record<string, unknown>;
+}
 
 /**
- * Agent 主类 - 极简智能代理入口
- * 使用平铺配置三要素(apiKey, baseUrl, modelName)驱动所有AI能力
+ * Agent核心类 - 简化架构实现
  */
-export class Agent {
-  private configManager: ConfigManager;
-  private llmManager: LLMManager;
+export class Agent extends EventEmitter {
+  private config: AgentConfig;
+  private isInitialized = false;
+  private activeTask?: AgentTask;
 
-  constructor(config?: Partial<BladeConfig>) {
-    // 初始化配置管理器
-    this.configManager = new ConfigManager();
-    
-    // 合并传入配置
-    if (config) {
-      this.configManager.updateConfig(config);
-    }
+  // 核心组件
+  private chatService!: ChatService;
+  private contextManager!: ContextManager;
+  private compressor!: ContextCompressor;
 
-    // 获取配置并构建LLM管理器
-    const bladeConfig = this.configManager.getConfig();
-    this.llmManager = new LLMManager({
-      apiKey: bladeConfig.apiKey,
-      baseUrl: bladeConfig.baseUrl,
-      modelName: bladeConfig.modelName,
-    });
+  constructor(config: AgentConfig) {
+    super();
+    this.config = config;
   }
 
   /**
    * 初始化Agent
    */
-  public async init(): Promise<void> {
-    // 这里可以添加初始化逻辑，目前为空实现
-    await Promise.resolve();
+  public async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      return;
+    }
+
+    try {
+      this.log('初始化Agent...');
+
+      // 初始化核心组件
+      this.chatService = new ChatService(this.config.chat);
+      this.compressor = new ContextCompressor(this.config.context);
+
+      // 初始化上下文管理器
+      this.contextManager = new ContextManager({
+        enabled: true,
+        defaultFilter: {
+          maxTokens: this.config.context?.maxTokens || 4000,
+          maxMessages: this.config.context?.maxMessages || 50,
+        },
+        storage: {
+          compressionEnabled: this.config.context?.compressionEnabled ?? true,
+        },
+      });
+      await this.contextManager.init();
+
+      this.isInitialized = true;
+      this.log('Agent初始化完成');
+      this.emit('initialized');
+    } catch (error) {
+      this.error('Agent初始化失败', error);
+      throw error;
+    }
   }
 
   /**
-   * 基础聊天
+   * 执行任务
+   */
+  public async executeTask(task: AgentTask): Promise<AgentResponse> {
+    if (!this.isInitialized) {
+      throw new Error('Agent未初始化');
+    }
+
+    this.activeTask = task;
+    this.emit('taskStarted', task);
+
+    try {
+      this.log(`开始执行任务: ${task.id}`);
+
+      // 准备上下文
+      const contextMessages = await this.contextManager.buildMessagesWithContext(task.prompt);
+
+      // 转换消息格式
+      const messages: ChatMessage[] = contextMessages.map(msg => ({
+        role: msg.role === 'tool' ? 'assistant' : msg.role, // 转换tool角色为assistant
+        content: msg.content,
+        metadata: msg.metadata,
+      }));
+
+      // 调用Chat服务
+      const content = await this.chatService.chat(messages);
+
+      // 添加助手回复到上下文
+      await this.contextManager.addAssistantMessage(content);
+
+      const response: AgentResponse = {
+        taskId: task.id,
+        content,
+        metadata: {
+          executionMode: 'simple',
+          taskType: task.type,
+        },
+      };
+
+      this.activeTask = undefined;
+      this.emit('taskCompleted', task, response);
+      this.log(`任务执行完成: ${task.id}`);
+
+      return response;
+    } catch (error) {
+      this.activeTask = undefined;
+      this.emit('taskFailed', task, error);
+      this.error(`任务执行失败: ${task.id}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 简单聊天接口
    */
   public async chat(message: string): Promise<string> {
-    return await this.llmManager.chat(message);
+    if (!this.isInitialized) {
+      throw new Error('Agent未初始化');
+    }
+
+    const task: AgentTask = {
+      id: this.generateTaskId(),
+      type: 'simple',
+      prompt: message,
+    };
+
+    const response = await this.executeTask(task);
+    return response.content;
   }
 
   /**
-   * 系统提示词聊天
+   * 带系统提示词的聊天
    */
   public async chatWithSystem(systemPrompt: string, userMessage: string): Promise<string> {
-    return await this.llmManager.chatWithSystem(systemPrompt, userMessage);
+    if (!this.isInitialized) {
+      throw new Error('Agent未初始化');
+    }
+
+    // 创建包含系统提示词的消息列表
+    const messages: ChatMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage },
+    ];
+
+    const response = await this.chatService.chat(messages);
+
+    // 添加到上下文
+    await this.contextManager.addUserMessage(userMessage);
+    await this.contextManager.addAssistantMessage(response);
+
+    return response;
   }
 
   /**
-   * 多轮对话
+   * 获取当前活动任务
    */
-  public async conversation(messages: LLMMessage[]): Promise<string> {
-    return await this.llmManager.conversation(messages);
+  public getActiveTask(): AgentTask | undefined {
+    return this.activeTask;
   }
 
   /**
-   * 获取当前配置
+   * 获取上下文管理器
    */
-  public getConfig(): BladeConfig {
-    return this.configManager.getConfig();
+  public getContextManager(): ContextManager {
+    return this.contextManager;
   }
 
   /**
-   * 更新配置
+   * 获取Chat服务
    */
-  public updateConfig(config: Partial<BladeConfig>): void {
-    this.configManager.updateConfig(config);
-    
-    // 同步更新LLM管理器配置
-    this.llmManager.configure({
-      apiKey: config.apiKey,
-      baseUrl: config.baseUrl,
-      modelName: config.modelName,
-    });
-  }
-
-  /**
-   * 获取LLM管理器
-   */
-  public getLLMManager(): LLMManager {
-    return this.llmManager;
-  }
-
-  /**
-   * 获取上下文组件 - 临时返回null
-   */
-  public getContextComponent(): any {
-    return null;
-  }
-
-  /**
-   * 获取工具组件 - 临时返回null
-   */
-  public getToolComponent(): any {
-    return null;
+  public getChatService(): ChatService {
+    return this.chatService;
   }
 
   /**
    * 销毁Agent
    */
   public async destroy(): Promise<void> {
-    // 清理资源
-    await Promise.resolve();
+    this.log('销毁Agent...');
+
+    try {
+      // 销毁核心组件
+      if (this.contextManager) {
+        await this.contextManager.destroy();
+      }
+
+      this.removeAllListeners();
+      this.isInitialized = false;
+      this.log('Agent已销毁');
+    } catch (error) {
+      this.error('Agent销毁失败', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 生成任务ID
+   */
+  private generateTaskId(): string {
+    return `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * 日志记录
+   */
+  private log(message: string, data?: unknown): void {
+    console.log(`[MainAgent] ${message}`, data || '');
+  }
+
+  /**
+   * 错误记录
+   */
+  private error(message: string, error?: unknown): void {
+    console.error(`[MainAgent] ${message}`, error || '');
   }
 }

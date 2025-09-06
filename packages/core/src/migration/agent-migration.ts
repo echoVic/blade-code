@@ -1,10 +1,11 @@
 /**
  * Agent架构迁移工具
- * 帮助从旧架构迁移到基于Claude Code设计的新架构
+ * 帮助从旧架构迁移到基于Chat统一调用的新架构
  */
 
 import { Agent } from '../agent/Agent.js';
-import { createMainAgent, type MainAgent } from '../agent/index.js';
+import { createAgent } from '../agent/index.js';
+import type { AgentConfig } from '../agent/types.js';
 import type { BladeConfig } from '../config/types/index.js';
 
 export interface MigrationOptions {
@@ -16,7 +17,7 @@ export interface MigrationOptions {
 
 export interface MigrationResult {
   success: boolean;
-  newAgent?: MainAgent;
+  newAgent?: Agent;
   oldAgent?: Agent;
   issues: string[];
   recommendations: string[];
@@ -52,7 +53,7 @@ export class AgentMigrator {
     const issues: string[] = [];
     const recommendations: string[] = [];
     let oldAgent: Agent | undefined;
-    let newAgent: MainAgent | undefined;
+    let newAgent: Agent | undefined;
 
     try {
       console.log('开始Agent架构迁移...');
@@ -60,8 +61,10 @@ export class AgentMigrator {
       // 1. 创建旧Agent（如果需要备份）
       if (this.options.backupOldAgent) {
         console.log('创建旧Agent备份...');
-        oldAgent = new Agent(this.config);
-        await oldAgent.init();
+        // 转换配置格式
+        const agentConfig: AgentConfig = this.convertBladeConfigToAgentConfig(this.config);
+        oldAgent = new Agent(agentConfig);
+        await oldAgent.initialize();
       }
 
       // 2. 验证配置兼容性
@@ -73,7 +76,8 @@ export class AgentMigrator {
 
       // 3. 创建新Agent
       console.log('创建新MainAgent...');
-      newAgent = await createMainAgent(this.config);
+      const agentConfig = this.convertBladeConfigToAgentConfig(this.config);
+      newAgent = await createAgent(agentConfig);
 
       // 4. 测试基本功能
       console.log('测试基本功能...');
@@ -139,14 +143,10 @@ export class AgentMigrator {
     }
 
     // 检查新架构特有配置
+    const recommendations: string[] = [];
     if (this.options.enableNewFeatures) {
-      if (!this.config.agentConfig) {
-        issues.push('建议添加agentConfig配置以启用新功能');
-      }
-
-      if (!this.config.contextConfig) {
-        issues.push('建议添加contextConfig配置以优化上下文管理');
-      }
+      recommendations.push('建议使用新的AgentConfig配置格式');
+      recommendations.push('建议启用上下文压缩功能以优化性能');
     }
 
     return issues;
@@ -156,7 +156,7 @@ export class AgentMigrator {
    * 测试基本功能
    */
   private async testBasicFunctionality(
-    newAgent: MainAgent,
+    newAgent: Agent,
     oldAgent?: Agent
   ): Promise<{
     success: boolean;
@@ -181,7 +181,7 @@ export class AgentMigrator {
       // 如果有旧Agent，进行性能对比
       if (oldAgent) {
         const oldStart = Date.now();
-        const oldResponse = await oldAgent.chat(testPrompt);
+        await oldAgent.chat(testPrompt);
         const oldTime = Date.now() - oldStart;
 
         const improvement =
@@ -220,13 +220,32 @@ export class AgentMigrator {
       recommendations.push('⚡ 新功能已启用，可以体验实时Steering和智能任务规划');
     }
 
-    if (!this.config.agentConfig) {
-      recommendations.push('⚙️ 建议添加agentConfig配置以充分利用新架构优势');
-    }
+    recommendations.push('⚙️ 建议使用新的AgentConfig配置格式以充分利用新架构优势');
 
     recommendations.push('🧪 在生产环境使用前请进行充分测试');
 
     return recommendations;
+  }
+
+  /**
+   * 转换BladeConfig到AgentConfig
+   */
+  private convertBladeConfigToAgentConfig(bladeConfig: BladeConfig): AgentConfig {
+    return {
+      chat: {
+        provider: 'qwen', // 默认使用qwen
+        apiKey: bladeConfig.apiKey,
+        baseUrl: bladeConfig.baseUrl,
+        model: bladeConfig.modelName,
+        temperature: 0.7,
+        maxTokens: 4000,
+      },
+      context: {
+        maxTokens: 4000,
+        maxMessages: 50,
+        compressionEnabled: true,
+      },
+    };
   }
 
   /**
