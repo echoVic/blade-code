@@ -11,6 +11,9 @@ import {
   WorkspaceContext,
 } from '../../context/index.js';
 
+import { ContextCompressionManager } from './ContextCompressionManager.js';
+import type { ChatMessage } from '../../services/ChatService.js';
+
 /**
  * 上下文管理器配置
  */
@@ -36,14 +39,17 @@ export interface ContextConfig {
 
 /**
  * 上下文管理器 - 管理对话历史、工具调用记录和工作空间状态
+ * 集成Claude Code风格的智能压缩功能
  */
 export class ContextManager {
   private internalContextManager?: InternalContextManager;
+  private compressionManager: ContextCompressionManager;
   private config: ContextConfig;
   private currentSessionId?: string;
   private isReady = false;
 
   constructor(config: ContextConfig = {}) {
+    this.compressionManager = new ContextCompressionManager();
     this.config = {
       debug: false,
       enabled: true,
@@ -311,7 +317,7 @@ export class ContextManager {
   }
 
   /**
-   * 构建包含上下文的消息列表
+   * 构建包含上下文的消息列表 - 集成智能压缩
    */
   public async buildMessagesWithContext(
     userMessage: string,
@@ -320,7 +326,7 @@ export class ContextManager {
   ): Promise<ContextMessage[]> {
     this.ensureReady();
 
-    const messages: ContextMessage[] = [];
+    let messages: ContextMessage[] = [];
 
     // 添加系统提示词
     if (systemPrompt) {
@@ -370,6 +376,124 @@ export class ContextManager {
    */
   public getInternalContextManager(): InternalContextManager | undefined {
     return this.internalContextManager;
+  }
+
+  // ========== 智能压缩功能 ==========
+
+  /**
+   * 智能压缩上下文消息 - 核心方法
+   */
+  public async compressContextMessages(messages: ChatMessage[]): Promise<{
+    compressed: ChatMessage[];
+    compressionResult: any;
+  }> {
+    if (!this.config.storage?.compressionEnabled) {
+      return {
+        compressed: messages,
+        compressionResult: null,
+      };
+    }
+
+    try {
+      // 转换为压缩管理器需要的格式
+      const contextData = {
+        messages,
+        tokenCount: this.estimateTokenCount(messages),
+        metadata: { source: 'context-manager' },
+      };
+
+      // 执行智能压缩
+      const compressionResult = await this.compressionManager.compressWhenNeeded(contextData);
+      
+      this.log(`上下文压缩完成: ${compressionResult.compressionRatio * 100}% 压缩率`);
+
+      return {
+        compressed: compressionResult.compressedMessages,
+        compressionResult,
+      };
+    } catch (error) {
+      this.log(`上下文压缩失败: ${error}`, 'error');
+      return {
+        compressed: messages,
+        compressionResult: null,
+      };
+    }
+  }
+
+  /**
+   * 检查是否需要压缩
+   */
+  public needsCompression(messages: ChatMessage[]): boolean {
+    const contextData = {
+      messages,
+      tokenCount: this.estimateTokenCount(messages),
+    };
+    return this.compressionManager.needsCompression(contextData);
+  }
+
+  /**
+   * 获取压缩统计信息
+   */
+  public getCompressionStats() {
+    return this.compressionManager.getCompressionStats();
+  }
+
+  /**
+   * 估算消息的Token数量
+   */
+  private estimateTokenCount(messages: ChatMessage[]): number {
+    return messages.reduce((total, message) => {
+      // 简单估算：4个字符约等于1个Token
+      return total + Math.ceil(message.content.length / 4);
+    }, 0);
+  }
+
+  /**
+   * 构建消息时自动应用智能压缩
+   */
+  public async buildCompressedMessagesWithContext(
+    userMessage: string,
+    systemPrompt?: string,
+    filterOptions?: ContextFilter
+  ): Promise<{
+    messages: ContextMessage[];
+    compressionApplied: boolean;
+    compressionStats?: any;
+  }> {
+    // 首先构建常规消息
+    const messages = await this.buildMessagesWithContext(userMessage, systemPrompt, filterOptions);
+    
+    // 转换为ChatMessage格式
+    const chatMessages: ChatMessage[] = messages.map(msg => ({
+      role: msg.role as 'system' | 'user' | 'assistant',
+      content: msg.content,
+      metadata: { timestamp: msg.timestamp },
+    }));
+
+    // 检查是否需要压缩
+    if (this.needsCompression(chatMessages)) {
+      const { compressed, compressionResult } = await this.compressContextMessages(chatMessages);
+      
+      // 转换回ContextMessage格式
+      const compressedMessages: ContextMessage[] = compressed.map((msg, index) => ({
+        id: `compressed_${Date.now()}_${index}`,
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.metadata?.timestamp as number || Date.now(),
+        metadata: msg.metadata,
+      }));
+
+      return {
+        messages: compressedMessages,
+        compressionApplied: true,
+        compressionStats: compressionResult?.metadata,
+      };
+    }
+
+    return {
+      messages,
+      compressionApplied: false,
+    };
   }
 
   /**

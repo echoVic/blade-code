@@ -35,6 +35,45 @@ import {
 } from '../types/config.js';
 
 /**
+ * 安全地深度合并对象，确保检测到循环引用
+ */
+function safeDeepMerge(target: any, source: any, seen = new WeakSet(), path = ''): any {
+  if (source === null || typeof source !== 'object') {
+    return source;
+  }
+
+  if (seen.has(source)) {
+    throw new Error(`检测到循环引用${path ? `在路径 ${path}` : ''}，配置合并失败`);
+  }
+  seen.add(source);
+
+  if (Array.isArray(source)) {
+    const result = [...(Array.isArray(target) ? target : []), ...source];
+    seen.delete(source);
+    return result;
+  }
+
+  const result = { ...target };
+
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) {
+      continue;
+    }
+
+    const currentPath = path ? `${path}.${key}` : key;
+
+    if (key in result && typeof result[key] === 'object' && typeof value === 'object') {
+      result[key] = safeDeepMerge(result[key], value, seen, currentPath);
+    } else {
+      result[key] = value;
+    }
+  }
+
+  seen.delete(source);
+  return result;
+}
+
+/**
  * 配置层类型
  */
 export interface ConfigLayers {
@@ -83,12 +122,38 @@ export function createConfig(
   const errors: string[] = [];
 
   try {
+    // 首先检查每个层级是否包含循环引用
+    for (const layer of priority) {
+      const layerConfig = layers[layer.toLowerCase() as keyof ConfigLayers];
+      if (layerConfig) {
+        try {
+          // 尝试序列化检测循环引用
+          JSON.stringify(layerConfig);
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('circular')) {
+            const errorMsg = `配置层 ${layer} 包含循环引用，配置合并失败: ${error.message}`;
+            errors.push(errorMsg);
+            if (throwOnError) {
+              throw new Error(errorMsg);
+            }
+            // 返回默认值
+            return {
+              config: createDefaultConfig(),
+              warnings,
+              errors
+            };
+          }
+          throw error;
+        }
+      }
+    }
+
     const reversedPriority = priority.slice().reverse();
     let merged: any = {};
     for (const layer of reversedPriority) {
       const layerConfig = layers[layer.toLowerCase() as keyof ConfigLayers];
       if (layerConfig) {
-        merged = deepMerge(merged, layerConfig, new WeakSet());
+        merged = safeDeepMerge(merged, layerConfig);
       }
     }
 
@@ -139,7 +204,7 @@ function mergeConfigLayers(
   for (const layer of priority.slice().reverse()) {
     const layerConfig = layers[layer.toLowerCase() as keyof ConfigLayers];
     if (layerConfig) {
-      merged = deepMerge(merged, layerConfig);
+      merged = safeDeepMerge(merged, layerConfig);
     }
   }
 

@@ -3,13 +3,16 @@
  * 测试所有安全相关的工具和功能
  */
 
+import './setup.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { PathSecurity } from '../src/utils/path-security';
-import { ConfigEncryptor } from '../src/utils/config-encryptor';
-import { CommandExecutor } from '../src/utils/command-executor';
-import { PromptSecurity } from '../src/utils/prompt-security';
-import { ErrorHandler } from '../src/utils/error-handler';
-import { SecureHttpClient } from '../src/utils/secure-http-client';
+import { 
+  pathSecurity as PathSecurity,
+  ConfigEncryptor, 
+  CommandExecutor, 
+  PromptSecurity, 
+  ErrorHandler, 
+  SecureHttpClient 
+} from '@blade-ai/core';
 import { join, resolve } from 'path';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
