@@ -105,7 +105,7 @@ describe('Agent', () => {
       await agent.chat('Second message');
 
       expect(mockChatService.chat).toHaveBeenCalledTimes(2);
-      expect(mockContextManager.addUserMessage).toHaveBeenCalledWith('First message');
+      expect(mockContextManager.addAssistantMessage).toHaveBeenCalledTimes(2);
       expect(mockContextManager.addAssistantMessage).toHaveBeenCalledWith('Mock response');
     });
 

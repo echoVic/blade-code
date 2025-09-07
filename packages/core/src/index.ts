@@ -43,6 +43,11 @@ export { deepMerge } from './utils/deep-merge.js';
 export { errorHandler } from './utils/error-handler.js';
 export { pathSecurity } from './utils/path-security.js';
 export { secureHttpClient } from './utils/secure-http-client.js';
+export { ConfigEncryptor } from './utils/config-encryptor.js';
+export { CommandExecutor } from './utils/command-executor.js';
+export { PromptSecurity } from './utils/prompt-security.js';
+export { ErrorHandler } from './utils/error-handler.js';
+export { SecureHttpClient } from './utils/secure-http-client.js';
 
 // 上下文类型
 export type {
@@ -80,6 +85,28 @@ export type {
 // Agent核心系统 (简化架构)
 export { Agent } from './agent/Agent.js';
 export type { AgentConfig, AgentResponse, AgentTask } from './agent/types.js';
+
+// Agent增强组件
+export { ContextCompressionManager } from './agent/context/ContextCompressionManager.js';
+export type { 
+  ContextData, 
+  CompressedContext, 
+  CompressionStage 
+} from './agent/context/ContextCompressionManager.js';
+
+export { EnhancedSteeringController } from './agent/EnhancedSteeringController.js';
+export type { SteeringDirection, TaskRedirectResult, MessageEvent } from './agent/EnhancedSteeringController.js';
+
+export { ParallelSubAgentExecutor } from './agent/ParallelSubAgentExecutor.js';
+export type { ParallelExecutionOptions, IsolatedEnvironment, IsolationConstraints, ParallelExecutionResult } from './agent/ParallelSubAgentExecutor.js';
+
+export { ComponentManager } from './agent/ComponentManager.js';
+export type { ComponentManagerConfig, ComponentEvent } from './agent/ComponentManager.js';
+
+// 便利工厂函数 (与现有API保持兼容)
+export function createMainAgent(config: AgentConfig): Agent {
+  return new Agent(config);
+}
 
 // 上下文管理
 export { ContextManager } from './agent/context/ContextManager.js';

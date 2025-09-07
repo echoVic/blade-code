@@ -28,8 +28,10 @@ vi.mock('path', async () => {
 });
 
 // Mock 'axios' to provide a default export with a 'create' method
-vi.mock('axios', () => {
+vi.mock('axios', async () => {
+  const actual = await vi.importActual('axios');
   const mockAxios = {
+    ...actual,
     create: vi.fn(() => mockAxios),
     get: vi.fn(),
     post: vi.fn(),

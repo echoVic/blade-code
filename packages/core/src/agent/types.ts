@@ -24,7 +24,7 @@ export interface AgentConfig {
 
 export interface AgentTask {
   id: string;
-  type: 'simple' | 'complex' | 'recursive';
+  type: 'simple' | 'complex' | 'recursive' | 'parallel' | 'steering';
   prompt: string;
   context?: Record<string, unknown>;
   priority?: number;
