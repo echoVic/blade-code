@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import { Client, Server } from '@modelcontextprotocol/sdk';
-import { ToolComponent } from '@blade-ai/core';
+import { ToolManager } from '@blade-ai/core';
 import { UIDisplay, UIInput, UILayout, UIList, UIProgress } from '../ui/index.js';
 
 /**

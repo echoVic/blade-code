@@ -1,19 +1,23 @@
 #!/usr/bin/env node
 
 /**
- * 平铺配置CLI命令
- * 直接使用三要素配置驱动命令
+ * 智能对话命令 - 使用统一的AgentFactory
  */
 
-import { createMainAgent, MainAgent } from '@blade-ai/core';
+import { AgentFactory } from '../services/AgentFactory.js';
 import chalk from 'chalk';
 import { Command } from 'commander';
+
+interface Agent {
+  chat(message: string): Promise<string>;
+  chatWithSystem(systemPrompt: string, message: string): Promise<string>;
+}
 
 /**
  * 注册Agent-LLM相关命令
  */
 export function agentLlmCommand(program: Command) {
-  const llmCmd = program
+  program
     .command('chat')
     .description('💬 智能对话')
     .argument('[message]', '对话内容')
@@ -29,9 +33,6 @@ export function agentLlmCommand(program: Command) {
     .action(async (message, options) => {
       await handleChat(message, options);
     });
-
-  // 别名
-  llmCmd.alias('c');
 }
 
 /**
@@ -49,19 +50,22 @@ async function handleChat(
   }
 ): Promise<void> {
   try {
-    // 构建配置
-    const configUpdates: any = {};
-    if (options.apiKey) configUpdates.apiKey = options.apiKey;
-    if (options.baseUrl) configUpdates.baseUrl = options.baseUrl;
-    if (options.model) configUpdates.modelName = options.model;
-
-    // 创建MainAgent实例
-    const agent = await createMainAgent(configUpdates);
+    // 使用AgentFactory创建Agent
+    const agentFactory = AgentFactory.getInstance();
+    const agent = await agentFactory.createAgent({
+      apiKey: options.apiKey,
+      baseUrl: options.baseUrl,
+      model: options.model
+    });
 
     // 设置主题
     if (options.theme) {
-      const { themeManager } = await import('../ui/themes/index.js');
-      themeManager.setTheme(options.theme);
+      try {
+        const { themeManager } = await import('../ui/themes/index.js');
+        themeManager.setTheme(options.theme);
+      } catch (error) {
+        console.warn(chalk.yellow(`⚠️ 主题设置失败: ${error}`));
+      }
     }
 
     // 交互式模式
@@ -87,7 +91,7 @@ async function handleChat(
 /**
  * 交互式聊天
  */
-async function interactiveChat(agent: MainAgent, systemPrompt?: string): Promise<void> {
+async function interactiveChat(agent: Agent, systemPrompt?: string): Promise<void> {
   const readline = require('readline');
   const rl = readline.createInterface({
     input: process.stdin,

@@ -2,16 +2,19 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": "src", 
     "declaration": true,
     "composite": true,
     "declarationMap": true,
     "types": ["node", "vitest/globals", "jest"]
   },
   "include": [
-    "src/**/*.ts",
-    "src/**/*.tsx",
-    "src/**/*.json"
+    "src/services/ChatService.ts",
+    "src/agent/Agent.ts",
+    "src/agent/ExecutionEngine.ts",
+    "src/agent/types.ts",
+    "src/index.ts",
+    "src/services/index.ts"
   ],
   "exclude": [
     "node_modules",

@@ -1,146 +1,25 @@
 /**
- * @blade-ai/core 包公共 API
- * 这是 core 包唯一的公共出口，所有外部依赖都应该通过这里导入
+ * @blade-ai/core 包公共 API - 简化架构
  */
 
-// 配置系统
-export { createConfig } from './config/index.js';
-export type { ConfigLayers, ConfigMergeOptions, ConfigMergeResult } from './config/index.js';
-
-// 类型定义
-export type {
-  AuthConfig,
-  BladeUnifiedConfig,
-  ConfigLayer,
-  DebugConfig,
-  EnvConfig,
-  GlobalConfig,
-  MCPConfig,
-  ProjectConfig,
-  SecurityConfig,
-  TelemetryConfig,
-  ToolsConfig,
-  UIConfig,
-  UsageConfig,
-  UserConfig,
-} from './types/config.js';
-
-// 共享类型定义（从 @blade-ai/types 迁移而来）
-export type {
-  BladeConfig,
-  ContextConfig,
-  LLMMessage,
-  LLMRequest,
-  LLMResponse,
-  ToolConfig,
-  ToolResult,
-} from './types/shared.js';
-
-export { bladeConfigToUnifiedConfig, unifiedConfigToBladeConfig } from './types/shared.js';
-
-// 工具函数
-export { deepMerge } from './utils/deep-merge.js';
-export { errorHandler } from './utils/error-handler.js';
-export { pathSecurity } from './utils/path-security.js';
-export { secureHttpClient } from './utils/secure-http-client.js';
-export { ConfigEncryptor } from './utils/config-encryptor.js';
-export { CommandExecutor } from './utils/command-executor.js';
-export { PromptSecurity } from './utils/prompt-security.js';
-export { ErrorHandler } from './utils/error-handler.js';
-export { SecureHttpClient } from './utils/secure-http-client.js';
-
-// 上下文类型
-export type {
-  CompressedContext,
-  ContextData,
-  ContextFilter,
-  ContextLayer,
-  ContextManagerOptions,
-  ContextMessage,
-  ContextStorageOptions,
-  ConversationContext,
-  SessionContext,
-  SystemContext,
-  ToolCall,
-  ToolContext,
-  WorkspaceContext,
-} from './types/context.js';
-
-// 工具类型
-export type {
-  ToolCallRequest,
-  ToolCallResponse,
-  ToolDefinition,
-  ToolExecutionContext,
-  ToolExecutionError,
-  ToolExecutionHistory,
-  ToolExecutionResult,
-  ToolManagerConfig,
-  ToolParameterSchema,
-  ToolRegistrationError,
-  ToolRegistrationOptions,
-  ToolValidationError,
-} from './types/tools.js';
-
-// Agent核心系统 (简化架构)
+// Agent核心系统
 export { Agent } from './agent/Agent.js';
+export { ExecutionEngine } from './agent/ExecutionEngine.js';
 export type { AgentConfig, AgentResponse, AgentTask } from './agent/types.js';
-
-// Agent增强组件
-export { ContextCompressionManager } from './agent/context/ContextCompressionManager.js';
-export type { 
-  ContextData, 
-  CompressedContext, 
-  CompressionStage 
-} from './agent/context/ContextCompressionManager.js';
-
-export { EnhancedSteeringController } from './agent/EnhancedSteeringController.js';
-export type { SteeringDirection, TaskRedirectResult, MessageEvent } from './agent/EnhancedSteeringController.js';
-
-export { ParallelSubAgentExecutor } from './agent/ParallelSubAgentExecutor.js';
-export type { ParallelExecutionOptions, IsolatedEnvironment, IsolationConstraints, ParallelExecutionResult } from './agent/ParallelSubAgentExecutor.js';
-
-export { ComponentManager } from './agent/ComponentManager.js';
-export type { ComponentManagerConfig, ComponentEvent } from './agent/ComponentManager.js';
-
-// 便利工厂函数 (与现有API保持兼容)
-export function createMainAgent(config: AgentConfig): Agent {
-  return new Agent(config);
-}
-
-// 上下文管理
-export { ContextManager } from './agent/context/ContextManager.js';
 
 // Chat服务 (统一的LLM接口)
 export { ChatService } from './services/ChatService.js';
-export type { ChatConfig, ChatMessage, ChatResponse } from './services/ChatService.js';
+export type { ChatConfig, ChatResponse, Message } from './services/ChatService.js';
 
-// 迁移工具
-export { AgentMigrator, fullMigrate, quickMigrate } from './migration/agent-migration.js';
-export type { MigrationOptions, MigrationResult } from './migration/agent-migration.js';
+// 工具系统
+export { ToolManager } from './tools/ToolManager.js';
+export type { Tool, ToolExecutionResult, ToolManagerConfig } from './tools/types.js';
 
-// 配置常量
-export { CONFIG_PRIORITY } from './types/config.js';
+// 配置管理 (简化版)
+export { ConfigManager } from './config/ConfigManager.js';
 
-/**
- * Core 包版本信息
- */
+// 核心服务
+export { ChatService as LLMService } from './services/ChatService.js';
+
+// 版本信息
 export const VERSION = '1.3.0';
-
-/**
- * Core 包初始化函数
- * 用于在应用启动时初始化核心功能
- */
-export async function initializeCore(): Promise<void> {
-  // 这里可以添加核心初始化逻辑
-  console.log('@blade-ai/core initialized');
-}
-
-/**
- * Core 包清理函数
- * 用于在应用关闭时清理资源
- */
-export async function cleanupCore(): Promise<void> {
-  // 这里可以添加资源清理逻辑
-  console.log('@blade-ai/core cleaned up');
-}

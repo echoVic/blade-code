@@ -3,58 +3,94 @@
  * 替代LLM模块，提供统一的聊天调用能力
  */
 
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-  metadata?: Record<string, unknown>;
-}
+// 使用Anthropic的工具调用格式
+export type Message = {
+  role: "user" | "assistant";
+  content: string | Array<{
+    type: "text" | "tool_use" | "tool_result";
+    text?: string;
+    tool_use?: {
+      id: string;
+      name: string;
+      input: Record<string, any>;
+    };
+    tool_result?: {
+      tool_use_id: string;
+      content: string;
+    };
+  }>;
+};
 
 export interface ChatConfig {
-  provider: 'qwen' | 'volcengine' | 'openai' | 'anthropic';
-  apiKey?: string;
-  model?: string;
-  baseUrl?: string;
+  apiKey: string;  // Anthropic API Key
+  model: string;   // Anthropic模型名称
+  baseUrl: string; // 必须配置的API端点
   temperature?: number;
   maxTokens?: number;
   timeout?: number;
 }
 
 export interface ChatResponse {
-  content: string;
+  content: string | Array<{
+    type: "text" | "tool_use" | "tool_result";
+    text?: string;
+    tool_use?: {
+      id: string;
+      name: string;
+      input: Record<string, any>;
+    };
+    tool_result?: {
+      tool_use_id: string;
+      content: string;
+    };
+  }>;
   usage?: {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
   };
-  metadata?: Record<string, unknown>;
 }
 
 /**
  * Chat服务类 - 统一的聊天接口
  */
 export class ChatService {
-  constructor(private config: ChatConfig) {}
+  private baseUrl: string;
+  
+  constructor(private config: ChatConfig) {
+    if (!config.baseUrl) {
+      throw new Error('baseUrl is required in ChatConfig');
+    }
+    this.baseUrl = config.baseUrl;
+  }
 
   /**
    * 统一的聊天接口
    */
-  async chat(messages: ChatMessage[]): Promise<string> {
-    const response = await this.callLLMProvider(messages);
-    return response.content;
+  async chat(messages: Message[]): Promise<string> {
+    const response = await this.callAnthropic(messages);
+    if (typeof response.content === 'string') {
+      return response.content;
+    }
+    // 如果是数组，连接所有文本内容
+    return response.content
+      .filter(item => item.type === 'text' && item.text)
+      .map(item => item.text)
+      .join('\n');
   }
 
   /**
    * 详细的聊天接口，返回完整响应信息
    */
-  async chatDetailed(messages: ChatMessage[]): Promise<ChatResponse> {
-    return this.callLLMProvider(messages);
+  async chatDetailed(messages: Message[]): Promise<ChatResponse> {
+    return this.callAnthropic(messages);
   }
 
   /**
    * 简单文本聊天
    */
   async chatText(message: string): Promise<string> {
-    const messages: ChatMessage[] = [{ role: 'user', content: message }];
+    const messages: Message[] = [{ role: 'user', content: message }];
     return this.chat(messages);
   }
 
@@ -62,115 +98,60 @@ export class ChatService {
    * 带系统提示词的聊天
    */
   async chatWithSystem(systemPrompt: string, userMessage: string): Promise<string> {
-    const messages: ChatMessage[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage },
+    // 将system消息转为user消息前缀
+    const messages: Message[] = [
+      {
+        role: 'user',
+        content: `系统提示: ${systemPrompt}\n\n用户消息: ${userMessage}`
+      }
     ];
     return this.chat(messages);
   }
 
   /**
-   * 调用LLM提供商
+   * 调用Anthropic API
    */
-  private async callLLMProvider(messages: ChatMessage[]): Promise<ChatResponse> {
-    switch (this.config.provider) {
-      case 'qwen':
-        return this.callQwen(messages);
-      case 'volcengine':
-        return this.callVolcEngine(messages);
-      case 'openai':
-        return this.callOpenAI(messages);
-      case 'anthropic':
-        return this.callAnthropic(messages);
-      default:
-        throw new Error(`Unsupported provider: ${this.config.provider}`);
+  private async callAnthropic(messages: Message[]): Promise<ChatResponse> {
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': this.config.apiKey,
+      'anthropic-version': '2023-06-01'
+    };
+
+    const body = {
+      model: this.config.model,
+      messages: messages,
+      max_tokens: this.config.maxTokens || 1000,
+      temperature: this.config.temperature || 0.7
+    };
+
+    try {
+      const response = await fetch(this.baseUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        throw new Error(`API调用失败: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      // 转换响应格式
+      return {
+        content: data.content,
+        usage: {
+          promptTokens: data.usage?.input_tokens || 0,
+          completionTokens: data.usage?.output_tokens || 0,
+          totalTokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)
+        }
+      };
+    } catch (error) {
+      throw new Error(`Anthropic API调用失败: ${error instanceof Error ? error.message : '未知错误'}`);
     }
   }
 
-  /**
-   * 调用通义千问
-   */
-  private async callQwen(messages: ChatMessage[]): Promise<ChatResponse> {
-    // 这里实现通义千问的调用逻辑
-    // 由于没有具体的实现，这里返回模拟数据
-    const mockResponse: ChatResponse = {
-      content: `Qwen response to: ${messages[messages.length - 1]?.content || ''}`,
-      usage: {
-        promptTokens: 100,
-        completionTokens: 50,
-        totalTokens: 150,
-      },
-      metadata: {
-        provider: 'qwen',
-        model: this.config.model || 'qwen-coder',
-      },
-    };
-
-    return mockResponse;
-  }
-
-  /**
-   * 调用火山引擎
-   */
-  private async callVolcEngine(messages: ChatMessage[]): Promise<ChatResponse> {
-    // 这里实现火山引擎的调用逻辑
-    const mockResponse: ChatResponse = {
-      content: `VolcEngine response to: ${messages[messages.length - 1]?.content || ''}`,
-      usage: {
-        promptTokens: 100,
-        completionTokens: 50,
-        totalTokens: 150,
-      },
-      metadata: {
-        provider: 'volcengine',
-        model: this.config.model || 'volcengine-model',
-      },
-    };
-
-    return mockResponse;
-  }
-
-  /**
-   * 调用OpenAI
-   */
-  private async callOpenAI(messages: ChatMessage[]): Promise<ChatResponse> {
-    // 这里实现OpenAI的调用逻辑
-    const mockResponse: ChatResponse = {
-      content: `OpenAI response to: ${messages[messages.length - 1]?.content || ''}`,
-      usage: {
-        promptTokens: 100,
-        completionTokens: 50,
-        totalTokens: 150,
-      },
-      metadata: {
-        provider: 'openai',
-        model: this.config.model || 'gpt-4',
-      },
-    };
-
-    return mockResponse;
-  }
-
-  /**
-   * 调用Anthropic
-   */
-  private async callAnthropic(messages: ChatMessage[]): Promise<ChatResponse> {
-    // 这里实现Anthropic的调用逻辑
-    const mockResponse: ChatResponse = {
-      content: `Anthropic response to: ${messages[messages.length - 1]?.content || ''}`,
-      usage: {
-        promptTokens: 100,
-        completionTokens: 50,
-        totalTokens: 150,
-      },
-      metadata: {
-        provider: 'anthropic',
-        model: this.config.model || 'claude-3',
-      },
-    };
-
-    return mockResponse;
-  }
 
   /**
    * 获取当前配置

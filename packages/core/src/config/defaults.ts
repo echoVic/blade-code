@@ -9,31 +9,27 @@ export const DEFAULT_CONFIG: BladeConfig = {
   // 认证配置
   apiKey: '',
   baseUrl: 'https://apis.iflow.cn/v1',
-  modelName: 'Qwen3-Coder',
-  
-  // 搜索配置
-  searchApiKey: '',
-  theme: 'GitHub',
-  sandbox: 'docker',
-  
+  modelName: 'qwen3-max-preview',
+
   // UI 配置
+  theme: 'GitHub',
   hideTips: false,
   hideBanner: false,
-  
+
   // 使用配置
   maxSessionTurns: 10,
-  
+
   // 工具配置
   toolDiscoveryCommand: 'bin/get_tools',
   toolCallCommand: 'bin/call_tool',
-  
+
   // 遥测配置
   telemetryEnabled: true,
   telemetryTarget: 'local',
   otlpEndpoint: 'http://localhost:4317',
   logPrompts: false,
   usageStatisticsEnabled: true,
-  
+
   // 调试配置
   debug: false,
 };
@@ -45,9 +41,7 @@ export const ENV_MAPPING = {
   BLADE_API_KEY: 'apiKey',
   BLADE_BASE_URL: 'baseUrl',
   BLADE_MODEL: 'modelName',
-  BLADE_SEARCH_API_KEY: 'searchApiKey',
   BLADE_THEME: 'theme',
-  BLADE_SANDBOX: 'sandbox',
   BLADE_MAX_TURNS: 'maxSessionTurns',
   BLADE_DEBUG: 'debug',
 };

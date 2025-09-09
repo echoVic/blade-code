@@ -13,29 +13,31 @@ Root (blade-ai)
 ├── packages/
 │   ├── cli/          # CLI interface layer with React/Ink UI components
 │   ├── core/         # Business logic - Agent, tools, services
-│   └── types/        # Shared TypeScript definitions
+│   └── types/        # Shared TypeScript definitions (now integrated into core)
 ├── bin/blade.js      # Main executable CLI entry point
 └── esbuild.config.js # Build system configuration
 ```
 
 **Layer Separation:**
-- **CLI Layer** (`@blade-ai/cli`): Ink-based terminal UI, React components, command parsing
-- **Core Layer** (`@blade-ai/core`): Business logic, Agent orchestration, tool management, IDE integration
+- **CLI Layer** (`@blade-ai/cli`): Ink-based terminal UI, React components, command parsing, UI state management
+- **Core Layer** (`@blade-ai/core`): Business logic, Agent orchestration, tool management, IDE integration, MCP support
 - **Build System**: Custom esbuild bundling with dual-package TypeScript compilation
 
 ## Core Components Architecture
 
 ### Agent System
-- **Agent**: Main orchestrator for LLM interactions with context/memory management
-- **ToolManager**: Centralized tool registration/execution system (src/tools/ToolManager.ts)
+- **Agent**: Main orchestrator for LLM interactions with context/memory management and enhanced steering control
+- **ToolManager**: Centralized tool registration/execution system with validation and security controls
 - **IDE Integration**: Multi-IDE detection and extension installation via IdeContext/IdeInstaller
 - **MCP Support**: Model Context Protocol server/client integration for external tools
+- **ChatService**: Unified LLM interface supporting multiple providers (Qwen, VolcEngine, OpenAI, Anthropic)
 
 ### Key Services
-- **FileSystemService**: File operations with atomic transactions
+- **FileSystemService**: File operations with atomic transactions and security validation
 - **GitService**: Git repository operations and analysis  
 - **TelemetrySDK**: Metrics collection and error tracking
-- **ProxyService**: HTTP client with retry/batch capabilities
+- **ProxyService**: HTTP client with retry/batch capabilities and security controls
+- **ConfigManager**: Hierarchical configuration management with encryption support
 
 ## Build & Development Commands
 
@@ -55,23 +57,32 @@ Root (blade-ai)
 - **Test**: `npm run test` - Vitest with Jest-like API
 - **Watch**: `npm run test:watch` - File-watching test runner
 - **Coverage**: `npm run test:coverage` - With V8 coverage
-- **Specific**: `npm run test:core` - Test specific package only
+- **Unit**: `npm run test:unit` - Unit tests only
 - **Integration**: `npm run test:integration` - Integration test suite
 - **E2E**: `npm run test:e2e` - End-to-end CLI testing
+- **Core Only**: `npm run test:core` - Test core package only
+- **Debug**: `npm run test:debug` - Verbose test output
 
 ### Package-Specific Commands
 ```bash
+# Core package
 cd packages/core && npm run build      # Core library build
+npm run test:core                     # Test core package only
+
+# CLI package
+cd packages/cli && npm run build      # CLI library build
 cd packages/cli && npm run build:bundle # CLI bundling only
-npm run build:packages                 # Build all packages in sequence
+
+# Build all packages
+npm run build:packages                # Build all packages in sequence
 ```
 
 ## Package Management
 
 **Uses pnpm workspaces** for monorepo management:
-- Workspace packages: `cli/`, `core/`, `types/`
+- Workspace packages: `cli/`, `core/`
 - Cross-package imports use `@blade-ai/*` aliases
-- Type definitions shared via `types` package
+- Type definitions now integrated into `@blade-ai/core` package
 
 ## Test Structure
 
@@ -86,9 +97,11 @@ tests/
 ## Key Entry Points
 
 - **CLI Entry**: `bin/blade.js` (bundled from packages/cli)
-- **CLI Source**: `packages/cli/src/cli.ts`
-- **Core API**: `packages/core/src/index.ts`
+- **CLI Source**: `packages/cli/src/blade.tsx` (main CLI entry)
+- **Core API**: `packages/core/src/index.ts` (public API exports)
 - **Build Script**: `esbuild.config.js` (Node.js-based bundling)
+- **Agent Core**: `packages/core/src/agent/Agent.ts` (main Agent implementation)
+- **Tool System**: `packages/core/src/tools/ToolManager.ts` (tool registration/execution)
 
 ## Environment Variables
 
@@ -103,6 +116,7 @@ tests/
 2. **Make changes**:
    - CLI changes: Edit `packages/cli/src/`
    - Core changes: Edit `packages/core/src/`
-   - Add new tools: `packages/core/src/tools/
+   - Add new tools: `packages/core/src/tools/`
+   - Modify Agent: `packages/core/src/agent/`
 3. **Test**: `npm test` or `npm run test:core`
 4. **Build**: `npm run build` for full bundling

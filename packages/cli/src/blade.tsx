@@ -9,7 +9,6 @@ import { AppWrapper as BladeApp } from './ui/App.js';
 // --- Command Definitions ---
 import { agentLlmCommand } from './commands/agent-llm.js';
 import { configCommand } from './commands/config.js';
-import { llmCommand } from './commands/llm.js';
 import { mcpCommand } from './commands/mcp.js';
 import { toolsCommand } from './commands/tools.js';
 
@@ -25,7 +24,6 @@ export async function main() {
   // 注册所有命令
   agentLlmCommand(program);
   configCommand(program);
-  llmCommand(program);
   mcpCommand(program);
   toolsCommand(program);
 

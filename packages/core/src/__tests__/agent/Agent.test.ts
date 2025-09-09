@@ -4,7 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../agent/Agent.js';
-import { ContextManager } from '../../agent/context/ContextManager.js';
+import { ContextManager } from '../../context/ContextManager.js';
 import { ChatService } from '../../services/ChatService.js';
 
 // Mock 服务
@@ -33,7 +33,7 @@ vi.mock('../../services/ChatService.js', () => {
   };
 });
 
-vi.mock('../../agent/context/ContextManager.js', () => {
+vi.mock('../../context/ContextManager.js', () => {
   return {
     ContextManager: vi.fn().mockImplementation(() => mockContextManager),
   };

@@ -294,22 +294,29 @@ const BladeInterface: React.FC<{
           {'> '}
         </Text>
         <Text>{input}</Text>
-        {isProcessing && <Text color="yellow">█</Text>}
+        {isProcessing ? (
+          <Text color="yellow">█</Text>
+        ) : (
+          <Text color="white">█</Text>
+        )}
       </Box>
 
       {/* 状态栏 */}
       <Box flexDirection="row" justifyContent="space-between" paddingX={2} paddingY={0}>
         <Box flexDirection="row" gap={2}>
-          {!hasApiKey && <Text color="red">⚠ API 密钥未配置</Text>}
           {sessionState.messages.length > 0 && (
             <Text color="gray" dimColor>
               {sessionState.messages.length} messages
             </Text>
           )}
         </Box>
-        <Text color="gray" dimColor>
-          {isProcessing ? 'Processing...' : 'Ready'}
-        </Text>
+        {!hasApiKey ? (
+          <Text color="red">⚠ API 密钥未配置</Text>
+        ) : isProcessing ? (
+          <Text color="yellow">Processing...</Text>
+        ) : (
+          <Text color="green">Ready</Text>
+        )}
       </Box>
     </Box>
   );
@@ -342,7 +349,7 @@ export const BladeApp: React.FC<AppProps> = ({ debug = false, testMode = false }
         addAssistantMessage('/help for help, /status for your current setup');
         addAssistantMessage(`Cwd: ${process.cwd()}`);
         addAssistantMessage(
-          '⚠️  API Key 未配置\n\nAPI Base URL: https://apis.iflow.cn\n\n📋 配置步骤:\n1. 访问 https://iflow.cn/ 获取API Key\n2. 设置环境变量: export BLADE_API_KEY="your-api-key"\n3. 重新启动 Blade\n\n💡 或者使用命令行参数: blade --api-key="your-api-key"'
+          '⚠️  API Key 未配置\n\nAPI Base URL: https://apis.iflow.cn\n\n📋 配置步骤:\n1. 设置环境变量: export BLADE_API_KEY="your-api-key"\n2. 重新启动 Blade\n\n💡 或者使用命令行参数: blade --api-key="your-api-key"'
         );
         return;
       }

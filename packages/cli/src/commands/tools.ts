@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { ToolComponent, ToolDefinition } from '@blade-ai/core';
+import { ToolManager, Tool } from '@blade-ai/core';
 import { UIDisplay, UIInput, UILayout, UIList, UIProgress } from '../ui/index.js';
 
 /**

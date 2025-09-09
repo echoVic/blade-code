@@ -4,8 +4,8 @@
  */
 
 import { ConfigError, ErrorFactory, globalErrorMonitor } from '../error/index.js';
-import type { BladeConfig } from './types/index.js';
 import { DEFAULT_CONFIG, ENV_MAPPING } from './defaults.js';
+import type { BladeConfig } from './types/index.js';
 
 export class ConfigManager {
   private config: BladeConfig;
@@ -136,17 +136,26 @@ export class ConfigManager {
   private validateConfig(config: Partial<BladeConfig>): any[] {
     const errors: any[] = [];
 
-    // 基础验证
-    if (config.apiKey !== undefined && typeof config.apiKey !== 'string') {
-      errors.push({ path: 'apiKey', message: 'API Key 必须是字符串' });
+    // 基础验证 - 必填字段
+    if (!config.apiKey || typeof config.apiKey !== 'string') {
+      errors.push({ path: 'apiKey', message: 'API Key 是必填字符串' });
     }
 
-    if (config.baseUrl !== undefined && typeof config.baseUrl !== 'string') {
-      errors.push({ path: 'baseUrl', message: 'Base URL 必须是字符串' });
+    if (!config.modelName || typeof config.modelName !== 'string') {
+      errors.push({ path: 'modelName', message: 'Model Name 是必填字符串' });
     }
 
-    if (config.modelName !== undefined && typeof config.modelName !== 'string') {
-      errors.push({ path: 'modelName', message: 'Model Name 必须是字符串' });
+    if (!config.baseUrl || typeof config.baseUrl !== 'string') {
+      errors.push({ path: 'baseUrl', message: 'Base URL 是必填字符串' });
+    } else {
+      try {
+        const url = new URL(config.baseUrl);
+        if (!['http:', 'https:'].includes(url.protocol)) {
+          errors.push({ path: 'baseUrl', message: 'Base URL 必须使用 http 或 https 协议' });
+        }
+      } catch {
+        errors.push({ path: 'baseUrl', message: 'Base URL 格式无效' });
+      }
     }
 
     return errors;
@@ -157,11 +166,23 @@ export class ConfigManager {
 
     switch (key) {
       case 'apiKey':
-      case 'baseUrl':
       case 'modelName':
-      case 'searchApiKey':
-        if (value !== undefined && typeof value !== 'string') {
-          errors.push({ path: key, message: `${key} 必须是字符串` });
+        if (!value || typeof value !== 'string') {
+          errors.push({ path: key, message: `${key} 是必填字符串` });
+        }
+        break;
+      case 'baseUrl':
+        if (!value || typeof value !== 'string') {
+          errors.push({ path: key, message: 'Base URL 是必填字符串' });
+        } else {
+          try {
+            const url = new URL(value);
+            if (!['http:', 'https:'].includes(url.protocol)) {
+              errors.push({ path: key, message: 'Base URL 必须使用 http 或 https 协议' });
+            }
+          } catch {
+            errors.push({ path: key, message: 'Base URL 格式无效' });
+          }
         }
         break;
       case 'maxSessionTurns':

@@ -2,7 +2,7 @@
  * Agent核心类型定义
  */
 
-import type { ChatConfig, ChatMessage } from '../services/ChatService.js';
+import type { ChatConfig, Message } from '../services/ChatService.js';
 
 export interface AgentConfig {
   chat: ChatConfig;
@@ -66,7 +66,7 @@ export interface SubAgentInfo {
 }
 
 export interface ContextData {
-  messages: ChatMessage[];
+  messages: Message[];
   metadata?: Record<string, unknown>;
 }
 

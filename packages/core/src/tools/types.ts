@@ -1,49 +1,22 @@
-/**
- * 工具参数模式定义
- */
-export interface ToolParameterSchema {
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object';
-  description?: string;
-  required?: boolean;
-  default?: any;
-  enum?: any[];
-  items?: ToolParameterSchema;
-  properties?: Record<string, ToolParameterSchema>;
-}
-
-/**
- * 工具定义接口
- */
-export interface ToolDefinition {
-  /** 工具名称 */
+// 使用Anthropic的工具调用格式
+export type Tool = {
   name: string;
-  /** 工具描述 */
   description: string;
-  /** 工具版本 */
-  version?: string;
-  /** 工具作者 */
-  author?: string;
-  /** 工具分类 */
-  category?: string;
-  /** 工具标签 */
-  tags?: string[];
-  /** 参数模式定义 */
-  parameters: Record<string, ToolParameterSchema>;
-  /** 必需参数列表 */
-  required?: string[];
-  /** 输入模式定义 */
-  inputSchema?: {
-    type?: string;
-    properties?: Record<string, any>;
-    required?: string[];
+  input_schema: {
+    type: "object";
+    properties: Record<string, {
+      type: string;
+      description?: string;
+      enum?: any[];
+      items?: {
+        type: string;
+      };
+      properties?: Record<string, any>;
+      required?: string[];
+    }>;
+    required: string[];
   };
-  /** 输出模式定义 */
-  outputSchema?: any;
-  /** 使用示例 */
-  examples?: any[];
-  /** 工具执行函数 */
-  execute: (params: Record<string, any>) => Promise<ToolExecutionResult>;
-}
+};
 
 /**
  * 工具执行结果

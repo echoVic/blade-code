@@ -43,7 +43,12 @@
       "WebFetch(domain:github.com)",
       "mcp__github__search_code",
       "Bash(BLADE_API_KEY=\"sk-efbb8602dc97babd486676797ed2ec28\" ./bin/blade.js --version)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "WebSearch",
+      "Bash(find:*)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(BLADE_API_KEY=\"test-key\" BLADE_BASE_URL=\"https://api.example.com/v1\" ./bin/blade.js llm --help)",
+      "Bash(npm run test:*)"
     ],
     "deny": [],
     "ask": [],
