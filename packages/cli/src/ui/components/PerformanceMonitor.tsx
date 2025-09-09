@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
-import { usePerformance } from '../contexts/AppContext.js';
+import React, { useEffect, useState } from 'react';
+import { usePerformance } from '../../contexts/AppContext.js';
 
 interface PerformanceMonitorProps {
   interval?: number; // 更新间隔（毫秒）

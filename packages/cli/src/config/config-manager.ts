@@ -272,7 +272,7 @@ export class ConfigManager {
           const value = this.parseEnvValue(envValue, mapping.type, mapping.default);
           this.setConfigValue(result, mapping.path, value);
 
-          if (this.config?.core.debug) {
+          if (result.core.debug) {
             console.log(`应用环境变量: ${envKey} -> ${mapping.path} = ${value}`);
           }
         } catch (error) {

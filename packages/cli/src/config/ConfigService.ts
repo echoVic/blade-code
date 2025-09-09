@@ -3,8 +3,8 @@
  */
 
 import fs from 'fs/promises';
-import path from 'path';
 import os from 'os';
+import path from 'path';
 import { BladeConfig } from './types.js';
 
 /**
@@ -36,7 +36,7 @@ export class ConfigService {
     try {
       // 加载默认配置
       const { DEFAULT_CONFIG } = await import('./types.js');
-      
+
       this.config = {
         version: '1.3.0',
         name: 'blade-ai',
@@ -77,15 +77,15 @@ export class ConfigService {
     if (process.env.BLADE_API_KEY) {
       this.config.auth.apiKey = process.env.BLADE_API_KEY;
     }
-    
+
     if (process.env.BLADE_BASE_URL) {
       this.config.auth.baseUrl = process.env.BLADE_BASE_URL;
     }
-    
+
     if (process.env.BLADE_MODEL) {
       this.config.auth.modelName = process.env.BLADE_MODEL;
     }
-    
+
     if (process.env.BLADE_DEBUG) {
       this.config.core.debug = process.env.BLADE_DEBUG.toLowerCase() === 'true';
     }
@@ -106,7 +106,7 @@ export class ConfigService {
         if (exists) {
           const content = await fs.readFile(configPath, 'utf-8');
           const userConfig = JSON.parse(content);
-          
+
           // 合并用户配置
           this.mergeConfig(userConfig);
           break;

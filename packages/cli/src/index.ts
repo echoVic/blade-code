@@ -1,14 +1,15 @@
 // CLI包入口文件
 
 // 核心组件
-export { BladeApp, runBladeApp } from './ui/App.js';
+export { AppWrapper, BladeApp } from './ui/App.js';
 
 // UI组件
-export { CommandPalette } from './ui/components/CommandPalette.js';
 export { MainLayout } from './ui/components/MainLayout.js';
 export { NotificationSystem, useNotify } from './ui/components/NotificationSystem.js';
-export { PerformanceMonitor, PerformanceMonitorStatic } from './ui/components/PerformanceMonitor.js';
-export { SplashScreen } from './ui/components/SplashScreen.js';
+export {
+  PerformanceMonitor,
+  PerformanceMonitorStatic,
+} from './ui/components/PerformanceMonitor.js';
 export { StatusBar } from './ui/components/StatusBar.js';
 
 // Hooks
@@ -40,7 +41,7 @@ export { CommandService } from './services/CommandService.js';
 export { McpPromptLoader } from './services/McpPromptLoader.js';
 
 // 主题系统
-export { ThemeManager, themeManager, defaultTheme, darkTheme } from './ui/themes/theme-manager.js';
+export { darkTheme, defaultTheme, ThemeManager, themeManager } from './ui/themes/theme-manager.js';
 export type { Theme } from './ui/themes/theme-manager.js';
 
 // 工具函数

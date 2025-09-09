@@ -1,6 +1,6 @@
 import { Box, Text } from 'ink';
 import React, { useEffect } from 'react';
-import { useNotifications } from '../contexts/AppContext.js';
+import { useNotifications } from '../../contexts/AppContext.js';
 
 interface NotificationSystemProps {
   position?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left';
