@@ -1,17 +1,8 @@
 {
   "permissions": {
-    "allow": [
-      "Read(//usr/local/etc/**)",
-      "Bash(unset:*)",
-      "Bash(BLADE_API_KEY=\"sk-efbb8602dc97babd486676797ed2ec28\" ./bin/blade.js chat \"配置架构重构成功了吗？\")",
-      "Bash(BLADE_API_KEY=\"sk-efbb8602dc97babd486676797ed2ec28\" ./bin/blade.js chat \"配置架构已经统一了吗？\")",
-      "Bash(BLADE_API_KEY=\"sk-efbb8602dc97babd486676797ed2ec28\" ./bin/blade.js chat \"类型定义重组完成了吗？\")",
-      "Bash(BLADE_API_KEY=\"sk-efbb8602dc97babd486676797ed2ec28\" ./bin/blade.js chat \"types目录清理成功了吗？\")"
-    ],
+    "allow": ["Read(//usr/local/etc/**)", "Bash(unset:*)"],
     "deny": [],
     "ask": [],
-    "additionalDirectories": [
-      "/Users/bytedance"
-    ]
+    "additionalDirectories": ["/Users/bytedance"]
   }
 }
