@@ -80,7 +80,7 @@ export class AgentFactory {
     const model = options.model 
       || process.env.BLADE_MODEL 
       || globalConfig?.auth.modelName
-      || 'claude-3-sonnet-20240229';
+      || 'Qwen3-Coder';
 
     // 验证必需配置
     if (!apiKey) {

@@ -3,7 +3,7 @@
  * 替代LLM模块，提供统一的聊天调用能力
  */
 
-// 使用Anthropic的工具调用格式
+// 使用Anthropic兼容的工具调用格式
 export type Message = {
   role: "user" | "assistant";
   content: string | Array<{
@@ -22,8 +22,8 @@ export type Message = {
 };
 
 export interface ChatConfig {
-  apiKey: string;  // Anthropic API Key
-  model: string;   // Anthropic模型名称
+  apiKey: string;  // API密钥
+  model: string;   // 模型名称
   baseUrl: string; // 必须配置的API端点
   temperature?: number;
   maxTokens?: number;
@@ -61,6 +61,7 @@ export class ChatService {
     if (!config.baseUrl) {
       throw new Error('baseUrl is required in ChatConfig');
     }
+    // 直接使用配置的baseUrl，要求用户配置完整的可调用端点
     this.baseUrl = config.baseUrl;
   }
 
@@ -68,7 +69,7 @@ export class ChatService {
    * 统一的聊天接口
    */
   async chat(messages: Message[]): Promise<string> {
-    const response = await this.callAnthropic(messages);
+    const response = await this.callChatAPI(messages);
     if (typeof response.content === 'string') {
       return response.content;
     }
@@ -83,7 +84,7 @@ export class ChatService {
    * 详细的聊天接口，返回完整响应信息
    */
   async chatDetailed(messages: Message[]): Promise<ChatResponse> {
-    return this.callAnthropic(messages);
+    return this.callChatAPI(messages);
   }
 
   /**
@@ -109,13 +110,13 @@ export class ChatService {
   }
 
   /**
-   * 调用Anthropic API
+   * 调用OpenAI兼容的Chat API
    */
-  private async callAnthropic(messages: Message[]): Promise<ChatResponse> {
+  private async callChatAPI(messages: Message[]): Promise<ChatResponse> {
+    
     const headers = {
       'Content-Type': 'application/json',
-      'x-api-key': this.config.apiKey,
-      'anthropic-version': '2023-06-01'
+      'Authorization': `Bearer ${this.config.apiKey}`
     };
 
     const body = {
@@ -138,17 +139,17 @@ export class ChatService {
 
       const data = await response.json();
       
-      // 转换响应格式
+      // 处理OpenAI格式的响应
       return {
-        content: data.content,
+        content: data.choices?.[0]?.message?.content || '',
         usage: {
-          promptTokens: data.usage?.input_tokens || 0,
-          completionTokens: data.usage?.output_tokens || 0,
-          totalTokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)
+          promptTokens: data.usage?.prompt_tokens || 0,
+          completionTokens: data.usage?.completion_tokens || 0,
+          totalTokens: data.usage?.total_tokens || 0
         }
       };
     } catch (error) {
-      throw new Error(`Anthropic API调用失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      throw new Error(`Chat API调用失败: ${error instanceof Error ? error.message : '未知错误'}`);
     }
   }
 

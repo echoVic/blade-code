@@ -3,7 +3,7 @@
  * 简化版本，提供基础的 MCP 服务器连接和工具调用功能
  */
 
-import type { BladeConfig } from '../../types/shared.js';
+import type { BladeConfig } from '../../config/types.js';
 import {
   ErrorFactory,
   globalErrorMonitor,

@@ -18,6 +18,25 @@ export type { Tool, ToolExecutionResult, ToolManagerConfig } from './tools/types
 // 配置管理 (简化版)
 export { ConfigManager } from './config/ConfigManager.js';
 
+// 统一配置类型 (供CLI和其他包使用)
+export { DEFAULT_CONFIG } from './config/types.js';
+export type {
+  AuthProvider,
+  BladeConfig,
+  ConfigError,
+  ConfigLocations,
+  ConfigMigration,
+  ConfigStatus,
+  ConfigValidator,
+  EnvMapping,
+  ExtensionConfig,
+  MCPServer,
+  MigrationChange,
+  PluginLoadOrder,
+  RouteConfig,
+  UserConfigOverride,
+} from './config/types.js';
+
 // 核心服务
 export { ChatService as LLMService } from './services/ChatService.js';
 

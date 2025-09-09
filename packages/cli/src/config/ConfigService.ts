@@ -2,10 +2,10 @@
  * 配置服务 - 简化版，独立于core包
  */
 
+import { BladeConfig, DEFAULT_CONFIG } from '@blade-ai/core';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { BladeConfig } from './types.js';
 
 /**
  * 配置服务类 - 简化版本
@@ -35,8 +35,6 @@ export class ConfigService {
 
     try {
       // 加载默认配置
-      const { DEFAULT_CONFIG } = await import('./types.js');
-
       this.config = {
         version: '1.3.0',
         name: 'blade-ai',

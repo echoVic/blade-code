@@ -1,3 +1,8 @@
+/**
+ * Blade AI 统一配置类型定义
+ * 作为Core包导出的标准配置，供CLI和其他包使用
+ */
+
 export interface BladeConfig {
   version: string;
   name: string;
@@ -338,7 +343,7 @@ export const DEFAULT_CONFIG: Omit<BladeConfig, 'version' | 'name' | 'description
     // 基础认证
     apiKey: '',
     apiSecret: '',
-    baseUrl: 'https://apis.iflow.cn/v1',
+    baseUrl: 'https://apis.iflow.cn/v1/chat/completions',
     
     // LLM 模型配置 (统一在auth下)
     modelName: 'Qwen3-Coder',

@@ -1,8 +1,3 @@
-import crypto from 'crypto';
-import { promises as fs } from 'fs';
-import os from 'os';
-import path from 'path';
-import { performance } from 'perf_hooks';
 import {
   BladeConfig,
   ConfigError,
@@ -12,7 +7,12 @@ import {
   DEFAULT_CONFIG,
   EnvMapping,
   UserConfigOverride,
-} from './types.js';
+} from '@blade-ai/core';
+import crypto from 'crypto';
+import { promises as fs } from 'fs';
+import os from 'os';
+import path from 'path';
+import { performance } from 'perf_hooks';
 
 export class ConfigManager {
   private static instance: ConfigManager;
