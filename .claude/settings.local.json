@@ -1,8 +1,16 @@
 {
   "permissions": {
-    "allow": ["Read(//usr/local/etc/**)", "Bash(unset:*)"],
+    "allow": [
+      "Read(//usr/local/etc/**)",
+      "Bash(unset:*)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "mcp__github__get_file_contents"
+    ],
     "deny": [],
     "ask": [],
-    "additionalDirectories": ["/Users/bytedance"]
+    "additionalDirectories": [
+      "/Users/bytedance"
+    ]
   }
 }
