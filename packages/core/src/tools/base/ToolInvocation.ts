@@ -1,12 +1,13 @@
-import type { ToolInvocation, ToolResult, ConfirmationDetails } from '../types/index.js';
+import type { ConfirmationDetails, ToolInvocation, ToolResult } from '../types/index.js';
+import { ToolErrorType } from '../types/index.js';
 
 /**
  * 工具调用抽象基类
  * 实现了通用的工具调用逻辑
  */
-export abstract class BaseToolInvocation<TParams = any, TResult = ToolResult> 
-  implements ToolInvocation<TParams, TResult> {
-
+export abstract class BaseToolInvocation<TParams = any, TResult = ToolResult>
+  implements ToolInvocation<TParams, TResult>
+{
   constructor(
     public readonly toolName: string,
     public readonly params: TParams
@@ -30,10 +31,7 @@ export abstract class BaseToolInvocation<TParams = any, TResult = ToolResult>
   /**
    * 执行工具
    */
-  abstract execute(
-    signal: AbortSignal, 
-    updateOutput?: (output: string) => void
-  ): Promise<TResult>;
+  abstract execute(signal: AbortSignal, updateOutput?: (output: string) => void): Promise<TResult>;
 
   /**
    * 验证参数
@@ -48,35 +46,32 @@ export abstract class BaseToolInvocation<TParams = any, TResult = ToolResult>
    * 创建成功结果
    */
   protected createSuccessResult(
-    data: any, 
-    displayMessage?: string, 
+    data: any,
+    displayMessage?: string,
     metadata?: Record<string, any>
   ): ToolResult {
     return {
       success: true,
       llmContent: data,
       displayContent: displayMessage || '执行成功',
-      metadata
+      metadata,
     };
   }
 
   /**
    * 创建错误结果
    */
-  protected createErrorResult(
-    error: Error | string,
-    metadata?: Record<string, any>
-  ): ToolResult {
+  protected createErrorResult(error: Error | string, metadata?: Record<string, any>): ToolResult {
     const errorMessage = typeof error === 'string' ? error : error.message;
     return {
       success: false,
       llmContent: `执行失败: ${errorMessage}`,
       displayContent: `错误: ${errorMessage}`,
       error: {
-        type: 'EXECUTION_ERROR' as const,
-        message: errorMessage
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: errorMessage,
       },
-      metadata
+      metadata,
     };
   }
 
