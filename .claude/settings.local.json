@@ -5,7 +5,11 @@
       "Bash(unset:*)",
       "WebFetch(domain:github.com)",
       "WebSearch",
-      "mcp__github__get_file_contents"
+      "mcp__github__get_file_contents",
+      "Bash(npm run type-check:*)",
+      "Bash(npm test)",
+      "Bash(npx vitest:*)",
+      "Bash(npm run build:*)"
     ],
     "deny": [],
     "ask": [],

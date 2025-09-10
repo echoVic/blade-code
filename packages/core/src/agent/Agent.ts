@@ -5,7 +5,7 @@
 
 import { EventEmitter } from 'events';
 import { ChatService, type Message } from '../services/ChatService.js';
-import { ExecutionEngine } from './ExecutionEngine.js';
+import { ExecutionEngine, type ContextManager } from './ExecutionEngine.js';
 import type { AgentConfig, AgentResponse, AgentTask } from './types.js';
 
 export class Agent extends EventEmitter {
@@ -141,6 +141,13 @@ export class Agent extends EventEmitter {
   }
 
   /**
+   * 获取上下文管理器 - 返回执行引擎的上下文管理功能
+   */
+  public getContextManager(): ContextManager | undefined {
+    return this.executionEngine?.getContextManager();
+  }
+
+  /**
    * 获取Agent状态统计
    */
   public getStats(): Record<string, unknown> {
@@ -174,7 +181,7 @@ export class Agent extends EventEmitter {
    * 生成任务ID
    */
   private generateTaskId(): string {
-    return `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `task_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   }
 
   /**

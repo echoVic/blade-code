@@ -3,7 +3,7 @@
  * 测试所有安全相关的工具和功能
  */
 
-import './setup.js';
+import './setup';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { 
   pathSecurity as PathSecurity,

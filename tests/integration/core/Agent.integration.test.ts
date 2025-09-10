@@ -2,12 +2,12 @@
  * Agent 集成测试
  */
 
-import { Agent } from '../../packages/core/src/agent/Agent.js';
-import { LLMManager } from '../../packages/core/src/agent/LLMManager.js';
-import { ToolComponent } from '../../packages/core/src/agent/ToolComponent.js';
-import { ContextComponent } from '../../packages/core/src/agent/ContextComponent.js';
-import { LoggerComponent } from '../../packages/core/src/agent/LoggerComponent.js';
-import { MCPComponent } from '../../packages/core/src/agent/MCPComponent.js';
+import { Agent } from '../../packages/core/src/agent/Agent';
+import { LLMManager } from '../../packages/core/src/agent/LLMManager';
+import { ToolComponent } from '../../packages/core/src/agent/ToolComponent';
+import { ContextComponent } from '../../packages/core/src/agent/ContextComponent';
+import { LoggerComponent } from '../../packages/core/src/agent/LoggerComponent';
+import { MCPComponent } from '../../packages/core/src/agent/MCPComponent';
 
 // 集成测试配置
 const TEST_CONFIG = {

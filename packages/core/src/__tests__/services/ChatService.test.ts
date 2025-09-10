@@ -28,6 +28,7 @@ describe('ChatService', () => {
     chatService = new ChatService({
       apiKey: 'test-api-key',
       model: 'claude-3-5-sonnet-20240620',
+      baseUrl: 'https://api.anthropic.com/v1/messages',
     });
   });
 
@@ -40,6 +41,7 @@ describe('ChatService', () => {
       const config = chatService.getConfig();
       expect(config.apiKey).toBe('test-api-key');
       expect(config.model).toBe('claude-3-5-sonnet-20240620');
+      expect(config.baseUrl).toBe('https://api.anthropic.com/v1/messages');
     });
   });
 
@@ -49,10 +51,15 @@ describe('ChatService', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: vi.fn().mockResolvedValue({
-          content: [{ type: 'text', text: 'Hello, world!' }],
+          choices: [{
+            message: {
+              content: 'Hello, world!'
+            }
+          }],
           usage: {
-            input_tokens: 10,
-            output_tokens: 20,
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            total_tokens: 30
           },
         }),
       });
@@ -68,8 +75,8 @@ describe('ChatService', () => {
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
-            'x-api-key': 'test-api-key',
-            'anthropic-version': '2023-06-01',
+            'Authorization': 'Bearer test-api-key',
+            'Content-Type': 'application/json',
           }),
         })
       );
@@ -90,8 +97,10 @@ describe('ChatService', () => {
       const response = await chatService.chatDetailed(messages);
       
       expect(response).toBeDefined();
-      expect(response.content).toEqual([{ type: 'text', text: 'Hello, world!' }]);
+      expect(response.content).toBe('Hello, world!');
       expect(response.usage).toBeDefined();
+      expect(response.usage?.promptTokens).toBe(10);
+      expect(response.usage?.completionTokens).toBe(20);
     });
 
     it('应该在API调用失败时抛出错误', async () => {
@@ -109,7 +118,7 @@ describe('ChatService', () => {
       mockFetch.mockRejectedValue(new Error('Network Error'));
 
       await expect(chatService.chatText('Hello, world!'))
-        .rejects.toThrow('Anthropic API调用失败: Network Error');
+        .rejects.toThrow('Chat API调用失败: Network Error');
     });
   });
 
@@ -122,8 +131,12 @@ describe('ChatService', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: vi.fn().mockResolvedValue({
-          content: [{ type: 'text', text: 'Response' }],
-          usage: { input_tokens: 10, output_tokens: 20 },
+          choices: [{
+            message: {
+              content: 'Response'
+            }
+          }],
+          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
         }),
       });
 
@@ -151,8 +164,12 @@ describe('ChatService', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: vi.fn().mockResolvedValue({
-          content: [{ type: 'text', text: 'Tool response' }],
-          usage: { input_tokens: 10, output_tokens: 20 },
+          choices: [{
+            message: {
+              content: 'Tool response'
+            }
+          }],
+          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
         }),
       });
 
@@ -179,8 +196,12 @@ describe('ChatService', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: vi.fn().mockResolvedValue({
-          content: [{ type: 'text', text: 'Final response' }],
-          usage: { input_tokens: 10, output_tokens: 20 },
+          choices: [{
+            message: {
+              content: 'Final response'
+            }
+          }],
+          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
         }),
       });
 
@@ -218,13 +239,19 @@ describe('ChatService', () => {
 
     it('应该在缺少API密钥时抛出错误', () => {
       expect(() => {
-        new ChatService({ model: 'claude-3-5-sonnet-20240620' } as any);
+        new ChatService({ 
+          model: 'claude-3-5-sonnet-20240620', 
+          baseUrl: 'https://api.test.com' 
+        } as any);
       }).toThrow();
     });
 
     it('应该在缺少模型名称时抛出错误', () => {
       expect(() => {
-        new ChatService({ apiKey: 'test-api-key' } as any);
+        new ChatService({ 
+          apiKey: 'test-api-key',
+          baseUrl: 'https://api.test.com' 
+        } as any);
       }).toThrow();
     });
   });

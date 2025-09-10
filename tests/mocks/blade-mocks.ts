@@ -5,7 +5,7 @@ import {
   FileSystemMockFactory, 
   NetworkMockFactory,
   DatabaseMock 
-} from '../index.js';
+} from '../index';
 
 // Blade 项目特定的 Mock 工具
 

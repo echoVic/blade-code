@@ -326,13 +326,6 @@ console.log(user.name);
   }
 }
 
-// 导出所有工具
-export {
-  E2ETestSession,
-  E2ETestUtils,
-  E2ETestDataFactory
-};
-
 // 默认导出
 export default {
   E2ETestSession,
