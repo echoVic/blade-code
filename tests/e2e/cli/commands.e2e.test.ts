@@ -2,7 +2,7 @@
  * CLI 命令端到端测试
  */
 
-import { E2ETestSession, E2ETestUtils } from './setup.js';
+import { E2ETestSession, E2ETestUtils } from './setup';
 
 describe('CLI 命令 E2E 测试', () => {
   let session: E2ETestSession;

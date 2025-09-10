@@ -9,12 +9,7 @@
     "types": ["node", "vitest/globals", "jest"]
   },
   "include": [
-    "src/services/ChatService.ts",
-    "src/agent/Agent.ts",
-    "src/agent/ExecutionEngine.ts",
-    "src/agent/types.ts",
-    "src/index.ts",
-    "src/services/index.ts"
+    "src/**/*.ts"
   ],
   "exclude": [
     "node_modules",

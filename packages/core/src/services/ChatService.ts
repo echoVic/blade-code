@@ -61,6 +61,12 @@ export class ChatService {
     if (!config.baseUrl) {
       throw new Error('baseUrl is required in ChatConfig');
     }
+    if (!config.apiKey) {
+      throw new Error('apiKey is required in ChatConfig');
+    }
+    if (!config.model) {
+      throw new Error('model is required in ChatConfig');
+    }
     // 直接使用配置的baseUrl，要求用户配置完整的可调用端点
     this.baseUrl = config.baseUrl;
   }

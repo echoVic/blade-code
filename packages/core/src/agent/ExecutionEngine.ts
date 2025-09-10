@@ -16,13 +16,47 @@ export interface ExecutionStep {
   metadata?: Record<string, unknown>;
 }
 
+export interface ContextManager {
+  getMessages(): Message[];
+  addMessage(message: Message): void;
+  clearContext(): void;
+  getContextSize(): number;
+}
+
 export class ExecutionEngine {
   private chatService: ChatService;
   private config: AgentConfig;
+  private contextManager: ContextManager;
 
   constructor(chatService: ChatService, config: AgentConfig) {
     this.chatService = chatService;
     this.config = config;
+    this.contextManager = this.createContextManager();
+  }
+
+  /**
+   * 创建上下文管理器
+   */
+  private createContextManager(): ContextManager {
+    const messages: Message[] = [];
+    
+    return {
+      getMessages: () => [...messages],
+      addMessage: (message: Message) => {
+        messages.push(message);
+      },
+      clearContext: () => {
+        messages.length = 0;
+      },
+      getContextSize: () => messages.length,
+    };
+  }
+
+  /**
+   * 获取上下文管理器
+   */
+  public getContextManager(): ContextManager {
+    return this.contextManager;
   }
 
   /**

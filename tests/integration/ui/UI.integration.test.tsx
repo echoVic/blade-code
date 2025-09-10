@@ -4,13 +4,13 @@
 
 import React from 'react';
 import { render, fireEvent, act } from '@testing-library/react';
-import { Box } from '../../packages/cli/src/ui/ink/Box.js';
-import { Text } from '../../packages/cli/src/ui/ink/Text.js';
-import { Button } from '../../packages/cli/src/ui/ink/Button.js';
-import { Input } from '../../packages/cli/src/ui/ink/Input.js';
-import { Layout } from '../../packages/cli/src/ui/ink/Layout.js';
-import { ProgressBar } from '../../packages/cli/src/ui/ink/ProgressBar.js';
-import { Spinner } from '../../packages/cli/src/ui/ink/Spinner.js';
+import { Box } from '../../packages/cli/src/ui/ink/Box';
+import { Text } from '../../packages/cli/src/ui/ink/Text';
+import { Button } from '../../packages/cli/src/ui/ink/Button';
+import { Input } from '../../packages/cli/src/ui/ink/Input';
+import { Layout } from '../../packages/cli/src/ui/ink/Layout';
+import { ProgressBar } from '../../packages/cli/src/ui/ink/ProgressBar';
+import { Spinner } from '../../packages/cli/src/ui/ink/Spinner';
 
 describe('UI 组件集成测试', () => {
   beforeAll(() => {

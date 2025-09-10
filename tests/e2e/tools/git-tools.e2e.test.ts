@@ -2,7 +2,7 @@
  * Git 工具 E2E 测试
  */
 
-import { E2ETestSession, E2ETestUtils } from '../setup.js';
+import { E2ETestSession, E2ETestUtils } from '../setup';
 import { join } from 'path';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 

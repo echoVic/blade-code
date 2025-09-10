@@ -2,8 +2,8 @@
  * 配置管理集成测试
  */
 
-import { ConfigurationManager } from '../../packages/core/src/config/ConfigurationManager.js';
-import { ConfigLayer } from '../../packages/core/src/config/types/index.js';
+import { ConfigurationManager } from '../../packages/core/src/config/ConfigurationManager';
+import { ConfigLayer } from '../../packages/core/src/config/types/index';
 
 describe('配置管理集成测试', () => {
   let configManager: ConfigurationManager;

@@ -2,8 +2,8 @@
  * 工具系统集成测试
  */
 
-import { ToolManager } from '../../packages/core/src/tools/ToolManager.js';
-import { BaseTool } from '../../packages/core/src/tools/base/ConfirmableToolBase.js';
+import { ToolManager } from '../../packages/core/src/tools/ToolManager';
+import { BaseTool } from '../../packages/core/src/tools/base/ConfirmableToolBase';
 
 // 测试工具实现
 class TestTool extends BaseTool {

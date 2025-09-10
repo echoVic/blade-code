@@ -2,9 +2,9 @@
  * MCP 系统集成测试
  */
 
-import { MCPClient } from '../../packages/core/src/mcp/client/MCPClient.js';
-import { MCPServer } from '../../packages/core/src/mcp/server/MCPServer.js';
-import { MCPConfig } from '../../packages/core/src/mcp/config/MCPConfig.js';
+import { MCPClient } from '../../packages/core/src/mcp/client/MCPClient';
+import { MCPServer } from '../../packages/core/src/mcp/server/MCPServer';
+import { MCPConfig } from '../../packages/core/src/mcp/config/MCPConfig';
 
 // 模拟 WebSocket 实现
 class MockWebSocket {
