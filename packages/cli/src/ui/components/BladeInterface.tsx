@@ -5,10 +5,10 @@ import { useAppInitializer } from '../../hooks/useAppInitializer.js';
 import { useCommandHandler } from '../../hooks/useCommandHandler.js';
 import { useCommandHistory } from '../../hooks/useCommandHistory.js';
 import { useKeyboardInput } from '../../hooks/useKeyboardInput.js';
-import { Header } from './Header.js';
-import { MessageArea } from './MessageArea.js';
-import { InputArea } from './InputArea.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
+import { Header } from './Header.js';
+import { InputArea } from './InputArea.js';
+import { MessageArea } from './MessageArea.js';
 import { PerformanceMonitor } from './PerformanceMonitor.js';
 
 interface BladeInterfaceProps {

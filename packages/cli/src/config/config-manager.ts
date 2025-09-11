@@ -612,7 +612,11 @@ export class ConfigManager {
             path: 'telemetry',
             type: 'add',
             description: '添加遥测配置',
-            defaultValue: DEFAULT_CONFIG.services.telemetry,
+            defaultValue: {
+              enabled: DEFAULT_CONFIG.telemetryEnabled,
+              target: DEFAULT_CONFIG.telemetryTarget,
+              otlpEndpoint: DEFAULT_CONFIG.otlpEndpoint,
+            },
           },
         ],
       },

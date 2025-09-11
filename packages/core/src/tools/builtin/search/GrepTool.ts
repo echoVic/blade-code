@@ -1,13 +1,13 @@
 import { spawn } from 'child_process';
 import { DeclarativeTool } from '../../base/DeclarativeTool.js';
 import { BaseToolInvocation } from '../../base/ToolInvocation.js';
-import type { 
-  ToolKind, 
-  ToolInvocation, 
-  ToolResult, 
+import type {
+  ConfirmationDetails,
   JSONSchema7,
-  ConfirmationDetails 
+  ToolInvocation,
+  ToolResult,
 } from '../../types/index.js';
+import { ToolKind } from '../../types/index.js';
 
 /**
  * Grep搜索参数接口
@@ -50,8 +50,12 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
   getDescription(): string {
     const { pattern, path, output_mode } = this.params;
     const searchPath = path || '当前目录';
-    const mode = output_mode === 'files_with_matches' ? '文件列表' : 
-                 output_mode === 'count' ? '匹配计数' : '内容搜索';
+    const mode =
+      output_mode === 'files_with_matches'
+        ? '文件列表'
+        : output_mode === 'count'
+          ? '匹配计数'
+          : '内容搜索';
     return `在 ${searchPath} 中搜索 "${pattern}" (${mode})`;
   }
 
@@ -69,7 +73,7 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
       this.validateParams();
       this.checkAbortSignal(signal);
 
-      const { 
+      const {
         pattern,
         path = process.cwd(),
         glob,
@@ -81,7 +85,7 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
         context_after,
         context,
         head_limit,
-        multiline = false
+        multiline = false,
       } = this.params;
 
       updateOutput?.(`使用ripgrep搜索模式 "${pattern}"...`);
@@ -99,7 +103,7 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
         context_after,
         context,
         head_limit,
-        multiline
+        multiline,
       });
 
       this.checkAbortSignal(signal);
@@ -108,7 +112,7 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
       const result = await this.executeRipgrep(args, signal, updateOutput);
 
       const matches = this.parseRipgrepOutput(result.stdout, output_mode);
-      
+
       const metadata: Record<string, any> = {
         search_pattern: pattern,
         search_path: path,
@@ -117,7 +121,7 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
         total_matches: matches.length,
         command_executed: `rg ${args.join(' ')}`,
         exit_code: result.exitCode,
-        stderr: result.stderr
+        stderr: result.stderr,
       };
 
       if (result.exitCode !== 0 && result.stderr) {
@@ -125,13 +129,8 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
       }
 
       const displayMessage = this.formatDisplayMessage(metadata);
-      
-      return this.createSuccessResult(
-        matches,
-        displayMessage,
-        metadata
-      );
 
+      return this.createSuccessResult(matches, displayMessage, metadata);
     } catch (error: any) {
       return this.createErrorResult(error);
     }
@@ -220,31 +219,35 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     return new Promise((resolve, reject) => {
       const process = spawn('rg', args, {
-        stdio: ['pipe', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
 
       let stdout = '';
       let stderr = '';
 
-      process.stdout.on('data', (data) => {
+      process.stdout.on('data', data => {
         stdout += data.toString();
       });
 
-      process.stderr.on('data', (data) => {
+      process.stderr.on('data', data => {
         stderr += data.toString();
       });
 
-      process.on('close', (code) => {
+      process.on('close', code => {
         resolve({
           stdout,
           stderr,
-          exitCode: code || 0
+          exitCode: code || 0,
         });
       });
 
-      process.on('error', (error) => {
+      process.on('error', error => {
         if (error.message.includes('ENOENT')) {
-          reject(new Error('ripgrep (rg) 未安装或不在PATH中。请安装ripgrep: https://github.com/BurntSushi/ripgrep'));
+          reject(
+            new Error(
+              'ripgrep (rg) 未安装或不在PATH中。请安装ripgrep: https://github.com/BurntSushi/ripgrep'
+            )
+          );
         } else {
           reject(error);
         }
@@ -275,7 +278,7 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
     switch (outputMode) {
       case 'files_with_matches':
         return lines.map(line => ({
-          file_path: line.trim()
+          file_path: line.trim(),
         }));
 
       case 'count':
@@ -283,7 +286,7 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
           const [filePath, count] = line.split(':');
           return {
             file_path: filePath,
-            count: parseInt(count, 10)
+            count: parseInt(count, 10),
           };
         });
 
@@ -315,31 +318,26 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
       // 有行号的格式
       const lineNumber = parseInt(remainder.substring(0, secondColonIndex), 10);
       const content = remainder.substring(secondColonIndex + 1);
-      
+
       return {
         file_path: filePath,
         line_number: lineNumber,
-        content: content
+        content: content,
       };
     } else {
       // 无行号的格式
       return {
         file_path: filePath,
-        content: remainder
+        content: remainder,
       };
     }
   }
 
   private formatDisplayMessage(metadata: Record<string, any>): string {
-    const { 
-      search_pattern,
-      search_path,
-      output_mode,
-      total_matches 
-    } = metadata;
+    const { search_pattern, search_path, output_mode, total_matches } = metadata;
 
     let message = `在 ${search_path} 中搜索 "${search_pattern}"`;
-    
+
     switch (output_mode) {
       case 'files_with_matches':
         message += `\n找到 ${total_matches} 个包含匹配内容的文件`;
@@ -351,7 +349,7 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
         message += `\n找到 ${total_matches} 个匹配行`;
         break;
     }
-    
+
     return message;
   }
 }
@@ -367,64 +365,65 @@ export class GrepTool extends DeclarativeTool<GrepParams> {
       properties: {
         pattern: {
           type: 'string',
-          description: '要搜索的正则表达式模式'
+          description: '要搜索的正则表达式模式',
         },
         path: {
           type: 'string',
-          description: '搜索路径（可选，默认当前工作目录）'
+          description: '搜索路径（可选，默认当前工作目录）',
         },
         glob: {
           type: 'string',
-          description: 'Glob模式过滤文件（如 "*.js", "*.{ts,tsx}"）'
+          description: 'Glob模式过滤文件（如 "*.js", "*.{ts,tsx}"）',
         },
         type: {
           type: 'string',
-          description: '文件类型过滤（如 js, py, rust, go, java等）'
+          description: '文件类型过滤（如 js, py, rust, go, java等）',
         },
         output_mode: {
           type: 'string',
           enum: ['content', 'files_with_matches', 'count'],
           default: 'files_with_matches',
-          description: '输出模式：content显示匹配行，files_with_matches显示文件路径，count显示匹配计数'
+          description:
+            '输出模式：content显示匹配行，files_with_matches显示文件路径，count显示匹配计数',
         },
         case_insensitive: {
           type: 'boolean',
           default: false,
-          description: '忽略大小写'
+          description: '忽略大小写',
         },
         line_numbers: {
           type: 'boolean',
           default: false,
-          description: '显示行号（仅content模式有效）'
+          description: '显示行号（仅content模式有效）',
         },
         context_before: {
           type: 'integer',
           minimum: 0,
-          description: '显示匹配行之前的行数（仅content模式有效）'
+          description: '显示匹配行之前的行数（仅content模式有效）',
         },
         context_after: {
           type: 'integer',
           minimum: 0,
-          description: '显示匹配行之后的行数（仅content模式有效）'
+          description: '显示匹配行之后的行数（仅content模式有效）',
         },
         context: {
           type: 'integer',
           minimum: 0,
-          description: '显示匹配行前后的行数（仅content模式有效）'
+          description: '显示匹配行前后的行数（仅content模式有效）',
         },
         head_limit: {
           type: 'integer',
           minimum: 1,
-          description: '限制输出的最大行数/文件数/计数条目数'
+          description: '限制输出的最大行数/文件数/计数条目数',
         },
         multiline: {
           type: 'boolean',
           default: false,
-          description: '启用多行模式，允许.匹配换行符'
-        }
+          description: '启用多行模式，允许.匹配换行符',
+        },
       },
       required: ['pattern'],
-      additionalProperties: false
+      additionalProperties: false,
     };
 
     super(
@@ -442,73 +441,80 @@ export class GrepTool extends DeclarativeTool<GrepParams> {
 
   build(params: GrepParams): ToolInvocation<GrepParams> {
     // 验证参数
-    const pattern = this.validateString(params.pattern, 'pattern', { 
+    const pattern = this.validateString(params.pattern, 'pattern', {
       required: true,
-      minLength: 1
+      minLength: 1,
     });
 
     let path: string | undefined;
     if (params.path !== undefined) {
-      path = this.validateString(params.path, 'path', { 
+      path = this.validateString(params.path, 'path', {
         required: false,
-        minLength: 1
+        minLength: 1,
       });
     }
 
     let glob: string | undefined;
     if (params.glob !== undefined) {
-      glob = this.validateString(params.glob, 'glob', { 
+      glob = this.validateString(params.glob, 'glob', {
         required: false,
-        minLength: 1
+        minLength: 1,
       });
     }
 
     let type: string | undefined;
     if (params.type !== undefined) {
-      type = this.validateString(params.type, 'type', { 
+      type = this.validateString(params.type, 'type', {
         required: false,
-        minLength: 1
+        minLength: 1,
       });
     }
 
     const outputMode = params.output_mode || 'files_with_matches';
     if (!['content', 'files_with_matches', 'count'].includes(outputMode)) {
-      this.createValidationError('output_mode', '输出模式必须是 content、files_with_matches 或 count 之一', outputMode);
+      this.createValidationError(
+        'output_mode',
+        '输出模式必须是 content、files_with_matches 或 count 之一',
+        outputMode
+      );
     }
 
-    const caseInsensitive = this.validateBoolean(params.case_insensitive ?? false, 'case_insensitive');
+    const caseInsensitive = this.validateBoolean(
+      params.case_insensitive ?? false,
+      'case_insensitive'
+    );
     const lineNumbers = this.validateBoolean(params.line_numbers ?? false, 'line_numbers');
     const multiline = this.validateBoolean(params.multiline ?? false, 'multiline');
 
     let contextBefore: number | undefined;
     if (params.context_before !== undefined) {
-      contextBefore = this.validateNumber(params.context_before, 'context_before', { 
+      contextBefore = this.validateNumber(params.context_before, 'context_before', {
         min: 0,
-        integer: true
+        integer: true,
       });
     }
 
     let contextAfter: number | undefined;
     if (params.context_after !== undefined) {
-      contextAfter = this.validateNumber(params.context_after, 'context_after', { 
+      contextAfter = this.validateNumber(params.context_after, 'context_after', {
         min: 0,
-        integer: true
+        integer: true,
       });
     }
 
     let context: number | undefined;
     if (params.context !== undefined) {
-      context = this.validateNumber(params.context, 'context', { 
+      context = this.validateNumber(params.context, 'context', {
         min: 0,
-        integer: true
+        integer: true,
       });
     }
 
     let headLimit: number | undefined;
     if (params.head_limit !== undefined) {
-      headLimit = this.validateNumber(params.head_limit, 'head_limit', { 
+      headLimit = this.validateNumber(params.head_limit, 'head_limit', {
         min: 1,
-        integer: true
+        integer: true,
       });
     }
 
@@ -524,7 +530,7 @@ export class GrepTool extends DeclarativeTool<GrepParams> {
       ...(contextAfter !== undefined && { context_after: contextAfter }),
       ...(context !== undefined && { context }),
       ...(headLimit !== undefined && { head_limit: headLimit }),
-      multiline
+      multiline,
     };
 
     return new GrepToolInvocation(validatedParams);

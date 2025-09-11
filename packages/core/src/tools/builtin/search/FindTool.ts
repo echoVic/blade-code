@@ -1,14 +1,14 @@
 import { promises as fs } from 'fs';
-import { resolve, join, relative, basename, extname } from 'path';
+import { extname, join, relative, resolve } from 'path';
 import { DeclarativeTool } from '../../base/DeclarativeTool.js';
 import { BaseToolInvocation } from '../../base/ToolInvocation.js';
-import type { 
-  ToolKind, 
-  ToolInvocation, 
-  ToolResult, 
+import type {
+  ConfirmationDetails,
   JSONSchema7,
-  ConfirmationDetails 
+  ToolInvocation,
+  ToolResult,
 } from '../../types/index.js';
+import { ToolKind } from '../../types/index.js';
 
 /**
  * Find搜索参数接口
@@ -53,8 +53,7 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
   getDescription(): string {
     const { name, path, type } = this.params;
     const searchPath = path || '当前目录';
-    const searchType = type === 'file' ? '文件' : 
-                      type === 'directory' ? '目录' : '文件和目录';
+    const searchType = type === 'file' ? '文件' : type === 'directory' ? '目录' : '文件和目录';
     const namePattern = name ? ` 匹配"${name}"` : '';
     return `在 ${searchPath} 中查找${searchType}${namePattern}`;
   }
@@ -73,7 +72,7 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
       this.validateParams();
       this.checkAbortSignal(signal);
 
-      const { 
+      const {
         name,
         path = process.cwd(),
         type = 'both',
@@ -85,11 +84,11 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
         case_sensitive = false,
         max_depth = 10,
         max_results = 100,
-        exclude_patterns = []
+        exclude_patterns = [],
       } = this.params;
 
       updateOutput?.(`开始在 ${path} 中查找文件...`);
-      
+
       // 验证搜索路径存在
       const searchPath = resolve(path);
       try {
@@ -111,23 +110,20 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
       const modifiedBefore = modified_before ? new Date(modified_before) : undefined;
 
       // 执行查找
-      const matches = await this.performFind(
-        searchPath,
-        {
-          name,
-          type,
-          size_min,
-          size_max,
-          modified_after: modifiedAfter,
-          modified_before: modifiedBefore,
-          extension,
-          case_sensitive,
-          max_depth,
-          max_results,
-          exclude_patterns,
-          signal
-        }
-      );
+      const matches = await this.performFind(searchPath, {
+        name,
+        type,
+        size_min,
+        size_max,
+        modified_after: modifiedAfter,
+        modified_before: modifiedBefore,
+        extension,
+        case_sensitive,
+        max_depth,
+        max_results,
+        exclude_patterns,
+        signal,
+      });
 
       const sortedMatches = this.sortMatches(matches);
       const limitedMatches = sortedMatches.slice(0, max_results);
@@ -144,22 +140,17 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
           extension,
           case_sensitive,
           max_depth,
-          exclude_patterns
+          exclude_patterns,
         },
         total_matches: matches.length,
         returned_matches: limitedMatches.length,
         max_results,
-        truncated: matches.length > max_results
+        truncated: matches.length > max_results,
       };
 
       const displayMessage = this.formatDisplayMessage(metadata);
-      
-      return this.createSuccessResult(
-        limitedMatches,
-        displayMessage,
-        metadata
-      );
 
+      return this.createSuccessResult(limitedMatches, displayMessage, metadata);
     } catch (error: any) {
       return this.createErrorResult(error);
     }
@@ -183,14 +174,8 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
     }
   ): Promise<FindMatch[]> {
     const matches: FindMatch[] = [];
-    
-    await this.walkDirectory(
-      searchPath,
-      searchPath,
-      0,
-      matches,
-      options
-    );
+
+    await this.walkDirectory(searchPath, searchPath, 0, matches, options);
 
     return matches;
   }
@@ -223,7 +208,7 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
 
     try {
       const entries = await fs.readdir(currentPath, { withFileTypes: true });
-      
+
       for (const entry of entries) {
         if (matches.length >= options.max_results) {
           break;
@@ -233,7 +218,7 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
 
         const fullPath = join(currentPath, entry.name);
         const relativePath = relative(basePath, fullPath);
-        
+
         // 检查排除模式
         if (this.shouldExclude(relativePath, entry.name, options.exclude_patterns)) {
           continue;
@@ -251,16 +236,18 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
         const fileExtension = isDirectory ? undefined : extname(entry.name);
 
         // 检查是否匹配搜索条件
-        if (this.matchesCriteria(
-          entry.name,
-          fullPath,
-          relativePath,
-          isDirectory,
-          stats,
-          fileExtension,
-          depth,
-          options
-        )) {
+        if (
+          this.matchesCriteria(
+            entry.name,
+            fullPath,
+            relativePath,
+            isDirectory,
+            stats,
+            fileExtension,
+            depth,
+            options
+          )
+        ) {
           matches.push({
             path: fullPath,
             relative_path: relativePath,
@@ -269,7 +256,7 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
             size: isDirectory ? undefined : stats.size,
             modified: stats.mtime.toISOString(),
             extension: fileExtension,
-            depth
+            depth,
           });
         }
 
@@ -331,7 +318,9 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
 
     // 扩展名匹配
     if (options.extension && !isDirectory) {
-      const targetExt = options.extension.startsWith('.') ? options.extension : `.${options.extension}`;
+      const targetExt = options.extension.startsWith('.')
+        ? options.extension
+        : `.${options.extension}`;
       if (fileExtension !== targetExt) return false;
     }
 
@@ -352,9 +341,9 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
   private createGlobRegex(pattern: string, caseSensitive: boolean): RegExp {
     // 将glob模式转换为正则表达式
     let regexPattern = pattern
-      .replace(/\./g, '\\.')  // 转义点号
-      .replace(/\*/g, '.*')   // * 匹配任意字符
-      .replace(/\?/g, '.');   // ? 匹配单个字符
+      .replace(/\./g, '\\.') // 转义点号
+      .replace(/\*/g, '.*') // * 匹配任意字符
+      .replace(/\?/g, '.'); // ? 匹配单个字符
 
     // 完全匹配
     regexPattern = `^${regexPattern}$`;
@@ -374,30 +363,24 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
       if (a.is_directory !== b.is_directory) {
         return a.is_directory ? -1 : 1;
       }
-      
+
       // 然后按修改时间排序（最新的在前）
       const aTime = new Date(a.modified).getTime();
       const bTime = new Date(b.modified).getTime();
       if (aTime !== bTime) {
         return bTime - aTime;
       }
-      
+
       // 最后按名称排序
       return a.name.localeCompare(b.name);
     });
   }
 
   private formatDisplayMessage(metadata: Record<string, any>): string {
-    const { 
-      search_path,
-      search_criteria,
-      total_matches, 
-      returned_matches,
-      truncated 
-    } = metadata;
+    const { search_path, search_criteria, total_matches, returned_matches, truncated } = metadata;
 
     let message = `在 ${search_path} 中找到 ${total_matches} 个匹配项`;
-    
+
     if (truncated) {
       message += `\n显示前 ${returned_matches} 个结果`;
     }
@@ -407,11 +390,11 @@ class FindToolInvocation extends BaseToolInvocation<FindParams> {
     if (search_criteria.name) criteria.push(`名称: ${search_criteria.name}`);
     if (search_criteria.type !== 'both') criteria.push(`类型: ${search_criteria.type}`);
     if (search_criteria.extension) criteria.push(`扩展名: ${search_criteria.extension}`);
-    
+
     if (criteria.length > 0) {
       message += `\n搜索条件: ${criteria.join(', ')}`;
     }
-    
+
     return message;
   }
 }
@@ -427,69 +410,69 @@ export class FindTool extends DeclarativeTool<FindParams> {
       properties: {
         name: {
           type: 'string',
-          description: '文件/目录名称模式（支持*和?通配符）'
+          description: '文件/目录名称模式（支持*和?通配符）',
         },
         path: {
           type: 'string',
-          description: '搜索路径（可选，默认当前工作目录）'
+          description: '搜索路径（可选，默认当前工作目录）',
         },
         type: {
           type: 'string',
           enum: ['file', 'directory', 'both'],
           default: 'both',
-          description: '搜索类型：文件、目录或两者'
+          description: '搜索类型：文件、目录或两者',
         },
         size_min: {
           type: 'integer',
           minimum: 0,
-          description: '最小文件大小（字节）'
+          description: '最小文件大小（字节）',
         },
         size_max: {
           type: 'integer',
           minimum: 0,
-          description: '最大文件大小（字节）'
+          description: '最大文件大小（字节）',
         },
         modified_after: {
           type: 'string',
-          description: '修改时间晚于指定时间（ISO格式）'
+          description: '修改时间晚于指定时间（ISO格式）',
         },
         modified_before: {
           type: 'string',
-          description: '修改时间早于指定时间（ISO格式）'
+          description: '修改时间早于指定时间（ISO格式）',
         },
         extension: {
           type: 'string',
-          description: '文件扩展名过滤（如 ".js" 或 "js"）'
+          description: '文件扩展名过滤（如 ".js" 或 "js"）',
         },
         case_sensitive: {
           type: 'boolean',
           default: false,
-          description: '名称匹配是否区分大小写'
+          description: '名称匹配是否区分大小写',
         },
         max_depth: {
           type: 'integer',
           minimum: 0,
           maximum: 20,
           default: 10,
-          description: '最大搜索深度'
+          description: '最大搜索深度',
         },
         max_results: {
           type: 'integer',
           minimum: 1,
           maximum: 1000,
           default: 100,
-          description: '最大返回结果数'
+          description: '最大返回结果数',
         },
         exclude_patterns: {
           type: 'array',
           items: {
-            type: 'string'
+            type: 'string',
           },
           default: [],
-          description: '排除模式列表（支持通配符）'
-        }
+          description: '排除模式列表（支持通配符）',
+        },
       },
-      additionalProperties: false
+      additionalProperties: false,
     };
 
     super(
@@ -509,17 +492,17 @@ export class FindTool extends DeclarativeTool<FindParams> {
     // 验证参数
     let name: string | undefined;
     if (params.name !== undefined) {
-      name = this.validateString(params.name, 'name', { 
+      name = this.validateString(params.name, 'name', {
         required: false,
-        minLength: 1
+        minLength: 1,
       });
     }
 
     let path: string | undefined;
     if (params.path !== undefined) {
-      path = this.validateString(params.path, 'path', { 
+      path = this.validateString(params.path, 'path', {
         required: false,
-        minLength: 1
+        minLength: 1,
       });
     }
 
@@ -530,17 +513,17 @@ export class FindTool extends DeclarativeTool<FindParams> {
 
     let sizeMin: number | undefined;
     if (params.size_min !== undefined) {
-      sizeMin = this.validateNumber(params.size_min, 'size_min', { 
+      sizeMin = this.validateNumber(params.size_min, 'size_min', {
         min: 0,
-        integer: true
+        integer: true,
       });
     }
 
     let sizeMax: number | undefined;
     if (params.size_max !== undefined) {
-      sizeMax = this.validateNumber(params.size_max, 'size_max', { 
+      sizeMax = this.validateNumber(params.size_max, 'size_max', {
         min: 0,
-        integer: true
+        integer: true,
       });
     }
 
@@ -561,15 +544,19 @@ export class FindTool extends DeclarativeTool<FindParams> {
       try {
         new Date(modifiedBefore);
       } catch {
-        this.createValidationError('modified_before', '时间格式无效，请使用ISO格式', modifiedBefore);
+        this.createValidationError(
+          'modified_before',
+          '时间格式无效，请使用ISO格式',
+          modifiedBefore
+        );
       }
     }
 
     let extension: string | undefined;
     if (params.extension !== undefined) {
-      extension = this.validateString(params.extension, 'extension', { 
+      extension = this.validateString(params.extension, 'extension', {
         required: false,
-        minLength: 1
+        minLength: 1,
       });
     }
 
@@ -577,29 +564,29 @@ export class FindTool extends DeclarativeTool<FindParams> {
 
     let maxDepth: number = 10;
     if (params.max_depth !== undefined) {
-      maxDepth = this.validateNumber(params.max_depth, 'max_depth', { 
+      maxDepth = this.validateNumber(params.max_depth, 'max_depth', {
         min: 0,
         max: 20,
-        integer: true
+        integer: true,
       });
     }
 
     let maxResults: number = 100;
     if (params.max_results !== undefined) {
-      maxResults = this.validateNumber(params.max_results, 'max_results', { 
+      maxResults = this.validateNumber(params.max_results, 'max_results', {
         min: 1,
         max: 1000,
-        integer: true
+        integer: true,
       });
     }
 
     const excludePatterns = this.validateArray(params.exclude_patterns || [], 'exclude_patterns', {
       itemValidator: (item: any, index: number) => {
-        return this.validateString(item, `exclude_patterns[${index}]`, { 
+        return this.validateString(item, `exclude_patterns[${index}]`, {
           required: true,
-          minLength: 1
+          minLength: 1,
         });
-      }
+      },
     });
 
     const validatedParams: FindParams = {
@@ -614,7 +601,7 @@ export class FindTool extends DeclarativeTool<FindParams> {
       case_sensitive: caseSensitive,
       max_depth: maxDepth,
       max_results: maxResults,
-      exclude_patterns: excludePatterns
+      exclude_patterns: excludePatterns,
     };
 
     return new FindToolInvocation(validatedParams);

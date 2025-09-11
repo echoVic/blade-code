@@ -2,10 +2,20 @@
  * @blade-ai/core 包公共 API - 简化架构
  */
 
-// Agent核心系统
+// Agent核心系统（已增强支持工具集成）
 export { Agent } from './agent/Agent.js';
+export type {
+  ChatContext,
+  ChatContext as AgentChatContext,
+  ToolRegistry,
+  ToolRegistry as AgentToolRegistry,
+  ToolCall,
+} from './agent/Agent.js';
 export { ExecutionEngine } from './agent/ExecutionEngine.js';
 export type { AgentConfig, AgentResponse, AgentTask } from './agent/types.js';
+
+// Agent系统已集成工具支持（第八章架构实现）
+// Agent现在直接支持工具注册和调用，无需额外包装层
 
 // Chat服务 (统一的LLM接口)
 export { ChatService } from './services/ChatService.js';
@@ -49,7 +59,9 @@ export async function initializeCore(): Promise<void> {
     // 这里可以添加核心组件的初始化逻辑
     console.log('Core module initialized successfully');
   } catch (error) {
-    throw new Error(`Core initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(
+      `Core initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
   }
 }
 
@@ -59,15 +71,15 @@ export function createConfig(layers: any): { config: any; errors: any[] } {
     // 简单的配置合并逻辑
     const config = mergeConfigLayers(layers);
     const errors = validateConfig(config);
-    
+
     return {
       config: errors.length > 0 ? getDefaultConfig() : config,
-      errors
+      errors,
     };
   } catch (error) {
     return {
       config: getDefaultConfig(),
-      errors: [error instanceof Error ? error.message : 'Configuration error']
+      errors: [error instanceof Error ? error.message : 'Configuration error'],
     };
   }
 }
@@ -76,21 +88,21 @@ export function createConfig(layers: any): { config: any; errors: any[] } {
 function mergeConfigLayers(layers: any): any {
   // 导入DEFAULT_CONFIG
   import('./config/defaults.js').then(module => module.DEFAULT_CONFIG);
-  
+
   const merged: any = {
     auth: {
       apiKey: '',
       baseUrl: '',
       modelName: '',
-      searchApiKey: ''
+      searchApiKey: '',
     },
     ui: {
       theme: 'default',
       hideTips: false,
-      hideBanner: false
-    }
+      hideBanner: false,
+    },
   };
-  
+
   // 按优先级合并：global -> user -> local
   if (layers.global) {
     Object.assign(merged, layers.global);
@@ -101,7 +113,7 @@ function mergeConfigLayers(layers: any): any {
       Object.assign(merged.ui, layers.global.ui);
     }
   }
-  
+
   if (layers.user) {
     Object.assign(merged, layers.user);
     if (layers.user.auth) {
@@ -111,21 +123,21 @@ function mergeConfigLayers(layers: any): any {
       Object.assign(merged.ui, layers.user.ui);
     }
   }
-  
+
   return merged;
 }
 
 // 辅助函数：验证配置
 function validateConfig(config: any): any[] {
   const errors: any[] = [];
-  
+
   // 验证必需字段
   if (config.auth) {
     if (typeof config.auth.apiKey !== 'string') {
       errors.push('auth.apiKey must be a string');
     }
   }
-  
+
   return errors;
 }
 
@@ -136,12 +148,12 @@ function getDefaultConfig(): any {
       apiKey: '',
       baseUrl: '',
       modelName: '',
-      searchApiKey: ''
+      searchApiKey: '',
     },
     ui: {
       theme: 'default',
       hideTips: false,
-      hideBanner: false
-    }
+      hideBanner: false,
+    },
   };
 }

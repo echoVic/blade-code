@@ -43,10 +43,18 @@ export class CommandOrchestrator {
         model: options.model
       });
 
+      // 使用增强的 chat 方法，传递 context 启用工具调用
+      const chatContext = {
+        messages: [], // 暂时为空，可以后续扩展
+        userId: 'cli-user',
+        sessionId: `session-${Date.now()}`,
+        workspaceRoot: process.cwd()
+      };
+      
       const response = options.systemPrompt
         ? await agent.chatWithSystem(options.systemPrompt, message)
-        : await agent.chat(message);
-
+        : await agent.chat(message, chatContext);
+      
       return {
         success: true,
         output: response,

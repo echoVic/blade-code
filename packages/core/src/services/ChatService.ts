@@ -44,6 +44,14 @@ export interface ChatResponse {
       content: string;
     };
   }>;
+  tool_calls?: Array<{
+    id: string;
+    type: string;
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }>;
   usage?: {
     promptTokens: number;
     completionTokens: number;
@@ -72,10 +80,17 @@ export class ChatService {
   }
 
   /**
-   * 统一的聊天接口
+   * 统一的聊天接口 - 支持工具调用
    */
-  async chat(messages: Message[]): Promise<string> {
-    const response = await this.callChatAPI(messages);
+  async chat(messages: Message[], tools?: Array<{
+    name: string;
+    description: string;
+    parameters: any;
+  }>): Promise<string> {
+    const response = tools && tools.length > 0 
+      ? await this.callChatAPIWithTools(messages, tools)
+      : await this.callChatAPI(messages);
+      
     if (typeof response.content === 'string') {
       return response.content;
     }
@@ -87,11 +102,18 @@ export class ChatService {
   }
 
   /**
-   * 详细的聊天接口，返回完整响应信息
+   * 详细的聊天接口，返回完整响应（包含工具调用）
    */
-  async chatDetailed(messages: Message[]): Promise<ChatResponse> {
-    return this.callChatAPI(messages);
+  async chatDetailed(messages: Message[], tools?: Array<{
+    name: string;
+    description: string;
+    parameters: any;
+  }>): Promise<ChatResponse> {
+    return tools && tools.length > 0 
+      ? await this.callChatAPIWithTools(messages, tools)
+      : await this.callChatAPI(messages);
   }
+
 
   /**
    * 简单文本聊天
@@ -113,6 +135,88 @@ export class ChatService {
       }
     ];
     return this.chat(messages);
+  }
+
+
+  /**
+   * 支持工具调用的API调用
+   */
+  private async callChatAPIWithTools(
+    messages: Message[], 
+    tools: Array<{
+      name: string;
+      description: string;
+      parameters: any;
+    }>
+  ): Promise<ChatResponse> {
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this.config.apiKey}`
+    };
+
+    const body = {
+      model: this.config.model,
+      messages: messages,
+      tools: tools.map(tool => ({
+        type: 'function',
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters
+        }
+      })),
+      max_tokens: this.config.maxTokens || 4000,
+      temperature: this.config.temperature || 0.7
+    };
+
+    try {
+      const response = await fetch(this.baseUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        throw new Error(`API调用失败: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      // 处理包含工具调用的响应
+      const choice = data.choices?.[0];
+      if (!choice) {
+        throw new Error('API响应格式无效');
+      }
+
+      const message = choice.message;
+      
+      // 检查是否有工具调用
+      if (message.tool_calls) {
+        return {
+          content: message.content || '',
+          tool_calls: message.tool_calls,
+          usage: {
+            promptTokens: data.usage?.prompt_tokens || 0,
+            completionTokens: data.usage?.completion_tokens || 0,
+            totalTokens: data.usage?.total_tokens || 0,
+          }
+        };
+      }
+
+      // 普通文本响应
+      return {
+        content: message.content || '',
+        usage: {
+          promptTokens: data.usage?.prompt_tokens || 0,
+          completionTokens: data.usage?.completion_tokens || 0,
+          totalTokens: data.usage?.total_tokens || 0,
+        }
+      };
+
+    } catch (error) {
+      console.error('ChatService API调用失败:', error);
+      throw error;
+    }
   }
 
   /**

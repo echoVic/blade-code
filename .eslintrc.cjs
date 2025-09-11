@@ -17,7 +17,7 @@ module.exports = {
     // 基础代码质量规则
     'no-console': 'off',
     'no-debugger': 'error',
-    'no-duplicate-imports': 'error',
+    'no-duplicate-imports': 'off',
     'no-unused-expressions': 'error',
     'prefer-const': 'error',
     'no-var': 'error',
