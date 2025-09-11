@@ -2,7 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import type { BladeConfig } from '../../config/types/index.js';
-import type { McpServer, McpConfig } from '../types/mcp.js';
+import type { McpServer, McpConfig } from '../types.js';
 
 export class McpConfigManager {
   private config: BladeConfig;

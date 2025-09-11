@@ -9,7 +9,9 @@
       "Bash(npm run type-check:*)",
       "Bash(npm test)",
       "Bash(npx vitest:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npx eslint:*)"
     ],
     "deny": [],
     "ask": [],

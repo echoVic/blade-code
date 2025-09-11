@@ -8,8 +8,9 @@ export enum ToolKind {
   Move = 'move',
   Search = 'search',
   Execute = 'execute',
-  Fetch = 'fetch',
+  Network = 'network',
   Think = 'think',
+  External = 'external',
   Other = 'other'
 }
 
@@ -91,7 +92,7 @@ export interface ToolInvocation<TParams = any, TResult = ToolResult> {
  * 确认详情
  */
 export interface ConfirmationDetails {
-  type: 'edit' | 'execute' | 'delete' | 'network' | 'mcp';
+  type: 'edit' | 'execute' | 'delete' | 'network' | 'external';
   title: string;
   message: string;
   risks?: string[];

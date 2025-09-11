@@ -21,11 +21,25 @@ import { ApiCallTool, WebFetchTool } from './web/index.js';
 import { TaskTool } from './task/index.js';
 
 /**
+ * 获取MCP协议工具
+ */
+export async function getMcpTools(): Promise<DeclarativeTool[]> {
+  try {
+    const { McpRegistry } = await import('../../mcp/index.js');
+    const mcpRegistry = McpRegistry.getInstance();
+    return await mcpRegistry.getAvailableTools();
+  } catch (error) {
+    console.warn('MCP协议工具加载失败:', error);
+    return [];
+  }
+}
+
+/**
  * 获取所有内置工具
- * 完整的第二、三阶段工具集合
+ * 完整的第二、三、四阶段工具集合（含MCP协议工具）
  */
 export async function getBuiltinTools(): Promise<DeclarativeTool[]> {
-  return [
+  const builtinTools = [
     // 文件操作工具
     new ReadTool(),
     new WriteTool(),
@@ -49,6 +63,11 @@ export async function getBuiltinTools(): Promise<DeclarativeTool[]> {
     // 任务管理工具
     new TaskTool(),
   ];
+
+  // 添加MCP协议工具
+  const mcpTools = await getMcpTools();
+
+  return [...builtinTools, ...mcpTools];
 }
 
 /**
@@ -63,11 +82,14 @@ export async function getBuiltinToolsByCategory(category: string): Promise<Decla
  * 按工具类型获取内置工具
  */
 export async function getBuiltinToolsByType(): Promise<Record<string, DeclarativeTool[]>> {
+  const mcpTools = await getMcpTools();
+
   return {
     file: [new ReadTool(), new WriteTool(), new EditTool(), new MultiEditTool()],
     search: [new GlobTool(), new GrepTool(), new FindTool()],
     shell: [new ShellTool(), new BashTool(), new ScriptTool()],
     web: [new WebFetchTool(), new ApiCallTool()],
     task: [new TaskTool()],
+    mcp: mcpTools, // MCP协议外部工具
   };
 }
