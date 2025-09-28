@@ -6,22 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture Overview
 
-Blade is a modern TypeScript monorepo architected with clear separation of concerns:
+Blade is a modern TypeScript project with clear separation of concerns:
 
 ```
 Root (blade-ai)
-├── packages/
+├── src/
 │   ├── cli/          # CLI interface layer with React/Ink UI components
-│   ├── core/         # Business logic - Agent, tools, services
-│   └── types/        # Shared TypeScript definitions (now integrated into core)
-├── bin/blade.js      # Main executable CLI entry point
-└── esbuild.config.js # Build system configuration
+│   └── core/         # Business logic - Agent, tools, services
+├── dist/blade.js     # Main executable CLI entry point
+└── package.json      # Build system configuration
 ```
 
 **Layer Separation:**
-- **CLI Layer** (`@blade-ai/cli`): Ink-based terminal UI, React components, command parsing, UI state management
-- **Core Layer** (`@blade-ai/core`): Business logic, Agent orchestration, tool management, IDE integration, MCP support
-- **Build System**: Custom esbuild bundling with dual-package TypeScript compilation
+- **CLI Layer** (`src/cli`): Ink-based terminal UI, React components, command parsing, UI state management
+- **Core Layer** (`src/core`): Business logic, Agent orchestration, tool management, IDE integration, MCP support
+- **Build System**: Bun native bundling with TypeScript compilation
 
 ## Core Components Architecture
 
@@ -42,16 +41,18 @@ Root (blade-ai)
 ## Build & Development Commands
 
 ### Quick Commands
-- **Develop**: `npm run dev` - TSC watch mode for packages
-- **Build**: `npm run build` - Full monorepo build via esbuild.config.js
-- **Bundle**: `npm run build:bundle` - CLI bundling with tree-shaking
-- **Clean**: `npm run clean` - Remove dist/ and bundles/
+- **Develop**: `npm run dev` - Bun watch mode for CLI development
+- **Build**: `npm run build` - Complete build (CLI + Core with minification)
+- **Build CLI**: `npm run build:cli` - Build CLI executable only (972KB minified)
+- **Build Core**: `npm run build:core` - Build core library only (389KB minified)
+- **Start**: `npm run start` - Run built CLI executable
+- **Clean**: Automatic cleanup before each build
 
 ### Code Quality
 - **Type Check**: `npm run type-check` - TypeScript strict checking
-- **Lint**: `npm run lint` - ESLint across TypeScript files
-- **Format**: `npm run format` - Prettier formatting
-- **Check**: `npm run check` - Combined type/lint/format check
+- **Lint**: `npm run lint` - Biome linting across TypeScript files
+- **Format**: `npm run format` - Biome formatting (单引号、分号、88字符行宽)
+- **Check**: `npm run check` - Combined Biome linting and formatting check
 
 ### Testing
 - **Test**: `npm run test` - Vitest with Jest-like API
@@ -63,26 +64,12 @@ Root (blade-ai)
 - **Core Only**: `npm run test:core` - Test core package only
 - **Debug**: `npm run test:debug` - Verbose test output
 
-### Package-Specific Commands
-```bash
-# Core package
-cd packages/core && npm run build      # Core library build
-npm run test:core                     # Test core package only
-
-# CLI package
-cd packages/cli && npm run build      # CLI library build
-cd packages/cli && npm run build:bundle # CLI bundling only
-
-# Build all packages
-npm run build:packages                # Build all packages in sequence
-```
-
 ## Package Management
 
-**Uses pnpm workspaces** for monorepo management:
-- Workspace packages: `cli/`, `core/`
-- Cross-package imports use `@blade-ai/*` aliases
-- Type definitions now integrated into `@blade-ai/core` package
+**Uses pnpm** for dependency management:
+- Single package structure
+- Direct imports using relative paths
+- All dependencies managed in root package.json
 
 ## Test Structure
 
@@ -96,12 +83,12 @@ tests/
 
 ## Key Entry Points
 
-- **CLI Entry**: `bin/blade.js` (bundled from packages/cli)
-- **CLI Source**: `packages/cli/src/blade.tsx` (main CLI entry)
-- **Core API**: `packages/core/src/index.ts` (public API exports)
-- **Build Script**: `esbuild.config.js` (Node.js-based bundling)
-- **Agent Core**: `packages/core/src/agent/Agent.ts` (main Agent implementation)
-- **Tool System**: `packages/core/src/tools/ToolManager.ts` (tool registration/execution)
+- **CLI Entry**: `dist/blade.js` (bundled from src/cli)
+- **CLI Source**: `src/cli/blade.tsx` (main CLI entry)
+- **Core API**: `src/core/index.ts` (public API exports)
+- **Build System**: Bun native bundling
+- **Agent Core**: `src/core/agent/Agent.ts` (main Agent implementation)
+- **Tool System**: `src/core/tools/ToolManager.ts` (tool registration/execution)
 
 ## Environment Variables
 
@@ -112,11 +99,32 @@ tests/
 
 ## Development Workflow
 
-1. **Start dev mode**: `npm run dev` (type-check watching)
+1. **Start dev mode**: `npm run dev` (Bun watch mode for live development)
 2. **Make changes**:
-   - CLI changes: Edit `packages/cli/src/`
-   - Core changes: Edit `packages/core/src/`
-   - Add new tools: `packages/core/src/tools/`
-   - Modify Agent: `packages/core/src/agent/`
-3. **Test**: `npm test` or `npm run test:core`
-4. **Build**: `npm run build` for full bundling
+   - CLI changes: Edit `src/cli/`
+   - Core changes: Edit `src/core/`
+   - Add new tools: `src/core/tools/`
+   - Modify Agent: `src/core/agent/`
+3. **Test**: `npm test` for all tests
+4. **Build**: `npm run build` for production bundling (minified)
+5. **Type check**: `npm run type-check` for TypeScript validation
+
+## Build System Details
+
+### Bun Configuration
+- **Target**: Node.js ESM format
+- **Minification**: Enabled for production builds
+- **External dependencies**: React ecosystem, CLI tools excluded from bundle
+- **Output**: Optimized single-file executables
+
+### Build Process
+```bash
+# Complete build process
+npm run build
+# Equivalent to:
+rm -rf dist && npm run build:cli && npm run build:core
+```
+
+### File Sizes (minified)
+- `dist/blade.js`: 972KB (CLI executable)
+- `dist/index.js`: 389KB (Core library)

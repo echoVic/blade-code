@@ -16,34 +16,35 @@
 - 🛡️ **安全确认**：统一的命令确认机制，智能风险评估
 - 🌟 **多模型支持**：千问(Qwen)、豆包(VolcEngine)
 - 🚀 **开箱即用**：零配置快速开始
-- 🏗️ **现代化架构**：基于 Monorepo 的分层设计，支持扩展
+- 🏗️ **现代化架构**：基于 TypeScript 的分层设计，使用 Bun 构建，支持扩展
 
 ## 🏗️ 架构概览
 
-Blade 采用现代化的 **Monorepo 分层架构** 设计：
+Blade 采用现代化的 **单包分层架构** 设计：
 
 ```
-packages/
-├── cli/             # 用户界面层 (CLI 包)
-│   ├── src/ui/      # 终端 UI 组件和 Hooks
-│   ├── src/services/ # 业务服务层
-│   └── src/config/  # CLI 配置管理
-├── core/            # 核心业务层 (@blade-ai/core)
-│   ├── src/core/    # 核心业务引擎
-│   ├── src/agent/   # Agent 核心组件
-│   ├── src/tools/   # 工具系统
-│   ├── src/services/ # 核心服务
-│   ├── src/ide/     # IDE 集成
-│   ├── src/mcp/     # MCP 协议支持
-│   └── src/telemetry/ # 遥测系统
-└── types/           # 共享类型定义
+src/
+├── cli/             # 用户界面层 (CLI 入口)
+│   ├── ui/          # 终端 UI 组件和 Hooks
+│   ├── services/    # CLI 业务服务层
+│   ├── config/      # CLI 配置管理
+│   └── blade.tsx    # CLI 主入口
+├── core/            # 核心业务层
+│   ├── agent/       # Agent 核心组件
+│   ├── tools/       # 工具系统
+│   ├── services/    # 核心服务
+│   ├── ide/         # IDE 集成
+│   ├── mcp/         # MCP 协议支持
+│   ├── telemetry/   # 遥测系统
+│   └── index.ts     # Core 主入口
 ```
 
 **设计特点：**
-- **关注点分离**：CLI 包专注 UI，Core 包专注业务逻辑
+- **关注点分离**：CLI 层专注 UI，Core 层专注业务逻辑
 - **模块化组织**：功能按领域分组，服务独立
 - **可扩展性**：支持插件机制和外部集成
 - **类型安全**：全面的 TypeScript 覆盖
+- **高性能构建**：使用 Bun 原生构建，支持 minification
 
 ## 🚀 快速开始
 
@@ -271,7 +272,7 @@ blade chat -i --stream
 ### Agent 使用
 
 ```typescript
-import { Agent } from '@blade-ai/core';
+import { Agent } from './src/core/agent/Agent';
 
 const agent = new Agent({
   llm: { provider: 'qwen', apiKey: 'your-key' },
@@ -292,7 +293,7 @@ await agent.destroy();
 ### 工具管理
 
 ```typescript
-import { createToolManager } from '@blade-ai/core';
+import { createToolManager } from './src/core/tools/ToolManager';
 
 const toolManager = await createToolManager();
 const result = await toolManager.callTool({
@@ -304,7 +305,7 @@ const result = await toolManager.callTool({
 ### 核心服务
 
 ```typescript
-import { FileSystemService, GitService } from '@blade-ai/core';
+import { FileSystemService, GitService } from './src/core/services';
 
 // 文件系统服务
 const fileService = new FileSystemService(config);
@@ -315,7 +316,7 @@ const gitService = new GitService(config);
 await gitService.commit('/repo', '提交信息');
 
 // 遥测服务
-import { TelemetrySDK } from '@blade-ai/core';
+import { TelemetrySDK } from './src/core/telemetry';
 const telemetry = new TelemetrySDK(config);
 telemetry.trackEvent('user_action', { action: 'click' });
 ```
@@ -325,44 +326,58 @@ telemetry.trackEvent('user_action', { action: 'click' });
 ### 项目结构
 
 ```
-packages/
-├── cli/             # 用户界面层 (CLI 包)
-│   ├── src/ui/      # 终端 UI 组件和 Hooks
-│   ├── src/services/ # 业务服务层
-│   └── src/config/  # CLI 配置管理
-├── core/            # 核心业务层 (@blade-ai/core)
-│   ├── src/core/    # 核心业务引擎
-│   ├── src/agent/   # Agent 核心组件
-│   ├── src/tools/   # 工具系统
-│   ├── src/services/ # 核心服务
-│   ├── src/ide/     # IDE 集成
-│   ├── src/mcp/     # MCP 协议支持
-│   └── src/telemetry/ # 遥测系统
-└── types/           # 共享类型定义
+src/
+├── cli/             # 用户界面层 (CLI 入口)
+│   ├── ui/          # 终端 UI 组件和 Hooks
+│   ├── services/    # CLI 业务服务层
+│   ├── config/      # CLI 配置管理
+│   └── blade.tsx    # CLI 主入口
+└── core/            # 核心业务层
+    ├── agent/       # Agent 核心组件
+    ├── tools/       # 工具系统
+    ├── services/    # 核心服务
+    ├── ide/         # IDE 集成
+    ├── mcp/         # MCP 协议支持
+    ├── telemetry/   # 遥测系统
+    └── index.ts     # Core 主入口
 ```
 
 ### 开发命令
 
 ```bash
-# 开发模式
+# 开发模式 (Bun watch)
 npm run dev
 
-# 构建所有包
-npm run build
+# 构建 (使用 Bun，minified)
+npm run build              # 完整构建 (CLI + Core)
+npm run build:cli          # 仅构建 CLI (972KB)
+npm run build:core         # 仅构建 Core (389KB)
 
-# 构建特定包
-cd packages/core && npm run build
+# 运行构建后的 CLI
+npm run start
 
 # 类型检查
 npm run type-check
 
-# 代码格式化
+# 代码格式化 (Biome)
 npm run format
+
+# 代码检查 (Biome lint + format)
+npm run check
 
 # 运行测试
 npm test
 npm run test:coverage
 ```
+
+### 构建系统
+
+项目使用 **Bun** 作为构建工具，具有以下特点：
+
+- **极速构建**：Bun 原生 TypeScript 支持，构建速度显著提升
+- **代码压缩**：生产环境自动 minification
+- **分离构建**：CLI 和 Core 可独立构建
+- **依赖优化**：智能 external 依赖处理
 
 ## 🧪 测试架构
 

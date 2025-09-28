@@ -5,14 +5,14 @@
 
 import './setup';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { 
+import {
   pathSecurity as PathSecurity,
-  ConfigEncryptor, 
-  CommandExecutor, 
-  PromptSecurity, 
-  ErrorHandler, 
-  SecureHttpClient 
-} from '@blade-ai/core';
+  ConfigEncryptor,
+  CommandExecutor,
+  PromptSecurity,
+  ErrorHandler,
+  SecureHttpClient
+} from '../../src/core';
 import { join, resolve } from 'path';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';

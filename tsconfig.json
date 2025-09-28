@@ -16,22 +16,21 @@
     "strictPropertyInitialization": true,
     "resolveJsonModule": true,
     "sourceMap": true,
-    "composite": true,
     "incremental": true,
     "declaration": true,
     "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": false,
     "lib": ["ES2023", "DOM"],
-    "module": "NodeNext",
-    "moduleResolution": "nodenext",
+    "module": "ES2022",
+    "moduleResolution": "node",
     "target": "es2022",
     "types": ["node", "vitest/globals"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "bin", "bundle"],
-  "references": [
-    { "path": "./packages/core" },
-    { "path": "./packages/cli" }
-  ]
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist", "bin", "bundle", "packages"]
 }

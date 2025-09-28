@@ -14,7 +14,12 @@
       "Bash(npx eslint:*)",
       "mcp__sequential-thinking__sequentialthinking",
       "Bash(npm run start:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(curl:*)",
+      "Bash(bash)",
+      "Bash(node:*)",
+      "Bash(pnpm add:*)",
+      "Bash(npx:*)"
     ],
     "deny": [],
     "ask": [],
