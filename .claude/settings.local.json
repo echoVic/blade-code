@@ -19,7 +19,8 @@
       "Bash(bash)",
       "Bash(node:*)",
       "Bash(pnpm add:*)",
-      "Bash(npx:*)"
+      "Bash(npx:*)",
+      "Bash(xargs sed:*)"
     ],
     "deny": [],
     "ask": [],

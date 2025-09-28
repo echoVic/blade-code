@@ -1,10 +1,10 @@
 import { jest } from '@jest/globals';
-import { 
-  MockFactory, 
-  APIMockFactory, 
-  FileSystemMockFactory, 
+import {
+  APIMockFactory,
+  DatabaseMock,
+  FileSystemMockFactory,
+  MockFactory,
   NetworkMockFactory,
-  DatabaseMock 
 } from '../index';
 
 // Blade 项目特定的 Mock 工具
@@ -27,54 +27,54 @@ export class AgentMockFactory extends MockFactory {
       configPath: '/test/config.json',
       apiKey: 'test-api-key',
       baseUrl: 'https://api.test.com',
-      theme: 'default'
+      theme: 'default',
     };
-    
+
     const finalConfig = { ...defaultConfig, ...config };
-    
+
     return {
       init: this.createAsync({
         returnValue: {
           success: true,
           agentId: finalConfig.agentId,
-          initializedAt: new Date().toISOString()
-        }
+          initializedAt: new Date().toISOString(),
+        },
       }),
-      
+
       chat: this.createAsync({
         returnValue: {
           message: 'Mock response from agent',
           timestamp: new Date().toISOString(),
-          agentId: finalConfig.agentId
-        }
+          agentId: finalConfig.agentId,
+        },
       }),
-      
+
       generateCode: this.createAsync({
         returnValue: {
           code: 'console.log("Hello, world!");',
           language: 'javascript',
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       }),
-      
+
       executeTool: this.createAsync({
         returnValue: {
           result: 'Tool executed successfully',
           duration: 100,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       }),
-      
+
       destroy: this.createAsync({
         returnValue: {
           success: true,
-          destroyedAt: new Date().toISOString()
-        }
+          destroyedAt: new Date().toISOString(),
+        },
       }),
-      
+
       getConfig: this.create({
-        returnValue: finalConfig
-      })
+        returnValue: finalConfig,
+      }),
     };
   }
 }
@@ -87,56 +87,56 @@ export class CLIMockFactory extends MockFactory {
         returnValue: {
           args: ['test'],
           options: { verbose: true },
-          command: 'test'
-        }
+          command: 'test',
+        },
       }),
-      
+
       help: this.create({
         returnValue: {
           usage: 'blade <command> [options]',
           commands: ['help', 'config', 'run'],
-          examples: []
-        }
+          examples: [],
+        },
       }),
-      
+
       version: this.create({
         returnValue: {
           version: '1.0.0',
-          name: 'blade'
-        }
-      })
+          name: 'blade',
+        },
+      }),
     };
   }
-  
+
   static createInquirer() {
     return {
       prompt: this.createAsync({
         returnValue: {
           name: 'test',
           email: 'test@example.com',
-          confirm: true
-        }
+          confirm: true,
+        },
       }),
-      
+
       confirm: this.createAsync({
-        returnValue: true
+        returnValue: true,
       }),
-      
+
       checkbox: this.createAsync({
-        returnValue: ['option1', 'option2']
+        returnValue: ['option1', 'option2'],
       }),
-      
+
       list: this.createAsync({
-        returnValue: 'option1'
+        returnValue: 'option1',
       }),
-      
+
       input: this.createAsync({
-        returnValue: 'test input'
+        returnValue: 'test input',
       }),
-      
+
       password: this.createAsync({
-        returnValue: 'test password'
-      })
+        returnValue: 'test password',
+      }),
     };
   }
 }
@@ -147,61 +147,67 @@ export class LLMMockFactory extends APIMockFactory {
     return {
       chat: this.createAsync({
         returnValue: {
-          choices: [{
-            message: {
-              content: 'This is a mock response from the LLM',
-              role: 'assistant'
-            }
-          }],
+          choices: [
+            {
+              message: {
+                content: 'This is a mock response from the LLM',
+                role: 'assistant',
+              },
+            },
+          ],
           usage: {
             prompt_tokens: 100,
             completion_tokens: 50,
-            total_tokens: 150
+            total_tokens: 150,
           },
           id: 'chatcmpl-123',
           object: 'chat.completion',
-          created: Date.now() / 1000
-        }
+          created: Date.now() / 1000,
+        },
       }),
-      
+
       complete: this.createAsync({
         returnValue: {
-          choices: [{
-            text: 'Mock completion text',
-            finish_reason: 'stop'
-          }],
+          choices: [
+            {
+              text: 'Mock completion text',
+              finish_reason: 'stop',
+            },
+          ],
           usage: {
             prompt_tokens: 50,
             completion_tokens: 30,
-            total_tokens: 80
-          }
-        }
+            total_tokens: 80,
+          },
+        },
       }),
-      
+
       embed: this.createAsync({
         returnValue: {
-          data: [{
-            embedding: Array(1536).fill(0.1),
-            index: 0,
-            object: 'embedding'
-          }],
+          data: [
+            {
+              embedding: Array(1536).fill(0.1),
+              index: 0,
+              object: 'embedding',
+            },
+          ],
           usage: {
             prompt_tokens: 10,
-            total_tokens: 10
-          }
-        }
+            total_tokens: 10,
+          },
+        },
       }),
-      
+
       validateApiKey: this.createAsync({
         returnValue: {
           valid: true,
           account: {
             id: 'acc_123',
             email: 'test@example.com',
-            name: 'Test Account'
-          }
-        }
-      })
+            name: 'Test Account',
+          },
+        },
+      }),
     };
   }
 }
@@ -216,31 +222,31 @@ export class ToolMockFactory extends MockFactory {
         returnValue: {
           success: true,
           result: `${toolName} executed successfully`,
-          duration: Math.floor(Math.random() * 1000) + 100
-        }
+          duration: Math.floor(Math.random() * 1000) + 100,
+        },
       }),
-      
+
       validate: this.create({
         returnValue: {
           valid: true,
-          errors: []
-        }
+          errors: [],
+        },
       }),
-      
+
       getSchema: this.create({
         returnValue: {
           type: 'object',
           properties: {
             input: {
               type: 'string',
-              description: `Input for ${toolName}`
-            }
+              description: `Input for ${toolName}`,
+            },
           },
-          required: ['input']
-        }
-      })
+          required: ['input'],
+        },
+      }),
     };
-    
+
     // 添加工具特定的 Mock
     switch (toolName) {
       case 'git-status':
@@ -255,12 +261,12 @@ export class ToolMockFactory extends MockFactory {
                 unstaged: ['file3.ts'],
                 untracked: ['new-file.txt'],
                 ahead: 2,
-                behind: 0
-              }
-            }
-          })
+                behind: 0,
+              },
+            },
+          }),
         };
-        
+
       case 'git-add':
         return {
           ...baseTool,
@@ -269,12 +275,12 @@ export class ToolMockFactory extends MockFactory {
               success: true,
               result: {
                 added: ['file1.ts', 'file2.js'],
-                message: 'Files added to staging area'
-              }
-            }
-          })
+                message: 'Files added to staging area',
+              },
+            },
+          }),
         };
-        
+
       case 'file-system':
         return {
           ...baseTool,
@@ -288,28 +294,28 @@ export class ToolMockFactory extends MockFactory {
                 stats: {
                   size: 1024,
                   created: new Date().toISOString(),
-                  modified: new Date().toISOString()
-                }
-              }
-            }
-          })
+                  modified: new Date().toISOString(),
+                },
+              },
+            },
+          }),
         };
-        
+
       default:
         return baseTool;
     }
   }
-  
+
   static createToolManager() {
     return {
       registerTool: this.create({
-        returnValue: true
+        returnValue: true,
       }),
-      
+
       getTool: this.create({
-        returnValue: this.createTool('mock-tool')
+        returnValue: this.createTool('mock-tool'),
       }),
-      
+
       listTools: this.create({
         returnValue: [
           'git-status',
@@ -317,24 +323,24 @@ export class ToolMockFactory extends MockFactory {
           'git-commit',
           'file-system',
           'network-request',
-          'code-review'
-        ]
+          'code-review',
+        ],
       }),
-      
+
       executeTool: this.createAsync({
         returnValue: {
           success: true,
           result: 'Tool executed via manager',
-          duration: 500
-        }
+          duration: 500,
+        },
       }),
-      
+
       validateTool: this.create({
         returnValue: {
           valid: true,
-          errors: []
-        }
-      })
+          errors: [],
+        },
+      }),
     };
   }
 }
@@ -349,30 +355,30 @@ export class ConfigMockFactory extends MockFactory {
           agent: {
             name: 'Blade',
             model: 'gpt-4',
-            maxTokens: 4000
+            maxTokens: 4000,
           },
           workspace: {
             path: '/workspace',
-            projects: []
+            projects: [],
           },
           theme: {
             name: 'default',
             colors: {
               primary: '#007acc',
-              secondary: '#6c757d'
-            }
-          }
-        }
+              secondary: '#6c757d',
+            },
+          },
+        },
       }),
-      
+
       saveConfig: this.createAsync({
         returnValue: {
           success: true,
           path: '/config/blade.json',
-          savedAt: new Date().toISOString()
-        }
+          savedAt: new Date().toISOString(),
+        },
       }),
-      
+
       mergeConfig: this.createAsync({
         returnValue: {
           merged: {
@@ -380,21 +386,21 @@ export class ConfigMockFactory extends MockFactory {
             agent: {
               name: 'Blade Pro',
               model: 'gpt-4',
-              maxTokens: 8000
-            }
+              maxTokens: 8000,
+            },
           },
-          conflicts: []
-        }
+          conflicts: [],
+        },
       }),
-      
+
       validateConfig: this.create({
         returnValue: {
           valid: true,
           errors: [],
-          warnings: []
-        }
+          warnings: [],
+        },
       }),
-      
+
       getConfigSchema: this.create({
         returnValue: {
           type: 'object',
@@ -404,12 +410,12 @@ export class ConfigMockFactory extends MockFactory {
               properties: {
                 name: { type: 'string' },
                 model: { type: 'string' },
-                maxTokens: { type: 'number' }
-              }
-            }
-          }
-        }
-      })
+                maxTokens: { type: 'number' },
+              },
+            },
+          },
+        },
+      }),
     };
   }
 }
@@ -419,33 +425,33 @@ export class UIMockFactory extends MockFactory {
   static createInkComponent() {
     return {
       render: this.create({
-        returnValue: '<div>Mock Ink Component</div>'
+        returnValue: '<div>Mock Ink Component</div>',
       }),
-      
+
       useApp: this.create({
         returnValue: {
           exit: jest.fn(),
-          redraw: jest.fn()
-        }
+          redraw: jest.fn(),
+        },
       }),
-      
+
       useInput: this.create({
         returnValue: {
           input: '',
-          setRawMode: jest.fn()
-        }
+          setRawMode: jest.fn(),
+        },
       }),
-      
+
       useStdout: this.create({
         returnValue: {
           write: jest.fn(),
           columns: 80,
-          rows: 24
-        }
-      })
+          rows: 24,
+        },
+      }),
     };
   }
-  
+
   static createThemeManager() {
     return {
       getCurrentTheme: this.create({
@@ -457,15 +463,15 @@ export class UIMockFactory extends MockFactory {
             success: '#28a745',
             danger: '#dc3545',
             warning: '#ffc107',
-            info: '#17a2b8'
+            info: '#17a2b8',
           },
           fonts: {
             primary: 'monospace',
-            secondary: 'sans-serif'
-          }
-        }
+            secondary: 'sans-serif',
+          },
+        },
       }),
-      
+
       setTheme: this.createAsync({
         returnValue: {
           success: true,
@@ -474,22 +480,22 @@ export class UIMockFactory extends MockFactory {
             name: 'dark',
             colors: {
               primary: '#ffffff',
-              background: '#1a1a1a'
-            }
-          }
-        }
+              background: '#1a1a1a',
+            },
+          },
+        },
       }),
-      
+
       listThemes: this.create({
-        returnValue: ['default', 'dark', 'light', 'high-contrast']
+        returnValue: ['default', 'dark', 'light', 'high-contrast'],
       }),
-      
+
       validateTheme: this.create({
         returnValue: {
           valid: true,
-          errors: []
-        }
-      })
+          errors: [],
+        },
+      }),
     };
   }
 }
@@ -502,42 +508,42 @@ export class MCPMockFactory extends MockFactory {
         returnValue: {
           success: true,
           clientId: 'mcp-client-123',
-          connectedAt: new Date().toISOString()
-        }
+          connectedAt: new Date().toISOString(),
+        },
       }),
-      
+
       disconnect: this.createAsync({
         returnValue: {
           success: true,
-          disconnectedAt: new Date().toISOString()
-        }
+          disconnectedAt: new Date().toISOString(),
+        },
       }),
-      
+
       sendRequest: this.createAsync({
         returnValue: {
           success: true,
           data: {
             id: 'req-123',
             result: 'Mock MCP response',
-            timestamp: new Date().toISOString()
-          }
-        }
+            timestamp: new Date().toISOString(),
+          },
+        },
       }),
-      
+
       sendNotification: this.createAsync({
         returnValue: {
           success: true,
-          notificationId: 'not-123'
-        }
+          notificationId: 'not-123',
+        },
       }),
-      
+
       onMessage: this.create({
-        returnValue: jest.fn()
+        returnValue: jest.fn(),
       }),
-      
+
       onError: this.create({
-        returnValue: jest.fn()
-      })
+        returnValue: jest.fn(),
+      }),
     };
   }
 }
@@ -551,30 +557,30 @@ export class LoggerMockFactory extends MockFactory {
       warn: this.create(),
       error: this.create(),
       fatal: this.create(),
-      
+
       setLevel: this.create({
-        returnValue: true
+        returnValue: true,
       }),
-      
+
       getLevel: this.create({
-        returnValue: 'info'
+        returnValue: 'info',
       }),
-      
+
       setContext: this.create({
-        returnValue: true
+        returnValue: true,
       }),
-      
+
       clearContext: this.create({
-        returnValue: true
+        returnValue: true,
       }),
-      
+
       addTransport: this.create({
-        returnValue: true
+        returnValue: true,
       }),
-      
+
       removeTransport: this.create({
-        returnValue: true
-      })
+        returnValue: true,
+      }),
     };
   }
 }
@@ -582,105 +588,105 @@ export class LoggerMockFactory extends MockFactory {
 // 综合测试 Mock 工具包
 export class BladeMockKit {
   private mocks: Map<string, any> = new Map();
-  
+
   constructor() {
     this.setupDefaultMocks();
   }
-  
+
   private setupDefaultMocks(): void {
     // Agent Mocks
     const agent = AgentMockFactory.createAgent();
     this.mocks.set('agent', agent);
-    
+
     // CLI Mocks
     const cli = CLIMockFactory.createCommand();
     this.mocks.set('cli', cli);
-    
+
     // LLM Mocks
     const llm = LLMMockFactory.createLLMProvider();
     this.mocks.set('llm', llm);
-    
+
     // Tool Mocks
     const toolManager = ToolMockFactory.createToolManager();
     this.mocks.set('toolManager', toolManager);
-    
+
     // Config Mocks
     const configManager = ConfigMockFactory.createConfigManager();
     this.mocks.set('configManager', configManager);
-    
+
     // Logger Mocks
     const logger = LoggerMockFactory.createLogger();
     this.mocks.set('logger', logger);
-    
+
     // Database Mock
     const database = DatabaseMock.create();
     this.mocks.set('database', database);
   }
-  
+
   get<T>(name: string): T {
     return this.mocks.get(name) as T;
   }
-  
+
   set(name: string, mock: any): void {
     this.mocks.set(name, mock);
   }
-  
+
   has(name: string): boolean {
     return this.mocks.has(name);
   }
-  
+
   getAgent() {
     return this.get('agent');
   }
-  
+
   getCLI() {
     return this.get('cli');
   }
-  
+
   getLLM() {
     return this.get('llm');
   }
-  
+
   getToolManager() {
     return this.get('toolManager');
   }
-  
+
   getConfigManager() {
     return this.get('configManager');
   }
-  
+
   getLogger() {
     return this.get('logger');
   }
-  
+
   getDatabase() {
     return this.get('database');
   }
-  
+
   clearAll(): void {
-    this.mocks.forEach(mock => {
+    this.mocks.forEach((mock) => {
       if (mock && typeof mock.mockClear === 'function') {
         mock.mockClear();
       }
     });
   }
-  
+
   resetAll(): void {
-    this.mocks.forEach(mock => {
+    this.mocks.forEach((mock) => {
       if (mock && typeof mock.mockReset === 'function') {
         mock.mockReset();
       }
     });
   }
-  
+
   restoreAll(): void {
-    this.mocks.forEach(mock => {
+    this.mocks.forEach((mock) => {
       if (mock && typeof mock.mockRestore === 'function') {
         mock.mockRestore();
       }
     });
   }
-  
+
   static create(): BladeMockKit {
     return new BladeMockKit();
   }
@@ -694,18 +700,18 @@ export const BladeMockPresets = {
   development: {
     verbose: true,
     mockDelay: 0,
-    mockErrors: false
+    mockErrors: false,
   },
-  
+
   integration: {
     verbose: false,
     mockDelay: 100,
-    mockErrors: true
+    mockErrors: true,
   },
-  
+
   production: {
     verbose: false,
     mockDelay: 500,
-    mockErrors: false
-  }
+    mockErrors: false,
+  },
 };

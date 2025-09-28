@@ -4,7 +4,7 @@
   "private": true,
   "description": "🗡️ Blade - 智能 AI 助手命令行工具",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/blade.js",
   "bin": {
     "blade": "dist/blade.js"
   },
@@ -15,10 +15,8 @@
     "README.md"
   ],
   "scripts": {
-    "dev": "bun --watch src/cli/blade.tsx",
-    "build:cli": "bun build src/cli/blade.tsx --external react-devtools-core --external react --external react-dom --external ink --external commander --external chalk --external inquirer --minify --outfile dist/blade.js --target=node",
-    "build:core": "bun build src/core/index.ts --external react-devtools-core --minify --outfile dist/index.js --target=node",
-    "build": "rm -rf dist && npm run build:cli && npm run build:core",
+    "dev": "bun --watch src/blade.tsx",
+    "build": "rm -rf dist && bun build src/blade.tsx --external react-devtools-core --external react --external react-dom --external ink --external commander --external chalk --external inquirer --minify --outfile dist/blade.js --target=node",
     "start": "bun run dist/blade.js",
     "test": "vitest",
     "test:watch": "vitest --watch",

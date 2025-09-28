@@ -1,5 +1,5 @@
-import { defineConfig } from 'vitest/config'
-import { resolve } from 'path'
+import { resolve } from 'path';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
@@ -11,7 +11,7 @@ export default defineConfig({
       '**/dist/**',
       '**/cypress/**',
       '**/.{idea,git,cache,output,temp}/**',
-      '**/{karma,rollup,webpack,vite,vitest,jest,babel}.config.*'
+      '**/{karma,rollup,webpack,vite,vitest,jest,babel}.config.*',
     ],
     coverage: {
       provider: 'v8',
@@ -24,21 +24,18 @@ export default defineConfig({
         '**/__tests__/**',
         '**/*.{test,spec}.{js,ts,jsx,tsx}',
         '**/scripts/**',
-        '**/coverage/**'
-      ]
+        '**/coverage/**',
+      ],
     },
-    setupFiles: [
-      './tests/setup.ts'
-    ],
+    setupFiles: ['./tests/setup.ts'],
     // 添加TypeScript配置
     typecheck: {
-      tsconfig: './tsconfig.test.json'
-    }
+      tsconfig: './tsconfig.test.json',
+    },
   },
   resolve: {
     alias: {
-      '@blade-ai/core': resolve(__dirname, 'packages/core/src'),
-      '@blade-ai/cli': resolve(__dirname, 'packages/cli/src')
-    }
-  }
-})
+      '@': resolve(__dirname, 'src'),
+    },
+  },
+});

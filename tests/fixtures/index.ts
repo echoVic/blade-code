@@ -27,13 +27,13 @@ export interface DataSchema<T = any> {
 // 基础测试数据生成器
 export class TestDataFactory {
   private static sequenceCounters: Map<string, number> = new Map();
-  
+
   static getSequence(key: string): number {
     const current = this.sequenceCounters.get(key) || 0;
     this.sequenceCounters.set(key, current + 1);
     return current;
   }
-  
+
   static resetSequence(key?: string): void {
     if (key) {
       this.sequenceCounters.delete(key);
@@ -41,21 +41,22 @@ export class TestDataFactory {
       this.sequenceCounters.clear();
     }
   }
-  
+
   static createFactory<T>(schema: DataSchema<T>): DataFactory<T> {
     return {
       create: (overrides?: Partial<T>): T => {
         const base = { ...schema.defaults };
-        
+
         // 应用变体
         if (schema.variations) {
           const variantKeys = Object.keys(schema.variations);
           if (variantKeys.length > 0) {
-            const randomVariant = variantKeys[Math.floor(Math.random() * variantKeys.length)];
+            const randomVariant =
+              variantKeys[Math.floor(Math.random() * variantKeys.length)];
             Object.assign(base, schema.variations[randomVariant]);
           }
         }
-        
+
         // 应用序列
         if (schema.sequences) {
           Object.entries(schema.sequences).forEach(([key, fn]) => {
@@ -63,18 +64,18 @@ export class TestDataFactory {
             Object.assign(base, fn(sequenceIndex));
           });
         }
-        
+
         // 应用覆盖
         if (overrides) {
           Object.assign(base, overrides);
         }
-        
+
         return base;
       },
-      
+
       createMany: (count: number, overrides?: Partial<T>): T[] => {
         return Array.from({ length: count }, () => this.create(overrides));
-      }
+      },
     };
   }
 }
@@ -98,29 +99,29 @@ export class BladeDataFactory {
         theme: 'default',
         logging: {
           level: 'info',
-          format: 'text'
-        }
-      }
+          format: 'text',
+        },
+      },
     },
     variations: {
       premium: {
         model: 'gpt-4-turbo',
         maxTokens: 8000,
-        temperature: 0.5
+        temperature: 0.5,
       },
       basic: {
         model: 'gpt-3.5-turbo',
         maxTokens: 2000,
-        temperature: 0.9
-      }
+        temperature: 0.9,
+      },
     },
     sequences: {
       generatedName: (index) => ({
-        name: `Test Agent ${index + 1}`
-      })
-    }
+        name: `Test Agent ${index + 1}`,
+      }),
+    },
   });
-  
+
   // 用户相关数据
   static User = TestDataFactory.createFactory({
     defaults: {
@@ -136,35 +137,35 @@ export class BladeDataFactory {
       preferences: {
         theme: 'default',
         language: 'en',
-        notifications: true
+        notifications: true,
       },
       stats: {
         logins: 0,
         projects: 0,
-        filesCreated: 0
-      }
+        filesCreated: 0,
+      },
     },
     variations: {
       admin: {
         role: 'admin',
-        name: 'Admin User'
+        name: 'Admin User',
       },
       developer: {
         role: 'developer',
-        name: 'Developer User'
+        name: 'Developer User',
       },
       guest: {
         role: 'guest',
-        isActive: false
-      }
+        isActive: false,
+      },
     },
     sequences: {
       email: (index) => ({
-        email: `user${index + 1}@example.com`
-      })
-    }
+        email: `user${index + 1}@example.com`,
+      }),
+    },
   });
-  
+
   // 项目相关数据
   static Project = TestDataFactory.createFactory({
     defaults: {
@@ -184,39 +185,39 @@ export class BladeDataFactory {
         buildCommand: 'npm run build',
         testCommand: 'npm test',
         deployCommand: 'npm run deploy',
-        environment: 'development'
+        environment: 'development',
       },
       stats: {
         builds: 0,
         deployments: 0,
         commits: 0,
-        issues: 0
-      }
+        issues: 0,
+      },
     },
     variations: {
       react: {
         type: 'javascript',
         framework: 'react',
-        name: 'React Test Project'
+        name: 'React Test Project',
       },
       node: {
         type: 'nodejs',
         framework: 'express',
-        name: 'Node.js Test Project'
+        name: 'Node.js Test Project',
       },
       python: {
         type: 'python',
         framework: 'django',
-        name: 'Python Test Project'
-      }
+        name: 'Python Test Project',
+      },
     },
     sequences: {
       name: (index) => ({
-        name: `Test Project ${index + 1}`
-      })
-    }
+        name: `Test Project ${index + 1}`,
+      }),
+    },
   });
-  
+
   // Git 相关数据
   static GitCommit = TestDataFactory.createFactory({
     defaults: {
@@ -224,43 +225,43 @@ export class BladeDataFactory {
       message: 'Test commit message',
       author: {
         name: 'Test Author',
-        email: 'test@example.com'
+        email: 'test@example.com',
       },
       committer: {
         name: 'Test Committer',
-        email: 'test@example.com'
+        email: 'test@example.com',
       },
       date: new Date().toISOString(),
       filesChanged: ['file1.ts', 'file2.js'],
       stats: {
         additions: 10,
         deletions: 5,
-        changes: 15
+        changes: 15,
       },
       branch: 'main',
-      tags: []
+      tags: [],
     },
     variations: {
       feature: {
         message: 'feat: Add new feature',
-        branch: 'feature/new-feature'
+        branch: 'feature/new-feature',
       },
       bugfix: {
         message: 'fix: Fix critical bug',
-        branch: 'bugfix/critical-bug'
+        branch: 'bugfix/critical-bug',
       },
       docs: {
         message: 'docs: Update documentation',
-        filesChanged: ['README.md', 'docs/api.md']
-      }
+        filesChanged: ['README.md', 'docs/api.md'],
+      },
     },
     sequences: {
       hash: (index) => ({
-        hash: `a1b2c3d4e5f6${index.toString(16).padStart(8, '0')}`
-      })
-    }
+        hash: `a1b2c3d4e5f6${index.toString(16).padStart(8, '0')}`,
+      }),
+    },
   });
-  
+
   // 工具相关数据
   static Tool = TestDataFactory.createFactory({
     defaults: {
@@ -273,7 +274,7 @@ export class BladeDataFactory {
       enabled: true,
       config: {
         timeout: 30000,
-        retries: 3
+        retries: 3,
       },
       createdAt: new Date().toISOString(),
       updatedAt: () => new Date().toISOString(),
@@ -281,33 +282,33 @@ export class BladeDataFactory {
         calls: 0,
         success: 0,
         errors: 0,
-        lastUsed: null
-      }
+        lastUsed: null,
+      },
     },
     variations: {
       git: {
         name: 'Git Tool',
         category: 'version-control',
-        type: 'built-in'
+        type: 'built-in',
       },
       file: {
         name: 'File System Tool',
         category: 'filesystem',
-        type: 'built-in'
+        type: 'built-in',
       },
       network: {
         name: 'Network Tool',
         category: 'network',
-        type: 'built-in'
-      }
+        type: 'built-in',
+      },
     },
     sequences: {
       name: (index) => ({
-        name: `Test Tool ${index + 1}`
-      })
-    }
+        name: `Test Tool ${index + 1}`,
+      }),
+    },
   });
-  
+
   // 日志相关数据
   static LogEntry = TestDataFactory.createFactory({
     defaults: {
@@ -318,10 +319,10 @@ export class BladeDataFactory {
       source: 'test',
       metadata: {
         userId: 'test-user',
-        sessionId: 'test-session'
+        sessionId: 'test-session',
       },
       tags: ['test'],
-      context: {}
+      context: {},
     },
     variations: {
       error: {
@@ -329,32 +330,32 @@ export class BladeDataFactory {
         message: 'Test error message',
         metadata: {
           error: 'Test error',
-          stack: 'Error: Test error\n    at test.js:1:1'
-        }
+          stack: 'Error: Test error\n    at test.js:1:1',
+        },
       },
       debug: {
         level: 'debug',
         message: 'Test debug message',
         metadata: {
           debug: true,
-          verbose: true
-        }
+          verbose: true,
+        },
       },
       warn: {
         level: 'warn',
         message: 'Test warning message',
         metadata: {
-          warning: 'Test warning'
-        }
-      }
+          warning: 'Test warning',
+        },
+      },
     },
     sequences: {
       message: (index) => ({
-        message: `Test log message ${index + 1}`
-      })
-    }
+        message: `Test log message ${index + 1}`,
+      }),
+    },
   });
-  
+
   // 配置相关数据
   static Config = TestDataFactory.createFactory({
     defaults: {
@@ -365,26 +366,26 @@ export class BladeDataFactory {
         agent: {
           model: 'gpt-4',
           maxTokens: 4000,
-          temperature: 0.7
+          temperature: 0.7,
         },
         workspace: {
           path: '/test/workspace',
-          showHiddenFiles: false
+          showHiddenFiles: false,
         },
         theme: {
           name: 'default',
           colors: {
             primary: '#007acc',
-            secondary: '#6c757d'
-          }
+            secondary: '#6c757d',
+          },
         },
         experimental: {
           enableBeta: false,
-          enableAlpha: false
-        }
+          enableAlpha: false,
+        },
       },
       createdAt: new Date().toISOString(),
-      updatedAt: () => new Date().toISOString()
+      updatedAt: () => new Date().toISOString(),
     },
     variations: {
       production: {
@@ -393,13 +394,13 @@ export class BladeDataFactory {
           agent: {
             model: 'gpt-4-turbo',
             maxTokens: 8000,
-            temperature: 0.5
+            temperature: 0.5,
           },
           experimental: {
             enableBeta: false,
-            enableAlpha: false
-          }
-        }
+            enableAlpha: false,
+          },
+        },
       },
       development: {
         name: 'Development Configuration',
@@ -407,22 +408,22 @@ export class BladeDataFactory {
           agent: {
             model: 'gpt-3.5-turbo',
             maxTokens: 2000,
-            temperature: 0.9
+            temperature: 0.9,
           },
           experimental: {
             enableBeta: true,
-            enableAlpha: true
-          }
-        }
-      }
+            enableAlpha: true,
+          },
+        },
+      },
     },
     sequences: {
       name: (index) => ({
-        name: `Test Configuration ${index + 1}`
-      })
-    }
+        name: `Test Configuration ${index + 1}`,
+      }),
+    },
   });
-  
+
   // 重置所有序列计数器
   static reset(): void {
     TestDataFactory.resetSequence();
@@ -432,84 +433,88 @@ export class BladeDataFactory {
 // Fixture管理器
 export class FixtureManager {
   private fixtures: Map<string, FixtureData> = new Map();
-  
+
   constructor(private basePath: string = './tests/fixtures') {}
-  
+
   async loadFixture(name: string): Promise<FixtureData> {
     if (this.fixtures.has(name)) {
       return this.fixtures.get(name)!;
     }
-    
+
     const filePath = `${this.basePath}/${name}.json`;
     try {
       const { readFileSync } = await import('fs');
       const { join } = await import('path');
       const data = readFileSync(join(this.basePath, `${name}.json`), 'utf-8');
       const fixture: FixtureData = JSON.parse(data);
-      
+
       this.fixtures.set(name, fixture);
       return fixture;
     } catch (error) {
       throw new Error(`Failed to load fixture '${name}': ${error}`);
     }
   }
-  
-  async saveFixture(name: string, data: any, type: 'json' | 'text' | 'binary' = 'json'): Promise<FixtureData> {
+
+  async saveFixture(
+    name: string,
+    data: any,
+    type: 'json' | 'text' | 'binary' = 'json'
+  ): Promise<FixtureData> {
     const fixture: FixtureData = {
       id: TestDataFactory.getSequence('fixture').toString(),
       name,
       data,
       type,
       created: new Date().toISOString(),
-      updated: new Date().toISOString()
+      updated: new Date().toISOString(),
     };
-    
+
     this.fixtures.set(name, fixture);
-    
+
     try {
       const { writeFileSync } = await import('fs');
       const { join } = await import('path');
       const { mkdirSync } = await import('fs');
-      
+
       // 确保目录存在
       mkdirSync(this.basePath, { recursive: true });
-      
+
       // 保存到文件
       const content = type === 'json' ? JSON.stringify(fixture, null, 2) : data;
       writeFileSync(join(this.basePath, `${name}.${type}`), content);
-      
+
       return fixture;
     } catch (error) {
       throw new Error(`Failed to save fixture '${name}': ${error}`);
     }
   }
-  
+
   async updateFixture(name: string, updates: Partial<any>): Promise<FixtureData> {
     const existing = await this.loadFixture(name);
     const updated = {
       ...existing,
       data: { ...existing.data, ...updates },
-      updated: new Date().toISOString()
+      updated: new Date().toISOString(),
     };
-    
+
     this.fixtures.set(name, updated);
     await this.saveFixture(name, updated.data, updated.type);
-    
+
     return updated;
   }
-  
+
   getFixture(name: string): FixtureData | undefined {
     return this.fixtures.get(name);
   }
-  
+
   listFixtures(): string[] {
     return Array.from(this.fixtures.keys());
   }
-  
+
   clear(): void {
     this.fixtures.clear();
   }
-  
+
   static create(basePath?: string): FixtureManager {
     return new FixtureManager(basePath);
   }
@@ -520,45 +525,54 @@ export class TestDataSet {
   static agentData = {
     basic: BladeDataFactory.Agent.create(),
     premium: BladeDataFactory.Agent.create({ model: 'gpt-4-turbo', maxTokens: 8000 }),
-    basic: BladeDataFactory.Agent.create({ model: 'gpt-3.5-turbo', maxTokens: 2000 })
+    basic: BladeDataFactory.Agent.create({ model: 'gpt-3.5-turbo', maxTokens: 2000 }),
   };
-  
+
   static userData = {
     admin: BladeDataFactory.User.create({ role: 'admin' }),
     developer: BladeDataFactory.User.create({ role: 'developer' }),
-    guest: BladeDataFactory.User.create({ role: 'guest' })
+    guest: BladeDataFactory.User.create({ role: 'guest' }),
   };
-  
+
   static projectData = {
     react: BladeDataFactory.Project.create({ type: 'javascript', framework: 'react' }),
     node: BladeDataFactory.Project.create({ type: 'nodejs', framework: 'express' }),
-    python: BladeDataFactory.Project.create({ type: 'python', framework: 'django' })
+    python: BladeDataFactory.Project.create({ type: 'python', framework: 'django' }),
   };
-  
+
   static gitData = {
     feature: BladeDataFactory.GitCommit.create({ message: 'feat: Add new feature' }),
     bugfix: BladeDataFactory.GitCommit.create({ message: 'fix: Fix critical bug' }),
-    docs: BladeDataFactory.GitCommit.create({ message: 'docs: Update documentation' })
+    docs: BladeDataFactory.GitCommit.create({ message: 'docs: Update documentation' }),
   };
-  
+
   static toolData = {
-    git: BladeDataFactory.Tool.create({ name: 'Git Tool', category: 'version-control' }),
-    file: BladeDataFactory.Tool.create({ name: 'File System Tool', category: 'filesystem' }),
-    network: BladeDataFactory.Tool.create({ name: 'Network Tool', category: 'network' })
+    git: BladeDataFactory.Tool.create({
+      name: 'Git Tool',
+      category: 'version-control',
+    }),
+    file: BladeDataFactory.Tool.create({
+      name: 'File System Tool',
+      category: 'filesystem',
+    }),
+    network: BladeDataFactory.Tool.create({
+      name: 'Network Tool',
+      category: 'network',
+    }),
   };
-  
+
   static logData = {
     info: BladeDataFactory.LogEntry.create({ level: 'info' }),
     error: BladeDataFactory.LogEntry.create({ level: 'error' }),
     debug: BladeDataFactory.LogEntry.create({ level: 'debug' }),
-    warn: BladeDataFactory.LogEntry.create({ level: 'warn' })
+    warn: BladeDataFactory.LogEntry.create({ level: 'warn' }),
   };
-  
+
   static configData = {
     production: BladeDataFactory.Config.create({ name: 'Production Configuration' }),
-    development: BladeDataFactory.Config.create({ name: 'Development Configuration' })
+    development: BladeDataFactory.Config.create({ name: 'Development Configuration' }),
   };
-  
+
   // 批量生成数据
   static users = BladeDataFactory.User.createMany(10);
   static projects = BladeDataFactory.Project.createMany(5);
@@ -581,7 +595,7 @@ export class TestDataValidator {
       typeof data.status === 'string'
     );
   }
-  
+
   static validateUser(data: any): boolean {
     return (
       data &&
@@ -592,7 +606,7 @@ export class TestDataValidator {
       typeof data.isActive === 'boolean'
     );
   }
-  
+
   static validateProject(data: any): boolean {
     return (
       data &&
@@ -603,7 +617,7 @@ export class TestDataValidator {
       typeof data.status === 'string'
     );
   }
-  
+
   static validateGitCommit(data: any): boolean {
     return (
       data &&
@@ -615,7 +629,7 @@ export class TestDataValidator {
       typeof data.date === 'string'
     );
   }
-  
+
   static validateTool(data: any): boolean {
     return (
       data &&
@@ -626,7 +640,7 @@ export class TestDataValidator {
       typeof data.enabled === 'boolean'
     );
   }
-  
+
   static validateLogEntry(data: any): boolean {
     return (
       data &&
@@ -637,7 +651,7 @@ export class TestDataValidator {
       typeof data.source === 'string'
     );
   }
-  
+
   static validateConfig(data: any): boolean {
     return (
       data &&
@@ -656,5 +670,5 @@ export {
   BladeDataFactory,
   FixtureManager,
   TestDataSet,
-  TestDataValidator
+  TestDataValidator,
 };

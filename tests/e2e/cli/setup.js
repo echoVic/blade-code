@@ -3,4 +3,4 @@
  */
 
 // 重新导出 setup.ts 中的内容
-export { E2ETestSession, E2ETestUtils, E2ETestDataFactory } from '../setup';
+export { E2ETestDataFactory, E2ETestSession, E2ETestUtils } from '../setup';

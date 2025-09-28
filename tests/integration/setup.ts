@@ -7,17 +7,17 @@ import { jest } from '@jest/globals';
 // 集成测试环境设置
 export class IntegrationTestSetup {
   private static initialized = false;
-  
+
   static async setup() {
     if (this.initialized) return;
-    
+
     // 设置环境变量
     process.env.NODE_ENV = 'test';
     process.env.INTEGRATION_TEST = 'true';
-    
+
     // 模拟网络请求
     global.fetch = jest.fn();
-    
+
     // 模拟文件系统
     jest.mock('fs', () => ({
       ...jest.requireActual('fs'),
@@ -27,27 +27,27 @@ export class IntegrationTestSetup {
       promises: {
         readFile: jest.fn(),
         writeFile: jest.fn(),
-        access: jest.fn()
-      }
+        access: jest.fn(),
+      },
     }));
-    
+
     // 模拟子进程
     jest.mock('child_process', () => ({
       exec: jest.fn(),
       execSync: jest.fn(),
-      spawn: jest.fn()
+      spawn: jest.fn(),
     }));
-    
+
     this.initialized = true;
   }
-  
+
   static async teardown() {
     // 清理模拟
     jest.clearAllMocks();
-    
+
     // 重置环境变量
     delete process.env.INTEGRATION_TEST;
-    
+
     this.initialized = false;
   }
 }
@@ -55,17 +55,17 @@ export class IntegrationTestSetup {
 // 测试数据管理器
 export class IntegrationTestDataManager {
   private static dataStores: Map<string, any[]> = new Map();
-  
+
   static createTestData<T>(key: string, factory: () => T, count: number = 1): T[] {
     const data = Array.from({ length: count }, factory);
     this.dataStores.set(key, data as any[]);
     return data;
   }
-  
+
   static getTestData<T>(key: string): T[] {
     return this.dataStores.get(key) || [];
   }
-  
+
   static clearTestData(key?: string) {
     if (key) {
       this.dataStores.delete(key);
@@ -85,10 +85,10 @@ export class IntegrationTestUtils {
     return {
       query: jest.fn(),
       execute: jest.fn(),
-      close: jest.fn()
+      close: jest.fn(),
     };
   }
-  
+
   /**
    * 创建临时文件系统
    */
@@ -96,9 +96,9 @@ export class IntegrationTestUtils {
     const fs = await import('fs');
     const path = await import('path');
     const os = await import('os');
-    
+
     const tempDir = path.join(os.tmpdir(), `test-${Date.now()}`);
-    
+
     return {
       root: tempDir,
       cleanup: async () => {
@@ -106,10 +106,10 @@ export class IntegrationTestUtils {
         if (fs.existsSync(tempDir)) {
           await fs.promises.rm(tempDir, { recursive: true });
         }
-      }
+      },
     };
   }
-  
+
   /**
    * 模拟外部服务
    */
@@ -124,19 +124,19 @@ export class IntegrationTestUtils {
           throw response;
         }
         return response;
-      })
+      }),
     };
-    
+
     // 根据服务名称设置全局模拟
     switch (serviceName) {
       case 'http':
         global.fetch = mockService.call as any;
         break;
     }
-    
+
     return mockService;
   }
-  
+
   /**
    * 等待异步操作完成
    */
@@ -145,16 +145,16 @@ export class IntegrationTestUtils {
     options: { timeout?: number; concurrency?: number } = {}
   ): Promise<any[]> {
     const { timeout = 5000, concurrency = 1 } = options;
-    
+
     if (concurrency === 1) {
       // 顺序执行
       const results = [];
       for (const operation of operations) {
         const result = await Promise.race([
           operation(),
-          new Promise((_, reject) => 
+          new Promise((_, reject) =>
             setTimeout(() => reject(new Error('Operation timeout')), timeout)
-          )
+          ),
         ]);
         results.push(result);
       }
@@ -165,12 +165,12 @@ export class IntegrationTestUtils {
       for (let i = 0; i < operations.length; i += concurrency) {
         const batch = operations.slice(i, i + concurrency);
         const batchResults = await Promise.all(
-          batch.map(op => 
+          batch.map((op) =>
             Promise.race([
               op(),
-              new Promise((_, reject) => 
+              new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('Operation timeout')), timeout)
-              )
+              ),
             ])
           )
         );
@@ -179,7 +179,7 @@ export class IntegrationTestUtils {
       return results;
     }
   }
-  
+
   /**
    * 验证集成测试结果
    */
@@ -204,21 +204,21 @@ export class IntegrationTestUtils {
 export class IntegrationTestLifecycle {
   private static setups: Array<() => Promise<void>> = [];
   private static teardowns: Array<() => Promise<void>> = [];
-  
+
   static addSetup(setupFn: () => Promise<void>) {
     this.setups.push(setupFn);
   }
-  
+
   static addTeardown(teardownFn: () => Promise<void>) {
     this.teardowns.push(teardownFn);
   }
-  
+
   static async runAllSetups() {
     for (const setup of this.setups) {
       await setup();
     }
   }
-  
+
   static async runAllTeardowns() {
     // 逆序执行清理函数
     for (let i = this.teardowns.length - 1; i >= 0; i--) {
@@ -228,7 +228,7 @@ export class IntegrationTestLifecycle {
         console.warn('Teardown error:', error);
       }
     }
-    
+
     this.setups = [];
     this.teardowns = [];
   }
@@ -250,5 +250,5 @@ export {
   IntegrationTestSetup,
   IntegrationTestDataManager,
   IntegrationTestUtils,
-  IntegrationTestLifecycle
+  IntegrationTestLifecycle,
 };

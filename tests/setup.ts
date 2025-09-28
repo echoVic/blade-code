@@ -1,4 +1,4 @@
-import { TextEncoder, TextDecoder } from 'util';
+import { TextDecoder, TextEncoder } from 'util';
 import { vi } from 'vitest';
 
 // 全局设置
@@ -52,7 +52,7 @@ vi.mock('fs', () => ({
   readdirSync: vi.fn(),
   statSync: vi.fn(),
   unlinkSync: vi.fn(),
-  rmdirSync: vi.fn()
+  rmdirSync: vi.fn(),
 }));
 
 // 模拟路径模块
@@ -65,7 +65,7 @@ vi.mock('path', () => ({
   extname: vi.fn((path) => {
     const lastDot = path.lastIndexOf('.');
     return lastDot === -1 ? '' : path.slice(lastDot);
-  })
+  }),
 }));
 
 // 模拟子进程
@@ -73,7 +73,7 @@ vi.mock('child_process', () => ({
   execSync: vi.fn(),
   exec: vi.fn(),
   spawn: vi.fn(),
-  fork: vi.fn()
+  fork: vi.fn(),
 }));
 
 // 模拟网络请求
@@ -85,7 +85,7 @@ vi.mock('axios', () => ({
     delete: vi.fn(),
     patch: vi.fn(),
     head: vi.fn(),
-    options: vi.fn()
+    options: vi.fn(),
   })),
   get: vi.fn(),
   post: vi.fn(),
@@ -93,7 +93,7 @@ vi.mock('axios', () => ({
   delete: vi.fn(),
   patch: vi.fn(),
   head: vi.fn(),
-  options: vi.fn()
+  options: vi.fn(),
 }));
 
 // 模拟 WebSocket
@@ -103,8 +103,8 @@ vi.mock('ws', () => ({
     send: vi.fn(),
     close: vi.fn(),
     addEventListener: vi.fn(),
-    removeEventListener: vi.fn()
-  }))
+    removeEventListener: vi.fn(),
+  })),
 }));
 
 // 模拟环境变量

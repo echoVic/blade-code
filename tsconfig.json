@@ -22,7 +22,7 @@
     "verbatimModuleSyntax": false,
     "lib": ["ES2023", "DOM"],
     "module": "ES2022",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "target": "es2022",
     "types": ["node", "vitest/globals"],
     "jsx": "react-jsx",

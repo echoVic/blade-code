@@ -1,4 +1,4 @@
-import { vi, afterEach } from 'vitest';
+import { afterEach, vi } from 'vitest';
 
 // Mock axios for security tests
 vi.mock('axios', async () => {

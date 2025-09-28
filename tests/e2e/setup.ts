@@ -2,10 +2,10 @@
  * E2E 测试配置和工具
  */
 
-import { spawn, execSync } from 'child_process';
-import { join } from 'path';
+import { execSync, spawn } from 'child_process';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { join } from 'path';
 
 // E2E 测试配置
 export interface E2ETestConfig {
@@ -27,22 +27,22 @@ export interface E2ETestResult {
 export class E2ETestSession {
   private tempDir: string;
   private config: E2ETestConfig;
-  
+
   constructor(config: E2ETestConfig = {}) {
     this.config = {
       timeout: 30000,
       cwd: process.cwd(),
       cliPath: './bin/blade.js',
-      ...config
+      ...config,
     };
-    
+
     // 创建临时目录
     this.tempDir = join(tmpdir(), `blade-e2e-${Date.now()}`);
     if (!existsSync(this.tempDir)) {
       mkdirSync(this.tempDir, { recursive: true });
     }
   }
-  
+
   /**
    * 运行 CLI 命令
    */
@@ -52,7 +52,7 @@ export class E2ETestSession {
     input?: string
   ): Promise<E2ETestResult> {
     const startTime = Date.now();
-    
+
     return new Promise((resolve, reject) => {
       const cmd = `node ${this.config.cliPath} ${command} ${args.join(' ')}`;
       const child = spawn('node', [this.config.cliPath!, command, ...args], {
@@ -61,32 +61,32 @@ export class E2ETestSession {
           ...process.env,
           ...this.config.env,
           NODE_ENV: 'test',
-          BLADE_TEST: 'true'
+          BLADE_TEST: 'true',
         },
-        stdio: ['pipe', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
-      
+
       let stdout = '';
       let stderr = '';
-      
+
       child.stdout.on('data', (data) => {
         stdout += data.toString();
       });
-      
+
       child.stderr.on('data', (data) => {
         stderr += data.toString();
       });
-      
+
       child.on('close', (code) => {
         const duration = Date.now() - startTime;
         resolve({
           stdout,
           stderr,
           exitCode: code,
-          duration
+          duration,
         });
       });
-      
+
       child.on('error', (error) => {
         const duration = Date.now() - startTime;
         reject({
@@ -94,16 +94,16 @@ export class E2ETestSession {
           stderr,
           exitCode: -1,
           duration,
-          error
+          error,
         });
       });
-      
+
       // 如果提供了输入，发送给子进程
       if (input) {
         child.stdin.write(input);
         child.stdin.end();
       }
-      
+
       // 设置超时
       if (this.config.timeout) {
         setTimeout(() => {
@@ -114,13 +114,13 @@ export class E2ETestSession {
             stderr,
             exitCode: -1,
             duration,
-            error: new Error('Command timeout')
+            error: new Error('Command timeout'),
           });
         }, this.config.timeout);
       }
     });
   }
-  
+
   /**
    * 创建测试文件
    */
@@ -129,14 +129,14 @@ export class E2ETestSession {
     writeFileSync(filePath, content);
     return filePath;
   }
-  
+
   /**
    * 获取临时目录路径
    */
   getTempDir(): string {
     return this.tempDir;
   }
-  
+
   /**
    * 清理临时目录
    */
@@ -158,18 +158,18 @@ export class E2ETestUtils {
     interval: number = 100
   ): Promise<boolean> {
     const startTime = Date.now();
-    
+
     while (Date.now() - startTime < timeout) {
       const result = await Promise.resolve(condition());
       if (result) {
         return true;
       }
-      await new Promise(resolve => setTimeout(resolve, interval));
+      await new Promise((resolve) => setTimeout(resolve, interval));
     }
-    
+
     return false;
   }
-  
+
   /**
    * 检查命令是否存在
    */
@@ -181,7 +181,7 @@ export class E2ETestUtils {
       return false;
     }
   }
-  
+
   /**
    * 获取系统信息
    */
@@ -190,24 +190,21 @@ export class E2ETestUtils {
       platform: process.platform,
       arch: process.arch,
       nodeVersion: process.version,
-      cwd: process.cwd()
+      cwd: process.cwd(),
     };
   }
-  
+
   /**
    * 比较输出结果
    */
-  static compareOutput(
-    actual: string,
-    expected: string | RegExp
-  ): boolean {
+  static compareOutput(actual: string, expected: string | RegExp): boolean {
     if (expected instanceof RegExp) {
       return expected.test(actual);
     } else {
       return actual.includes(expected);
     }
   }
-  
+
   /**
    * 验证 E2E 测试结果
    */
@@ -221,29 +218,34 @@ export class E2ETestUtils {
     }
   ): boolean {
     // 检查退出码
-    if (expectations.exitCode !== undefined && 
-        result.exitCode !== expectations.exitCode) {
+    if (
+      expectations.exitCode !== undefined &&
+      result.exitCode !== expectations.exitCode
+    ) {
       return false;
     }
-    
+
     // 检查标准输出
-    if (expectations.stdout !== undefined && 
-        !this.compareOutput(result.stdout, expectations.stdout)) {
+    if (
+      expectations.stdout !== undefined &&
+      !this.compareOutput(result.stdout, expectations.stdout)
+    ) {
       return false;
     }
-    
+
     // 检查标准错误
-    if (expectations.stderr !== undefined && 
-        !this.compareOutput(result.stderr, expectations.stderr)) {
+    if (
+      expectations.stderr !== undefined &&
+      !this.compareOutput(result.stderr, expectations.stderr)
+    ) {
       return false;
     }
-    
+
     // 检查超时
-    if (expectations.timeout !== undefined && 
-        result.duration > expectations.timeout) {
+    if (expectations.timeout !== undefined && result.duration > expectations.timeout) {
       return false;
     }
-    
+
     return true;
   }
 }
@@ -260,11 +262,11 @@ export class E2ETestDataFactory {
       description: 'Test project for E2E testing',
       private: true,
       scripts: {
-        test: 'echo "test"'
-      }
+        test: 'echo "test"',
+      },
     };
   }
-  
+
   /**
    * 创建测试配置
    */
@@ -273,19 +275,19 @@ export class E2ETestDataFactory {
       auth: {
         apiKey: 'test-api-key',
         modelName: 'gpt-4',
-        baseUrl: 'https://api.test.com'
+        baseUrl: 'https://api.test.com',
       },
       ui: {
         theme: 'default',
-        hideTips: false
+        hideTips: false,
       },
       debug: {
         debug: false,
-        verbose: false
-      }
+        verbose: false,
+      },
     };
   }
-  
+
   /**
    * 创建测试文件内容
    */
@@ -312,14 +314,18 @@ const user: User = {
 console.log(user.name);
 `;
       case 'json':
-        return JSON.stringify({
-          name: 'test-config',
-          version: '1.0.0',
-          settings: {
-            theme: 'dark',
-            language: 'en'
-          }
-        }, null, 2);
+        return JSON.stringify(
+          {
+            name: 'test-config',
+            version: '1.0.0',
+            settings: {
+              theme: 'dark',
+              language: 'en',
+            },
+          },
+          null,
+          2
+        );
       default:
         return 'Test file content';
     }
@@ -330,5 +336,5 @@ console.log(user.name);
 export default {
   E2ETestSession,
   E2ETestUtils,
-  E2ETestDataFactory
+  E2ETestDataFactory,
 };

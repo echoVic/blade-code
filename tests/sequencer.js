@@ -1,4 +1,5 @@
 import type { Test, Context } from 'jest';
+
 import Sequencer from '@jest/test-sequencer';
 
 export default class CustomSequencer extends Sequencer {
