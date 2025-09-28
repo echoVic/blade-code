@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 /**
- * 智能对话命令 - 使用统一的AgentFactory
+ * 智能对话命令 - 使用 createAgent 函数
  */
 
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { AgentFactory } from '../agent/AgentFactory.js';
+import { createAgent } from '../agent/agent-creator.js';
 
 interface Agent {
   chat(message: string): Promise<string>;
@@ -50,9 +50,8 @@ async function handleChat(
   }
 ): Promise<void> {
   try {
-    // 使用AgentFactory创建Agent
-    const agentFactory = AgentFactory.getInstance();
-    const agent = await agentFactory.createAgent({
+    // 使用createAgent函数创建Agent
+    const agent = await createAgent({
       apiKey: options.apiKey,
       baseUrl: options.baseUrl,
       model: options.model

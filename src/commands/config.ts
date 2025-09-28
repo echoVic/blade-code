@@ -11,7 +11,7 @@ import { UIDisplay, UIInput } from '../ui/index.js';
  */
 export function configCommand(program: Command) {
   const configCmd = program.command('config').description('⚙️ 配置管理');
-  const configManager = ConfigManager.getInstance();
+  const configManager = new ConfigManager();
 
   // 显示当前配置
   configCmd

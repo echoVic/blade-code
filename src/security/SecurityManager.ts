@@ -4,7 +4,7 @@
  */
 
 import { EventEmitter } from 'events';
-import { ErrorFactory } from '../error/index.js';
+import { BladeError, ErrorCodeModule, ErrorSeverity } from '../error/index.js';
 
 // 安全层级接口定义
 export interface SecurityLayer {
@@ -1001,7 +1001,7 @@ class OutputFilteringLayer implements SecurityLayer {
     for (const blacklistWord of this.config.blacklist) {
       if (filtered.toLowerCase().includes(blacklistWord.toLowerCase())) {
         // 替换敏感词汇
-        for (const [key, replacement] of Object.entries(
+        for (const [_key, replacement] of Object.entries(
           this.config.replacementStrings
         )) {
           filtered = filtered.replace(new RegExp(blacklistWord, 'gi'), replacement);
@@ -1310,7 +1310,7 @@ export class SecurityManager extends EventEmitter {
 
       let processedRequest = request;
       const processedLevels: SecurityLevel[] = [];
-      let securityScore = 1.0;
+      let _securityScore = 1.0;
 
       // 按顺序处理每个安全层级
       for (const layer of this.securityLayers) {
@@ -1340,7 +1340,7 @@ export class SecurityManager extends EventEmitter {
           }
 
           // 更新安全评分
-          securityScore = this.calculateSecurityScore(layer, processedRequest);
+          _securityScore = this.calculateSecurityScore(layer, processedRequest);
         } catch (error) {
           this.error(`安全层级 ${layer.getLevel()} 处理失败`, error as Error);
 
@@ -1366,10 +1366,18 @@ export class SecurityManager extends EventEmitter {
       return this.createSuccessResponse(processedRequest, processedLevels);
     } catch (error) {
       this.error('安全处理失败', error as Error);
-      throw ErrorFactory.createError(`安全处理失败: ${(error as Error).message}`, {
-        module: 'SECURITY' as any,
-        severity: 'ERROR' as any
-      });
+      throw new BladeError(
+        ErrorCodeModule.SECURITY,
+        'SECURITY_PROCESSING_FAILED',
+        `安全处理失败: ${(error as Error).message}`,
+        {
+          severity: ErrorSeverity.ERROR,
+          retryable: false,
+          recoverable: false,
+          context: { originalError: error },
+          suggestions: ['检查安全配置', '验证请求参数', '查看详细日志'],
+        }
+      );
     } finally {
       const duration = Date.now() - startTime;
       this.emit('securityProcessingCompleted', { requestId: request.id, duration });

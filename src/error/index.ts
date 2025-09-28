@@ -24,8 +24,7 @@ export {
   withDebugTrace,
   withErrorBoundary,
 } from './ErrorBoundary.js';
-// 错误处理工具
-export { BatchErrorFactory, ErrorFactory } from './ErrorFactory.js';
+// 错误处理工具 - 直接使用错误类构造函数
 export { ErrorMonitor, globalErrorMonitor, monitor } from './ErrorMonitor.js';
 export {
   ErrorPersistenceManager,

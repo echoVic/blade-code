@@ -4,7 +4,6 @@
  */
 
 import { EventEmitter } from 'events';
-import { ErrorFactory } from '../error/index.js';
 
 export enum MemoryLayer {
   SHORT_TERM = 'short_term',

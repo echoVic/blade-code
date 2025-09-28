@@ -1,6 +1,6 @@
 import { Box, Text, useApp, useInput } from 'ink';
 import React, { useCallback, useState } from 'react';
-import { CommandResult } from '../../services/CommandOrchestrator.js';
+import { CommandResult } from '../hooks/useCommandHandler.js';
 import { useSession } from '../contexts/SessionContext.js';
 
 interface EnhancedReplInterfaceProps {

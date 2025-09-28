@@ -1,7 +1,14 @@
 import { useCallback, useState } from 'react';
 
-import { CommandOrchestrator, CommandResult } from '../../agent/CommandOrchestrator.js';
+import { createAgent } from '../../agent/agent-creator.js';
 import { useSession } from '../contexts/SessionContext.js';
+
+export interface CommandResult {
+  success: boolean;
+  output?: string;
+  error?: string;
+  metadata?: Record<string, unknown>;
+}
 
 /**
  * 命令处理 Hook
@@ -11,15 +18,7 @@ export const useCommandHandler = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const { dispatch } = useSession();
 
-  // 初始化命令协调器
-  const [commandOrchestrator] = useState(() => {
-    try {
-      return CommandOrchestrator.getInstance();
-    } catch (error) {
-      console.error('Failed to initialize CommandOrchestrator:', error);
-      return null;
-    }
-  });
+  // Agent创建函数已准备就绪
 
   // 处理命令提交
   const handleCommandSubmit = useCallback(
@@ -30,17 +29,22 @@ export const useCommandHandler = () => {
     ): Promise<CommandResult> => {
       console.log('[DEBUG] handleCommandSubmit 被调用，命令:', command);
 
-      if (!commandOrchestrator) {
-        console.log('[ERROR] commandOrchestrator 不可用');
-        return { success: false, error: 'Command orchestrator not available' };
-      }
-
       try {
         console.log('[DEBUG] 添加用户消息到UI');
         addUserMessage(command);
 
         console.log('[DEBUG] 开始执行命令...');
-        const result = await commandOrchestrator.executeChat(command);
+
+        // 直接使用createAgent函数创建Agent并执行命令
+        const agent = await createAgent({});
+        const chatContext = {
+          messages: [],
+          userId: 'cli-user',
+          sessionId: `session-${Date.now()}`,
+          workspaceRoot: process.cwd(),
+        };
+        const output = await agent.chat(command, chatContext);
+        const result = { success: true, output };
 
         console.log('[DEBUG] 命令执行结果:', result);
 
@@ -69,7 +73,7 @@ export const useCommandHandler = () => {
         return errorResult;
       }
     },
-    [commandOrchestrator]
+    []
   );
 
   // 处理提交

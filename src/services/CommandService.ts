@@ -37,20 +37,12 @@ export interface CommandResult {
 }
 
 export class CommandService extends EventEmitter {
-  private static instance: CommandService;
   private commands: Map<string, Command> = new Map();
   private aliases: Map<string, string> = new Map();
   private config: BladeConfig | null = null;
 
-  private constructor() {
+  constructor() {
     super();
-  }
-
-  public static getInstance(): CommandService {
-    if (!CommandService.instance) {
-      CommandService.instance = new CommandService();
-    }
-    return CommandService.instance;
   }
 
   public async initialize(config: BladeConfig): Promise<void> {

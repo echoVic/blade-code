@@ -7,14 +7,6 @@ export { ContextManager } from '../context/ContextManager.js';
 export { ContextCompressor } from '../context/processors/ContextCompressor.js';
 // 核心Agent类
 export { Agent } from './Agent.js';
+// Agent创建函数
+export { createAgent, type AgentOptions } from './agent-creator.js';
 export type { AgentConfig, AgentResponse, AgentTask } from './types.js';
-
-// 创建Agent的便捷函数
-export async function createAgent(
-  config: import('./types.js').AgentConfig
-): Promise<import('./Agent.js').Agent> {
-  const { Agent } = await import('./Agent.js');
-  const agent = new Agent(config);
-  await agent.initialize();
-  return agent;
-}

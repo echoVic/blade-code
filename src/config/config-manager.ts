@@ -15,7 +15,6 @@ import {
 } from './types.js';
 
 export class ConfigManager {
-  private static instance: ConfigManager;
   private config: BladeConfig | null = null;
   private configStatus: ConfigStatus | null = null;
   private readonly locations: ConfigLocations;
@@ -24,17 +23,10 @@ export class ConfigManager {
   private configLoaded = false;
   private configLoading = false;
 
-  private constructor() {
+  constructor() {
     this.locations = this.getConfigLocations();
     this.envMapping = this.getEnvMapping();
     this.migrations = this.getConfigMigrations();
-  }
-
-  public static getInstance(): ConfigManager {
-    if (!ConfigManager.instance) {
-      ConfigManager.instance = new ConfigManager();
-    }
-    return ConfigManager.instance;
   }
 
   public async initialize(userConfig?: Partial<BladeConfig>): Promise<BladeConfig> {
@@ -186,7 +178,7 @@ export class ConfigManager {
     // 删除用户配置文件
     try {
       await fs.unlink(this.locations.userConfigPath);
-    } catch (error) {
+    } catch (_error) {
       // 文件不存在，忽略
     }
 
@@ -231,7 +223,7 @@ export class ConfigManager {
       const packagePath = path.resolve(process.cwd(), 'package.json');
       const content = await fs.readFile(packagePath, 'utf-8');
       return JSON.parse(content);
-    } catch (error) {
+    } catch (_error) {
       return {
         version: '1.0.0',
         name: 'blade-ai',
@@ -281,7 +273,7 @@ export class ConfigManager {
           if (result.core.debug) {
             console.log(`应用环境变量: ${envKey} -> ${mapping.path} = ${value}`);
           }
-        } catch (error) {
+        } catch (_error) {
           console.warn(`环境变量解析失败: ${envKey} = ${envValue}`);
         }
       } else if (mapping.required && mapping.default === undefined) {

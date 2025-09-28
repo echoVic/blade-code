@@ -1,6 +1,6 @@
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useState } from 'react';
-import { ConfigService } from '../../config/ConfigService.js';
+import { ConfigManager } from '../../config/config-manager.js';
 
 /**
  * 应用初始化 Hook
@@ -19,15 +19,15 @@ export const useAppInitializer = (
     try {
       setLoadingStatus('加载配置...');
 
-      // 初始化配置服务
-      const configService = ConfigService.getInstance();
-      await configService.initialize();
-      const config = configService.getConfig();
+      // 初始化配置管理器
+      const configManager = new ConfigManager();
+      await configManager.initialize();
+      const config = configManager.getConfig();
 
       setLoadingStatus('检查 API 密钥...');
 
       // 检查 API 密钥配置
-      if (!config.auth.apiKey || config.auth.apiKey.trim() === '') {
+      if (!config.auth?.apiKey || config.auth.apiKey.trim() === '') {
         setHasApiKey(false);
         setIsInitialized(true);
         addAssistantMessage('🚀 欢迎使用 Blade AI 助手！');
