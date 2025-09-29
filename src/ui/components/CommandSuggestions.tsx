@@ -19,7 +19,21 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
     return null;
   }
 
-  const displaySuggestions = suggestions.slice(0, maxDisplay);
+  // 计算显示范围，确保选中项总是可见
+  let startIndex = 0;
+  let endIndex = Math.min(maxDisplay, suggestions.length);
+
+  // 如果选中的是隐藏项提示（超出了建议数量）
+  const isMoreItemSelected = selectedIndex >= suggestions.length;
+
+  // 如果选中项超出了显示范围，调整显示窗口
+  if (selectedIndex >= maxDisplay && !isMoreItemSelected) {
+    startIndex = selectedIndex - maxDisplay + 1;
+    endIndex = selectedIndex + 1;
+  }
+
+  const displaySuggestions = suggestions.slice(startIndex, endIndex);
+  const hasMoreItems = suggestions.length > maxDisplay;
 
   return (
     <Box
@@ -27,8 +41,9 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
       paddingX={2}
       paddingY={0}
     >
-      {displaySuggestions.map((suggestion, index) => {
-        const isSelected = index === selectedIndex;
+      {displaySuggestions.map((suggestion, displayIndex) => {
+        const actualIndex = startIndex + displayIndex;
+        const isSelected = actualIndex === selectedIndex;
         return (
           <Box
             key={suggestion.command}
@@ -45,9 +60,9 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
         );
       })}
 
-      {suggestions.length > maxDisplay && (
+      {hasMoreItems && (
         <Box paddingX={1}>
-          <Text color="gray" dimColor>
+          <Text color={isMoreItemSelected ? 'cyan' : 'gray'} bold={isMoreItemSelected} dimColor={!isMoreItemSelected}>
             ... and {suggestions.length - maxDisplay} more
           </Text>
         </Box>

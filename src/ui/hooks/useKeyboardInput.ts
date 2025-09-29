@@ -96,8 +96,10 @@ export const useKeyboardInput = (
     } else if (key.upArrow) {
       if (showSuggestions && suggestions.length > 0) {
         // 在建议列表中向上导航
+        const maxIndex = suggestions.length - 1;
+
         setSelectedSuggestionIndex((prev) =>
-          prev > 0 ? prev - 1 : suggestions.length - 1
+          prev > 0 ? prev - 1 : maxIndex
         );
       } else {
         // 上箭头 - 历史命令
@@ -109,8 +111,10 @@ export const useKeyboardInput = (
     } else if (key.downArrow) {
       if (showSuggestions && suggestions.length > 0) {
         // 在建议列表中向下导航
+        const maxIndex = suggestions.length - 1;
+
         setSelectedSuggestionIndex((prev) =>
-          prev < suggestions.length - 1 ? prev + 1 : 0
+          prev < maxIndex ? prev + 1 : 0
         );
       } else {
         // 下箭头 - 历史命令

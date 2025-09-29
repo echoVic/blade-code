@@ -26,7 +26,6 @@ interface AppProps {
   disallowedTools?: string[];
 
   // MCP 选项
-  mcpDebug?: boolean;
   mcpConfig?: string[];
   strictMcpConfig?: boolean;
 
