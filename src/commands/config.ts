@@ -1,49 +1,93 @@
-/**
- * 配置管理命令
- */
-
 import { Command } from 'commander';
 import { ConfigManager } from '../config/config-manager.js';
-import { UIDisplay, UIInput } from '../ui/index.js';
+import type { BladeConfig } from '../config/types.js';
 
-/**
- * 注册配置相关命令
- */
 export function configCommand(program: Command) {
-  const configCmd = program.command('config').description('⚙️ 配置管理');
-  const configManager = new ConfigManager();
+  const config = program
+    .command('config')
+    .description('Manage configuration (eg. blade config set -g theme dark)');
 
-  // 显示当前配置
-  configCmd
-    .command('show')
-    .alias('s')
-    .description('📋 显示当前配置')
-    .action(async () => {
+  config
+    .command('set')
+    .option('-g, --global', 'Set global config')
+    .argument('<key>', 'Config key')
+    .argument('<value>', 'Config value')
+    .action(async (key: string, value: string, options: { global?: boolean }) => {
       try {
-        await configManager.initialize(); //确保配置已加载
-        const config = configManager.getConfig();
-        UIDisplay.text(JSON.stringify(config, null, 2));
+        const configManager = new ConfigManager();
+        await configManager.initialize();
+
+        // 创建配置更新对象 - 使用 Partial<BladeConfig> 类型
+        const keys = key.split('.');
+        const update = {} as Partial<BladeConfig>;
+        let target: any = update;
+
+        // 构建嵌套的更新对象
+        for (let i = 0; i < keys.length - 1; i++) {
+          if (!target[keys[i]]) {
+            target[keys[i]] = {};
+          }
+          target = target[keys[i]];
+        }
+        target[keys[keys.length - 1]] = value;
+
+        // 使用 updateConfig 方法
+        await configManager.updateConfig(update);
+        console.log(`✅ Set ${key} = ${value}${options.global ? ' (global)' : ''}`);
       } catch (error) {
-        UIDisplay.error(`获取配置失败: ${error instanceof Error ? error.message : '未知错误'}`);
+        console.error(
+          `❌ Failed to set config: ${error instanceof Error ? error.message : '未知错误'}`
+        );
+        process.exit(1);
       }
     });
 
-  // 重置配置
-  configCmd
-    .command('reset')
-    .description('🔄 重置配置为默认值')
-    .action(async () => {
-      const confirm = await UIInput.confirm('确定要重置所有配置吗？这将删除您的用户配置。', { default: false });
+  config
+    .command('get')
+    .argument('<key>', 'Config key')
+    .action(async (key: string) => {
+      try {
+        const configManager = new ConfigManager();
+        await configManager.initialize();
+        const config = configManager.getConfig();
 
-      if (confirm) {
-        try {
-          await configManager.resetConfig();
-          UIDisplay.success('配置已成功重置为默认值。');
-        } catch (error) {
-          UIDisplay.error(`重置配置失败: ${error instanceof Error ? error.message : '未知错误'}`);
+        // 支持嵌套键访问
+        const keys = key.split('.');
+        let value: any = config;
+        for (const k of keys) {
+          value = value?.[k];
+          if (value === undefined) break;
         }
-      } else {
-        UIDisplay.muted('取消重置');
+
+        if (value !== undefined) {
+          console.log(
+            typeof value === 'object' ? JSON.stringify(value, null, 2) : value
+          );
+        } else {
+          console.log(`Config key "${key}" not found`);
+        }
+      } catch (error) {
+        console.error(
+          `❌ Failed to get config: ${error instanceof Error ? error.message : '未知错误'}`
+        );
+        process.exit(1);
+      }
+    });
+
+  config
+    .command('list')
+    .description('List all configuration')
+    .action(async () => {
+      try {
+        const configManager = new ConfigManager();
+        await configManager.initialize();
+        const config = configManager.getConfig();
+        console.log(JSON.stringify(config, null, 2));
+      } catch (error) {
+        console.error(
+          `❌ Failed to list config: ${error instanceof Error ? error.message : '未知错误'}`
+        );
+        process.exit(1);
       }
     });
 }
