@@ -61,7 +61,7 @@ interface BladeInterfaceProps {
 }
 
 /**
- * Blade AI 主界面组件
+ * Blade Code 主界面组件
  * 负责应用初始化、主界面渲染和所有业务逻辑的协调
  */
 export const BladeInterface: React.FC<BladeInterfaceProps> = ({

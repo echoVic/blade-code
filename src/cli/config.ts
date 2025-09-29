@@ -5,6 +5,7 @@
 
 import type { Options } from 'yargs';
 import type { GlobalOptions } from './types.js';
+import { getDescription, getVersion } from '../utils/package-info.js';
 
 export const globalOptions: Record<keyof GlobalOptions, Options> = {
   debug: {
@@ -150,8 +151,8 @@ export const globalOptions: Record<keyof GlobalOptions, Options> = {
 export const cliConfig = {
   scriptName: 'blade',
   usage: '$0 [command] [options]',
-  description: '🗡️ Blade AI - 智能AI助手命令行界面',
-  version: '1.3.0',
+  description: getDescription(),
+  version: getVersion(),
   locale: 'en', // 使用英文，因为 Yargs 的中文支持有限
   showHelpOnFail: true,
   demandCommand: false, // 允许无命令运行（进入UI模式）

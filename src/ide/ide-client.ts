@@ -65,7 +65,7 @@ export class IdeClient {
     const initMessage: IdeMessage = {
       type: 'init',
       payload: {
-        clientId: 'blade-ai',
+        clientId: 'blade-code',
         version: this.config.version,
         capabilities: this.getAgentCapabilities(),
       },

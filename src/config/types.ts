@@ -1,5 +1,5 @@
 /**
- * Blade AI 统一配置类型定义
+ * Blade Code 统一配置类型定义
  * 作为Core包导出的标准配置，供CLI和其他包使用
  */
 
@@ -376,7 +376,7 @@ export const DEFAULT_CONFIG: Omit<BladeConfig, 'version' | 'name' | 'description
   },
   systemPrompt: {
     enabled: true,
-    default: '你是 Blade AI，一个专业的命令行智能编码助手。',
+    default: '你是 Blade Code，一个专业的命令行智能代码助手。',
     allowOverride: true,
     maxLength: 4000,
     loadUserConfig: true,
@@ -442,7 +442,7 @@ export const DEFAULT_CONFIG: Omit<BladeConfig, 'version' | 'name' | 'description
     },
     telemetry: {
       enabled: true,
-      endpoint: 'https://telemetry.blade-ai.com/api/v1/events',
+      endpoint: 'https://telemetry.blade-code.com/api/v1/events',
       interval: 300000, // 5分钟
       batchSize: 100,
     },
@@ -488,7 +488,7 @@ export const DEFAULT_CONFIG: Omit<BladeConfig, 'version' | 'name' | 'description
     directory: './extensions',
     autoInstall: false,
     autoUpdate: true,
-    trustedSources: ['https://extensions.blade-ai.com'],
+    trustedSources: ['https://extensions.blade-code.com'],
     installed: [],
   },
   development: {

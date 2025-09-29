@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import { MessageRenderer } from './MessageRenderer.js';
+import { getCopyright } from '../../utils/package-info.js';
 
 interface MessageAreaProps {
   sessionState: any;
@@ -78,9 +79,9 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
 
                 {/* 品牌信息 - 左对齐 */}
                 <Box flexDirection="column">
-                  <Text color="cyan">AI驱动的智能命令行助手</Text>
+                  <Text color="cyan">智能代码助手命令行工具</Text>
                   <Text color="gray" dimColor>
-                    v1.3.0 © 2025 Blade AI
+                    {getCopyright()}
                   </Text>
                 </Box>
               </>
@@ -103,7 +104,7 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
                   </Text>
                   <Box marginTop={1}>
                     <Text color="gray" dimColor>
-                      v1.3.0 © 2025 Blade AI
+                      {getCopyright()}
                     </Text>
                   </Box>
                 </Box>

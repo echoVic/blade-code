@@ -1,5 +1,5 @@
 /**
- * Blade AI CLI - Yargs 版本
+ * Blade Code CLI
  */
 
 import { render } from 'ink';

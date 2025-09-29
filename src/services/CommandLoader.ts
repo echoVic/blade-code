@@ -67,7 +67,7 @@ export class BuiltinCommandLoader {
       aliases: ['v'],
       hidden: false,
       handler: async () => {
-        console.log(`Blade AI v${this.config.version}`);
+        console.log(`Blade Code v${this.config.version}`);
       },
       examples: ['version'],
     });
