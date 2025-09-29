@@ -1,10 +1,10 @@
 import { Box, useStdout } from 'ink';
 import React, { useEffect, useState } from 'react';
+import { useSession } from '../contexts/SessionContext.js';
 import { useAppInitializer } from '../hooks/useAppInitializer.js';
 import { useCommandHandler } from '../hooks/useCommandHandler.js';
 import { useCommandHistory } from '../hooks/useCommandHistory.js';
 import { useKeyboardInput } from '../hooks/useKeyboardInput.js';
-import { useSession } from '../contexts/SessionContext.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
 import { Header } from './Header.js';
 import { InputArea } from './InputArea.js';
@@ -12,8 +12,51 @@ import { MessageArea } from './MessageArea.js';
 import { PerformanceMonitor } from './PerformanceMonitor.js';
 
 interface BladeInterfaceProps {
+  // 基础选项
   debug?: boolean;
   testMode?: boolean;
+  verbose?: boolean;
+
+  // 输出选项
+  print?: boolean;
+  outputFormat?: string;
+  includePartialMessages?: boolean;
+  inputFormat?: string;
+  replayUserMessages?: boolean;
+
+  // 权限和安全选项
+  dangerouslySkipPermissions?: boolean;
+  permissionMode?: string;
+  allowedTools?: string[];
+  disallowedTools?: string[];
+
+  // MCP 选项
+  mcpDebug?: boolean;
+  mcpConfig?: string[];
+  strictMcpConfig?: boolean;
+
+  // 会话选项
+  continue?: boolean;
+  resume?: string;
+  forkSession?: boolean;
+  sessionId?: string;
+
+  // 模型选项
+  model?: string;
+  fallbackModel?: string;
+  appendSystemPrompt?: string;
+  agents?: string;
+
+  // 文件系统选项
+  settings?: string;
+  addDir?: string[];
+  settingSources?: string;
+
+  // IDE 集成
+  ide?: boolean;
+
+  // 初始消息
+  initialMessage?: string;
 }
 
 /**
@@ -23,13 +66,11 @@ interface BladeInterfaceProps {
 export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   debug = false,
   testMode = false,
+  ...otherProps
 }) => {
   const { state: sessionState, addUserMessage, addAssistantMessage } = useSession();
 
-  const { isInitialized, loadingStatus, hasApiKey } = useAppInitializer(
-    addAssistantMessage,
-    debug
-  );
+  const { isInitialized, hasApiKey } = useAppInitializer(addAssistantMessage, debug);
 
   const { stdout } = useStdout();
   const [terminalWidth, setTerminalWidth] = useState(80);
