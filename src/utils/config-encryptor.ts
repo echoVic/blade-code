@@ -100,7 +100,7 @@ export class ConfigEncryptor {
       decrypted += decipher.final('utf8');
 
       return decrypted;
-    } catch (error) {
+    } catch (_error) {
       throw new Error('解密失败：密码错误或数据损坏');
     }
   }
@@ -164,7 +164,7 @@ export class ConfigEncryptor {
     // 2. 尝试从系统密钥环获取（macOS Keychain / Linux Keyring）
     try {
       const keytar = require('keytar');
-      const password = keytar.getPassword('blade-ai', 'config-encryption');
+      const password = keytar.getPassword('blade-code', 'config-encryption');
       if (password) {
         return password;
       }
@@ -188,7 +188,7 @@ export class ConfigEncryptor {
   static async setEncryptionPassword(password: string): Promise<void> {
     try {
       const keytar = require('keytar');
-      await keytar.setPassword('blade-ai', 'config-encryption', password);
+      await keytar.setPassword('blade-code', 'config-encryption', password);
     } catch (error) {
       console.warn('无法存储密码到系统密钥环:', error);
     }

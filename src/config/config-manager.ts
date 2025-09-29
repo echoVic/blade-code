@@ -212,7 +212,7 @@ export class ConfigManager {
     const packageJson = await this.loadPackageJson();
     return {
       version: packageJson.version || '1.0.0',
-      name: packageJson.name || 'blade-ai',
+      name: packageJson.name || 'blade-code',
       description: packageJson.description || '智能AI助手命令行工具',
       ...DEFAULT_CONFIG,
     };
@@ -226,8 +226,8 @@ export class ConfigManager {
     } catch (_error) {
       return {
         version: '1.0.0',
-        name: 'blade-ai',
-        description: '智能AI助手命令行工具',
+        name: 'blade-code',
+        description: '智能代码助手命令行工具',
       };
     }
   }
@@ -516,8 +516,8 @@ export class ConfigManager {
     console.warn('使用备用配置');
     return {
       version: '1.0.0',
-      name: 'blade-ai',
-      description: '智能AI助手命令行工具',
+      name: 'blade-code',
+      description: '智能代码助手命令行工具',
       ...DEFAULT_CONFIG,
     };
   }

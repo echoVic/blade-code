@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Blade is a modern TypeScript project with flattened, modular architecture:
 
 ```
-Root (blade-ai)
+Root (blade-code)
 ├── src/
 │   ├── agent/          # Agent核心逻辑和控制器
 │   ├── commands/       # CLI命令定义和处理

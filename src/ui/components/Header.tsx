@@ -18,7 +18,7 @@ export const Header: React.FC<HeaderProps> = ({ testMode }) => {
       paddingX={2}
     >
       <Text color="cyan" bold>
-        ⚡ Blade AI
+        ⚡ Blade Code
       </Text>
       <Box flexDirection="row" gap={2}>
         {testMode && (

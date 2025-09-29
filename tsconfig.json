@@ -21,7 +21,7 @@
     "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": false,
     "lib": ["ES2023", "DOM"],
-    "module": "ES2022",
+    "module": "esnext",
     "moduleResolution": "bundler",
     "target": "es2022",
     "types": ["node", "vitest/globals"],

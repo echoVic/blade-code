@@ -21,7 +21,7 @@ const helpCommand: SlashCommand = {
 **/init** - 分析当前项目并生成 BLADE.md 配置文件
 **/help** - 显示此帮助信息
 **/clear** - 清除屏幕内容
-**/version** - 显示 Blade AI 版本信息
+**/version** - 显示 Blade Code 版本信息
 **/status** - 显示当前配置状态
 
 💡 **使用提示:**
@@ -59,8 +59,8 @@ const clearCommand: SlashCommand = {
 
 const versionCommand: SlashCommand = {
   name: 'version',
-  description: 'Show Blade AI version information',
-  fullDescription: '显示 Blade AI 版本信息和构建详情',
+  description: 'Show Blade Code version information',
+  fullDescription: '显示 Blade Code 版本信息和构建详情',
   usage: '/version',
   aliases: ['v'],
   async handler(
@@ -74,7 +74,7 @@ const versionCommand: SlashCommand = {
       const packageJson = require('../../../package.json');
       const version = packageJson.version || '1.3.0';
 
-      const versionInfo = `🗡️ **Blade AI v${version}**
+      const versionInfo = `🗡️ **Blade Code v${version}**
 
 **构建信息:**
 - Node.js: ${process.version}
@@ -94,7 +94,7 @@ const versionCommand: SlashCommand = {
         message: '版本信息已显示',
       };
     } catch (_error) {
-      addAssistantMessage('🗡️ **Blade AI**\n\n版本信息获取失败');
+      addAssistantMessage('🗡️ **Blade Code**\n\n版本信息获取失败');
       return {
         success: true,
         message: '版本信息已显示',
@@ -178,7 +178,7 @@ ${!hasBlademd ? '\n💡 **建议:** 运行 `/init` 命令来创建项目配置�
 const exitCommand: SlashCommand = {
   name: 'exit',
   description: 'Exit the REPL',
-  fullDescription: '退出 Blade AI 命令行界面',
+  fullDescription: '退出 Blade Code 命令行界面',
   usage: '/exit',
   aliases: ['quit', 'q'],
   async handler(
@@ -195,7 +195,7 @@ const exitCommand: SlashCommand = {
 const configCommand: SlashCommand = {
   name: 'config',
   description: 'Open config panel',
-  fullDescription: '打开配置面板，管理 Blade AI 设置',
+  fullDescription: '打开配置面板，管理 Blade Code 设置',
   usage: '/config [theme]',
   async handler(
     args: string[],

@@ -25,7 +25,7 @@ interface ProjectInfo {
  * 构建详细的项目分析提示
  */
 export function buildAnalysisPrompt(projectInfo: ProjectInfo, cwd: string): string {
-  const prompt = `Please analyze this codebase and create a BLADE.md file, which will be given to future instances of Blade AI to operate in this repository.
+  const prompt = `Please analyze this codebase and create a BLADE.md file, which will be given to future instances of Blade Code to operate in this repository.
 
 **Project Information:**
 - Name: ${projectInfo.name}

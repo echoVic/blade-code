@@ -96,9 +96,9 @@ export class PromptBuilder {
    * 获取示例配置内容
    */
   private getExampleConfigContent(): string {
-    return `# Blade AI 项目配置
+    return `# Blade Code 项目配置
 
-这个文件定义了 Blade AI 在当前项目中的行为和个性。
+这个文件定义了 Blade Code 在当前项目中的行为和个性。
 
 ## 项目背景
 请描述这个项目的主要目的、技术栈和特殊要求。
@@ -122,7 +122,7 @@ export class PromptBuilder {
 ## 使用方法
 1. 编辑此文件来自定义 AI 助手的行为
 2. 删除示例内容，添加你的项目特定指导
-3. Blade AI 会自动加载这些配置
+3. Blade Code 会自动加载这些配置
 
 ---
 此文件由 \`blade /init\` 命令创建。

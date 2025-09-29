@@ -1,8 +1,8 @@
 {
-  "name": "blade-ai",
-  "version": "1.3.0",
-  "private": true,
-  "description": "🗡️ Blade - 智能 AI 助手命令行工具",
+  "name": "blade-code",
+  "version": "0.0.1",
+  "private": false,
+  "description": "🗡️ Blade Code - 智能代码助手命令行工具",
   "type": "module",
   "main": "dist/blade.js",
   "bin": {
