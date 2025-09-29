@@ -65,11 +65,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/echoVic/Blade.git"
+    "url": "git+https://github.com/echoVic/blade-code.git"
   },
-  "homepage": "https://github.com/echoVic/Blade",
+  "homepage": "https://github.com/echoVic/blade-code",
   "bugs": {
-    "url": "https://github.com/echoVic/Blade/issues"
+    "url": "https://github.com/echoVic/blade-code/issues"
   },
   "engines": {
     "node": ">=16.0.0"
