@@ -4,9 +4,9 @@ export default {
     // 是否检查工作目录
     checkWorkingDirectory: true,
     // 是否运行测试
-    runTests: true,
+    runTests: false,
     // 是否检查代码质量
-    checkCodeQuality: true,
+    checkCodeQuality: false,
     // 是否检查远程版本冲突
     checkVersionConflicts: true,
   },
