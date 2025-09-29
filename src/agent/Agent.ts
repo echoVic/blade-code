@@ -1,961 +1,642 @@
+/**
+ * Agent核心类 - 简化架构，基于chat统一调用
+ * 负责任务执行和上下文管理
+ */
+
 import { EventEmitter } from 'events';
-import type { ContextFilter, ToolCall as ContextToolCall } from '../context/index.js';
-import type { LLMMessage } from '../llm/BaseLLM.js';
-import type { ToolCallRequest, ToolDefinition } from '../tools/index.js';
-import { BaseComponent } from './BaseComponent.js';
-import { ComponentManager, type ComponentManagerConfig } from './ComponentManager.js';
-import { ContextComponent, type ContextComponentConfig } from './ContextComponent.js';
-import { LLMManager, type LLMConfig } from './LLMManager.js';
-import { MCPComponent, type MCPComponentConfig } from './MCPComponent.js';
-import { ToolComponent } from './ToolComponent.js';
+import { ChatService, type Message } from '../services/ChatService.js';
+import { PromptBuilder } from '../prompts/index.js';
+import type { DeclarativeTool } from '../tools/base/DeclarativeTool.js';
+import { getBuiltinTools } from '../tools/builtin/index.js';
+import type { ToolResult } from '../tools/types/index.js';
+import { type ContextManager, ExecutionEngine } from './ExecutionEngine.js';
+import type { AgentConfig, AgentResponse, AgentTask } from './types.js';
 
 /**
- * Agent 配置接口
+ * 工具调用接口
  */
-export interface AgentConfig {
-  debug?: boolean;
-  llm?: LLMConfig;
-  tools?: {
-    enabled?: boolean;
-    includeBuiltinTools?: boolean;
-    excludeTools?: string[];
-    includeCategories?: string[];
-  };
-  context?: ContextComponentConfig;
-  mcp?: MCPComponentConfig;
-  components?: ComponentManagerConfig;
+export interface ToolCall {
+  name: string;
+  parameters: Record<string, any>;
+  id?: string;
 }
 
 /**
- * 工具调用结果
+ * 聊天上下文接口
  */
-export interface ToolCallResult {
-  toolName: string;
-  success: boolean;
-  result: any;
-  error?: string;
-  duration?: number;
+export interface ChatContext {
+  messages: Message[];
+  userId: string;
+  sessionId: string;
+  workspaceRoot: string;
 }
 
 /**
- * Agent 聊天响应
+ * 工具注册表接口
  */
-export interface AgentResponse {
-  content: string;
-  toolCalls?: ToolCallResult[];
-  reasoning?: string;
+export interface ToolRegistry {
+  register(tool: DeclarativeTool): void;
+  registerAll(tools: DeclarativeTool[]): void;
+  get(name: string): DeclarativeTool | undefined;
+  getAll(): DeclarativeTool[];
+  getFunctionDeclarations(): Array<{
+    name: string;
+    description: string;
+    parameters: any;
+  }>;
 }
 
 /**
- * Agent 主类 - 智能代理的核心协调器
- * 专注于代理协调逻辑，LLM 和组件管理由专门的管理器负责
+ * 简单工具注册表实现
  */
+class SimpleToolRegistry implements ToolRegistry {
+  private tools = new Map<string, DeclarativeTool>();
+
+  register(tool: DeclarativeTool): void {
+    if (this.tools.has(tool.name)) {
+      throw new Error(`Tool '${tool.name}' already registered`);
+    }
+    this.tools.set(tool.name, tool);
+  }
+
+  registerAll(tools: DeclarativeTool[]): void {
+    tools.forEach((tool) => this.register(tool));
+  }
+
+  get(name: string): DeclarativeTool | undefined {
+    return this.tools.get(name);
+  }
+
+  getAll(): DeclarativeTool[] {
+    return Array.from(this.tools.values());
+  }
+
+  getFunctionDeclarations() {
+    return this.getAll().map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameterSchema,
+    }));
+  }
+}
+
 export class Agent extends EventEmitter {
   private config: AgentConfig;
-  private llmManager: LLMManager;
-  private componentManager: ComponentManager;
   private isInitialized = false;
-  private isDestroyed = false;
+  private activeTask?: AgentTask;
+  private toolRegistry: ToolRegistry;
+  private systemPrompt?: string;
 
-  constructor(config: AgentConfig = {}) {
+  // 核心组件
+  private chatService!: ChatService;
+  private executionEngine!: ExecutionEngine;
+  private promptBuilder!: PromptBuilder;
+
+  constructor(config: AgentConfig, toolRegistry?: ToolRegistry) {
     super();
-    this.config = {
-      debug: false,
-      tools: {
-        enabled: true,
-        includeBuiltinTools: true,
-        ...config.tools,
-      },
-      context: {
-        enabled: true,
-        debug: config.debug,
-        ...config.context,
-      },
-      mcp: {
-        enabled: true,
-        ...config.mcp,
-      },
-      components: {
-        debug: config.debug,
-        autoInit: true,
-        ...config.components,
-      },
-      ...config,
-    };
-
-    // 初始化管理器
-    this.llmManager = new LLMManager(this.config.debug);
-    this.componentManager = new ComponentManager(this.config.components);
-
-    // 转发管理器事件
-    this.setupManagerEventForwarding();
-
-    this.log('Agent 实例已创建');
-
-    // 配置 LLM
-    if (this.config.llm) {
-      this.llmManager.configure(this.config.llm);
-    }
-
-    // 自动注册默认组件
-    this.autoRegisterComponents();
+    this.config = config;
+    this.toolRegistry = toolRegistry || new SimpleToolRegistry();
   }
 
   /**
-   * 初始化 Agent 和所有管理器
+   * 初始化Agent
    */
-  public async init(): Promise<void> {
+  public async initialize(): Promise<void> {
     if (this.isInitialized) {
-      throw new Error('Agent 已经初始化');
-    }
-
-    if (this.isDestroyed) {
-      throw new Error('Agent 已被销毁，无法重新初始化');
-    }
-
-    this.log('初始化 Agent...');
-
-    try {
-      // 初始化 LLM 管理器
-      if (this.config.llm) {
-        await this.llmManager.init();
-      }
-
-      // 初始化组件管理器
-      await this.componentManager.init();
-
-      this.isInitialized = true;
-      this.log('Agent 初始化完成');
-      this.emit('initialized');
-    } catch (error) {
-      this.log(`初始化失败: ${error}`);
-      throw error;
-    }
-  }
-
-  /**
-   * 销毁 Agent 和所有管理器
-   */
-  public async destroy(): Promise<void> {
-    if (this.isDestroyed) {
       return;
     }
 
-    this.log('销毁 Agent...');
-
     try {
-      // 销毁组件管理器
-      await this.componentManager.destroy();
+      this.log('初始化Agent...');
 
-      // 销毁 LLM 管理器
-      await this.llmManager.destroy();
+      // 1. 初始化系统提示
+      await this.initializeSystemPrompt();
 
-      this.isDestroyed = true;
-      this.log('Agent 已销毁');
-      this.emit('destroyed');
+      // 2. 注册内置工具
+      await this.registerBuiltinTools();
+
+      // 3. 初始化核心组件
+      this.chatService = new ChatService(this.config.chat);
+
+      // 4. 初始化执行引擎
+      this.executionEngine = new ExecutionEngine(this.chatService, this.config);
+
+      this.isInitialized = true;
+      this.log(`Agent初始化完成，已加载 ${this.toolRegistry.getAll().length} 个工具`);
+      this.emit('initialized');
     } catch (error) {
-      this.log(`销毁失败: ${error}`);
+      this.error('Agent初始化失败', error);
       throw error;
     }
   }
 
-  // ======================== 管理器访问方法 ========================
-
   /**
-   * 获取 LLM 管理器
+   * 执行任务
    */
-  public getLLMManager(): LLMManager {
-    return this.llmManager;
-  }
-
-  /**
-   * 获取组件管理器
-   */
-  public getComponentManager(): ComponentManager {
-    return this.componentManager;
-  }
-
-  // ======================== LLM 功能代理方法 ========================
-
-  /**
-   * 检查 LLM 是否可用
-   */
-  public hasLLM(): boolean {
-    return this.llmManager.isAvailable();
-  }
-
-  /**
-   * 获取 LLM 提供商名称
-   */
-  public getLLMProvider(): string | null {
-    return this.llmManager.getProvider();
-  }
-
-  /**
-   * 基础聊天
-   */
-  public async chat(message: string): Promise<string> {
-    return await this.llmManager.chat(message);
-  }
-
-  /**
-   * 多轮对话
-   */
-  public async conversation(messages: LLMMessage[]): Promise<string> {
-    return await this.llmManager.conversation(messages);
-  }
-
-  /**
-   * 流式聊天
-   */
-  public async streamChat(
-    messages: LLMMessage[],
-    onChunk: (chunk: string) => void
-  ): Promise<string> {
-    return await this.llmManager.streamChat(messages, onChunk);
-  }
-
-  /**
-   * 系统提示词聊天
-   */
-  public async chatWithSystem(systemPrompt: string, userMessage: string): Promise<string> {
-    return await this.llmManager.chatWithSystem(systemPrompt, userMessage);
-  }
-
-  /**
-   * 代码生成
-   */
-  public async generateCode(description: string, language: string = 'javascript'): Promise<string> {
-    return await this.llmManager.generateCode(description, language);
-  }
-
-  /**
-   * 文本摘要
-   */
-  public async summarize(text: string): Promise<string> {
-    return await this.llmManager.summarize(text);
-  }
-
-  /**
-   * 代码审查
-   */
-  public async reviewCode(code: string, language: string): Promise<string> {
-    return await this.llmManager.reviewCode(code, language);
-  }
-
-  /**
-   * 情绪分析
-   */
-  public async analyzeSentiment(text: string): Promise<string> {
-    return await this.llmManager.analyzeSentiment(text);
-  }
-
-  /**
-   * 智能问答
-   */
-  public async ask(question: string): Promise<string> {
-    return await this.llmManager.ask(question);
-  }
-
-  // ======================== 组件管理代理方法 ========================
-
-  /**
-   * 注册组件
-   */
-  public async registerComponent(component: BaseComponent): Promise<void> {
-    return await this.componentManager.registerComponent(component);
-  }
-
-  /**
-   * 获取组件
-   */
-  public getComponent<T extends BaseComponent>(id: string): T | undefined {
-    return this.componentManager.getComponent<T>(id);
-  }
-
-  /**
-   * 移除组件
-   */
-  public async removeComponent(id: string): Promise<boolean> {
-    return await this.componentManager.removeComponent(id);
-  }
-
-  /**
-   * 获取所有组件ID
-   */
-  public getComponentIds(): string[] {
-    return this.componentManager.getComponentIds();
-  }
-
-  // ======================== 核心代理协调逻辑 ========================
-
-  /**
-   * 智能聊天 - 支持工具调用的完整流程
-   * 这是 Agent 的核心协调逻辑
-   */
-  public async smartChat(message: string): Promise<AgentResponse> {
-    if (!this.llmManager.isAvailable()) {
-      throw new Error('LLM 未配置或不可用');
+  public async executeTask(task: AgentTask): Promise<AgentResponse> {
+    if (!this.isInitialized) {
+      throw new Error('Agent未初始化');
     }
 
-    this.log(`开始智能聊天: ${message.substring(0, 50)}...`);
-
-    // 第一步：分析用户意图，判断是否需要工具调用
-    const toolAnalysis = await this.analyzeToolNeed(message);
-
-    if (!toolAnalysis.needsTool) {
-      // 不需要工具，直接回答
-      const content = await this.llmManager.chat(message);
-      return {
-        content,
-        reasoning: '无需工具调用，直接回答',
-      };
-    }
-
-    // 第二步：识别并调用工具
-    const toolResults: ToolCallResult[] = [];
-
-    for (const toolCall of toolAnalysis.toolCalls) {
-      try {
-        this.log(`调用工具: ${toolCall.toolName}`);
-        const result = await this.callToolSmart(toolCall);
-        toolResults.push(result);
-      } catch (error) {
-        const errorResult: ToolCallResult = {
-          toolName: toolCall.toolName,
-          success: false,
-          result: null,
-          error: (error as Error).message,
-        };
-        toolResults.push(errorResult);
-      }
-    }
-
-    // 第三步：基于工具结果生成最终回答
-    const finalAnswer = await this.generateAnswerWithToolResults(message, toolResults);
-
-    return {
-      content: finalAnswer,
-      toolCalls: toolResults,
-      reasoning: `使用了 ${toolResults.length} 个工具协助回答`,
-    };
-  }
-
-  /**
-   * 分析用户消息是否需要工具调用
-   */
-  private async analyzeToolNeed(message: string): Promise<{
-    needsTool: boolean;
-    toolCalls: Array<{ toolName: string; parameters: Record<string, any> }>;
-    reasoning: string;
-  }> {
-    const toolComponent = this.getComponent<ToolComponent>('tools');
-    if (!toolComponent) {
-      return { needsTool: false, toolCalls: [], reasoning: '工具组件未启用' };
-    }
-
-    // 获取可用工具列表
-    const availableTools = toolComponent.getTools();
-    const toolDescriptions = availableTools
-      .map(tool => `${tool.name}: ${tool.description}`)
-      .join('\n');
-
-    // 构造分析提示
-    const analysisPrompt = `
-分析以下用户消息，判断是否需要调用工具来回答问题。
-
-用户消息: "${message}"
-
-可用工具:
-${toolDescriptions}
-
-请分析：
-1. 这个问题是否需要使用工具？
-2. 如果需要，应该使用哪些工具？
-3. 工具的参数是什么？
-
-请按以下JSON格式回答（只返回JSON，不要其他内容）：
-{
-  "needsTool": boolean,
-  "toolCalls": [
-    {
-      "toolName": "工具名称",
-      "parameters": { "参数名": "参数值" }
-    }
-  ],
-  "reasoning": "分析理由"
-}
-
-示例：
-- 如果用户问"现在是几点？"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "timestamp", "parameters": {"operation": "now", "format": "local"}}], "reasoning": "需要获取当前时间"}
-- 如果用户问"你好吗？"，应该返回：{"needsTool": false, "toolCalls": [], "reasoning": "这是普通问候，无需工具"}
-- 如果用户说"查看现在的变更，生成commit信息并提交"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "git_smart_commit", "parameters": {"autoAdd": true}}], "reasoning": "需要智能分析Git变更并提交"}
-- 如果用户说"查看git状态"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "git_status", "parameters": {}}], "reasoning": "需要查看Git仓库状态"}
-- 如果用户说"审查这个文件的代码"或"检查代码质量"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "smart_code_review", "parameters": {"path": "待指定文件路径"}}], "reasoning": "需要使用智能代码审查工具"}
-- 如果用户说"生成这个项目的文档"或"写个README"，应该返回：{"needsTool": true, "toolCalls": [{"toolName": "smart_doc_generator", "parameters": {"sourcePath": "待指定路径"}}], "reasoning": "需要使用智能文档生成工具"}
-`;
+    this.activeTask = task;
+    this.emit('taskStarted', task);
 
     try {
-      const response = await this.llmManager.chat(analysisPrompt);
+      this.log(`开始执行任务: ${task.id}`);
 
-      // 尝试解析JSON响应
-      const cleanResponse = response.replace(/```json\n?|\n?```/g, '').trim();
-      const analysis = JSON.parse(cleanResponse);
+      // 根据任务类型选择执行策略
+      let response: AgentResponse;
 
-      this.log(`工具需求分析: ${analysis.reasoning}`);
-      return analysis;
-    } catch (error) {
-      this.log(`工具需求分析失败: ${error}`);
-      return { needsTool: false, toolCalls: [], reasoning: '分析失败' };
-    }
-  }
-
-  /**
-   * 智能调用工具
-   */
-  private async callToolSmart(toolCall: {
-    toolName: string;
-    parameters: Record<string, any>;
-  }): Promise<ToolCallResult> {
-    const toolComponent = this.getComponent<ToolComponent>('tools');
-    if (!toolComponent) {
-      throw new Error('工具组件未启用');
-    }
-
-    const startTime = Date.now();
-
-    try {
-      const request: ToolCallRequest = {
-        toolName: toolCall.toolName,
-        parameters: toolCall.parameters,
-      };
-
-      const response = await toolComponent.callTool(request);
-
-      // 特殊处理：如果工具需要LLM分析
-      if (response.result.error === 'need_llm_analysis' && response.result.data?.needsLLMAnalysis) {
-        this.log(`${toolCall.toolName} 需要LLM分析...`);
-
-        // 使用LLM分析变更内容
-        const analysisPrompt = response.result.data.analysisPrompt;
-        const llmAnalysis = await this.llmManager.chat(analysisPrompt);
-
-        this.log(`LLM分析完成`);
-
-        // 处理不同工具的分析结果
-        let processedAnalysis = llmAnalysis;
-        if (toolCall.toolName === 'git_smart_commit') {
-          // Git智能提交：提取commit信息
-          processedAnalysis = llmAnalysis
-            .replace(/```\w*\n?|\n?```/g, '')
-            .split('\n')[0]
-            .trim();
-        }
-        // smart_code_review 和 smart_doc_generator 直接使用原始分析结果
-
-        // 使用LLM分析结果重新调用工具
-        const retryRequest: ToolCallRequest = {
-          toolName: toolCall.toolName,
-          parameters: {
-            ...toolCall.parameters,
-            llmAnalysis: processedAnalysis,
-          },
-        };
-
-        const retryResponse = await toolComponent.callTool(retryRequest);
-        const duration = Date.now() - startTime;
-
-        return {
-          toolName: toolCall.toolName,
-          success: retryResponse.result.success,
-          result: retryResponse.result.data,
-          error: retryResponse.result.error,
-          duration,
-        };
+      if (task.type === 'parallel') {
+        // 并行子Agent执行
+        response = await this.executionEngine.executeParallelTask(task);
+      } else if (task.type === 'steering') {
+        // 隐式压束执行
+        response = await this.executionEngine.executeSteeringTask(task);
+      } else {
+        // 默认简单执行
+        response = await this.executionEngine.executeSimpleTask(task);
       }
 
-      const duration = Date.now() - startTime;
-
-      return {
-        toolName: toolCall.toolName,
-        success: response.result.success,
-        result: response.result.data,
-        error: response.result.error,
-        duration,
-      };
-    } catch (error) {
-      return {
-        toolName: toolCall.toolName,
-        success: false,
-        result: null,
-        error: (error as Error).message,
-        duration: Date.now() - startTime,
-      };
-    }
-  }
-
-  /**
-   * 基于工具结果生成最终回答
-   */
-  private async generateAnswerWithToolResults(
-    originalMessage: string,
-    toolResults: ToolCallResult[]
-  ): Promise<string> {
-    // 构造包含工具结果的上下文，针对不同工具类型提供更详细的信息
-    const toolResultsText = toolResults
-      .map(result => {
-        if (result.success) {
-          let resultDescription = '';
-
-          // 特殊处理 Git 相关工具，显示更多细节
-          if (result.toolName === 'git_smart_commit' && result.result) {
-            const data = result.result;
-            resultDescription = `Git智能提交执行成功:
-- 提交信息: "${data.commitMessage || '未知'}"
-- 提交哈希: ${data.commitHash || '未获取'}
-- 变更文件: ${data.changedFiles ? data.changedFiles.join(', ') : '未知'}
-- 统计信息: ${data.statistics ? `${data.statistics.filesChanged || 0}个文件, +${data.statistics.insertions || 0}行, -${data.statistics.deletions || 0}行` : '未知'}
-- 执行命令: git commit -m "${data.commitMessage || '未知'}"`;
-          } else if (result.toolName === 'git_status' && result.result) {
-            resultDescription = `Git状态查看成功:
-- 执行命令: git status
-- 输出结果: ${result.result.stdout || result.result.output || ''}`;
-          } else if (result.toolName === 'git_add' && result.result) {
-            const data = result.result;
-            resultDescription = `Git文件添加成功:
-- 执行命令: git add ${data.files ? data.files.join(' ') : 'unknown'}
-- 添加文件: ${data.addedFiles ? data.addedFiles.join(', ') : '未知'}`;
-          } else if (result.toolName === 'git_diff' && result.result) {
-            resultDescription = `Git差异查看成功:
-- 执行命令: git diff ${result.result.options || ''}
-- 输出结果: ${result.result.stdout || result.result.output || ''}`;
-          } else if (result.toolName.startsWith('git_') && result.result) {
-            // 其他Git工具的通用处理
-            const data = result.result;
-            resultDescription = `${result.toolName}执行成功:
-- 执行的命令: ${data.command || `git ${result.toolName.replace('git_', '')}`}
-- 输出结果: ${data.stdout || data.output || JSON.stringify(data)}`;
-          } else if (result.toolName === 'smart_code_review' && result.result) {
-            const data = result.result;
-            resultDescription = `智能代码审查完成:
-- 审查文件: ${data.reviewedFiles ? data.reviewedFiles.join(', ') : '未知'}
-- 分析结果: ${data.analysis || data.summary || '无详细信息'}`;
-          } else if (result.toolName === 'smart_doc_generator' && result.result) {
-            const data = result.result;
-            resultDescription = `智能文档生成完成:
-- 生成文件: ${data.generatedFiles ? data.generatedFiles.join(', ') : '未知'}
-- 文档类型: ${data.documentType || '未知'}`;
-          } else {
-            // 默认处理
-            resultDescription = `工具 ${result.toolName} 执行成功，结果: ${JSON.stringify(result.result)}`;
-          }
-
-          return resultDescription;
-        } else {
-          return `工具 ${result.toolName} 执行失败，错误: ${result.error}`;
-        }
-      })
-      .join('\n\n');
-
-    const contextPrompt = `
-用户问题: "${originalMessage}"
-
-我已经使用以下工具获取了信息：
-${toolResultsText}
-
-请基于这些工具返回的数据，给用户一个完整、准确且友好的回答。
-回答应该：
-1. 直接回答用户的问题
-2. 整合工具返回的数据，特别是显示执行的具体命令
-3. 使用自然的语言表达
-4. 对于Git操作，要告诉用户具体执行了什么命令
-5. 对于代码审查和文档生成，要说明处理的文件和结果
-
-回答:`;
-
-    const finalAnswer = await this.llmManager.chat(contextPrompt);
-    return finalAnswer;
-  }
-
-  // ======================== 专用组件访问方法 ========================
-
-  /**
-   * 获取工具组件
-   */
-  public getToolComponent(): ToolComponent | undefined {
-    return this.getComponent<ToolComponent>('tools');
-  }
-
-  /**
-   * 获取上下文组件
-   */
-  public getContextComponent(): ContextComponent | undefined {
-    return this.getComponent<ContextComponent>('context');
-  }
-
-  /**
-   * 获取 MCP 组件
-   */
-  public getMCPComponent(): MCPComponent | undefined {
-    return this.getComponent<MCPComponent>('mcp');
-  }
-
-  // ======================== 上下文管理协调方法 ========================
-
-  /**
-   * 创建新的上下文会话
-   */
-  public async createContextSession(
-    userId?: string,
-    preferences: Record<string, any> = {},
-    configuration: Record<string, any> = {},
-    customSessionId?: string
-  ): Promise<string> {
-    const contextComponent = this.getContextComponent();
-    if (!contextComponent) {
-      throw new Error('上下文组件未启用');
-    }
-    return await contextComponent.createSession(
-      userId,
-      preferences,
-      configuration,
-      customSessionId
-    );
-  }
-
-  /**
-   * 加载现有的上下文会话
-   */
-  public async loadContextSession(sessionId: string): Promise<boolean> {
-    const contextComponent = this.getContextComponent();
-    if (!contextComponent) {
-      throw new Error('上下文组件未启用');
-    }
-    return await contextComponent.loadSession(sessionId);
-  }
-
-  /**
-   * 获取当前上下文会话ID
-   */
-  public getCurrentSessionId(): string | undefined {
-    const contextComponent = this.getContextComponent();
-    return contextComponent?.getCurrentSessionId();
-  }
-
-  /**
-   * 搜索历史会话
-   */
-  public async searchContextSessions(
-    query: string,
-    limit: number = 10
-  ): Promise<
-    Array<{
-      sessionId: string;
-      summary: string;
-      lastActivity: number;
-      relevanceScore: number;
-    }>
-  > {
-    const contextComponent = this.getContextComponent();
-    if (!contextComponent) {
-      return [];
-    }
-    return await contextComponent.searchSessions(query, limit);
-  }
-
-  /**
-   * 带上下文的智能聊天
-   */
-  public async chatWithContext(
-    message: string,
-    systemPrompt?: string,
-    options?: ContextFilter
-  ): Promise<string> {
-    const contextComponent = this.getContextComponent();
-
-    if (!contextComponent || !contextComponent.isContextReady()) {
-      // 如果没有上下文组件或未就绪，降级到普通聊天
-      this.log('上下文组件未就绪，使用普通聊天模式');
-      return systemPrompt
-        ? await this.llmManager.chatWithSystem(systemPrompt, message)
-        : await this.llmManager.chat(message);
-    }
-
-    try {
-      // 构建包含上下文的消息列表
-      const messages = await contextComponent.buildMessagesWithContext(
-        message,
-        systemPrompt,
-        options
-      );
-
-      // 转换为LLM消息格式
-      const llmMessages: LLMMessage[] = messages.map(msg => ({
-        role: msg.role as 'user' | 'assistant' | 'system',
-        content: msg.content,
-      }));
-
-      // 进行对话
-      const response = await this.llmManager.conversation(llmMessages);
-
-      // 将助手回复添加到上下文
-      await contextComponent.addAssistantMessage(response);
+      this.activeTask = undefined;
+      this.emit('taskCompleted', task, response);
+      this.log(`任务执行完成: ${task.id}`);
 
       return response;
     } catch (error) {
-      this.log(`上下文聊天失败，降级到普通聊天: ${error}`);
-      // 降级到普通聊天
-      return systemPrompt
-        ? await this.llmManager.chatWithSystem(systemPrompt, message)
-        : await this.llmManager.chat(message);
+      this.activeTask = undefined;
+      this.emit('taskFailed', task, error);
+      this.error(`任务执行失败: ${task.id}`, error);
+      throw error;
     }
   }
 
   /**
-   * 带上下文的智能工具调用聊天
+   * 简单聊天接口
    */
-  public async smartChatWithContext(message: string): Promise<AgentResponse> {
-    const contextComponent = this.getContextComponent();
+  public async chat(message: string, context?: ChatContext): Promise<string> {
+    if (!this.isInitialized) {
+      throw new Error('Agent未初始化');
+    }
 
-    if (!contextComponent || !contextComponent.isContextReady()) {
-      // 如果没有上下文组件或未就绪，降级到普通智能聊天
-      this.log('上下文组件未就绪，使用普通智能聊天模式');
-      return await this.smartChat(message);
+    // 如果提供了 context，使用增强的工具调用流程
+    if (context) {
+      const toolResult = await this.processMessageWithTools(message, context);
+      return toolResult.message;
+    }
+
+    // 否则使用原有的简单流程
+    const task: AgentTask = {
+      id: this.generateTaskId(),
+      type: 'simple',
+      prompt: message,
+    };
+
+    const response = await this.executeTask(task);
+    return response.content;
+  }
+
+  /**
+   * 处理带工具调用的消息（私有方法）
+   */
+  private async processMessageWithTools(
+    message: string,
+    context: ChatContext
+  ): Promise<{
+    message: string;
+    toolResults: ToolResult[];
+  }> {
+    if (!this.isInitialized) {
+      throw new Error('Agent未初始化');
     }
 
     try {
-      // 构建包含上下文的消息列表
-      const messages = await contextComponent.buildMessagesWithContext(message);
+      console.log('💬 Processing enhanced chat message...');
 
-      // 转换为LLM消息格式
-      const llmMessages: LLMMessage[] = messages.map(msg => ({
-        role: msg.role as 'user' | 'assistant' | 'system',
-        content: msg.content,
-      }));
+      // 1. 获取可用工具定义
+      const tools = this.toolRegistry.getFunctionDeclarations();
 
-      // 分析是否需要工具调用（基于包含上下文的消息）
-      const toolAnalysis = await this.analyzeToolNeed(message);
+      // 2. 构建消息历史
+      const messages: Message[] = [
+        ...context.messages,
+        { role: 'user', content: message },
+      ];
 
-      if (!toolAnalysis.needsTool) {
-        // 不需要工具，使用上下文进行对话
-        const response = await this.llmManager.conversation(llmMessages);
+      // 3. 调用 LLM，让它决定是否需要工具调用，并包含系统提示
+      const response = await this.chatService.chatDetailed(messages, tools, {
+        systemPrompt: this.systemPrompt,
+      });
+      console.log(`🔧 LLM response:`, JSON.stringify(response, null, 2));
 
-        // 将助手回复添加到上下文
-        await contextComponent.addAssistantMessage(response);
+      // 4. 检查是否需要工具调用
+      if (response.tool_calls && response.tool_calls.length > 0) {
+        console.log(`🔧 LLM requested ${response.tool_calls.length} tool calls`);
+
+        // 5. 执行工具调用
+        const toolResults: ToolResult[] = [];
+        const toolMessages: Message[] = [...messages];
+
+        // 添加 LLM 的工具调用响应
+        if (response.content) {
+          toolMessages.push({ role: 'assistant', content: response.content });
+        }
+
+        // 执行每个工具调用
+        for (const toolCall of response.tool_calls) {
+          try {
+            console.log(
+              `🔧 Executing tool: ${toolCall.function.name} with arguments: ${toolCall.function.arguments}`
+            );
+
+            const tool = this.toolRegistry.get(toolCall.function.name);
+            if (!tool) {
+              throw new Error(`未找到工具: ${toolCall.function.name}`);
+            }
+
+            const params = JSON.parse(toolCall.function.arguments);
+            console.log(`🔧 Tool parameters:`, params);
+
+            const toolInvocation = tool.build(params);
+            const result = await toolInvocation.execute(new AbortController().signal);
+
+            console.log(`🔧 Tool execution result:`, result);
+            toolResults.push(result);
+
+            // 添加工具执行结果到消息历史
+            const toolResultContent = result.success
+              ? result.llmContent || result.displayContent || ''
+              : result.error?.message || '执行失败';
+
+            toolMessages.push({
+              role: 'user',
+              content: `工具 ${toolCall.function.name} 执行结果: ${result.success ? '成功' : '失败'}\n\n${toolResultContent}`,
+            });
+          } catch (error) {
+            console.error(
+              `Tool execution failed for ${toolCall.function.name}:`,
+              error
+            );
+            toolMessages.push({
+              role: 'user',
+              content: `工具 ${toolCall.function.name} 执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
+            });
+          }
+        }
+
+        // 6. 获取 LLM 的最终回复
+        const finalResponse = await this.chatService.chat(toolMessages);
 
         return {
-          content: response,
-          reasoning: '基于上下文的对话，无需工具调用',
+          message: finalResponse,
+          toolResults: toolResults,
         };
       }
 
-      // 需要工具调用，执行工具
-      const toolResults: ToolCallResult[] = [];
-
-      for (const toolCall of toolAnalysis.toolCalls) {
-        try {
-          this.log(`调用工具: ${toolCall.toolName}`);
-          const result = await this.callToolSmart(toolCall);
-          toolResults.push(result);
-        } catch (error) {
-          const errorResult: ToolCallResult = {
-            toolName: toolCall.toolName,
-            success: false,
-            result: null,
-            error: (error as Error).message,
-          };
-          toolResults.push(errorResult);
-        }
-      }
-
-      // 基于工具结果和上下文生成最终回答
-      const finalAnswer = await this.generateAnswerWithToolResults(message, toolResults);
-
-      // 将助手回复添加到上下文
-      await contextComponent.addAssistantMessage(finalAnswer);
-
-      // 记录工具调用到上下文
-      if (toolResults.length > 0) {
-        for (const toolCallResult of toolResults) {
-          const toolCall: ContextToolCall = {
-            id: `tool_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            name: toolCallResult.toolName,
-            input: {}, // 这里可以从toolCallResult获取输入参数
-            output: toolCallResult.result,
-            timestamp: Date.now(),
-            status: toolCallResult.success ? 'success' : 'error',
-            error: toolCallResult.error,
-          };
-
-          await contextComponent.addToolCall(toolCall);
-        }
-      }
-
+      // 7. 如果不需要工具调用，直接返回 LLM 响应
       return {
-        content: finalAnswer,
-        toolCalls: toolResults,
-        reasoning: `基于上下文对话，使用了 ${toolResults.length} 个工具协助回答`,
+        message: typeof response.content === 'string' ? response.content : '',
+        toolResults: [],
       };
     } catch (error) {
-      this.log(`上下文智能聊天失败，降级到普通智能聊天: ${error}`);
-      // 降级到普通智能聊天
-      return await this.smartChat(message);
+      console.error('Enhanced chat processing error:', error);
+      return {
+        message: `处理消息时发生错误: ${error instanceof Error ? error.message : '未知错误'}`,
+        toolResults: [],
+      };
     }
   }
 
   /**
-   * 获取上下文统计信息
+   * 带系统提示的聊天接口
    */
-  public async getContextStats(): Promise<{
-    currentSession: string | null;
-    memory: any;
-    cache: any;
-    storage: any;
-  } | null> {
-    const contextComponent = this.getContextComponent();
-    if (!contextComponent) {
-      return null;
+  public async chatWithSystem(systemPrompt: string, message: string): Promise<string> {
+    if (!this.isInitialized) {
+      throw new Error('Agent未初始化');
     }
-    return await contextComponent.getStats();
+
+    // 直接使用 ChatService 的系统提示功能
+    const messages: Message[] = [{ role: 'user', content: message }];
+    return this.chatService.chat(messages, undefined, { systemPrompt });
   }
 
-  // ======================== 工具管理协调方法 ========================
+  /**
+   * 获取当前活动任务
+   */
+  public getActiveTask(): AgentTask | undefined {
+    return this.activeTask;
+  }
 
   /**
-   * 手动调用工具
+   * 获取Chat服务
    */
-  public async callTool(
-    toolName: string,
-    parameters: Record<string, any>
-  ): Promise<ToolCallResult> {
-    const toolComponent = this.getToolComponent();
-    if (!toolComponent) {
-      throw new Error('工具组件未启用');
-    }
+  public getChatService(): ChatService {
+    return this.chatService;
+  }
 
-    return await this.callToolSmart({ toolName, parameters });
+  /**
+   * 获取上下文管理器 - 返回执行引擎的上下文管理功能
+   */
+  public getContextManager(): ContextManager | undefined {
+    return this.executionEngine?.getContextManager();
+  }
+
+  /**
+   * 获取Agent状态统计
+   */
+  public getStats(): Record<string, unknown> {
+    return {
+      initialized: this.isInitialized,
+      activeTask: this.activeTask?.id,
+      components: {
+        chatService: this.chatService ? 'ready' : 'not_loaded',
+        executionEngine: this.executionEngine ? 'ready' : 'not_loaded',
+      },
+    };
   }
 
   /**
    * 获取可用工具列表
    */
-  public getAvailableTools(): ToolDefinition[] {
-    const toolComponent = this.getToolComponent();
-    if (!toolComponent) {
-      return [];
-    }
-    return toolComponent.getTools();
+  public getAvailableTools(): DeclarativeTool[] {
+    return this.toolRegistry ? this.toolRegistry.getAll() : [];
   }
 
   /**
-   * 搜索工具
+   * 获取工具统计信息
    */
-  public searchTools(query: string): ToolDefinition[] {
-    const toolComponent = this.getToolComponent();
-    if (!toolComponent) {
-      return [];
-    }
-    return toolComponent.searchTools(query);
-  }
+  public getToolStats() {
+    const tools = this.getAvailableTools();
+    const toolsByKind = new Map<string, number>();
 
-  // ======================== 状态和工具方法 ========================
+    tools.forEach((tool) => {
+      const count = toolsByKind.get(tool.kind) || 0;
+      toolsByKind.set(tool.kind, count + 1);
+    });
 
-  /**
-   * 获取 Agent 状态
-   */
-  public getStatus() {
     return {
-      initialized: this.isInitialized,
-      destroyed: this.isDestroyed,
-      llm: this.llmManager.getStatus(),
-      components: this.componentManager.getStatus(),
-      hasLLM: this.hasLLM(),
-      llmProvider: this.getLLMProvider(),
+      totalTools: tools.length,
+      toolsByKind: Object.fromEntries(toolsByKind),
+      toolNames: tools.map((t) => t.name),
     };
   }
 
   /**
-   * 获取健康状态
+   * 销毁Agent
    */
-  public async getHealthStatus() {
-    const componentHealth = await this.componentManager.getHealthStatus();
-    const llmStatus = this.llmManager.getStatus();
+  public async destroy(): Promise<void> {
+    this.log('销毁Agent...');
+
+    try {
+      this.removeAllListeners();
+      this.isInitialized = false;
+      this.log('Agent已销毁');
+    } catch (error) {
+      this.error('Agent销毁失败', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 构建LLM请求
+   */
+  private buildLLMRequest(message: string, context: ChatContext) {
+    // 获取工具函数声明
+    const tools = this.toolRegistry ? this.toolRegistry.getFunctionDeclarations() : [];
 
     return {
-      healthy:
-        this.isInitialized && !this.isDestroyed && componentHealth.healthy && llmStatus.isAvailable,
-      agent: {
-        initialized: this.isInitialized,
-        destroyed: this.isDestroyed,
-      },
-      llm: llmStatus,
-      components: componentHealth,
+      messages: [...context.messages, { role: 'user' as const, content: message }],
+      tools: tools, // 关键：提供工具列表给LLM
+      temperature: 0.7,
+      maxTokens: 4000,
     };
   }
 
-  // ======================== 私有方法 ========================
+  /**
+   * 调用LLM
+   */
+  private async callLLM(request: any): Promise<{
+    content: string;
+    toolCalls?: ToolCall[];
+    finishReason?: string;
+  }> {
+    try {
+      // 实际调用 ChatService
+      const response = await this.chatService.chat(request.messages);
+
+      // 解析响应，检查是否有工具调用
+      // 对于当前的简单实现，直接返回文本响应
+      // 后续可以扩展支持工具调用解析
+      return {
+        content: response,
+        finishReason: 'stop',
+      };
+    } catch (error) {
+      console.error('LLM call failed:', error);
+      // 如果调用失败，返回错误信息
+      return {
+        content: `抱歉，调用语言模型时出现错误: ${error instanceof Error ? error.message : '未知错误'}`,
+        finishReason: 'error',
+      };
+    }
+  }
 
   /**
-   * 自动注册默认组件
+   * 处理工具调用
    */
-  private autoRegisterComponents(): void {
-    // 注册工具组件
-    if (this.config.tools?.enabled) {
-      const toolConfig = {
-        includeBuiltinTools: this.config.tools.includeBuiltinTools ?? true,
-        excludeTools: this.config.tools.excludeTools,
-        includeCategories: this.config.tools.includeCategories,
-        debug: this.config.debug,
+  private async handleToolCalls(
+    toolCalls: ToolCall[],
+    context: ChatContext
+  ): Promise<{
+    message: string;
+    toolResults: ToolResult[];
+  }> {
+    const results: ToolResult[] = [];
+    let responseMessage = '';
+
+    for (const toolCall of toolCalls) {
+      try {
+        console.log(`🔧 Executing tool: ${toolCall.name}`);
+
+        // 通过工具注册表获取工具
+        const tool = this.toolRegistry?.get(toolCall.name);
+        if (!tool) {
+          const errorResult: ToolResult = {
+            success: false,
+            llmContent: `工具 ${toolCall.name} 不存在`,
+            displayContent: `❌ 工具 "${toolCall.name}" 未找到`,
+            error: {
+              message: `Tool "${toolCall.name}" not found`,
+              type: 'VALIDATION_ERROR' as any,
+            },
+          };
+          results.push(errorResult);
+          continue;
+        }
+
+        // 执行工具
+        const result = await this.executeTool(tool, toolCall.parameters, context);
+        results.push(result);
+
+        // 构建响应消息
+        if (result.success) {
+          responseMessage += `✅ ${toolCall.name} 执行成功\n`;
+          if (result.displayContent) {
+            responseMessage += `${result.displayContent}\n\n`;
+          }
+        } else {
+          responseMessage += `❌ ${toolCall.name} 执行失败: ${result.error?.message}\n\n`;
+        }
+      } catch (error) {
+        console.error(`Tool execution error for ${toolCall.name}:`, error);
+
+        const errorResult: ToolResult = {
+          success: false,
+          llmContent: `工具 ${toolCall.name} 执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
+          displayContent: `❌ 工具执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
+          error: {
+            message: error instanceof Error ? error.message : 'Unknown error',
+            type: 'EXECUTION_ERROR' as any,
+          },
+        };
+        results.push(errorResult);
+        responseMessage += `❌ ${toolCall.name} 执行出错: ${error instanceof Error ? error.message : '未知错误'}\n\n`;
+      }
+    }
+
+    this.emit('toolCallsCompleted', { toolCalls, results });
+
+    return {
+      message: responseMessage.trim() || '工具执行完成',
+      toolResults: results,
+    };
+  }
+
+  /**
+   * 执行单个工具
+   */
+  private async executeTool(
+    tool: DeclarativeTool,
+    parameters: Record<string, any>,
+    context: ChatContext
+  ): Promise<ToolResult> {
+    try {
+      // 创建执行上下文
+      const executionContext = {
+        userId: context.userId,
+        sessionId: context.sessionId,
+        workspaceRoot: context.workspaceRoot,
+        signal: new AbortController().signal,
       };
 
-      const toolComponent = new ToolComponent('tools', toolConfig);
-      this.componentManager.registerComponent(toolComponent);
-    }
+      // 构建工具调用
+      const invocation = tool.build(parameters);
 
-    // 注册上下文组件
-    if (this.config.context?.enabled) {
-      const contextComponent = new ContextComponent('context', this.config.context);
-      this.componentManager.registerComponent(contextComponent);
-    }
+      // 检查是否需要用户确认
+      if (tool.requiresConfirmation) {
+        const confirmationDetails = await invocation.shouldConfirm();
+        if (confirmationDetails) {
+          console.log(
+            `⚠️  Tool ${tool.name} requires confirmation:`,
+            confirmationDetails.title
+          );
+          // 在实际实现中，这里应该弹出确认对话框
+          // 暂时自动确认
+        }
+      }
 
-    // 注册 MCP 组件
-    if (this.config.mcp?.enabled) {
-      const mcpComponent = new MCPComponent('mcp', this.config.mcp);
-      this.componentManager.registerComponent(mcpComponent);
+      // 执行工具
+      const result = await invocation.execute(
+        executionContext.signal,
+        (output: string) => {
+          console.log(`📊 Tool progress: ${output}`);
+          this.emit('toolProgress', { toolName: tool.name, output });
+        }
+      );
+
+      this.emit('toolExecuted', { toolName: tool.name, parameters, result });
+      return result;
+    } catch (error) {
+      console.error(`Tool execution failed for ${tool.name}:`, error);
+      throw error;
     }
   }
 
   /**
-   * 设置管理器事件转发
+   * 生成任务ID
    */
-  private setupManagerEventForwarding(): void {
-    // 转发 LLM 管理器事件
-    // 这里可以根据需要转发特定事件
-
-    // 转发组件管理器事件
-    this.componentManager.on('componentRegistered', event => {
-      this.emit('componentRegistered', event);
-    });
-
-    this.componentManager.on('componentRemoved', event => {
-      this.emit('componentRemoved', event);
-    });
-
-    this.componentManager.on('componentInitialized', event => {
-      this.emit('componentInitialized', event);
-    });
-
-    this.componentManager.on('componentDestroyed', event => {
-      this.emit('componentDestroyed', event);
-    });
+  private generateTaskId(): string {
+    return `task_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   }
 
   /**
-   * 内部日志记录
+   * 日志记录
    */
-  private log(message: string): void {
-    if (this.config.debug) {
-      console.log(`[Agent] ${message}`);
+  private log(message: string, data?: unknown): void {
+    console.log(`[MainAgent] ${message}`, data || '');
+  }
+
+  /**
+   * 错误记录
+   */
+  private error(message: string, error?: unknown): void {
+    console.error(`[MainAgent] ${message}`, error || '');
+  }
+
+  /**
+   * 初始化系统提示
+   */
+  private async initializeSystemPrompt(): Promise<void> {
+    try {
+      this.promptBuilder = new PromptBuilder({
+        workingDirectory: process.cwd(),
+        config: {
+          enabled: true,
+          allowOverride: true,
+        },
+      });
+
+      // 从配置中获取 CLI 追加的系统提示
+      const cliPrompt = this.config.systemPrompt;
+      this.systemPrompt = await this.promptBuilder.buildString(cliPrompt);
+
+      if (this.systemPrompt) {
+        this.log('系统提示已加载');
+      }
+    } catch (error) {
+      this.error('初始化系统提示失败', error);
+      // 系统提示失败不应该阻止 Agent 初始化
+    }
+  }
+
+  /**
+   * 获取系统提示
+   */
+  public getSystemPrompt(): string | undefined {
+    return this.systemPrompt;
+  }
+
+  /**
+   * 设置 CLI 系统提示
+   */
+  public setCliSystemPrompt(prompt: string): void {
+    this.config.systemPrompt = prompt;
+  }
+
+  /**
+   * 注册内置工具
+   */
+  private async registerBuiltinTools(): Promise<void> {
+    try {
+      const builtinTools = await getBuiltinTools();
+      console.log(`📦 Registering ${builtinTools.length} builtin tools...`);
+
+      this.toolRegistry.registerAll(builtinTools);
+
+      console.log('✅ Builtin tools registered successfully');
+      this.emit('toolsRegistered', builtinTools);
+    } catch (error) {
+      console.error('Failed to register builtin tools:', error);
+      throw error;
     }
   }
 }

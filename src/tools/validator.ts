@@ -1,4 +1,4 @@
-import { ToolValidationError, type ToolParameterSchema } from './types.js';
+import { type ToolParameterSchema, ToolValidationError } from './types.js';
 
 /**
  * 工具参数验证器
@@ -33,7 +33,11 @@ export class ToolValidator {
   /**
    * 验证单个值
    */
-  private static validateValue(value: any, schema: ToolParameterSchema, fieldPath: string): void {
+  private static validateValue(
+    value: any,
+    schema: ToolParameterSchema,
+    fieldPath: string
+  ): void {
     // 检查类型
     if (!this.isValidType(value, schema.type)) {
       throw new ToolValidationError(
@@ -59,7 +63,12 @@ export class ToolValidator {
       });
     }
 
-    if (schema.type === 'object' && value && typeof value === 'object' && schema.properties) {
+    if (
+      schema.type === 'object' &&
+      value &&
+      typeof value === 'object' &&
+      schema.properties
+    ) {
       for (const [key, subValue] of Object.entries(value)) {
         const subSchema = schema.properties[key];
         if (subSchema) {
@@ -145,9 +154,13 @@ export class ToolValidator {
       const requiredMark = isRequired ? ' *' : '';
       const defaultValue =
         paramSchema.default !== undefined ? ` (默认: ${paramSchema.default})` : '';
-      const enumValues = paramSchema.enum ? ` (可选值: ${paramSchema.enum.join(', ')})` : '';
+      const enumValues = paramSchema.enum
+        ? ` (可选值: ${paramSchema.enum.join(', ')})`
+        : '';
 
-      docs.push(`  ${key}${requiredMark}: ${paramSchema.type}${defaultValue}${enumValues}`);
+      docs.push(
+        `  ${key}${requiredMark}: ${paramSchema.type}${defaultValue}${enumValues}`
+      );
 
       if (paramSchema.description) {
         docs.push(`    ${paramSchema.description}`);

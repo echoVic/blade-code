@@ -1,0 +1,31 @@
+# Codecov 配置文件
+
+codecov:
+  require_ci_to_pass: false
+  branch: main
+
+coverage:
+  precision: 2
+  round: down
+  range: "70...100"
+  
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 5%
+        base: auto
+    patch:
+      default:
+        target: 80%
+        threshold: 5%
+        base: auto
+
+parsers:
+  javascript:
+    enable_partials: yes
+
+comment:
+  layout: "reach,diff,flags,files,footer"
+  behavior: default
+  require_changes: false

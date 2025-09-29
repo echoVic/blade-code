@@ -1,6 +1,7 @@
 # 依赖目录
 node_modules/
 dist/
+bundle/
 
 # pnpm 相关文件
 .pnpm/
@@ -46,8 +47,12 @@ config.env
 
 # 构建输出
 build/
+bin/
 coverage/
 .nyc_output/
+
+# TypeScript 构建信息
+*.tsbuildinfo
 
 # 临时文件
 .tmp/
@@ -61,4 +66,4 @@ blade-context/
 
 # 其他
 .cache/
-.parcel-cache/ 
+.parcel-cache/

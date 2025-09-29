@@ -26,8 +26,8 @@ export class ContextCompressor {
     const toolCalls = contextData.layers.tool.recentCalls;
 
     // 分离系统消息和用户/助手消息
-    const systemMessages = messages.filter(m => m.role === 'system');
-    const conversationMessages = messages.filter(m => m.role !== 'system');
+    const systemMessages = messages.filter((m) => m.role === 'system');
+    const conversationMessages = messages.filter((m) => m.role !== 'system');
 
     // 获取最近的消息（保持完整）
     const recentMessages = this.getRecentMessages(conversationMessages);
@@ -43,7 +43,12 @@ export class ContextCompressor {
     const toolSummary = this.generateToolSummary(toolCalls);
 
     // 估算 token 数量
-    const tokenCount = this.estimateTokenCount(summary, keyPoints, recentMessages, toolSummary);
+    const tokenCount = this.estimateTokenCount(
+      summary,
+      keyPoints,
+      recentMessages,
+      toolSummary
+    );
 
     return {
       summary,
@@ -79,7 +84,7 @@ export class ContextCompressor {
 
       // 检测主题关键词
       const topicKeywords = ['关于', '讨论', '问题', '项目', '功能', '需求'];
-      topicKeywords.forEach(keyword => {
+      topicKeywords.forEach((keyword) => {
         if (content.includes(keyword)) {
           const context = this.extractContext(content, keyword, 50);
           if (context) topics.add(context);
@@ -88,7 +93,7 @@ export class ContextCompressor {
 
       // 检测动作关键词
       const actionKeywords = ['创建', '删除', '修改', '更新', '实现', '开发'];
-      actionKeywords.forEach(keyword => {
+      actionKeywords.forEach((keyword) => {
         if (content.includes(keyword)) {
           const context = this.extractContext(content, keyword, 30);
           if (context) actions.add(context);
@@ -97,7 +102,7 @@ export class ContextCompressor {
 
       // 检测决策关键词
       const decisionKeywords = ['决定', '选择', '确定', '采用', '使用'];
-      decisionKeywords.forEach(keyword => {
+      decisionKeywords.forEach((keyword) => {
         if (content.includes(keyword)) {
           const context = this.extractContext(content, keyword, 40);
           if (context) decisions.add(context);
@@ -128,7 +133,10 @@ export class ContextCompressor {
   /**
    * 提取关键要点
    */
-  private extractKeyPoints(messages: ContextMessage[], toolCalls: ToolCall[]): string[] {
+  private extractKeyPoints(
+    messages: ContextMessage[],
+    toolCalls: ToolCall[]
+  ): string[] {
     const keyPoints: Set<string> = new Set();
 
     // 从消息中提取关键点
@@ -136,20 +144,20 @@ export class ContextCompressor {
       if (message.role === 'user') {
         // 用户的问题和请求
         const questions = this.extractQuestions(message.content);
-        questions.forEach(q => keyPoints.add(`用户问题：${q}`));
+        questions.forEach((q) => keyPoints.add(`用户问题：${q}`));
 
         const requests = this.extractRequests(message.content);
-        requests.forEach(r => keyPoints.add(`用户请求：${r}`));
+        requests.forEach((r) => keyPoints.add(`用户请求：${r}`));
       } else if (message.role === 'assistant') {
         // 助手的重要建议和解决方案
         const solutions = this.extractSolutions(message.content);
-        solutions.forEach(s => keyPoints.add(`解决方案：${s}`));
+        solutions.forEach((s) => keyPoints.add(`解决方案：${s}`));
       }
     }
 
     // 从工具调用中提取关键点
     const toolUsage = this.summarizeToolUsage(toolCalls);
-    toolUsage.forEach(usage => keyPoints.add(`工具使用：${usage}`));
+    toolUsage.forEach((usage) => keyPoints.add(`工具使用：${usage}`));
 
     return Array.from(keyPoints).slice(0, this.keyPointsLimit);
   }
@@ -162,7 +170,10 @@ export class ContextCompressor {
       return '';
     }
 
-    const toolStats = new Map<string, { count: number; success: number; recent: number }>();
+    const toolStats = new Map<
+      string,
+      { count: number; success: number; recent: number }
+    >();
     const recentTime = Date.now() - 10 * 60 * 1000; // 最近10分钟
 
     for (const call of toolCalls) {
@@ -208,7 +219,11 @@ export class ContextCompressor {
   /**
    * 从内容中提取上下文
    */
-  private extractContext(content: string, keyword: string, maxLength: number): string | null {
+  private extractContext(
+    content: string,
+    keyword: string,
+    maxLength: number
+  ): string | null {
     const index = content.indexOf(keyword);
     if (index === -1) return null;
 
@@ -227,7 +242,7 @@ export class ContextCompressor {
 
     const sentences = content.split(/[。！.!]/);
     for (const sentence of sentences) {
-      if (questionMarkers.some(marker => sentence.includes(marker))) {
+      if (questionMarkers.some((marker) => sentence.includes(marker))) {
         const cleaned = sentence.trim();
         if (cleaned.length > 5 && cleaned.length < 100) {
           questions.push(cleaned);
@@ -247,7 +262,7 @@ export class ContextCompressor {
 
     const sentences = content.split(/[。！.!]/);
     for (const sentence of sentences) {
-      if (requestMarkers.some(marker => sentence.includes(marker))) {
+      if (requestMarkers.some((marker) => sentence.includes(marker))) {
         const cleaned = sentence.trim();
         if (cleaned.length > 5 && cleaned.length < 100) {
           requests.push(cleaned);
@@ -267,7 +282,7 @@ export class ContextCompressor {
 
     const sentences = content.split(/[。！.!]/);
     for (const sentence of sentences) {
-      if (solutionMarkers.some(marker => sentence.includes(marker))) {
+      if (solutionMarkers.some((marker) => sentence.includes(marker))) {
         const cleaned = sentence.trim();
         if (cleaned.length > 10 && cleaned.length < 150) {
           solutions.push(cleaned);
@@ -284,19 +299,19 @@ export class ContextCompressor {
   private summarizeToolUsage(toolCalls: ToolCall[]): string[] {
     const summary: string[] = [];
     const recentCalls = toolCalls.filter(
-      call => Date.now() - call.timestamp < 30 * 60 * 1000 // 最近30分钟
+      (call) => Date.now() - call.timestamp < 30 * 60 * 1000 // 最近30分钟
     );
 
     if (recentCalls.length > 0) {
       const toolGroups = new Map<string, ToolCall[]>();
-      recentCalls.forEach(call => {
+      recentCalls.forEach((call) => {
         const group = toolGroups.get(call.name) || [];
         group.push(call);
         toolGroups.set(call.name, group);
       });
 
       for (const [toolName, calls] of Array.from(toolGroups.entries())) {
-        const successCount = calls.filter(c => c.status === 'success').length;
+        const successCount = calls.filter((c) => c.status === 'success').length;
         summary.push(`${toolName}(${calls.length}次,${successCount}成功)`);
       }
     }

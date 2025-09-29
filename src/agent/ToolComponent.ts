@@ -1,13 +1,60 @@
 import { EventEmitter } from 'events';
 import {
-  ToolManager,
   createToolManager,
-  type ToolCallRequest,
-  type ToolCallResponse,
-  type ToolDefinition,
-  type ToolManagerConfig,
+  type ToolResult,
 } from '../tools/index.js';
+import type { ToolManagerConfig } from '../tools/factory.js';
+import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
+import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
+import { ToolDiscovery } from '../tools/registry/ToolDiscovery.js';
 import { BaseComponent } from './BaseComponent.js';
+
+/**
+ * 工具定义接口
+ */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  version?: string;
+  category?: string;
+  tags?: string[];
+  parameters: Record<string, any>;
+  required?: string[];
+}
+
+/**
+ * 工具调用请求
+ */
+export interface ToolCallRequest {
+  toolName: string;
+  parameters: Record<string, any>;
+}
+
+/**
+ * 工具调用响应
+ */
+export interface ToolCallResponse {
+  result: ToolResult;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * 工具管理器接口
+ */
+export interface ToolManager {
+  getTools(): ToolDefinition[];
+  getTool(name: string): ToolDefinition | undefined;
+  hasTool(name: string): boolean;
+  registerTool(tool: ToolDefinition): Promise<void>;
+  unregisterTool(name: string): void;
+  callTool(request: ToolCallRequest): Promise<ToolCallResponse>;
+  setToolEnabled(name: string, enabled: boolean): void;
+  getStats(): Record<string, any>;
+  getExecutionHistory(limit?: number): any[];
+  clearHistory(): void;
+  on(event: string, listener: (...args: any[]) => void): void;
+  removeAllListeners(): void;
+}
 
 /**
  * 工具组件配置
@@ -22,6 +69,106 @@ export interface ToolComponentConfig extends ToolManagerConfig {
 }
 
 /**
+ * 工具管理器适配器
+ */
+class ToolManagerAdapter implements ToolManager {
+  constructor(
+    private registry: ToolRegistry,
+    private pipeline: ExecutionPipeline,
+    private discovery: ToolDiscovery
+  ) {}
+
+  getTools(): ToolDefinition[] {
+    return this.registry.getAll().map((tool: any) => ({
+      name: tool.name,
+      description: tool.description,
+      version: tool.version,
+      category: tool.category,
+      tags: tool.tags,
+      parameters: tool.parameterSchema.properties || {},
+      required: tool.parameterSchema.required
+    }));
+  }
+
+  getTool(name: string): ToolDefinition | undefined {
+    const tool = this.registry.get(name);
+    if (!tool) return undefined;
+    return {
+      name: tool.name,
+      description: tool.description,
+      version: tool.version,
+      category: tool.category,
+      tags: tool.tags,
+      parameters: tool.parameterSchema.properties || {},
+      required: tool.parameterSchema.required
+    };
+  }
+
+  hasTool(name: string): boolean {
+    return this.registry.has(name);
+  }
+
+  async registerTool(tool: ToolDefinition): Promise<void> {
+    // 适配器暂不支持注册新工具
+    console.warn('工具注册功能暂未实现');
+  }
+
+  unregisterTool(name: string): void {
+    this.registry.unregister(name);
+  }
+
+  async callTool(request: ToolCallRequest): Promise<ToolCallResponse> {
+    const tool = this.registry.get(request.toolName);
+    if (!tool) {
+      throw new Error(`工具未找到: ${request.toolName}`);
+    }
+
+    const result = await this.pipeline.execute(
+      request.toolName,
+      request.parameters,
+      {
+        sessionId: 'tool-component',
+        signal: new AbortController().signal
+      }
+    );
+
+    return {
+      result,
+      metadata: { toolName: request.toolName }
+    };
+  }
+
+  setToolEnabled(name: string, enabled: boolean): void {
+    // 适配器暂不支持启用/禁用功能
+    console.warn('工具启用/禁用功能暂未实现');
+  }
+
+  getStats(): Record<string, any> {
+    return {
+      totalTools: this.registry.getAll().length,
+      registeredTools: this.registry.getAll().map((t: any) => t.name)
+    };
+  }
+
+  getExecutionHistory(limit?: number): any[] {
+    // ExecutionPipeline 没有 getHistory 方法，返回空数组
+    return [];
+  }
+
+  clearHistory(): void {
+    // ExecutionPipeline 没有 clearHistory 方法，暂不实现
+  }
+
+  on(event: string, listener: (...args: any[]) => void): void {
+    // 事件处理暂未实现
+  }
+
+  removeAllListeners(): void {
+    // 事件处理暂未实现
+  }
+}
+
+/**
  * 工具组件 - 为 Agent 提供工具管理和调用能力
  */
 export class ToolComponent extends BaseComponent {
@@ -33,7 +180,6 @@ export class ToolComponent extends BaseComponent {
   constructor(id = 'tools', config: ToolComponentConfig = {}) {
     super(id);
     this.config = {
-      debug: false,
       includeBuiltinTools: true,
       ...config,
     };
@@ -49,7 +195,16 @@ export class ToolComponent extends BaseComponent {
       this.log('初始化工具组件...');
 
       // 创建工具管理器
-      this.toolManager = await createToolManager(this.config, this.config.includeBuiltinTools);
+      const managerComponents = await createToolManager(
+        this.config as ToolManagerConfig,
+        this.config.includeBuiltinTools
+      );
+
+      this.toolManager = new ToolManagerAdapter(
+        managerComponents.registry,
+        managerComponents.pipeline,
+        managerComponents.discovery
+      );
 
       // 应用过滤器
       this.applyFilters();
@@ -173,10 +328,10 @@ export class ToolComponent extends BaseComponent {
     const lowerQuery = query.toLowerCase();
 
     return tools.filter(
-      tool =>
+      (tool) =>
         tool.name.toLowerCase().includes(lowerQuery) ||
         tool.description.toLowerCase().includes(lowerQuery) ||
-        (tool.tags && tool.tags.some(tag => tag.toLowerCase().includes(lowerQuery)))
+        (tool.tags && tool.tags.some((tag: string) => tag.toLowerCase().includes(lowerQuery)))
     );
   }
 
@@ -203,7 +358,7 @@ export class ToolComponent extends BaseComponent {
   /**
    * 获取工具统计信息
    */
-  public getStats(): Record<string, any> {
+  public getStats(): Record<string, unknown> {
     if (!this.toolManager) {
       throw new Error('工具组件未初始化');
     }
@@ -233,21 +388,21 @@ export class ToolComponent extends BaseComponent {
   /**
    * 添加事件监听器
    */
-  public on(event: string, listener: (...args: any[]) => void): void {
+  public on(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.on(event, listener);
   }
 
   /**
    * 移除事件监听器
    */
-  public off(event: string, listener: (...args: any[]) => void): void {
+  public off(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.off(event, listener);
   }
 
   /**
    * 发送事件
    */
-  public emit(event: string, ...args: any[]): boolean {
+  public emit(event: string, ...args: unknown[]): boolean {
     return this.eventEmitter.emit(event, ...args);
   }
 
@@ -291,27 +446,27 @@ export class ToolComponent extends BaseComponent {
       return;
     }
 
-    this.toolManager.on('toolRegistered', event => {
+    this.toolManager.on('toolRegistered', (event: unknown) => {
       this.emit('toolRegistered', event);
     });
 
-    this.toolManager.on('toolUnregistered', event => {
+    this.toolManager.on('toolUnregistered', (event: unknown) => {
       this.emit('toolUnregistered', event);
     });
 
-    this.toolManager.on('toolCallStarted', event => {
+    this.toolManager.on('toolCallStarted', (event: unknown) => {
       this.emit('toolCallStarted', event);
     });
 
-    this.toolManager.on('toolCallCompleted', event => {
+    this.toolManager.on('toolCallCompleted', (event: unknown) => {
       this.emit('toolCallCompleted', event);
     });
 
-    this.toolManager.on('toolCallFailed', event => {
+    this.toolManager.on('toolCallFailed', (event: unknown) => {
       this.emit('toolCallFailed', event);
     });
 
-    this.toolManager.on('toolStateChanged', event => {
+    this.toolManager.on('toolStateChanged', (event: unknown) => {
       this.emit('toolStateChanged', event);
     });
   }
@@ -323,40 +478,41 @@ export class ToolComponent extends BaseComponent {
     const tools = this.getTools();
     const categories = this.getToolsByCategory();
 
-    let docs = '# 工具文档\n\n';
-    docs += `总计 ${tools.length} 个工具\n\n`;
+    let docs = '# 工具文档\\n\\n';
+    docs += `总计 ${tools.length} 个工具\\n\\n`;
 
     for (const [category, categoryTools] of Object.entries(categories)) {
-      docs += `## ${category.toUpperCase()} (${categoryTools.length})\n\n`;
+      docs += `## ${category.toUpperCase()} (${categoryTools.length})\\n\\n`;
 
       for (const tool of categoryTools) {
-        docs += `### ${tool.name}\n`;
-        docs += `${tool.description}\n\n`;
+        docs += `### ${tool.name}\\n`;
+        docs += `${tool.description}\\n\\n`;
 
         if (tool.version) {
-          docs += `**版本:** ${tool.version}\n`;
+          docs += `**版本:** ${tool.version}\\n`;
         }
 
         if (tool.tags && tool.tags.length > 0) {
-          docs += `**标签:** ${tool.tags.join(', ')}\n`;
+          docs += `**标签:** ${tool.tags.join(', ')}\\n`;
         }
 
-        docs += '\n**参数:**\n';
-        docs += '```\n';
+        docs += '\\n**参数:**\\n';
+        docs += '```\\n';
 
         for (const [paramName, paramSchema] of Object.entries(tool.parameters)) {
+          const schema = paramSchema as any;
           const required = tool.required?.includes(paramName) ? ' (必需)' : '';
           const defaultValue =
-            paramSchema.default !== undefined ? ` (默认: ${paramSchema.default})` : '';
+            schema.default !== undefined ? ` (默认: ${schema.default})` : '';
 
-          docs += `${paramName}: ${paramSchema.type}${required}${defaultValue}\n`;
-          if (paramSchema.description) {
-            docs += `  ${paramSchema.description}\n`;
+          docs += `${paramName}: ${schema.type || 'unknown'}${required}${defaultValue}\\n`;
+          if (schema.description) {
+            docs += `  ${schema.description}\\n`;
           }
         }
 
-        docs += '```\n\n';
-        docs += '---\n\n';
+        docs += '```\\n\\n';
+        docs += '---\\n\\n';
       }
     }
 
@@ -366,8 +522,8 @@ export class ToolComponent extends BaseComponent {
   /**
    * 记录日志
    */
-  private log(message: string, data?: any): void {
-    if (this.config.debug) {
+  private log(message: string, data?: unknown): void {
+    if ((this.config as any).debug) {
       console.log(`[ToolComponent] ${message}`, data || '');
     }
   }
@@ -375,7 +531,7 @@ export class ToolComponent extends BaseComponent {
   /**
    * 记录错误
    */
-  private error(message: string, error?: any): void {
+  private error(message: string, error?: unknown): void {
     console.error(`[ToolComponent] ${message}`, error || '');
   }
 }

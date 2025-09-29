@@ -1,0 +1,28 @@
+{
+  "id": "user-admin",
+  "name": "Admin User",
+  "data": {
+    "id": "user-001",
+    "username": "admin",
+    "email": "admin@example.com",
+    "name": "Admin User",
+    "role": "admin",
+    "avatar": "https://example.com/avatar.jpg",
+    "createdAt": "2023-01-01T00:00:00.000Z",
+    "updatedAt": "2023-01-01T00:00:00.000Z",
+    "isActive": true,
+    "preferences": {
+      "theme": "default",
+      "language": "en",
+      "notifications": true
+    },
+    "stats": {
+      "logins": 150,
+      "projects": 25,
+      "filesCreated": 500
+    }
+  },
+  "type": "json",
+  "created": "2023-01-01T00:00:00.000Z",
+  "updated": "2023-01-01T00:00:00.000Z"
+}

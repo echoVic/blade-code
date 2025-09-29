@@ -1,0 +1,18 @@
+[
+  {
+    "scenario": "基础对话和帮助命令",
+    "expectedOutputs": []
+  },
+  {
+    "scenario": "上下文感知审查",
+    "expectedOutputs": []
+  },
+  {
+    "scenario": "多步代码生成",
+    "expectedOutputs": []
+  },
+  {
+    "scenario": "配置和状态检查",
+    "expectedOutputs": []
+  }
+]

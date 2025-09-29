@@ -294,7 +294,9 @@ export class ContextManager {
     return {
       context: filteredContext,
       compressed,
-      tokenCount: compressed ? compressed.tokenCount : filteredContext.metadata.totalTokens,
+      tokenCount: compressed
+        ? compressed.tokenCount
+        : filteredContext.metadata.totalTokens,
     };
   }
 
@@ -416,7 +418,7 @@ export class ContextManager {
           cwd,
         },
       };
-    } catch (error) {
+    } catch (_error) {
       return {
         currentFiles: [],
         recentFiles: [],
@@ -452,7 +454,7 @@ export class ContextManager {
 
   private saveCurrentSessionAsync(): void {
     // 异步保存，不阻塞主流程
-    this.saveCurrentSession().catch(error => {
+    this.saveCurrentSession().catch((error) => {
       console.warn('异步保存会话失败:', error);
     });
   }
@@ -475,7 +477,10 @@ export class ContextManager {
     let score = 0;
 
     for (const topic of topics) {
-      if (queryLower.includes(topic.toLowerCase()) || topic.toLowerCase().includes(queryLower)) {
+      if (
+        queryLower.includes(topic.toLowerCase()) ||
+        topic.toLowerCase().includes(queryLower)
+      ) {
         score += 1;
       }
     }

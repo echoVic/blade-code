@@ -203,11 +203,11 @@ export class UIFormatter {
     return [
       header,
       UIStyles.border.line(
-        Math.max(60, Math.max(...lines.map(l => l.length)) + lineNumberWidth + 3)
+        Math.max(60, Math.max(...lines.map((l) => l.length)) + lineNumberWidth + 3)
       ),
       ...formattedLines,
       UIStyles.border.line(
-        Math.max(60, Math.max(...lines.map(l => l.length)) + lineNumberWidth + 3)
+        Math.max(60, Math.max(...lines.map((l) => l.length)) + lineNumberWidth + 3)
       ),
     ]
       .filter(Boolean)
@@ -222,7 +222,7 @@ export class UIFormatter {
       const json = JSON.stringify(obj, null, indent);
       return json
         .split('\n')
-        .map(line => {
+        .map((line) => {
           // 简单的语法高亮
           if (line.includes(':')) {
             const [key, ...valueParts] = line.split(':');
@@ -232,7 +232,7 @@ export class UIFormatter {
           return line;
         })
         .join('\n');
-    } catch (error) {
+    } catch (_error) {
       return UIStyles.status.error('无效的JSON数据');
     }
   }
@@ -240,7 +240,11 @@ export class UIFormatter {
   /**
    * 文本截断
    */
-  public static truncate(text: string, maxLength: number, suffix: string = '...'): string {
+  public static truncate(
+    text: string,
+    maxLength: number,
+    suffix: string = '...'
+  ): string {
     if (text.length <= maxLength) {
       return text;
     }
@@ -262,10 +266,13 @@ export class UIFormatter {
     const padding = width - text.length;
 
     switch (align) {
-      case 'center':
-        const leftPad = Math.floor(padding / 2);
-        const rightPad = padding - leftPad;
-        return ' '.repeat(leftPad) + text + ' '.repeat(rightPad);
+      case 'center': {
+        {
+          const leftPad = Math.floor(padding / 2);
+          const rightPad = padding - leftPad;
+          return ' '.repeat(leftPad) + text + ' '.repeat(rightPad);
+        }
+      }
       case 'right':
         return ' '.repeat(padding) + text;
       default: // left

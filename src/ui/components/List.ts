@@ -134,7 +134,10 @@ export class UIList {
   /**
    * 显示键值对列表
    */
-  public static keyValue(data: Record<string, string>, options: ListOptions = {}): void {
+  public static keyValue(
+    data: Record<string, string>,
+    options: ListOptions = {}
+  ): void {
     const items: ListItem[] = Object.entries(data).map(([key, value]) => ({
       label: key,
       value: value,
@@ -153,10 +156,10 @@ export class UIList {
     }
 
     // 计算列宽
-    const colWidths = columns.map(col => {
+    const colWidths = columns.map((col) => {
       const headerWidth = col.title.length;
       const dataWidth = Math.max(
-        ...data.map(row => {
+        ...data.map((row) => {
           const value = row[col.key];
           const formatted = col.format ? col.format(value) : String(value || '');
           return formatted.length;
@@ -177,11 +180,11 @@ export class UIList {
     UIDisplay.text(header);
 
     // 显示分隔线
-    const separator = colWidths.map(width => '─'.repeat(width)).join('─┼─');
+    const separator = colWidths.map((width) => '─'.repeat(width)).join('─┼─');
     UIDisplay.muted('─' + separator + '─');
 
     // 显示数据行
-    data.forEach(row => {
+    data.forEach((row) => {
       const line = columns
         .map((col, i) => {
           const value = row[col.key];
@@ -241,9 +244,9 @@ export class UIList {
   public static status(
     items: Array<{ name: string; status: 'success' | 'error' | 'warning' | 'pending' }>
   ): void {
-    const maxLength = Math.max(...items.map(item => item.name.length));
+    const maxLength = Math.max(...items.map((item) => item.name.length));
 
-    items.forEach(item => {
+    items.forEach((item) => {
       const name = item.name.padEnd(maxLength);
       let statusText = '';
 
@@ -278,10 +281,11 @@ export class UIList {
     const padding = Math.max(0, width - plainText.length);
 
     switch (align) {
-      case 'center':
+      case 'center': {
         const leftPad = Math.floor(padding / 2);
         const rightPad = padding - leftPad;
         return ' '.repeat(leftPad) + text + ' '.repeat(rightPad);
+      }
       case 'right':
         return ' '.repeat(padding) + text;
       default: // left

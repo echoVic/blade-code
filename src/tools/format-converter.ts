@@ -30,7 +30,7 @@ export class ToolFormatConverter {
    * 将项目内部的 ToolDefinition 转换为 OpenAI Tools 格式
    */
   static toOpenAITools(toolDefinitions: ToolDefinition[]): OpenAITool[] {
-    return toolDefinitions.map(tool => ({
+    return toolDefinitions.map((tool) => ({
       type: 'function' as const,
       function: {
         name: tool.name,
@@ -48,7 +48,7 @@ export class ToolFormatConverter {
    * 将项目内部的 ToolDefinition 转换为 OpenAI Functions 格式（旧版）
    */
   static toOpenAIFunctions(toolDefinitions: ToolDefinition[]): OpenAIFunction[] {
-    return toolDefinitions.map(tool => ({
+    return toolDefinitions.map((tool) => ({
       name: tool.name,
       description: tool.description,
       parameters: {
@@ -63,7 +63,7 @@ export class ToolFormatConverter {
    * 将 OpenAI Tools 格式转换为 Functions 格式
    */
   static toolsToFunctions(tools: OpenAITool[]): OpenAIFunction[] {
-    return tools.map(tool => ({
+    return tools.map((tool) => ({
       name: tool.function.name,
       description: tool.function.description,
       parameters: tool.function.parameters,
@@ -74,7 +74,7 @@ export class ToolFormatConverter {
    * 将 OpenAI Functions 格式转换为 Tools 格式
    */
   static functionsToTools(functions: OpenAIFunction[]): OpenAITool[] {
-    return functions.map(func => ({
+    return functions.map((func) => ({
       type: 'function' as const,
       function: {
         name: func.name,
@@ -143,7 +143,7 @@ export class ToolFormatConverter {
    */
   static validateToolsFormat(tools: any[]): boolean {
     return tools.every(
-      tool =>
+      (tool) =>
         tool.type === 'function' &&
         tool.function &&
         typeof tool.function.name === 'string' &&
@@ -157,8 +157,10 @@ export class ToolFormatConverter {
    */
   static validateFunctionsFormat(functions: any[]): boolean {
     return functions.every(
-      func =>
-        typeof func.name === 'string' && typeof func.description === 'string' && func.parameters
+      (func) =>
+        typeof func.name === 'string' &&
+        typeof func.description === 'string' &&
+        func.parameters
     );
   }
 
@@ -167,7 +169,7 @@ export class ToolFormatConverter {
    * Qwen 模型对中文描述更友好
    */
   static optimizeForQwen(tools: OpenAITool[]): OpenAITool[] {
-    return tools.map(tool => ({
+    return tools.map((tool) => ({
       ...tool,
       function: {
         ...tool.function,

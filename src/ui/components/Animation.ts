@@ -38,7 +38,10 @@ export class UIAnimation {
   /**
    * 打字机效果
    */
-  public static async typewriter(text: string, config: TypewriterConfig = {}): Promise<void> {
+  public static async typewriter(
+    text: string,
+    config: TypewriterConfig = {}
+  ): Promise<void> {
     const opts = {
       speed: 50,
       cursor: true,
@@ -47,7 +50,7 @@ export class UIAnimation {
       ...config,
     };
 
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       let index = 0;
       const timer = setInterval(() => {
         // 清除当前行
@@ -305,7 +308,10 @@ export class UIAnimation {
 
         index++;
 
-        if (opts.repeat !== 'infinite' && index >= texts.length * (opts.repeat as number)) {
+        if (
+          opts.repeat !== 'infinite' &&
+          index >= texts.length * (opts.repeat as number)
+        ) {
           stop();
         }
       }, opts.interval!);
@@ -367,7 +373,10 @@ export class UIAnimation {
   /**
    * 淡入效果（模拟）
    */
-  public static async fadeIn(text: string, config: AnimationConfig = {}): Promise<void> {
+  public static async fadeIn(
+    text: string,
+    config: AnimationConfig = {}
+  ): Promise<void> {
     const opts = {
       duration: 1000,
       ...config,
@@ -388,7 +397,7 @@ export class UIAnimation {
 
       process.stdout.write(chalk.hex(UIColors.primary)(fadeText));
 
-      await new Promise(resolve => setTimeout(resolve, stepDuration));
+      await new Promise((resolve) => setTimeout(resolve, stepDuration));
     }
 
     console.log(); // 换行

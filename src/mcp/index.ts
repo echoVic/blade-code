@@ -1,17 +1,21 @@
-// MCP 类型定义
-export * from './types/mcp.js';
+// MCP协议支持导出
 
-// MCP 客户端
-export { MCPClient } from './client/MCPClient.js';
+// === 配置管理 ===
+export { McpConfigManager } from './config/MCPConfig.js';
+// === MCP协议客户端（真实协议实现） ===
+export { McpClient } from './McpClient.js';
+export { McpRegistry } from './McpRegistry.js';
+// === MCP工具系统 ===
+export { McpToolAdapter } from './McpToolAdapter.js';
+export { McpToolInvocation } from './McpToolInvocation.js';
 
-// MCP 服务器
-export { MCPServer, MCPServerConfig } from './server/MCPServer.js';
-
-// MCP 配置管理
+// === OAuth支持 ===
 export {
-  MCPClientConfig,
-  MCPConfig,
-  mcpConfig,
-  MCPConfigFile,
-  MCPServerConfigFile,
-} from './config/MCPConfig.js';
+  GitHubOAuthProvider,
+  GoogleOAuthProvider,
+  OAuthProvider,
+} from './oauth-provider.js';
+export { OAuthTokenStorage } from './oauth-token-storage.js';
+
+// === 类型定义 ===
+export type * from './types.js';

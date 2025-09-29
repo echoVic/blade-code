@@ -1,9 +1,10 @@
 /**
- * UI样式配置
+ * UI样式配置 - 基于现代化主题系统
  */
-
 import chalk from 'chalk';
+import { themeManager } from './theme-manager.js';
 
+// 动态样式生成器
 export const UIStyles = {
   // 文本样式
   text: {
@@ -16,37 +17,91 @@ export const UIStyles = {
 
   // 状态样式
   status: {
-    success: (text: string) => chalk.green(text),
-    error: (text: string) => chalk.red(text),
-    warning: (text: string) => chalk.yellow(text),
-    info: (text: string) => chalk.blue(text),
-    muted: (text: string) => chalk.gray(text),
+    success: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.success)(text);
+    },
+    error: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.error)(text);
+    },
+    warning: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.warning)(text);
+    },
+    info: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.info)(text);
+    },
+    muted: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.muted)(text);
+    },
   },
 
   // 语义化样式
   semantic: {
-    primary: (text: string) => chalk.blue(text),
-    secondary: (text: string) => chalk.gray(text),
-    accent: (text: string) => chalk.magenta(text),
-    highlight: (text: string) => chalk.bgYellow.black(text),
+    primary: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.primary)(text);
+    },
+    secondary: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.secondary)(text);
+    },
+    accent: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.accent)(text);
+    },
+    highlight: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.bgHex(theme.colors.highlight).hex(theme.colors.text.primary)(text);
+    },
   },
 
   // 标题样式
   heading: {
-    h1: (text: string) => chalk.bold.blue(text),
-    h2: (text: string) => chalk.bold.cyan(text),
-    h3: (text: string) => chalk.bold.green(text),
-    h4: (text: string) => chalk.bold.yellow(text),
+    h1: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.bold.hex(theme.colors.primary)(text);
+    },
+    h2: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.bold.hex(theme.colors.info)(text);
+    },
+    h3: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.bold.hex(theme.colors.success)(text);
+    },
+    h4: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.bold.hex(theme.colors.warning)(text);
+    },
   },
 
   // 特殊组件样式
   component: {
-    header: (text: string) => chalk.bold.blue(text),
-    section: (text: string) => chalk.cyan(text),
+    header: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.bold.hex(theme.colors.primary)(text);
+    },
+    section: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.info)(text);
+    },
     label: (text: string) => chalk.white(text),
-    value: (text: string) => chalk.green(text),
-    code: (text: string) => chalk.gray.bgBlack(` ${text} `),
-    quote: (text: string) => chalk.italic.gray(text),
+    value: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.success)(text);
+    },
+    code: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.gray.bgHex(theme.colors.background.secondary)(` ${text} `);
+    },
+    quote: (text: string) => {
+      const theme = themeManager.getTheme();
+      return chalk.italic.hex(theme.colors.text.secondary)(text);
+    },
   },
 
   // 图标样式
@@ -66,8 +121,14 @@ export const UIStyles = {
 
   // 边框和分隔符
   border: {
-    line: (length: number = 50) => chalk.gray('─'.repeat(length)),
-    doubleLine: (length: number = 50) => chalk.gray('═'.repeat(length)),
+    line: (length: number = 50) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.border.light)('─'.repeat(length));
+    },
+    doubleLine: (length: number = 50) => {
+      const theme = themeManager.getTheme();
+      return chalk.hex(theme.colors.border.dark)('═'.repeat(length));
+    },
     box: {
       top: '┌',
       bottom: '└',

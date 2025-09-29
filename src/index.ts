@@ -1,216 +1,154 @@
-import { Command } from 'commander';
-import { readFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
-import { agentLlmCommand } from './commands/agent-llm.js';
-import { configCommand } from './commands/config.js';
-import { llmCommand } from './commands/llm.js';
-import { mcpCommand } from './commands/mcp.js';
-import { toolsCommand } from './commands/tools.js';
-import { UIDisplay, UILayout, UIList } from './ui/index.js';
-
-// 获取当前模块的目录路径
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// 读取 package.json 获取版本号
-const packageJsonPath = join(__dirname, '..', 'package.json');
-const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
-const version = packageJson.version;
-
-// 导出 Agent 和 LLM 相关模块
-export { Agent, AgentConfig, AgentResponse, ToolCallResult } from './agent/Agent.js';
-export { BaseComponent } from './agent/BaseComponent.js';
-export { LoggerComponent } from './agent/LoggerComponent.js';
-export { ToolComponent, ToolComponentConfig } from './agent/ToolComponent.js';
-
-// LLM 模块
-export { BaseLLM } from './llm/BaseLLM.js';
-export { QwenLLM } from './llm/QwenLLM.js';
-export { VolcEngineLLM } from './llm/VolcEngineLLM.js';
-
-// 配置模块
-export {
-  DEFAULT_CONFIG,
-  getProviderConfig,
-  getSupportedProviders,
-  isProviderSupported,
-  loadConfigFromEnv,
-} from './config/defaults.js';
-export type { DefaultConfig, LLMProviderConfig } from './config/defaults.js';
-
-// 工具模块
-export {
-  createToolManager,
-  fileSystemTools,
-  getAllBuiltinTools,
-  getBuiltinToolsByCategory,
-  gitTools,
-  networkTools,
-  smartTools,
-  textProcessingTools,
-  ToolExecutionError,
-  ToolManager,
-  ToolRegistrationError,
-  ToolValidationError,
-  ToolValidator,
-  utilityTools,
-} from './tools/index.js';
+/**
+ * @blade-ai/core 包公共 API - 简化架构
+ */
 
 export type {
-  ToolCallRequest,
-  ToolCallResponse,
-  ToolDefinition,
-  ToolExecutionContext,
-  ToolExecutionHistory,
-  ToolExecutionResult,
-  ToolManagerConfig,
-  ToolParameterSchema,
-  ToolRegistrationOptions,
-} from './tools/index.js';
+  ChatContext as AgentChatContext,
+  ChatContext,
+  ToolCall,
+  ToolRegistry as AgentToolRegistry,
+  ToolRegistry,
+} from './agent/Agent.js';
+// Agent核心系统（已增强支持工具集成）
+export { Agent } from './agent/Agent.js';
+export { ExecutionEngine } from './agent/ExecutionEngine.js';
+export type { AgentConfig, AgentResponse, AgentTask } from './agent/types.js';
 
-// 类型定义
-export type { LLMMessage, LLMRequest, LLMResponse } from './llm/BaseLLM.js';
+// Agent系统已集成工具支持（第八章架构实现）
+// Agent现在直接支持工具注册和调用，无需额外包装层
 
-// MCP 模块
-export * from './mcp/index.js';
+// 配置管理 (简化版)
+export { ConfigManager } from './config/config-manager.js';
+// 统一配置类型 (供CLI和其他包使用)
+export { DEFAULT_CONFIG } from './config/defaults.js';
+export type {
+  AuthProvider,
+  BladeConfig,
+  ConfigError,
+  ConfigLocations,
+  ConfigMigration,
+  ConfigStatus,
+  ConfigValidator,
+  EnvMapping,
+  ExtensionConfig,
+  MCPServer,
+  MigrationChange,
+  PluginLoadOrder,
+  RouteConfig,
+  UserConfigOverride,
+} from './config/types.js';
+export type { ChatConfig, ChatResponse, Message } from './services/ChatService.js';
+// Chat服务 (统一的LLM接口)
+// 核心服务
+export { ChatService, ChatService as LLMService } from './services/ChatService.js';
+// 新工具系统
+export * from './tools/index.js';
 
-const program = new Command();
+// 版本信息
+export const VERSION = '1.3.0';
 
-// 设置基本信息
-program.name('blade').description('🗡️ Blade - 智能 AI 助手命令行工具').version(version);
-
-// 注册 LLM 相关命令
-agentLlmCommand(program);
-llmCommand(program);
-
-// 注册配置相关命令
-configCommand(program);
-
-// 注册工具相关命令
-toolsCommand(program);
-
-// 注册 MCP 相关命令
-mcpCommand(program);
-
-// 添加帮助信息
-program.on('--help', () => {
-  UIDisplay.newline();
-  UIDisplay.header('Blade 使用示例');
-  UIDisplay.newline();
-
-  // 智能对话示例
-  UIDisplay.section('💬 智能对话');
-  const chatExamples = [
-    'blade chat 什么是人工智能',
-    'blade chat 解释一下微服务架构',
-    'blade chat --scenario customer 怎么退货',
-    'blade chat --stream 详细解释机器学习',
-  ];
-  UIList.simple(chatExamples, { indent: 2 });
-  UIDisplay.newline();
-
-  // 交互式聊天示例
-  UIDisplay.section('🔄 交互式聊天');
-  const interactiveExamples = [
-    'blade chat --interactive',
-    'blade chat -i --scenario code --stream',
-  ];
-  UIList.simple(interactiveExamples, { indent: 2 });
-  UIDisplay.newline();
-
-  // 上下文记忆聊天示例
-  UIDisplay.section('🧠 带上下文记忆的聊天');
-  const contextExamples = [
-    'blade chat --context --interactive',
-    'blade chat --context "你还记得我之前问的问题吗？"',
-    'blade chat --context --context-session my-session',
-    'blade chat --context --context-user john --interactive',
-  ];
-  UIList.simple(contextExamples, { indent: 2 });
-  UIDisplay.newline();
-
-  // 场景演示示例
-  UIDisplay.section('🎭 场景演示');
-  const demoExamples = [
-    'blade chat --demo --scenario assistant',
-    'blade chat --demo --scenario customer',
-  ];
-  UIList.simple(demoExamples, { indent: 2 });
-  UIDisplay.newline();
-
-  // LLM 模式示例
-  UIDisplay.section('🤖 纯 LLM 模式');
-  const llmExamples = ['blade llm --stream', 'blade llm --provider volcengine'];
-  UIList.simple(llmExamples, { indent: 2 });
-  UIDisplay.newline();
-
-  // 模型管理示例
-  UIDisplay.section('📋 模型管理');
-  const modelExamples = ['blade models --provider qwen', 'blade models --provider volcengine'];
-  UIList.simple(modelExamples, { indent: 2 });
-  UIDisplay.newline();
-
-  // 配置管理示例
-  UIDisplay.section('⚙️ 配置管理');
-  const configExamples = [
-    'blade config show',
-    'blade config set-provider volcengine',
-    'blade config set-model ep-20250530171222-q42h8',
-    'blade config switch',
-    'blade config wizard',
-  ];
-  UIList.simple(configExamples, { indent: 2 });
-  UIDisplay.newline();
-
-  // 工具管理示例
-  UIDisplay.section('🔧 工具管理');
-  const toolExamples = [
-    'blade tools list',
-    'blade tools info smart_code_review',
-    'blade tools call uuid',
-    'blade tools call command_confirmation \\\n    --params \'{"command": "ls -la", "description": "查看文件"}\'',
-  ];
-  UIList.simple(toolExamples, { indent: 2 });
-  UIDisplay.newline();
-
-  // MCP 支持示例
-  UIDisplay.section('🔗 MCP 支持');
-  const mcpExamples = [
-    'blade mcp server start',
-    'blade mcp config add',
-    'blade mcp client connect my-server',
-    'blade chat --mcp my-server "使用外部资源分析"',
-  ];
-  UIList.simple(mcpExamples, { indent: 2 });
-  UIDisplay.newline();
-
-  // 命令确认功能
-  UILayout.card(
-    '✨ 命令确认功能',
-    [
-      '• 📋 命令展示 - 清晰显示建议的命令和说明',
-      '• 🔍 风险评估 - 自动显示命令的风险级别',
-      '• ✅ 用户确认 - 交互式确认是否执行',
-      '• ⚡ 实时执行 - 确认后立即执行命令',
-      '• 📊 执行统计 - 显示执行时间和结果',
-    ],
-    { width: 60, style: 'rounded' }
-  );
-  UIDisplay.newline();
-
-  // 提示信息
-  UIDisplay.warning('💡 提示: 使用 "blade chat 你的问题" 进行智能对话');
-  UIDisplay.muted('        使用命令确认工具安全执行AI建议的命令');
-  UIDisplay.muted('        在对话中说"请使用命令确认工具执行..."');
-});
-
-if (!process.argv.slice(2).length) {
-  UIDisplay.header('🗡️ 欢迎使用 Blade！');
-  UIDisplay.newline();
-  program.outputHelp();
-  process.exit(0);
+// 核心初始化函数
+export async function initializeCore(): Promise<void> {
+  // 简单的初始化逻辑，确保核心模块正常加载
+  try {
+    // 这里可以添加核心组件的初始化逻辑
+    console.log('Core module initialized successfully');
+  } catch (error) {
+    throw new Error(
+      `Core initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
 }
 
-// 解析命令行参数
-program.parse(process.argv);
+// 配置创建和验证函数
+export function createConfig(layers: any): { config: any; errors: any[] } {
+  try {
+    // 简单的配置合并逻辑
+    const config = mergeConfigLayers(layers);
+    const errors = validateConfig(config);
+
+    return {
+      config: errors.length > 0 ? getDefaultConfig() : config,
+      errors,
+    };
+  } catch (error) {
+    return {
+      config: getDefaultConfig(),
+      errors: [error instanceof Error ? error.message : 'Configuration error'],
+    };
+  }
+}
+
+// 辅助函数：合并配置层
+function mergeConfigLayers(layers: any): any {
+  // 导入DEFAULT_CONFIG
+  import('./config/defaults.js').then((module) => module.DEFAULT_CONFIG);
+
+  const merged: any = {
+    auth: {
+      apiKey: '',
+      baseUrl: '',
+      modelName: '',
+      searchApiKey: '',
+    },
+    ui: {
+      theme: 'default',
+      hideTips: false,
+      hideBanner: false,
+    },
+  };
+
+  // 按优先级合并：global -> user -> local
+  if (layers.global) {
+    Object.assign(merged, layers.global);
+    if (layers.global.auth) {
+      Object.assign(merged.auth, layers.global.auth);
+    }
+    if (layers.global.ui) {
+      Object.assign(merged.ui, layers.global.ui);
+    }
+  }
+
+  if (layers.user) {
+    Object.assign(merged, layers.user);
+    if (layers.user.auth) {
+      Object.assign(merged.auth, layers.user.auth);
+    }
+    if (layers.user.ui) {
+      Object.assign(merged.ui, layers.user.ui);
+    }
+  }
+
+  return merged;
+}
+
+// 辅助函数：验证配置
+function validateConfig(config: any): any[] {
+  const errors: any[] = [];
+
+  // 验证必需字段
+  if (config.auth) {
+    if (typeof config.auth.apiKey !== 'string') {
+      errors.push('auth.apiKey must be a string');
+    }
+  }
+
+  return errors;
+}
+
+// 辅助函数：获取默认配置
+function getDefaultConfig(): any {
+  return {
+    auth: {
+      apiKey: '',
+      baseUrl: '',
+      modelName: '',
+      searchApiKey: '',
+    },
+    ui: {
+      theme: 'default',
+      hideTips: false,
+      hideBanner: false,
+    },
+  };
+}

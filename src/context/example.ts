@@ -36,7 +36,10 @@ async function example() {
     await contextManager.addMessage('system', '你是一个专业的 TypeScript 开发助手。');
 
     // 添加用户消息
-    await contextManager.addMessage('user', '我想创建一个 TypeScript 项目，可以帮我设计架构吗？');
+    await contextManager.addMessage(
+      'user',
+      '我想创建一个 TypeScript 项目，可以帮我设计架构吗？'
+    );
 
     // 添加助手回复
     await contextManager.addMessage(
@@ -61,11 +64,12 @@ async function example() {
     });
 
     // 获取格式化的上下文
-    const { context, compressed, tokenCount } = await contextManager.getFormattedContext({
-      maxTokens: 1500,
-      includeTools: true,
-      includeWorkspace: true,
-    });
+    const { context, compressed, tokenCount } =
+      await contextManager.getFormattedContext({
+        maxTokens: 1500,
+        includeTools: true,
+        includeWorkspace: true,
+      });
 
     console.log(`📊 上下文信息:`);
     console.log(`- Token 数量: ${tokenCount}`);

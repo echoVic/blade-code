@@ -32,14 +32,20 @@ export class UIProgress {
   /**
    * 创建旋转加载器
    */
-  public static spinner(text: string = '加载中...', options: SpinnerOptions = {}): Spinner {
+  public static spinner(
+    text: string = '加载中...',
+    options: SpinnerOptions = {}
+  ): Spinner {
     return new Spinner(text, options);
   }
 
   /**
    * 创建进度条
    */
-  public static progressBar(total: number, options: ProgressBarOptions = {}): ProgressBar {
+  public static progressBar(
+    total: number,
+    options: ProgressBarOptions = {}
+  ): ProgressBar {
     return new ProgressBar(total, options);
   }
 
@@ -112,11 +118,13 @@ export class UIProgress {
    * 倒计时
    */
   public static countdown(seconds: number, message: string = '倒计时'): Promise<void> {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       let remaining = seconds;
 
       const timer = setInterval(() => {
-        process.stdout.write(`\r${message}: ${UIStyles.status.warning(remaining.toString())}s `);
+        process.stdout.write(
+          `\r${message}: ${UIStyles.status.warning(remaining.toString())}s `
+        );
 
         remaining--;
 
@@ -133,7 +141,10 @@ export class UIProgress {
   /**
    * 模拟加载过程
    */
-  public static async simulate(duration: number, message: string = '处理中'): Promise<void> {
+  public static async simulate(
+    duration: number,
+    message: string = '处理中'
+  ): Promise<void> {
     const steps = 20;
     const stepDuration = duration / steps;
 
@@ -144,7 +155,7 @@ export class UIProgress {
       process.stdout.write(`\r${message}: ${progress} ${percentage}%`);
 
       if (i < steps) {
-        await new Promise(resolve => setTimeout(resolve, stepDuration));
+        await new Promise((resolve) => setTimeout(resolve, stepDuration));
       }
     }
 
@@ -309,7 +320,9 @@ export class ProgressBar {
     const filledWidth = Math.round((this.current / this.total) * this.options.width!);
     const emptyWidth = this.options.width! - filledWidth;
 
-    const filledBar = UIStyles.status.success(this.options.complete!.repeat(filledWidth));
+    const filledBar = UIStyles.status.success(
+      this.options.complete!.repeat(filledWidth)
+    );
     const emptyBar = UIStyles.status.muted(this.options.incomplete!.repeat(emptyWidth));
     const bar = `[${filledBar}${emptyBar}]`;
 

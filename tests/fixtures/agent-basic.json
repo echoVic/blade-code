@@ -1,0 +1,26 @@
+{
+  "id": "agent-basic",
+  "name": "Basic Agent",
+  "data": {
+    "id": "agent-001",
+    "name": "Test Agent",
+    "model": "gpt-4",
+    "maxTokens": 4000,
+    "temperature": 0.7,
+    "systemPrompt": "You are a helpful AI assistant",
+    "createdAt": "2023-01-01T00:00:00.000Z",
+    "updatedAt": "2023-01-01T00:00:00.000Z",
+    "status": "active",
+    "config": {
+      "workspace": "/test/workspace",
+      "theme": "default",
+      "logging": {
+        "level": "info",
+        "format": "text"
+      }
+    }
+  },
+  "type": "json",
+  "created": "2023-01-01T00:00:00.000Z",
+  "updated": "2023-01-01T00:00:00.000Z"
+}

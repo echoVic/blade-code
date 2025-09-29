@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { BaseComponent } from './BaseComponent.js';
+import { LoggerComponent } from './LoggerComponent.js';
 
 /**
  * 组件管理器配置
@@ -27,6 +28,7 @@ export class ComponentManager extends EventEmitter {
   private config: ComponentManagerConfig;
   private isInitialized = false;
   private isDestroyed = false;
+  private logger: LoggerComponent = new LoggerComponent('component-manager');
 
   constructor(config: ComponentManagerConfig = {}) {
     super();
@@ -98,7 +100,11 @@ export class ComponentManager extends EventEmitter {
           this.emit('componentDestroyed', { id: name, component });
         } catch (error) {
           this.log(`组件 ${name} 销毁失败: ${error}`);
-          this.emit('componentDestructionFailed', { id: name, component, error: error as Error });
+          this.emit('componentDestructionFailed', {
+            id: name,
+            component,
+            error: error as Error,
+          });
         }
       }
 
@@ -133,7 +139,11 @@ export class ComponentManager extends EventEmitter {
         this.emit('componentInitialized', { id, component });
       } catch (error) {
         this.log(`组件 "${id}" 自动初始化失败: ${error}`);
-        this.emit('componentInitializationFailed', { id, component, error: error as Error });
+        this.emit('componentInitializationFailed', {
+          id,
+          component,
+          error: error as Error,
+        });
         throw error;
       }
     }
@@ -212,7 +222,9 @@ export class ComponentManager extends EventEmitter {
   /**
    * 搜索组件
    */
-  public searchComponents(predicate: (component: BaseComponent) => boolean): BaseComponent[] {
+  public searchComponents(
+    predicate: (component: BaseComponent) => boolean
+  ): BaseComponent[] {
     const result: BaseComponent[] = [];
     for (const component of this.components.values()) {
       if (predicate(component)) {
@@ -240,7 +252,7 @@ export class ComponentManager extends EventEmitter {
     for (const id of ids) {
       try {
         results[id] = await this.removeComponent(id);
-      } catch (error) {
+      } catch (_error) {
         results[id] = false;
       }
     }
@@ -352,7 +364,7 @@ export class ComponentManager extends EventEmitter {
         resolve();
       });
 
-      this.once('initializationFailed', error => {
+      this.once('initializationFailed', (error) => {
         clearTimeout(timer);
         reject(error);
       });
@@ -364,7 +376,10 @@ export class ComponentManager extends EventEmitter {
    */
   private log(message: string): void {
     if (this.config.debug) {
-      console.log(`[ComponentManager] ${message}`);
+      this.logger.debug(`[ComponentManager] ${message}`, {
+        component: 'component-manager',
+        action: 'log',
+      });
     }
   }
 }

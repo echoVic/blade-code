@@ -23,7 +23,11 @@ export class UILayout {
   /**
    * 创建页面头部
    */
-  public static header(title: string, subtitle?: string, options: LayoutOptions = {}): void {
+  public static header(
+    title: string,
+    subtitle?: string,
+    options: LayoutOptions = {}
+  ): void {
     const opts = { width: 80, padding: 2, border: true, ...options };
 
     UIDisplay.newline();
@@ -103,9 +107,11 @@ export class UILayout {
     // 计算列宽
     const columnWidths =
       opts.columnWidths ||
-      Array(colCount).fill(Math.floor((opts.totalWidth - (colCount - 1) * 3) / colCount));
+      Array(colCount).fill(
+        Math.floor((opts.totalWidth - (colCount - 1) * 3) / colCount)
+      );
 
-    const maxLines = Math.max(...columns.map(col => col.length));
+    const maxLines = Math.max(...columns.map((col) => col.length));
 
     for (let i = 0; i < maxLines; i++) {
       const line = columns
@@ -145,11 +151,13 @@ export class UILayout {
 
     // 上边距
     for (let i = 0; i < opts.padding; i++) {
-      UIDisplay.text(boxChars.vertical + ' '.repeat(opts.width - 2) + boxChars.vertical);
+      UIDisplay.text(
+        boxChars.vertical + ' '.repeat(opts.width - 2) + boxChars.vertical
+      );
     }
 
     // 内容行
-    lines.forEach(line => {
+    lines.forEach((line) => {
       const trimmedLine = line.substring(0, contentWidth);
       const alignedLine = this.alignText(trimmedLine, contentWidth, opts.align);
 
@@ -164,12 +172,16 @@ export class UILayout {
 
     // 下边距
     for (let i = 0; i < opts.padding; i++) {
-      UIDisplay.text(boxChars.vertical + ' '.repeat(opts.width - 2) + boxChars.vertical);
+      UIDisplay.text(
+        boxChars.vertical + ' '.repeat(opts.width - 2) + boxChars.vertical
+      );
     }
 
     // 底部边框
     UIDisplay.text(
-      boxChars.bottomLeft + boxChars.horizontal.repeat(opts.width - 2) + boxChars.bottomRight
+      boxChars.bottomLeft +
+        boxChars.horizontal.repeat(opts.width - 2) +
+        boxChars.bottomRight
     );
   }
 
@@ -209,7 +221,7 @@ export class UILayout {
     for (let i = 0; i < items.length; i += opts.columns) {
       const row = items.slice(i, i + opts.columns);
       const line = row
-        .map(item => {
+        .map((item) => {
           return item.padEnd(opts.cellWidth).substring(0, opts.cellWidth);
         })
         .join(' '.repeat(opts.spacing));
@@ -236,8 +248,10 @@ export class UILayout {
       UIDisplay.section(section.title);
 
       // 节内容
-      const lines = Array.isArray(section.content) ? section.content : [section.content];
-      lines.forEach(line => {
+      const lines = Array.isArray(section.content)
+        ? section.content
+        : [section.content];
+      lines.forEach((line) => {
         UIDisplay.text(line, { indent: 2 });
       });
     });
@@ -268,10 +282,11 @@ export class UILayout {
     const padding = width - text.length;
 
     switch (align) {
-      case 'center':
+      case 'center': {
         const leftPad = Math.floor(padding / 2);
         const rightPad = padding - leftPad;
         return ' '.repeat(leftPad) + text + ' '.repeat(rightPad);
+      }
       case 'right':
         return ' '.repeat(padding) + text;
       default: // left
@@ -341,7 +356,12 @@ export class UILayout {
       align?: 'left' | 'center' | 'right';
     } = {}
   ): void {
-    const opts = { width: 80, style: 'single' as const, align: 'center' as const, ...options };
+    const opts = {
+      width: 80,
+      style: 'single' as const,
+      align: 'center' as const,
+      ...options,
+    };
 
     if (!text) {
       const line = opts.style === 'double' ? '═' : '─';

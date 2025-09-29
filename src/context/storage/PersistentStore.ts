@@ -51,7 +51,7 @@ export class PersistentStore {
       const sessionPath = path.join(this.storagePath, 'sessions', `${sessionId}.json`);
       const data = await fs.readFile(sessionPath, 'utf-8');
       return JSON.parse(data) as SessionContext;
-    } catch (error) {
+    } catch (_error) {
       return null;
     }
   }
@@ -59,9 +59,16 @@ export class PersistentStore {
   /**
    * 保存对话上下文
    */
-  async saveConversation(sessionId: string, conversation: ConversationContext): Promise<void> {
+  async saveConversation(
+    sessionId: string,
+    conversation: ConversationContext
+  ): Promise<void> {
     try {
-      const conversationPath = path.join(this.storagePath, 'conversations', `${sessionId}.json`);
+      const conversationPath = path.join(
+        this.storagePath,
+        'conversations',
+        `${sessionId}.json`
+      );
       const data = {
         ...conversation,
         lastSaved: Date.now(),
@@ -77,10 +84,14 @@ export class PersistentStore {
    */
   async loadConversation(sessionId: string): Promise<ConversationContext | null> {
     try {
-      const conversationPath = path.join(this.storagePath, 'conversations', `${sessionId}.json`);
+      const conversationPath = path.join(
+        this.storagePath,
+        'conversations',
+        `${sessionId}.json`
+      );
       const data = await fs.readFile(conversationPath, 'utf-8');
       return JSON.parse(data) as ConversationContext;
-    } catch (error) {
+    } catch (_error) {
       return null;
     }
   }
@@ -103,10 +114,10 @@ export class PersistentStore {
       const sessionsDir = path.join(this.storagePath, 'sessions');
       const files = await fs.readdir(sessionsDir);
       return files
-        .filter(file => file.endsWith('.json'))
-        .map(file => file.replace('.json', ''))
+        .filter((file) => file.endsWith('.json'))
+        .map((file) => file.replace('.json', ''))
         .sort();
-    } catch (error) {
+    } catch (_error) {
       return [];
     }
   }
@@ -136,7 +147,7 @@ export class PersistentStore {
         messageCount: conversation.messages.length,
         topics: conversation.topics || [],
       };
-    } catch (error) {
+    } catch (_error) {
       return null;
     }
   }
@@ -147,7 +158,11 @@ export class PersistentStore {
   async deleteSession(sessionId: string): Promise<void> {
     try {
       const sessionPath = path.join(this.storagePath, 'sessions', `${sessionId}.json`);
-      const conversationPath = path.join(this.storagePath, 'conversations', `${sessionId}.json`);
+      const conversationPath = path.join(
+        this.storagePath,
+        'conversations',
+        `${sessionId}.json`
+      );
 
       await Promise.all([
         fs.unlink(sessionPath).catch(() => {}),
@@ -170,7 +185,7 @@ export class PersistentStore {
 
       // 获取所有会话的摘要信息并按时间排序
       const sessionSummaries = await Promise.all(
-        sessions.map(sessionId => this.getSessionSummary(sessionId))
+        sessions.map((sessionId) => this.getSessionSummary(sessionId))
       );
 
       const validSummaries = sessionSummaries
@@ -180,9 +195,11 @@ export class PersistentStore {
       // 删除最旧的会话
       const sessionsToDelete = validSummaries
         .slice(this.maxSessions)
-        .map(summary => summary.sessionId);
+        .map((summary) => summary.sessionId);
 
-      await Promise.all(sessionsToDelete.map(sessionId => this.deleteSession(sessionId)));
+      await Promise.all(
+        sessionsToDelete.map((sessionId) => this.deleteSession(sessionId))
+      );
 
       if (sessionsToDelete.length > 0) {
         console.log(`清理了 ${sessionsToDelete.length} 个旧会话`);
@@ -217,7 +234,11 @@ export class PersistentStore {
       let totalSize = 0;
       for (const sessionId of sessions) {
         try {
-          const sessionPath = path.join(this.storagePath, 'sessions', `${sessionId}.json`);
+          const sessionPath = path.join(
+            this.storagePath,
+            'sessions',
+            `${sessionId}.json`
+          );
           const conversationPath = path.join(
             this.storagePath,
             'conversations',
@@ -230,14 +251,14 @@ export class PersistentStore {
           ]);
 
           totalSize += sessionStat.size + conversationStat.size;
-        } catch (error) {
+        } catch (_error) {
           // 忽略单个文件的错误
         }
       }
 
       // 获取最新和最旧的会话
       const sessionSummaries = await Promise.all(
-        sessions.map(sessionId => this.getSessionSummary(sessionId))
+        sessions.map((sessionId) => this.getSessionSummary(sessionId))
       );
 
       const validSummaries = sessionSummaries

@@ -1,10 +1,17 @@
 import { ContextManager } from './ContextManager.js';
-import { CompressedContext, ContextData, ContextManagerOptions, ContextMessage } from './types.js';
+import {
+  CompressedContext,
+  ContextData,
+  ContextManagerOptions,
+  ContextMessage,
+} from './types.js';
 
 /**
  * 创建配置好的上下文管理器
  */
-export function createContextManager(options: Partial<ContextManagerOptions> = {}): ContextManager {
+export function createContextManager(
+  options: Partial<ContextManagerOptions> = {}
+): ContextManager {
   return new ContextManager(options);
 }
 
@@ -61,7 +68,7 @@ export function formatContextForPrompt(
 ${compressed.summary}
 
 ### 关键要点
-${compressed.keyPoints.map(point => `- ${point}`).join('\n')}
+${compressed.keyPoints.map((point) => `- ${point}`).join('\n')}
 
 ### 最近消息
 ${formatMessages(compressed.recentMessages, maxRecentMessages)}`;
@@ -101,7 +108,7 @@ function formatMessages(messages: ContextMessage[], limit?: number): string {
   const messagesToFormat = limit ? messages.slice(-limit) : messages;
 
   return messagesToFormat
-    .map(msg => {
+    .map((msg) => {
       const time = new Date(msg.timestamp).toLocaleTimeString();
       const role = getRoleDisplayName(msg.role);
       return `[${time}] ${role}: ${msg.content}`;
@@ -116,7 +123,7 @@ function formatToolHistory(toolCalls: any[]): string {
   const recentCalls = toolCalls.slice(-10); // 最近10次调用
 
   return recentCalls
-    .map(call => {
+    .map((call) => {
       const time = new Date(call.timestamp).toLocaleTimeString();
       const status = call.status === 'success' ? '✅' : '❌';
       return `[${time}] ${status} ${call.name}`;
@@ -173,7 +180,7 @@ export function validateContextData(data: any): data is ContextData {
   // 检查必需的层级结构
   const requiredLayers = ['system', 'session', 'conversation', 'tool', 'workspace'];
   const hasAllLayers = requiredLayers.every(
-    layer => data.layers && typeof data.layers[layer] === 'object'
+    (layer) => data.layers && typeof data.layers[layer] === 'object'
   );
 
   // 检查元数据
@@ -203,7 +210,7 @@ export function estimateContextSize(data: ContextData): {
 
   // Token 估算（中文按4字符1个token计算）
   let totalChars = 0;
-  data.layers.conversation.messages.forEach(msg => {
+  data.layers.conversation.messages.forEach((msg) => {
     totalChars += msg.content.length;
   });
 
@@ -271,7 +278,10 @@ export function cloneContextData(data: ContextData): ContextData {
 /**
  * 合并两个上下文数据
  */
-export function mergeContextData(base: ContextData, overlay: Partial<ContextData>): ContextData {
+export function mergeContextData(
+  base: ContextData,
+  overlay: Partial<ContextData>
+): ContextData {
   const merged = cloneContextData(base);
 
   if (overlay.layers) {

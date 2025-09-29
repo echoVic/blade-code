@@ -37,7 +37,10 @@ export class UIInput {
   /**
    * 文本输入
    */
-  public static async text(message: string, options: TextInputOptions = {}): Promise<string> {
+  public static async text(
+    message: string,
+    options: TextInputOptions = {}
+  ): Promise<string> {
     const answers = await inquirer.prompt([
       {
         type: 'input',
@@ -71,7 +74,10 @@ export class UIInput {
   /**
    * 确认输入
    */
-  public static async confirm(message: string, options: ConfirmOptions = {}): Promise<boolean> {
+  public static async confirm(
+    message: string,
+    options: ConfirmOptions = {}
+  ): Promise<boolean> {
     const answers = await inquirer.prompt([
       {
         type: 'confirm',
@@ -97,7 +103,7 @@ export class UIInput {
         type: 'list',
         name: 'value',
         message: UIStyles.component.label(message),
-        choices: choices.map(choice => ({
+        choices: choices.map((choice) => ({
           name: choice.name,
           value: choice.value,
           short: choice.short || choice.name,
@@ -123,7 +129,7 @@ export class UIInput {
         type: 'checkbox',
         name: 'value',
         message: UIStyles.component.label(message),
-        choices: choices.map(choice => ({
+        choices: choices.map((choice) => ({
           name: choice.name,
           value: choice.value,
           checked: false,
@@ -206,7 +212,10 @@ export class UIInput {
   /**
    * 编辑器输入（多行文本）
    */
-  public static async editor(message: string, options: TextInputOptions = {}): Promise<string> {
+  public static async editor(
+    message: string,
+    options: TextInputOptions = {}
+  ): Promise<string> {
     const answers = await inquirer.prompt([
       {
         type: 'editor',
@@ -228,7 +237,9 @@ export class UIInput {
   /**
    * 等待用户按键继续
    */
-  public static async pressKeyToContinue(message: string = '按任意键继续...'): Promise<void> {
+  public static async pressKeyToContinue(
+    message: string = '按任意键继续...'
+  ): Promise<void> {
     await inquirer.prompt([
       {
         type: 'input',
@@ -256,7 +267,7 @@ export class UIInput {
     options: string[],
     defaultIndex: number = 0
   ): Promise<string> {
-    const choices: Choice[] = options.map(option => ({
+    const choices: Choice[] = options.map((option) => ({
       name: option,
       value: option,
       short: option,

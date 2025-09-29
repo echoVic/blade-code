@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//usr/local/etc/**)",
+      "Bash(unset:*)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "mcp__github__get_file_contents",
+      "Bash(npm run type-check:*)",
+      "Bash(npm test)",
+      "Bash(npx vitest:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npx eslint:*)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(npm run start:*)",
+      "Bash(find:*)",
+      "Bash(curl:*)",
+      "Bash(bash)",
+      "Bash(node:*)",
+      "Bash(pnpm add:*)",
+      "Bash(npx:*)",
+      "Bash(xargs sed:*)"
+    ],
+    "deny": [],
+    "ask": [],
+    "additionalDirectories": [
+      "/Users/bytedance"
+    ]
+  }
+}

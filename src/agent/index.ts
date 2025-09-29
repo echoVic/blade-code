@@ -1,16 +1,12 @@
-// Agent 核心类
+/**
+ * Agent模块导出 - 简化架构
+ */
+
+export { ContextManager } from '../context/ContextManager.js';
+// 上下文管理
+export { ContextCompressor } from '../context/processors/ContextCompressor.js';
+// 核心Agent类
 export { Agent } from './Agent.js';
-export type { AgentConfig, AgentResponse, ToolCallResult } from './Agent.js';
-
-// 管理器类
-export { LLMManager } from './LLMManager.js';
-export type { LLMConfig } from './LLMManager.js';
-
-export { ComponentManager } from './ComponentManager.js';
-export type { ComponentEvent, ComponentManagerConfig } from './ComponentManager.js';
-
-// 组件基类和具体组件
-export { BaseComponent } from './BaseComponent.js';
-export { ContextComponent } from './ContextComponent.js';
-export type { ContextComponentConfig } from './ContextComponent.js';
-export { ToolComponent } from './ToolComponent.js';
+// Agent创建函数
+export { createAgent, type AgentOptions } from './agent-creator.js';
+export type { AgentConfig, AgentResponse, AgentTask } from './types.js';

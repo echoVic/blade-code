@@ -110,7 +110,11 @@ export class UIDisplay {
   /**
    * 节标题
    */
-  public static section(title: string, content?: string, options?: DisplayOptions): void {
+  public static section(
+    title: string,
+    content?: string,
+    options?: DisplayOptions
+  ): void {
     const text = UIStyles.component.section(title);
     this.output(text, options);
 
@@ -149,7 +153,9 @@ export class UIDisplay {
    * 分隔线
    */
   public static separator(length: number = 50, double: boolean = false): void {
-    const line = double ? UIStyles.border.doubleLine(length) : UIStyles.border.line(length);
+    const line = double
+      ? UIStyles.border.doubleLine(length)
+      : UIStyles.border.line(length);
     this.output(line);
   }
 
@@ -187,7 +193,12 @@ export class UIDisplay {
   /**
    * 步骤提示
    */
-  public static step(step: number, total: number, message: string, options?: DisplayOptions): void {
+  public static step(
+    step: number,
+    total: number,
+    message: string,
+    options?: DisplayOptions
+  ): void {
     const stepText = UIStyles.status.info(`[${step}/${total}]`);
     const text = `${stepText} ${message}`;
     this.output(text, options);

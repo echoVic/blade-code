@@ -112,7 +112,11 @@ export class CacheStore {
   /**
    * 缓存消息摘要
    */
-  cacheMessageSummary(sessionId: string, messages: ContextMessage[], summary: string): void {
+  cacheMessageSummary(
+    sessionId: string,
+    messages: ContextMessage[],
+    summary: string
+  ): void {
     const key = `summary:${sessionId}:${messages.length}`;
     this.set(
       key,
@@ -224,7 +228,7 @@ export class CacheStore {
       }
     }
 
-    expiredKeys.forEach(key => this.cache.delete(key));
+    expiredKeys.forEach((key) => this.cache.delete(key));
   }
 
   /**

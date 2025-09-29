@@ -1,0 +1,47 @@
+{
+  "id": "project-react",
+  "name": "React Project",
+  "data": {
+    "id": "project-001",
+    "name": "React Test Project",
+    "description": "A test React project for testing purposes",
+    "path": "/test/projects/react-app",
+    "type": "javascript",
+    "version": "1.0.0",
+    "framework": "react",
+    "createdAt": "2023-01-01T00:00:00.000Z",
+    "updatedAt": "2023-01-01T00:00:00.000Z",
+    "status": "active",
+    "owner": {
+      "id": "user-001",
+      "username": "testuser",
+      "email": "test@example.com",
+      "name": "Test User",
+      "role": "developer"
+    },
+    "collaborators": [
+      {
+        "id": "user-002",
+        "username": "collaborator1",
+        "email": "collab1@example.com",
+        "name": "Collaborator One",
+        "role": "developer"
+      }
+    ],
+    "settings": {
+      "buildCommand": "npm run build",
+      "testCommand": "npm test",
+      "deployCommand": "npm run deploy",
+      "environment": "development"
+    },
+    "stats": {
+      "builds": 15,
+      "deployments": 3,
+      "commits": 127,
+      "issues": 8
+    }
+  },
+  "type": "json",
+  "created": "2023-01-01T00:00:00.000Z",
+  "updated": "2023-01-01T00:00:00.000Z"
+}

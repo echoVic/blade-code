@@ -167,7 +167,7 @@ export class UIValidator {
     }
 
     const octets = match.slice(1).map(Number);
-    if (octets.some(octet => octet > 255)) {
+    if (octets.some((octet) => octet > 255)) {
       return '请输入有效的IP地址';
     }
 
@@ -324,7 +324,10 @@ export class UIValidator {
         return '密码必须包含数字';
       }
 
-      if (opts.requireSpecialChars && !/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(value)) {
+      if (
+        opts.requireSpecialChars &&
+        !/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(value)
+      ) {
         return '密码必须包含特殊字符';
       }
 
