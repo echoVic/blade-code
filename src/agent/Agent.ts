@@ -5,6 +5,7 @@
 
 import { EventEmitter } from 'events';
 import { ChatService, type Message } from '../services/ChatService.js';
+import { PromptBuilder } from '../prompts/index.js';
 import type { DeclarativeTool } from '../tools/base/DeclarativeTool.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import type { ToolResult } from '../tools/types/index.js';
@@ -84,10 +85,12 @@ export class Agent extends EventEmitter {
   private isInitialized = false;
   private activeTask?: AgentTask;
   private toolRegistry: ToolRegistry;
+  private systemPrompt?: string;
 
   // 核心组件
   private chatService!: ChatService;
   private executionEngine!: ExecutionEngine;
+  private promptBuilder!: PromptBuilder;
 
   constructor(config: AgentConfig, toolRegistry?: ToolRegistry) {
     super();
@@ -106,13 +109,16 @@ export class Agent extends EventEmitter {
     try {
       this.log('初始化Agent...');
 
-      // 1. 注册内置工具
+      // 1. 初始化系统提示
+      await this.initializeSystemPrompt();
+
+      // 2. 注册内置工具
       await this.registerBuiltinTools();
 
-      // 2. 初始化核心组件
+      // 3. 初始化核心组件
       this.chatService = new ChatService(this.config.chat);
 
-      // 3. 初始化执行引擎
+      // 4. 初始化执行引擎
       this.executionEngine = new ExecutionEngine(this.chatService, this.config);
 
       this.isInitialized = true;
@@ -216,8 +222,10 @@ export class Agent extends EventEmitter {
         { role: 'user', content: message },
       ];
 
-      // 3. 调用 LLM，让它决定是否需要工具调用
-      const response = await this.chatService.chatDetailed(messages, tools);
+      // 3. 调用 LLM，让它决定是否需要工具调用，并包含系统提示
+      const response = await this.chatService.chatDetailed(messages, tools, {
+        systemPrompt: this.systemPrompt,
+      });
       console.log(`🔧 LLM response:`, JSON.stringify(response, null, 2));
 
       // 4. 检查是否需要工具调用
@@ -306,15 +314,9 @@ export class Agent extends EventEmitter {
       throw new Error('Agent未初始化');
     }
 
-    const task: AgentTask = {
-      id: this.generateTaskId(),
-      type: 'simple',
-      prompt: message,
-      context: { systemPrompt },
-    };
-
-    const response = await this.executeTask(task);
-    return response.content;
+    // 直接使用 ChatService 的系统提示功能
+    const messages: Message[] = [{ role: 'user', content: message }];
+    return this.chatService.chat(messages, undefined, { systemPrompt });
   }
 
   /**
@@ -578,6 +580,46 @@ export class Agent extends EventEmitter {
    */
   private error(message: string, error?: unknown): void {
     console.error(`[MainAgent] ${message}`, error || '');
+  }
+
+  /**
+   * 初始化系统提示
+   */
+  private async initializeSystemPrompt(): Promise<void> {
+    try {
+      this.promptBuilder = new PromptBuilder({
+        workingDirectory: process.cwd(),
+        config: {
+          enabled: true,
+          allowOverride: true,
+        },
+      });
+
+      // 从配置中获取 CLI 追加的系统提示
+      const cliPrompt = this.config.systemPrompt;
+      this.systemPrompt = await this.promptBuilder.buildString(cliPrompt);
+
+      if (this.systemPrompt) {
+        this.log('系统提示已加载');
+      }
+    } catch (error) {
+      this.error('初始化系统提示失败', error);
+      // 系统提示失败不应该阻止 Agent 初始化
+    }
+  }
+
+  /**
+   * 获取系统提示
+   */
+  public getSystemPrompt(): string | undefined {
+    return this.systemPrompt;
+  }
+
+  /**
+   * 设置 CLI 系统提示
+   */
+  public setCliSystemPrompt(prompt: string): void {
+    this.config.systemPrompt = prompt;
   }
 
   /**

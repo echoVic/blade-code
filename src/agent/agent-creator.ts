@@ -11,6 +11,7 @@ export interface AgentOptions {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
+  systemPrompt?: string;
 }
 
 /**
@@ -70,5 +71,6 @@ async function buildAgentConfig(options: AgentOptions): Promise<AgentConfig> {
         baseUrl,
         model,
       },
+      systemPrompt: options.systemPrompt,
     };
 }

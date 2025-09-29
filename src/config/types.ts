@@ -45,6 +45,16 @@ export interface BladeConfig {
     providers: AuthProvider[];
   };
 
+  // 系统提示配置
+  systemPrompt: {
+    enabled: boolean;
+    default: string;
+    allowOverride: boolean;
+    maxLength: number;
+    loadUserConfig: boolean;
+    loadProjectConfig: boolean;
+  };
+
   // MCP配置
   mcp: {
     enabled: boolean;
@@ -255,6 +265,7 @@ export interface RouteConfig {
 
 // 用户配置覆盖
 export interface UserConfigOverride {
+  systemPrompt?: Partial<BladeConfig['systemPrompt']>;
   ui?: Partial<BladeConfig['ui']>;
   tools?: Partial<BladeConfig['tools']>;
   services?: Partial<BladeConfig['services']>;
@@ -362,6 +373,14 @@ export const DEFAULT_CONFIG: Omit<BladeConfig, 'version' | 'name' | 'description
     tokenRefreshInterval: 3600,
     timeout: 30000,
     providers: [],
+  },
+  systemPrompt: {
+    enabled: true,
+    default: '你是 Blade AI，一个专业的命令行智能编码助手。',
+    allowOverride: true,
+    maxLength: 4000,
+    loadUserConfig: true,
+    loadProjectConfig: true,
   },
   mcp: {
     enabled: false,

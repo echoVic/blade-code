@@ -6,6 +6,7 @@ import type { ChatConfig, Message } from '../services/ChatService.js';
 
 export interface AgentConfig {
   chat: ChatConfig;
+  systemPrompt?: string;
   context?: {
     enabled?: boolean;
     maxTokens?: number;

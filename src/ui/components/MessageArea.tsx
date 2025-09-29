@@ -63,8 +63,8 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
                     </Text>
                   </Box>
                   <Text color="gray">1. 输入问题、编辑文件或运行命令</Text>
-                  <Text color="gray">2. 尽量提供具体描述以获得最佳结果</Text>
-                  <Text color="gray">3. 输入 /help 查看更多命令</Text>
+                  <Text color="gray">2. 使用 /init 创建项目配置文件</Text>
+                  <Text color="gray">3. 输入 /help 查看所有 slash 命令</Text>
                   <Text color="gray">4. 按 Ctrl+C 退出应用</Text>
                   {!isInitialized && (
                     <>
@@ -99,7 +99,7 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
                 {/* 使用指南（简化版） - 左对齐 */}
                 <Box flexDirection="column" marginTop={2}>
                   <Text color="gray">
-                    输入问题开始对话 • 按 Ctrl+C 退出 • 输入 /help 查看更多命令
+输入问题开始对话 • 使用 /init 创建项目配置 • 输入 /help 查看 slash 命令
                   </Text>
                   <Box marginTop={1}>
                     <Text color="gray" dimColor>

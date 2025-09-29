@@ -6,6 +6,7 @@ import { useCommandHandler } from '../hooks/useCommandHandler.js';
 import { useCommandHistory } from '../hooks/useCommandHistory.js';
 import { useKeyboardInput } from '../hooks/useKeyboardInput.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
+import { CommandSuggestions } from './CommandSuggestions.js';
 import { Header } from './Header.js';
 import { InputArea } from './InputArea.js';
 import { MessageArea } from './MessageArea.js';
@@ -90,10 +91,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   }, [stdout]);
 
   // 使用 hooks
-  const { isProcessing, executeCommand } = useCommandHandler();
+  const { isProcessing, executeCommand } = useCommandHandler(otherProps.appendSystemPrompt);
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
 
-  const { input } = useKeyboardInput(
+  const { input, showSuggestions, suggestions, selectedSuggestionIndex } = useKeyboardInput(
     (command: string) => executeCommand(command, addUserMessage, addAssistantMessage),
     getPreviousCommand,
     getNextCommand,
@@ -112,7 +113,17 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         isInitialized={hasApiKey}
       />
 
-      <InputArea input={input} isProcessing={isProcessing || !isInitialized} />
+      <InputArea
+        input={input}
+        isProcessing={isProcessing || !isInitialized}
+      />
+
+      {/* 命令建议列表 - 显示在输入框下方 */}
+      <CommandSuggestions
+        suggestions={suggestions}
+        selectedIndex={selectedSuggestionIndex}
+        visible={showSuggestions}
+      />
 
       <ChatStatusBar
         messageCount={sessionState.messages.length}

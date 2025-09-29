@@ -38,6 +38,7 @@ export function printCommand(program: Command) {
       try {
         const agent = await createAgent({
           model: options.model,
+          systemPrompt: options.appendSystemPrompt,
         });
 
         let input = '';

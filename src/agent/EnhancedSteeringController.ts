@@ -265,7 +265,7 @@ export class EnhancedSteeringController extends EventEmitter {
    * 检查活动任务状态
    */
   private checkActiveTasks(): void {
-    for (const [taskId, task] of this.activeTasks) {
+    this.activeTasks.forEach((task, taskId) => {
       if (task.metadata) {
         const timeoutThreshold = 30000; // 30秒超时
         const startTime = Number(task.metadata.startTime || 0);
@@ -275,7 +275,7 @@ export class EnhancedSteeringController extends EventEmitter {
           this.activeTasks.delete(taskId);
         }
       }
-    }
+    });
   }
 
   /**
@@ -328,9 +328,9 @@ export class EnhancedSteeringController extends EventEmitter {
   private async pauseTask(taskId?: string): Promise<void> {
     if (!taskId) {
       // 暂停所有任务
-      for (const [id] of this.activeTasks) {
+      this.activeTasks.forEach((_, id) => {
         this.emit('taskPaused', { taskId: id });
-      }
+      });
     } else {
       if (this.activeTasks.has(taskId)) {
         this.emit('taskPaused', { taskId });
@@ -344,9 +344,9 @@ export class EnhancedSteeringController extends EventEmitter {
   private async resumeTask(taskId?: string): Promise<void> {
     if (!taskId) {
       // 恢复所有任务
-      for (const [id] of this.activeTasks) {
+      this.activeTasks.forEach((_, id) => {
         this.emit('taskResumed', { taskId: id });
-      }
+      });
     } else {
       if (this.activeTasks.has(taskId)) {
         this.emit('taskResumed', { taskId });
@@ -360,10 +360,11 @@ export class EnhancedSteeringController extends EventEmitter {
   private async cancelTask(taskId?: string): Promise<void> {
     if (!taskId) {
       // 取消所有任务
-      for (const [id] of this.activeTasks) {
+      const taskIds = Array.from(this.activeTasks.keys());
+      taskIds.forEach(id => {
         this.activeTasks.delete(id);
         this.emit('taskCancelled', { taskId: id });
-      }
+      });
     } else {
       if (this.activeTasks.has(taskId)) {
         this.activeTasks.delete(taskId);

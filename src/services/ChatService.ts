@@ -5,7 +5,7 @@
 
 // 使用Anthropic兼容的工具调用格式
 export type Message = {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content:
     | string
     | Array<{
@@ -30,6 +30,11 @@ export interface ChatConfig {
   temperature?: number;
   maxTokens?: number;
   timeout?: number;
+}
+
+export interface ChatOptions {
+  systemPrompt?: string;
+  includeSystemPrompt?: boolean;
 }
 
 export interface ChatResponse {
@@ -84,7 +89,7 @@ export class ChatService {
   }
 
   /**
-   * 统一的聊天接口 - 支持工具调用
+   * 统一的聊天接口 - 支持工具调用和系统提示
    */
   async chat(
     messages: Message[],
@@ -92,12 +97,16 @@ export class ChatService {
       name: string;
       description: string;
       parameters: any;
-    }>
+    }>,
+    options?: ChatOptions
   ): Promise<string> {
+    // 注入系统提示
+    const effectiveMessages = this.injectSystemPrompt(messages, options?.systemPrompt);
+
     const response =
       tools && tools.length > 0
-        ? await this.callChatAPIWithTools(messages, tools)
-        : await this.callChatAPI(messages);
+        ? await this.callChatAPIWithTools(effectiveMessages, tools)
+        : await this.callChatAPI(effectiveMessages);
 
     if (typeof response.content === 'string') {
       return response.content;
@@ -118,11 +127,15 @@ export class ChatService {
       name: string;
       description: string;
       parameters: any;
-    }>
+    }>,
+    options?: ChatOptions
   ): Promise<ChatResponse> {
+    // 注入系统提示
+    const effectiveMessages = this.injectSystemPrompt(messages, options?.systemPrompt);
+
     return tools && tools.length > 0
-      ? await this.callChatAPIWithTools(messages, tools)
-      : await this.callChatAPI(messages);
+      ? await this.callChatAPIWithTools(effectiveMessages, tools)
+      : await this.callChatAPI(effectiveMessages);
   }
 
   /**
@@ -284,5 +297,31 @@ export class ChatService {
    */
   updateConfig(newConfig: Partial<ChatConfig>): void {
     this.config = { ...this.config, ...newConfig };
+  }
+
+  /**
+   * 注入系统提示到消息列表
+   */
+  private injectSystemPrompt(messages: Message[], systemPrompt?: string): Message[] {
+    if (!systemPrompt) {
+      return messages;
+    }
+
+    // 检查是否已有系统消息
+    const hasSystemMessage = messages.some((msg) => msg.role === 'system');
+
+    if (hasSystemMessage) {
+      // 如果已有系统消息，直接返回原消息
+      return messages;
+    }
+
+    // 在消息列表开头添加系统提示
+    return [
+      {
+        role: 'system' as const,
+        content: systemPrompt,
+      },
+      ...messages,
+    ];
   }
 }

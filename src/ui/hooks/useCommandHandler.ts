@@ -2,6 +2,11 @@ import { useCallback, useState } from 'react';
 
 import { createAgent } from '../../agent/agent-creator.js';
 import { useSession } from '../contexts/SessionContext.js';
+import {
+  isSlashCommand,
+  executeSlashCommand,
+  type SlashCommandContext
+} from '../../slash-commands/index.js';
 
 export interface CommandResult {
   success: boolean;
@@ -14,7 +19,7 @@ export interface CommandResult {
  * 命令处理 Hook
  * 负责命令的执行和状态管理
  */
-export const useCommandHandler = () => {
+export const useCommandHandler = (systemPrompt?: string) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const { dispatch } = useSession();
 
@@ -33,10 +38,74 @@ export const useCommandHandler = () => {
         console.log('[DEBUG] 添加用户消息到UI');
         addUserMessage(command);
 
-        console.log('[DEBUG] 开始执行命令...');
+        // 检查是否为 slash command
+        if (isSlashCommand(command)) {
+          console.log('[DEBUG] 检测到 slash command，执行中...');
+
+          const slashContext: SlashCommandContext = {
+            cwd: process.cwd(),
+            addUserMessage,
+            addAssistantMessage
+          };
+
+          const slashResult = await executeSlashCommand(command, slashContext);
+
+          if (!slashResult.success && slashResult.error) {
+            addAssistantMessage(`❌ ${slashResult.error}`);
+            return {
+              success: slashResult.success,
+              output: slashResult.message,
+              error: slashResult.error,
+              metadata: slashResult.data
+            };
+          }
+
+          // /init 命令总是会触发 AI 分析
+          if (slashResult.success && slashResult.message === 'trigger_analysis' && slashResult.data) {
+            const { analysisPrompt } = slashResult.data;
+
+            console.log('[DEBUG] 触发 AI 分析，提示:', analysisPrompt.substring(0, 100) + '...');
+
+            // 处理 AI 分析
+            const agent = await createAgent({ systemPrompt });
+            const chatContext = {
+              messages: [],
+              userId: 'cli-user',
+              sessionId: `session-${Date.now()}`,
+              workspaceRoot: process.cwd(),
+            };
+
+            try {
+              const aiOutput = await agent.chat(analysisPrompt, chatContext);
+              addAssistantMessage(aiOutput);
+
+              return {
+                success: true,
+                output: aiOutput,
+                metadata: slashResult.data
+              };
+            } catch (aiError) {
+              const aiErrorMessage = aiError instanceof Error ? aiError.message : '未知错误';
+              addAssistantMessage(`❌ AI 分析失败: ${aiErrorMessage}`);
+              return {
+                success: false,
+                error: `AI 分析失败: ${aiErrorMessage}`
+              };
+            }
+          }
+
+          return {
+            success: slashResult.success,
+            output: slashResult.message,
+            error: slashResult.error,
+            metadata: slashResult.data
+          };
+        }
+
+        console.log('[DEBUG] 普通命令，发送给 Agent...');
 
         // 直接使用createAgent函数创建Agent并执行命令
-        const agent = await createAgent({});
+        const agent = await createAgent({ systemPrompt });
         const chatContext = {
           messages: [],
           userId: 'cli-user',
@@ -48,20 +117,13 @@ export const useCommandHandler = () => {
 
         console.log('[DEBUG] 命令执行结果:', result);
 
-        if (result.success && result.output) {
+        if (result.output) {
           console.log('[DEBUG] 添加助手消息到UI');
           addAssistantMessage(result.output);
-        } else if (!result.success && result.error) {
-          console.log('[DEBUG] 命令执行失败:', result.error);
-          addAssistantMessage(`❌ ${result.error}`);
-        } else if (result.success && !result.output) {
+        } else {
           // 成功但没有输出内容的情况
           console.log('[DEBUG] 命令执行成功但无输出内容');
           addAssistantMessage('✅ 处理完成');
-        } else {
-          // 未知状态
-          console.log('[DEBUG] 未知的执行结果状态:', result);
-          addAssistantMessage('⚠️ 处理完成，但结果状态不明确');
         }
 
         return result;
@@ -73,7 +135,7 @@ export const useCommandHandler = () => {
         return errorResult;
       }
     },
-    []
+    [systemPrompt]
   );
 
   // 处理提交
