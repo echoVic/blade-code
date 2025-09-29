@@ -1,4 +1,4 @@
-# 🚀 Blade 快速开始指南
+# 🚀 Blade Code 快速开始指南
 
 ## 🎯 三步开始使用
 
@@ -6,122 +6,91 @@
 
 #### 方式A：环境变量（推荐）
 ```bash
-export BLADE_API_KEY="sk-你的API密钥"
-export BLADE_BASE_URL="https://apis.iflow.cn/v1"
-export BLADE_MODEL="Qwen3-Coder"
+export QWEN_API_KEY="your-qwen-api-key"
+export VOLCENGINE_API_KEY="your-volcengine-api-key"
 ```
 
-#### 方式B：用户配置文件
+#### 方式B：配置文件
 ```bash
-mkdir -p ~/.blade
-echo '{
-  "auth": {
-    "apiKey": "sk-你的API密钥",
-    "baseUrl": "https://apis.iflow.cn/v1",
-    "modelName": "Qwen3-Coder"
-  }
-}' > ~/.blade/config.json
+cp config.env.example .env
+# 编辑 .env 文件填入密钥
 ```
 
 #### 方式C：命令行参数
 ```bash
-blade chat -k "sk-你的API密钥" "你好"
+blade --api-key your-api-key "你好"
 ```
 
 ### 步骤2：开始对话
 
 ```bash
 # 单次问答
-blade chat "你好，世界！"
+blade "你好，世界！"
 
-# 交互式对话 (REPL模式)
-blade chat -i
-# 或者直接运行
+# 交互式对话
 blade
 
-# 系统提示词
-blade chat -s "你是一个代码助手" "帮我写一个Python冒泡排序"
+# 打印模式（适合管道操作）
+blade --print "解释什么是TypeScript"
 
-# 流式输出
-blade chat --stream "详细解释量子计算原理"
+# 继续最近的对话
+blade --continue
+
+# 使用特定模型
+blade --model qwen-max "复杂问题"
 ```
 
-### 步骤3：项目配置（可选）
+### 步骤3：安装（可选）
 
 ```bash
-# 创建项目配置文件
-echo '{
-  "auth": {
-    "modelName": "Qwen3-Coder-Project"
-  },
-  "ui": {
-    "theme": "dark"
-  },
-  "security": {
-    "sandbox": "none"
-  }
-}' > .blade.json
+# 全局安装（推荐）
+npm install -g blade-code
+
+# 然后就可以使用了
+blade "你好"
+
+# 或者启动交互式界面
+blade
 ```
 
 ## 📋 常用命令示例
 
 ```bash
 # 基础使用
-blade chat "什么是人工智能？"
-blade chat "用Python写一个快速排序"
+blade "什么是人工智能？"
+blade "用Python写一个快速排序"
 
 # 交互模式
-blade chat -i
-# 或
 blade
 
-# 查看配置
-blade config show
+# 会话管理
+blade --session-id "work" "我叫张三，是前端工程师"
+blade --session-id "work" "你还记得我的职业吗？"
 
-# 设置配置
-blade config set auth.modelName "new-model"
-
-# 列出可用工具
-blade tools list
-
-# 执行工具
-blade tools exec git.status
+# 配置管理
+blade config
 
 # MCP相关命令
-blade mcp list
+blade mcp
 ```
 
-## 🛠️ 配置文件结构
+## 🛠️ API 密钥配置
 
-### 用户配置（私有）
-```json
-~/.blade/config.json
-{
-  "auth": {
-    "apiKey": "sk-xxx",           # API密钥
-    "baseUrl": "https://api.com", # 基础URL
-    "modelName": "model-name"     # 模型名称
-  }
-}
-```
+**获取 API 密钥：**
+- 千问: https://dashscope.console.aliyun.com/apiKey
+- 火山引擎: https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey
 
-### 项目配置（可共享）
-```json
-./.blade.json
-{
-  "auth": {
-    "modelName": "Qwen3-Coder-Project"
-  },
-  "ui": {
-    "theme": "dark"
-  },
-  "security": {
-    "sandbox": "none"
-  },
-  "usage": {
-    "usageStatisticsEnabled": true
-  }
-}
+**配置方式：**
+```bash
+# 方式1: 环境变量（推荐）
+export QWEN_API_KEY="your-qwen-api-key"
+
+# 方式2: 命令行参数
+blade --api-key your-api-key "你好"
+
+# 方式3: .env 文件
+cp config.env.example .env
+# 编辑 .env 文件填入密钥
 ```
 
 ## ✅ 验证安装
@@ -134,65 +103,40 @@ blade --version
 blade --help
 
 # 快速测试
-blade chat "请告诉我现在几点了？"
+blade "请告诉我现在几点了？"
 
 # 启动交互式模式
 blade
 ```
 
-## 🔄 交互式 REPL 模式
+## 🔄 智能工具调用
 
-Blade 的交互式模式提供了一个功能丰富的对话环境：
-
-```bash
-# 启动 REPL
-blade
-# 或
-blade chat -i
-
-# REPL 中的内置命令:
-# /help - 显示帮助
-# /clear - 清除会话历史
-# /config - 显示当前配置
-# /tools - 列出可用工具
-# /exit 或 /quit - 退出
-
-# 快捷键:
-# ↑/↓ - 命令历史导航
-# Ctrl+C - 退出
-# Ctrl+L - 清屏
-```
-
-## 🔧 工具系统使用
+Blade 内置多种实用工具，通过自然语言即可调用：
 
 ```bash
-# 在 REPL 中使用工具
-> /tools git.status
-> /tools git.diff --file src/index.ts
-> /tools fs.readFile --path package.json
+# 智能处理示例
+blade "审查我的 app.js 代码"
+blade "查看当前git状态"
+blade "现在几点了？"
+blade "帮我分析项目结构"
 ```
 
-## 🎨 主题和外观
+## 🛡️ 安全确认机制
+
+所有写入操作都提供智能确认：
 
 ```bash
-# 设置主题
-blade config set ui.theme dark
-
-# 可用主题:
-# - dark (默认)
-# - light
-# - GitHub
-# - auto (自动)
+blade "删除临时文件"
+# 📋 建议执行以下命令:
+#   rm temp.txt
+#   风险级别: 中等
+# ✔ 是否执行？ Yes
 ```
 
-## 🔒 安全配置
-
-```bash
-# 启用沙箱模式 (需要 Docker)
-blade config set security.sandbox docker
-
-# 禁用沙箱
-blade config set security.sandbox none
-```
+**风险级别：**
+- 🟢 **安全** - 只读操作，自动执行
+- 🟡 **中等** - 普通写入，需要确认
+- 🟠 **高风险** - 覆盖文件，重点确认
+- 🔴 **极高风险** - 危险操作，严格确认
 
 现在你已经准备好使用 Blade 了！
