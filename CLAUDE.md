@@ -142,7 +142,7 @@ tests/
 # Single unified build
 npm run build
 # Equivalent to:
-rm -rf dist && bun build src/blade.tsx --external react-devtools-core --external react --external react-dom --external ink --external commander --external chalk --external inquirer --minify --outfile dist/blade.js --target=node
+rm -rf dist && bun build src/blade.tsx --external react-devtools-core --external react --external react-dom --external ink --external yargs --external chalk --external inquirer --minify --outfile dist/blade.js --target=node
 ```
 
 ### Build Output
