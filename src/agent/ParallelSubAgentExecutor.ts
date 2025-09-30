@@ -5,7 +5,7 @@
 
 import { EventEmitter } from 'events';
 import { Agent } from './Agent.js';
-import type { AgentTask, AgentConfig, SubAgentResult } from './types.js';
+import type { AgentConfig, AgentTask, SubAgentResult } from './types.js';
 
 export interface IsolatedEnvironment {
   id: string;
@@ -285,7 +285,7 @@ export class ParallelSubAgentExecutor extends EventEmitter {
         environment.endTime = Date.now();
 
         const result: SubAgentResult = {
-          agentName: task.metadata?.agentName as string || 'sub-agent',
+          agentName: (task.metadata?.agentName as string) || 'sub-agent',
           taskType: task.type,
           result: response,
           executionTime,
@@ -358,7 +358,7 @@ export class ParallelSubAgentExecutor extends EventEmitter {
       },
       context: {
         enabled: true,
-        maxTokens: 8000,
+        maxTokens: 32000,
       },
     };
 
@@ -481,7 +481,7 @@ export class ParallelSubAgentExecutor extends EventEmitter {
         const isolationId = task?.id || 'unknown';
 
         const failedResult: FailedSubAgentResult = {
-          agentName: task?.metadata?.agentName as string || 'unknown',
+          agentName: (task?.metadata?.agentName as string) || 'unknown',
           taskId: task?.id || 'unknown',
           error: reason,
           isolationId,

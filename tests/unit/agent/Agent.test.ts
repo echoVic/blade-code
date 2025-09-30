@@ -10,8 +10,7 @@ import { ChatService } from '../../../src/services/ChatService.js';
 // Mock 服务
 const mockChatService = {
   chat: vi.fn().mockResolvedValue('Mock response'),
-  chatText: vi.fn().mockResolvedValue('Mock response'),
-  chatWithSystem: vi.fn().mockResolvedValue('Mock response'),
+  chatDetailed: vi.fn().mockResolvedValue({ content: 'Mock response' }),
   getConfig: vi.fn().mockReturnValue({ provider: 'mock' }),
   updateConfig: vi.fn(),
 };
@@ -51,8 +50,9 @@ describe('Agent', () => {
     // 创建新的 Agent 实例
     agent = new Agent({
       chat: {
-        provider: 'mock',
         apiKey: 'test-key',
+        model: 'mock-model',
+        baseUrl: 'https://mock.api',
       },
     });
   });

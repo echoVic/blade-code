@@ -10,8 +10,7 @@ import { ChatService, type Message } from '../../../src/services/ChatService.js'
 // Mock 服务
 const mockChatService = {
   chat: vi.fn().mockResolvedValue('Mock response'),
-  chatText: vi.fn().mockResolvedValue('Mock response'),
-  chatWithSystem: vi.fn().mockResolvedValue('Mock response'),
+  chatDetailed: vi.fn().mockResolvedValue({ content: 'Mock response' }),
   getConfig: vi
     .fn()
     .mockReturnValue({ apiKey: 'test-key', model: 'claude-3-5-sonnet-20240620' }),
@@ -40,9 +39,12 @@ describe('ExecutionEngine', () => {
     // 创建新的 ExecutionEngine 实例
     executionEngine = new ExecutionEngine(
       mockChatService as unknown as ChatService,
-      mockContextManager as unknown as ContextManager,
       {
-        chat: { apiKey: 'test-key', model: 'claude-3-5-sonnet-20240620' },
+        chat: {
+          apiKey: 'test-key',
+          model: 'claude-3-5-sonnet-20240620',
+          baseUrl: 'https://mock.api',
+        },
         context: {},
       }
     );

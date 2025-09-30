@@ -1,4 +1,5 @@
-import type { ToolError, ToolErrorType, ToolResult } from '../types/index.js';
+import type { ToolError, ToolResult } from '../types/index.js';
+import { ToolErrorType } from '../types/index.js';
 
 /**
  * 结果处理器
@@ -36,12 +37,12 @@ export class ResultProcessor {
 
     if (typeof error === 'string') {
       toolError = {
-        type: errorType || 'EXECUTION_ERROR',
+        type: errorType || ToolErrorType.EXECUTION_ERROR,
         message: error,
       };
     } else if (error instanceof Error) {
       toolError = {
-        type: errorType || 'EXECUTION_ERROR',
+        type: errorType || ToolErrorType.EXECUTION_ERROR,
         message: error.message,
         details: {
           stack: error.stack,
@@ -167,7 +168,7 @@ export class ResultProcessor {
       llmContent: `所有操作失败: ${allErrors.map((e) => e.message).join('; ')}`,
       displayContent: `全部失败 (${results.length} 个操作):\n${displayContents.join('\n')}`,
       error: {
-        type: 'EXECUTION_ERROR',
+        type: ToolErrorType.EXECUTION_ERROR,
         message: `批量操作失败: ${allErrors.length} 个错误`,
         details: allErrors,
       },
@@ -228,14 +229,15 @@ export class ResultProcessor {
       success: Boolean(result.success),
       llmContent: result.llmContent || '',
       displayContent: result.displayContent || '',
-      metadata: result.metadata || {},
+      metadata: result.metadata || { timestamp: Date.now() },
     };
 
     if (result.error) {
       normalized.error = result.error;
     }
 
-    if (!normalized.metadata.timestamp) {
+    if (!normalized.metadata?.timestamp) {
+      normalized.metadata = normalized.metadata || {};
       normalized.metadata.timestamp = Date.now();
     }
 
@@ -251,7 +253,11 @@ export class ResultProcessor {
     }
 
     if (typeof data === 'object' && data !== null) {
-      return data;
+      try {
+        return JSON.parse(JSON.stringify(data));
+      } catch {
+        return String(data);
+      }
     }
 
     if (data === null || data === undefined) {

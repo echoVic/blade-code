@@ -12,6 +12,8 @@ export interface AgentOptions {
   baseUrl?: string;
   model?: string;
   systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
 }
 
 /**
@@ -65,11 +67,23 @@ async function buildAgentConfig(options: AgentOptions): Promise<AgentConfig> {
       throw new Error('缺少 API 基础 URL。请通过参数、环境变量或配置文件提供。');
     }
 
+    const temperature =
+      options.temperature ??
+      globalConfig?.auth?.temperature ??
+      0.3;
+
+    const maxTokens =
+      options.maxTokens ??
+      globalConfig?.auth?.maxTokens ??
+      32000;
+
     return {
       chat: {
         apiKey,
         baseUrl,
         model,
+        temperature,
+        maxTokens,
       },
       systemPrompt: options.systemPrompt,
     };

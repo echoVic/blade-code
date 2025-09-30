@@ -65,7 +65,15 @@ export class ExecutionEngine {
   async executeSimpleTask(task: AgentTask): Promise<AgentResponse> {
     // 简化版本：直接调用聊天服务
     const messages: Message[] = [{ role: 'user', content: task.prompt }];
-    const content = await this.chatService.chat(messages);
+    const response = await this.chatService.chat(messages);
+
+    // 提取文本内容
+    const content = typeof response.content === 'string'
+      ? response.content
+      : response.content
+          .filter((item) => item.type === 'text' && item.text)
+          .map((item) => item.text)
+          .join('\n');
 
     return {
       taskId: task.id,
@@ -216,8 +224,17 @@ export class ExecutionEngine {
    */
   private async executeLlmStep(step: ExecutionStep, task: AgentTask): Promise<any> {
     const context = `步骤: ${step.description}\n任务: ${task.prompt}`;
-    const response = await this.chatService.chat([{ role: 'user', content: context }]);
-    return { content: response, stepId: step.id };
+    const chatResponse = await this.chatService.chat([{ role: 'user', content: context }]);
+
+    // 提取文本内容
+    const content = typeof chatResponse.content === 'string'
+      ? chatResponse.content
+      : chatResponse.content
+          .filter((item) => item.type === 'text' && item.text)
+          .map((item) => item.text)
+          .join('\n');
+
+    return { content, stepId: step.id };
   }
 
   /**

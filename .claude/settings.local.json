@@ -20,7 +20,8 @@
       "Bash(node:*)",
       "Bash(pnpm add:*)",
       "Bash(npx:*)",
-      "Bash(xargs sed:*)"
+      "Bash(xargs sed:*)",
+      "WebFetch(domain:gist.github.com)"
     ],
     "deny": [],
     "ask": [],
