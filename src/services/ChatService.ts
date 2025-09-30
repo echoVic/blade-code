@@ -3,7 +3,6 @@
  * 替代LLM模块，提供统一的聊天调用能力
  */
 
-// 使用Anthropic兼容的工具调用格式
 export type Message = {
   role: 'user' | 'assistant' | 'system';
   content:
@@ -30,11 +29,6 @@ export interface ChatConfig {
   temperature?: number;
   maxTokens?: number;
   timeout?: number;
-}
-
-export interface ChatOptions {
-  systemPrompt?: string;
-  includeSystemPrompt?: boolean;
 }
 
 export interface ChatResponse {
@@ -89,7 +83,7 @@ export class ChatService {
   }
 
   /**
-   * 统一的聊天接口 - 支持工具调用和系统提示
+   * 统一的聊天接口 - 返回完整响应（包含 content、tool_calls、usage）
    */
   async chat(
     messages: Message[],
@@ -97,68 +91,13 @@ export class ChatService {
       name: string;
       description: string;
       parameters: any;
-    }>,
-    options?: ChatOptions
-  ): Promise<string> {
-    // 注入系统提示
-    const effectiveMessages = this.injectSystemPrompt(messages, options?.systemPrompt);
-
-    const response =
-      tools && tools.length > 0
-        ? await this.callChatAPIWithTools(effectiveMessages, tools)
-        : await this.callChatAPI(effectiveMessages);
-
-    if (typeof response.content === 'string') {
-      return response.content;
-    }
-    // 如果是数组，连接所有文本内容
-    return response.content
-      .filter((item) => item.type === 'text' && item.text)
-      .map((item) => item.text)
-      .join('\n');
-  }
-
-  /**
-   * 详细的聊天接口，返回完整响应（包含工具调用）
-   */
-  async chatDetailed(
-    messages: Message[],
-    tools?: Array<{
-      name: string;
-      description: string;
-      parameters: any;
-    }>,
-    options?: ChatOptions
+    }>
   ): Promise<ChatResponse> {
-    // 注入系统提示
-    const effectiveMessages = this.injectSystemPrompt(messages, options?.systemPrompt);
-
     return tools && tools.length > 0
-      ? await this.callChatAPIWithTools(effectiveMessages, tools)
-      : await this.callChatAPI(effectiveMessages);
+      ? await this.callChatAPIWithTools(messages, tools)
+      : await this.callChatAPI(messages);
   }
 
-  /**
-   * 简单文本聊天
-   */
-  async chatText(message: string): Promise<string> {
-    const messages: Message[] = [{ role: 'user', content: message }];
-    return this.chat(messages);
-  }
-
-  /**
-   * 带系统提示词的聊天
-   */
-  async chatWithSystem(systemPrompt: string, userMessage: string): Promise<string> {
-    // 将system消息转为user消息前缀
-    const messages: Message[] = [
-      {
-        role: 'user',
-        content: `系统提示: ${systemPrompt}\n\n用户消息: ${userMessage}`,
-      },
-    ];
-    return this.chat(messages);
-  }
 
   /**
    * 支持工具调用的API调用
@@ -187,9 +126,13 @@ export class ChatService {
           parameters: tool.parameters,
         },
       })),
-      max_tokens: this.config.maxTokens || 4000,
-      temperature: this.config.temperature || 0.7,
+      tool_choice: 'auto',
+      max_tokens: this.config.maxTokens ?? 32000,
+      temperature: this.config.temperature ?? 0.3,
     };
+
+    // 🔍 调试日志: 打印完整请求体
+    console.log('[ChatService DEBUG] Request Body:', JSON.stringify(body, null, 2));
 
     try {
       const response = await fetch(this.baseUrl, {
@@ -204,6 +147,9 @@ export class ChatService {
 
       const data = await response.json();
 
+      // 🔍 调试日志: 打印完整API响应
+      console.log('[ChatService DEBUG] API Response:', JSON.stringify(data, null, 2));
+
       // 处理包含工具调用的响应
       const choice = data.choices?.[0];
       if (!choice) {
@@ -212,8 +158,13 @@ export class ChatService {
 
       const message = choice.message;
 
+      // 🔍 调试日志: 打印 message 对象
+      console.log('[ChatService DEBUG] Message:', JSON.stringify(message, null, 2));
+      console.log('[ChatService DEBUG] Has tool_calls?', !!message.tool_calls);
+
       // 检查是否有工具调用
-      if (message.tool_calls) {
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        console.log(`[ChatService DEBUG] Found ${message.tool_calls.length} tool calls`);
         return {
           content: message.content || '',
           tool_calls: message.tool_calls,
@@ -226,6 +177,7 @@ export class ChatService {
       }
 
       // 普通文本响应
+      console.log('[ChatService DEBUG] No tool calls, returning plain text response');
       return {
         content: message.content || '',
         usage: {
@@ -252,8 +204,8 @@ export class ChatService {
     const body = {
       model: this.config.model,
       messages: messages,
-      max_tokens: this.config.maxTokens || 1000,
-      temperature: this.config.temperature || 0.7,
+      max_tokens: this.config.maxTokens ?? 32000,
+      temperature: this.config.temperature ?? 0.3,
     };
 
     try {
@@ -297,31 +249,5 @@ export class ChatService {
    */
   updateConfig(newConfig: Partial<ChatConfig>): void {
     this.config = { ...this.config, ...newConfig };
-  }
-
-  /**
-   * 注入系统提示到消息列表
-   */
-  private injectSystemPrompt(messages: Message[], systemPrompt?: string): Message[] {
-    if (!systemPrompt) {
-      return messages;
-    }
-
-    // 检查是否已有系统消息
-    const hasSystemMessage = messages.some((msg) => msg.role === 'system');
-
-    if (hasSystemMessage) {
-      // 如果已有系统消息，直接返回原消息
-      return messages;
-    }
-
-    // 在消息列表开头添加系统提示
-    return [
-      {
-        role: 'system' as const,
-        content: systemPrompt,
-      },
-      ...messages,
-    ];
   }
 }

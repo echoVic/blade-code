@@ -123,12 +123,21 @@ class ShellToolInvocation extends BaseToolInvocation<ShellParams> {
       updateOutput?.(`执行命令: ${fullCommand}`);
 
       const startTime = Date.now();
+
+      // 过滤掉 undefined 值以满足 Record<string, string> 类型
+      const mergedEnv: Record<string, string> = {};
+      for (const [key, value] of Object.entries({ ...process.env, ...env })) {
+        if (value !== undefined) {
+          mergedEnv[key] = value;
+        }
+      }
+
       const result = await this.executeCommand({
         command,
         args,
         cwd,
         timeout,
-        env: { ...process.env, ...env },
+        env: mergedEnv,
         capture_stderr,
         signal,
         updateOutput,
@@ -158,8 +167,10 @@ class ShellToolInvocation extends BaseToolInvocation<ShellParams> {
       }
 
       return this.createSuccessResult(result, displayMessage, metadata);
-    } catch (error: any) {
-      return this.createErrorResult(error);
+    } catch (error: unknown) {
+      return this.createErrorResult(
+        error instanceof Error ? error : new Error(String(error))
+      );
     }
   }
 
@@ -206,13 +217,15 @@ class ShellToolInvocation extends BaseToolInvocation<ShellParams> {
       signal.addEventListener('abort', abortHandler);
 
       // 收集输出
-      childProcess.stdout.on('data', (data) => {
-        const output = data.toString();
-        stdout += output;
-        updateOutput?.(output);
-      });
+      if (childProcess.stdout) {
+        childProcess.stdout.on('data', (data) => {
+          const output = data.toString();
+          stdout += output;
+          updateOutput?.(output);
+        });
+      }
 
-      if (capture_stderr) {
+      if (capture_stderr && childProcess.stderr) {
         childProcess.stderr.on('data', (data) => {
           const output = data.toString();
           stderr += output;
@@ -247,7 +260,17 @@ class ShellToolInvocation extends BaseToolInvocation<ShellParams> {
     });
   }
 
-  private formatDisplayMessage(result: CommandResult, metadata: any): string {
+  private formatDisplayMessage(
+    result: CommandResult,
+    metadata: {
+      command: string;
+      exit_code: number;
+      execution_time: number;
+      has_stderr: boolean;
+      stdout_length: number;
+      stderr_length: number;
+    }
+  ): string {
     const { command, exit_code, execution_time } = metadata;
 
     let message = `命令执行完成: ${command}`;
@@ -329,15 +352,24 @@ export class ShellTool extends DeclarativeTool<ShellParams> {
 
   build(params: ShellParams): ToolInvocation<ShellParams> {
     // 验证参数
-    const command = this.validateString(params.command, 'command', {
+    let command = this.validateString(params.command, 'command', {
       required: true,
       minLength: 1,
     });
 
     let args: string[] | undefined;
-    if (params.args !== undefined) {
+
+    // 🔧 智能解析: 如果 command 包含空格且没有提供 args,自动拆分
+    if (!params.args && command.includes(' ')) {
+      const parts = command.split(/\s+/);
+      command = parts[0];
+      args = parts.slice(1);
+      console.log(
+        `[ShellTool] 自动解析命令: "${params.command}" -> command="${command}", args=${JSON.stringify(args)}`
+      );
+    } else if (params.args !== undefined) {
       args = this.validateArray(params.args, 'args', {
-        itemValidator: (item: any, index: number) => {
+        itemValidator: (item: unknown, index: number) => {
           return this.validateString(item, `args[${index}]`, {
             required: true,
             minLength: 1,

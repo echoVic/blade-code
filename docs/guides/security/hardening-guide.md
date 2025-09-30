@@ -513,8 +513,8 @@ export class LLMManager {
     const payload = {
       model: config.modelName,
       messages: config.messages,
-      temperature: config.temperature || 0.7,
-      max_tokens: config.maxTokens || 2048,
+      temperature: config.temperature || 0.3,
+      max_tokens: config.maxTokens || 32000,
       stream: config.stream || false,
     };
 
@@ -524,7 +524,7 @@ export class LLMManager {
           'Authorization': `Bearer ${config.apiKey}`,
           'Content-Type': 'application/json',
         },
-        signal: AbortSignal.timeout(config.timeout || 30000),
+        signal: AbortSignal.timeout(config.timeout || 120000),
       });
 
       return {

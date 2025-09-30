@@ -68,7 +68,8 @@ describe('ChatService', () => {
     });
 
     it('应该能够发送简单消息并接收响应', async () => {
-      const response = await chatService.chatText('Hello, world!');
+      const messages: Message[] = [{ role: 'user', content: 'Hello, world!' }];
+      const response = await chatService.chat(messages);
 
       expect(response).toBe('Hello, world!');
       expect(mockFetch).toHaveBeenCalled();
@@ -85,10 +86,10 @@ describe('ChatService', () => {
     });
 
     it('应该能够处理带系统提示词的聊天', async () => {
-      const response = await chatService.chatWithSystem(
-        'You are a helpful assistant',
-        'Hello'
-      );
+      const messages: Message[] = [{ role: 'user', content: 'Hello' }];
+      const response = await chatService.chat(messages, undefined, {
+        systemPrompt: 'You are a helpful assistant',
+      });
 
       expect(response).toBe('Hello, world!');
       expect(mockFetch).toHaveBeenCalled();
@@ -113,7 +114,8 @@ describe('ChatService', () => {
         statusText: 'Internal Server Error',
       });
 
-      await expect(chatService.chatText('Hello, world!')).rejects.toThrow(
+      const messages: Message[] = [{ role: 'user', content: 'Hello, world!' }];
+      await expect(chatService.chat(messages)).rejects.toThrow(
         'API调用失败: 500 Internal Server Error'
       );
     });
@@ -121,7 +123,8 @@ describe('ChatService', () => {
     it('应该在网络错误时抛出错误', async () => {
       mockFetch.mockRejectedValue(new Error('Network Error'));
 
-      await expect(chatService.chatText('Hello, world!')).rejects.toThrow(
+      const messages: Message[] = [{ role: 'user', content: 'Hello, world!' }];
+      await expect(chatService.chat(messages)).rejects.toThrow(
         'Chat API调用失败: Network Error'
       );
     });

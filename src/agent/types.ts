@@ -77,3 +77,52 @@ export interface ContextConfig {
   compressionEnabled?: boolean;
   storagePath?: string;
 }
+
+// ===== Agentic Loop Types =====
+
+export interface ToolCall {
+  id?: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+export interface LoopConfig {
+  maxTurns?: number;
+  autoCompact?: boolean;
+  compressionThreshold?: number;
+  loopDetection?: {
+    enabled: boolean;
+    toolCallThreshold: number;
+    contentRepeatThreshold: number;
+    llmCheckInterval: number;
+  };
+}
+
+export interface LoopOptions {
+  maxTurns?: number;
+  autoCompact?: boolean;
+  signal?: AbortSignal;
+  stream?: boolean;
+  onTurnStart?: (data: { turn: number; maxTurns: number }) => void;
+  onToolUse?: (toolCall: ToolCall) => Promise<ToolCall | void>;
+  onToolApprove?: (toolCall: ToolCall) => Promise<boolean>;
+  onToolResult?: (toolCall: ToolCall, result: any) => Promise<any | void>;
+}
+
+export interface LoopResult {
+  success: boolean;
+  finalMessage?: string;
+  error?: {
+    type: 'canceled' | 'max_turns_exceeded' | 'api_error' | 'loop_detected';
+    message: string;
+    details?: any;
+  };
+  metadata?: {
+    turnsCount: number;
+    toolCallsCount: number;
+    duration: number;
+  };
+}

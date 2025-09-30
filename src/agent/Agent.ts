@@ -4,12 +4,18 @@
  */
 
 import { EventEmitter } from 'events';
-import { ChatService, type Message } from '../services/ChatService.js';
 import { PromptBuilder } from '../prompts/index.js';
+import { ChatService, type Message } from '../services/ChatService.js';
 import type { DeclarativeTool } from '../tools/base/DeclarativeTool.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
+import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { ToolResult } from '../tools/types/index.js';
+import { getEnvironmentContext } from '../utils/environment.js';
 import { type ContextManager, ExecutionEngine } from './ExecutionEngine.js';
+import {
+  type LoopDetectionConfig,
+  LoopDetectionService,
+} from './LoopDetectionService.js';
 import type { AgentConfig, AgentResponse, AgentTask } from './types.js';
 
 /**
@@ -31,55 +37,6 @@ export interface ChatContext {
   workspaceRoot: string;
 }
 
-/**
- * 工具注册表接口
- */
-export interface ToolRegistry {
-  register(tool: DeclarativeTool): void;
-  registerAll(tools: DeclarativeTool[]): void;
-  get(name: string): DeclarativeTool | undefined;
-  getAll(): DeclarativeTool[];
-  getFunctionDeclarations(): Array<{
-    name: string;
-    description: string;
-    parameters: any;
-  }>;
-}
-
-/**
- * 简单工具注册表实现
- */
-class SimpleToolRegistry implements ToolRegistry {
-  private tools = new Map<string, DeclarativeTool>();
-
-  register(tool: DeclarativeTool): void {
-    if (this.tools.has(tool.name)) {
-      throw new Error(`Tool '${tool.name}' already registered`);
-    }
-    this.tools.set(tool.name, tool);
-  }
-
-  registerAll(tools: DeclarativeTool[]): void {
-    tools.forEach((tool) => this.register(tool));
-  }
-
-  get(name: string): DeclarativeTool | undefined {
-    return this.tools.get(name);
-  }
-
-  getAll(): DeclarativeTool[] {
-    return Array.from(this.tools.values());
-  }
-
-  getFunctionDeclarations() {
-    return this.getAll().map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameterSchema,
-    }));
-  }
-}
-
 export class Agent extends EventEmitter {
   private config: AgentConfig;
   private isInitialized = false;
@@ -91,11 +48,12 @@ export class Agent extends EventEmitter {
   private chatService!: ChatService;
   private executionEngine!: ExecutionEngine;
   private promptBuilder!: PromptBuilder;
+  private loopDetector!: LoopDetectionService;
 
   constructor(config: AgentConfig, toolRegistry?: ToolRegistry) {
     super();
     this.config = config;
-    this.toolRegistry = toolRegistry || new SimpleToolRegistry();
+    this.toolRegistry = toolRegistry || new ToolRegistry();
   }
 
   /**
@@ -120,6 +78,14 @@ export class Agent extends EventEmitter {
 
       // 4. 初始化执行引擎
       this.executionEngine = new ExecutionEngine(this.chatService, this.config);
+
+      // 5. 初始化循环检测服务
+      const loopConfig: LoopDetectionConfig = {
+        toolCallThreshold: 5, // 工具调用重复5次触发
+        contentRepeatThreshold: 10, // 内容重复10次触发
+        llmCheckInterval: 30, // 每30轮进行LLM检测
+      };
+      this.loopDetector = new LoopDetectionService(loopConfig);
 
       this.isInitialized = true;
       this.log(`Agent初始化完成，已加载 ${this.toolRegistry.getAll().length} 个工具`);
@@ -181,7 +147,7 @@ export class Agent extends EventEmitter {
 
     // 如果提供了 context，使用增强的工具调用流程
     if (context) {
-      const toolResult = await this.processMessageWithTools(message, context);
+      const toolResult = await this.runLoop(message, context);
       return toolResult.message;
     }
 
@@ -197,9 +163,10 @@ export class Agent extends EventEmitter {
   }
 
   /**
-   * 处理带工具调用的消息（私有方法）
+   * 运行 Agentic Loop - 核心循环调用逻辑
+   * 持续执行 LLM → 工具 → 结果注入 直到任务完成或达到限制
    */
-  private async processMessageWithTools(
+  private async runLoop(
     message: string,
     context: ChatContext
   ): Promise<{
@@ -215,38 +182,76 @@ export class Agent extends EventEmitter {
 
       // 1. 获取可用工具定义
       const tools = this.toolRegistry.getFunctionDeclarations();
+      console.log(`[Agent DEBUG] Tools count: ${tools.length}`);
+      if (tools.length > 0) {
+        console.log(`[Agent DEBUG] First tool example:`, JSON.stringify(tools[0], null, 2));
+      }
 
       // 2. 构建消息历史
-      const messages: Message[] = [
-        ...context.messages,
-        { role: 'user', content: message },
-      ];
+      // 只在会话第一次时注入完整的 system 消息（环境上下文 + DEFAULT_SYSTEM_PROMPT）
+      const needsSystemPrompt =
+        context.messages.length === 0 ||
+        !context.messages.some((msg) => msg.role === 'system');
 
-      // 3. 调用 LLM，让它决定是否需要工具调用，并包含系统提示
-      const response = await this.chatService.chatDetailed(messages, tools, {
-        systemPrompt: this.systemPrompt,
-      });
-      console.log(`🔧 LLM response:`, JSON.stringify(response, null, 2));
+      const messages: Message[] = [];
 
-      // 4. 检查是否需要工具调用
-      if (response.tool_calls && response.tool_calls.length > 0) {
-        console.log(`🔧 LLM requested ${response.tool_calls.length} tool calls`);
+      if (needsSystemPrompt) {
+        const envContext = getEnvironmentContext();
+        const fullSystemPrompt = this.systemPrompt
+          ? `${envContext}\n\n---\n\n${this.systemPrompt}`
+          : envContext;
+        messages.push({ role: 'system', content: fullSystemPrompt });
+      }
 
-        // 5. 执行工具调用
-        const toolResults: ToolResult[] = [];
-        const toolMessages: Message[] = [...messages];
+      messages.push(...context.messages, { role: 'user', content: message });
 
-        // 添加 LLM 的工具调用响应
-        if (response.content) {
-          toolMessages.push({ role: 'assistant', content: response.content });
+      // === Agentic Loop: 循环调用直到任务完成 ===
+      const maxTurns = 50; // 最大循环次数
+      let turnsCount = 0;
+      const allToolResults: ToolResult[] = [];
+
+      while (turnsCount < maxTurns) {
+        turnsCount++;
+        console.log(`🔄 [轮次 ${turnsCount}/${maxTurns}] 调用 LLM...`);
+
+        // 触发轮次开始事件 (供 UI 显示进度)
+        this.emit('loopTurnStart', { turn: turnsCount, maxTurns });
+
+        // 3. 调用 LLM，让它决定是否需要工具调用
+        // systemPrompt 已经在 messages 中作为第一条 system 消息了
+        const response = await this.chatService.chat(messages, tools);
+        console.log(`🔧 LLM response:`, JSON.stringify(response, null, 2));
+
+        // 4. 检查是否需要工具调用（任务完成条件）
+        if (!response.tool_calls || response.tool_calls.length === 0) {
+          const content = typeof response.content === 'string' ? response.content : '';
+
+          console.log('✅ 任务完成 - LLM 未请求工具调用');
+          return {
+            message: content,
+            toolResults: allToolResults,
+          };
         }
 
-        // 执行每个工具调用
+        console.log(`🔧 LLM requested ${response.tool_calls.length} tool calls`);
+
+        // 5. 添加 LLM 的响应到消息历史
+        if (response.content) {
+          messages.push({ role: 'assistant', content: response.content });
+        }
+
+        // 6. 执行每个工具调用并注入结果
         for (const toolCall of response.tool_calls) {
           try {
             console.log(
               `🔧 Executing tool: ${toolCall.function.name} with arguments: ${toolCall.function.arguments}`
             );
+
+            // 触发工具执行开始事件
+            this.emit('toolExecutionStart', {
+              tool: toolCall.function.name,
+              turn: turnsCount,
+            });
 
             const tool = this.toolRegistry.get(toolCall.function.name);
             if (!tool) {
@@ -260,14 +265,30 @@ export class Agent extends EventEmitter {
             const result = await toolInvocation.execute(new AbortController().signal);
 
             console.log(`🔧 Tool execution result:`, result);
-            toolResults.push(result);
+            allToolResults.push(result);
+
+            // 触发工具执行完成事件
+            this.emit('toolExecutionComplete', {
+              tool: toolCall.function.name,
+              success: result.success,
+              turn: turnsCount,
+            });
 
             // 添加工具执行结果到消息历史
-            const toolResultContent = result.success
+            let toolResultContent = result.success
               ? result.llmContent || result.displayContent || ''
               : result.error?.message || '执行失败';
 
-            toolMessages.push({
+            // 如果内容是对象，需要序列化为 JSON
+            if (typeof toolResultContent === 'object' && toolResultContent !== null) {
+              try {
+                toolResultContent = JSON.stringify(toolResultContent, null, 2);
+              } catch {
+                toolResultContent = String(toolResultContent);
+              }
+            }
+
+            messages.push({
               role: 'user',
               content: `工具 ${toolCall.function.name} 执行结果: ${result.success ? '成功' : '失败'}\n\n${toolResultContent}`,
             });
@@ -276,26 +297,53 @@ export class Agent extends EventEmitter {
               `Tool execution failed for ${toolCall.function.name}:`,
               error
             );
-            toolMessages.push({
+            messages.push({
               role: 'user',
               content: `工具 ${toolCall.function.name} 执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
             });
           }
         }
 
-        // 6. 获取 LLM 的最终回复
-        const finalResponse = await this.chatService.chat(toolMessages);
+        // 7. 循环检测 - 检测是否陷入死循环
+        const loopDetected = await this.loopDetector.detect(
+          response.tool_calls.map((tc) => ({
+            type: 'function' as const,
+            function: { name: tc.function.name, arguments: tc.function.arguments },
+          })),
+          turnsCount,
+          messages
+        );
 
-        return {
-          message: finalResponse,
-          toolResults: toolResults,
-        };
+        if (loopDetected?.detected) {
+          console.warn(`🔴 检测到循环: ${loopDetected.reason}`);
+          return {
+            message: `检测到循环行为: ${loopDetected.reason}。已自动停止。`,
+            toolResults: allToolResults,
+          };
+        }
+
+        // 8. 历史压缩 - 针对256K上下文优化 (每10轮且消息超过100条时压缩)
+        if (turnsCount % 10 === 0 && messages.length > 100) {
+          console.log(`🗜️ 历史消息过长 (${messages.length}条)，进行压缩...`);
+          // 保留系统提示 + 最近80条消息
+          const systemMsg = messages.find((m) => m.role === 'system');
+          const recentMessages = messages.slice(-80);
+          messages.length = 0;
+          if (systemMsg && !recentMessages.some((m) => m.role === 'system')) {
+            messages.push(systemMsg);
+          }
+          messages.push(...recentMessages);
+          console.log(`🗜️ 压缩后保留 ${messages.length} 条消息`);
+        }
+
+        // 继续下一轮循环...
       }
 
-      // 7. 如果不需要工具调用，直接返回 LLM 响应
+      // 8. 达到最大轮次限制
+      console.warn(`⚠️ 达到最大轮次限制 ${maxTurns}`);
       return {
-        message: typeof response.content === 'string' ? response.content : '',
-        toolResults: [],
+        message: `已达到最大处理轮次 ${maxTurns}，任务可能未完成。`,
+        toolResults: allToolResults,
       };
     } catch (error) {
       console.error('Enhanced chat processing error:', error);
@@ -314,9 +362,20 @@ export class Agent extends EventEmitter {
       throw new Error('Agent未初始化');
     }
 
-    // 直接使用 ChatService 的系统提示功能
-    const messages: Message[] = [{ role: 'user', content: message }];
-    return this.chatService.chat(messages, undefined, { systemPrompt });
+    // 自己构建包含 system 消息的 messages 数组
+    const messages: Message[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: message },
+    ];
+    const response = await this.chatService.chat(messages);
+
+    // 提取文本内容
+    return typeof response.content === 'string'
+      ? response.content
+      : response.content
+          .filter((item) => item.type === 'text' && item.text)
+          .map((item) => item.text)
+          .join('\n');
   }
 
   /**
@@ -396,170 +455,7 @@ export class Agent extends EventEmitter {
     }
   }
 
-  /**
-   * 构建LLM请求
-   */
-  private buildLLMRequest(message: string, context: ChatContext) {
-    // 获取工具函数声明
-    const tools = this.toolRegistry ? this.toolRegistry.getFunctionDeclarations() : [];
 
-    return {
-      messages: [...context.messages, { role: 'user' as const, content: message }],
-      tools: tools, // 关键：提供工具列表给LLM
-      temperature: 0.7,
-      maxTokens: 4000,
-    };
-  }
-
-  /**
-   * 调用LLM
-   */
-  private async callLLM(request: any): Promise<{
-    content: string;
-    toolCalls?: ToolCall[];
-    finishReason?: string;
-  }> {
-    try {
-      // 实际调用 ChatService
-      const response = await this.chatService.chat(request.messages);
-
-      // 解析响应，检查是否有工具调用
-      // 对于当前的简单实现，直接返回文本响应
-      // 后续可以扩展支持工具调用解析
-      return {
-        content: response,
-        finishReason: 'stop',
-      };
-    } catch (error) {
-      console.error('LLM call failed:', error);
-      // 如果调用失败，返回错误信息
-      return {
-        content: `抱歉，调用语言模型时出现错误: ${error instanceof Error ? error.message : '未知错误'}`,
-        finishReason: 'error',
-      };
-    }
-  }
-
-  /**
-   * 处理工具调用
-   */
-  private async handleToolCalls(
-    toolCalls: ToolCall[],
-    context: ChatContext
-  ): Promise<{
-    message: string;
-    toolResults: ToolResult[];
-  }> {
-    const results: ToolResult[] = [];
-    let responseMessage = '';
-
-    for (const toolCall of toolCalls) {
-      try {
-        console.log(`🔧 Executing tool: ${toolCall.name}`);
-
-        // 通过工具注册表获取工具
-        const tool = this.toolRegistry?.get(toolCall.name);
-        if (!tool) {
-          const errorResult: ToolResult = {
-            success: false,
-            llmContent: `工具 ${toolCall.name} 不存在`,
-            displayContent: `❌ 工具 "${toolCall.name}" 未找到`,
-            error: {
-              message: `Tool "${toolCall.name}" not found`,
-              type: 'VALIDATION_ERROR' as any,
-            },
-          };
-          results.push(errorResult);
-          continue;
-        }
-
-        // 执行工具
-        const result = await this.executeTool(tool, toolCall.parameters, context);
-        results.push(result);
-
-        // 构建响应消息
-        if (result.success) {
-          responseMessage += `✅ ${toolCall.name} 执行成功\n`;
-          if (result.displayContent) {
-            responseMessage += `${result.displayContent}\n\n`;
-          }
-        } else {
-          responseMessage += `❌ ${toolCall.name} 执行失败: ${result.error?.message}\n\n`;
-        }
-      } catch (error) {
-        console.error(`Tool execution error for ${toolCall.name}:`, error);
-
-        const errorResult: ToolResult = {
-          success: false,
-          llmContent: `工具 ${toolCall.name} 执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
-          displayContent: `❌ 工具执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
-          error: {
-            message: error instanceof Error ? error.message : 'Unknown error',
-            type: 'EXECUTION_ERROR' as any,
-          },
-        };
-        results.push(errorResult);
-        responseMessage += `❌ ${toolCall.name} 执行出错: ${error instanceof Error ? error.message : '未知错误'}\n\n`;
-      }
-    }
-
-    this.emit('toolCallsCompleted', { toolCalls, results });
-
-    return {
-      message: responseMessage.trim() || '工具执行完成',
-      toolResults: results,
-    };
-  }
-
-  /**
-   * 执行单个工具
-   */
-  private async executeTool(
-    tool: DeclarativeTool,
-    parameters: Record<string, any>,
-    context: ChatContext
-  ): Promise<ToolResult> {
-    try {
-      // 创建执行上下文
-      const executionContext = {
-        userId: context.userId,
-        sessionId: context.sessionId,
-        workspaceRoot: context.workspaceRoot,
-        signal: new AbortController().signal,
-      };
-
-      // 构建工具调用
-      const invocation = tool.build(parameters);
-
-      // 检查是否需要用户确认
-      if (tool.requiresConfirmation) {
-        const confirmationDetails = await invocation.shouldConfirm();
-        if (confirmationDetails) {
-          console.log(
-            `⚠️  Tool ${tool.name} requires confirmation:`,
-            confirmationDetails.title
-          );
-          // 在实际实现中，这里应该弹出确认对话框
-          // 暂时自动确认
-        }
-      }
-
-      // 执行工具
-      const result = await invocation.execute(
-        executionContext.signal,
-        (output: string) => {
-          console.log(`📊 Tool progress: ${output}`);
-          this.emit('toolProgress', { toolName: tool.name, output });
-        }
-      );
-
-      this.emit('toolExecuted', { toolName: tool.name, parameters, result });
-      return result;
-    } catch (error) {
-      console.error(`Tool execution failed for ${tool.name}:`, error);
-      throw error;
-    }
-  }
 
   /**
    * 生成任务ID
@@ -632,7 +528,9 @@ export class Agent extends EventEmitter {
 
       this.toolRegistry.registerAll(builtinTools);
 
-      console.log('✅ Builtin tools registered successfully');
+      const registeredCount = this.toolRegistry.getAll().length;
+      console.log(`✅ Builtin tools registered: ${registeredCount} tools`);
+      console.log(`[Tools] ${this.toolRegistry.getAll().map((t) => t.name).join(', ')}`);
       this.emit('toolsRegistered', builtinTools);
     } catch (error) {
       console.error('Failed to register builtin tools:', error);

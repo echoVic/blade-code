@@ -357,9 +357,9 @@ export const DEFAULT_CONFIG: Omit<BladeConfig, 'version' | 'name' | 'description
     baseUrl: 'https://apis.iflow.cn/v1/chat/completions',
 
     // LLM 模型配置 (统一在auth下)
-    modelName: 'Qwen3-Coder',
-    temperature: 0.7,
-    maxTokens: 4000,
+    modelName: 'qwen3-coder-plus',
+    temperature: 0.3,
+    maxTokens: 32000,
     stream: true,
 
     // 高级参数
@@ -371,14 +371,14 @@ export const DEFAULT_CONFIG: Omit<BladeConfig, 'version' | 'name' | 'description
     // 其他
     tokenStorage: 'file',
     tokenRefreshInterval: 3600,
-    timeout: 30000,
+    timeout: 120000,
     providers: [],
   },
   systemPrompt: {
     enabled: true,
     default: '你是 Blade Code，一个专业的命令行智能代码助手。',
     allowOverride: true,
-    maxLength: 4000,
+    maxLength: 32000, 
     loadUserConfig: true,
     loadProjectConfig: true,
   },

@@ -28,5 +28,5 @@ export const validateApiKey = (key: string) => key || process.env.BLADE_API_KEY 
 export const loadConfigFromEnv = () => ({
   apiKey: process.env.BLADE_API_KEY || '',
   baseUrl: process.env.BLADE_BASE_URL || 'https://apis.iflow.cn/v1',
-  modelName: process.env.BLADE_MODEL || 'Qwen3-Coder',
+  modelName: process.env.BLADE_MODEL || 'qwen3-coder-plus',
 });

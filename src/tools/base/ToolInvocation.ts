@@ -3,7 +3,7 @@ import type {
   ToolInvocation,
   ToolResult,
 } from '../types/index.js';
-import { ToolErrorType } from '../types/index.js';
+import { ResultProcessor } from '../execution/ResultProcessor.js';
 
 /**
  * 工具调用抽象基类
@@ -57,12 +57,7 @@ export abstract class BaseToolInvocation<TParams = any, TResult = ToolResult>
     displayMessage?: string,
     metadata?: Record<string, any>
   ): ToolResult {
-    return {
-      success: true,
-      llmContent: data,
-      displayContent: displayMessage || '执行成功',
-      metadata,
-    };
+    return ResultProcessor.formatSuccess(data, displayMessage, metadata);
   }
 
   /**
@@ -72,17 +67,7 @@ export abstract class BaseToolInvocation<TParams = any, TResult = ToolResult>
     error: Error | string,
     metadata?: Record<string, any>
   ): ToolResult {
-    const errorMessage = typeof error === 'string' ? error : error.message;
-    return {
-      success: false,
-      llmContent: `执行失败: ${errorMessage}`,
-      displayContent: `错误: ${errorMessage}`,
-      error: {
-        type: ToolErrorType.EXECUTION_ERROR,
-        message: errorMessage,
-      },
-      metadata,
-    };
+    return ResultProcessor.formatError(error, undefined, metadata);
   }
 
   /**

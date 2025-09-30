@@ -39,7 +39,7 @@ export class ContextManager {
         ...options.storage,
       },
       defaultFilter: {
-        maxTokens: 4000,
+        maxTokens: 32000,
         maxMessages: 50,
         timeWindow: 24 * 60 * 60 * 1000,
         ...options.defaultFilter,
