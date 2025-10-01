@@ -8,6 +8,7 @@ import type {
   ToolResult,
 } from '../../types/index.js';
 import { ToolKind } from '../../types/index.js';
+import { DEFAULT_EXCLUDE_DIRS } from '../../../utils/file-patterns.js';
 
 /**
  * Grep搜索参数接口
@@ -167,10 +168,10 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
     // 输出模式
     switch (options.output_mode) {
       case 'files_with_matches':
-        args.push('-l'); // 只显示文件名
+        args.push('-l');
         break;
       case 'count':
-        args.push('-c'); // 显示匹配计数
+        args.push('-c');
         break;
       case 'content':
         if (options.line_numbers) {
@@ -196,7 +197,12 @@ class GrepToolInvocation extends BaseToolInvocation<GrepParams> {
       args.push('--type', options.type);
     }
 
-    // Glob模式
+    // 默认排除常见目录
+    for (const dir of DEFAULT_EXCLUDE_DIRS) {
+      args.push('--glob', `!${dir}/**`);
+    }
+
+    // 用户自定义Glob模式
     if (options.glob) {
       args.push('--glob', options.glob);
     }

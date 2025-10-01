@@ -31,6 +31,15 @@ export interface ChatConfig {
   timeout?: number;
 }
 
+export interface ToolCall {
+  id?: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
 export interface ChatResponse {
   content:
     | string
@@ -47,14 +56,7 @@ export interface ChatResponse {
           content: string;
         };
       }>;
-  tool_calls?: Array<{
-    id: string;
-    type: string;
-    function: {
-      name: string;
-      arguments: string;
-    };
-  }>;
+  tool_calls?: ToolCall[];
   usage?: {
     promptTokens: number;
     completionTokens: number;
@@ -78,8 +80,10 @@ export class ChatService {
     if (!config.model) {
       throw new Error('model is required in ChatConfig');
     }
-    // 直接使用配置的baseUrl，要求用户配置完整的可调用端点
-    this.baseUrl = config.baseUrl;
+    // 自动补全 /chat/completions 端点
+    this.baseUrl = config.baseUrl.endsWith('/chat/completions')
+      ? config.baseUrl
+      : config.baseUrl.replace(/\/$/, '') + '/chat/completions';
   }
 
   /**

@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import { extname, join, relative, resolve } from 'path';
+import { getExcludePatterns } from '../../../utils/file-patterns.js';
 import { DeclarativeTool } from '../../base/DeclarativeTool.js';
 import { BaseToolInvocation } from '../../base/ToolInvocation.js';
 import type {
@@ -602,7 +603,7 @@ export class FindTool extends DeclarativeTool<FindParams> {
     }
 
     const excludePatterns = this.validateArray(
-      params.exclude_patterns || [],
+      getExcludePatterns(params.exclude_patterns),
       'exclude_patterns',
       {
         itemValidator: (item: any, index: number) => {

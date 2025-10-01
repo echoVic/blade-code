@@ -1,1 +1,2 @@
-export { TaskManager, type TaskResult, TaskStatus, TaskTool } from './TaskTool.js';
+export { TaskManager, TaskStatus, TaskTool } from './TaskTool.js';
+export type { TaskResult } from './TaskTool.js';

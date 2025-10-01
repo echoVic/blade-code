@@ -2,7 +2,31 @@
  * Agent核心类型定义
  */
 
-import type { ChatConfig, Message } from '../services/ChatService.js';
+import type { ChatConfig, Message, ToolCall } from '../services/ChatService.js';
+
+export type { ToolCall };
+
+/**
+ * 聊天上下文接口
+ */
+export interface ChatContext {
+  messages: Message[];
+  userId: string;
+  sessionId: string;
+  workspaceRoot: string;
+}
+
+/**
+ * Agent 创建选项
+ */
+export interface AgentOptions {
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
+}
 
 export interface AgentConfig {
   chat: ChatConfig;
@@ -80,15 +104,6 @@ export interface ContextConfig {
 
 // ===== Agentic Loop Types =====
 
-export interface ToolCall {
-  id?: string;
-  type: 'function';
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
 export interface LoopConfig {
   maxTurns?: number;
   autoCompact?: boolean;
@@ -125,4 +140,27 @@ export interface LoopResult {
     toolCallsCount: number;
     duration: number;
   };
+}
+
+// ===== TurnExecutor Types =====
+
+export interface TurnOptions {
+  maxRetries?: number;
+  stream?: boolean;
+  onTextDelta?: (text: string) => void;
+  onReasoning?: (reasoning: string) => void;
+}
+
+export interface TurnResult {
+  content: string;
+  tool_calls?: ToolCall[];
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+}
+
+export interface TurnExecutorConfig {
+  // 预留配置项
 }

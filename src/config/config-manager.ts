@@ -47,19 +47,19 @@ export class ConfigManager {
       // 1. 加载默认配置
       this.config = await this.loadDefaultConfig();
 
-      // 2. 应用环境变量
-      this.config = this.applyEnvVariables(this.config);
-
-      // 3. 加载用户配置文件
+      // 2. 加载用户配置文件
       const userConfigData = await this.loadUserConfigFile();
       if (userConfigData) {
         this.config = this.mergeConfig(this.config, userConfigData);
       }
 
-      // 4. 应用用户传入的配置
+      // 3. 应用用户传入的配置
       if (userConfig) {
         this.config = this.mergeConfig(this.config, userConfig);
       }
+
+      // 4. 应用环境变量（最高优先级，覆盖配置文件）
+      this.config = this.applyEnvVariables(this.config);
 
       // 5. 运行配置迁移
       this.config = await this.runMigrations(this.config);

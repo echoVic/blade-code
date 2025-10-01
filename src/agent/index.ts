@@ -7,6 +7,10 @@ export { ContextManager } from '../context/ContextManager.js';
 export { ContextCompressor } from '../context/processors/ContextCompressor.js';
 // 核心Agent类
 export { Agent } from './Agent.js';
-// Agent创建函数
-export { createAgent, type AgentOptions } from './agent-creator.js';
-export type { AgentConfig, AgentResponse, AgentTask } from './types.js';
+export type {
+  AgentConfig,
+  AgentOptions,
+  AgentResponse,
+  AgentTask,
+  ChatContext,
+} from './types.js';

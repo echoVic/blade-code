@@ -9,6 +9,7 @@ import type {
   ToolResult,
 } from '../../types/index.js';
 import { ToolKind } from '../../types/index.js';
+import { FileFilter } from '../../../utils/file-patterns.js';
 
 /**
  * Glob搜索参数接口
@@ -89,13 +90,25 @@ class GlobToolInvocation extends BaseToolInvocation<GlobParams> {
 
       this.checkAbortSignal(signal);
 
-      // 执行glob搜索
-      const matches = await this.performGlobSearch(searchPath, pattern, {
-        maxResults: max_results,
-        includeDirectories: include_directories,
-        caseSensitive: case_sensitive,
-        signal,
+      // 创建文件过滤器
+      const fileFilter = new FileFilter({
+        cwd: searchPath,
+        useGitignore: true,
+        useDefaults: true,
       });
+
+      // 执行glob搜索
+      const matches = await this.performGlobSearch(
+        searchPath,
+        pattern,
+        {
+          maxResults: max_results,
+          includeDirectories: include_directories,
+          caseSensitive: case_sensitive,
+          signal,
+        },
+        fileFilter
+      );
 
       const sortedMatches = this.sortMatches(matches);
       const limitedMatches = sortedMatches.slice(0, max_results);
@@ -127,12 +140,20 @@ class GlobToolInvocation extends BaseToolInvocation<GlobParams> {
       includeDirectories: boolean;
       caseSensitive: boolean;
       signal: AbortSignal;
-    }
+    },
+    fileFilter: FileFilter
   ): Promise<FileMatch[]> {
     const matches: FileMatch[] = [];
     const globRegex = this.createGlobRegex(pattern, options.caseSensitive);
 
-    await this.walkDirectory(searchPath, searchPath, globRegex, matches, options);
+    await this.walkDirectory(
+      searchPath,
+      searchPath,
+      globRegex,
+      matches,
+      options,
+      fileFilter
+    );
 
     return matches;
   }
@@ -147,7 +168,8 @@ class GlobToolInvocation extends BaseToolInvocation<GlobParams> {
       includeDirectories: boolean;
       caseSensitive: boolean;
       signal: AbortSignal;
-    }
+    },
+    fileFilter: FileFilter
   ): Promise<void> {
     if (matches.length >= options.maxResults) {
       return;
@@ -168,6 +190,14 @@ class GlobToolInvocation extends BaseToolInvocation<GlobParams> {
         const fullPath = join(currentPath, entry.name);
         const relativePath = relative(basePath, fullPath);
 
+        if (entry.isDirectory() && fileFilter.shouldIgnoreDirectory(entry.name)) {
+          continue;
+        }
+
+        if (entry.isFile() && fileFilter.shouldIgnore(relativePath)) {
+          continue;
+        }
+
         // 检查是否匹配模式
         const isMatch = globRegex.test(relativePath) || globRegex.test(entry.name);
 
@@ -182,7 +212,14 @@ class GlobToolInvocation extends BaseToolInvocation<GlobParams> {
           }
 
           // 递归搜索子目录
-          await this.walkDirectory(fullPath, basePath, globRegex, matches, options);
+          await this.walkDirectory(
+            fullPath,
+            basePath,
+            globRegex,
+            matches,
+            options,
+            fileFilter
+          );
         } else if (entry.isFile() && isMatch) {
           // 获取文件信息
           try {
