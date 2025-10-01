@@ -2,17 +2,17 @@
  * @blade-ai/core 包公共 API - 简化架构
  */
 
-export type {
-  ChatContext as AgentChatContext,
-  ChatContext,
-  ToolCall,
-  ToolRegistry as AgentToolRegistry,
-  ToolRegistry,
-} from './agent/Agent.js';
 // Agent核心系统（已增强支持工具集成）
 export { Agent } from './agent/Agent.js';
 export { ExecutionEngine } from './agent/ExecutionEngine.js';
-export type { AgentConfig, AgentResponse, AgentTask } from './agent/types.js';
+export type {
+  AgentConfig,
+  AgentOptions,
+  AgentResponse,
+  AgentTask,
+  ChatContext,
+  ToolCall,
+} from './agent/types.js';
 
 // Agent系统已集成工具支持（第八章架构实现）
 // Agent现在直接支持工具注册和调用，无需额外包装层

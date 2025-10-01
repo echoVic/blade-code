@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 
-import { createAgent } from '../../agent/agent-creator.js';
+import { Agent } from '../../agent/Agent.js';
 import { useSession } from '../contexts/SessionContext.js';
 import {
   isSlashCommand,
@@ -67,7 +67,7 @@ export const useCommandHandler = (systemPrompt?: string) => {
             console.log('[DEBUG] 触发 AI 分析，提示:', analysisPrompt.substring(0, 100) + '...');
 
             // 处理 AI 分析
-            const agent = await createAgent({ systemPrompt });
+            const agent = await Agent.create({ systemPrompt });
             const chatContext = {
               messages: [],
               userId: 'cli-user',
@@ -104,8 +104,7 @@ export const useCommandHandler = (systemPrompt?: string) => {
 
         console.log('[DEBUG] 普通命令，发送给 Agent...');
 
-        // 直接使用createAgent函数创建Agent并执行命令
-        const agent = await createAgent({ systemPrompt });
+        const agent = await Agent.create({ systemPrompt });
         const chatContext = {
           messages: [],
           userId: 'cli-user',

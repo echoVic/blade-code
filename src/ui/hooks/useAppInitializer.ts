@@ -34,7 +34,7 @@ export const useAppInitializer = (
         addAssistantMessage('/help for help, /status for your current setup');
         addAssistantMessage(`Cwd: ${process.cwd()}`);
         addAssistantMessage(
-          '⚠️  API Key 未配置\n\nAPI Base URL: https://apis.iflow.cn\n\n📋 配置步骤:\n1. 设置环境变量: export BLADE_API_KEY="your-api-key"\n2. 重新启动 Blade\n\n💡 或者使用命令行参数: blade --api-key="your-api-key"'
+          '⚠️  API Key 未配置\n\nAPI Base URL: https://apis.iflow.cn\n\n📋 配置步骤:\n1. 设置环境变量: export BLADE_API_KEY="your-api-key"\n2. 重新启动 Blade'
         );
         return;
       }

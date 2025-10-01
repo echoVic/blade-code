@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import type { Agent } from '../../../agent/Agent.js';
 import { DeclarativeTool } from '../../base/DeclarativeTool.js';
 import { BaseToolInvocation } from '../../base/ToolInvocation.js';
 import type {
@@ -148,7 +149,10 @@ class TaskManager {
  * Task工具调用实现
  */
 class TaskToolInvocation extends BaseToolInvocation<TaskParams> {
-  constructor(params: TaskParams) {
+  constructor(
+    params: TaskParams,
+    private taskTool?: TaskTool
+  ) {
     super('task', params);
   }
 
@@ -195,7 +199,6 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams> {
 
       const {
         description,
-        subagent_type,
         prompt,
         context,
         timeout = 300000, // 5分钟默认超时
@@ -298,7 +301,7 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams> {
     const taskManager = TaskManager.getInstance();
 
     try {
-      updateOutput?.(`开始执行任务: ${task.description}`);
+      options.updateOutput?.(`开始执行任务: ${task.description}`);
       taskManager.updateTaskStatus(task.task_id, TaskStatus.RUNNING);
 
       const result = await this.simulateTaskExecution(task, options);
@@ -342,8 +345,44 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams> {
       signal: AbortSignal;
     }
   ): Promise<any> {
-    // 这里应该是实际的Agent调用逻辑
-    // 为了演示，我们模拟一个简单的任务执行
+    // 尝试使用真实的子 Agent
+    const agentFactory = this.taskTool?.getAgentFactory();
+
+    if (agentFactory) {
+      console.log('🚀 使用真实子 Agent 执行任务...');
+      try {
+        // 创建子 Agent
+        const subAgent = await agentFactory();
+
+        // 调用 runAgenticLoop
+        const result = await subAgent.runAgenticLoop(
+          options.prompt || task.description,
+          options.context || {},
+          {
+            maxTurns: 10, // 子任务限制为 10 轮
+            signal: options.signal,
+          }
+        );
+
+        if (result.success) {
+          return {
+            task_description: task.description,
+            subagent_type: task.subagent_type || 'general',
+            execution_result: result.finalMessage,
+            metadata: result.metadata,
+            timestamp: new Date().toISOString(),
+          };
+        } else {
+          throw new Error(result.error?.message || '子任务执行失败');
+        }
+      } catch (error) {
+        console.error('子 Agent 执行失败:', error);
+        throw error;
+      }
+    }
+
+    // 降级：使用模拟逻辑
+    console.log('⚠️ 未配置 agentFactory，使用模拟逻辑');
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         reject(new Error('任务执行超时'));
@@ -365,7 +404,7 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams> {
           resolve({
             task_description: task.description,
             subagent_type: task.subagent_type || 'general',
-            execution_result: `任务 "${task.description}" 已成功完成`,
+            execution_result: `任务 "${task.description}" 已成功完成（模拟）`,
             context: options.context,
             timestamp: new Date().toISOString(),
           });
@@ -406,6 +445,8 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams> {
  * 创建和管理Agent执行任务
  */
 export class TaskTool extends DeclarativeTool<TaskParams> {
+  private agentFactory?: () => Promise<Agent>;
+
   constructor() {
     const schema: JSONSchema7 = {
       type: 'object',
@@ -455,6 +496,20 @@ export class TaskTool extends DeclarativeTool<TaskParams> {
       '任务工具',
       ['task', 'agent', 'schedule', 'workflow']
     );
+  }
+
+  /**
+   * 设置 Agent 工厂函数（用于创建子 Agent）
+   */
+  public setAgentFactory(factory: () => Promise<Agent>): void {
+    this.agentFactory = factory;
+  }
+
+  /**
+   * 获取 Agent 工厂函数
+   */
+  public getAgentFactory(): (() => Promise<Agent>) | undefined {
+    return this.agentFactory;
   }
 
   build(params: TaskParams): ToolInvocation<TaskParams> {
@@ -514,7 +569,7 @@ export class TaskTool extends DeclarativeTool<TaskParams> {
       run_in_background: runInBackground,
     };
 
-    return new TaskToolInvocation(validatedParams);
+    return new TaskToolInvocation(validatedParams, this);
   }
 }
 

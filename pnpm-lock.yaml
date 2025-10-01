@@ -41,6 +41,9 @@ importers:
       openai:
         specifier: ^4.103.0
         version: 4.104.0(ws@8.18.3)(zod@3.25.76)
+      picomatch:
+        specifier: ^4.0.3
+        version: 4.0.3
       react:
         specifier: ^19.1.1
         version: 19.1.1
@@ -90,6 +93,9 @@ importers:
       '@types/node':
         specifier: ^22.15.24
         version: 22.18.0
+      '@types/picomatch':
+        specifier: ^4.0.2
+        version: 4.0.2
       '@types/uuid':
         specifier: ^10.0.0
         version: 10.0.0
@@ -1422,6 +1428,9 @@ packages:
 
   '@types/node@22.18.0':
     resolution: {integrity: sha512-m5ObIqwsUp6BZzyiy4RdZpzWGub9bqLJMvZDD0QMXhxjqMHMENlj+SqF5QxoUwaQNFe+8kz8XM8ZQhqkQPTgMQ==}
+
+  '@types/picomatch@4.0.2':
+    resolution: {integrity: sha512-qHHxQ+P9PysNEGbALT8f8YOSHW0KJu6l2xU8DYY0fu/EmGxXdVnuTLvFUvBgPJMSqXq29SYHveejeAha+4AYgA==}
 
   '@types/react-dom@19.1.9':
     resolution: {integrity: sha512-qXRuZaOsAdXKFyOhRBg6Lqqc0yay13vN7KrIg4L7N4aaHN68ma9OK3NE1BoDFgFOTfM7zg+3/8+2n8rLUH3OKQ==}
@@ -4299,6 +4308,8 @@ snapshots:
   '@types/node@22.18.0':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/picomatch@4.0.2': {}
 
   '@types/react-dom@19.1.9(@types/react@19.1.12)':
     dependencies:
