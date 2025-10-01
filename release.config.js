@@ -9,6 +9,8 @@ export default {
     checkCodeQuality: false,
     // 是否检查远程版本冲突
     checkVersionConflicts: true,
+    // 是否检查安全漏洞
+    checkSecurity: false,
   },
   
   // 版本管理

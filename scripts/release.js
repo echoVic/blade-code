@@ -521,16 +521,20 @@ function preReleaseCheck() {
   });
 
   console.log(chalk.yellow('\n🔧 依赖检查'));
-  
+
   // 检查依赖安全
-  try {
-    exec(`${packageManager} audit --audit-level=high`, { allowInDryRun: true });
-    console.log(chalk.green('✅ 依赖安全检查通过'));
-  } catch (error) {
-    console.log(chalk.red('❌ 发现高风险依赖问题'));
-    if (!isDryRun) {
-      allChecks = false;
+  if (config.preChecks?.checkSecurity !== false) {
+    try {
+      exec(`${packageManager} audit --audit-level=high`, { allowInDryRun: true });
+      console.log(chalk.green('✅ 依赖安全检查通过'));
+    } catch (error) {
+      console.log(chalk.red('❌ 发现高风险依赖问题'));
+      if (!isDryRun) {
+        allChecks = false;
+      }
     }
+  } else {
+    console.log(chalk.gray('⏭️  跳过安全检查'));
   }
 
   // 检查过期依赖

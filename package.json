@@ -102,7 +102,7 @@
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
     "ahooks": "^3.9.5",
-    "axios": "^1.9.0",
+    "axios": "^1.12.2",
     "chalk": "^5.4.1",
     "ink": "^6.2.3",
     "inquirer": "^12.6.3",
