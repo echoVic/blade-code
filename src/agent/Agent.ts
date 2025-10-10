@@ -7,8 +7,8 @@ import { EventEmitter } from 'events';
 import { ConfigManager } from '../config/config-manager.js';
 import { PromptBuilder } from '../prompts/index.js';
 import { ChatService, type Message } from '../services/ChatService.js';
-import type { DeclarativeTool } from '../tools/base/DeclarativeTool.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
+import type { Tool } from '../tools/types/index.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
@@ -314,7 +314,6 @@ export class Agent extends EventEmitter {
           };
         }
 
-
         // 5. 添加 LLM 的响应到消息历史（包含 tool_calls）
         messages.push({
           role: 'assistant',
@@ -362,9 +361,10 @@ export class Agent extends EventEmitter {
             }
 
             // 简化工具结果内容（不需要包装文字）
-            const finalContent = typeof toolResultContent === 'string'
-              ? toolResultContent
-              : JSON.stringify(toolResultContent);
+            const finalContent =
+              typeof toolResultContent === 'string'
+                ? toolResultContent
+                : JSON.stringify(toolResultContent);
 
             messages.push({
               role: 'tool',
@@ -541,7 +541,7 @@ export class Agent extends EventEmitter {
   /**
    * 获取可用工具列表
    */
-  public getAvailableTools(): DeclarativeTool[] {
+  public getAvailableTools(): Tool[] {
     return this.toolRegistry ? this.toolRegistry.getAll() : [];
   }
 

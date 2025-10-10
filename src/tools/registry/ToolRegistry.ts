@@ -1,14 +1,13 @@
 import { EventEmitter } from 'events';
-import type { DeclarativeTool } from '../base/index.js';
-import type { FunctionDeclaration } from '../types/index.js';
+import type { FunctionDeclaration, Tool } from '../types/index.js';
 
 /**
  * 工具注册表
  * 管理内置工具和MCP工具的注册、发现和查询
  */
 export class ToolRegistry extends EventEmitter {
-  private tools = new Map<string, DeclarativeTool>();
-  private mcpTools = new Map<string, McpToolAdapter>();
+  private tools = new Map<string, Tool>();
+  private mcpTools = new Map<string, Tool>();
   private categories = new Map<string, Set<string>>();
   private tags = new Map<string, Set<string>>();
 
@@ -19,7 +18,7 @@ export class ToolRegistry extends EventEmitter {
   /**
    * 注册内置工具
    */
-  register(tool: DeclarativeTool): void {
+  register(tool: Tool): void {
     if (this.tools.has(tool.name)) {
       throw new Error(`工具 '${tool.name}' 已注册`);
     }
@@ -37,7 +36,7 @@ export class ToolRegistry extends EventEmitter {
   /**
    * 批量注册工具
    */
-  registerAll(tools: DeclarativeTool[]): void {
+  registerAll(tools: Tool[]): void {
     const errors: string[] = [];
 
     for (const tool of tools) {
@@ -77,7 +76,7 @@ export class ToolRegistry extends EventEmitter {
   /**
    * 获取工具
    */
-  get(name: string): DeclarativeTool | undefined {
+  get(name: string): Tool | undefined {
     return this.tools.get(name) || this.mcpTools.get(name);
   }
 
@@ -91,28 +90,28 @@ export class ToolRegistry extends EventEmitter {
   /**
    * 获取所有工具
    */
-  getAll(): DeclarativeTool[] {
+  getAll(): Tool[] {
     return [...Array.from(this.tools.values()), ...Array.from(this.mcpTools.values())];
   }
 
   /**
    * 获取内置工具
    */
-  getBuiltinTools(): DeclarativeTool[] {
+  getBuiltinTools(): Tool[] {
     return Array.from(this.tools.values());
   }
 
   /**
    * 获取MCP工具
    */
-  getMcpTools(): McpToolAdapter[] {
+  getMcpTools(): Tool[] {
     return Array.from(this.mcpTools.values());
   }
 
   /**
    * 按分类获取工具
    */
-  getByCategory(category: string): DeclarativeTool[] {
+  getByCategory(category: string): Tool[] {
     const toolNames = this.categories.get(category);
     if (!toolNames) {
       return [];
@@ -120,13 +119,13 @@ export class ToolRegistry extends EventEmitter {
 
     return Array.from(toolNames)
       .map((name) => this.get(name))
-      .filter((tool): tool is DeclarativeTool => tool !== undefined);
+      .filter((tool): tool is Tool => tool !== undefined);
   }
 
   /**
    * 按标签获取工具
    */
-  getByTag(tag: string): DeclarativeTool[] {
+  getByTag(tag: string): Tool[] {
     const toolNames = this.tags.get(tag);
     if (!toolNames) {
       return [];
@@ -134,29 +133,34 @@ export class ToolRegistry extends EventEmitter {
 
     return Array.from(toolNames)
       .map((name) => this.get(name))
-      .filter((tool): tool is DeclarativeTool => tool !== undefined);
+      .filter((tool): tool is Tool => tool !== undefined);
   }
 
   /**
    * 搜索工具
    */
-  search(query: string): DeclarativeTool[] {
+  search(query: string): Tool[] {
     const lowerQuery = query.toLowerCase();
-    return this.getAll().filter(
-      (tool) =>
+    return this.getAll().filter((tool) => {
+      const desc =
+        typeof tool.description === 'string'
+          ? tool.description
+          : tool.description.short;
+      return (
         tool.name.toLowerCase().includes(lowerQuery) ||
-        tool.description.toLowerCase().includes(lowerQuery) ||
+        desc.toLowerCase().includes(lowerQuery) ||
         tool.displayName.toLowerCase().includes(lowerQuery) ||
         (tool.category && tool.category.toLowerCase().includes(lowerQuery)) ||
         tool.tags.some((tag) => tag.toLowerCase().includes(lowerQuery))
-    );
+      );
+    });
   }
 
   /**
    * 获取函数声明（用于LLM）
    */
   getFunctionDeclarations(): FunctionDeclaration[] {
-    return this.getAll().map((tool) => tool.functionDeclaration);
+    return this.getAll().map((tool) => tool.getFunctionDeclaration());
   }
 
   /**
@@ -192,31 +196,31 @@ export class ToolRegistry extends EventEmitter {
   /**
    * 注册MCP工具
    */
-  registerMcpTool(adapter: McpToolAdapter): void {
-    if (this.mcpTools.has(adapter.name)) {
+  registerMcpTool(tool: Tool): void {
+    if (this.mcpTools.has(tool.name)) {
       // MCP工具可以覆盖（支持热更新）
-      this.mcpTools.delete(adapter.name);
+      this.mcpTools.delete(tool.name);
     }
 
-    this.mcpTools.set(adapter.name, adapter);
-    this.updateIndexes(adapter);
+    this.mcpTools.set(tool.name, tool);
+    this.updateIndexes(tool);
 
     this.emit('toolRegistered', {
       type: 'mcp',
-      tool: adapter,
-      serverName: adapter.serverName,
+      tool,
       timestamp: Date.now(),
     });
   }
 
   /**
-   * 移除MCP服务器的所有工具
+   * 移除MCP工具（通过名称前缀匹配）
    */
   removeMcpTools(serverName: string): number {
     let removedCount = 0;
+    const prefix = `mcp__${serverName}__`;
 
     for (const [name, tool] of this.mcpTools.entries()) {
-      if (tool.serverName === serverName) {
+      if (name.startsWith(prefix)) {
         this.mcpTools.delete(name);
         this.removeFromIndexes(tool);
         removedCount++;
@@ -236,7 +240,7 @@ export class ToolRegistry extends EventEmitter {
   /**
    * 更新索引
    */
-  private updateIndexes(tool: DeclarativeTool): void {
+  private updateIndexes(tool: Tool): void {
     // 更新分类索引
     if (tool.category) {
       if (!this.categories.has(tool.category)) {
@@ -257,7 +261,7 @@ export class ToolRegistry extends EventEmitter {
   /**
    * 从索引中移除
    */
-  private removeFromIndexes(tool: DeclarativeTool): void {
+  private removeFromIndexes(tool: Tool): void {
     // 从分类索引移除
     if (tool.category) {
       const categorySet = this.categories.get(tool.category);
@@ -280,14 +284,6 @@ export class ToolRegistry extends EventEmitter {
       }
     }
   }
-}
-
-/**
- * MCP工具适配器接口（临时定义，后续在MCP模块中完善）
- */
-export interface McpToolAdapter extends DeclarativeTool {
-  readonly serverName: string;
-  readonly mcpToolName: string;
 }
 
 /**

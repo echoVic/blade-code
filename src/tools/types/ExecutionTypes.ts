@@ -10,6 +10,7 @@ export interface ExecutionContext {
   workspaceRoot?: string;
   signal: AbortSignal;
   onProgress?: (message: string) => void;
+  updateOutput?: (output: string) => void; // 别名，与 onProgress 功能相同
 }
 
 /**

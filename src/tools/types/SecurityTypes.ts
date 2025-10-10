@@ -31,9 +31,9 @@ export interface ValidationResult {
  * 验证错误
  */
 export interface ValidationError {
-  field: string;
+  path: string;
   message: string;
-  value?: any;
+  value?: unknown;
 }
 
 /**

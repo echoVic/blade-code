@@ -1,4 +1,6 @@
-export { EditTool } from './EditTool.js';
-export { MultiEditTool } from './MultiEditTool.js';
-export { ReadTool } from './ReadTool.js';
-export { WriteTool } from './WriteTool.js';
+// 新的基于 Zod 的工具定义
+
+export { editTool } from './edit.js';
+export { multiEditTool } from './multi-edit.js';
+export { readTool } from './read.js';
+export { writeTool } from './write.js';

@@ -1,3 +1,5 @@
-export { FindTool } from './FindTool.js';
-export { GlobTool } from './GlobTool.js';
-export { GrepTool } from './GrepTool.js';
+// 新的基于 Zod 的工具定义
+
+export { findTool } from './find.js';
+export { globTool } from './glob.js';
+export { grepTool } from './grep.js';

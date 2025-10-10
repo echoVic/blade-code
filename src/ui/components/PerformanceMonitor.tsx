@@ -125,49 +125,51 @@ export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
 
       {/* 内存使用 */}
       <Box flexDirection="row" alignItems="center" marginBottom={1}>
-        <Text color="#FBBF24" marginRight={1}>
-          🧠
-        </Text>
-        <Text color="#D1D5DB" width={12}>
-          内存:
-        </Text>
+        <Box marginRight={1}>
+          <Text color="#FBBF24">🧠</Text>
+        </Box>
+        <Box width={12}>
+          <Text color="#D1D5DB">内存:</Text>
+        </Box>
         <Text color="#93C5FD">
           {formatBytes(performance.memory.used)} /{' '}
           {formatBytes(performance.memory.total)}
         </Text>
-        <Text color="#9CA3AF" marginLeft={2}>
-          ({performance.memory.percentage}%)
-        </Text>
+        <Box marginLeft={2}>
+          <Text color="#9CA3AF">({performance.memory.percentage}%)</Text>
+        </Box>
       </Box>
 
       {/* CPU使用 */}
       <Box flexDirection="row" alignItems="center" marginBottom={1}>
-        <Text color="#EF4444" marginRight={1}>
-          ⚡
-        </Text>
-        <Text color="#D1D5DB" width={12}>
-          CPU:
-        </Text>
+        <Box marginRight={1}>
+          <Text color="#EF4444">⚡</Text>
+        </Box>
+        <Box width={12}>
+          <Text color="#D1D5DB">CPU:</Text>
+        </Box>
         <Text color="#93C5FD">{performance.cpu.usage}%</Text>
       </Box>
 
       {/* 运行时间 */}
       <Box flexDirection="row" alignItems="center" marginBottom={1}>
-        <Text color="#10B981" marginRight={1}>
-          ⏰
-        </Text>
-        <Text color="#D1D5DB" width={12}>
-          运行时间:
-        </Text>
+        <Box marginRight={1}>
+          <Text color="#10B981">⏰</Text>
+        </Box>
+        <Box width={12}>
+          <Text color="#D1D5DB">运行时间:</Text>
+        </Box>
         <Text color="#93C5FD">{formatTime(performance.uptime)}</Text>
       </Box>
 
       {/* 内存使用图表 */}
       {showGraph && history.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text color="#9CA3AF" dimColor marginBottom={1}>
-            内存使用趋势:
-          </Text>
+          <Box marginBottom={1}>
+            <Text color="#9CA3AF" dimColor>
+              内存使用趋势:
+            </Text>
+          </Box>
           <Text color="#93C5FD">{generateGraph(history, 30, 5)}</Text>
         </Box>
       )}

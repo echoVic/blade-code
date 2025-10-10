@@ -42,20 +42,22 @@ export const NotificationSystem: React.FC<NotificationSystemProps> = ({
       position="absolute"
       {...positionStyles[position]}
       width={50}
-      zIndex={1000}
     >
       {displayNotifications.map((notification, index) => {
         const colors = colorMap[notification.type];
+        const currentPosition = positionStyles[position];
+
+        // 计算偏移量（根据通知索引）
+        const offset = index * 4;
         const style = {
           top: position.includes('top')
-            ? (positionStyles[position].top || 0) + index * 4
+            ? ('top' in currentPosition ? currentPosition.top + offset : undefined)
             : undefined,
           bottom: position.includes('bottom')
-            ? (positionStyles[position].bottom || 0) + index * 4
+            ? ('bottom' in currentPosition ? currentPosition.bottom + offset : undefined)
             : undefined,
-          [position.includes('left') ? 'left' : 'right']: position.includes('left')
-            ? positionStyles[position].left
-            : positionStyles[position].right,
+          left: 'left' in currentPosition ? currentPosition.left : undefined,
+          right: 'right' in currentPosition ? currentPosition.right : undefined,
         };
 
         return (
@@ -117,9 +119,11 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
     >
       <Box flexDirection="row" alignItems="center" marginBottom={1}>
         <Text color={colors.text}>{colors.icon}</Text>
-        <Text color={colors.text} bold marginLeft={1}>
-          {notification.title}
-        </Text>
+        <Box marginLeft={1}>
+          <Text color={colors.text} bold>
+            {notification.title}
+          </Text>
+        </Box>
       </Box>
 
       <Text color={colors.text} wrap="wrap">
@@ -127,8 +131,8 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
       </Text>
 
       <Box flexDirection="row" justifyContent="flex-end" marginTop={1}>
-        <Text color={colors.text} dimColor underline onPress={onDismiss}>
-          关闭
+        <Text color={colors.text} dimColor>
+          [按 Ctrl+C 关闭]
         </Text>
       </Box>
     </Box>

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
-import type { DeclarativeTool } from '../tools/base/DeclarativeTool.js';
+import type { Tool } from '../tools/types/index.js';
+import { createMcpTool } from './createMcpTool.js';
 import { McpClient } from './McpClient.js';
-import { McpToolAdapter } from './McpToolAdapter.js';
 import {
   McpConnectionStatus,
   type McpServerConfig,
@@ -133,14 +133,14 @@ export class McpRegistry extends EventEmitter {
   /**
    * 获取所有可用工具
    */
-  async getAvailableTools(): Promise<DeclarativeTool[]> {
-    const tools: DeclarativeTool[] = [];
+  async getAvailableTools(): Promise<Tool[]> {
+    const tools: Tool[] = [];
 
-    for (const [, serverInfo] of this.servers) {
+    for (const [serverName, serverInfo] of this.servers) {
       if (serverInfo.status === McpConnectionStatus.CONNECTED) {
         for (const mcpTool of serverInfo.tools) {
-          const adapter = new McpToolAdapter(serverInfo.client, mcpTool);
-          tools.push(adapter);
+          const tool = createMcpTool(serverInfo.client, serverName, mcpTool);
+          tools.push(tool);
         }
       }
     }
@@ -151,12 +151,12 @@ export class McpRegistry extends EventEmitter {
   /**
    * 根据名称查找工具
    */
-  async findTool(toolName: string): Promise<DeclarativeTool | null> {
-    for (const [, serverInfo] of this.servers) {
+  async findTool(toolName: string): Promise<Tool | null> {
+    for (const [serverName, serverInfo] of this.servers) {
       if (serverInfo.status === McpConnectionStatus.CONNECTED) {
         const mcpTool = serverInfo.tools.find((tool) => tool.name === toolName);
         if (mcpTool) {
-          return new McpToolAdapter(serverInfo.client, mcpTool);
+          return createMcpTool(serverInfo.client, serverName, mcpTool);
         }
       }
     }
@@ -166,14 +166,14 @@ export class McpRegistry extends EventEmitter {
   /**
    * 按服务器获取工具
    */
-  getToolsByServer(serverName: string): DeclarativeTool[] {
+  getToolsByServer(serverName: string): Tool[] {
     const serverInfo = this.servers.get(serverName);
     if (!serverInfo || serverInfo.status !== McpConnectionStatus.CONNECTED) {
       return [];
     }
 
-    return serverInfo.tools.map(
-      (mcpTool) => new McpToolAdapter(serverInfo.client, mcpTool)
+    return serverInfo.tools.map((mcpTool) =>
+      createMcpTool(serverInfo.client, serverName, mcpTool)
     );
   }
 

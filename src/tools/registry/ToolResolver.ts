@@ -1,5 +1,10 @@
-import type { DeclarativeTool } from '../base/index.js';
-import type { FunctionDeclaration, JSONSchema7 } from '../types/index.js';
+import type { JSONSchema7, JSONSchema7Definition } from 'json-schema';
+import type {
+  FunctionDeclaration,
+  Tool,
+  ValidationError,
+  ValidationResult,
+} from '../types/index.js';
 
 /**
  * 工具解析器
@@ -9,12 +14,8 @@ export class ToolResolver {
   /**
    * 解析工具的函数声明
    */
-  static resolveFunctionDeclaration(tool: DeclarativeTool): FunctionDeclaration {
-    return {
-      name: tool.name,
-      description: tool.description,
-      parameters: this.resolveParameterSchema(tool.parameterSchema),
-    };
+  static resolveFunctionDeclaration(tool: Tool): FunctionDeclaration {
+    return tool.getFunctionDeclaration();
   }
 
   /**
@@ -40,12 +41,15 @@ export class ToolResolver {
    * 解析属性定义
    */
   private static resolveProperties(
-    properties: Record<string, JSONSchema7>
+    properties: Record<string, JSONSchema7Definition>
   ): Record<string, JSONSchema7> {
     const resolved: Record<string, JSONSchema7> = {};
 
     for (const [key, value] of Object.entries(properties)) {
-      resolved[key] = this.resolveProperty(value);
+      // 过滤掉 boolean 类型的定义
+      if (typeof value === 'object' && value !== null) {
+        resolved[key] = this.resolveProperty(value);
+      }
     }
 
     return resolved;
@@ -60,7 +64,7 @@ export class ToolResolver {
     // 处理数组类型
     if (resolved.type === 'array' && resolved.items) {
       if (typeof resolved.items === 'object' && !Array.isArray(resolved.items)) {
-        resolved.items = this.resolveProperty(resolved.items);
+        resolved.items = this.resolveProperty(resolved.items as JSONSchema7);
       }
     }
 
@@ -71,15 +75,21 @@ export class ToolResolver {
 
     // 处理联合类型
     if (resolved.oneOf) {
-      resolved.oneOf = resolved.oneOf.map((schema) => this.resolveProperty(schema));
+      resolved.oneOf = resolved.oneOf
+        .filter((schema): schema is JSONSchema7 => typeof schema === 'object')
+        .map((schema) => this.resolveProperty(schema));
     }
 
     if (resolved.anyOf) {
-      resolved.anyOf = resolved.anyOf.map((schema) => this.resolveProperty(schema));
+      resolved.anyOf = resolved.anyOf
+        .filter((schema): schema is JSONSchema7 => typeof schema === 'object')
+        .map((schema) => this.resolveProperty(schema));
     }
 
     if (resolved.allOf) {
-      resolved.allOf = resolved.allOf.map((schema) => this.resolveProperty(schema));
+      resolved.allOf = resolved.allOf
+        .filter((schema): schema is JSONSchema7 => typeof schema === 'object')
+        .map((schema) => this.resolveProperty(schema));
     }
 
     return resolved;
@@ -118,10 +128,13 @@ export class ToolResolver {
   ): void {
     // 检查类型
     if (schema.type) {
-      if (!this.checkType(value, schema.type)) {
+      const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+      const isValid = types.some((type) => this.checkType(value, type));
+
+      if (!isValid) {
         errors.push({
           path,
-          message: `期望类型 ${schema.type}，实际类型 ${typeof value}`,
+          message: `期望类型 ${Array.isArray(schema.type) ? schema.type.join(' | ') : schema.type}，实际类型 ${typeof value}`,
           value,
         });
         return;
@@ -129,7 +142,7 @@ export class ToolResolver {
     }
 
     // 检查枚举值
-    if (schema.enum && !schema.enum.includes(value)) {
+    if (schema.enum && !schema.enum.includes(value as never)) {
       errors.push({
         path,
         message: `值必须是以下之一: ${schema.enum.join(', ')}`,
@@ -266,8 +279,17 @@ export class ToolResolver {
 
     if (schema.items) {
       value.forEach((item, index) => {
-        if (typeof schema.items === 'object' && !Array.isArray(schema.items)) {
-          this.validateValue(item, schema.items, `${path}[${index}]`, errors);
+        if (
+          typeof schema.items === 'object' &&
+          !Array.isArray(schema.items) &&
+          schema.items !== null
+        ) {
+          this.validateValue(
+            item,
+            schema.items as JSONSchema7,
+            `${path}[${index}]`,
+            errors
+          );
         }
       });
     }
@@ -298,10 +320,14 @@ export class ToolResolver {
     // 验证属性
     if (schema.properties) {
       for (const [propName, propSchema] of Object.entries(schema.properties)) {
-        if (propName in value) {
+        if (
+          propName in value &&
+          typeof propSchema === 'object' &&
+          propSchema !== null
+        ) {
           this.validateValue(
             value[propName],
-            propSchema,
+            propSchema as JSONSchema7,
             `${path}.${propName}`,
             errors
           );
@@ -340,10 +366,15 @@ export class ToolResolver {
 
     if (schema.properties) {
       for (const [key, propSchema] of Object.entries(schema.properties)) {
-        if (key in paramObj) {
-          normalized[key] = this.normalizeValue(paramObj[key], propSchema);
-        } else if (propSchema.default !== undefined) {
-          normalized[key] = propSchema.default;
+        if (typeof propSchema === 'object' && propSchema !== null) {
+          if (key in paramObj) {
+            normalized[key] = this.normalizeValue(
+              paramObj[key],
+              propSchema as JSONSchema7
+            );
+          } else if (propSchema.default !== undefined) {
+            normalized[key] = propSchema.default;
+          }
         }
       }
     }
@@ -371,8 +402,10 @@ export class ToolResolver {
       case 'array':
         if (Array.isArray(value) && schema.items) {
           return value.map((item) =>
-            typeof schema.items === 'object' && !Array.isArray(schema.items)
-              ? this.normalizeValue(item, schema.items)
+            typeof schema.items === 'object' &&
+            !Array.isArray(schema.items) &&
+            schema.items !== null
+              ? this.normalizeValue(item, schema.items as JSONSchema7)
               : item
           );
         }
@@ -381,21 +414,4 @@ export class ToolResolver {
         return value;
     }
   }
-}
-
-/**
- * 验证结果
- */
-export interface ValidationResult {
-  valid: boolean;
-  errors: ValidationError[];
-}
-
-/**
- * 验证错误
- */
-export interface ValidationError {
-  path: string;
-  message: string;
-  value: unknown;
 }
