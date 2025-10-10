@@ -11,7 +11,6 @@ export type {
   AgentResponse,
   AgentTask,
   ChatContext,
-  ToolCall,
 } from './agent/types.js';
 
 // Agent系统已集成工具支持（第八章架构实现）

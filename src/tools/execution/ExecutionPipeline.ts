@@ -7,6 +7,7 @@ import type {
   PipelineStage,
   ToolResult,
 } from '../types/index.js';
+import { ToolErrorType } from '../types/ToolTypes.js';
 import {
   ConfirmationStage,
   DiscoveryStage,
@@ -121,7 +122,7 @@ export class ExecutionPipeline extends EventEmitter {
         llmContent: `工具执行失败: ${(error as Error).message}`,
         displayContent: `错误: ${(error as Error).message}`,
         error: {
-          type: 'EXECUTION_ERROR' as const,
+          type: ToolErrorType.EXECUTION_ERROR,
           message: (error as Error).message,
         },
       };

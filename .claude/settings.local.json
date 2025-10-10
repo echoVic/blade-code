@@ -21,7 +21,9 @@
       "Bash(pnpm add:*)",
       "Bash(npx:*)",
       "Bash(xargs sed:*)",
-      "WebFetch(domain:gist.github.com)"
+      "WebFetch(domain:gist.github.com)",
+      "Bash(pnpm update:*)",
+      "WebFetch(domain:jannesklaas.github.io)"
     ],
     "deny": [],
     "ask": [],

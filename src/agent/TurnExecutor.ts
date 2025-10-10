@@ -72,7 +72,7 @@ export class TurnExecutor {
     // 返回统一的 TurnResult (直接透传,类型已统一)
     return {
       content: typeof response.content === 'string' ? response.content : '',
-      tool_calls: response.tool_calls,
+      toolCalls: response.toolCalls,
       usage: response.usage,
     };
   }

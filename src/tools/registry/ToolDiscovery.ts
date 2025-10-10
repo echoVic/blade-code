@@ -1,5 +1,5 @@
 import type { DeclarativeTool } from '../base/index.js';
-import type { ToolKind } from '../types/index.js';
+import { ToolKind } from '../types/index.js';
 
 /**
  * 工具发现服务

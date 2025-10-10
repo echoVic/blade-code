@@ -67,17 +67,9 @@ export class ExecutionEngine {
     const messages: Message[] = [{ role: 'user', content: task.prompt }];
     const response = await this.chatService.chat(messages);
 
-    // 提取文本内容
-    const content = typeof response.content === 'string'
-      ? response.content
-      : response.content
-          .filter((item) => item.type === 'text' && item.text)
-          .map((item) => item.text)
-          .join('\n');
-
     return {
       taskId: task.id,
-      content,
+      content: response.content,
       metadata: {
         executionMode: 'simple',
         taskType: task.type,
@@ -226,15 +218,7 @@ export class ExecutionEngine {
     const context = `步骤: ${step.description}\n任务: ${task.prompt}`;
     const chatResponse = await this.chatService.chat([{ role: 'user', content: context }]);
 
-    // 提取文本内容
-    const content = typeof chatResponse.content === 'string'
-      ? chatResponse.content
-      : chatResponse.content
-          .filter((item) => item.type === 'text' && item.text)
-          .map((item) => item.text)
-          .join('\n');
-
-    return { content, stepId: step.id };
+    return { content: chatResponse.content, stepId: step.id };
   }
 
   /**

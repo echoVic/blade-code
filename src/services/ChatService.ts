@@ -1,62 +1,31 @@
-/**
- * Chat服务 - 统一的聊天接口
- * 替代LLM模块，提供统一的聊天调用能力
- */
+import OpenAI from 'openai';
+import type {
+  ChatCompletionChunk,
+  ChatCompletionMessageParam,
+  ChatCompletionMessageToolCall,
+  ChatCompletionTool,
+} from 'openai/resources/chat';
 
 export type Message = {
-  role: 'user' | 'assistant' | 'system';
-  content:
-    | string
-    | Array<{
-        type: 'text' | 'tool_use' | 'tool_result';
-        text?: string;
-        tool_use?: {
-          id: string;
-          name: string;
-          input: Record<string, any>;
-        };
-        tool_result?: {
-          tool_use_id: string;
-          content: string;
-        };
-      }>;
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  tool_call_id?: string;  // tool 角色必需
+  name?: string;  // 工具名称
+  tool_calls?: ChatCompletionMessageToolCall[];  // assistant 返回工具调用时需要
 };
 
 export interface ChatConfig {
-  apiKey: string; // API密钥
-  model: string; // 模型名称
-  baseUrl: string; // 必须配置的API端点
+  apiKey: string;
+  model: string;
+  baseUrl: string;
   temperature?: number;
   maxTokens?: number;
   timeout?: number;
 }
 
-export interface ToolCall {
-  id?: string;
-  type: 'function';
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
 export interface ChatResponse {
-  content:
-    | string
-    | Array<{
-        type: 'text' | 'tool_use' | 'tool_result';
-        text?: string;
-        tool_use?: {
-          id: string;
-          name: string;
-          input: Record<string, any>;
-        };
-        tool_result?: {
-          tool_use_id: string;
-          content: string;
-        };
-      }>;
-  tool_calls?: ToolCall[];
+  content: string;
+  toolCalls?: ChatCompletionMessageToolCall[];
   usage?: {
     promptTokens: number;
     completionTokens: number;
@@ -64,31 +33,49 @@ export interface ChatResponse {
   };
 }
 
-/**
- * Chat服务类 - 统一的聊天接口
- */
+export interface StreamChunk {
+  content?: string;
+  toolCalls?: ChatCompletionChunk.Choice.Delta.ToolCall[];
+  finishReason?: string;
+}
+
 export class ChatService {
-  private baseUrl: string;
+  private client: OpenAI;
 
   constructor(private config: ChatConfig) {
+    console.log('🚀 [ChatService] Initializing ChatService');
+    console.log('⚙️ [ChatService] Config:', {
+      model: config.model,
+      baseUrl: config.baseUrl,
+      temperature: config.temperature,
+      maxTokens: config.maxTokens,
+      timeout: config.timeout,
+      hasApiKey: !!config.apiKey,
+    });
+    
     if (!config.baseUrl) {
+      console.error('❌ [ChatService] baseUrl is required in ChatConfig');
       throw new Error('baseUrl is required in ChatConfig');
     }
     if (!config.apiKey) {
+      console.error('❌ [ChatService] apiKey is required in ChatConfig');
       throw new Error('apiKey is required in ChatConfig');
     }
     if (!config.model) {
+      console.error('❌ [ChatService] model is required in ChatConfig');
       throw new Error('model is required in ChatConfig');
     }
-    // 自动补全 /chat/completions 端点
-    this.baseUrl = config.baseUrl.endsWith('/chat/completions')
-      ? config.baseUrl
-      : config.baseUrl.replace(/\/$/, '') + '/chat/completions';
+
+    this.client = new OpenAI({
+      apiKey: config.apiKey,
+      baseURL: config.baseUrl,
+      timeout: config.timeout ?? 30000,
+      maxRetries: 3,
+    });
+    
+    console.log('✅ [ChatService] ChatService initialized successfully');
   }
 
-  /**
-   * 统一的聊天接口 - 返回完整响应（包含 content、tool_calls、usage）
-   */
   async chat(
     messages: Message[],
     tools?: Array<{
@@ -97,161 +84,278 @@ export class ChatService {
       parameters: any;
     }>
   ): Promise<ChatResponse> {
-    return tools && tools.length > 0
-      ? await this.callChatAPIWithTools(messages, tools)
-      : await this.callChatAPI(messages);
-  }
+    const startTime = Date.now();
+    console.log('🚀 [ChatService] Starting chat request');
+    console.log('📝 [ChatService] Messages count:', messages.length);
+    console.log('📝 [ChatService] Messages preview:', messages.map(m => ({ role: m.role, contentLength: m.content.length })));
 
-
-  /**
-   * 支持工具调用的API调用
-   */
-  private async callChatAPIWithTools(
-    messages: Message[],
-    tools: Array<{
-      name: string;
-      description: string;
-      parameters: any;
-    }>
-  ): Promise<ChatResponse> {
-    const headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${this.config.apiKey}`,
-    };
-
-    const body = {
-      model: this.config.model,
-      messages: messages,
-      tools: tools.map((tool) => ({
-        type: 'function',
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters,
-        },
-      })),
-      tool_choice: 'auto',
-      max_tokens: this.config.maxTokens ?? 32000,
-      temperature: this.config.temperature ?? 0.3,
-    };
-
-    // 🔍 调试日志: 打印完整请求体
-    console.log('[ChatService DEBUG] Request Body:', JSON.stringify(body, null, 2));
-
-    try {
-      const response = await fetch(this.baseUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        throw new Error(`API调用失败: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-
-      // 🔍 调试日志: 打印完整API响应
-      console.log('[ChatService DEBUG] API Response:', JSON.stringify(data, null, 2));
-
-      // 处理包含工具调用的响应
-      const choice = data.choices?.[0];
-      if (!choice) {
-        throw new Error('API响应格式无效');
-      }
-
-      const message = choice.message;
-
-      // 🔍 调试日志: 打印 message 对象
-      console.log('[ChatService DEBUG] Message:', JSON.stringify(message, null, 2));
-      console.log('[ChatService DEBUG] Has tool_calls?', !!message.tool_calls);
-
-      // 检查是否有工具调用
-      if (message.tool_calls && message.tool_calls.length > 0) {
-        console.log(`[ChatService DEBUG] Found ${message.tool_calls.length} tool calls`);
+    const openaiMessages: ChatCompletionMessageParam[] = messages.map((msg) => {
+      if (msg.role === 'tool') {
         return {
-          content: message.content || '',
-          tool_calls: message.tool_calls,
-          usage: {
-            promptTokens: data.usage?.prompt_tokens || 0,
-            completionTokens: data.usage?.completion_tokens || 0,
-            totalTokens: data.usage?.total_tokens || 0,
-          },
+          role: 'tool',
+          content: msg.content,
+          tool_call_id: msg.tool_call_id!,
         };
       }
-
-      // 普通文本响应
-      console.log('[ChatService DEBUG] No tool calls, returning plain text response');
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        return {
+          role: 'assistant',
+          content: msg.content || null,
+          tool_calls: msg.tool_calls,
+        };
+      }
       return {
-        content: message.content || '',
+        role: msg.role as 'user' | 'assistant' | 'system',
+        content: msg.content,
+      };
+    });
+
+    const openaiTools: ChatCompletionTool[] | undefined = tools?.map((tool) => ({
+      type: 'function' as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    }));
+    
+    console.log('🔧 [ChatService] Tools count:', openaiTools?.length || 0);
+    if (openaiTools && openaiTools.length > 0) {
+      console.log('🔧 [ChatService] Available tools:', openaiTools.map(t => t.type === 'function' ? t.function.name : 'unknown'));
+    }
+
+    const requestParams = {
+      model: this.config.model,
+      messages: openaiMessages,
+      tools: openaiTools,
+      tool_choice: openaiTools && openaiTools.length > 0 ? 'auto' as const : undefined,
+      max_tokens: this.config.maxTokens ?? 32000,
+      temperature: this.config.temperature ?? 0.0,
+    };
+    
+    console.log('📤 [ChatService] Request params:', {
+      model: requestParams.model,
+      messagesCount: requestParams.messages.length,
+      toolsCount: requestParams.tools?.length || 0,
+      tool_choice: requestParams.tool_choice,
+      max_tokens: requestParams.max_tokens,
+      temperature: requestParams.temperature,
+    });
+
+    try {
+      const completion = await this.client.chat.completions.create(requestParams);
+      const requestDuration = Date.now() - startTime;
+      
+      console.log('📥 [ChatService] Response received in', requestDuration, 'ms');
+      console.log('📊 [ChatService] Response usage:', completion.usage);
+      console.log('📊 [ChatService] Response choices count:', completion.choices.length);
+
+      const choice = completion.choices[0];
+      if (!choice) {
+        console.error('❌ [ChatService] No completion choice returned');
+        throw new Error('No completion choice returned');
+      }
+
+      console.log('📝 [ChatService] Response choice:', {
+        finishReason: choice.finish_reason,
+        contentLength: choice.message.content?.length || 0,
+        hasToolCalls: !!choice.message.tool_calls,
+        toolCallsCount: choice.message.tool_calls?.length || 0,
+      });
+
+      if (choice.message.tool_calls) {
+        console.log('🔧 [ChatService] Tool calls:', choice.message.tool_calls.map(tc => ({
+          id: tc.id,
+          type: tc.type,
+          functionName: tc.type === 'function' ? tc.function?.name : 'unknown',
+          functionArgsLength: tc.type === 'function' ? tc.function?.arguments?.length || 0 : 0,
+        })));
+      }
+
+      const toolCalls = choice.message.tool_calls?.filter(
+        (tc): tc is ChatCompletionMessageToolCall => tc.type === 'function'
+      );
+
+      const response = {
+        content: choice.message.content || '',
+        toolCalls: toolCalls,
         usage: {
-          promptTokens: data.usage?.prompt_tokens || 0,
-          completionTokens: data.usage?.completion_tokens || 0,
-          totalTokens: data.usage?.total_tokens || 0,
+          promptTokens: completion.usage?.prompt_tokens || 0,
+          completionTokens: completion.usage?.completion_tokens || 0,
+          totalTokens: completion.usage?.total_tokens || 0,
         },
       };
+      
+      console.log('✅ [ChatService] Chat completed successfully');
+      console.log('📊 [ChatService] Final response:', {
+        contentLength: response.content.length,
+        toolCallsCount: response.toolCalls?.length || 0,
+        usage: response.usage,
+      });
+      
+      return response;
     } catch (error) {
-      console.error('ChatService API调用失败:', error);
+      const requestDuration = Date.now() - startTime;
+      console.error('❌ [ChatService] Chat request failed after', requestDuration, 'ms');
+      console.error('❌ [ChatService] Error details:', error);
       throw error;
     }
   }
 
-  /**
-   * 调用OpenAI兼容的Chat API
-   */
-  private async callChatAPI(messages: Message[]): Promise<ChatResponse> {
-    const headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${this.config.apiKey}`,
-    };
+  async *chatStream(
+    messages: Message[],
+    tools?: Array<{
+      name: string;
+      description: string;
+      parameters: any;
+    }>
+  ): AsyncGenerator<StreamChunk, void, unknown> {
+    const startTime = Date.now();
+    console.log('🚀 [ChatService] Starting chat stream request');
+    console.log('📝 [ChatService] Messages count:', messages.length);
+    console.log('📝 [ChatService] Messages preview:', messages.map(m => ({ role: m.role, contentLength: m.content.length })));
 
-    const body = {
+    const openaiMessages: ChatCompletionMessageParam[] = messages.map((msg) => {
+      if (msg.role === 'tool') {
+        return {
+          role: 'tool',
+          content: msg.content,
+          tool_call_id: msg.tool_call_id!,
+        };
+      }
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        return {
+          role: 'assistant',
+          content: msg.content || null,
+          tool_calls: msg.tool_calls,
+        };
+      }
+      return {
+        role: msg.role as 'user' | 'assistant' | 'system',
+        content: msg.content,
+      };
+    });
+
+    const openaiTools: ChatCompletionTool[] | undefined = tools?.map((tool) => ({
+      type: 'function' as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    }));
+
+    console.log('🔧 [ChatService] Stream tools count:', openaiTools?.length || 0);
+    if (openaiTools && openaiTools.length > 0) {
+      console.log('🔧 [ChatService] Stream available tools:', openaiTools.map(t => t.type === 'function' ? t.function.name : 'unknown'));
+    }
+
+    const requestParams = {
       model: this.config.model,
-      messages: messages,
+      messages: openaiMessages,
+      tools: openaiTools,
+      tool_choice: openaiTools && openaiTools.length > 0 ? 'auto' as const : 'none' as const,
       max_tokens: this.config.maxTokens ?? 32000,
-      temperature: this.config.temperature ?? 0.3,
+      temperature: this.config.temperature ?? 0.0,
+      stream: true as const,
     };
+    
+    console.log('📤 [ChatService] Stream request params:', {
+      model: requestParams.model,
+      messagesCount: requestParams.messages.length,
+      toolsCount: requestParams.tools?.length || 0,
+      tool_choice: requestParams.tool_choice,
+      max_tokens: requestParams.max_tokens,
+      temperature: requestParams.temperature,
+      stream: requestParams.stream,
+    });
 
     try {
-      const response = await fetch(this.baseUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-      });
+      const stream = await this.client.chat.completions.create(requestParams);
+      const requestDuration = Date.now() - startTime;
+      console.log('📥 [ChatService] Stream started in', requestDuration, 'ms');
+      
+      let chunkCount = 0;
+      let totalContent = '';
+      let toolCallsReceived = false;
 
-      if (!response.ok) {
-        throw new Error(`API调用失败: ${response.status} ${response.statusText}`);
+      for await (const chunk of stream) {
+        chunkCount++;
+        const delta = chunk.choices[0]?.delta;
+        if (!delta) {
+          console.log('⚠️ [ChatService] Empty delta in chunk', chunkCount);
+          continue;
+        }
+
+        if (delta.content) {
+          totalContent += delta.content;
+        }
+        
+        if (delta.tool_calls && !toolCallsReceived) {
+          toolCallsReceived = true;
+          console.log('🔧 [ChatService] Tool calls detected in stream');
+        }
+
+        const finishReason = chunk.choices[0]?.finish_reason;
+        if (finishReason) {
+          console.log('🏁 [ChatService] Stream finished with reason:', finishReason);
+          console.log('📊 [ChatService] Stream summary:', {
+            totalChunks: chunkCount,
+            totalContentLength: totalContent.length,
+            hadToolCalls: toolCallsReceived,
+            duration: Date.now() - startTime + 'ms',
+          });
+        }
+
+        yield {
+          content: delta.content || undefined,
+          toolCalls: delta.tool_calls,
+          finishReason: finishReason || undefined,
+        };
       }
-
-      const data = await response.json();
-
-      // 处理OpenAI格式的响应
-      return {
-        content: data.choices?.[0]?.message?.content || '',
-        usage: {
-          promptTokens: data.usage?.prompt_tokens || 0,
-          completionTokens: data.usage?.completion_tokens || 0,
-          totalTokens: data.usage?.total_tokens || 0,
-        },
-      };
+      
+      console.log('✅ [ChatService] Stream completed successfully');
     } catch (error) {
-      throw new Error(
-        `Chat API调用失败: ${error instanceof Error ? error.message : '未知错误'}`
-      );
+      const requestDuration = Date.now() - startTime;
+      console.error('❌ [ChatService] Stream request failed after', requestDuration, 'ms');
+      console.error('❌ [ChatService] Stream error details:', error);
+      throw error;
     }
   }
 
-  /**
-   * 获取当前配置
-   */
   getConfig(): ChatConfig {
     return { ...this.config };
   }
 
-  /**
-   * 更新配置
-   */
   updateConfig(newConfig: Partial<ChatConfig>): void {
+    console.log('🔄 [ChatService] Updating configuration');
+    console.log('🔄 [ChatService] New config:', {
+      model: newConfig.model,
+      baseUrl: newConfig.baseUrl,
+      temperature: newConfig.temperature,
+      maxTokens: newConfig.maxTokens,
+      timeout: newConfig.timeout,
+      hasApiKey: !!newConfig.apiKey,
+    });
+    
+    const oldConfig = { ...this.config };
     this.config = { ...this.config, ...newConfig };
+
+    this.client = new OpenAI({
+      apiKey: this.config.apiKey,
+      baseURL: this.config.baseUrl,
+      timeout: this.config.timeout ?? 30000,
+      maxRetries: 3,
+    });
+    
+    console.log('✅ [ChatService] Configuration updated successfully');
+    console.log('📊 [ChatService] Config changes:', {
+      modelChanged: oldConfig.model !== this.config.model,
+      baseUrlChanged: oldConfig.baseUrl !== this.config.baseUrl,
+      temperatureChanged: oldConfig.temperature !== this.config.temperature,
+      maxTokensChanged: oldConfig.maxTokens !== this.config.maxTokens,
+      timeoutChanged: oldConfig.timeout !== this.config.timeout,
+      apiKeyChanged: oldConfig.apiKey !== this.config.apiKey,
+    });
   }
 }
