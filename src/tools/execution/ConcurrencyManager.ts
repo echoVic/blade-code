@@ -5,6 +5,7 @@ import type {
   ToolInvocation,
   ToolResult,
 } from '../types/index.js';
+import { ToolErrorType } from '../types/ToolTypes.js';
 
 /**
  * 并发管理器
@@ -159,7 +160,7 @@ export class ConcurrencyManager extends EventEmitter {
           llmContent: `工具执行失败 (尝试 ${attempt} 次): ${(error as Error).message}`,
           displayContent: `执行失败: ${(error as Error).message}`,
           error: {
-            type: 'EXECUTION_ERROR' as const,
+            type: ToolErrorType.EXECUTION_ERROR,
             message: (error as Error).message,
             details: { attempts: attempt },
           },

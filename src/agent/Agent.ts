@@ -97,7 +97,7 @@ export class Agent extends EventEmitter {
       throw new Error('缺少 API 基础 URL。请通过参数、环境变量或配置文件提供。');
     }
 
-    const temperature = options.temperature ?? globalConfig?.auth?.temperature ?? 0.3;
+    const temperature = options.temperature ?? globalConfig?.auth?.temperature ?? 0.0;
 
     const maxTokens = options.maxTokens ?? globalConfig?.auth?.maxTokens ?? 32000;
 
@@ -242,13 +242,6 @@ export class Agent extends EventEmitter {
 
       // 1. 获取可用工具定义
       const tools = this.toolRegistry.getFunctionDeclarations();
-      console.log(`[Agent DEBUG] Tools count: ${tools.length}`);
-      if (tools.length > 0) {
-        console.log(
-          `[Agent DEBUG] First tool example:`,
-          JSON.stringify(tools[0], null, 2)
-        );
-      }
 
       // 2. 构建消息历史
       // 只在会话第一次时注入完整的 system 消息（环境上下文 + DEFAULT_SYSTEM_PROMPT）
@@ -267,16 +260,6 @@ export class Agent extends EventEmitter {
       }
 
       messages.push(...context.messages, { role: 'user', content: message });
-
-      // 🔍 调试日志: 打印 system prompt 内容
-      console.log('[Agent DEBUG] Messages array length:', messages.length);
-      if (messages.length > 0 && messages[0].role === 'system') {
-        console.log('[Agent DEBUG] System prompt (first 500 chars):',
-          typeof messages[0].content === 'string'
-            ? messages[0].content.substring(0, 500)
-            : JSON.stringify(messages[0].content).substring(0, 500)
-        );
-      }
 
       // === Agentic Loop: 循环调用直到任务完成 ===
       const maxTurns = options?.maxTurns || 50; // 可配置最大循环次数
@@ -316,10 +299,9 @@ export class Agent extends EventEmitter {
           stream: options?.stream,
           onTextDelta: (text) => this.emit('textDelta', { text, turn: turnsCount }),
         });
-        console.log(`🔧 Turn result:`, JSON.stringify(turnResult, null, 2));
 
         // 4. 检查是否需要工具调用（任务完成条件）
-        if (!turnResult.tool_calls || turnResult.tool_calls.length === 0) {
+        if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
           console.log('✅ 任务完成 - LLM 未请求工具调用');
           return {
             success: true,
@@ -332,20 +314,19 @@ export class Agent extends EventEmitter {
           };
         }
 
-        console.log(`🔧 LLM requested ${turnResult.tool_calls.length} tool calls`);
 
-        // 5. 添加 LLM 的响应到消息历史
-        if (turnResult.content) {
-          messages.push({ role: 'assistant', content: turnResult.content });
-        }
+        // 5. 添加 LLM 的响应到消息历史（包含 tool_calls）
+        messages.push({
+          role: 'assistant',
+          content: turnResult.content || '',
+          tool_calls: turnResult.toolCalls,
+        });
 
         // 6. 执行每个工具调用并注入结果
-        for (const toolCall of turnResult.tool_calls) {
-          try {
-            console.log(
-              `🔧 Executing tool: ${toolCall.function.name} with arguments: ${toolCall.function.arguments}`
-            );
+        for (const toolCall of turnResult.toolCalls) {
+          if (toolCall.type !== 'function') continue;
 
+          try {
             // 触发工具执行开始事件
             this.emit('toolExecutionStart', {
               tool: toolCall.function.name,
@@ -358,12 +339,8 @@ export class Agent extends EventEmitter {
             }
 
             const params = JSON.parse(toolCall.function.arguments);
-            console.log(`🔧 Tool parameters:`, params);
-
             const toolInvocation = tool.build(params);
             const result = await toolInvocation.execute(new AbortController().signal);
-
-            console.log(`🔧 Tool execution result:`, result);
             allToolResults.push(result);
 
             // 触发工具执行完成事件
@@ -374,22 +351,26 @@ export class Agent extends EventEmitter {
             });
 
             // 添加工具执行结果到消息历史
+            // 优先使用 displayContent（人类可读格式），避免空数组或复杂对象被选中
             let toolResultContent = result.success
-              ? result.llmContent || result.displayContent || ''
+              ? result.displayContent || result.llmContent || ''
               : result.error?.message || '执行失败';
 
             // 如果内容是对象，需要序列化为 JSON
             if (typeof toolResultContent === 'object' && toolResultContent !== null) {
-              try {
-                toolResultContent = JSON.stringify(toolResultContent, null, 2);
-              } catch {
-                toolResultContent = String(toolResultContent);
-              }
+              toolResultContent = JSON.stringify(toolResultContent, null, 2);
             }
 
+            // 简化工具结果内容（不需要包装文字）
+            const finalContent = typeof toolResultContent === 'string'
+              ? toolResultContent
+              : JSON.stringify(toolResultContent);
+
             messages.push({
-              role: 'user',
-              content: `工具 ${toolCall.function.name} 执行结果: ${result.success ? '成功' : '失败'}\n\n${toolResultContent}`,
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: toolCall.function.name,
+              content: finalContent,
             });
           } catch (error) {
             console.error(
@@ -397,18 +378,17 @@ export class Agent extends EventEmitter {
               error
             );
             messages.push({
-              role: 'user',
-              content: `工具 ${toolCall.function.name} 执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: toolCall.function.name,
+              content: `执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
             });
           }
         }
 
         // 7. 循环检测 - 检测是否陷入死循环
         const loopDetected = await this.loopDetector.detect(
-          turnResult.tool_calls.map((tc) => ({
-            type: 'function' as const,
-            function: { name: tc.function.name, arguments: tc.function.arguments },
-          })),
+          turnResult.toolCalls.filter((tc) => tc.type === 'function'),
           turnsCount,
           messages
         );
@@ -514,20 +494,13 @@ export class Agent extends EventEmitter {
       throw new Error('Agent未初始化');
     }
 
-    // 自己构建包含 system 消息的 messages 数组
     const messages: Message[] = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: message },
     ];
     const response = await this.chatService.chat(messages);
 
-    // 提取文本内容
-    return typeof response.content === 'string'
-      ? response.content
-      : response.content
-          .filter((item) => item.type === 'text' && item.text)
-          .map((item) => item.text)
-          .join('\n');
+    return response.content;
   }
 
   /**

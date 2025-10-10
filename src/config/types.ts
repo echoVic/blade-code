@@ -358,7 +358,7 @@ export const DEFAULT_CONFIG: Omit<BladeConfig, 'version' | 'name' | 'description
 
     // LLM 模型配置 (统一在auth下)
     modelName: 'qwen3-coder-plus',
-    temperature: 0.3,
+    temperature: 0.0,
     maxTokens: 32000,
     stream: true,
 

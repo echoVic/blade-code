@@ -3,8 +3,8 @@
  * 融合 Gemini CLI 的最佳实践
  */
 
+import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { Message } from '../services/ChatService.js';
-import type { ToolCall } from './types.js';
 
 export interface LoopDetectionConfig {
   toolCallThreshold: number; // 工具调用重复次数阈值 (默认5)
@@ -44,7 +44,7 @@ export class LoopDetectionService {
    * 主检测方法 - 三层检测机制
    */
   async detect(
-    toolCalls: ToolCall[],
+    toolCalls: ChatCompletionMessageToolCall[],
     currentTurn: number,
     messages: Message[]
   ): Promise<LoopDetectionResult | null> {
@@ -94,8 +94,10 @@ export class LoopDetectionService {
    * 工具调用循环检测 (Gemini CLI)
    * 检测连续N次相同工具调用
    */
-  private detectToolCallLoop(toolCalls: ToolCall[]): { toolName: string } | null {
+  private detectToolCallLoop(toolCalls: ChatCompletionMessageToolCall[]): { toolName: string } | null {
     for (const tc of toolCalls) {
+      if (tc.type !== 'function') continue;
+
       const hash = this.hashParams(tc.function.arguments);
       this.toolCallHistory.push({
         name: tc.function.name,

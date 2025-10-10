@@ -2,9 +2,9 @@
  * Agent核心类型定义
  */
 
-import type { ChatConfig, Message, ToolCall } from '../services/ChatService.js';
+import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
+import type { ChatConfig, Message } from '../services/ChatService.js';
 
-export type { ToolCall };
 
 /**
  * 聊天上下文接口
@@ -122,9 +122,9 @@ export interface LoopOptions {
   signal?: AbortSignal;
   stream?: boolean;
   onTurnStart?: (data: { turn: number; maxTurns: number }) => void;
-  onToolUse?: (toolCall: ToolCall) => Promise<ToolCall | void>;
-  onToolApprove?: (toolCall: ToolCall) => Promise<boolean>;
-  onToolResult?: (toolCall: ToolCall, result: any) => Promise<any | void>;
+  onToolUse?: (toolCall: ChatCompletionMessageToolCall) => Promise<ChatCompletionMessageToolCall | void>;
+  onToolApprove?: (toolCall: ChatCompletionMessageToolCall) => Promise<boolean>;
+  onToolResult?: (toolCall: ChatCompletionMessageToolCall, result: any) => Promise<any | void>;
 }
 
 export interface LoopResult {
@@ -153,7 +153,7 @@ export interface TurnOptions {
 
 export interface TurnResult {
   content: string;
-  tool_calls?: ToolCall[];
+  toolCalls?: ChatCompletionMessageToolCall[];
   usage?: {
     promptTokens: number;
     completionTokens: number;

@@ -1,4 +1,28 @@
-import { type ToolParameterSchema, ToolValidationError } from './types.js';
+/**
+ * 工具参数Schema
+ */
+export interface ToolParameterSchema {
+  type: string;
+  description?: string;
+  default?: any;
+  enum?: any[];
+  items?: ToolParameterSchema;
+  properties?: Record<string, ToolParameterSchema>;
+}
+
+/**
+ * 工具验证错误
+ */
+export class ToolValidationError extends Error {
+  constructor(
+    message: string,
+    public readonly field?: string,
+    public readonly value?: any
+  ) {
+    super(message);
+    this.name = 'ToolValidationError';
+  }
+}
 
 /**
  * 工具参数验证器

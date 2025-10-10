@@ -1,4 +1,4 @@
-import type { ToolDefinition } from './types.js';
+import type { McpToolDefinition as ToolDefinition } from './types/McpTypes.js';
 
 /**
  * OpenAI Tools 格式
@@ -37,8 +37,8 @@ export class ToolFormatConverter {
         description: tool.description,
         parameters: {
           type: 'object',
-          properties: tool.parameters,
-          required: tool.required || [],
+          properties: tool.inputSchema.properties || {},
+          required: (tool.inputSchema.required as string[]) || [],
         },
       },
     }));
@@ -53,8 +53,8 @@ export class ToolFormatConverter {
       description: tool.description,
       parameters: {
         type: 'object',
-        properties: tool.parameters,
-        required: tool.required || [],
+        properties: tool.inputSchema.properties || {},
+        required: (tool.inputSchema.required as string[]) || [],
       },
     }));
   }
@@ -102,8 +102,8 @@ export class ToolFormatConverter {
       return this.functionsToTools(input as OpenAIFunction[]);
     }
 
-    // 如果是项目内部的 ToolDefinition 格式
-    if (first.name && first.description && first.parameters && first.execute) {
+    // 如果是项目内部的 ToolDefinition 格式 (MCP格式)
+    if (first.name && first.description && first.inputSchema) {
       return this.toOpenAITools(input as ToolDefinition[]);
     }
 
@@ -129,8 +129,8 @@ export class ToolFormatConverter {
       return input as OpenAIFunction[];
     }
 
-    // 如果是项目内部的 ToolDefinition 格式
-    if (first.name && first.description && first.parameters && first.execute) {
+    // 如果是项目内部的 ToolDefinition 格式 (MCP格式)
+    if (first.name && first.description && first.inputSchema) {
       return this.toOpenAIFunctions(input as ToolDefinition[]);
     }
 

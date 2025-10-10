@@ -108,7 +108,7 @@
     "inquirer": "^12.6.3",
     "lodash-es": "^4.17.21",
     "lowlight": "^3.3.0",
-    "openai": "^4.103.0",
+    "openai": "^6.2.0",
     "picomatch": "^4.0.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

@@ -213,7 +213,7 @@ export class AgentLoop extends EventEmitter {
       );
 
       // === 4. 检查是否有工具调用 ===
-      if (!turnResult.tool_calls || turnResult.tool_calls.length === 0) {
+      if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
         // 无工具调用,任务完成
         return {
           success: true,
@@ -228,7 +228,7 @@ export class AgentLoop extends EventEmitter {
 
       // === 5. 循环检测 (Gemini CLI) ===
       const loopDetected = await this.loopDetector.detect(
-        turnResult.tool_calls,
+        turnResult.toolCalls,
         turnsCount,
         messages
       );
@@ -250,7 +250,7 @@ export class AgentLoop extends EventEmitter {
 
       // === 7. 批量执行工具 (Gemini CLI) ===
       const toolResults = await this.executeToolsBatch(
-        turnResult.tool_calls,
+        turnResult.toolCalls,
         options
       );
 
@@ -613,7 +613,7 @@ interface TurnOptions {
 
 interface TurnResult {
   content: string;
-  tool_calls?: ToolCall[];
+  toolCalls?: ToolCall[];
   usage?: {
     promptTokens: number;
     completionTokens: number;
