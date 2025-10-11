@@ -62,10 +62,10 @@ Experience Blade Code instantly without installation:
 # Interactive mode
 npx blade-code
 
-# Quick Q&A (non-interactive with --print)
+# Quick Q&A (non-interactive)
 npx blade-code --print "Explain what TypeScript is"
 
-# Code generation
+# Code generation (non-interactive)
 npx blade-code --print "Write a quicksort algorithm in Python"
 ```
 
@@ -88,7 +88,7 @@ After installation, use the `blade` command:
 # Interactive mode (default)
 blade
 
-# Direct Q&A (with --print)
+# Quick Q&A (non-interactive)
 blade --print "Hello, introduce yourself"
 ```
 

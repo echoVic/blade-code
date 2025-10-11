@@ -59,14 +59,14 @@
 无需安装，直接体验 Blade Code：
 
 ```bash
-# 快速问答
-npx blade-code "解释什么是 TypeScript"
-
-# 启动交互式界面
+# 交互式模式
 npx blade-code
 
-# 代码生成
-npx blade-code "用 Python 写一个快速排序算法"
+# 快速问答（非交互式）
+npx blade-code --print "解释什么是 TypeScript"
+
+# 代码生成（非交互式）
+npx blade-code --print "用 Python 写一个快速排序算法"
 ```
 
 ### 📦 全局安装（推荐）
@@ -85,7 +85,11 @@ yarn global add blade-code
 安装后即可使用 `blade` 命令：
 
 ```bash
-blade "你好，介绍一下自己"
+# 交互式模式（默认）
+blade
+
+# 快速问答（非交互式）
+blade --print "你好，介绍一下自己"
 ```
 
 ---
