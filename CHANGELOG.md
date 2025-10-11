@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.6] - 2025-10-11
+
+### ✨ 新功能
+
+- 添加 Ink UI 组件库集成和现代化界面改进 (8a1fcd9)
+- 更新 UI 组件样式和提示文本 (95be248)
+- add task abort functionality and improve UI feedback (1f5c4e4)
+
+### ♻️ 代码重构
+
+- 移除 TurnExecutor 类并简化 Agent 实现 (d21a345)
+
+
 ## [0.0.5] - 2025-10-10
 
 ### ✨ 新功能
