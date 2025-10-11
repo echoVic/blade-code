@@ -5,7 +5,6 @@
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { ChatConfig, Message } from '../services/ChatService.js';
 
-
 /**
  * 聊天上下文接口
  */
@@ -122,9 +121,14 @@ export interface LoopOptions {
   signal?: AbortSignal;
   stream?: boolean;
   onTurnStart?: (data: { turn: number; maxTurns: number }) => void;
-  onToolUse?: (toolCall: ChatCompletionMessageToolCall) => Promise<ChatCompletionMessageToolCall | void>;
+  onToolUse?: (
+    toolCall: ChatCompletionMessageToolCall
+  ) => Promise<ChatCompletionMessageToolCall | void>;
   onToolApprove?: (toolCall: ChatCompletionMessageToolCall) => Promise<boolean>;
-  onToolResult?: (toolCall: ChatCompletionMessageToolCall, result: any) => Promise<any | void>;
+  onToolResult?: (
+    toolCall: ChatCompletionMessageToolCall,
+    result: any
+  ) => Promise<any | void>;
 }
 
 export interface LoopResult {
@@ -140,27 +144,4 @@ export interface LoopResult {
     toolCallsCount: number;
     duration: number;
   };
-}
-
-// ===== TurnExecutor Types =====
-
-export interface TurnOptions {
-  maxRetries?: number;
-  stream?: boolean;
-  onTextDelta?: (text: string) => void;
-  onReasoning?: (reasoning: string) => void;
-}
-
-export interface TurnResult {
-  content: string;
-  toolCalls?: ChatCompletionMessageToolCall[];
-  usage?: {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-  };
-}
-
-export interface TurnExecutorConfig {
-  // 预留配置项
 }
