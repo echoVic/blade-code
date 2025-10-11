@@ -4,20 +4,19 @@
  */
 
 import { EventEmitter } from 'events';
+import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { ConfigManager } from '../config/config-manager.js';
 import { PromptBuilder } from '../prompts/index.js';
 import { ChatService, type Message } from '../services/ChatService.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
-import type { Tool } from '../tools/types/index.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
-import type { ToolResult } from '../tools/types/index.js';
+import type { Tool, ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
 import { type ContextManager, ExecutionEngine } from './ExecutionEngine.js';
 import {
   type LoopDetectionConfig,
   LoopDetectionService,
 } from './LoopDetectionService.js';
-import { TurnExecutor } from './TurnExecutor.js';
 import type {
   AgentConfig,
   AgentOptions,
@@ -266,9 +265,6 @@ export class Agent extends EventEmitter {
       let turnsCount = 0;
       const allToolResults: ToolResult[] = [];
 
-      // 创建 TurnExecutor 实例（带重试机制）
-      const turnExecutor = new TurnExecutor(this.chatService, {});
-
       while (turnsCount < maxTurns) {
         // === 检查中断信号 ===
         if (options?.signal?.aborted) {
@@ -293,12 +289,8 @@ export class Agent extends EventEmitter {
         this.emit('loopTurnStart', { turn: turnsCount, maxTurns });
         options?.onTurnStart?.({ turn: turnsCount, maxTurns });
 
-        // 3. 调用 TurnExecutor 执行单轮对话（带重试机制）
-        const turnResult = await turnExecutor.execute(messages, tools, {
-          maxRetries: 3,
-          stream: options?.stream,
-          onTextDelta: (text) => this.emit('textDelta', { text, turn: turnsCount }),
-        });
+        // 3. 直接调用 ChatService（OpenAI SDK 已内置重试机制）
+        const turnResult = await this.chatService.chat(messages, tools);
 
         // 4. 检查是否需要工具调用（任务完成条件）
         if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
@@ -388,7 +380,9 @@ export class Agent extends EventEmitter {
 
         // 7. 循环检测 - 检测是否陷入死循环
         const loopDetected = await this.loopDetector.detect(
-          turnResult.toolCalls.filter((tc) => tc.type === 'function'),
+          turnResult.toolCalls.filter(
+            (tc: ChatCompletionMessageToolCall) => tc.type === 'function'
+          ),
           turnsCount,
           messages
         );
