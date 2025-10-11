@@ -2,6 +2,8 @@
  * Ink UI 组件测试
  */
 import { render } from 'ink';
+import ProgressBar from 'ink-progress-bar';
+import Spinner from 'ink-spinner';
 import React, { useEffect, useState } from 'react';
 import { Animation } from './Animation.js';
 import { Box } from './Box.js';
@@ -12,13 +14,11 @@ import { Layout } from './Layout.js';
 import { memoryLeakDetector, useLeakDetection } from './MemoryLeakDetector.js';
 import { memoryManager } from './MemoryManager.js';
 import { PerformanceProvider, usePerformanceMonitor } from './PerformanceOptimizer.js';
-import { ProgressBar } from './ProgressBar.js';
 import {
   ResponsiveProvider,
   useBreakpoint,
   useTerminalSize,
 } from './ResponsiveAdapter.js';
-import { Spinner } from './Spinner.js';
 import { Text } from './Text.js';
 import { useMemoryCleanup } from './useMemoryCleanup.js';
 import { VirtualScroll } from './VirtualScroll.js';
@@ -121,14 +121,17 @@ const TestApp = () => {
             <Display type="header" content="动画和加载组件测试" />
 
             <Box flexDirection="row" marginTop={1}>
-              <Box marginRight={2}>
+              <Box marginRight={2} flexDirection="column">
                 <Text>进度条: </Text>
-                <ProgressBar progress={progress} showPercentage width={20} />
+                <ProgressBar percent={progress * 100} />
+                <Text color="gray">{Math.round(progress * 100)}%</Text>
               </Box>
 
               <Box marginRight={2}>
                 <Text>加载动画: </Text>
-                <Spinner type="dots" label="加载中" />
+                <Text color="green">
+                  <Spinner type="dots" /> 加载中
+                </Text>
               </Box>
             </Box>
 

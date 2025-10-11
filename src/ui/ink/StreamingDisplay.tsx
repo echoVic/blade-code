@@ -1,9 +1,9 @@
 /**
  * Ink StreamingDisplay 组件 - 流式响应渲染
  */
+import Spinner from 'ink-spinner';
 import React, { useEffect, useRef, useState } from 'react';
 import { Box } from './Box.js';
-import { Spinner } from './Spinner.js';
 import { Text } from './Text.js';
 
 interface StreamingDisplayProps {
@@ -100,7 +100,9 @@ export const StreamingDisplay: React.FC<StreamingDisplayProps> = ({
         <Box flexDirection="column">
           <Text>{contentRef.current}</Text>
           <Box marginTop={1}>
-            <Spinner type={spinnerType as any} label={spinnerLabel} />
+            <Text color="green">
+              <Spinner type={spinnerType as any} /> {spinnerLabel}
+            </Text>
           </Box>
         </Box>
       );

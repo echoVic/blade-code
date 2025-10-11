@@ -6,7 +6,6 @@ export { Animation } from './Animation.js';
 export { Box } from './Box.js';
 export { Button } from './Button.js';
 export { Display } from './Display.js';
-export { Input } from './Input.js';
 export { InputManager } from './InputManager.js';
 export { Layout } from './Layout.js';
 // 内存泄漏检测
@@ -27,7 +26,6 @@ export {
   useThrottledCallback,
   VirtualizedList,
 } from './PerformanceOptimizer.js';
-export { ProgressBar } from './ProgressBar.js';
 // 响应式设计组件
 export {
   defaultBreakpoints,
@@ -38,11 +36,10 @@ export {
   useResponsive,
   useTerminalSize,
 } from './ResponsiveAdapter.js';
-export { Spinner } from './Spinner.js';
 export { StreamingDisplay } from './StreamingDisplay.js';
 export { Text } from './Text.js';
 // 测试组件
-export { default as TestApp, runUITest } from './UITest.js';
+export { runUITest, default as TestApp } from './UITest.js';
 export { useMemoryCleanup } from './useMemoryCleanup.js';
 // 虚拟滚动组件
 export {

@@ -26,7 +26,9 @@
       "WebFetch(domain:jannesklaas.github.io)",
       "Bash(npm view:*)",
       "Bash(for file in src/ui/hooks/useKeyboardInput.ts src/ui/components/ReplInterface.tsx src/ui/ink/Input.tsx src/ui/ink/InputManager.tsx)",
-      "Bash(do echo \"=== $file ===\" grep -n \"useInput\\|key\\.\" \"$file\")"
+      "Bash(do echo \"=== $file ===\" grep -n \"useInput\\|key\\.\" \"$file\")",
+      "Bash(ls:*)",
+      "Bash(xargs:*)"
     ],
     "deny": [],
     "ask": [],

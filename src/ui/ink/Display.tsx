@@ -1,11 +1,11 @@
 /**
  * Ink Display 组件 - 现代化终端显示组件
  */
+import Spinner from 'ink-spinner';
 import React, { useEffect, useState } from 'react';
 import { UIStyles } from '../themes/styles.js';
 import { themeManager } from '../themes/theme-manager.js';
 import { Box } from './Box.js';
-import { Spinner } from './Spinner.js';
 import { Text } from './Text.js';
 
 interface DisplayOptions {
@@ -199,7 +199,11 @@ export const Display: React.FC<DisplayProps> = ({
         );
 
       case 'spinner':
-        return <Spinner type={spinnerType as any} label={spinnerLabel} />;
+        return (
+          <Text color="green">
+            <Spinner type={spinnerType as any} /> {spinnerLabel}
+          </Text>
+        );
 
       default:
         return <Text>{formatText(content, options)}</Text>;
