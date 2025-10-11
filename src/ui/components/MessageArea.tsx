@@ -62,14 +62,14 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
                 {/* 使用提示 - 仿照 Gemini 的 Tips 风格 */}
                 <Box flexDirection="column" marginBottom={2}>
                   <Box marginBottom={1}>
-                    <Text color="gray" bold>
+                    <Text color="white" bold>
                       使用指南：
                     </Text>
                   </Box>
-                  <Text color="gray">1. 输入问题、编辑文件或运行命令</Text>
-                  <Text color="gray">2. 使用 /init 创建项目配置文件</Text>
-                  <Text color="gray">3. 输入 /help 查看所有 slash 命令</Text>
-                  <Text color="gray">4. 按 Ctrl+C 退出应用</Text>
+                  <Text color="white">1. 输入问题、编辑文件或运行命令</Text>
+                  <Text color="white">2. 使用 /init 创建项目配置文件</Text>
+                  <Text color="white">3. 输入 /help 查看所有 slash 命令</Text>
+                  <Text color="white">4. 按 Ctrl+C 退出应用</Text>
                   {!isInitialized && (
                     <>
                       <Text></Text>
@@ -102,11 +102,11 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
 
                 {/* 使用指南（简化版） - 左对齐 */}
                 <Box flexDirection="column" marginTop={2}>
-                  <Text color="gray">
+                  <Text color="white">
 输入问题开始对话 • 使用 /init 创建项目配置 • 输入 /help 查看 slash 命令
                   </Text>
                   <Box marginTop={1}>
-                    <Text color="gray" dimColor>
+                    <Text color="gray">
                       {getCopyright()}
                     </Text>
                   </Box>

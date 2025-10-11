@@ -260,7 +260,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
   terminalWidth,
 }) => {
   const blocks = parseMarkdown(content);
-  const prefix = role === 'user' ? '❯ ' : '🤖 ';
+  const prefix = role === 'user' ? '> ' : '• ';
 
   return (
     <Box flexDirection="column" marginBottom={1}>

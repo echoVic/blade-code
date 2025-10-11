@@ -78,7 +78,7 @@ export const ReplInterface: React.FC<ReplInterfaceProps> = ({ onCommandSubmit })
 
       {/* 帮助提示 */}
       <Box marginTop={1}>
-        <Text color="gray">输入命令后按回车执行，Ctrl+C 退出，/help 查看帮助</Text>
+        <Text color="white">输入命令后按回车执行，Ctrl+C 退出，/help 查看帮助</Text>
       </Box>
     </Box>
   );

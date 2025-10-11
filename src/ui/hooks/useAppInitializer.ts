@@ -43,7 +43,7 @@ export const useAppInitializer = (
       setHasApiKey(true);
       setIsInitialized(true);
 
-      addAssistantMessage('🚀 Blade Code 助手已就绪！');
+      addAssistantMessage('Blade Code 助手已就绪！');
       addAssistantMessage('请输入您的问题，我将为您提供帮助。');
 
       console.log('Blade 应用初始化完成');

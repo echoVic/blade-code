@@ -20,7 +20,7 @@ export const ChatStatusBar: React.FC<ChatStatusBarProps> = ({
     <Box flexDirection="row" justifyContent="space-between" paddingX={2} paddingY={0}>
       <Box flexDirection="row" gap={2}>
         {messageCount > 0 && (
-          <Text color="gray" dimColor>
+          <Text color="white">
             {messageCount} messages
           </Text>
         )}
