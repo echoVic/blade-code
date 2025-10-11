@@ -12,6 +12,7 @@ Blade is a modern TypeScript project with flattened, modular architecture:
 Root (blade-code)
 ├── src/
 │   ├── agent/          # Agent核心逻辑和控制器
+│   ├── cli/            # CLI配置和中间件
 │   ├── commands/       # CLI命令定义和处理
 │   ├── config/         # 统一配置管理
 │   ├── context/        # 上下文管理和压缩
@@ -19,15 +20,21 @@ Root (blade-code)
 │   ├── ide/            # IDE集成和扩展
 │   ├── logging/        # 日志系统
 │   ├── mcp/            # MCP协议实现
+│   ├── prompts/        # 提示模板管理
 │   ├── security/       # 安全管理
 │   ├── services/       # 共享服务层
+│   ├── slash-commands/ # 内置斜杠命令
 │   ├── telemetry/      # 遥测和监控
 │   ├── tools/          # 工具系统
-│   ├── ui/             # UI组件和界面
+│   ├── ui/             # UI组件和界面（基于Ink）
 │   ├── utils/          # 工具函数
 │   ├── index.ts        # 公共API导出
 │   └── blade.tsx       # CLI应用入口
 ├── tests/              # 测试文件（独立）
+│   ├── unit/           # 组件级测试
+│   ├── integration/    # 多组件工作流测试
+│   ├── e2e/            # 端到端CLI测试
+│   └── security/       # 安全测试
 ├── dist/blade.js       # 构建后的CLI可执行文件
 └── package.json        # 项目配置
 ```
@@ -41,109 +48,162 @@ Root (blade-code)
 ## Core Components Architecture
 
 ### Agent System
-- **Agent**: Main orchestrator for LLM interactions with context/memory management and enhanced steering control
-- **ToolManager**: Centralized tool registration/execution system with validation and security controls
-- **IDE Integration**: Multi-IDE detection and extension installation via IdeContext/IdeInstaller
-- **MCP Support**: Model Context Protocol server/client integration for external tools
-- **ChatService**: Unified LLM interface supporting multiple providers (Qwen, VolcEngine, OpenAI, Anthropic)
+- **Agent** ([src/agent/Agent.ts](src/agent/Agent.ts)): 主要协调器，管理LLM交互、上下文/记忆和执行控制
+  - 静态工厂方法 `Agent.create()` 用于创建和初始化实例
+  - 通过 `ExecutionEngine` 处理工具执行流程
+  - 通过 `LoopDetectionService` 防止无限循环
+- **ToolRegistry** ([src/tools/registry/ToolRegistry.ts](src/tools/registry/ToolRegistry.ts)): 中心化工具注册/执行系统，提供验证和安全控制
+- **ChatService** ([src/services/ChatService.ts](src/services/ChatService.ts)): 统一LLM接口，支持多提供商（基于OpenAI客户端）
+  - 支持流式和非流式响应
+  - 内置重试机制和错误处理
+  - 工具调用集成
 
 ### Key Services
-- **FileSystemService**: File operations with atomic transactions and security validation
-- **GitService**: Git repository operations and analysis  
-- **TelemetrySDK**: Metrics collection and error tracking
-- **ProxyService**: HTTP client with retry/batch capabilities and security controls
-- **ConfigManager**: Hierarchical configuration management with encryption support
+- **ConfigManager** ([src/config/config-manager.ts](src/config/config-manager.ts)): 分层配置管理，支持加密
+  - 配置优先级：命令行参数 > 环境变量 > 用户配置 > 全局配置 > 默认值
+- **PromptBuilder** ([src/prompts/](src/prompts/)): 提示模板管理和构建
 
 ## Build & Development Commands
 
 ### Quick Commands
-- **Develop**: `npm run dev` - Bun watch mode for live development
-- **Build**: `npm run build` - Build CLI executable (0.99MB minified)
-- **Start**: `npm run start` - Run built CLI executable
-- **Clean**: Automatic cleanup before each build
+
+- **开发模式**: `npm run dev` - Bun watch 模式，实时开发
+- **构建**: `npm run build` - 构建 CLI 可执行文件（~1MB minified）
+- **运行**: `npm run start` - 运行构建后的 CLI
+- **清理**: `npm run clean` - 清理构建产物和缓存
 
 ### Code Quality
-- **Type Check**: `npm run type-check` - TypeScript strict checking
-- **Lint**: `npm run lint` - Biome linting across TypeScript files
-- **Format**: `npm run format` - Biome formatting (单引号、分号、88字符行宽)
-- **Check**: `npm run check` - Combined Biome linting and formatting check
+
+- **类型检查**: `npm run type-check` - TypeScript 严格类型检查
+- **Lint**: `npm run lint` - Biome 代码检查
+- **格式化**: `npm run format` - Biome 格式化（单引号、分号、88字符行宽）
+- **综合检查**: `npm run check` - Biome lint + format 检查
+- **自动修复**: `npm run check:fix` - 自动修复 lint 和格式问题
 
 ### Testing
-- **Test**: `npm run test` - Vitest with Jest-like API
-- **Watch**: `npm run test:watch` - File-watching test runner
-- **Coverage**: `npm run test:coverage` - With V8 coverage
-- **Unit**: `npm run test:unit` - Unit tests only
-- **Integration**: `npm run test:integration` - Integration test suite
-- **E2E**: `npm run test:e2e` - End-to-end CLI testing
-- **Core Only**: `npm run test:core` - Test core package only
-- **Debug**: `npm run test:debug` - Verbose test output
+
+- **运行测试**: `npm test` - 使用 Vitest 运行所有测试
+- **监视模式**: `npm run test:watch` - 文件变化时自动运行测试
+- **覆盖率**: `npm run test:coverage` - 生成 V8 覆盖率报告
+- **单元测试**: `npm run test:unit` - 仅运行单元测试
+- **集成测试**: `npm run test:integration` - 仅运行集成测试
+- **端到端测试**: `npm run test:e2e` - 仅运行 E2E 测试
+- **性能测试**: `npm run test:performance` - 运行性能测试
+- **调试模式**: `npm run test:debug` - 详细输出模式
+
+### Release Commands
+
+- **版本发布**: `npm run release` - 自动发布新版本
+- **预发布检查**: `npm run preflight` - 发布前完整检查（清理、安装、格式化、lint、构建、类型检查、测试）
 
 ## Package Management
 
-**Uses pnpm** for dependency management:
-- Single package structure
-- Direct imports using relative paths
-- All dependencies managed in root package.json
+使用 **pnpm** 进行依赖管理：
+
+- 单包结构
+- 使用相对路径直接导入
+- 所有依赖在根 package.json 管理
 
 ## Test Structure
 
-```
+```text
 tests/
-├── unit/           # Component-level tests
-├── integration/    # Multi-component workflows
-├── e2e/           # Full CLI user journeys
-└── security/      # Security-focused test scenarios
+├── unit/           # 组件级测试
+├── integration/    # 多组件工作流测试
+├── e2e/            # 完整 CLI 用户旅程测试
+├── security/       # 安全测试
+├── fixtures/       # 测试固定数据
+├── helpers/        # 测试辅助函数
+└── mocks/          # 测试模拟对象
 ```
 
 ## Key Entry Points
 
-- **CLI Entry**: `dist/blade.js` (构建后的CLI可执行文件)
-- **CLI Source**: `src/blade.tsx` (CLI应用入口)
-- **Core API**: `src/index.ts` (公共API导出)
-- **Build System**: Bun native bundling
-- **Agent Core**: `src/agent/Agent.ts` (Agent核心实现)
-- **Tool System**: `src/tools/ToolManager.ts` (工具注册/执行)
-- **UI Components**: `src/ui/App.tsx` (主UI组件)
-- **Config Management**: `src/config/ConfigManager.ts` (配置管理)
-- **Services**: `src/services/ChatService.ts` (核心服务)
+- **CLI 入口**: [src/blade.tsx](src/blade.tsx) - CLI 应用主入口
+- **核心 API**: [src/index.ts](src/index.ts) - 公共 API 导出
+- **构建产物**: `dist/blade.js` - 构建后的可执行文件
+- **UI 根组件**: [src/ui/App.tsx](src/ui/App.tsx) - Ink UI 主组件
+- **CLI 配置**: [src/cli/config.ts](src/cli/config.ts) - yargs CLI 配置
+- **命令处理**: [src/commands/](src/commands/) - 各命令处理器
 
 ## Environment Variables
 
-- `QWEN_API_KEY` - Alibaba Cloud Qwen API key
-- `VOLCENGINE_API_KEY` - VolcEngine API key
-- `BLADE_DEBUG` - Debug mode toggles verbose logging
-- `BLADE_VERSION` - Set by build system from package.json
+- `BLADE_API_KEY` / `QWEN_API_KEY` - API 密钥（千问等）
+- `VOLCENGINE_API_KEY` - 火山引擎 API 密钥
+- `BLADE_BASE_URL` - API 基础 URL
+- `BLADE_MODEL` - 默认模型名称
+- `BLADE_DEBUG` - 调试模式开关（启用详细日志）
+- `BLADE_VERSION` - 构建系统自动设置的版本号
 
 ## Development Workflow
 
-1. **Start dev mode**: `npm run dev` (Bun watch mode for live development)
-2. **Make changes**:
-   - CLI changes: Edit `src/blade.tsx`
-   - UI changes: Edit `src/ui/`
-   - Agent changes: Edit `src/agent/`
-   - Add new tools: `src/tools/`
-   - Config changes: `src/config/`
-   - Service changes: `src/services/`
-3. **Test**: `npm test` for all tests
-4. **Build**: `npm run build` for production bundling (minified)
-5. **Type check**: `npm run type-check` for TypeScript validation
-6. **Lint**: `npm run check:fix` for code quality
+1. **启动开发模式**: `npm run dev`
+2. **修改代码**:
+   - CLI 入口: [src/blade.tsx](src/blade.tsx)
+   - UI 组件: [src/ui/](src/ui/)
+   - Agent 逻辑: [src/agent/](src/agent/)
+   - 工具开发: [src/tools/](src/tools/)
+   - 配置管理: [src/config/](src/config/)
+   - 服务层: [src/services/](src/services/)
+3. **运行测试**: `npm test` 或特定测试套件
+4. **代码检查**: `npm run check:fix` 自动修复问题
+5. **类型检查**: `npm run type-check` 验证 TypeScript
+6. **构建**: `npm run build` 生产构建
 
-## Build System Details
+## Build System
 
 ### Bun Configuration
-- **Target**: Node.js ESM format
-- **Minification**: Enabled for production builds
-- **External dependencies**: React ecosystem, CLI tools excluded from bundle
-- **Output**: Optimized single-file executables
+
+- **构建工具**: Bun 原生构建（极速构建性能）
+- **目标格式**: Node.js ESM
+- **代码压缩**: 生产构建启用 minification
+- **外部依赖**: React、Ink、CLI 工具库排除在 bundle 外
+- **输出**: 单文件可执行程序
 
 ### Build Process
+
 ```bash
-# Single unified build
+# 构建命令
 npm run build
-# Equivalent to:
-rm -rf dist && bun build src/blade.tsx --external react-devtools-core --external react --external react-dom --external ink --external yargs --external chalk --external inquirer --minify --outfile dist/blade.js --target=node
+
+# 等价于：
+rm -rf dist && bun build src/blade.tsx \
+  --external react-devtools-core \
+  --external react \
+  --external react-dom \
+  --external ink \
+  --external ink-* \
+  --external yargs \
+  --external chalk \
+  --external inquirer \
+  --minify \
+  --outfile dist/blade.js \
+  --target=node
 ```
 
 ### Build Output
-- `dist/blade.js`: 0.99MB (Unified CLI executable)
+
+- `dist/blade.js`: ~1MB (包含所有核心逻辑的可执行文件)
+
+## UI Framework
+
+项目使用 **Ink** 构建 CLI UI（React for CLI）：
+
+- 基于 React 组件模型
+- 支持 hooks 和现代 React 特性
+- 丰富的 Ink 生态组件：
+  - `ink-text-input` - 文本输入
+  - `ink-select-input` - 选择列表
+  - `ink-spinner` - 加载动画
+  - `ink-progress-bar` - 进度条
+  - `ink-gradient` / `ink-big-text` - 视觉效果
+
+## Code Style Guidelines
+
+遵循 Biome 配置的代码风格：
+
+- **单引号**: 字符串使用单引号
+- **分号**: 语句结尾必须有分号
+- **行宽**: 最大 88 字符
+- **缩进**: 2 空格
+- **TypeScript**: 尽量避免 `any`，测试文件除外
