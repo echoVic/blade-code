@@ -1,5 +1,6 @@
+import { useMemoizedFn } from 'ahooks';
 import { useApp, useInput } from 'ink';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getFuzzyCommandSuggestions } from '../../slash-commands/index.js';
 import type { CommandSuggestion } from '../../slash-commands/types.js';
 import { useSession } from '../contexts/SessionContext.js';
@@ -12,7 +13,9 @@ export const useKeyboardInput = (
   onSubmit: (input: string) => void,
   onPreviousCommand: () => string,
   onNextCommand: () => string,
-  onAddToHistory: (command: string) => void
+  onAddToHistory: (command: string) => void,
+  onAbort?: () => void,
+  isProcessing?: boolean
 ) => {
   const [input, setInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -35,18 +38,18 @@ export const useKeyboardInput = (
   }, [input]);
 
   // 处理清屏
-  const handleClear = useCallback(() => {
+  const handleClear = useMemoizedFn(() => {
     dispatch({ type: 'CLEAR_MESSAGES' });
     dispatch({ type: 'SET_ERROR', payload: null });
-  }, [dispatch]);
+  });
 
   // 处理退出
-  const handleExit = useCallback(() => {
+  const handleExit = useMemoizedFn(() => {
     exit();
-  }, [exit]);
+  });
 
   // 处理提交
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useMemoizedFn(() => {
     let commandToSubmit = input.trim();
 
     // 如果显示建议并且有选中项，使用选中的命令
@@ -63,7 +66,7 @@ export const useKeyboardInput = (
       setInput('');
       onSubmit(commandToSubmit);
     }
-  }, [input, onSubmit, onAddToHistory, showSuggestions, suggestions, selectedSuggestionIndex]);
+  });
 
   // 键盘输入监听
   useInput((inputKey, key) => {
@@ -79,12 +82,17 @@ export const useKeyboardInput = (
     } else if ((key.ctrl && inputKey === 'l') || (key.meta && inputKey === 'l')) {
       // Ctrl+L 清屏
       handleClear();
-    } else if (inputKey === '\u001B') {
-      // Esc 键 - 退出建议模式或返回
-      if (showSuggestions) {
+    } else if (key.escape) {
+      // Esc 键 - 停止任务 > 退出建议模式 > 退出应用
+      if (isProcessing && onAbort) {
+        // 如果正在处理任务，触发停止
+        onAbort();
+      } else if (showSuggestions) {
+        // 如果显示建议，隐藏建议
         setShowSuggestions(false);
         setSuggestions([]);
       } else {
+        // 否则退出应用
         handleExit();
       }
     } else if (key.tab && showSuggestions && suggestions.length > 0) {
@@ -98,9 +106,7 @@ export const useKeyboardInput = (
         // 在建议列表中向上导航
         const maxIndex = suggestions.length - 1;
 
-        setSelectedSuggestionIndex((prev) =>
-          prev > 0 ? prev - 1 : maxIndex
-        );
+        setSelectedSuggestionIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
       } else {
         // 上箭头 - 历史命令
         const prevCommand = onPreviousCommand();
@@ -113,9 +119,7 @@ export const useKeyboardInput = (
         // 在建议列表中向下导航
         const maxIndex = suggestions.length - 1;
 
-        setSelectedSuggestionIndex((prev) =>
-          prev < maxIndex ? prev + 1 : 0
-        );
+        setSelectedSuggestionIndex((prev) => (prev < maxIndex ? prev + 1 : 0));
       } else {
         // 下箭头 - 历史命令
         const nextCommand = onNextCommand();

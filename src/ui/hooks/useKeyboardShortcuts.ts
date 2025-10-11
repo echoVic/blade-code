@@ -1,5 +1,6 @@
-import { useInput } from 'ink';
-import { useCallback, useRef } from 'react';
+import { useMemoizedFn } from 'ahooks';
+import { type Key, useInput } from 'ink';
+import { useRef } from 'react';
 
 export interface KeyboardShortcut {
   key: string;
@@ -77,110 +78,86 @@ export const useKeyboardShortcuts = (shortcuts: KeyboardShortcut[] = []) => {
     shortcuts.map((shortcut) => [generateShortcutKey(shortcut), shortcut])
   );
 
-  const handleInput = useCallback(
-    (
-      input: string,
-      key: {
-        left: boolean;
-        right: boolean;
-        up: boolean;
-        down: boolean;
-        pageup: boolean;
-        pagedown: boolean;
-        return: boolean;
-        escape: boolean;
-        tab: boolean;
-        backspace: boolean;
-        delete: boolean;
-        ctrl: boolean;
-        alt: boolean;
-        shift: boolean;
-        meta: boolean;
-      }
-    ) => {
-      // 如果输入是可打印字符，不是快捷键
-      if (input.length === 1 && !key.ctrl && !key.alt && !key.meta && !key.shift) {
+  const handleInput = useMemoizedFn((input: string, key: Key) => {
+    // 如果输入是可打印字符，不是快捷键
+    if (input.length === 1 && !key.ctrl && !key.meta && !key.shift) {
+      return;
+    }
+
+    // 构建当前按键的快捷键
+    const pressedKey =
+      input.toUpperCase() ||
+      (key.escape ? 'Escape' : '') ||
+      (key.return ? 'Return' : '') ||
+      (key.tab ? 'Tab' : '') ||
+      (key.backspace ? 'Backspace' : '') ||
+      (key.delete ? 'Delete' : '');
+
+    if (!pressedKey) return;
+
+    const shortcutKey = generateShortcutKey({
+      key: pressedKey,
+      ctrl: key.ctrl,
+      shift: key.shift,
+      meta: key.meta,
+    });
+
+    const shortcut = shortcutMapRef.current.get(shortcutKey);
+    if (shortcut) {
+      // 检查条件
+      if (shortcut.condition && !shortcut.condition()) {
         return;
       }
 
-      // 构建当前按键的快捷键
-      const pressedKey =
-        input.toUpperCase() ||
-        (key.escape ? 'Escape' : '') ||
-        (key.return ? 'Return' : '') ||
-        (key.tab ? 'Tab' : '') ||
-        (key.backspace ? 'Backspace' : '') ||
-        (key.delete ? 'Delete' : '');
+      // 执行快捷键动作
+      shortcut.action();
+      return;
+    }
 
-      if (!pressedKey) return;
-
-      const shortcutKey = generateShortcutKey({
-        key: pressedKey,
-        ctrl: key.ctrl,
-        alt: key.alt,
-        shift: key.shift,
-        meta: key.meta,
-      });
-
-      const shortcut = shortcutMapRef.current.get(shortcutKey);
-      if (shortcut) {
-        // 检查条件
-        if (shortcut.condition && !shortcut.condition()) {
-          return;
-        }
-
-        // 执行快捷键动作
-        shortcut.action();
-        return;
+    // 方向键处理
+    if (key.upArrow || key.downArrow || key.leftArrow || key.rightArrow) {
+      const direction = key.upArrow
+        ? 'Up'
+        : key.downArrow
+          ? 'Down'
+          : key.leftArrow
+            ? 'Left'
+            : 'Right';
+      const directionShortcut = shortcutMapRef.current.get(direction);
+      if (directionShortcut) {
+        directionShortcut.action();
       }
-
-      // 方向键处理
-      if (key.up || key.down || key.left || key.right) {
-        const direction = key.up
-          ? 'Up'
-          : key.down
-            ? 'Down'
-            : key.left
-              ? 'Left'
-              : 'Right';
-        const directionShortcut = shortcutMapRef.current.get(direction);
-        if (directionShortcut) {
-          directionShortcut.action();
-        }
-      }
-    },
-    []
-  );
+    }
+  });
 
   useInput(handleInput);
 
   // 添加快捷键
-  const addShortcut = useCallback((shortcut: KeyboardShortcut) => {
+  const addShortcut = useMemoizedFn((shortcut: KeyboardShortcut) => {
     const key = generateShortcutKey(shortcut);
     shortcutMapRef.current.set(key, shortcut);
-  }, []);
+  });
 
   // 移除快捷键
-  const removeShortcut = useCallback(
+  const removeShortcut = useMemoizedFn(
     (shortcut: Omit<KeyboardShortcut, 'description' | 'action'>) => {
       const key = generateShortcutKey(shortcut);
       shortcutMapRef.current.delete(key);
-    },
-    []
+    }
   );
 
   // 清除所有快捷键
-  const clearShortcuts = useCallback(() => {
+  const clearShortcuts = useMemoizedFn(() => {
     shortcutMapRef.current.clear();
-  }, []);
+  });
 
   // 获取所有快捷键
-  const getAllShortcuts = useCallback(() => {
+  const getAllShortcuts = useMemoizedFn(() => {
     return Array.from(shortcutMapRef.current.values());
-  }, []);
+  });
 
   // 按类别分组获取快捷键
-  const getShortcutsByCategory = useCallback((): ShortcutGroup[] => {
+  const getShortcutsByCategory = useMemoizedFn((): ShortcutGroup[] => {
     const shortsuts = Array.from(shortcutMapRef.current.values());
     const grouped = shortsuts.reduce(
       (acc, shortcut) => {
@@ -198,7 +175,7 @@ export const useKeyboardShortcuts = (shortcuts: KeyboardShortcut[] = []) => {
       category,
       shortcuts: shortcuts.sort((a, b) => a.description.localeCompare(b.description)),
     }));
-  }, []);
+  });
 
   return {
     addShortcut,
@@ -215,35 +192,30 @@ export const useShortcutManager = () => {
     useKeyboardShortcuts();
 
   // 注册一组快捷键
-  const registerShortcuts = useCallback(
-    (shortcuts: KeyboardShortcut[]) => {
-      shortcuts.forEach(addShortcut);
-    },
-    [addShortcut]
-  );
+  const registerShortcuts = useMemoizedFn((shortcuts: KeyboardShortcut[]) => {
+    shortcuts.forEach(addShortcut);
+  });
 
   // 注销一组快捷键
-  const unregisterShortcuts = useCallback(
+  const unregisterShortcuts = useMemoizedFn(
     (shortcuts: Omit<KeyboardShortcut, 'description' | 'action'>[]) => {
       shortcuts.forEach(removeShortcut);
-    },
-    [removeShortcut]
+    }
   );
 
   // 检查快捷键冲突
-  const checkConflict = useCallback(
+  const checkConflict = useMemoizedFn(
     (newShortcut: Omit<KeyboardShortcut, 'description' | 'action'>) => {
       const key = generateShortcutKey(newShortcut);
       const existingShortcuts = getAllShortcuts();
       return existingShortcuts.find(
         (shortcut) => generateShortcutKey(shortcut) === key
       );
-    },
-    [getAllShortcuts]
+    }
   );
 
   // 验证快捷键格式
-  const validateShortcut = useCallback((shortcut: KeyboardShortcut): boolean => {
+  const validateShortcut = useMemoizedFn((shortcut: KeyboardShortcut): boolean => {
     if (!shortcut.key || shortcut.key.length === 0) {
       return false;
     }
@@ -277,7 +249,7 @@ export const useShortcutManager = () => {
     }
 
     return true;
-  }, []);
+  });
 
   return {
     registerShortcuts,
@@ -295,7 +267,7 @@ export const useShortcutManager = () => {
 export const useShortcutHelp = () => {
   const { getShortcutsByCategory } = useKeyboardShortcuts();
 
-  const showShortcutHelp = useCallback(() => {
+  const showShortcutHelp = useMemoizedFn(() => {
     const groups = getShortcutsByCategory();
 
     console.log('\n🎹 快捷键帮助:\n');
@@ -309,7 +281,7 @@ export const useShortcutHelp = () => {
     });
 
     console.log('\n💡 提示: 按下快捷键即可执行对应功能\n');
-  }, [getShortcutsByCategory]);
+  });
 
   return { showShortcutHelp };
 };

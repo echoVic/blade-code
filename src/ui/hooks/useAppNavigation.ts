@@ -1,4 +1,5 @@
-import { useCallback, useState } from 'react';
+import { useMemoizedFn } from 'ahooks';
+import { useState } from 'react';
 import type { RouteConfig } from '../../config/route-config.js';
 
 export type AppView =
@@ -50,7 +51,7 @@ export const useAppNavigation = (): UseAppNavigationReturn => {
   const [navigationState, setNavigationState] =
     useState<NavigationState>(defaultNavigationState);
 
-  const navigate = useCallback((view: AppView, options: NavigationOptions = {}) => {
+  const navigate = useMemoizedFn((view: AppView, options: NavigationOptions = {}) => {
     const { replace = false, preserveHistory = false } = options;
 
     setNavigationState((prevState) => {
@@ -80,9 +81,9 @@ export const useAppNavigation = (): UseAppNavigationReturn => {
     if (routeConfig?.onNavigate) {
       routeConfig.onNavigate(view, options);
     }
-  }, []);
+  });
 
-  const goBack = useCallback(() => {
+  const goBack = useMemoizedFn(() => {
     setNavigationState((prevState) => {
       if (prevState.history.length <= 1) {
         return prevState; // 无法返回
@@ -98,26 +99,26 @@ export const useAppNavigation = (): UseAppNavigationReturn => {
         canGoForward: true,
       };
     });
-  }, []);
+  });
 
-  const goForward = useCallback(() => {
+  const goForward = useMemoizedFn(() => {
     setNavigationState((prevState) => {
       // 这里简化处理，实际应该维护一个前进历史栈
       return prevState; // 暂时无法前进
     });
-  }, []);
+  });
 
-  const goToHome = useCallback(() => {
+  const goToHome = useMemoizedFn(() => {
     navigate('main', { replace: true });
-  }, [navigate]);
+  });
 
-  const registerRoute = useCallback((route: RouteConfig) => {
+  const registerRoute = useMemoizedFn((route: RouteConfig) => {
     routeRegistry.set(route.path as AppView, route);
-  }, []);
+  });
 
-  const getRouteConfig = useCallback((view: AppView): RouteConfig | undefined => {
+  const getRouteConfig = useMemoizedFn((view: AppView): RouteConfig | undefined => {
     return routeRegistry.get(view);
-  }, []);
+  });
 
   return {
     currentView: navigationState.currentView,
@@ -152,31 +153,28 @@ export const useNavigationHistory = () => {
 export const useDeepLink = () => {
   const navigate = useAppNavigation().navigate;
 
-  const handleDeepLink = useCallback(
-    (url: string) => {
-      try {
-        const parsedUrl = new URL(url);
-        const path = parsedUrl.pathname.slice(1); // 去掉开头的'/'
-        const params = Object.fromEntries(parsedUrl.searchParams);
+  const handleDeepLink = useMemoizedFn((url: string) => {
+    try {
+      const parsedUrl = new URL(url);
+      const path = parsedUrl.pathname.slice(1); // 去掉开头的'/'
+      const params = Object.fromEntries(parsedUrl.searchParams);
 
-        // 解析路径并导航
-        if (['settings', 'help', 'logs', 'tools', 'chat', 'config'].includes(path)) {
-          navigate(path as AppView, { state: params });
-        } else {
-          // 处理特殊的深度链接格式
-          const [view, ...rest] = path.split('/');
-          if (['settings', 'help', 'logs', 'tools', 'chat', 'config'].includes(view)) {
-            navigate(view as AppView, {
-              state: { section: rest.join('/'), ...params },
-            });
-          }
+      // 解析路径并导航
+      if (['settings', 'help', 'logs', 'tools', 'chat', 'config'].includes(path)) {
+        navigate(path as AppView, { state: params });
+      } else {
+        // 处理特殊的深度链接格式
+        const [view, ...rest] = path.split('/');
+        if (['settings', 'help', 'logs', 'tools', 'chat', 'config'].includes(view)) {
+          navigate(view as AppView, {
+            state: { section: rest.join('/'), ...params },
+          });
         }
-      } catch (error) {
-        console.error('解析深度链接失败:', error);
       }
-    },
-    [navigate]
-  );
+    } catch (error) {
+      console.error('解析深度链接失败:', error);
+    }
+  });
 
   return { handleDeepLink };
 };
@@ -185,7 +183,7 @@ export const useDeepLink = () => {
 export const useRouteGuard = () => {
   const navigate = useAppNavigation().navigate;
 
-  const requireAuth = useCallback((targetView: AppView) => {
+  const requireAuth = useMemoizedFn((targetView: AppView) => {
     const isAuthenticated = false; // 这里应该从认证状态获取
 
     if (!isAuthenticated) {
@@ -195,9 +193,9 @@ export const useRouteGuard = () => {
     }
 
     return true;
-  }, []);
+  });
 
-  const requirePermission = useCallback((permission: string, targetView: AppView) => {
+  const requirePermission = useMemoizedFn((permission: string, targetView: AppView) => {
     const hasPermission = true; // 这里应该从权限系统获取
 
     if (!hasPermission) {
@@ -206,9 +204,9 @@ export const useRouteGuard = () => {
     }
 
     return true;
-  }, []);
+  });
 
-  const navigateWithGuard = useCallback(
+  const navigateWithGuard = useMemoizedFn(
     (view: AppView, options?: NavigationOptions) => {
       const routeConfig = routeRegistry.get(view);
 
@@ -223,8 +221,7 @@ export const useRouteGuard = () => {
       }
 
       navigate(view, options);
-    },
-    [navigate]
+    }
   );
 
   return {

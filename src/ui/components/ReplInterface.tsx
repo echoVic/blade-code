@@ -31,13 +31,13 @@ export const ReplInterface: React.FC<ReplInterfaceProps> = ({ onCommandSubmit })
     if (key.return) {
       // 回车键提交命令
       handleSubmit();
-    } else if (key.ctrl && key.name === 'c') {
+    } else if (key.ctrl && inputKey === 'c') {
       // Ctrl+C 退出
       exit();
     } else if (key.backspace || key.delete) {
       // 退格键删除字符
       setInput((prev) => prev.slice(0, -1));
-    } else if (inputKey && key.name !== 'escape') {
+    } else if (inputKey && !key.escape) {
       // 普通字符输入
       setInput((prev) => prev + inputKey);
     }

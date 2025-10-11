@@ -91,14 +91,18 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   }, [stdout]);
 
   // 使用 hooks
-  const { isProcessing, executeCommand } = useCommandHandler(otherProps.appendSystemPrompt);
+  const { isProcessing, executeCommand, loopState, handleAbort } = useCommandHandler(
+    otherProps.appendSystemPrompt
+  );
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
 
   const { input, showSuggestions, suggestions, selectedSuggestionIndex } = useKeyboardInput(
     (command: string) => executeCommand(command, addUserMessage, addAssistantMessage),
     getPreviousCommand,
     getNextCommand,
-    addToHistory
+    addToHistory,
+    handleAbort,
+    isProcessing
   );
 
   // 主界面 - 统一显示，不再区分初始化状态
@@ -111,6 +115,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         terminalWidth={terminalWidth}
         isProcessing={isProcessing}
         isInitialized={hasApiKey}
+        loopState={loopState}
       />
 
       <InputArea

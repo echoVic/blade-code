@@ -13,6 +13,7 @@ export interface ChatContext {
   userId: string;
   sessionId: string;
   workspaceRoot: string;
+  signal?: AbortSignal;
 }
 
 /**
@@ -135,7 +136,7 @@ export interface LoopResult {
   success: boolean;
   finalMessage?: string;
   error?: {
-    type: 'canceled' | 'max_turns_exceeded' | 'api_error' | 'loop_detected';
+    type: 'canceled' | 'max_turns_exceeded' | 'api_error' | 'loop_detected' | 'aborted';
     message: string;
     details?: any;
   };

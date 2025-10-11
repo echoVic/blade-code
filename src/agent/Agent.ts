@@ -203,8 +203,16 @@ export class Agent extends EventEmitter {
 
     // 如果提供了 context，使用增强的工具调用流程
     if (context) {
-      const result = await this.runLoop(message, context);
+      const result = await this.runLoop(message, context, {
+        signal: context.signal,
+      });
       if (!result.success) {
+        // 如果是用户中止，触发事件并返回空字符串（不抛出异常）
+        if (result.error?.type === 'aborted') {
+          this.emit('taskAborted', result.metadata);
+          return ''; // 返回空字符串，让调用方自行处理
+        }
+        // 其他错误则抛出异常
         throw new Error(result.error?.message || '执行失败');
       }
       return result.finalMessage || '';
@@ -271,8 +279,8 @@ export class Agent extends EventEmitter {
           return {
             success: false,
             error: {
-              type: 'canceled',
-              message: '用户中断',
+              type: 'aborted',
+              message: '任务已被用户中止',
             },
             metadata: {
               turnsCount,
@@ -317,6 +325,22 @@ export class Agent extends EventEmitter {
         for (const toolCall of turnResult.toolCalls) {
           if (toolCall.type !== 'function') continue;
 
+          // 在每个工具执行前检查中断信号
+          if (options?.signal?.aborted) {
+            return {
+              success: false,
+              error: {
+                type: 'aborted',
+                message: '任务已被用户中止',
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+              },
+            };
+          }
+
           try {
             // 触发工具执行开始事件
             this.emit('toolExecutionStart', {
@@ -331,7 +355,8 @@ export class Agent extends EventEmitter {
 
             const params = JSON.parse(toolCall.function.arguments);
             const toolInvocation = tool.build(params);
-            const result = await toolInvocation.execute(new AbortController().signal);
+            const signalToUse = options?.signal || new AbortController().signal;
+            const result = await toolInvocation.execute(signalToUse);
             allToolResults.push(result);
 
             // 触发工具执行完成事件
@@ -376,6 +401,22 @@ export class Agent extends EventEmitter {
               content: `执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
             });
           }
+        }
+
+        // 检查工具执行后的中断信号
+        if (options?.signal?.aborted) {
+          return {
+            success: false,
+            error: {
+              type: 'aborted',
+              message: '任务已被用户中止',
+            },
+            metadata: {
+              turnsCount,
+              toolCallsCount: allToolResults.length,
+              duration: Date.now() - startTime,
+            },
+          };
         }
 
         // 7. 循环检测 - 检测是否陷入死循环

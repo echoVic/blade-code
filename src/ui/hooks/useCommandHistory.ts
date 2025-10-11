@@ -1,4 +1,5 @@
-import { useCallback, useState } from 'react';
+import { useMemoizedFn } from 'ahooks';
+import { useState } from 'react';
 
 /**
  * 命令历史记录 Hook
@@ -9,13 +10,13 @@ export const useCommandHistory = () => {
   const [historyIndex, setHistoryIndex] = useState(-1);
 
   // 添加命令到历史记录
-  const addToHistory = useCallback((command: string) => {
+  const addToHistory = useMemoizedFn((command: string) => {
     setCommandHistory((prev) => [...prev, command]);
     setHistoryIndex(-1);
-  }, []);
+  });
 
   // 获取上一个历史命令
-  const getPreviousCommand = useCallback((): string => {
+  const getPreviousCommand = useMemoizedFn((): string => {
     if (commandHistory.length === 0) return '';
 
     const newIndex =
@@ -23,10 +24,10 @@ export const useCommandHistory = () => {
 
     setHistoryIndex(newIndex);
     return commandHistory[newIndex] || '';
-  }, [commandHistory, historyIndex]);
+  });
 
   // 获取下一个历史命令
-  const getNextCommand = useCallback((): string => {
+  const getNextCommand = useMemoizedFn((): string => {
     if (historyIndex === -1) return '';
 
     const newIndex = historyIndex + 1;
@@ -37,12 +38,12 @@ export const useCommandHistory = () => {
       setHistoryIndex(newIndex);
       return commandHistory[newIndex] || '';
     }
-  }, [commandHistory, historyIndex]);
+  });
 
   // 重置历史索引
-  const resetHistoryIndex = useCallback(() => {
+  const resetHistoryIndex = useMemoizedFn(() => {
     setHistoryIndex(-1);
-  }, []);
+  });
 
   return {
     commandHistory,

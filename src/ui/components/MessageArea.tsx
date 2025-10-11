@@ -2,12 +2,14 @@ import { Box, Text } from 'ink';
 import React from 'react';
 import { MessageRenderer } from './MessageRenderer.js';
 import { getCopyright } from '../../utils/package-info.js';
+import type { LoopState } from '../hooks/useCommandHandler.js';
 
 interface MessageAreaProps {
   sessionState: any;
   terminalWidth: number;
   isProcessing: boolean;
   isInitialized: boolean;
+  loopState: LoopState;
 }
 
 /**
@@ -19,6 +21,7 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
   terminalWidth,
   isProcessing,
   isInitialized,
+  loopState,
 }) => {
   // 判断是否显示欢迎界面（只有assistant消息，没有用户消息）
   const hasUserMessages = sessionState.messages.some((msg: any) => msg.role === 'user');
@@ -122,10 +125,25 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
               />
             ))}
             {isProcessing && (
-              <Box paddingX={2}>
-                <Text color="yellow" dimColor>
-                  正在思考中...
-                </Text>
+              <Box paddingX={2} flexDirection="column">
+                {loopState.active ? (
+                  <>
+                    <Text color="cyan" bold>
+                      🔄 回合 {loopState.turn}/{loopState.maxTurns} (
+                      {Math.round((loopState.turn / loopState.maxTurns) * 100)}%)
+                    </Text>
+                    {loopState.currentTool && (
+                      <Text color="green" bold>🔧 正在执行: {loopState.currentTool}</Text>
+                    )}
+                    <Text color="yellow">
+                      按 ESC 停止任务
+                    </Text>
+                  </>
+                ) : (
+                  <Text color="yellow" bold>
+                    正在思考中...
+                  </Text>
+                )}
               </Box>
             )}
           </Box>

@@ -1,12 +1,12 @@
-import { useCallback, useState } from 'react';
-
+import { useMemoizedFn } from 'ahooks';
+import { useEffect, useRef, useState } from 'react';
 import { Agent } from '../../agent/Agent.js';
-import { useSession } from '../contexts/SessionContext.js';
 import {
-  isSlashCommand,
   executeSlashCommand,
-  type SlashCommandContext
+  isSlashCommand,
+  type SlashCommandContext,
 } from '../../slash-commands/index.js';
+import { useSession } from '../contexts/SessionContext.js';
 
 export interface CommandResult {
   success: boolean;
@@ -15,18 +15,50 @@ export interface CommandResult {
   metadata?: Record<string, unknown>;
 }
 
+export interface LoopState {
+  active: boolean;
+  turn: number;
+  maxTurns: number;
+  currentTool?: string;
+}
+
 /**
  * 命令处理 Hook
  * 负责命令的执行和状态管理
  */
 export const useCommandHandler = (systemPrompt?: string) => {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [loopState, setLoopState] = useState<LoopState>({
+    active: false,
+    turn: 0,
+    maxTurns: 50,
+    currentTool: undefined,
+  });
   const { dispatch } = useSession();
+  const abortControllerRef = useRef<AbortController | undefined>(undefined);
+  const agentRef = useRef<Agent | undefined>(undefined);
+
+  // 清理函数
+  useEffect(() => {
+    return () => {
+      if (agentRef.current) {
+        agentRef.current.removeAllListeners();
+      }
+    };
+  }, []);
+
+  // 停止任务
+  const handleAbort = useMemoizedFn(() => {
+    if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
+      abortControllerRef.current.abort();
+      setLoopState({ active: false, turn: 0, maxTurns: 50, currentTool: undefined });
+    }
+  });
 
   // Agent创建函数已准备就绪
 
   // 处理命令提交
-  const handleCommandSubmit = useCallback(
+  const handleCommandSubmit = useMemoizedFn(
     async (
       command: string,
       addUserMessage: (message: string) => void,
@@ -45,7 +77,7 @@ export const useCommandHandler = (systemPrompt?: string) => {
           const slashContext: SlashCommandContext = {
             cwd: process.cwd(),
             addUserMessage,
-            addAssistantMessage
+            addAssistantMessage,
           };
 
           const slashResult = await executeSlashCommand(command, slashContext);
@@ -56,40 +88,108 @@ export const useCommandHandler = (systemPrompt?: string) => {
               success: slashResult.success,
               output: slashResult.message,
               error: slashResult.error,
-              metadata: slashResult.data
+              metadata: slashResult.data,
             };
           }
 
           // /init 命令总是会触发 AI 分析
-          if (slashResult.success && slashResult.message === 'trigger_analysis' && slashResult.data) {
+          if (
+            slashResult.success &&
+            slashResult.message === 'trigger_analysis' &&
+            slashResult.data
+          ) {
             const { analysisPrompt } = slashResult.data;
 
-            console.log('[DEBUG] 触发 AI 分析，提示:', analysisPrompt.substring(0, 100) + '...');
+            console.log(
+              '[DEBUG] 触发 AI 分析，提示:',
+              analysisPrompt.substring(0, 100) + '...'
+            );
+
+            // 清理旧的 Agent 事件监听器
+            if (agentRef.current) {
+              agentRef.current.removeAllListeners();
+            }
 
             // 处理 AI 分析
             const agent = await Agent.create({ systemPrompt });
+            agentRef.current = agent;
+
+            // 监听 Agent 事件
+            agent.on(
+              'loopTurnStart',
+              ({ turn, maxTurns }: { turn: number; maxTurns: number }) => {
+                setLoopState({ active: true, turn, maxTurns, currentTool: undefined });
+              }
+            );
+            agent.on('toolExecutionStart', ({ tool }: { tool: string }) => {
+              setLoopState((prev) => ({ ...prev, currentTool: tool }));
+            });
+            agent.on('toolExecutionComplete', () => {
+              setLoopState((prev) => ({ ...prev, currentTool: undefined }));
+            });
+            agent.on('taskCompleted', () => {
+              setLoopState({
+                active: false,
+                turn: 0,
+                maxTurns: 50,
+                currentTool: undefined,
+              });
+            });
+            agent.on('taskFailed', () => {
+              setLoopState({
+                active: false,
+                turn: 0,
+                maxTurns: 50,
+                currentTool: undefined,
+              });
+            });
+            agent.on('taskAborted', () => {
+              setLoopState({
+                active: false,
+                turn: 0,
+                maxTurns: 50,
+                currentTool: undefined,
+              });
+            });
+
+            // 创建新的 AbortController
+            abortControllerRef.current = new AbortController();
+
             const chatContext = {
               messages: [],
               userId: 'cli-user',
               sessionId: `session-${Date.now()}`,
               workspaceRoot: process.cwd(),
+              signal: abortControllerRef.current.signal,
             };
 
             try {
               const aiOutput = await agent.chat(analysisPrompt, chatContext);
+
+              // 如果返回空字符串，可能是用户中止
+              if (!aiOutput || aiOutput.trim() === '') {
+                addAssistantMessage('✋ 任务已停止');
+                return {
+                  success: true,
+                  output: '任务已停止',
+                  metadata: slashResult.data,
+                };
+              }
+
               addAssistantMessage(aiOutput);
 
               return {
                 success: true,
                 output: aiOutput,
-                metadata: slashResult.data
+                metadata: slashResult.data,
               };
             } catch (aiError) {
-              const aiErrorMessage = aiError instanceof Error ? aiError.message : '未知错误';
+              const aiErrorMessage =
+                aiError instanceof Error ? aiError.message : '未知错误';
               addAssistantMessage(`❌ AI 分析失败: ${aiErrorMessage}`);
               return {
                 success: false,
-                error: `AI 分析失败: ${aiErrorMessage}`
+                error: `AI 分析失败: ${aiErrorMessage}`,
               };
             }
           }
@@ -98,34 +198,85 @@ export const useCommandHandler = (systemPrompt?: string) => {
             success: slashResult.success,
             output: slashResult.message,
             error: slashResult.error,
-            metadata: slashResult.data
+            metadata: slashResult.data,
           };
         }
 
         console.log('[DEBUG] 普通命令，发送给 Agent...');
 
+        // 清理旧的 Agent 事件监听器
+        if (agentRef.current) {
+          agentRef.current.removeAllListeners();
+        }
+
         const agent = await Agent.create({ systemPrompt });
+        agentRef.current = agent;
+
+        // 监听 Agent 事件
+        agent.on(
+          'loopTurnStart',
+          ({ turn, maxTurns }: { turn: number; maxTurns: number }) => {
+            setLoopState({ active: true, turn, maxTurns, currentTool: undefined });
+          }
+        );
+        agent.on('toolExecutionStart', ({ tool }: { tool: string }) => {
+          setLoopState((prev) => ({ ...prev, currentTool: tool }));
+        });
+        agent.on('toolExecutionComplete', () => {
+          setLoopState((prev) => ({ ...prev, currentTool: undefined }));
+        });
+        agent.on('taskCompleted', () => {
+          setLoopState({
+            active: false,
+            turn: 0,
+            maxTurns: 50,
+            currentTool: undefined,
+          });
+        });
+        agent.on('taskFailed', () => {
+          setLoopState({
+            active: false,
+            turn: 0,
+            maxTurns: 50,
+            currentTool: undefined,
+          });
+        });
+        agent.on('taskAborted', () => {
+          setLoopState({
+            active: false,
+            turn: 0,
+            maxTurns: 50,
+            currentTool: undefined,
+          });
+        });
+
+        // 创建新的 AbortController
+        abortControllerRef.current = new AbortController();
+
         const chatContext = {
           messages: [],
           userId: 'cli-user',
           sessionId: `session-${Date.now()}`,
           workspaceRoot: process.cwd(),
+          signal: abortControllerRef.current.signal,
         };
         const output = await agent.chat(command, chatContext);
-        const result = { success: true, output };
 
-        console.log('[DEBUG] 命令执行结果:', result);
+        console.log('[DEBUG] 命令执行结果:', output);
 
-        if (result.output) {
-          console.log('[DEBUG] 添加助手消息到UI');
-          addAssistantMessage(result.output);
-        } else {
-          // 成功但没有输出内容的情况
-          console.log('[DEBUG] 命令执行成功但无输出内容');
-          addAssistantMessage('✅ 处理完成');
+        // 如果返回空字符串，可能是用户中止
+        if (!output || output.trim() === '') {
+          addAssistantMessage('✋ 任务已停止');
+          return {
+            success: true,
+            output: '任务已停止',
+          };
         }
 
-        return result;
+        console.log('[DEBUG] 添加助手消息到UI');
+        addAssistantMessage(output);
+
+        return { success: true, output };
       } catch (error) {
         console.log('[ERROR] handleCommandSubmit 异常:', error);
         const errorMessage = error instanceof Error ? error.message : '未知错误';
@@ -133,12 +284,11 @@ export const useCommandHandler = (systemPrompt?: string) => {
         addAssistantMessage(`❌ ${errorMessage}`);
         return errorResult;
       }
-    },
-    [systemPrompt]
+    }
   );
 
   // 处理提交
-  const executeCommand = useCallback(
+  const executeCommand = useMemoizedFn(
     async (
       command: string,
       addUserMessage: (message: string) => void,
@@ -155,7 +305,6 @@ export const useCommandHandler = (systemPrompt?: string) => {
         const trimmedCommand = command.trim();
 
         console.log('[DEBUG] 开始处理命令:', trimmedCommand);
-        console.log('[DEBUG] 设置处理状态为 true');
         setIsProcessing(true);
         dispatch({ type: 'SET_THINKING', payload: true });
 
@@ -182,17 +331,24 @@ export const useCommandHandler = (systemPrompt?: string) => {
         } finally {
           console.log('[DEBUG] 设置处理状态为 false');
           setIsProcessing(false);
+          setLoopState({
+            active: false,
+            turn: 0,
+            maxTurns: 50,
+            currentTool: undefined,
+          });
           dispatch({ type: 'SET_THINKING', payload: false });
         }
       } else {
         console.log('[DEBUG] 跳过提交 - 输入为空或正在处理中');
       }
-    },
-    [isProcessing, handleCommandSubmit, dispatch]
+    }
   );
 
   return {
     isProcessing,
     executeCommand,
+    loopState,
+    handleAbort,
   };
 };
