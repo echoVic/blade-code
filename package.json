@@ -4,7 +4,6 @@
   "private": false,
   "description": "🗡️ Blade Code - 智能代码助手命令行工具",
   "type": "module",
-  "main": "dist/blade.js",
   "bin": {
     "blade": "dist/blade.js"
   },
