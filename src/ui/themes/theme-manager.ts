@@ -136,9 +136,9 @@ export class ThemeManager {
     this.themes.set('default', defaultTheme);
     this.themes.set('dark', darkTheme);
 
-    // 注册所有预设主题
-    for (const [name, theme] of Object.entries(themes)) {
-      this.themes.set(name, theme);
+    // 注册所有预设主题 (themes 现在是数组)
+    for (const item of themes) {
+      this.themes.set(item.id, item.theme);
     }
   }
 
@@ -205,7 +205,9 @@ export class ThemeManager {
    * @param name 主题名称
    */
   removeTheme(name: string): void {
-    if (name === 'default' || name === 'dark' || Object.hasOwn(themes, name)) {
+    const isBuiltIn =
+      name === 'default' || name === 'dark' || themes.some((item) => item.id === name);
+    if (isBuiltIn) {
       throw new Error(`Cannot remove built-in theme '${name}'`);
     }
     this.themes.delete(name);

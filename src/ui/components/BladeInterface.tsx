@@ -1,5 +1,6 @@
 import { Box, useStdout } from 'ink';
 import React, { useEffect, useState } from 'react';
+import { useAppState } from '../contexts/AppContext.js';
 import { useSession } from '../contexts/SessionContext.js';
 import { useAppInitializer } from '../hooks/useAppInitializer.js';
 import { useCommandHandler } from '../hooks/useCommandHandler.js';
@@ -11,6 +12,7 @@ import { Header } from './Header.js';
 import { InputArea } from './InputArea.js';
 import { MessageArea } from './MessageArea.js';
 import { PerformanceMonitor } from './PerformanceMonitor.js';
+import { ThemeSelector } from './ThemeSelector.js';
 
 interface BladeInterfaceProps {
   // 基础选项
@@ -69,6 +71,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   testMode = false,
   ...otherProps
 }) => {
+  const { state: appState } = useAppState();
   const { state: sessionState, addUserMessage, addAssistantMessage } = useSession();
 
   const { isInitialized, hasApiKey } = useAppInitializer(addAssistantMessage, debug);
@@ -108,39 +111,43 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   // 主界面 - 统一显示，不再区分初始化状态
   return (
     <Box flexDirection="column" width="100%" height="100%">
-      <Header testMode={testMode} />
+      {/* 主题选择器覆盖层 */}
+      {appState.showThemeSelector ? (
+        <ThemeSelector />
+      ) : (
+        <>
+          <Header testMode={testMode} />
 
-      <MessageArea
-        sessionState={sessionState}
-        terminalWidth={terminalWidth}
-        isProcessing={isProcessing}
-        isInitialized={hasApiKey}
-        loopState={loopState}
-      />
+          <MessageArea
+            sessionState={sessionState}
+            terminalWidth={terminalWidth}
+            isProcessing={isProcessing}
+            isInitialized={hasApiKey}
+            loopState={loopState}
+          />
 
-      <InputArea
-        input={input}
-        isProcessing={isProcessing || !isInitialized}
-      />
+          <InputArea input={input} isProcessing={isProcessing || !isInitialized} />
 
-      {/* 命令建议列表 - 显示在输入框下方 */}
-      <CommandSuggestions
-        suggestions={suggestions}
-        selectedIndex={selectedSuggestionIndex}
-        visible={showSuggestions}
-      />
+          {/* 命令建议列表 - 显示在输入框下方 */}
+          <CommandSuggestions
+            suggestions={suggestions}
+            selectedIndex={selectedSuggestionIndex}
+            visible={showSuggestions}
+          />
 
-      <ChatStatusBar
-        messageCount={sessionState.messages.length}
-        hasApiKey={hasApiKey}
-        isProcessing={isProcessing || !isInitialized}
-      />
+          <ChatStatusBar
+            messageCount={sessionState.messages.length}
+            hasApiKey={hasApiKey}
+            isProcessing={isProcessing || !isInitialized}
+          />
 
-      {/* 性能监控 - Debug 模式 */}
-      {debug && (
-        <Box position="absolute" width={30}>
-          <PerformanceMonitor />
-        </Box>
+          {/* 性能监控 - Debug 模式 */}
+          {debug && (
+            <Box position="absolute" width={30}>
+              <PerformanceMonitor />
+            </Box>
+          )}
+        </>
       )}
     </Box>
   );

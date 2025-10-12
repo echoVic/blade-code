@@ -2,6 +2,8 @@
  * Slash Command 类型定义
  */
 
+import type { ConfigManager } from '../config/config-manager.js';
+
 export interface SlashCommandResult {
   success: boolean;
   message?: string;
@@ -13,6 +15,7 @@ export interface SlashCommandContext {
   cwd: string;
   addUserMessage: (message: string) => void;
   addAssistantMessage: (message: string) => void;
+  configManager?: ConfigManager;
 }
 
 export interface SlashCommand {
@@ -21,6 +24,8 @@ export interface SlashCommand {
   fullDescription?: string;
   usage?: string;
   aliases?: string[];
+  category?: string;
+  examples?: string[];
   handler: (
     args: string[],
     context: SlashCommandContext

@@ -12,6 +12,7 @@ export interface AppState {
   userPreferences: UserPreferences;
   performance: PerformanceStats;
   error: AppError | null;
+  showThemeSelector: boolean;
 }
 
 // 用户偏好设置
@@ -84,7 +85,9 @@ type AppAction =
   | { type: 'UPDATE_PREFERENCES'; payload: Partial<UserPreferences> }
   | { type: 'SET_PERFORMANCE_STATS'; payload: Partial<PerformanceStats> }
   | { type: 'SET_ERROR'; payload: AppError | null }
-  | { type: 'CLEAR_ERROR' };
+  | { type: 'CLEAR_ERROR' }
+  | { type: 'SHOW_THEME_SELECTOR' }
+  | { type: 'HIDE_THEME_SELECTOR' };
 
 // 默认状态
 const defaultState: AppState = {
@@ -121,6 +124,7 @@ const defaultState: AppState = {
     uptime: 0,
   },
   error: null,
+  showThemeSelector: false,
 };
 
 // 状态reducer
@@ -173,6 +177,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'CLEAR_ERROR':
       return { ...state, error: null };
+
+    case 'SHOW_THEME_SELECTOR':
+      return { ...state, showThemeSelector: true };
+
+    case 'HIDE_THEME_SELECTOR':
+      return { ...state, showThemeSelector: false };
 
     default:
       return state;
@@ -248,6 +258,14 @@ export const AppActions = {
 
   clearError: () => ({
     type: 'CLEAR_ERROR' as const,
+  }),
+
+  showThemeSelector: () => ({
+    type: 'SHOW_THEME_SELECTOR' as const,
+  }),
+
+  hideThemeSelector: () => ({
+    type: 'HIDE_THEME_SELECTOR' as const,
   }),
 };
 

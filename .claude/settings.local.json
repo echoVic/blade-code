@@ -31,7 +31,8 @@
       "Bash(xargs:*)",
       "Bash(tree:*)",
       "Bash(awk:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": [],

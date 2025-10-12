@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 
+import { ConfigManager } from '../config/config-manager.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { NotificationSystem } from './components/NotificationSystem.js';
 import { AppProvider } from './contexts/AppContext.js';
 import { SessionProvider } from './contexts/SessionContext.js';
+import { themeManager } from './themes/theme-manager.js';
 
 interface AppProps {
   // 基础选项
@@ -60,6 +62,32 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
     ...props,
     debug: Boolean(props.debug), // 统一转换为 boolean
   };
+
+  // 启动时从配置文件加载主题
+  useEffect(() => {
+    const loadTheme = async () => {
+      try {
+        const configManager = new ConfigManager();
+        await configManager.initialize();
+        const config = configManager.getConfig();
+        const savedTheme = config?.ui?.theme;
+
+        if (savedTheme && themeManager.hasTheme(savedTheme)) {
+          themeManager.setTheme(savedTheme);
+          if (props.debug) {
+            console.log(`✓ 已加载主题: ${savedTheme}`);
+          }
+        }
+      } catch (error) {
+        // 静默失败，使用默认主题
+        if (props.debug) {
+          console.warn('⚠️ 主题加载失败，使用默认主题:', error);
+        }
+      }
+    };
+
+    loadTheme();
+  }, []); // 只在组件挂载时执行一次
 
   return (
     <ErrorBoundary>

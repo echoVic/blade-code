@@ -4,6 +4,7 @@
 
 import { builtinCommands } from './builtin-commands.js';
 import initCommand from './init.js';
+import themeCommand from './theme.js';
 import type {
   CommandSuggestion,
   SlashCommand,
@@ -16,6 +17,7 @@ import type {
 const slashCommands: SlashCommandRegistry = {
   ...builtinCommands,
   init: initCommand,
+  theme: themeCommand,
 };
 
 /**

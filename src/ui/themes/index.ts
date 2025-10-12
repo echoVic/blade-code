@@ -2,8 +2,8 @@
  * 主题系统统一导出
  */
 
-// 主题预设
-export { THEME_NAMES, themes } from './presets.js';
+// 主题预设和辅助函数
+export { themes, getThemeById, getThemeIds, type ThemeItem } from './presets.js';
 
 // 核心管理器
 export {

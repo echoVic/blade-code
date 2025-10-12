@@ -1069,36 +1069,59 @@ export const kanagawa: Theme = {
   },
 };
 
-// 主题名称常量
-export const THEME_NAMES = {
-  AYU_DARK: 'ayu-dark',
-  DRACULA: 'dracula',
-  MONOKAI: 'monokai',
-  NORD: 'nord',
-  SOLARIZED_LIGHT: 'solarized-light',
-  SOLARIZED_DARK: 'solarized-dark',
-  TOKYO_NIGHT: 'tokyo-night',
-  GITHUB: 'github',
-  GRUVBOX: 'gruvbox',
-  ONE_DARK: 'one-dark',
-  CATPPUCCIN: 'catppuccin',
-  ROSE_PINE: 'rose-pine',
-  KANAGAWA: 'kanagawa',
-} as const;
+// 主题项接口 - 包含主题数据和元信息
+export interface ThemeItem {
+  id: string; // 主题唯一标识
+  label: string; // 显示名称
+  theme: Theme; // 主题配置
+  description?: string; // 主题描述
+  author?: string; // 作者
+  tags?: string[]; // 标签
+}
 
-// 导出所有主题
-export const themes = {
-  'ayu-dark': ayuDark,
-  dracula: dracula,
-  monokai: monokai,
-  nord: nord,
-  'solarized-light': solarizedLight,
-  'solarized-dark': solarizedDark,
-  'tokyo-night': tokyoNight,
-  github: github,
-  gruvbox: gruvbox,
-  'one-dark': oneDark,
-  catppuccin: catppuccin,
-  'rose-pine': rosePine,
-  kanagawa: kanagawa,
-};
+// 导出所有主题 - 数组格式，方便遍历和UI使用
+export const themes: ThemeItem[] = [
+  { id: 'ayu-dark', label: 'Ayu Dark', theme: ayuDark, tags: ['dark', 'popular'] },
+  { id: 'dracula', label: 'Dracula', theme: dracula, tags: ['dark', 'popular'] },
+  { id: 'monokai', label: 'Monokai', theme: monokai, tags: ['dark', 'classic'] },
+  { id: 'nord', label: 'Nord', theme: nord, tags: ['dark', 'minimal'] },
+  {
+    id: 'solarized-light',
+    label: 'Solarized Light',
+    theme: solarizedLight,
+    tags: ['light'],
+  },
+  {
+    id: 'solarized-dark',
+    label: 'Solarized Dark',
+    theme: solarizedDark,
+    tags: ['dark'],
+  },
+  {
+    id: 'tokyo-night',
+    label: 'Tokyo Night',
+    theme: tokyoNight,
+    tags: ['dark', 'popular'],
+  },
+  { id: 'github', label: 'GitHub', theme: github, tags: ['light', 'minimal'] },
+  { id: 'gruvbox', label: 'Gruvbox', theme: gruvbox, tags: ['dark', 'warm'] },
+  { id: 'one-dark', label: 'One Dark', theme: oneDark, tags: ['dark', 'popular'] },
+  {
+    id: 'catppuccin',
+    label: 'Catppuccin',
+    theme: catppuccin,
+    tags: ['dark', 'pastel'],
+  },
+  { id: 'rose-pine', label: 'Rose Pine', theme: rosePine, tags: ['dark', 'elegant'] },
+  { id: 'kanagawa', label: 'Kanagawa', theme: kanagawa, tags: ['dark', 'japanese'] },
+];
+
+// 辅助函数 - 根据 ID 查找主题
+export function getThemeById(id: string): Theme | undefined {
+  return themes.find((item) => item.id === id)?.theme;
+}
+
+// 辅助函数 - 获取所有主题 ID
+export function getThemeIds(): string[] {
+  return themes.map((item) => item.id);
+}

@@ -1,11 +1,13 @@
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useRef, useState } from 'react';
 import { Agent } from '../../agent/Agent.js';
+import { ConfigManager } from '../../config/config-manager.js';
 import {
   executeSlashCommand,
   isSlashCommand,
   type SlashCommandContext,
 } from '../../slash-commands/index.js';
+import { useAppState } from '../contexts/AppContext.js';
 import { useSession } from '../contexts/SessionContext.js';
 
 export interface CommandResult {
@@ -35,6 +37,7 @@ export const useCommandHandler = (systemPrompt?: string) => {
     currentTool: undefined,
   });
   const { dispatch } = useSession();
+  const { dispatch: appDispatch, actions: appActions } = useAppState();
   const abortControllerRef = useRef<AbortController | undefined>(undefined);
   const agentRef = useRef<Agent | undefined>(undefined);
 
@@ -74,13 +77,23 @@ export const useCommandHandler = (systemPrompt?: string) => {
         if (isSlashCommand(command)) {
           console.log('[DEBUG] 检测到 slash command，执行中...');
 
+          const configManager = new ConfigManager();
+          await configManager.initialize();
+
           const slashContext: SlashCommandContext = {
             cwd: process.cwd(),
             addUserMessage,
             addAssistantMessage,
+            configManager,
           };
 
           const slashResult = await executeSlashCommand(command, slashContext);
+
+          // 检查是否需要显示主题选择器
+          if (slashResult.message === 'show_theme_selector') {
+            appDispatch(appActions.showThemeSelector());
+            return { success: true };
+          }
 
           if (!slashResult.success && slashResult.error) {
             addAssistantMessage(`❌ ${slashResult.error}`);
