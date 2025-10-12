@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.7] - 2025-10-12
+
+### ✨ 新功能
+
+- add theme command and UI theme selector with enhanced theme system (bd87bdd)
+
+### 🐛 问题修复
+
+- remove main field requirement from release script (e0348ab)
+
+### 📝 文档更新
+
+- 更新README中的命令行使用说明 (f9570fc)
+- 更新文档结构和内容，添加英文README (222e35b)
+
+### ♻️ 代码重构
+
+- 移除 Ink UI 组件并更新主题系统\n\n- 移除大量 Ink UI 组件及相关测试文件\n- 更新主题系统，添加语法高亮颜色配置\n- 从 package.json 中移除 main 字段\n- 更新 Claude 安全设置，允许更多 bash 命令 (f77c969)
+
+
 ## [0.0.6] - 2025-10-11
 
 ### ✨ 新功能
