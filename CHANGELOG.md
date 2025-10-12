@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.8] - 2025-10-12
+
+### ✨ 新功能
+
+- 添加 TODO 管理工具并规范文件命名 (b5e2a6d)
+
+
 ## [0.0.7] - 2025-10-12
 
 ### ✨ 新功能
