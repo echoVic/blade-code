@@ -510,7 +510,8 @@ function preReleaseCheck() {
   console.log(chalk.yellow('\n📋 基本信息检查'));
   
   // 检查 package.json 必要字段
-  const requiredFields = ['name', 'version', 'description', 'main', 'bin'];
+  // 注意: 对于 CLI 工具，main 字段不是必需的，只需要 bin 字段
+  const requiredFields = ['name', 'version', 'description', 'bin'];
   requiredFields.forEach(field => {
     if (packageJson[field]) {
       console.log(chalk.green(`✅ ${field}: ${typeof packageJson[field] === 'object' ? JSON.stringify(packageJson[field]) : packageJson[field]}`));
