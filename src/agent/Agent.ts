@@ -5,7 +5,9 @@
 
 import { EventEmitter } from 'events';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
-import { ConfigManager } from '../config/config-manager.js';
+import * as os from 'os';
+import * as path from 'path';
+import { ConfigManager } from '../config/ConfigManager.js';
 import { PromptBuilder } from '../prompts/index.js';
 import { ChatService, type Message } from '../services/ChatService.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
@@ -33,6 +35,7 @@ export class Agent extends EventEmitter {
   private activeTask?: AgentTask;
   private toolRegistry: ToolRegistry;
   private systemPrompt?: string;
+  private sessionId: string;
 
   // 核心组件
   private chatService!: ChatService;
@@ -40,10 +43,12 @@ export class Agent extends EventEmitter {
   private promptBuilder!: PromptBuilder;
   private loopDetector!: LoopDetectionService;
 
-  constructor(config: AgentConfig, toolRegistry?: ToolRegistry) {
+  constructor(config: AgentConfig, toolRegistry?: ToolRegistry, sessionId?: string) {
     super();
     this.config = config;
     this.toolRegistry = toolRegistry || new ToolRegistry();
+    this.sessionId =
+      sessionId || `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   }
 
   /**
@@ -354,6 +359,18 @@ export class Agent extends EventEmitter {
             }
 
             const params = JSON.parse(toolCall.function.arguments);
+
+            // 智能修复: 如果 todos 参数被错误地序列化为字符串,自动解析
+            if (params.todos && typeof params.todos === 'string') {
+              try {
+                params.todos = JSON.parse(params.todos);
+                this.log('[Agent] 自动修复了字符串化的 todos 参数');
+              } catch {
+                // 解析失败,保持原样,让后续验证报错
+                this.error('[Agent] todos 参数格式异常,将由验证层处理');
+              }
+            }
+
             const toolInvocation = tool.build(params);
             const signalToUse = options?.signal || new AbortController().signal;
             const result = await toolInvocation.execute(signalToUse);
@@ -365,6 +382,21 @@ export class Agent extends EventEmitter {
               success: result.success,
               turn: turnsCount,
             });
+
+            // 如果是 TODO 工具,触发 TODO 更新事件
+            if (
+              (toolCall.function.name === 'TodoWrite' ||
+                toolCall.function.name === 'TodoRead') &&
+              result.success &&
+              result.llmContent
+            ) {
+              const content =
+                typeof result.llmContent === 'object' ? result.llmContent : {};
+              const todos = Array.isArray(content)
+                ? content
+                : (content as Record<string, unknown>).todos || [];
+              this.emit('todoUpdate', { todos });
+            }
 
             // 添加工具执行结果到消息历史
             // 优先使用 displayContent（人类可读格式），避免空数组或复杂对象被选中
@@ -681,7 +713,10 @@ export class Agent extends EventEmitter {
    */
   private async registerBuiltinTools(): Promise<void> {
     try {
-      const builtinTools = await getBuiltinTools();
+      const builtinTools = await getBuiltinTools({
+        sessionId: this.sessionId,
+        configDir: path.join(os.homedir(), '.blade'),
+      });
       console.log(`📦 Registering ${builtinTools.length} builtin tools...`);
 
       // 为 TaskTool 注入 agentFactory（支持子任务递归）

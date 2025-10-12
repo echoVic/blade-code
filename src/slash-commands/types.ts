@@ -2,7 +2,7 @@
  * Slash Command 类型定义
  */
 
-import type { ConfigManager } from '../config/config-manager.js';
+import type { ConfigManager } from '../config/ConfigManager.js';
 
 export interface SlashCommandResult {
   success: boolean;

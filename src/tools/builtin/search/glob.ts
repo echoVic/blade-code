@@ -2,11 +2,11 @@ import { z } from 'zod';
 import { promises as fs } from 'fs';
 import { join, relative, resolve } from 'path';
 import { createTool } from '../../core/createTool.js';
-import { ToolSchemas } from '../../validation/zod-schemas.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { ToolKind, ToolErrorType } from '../../types/index.js';
 import type { ToolResult } from '../../types/index.js';
 import type { ExecutionContext } from '../../types/index.js';
-import { FileFilter } from '../../../utils/file-patterns.js';
+import { FileFilter } from '../../../utils/filePatterns.js';
 
 /**
  * 文件匹配结果
@@ -24,7 +24,7 @@ interface FileMatch {
  * 使用新的 Zod 验证设计
  */
 export const globTool = createTool({
-  name: 'glob',
+  name: 'Glob',
   displayName: '文件模式匹配',
   kind: ToolKind.Search,
 

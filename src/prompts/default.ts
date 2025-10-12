@@ -155,7 +155,10 @@ When referencing specific functions or pieces of code include the pattern \`file
 <example>
 user: Where are errors from the client handled?
 assistant: Clients are marked as failed in the \`connectToServer\` function in src/services/process.ts:712.
-</example>`;
+</example>
+
+# Language Requirement
+IMPORTANT: Always respond in Chinese (Simplified Chinese). Translate all your responses to Chinese before sending them to the user.`;
 
 /**
  * 系统提示配置选项
@@ -174,5 +177,5 @@ export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {
   enabled: true,
   default: DEFAULT_SYSTEM_PROMPT,
   allowOverride: true,
-  maxLength: 4000,
+  maxLength: 32000,
 };

@@ -8,7 +8,7 @@ import type {
   ConfigListOptions,
   ConfigSetOptions,
 } from '../cli/types.js';
-import { ConfigManager } from '../config/config-manager.js';
+import { ConfigManager } from '../config/ConfigManager.js';
 import type { BladeConfig } from '../config/types.js';
 
 // Config Set 子命令

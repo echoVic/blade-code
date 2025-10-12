@@ -2,7 +2,7 @@
  * Slash Commands 注册和处理中心
  */
 
-import { builtinCommands } from './builtin-commands.js';
+import { builtinCommands } from './builtinCommands.js';
 import initCommand from './init.js';
 import themeCommand from './theme.js';
 import type {

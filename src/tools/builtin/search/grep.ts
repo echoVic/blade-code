@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import { spawn } from 'child_process';
 import { createTool } from '../../core/createTool.js';
-import { ToolSchemas } from '../../validation/zod-schemas.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { ToolKind, ToolErrorType } from '../../types/index.js';
 import type { ToolResult } from '../../types/index.js';
 import type { ExecutionContext } from '../../types/index.js';
-import { DEFAULT_EXCLUDE_DIRS } from '../../../utils/file-patterns.js';
+import { DEFAULT_EXCLUDE_DIRS } from '../../../utils/filePatterns.js';
 
 /**
  * 搜索结果条目
@@ -24,7 +24,7 @@ interface GrepMatch {
  * 使用新的 Zod 验证设计
  */
 export const grepTool = createTool({
-  name: 'grep',
+  name: 'Grep',
   displayName: '内容搜索',
   kind: ToolKind.Search,
 

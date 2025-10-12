@@ -1,11 +1,11 @@
 import { promises as fs } from 'fs';
 import { extname, join, relative, resolve } from 'path';
 import { z } from 'zod';
-import { getExcludePatterns } from '../../../utils/file-patterns.js';
+import { getExcludePatterns } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zod-schemas.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
  * Find搜索参数 Schema
@@ -252,7 +252,7 @@ function sortMatches(matches: FindMatch[]): FindMatch[] {
  * 提供基于多种条件的文件和目录查找功能
  */
 export const findTool = createTool({
-  name: 'find',
+  name: 'Find',
   displayName: '高级文件查找',
   kind: ToolKind.Search,
   schema: FindParamsSchema,

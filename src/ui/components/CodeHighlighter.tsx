@@ -5,7 +5,7 @@
 import { Box, Text } from 'ink';
 import { common, createLowlight } from 'lowlight';
 import React from 'react';
-import { themeManager } from '../themes/theme-manager.js';
+import { themeManager } from '../themes/ThemeManager.js';
 import type { SyntaxColors } from '../themes/types.js';
 
 // 创建 lowlight 实例

@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { ConfigEncryptor } from './config-encryptor.js';
+import { ConfigEncryptor } from './configEncryptor.js';
 
 export interface SecurityPolicy {
   // 身份认证策略

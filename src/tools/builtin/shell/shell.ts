@@ -4,7 +4,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext } from '../../types/index.js';
 import type { ConfirmationDetails, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zod-schemas.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
  * 命令执行结果
@@ -22,7 +22,7 @@ interface CommandResult {
  * 使用新的 Zod 验证设计
  */
 export const shellTool = createTool({
-  name: 'shell',
+  name: 'Shell',
   displayName: 'Shell命令执行',
   kind: ToolKind.Execute,
 

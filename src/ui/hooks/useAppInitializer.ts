@@ -1,6 +1,6 @@
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useState } from 'react';
-import { ConfigManager } from '../../config/config-manager.js';
+import { ConfigManager } from '../../config/ConfigManager.js';
 
 /**
  * 应用初始化 Hook

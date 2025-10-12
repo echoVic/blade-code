@@ -8,7 +8,7 @@ import type {
   ToolResult,
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zod-schemas.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
  * Bash 会话上下文 (用于环境变量和工作目录复用)
@@ -57,7 +57,7 @@ class BashSessionManager {
  * 采用业界标准做法:非交互式执行 + 进程事件监听
  */
 export const bashTool = createTool({
-  name: 'bash',
+  name: 'Bash',
   displayName: 'Bash 命令执行',
   kind: ToolKind.Execute,
 

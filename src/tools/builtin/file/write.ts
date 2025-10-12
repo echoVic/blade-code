@@ -8,14 +8,14 @@ import type {
   ToolResult,
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zod-schemas.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
  * WriteTool - 文件写入工具
  * 使用新的 Zod 验证设计
  */
 export const writeTool = createTool({
-  name: 'write',
+  name: 'Write',
   displayName: '文件写入',
   kind: ToolKind.Edit,
 

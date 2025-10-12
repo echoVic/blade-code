@@ -19,7 +19,7 @@ import { doctorCommands } from './commands/doctor.js';
 import { installCommands } from './commands/install.js';
 import { mcpCommands } from './commands/mcp.js';
 import { handlePrintMode } from './commands/print.js';
-import { setupTokenCommands } from './commands/setup-token.js';
+import { setupTokenCommands } from './commands/setupToken.js';
 import { updateCommands } from './commands/update.js';
 import { AppWrapper as BladeApp } from './ui/App.js';
 

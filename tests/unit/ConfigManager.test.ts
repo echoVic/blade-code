@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
-import { ConfigManager } from '../../src/config/config-manager.js';
+import { ConfigManager } from '../../src/config/ConfigManager.js';
 
 // Mock fs module
 jest.mock('fs', () => ({

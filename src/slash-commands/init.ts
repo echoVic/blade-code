@@ -5,7 +5,7 @@
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
-import { buildAnalysisPrompt, detectProjectFeatures } from './analysis-prompt.js';
+import { buildAnalysisPrompt, detectProjectFeatures } from './analysisPrompt.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 async function _analyzeProject(cwd: string): Promise<string> {

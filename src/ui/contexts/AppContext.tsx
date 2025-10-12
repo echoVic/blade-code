@@ -1,5 +1,6 @@
 import React, { createContext, ReactNode, useContext, useReducer } from 'react';
 import type { BladeConfig } from '../../config/types.js';
+import type { TodoItem } from '../../tools/builtin/todo/types.js';
 
 // 应用状态类型定义
 export interface AppState {
@@ -13,6 +14,8 @@ export interface AppState {
   performance: PerformanceStats;
   error: AppError | null;
   showThemeSelector: boolean;
+  todos: TodoItem[];
+  showTodoPanel: boolean;
 }
 
 // 用户偏好设置
@@ -87,7 +90,12 @@ type AppAction =
   | { type: 'SET_ERROR'; payload: AppError | null }
   | { type: 'CLEAR_ERROR' }
   | { type: 'SHOW_THEME_SELECTOR' }
-  | { type: 'HIDE_THEME_SELECTOR' };
+  | { type: 'HIDE_THEME_SELECTOR' }
+  | { type: 'SET_TODOS'; payload: TodoItem[] }
+  | { type: 'UPDATE_TODO'; payload: TodoItem }
+  | { type: 'SHOW_TODO_PANEL' }
+  | { type: 'HIDE_TODO_PANEL' }
+  | { type: 'TOGGLE_TODO_PANEL' };
 
 // 默认状态
 const defaultState: AppState = {
@@ -125,6 +133,8 @@ const defaultState: AppState = {
   },
   error: null,
   showThemeSelector: false,
+  todos: [],
+  showTodoPanel: true,
 };
 
 // 状态reducer
@@ -183,6 +193,26 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'HIDE_THEME_SELECTOR':
       return { ...state, showThemeSelector: false };
+
+    case 'SET_TODOS':
+      return { ...state, todos: action.payload };
+
+    case 'UPDATE_TODO':
+      return {
+        ...state,
+        todos: state.todos.map((todo) =>
+          todo.id === action.payload.id ? action.payload : todo
+        ),
+      };
+
+    case 'SHOW_TODO_PANEL':
+      return { ...state, showTodoPanel: true };
+
+    case 'HIDE_TODO_PANEL':
+      return { ...state, showTodoPanel: false };
+
+    case 'TOGGLE_TODO_PANEL':
+      return { ...state, showTodoPanel: !state.showTodoPanel };
 
     default:
       return state;
@@ -267,6 +297,28 @@ export const AppActions = {
   hideThemeSelector: () => ({
     type: 'HIDE_THEME_SELECTOR' as const,
   }),
+
+  setTodos: (todos: TodoItem[]) => ({
+    type: 'SET_TODOS' as const,
+    payload: todos,
+  }),
+
+  updateTodo: (todo: TodoItem) => ({
+    type: 'UPDATE_TODO' as const,
+    payload: todo,
+  }),
+
+  showTodoPanel: () => ({
+    type: 'SHOW_TODO_PANEL' as const,
+  }),
+
+  hideTodoPanel: () => ({
+    type: 'HIDE_TODO_PANEL' as const,
+  }),
+
+  toggleTodoPanel: () => ({
+    type: 'TOGGLE_TODO_PANEL' as const,
+  }),
 };
 
 type AppActions = typeof AppActions;
@@ -334,5 +386,16 @@ export const useAppError = () => {
     error: state.error,
     setError: actions.setError,
     clearError: actions.clearError,
+  };
+};
+
+export const useTodos = () => {
+  const { state, actions } = useAppState();
+  return {
+    todos: state.todos,
+    showTodoPanel: state.showTodoPanel,
+    setTodos: actions.setTodos,
+    updateTodo: actions.updateTodo,
+    toggleTodoPanel: actions.toggleTodoPanel,
   };
 };

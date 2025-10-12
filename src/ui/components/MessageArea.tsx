@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import { MessageRenderer } from './MessageRenderer.js';
-import { getCopyright } from '../../utils/package-info.js';
+import { getCopyright } from '../../utils/packageInfo.js';
 import type { LoopState } from '../hooks/useCommandHandler.js';
 
 interface MessageAreaProps {

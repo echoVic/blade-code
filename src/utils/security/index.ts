@@ -3,27 +3,27 @@
  * 导出所有安全相关的工具和实用程序
  */
 
-import { CommandExecutor } from '../command-executor.js';
-import { ConfigEncryptor } from '../config-encryptor.js';
-import { ErrorHandler } from '../error-handler.js';
-import { PathSecurity } from '../path-security.js';
-import { PromptSecurity } from '../prompt-security.js';
-import { SecureHttpClient } from '../secure-http-client.js';
+import { CommandExecutor } from '../commandExecutor.js';
+import { ConfigEncryptor } from '../configEncryptor.js';
+import { ErrorHandler } from '../errorHandler.js';
+import { PathSecurity } from '../pathSecurity.js';
+import { PromptSecurity } from '../promptSecurity.js';
+import { SecureHttpClient } from '../secureHttpClient.js';
 
 // 命令执行安全
-export { CommandExecutor } from '../command-executor.js';
+export { CommandExecutor } from '../commandExecutor.js';
 
 // 配置加密
-export { ConfigEncryptor } from '../config-encryptor.js';
+export { ConfigEncryptor } from '../configEncryptor.js';
 // 错误处理
-export { ErrorHandler } from '../error-handler.js';
+export { ErrorHandler } from '../errorHandler.js';
 // 路径安全
-export { PathSecurity } from '../path-security.js';
+export { PathSecurity } from '../pathSecurity.js';
 // 提示词安全
-export { PromptSecurity } from '../prompt-security.js';
+export { PromptSecurity } from '../promptSecurity.js';
 
 // HTTP 客户端安全
-export { SecureHttpClient } from '../secure-http-client.js';
+export { SecureHttpClient } from '../secureHttpClient.js';
 
 // 安全常量
 export const SECURITY_CONSTANTS = {

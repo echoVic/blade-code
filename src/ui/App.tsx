@@ -1,12 +1,12 @@
 import React, { useEffect } from 'react';
 
-import { ConfigManager } from '../config/config-manager.js';
+import { ConfigManager } from '../config/ConfigManager.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { NotificationSystem } from './components/NotificationSystem.js';
 import { AppProvider } from './contexts/AppContext.js';
 import { SessionProvider } from './contexts/SessionContext.js';
-import { themeManager } from './themes/theme-manager.js';
+import { themeManager } from './themes/ThemeManager.js';
 
 interface AppProps {
   // 基础选项

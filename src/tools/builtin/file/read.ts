@@ -4,14 +4,14 @@ import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zod-schemas.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
  * ReadTool - 文件读取工具
  * 使用新的 Zod 验证设计
  */
 export const readTool = createTool({
-  name: 'read',
+  name: 'Read',
   displayName: '文件读取',
   kind: ToolKind.Read,
 

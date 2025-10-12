@@ -13,8 +13,8 @@ export {
   GitHubOAuthProvider,
   GoogleOAuthProvider,
   OAuthProvider,
-} from './oauth-provider.js';
-export { OAuthTokenStorage } from './oauth-token-storage.js';
+} from './OAuthProvider.js';
+export { OAuthTokenStorage } from './oauthTokenStorage.js';
 
 // === 类型定义 ===
 export type * from './types.js';

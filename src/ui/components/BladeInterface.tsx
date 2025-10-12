@@ -1,6 +1,6 @@
 import { Box, useStdout } from 'ink';
 import React, { useEffect, useState } from 'react';
-import { useAppState } from '../contexts/AppContext.js';
+import { useAppState, useTodos } from '../contexts/AppContext.js';
 import { useSession } from '../contexts/SessionContext.js';
 import { useAppInitializer } from '../hooks/useAppInitializer.js';
 import { useCommandHandler } from '../hooks/useCommandHandler.js';
@@ -13,6 +13,7 @@ import { InputArea } from './InputArea.js';
 import { MessageArea } from './MessageArea.js';
 import { PerformanceMonitor } from './PerformanceMonitor.js';
 import { ThemeSelector } from './ThemeSelector.js';
+import { TodoPanel } from './TodoPanel.js';
 
 interface BladeInterfaceProps {
   // 基础选项
@@ -73,6 +74,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 }) => {
   const { state: appState } = useAppState();
   const { state: sessionState, addUserMessage, addAssistantMessage } = useSession();
+  const { todos, showTodoPanel } = useTodos();
 
   const { isInitialized, hasApiKey } = useAppInitializer(addAssistantMessage, debug);
 
@@ -117,6 +119,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       ) : (
         <>
           <Header testMode={testMode} />
+
+          {/* TODO 面板 - 显示在顶部 */}
+          {showTodoPanel && <TodoPanel todos={todos} visible={showTodoPanel} compact={false} />}
 
           <MessageArea
             sessionState={sessionState}

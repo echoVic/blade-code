@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { promises as fs } from 'fs';
 import { createTool } from '../../core/createTool.js';
-import { ToolSchemas } from '../../validation/zod-schemas.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { ToolKind, ToolErrorType } from '../../types/index.js';
 import type { ToolResult, ConfirmationDetails } from '../../types/index.js';
 import type { ExecutionContext } from '../../types/index.js';
@@ -11,7 +11,7 @@ import type { ExecutionContext } from '../../types/index.js';
  * 使用新的 Zod 验证设计
  */
 export const editTool = createTool({
-  name: 'edit',
+  name: 'Edit',
   displayName: '文件编辑',
   kind: ToolKind.Edit,
 

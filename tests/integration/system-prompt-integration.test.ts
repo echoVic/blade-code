@@ -26,7 +26,7 @@ describe('System Prompt Integration', () => {
     vi.spyOn(require('os'), 'homedir').mockReturnValue(testDir);
 
     // Mock 配置管理器，避免实际读取配置
-    vi.mock('../../src/config/config-manager.js', () => ({
+    vi.mock('../../src/config/ConfigManager.js', () => ({
       ConfigManager: vi.fn().mockImplementation(() => ({
         initialize: vi.fn().mockResolvedValue(undefined),
         getConfig: vi.fn().mockReturnValue({

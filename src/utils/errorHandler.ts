@@ -3,7 +3,7 @@
  * 防止敏感信息泄露
  */
 
-import { PathSecurity } from './path-security.js';
+import { PathSecurity } from './pathSecurity.js';
 
 export interface ErrorData {
   code?: string | number;

@@ -5,10 +5,10 @@
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import React, { useState } from 'react';
-import { ConfigManager } from '../../config/config-manager.js';
+import { ConfigManager } from '../../config/ConfigManager.js';
 import { useAppState } from '../contexts/AppContext.js';
 import { themes } from '../themes/index.js';
-import { themeManager } from '../themes/theme-manager.js';
+import { themeManager } from '../themes/ThemeManager.js';
 import type { Theme } from '../themes/types.js';
 
 // 准备 SelectInput 需要的数据格式

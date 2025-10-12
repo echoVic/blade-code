@@ -148,7 +148,7 @@ export function setTaskToolAgentFactory(factory: () => Promise<Agent>): void {
  * 使用新的 Zod 验证设计
  */
 export const taskTool = createTool({
-  name: 'task',
+  name: 'Task',
   displayName: 'Agent任务调度',
   kind: ToolKind.Execute,
 

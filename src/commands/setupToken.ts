@@ -4,7 +4,7 @@
 
 import type { CommandModule } from 'yargs';
 import type { SetupTokenOptions } from '../cli/types.js';
-import { ConfigManager } from '../config/config-manager.js';
+import { ConfigManager } from '../config/ConfigManager.js';
 
 export const setupTokenCommands: CommandModule<{}, SetupTokenOptions> = {
   command: 'setup-token',

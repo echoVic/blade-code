@@ -3,7 +3,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext } from '../../types/index.js';
 import type { ConfirmationDetails, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zod-schemas.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
  * API响应结果
@@ -23,7 +23,7 @@ interface ApiResponse {
  * 使用新的 Zod 验证设计
  */
 export const apiCallTool = createTool({
-  name: 'api_call',
+  name: 'ApiCall',
   displayName: 'API调用',
   kind: ToolKind.Network,
 

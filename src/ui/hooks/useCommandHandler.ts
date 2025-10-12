@@ -1,12 +1,13 @@
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useRef, useState } from 'react';
 import { Agent } from '../../agent/Agent.js';
-import { ConfigManager } from '../../config/config-manager.js';
+import { ConfigManager } from '../../config/ConfigManager.js';
 import {
   executeSlashCommand,
   isSlashCommand,
   type SlashCommandContext,
 } from '../../slash-commands/index.js';
+import type { TodoItem } from '../../tools/builtin/todo/types.js';
 import { useAppState } from '../contexts/AppContext.js';
 import { useSession } from '../contexts/SessionContext.js';
 
@@ -164,6 +165,10 @@ export const useCommandHandler = (systemPrompt?: string) => {
                 currentTool: undefined,
               });
             });
+            agent.on('todoUpdate', ({ todos }: { todos: TodoItem[] }) => {
+              appDispatch(appActions.setTodos(todos));
+              appDispatch(appActions.showTodoPanel());
+            });
 
             // 创建新的 AbortController
             abortControllerRef.current = new AbortController();
@@ -261,6 +266,10 @@ export const useCommandHandler = (systemPrompt?: string) => {
             maxTurns: 50,
             currentTool: undefined,
           });
+        });
+        agent.on('todoUpdate', ({ todos }: { todos: TodoItem[] }) => {
+          appDispatch(appActions.setTodos(todos));
+          appDispatch(appActions.showTodoPanel());
         });
 
         // 创建新的 AbortController

@@ -1,9 +1,12 @@
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext } from '../../types/index.js';
-import type { ConfirmationDetails, ToolResult } from '../../types/index.js';
+import type {
+  ConfirmationDetails,
+  ExecutionContext,
+  ToolResult,
+} from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zod-schemas.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
  * Web响应结果
@@ -23,33 +26,21 @@ interface WebResponse {
  * 使用新的 Zod 验证设计
  */
 export const webFetchTool = createTool({
-  name: 'web_fetch',
+  name: 'WebFetch',
   displayName: '网页内容获取',
   kind: ToolKind.Network,
 
   // Zod Schema 定义
   schema: z.object({
-    url: z
-      .string()
-      .url()
-      .describe('要请求的URL地址'),
+    url: z.string().url().describe('要请求的URL地址'),
     method: z
       .enum(['GET', 'POST', 'PUT', 'DELETE', 'HEAD'])
       .default('GET')
       .describe('HTTP方法'),
-    headers: z
-      .record(z.string())
-      .optional()
-      .describe('请求头(可选)'),
-    body: z
-      .string()
-      .optional()
-      .describe('请求体内容(可选)'),
+    headers: z.record(z.string()).optional().describe('请求头(可选)'),
+    body: z.string().optional().describe('请求体内容(可选)'),
     timeout: ToolSchemas.timeout(1000, 120000, 30000),
-    follow_redirects: z
-      .boolean()
-      .default(true)
-      .describe('是否跟随重定向'),
+    follow_redirects: z.boolean().default(true).describe('是否跟随重定向'),
     max_redirects: z
       .number()
       .int()
@@ -57,10 +48,7 @@ export const webFetchTool = createTool({
       .max(10)
       .default(5)
       .describe('最大重定向次数'),
-    return_headers: z
-      .boolean()
-      .default(false)
-      .describe('是否返回响应头信息'),
+    return_headers: z.boolean().default(false).describe('是否返回响应头信息'),
   }),
 
   // 工具描述
@@ -99,8 +87,8 @@ export const webFetchTool = createTool({
         params: {
           url: 'https://api.example.com/secure',
           headers: {
-            'Authorization': 'Bearer token123',
-            'Accept': 'application/json',
+            Authorization: 'Bearer token123',
+            Accept: 'application/json',
           },
         },
       },

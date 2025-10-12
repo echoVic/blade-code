@@ -6,8 +6,8 @@ import type {
   ToolInvocation,
   ToolResult,
 } from '../types/index.js';
-import { parseWithZod } from '../validation/error-formatter.js';
-import { zodToFunctionSchema } from '../validation/zod-to-json.js';
+import { parseWithZod } from '../validation/errorFormatter.js';
+import { zodToFunctionSchema } from '../validation/zodToJson.js';
 import { UnifiedToolInvocation } from './ToolInvocation.js';
 
 /**

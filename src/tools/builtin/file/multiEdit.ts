@@ -7,7 +7,7 @@ import type {
   ToolResult,
 } from '../../types/index.js';
 import { ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zod-schemas.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
  * 编辑操作 Schema
@@ -104,7 +104,7 @@ function applyEdit(content: string, edit: EditOperation) {
  * 在单个文件中执行多个编辑操作
  */
 export const multiEditTool = createTool({
-  name: 'multi_edit',
+  name: 'MultiEdit',
   displayName: '批量编辑',
   kind: ToolKind.Edit,
   schema: MultiEditParamsSchema,

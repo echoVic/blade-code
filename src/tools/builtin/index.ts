@@ -3,6 +3,8 @@
  * 第二、三阶段完整实现：文件操作、搜索、命令执行、网络、任务管理工具
  */
 
+import * as os from 'os';
+import * as path from 'path';
 import type { Tool } from '../types/index.js';
 
 // 文件操作工具 - 新版本（基于 Zod）
@@ -15,6 +17,8 @@ import { findTool, globTool, grepTool } from './search/index.js';
 import { bashTool, scriptTool, shellTool } from './shell/index.js';
 // 任务管理工具 - 新版本（基于 Zod）
 import { taskTool } from './task/index.js';
+// TODO 工具 - 新版本（基于 Zod）
+import { createTodoReadTool, createTodoWriteTool } from './todo/index.js';
 // 网络工具 - 新版本（基于 Zod）
 import { apiCallTool, webFetchTool } from './web/index.js';
 
@@ -36,7 +40,13 @@ export async function getMcpTools(): Promise<Tool[]> {
  * 获取所有内置工具
  * 完整的第二、三、四阶段工具集合（含MCP协议工具）
  */
-export async function getBuiltinTools(): Promise<Tool[]> {
+export async function getBuiltinTools(opts?: {
+  sessionId?: string;
+  configDir?: string;
+}): Promise<Tool[]> {
+  const sessionId = opts?.sessionId || `session_${Date.now()}`;
+  const configDir = opts?.configDir || path.join(os.homedir(), '.blade');
+
   const builtinTools: Tool[] = [
     // 文件操作工具
     readTool,
@@ -60,6 +70,10 @@ export async function getBuiltinTools(): Promise<Tool[]> {
 
     // 任务管理工具
     taskTool,
+
+    // TODO 工具
+    createTodoWriteTool({ sessionId, configDir }),
+    createTodoReadTool({ sessionId, configDir }),
   ];
 
   // 添加MCP协议工具
@@ -79,7 +93,12 @@ export async function getBuiltinToolsByCategory(category: string): Promise<Tool[
 /**
  * 按工具类型获取内置工具
  */
-export async function getBuiltinToolsByType(): Promise<Record<string, Tool[]>> {
+export async function getBuiltinToolsByType(opts?: {
+  sessionId?: string;
+  configDir?: string;
+}): Promise<Record<string, Tool[]>> {
+  const sessionId = opts?.sessionId || `session_${Date.now()}`;
+  const configDir = opts?.configDir || path.join(os.homedir(), '.blade');
   const mcpTools = await getMcpTools();
 
   return {
@@ -88,6 +107,7 @@ export async function getBuiltinToolsByType(): Promise<Record<string, Tool[]>> {
     shell: [bashTool, shellTool, scriptTool],
     web: [webFetchTool, apiCallTool],
     task: [taskTool],
+    todo: [createTodoWriteTool({ sessionId, configDir }), createTodoReadTool({ sessionId, configDir })],
     mcp: mcpTools, // MCP协议外部工具
   };
 }

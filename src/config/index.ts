@@ -7,7 +7,7 @@ import { DEFAULT_CONFIG } from './defaults.js';
 import { BladeConfig } from './types/index.js';
 
 // 基础配置管理器
-export { ConfigManager } from './config-manager.js';
+export { ConfigManager } from './ConfigManager.js';
 
 // 默认配置
 export { DEFAULT_CONFIG } from './defaults.js';
