@@ -274,7 +274,7 @@ export class E2ETestDataFactory {
     return {
       auth: {
         apiKey: 'test-api-key',
-        modelName: 'gpt-4',
+        model: 'gpt-4',
         baseUrl: 'https://api.test.com',
       },
       ui: {

@@ -51,10 +51,14 @@ export const NotificationSystem: React.FC<NotificationSystemProps> = ({
         const offset = index * 4;
         const style = {
           top: position.includes('top')
-            ? ('top' in currentPosition ? currentPosition.top + offset : undefined)
+            ? 'top' in currentPosition
+              ? currentPosition.top + offset
+              : undefined
             : undefined,
           bottom: position.includes('bottom')
-            ? ('bottom' in currentPosition ? currentPosition.bottom + offset : undefined)
+            ? 'bottom' in currentPosition
+              ? currentPosition.bottom + offset
+              : undefined
             : undefined,
           left: 'left' in currentPosition ? currentPosition.left : undefined,
           right: 'right' in currentPosition ? currentPosition.right : undefined,

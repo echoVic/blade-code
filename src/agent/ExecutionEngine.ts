@@ -216,7 +216,9 @@ export class ExecutionEngine {
    */
   private async executeLlmStep(step: ExecutionStep, task: AgentTask): Promise<any> {
     const context = `步骤: ${step.description}\n任务: ${task.prompt}`;
-    const chatResponse = await this.chatService.chat([{ role: 'user', content: context }]);
+    const chatResponse = await this.chatService.chat([
+      { role: 'user', content: context },
+    ]);
 
     return { content: chatResponse.content, stepId: step.id };
   }

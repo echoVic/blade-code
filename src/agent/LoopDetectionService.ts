@@ -94,7 +94,9 @@ export class LoopDetectionService {
    * 工具调用循环检测 (Gemini CLI)
    * 检测连续N次相同工具调用
    */
-  private detectToolCallLoop(toolCalls: ChatCompletionMessageToolCall[]): { toolName: string } | null {
+  private detectToolCallLoop(
+    toolCalls: ChatCompletionMessageToolCall[]
+  ): { toolName: string } | null {
     for (const tc of toolCalls) {
       if (tc.type !== 'function') continue;
 

@@ -145,11 +145,6 @@ export class FileFilter {
   }
 }
 
-
 export function getExcludePatterns(customPatterns: string[] = []): string[] {
-  return [
-    ...DEFAULT_EXCLUDE_DIRS,
-    ...DEFAULT_EXCLUDE_FILE_PATTERNS,
-    ...customPatterns,
-  ];
+  return [...DEFAULT_EXCLUDE_DIRS, ...DEFAULT_EXCLUDE_FILE_PATTERNS, ...customPatterns];
 }

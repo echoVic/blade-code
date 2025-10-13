@@ -19,11 +19,7 @@ export const ChatStatusBar: React.FC<ChatStatusBarProps> = ({
   return (
     <Box flexDirection="row" justifyContent="space-between" paddingX={2} paddingY={0}>
       <Box flexDirection="row" gap={2}>
-        {messageCount > 0 && (
-          <Text color="white">
-            {messageCount} messages
-          </Text>
-        )}
+        {messageCount > 0 && <Text color="white">{messageCount} messages</Text>}
       </Box>
       {!hasApiKey ? (
         <Text color="red">⚠ API 密钥未配置</Text>

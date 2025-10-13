@@ -4,8 +4,8 @@
  */
 
 import path from 'path';
-import { SystemPrompt, type SystemPromptOptions } from './SystemPrompt.js';
 import type { SystemPromptConfig } from './default.js';
+import { SystemPrompt, type SystemPromptOptions } from './SystemPrompt.js';
 
 /**
  * 提示构建器选项

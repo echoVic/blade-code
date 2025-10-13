@@ -25,7 +25,7 @@ Blade采用清晰的分层配置架构，将敏感信息和项目设置分离。
   "auth": {
     "apiKey": "sk-你的API密钥",
     "baseUrl": "https://api.example.com",
-    "modelName": "qwen3-coder"
+    "model": "qwen3-coder"
   }
 }
 ```
@@ -37,7 +37,7 @@ Blade采用清晰的分层配置架构，将敏感信息和项目设置分离。
 ```json
 {
   "auth": {
-    "modelName": "qwen3-coder-project-specific"
+    "model": "qwen3-coder-project-specific"
   },
   "ui": {
     "theme": "dark",
@@ -99,7 +99,7 @@ CLI参数 > 环境变量 > 项目配置文件 > 用户配置文件 > 默认值
 ### 认证配置
 - `auth.apiKey`: API密钥（必填）
 - `auth.baseUrl`: API基础URL（默认：https://apis.iflow.cn/v1）
-- `auth.modelName`: 模型名称（默认：Qwen3-Coder）
+- `auth.model`: 模型名称（默认：Qwen3-Coder）
 - `auth.timeout`: 请求超时时间（毫秒，默认：30000）
 - `auth.maxTokens`: 最大令牌数（默认：2048）
 - `auth.temperature`: 采样温度（默认：0.7）
@@ -168,7 +168,7 @@ blade chat "你好世界"
 # 项目设置（可版本控制）
 echo '{
   "auth": {
-    "modelName": "qwen3-coder-team"
+    "model": "qwen3-coder-team"
   },
   "ui": {
     "theme": "GitHub"
@@ -193,7 +193,7 @@ blade config show
 blade config validate
 
 # 设置配置项
-blade config set auth.modelName "new-model"
+blade config set auth.model "new-model"
 
 # 重置配置项
 blade config unset ui.theme
@@ -264,7 +264,7 @@ const layers: ConfigLayers = {
   defaults: {
     auth: {
       baseUrl: 'https://apis.iflow.cn/v1',
-      modelName: 'Qwen3-Coder'
+      model: 'Qwen3-Coder'
     }
   },
   user: {

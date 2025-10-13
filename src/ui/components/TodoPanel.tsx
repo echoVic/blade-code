@@ -50,11 +50,7 @@ export const TodoPanel: React.FC<TodoPanelProps> = ({
       {/* 任务列表 */}
       <Box flexDirection="column">
         {todos.map((todo, index) => (
-          <TodoRow
-            key={todo.id || index}
-            todo={todo}
-            compact={compact}
-          />
+          <TodoRow key={todo.id || index} todo={todo} compact={compact} />
         ))}
       </Box>
     </Box>
@@ -93,7 +89,9 @@ const TodoRow: React.FC<TodoRowProps> = ({ todo, compact }) => {
 
   return (
     <Box paddingY={compact ? 0 : 0}>
-      <Text dimColor={dimmed}>{icon} {text}</Text>
+      <Text dimColor={dimmed}>
+        {icon} {text}
+      </Text>
     </Box>
   );
 };

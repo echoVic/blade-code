@@ -33,10 +33,7 @@ export const grepTool = createTool({
     pattern: ToolSchemas.pattern({
       description: '要搜索的正则表达式模式',
     }),
-    path: z
-      .string()
-      .optional()
-      .describe('搜索路径（可选，默认当前工作目录）'),
+    path: z.string().optional().describe('搜索路径（可选，默认当前工作目录）'),
     glob: ToolSchemas.glob().optional(),
     type: z
       .string()
@@ -45,11 +42,10 @@ export const grepTool = createTool({
     output_mode: z
       .enum(['content', 'files_with_matches', 'count'])
       .default('files_with_matches')
-      .describe('输出模式：content 显示匹配行，files_with_matches 显示文件路径，count 显示匹配计数'),
-    case_insensitive: z
-      .boolean()
-      .default(false)
-      .describe('是否忽略大小写（-i）'),
+      .describe(
+        '输出模式：content 显示匹配行，files_with_matches 显示文件路径，count 显示匹配计数'
+      ),
+    case_insensitive: z.boolean().default(false).describe('是否忽略大小写（-i）'),
     line_numbers: z
       .boolean()
       .default(false)
@@ -438,7 +434,10 @@ function parseContentLine(line: string): GrepMatch | null {
 
   // 检查是否有行号
   const secondColonIndex = remainder.indexOf(':');
-  if (secondColonIndex !== -1 && /^\d+$/.test(remainder.substring(0, secondColonIndex))) {
+  if (
+    secondColonIndex !== -1 &&
+    /^\d+$/.test(remainder.substring(0, secondColonIndex))
+  ) {
     // 有行号的格式
     const lineNumber = parseInt(remainder.substring(0, secondColonIndex), 10);
     const content = remainder.substring(secondColonIndex + 1);

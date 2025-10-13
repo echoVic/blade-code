@@ -31,20 +31,11 @@ export const shellTool = createTool({
     command: ToolSchemas.command({
       description: '要执行的命令',
     }),
-    args: z
-      .array(z.string().min(1))
-      .optional()
-      .describe('命令参数列表(可选)'),
-    cwd: z
-      .string()
-      .optional()
-      .describe('执行目录(可选,默认当前目录)'),
+    args: z.array(z.string().min(1)).optional().describe('命令参数列表(可选)'),
+    cwd: z.string().optional().describe('执行目录(可选,默认当前目录)'),
     timeout: ToolSchemas.timeout(1000, 300000, 30000),
     env: ToolSchemas.environment(),
-    capture_stderr: z
-      .boolean()
-      .default(true)
-      .describe('是否捕获错误输出'),
+    capture_stderr: z.boolean().default(true).describe('是否捕获错误输出'),
   }),
 
   // 工具描述
@@ -167,7 +158,8 @@ export const shellTool = createTool({
         );
       }
 
-      const fullCommand = args && args.length > 0 ? `${command} ${args.join(' ')}` : command;
+      const fullCommand =
+        args && args.length > 0 ? `${command} ${args.join(' ')}` : command;
       updateOutput?.(`执行命令: ${fullCommand}`);
 
       signal.throwIfAborted();
@@ -364,9 +356,7 @@ function formatDisplayMessage(
   const { command, exit_code, execution_time } = metadata;
 
   let message =
-    exit_code === 0
-      ? `✅ 命令执行完成: ${command}`
-      : `❌ 命令执行失败: ${command}`;
+    exit_code === 0 ? `✅ 命令执行完成: ${command}` : `❌ 命令执行失败: ${command}`;
   message += `\n退出码: ${exit_code}`;
   message += `\n执行时间: ${execution_time}ms`;
 

@@ -33,10 +33,10 @@ describe('System Prompt Integration', () => {
           auth: {
             apiKey: 'test-api-key',
             baseUrl: 'https://test-api.example.com',
-            modelName: 'test-model'
-          }
-        })
-      }))
+            model: 'test-model',
+          },
+        }),
+      })),
     }));
   });
 

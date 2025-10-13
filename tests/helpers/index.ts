@@ -462,9 +462,7 @@ export class PerformanceTestHelper {
     return process.memoryUsage();
   }
 
-  static async measureMemoryUsage<T>(
-    fn: () => Promise<T> | T
-  ): Promise<{
+  static async measureMemoryUsage<T>(fn: () => Promise<T> | T): Promise<{
     result: T;
     memoryDiff: { rss: number; heapTotal: number; heapUsed: number; external: number };
   }> {

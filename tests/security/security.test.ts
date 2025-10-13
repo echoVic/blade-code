@@ -57,7 +57,7 @@ describe('安全测试套件', () => {
     const testConfig = {
       apiKey: 'sk-test1234567890',
       baseUrl: 'https://api.test.com',
-      modelName: 'test-model',
+      model: 'test-model',
       timeout: 30000,
       debug: false,
     };

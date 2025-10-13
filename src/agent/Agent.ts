@@ -78,19 +78,13 @@ export class Agent extends EventEmitter {
 
     // 优先级：选项参数 > 环境变量 > 全局配置 > 默认值
     const apiKey =
-      options.apiKey || process.env.BLADE_API_KEY || globalConfig?.auth?.apiKey || '';
+      options.apiKey || process.env.BLADE_API_KEY || globalConfig?.apiKey || '';
 
     const baseUrl =
-      options.baseUrl ||
-      process.env.BLADE_BASE_URL ||
-      globalConfig?.auth?.baseUrl ||
-      '';
+      options.baseUrl || process.env.BLADE_BASE_URL || globalConfig?.baseURL || '';
 
     const model =
-      options.model ||
-      process.env.BLADE_MODEL ||
-      globalConfig?.auth?.modelName ||
-      'Qwen3-Coder';
+      options.model || process.env.BLADE_MODEL || globalConfig?.model || 'Qwen3-Coder';
 
     // 验证必需配置
     if (!apiKey) {
@@ -101,9 +95,9 @@ export class Agent extends EventEmitter {
       throw new Error('缺少 API 基础 URL。请通过参数、环境变量或配置文件提供。');
     }
 
-    const temperature = options.temperature ?? globalConfig?.auth?.temperature ?? 0.0;
+    const temperature = options.temperature ?? globalConfig?.temperature ?? 0.0;
 
-    const maxTokens = options.maxTokens ?? globalConfig?.auth?.maxTokens ?? 32000;
+    const maxTokens = options.maxTokens ?? globalConfig?.maxTokens ?? 32000;
 
     return {
       chat: {

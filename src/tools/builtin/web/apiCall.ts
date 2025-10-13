@@ -29,26 +29,14 @@ export const apiCallTool = createTool({
 
   // Zod Schema 定义
   schema: z.object({
-    url: z
-      .string()
-      .url()
-      .describe('API端点URL'),
+    url: z.string().url().describe('API端点URL'),
     method: z
       .enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
       .default('GET')
       .describe('HTTP方法'),
-    headers: z
-      .record(z.string())
-      .optional()
-      .describe('自定义请求头(可选)'),
-    query_params: z
-      .record(z.string())
-      .optional()
-      .describe('查询参数(可选)'),
-    body: z
-      .any()
-      .optional()
-      .describe('请求体数据(可选,支持JSON对象或字符串)'),
+    headers: z.record(z.string()).optional().describe('自定义请求头(可选)'),
+    query_params: z.record(z.string()).optional().describe('查询参数(可选)'),
+    body: z.any().optional().describe('请求体数据(可选,支持JSON对象或字符串)'),
     auth: z
       .object({
         type: z.enum(['bearer', 'basic', 'api_key']).describe('认证类型'),
@@ -64,10 +52,7 @@ export const apiCallTool = createTool({
       .optional()
       .describe('认证信息(可选)'),
     timeout: ToolSchemas.timeout(1000, 120000, 30000),
-    parse_response: z
-      .boolean()
-      .default(true)
-      .describe('是否尝试解析JSON响应'),
+    parse_response: z.boolean().default(true).describe('是否尝试解析JSON响应'),
   }),
 
   // 工具描述

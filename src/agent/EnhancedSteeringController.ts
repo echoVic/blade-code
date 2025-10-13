@@ -361,7 +361,7 @@ export class EnhancedSteeringController extends EventEmitter {
     if (!taskId) {
       // 取消所有任务
       const taskIds = Array.from(this.activeTasks.keys());
-      taskIds.forEach(id => {
+      taskIds.forEach((id) => {
         this.activeTasks.delete(id);
         this.emit('taskCancelled', { taskId: id });
       });
@@ -576,7 +576,10 @@ export class EnhancedSteeringController extends EventEmitter {
     console.error(`[EnhancedSteeringController] ${message}`, error || '');
   }
 
-  private async redirectTask(targetTaskId: string, direction: SteeringDirection): Promise<void> {
+  private async redirectTask(
+    targetTaskId: string,
+    direction: SteeringDirection
+  ): Promise<void> {
     const task = this.activeTasks.get(targetTaskId);
     if (!task) {
       this.error(`Target task not found: ${targetTaskId}`);

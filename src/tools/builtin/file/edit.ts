@@ -282,7 +282,8 @@ function findMatches(content: string, searchString: string): number[] {
  * 格式化显示消息
  */
 function formatDisplayMessage(metadata: Record<string, any>): string {
-  const { file_path, matches_found, replacements_made, replace_all, size_diff } = metadata;
+  const { file_path, matches_found, replacements_made, replace_all, size_diff } =
+    metadata;
 
   let message = `✅ 成功编辑文件: ${file_path}`;
   message += `\n📝 替换了 ${replacements_made} 个匹配项`;
@@ -292,7 +293,8 @@ function formatDisplayMessage(metadata: Record<string, any>): string {
   }
 
   if (size_diff !== 0) {
-    const sizeChange = size_diff > 0 ? `增加${size_diff}` : `减少${Math.abs(size_diff)}`;
+    const sizeChange =
+      size_diff > 0 ? `增加${size_diff}` : `减少${Math.abs(size_diff)}`;
     message += `\n📊 文件大小${sizeChange}个字符`;
   }
 

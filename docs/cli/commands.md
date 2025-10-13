@@ -103,7 +103,7 @@ export BLADE_MODEL="qwen3-coder"
   "auth": {
     "apiKey": "sk-xxx",
     "baseUrl": "https://api.example.com",
-    "modelName": "qwen3-coder"
+    "model": "qwen3-coder"
   },
   "ui": {
     "theme": "dark",
@@ -119,7 +119,7 @@ export BLADE_MODEL="qwen3-coder"
 ```json
 {
   "auth": {
-    "modelName": "qwen3-coder-specific"
+    "model": "qwen3-coder-specific"
   },
   "ui": {
     "theme": "light"

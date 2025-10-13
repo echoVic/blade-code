@@ -182,9 +182,9 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
 function calculateStats(todos: TodoItem[]): TodoStats {
   return {
     total: todos.length,
-    completed: todos.filter(t => t.status === 'completed').length,
-    inProgress: todos.filter(t => t.status === 'in_progress').length,
-    pending: todos.filter(t => t.status === 'pending').length,
+    completed: todos.filter((t) => t.status === 'completed').length,
+    inProgress: todos.filter((t) => t.status === 'in_progress').length,
+    pending: todos.filter((t) => t.status === 'pending').length,
   };
 }
 

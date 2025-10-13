@@ -3,14 +3,14 @@
  */
 
 import type { CommandModule } from 'yargs';
-import { McpRegistry } from '../mcp/McpRegistry.js';
 import type {
-  McpListOptions,
   McpAddOptions,
+  McpListOptions,
   McpRemoveOptions,
   McpStartOptions,
-  McpStopOptions
+  McpStopOptions,
 } from '../cli/types.js';
+import { McpRegistry } from '../mcp/McpRegistry.js';
 
 // MCP List 子命令
 const mcpListCommand: CommandModule<{}, McpListOptions> = {
@@ -61,7 +61,10 @@ const mcpAddCommand: CommandModule<{}, McpAddOptions> = {
         demandOption: true,
       })
       .example([
-        ['$0 mcp add myserver \'{"command": "node", "args": ["server.js"]}\'', 'Add server with JSON config'],
+        [
+          '$0 mcp add myserver \'{"command": "node", "args": ["server.js"]}\'',
+          'Add server with JSON config',
+        ],
         ['$0 mcp add myserver config.json', 'Add server from config file'],
       ]);
   },
@@ -103,9 +106,7 @@ const mcpRemoveCommand: CommandModule<{}, McpRemoveOptions> = {
         type: 'string',
         demandOption: true,
       })
-      .example([
-        ['$0 mcp remove myserver', 'Remove the specified MCP server'],
-      ]);
+      .example([['$0 mcp remove myserver', 'Remove the specified MCP server']]);
   },
   handler: async (argv) => {
     try {
@@ -132,9 +133,7 @@ const mcpStartCommand: CommandModule<{}, McpStartOptions> = {
         type: 'string',
         demandOption: true,
       })
-      .example([
-        ['$0 mcp start myserver', 'Start the specified MCP server'],
-      ]);
+      .example([['$0 mcp start myserver', 'Start the specified MCP server']]);
   },
   handler: async (argv) => {
     try {
@@ -161,9 +160,7 @@ const mcpStopCommand: CommandModule<{}, McpStopOptions> = {
         type: 'string',
         demandOption: true,
       })
-      .example([
-        ['$0 mcp stop myserver', 'Stop the specified MCP server'],
-      ]);
+      .example([['$0 mcp stop myserver', 'Stop the specified MCP server']]);
   },
   handler: async (argv) => {
     try {

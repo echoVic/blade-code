@@ -7,7 +7,8 @@ import type { InstallOptions } from '../cli/types.js';
 
 export const installCommands: CommandModule<{}, InstallOptions> = {
   command: 'install [target]',
-  describe: 'Install Blade native build. Use [target] to specify version (stable, latest, or specific version)',
+  describe:
+    'Install Blade native build. Use [target] to specify version (stable, latest, or specific version)',
   builder: (yargs) => {
     return yargs
       .positional('target', {

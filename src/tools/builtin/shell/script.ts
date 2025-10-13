@@ -3,8 +3,11 @@ import { promises as fs } from 'fs';
 import { extname } from 'path';
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext } from '../../types/index.js';
-import type { ConfirmationDetails, ToolResult } from '../../types/index.js';
+import type {
+  ConfirmationDetails,
+  ExecutionContext,
+  ToolResult,
+} from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
@@ -51,18 +54,12 @@ export const scriptTool = createTool({
     script_path: ToolSchemas.filePath({
       description: '脚本文件路径',
     }),
-    args: z
-      .array(z.string().min(1))
-      .optional()
-      .describe('脚本参数列表(可选)'),
+    args: z.array(z.string().min(1)).optional().describe('脚本参数列表(可选)'),
     interpreter: z
       .string()
       .optional()
       .describe('指定解释器(可选,默认根据文件扩展名自动检测)'),
-    cwd: z
-      .string()
-      .optional()
-      .describe('执行目录(可选,默认当前目录)'),
+    cwd: z.string().optional().describe('执行目录(可选,默认当前目录)'),
     timeout: ToolSchemas.timeout(1000, 600000, 60000),
     env: ToolSchemas.environment(),
   }),
@@ -198,7 +195,7 @@ export const scriptTool = createTool({
       // 验证脚本文件存在
       try {
         await fs.access(script_path);
-      } catch (error) {
+      } catch (_error) {
         return {
           success: false,
           llmContent: `脚本文件不存在: ${script_path}`,

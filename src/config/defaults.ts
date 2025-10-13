@@ -1,32 +1,87 @@
 /**
- * Blade 极简配置
- * 使用从 types.ts 导入的 DEFAULT_CONFIG
+ * Blade 默认配置
  */
 
-export { DEFAULT_CONFIG } from './types.js';
+import { BladeConfig } from './types.js';
 
-/**
- * 简化环境变量映射
- */
-export const ENV_MAPPING = {
-  BLADE_API_KEY: 'apiKey',
-  BLADE_BASE_URL: 'baseUrl',
-  BLADE_MODEL: 'modelName',
-  BLADE_THEME: 'theme',
-  BLADE_MAX_TURNS: 'maxSessionTurns',
-  BLADE_DEBUG: 'debug',
+export const DEFAULT_CONFIG: BladeConfig = {
+  // =====================================
+  // 基础配置 (config.json)
+  // =====================================
+
+  // 认证
+  apiKey: '',
+  baseURL: 'https://apis.iflow.cn/v1',
+
+  // 模型
+  model: 'qwen3-coder-plus',
+  temperature: 0.0,
+  maxTokens: 32000,
+  stream: true,
+  topP: 0.9,
+  topK: 50,
+
+  // UI
+  theme: 'GitHub',
+  language: 'zh-CN',
+  fontSize: 14,
+  showStatusBar: true,
+
+  // 核心
+  debug: false,
+  telemetry: true,
+  autoUpdate: true,
+  workingDirectory: process.cwd(),
+
+  // 日志
+  logLevel: 'info',
+  logFormat: 'text',
+
+  // MCP
+  mcpEnabled: false,
+
+  // =====================================
+  // 行为配置 (settings.json)
+  // =====================================
+
+  // 权限
+  permissions: {
+    allow: [],
+    ask: [],
+    deny: ['Read(./.env)', 'Read(./.env.*)'],
+  },
+
+  // Hooks
+  hooks: {},
+
+  // 环境变量
+  env: {},
+
+  // 其他
+  disableAllHooks: false,
+  cleanupPeriodDays: 30,
+  includeCoAuthoredBy: true,
 };
 
 /**
- * 完全翻翻重写的默认提供商
+ * 环境变量映射表
  */
-import { DEFAULT_CONFIG } from './types.js';
+export const ENV_VAR_MAPPING: Record<string, keyof BladeConfig> = {
+  // 认证
+  BLADE_API_KEY: 'apiKey',
+  BLADE_API_SECRET: 'apiSecret',
+  BLADE_BASE_URL: 'baseURL',
 
-export const getProviderConfig = () => DEFAULT_CONFIG;
-export const isProviderSupported = () => true;
-export const validateApiKey = (key: string) => key || process.env.BLADE_API_KEY || '';
-export const loadConfigFromEnv = () => ({
-  apiKey: process.env.BLADE_API_KEY || '',
-  baseUrl: process.env.BLADE_BASE_URL || 'https://apis.iflow.cn/v1',
-  modelName: process.env.BLADE_MODEL || 'qwen3-coder-plus',
-});
+  // 模型
+  BLADE_MODEL: 'model',
+  BLADE_TEMPERATURE: 'temperature',
+  BLADE_MAX_TOKENS: 'maxTokens',
+
+  // UI
+  BLADE_THEME: 'theme',
+  BLADE_LANGUAGE: 'language',
+
+  // 核心
+  BLADE_DEBUG: 'debug',
+  BLADE_TELEMETRY: 'telemetry',
+};

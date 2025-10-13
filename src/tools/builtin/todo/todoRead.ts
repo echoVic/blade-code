@@ -20,7 +20,9 @@ export function createTodoReadTool(opts: { sessionId: string; configDir: string 
       filter: z
         .enum(['all', 'pending', 'in_progress', 'completed'])
         .default('all')
-        .describe('过滤条件：all(全部)、pending(待执行)、in_progress(执行中)、completed(已完成)'),
+        .describe(
+          '过滤条件：all(全部)、pending(待执行)、in_progress(执行中)、completed(已完成)'
+        ),
     }),
 
     description: {
@@ -73,7 +75,7 @@ export function createTodoReadTool(opts: { sessionId: string; configDir: string 
         let todos = manager.getTodos();
 
         if (filter !== 'all') {
-          todos = todos.filter(t => t.status === filter);
+          todos = todos.filter((t) => t.status === filter);
         }
 
         const stats = calculateStats(todos);
@@ -115,23 +117,26 @@ export function createTodoReadTool(opts: { sessionId: string; configDir: string 
 function calculateStats(todos: TodoItem[]): TodoStats {
   return {
     total: todos.length,
-    completed: todos.filter(t => t.status === 'completed').length,
-    inProgress: todos.filter(t => t.status === 'in_progress').length,
-    pending: todos.filter(t => t.status === 'pending').length,
+    completed: todos.filter((t) => t.status === 'completed').length,
+    inProgress: todos.filter((t) => t.status === 'in_progress').length,
+    pending: todos.filter((t) => t.status === 'pending').length,
   };
 }
 
 /**
  * 格式化 TODO 列表显示
  */
-function formatTodoList(
-  todos: TodoItem[],
-  stats: TodoStats,
-  filter: string
-): string {
+function formatTodoList(todos: TodoItem[], stats: TodoStats, filter: string): string {
   const lines: string[] = [];
 
-  const filterLabel = filter === 'all' ? '全部' : filter === 'pending' ? '待执行' : filter === 'in_progress' ? '执行中' : '已完成';
+  const filterLabel =
+    filter === 'all'
+      ? '全部'
+      : filter === 'pending'
+        ? '待执行'
+        : filter === 'in_progress'
+          ? '执行中'
+          : '已完成';
 
   const percentage =
     stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0;

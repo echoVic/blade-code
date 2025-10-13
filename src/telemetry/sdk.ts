@@ -173,7 +173,8 @@ export class TelemetrySDK {
   // 发送事件到服务器
   private async sendEvents(payload: TelemetryPayload): Promise<void> {
     const endpoint =
-      this.config.services?.telemetry?.endpoint || 'https://telemetry.blade-ai.com/api/v1/events';
+      this.config.services?.telemetry?.endpoint ||
+      'https://telemetry.blade-ai.com/api/v1/events';
 
     await axios.post(endpoint, payload, {
       headers: {

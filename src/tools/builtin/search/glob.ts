@@ -33,23 +33,14 @@ export const globTool = createTool({
     pattern: ToolSchemas.glob({
       description: 'Glob 模式字符串（支持 *, ?, ** 通配符）',
     }),
-    path: z
-      .string()
-      .optional()
-      .describe('搜索路径（可选，默认当前工作目录）'),
+    path: z.string().optional().describe('搜索路径（可选，默认当前工作目录）'),
     max_results: ToolSchemas.positiveInt({
       description: '最大返回结果数',
     })
       .max(1000, '最多返回 1000 个结果')
       .default(100),
-    include_directories: z
-      .boolean()
-      .default(false)
-      .describe('是否在结果中包含目录'),
-    case_sensitive: z
-      .boolean()
-      .default(false)
-      .describe('是否区分大小写'),
+    include_directories: z.boolean().default(false).describe('是否在结果中包含目录'),
+    case_sensitive: z.boolean().default(false).describe('是否区分大小写'),
   }),
 
   // 工具描述
@@ -102,8 +93,13 @@ export const globTool = createTool({
 
   // 执行函数
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
-    const { pattern, path = process.cwd(), max_results, include_directories, case_sensitive } =
-      params;
+    const {
+      pattern,
+      path = process.cwd(),
+      max_results,
+      include_directories,
+      case_sensitive,
+    } = params;
     const { signal, updateOutput } = context;
 
     try {
@@ -293,7 +289,14 @@ async function walkDirectory(
         }
 
         // 递归搜索子目录
-        await walkDirectory(fullPath, basePath, globRegex, matches, options, fileFilter);
+        await walkDirectory(
+          fullPath,
+          basePath,
+          globRegex,
+          matches,
+          options,
+          fileFilter
+        );
       } else if (entry.isFile() && isMatch) {
         // 获取文件信息
         try {

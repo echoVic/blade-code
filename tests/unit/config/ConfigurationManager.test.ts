@@ -96,7 +96,7 @@ describe('ConfigurationManager', () => {
         auth: {
           apiKey: '',
           baseUrl: 'invalid-url', // 无效的URL
-          modelName: '',
+          model: '',
         },
         ui: {
           theme: 'invalid-theme', // 无效的主题

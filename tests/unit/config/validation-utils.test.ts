@@ -21,7 +21,7 @@ describe('配置验证工具函数', () => {
         auth: {
           apiKey: 'test-key',
           baseUrl: 'https://api.test.com',
-          modelName: 'test-model',
+          model: 'test-model',
         },
         ui: {
           theme: 'dark',
@@ -66,7 +66,7 @@ describe('配置验证工具函数', () => {
         auth: {
           apiKey: 'test-key',
           baseUrl: 'https://api.test.com',
-          modelName: 'test-model',
+          model: 'test-model',
         },
         // 缺少其他必需字段，但应该被自动填充默认值
       };

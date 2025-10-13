@@ -489,8 +489,8 @@ class LongTermMemory {
   private canCreateEmbedding(data: PersistentKnowledge): boolean {
     return Boolean(
       data.type === 'concept' &&
-      data.content.text &&
-      typeof data.content.text === 'string'
+        data.content.text &&
+        typeof data.content.text === 'string'
     );
   }
 

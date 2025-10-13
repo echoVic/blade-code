@@ -33,7 +33,7 @@ export class TodoManager {
    * 规则：同时只能有一个任务处于 in_progress 状态
    */
   validate(todos: TodoItem[]): ValidationResult {
-    const inProgress = todos.filter(t => t.status === 'in_progress').length;
+    const inProgress = todos.filter((t) => t.status === 'in_progress').length;
 
     if (inProgress > 1) {
       return {
@@ -49,16 +49,18 @@ export class TodoManager {
    * 更新 TODO 列表
    */
   async updateTodos(
-    newTodos: Array<Partial<TodoItem> & Pick<TodoItem, 'content' | 'status' | 'activeForm'>>
+    newTodos: Array<
+      Partial<TodoItem> & Pick<TodoItem, 'content' | 'status' | 'activeForm'>
+    >
   ): Promise<void> {
     await this.ensureLoaded();
 
     const now = new Date().toISOString();
 
-    const processed: TodoItem[] = newTodos.map(todo => {
+    const processed: TodoItem[] = newTodos.map((todo) => {
       const todoWithId = todo as Partial<TodoItem>;
       const existing = this.todos.find(
-        t => t.id === todoWithId.id || t.content === todo.content
+        (t) => t.id === todoWithId.id || t.content === todo.content
       );
 
       return {
@@ -67,9 +69,13 @@ export class TodoManager {
         priority: todo.priority || existing?.priority || 'medium',
         createdAt: existing?.createdAt || now,
         startedAt:
-          todo.status === 'in_progress' && !existing?.startedAt ? now : existing?.startedAt,
+          todo.status === 'in_progress' && !existing?.startedAt
+            ? now
+            : existing?.startedAt,
         completedAt:
-          todo.status === 'completed' && !existing?.completedAt ? now : existing?.completedAt,
+          todo.status === 'completed' && !existing?.completedAt
+            ? now
+            : existing?.completedAt,
       } as TodoItem;
     });
 
