@@ -38,7 +38,8 @@
       "Bash(do)",
       "Bash(done)",
       "Bash(npm test:*)",
-      "Bash(npm run test:integration:*)"
+      "Bash(npm run test:integration:*)",
+      "Bash(blade mcp:*)"
     ],
     "deny": [],
     "ask": [],

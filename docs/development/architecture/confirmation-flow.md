@@ -581,6 +581,6 @@ describe('Confirmation Flow', () => {
 
 ## 相关文档
 
-- [工具系统架构](./TOOL_SYSTEM_ARCHITECTURE.md)
+- [工具系统架构](./architecture/tool-system.md)
 - [执行管道集成](./execution-pipeline-integration-plan.md)
-- [权限系统](./permissions-guide.md)
+- [权限系统](../guides/configuration/permissions-guide.md)

@@ -285,12 +285,12 @@ Blade 支持三级权限控制:
 
 ## 优先级规则
 
-权限检查按以下优先级执行:
+权限检查按以下优先级执行（由 `PermissionChecker` 实现）:
 
-1. **deny** (最高优先级) - 直接拒绝
-2. **allow** - 允许执行  
-3. **ask** - 需要确认
-4. **默认** - 需要确认 (未匹配任何规则时)
+1. **deny** (最高优先级) - 直接拒绝，不会请求用户确认
+2. **allow** - 自动允许执行，不需要用户确认
+3. **ask** - 需要用户确认后执行
+4. **默认** - 未匹配任何规则时，默认需要确认（ask）
 
 **示例**:
 ```json
@@ -301,22 +301,118 @@ Blade 支持三级权限控制:
 ```
 
 结果:
-- `Read(file_path:.env)` → **DENY** (deny 优先)
-- `Read(file_path:test.txt)` → **ALLOW**
+- `Read(file_path:.env)` → **DENY** (deny 优先，直接拒绝)
+- `Read(file_path:test.txt)` → **ALLOW** (自动允许)
+- `Write(file_path:test.txt)` → **ASK** (默认需要确认)
+
+## 技术实现
+
+### PermissionChecker 类
+
+位于 [src/config/PermissionChecker.ts](../src/config/PermissionChecker.ts):
+
+```typescript
+export class PermissionChecker {
+  constructor(private config: PermissionConfig) {}
+
+  // 检查工具调用权限
+  check(descriptor: ToolInvocationDescriptor): PermissionCheckResult {
+    const signature = this.buildSignature(descriptor);
+
+    // 1. 检查 deny (最高优先级)
+    if (this.matchRules(signature, this.config.deny)) {
+      return { result: PermissionResult.DENY, ... };
+    }
+
+    // 2. 检查 allow
+    if (this.matchRules(signature, this.config.allow)) {
+      return { result: PermissionResult.ALLOW, ... };
+    }
+
+    // 3. 检查 ask
+    if (this.matchRules(signature, this.config.ask)) {
+      return { result: PermissionResult.ASK, ... };
+    }
+
+    // 4. 默认策略: 需要确认
+    return { result: PermissionResult.ASK, ... };
+  }
+}
+```
+
+### 集成到执行管道
+
+权限检查在第 3 阶段（PermissionStage）执行：
+
+```
+ExecutionPipeline.execute()
+  ↓
+1. DiscoveryStage    - 查找工具
+2. ValidationStage   - 验证参数
+3. PermissionStage   ← 检查权限 (PermissionChecker.check)
+4. ConfirmationStage - 如果需要确认，请求用户
+5. ExecutionStage    - 执行工具
+6. FormattingStage   - 格式化结果
+```
+
+### 工具调用签名格式
+
+```typescript
+// 格式: ToolName(param1:value1, param2:value2)
+
+// 示例:
+"Read(file_path:/path/to/file.txt)"
+"Bash(command:npm run test)"
+"Write(file_path:output.txt, content:Hello World)"
+```
 
 ## 调试权限规则
 
-如果权限规则不按预期工作,可以:
+### 使用调试模式
 
-1. 检查规则语法是否正确
-2. 确认工具调用签名格式: `ToolName(param:value)`
-3. 测试 glob 模式是否匹配
-4. 检查优先级是否符合预期
+启用调试模式查看详细的权限检查日志:
 
-**测试工具** (即将推出):
 ```bash
-blade permissions check "Read(file_path:.env)"
-# Output: DENY - 匹配规则: Read(file_path:.env)
+# 启用调试模式
+export BLADE_DEBUG=1
+blade "your command"
+
+# 或使用 --debug 参数
+blade --debug "your command"
+```
+
+调试输出示例:
+```
+[Permission] Checking: Read(file_path:.env)
+[Permission] Matched deny rule: Read(file_path:.env)
+[Permission] Result: DENY - 工具调用被拒绝规则阻止
+```
+
+### 常见问题排查
+
+1. **规则不匹配**
+   - 检查工具调用签名格式是否正确
+   - 确认参数名称与实际工具参数一致
+   - 使用 `*` 测试是否是匹配模式问题
+
+2. **Glob 模式不生效**
+   - 确认使用了正确的 glob 语法（`*`, `**`, `{}`, `?`）
+   - 测试简单的通配符是否工作
+   - 查看 PermissionChecker 日志确认匹配类型
+
+3. **优先级问题**
+   - 记住: `deny` > `allow` > `ask` > 默认
+   - 检查是否有多条规则匹配同一工具
+   - 更具体的规则应该放在前面
+
+### 检查当前配置
+
+```bash
+# 查看权限配置
+blade config show permissions
+
+# 追踪配置来源
+blade config trace permissions.allow
 ```
 
 ## 常见问题
@@ -344,8 +440,22 @@ blade config get permissions
 
 不直接支持正则表达式,但 glob 模式已经足够强大。
 
-## 相关链接
+## 相关代码
 
-- [配置系统文档](./config-system.md)
-- [工具系统文档](./tool-system.md)
-- [Hooks 系统文档](./hooks-guide.md)
+### 核心文件
+
+- [src/config/PermissionChecker.ts](../src/config/PermissionChecker.ts) - 权限检查器实现
+- [src/config/types.ts](../src/config/types.ts) - 权限配置类型定义
+- [src/tools/execution/PipelineStages.ts](../src/tools/execution/PipelineStages.ts) - PermissionStage 实现
+- [src/tools/execution/ExecutionPipeline.ts](../src/tools/execution/ExecutionPipeline.ts) - 执行管道
+
+### 测试文件
+
+- [tests/unit/config/PermissionChecker.test.ts](../tests/unit/config/PermissionChecker.test.ts) - 权限检查器单元测试
+- [tests/integration/permissions.integration.test.ts](../tests/integration/permissions.integration.test.ts) - 权限系统集成测试
+
+## 相关文档
+
+- [配置系统文档](./config-system.md) - 完整的配置系统说明
+- [用户确认流程](./architecture/confirmation-flow.md) - 了解用户确认机制
+- [执行管道架构](./architecture/execution-pipeline.md) - 6 阶段执行管道详解

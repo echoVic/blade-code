@@ -63,7 +63,7 @@ ExecutionPipeline 继续/中止
 ### 3. 文档 ✅
 
 #### 确认流程文档
-- ✅ 创建了 [confirmation-flow.md](./confirmation-flow.md)
+- ✅ 创建了 [confirmation-flow.md](../architecture/confirmation-flow.md)
 - ✅ 包含完整的架构说明
 - ✅ 数据流和类型定义
 - ✅ UI 实现细节
@@ -168,11 +168,11 @@ ExecutionPipeline 继续/中止
 
 ## 相关链接
 
-- [确认流程文档](./confirmation-flow.md)
+- [确认流程文档](../architecture/confirmation-flow.md)
 - [ExecutionPipeline 源码](../src/tools/execution/ExecutionPipeline.ts)
 - [ConfirmationStage 源码](../src/tools/execution/PipelineStages.ts)
 - [执行管道集成计划](./execution-pipeline-integration-plan.md)
-- [工具系统架构](./TOOL_SYSTEM_ARCHITECTURE.md)
+- [工具系统架构](../architecture/tool-system.md)
 
 ## 总结
 

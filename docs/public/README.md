@@ -1,0 +1,30 @@
+# 🗡️ Blade Code 用户文档
+
+欢迎使用 Blade Code！这是一个现代化的 AI 命令行工具，支持智能对话、工具调用、权限管理等功能。
+
+## 🚀 快速开始
+
+- **[安装指南](getting-started/installation.md)** - 详细的安装步骤
+- **[快速开始](getting-started/quick-start.md)** - 5 分钟快速上手
+- **[常见问题](faq.md)** - 常见问题解答
+
+## ⚙️ 配置
+
+- **[配置系统](configuration/config-system.md)** - 双文件配置系统完整指南
+- **[权限控制](configuration/permissions.md)** - 三级权限控制详解
+- **[主题配置](configuration/themes.md)** - 主题配置和自定义
+
+## 📖 使用指南
+
+- **[工具列表](reference/tool-list.md)** - 所有可用工具
+- **[CLI 命令](reference/cli-commands.md)** - 命令行参考
+
+## 🔗 相关资源
+
+- [GitHub 仓库](https://github.com/echoVic/blade-code)
+- [NPM 包](https://www.npmjs.com/package/blade-code)
+- [问题反馈](https://github.com/echoVic/blade-code/issues)
+
+---
+
+如需了解 Blade 的技术架构和开发文档，请访问 [开发者文档](../development/README.md)。

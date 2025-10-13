@@ -14,7 +14,11 @@ Root (blade-code)
 │   ├── agent/          # Agent核心逻辑和控制器
 │   ├── cli/            # CLI配置和中间件
 │   ├── commands/       # CLI命令定义和处理
-│   ├── config/         # 统一配置管理
+│   ├── config/         # 统一配置管理（双文件系统）
+│   │   ├── ConfigManager.ts      # 配置管理器
+│   │   ├── PermissionChecker.ts  # 权限检查器
+│   │   ├── types.ts              # 配置类型定义
+│   │   └── defaults.ts           # 默认配置
 │   ├── context/        # 上下文管理和压缩
 │   ├── error/          # 错误处理和恢复
 │   ├── ide/            # IDE集成和扩展
@@ -26,7 +30,20 @@ Root (blade-code)
 │   ├── slash-commands/ # 内置斜杠命令
 │   ├── telemetry/      # 遥测和监控
 │   ├── tools/          # 工具系统
+│   │   ├── builtin/    # 内置工具（Read/Write/Bash等）
+│   │   ├── execution/  # 执行管道
+│   │   │   ├── ExecutionPipeline.ts  # 6阶段管道
+│   │   │   └── PipelineStages.ts     # 各阶段实现
+│   │   ├── registry/   # 工具注册中心
+│   │   ├── types/      # 工具类型定义
+│   │   └── validation/ # 参数验证
 │   ├── ui/             # UI组件和界面（基于Ink）
+│   │   ├── components/ # UI组件
+│   │   │   ├── BladeInterface.tsx    # 主界面
+│   │   │   └── ConfirmationPrompt.tsx # 确认提示
+│   │   └── hooks/      # React Hooks
+│   │       ├── useCommandHandler.ts  # 命令处理
+│   │       └── useConfirmation.ts    # 确认管理
 │   ├── utils/          # 工具函数
 │   ├── index.ts        # 公共API导出
 │   └── blade.tsx       # CLI应用入口
@@ -35,6 +52,25 @@ Root (blade-code)
 │   ├── integration/    # 多组件工作流测试
 │   ├── e2e/            # 端到端CLI测试
 │   └── security/       # 安全测试
+├── docs/               # 项目文档（按受众分类）
+│   ├── index.md        # 文档中心导航
+│   ├── public/         # 用户文档（Docsify站点）
+│   │   ├── getting-started/    # 快速开始
+│   │   ├── configuration/      # 配置指南
+│   │   ├── guides/             # 使用指南
+│   │   └── reference/          # 参考文档
+│   ├── development/    # 开发者文档（内部技术）
+│   │   ├── architecture/       # 架构设计
+│   │   ├── implementation/     # 实现细节
+│   │   ├── planning/           # 技术方案
+│   │   ├── testing/            # 测试文档
+│   │   └── api-reference.md    # API参考
+│   ├── contributing/   # 贡献者文档（开源贡献）
+│   │   ├── README.md           # 贡献指南
+│   │   ├── pr-creation-guide.md
+│   │   ├── release-process.md
+│   │   └── security-policy.md
+│   └── archive/        # 归档文档（历史参考）
 ├── dist/blade.js       # 构建后的CLI可执行文件
 └── package.json        # 项目配置
 ```
@@ -59,8 +95,18 @@ Root (blade-code)
   - 工具调用集成
 
 ### Key Services
-- **ConfigManager** ([src/config/config-manager.ts](src/config/config-manager.ts)): 分层配置管理，支持加密
-  - 配置优先级：命令行参数 > 环境变量 > 用户配置 > 全局配置 > 默认值
+- **ConfigManager** ([src/config/ConfigManager.ts](src/config/ConfigManager.ts)): 双文件配置管理系统
+  - config.json: 基础配置（API、模型、UI）
+  - settings.json: 行为配置（权限、Hooks、环境变量）
+  - 配置优先级：环境变量 > 本地配置 > 项目配置 > 用户配置 > 默认值
+- **PermissionChecker** ([src/config/PermissionChecker.ts](src/config/PermissionChecker.ts)): 三级权限控制系统
+  - 支持 allow/ask/deny 规则
+  - 支持精确匹配、通配符、Glob 模式
+  - 集成在执行管道的第 3 阶段
+- **ExecutionPipeline** ([src/tools/execution/ExecutionPipeline.ts](src/tools/execution/ExecutionPipeline.ts)): 6 阶段执行管道
+  - Discovery → Validation → Permission → Confirmation → Execution → Formatting
+  - 事件驱动架构，支持监听各阶段事件
+  - 自动记录执行历史
 - **PromptBuilder** ([src/prompts/](src/prompts/)): 提示模板管理和构建
 
 ## Build & Development Commands
@@ -207,3 +253,141 @@ rm -rf dist && bun build src/blade.tsx \
 - **行宽**: 最大 88 字符
 - **缩进**: 2 空格
 - **TypeScript**: 尽量避免 `any`，测试文件除外
+
+## Documentation Guidelines
+
+### 文档结构
+
+项目文档按受众分为三大类：
+
+1. **用户文档** (`docs/public/`) - 面向最终用户
+   - 安装、配置、使用指南
+   - 通过 Docsify 构建静态站点
+   - 适合 GitHub Pages 部署
+
+2. **开发者文档** (`docs/development/`) - 面向项目开发者
+   - 架构设计、实现细节
+   - 技术方案、测试文档
+   - 不对外公开
+
+3. **贡献者文档** (`docs/contributing/`) - 面向开源贡献者
+   - 贡献指南、PR 规范
+   - 发布流程、安全策略
+   - 适合 GitHub 仓库展示
+
+### 创建新文档指南
+
+#### 1. 确定文档类型
+
+**问自己以下问题：**
+- 这个文档是给谁看的？（用户/开发者/贡献者）
+- 这个文档的目的是什么？（教程/指南/参考/技术方案）
+- 这个文档需要对外公开吗？
+
+**文档归属判断：**
+
+| 文档内容 | 目标目录 | 示例 |
+|---------|---------|------|
+| 用户安装、配置 | `docs/public/getting-started/` | installation.md, quick-start.md |
+| 用户配置指南 | `docs/public/configuration/` | config-system.md, permissions.md |
+| 用户使用教程 | `docs/public/guides/` | advanced-usage.md |
+| CLI/工具参考 | `docs/public/reference/` | cli-commands.md, tool-list.md |
+| 架构设计 | `docs/development/architecture/` | execution-pipeline.md, tool-system.md |
+| 实现细节 | `docs/development/implementation/` | logging-system.md, mcp-support.md |
+| 技术方案 | `docs/development/planning/` | xxx-plan.md, xxx-proposal.md |
+| 测试相关 | `docs/development/testing/` | index.md, coverage.md |
+| 贡献规范 | `docs/contributing/` | README.md, pr-creation-guide.md |
+| 过时文档 | `docs/archive/` | 历史参考文档 |
+
+#### 2. 文档命名规范
+
+- 使用小写字母和连字符：`config-system.md`（不是 `ConfigSystem.md`）
+- 名称要描述性强：`execution-pipeline.md`（不是 `pipeline.md`）
+- 技术方案文档加后缀：`feature-name-plan.md` 或 `feature-name-proposal.md`
+
+#### 3. 文档内容规范
+
+**每个文档应包含：**
+
+```markdown
+# 标题
+
+> 简短描述：一句话说明这个文档的目的
+
+## 目录（可选，复杂文档需要）
+
+- [章节1](#章节1)
+- [章节2](#章节2)
+
+## 正文内容
+
+### 使用代码示例
+
+\`\`\`typescript
+// 代码示例要完整且可运行
+const example = 'hello';
+\`\`\`
+
+### 使用相对链接
+
+引用其他文档时使用相对路径：
+- 同目录：[其他文档](other-doc.md)
+- 父目录：[上级文档](../parent-doc.md)
+- 其他分类：[开发文档](../../development/architecture/tool-system.md)
+
+### 使用表格和图表
+
+让文档易于理解。
+
+## 参考资源（可选）
+
+- 相关文档链接
+- 外部资源链接
+```
+
+#### 4. 更新文档索引
+
+创建新文档后，必须更新相应的索引：
+
+- **用户文档**: 更新 `docs/public/_sidebar.md` 和 `docs/public/README.md`
+- **开发者文档**: 更新 `docs/development/README.md`
+- **贡献者文档**: 更新 `docs/contributing/README.md`
+- **文档中心**: 如果是重要文档，更新 `docs/index.md`
+
+#### 5. 文档维护原则
+
+- **避免重复**：一个主题只写一份文档，其他地方通过链接引用
+- **保持同步**：代码变更时及时更新相关文档
+- **及时归档**：过时文档移到 `docs/archive/`，不要直接删除
+- **交叉引用**：相关文档之间相互链接，形成文档网络
+
+### Docsify 用户文档站点
+
+`docs/public/` 目录配置了 Docsify 静态站点：
+
+- **本地预览**:
+  ```bash
+  npm install -g docsify-cli
+  docsify serve docs/public
+  # 访问 http://localhost:3000
+  ```
+
+- **配置文件**:
+  - `index.html` - Docsify 配置
+  - `_sidebar.md` - 侧边栏导航
+  - `_coverpage.md` - 封面页
+  - `.nojekyll` - 禁用 Jekyll
+
+- **添加新页面**:
+  1. 在 `docs/public/` 对应目录创建 `.md` 文件
+  2. 在 `_sidebar.md` 中添加导航链接
+  3. 本地预览验证效果
+
+### 文档编写最佳实践
+
+1. **从用户角度出发**：用户文档应该回答"如何做"而非"这是什么"
+2. **提供完整示例**：代码示例要能直接运行，不需要额外修改
+3. **循序渐进**：从简单到复杂，从基础到高级
+4. **使用视觉辅助**：表格、流程图、代码高亮让文档更易读
+5. **保持简洁**：一个文档只讲一个主题，不要贪多
+6. **定期审查**：每个月检查文档是否还与代码实现一致

@@ -4,7 +4,7 @@ Blade 提供强大而灵活的工具系统，支持文件操作、搜索、Shell
 
 ## 📚 架构文档
 
-- **[工具系统架构](../TOOL_SYSTEM_ARCHITECTURE.md)** - 完整的架构设计文档 ⭐
+- **[工具系统架构](../architecture/tool-system.md)** - 完整的架构设计文档 ⭐
 - **[工具使用指南](./TOOL_USAGE_GUIDE.md)** - 开发者使用指南
 - **[源码 README](../../src/tools/README.md)** - 源码目录说明
 

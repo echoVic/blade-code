@@ -89,37 +89,54 @@ Blade 采用双配置文件系统，参考 Claude Code 的设计理念：
 
 ### 权限控制
 
+权限系统通过 `PermissionChecker` 类实现，支持三级权限控制：
+
 ```json
 {
   "permissions": {
     "allow": [
-      "Bash(git status)",
-      "Bash(npm run lint)",
-      "Read(~/.zshrc)"
+      "Read(file_path:**/*.ts)",
+      "Read(file_path:**/*.js)",
+      "Grep",
+      "Glob"
     ],
     "ask": [
-      "Bash(git push:*)",
-      "WebFetch(*)"
+      "Write",
+      "Edit",
+      "Bash(command:npm *)",
+      "Bash(command:git *)"
     ],
     "deny": [
-      "Read(./.env)",
-      "Read(./secrets/**)",
-      "Bash(rm -rf:*)"
+      "Read(file_path:.env)",
+      "Read(file_path:**/.env*)",
+      "Read(file_path:**/*.{key,secret})",
+      "Bash(command:rm -rf *)",
+      "Bash(command:sudo *)"
     ]
   }
 }
 ```
 
 **权限规则说明：**
-- `allow` - 自动允许的工具调用
-- `ask` - 需要用户确认的调用
-- `deny` - 拒绝的调用
+- `allow` - 自动允许的工具调用（无需用户确认）
+- `ask` - 需要用户确认的调用（默认行为）
+- `deny` - 拒绝的调用（最高优先级）
+
+**优先级：** `deny` > `allow` > `ask` > 默认(ask)
 
 **匹配模式：**
-- 精确匹配: `Bash(git status)`
-- 前缀匹配: `Bash(git push:*)` 匹配所有 git push 命令
-- 通配符: `WebFetch(*)` 匹配所有 WebFetch 调用
-- Glob: `Read(./secrets/**)` 匹配 secrets 目录下所有文件
+1. **精确匹配**: `Bash(command:git status)` - 完全匹配
+2. **工具名匹配**: `Read` - 匹配该工具的所有调用
+3. **通配符匹配**: `Read(file_path:*.env)` - `*` 匹配任意字符（不包括 `/`）
+4. **Glob 模式**: `Read(file_path:**/.env)` - `**` 匹配任意层级目录
+5. **大括号扩展**: `Read(file_path:**/*.{env,key,secret})` - 匹配多个扩展名
+6. **全局通配**: `*` 或 `**` - 匹配所有工具
+
+**实现细节：**
+- 工具调用签名格式: `ToolName(param1:value1, param2:value2)`
+- 使用 `minimatch` 库进行 glob 模式匹配
+- 支持嵌套括号和花括号的智能解析
+- 参数值支持 glob 模式匹配
 
 ### Hooks
 
@@ -320,6 +337,44 @@ blade
 - 从严格到宽松逐步放开权限
 - 生产环境使用更严格的权限
 
+## 核心实现
+
+### ConfigManager
+
+配置管理器位于 [src/config/ConfigManager.ts](../src/config/ConfigManager.ts)，负责：
+
+1. **多层级配置加载** - 按优先级加载和合并配置
+2. **环境变量插值** - 支持 `$VAR` 和 `${VAR:-default}` 语法
+3. **配置验证** - 验证配置格式和必需字段
+4. **动态更新** - 运行时更新配置
+5. **配置追踪** - 追踪配置项的来源
+
+### PermissionChecker
+
+权限检查器位于 [src/config/PermissionChecker.ts](../src/config/PermissionChecker.ts)，提供：
+
+```typescript
+class PermissionChecker {
+  check(descriptor: ToolInvocationDescriptor): PermissionCheckResult
+  isAllowed(descriptor: ToolInvocationDescriptor): boolean
+  isDenied(descriptor: ToolInvocationDescriptor): boolean
+  needsConfirmation(descriptor: ToolInvocationDescriptor): boolean
+  updateConfig(config: Partial<PermissionConfig>): void
+}
+```
+
+### ExecutionPipeline 集成
+
+权限检查集成在 6 阶段执行管道中：
+
+```
+Discovery → Validation → Permission → Confirmation → Execution → Formatting
+                            ↑            ↑
+                         检查权限      需要确认时请求用户
+```
+
+详见 [执行管道文档](../../architecture/execution-pipeline.md)
+
 ## FAQ
 
 ### Q: 配置文件不存在怎么办？
@@ -336,3 +391,12 @@ A: 删除对应的配置文件，系统会使用默认配置。
 
 ### Q: 支持 JSON5 或 YAML 吗？
 A: 目前只支持标准 JSON 格式。
+
+### Q: 如何调试权限规则？
+A: 查看执行日志或使用 `--debug` 模式查看权限检查详情。
+
+## 相关文档
+
+- [权限系统指南](./permissions-guide.md) - 详细的权限配置指南
+- [执行管道架构](../../architecture/execution-pipeline.md) - 了解工具执行流程
+- [用户确认流程](../../architecture/confirmation-flow.md) - 了解用户确认机制
