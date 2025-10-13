@@ -101,14 +101,15 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   );
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
 
-  const { input, showSuggestions, suggestions, selectedSuggestionIndex } = useKeyboardInput(
-    (command: string) => executeCommand(command, addUserMessage, addAssistantMessage),
-    getPreviousCommand,
-    getNextCommand,
-    addToHistory,
-    handleAbort,
-    isProcessing
-  );
+  const { input, showSuggestions, suggestions, selectedSuggestionIndex } =
+    useKeyboardInput(
+      (command: string) => executeCommand(command, addUserMessage, addAssistantMessage),
+      getPreviousCommand,
+      getNextCommand,
+      addToHistory,
+      handleAbort,
+      isProcessing
+    );
 
   // 主界面 - 统一显示，不再区分初始化状态
   return (
@@ -121,7 +122,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           <Header testMode={testMode} />
 
           {/* TODO 面板 - 显示在顶部 */}
-          {showTodoPanel && <TodoPanel todos={todos} visible={showTodoPanel} compact={false} />}
+          {showTodoPanel && (
+            <TodoPanel todos={todos} visible={showTodoPanel} compact={false} />
+          )}
 
           <MessageArea
             sessionState={sessionState}

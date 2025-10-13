@@ -4,8 +4,8 @@
  */
 
 import type { Options } from 'yargs';
-import type { GlobalOptions } from './types.js';
 import { getDescription, getVersion } from '../utils/packageInfo.js';
+import type { GlobalOptions } from './types.js';
 
 export const globalOptions: Record<keyof GlobalOptions, Options> = {
   debug: {

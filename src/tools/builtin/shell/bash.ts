@@ -66,7 +66,10 @@ export const bashTool = createTool({
     command: ToolSchemas.command({
       description: '要执行的 bash 命令',
     }),
-    session_id: z.string().optional().describe('会话 ID(可选,用于复用环境变量和工作目录)'),
+    session_id: z
+      .string()
+      .optional()
+      .describe('会话 ID(可选,用于复用环境变量和工作目录)'),
     timeout: ToolSchemas.timeout(1000, 300000, 30000),
     cwd: z.string().optional().describe('工作目录(可选)'),
     env: ToolSchemas.environment(),
@@ -200,11 +203,7 @@ export const bashTool = createTool({
       updateOutput?.(`执行 Bash 命令: ${command}`);
 
       if (run_in_background) {
-        return executeInBackground(
-          command,
-          actualSessionId,
-          sessionContext
-        );
+        return executeInBackground(command, actualSessionId, sessionContext);
       } else {
         return executeWithTimeout(
           command,
@@ -482,7 +481,8 @@ function formatDisplayMessage(result: {
   exit_code: number | null;
   signal: NodeJS.Signals | null;
 }): string {
-  const { stdout, stderr, session_id, command, execution_time, exit_code, signal } = result;
+  const { stdout, stderr, session_id, command, execution_time, exit_code, signal } =
+    result;
 
   let message = `✅ Bash 命令执行完成: ${command}`;
   message += `\n🔑 会话 ID: ${session_id}`;

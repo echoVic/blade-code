@@ -19,7 +19,7 @@ describe('PromptBuilder (Simplified)', () => {
       systemPrompt.addSource({
         type: 'cli',
         content: cliPrompt,
-        priority: 10
+        priority: 10,
       });
 
       const result = systemPrompt.build();
@@ -35,27 +35,27 @@ describe('PromptBuilder (Simplified)', () => {
       systemPrompt.addSource({
         type: 'default',
         content: '默认提示',
-        priority: 0
+        priority: 0,
       });
 
       systemPrompt.addSource({
         type: 'file',
         content: '用户提示',
         priority: 5,
-        source: 'user'
+        source: 'user',
       });
 
       systemPrompt.addSource({
         type: 'file',
         content: '项目提示',
         priority: 7,
-        source: 'project'
+        source: 'project',
       });
 
       systemPrompt.addSource({
         type: 'cli',
         content: cliPrompt,
-        priority: 10
+        priority: 10,
       });
 
       const result = systemPrompt.build();
@@ -77,7 +77,7 @@ describe('PromptBuilder (Simplified)', () => {
       systemPrompt.addSource({
         type: 'cli',
         content: '',
-        priority: 10
+        priority: 10,
       });
 
       const result = systemPrompt.build();
@@ -90,14 +90,14 @@ describe('PromptBuilder (Simplified)', () => {
       systemPrompt.addSource({
         type: 'cli',
         content: '第一部分',
-        priority: 10
+        priority: 10,
       });
 
       systemPrompt.addSource({
         type: 'file',
         content: '第二部分',
         priority: 5,
-        source: 'test'
+        source: 'test',
       });
 
       const result = systemPrompt.build();
@@ -117,7 +117,7 @@ describe('PromptBuilder (Simplified)', () => {
       systemPrompt.addSource({
         type: 'cli',
         content: '测试内容',
-        priority: -1
+        priority: -1,
       });
 
       const result = systemPrompt.build();
@@ -131,13 +131,13 @@ describe('PromptBuilder (Simplified)', () => {
       systemPrompt.addSource({
         type: 'cli',
         content: '第一个',
-        priority: 5
+        priority: 5,
       });
 
       systemPrompt.addSource({
         type: 'cli',
         content: '第二个',
-        priority: 5
+        priority: 5,
       });
 
       const result = systemPrompt.build();

@@ -107,7 +107,10 @@ export async function getBuiltinToolsByType(opts?: {
     shell: [bashTool, shellTool, scriptTool],
     web: [webFetchTool, apiCallTool],
     task: [taskTool],
-    todo: [createTodoWriteTool({ sessionId, configDir }), createTodoReadTool({ sessionId, configDir })],
+    todo: [
+      createTodoWriteTool({ sessionId, configDir }),
+      createTodoReadTool({ sessionId, configDir }),
+    ],
     mcp: mcpTools, // MCP协议外部工具
   };
 }

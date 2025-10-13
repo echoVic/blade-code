@@ -36,20 +36,12 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   const hasMoreItems = suggestions.length > maxDisplay;
 
   return (
-    <Box
-      flexDirection="column"
-      paddingX={2}
-      paddingY={0}
-    >
+    <Box flexDirection="column" paddingX={2} paddingY={0}>
       {displaySuggestions.map((suggestion, displayIndex) => {
         const actualIndex = startIndex + displayIndex;
         const isSelected = actualIndex === selectedIndex;
         return (
-          <Box
-            key={suggestion.command}
-            justifyContent="space-between"
-            paddingX={1}
-          >
+          <Box key={suggestion.command} justifyContent="space-between" paddingX={1}>
             <Text color={isSelected ? 'cyan' : 'white'} bold={isSelected}>
               {suggestion.command}
             </Text>
@@ -62,7 +54,11 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
 
       {hasMoreItems && (
         <Box paddingX={1}>
-          <Text color={isMoreItemSelected ? 'cyan' : 'gray'} bold={isMoreItemSelected} dimColor={!isMoreItemSelected}>
+          <Text
+            color={isMoreItemSelected ? 'cyan' : 'gray'}
+            bold={isMoreItemSelected}
+            dimColor={!isMoreItemSelected}
+          >
             ... and {suggestions.length - maxDisplay} more
           </Text>
         </Box>

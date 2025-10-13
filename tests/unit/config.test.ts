@@ -21,7 +21,7 @@ describe('配置系统', () => {
           auth: {
             apiKey: 'global-key',
             baseUrl: 'https://example.com',
-            modelName: 'test-model',
+            model: 'test-model',
             searchApiKey: '',
           },
           ui: { theme: 'dark', hideTips: false, hideBanner: false },
@@ -30,7 +30,7 @@ describe('配置系统', () => {
           auth: {
             apiKey: 'user-key',
             baseUrl: 'https://example.com',
-            modelName: 'test-model',
+            model: 'test-model',
             searchApiKey: '',
           },
           ui: { theme: 'dark', hideTips: true, hideBanner: false },
@@ -51,7 +51,7 @@ describe('配置系统', () => {
           auth: {
             apiKey: 'global-key',
             baseUrl: 'https://example.com',
-            modelName: 'test-model',
+            model: 'test-model',
             searchApiKey: '',
           },
         },
@@ -59,7 +59,7 @@ describe('配置系统', () => {
           auth: {
             apiKey: 'user-key',
             baseUrl: 'https://example.com',
-            modelName: 'test-model',
+            model: 'test-model',
             searchApiKey: '',
           },
         },
@@ -67,7 +67,7 @@ describe('配置系统', () => {
           auth: {
             apiKey: 'env-key',
             baseUrl: 'https://example.com',
-            modelName: 'test-model',
+            model: 'test-model',
             searchApiKey: '',
           },
         },
@@ -86,7 +86,7 @@ describe('配置系统', () => {
           auth: {
             apiKey: 12345 as any, // 无效的类型，应该是字符串
             baseUrl: 'https://example.com',
-            modelName: 'test-model',
+            model: 'test-model',
             searchApiKey: '',
           },
         },
@@ -104,7 +104,7 @@ describe('配置系统', () => {
           auth: {
             apiKey: 12345 as any, // 无效的类型
             baseUrl: 'https://example.com',
-            modelName: 'test-model',
+            model: 'test-model',
             searchApiKey: '',
           },
         },
@@ -137,7 +137,7 @@ describe('配置系统', () => {
           auth: {
             apiKey: 'custom-key',
             baseUrl: 'https://example.com',
-            modelName: 'test-model',
+            model: 'test-model',
             searchApiKey: '',
           },
           // 不提供其他字段
@@ -160,7 +160,7 @@ describe('配置系统', () => {
           auth: {
             apiKey: 'valid-key',
             baseUrl: 'invalid-url', // 无效的 URL
-            modelName: 'test-model',
+            model: 'test-model',
             searchApiKey: '',
           },
         },

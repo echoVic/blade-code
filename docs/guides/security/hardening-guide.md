@@ -496,7 +496,7 @@ import https from 'https';
 export class LLMManager {
   private httpClient: AxiosInstance;
   
-  constructor(config: Pick<BladeConfig, 'apiKey' | 'baseUrl' | 'modelName'>) {
+  constructor(config: Pick<BladeConfig, 'apiKey' | 'baseUrl' | 'model'>) {
     this.httpClient = SecureHttpClient.createClient();
     // ... 其他初始化代码
   }
@@ -511,7 +511,7 @@ export class LLMManager {
     
     // 构造请求
     const payload = {
-      model: config.modelName,
+      model: config.model,
       messages: config.messages,
       temperature: config.temperature || 0.3,
       max_tokens: config.maxTokens || 32000,

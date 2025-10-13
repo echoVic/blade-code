@@ -34,7 +34,7 @@ describe('SystemPrompt', () => {
         type: 'default',
         content: DEFAULT_SYSTEM_PROMPT,
         priority: 1,
-        source: 'default'
+        source: 'default',
       });
 
       const result = systemPrompt.build();
@@ -52,7 +52,7 @@ describe('SystemPrompt', () => {
         type: 'file',
         content: customPrompt,
         priority: 5,
-        source: 'test-file'
+        source: 'test-file',
       });
 
       expect(systemPrompt.build()).toContain(customPrompt);
@@ -74,14 +74,14 @@ describe('SystemPrompt', () => {
         type: 'cli',
         content: '低优先级',
         priority: 1,
-        source: 'low'
+        source: 'low',
       });
 
       systemPrompt.addSource({
         type: 'cli',
         content: '高优先级',
         priority: 10,
-        source: 'high'
+        source: 'high',
       });
 
       const result = systemPrompt.build();
@@ -98,14 +98,14 @@ describe('SystemPrompt', () => {
         type: 'cli',
         content: '第一个',
         priority: 5,
-        source: 'first'
+        source: 'first',
       });
 
       systemPrompt.addSource({
         type: 'cli',
         content: '第二个',
         priority: 5,
-        source: 'second'
+        source: 'second',
       });
 
       const result = systemPrompt.build();
@@ -122,7 +122,7 @@ describe('SystemPrompt', () => {
       systemPrompt.addSource({
         type: 'cli',
         content: 'CLI 提示',
-        priority: 10
+        priority: 10,
       });
 
       const result = systemPrompt.build();
@@ -138,7 +138,7 @@ describe('SystemPrompt', () => {
         type: 'cli',
         content: '',
         priority: 1,
-        source: 'empty'
+        source: 'empty',
       });
 
       const result = systemPrompt.build();
@@ -152,7 +152,7 @@ describe('SystemPrompt', () => {
         type: 'cli',
         content: '   \n\t  ',
         priority: 1,
-        source: 'whitespace'
+        source: 'whitespace',
       });
 
       const result = systemPrompt.build();
@@ -167,14 +167,14 @@ describe('SystemPrompt', () => {
         type: 'cli',
         content: '第一行\n第二行',
         priority: 1,
-        source: 'multiline1'
+        source: 'multiline1',
       });
 
       systemPrompt.addSource({
         type: 'cli',
         content: '第三行\n第四行',
         priority: 2,
-        source: 'multiline2'
+        source: 'multiline2',
       });
 
       const result = systemPrompt.build();

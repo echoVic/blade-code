@@ -58,7 +58,6 @@ export const setupLogging: MiddlewareFunction = (argv) => {
     process.env.BLADE_VERBOSE = '1';
     console.log('Verbose mode enabled');
   }
-
 };
 
 /**

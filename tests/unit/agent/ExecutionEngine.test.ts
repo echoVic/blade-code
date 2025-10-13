@@ -37,17 +37,14 @@ describe('ExecutionEngine', () => {
     vi.clearAllMocks();
 
     // 创建新的 ExecutionEngine 实例
-    executionEngine = new ExecutionEngine(
-      mockChatService as unknown as ChatService,
-      {
-        chat: {
-          apiKey: 'test-key',
-          model: 'claude-3-5-sonnet-20240620',
-          baseUrl: 'https://mock.api',
-        },
-        context: {},
-      }
-    );
+    executionEngine = new ExecutionEngine(mockChatService as unknown as ChatService, {
+      chat: {
+        apiKey: 'test-key',
+        model: 'claude-3-5-sonnet-20240620',
+        baseUrl: 'https://mock.api',
+      },
+      context: {},
+    });
   });
 
   describe('初始化', () => {

@@ -38,7 +38,7 @@ const agent = await createAgent({
   auth: {
     apiKey: process.env.BLADE_API_KEY || 'sk-xxx',
     baseUrl: 'https://api.example.com',
-    modelName: 'qwen3-coder'
+    model: 'qwen3-coder'
   }
 });
 
@@ -66,7 +66,7 @@ const config: BladeUnifiedConfig = {
   auth: {
     apiKey: 'sk-xxx',
     baseUrl: 'https://api.example.com',
-    modelName: 'qwen3-coder',
+    model: 'qwen3-coder',
     timeout: 30000,
     maxTokens: 2048
   },
@@ -116,7 +116,7 @@ const config = agent.getConfig();
 // 更新配置
 await agent.updateConfig({
   auth: {
-    modelName: 'new-model'
+    model: 'new-model'
   }
 });
 
@@ -136,7 +136,7 @@ const layers: ConfigLayers = {
   defaults: {
     auth: {
       baseUrl: 'https://apis.iflow.cn/v1',
-      modelName: 'Qwen3-Coder'
+      model: 'Qwen3-Coder'
     },
     ui: {
       theme: 'dark'
@@ -212,7 +212,7 @@ interface BladeUnifiedConfig {
   auth: {
     apiKey: string;
     baseUrl: string;
-    modelName: string;
+    model: string;
     searchApiKey?: string;
     timeout?: number;
     maxTokens?: number;
@@ -439,12 +439,12 @@ import { createConfig } from '../src/config';
 describe('配置系统', () => {
   test('配置层正确合并', () => {
     const layers = {
-      defaults: { auth: { modelName: 'default' } },
-      user: { auth: { modelName: 'user' } }
+      defaults: { auth: { model: 'default' } },
+      user: { auth: { model: 'user' } }
     };
     
     const result = createConfig(layers);
-    expect(result.config.auth.modelName).toBe('user');
+    expect(result.config.auth.model).toBe('user');
   });
 });
 ```
@@ -460,12 +460,12 @@ describe('核心集成测试', () => {
     const agent = await createAgent({
       auth: {
         apiKey: 'test-key',
-        modelName: 'test-model'
+        model: 'test-model'
       }
     });
     
     expect(agent).toBeDefined();
-    expect(agent.getConfig().auth.modelName).toBe('test-model');
+    expect(agent.getConfig().auth.model).toBe('test-model');
   });
 });
 ```

@@ -16,6 +16,4 @@ export type {
   SystemPromptOptions,
 } from './SystemPrompt.js';
 
-export type {
-  PromptBuilderOptions,
-} from './builder.js';
+export type { PromptBuilderOptions } from './builder.js';

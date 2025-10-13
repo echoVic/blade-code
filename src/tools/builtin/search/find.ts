@@ -408,12 +408,7 @@ function formatDisplayMessage(
   searchPath: string,
   metadata: Record<string, unknown>
 ): string {
-  const {
-    total_matches,
-    returned_matches,
-    truncated,
-    search_criteria,
-  } = metadata as {
+  const { total_matches, returned_matches, truncated, search_criteria } = metadata as {
     total_matches: number;
     returned_matches: number;
     truncated: boolean;

@@ -103,12 +103,11 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
                 {/* 使用指南（简化版） - 左对齐 */}
                 <Box flexDirection="column" marginTop={2}>
                   <Text color="white">
-输入问题开始对话 • 使用 /init 创建项目配置 • 输入 /help 查看 slash 命令
+                    输入问题开始对话 • 使用 /init 创建项目配置 • 输入 /help 查看 slash
+                    命令
                   </Text>
                   <Box marginTop={1}>
-                    <Text color="gray">
-                      {getCopyright()}
-                    </Text>
+                    <Text color="gray">{getCopyright()}</Text>
                   </Box>
                 </Box>
               </>
@@ -133,11 +132,11 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
                       {Math.round((loopState.turn / loopState.maxTurns) * 100)}%)
                     </Text>
                     {loopState.currentTool && (
-                      <Text color="green" bold>🔧 正在执行: {loopState.currentTool}</Text>
+                      <Text color="green" bold>
+                        🔧 正在执行: {loopState.currentTool}
+                      </Text>
                     )}
-                    <Text color="yellow">
-                      按 ESC 停止任务
-                    </Text>
+                    <Text color="yellow">按 ESC 停止任务</Text>
                   </>
                 ) : (
                   <Text color="yellow" bold>

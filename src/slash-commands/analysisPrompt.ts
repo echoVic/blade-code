@@ -35,12 +35,16 @@ export function buildAnalysisPrompt(projectInfo: ProjectInfo, cwd: string): stri
 - Working Directory: ${cwd}
 
 **Package Information:**
-${projectInfo.hasPackageJson ? `
+${
+  projectInfo.hasPackageJson
+    ? `
 - Has package.json: Yes
 - Dependencies: ${Object.keys(projectInfo.dependencies).length} packages
 - DevDependencies: ${Object.keys(projectInfo.devDependencies).length} packages
 - Scripts: ${Object.keys(projectInfo.scripts).join(', ') || 'None'}
-` : '- Has package.json: No'}
+`
+    : '- Has package.json: No'
+}
 
 **Development Setup:**
 - TypeScript: ${projectInfo.hasTypeScript ? 'Yes' : 'No'}
@@ -113,28 +117,28 @@ export function detectProjectFeatures(
   // 检测特征
   const hasTypeScript = Boolean(
     allDeps.typescript ||
-    allDeps['@types/node'] ||
-    Object.keys(scripts).some(script => scripts[script].includes('tsc'))
+      allDeps['@types/node'] ||
+      Object.keys(scripts).some((script) => scripts[script].includes('tsc'))
   );
 
   const hasTests = Boolean(
     testFramework ||
-    Object.keys(scripts).some(script => script.includes('test')) ||
-    allDeps['@testing-library/react'] ||
-    allDeps['@testing-library/vue']
+      Object.keys(scripts).some((script) => script.includes('test')) ||
+      allDeps['@testing-library/react'] ||
+      allDeps['@testing-library/vue']
   );
 
   const hasLinting = Boolean(
     allDeps.eslint ||
-    allDeps.biome ||
-    allDeps.tslint ||
-    Object.keys(scripts).some(script => script.includes('lint'))
+      allDeps.biome ||
+      allDeps.tslint ||
+      Object.keys(scripts).some((script) => script.includes('lint'))
   );
 
   const hasFormatting = Boolean(
     allDeps.prettier ||
-    allDeps.biome ||
-    Object.keys(scripts).some(script => script.includes('format'))
+      allDeps.biome ||
+      Object.keys(scripts).some((script) => script.includes('format'))
   );
 
   return {
@@ -143,6 +147,6 @@ export function detectProjectFeatures(
     hasLinting,
     hasFormatting,
     buildSystem: buildSystem !== 'Unknown' ? buildSystem : undefined,
-    testFramework
+    testFramework,
   };
 }
