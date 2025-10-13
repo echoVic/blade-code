@@ -1,7 +1,7 @@
 import { createWriteStream, promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
-import type { BladeConfig } from '../config/types/index.js';
+import type { BladeConfig } from '../config/types.js';
 import { TelemetrySDK } from './sdk.js';
 
 export class TelemetryLogger {

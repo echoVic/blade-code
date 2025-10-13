@@ -1,44 +1,42 @@
 /**
- * Agent 单元测试 (新架构)
+ * Agent 单元测试 (新架构 - 适配 ExecutionPipeline)
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../../src/agent/Agent.js';
-import { ContextManager } from '../../../src/context/ContextManager.js';
-import { ChatService } from '../../../src/services/ChatService.js';
+import type { AgentConfig } from '../../../src/agent/types.js';
 
-// Mock 服务
-const mockChatService = {
-  chat: vi.fn().mockResolvedValue('Mock response'),
-  chatDetailed: vi.fn().mockResolvedValue({ content: 'Mock response' }),
-  getConfig: vi.fn().mockReturnValue({ provider: 'mock' }),
-  updateConfig: vi.fn(),
-};
-
-const mockContextManager = {
-  init: vi.fn().mockResolvedValue(undefined),
-  destroy: vi.fn().mockResolvedValue(undefined),
-  buildMessagesWithContext: vi
-    .fn()
-    .mockResolvedValue([{ role: 'user', content: 'test message' }]),
-  addUserMessage: vi.fn(),
-  addAssistantMessage: vi.fn(),
-  createSession: vi.fn().mockResolvedValue('session-123'),
-  getCurrentSessionId: vi.fn().mockReturnValue('session-123'),
-};
-
-// Mock 服务
-vi.mock('../../services/ChatService.js', () => {
+// Mock ChatService
+vi.mock('../../../src/services/ChatService.js', () => {
   return {
-    ChatService: vi.fn().mockImplementation(() => mockChatService),
+    ChatService: vi.fn().mockImplementation(() => ({
+      chat: vi.fn().mockResolvedValue({
+        content: 'Mock AI response',
+        toolCalls: undefined,
+      }),
+    })),
   };
 });
 
-vi.mock('../../context/ContextManager.js', () => {
-  return {
-    ContextManager: vi.fn().mockImplementation(() => mockContextManager),
-  };
-});
+// Mock getBuiltinTools
+vi.mock('../../../src/tools/builtin/index.js', () => ({
+  getBuiltinTools: vi.fn().mockResolvedValue([
+    {
+      name: 'MockTool',
+      description: 'A mock tool for testing',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+      },
+      build: vi.fn().mockReturnValue({
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          llmContent: 'Mock tool result',
+        }),
+      }),
+    },
+  ]),
+}));
 
 describe('Agent', () => {
   let agent: Agent;

@@ -31,9 +31,10 @@ export class PromptBuilder {
   /**
    * 构建系统提示
    */
-  async build(cliPrompt?: string): Promise<SystemPrompt> {
+  async build(cliPrompt?: string, replacePrompt?: string): Promise<SystemPrompt> {
     const systemPromptOptions: SystemPromptOptions = {
-      cliPrompt,
+      replacePrompt, // 完全替换模式
+      cliPrompt, // 追加模式
       config: this.options.config,
     };
 
@@ -48,8 +49,11 @@ export class PromptBuilder {
   /**
    * 快速构建系统提示字符串
    */
-  async buildString(cliPrompt?: string): Promise<string> {
-    const systemPrompt = await this.build(cliPrompt);
+  async buildString(
+    cliPrompt?: string,
+    replacePrompt?: string
+  ): Promise<string> {
+    const systemPrompt = await this.build(cliPrompt, replacePrompt);
     return systemPrompt.build();
   }
 

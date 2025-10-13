@@ -1,6 +1,7 @@
 /**
  * Blade 配置管理器
  * 实现双配置文件系统 (config.json + settings.json)
+ * 单例模式：全局唯一实例，避免重复加载配置
  */
 
 import { promises as fs } from 'fs';
@@ -10,8 +11,31 @@ import { DEFAULT_CONFIG, ENV_VAR_MAPPING } from './defaults.js';
 import { BladeConfig, HookConfig, PermissionConfig } from './types.js';
 
 export class ConfigManager {
+  private static instance: ConfigManager | null = null;
   private config: BladeConfig | null = null;
   private configLoaded = false;
+
+  /**
+   * 私有构造函数，防止外部直接实例化
+   */
+  private constructor() {}
+
+  /**
+   * 获取 ConfigManager 单例实例
+   */
+  public static getInstance(): ConfigManager {
+    if (!ConfigManager.instance) {
+      ConfigManager.instance = new ConfigManager();
+    }
+    return ConfigManager.instance;
+  }
+
+  /**
+   * 重置单例实例（仅用于测试）
+   */
+  public static resetInstance(): void {
+    ConfigManager.instance = null;
+  }
 
   /**
    * 初始化配置系统
@@ -322,7 +346,7 @@ export class ConfigManager {
    * 获取 Base URL
    */
   getBaseURL(): string {
-    return this.getConfig().baseURL;
+    return this.getConfig().baseUrl;
   }
 
   /**
@@ -358,5 +382,32 @@ export class ConfigManager {
    */
   isDebug(): boolean {
     return this.getConfig().debug;
+  }
+
+  /**
+   * 验证 BladeConfig 是否包含 Agent 所需的必要字段
+   */
+  public validateConfig(config: BladeConfig): void {
+    const errors: string[] = [];
+
+    if (!config.apiKey) {
+      errors.push('缺少 API 密钥');
+    }
+    if (!config.baseUrl) {
+      errors.push('缺少 API 基础 URL');
+    }
+    if (!config.model) {
+      errors.push('缺少模型名称');
+    }
+
+    if (errors.length > 0) {
+      throw new Error(
+        `配置验证失败:\n${errors.map((e) => `  - ${e}`).join('\n')}\n\n` +
+          `请通过以下方式之一提供配置:\n` +
+          `  1. 配置文件: ~/.blade/config.json\n` +
+          `  2. 环境变量: BLADE_API_KEY, BLADE_BASE_URL, BLADE_MODEL\n` +
+          `  3. 命令行参数: blade --api-key <key> --model <model>`
+      );
+    }
   }
 }

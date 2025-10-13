@@ -62,16 +62,12 @@ export const setupTokenCommands: CommandModule<{}, SetupTokenOptions> = {
       }
 
       // 保存 token 到配置
-      const configManager = new ConfigManager();
+      const configManager = ConfigManager.getInstance();
       await configManager.initialize();
 
       // 使用 updateConfig 方法更新配置中的 apiKey
-      const currentConfig = configManager.getConfig();
       await configManager.updateConfig({
-        auth: {
-          ...currentConfig.auth, // 保留现有的 auth 配置
-          apiKey: token, // 只更新 apiKey
-        },
+        apiKey: token, // 更新 apiKey
       });
 
       console.log('✅ Authentication token saved successfully');

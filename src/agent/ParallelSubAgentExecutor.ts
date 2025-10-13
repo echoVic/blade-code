@@ -4,8 +4,9 @@
  */
 
 import { EventEmitter } from 'events';
+import { ConfigManager } from '../config/ConfigManager.js';
 import { Agent } from './Agent.js';
-import type { AgentConfig, AgentTask, SubAgentResult } from './types.js';
+import type { AgentTask, SubAgentResult } from './types.js';
 
 export interface IsolatedEnvironment {
   id: string;
@@ -347,23 +348,13 @@ export class ParallelSubAgentExecutor extends EventEmitter {
     task: AgentTask,
     context: SubAgentContext
   ): Promise<Agent> {
-    // 基于原始Agent配置创建简化版SubAgent
-    // 这里假设Agent类有相应的构造函数
-    // 创建Agent配置
-    const subAgentConfig: AgentConfig = {
-      chat: {
-        apiKey: process.env.BLADE_API_KEY || '',
-        model: 'claude-3-sonnet',
-        baseUrl: 'https://api.anthropic.com',
-      },
-      context: {
-        enabled: true,
-        maxTokens: 32000,
-      },
-    };
+    // 获取 BladeConfig 并创建 Agent
+    const configManager = ConfigManager.getInstance();
+    await configManager.initialize();
+    const config = configManager.getConfig();
 
-    // 创建Agent实例
-    return new Agent(subAgentConfig);
+    // 创建Agent实例（使用共享配置，空运行时选项）
+    return new Agent(config, {});
   }
 
   /**

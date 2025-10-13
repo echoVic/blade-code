@@ -23,7 +23,7 @@ export class BuiltinCommandLoader {
     await this.registerConfigCommands();
 
     // 注册调试命令（仅在调试模式下）
-    if (this.config.core.debug) {
+    if (this.config.debug) {
       await this.registerDebugCommands();
     }
   }
@@ -67,7 +67,7 @@ export class BuiltinCommandLoader {
       aliases: ['v'],
       hidden: false,
       handler: async () => {
-        console.log(`Blade Code v${this.config.version}`);
+        console.log(`Blade Code v${process.env.BLADE_VERSION || '0.0.0'}`);
       },
       examples: ['version'],
     });

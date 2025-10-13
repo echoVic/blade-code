@@ -20,7 +20,7 @@ export class IdeClient {
   public async initialize(agent: Agent): Promise<void> {
     this.agent = agent;
 
-    if (this.config.core.debug === true) {
+    if (this.config.debug === true) {
       await this.connectToIde();
     }
   }
@@ -66,7 +66,7 @@ export class IdeClient {
       type: 'init',
       payload: {
         clientId: 'blade-code',
-        version: this.config.version,
+        version: process.env.BLADE_VERSION || '0.0.0',
         capabilities: this.getAgentCapabilities(),
       },
       timestamp: Date.now(),

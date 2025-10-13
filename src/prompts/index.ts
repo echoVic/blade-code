@@ -3,8 +3,8 @@
  * 导出系统提示相关的核心功能
  */
 
-export { SystemPrompt } from './SystemPrompt.js';
-export { PromptBuilder, defaultPromptBuilder } from './builder.js';
+export type { PromptBuilderOptions } from './builder.js';
+export { defaultPromptBuilder, PromptBuilder } from './builder.js';
 export {
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_SYSTEM_PROMPT_CONFIG,
@@ -12,8 +12,7 @@ export {
 } from './default.js';
 
 export type {
-  SystemPromptSource,
   SystemPromptOptions,
+  SystemPromptSource,
 } from './SystemPrompt.js';
-
-export type { PromptBuilderOptions } from './builder.js';
+export { SystemPrompt } from './SystemPrompt.js';

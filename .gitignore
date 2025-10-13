@@ -67,3 +67,6 @@ blade-context/
 # 其他
 .cache/
 .parcel-cache/
+
+# Blade local settings
+.blade/settings.local.json

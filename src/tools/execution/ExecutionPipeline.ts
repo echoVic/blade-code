@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import type { PermissionConfig } from '../../config/types.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import { ToolExecution as ToolExecutionImpl } from '../types/ExecutionTypes.js';
 import type {
@@ -34,11 +35,18 @@ export class ExecutionPipeline extends EventEmitter {
 
     this.maxHistorySize = config.maxHistorySize || 1000;
 
+    // 使用提供的权限配置或默认配置
+    const permissionConfig: PermissionConfig = config.permissionConfig || {
+      allow: [],
+      ask: [],
+      deny: [],
+    };
+
     // 初始化6个执行阶段
     this.stages = [
       new DiscoveryStage(this.registry), // 工具发现
       new ValidationStage(), // 参数验证
-      new PermissionStage(), // 权限检查
+      new PermissionStage(permissionConfig), // 权限检查
       new ConfirmationStage(), // 用户确认
       new ExecutionStage(), // 实际执行
       new FormattingStage(), // 结果格式化
@@ -297,6 +305,13 @@ export class ExecutionPipeline extends EventEmitter {
   }
 
   /**
+   * 获取工具注册表（用于工具管理）
+   */
+  getRegistry(): ToolRegistry {
+    return this.registry;
+  }
+
+  /**
    * 生成执行ID
    */
   private generateExecutionId(): string {
@@ -323,6 +338,7 @@ export interface ExecutionPipelineConfig {
   maxHistorySize?: number;
   enableMetrics?: boolean;
   customStages?: PipelineStage[];
+  permissionConfig?: PermissionConfig;
 }
 
 /**

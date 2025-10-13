@@ -8,7 +8,6 @@ export { ContextCompressor } from '../context/processors/ContextCompressor.js';
 // 核心Agent类
 export { Agent } from './Agent.js';
 export type {
-  AgentConfig,
   AgentOptions,
   AgentResponse,
   AgentTask,

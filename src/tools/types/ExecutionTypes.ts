@@ -1,5 +1,26 @@
-import type { ToolResult } from './ToolTypes.js';
+import type { ConfirmationDetails, ToolResult } from './ToolTypes.js';
 import { ToolErrorType } from './ToolTypes.js';
+
+/**
+ * 用户确认响应
+ */
+export interface ConfirmationResponse {
+  approved: boolean;
+  reason?: string;
+}
+
+/**
+ * 确认处理器接口
+ * 由 UI 层实现,用于处理需要用户确认的工具调用
+ */
+export interface ConfirmationHandler {
+  /**
+   * 请求用户确认
+   * @param details 确认详情
+   * @returns Promise<ConfirmationResponse> 用户的确认结果
+   */
+  requestConfirmation(details: ConfirmationDetails): Promise<ConfirmationResponse>;
+}
 
 /**
  * 执行上下文
@@ -11,6 +32,24 @@ export interface ExecutionContext {
   signal: AbortSignal;
   onProgress?: (message: string) => void;
   updateOutput?: (output: string) => void; // 别名，与 onProgress 功能相同
+  confirmationHandler?: ConfirmationHandler; // 用于处理需要用户确认的工具调用
+}
+
+/**
+ * 工具执行内部状态 (由 Pipeline 阶段设置)
+ */
+export interface ToolExecutionInternalState {
+  // DiscoveryStage 设置
+  tool?: any;
+
+  // ValidationStage 设置
+  normalizedParams?: Record<string, unknown>;
+
+  // PermissionStage 设置
+  invocation?: any;
+  permissionCheckResult?: any;
+  needsConfirmation?: boolean;
+  confirmationReason?: string;
 }
 
 /**
@@ -19,6 +58,9 @@ export interface ExecutionContext {
 export class ToolExecution {
   private aborted = false;
   private result?: ToolResult;
+
+  // 内部状态 (由 Pipeline 阶段设置和访问)
+  public _internal: ToolExecutionInternalState = {};
 
   constructor(
     public readonly toolName: string,

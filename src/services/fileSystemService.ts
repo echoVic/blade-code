@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { promises as fs, Stats, watch } from 'fs';
 import path from 'path';
-import type { BladeConfig } from '../config/types/index.js';
+import type { BladeConfig } from '../config/types.js';
 
 export class FileSystemService {
   private config: BladeConfig;

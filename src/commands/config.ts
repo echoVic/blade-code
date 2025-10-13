@@ -41,7 +41,7 @@ const configSetCommand: CommandModule<{}, ConfigSetOptions> = {
   },
   handler: async (argv) => {
     try {
-      const configManager = new ConfigManager();
+      const configManager = ConfigManager.getInstance();
       await configManager.initialize();
 
       // 创建配置更新对象
@@ -90,7 +90,7 @@ const configGetCommand: CommandModule<{}, ConfigGetOptions> = {
   },
   handler: async (argv) => {
     try {
-      const configManager = new ConfigManager();
+      const configManager = ConfigManager.getInstance();
       await configManager.initialize();
 
       const config = configManager.getConfig();
@@ -127,7 +127,7 @@ const configListCommand: CommandModule<{}, ConfigListOptions> = {
   },
   handler: async () => {
     try {
-      const configManager = new ConfigManager();
+      const configManager = ConfigManager.getInstance();
       await configManager.initialize();
 
       const config = configManager.getConfig();
@@ -162,7 +162,7 @@ const configResetCommand: CommandModule<{}, ConfigListOptions> = {
     }
 
     try {
-      const configManager = new ConfigManager();
+      const configManager = ConfigManager.getInstance();
       await configManager.initialize();
 
       // 重置配置（这里需要根据 ConfigManager 的实际 API 调整）

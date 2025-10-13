@@ -5,9 +5,11 @@ import { useSession } from '../contexts/SessionContext.js';
 import { useAppInitializer } from '../hooks/useAppInitializer.js';
 import { useCommandHandler } from '../hooks/useCommandHandler.js';
 import { useCommandHistory } from '../hooks/useCommandHistory.js';
+import { useConfirmation } from '../hooks/useConfirmation.js';
 import { useKeyboardInput } from '../hooks/useKeyboardInput.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
 import { CommandSuggestions } from './CommandSuggestions.js';
+import { ConfirmationPrompt } from './ConfirmationPrompt.js';
 import { Header } from './Header.js';
 import { InputArea } from './InputArea.js';
 import { MessageArea } from './MessageArea.js';
@@ -48,6 +50,7 @@ interface BladeInterfaceProps {
   // 模型选项
   model?: string;
   fallbackModel?: string;
+  systemPrompt?: string;
   appendSystemPrompt?: string;
   agents?: string;
 
@@ -95,9 +98,14 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     };
   }, [stdout]);
 
+  // 确认管理
+  const { confirmationState, confirmationHandler, handleResponse } = useConfirmation();
+
   // 使用 hooks
   const { isProcessing, executeCommand, loopState, handleAbort } = useCommandHandler(
-    otherProps.appendSystemPrompt
+    otherProps.systemPrompt,
+    otherProps.appendSystemPrompt,
+    confirmationHandler
   );
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
 
@@ -114,8 +122,13 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   // 主界面 - 统一显示，不再区分初始化状态
   return (
     <Box flexDirection="column" width="100%" height="100%">
-      {/* 主题选择器覆盖层 */}
-      {appState.showThemeSelector ? (
+      {/* 确认对话框覆盖层 */}
+      {confirmationState.isVisible && confirmationState.details ? (
+        <ConfirmationPrompt
+          details={confirmationState.details}
+          onResponse={handleResponse}
+        />
+      ) : /* 主题选择器覆盖层 */ appState.showThemeSelector ? (
         <ThemeSelector />
       ) : (
         <>

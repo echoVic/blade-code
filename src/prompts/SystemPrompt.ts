@@ -15,7 +15,8 @@ export interface SystemPromptSource {
 }
 
 export interface SystemPromptOptions {
-  cliPrompt?: string;
+  replacePrompt?: string; // 完全替换默认提示（--system-prompt）
+  cliPrompt?: string; // 追加到默认提示（--append-system-prompt）
   projectPath?: string;
   config?: Partial<SystemPromptConfig>;
 }
@@ -137,6 +138,19 @@ export class SystemPrompt {
    */
   static async fromSources(options: SystemPromptOptions): Promise<SystemPrompt> {
     const prompt = new SystemPrompt(options.config);
+
+    // 如果提供了 replacePrompt，清除默认提示并只使用替换提示
+    if (options.replacePrompt) {
+      prompt.clear(); // 清除默认提示
+      prompt.addSource({
+        type: 'cli',
+        content: options.replacePrompt,
+        priority: 10,
+      });
+      return prompt; // 直接返回，不加载其他来源
+    }
+
+    // 否则，按照正常流程加载所有来源
 
     // 加载项目配置（优先级：5）
     if (options.projectPath) {

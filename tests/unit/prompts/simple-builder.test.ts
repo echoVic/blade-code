@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { SystemPrompt } from '../../../src/prompts/SystemPrompt.js';
+import { describe, expect, it } from 'vitest';
 import { DEFAULT_SYSTEM_PROMPT } from '../../../src/prompts/default.js';
+import { SystemPrompt } from '../../../src/prompts/SystemPrompt.js';
 
 describe('PromptBuilder (Simplified)', () => {
   describe('基础功能测试', () => {

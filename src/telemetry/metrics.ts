@@ -1,5 +1,5 @@
 import { performance } from 'perf_hooks';
-import type { BladeConfig } from '../config/types/index.js';
+import type { BladeConfig } from '../config/types.js';
 import { TelemetrySDK } from './sdk.js';
 
 export class MetricsCollector {
@@ -72,7 +72,7 @@ export class MetricsCollector {
     }
 
     return {
-      version: this.config.version || '1.0.0',
+      version: process.env.BLADE_VERSION || '0.0.0',
       name: appInfo.name || 'unknown',
       description: appInfo.description || '',
       startTime: Date.now() - process.uptime() * 1000,
@@ -361,7 +361,7 @@ export class LogCollector {
   }
 
   private shouldSendLog(level: LogLevel): boolean {
-    const logLevel = this.config.services?.logging?.level || 'info';
+    const logLevel = this.config.logLevel || 'info';
 
     const levelPriority: Record<LogLevel, number> = {
       debug: 0,

@@ -3,7 +3,7 @@
  */
 
 // 主题预设和辅助函数
-export { themes, getThemeById, getThemeIds, type ThemeItem } from './presets.js';
+export { getThemeById, getThemeIds, type ThemeItem, themes } from './presets.js';
 
 // 核心管理器
 export {

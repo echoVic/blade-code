@@ -151,15 +151,11 @@ export const ThemeSelector: React.FC = () => {
       themeManager.setTheme(item.value);
 
       // 保存到配置
-      const configManager = new ConfigManager();
+      const configManager = ConfigManager.getInstance();
       await configManager.initialize();
-      const currentConfig = configManager.getConfig();
 
       await configManager.updateConfig({
-        ui: {
-          ...currentConfig.ui,
-          theme: item.value,
-        },
+        theme: item.value,
       });
 
       // 显示成功通知

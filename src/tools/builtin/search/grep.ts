@@ -1,11 +1,10 @@
-import { z } from 'zod';
 import { spawn } from 'child_process';
-import { createTool } from '../../core/createTool.js';
-import { ToolSchemas } from '../../validation/zodSchemas.js';
-import { ToolKind, ToolErrorType } from '../../types/index.js';
-import type { ToolResult } from '../../types/index.js';
-import type { ExecutionContext } from '../../types/index.js';
+import { z } from 'zod';
 import { DEFAULT_EXCLUDE_DIRS } from '../../../utils/filePatterns.js';
+import { createTool } from '../../core/createTool.js';
+import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import { ToolErrorType, ToolKind } from '../../types/index.js';
+import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
  * 搜索结果条目

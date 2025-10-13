@@ -14,6 +14,7 @@ export interface GlobalOptions {
   allowedTools?: string[];
   disallowedTools?: string[];
   mcpConfig?: string[];
+  systemPrompt?: string;
   appendSystemPrompt?: string;
   permissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan';
   continue?: boolean;
