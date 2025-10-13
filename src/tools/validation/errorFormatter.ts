@@ -1,4 +1,4 @@
-import { z, ZodError, ZodIssue } from 'zod';
+import { ZodError, ZodIssue, z } from 'zod';
 import { ToolErrorType } from '../types/index.js';
 
 /**
@@ -27,11 +27,12 @@ function translateZodIssue(issue: ZodIssue): string {
   const received = (issue as any).received;
 
   switch (code) {
-    case 'invalid_type':
+    case 'invalid_type': {
       const expected = (issue as any).expected;
       return `类型错误：期望 ${expected}，实际收到 ${received}`;
+    }
 
-    case 'too_small':
+    case 'too_small': {
       const minimum = (issue as any).minimum;
       const inclusive = (issue as any).inclusive;
       if ((issue as any).type === 'string') {
@@ -44,8 +45,9 @@ function translateZodIssue(issue: ZodIssue): string {
         return `数组长度不能少于 ${minimum}`;
       }
       return `值太小`;
+    }
 
-    case 'too_big':
+    case 'too_big': {
       const maximum = (issue as any).maximum;
       const inclusiveMax = (issue as any).inclusive;
       if ((issue as any).type === 'string') {
@@ -58,8 +60,9 @@ function translateZodIssue(issue: ZodIssue): string {
         return `数组长度不能超过 ${maximum}`;
       }
       return `值太大`;
+    }
 
-    case 'invalid_string':
+    case 'invalid_string': {
       const validation = (issue as any).validation;
       if (validation === 'email') {
         return '必须是有效的电子邮件地址';
@@ -80,18 +83,22 @@ function translateZodIssue(issue: ZodIssue): string {
         return `必须以 "${validation.endsWith}" 结尾`;
       }
       return '字符串格式不正确';
+    }
 
-    case 'invalid_enum_value':
+    case 'invalid_enum_value': {
       const options = (issue as any).options;
       return `必须是以下值之一：${options.join(', ')}`;
+    }
 
-    case 'invalid_literal':
+    case 'invalid_literal': {
       const expected_literal = (issue as any).expected;
       return `必须是字面量值：${expected_literal}`;
+    }
 
-    case 'unrecognized_keys':
+    case 'unrecognized_keys': {
       const keys = (issue as any).keys;
       return `包含未知的参数：${keys.join(', ')}`;
+    }
 
     case 'invalid_union':
       return '不符合任何有效的类型定义';

@@ -3,7 +3,8 @@
  */
 
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
-import type { ChatConfig, Message } from '../services/ChatService.js';
+import type { PermissionConfig } from '../config/types.js';
+import type { Message } from '../services/ChatService.js';
 
 /**
  * 聊天上下文接口
@@ -17,34 +18,14 @@ export interface ChatContext {
 }
 
 /**
- * Agent 创建选项
+ * Agent 创建选项 - 仅包含运行时参数
+ * Agent 的配置来自 ConfigManager.getConfig() (BladeConfig)
  */
 export interface AgentOptions {
-  apiKey?: string;
-  baseUrl?: string;
-  model?: string;
-  systemPrompt?: string;
-  temperature?: number;
-  maxTokens?: number;
-}
-
-export interface AgentConfig {
-  chat: ChatConfig;
-  systemPrompt?: string;
-  context?: {
-    enabled?: boolean;
-    maxTokens?: number;
-    maxMessages?: number;
-    compressionEnabled?: boolean;
-  };
-  planning?: {
-    enabled?: boolean;
-    maxSteps?: number;
-  };
-  subagents?: {
-    enabled?: boolean;
-    maxConcurrent?: number;
-  };
+  // 运行时参数
+  systemPrompt?: string; // 完全替换系统提示
+  appendSystemPrompt?: string; // 追加系统提示
+  permissions?: Partial<PermissionConfig>; // 运行时覆盖权限
 }
 
 export interface AgentTask {

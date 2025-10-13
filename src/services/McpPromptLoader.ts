@@ -40,7 +40,7 @@ export class McpPromptLoader {
   }
 
   private async initializeMcpClient(): Promise<void> {
-    if (!this.config.mcp.enabled) {
+    if (!this.config.mcpEnabled) {
       console.log('MCP未启用，跳过初始化');
       return;
     }
@@ -111,7 +111,7 @@ export class McpPromptLoader {
   }
 
   private async loadRemotePrompts(): Promise<void> {
-    if (!this.config.mcp.enabled || !this.mcpClient) {
+    if (!this.config.mcpEnabled || !this.mcpClient) {
       console.log('MCP未启用，跳过远程提示加载');
       return;
     }
@@ -282,7 +282,7 @@ export class McpPromptLoader {
   }
 
   public async syncWithRemote(): Promise<void> {
-    if (!this.config.mcp.enabled || !this.mcpClient) {
+    if (!this.config.mcpEnabled || !this.mcpClient) {
       console.log('MCP未启用，跳过同步');
       return;
     }

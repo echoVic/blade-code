@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
-import { SystemPrompt } from '../../../src/prompts/SystemPrompt.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_SYSTEM_PROMPT } from '../../../src/prompts/default.js';
+import { SystemPrompt } from '../../../src/prompts/SystemPrompt.js';
 
 describe('SystemPrompt', () => {
   const testDir = join(process.cwd(), 'test-temp');

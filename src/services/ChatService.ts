@@ -5,6 +5,7 @@ import type {
   ChatCompletionMessageToolCall,
   ChatCompletionTool,
 } from 'openai/resources/chat';
+import type { BladeConfig } from '../config/types.js';
 
 export type Message = {
   role: 'user' | 'assistant' | 'system' | 'tool';
@@ -14,14 +15,14 @@ export type Message = {
   tool_calls?: ChatCompletionMessageToolCall[]; // assistant 返回工具调用时需要
 };
 
-export interface ChatConfig {
-  apiKey: string;
-  model: string;
-  baseUrl: string;
-  temperature?: number;
-  maxTokens?: number;
-  timeout?: number;
-}
+/**
+ * ChatConfig - 从 BladeConfig 派生的聊天配置
+ * 使用 Pick 直接选择所需字段，保持类型一致性
+ */
+export type ChatConfig = Pick<
+  BladeConfig,
+  'apiKey' | 'model' | 'baseUrl' | 'temperature' | 'maxTokens' | 'timeout'
+>;
 
 export interface ChatResponse {
   content: string;
@@ -68,7 +69,7 @@ export class ChatService {
 
     this.client = new OpenAI({
       apiKey: config.apiKey,
-      baseURL: config.baseUrl,
+      baseURL: config.baseUrl, // OpenAI SDK 使用 baseURL
       timeout: config.timeout ?? 30000,
       maxRetries: 3,
     });
@@ -372,7 +373,7 @@ export class ChatService {
 
     this.client = new OpenAI({
       apiKey: this.config.apiKey,
-      baseURL: this.config.baseUrl,
+      baseURL: this.config.baseUrl, // OpenAI SDK 使用 baseURL
       timeout: this.config.timeout ?? 30000,
       maxRetries: 3,
     });

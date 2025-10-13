@@ -13,8 +13,7 @@ export interface BladeConfig {
 
   // 认证
   apiKey: string;
-  apiSecret?: string;
-  baseURL: string;
+  baseUrl: string;
 
   // 模型
   model: string;
@@ -23,6 +22,7 @@ export interface BladeConfig {
   stream: boolean;
   topP: number;
   topK: number;
+  timeout: number; // HTTP 请求超时时间（毫秒）
 
   // UI
   theme: string;
@@ -33,6 +33,7 @@ export interface BladeConfig {
   // 核心
   debug: boolean;
   telemetry: boolean;
+  telemetryEndpoint?: string; // 遥测数据上报端点
   autoUpdate: boolean;
   workingDirectory: string;
 

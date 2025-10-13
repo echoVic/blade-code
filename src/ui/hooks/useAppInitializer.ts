@@ -20,14 +20,14 @@ export const useAppInitializer = (
       setLoadingStatus('加载配置...');
 
       // 初始化配置管理器
-      const configManager = new ConfigManager();
+      const configManager = ConfigManager.getInstance();
       await configManager.initialize();
       const config = configManager.getConfig();
 
       setLoadingStatus('检查 API 密钥...');
 
       // 检查 API 密钥配置
-      if (!config.auth?.apiKey || config.auth.apiKey.trim() === '') {
+      if (!config.apiKey || config.apiKey.trim() === '') {
         setHasApiKey(false);
         setIsInitialized(true);
         addAssistantMessage('🚀 欢迎使用 Blade Code 助手！');

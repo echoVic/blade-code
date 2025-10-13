@@ -4,7 +4,7 @@
  */
 
 import { ChatService, type Message } from '../services/ChatService.js';
-import type { AgentConfig, AgentResponse, AgentTask } from './types.js';
+import type { AgentResponse, AgentTask } from './types.js';
 
 export interface ExecutionStep {
   id: string;
@@ -25,12 +25,10 @@ export interface ContextManager {
 
 export class ExecutionEngine {
   private chatService: ChatService;
-  private config: AgentConfig;
   private contextManager: ContextManager;
 
-  constructor(chatService: ChatService, config: AgentConfig) {
+  constructor(chatService: ChatService) {
     this.chatService = chatService;
-    this.config = config;
     this.contextManager = this.createContextManager();
   }
 

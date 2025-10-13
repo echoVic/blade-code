@@ -1,8 +1,8 @@
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
-import type { BladeConfig } from '../config/types/index.js';
+import type { BladeConfig } from '../config/types.js';
 
-const execAsync = promisify(exec);
+const _execAsync = promisify(exec);
 
 export class GitService {
   private config: BladeConfig;

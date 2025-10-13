@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { createHash } from 'crypto';
 import { performance } from 'perf_hooks';
-import type { BladeConfig } from '../config/types/index.js';
+import type { BladeConfig } from '../config/types.js';
 
 /// <reference types="node" />
 
@@ -26,7 +26,7 @@ export class TelemetrySDK {
     }
 
     // 检查是否启用遥测
-    if (!this.config.services?.telemetry?.enabled) {
+    if (!this.config.telemetry) {
       console.log('遥测已禁用');
       return;
     }
@@ -48,7 +48,7 @@ export class TelemetrySDK {
 
   // 记录事件
   public trackEvent(eventName: string, properties: Record<string, any> = {}): void {
-    if (!this.isInitialized || !this.config.services?.telemetry?.enabled) {
+    if (!this.isInitialized || !this.config.telemetry) {
       return;
     }
 
@@ -63,7 +63,7 @@ export class TelemetrySDK {
       },
       timestamp: Date.now(),
       metadata: {
-        version: this.config.version,
+        version: process.env.BLADE_VERSION || '0.0.0',
         platform: process.platform,
         arch: process.arch,
         nodeVersion: process.version,
@@ -173,13 +173,13 @@ export class TelemetrySDK {
   // 发送事件到服务器
   private async sendEvents(payload: TelemetryPayload): Promise<void> {
     const endpoint =
-      this.config.services?.telemetry?.endpoint ||
+      this.config.telemetryEndpoint ||
       'https://telemetry.blade-ai.com/api/v1/events';
 
     await axios.post(endpoint, payload, {
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': `Blade-AI/${this.config.version}`,
+        'User-Agent': `Blade-AI/${process.env.BLADE_VERSION || '0.0.0'}`,
       },
       timeout: 10000, // 10秒超时
     });
@@ -247,7 +247,7 @@ export class TelemetrySDK {
   // 获取遥测状态
   public getTelemetryStatus(): TelemetryStatus {
     return {
-      enabled: this.config.services?.telemetry?.enabled || false,
+      enabled: this.config.telemetry || false,
       initialized: this.isInitialized,
       queuedEvents: this.events.length,
       sessionId: this.sessionId,

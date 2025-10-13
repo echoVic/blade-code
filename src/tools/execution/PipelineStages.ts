@@ -1,3 +1,9 @@
+import {
+  PermissionChecker,
+  PermissionResult,
+  type ToolInvocationDescriptor,
+} from '../../config/PermissionChecker.js';
+import type { PermissionConfig } from '../../config/types.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import { ToolResolver } from '../registry/ToolResolver.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
@@ -20,7 +26,7 @@ export class DiscoveryStage implements PipelineStage {
     }
 
     // 将工具实例附加到执行上下文中
-    (execution as any).tool = tool;
+    execution._internal.tool = tool;
   }
 }
 
@@ -32,18 +38,18 @@ export class ValidationStage implements PipelineStage {
   readonly name = 'validation';
 
   async process(execution: ToolExecution): Promise<void> {
-    const tool = (execution as any).tool;
+    const tool = execution._internal.tool;
     if (!tool) {
       execution.abort('工具发现阶段失败，无法进行参数验证');
       return;
     }
 
     try {
+      // 获取工具的 JSON Schema
+      const schema = tool.getFunctionDeclaration().parameters;
+
       // 使用工具解析器验证参数
-      const validationResult = ToolResolver.validateParameters(
-        execution.params,
-        tool.parameterSchema
-      );
+      const validationResult = ToolResolver.validateParameters(execution.params, schema);
 
       if (!validationResult.valid) {
         const errorMessages = validationResult.errors
@@ -55,13 +61,10 @@ export class ValidationStage implements PipelineStage {
       }
 
       // 规范化参数
-      const normalizedParams = ToolResolver.normalizeParameters(
-        execution.params,
-        tool.parameterSchema
-      );
+      const normalizedParams = ToolResolver.normalizeParameters(execution.params, schema);
 
       // 更新执行参数
-      (execution as any).normalizedParams = normalizedParams;
+      execution._internal.normalizedParams = normalizedParams;
     } catch (error) {
       execution.abort(`参数验证出错: ${(error as Error).message}`);
     }
@@ -74,9 +77,14 @@ export class ValidationStage implements PipelineStage {
  */
 export class PermissionStage implements PipelineStage {
   readonly name = 'permission';
+  private permissionChecker: PermissionChecker;
+
+  constructor(permissionConfig: PermissionConfig) {
+    this.permissionChecker = new PermissionChecker(permissionConfig);
+  }
 
   async process(execution: ToolExecution): Promise<void> {
-    const tool = (execution as any).tool;
+    const tool = execution._internal.tool;
     if (!tool) {
       execution.abort('工具发现阶段失败，无法进行权限检查');
       return;
@@ -89,11 +97,40 @@ export class PermissionStage implements PipelineStage {
       // 检查受影响的路径
       const affectedPaths = invocation.getAffectedPaths();
 
-      // 基础权限检查（这里可以扩展更复杂的权限逻辑）
+      // 构建工具调用描述符
+      const descriptor: ToolInvocationDescriptor = {
+        toolName: tool.name,
+        params: execution.params,
+        affectedPaths,
+      };
+
+      // 使用 PermissionChecker 进行权限检查
+      const checkResult = this.permissionChecker.check(descriptor);
+
+      // 根据检查结果采取行动
+      switch (checkResult.result) {
+        case PermissionResult.DENY:
+          execution.abort(
+            checkResult.reason ||
+              `工具调用 "${tool.name}" 被权限规则拒绝: ${checkResult.matchedRule}`
+          );
+          return;
+
+        case PermissionResult.ASK:
+          // 标记需要用户确认
+          execution._internal.needsConfirmation = true;
+          execution._internal.confirmationReason = checkResult.reason || '需要用户确认';
+          break;
+
+        case PermissionResult.ALLOW:
+          // 允许执行，继续
+          break;
+      }
+
+      // 额外的安全检查: 检查是否有危险路径
       if (affectedPaths.length > 0) {
-        // 检查是否有危险路径
         const dangerousPaths = affectedPaths.filter(
-          (path) =>
+          (path: string) =>
             path.includes('..') ||
             path.startsWith('/') ||
             path.includes('system32') ||
@@ -107,7 +144,8 @@ export class PermissionStage implements PipelineStage {
       }
 
       // 将调用实例附加到执行上下文
-      (execution as any).invocation = invocation;
+      execution._internal.invocation = invocation;
+      execution._internal.permissionCheckResult = checkResult;
     } catch (error) {
       execution.abort(`权限检查出错: ${(error as Error).message}`);
     }
@@ -117,13 +155,22 @@ export class PermissionStage implements PipelineStage {
 /**
  * 用户确认阶段
  * 负责请求用户确认（如果需要）
+ *
+ * 确认触发条件（优先级）:
+ * 1. PermissionStage 标记 needsConfirmation = true (权限规则要求)
+ * 2. 工具的 shouldConfirm() 方法返回确认详情 (工具自身要求)
  */
 export class ConfirmationStage implements PipelineStage {
   readonly name = 'confirmation';
 
   async process(execution: ToolExecution): Promise<void> {
-    const tool = (execution as any).tool;
-    const invocation = (execution as any).invocation;
+    const {
+      tool,
+      invocation,
+      needsConfirmation,
+      confirmationReason,
+      permissionCheckResult,
+    } = execution._internal;
 
     if (!tool || !invocation) {
       execution.abort('前置阶段失败，无法进行用户确认');
@@ -131,12 +178,29 @@ export class ConfirmationStage implements PipelineStage {
     }
 
     try {
-      // 检查是否需要确认
-      const confirmationDetails = await invocation.shouldConfirm();
+      let confirmationDetails = null;
 
+      // 1. 优先检查权限系统是否要求确认
+      if (needsConfirmation) {
+        // 从权限检查结果构建确认详情
+        confirmationDetails = {
+          title: `权限确认: ${tool.name}`,
+          message: confirmationReason || '此操作需要用户确认',
+          risks: this.extractRisksFromPermissionCheck(
+            tool,
+            execution.params,
+            permissionCheckResult
+          ),
+          affectedFiles: invocation.getAffectedPaths() || [],
+        };
+      }
+      // 2. 如果权限系统没有要求确认，检查工具自身是否需要确认
+      else {
+        confirmationDetails = await invocation.shouldConfirm();
+      }
+
+      // 如果需要确认，请求用户确认
       if (confirmationDetails) {
-        // 这里可以实现用户确认逻辑
-        // 目前假设自动确认（在实际实现中应该请求用户输入）
         console.warn(`工具 "${tool.name}" 需要用户确认: ${confirmationDetails.title}`);
         console.warn(`详情: ${confirmationDetails.message}`);
 
@@ -144,12 +208,62 @@ export class ConfirmationStage implements PipelineStage {
           console.warn(`风险: ${confirmationDetails.risks.join(', ')}`);
         }
 
-        // 在真实实现中，这里应该暂停执行并等待用户确认
-        // 当前为了演示目的，自动通过确认
+        // 如果提供了 confirmationHandler,使用它来请求用户确认
+        const confirmationHandler = execution.context.confirmationHandler;
+        if (confirmationHandler) {
+          const response =
+            await confirmationHandler.requestConfirmation(confirmationDetails);
+
+          if (!response.approved) {
+            execution.abort(`用户拒绝执行: ${response.reason || '无原因'}`);
+            return;
+          }
+        } else {
+          // 如果没有提供 confirmationHandler,则自动通过确认（用于非交互式环境）
+          console.warn(
+            '⚠️ 无 ConfirmationHandler,自动批准工具执行（仅用于非交互式环境）'
+          );
+        }
       }
     } catch (error) {
       execution.abort(`用户确认出错: ${(error as Error).message}`);
     }
+  }
+
+  /**
+   * 从权限检查结果提取风险信息
+   */
+  private extractRisksFromPermissionCheck(
+    tool: { name: string },
+    params: Record<string, unknown>,
+    permissionCheckResult?: { reason?: string }
+  ): string[] {
+    const risks: string[] = [];
+
+    // 添加权限检查的原因作为风险
+    if (permissionCheckResult?.reason) {
+      risks.push(permissionCheckResult.reason);
+    }
+
+    // 根据工具类型添加特定风险
+    if (tool.name === 'Bash') {
+      const command = (params.command as string) || '';
+      if (command.includes('rm')) {
+        risks.push('此命令可能删除文件');
+      }
+      if (command.includes('sudo')) {
+        risks.push('此命令需要管理员权限');
+      }
+      if (command.includes('git push')) {
+        risks.push('此命令将推送代码到远程仓库');
+      }
+    } else if (tool.name === 'Write' || tool.name === 'Edit') {
+      risks.push('此操作将修改文件内容');
+    } else if (tool.name === 'Delete') {
+      risks.push('此操作将永久删除文件');
+    }
+
+    return risks;
   }
 }
 
@@ -161,7 +275,7 @@ export class ExecutionStage implements PipelineStage {
   readonly name = 'execution';
 
   async process(execution: ToolExecution): Promise<void> {
-    const invocation = (execution as any).invocation;
+    const invocation = execution._internal.invocation;
 
     if (!invocation) {
       execution.abort('前置阶段失败，无法执行工具');

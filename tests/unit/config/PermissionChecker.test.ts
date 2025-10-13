@@ -2,7 +2,7 @@
  * PermissionChecker 单元测试
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   PermissionChecker,
   PermissionResult,
@@ -130,11 +130,7 @@ describe('PermissionChecker', () => {
       config.deny = ['Read(file_path:**/*.{env,key,secret})'];
       checker = new PermissionChecker(config);
 
-      const cases = [
-        'config.env',
-        'secrets/api.key',
-        'data/db.secret',
-      ];
+      const cases = ['config.env', 'secrets/api.key', 'data/db.secret'];
 
       for (const filePath of cases) {
         const descriptor: ToolInvocationDescriptor = {
@@ -372,12 +368,7 @@ describe('PermissionChecker', () => {
       ];
       checker = new PermissionChecker(config);
 
-      const sensitiveFiles = [
-        '.env',
-        '.env.local',
-        'config/.env',
-        'secrets/api.key',
-      ];
+      const sensitiveFiles = ['.env', '.env.local', 'config/.env', 'secrets/api.key'];
 
       for (const file of sensitiveFiles) {
         const descriptor: ToolInvocationDescriptor = {
@@ -398,11 +389,7 @@ describe('PermissionChecker', () => {
       ];
       checker = new PermissionChecker(config);
 
-      const codeFiles = [
-        'src/main.ts',
-        'lib/utils.js',
-        'components/App.tsx',
-      ];
+      const codeFiles = ['src/main.ts', 'lib/utils.js', 'components/App.tsx'];
 
       for (const file of codeFiles) {
         const descriptor: ToolInvocationDescriptor = {
@@ -416,11 +403,7 @@ describe('PermissionChecker', () => {
     });
 
     it('应该要求确认危险操作', () => {
-      config.ask = [
-        'Delete',
-        'Bash(command:rm *)',
-        'Write(file_path:**/package.json)',
-      ];
+      config.ask = ['Delete', 'Bash(command:rm *)', 'Write(file_path:**/package.json)'];
       checker = new PermissionChecker(config);
 
       const dangerousOps = [

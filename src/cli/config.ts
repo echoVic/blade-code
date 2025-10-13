@@ -72,6 +72,11 @@ export const globalOptions: Record<keyof GlobalOptions, Options> = {
     describe: 'Load MCP servers from JSON files or strings',
     group: 'MCP Options:',
   },
+  systemPrompt: {
+    type: 'string',
+    describe: 'System prompt to use for the session (replaces default)',
+    group: 'AI Options:',
+  },
   appendSystemPrompt: {
     type: 'string',
     describe: 'Append a system prompt to the default system prompt',

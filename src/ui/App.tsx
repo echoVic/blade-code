@@ -40,6 +40,7 @@ interface AppProps {
   // 模型选项
   model?: string;
   fallbackModel?: string;
+  systemPrompt?: string;
   appendSystemPrompt?: string;
   agents?: string;
 
@@ -67,10 +68,10 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
   useEffect(() => {
     const loadTheme = async () => {
       try {
-        const configManager = new ConfigManager();
+        const configManager = ConfigManager.getInstance();
         await configManager.initialize();
         const config = configManager.getConfig();
-        const savedTheme = config?.ui?.theme;
+        const savedTheme = config?.theme;
 
         if (savedTheme && themeManager.hasTheme(savedTheme)) {
           themeManager.setTheme(savedTheme);

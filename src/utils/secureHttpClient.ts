@@ -13,7 +13,7 @@ import crypto, { createHash, createHmac } from 'crypto';
 import https from 'https';
 
 export interface SecureHttpClientOptions {
-  baseURL?: string;
+  baseUrl?: string;
   timeout?: number;
   retryAttempts?: number;
   retryDelay?: number;
@@ -33,7 +33,7 @@ export class SecureHttpClient {
 
   constructor(options: SecureHttpClientOptions = {}) {
     this.options = {
-      baseURL: options.baseURL || '',
+      baseUrl: options.baseUrl || '',
       timeout: options.timeout || 30000,
       retryAttempts: options.retryAttempts || 3,
       retryDelay: options.retryDelay || 1000,
@@ -58,7 +58,7 @@ export class SecureHttpClient {
     });
 
     const client = axios.create({
-      baseURL: this.options.baseURL,
+      baseURL: this.options.baseUrl, // axios 使用 baseURL
       timeout: this.options.timeout,
       httpsAgent: agent,
     });

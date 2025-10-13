@@ -8,6 +8,7 @@ import {
   type SlashCommandContext,
 } from '../../slash-commands/index.js';
 import type { TodoItem } from '../../tools/builtin/todo/types.js';
+import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import { useAppState } from '../contexts/AppContext.js';
 import { useSession } from '../contexts/SessionContext.js';
 
@@ -29,7 +30,11 @@ export interface LoopState {
  * 命令处理 Hook
  * 负责命令的执行和状态管理
  */
-export const useCommandHandler = (systemPrompt?: string) => {
+export const useCommandHandler = (
+  replaceSystemPrompt?: string, // --system-prompt (完全替换)
+  appendSystemPrompt?: string, // --append-system-prompt (追加)
+  confirmationHandler?: ConfirmationHandler
+) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [loopState, setLoopState] = useState<LoopState>({
     active: false,
@@ -59,7 +64,46 @@ export const useCommandHandler = (systemPrompt?: string) => {
     }
   });
 
-  // Agent创建函数已准备就绪
+  // 创建并初始化 Agent（共享逻辑）
+  const createAndSetupAgent = useMemoizedFn(async (): Promise<Agent> => {
+    // 清理旧的 Agent 事件监听器
+    if (agentRef.current) {
+      agentRef.current.removeAllListeners();
+    }
+
+    // 创建新 Agent
+    const agent = await Agent.create({
+      systemPrompt: replaceSystemPrompt,
+      appendSystemPrompt: appendSystemPrompt,
+    });
+    agentRef.current = agent;
+
+    // 设置事件监听器
+    agent.on('loopTurnStart', ({ turn, maxTurns }: { turn: number; maxTurns: number }) => {
+      setLoopState({ active: true, turn, maxTurns, currentTool: undefined });
+    });
+    agent.on('toolExecutionStart', ({ tool }: { tool: string }) => {
+      setLoopState((prev) => ({ ...prev, currentTool: tool }));
+    });
+    agent.on('toolExecutionComplete', () => {
+      setLoopState((prev) => ({ ...prev, currentTool: undefined }));
+    });
+    agent.on('taskCompleted', () => {
+      setLoopState({ active: false, turn: 0, maxTurns: 50, currentTool: undefined });
+    });
+    agent.on('taskFailed', () => {
+      setLoopState({ active: false, turn: 0, maxTurns: 50, currentTool: undefined });
+    });
+    agent.on('taskAborted', () => {
+      setLoopState({ active: false, turn: 0, maxTurns: 50, currentTool: undefined });
+    });
+    agent.on('todoUpdate', ({ todos }: { todos: TodoItem[] }) => {
+      appDispatch(appActions.setTodos(todos));
+      appDispatch(appActions.showTodoPanel());
+    });
+
+    return agent;
+  });
 
   // 处理命令提交
   const handleCommandSubmit = useMemoizedFn(
@@ -78,7 +122,7 @@ export const useCommandHandler = (systemPrompt?: string) => {
         if (isSlashCommand(command)) {
           console.log('[DEBUG] 检测到 slash command，执行中...');
 
-          const configManager = new ConfigManager();
+          const configManager = ConfigManager.getInstance();
           await configManager.initialize();
 
           const slashContext: SlashCommandContext = {
@@ -119,56 +163,8 @@ export const useCommandHandler = (systemPrompt?: string) => {
               analysisPrompt.substring(0, 100) + '...'
             );
 
-            // 清理旧的 Agent 事件监听器
-            if (agentRef.current) {
-              agentRef.current.removeAllListeners();
-            }
-
-            // 处理 AI 分析
-            const agent = await Agent.create({ systemPrompt });
-            agentRef.current = agent;
-
-            // 监听 Agent 事件
-            agent.on(
-              'loopTurnStart',
-              ({ turn, maxTurns }: { turn: number; maxTurns: number }) => {
-                setLoopState({ active: true, turn, maxTurns, currentTool: undefined });
-              }
-            );
-            agent.on('toolExecutionStart', ({ tool }: { tool: string }) => {
-              setLoopState((prev) => ({ ...prev, currentTool: tool }));
-            });
-            agent.on('toolExecutionComplete', () => {
-              setLoopState((prev) => ({ ...prev, currentTool: undefined }));
-            });
-            agent.on('taskCompleted', () => {
-              setLoopState({
-                active: false,
-                turn: 0,
-                maxTurns: 50,
-                currentTool: undefined,
-              });
-            });
-            agent.on('taskFailed', () => {
-              setLoopState({
-                active: false,
-                turn: 0,
-                maxTurns: 50,
-                currentTool: undefined,
-              });
-            });
-            agent.on('taskAborted', () => {
-              setLoopState({
-                active: false,
-                turn: 0,
-                maxTurns: 50,
-                currentTool: undefined,
-              });
-            });
-            agent.on('todoUpdate', ({ todos }: { todos: TodoItem[] }) => {
-              appDispatch(appActions.setTodos(todos));
-              appDispatch(appActions.showTodoPanel());
-            });
+            // 创建并设置 Agent
+            const agent = await createAndSetupAgent();
 
             // 创建新的 AbortController
             abortControllerRef.current = new AbortController();
@@ -179,6 +175,7 @@ export const useCommandHandler = (systemPrompt?: string) => {
               sessionId: `session-${Date.now()}`,
               workspaceRoot: process.cwd(),
               signal: abortControllerRef.current.signal,
+              confirmationHandler,
             };
 
             try {
@@ -222,55 +219,8 @@ export const useCommandHandler = (systemPrompt?: string) => {
 
         console.log('[DEBUG] 普通命令，发送给 Agent...');
 
-        // 清理旧的 Agent 事件监听器
-        if (agentRef.current) {
-          agentRef.current.removeAllListeners();
-        }
-
-        const agent = await Agent.create({ systemPrompt });
-        agentRef.current = agent;
-
-        // 监听 Agent 事件
-        agent.on(
-          'loopTurnStart',
-          ({ turn, maxTurns }: { turn: number; maxTurns: number }) => {
-            setLoopState({ active: true, turn, maxTurns, currentTool: undefined });
-          }
-        );
-        agent.on('toolExecutionStart', ({ tool }: { tool: string }) => {
-          setLoopState((prev) => ({ ...prev, currentTool: tool }));
-        });
-        agent.on('toolExecutionComplete', () => {
-          setLoopState((prev) => ({ ...prev, currentTool: undefined }));
-        });
-        agent.on('taskCompleted', () => {
-          setLoopState({
-            active: false,
-            turn: 0,
-            maxTurns: 50,
-            currentTool: undefined,
-          });
-        });
-        agent.on('taskFailed', () => {
-          setLoopState({
-            active: false,
-            turn: 0,
-            maxTurns: 50,
-            currentTool: undefined,
-          });
-        });
-        agent.on('taskAborted', () => {
-          setLoopState({
-            active: false,
-            turn: 0,
-            maxTurns: 50,
-            currentTool: undefined,
-          });
-        });
-        agent.on('todoUpdate', ({ todos }: { todos: TodoItem[] }) => {
-          appDispatch(appActions.setTodos(todos));
-          appDispatch(appActions.showTodoPanel());
-        });
+        // 创建并设置 Agent
+        const agent = await createAndSetupAgent();
 
         // 创建新的 AbortController
         abortControllerRef.current = new AbortController();
@@ -281,6 +231,7 @@ export const useCommandHandler = (systemPrompt?: string) => {
           sessionId: `session-${Date.now()}`,
           workspaceRoot: process.cwd(),
           signal: abortControllerRef.current.signal,
+          confirmationHandler,
         };
         const output = await agent.chat(command, chatContext);
 

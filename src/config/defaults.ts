@@ -11,7 +11,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
 
   // 认证
   apiKey: '',
-  baseURL: 'https://apis.iflow.cn/v1',
+  baseUrl: 'https://apis.iflow.cn/v1',
 
   // 模型
   model: 'qwen3-coder-plus',
@@ -20,6 +20,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
   stream: true,
   topP: 0.9,
   topK: 50,
+  timeout: 30000, // 30秒超时
 
   // UI
   theme: 'GitHub',
@@ -69,13 +70,13 @@ export const DEFAULT_CONFIG: BladeConfig = {
 export const ENV_VAR_MAPPING: Record<string, keyof BladeConfig> = {
   // 认证
   BLADE_API_KEY: 'apiKey',
-  BLADE_API_SECRET: 'apiSecret',
-  BLADE_BASE_URL: 'baseURL',
+  BLADE_BASE_URL: 'baseUrl',
 
   // 模型
   BLADE_MODEL: 'model',
   BLADE_TEMPERATURE: 'temperature',
   BLADE_MAX_TOKENS: 'maxTokens',
+  BLADE_TIMEOUT: 'timeout',
 
   // UI
   BLADE_THEME: 'theme',

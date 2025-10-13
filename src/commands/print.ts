@@ -8,6 +8,7 @@ interface PrintOptions {
   inputFormat?: string;
   model?: string;
   appendSystemPrompt?: string;
+  systemPrompt?: string;
   _?: (string | number)[];
 }
 
@@ -47,6 +48,10 @@ export function printCommand(yargs: Argv) {
         .option('append-system-prompt', {
           describe: 'Append a system prompt to the default system prompt',
           type: 'string',
+        })
+        .option('system-prompt', {
+          describe: 'Replace the default system prompt',
+          type: 'string',
         });
     },
     async (argv: PrintOptions) => {
@@ -57,8 +62,8 @@ export function printCommand(yargs: Argv) {
 
       try {
         const agent = await Agent.create({
-          model: argv.model,
-          systemPrompt: argv.appendSystemPrompt,
+          systemPrompt: argv.systemPrompt,
+          appendSystemPrompt: argv.appendSystemPrompt,
         });
 
         let input = '';

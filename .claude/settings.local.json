@@ -37,7 +37,8 @@
       "Bash(for file in src/ui/App.tsx src/ui/components/ThemeSelector.tsx src/ui/hooks/useAppInitializer.ts src/ui/hooks/useCommandHandler.ts src/config/index.ts src/agent/Agent.ts src/slash-commands/types.ts src/commands/setup-token.ts src/commands/doctor.ts src/commands/config.ts tests/unit/ConfigManager.test.ts tests/integration/system-prompt-integration.test.ts)",
       "Bash(do)",
       "Bash(done)",
-      "Bash(npm test:*)"
+      "Bash(npm test:*)",
+      "Bash(npm run test:integration:*)"
     ],
     "deny": [],
     "ask": [],

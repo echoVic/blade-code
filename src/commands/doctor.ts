@@ -3,8 +3,8 @@
  */
 
 import type { CommandModule } from 'yargs';
-import { ConfigManager } from '../config/ConfigManager.js';
 import type { DoctorOptions } from '../cli/types.js';
+import { ConfigManager } from '../config/ConfigManager.js';
 
 export const doctorCommands: CommandModule<{}, DoctorOptions> = {
   command: 'doctor',
@@ -16,7 +16,7 @@ export const doctorCommands: CommandModule<{}, DoctorOptions> = {
 
     // 检查配置
     try {
-      const configManager = new ConfigManager();
+      const configManager = ConfigManager.getInstance();
       await configManager.initialize();
       console.log('✅ Configuration: OK');
     } catch (error) {

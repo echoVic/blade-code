@@ -8,9 +8,11 @@ import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import * as os from 'os';
 import * as path from 'path';
 import { ConfigManager } from '../config/ConfigManager.js';
+import type { BladeConfig, PermissionConfig } from '../config/types.js';
 import { PromptBuilder } from '../prompts/index.js';
 import { ChatService, type Message } from '../services/ChatService.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
+import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { Tool, ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
@@ -20,7 +22,6 @@ import {
   LoopDetectionService,
 } from './LoopDetectionService.js';
 import type {
-  AgentConfig,
   AgentOptions,
   AgentResponse,
   AgentTask,
@@ -30,10 +31,11 @@ import type {
 } from './types.js';
 
 export class Agent extends EventEmitter {
-  private config: AgentConfig;
+  private config: BladeConfig;
+  private runtimeOptions: AgentOptions;
   private isInitialized = false;
   private activeTask?: AgentTask;
-  private toolRegistry: ToolRegistry;
+  private executionPipeline: ExecutionPipeline;
   private systemPrompt?: string;
   private sessionId: string;
 
@@ -43,72 +45,58 @@ export class Agent extends EventEmitter {
   private promptBuilder!: PromptBuilder;
   private loopDetector!: LoopDetectionService;
 
-  constructor(config: AgentConfig, toolRegistry?: ToolRegistry, sessionId?: string) {
+  constructor(
+    config: BladeConfig,
+    runtimeOptions: AgentOptions = {},
+    executionPipeline?: ExecutionPipeline,
+    sessionId?: string
+  ) {
     super();
     this.config = config;
-    this.toolRegistry = toolRegistry || new ToolRegistry();
+    this.runtimeOptions = runtimeOptions;
+    this.executionPipeline = executionPipeline || this.createDefaultPipeline();
     this.sessionId =
       sessionId || `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   }
 
   /**
-   * 快速创建并初始化 Agent 实例（静态工厂方法）
+   * 创建默认的 ExecutionPipeline
    */
-  static async create(options: AgentOptions = {}): Promise<Agent> {
-    const config = await Agent.buildConfig(options);
-    const agent = new Agent(config);
-    await agent.initialize();
-    return agent;
+  private createDefaultPipeline(): ExecutionPipeline {
+    const registry = new ToolRegistry();
+    // 合并基础权限配置和运行时覆盖
+    const permissions: PermissionConfig = {
+      ...this.config.permissions,
+      ...this.runtimeOptions.permissions,
+    };
+    return new ExecutionPipeline(registry, {
+      permissionConfig: permissions,
+      maxHistorySize: 1000,
+    });
   }
 
   /**
-   * 构建 Agent 配置（私有静态方法）
+   * 快速创建并初始化 Agent 实例（静态工厂方法）
+   * 使用 ConfigManager 单例获取配置
    */
-  private static async buildConfig(options: AgentOptions): Promise<AgentConfig> {
-    // 获取全局配置
-    let globalConfig;
-    try {
-      const configManager = new ConfigManager();
-      await configManager.initialize();
-      globalConfig = configManager.getConfig();
-    } catch (_error) {
-      console.warn('获取全局配置失败，使用默认值');
-      globalConfig = null;
-    }
+  static async create(options: AgentOptions = {}): Promise<Agent> {
+    // 1. 获取 ConfigManager 单例
+    const configManager = ConfigManager.getInstance();
 
-    // 优先级：选项参数 > 环境变量 > 全局配置 > 默认值
-    const apiKey =
-      options.apiKey || process.env.BLADE_API_KEY || globalConfig?.apiKey || '';
+    // 2. 确保已初始化（幂等操作）
+    await configManager.initialize();
 
-    const baseUrl =
-      options.baseUrl || process.env.BLADE_BASE_URL || globalConfig?.baseURL || '';
+    // 3. 获取 BladeConfig（不需要转换）
+    const config = configManager.getConfig();
 
-    const model =
-      options.model || process.env.BLADE_MODEL || globalConfig?.model || 'Qwen3-Coder';
+    // 4. 验证配置
+    configManager.validateConfig(config);
 
-    // 验证必需配置
-    if (!apiKey) {
-      throw new Error('缺少 API 密钥。请通过参数、环境变量或配置文件提供。');
-    }
-
-    if (!baseUrl) {
-      throw new Error('缺少 API 基础 URL。请通过参数、环境变量或配置文件提供。');
-    }
-
-    const temperature = options.temperature ?? globalConfig?.temperature ?? 0.0;
-
-    const maxTokens = options.maxTokens ?? globalConfig?.maxTokens ?? 32000;
-
-    return {
-      chat: {
-        apiKey,
-        baseUrl,
-        model,
-        temperature,
-        maxTokens,
-      },
-      systemPrompt: options.systemPrompt,
-    };
+    // 5. 创建并初始化 Agent
+    // 将 options 作为运行时参数传递
+    const agent = new Agent(config, options);
+    await agent.initialize();
+    return agent;
   }
 
   /**
@@ -129,10 +117,18 @@ export class Agent extends EventEmitter {
       await this.registerBuiltinTools();
 
       // 3. 初始化核心组件
-      this.chatService = new ChatService(this.config.chat);
+      // 从扁平化的 AgentConfig 构建 ChatConfig
+      this.chatService = new ChatService({
+        apiKey: this.config.apiKey,
+        model: this.config.model,
+        baseUrl: this.config.baseUrl,
+        temperature: this.config.temperature,
+        maxTokens: this.config.maxTokens,
+        timeout: this.config.timeout,
+      });
 
       // 4. 初始化执行引擎
-      this.executionEngine = new ExecutionEngine(this.chatService, this.config);
+      this.executionEngine = new ExecutionEngine(this.chatService);
 
       // 5. 初始化循环检测服务
       const loopConfig: LoopDetectionConfig = {
@@ -143,7 +139,9 @@ export class Agent extends EventEmitter {
       this.loopDetector = new LoopDetectionService(loopConfig);
 
       this.isInitialized = true;
-      this.log(`Agent初始化完成，已加载 ${this.toolRegistry.getAll().length} 个工具`);
+      this.log(
+        `Agent初始化完成，已加载 ${this.executionPipeline.getRegistry().getAll().length} 个工具`
+      );
       this.emit('initialized');
     } catch (error) {
       this.error('Agent初始化失败', error);
@@ -247,7 +245,7 @@ export class Agent extends EventEmitter {
       console.log('💬 Processing enhanced chat message...');
 
       // 1. 获取可用工具定义
-      const tools = this.toolRegistry.getFunctionDeclarations();
+      const tools = this.executionPipeline.getRegistry().getFunctionDeclarations();
 
       // 2. 构建消息历史
       // 只在会话第一次时注入完整的 system 消息（环境上下文 + DEFAULT_SYSTEM_PROMPT）
@@ -347,11 +345,7 @@ export class Agent extends EventEmitter {
               turn: turnsCount,
             });
 
-            const tool = this.toolRegistry.get(toolCall.function.name);
-            if (!tool) {
-              throw new Error(`未找到工具: ${toolCall.function.name}`);
-            }
-
+            // 解析工具参数
             const params = JSON.parse(toolCall.function.arguments);
 
             // 智能修复: 如果 todos 参数被错误地序列化为字符串,自动解析
@@ -365,9 +359,18 @@ export class Agent extends EventEmitter {
               }
             }
 
-            const toolInvocation = tool.build(params);
+            // 使用 ExecutionPipeline 执行工具（自动走完6阶段流程）
             const signalToUse = options?.signal || new AbortController().signal;
-            const result = await toolInvocation.execute(signalToUse);
+            const result = await this.executionPipeline.execute(
+              toolCall.function.name,
+              params,
+              {
+                sessionId: this.sessionId,
+                userId: context.userId || 'default',
+                workspaceRoot: context.workspaceRoot || process.cwd(),
+                signal: signalToUse,
+              }
+            );
             allToolResults.push(result);
 
             // 触发工具执行完成事件
@@ -603,7 +606,7 @@ export class Agent extends EventEmitter {
    * 获取可用工具列表
    */
   public getAvailableTools(): Tool[] {
-    return this.toolRegistry ? this.toolRegistry.getAll() : [];
+    return this.executionPipeline ? this.executionPipeline.getRegistry().getAll() : [];
   }
 
   /**
@@ -675,9 +678,15 @@ export class Agent extends EventEmitter {
         },
       });
 
-      // 从配置中获取 CLI 追加的系统提示
-      const cliPrompt = this.config.systemPrompt;
-      this.systemPrompt = await this.promptBuilder.buildString(cliPrompt);
+      // 从运行时选项中获取系统提示
+      const replacePrompt = this.runtimeOptions.systemPrompt; // 完全替换模式
+      const appendPrompt = this.runtimeOptions.appendSystemPrompt; // 追加模式
+
+      // 构建最终的系统提示
+      this.systemPrompt = await this.promptBuilder.buildString(
+        appendPrompt,
+        replacePrompt
+      );
 
       if (this.systemPrompt) {
         this.log('系统提示已加载');
@@ -693,13 +702,6 @@ export class Agent extends EventEmitter {
    */
   public getSystemPrompt(): string | undefined {
     return this.systemPrompt;
-  }
-
-  /**
-   * 设置 CLI 系统提示
-   */
-  public setCliSystemPrompt(prompt: string): void {
-    this.config.systemPrompt = prompt;
   }
 
   /**
@@ -722,19 +724,20 @@ export class Agent extends EventEmitter {
       ) {
         console.log('🔧 Injecting agentFactory into TaskTool...');
         taskTool.setAgentFactory(async () => {
-          // 创建新的子 Agent 实例
-          const subAgent = new Agent(this.config, new ToolRegistry());
+          // 创建新的子 Agent 实例（使用默认 pipeline）
+          const subAgent = new Agent(this.config, {});
           await subAgent.initialize();
           return subAgent;
         });
       }
 
-      this.toolRegistry.registerAll(builtinTools);
+      this.executionPipeline.getRegistry().registerAll(builtinTools);
 
-      const registeredCount = this.toolRegistry.getAll().length;
+      const registeredCount = this.executionPipeline.getRegistry().getAll().length;
       console.log(`✅ Builtin tools registered: ${registeredCount} tools`);
       console.log(
-        `[Tools] ${this.toolRegistry
+        `[Tools] ${this.executionPipeline
+          .getRegistry()
           .getAll()
           .map((t) => t.name)
           .join(', ')}`
