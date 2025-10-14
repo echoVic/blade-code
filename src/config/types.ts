@@ -4,6 +4,11 @@
  */
 
 /**
+ * LLM API 提供商类型
+ */
+export type ProviderType = 'openai-compatible' | 'anthropic';
+
+/**
  * Blade 统一配置接口
  */
 export interface BladeConfig {
@@ -12,6 +17,7 @@ export interface BladeConfig {
   // =====================================
 
   // 认证
+  provider: ProviderType;
   apiKey: string;
   baseUrl: string;
 

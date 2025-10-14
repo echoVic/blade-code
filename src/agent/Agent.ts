@@ -10,7 +10,11 @@ import * as path from 'path';
 import { ConfigManager } from '../config/ConfigManager.js';
 import type { BladeConfig, PermissionConfig } from '../config/types.js';
 import { PromptBuilder } from '../prompts/index.js';
-import { ChatService, type Message } from '../services/ChatService.js';
+import {
+  createChatService,
+  type IChatService,
+} from '../services/ChatServiceInterface.js';
+import { type Message } from '../services/OpenAIChatService.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
@@ -40,7 +44,7 @@ export class Agent extends EventEmitter {
   private sessionId: string;
 
   // 核心组件
-  private chatService!: ChatService;
+  private chatService!: IChatService;
   private executionEngine!: ExecutionEngine;
   private promptBuilder!: PromptBuilder;
   private loopDetector!: LoopDetectionService;
@@ -117,8 +121,9 @@ export class Agent extends EventEmitter {
       await this.registerBuiltinTools();
 
       // 3. 初始化核心组件
-      // 从扁平化的 AgentConfig 构建 ChatConfig
-      this.chatService = new ChatService({
+      // 使用工厂函数创建 ChatService（根据 provider 选择实现）
+      this.chatService = createChatService({
+        provider: this.config.provider,
         apiKey: this.config.apiKey,
         model: this.config.model,
         baseUrl: this.config.baseUrl,
@@ -577,7 +582,7 @@ export class Agent extends EventEmitter {
   /**
    * 获取Chat服务
    */
-  public getChatService(): ChatService {
+  public getChatService(): IChatService {
     return this.chatService;
   }
 

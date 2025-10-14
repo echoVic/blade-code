@@ -49,10 +49,7 @@ export class PromptBuilder {
   /**
    * 快速构建系统提示字符串
    */
-  async buildString(
-    cliPrompt?: string,
-    replacePrompt?: string
-  ): Promise<string> {
+  async buildString(cliPrompt?: string, replacePrompt?: string): Promise<string> {
     const systemPrompt = await this.build(cliPrompt, replacePrompt);
     return systemPrompt.build();
   }

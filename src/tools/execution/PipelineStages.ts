@@ -49,7 +49,10 @@ export class ValidationStage implements PipelineStage {
       const schema = tool.getFunctionDeclaration().parameters;
 
       // 使用工具解析器验证参数
-      const validationResult = ToolResolver.validateParameters(execution.params, schema);
+      const validationResult = ToolResolver.validateParameters(
+        execution.params,
+        schema
+      );
 
       if (!validationResult.valid) {
         const errorMessages = validationResult.errors
@@ -61,7 +64,10 @@ export class ValidationStage implements PipelineStage {
       }
 
       // 规范化参数
-      const normalizedParams = ToolResolver.normalizeParameters(execution.params, schema);
+      const normalizedParams = ToolResolver.normalizeParameters(
+        execution.params,
+        schema
+      );
 
       // 更新执行参数
       execution._internal.normalizedParams = normalizedParams;

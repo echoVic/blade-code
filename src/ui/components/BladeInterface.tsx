@@ -14,6 +14,7 @@ import { Header } from './Header.js';
 import { InputArea } from './InputArea.js';
 import { MessageArea } from './MessageArea.js';
 import { PerformanceMonitor } from './PerformanceMonitor.js';
+import { SetupWizard } from './SetupWizard.js';
 import { ThemeSelector } from './ThemeSelector.js';
 import { TodoPanel } from './TodoPanel.js';
 
@@ -79,7 +80,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const { state: sessionState, addUserMessage, addAssistantMessage } = useSession();
   const { todos, showTodoPanel } = useTodos();
 
-  const { isInitialized, hasApiKey } = useAppInitializer(addAssistantMessage, debug);
+  const { isInitialized, hasApiKey, showSetupWizard, handleSetupComplete } =
+    useAppInitializer(addAssistantMessage, debug);
 
   const { stdout } = useStdout();
   const [terminalWidth, setTerminalWidth] = useState(80);
@@ -116,8 +118,24 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       getNextCommand,
       addToHistory,
       handleAbort,
-      isProcessing
+      isProcessing,
+      showSetupWizard
     );
+
+  // 设置向导取消回调
+  const handleSetupCancel = () => {
+    addAssistantMessage('❌ 设置已取消');
+    addAssistantMessage('Blade 需要 API 配置才能正常工作。');
+    addAssistantMessage('您可以稍后运行 Blade 重新进入设置向导。');
+    process.exit(0); // 退出程序
+  };
+
+  // 如果显示设置向导，渲染 SetupWizard 组件
+  if (showSetupWizard) {
+    return (
+      <SetupWizard onComplete={handleSetupComplete} onCancel={handleSetupCancel} />
+    );
+  }
 
   // 主界面 - 统一显示，不再区分初始化状态
   return (

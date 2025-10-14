@@ -10,6 +10,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
   // =====================================
 
   // 认证
+  provider: 'openai-compatible',
   apiKey: '',
   baseUrl: 'https://apis.iflow.cn/v1',
 
@@ -69,6 +70,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
  */
 export const ENV_VAR_MAPPING: Record<string, keyof BladeConfig> = {
   // 认证
+  BLADE_PROVIDER: 'provider',
   BLADE_API_KEY: 'apiKey',
   BLADE_BASE_URL: 'baseUrl',
 

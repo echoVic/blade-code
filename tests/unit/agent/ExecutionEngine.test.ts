@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExecutionEngine } from '../../../src/agent/ExecutionEngine.js';
 import { ContextManager } from '../../../src/context/ContextManager.js';
-import { ChatService, type Message } from '../../../src/services/ChatService.js';
+import { ChatService, type Message } from '../../../src/services/OpenAIChatService.js';
 
 // Mock 服务
 const mockChatService = {

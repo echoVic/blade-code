@@ -4,7 +4,7 @@
  */
 
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
-import type { Message } from '../services/ChatService.js';
+import type { Message } from '../services/OpenAIChatService.js';
 
 export interface LoopDetectionConfig {
   toolCallThreshold: number; // 工具调用重复次数阈值 (默认5)

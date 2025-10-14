@@ -3,7 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChatService, type Message } from '../../../src/services/ChatService.js';
+import { ChatService, type Message } from '../../../src/services/OpenAIChatService.js';
 
 // Mock fetch
 vi.mock('node:fetch', () => {
