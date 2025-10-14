@@ -1,4 +1,4 @@
-import { Box, useStdout } from 'ink';
+import { Box, useFocusManager, useStdout } from 'ink';
 import React, { useEffect, useState } from 'react';
 import { useAppState, useTodos } from '../contexts/AppContext.js';
 import { useSession } from '../contexts/SessionContext.js';
@@ -118,9 +118,19 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       getNextCommand,
       addToHistory,
       handleAbort,
-      isProcessing,
-      showSetupWizard
+      isProcessing
     );
+
+  // 焦点管理：根据 showSetupWizard 状态切换焦点
+  // 注意：SetupWizard 不是可聚焦组件，它内部的步骤会自己管理焦点
+  const { focus } = useFocusManager();
+  useEffect(() => {
+    if (!showSetupWizard) {
+      // 只在回到主界面时才设置焦点
+      focus('main-input');
+    }
+    // SetupWizard 显示时，由 SetupWizard 自己管理焦点
+  }, [showSetupWizard, focus]);
 
   // 设置向导取消回调
   const handleSetupCancel = () => {

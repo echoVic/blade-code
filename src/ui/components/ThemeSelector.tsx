@@ -2,7 +2,7 @@
  * ThemeSelector - 交互式主题选择器组件
  * 类似 Claude Code 的交互式可视化选择器
  */
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useFocus, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import React, { useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
@@ -193,12 +193,16 @@ export const ThemeSelector: React.FC = () => {
     }
   };
 
+  // 使用 useFocus 管理焦点，主题选择器显示时自动获取焦点
+  const { isFocused } = useFocus({ autoFocus: true });
+
   // 监听 Esc 键退出
+  // 只有在聚焦且未处理任务时才响应
   useInput((input, key) => {
-    if (key.escape && !isProcessing) {
+    if (key.escape) {
       dispatch(actions.hideThemeSelector());
     }
-  });
+  }, { isActive: isFocused && !isProcessing });
 
   // 自定义主题项渲染器
   const renderThemeItem = (props: { isSelected?: boolean; label: string }) => {
