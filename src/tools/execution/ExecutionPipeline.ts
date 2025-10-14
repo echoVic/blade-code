@@ -15,11 +15,10 @@ import {
   ExecutionStage,
   FormattingStage,
   PermissionStage,
-  ValidationStage,
 } from './PipelineStages.js';
 
 /**
- * 6阶段执行管道
+ * 5阶段执行管道
  * 实现Claude Code的执行管道架构
  */
 export class ExecutionPipeline extends EventEmitter {
@@ -42,11 +41,10 @@ export class ExecutionPipeline extends EventEmitter {
       deny: [],
     };
 
-    // 初始化6个执行阶段
+    // 初始化5个执行阶段
     this.stages = [
       new DiscoveryStage(this.registry), // 工具发现
-      new ValidationStage(), // 参数验证
-      new PermissionStage(permissionConfig), // 权限检查
+      new PermissionStage(permissionConfig), // 权限检查（含 Zod 验证和默认值处理）
       new ConfirmationStage(), // 用户确认
       new ExecutionStage(), // 实际执行
       new FormattingStage(), // 结果格式化
