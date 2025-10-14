@@ -5,7 +5,6 @@ import {
 } from '../../config/PermissionChecker.js';
 import type { PermissionConfig } from '../../config/types.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
-import { ToolResolver } from '../registry/ToolResolver.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
 
 /**
@@ -31,55 +30,10 @@ export class DiscoveryStage implements PipelineStage {
 }
 
 /**
- * 参数验证阶段
- * 负责验证工具参数的正确性
- */
-export class ValidationStage implements PipelineStage {
-  readonly name = 'validation';
-
-  async process(execution: ToolExecution): Promise<void> {
-    const tool = execution._internal.tool;
-    if (!tool) {
-      execution.abort('工具发现阶段失败，无法进行参数验证');
-      return;
-    }
-
-    try {
-      // 获取工具的 JSON Schema
-      const schema = tool.getFunctionDeclaration().parameters;
-
-      // 使用工具解析器验证参数
-      const validationResult = ToolResolver.validateParameters(
-        execution.params,
-        schema
-      );
-
-      if (!validationResult.valid) {
-        const errorMessages = validationResult.errors
-          .map((error) => `${error.path}: ${error.message}`)
-          .join('; ');
-
-        execution.abort(`参数验证失败: ${errorMessages}`);
-        return;
-      }
-
-      // 规范化参数
-      const normalizedParams = ToolResolver.normalizeParameters(
-        execution.params,
-        schema
-      );
-
-      // 更新执行参数
-      execution._internal.normalizedParams = normalizedParams;
-    } catch (error) {
-      execution.abort(`参数验证出错: ${(error as Error).message}`);
-    }
-  }
-}
-
-/**
  * 权限检查阶段
- * 负责检查工具执行权限
+ * 负责检查工具执行权限并进行 Zod 参数验证
+ *
+ * 注意：参数验证(包括默认值处理)由 tool.build() 中的 Zod schema 完成
  */
 export class PermissionStage implements PipelineStage {
   readonly name = 'permission';

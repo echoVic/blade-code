@@ -1,12 +1,12 @@
 # 执行管道架构
 
-Blade 实现了一个 6 阶段的工具执行管道（ExecutionPipeline），参考 Claude Code 的设计理念，提供完整的工具执行生命周期管理。
+Blade 实现了一个 5 阶段的工具执行管道（ExecutionPipeline），参考 Claude Code 的设计理念，提供完整的工具执行生命周期管理。
 
 ## 概述
 
-ExecutionPipeline 负责协调工具的发现、验证、权限检查、用户确认、执行和结果格式化。所有工具调用都必须通过这个管道，确保安全性和一致性。
+ExecutionPipeline 负责协调工具的发现、权限检查(含Zod验证和默认值处理)、用户确认、执行和结果格式化。所有工具调用都必须通过这个管道，确保安全性和一致性。
 
-## 6 阶段架构
+## 5 阶段架构
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -21,14 +21,8 @@ ExecutionPipeline 负责协调工具的发现、验证、权限检查、用户�
         └────────────┬────────────────────────────┘
                      ↓
         ┌─────────────────────────────────────────┐
-        │  2. Validation Stage (参数验证)         │
-        │  - 验证必需参数是否存在                  │
-        │  - 检查参数类型                          │
-        │  - 应用参数转换                          │
-        └────────────┬────────────────────────────┘
-                     ↓
-        ┌─────────────────────────────────────────┐
-        │  3. Permission Stage (权限检查)         │
+        │  2. Permission Stage (权限检查+Zod验证)  │
+        │  - tool.build() 执行 Zod 验证和默认值    │
         │  - PermissionChecker.check()            │
         │  - 检查 deny 规则 → 直接拒绝             │
         │  - 检查 allow 规则 → 直接通过            │
@@ -36,7 +30,7 @@ ExecutionPipeline 负责协调工具的发现、验证、权限检查、用户�
         └────────────┬────────────────────────────┘
                      ↓
         ┌─────────────────────────────────────────┐
-        │  4. Confirmation Stage (用户确认)       │
+        │  3. Confirmation Stage (用户确认)       │
         │  - 如果需要确认，暂停执行                │
         │  - 调用 ConfirmationHandler             │
         │  - 等待用户响应                          │
@@ -44,14 +38,14 @@ ExecutionPipeline 负责协调工具的发现、验证、权限检查、用户�
         └────────────┬────────────────────────────┘
                      ↓
         ┌─────────────────────────────────────────┐
-        │  5. Execution Stage (实际执行)          │
+        │  4. Execution Stage (实际执行)          │
         │  - 调用工具的 execute() 方法             │
         │  - 捕获执行异常                          │
         │  - 处理执行超时                          │
         └────────────┬────────────────────────────┘
                      ↓
         ┌─────────────────────────────────────────┐
-        │  6. Formatting Stage (结果格式化)       │
+        │  5. Formatting Stage (结果格式化)       │
         │  - 格式化工具结果                        │
         │  - 分离 LLM 内容和显示内容               │
         │  - 构建最终 ToolResult                   │
@@ -157,88 +151,79 @@ export class DiscoveryStage implements PipelineStage {
 - 工具不存在
 - 工具已被禁用
 
-### 2. Validation Stage (参数验证)
+### 2. Permission Stage (权限检查 + Zod 验证)
 
-**职责:** 验证和转换工具参数
+**职责:** 执行 Zod 参数验证 + 检查工具执行权限
 
-```typescript
-export class ValidationStage implements PipelineStage {
-  readonly name = 'validation';
-
-  async process(execution: ToolExecution): Promise<void> {
-    const tool = (execution as any).tool;
-    const descriptor = tool.descriptor;
-
-    // 验证必需参数
-    for (const param of descriptor.parameters) {
-      if (param.required && !(param.name in execution.params)) {
-        execution.abort({
-          type: ToolErrorType.INVALID_PARAMS,
-          message: `缺少必需参数: ${param.name}`,
-        });
-        return;
-      }
-    }
-
-    // 构建工具调用
-    const invocation = tool.build(execution.params);
-    (execution as any).invocation = invocation;
-  }
-}
-```
-
-**验证内容:**
-- 必需参数检查
-- 参数类型验证
-- 参数值范围检查
-- 参数转换和默认值
-
-### 3. Permission Stage (权限检查)
-
-**职责:** 检查工具执行权限
+> **重要:** 此阶段通过调用 `tool.build()` 执行 **Zod schema 验证**,这是参数验证的唯一验证点。
 
 ```typescript
 export class PermissionStage implements PipelineStage {
   readonly name = 'permission';
+  private permissionChecker: PermissionChecker;
 
-  constructor(private permissionConfig: PermissionConfig) {}
+  constructor(permissionConfig: PermissionConfig) {
+    this.permissionChecker = new PermissionChecker(permissionConfig);
+  }
 
   async process(execution: ToolExecution): Promise<void> {
-    const checker = new PermissionChecker(this.permissionConfig);
+    const tool = execution._internal.tool;
 
-    const descriptor: ToolInvocationDescriptor = {
-      toolName: execution.toolName,
-      params: execution.params as Record<string, unknown>,
-    };
+    try {
+      // ✅ 创建工具调用实例 - 这里执行 Zod 验证!
+      const invocation = tool.build(execution.params);
 
-    const result = checker.check(descriptor);
+      // 检查受影响的路径
+      const affectedPaths = invocation.getAffectedPaths();
 
-    // 保存检查结果
-    (execution as any).permissionCheckResult = result;
+      // 构建工具调用描述符
+      const descriptor: ToolInvocationDescriptor = {
+        toolName: tool.name,
+        params: execution.params,
+        affectedPaths,
+      };
 
-    if (result.result === PermissionResult.DENY) {
-      execution.abort({
-        type: ToolErrorType.PERMISSION_DENIED,
-        message: result.reason || '权限被拒绝',
-      });
-      return;
-    }
+      // 使用 PermissionChecker 进行权限检查
+      const checkResult = this.permissionChecker.check(descriptor);
 
-    if (result.result === PermissionResult.ASK) {
-      // 标记需要用户确认
-      (execution as any).needsConfirmation = true;
-      (execution as any).confirmationReason = result.reason;
+      // 根据检查结果采取行动
+      switch (checkResult.result) {
+        case PermissionResult.DENY:
+          execution.abort(checkResult.reason || '权限被拒绝');
+          return;
+
+        case PermissionResult.ASK:
+          execution._internal.needsConfirmation = true;
+          execution._internal.confirmationReason = checkResult.reason;
+          break;
+
+        case PermissionResult.ALLOW:
+          break;
+      }
+
+      // 将调用实例附加到执行上下文
+      execution._internal.invocation = invocation;
+      execution._internal.permissionCheckResult = checkResult;
+    } catch (error) {
+      // Zod 验证失败或其他错误
+      execution.abort(`权限检查出错: ${(error as Error).message}`);
     }
   }
 }
 ```
+
+**执行流程:**
+1. **Zod 验证** - `tool.build()` 调用 Zod schema 验证参数
+2. **获取影响路径** - `invocation.getAffectedPaths()`
+3. **权限检查** - `permissionChecker.check()`
+4. **决策** - DENY/ASK/ALLOW
 
 **权限级别:**
 - `DENY` - 直接中止执行
 - `ALLOW` - 继续下一阶段
 - `ASK` - 标记需要确认
 
-### 4. Confirmation Stage (用户确认)
+### 3. Confirmation Stage (用户确认)
 
 **职责:** 请求用户确认
 
@@ -286,7 +271,7 @@ export class ConfirmationStage implements PipelineStage {
 4. 等待用户响应
 5. 批准 → 继续执行 / 拒绝 → 中止
 
-### 5. Execution Stage (实际执行)
+### 4. Execution Stage (实际执行)
 
 **职责:** 执行工具逻辑
 
@@ -322,7 +307,7 @@ export class ExecutionStage implements PipelineStage {
 - 中断信号（AbortSignal）
 - 资源不可用
 
-### 6. Formatting Stage (结果格式化)
+### 5. Formatting Stage (结果格式化)
 
 **职责:** 格式化工具执行结果
 
@@ -496,7 +481,6 @@ class CustomStage implements PipelineStage {
 const pipeline = new ExecutionPipeline(registry, {
   customStages: [
     new DiscoveryStage(registry),
-    new ValidationStage(),
     new CustomStage(), // 插入自定义阶段
     new PermissionStage(permissionConfig),
     new ConfirmationStage(),
@@ -542,13 +526,12 @@ class CustomPermissionStage implements PipelineStage {
 | 阶段 | 平均耗时 | 说明 |
 |------|---------|------|
 | Discovery | 1-2ms | 工具查找 |
-| Validation | 2-5ms | 参数验证 |
-| Permission | 3-10ms | 权限检查（含 glob 匹配） |
+| Permission | 3-10ms | Zod验证(含默认值处理) + 权限检查（含 glob 匹配） |
 | Confirmation | 0ms 或等待用户 | 如需确认则等待 |
 | Execution | 取决于工具 | 实际工具执行时间 |
 | Formatting | 1-3ms | 结果格式化 |
 
-**总开销:** ~10-20ms (不含 Confirmation 和 Execution)
+**总开销:** ~5-15ms (不含 Confirmation 和 Execution)
 
 ### 优化建议
 

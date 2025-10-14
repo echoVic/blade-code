@@ -342,17 +342,16 @@ export class PermissionChecker {
 
 ### 集成到执行管道
 
-权限检查在第 3 阶段（PermissionStage）执行：
+权限检查在第 2 阶段（PermissionStage）执行：
 
 ```
 ExecutionPipeline.execute()
   ↓
-1. DiscoveryStage    - 查找工具
-2. ValidationStage   - 验证参数
-3. PermissionStage   ← 检查权限 (PermissionChecker.check)
-4. ConfirmationStage - 如果需要确认，请求用户
-5. ExecutionStage    - 执行工具
-6. FormattingStage   - 格式化结果
+1. DiscoveryStage      - 查找工具
+2. PermissionStage     ← Zod验证(含默认值处理) + 检查权限 (PermissionChecker.check)
+3. ConfirmationStage   - 如果需要确认，请求用户
+4. ExecutionStage      - 执行工具
+5. FormattingStage     - 格式化结果
 ```
 
 ### 工具调用签名格式
@@ -458,4 +457,4 @@ blade config get permissions
 
 - [配置系统文档](./config-system.md) - 完整的配置系统说明
 - [用户确认流程](./architecture/confirmation-flow.md) - 了解用户确认机制
-- [执行管道架构](./architecture/execution-pipeline.md) - 6 阶段执行管道详解
+- [执行管道架构](./architecture/execution-pipeline.md) - 5 阶段执行管道详解

@@ -103,8 +103,8 @@ Root (blade-code)
   - 支持 allow/ask/deny 规则
   - 支持精确匹配、通配符、Glob 模式
   - 集成在执行管道的第 3 阶段
-- **ExecutionPipeline** ([src/tools/execution/ExecutionPipeline.ts](src/tools/execution/ExecutionPipeline.ts)): 6 阶段执行管道
-  - Discovery → Validation → Permission → Confirmation → Execution → Formatting
+- **ExecutionPipeline** ([src/tools/execution/ExecutionPipeline.ts](src/tools/execution/ExecutionPipeline.ts)): 5 阶段执行管道
+  - Discovery → Permission (Zod验证+默认值) → Confirmation → Execution → Formatting
   - 事件驱动架构，支持监听各阶段事件
   - 自动记录执行历史
 - **PromptBuilder** ([src/prompts/](src/prompts/)): 提示模板管理和构建

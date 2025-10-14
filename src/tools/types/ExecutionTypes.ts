@@ -42,10 +42,7 @@ export interface ToolExecutionInternalState {
   // DiscoveryStage 设置
   tool?: any;
 
-  // ValidationStage 设置
-  normalizedParams?: Record<string, unknown>;
-
-  // PermissionStage 设置
+  // PermissionStage 设置 (含 Zod 验证和默认值处理)
   invocation?: any;
   permissionCheckResult?: any;
   needsConfirmation?: boolean;
