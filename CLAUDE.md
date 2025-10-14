@@ -244,6 +244,79 @@ rm -rf dist && bun build src/blade.tsx \
   - `ink-progress-bar` - 进度条
   - `ink-gradient` / `ink-big-text` - 视觉效果
 
+### 焦点管理系统 (Focus Management)
+
+Blade 使用 Ink 官方的 **useFocus** 和 **useFocusManager** hooks 实现两层焦点管理架构，确保多个输入组件之间不会冲突。
+
+#### 架构设计：两层焦点管理
+
+**第一层：应用级焦点管理（BladeInterface）**
+
+在 [BladeInterface.tsx](src/ui/components/BladeInterface.tsx:125-132) 中，使用 `useFocusManager` 管理主界面和设置向导之间的焦点切换：
+
+```typescript
+const { focus } = useFocusManager();
+
+useEffect(() => {
+  if (showSetupWizard) {
+    focus('setup-wizard');  // 显示设置向导时，焦点转移到向导
+  } else {
+    focus('main-input');    // 主界面时，焦点在主输入框
+  }
+}, [showSetupWizard, focus]);
+```
+
+**第二层：组件级焦点管理（SetupWizard）**
+
+在 [SetupWizard.tsx](src/ui/components/SetupWizard.tsx:290-303) 中，使用 `useFocusManager` 管理步骤之间的焦点：
+
+```typescript
+const { isFocused } = useFocus({ id: 'setup-wizard' });
+const { focus } = useFocusManager();
+
+useEffect(() => {
+  if (!isFocused) return; // 只在向导有焦点时才管理内部步骤
+
+  if (currentStep === 'provider') {
+    focus('provider-step');
+  } else if (currentStep === 'confirm') {
+    focus('confirm-step');
+  }
+  // TextInput 步骤不调用 focus()，让 TextInput 自然获得键盘控制
+}, [currentStep, isFocused, focus]);
+```
+
+#### 核心原则
+
+1. **显式优于隐式** - 使用 `focus(id)` 显式控制焦点，而非依赖 `autoFocus`
+2. **中心化管理** - 焦点切换逻辑集中在两个层级
+3. **层级隔离** - 子组件焦点只在父组件有焦点时才生效
+4. **特殊处理 TextInput** - TextInput 步骤不使用焦点，让其独占键盘输入
+5. **Agent 执行时允许输入** - 新输入进入队列，而非禁用焦点
+
+#### 焦点 ID 映射表
+
+| 组件 | 焦点 ID | 说明 |
+|-----|---------|------|
+| 主输入框 | `main-input` | 默认焦点 |
+| 设置向导 | `setup-wizard` | 向导容器 |
+| Provider 选择 | `provider-step` | SelectInput 步骤 |
+| 确认步骤 | `confirm-step` | Y/N 输入步骤 |
+| TextInput 步骤 | 无 | 不使用焦点，独占键盘 |
+
+#### 最佳实践
+
+**✅ 推荐：**
+1. 所有可聚焦组件使用显式 `id`：`useFocus({ id: 'unique-id' })`
+2. 使用 `useFocusManager.focus(id)` 显式控制焦点转移
+3. 所有 `useInput` 必须添加 `{ isActive: isFocused }`
+4. TextInput 组件不使用 `useFocus`（支持粘贴功能）
+
+**❌ 避免：**
+1. ❌ 不要依赖 `autoFocus`，使用显式 `focus(id)`
+2. ❌ 不要在 TextInput 步骤调用 `focus()`
+3. ❌ 不要使用 `useFocusManager.disableFocus()` 阻止输入
+
 ## Code Style Guidelines
 
 遵循 Biome 配置的代码风格：

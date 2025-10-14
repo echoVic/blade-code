@@ -9,10 +9,10 @@
  * Step 5: 确认配置
  */
 
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useFocus, useFocusManager, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import type { ProviderType } from '../../config/types.js';
 import { themeManager } from '../themes/ThemeManager.js';
@@ -31,6 +31,241 @@ interface SetupConfig {
   model: string;
 }
 
+// ========================================
+// 步骤组件：Provider 选择
+// ========================================
+interface ProviderStepProps {
+  onSelect: (provider: ProviderType) => void;
+  onCancel: () => void;
+}
+
+const ProviderStep: React.FC<ProviderStepProps> = ({ onSelect, onCancel }) => {
+  const theme = themeManager.getTheme();
+  const { isFocused } = useFocus({ id: 'provider-step' });
+
+  useInput(
+    (_input, key) => {
+      if (key.escape) {
+        onCancel();
+      }
+    },
+    { isActive: isFocused }
+  );
+
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box marginBottom={1}>
+        <Text bold color={theme.colors.info}>
+          📡 Step 1: 选择 API 提供商
+        </Text>
+      </Box>
+      <Box marginBottom={1}>
+        <Text color={theme.colors.text.secondary}>
+          根据您使用的 LLM 服务选择对应的 API 类型
+        </Text>
+      </Box>
+      <Box marginBottom={1}>
+        <SelectInput
+          items={[
+            { label: '⚡ OpenAI Compatible - 兼容 OpenAI API 的服务 (千问/豆包/DeepSeek等)', value: 'openai-compatible' },
+            { label: '🤖 Anthropic Claude API - Claude 官方 API', value: 'anthropic' },
+          ]}
+          onSelect={(item) => onSelect(item.value as ProviderType)}
+        />
+      </Box>
+    </Box>
+  );
+};
+
+// ========================================
+// 步骤组件：文本输入（Base URL / API Key / Model）
+// ========================================
+interface TextInputStepProps {
+  stepNumber: number;
+  icon: string;
+  title: string;
+  description: string;
+  hint?: string;
+  examples?: string[];
+  value: string;
+  placeholder: string;
+  mask?: string;
+  previousValue?: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+}
+
+const TextInputStep: React.FC<TextInputStepProps> = ({
+  stepNumber,
+  icon,
+  title,
+  description,
+  hint,
+  examples,
+  value,
+  placeholder,
+  mask,
+  previousValue,
+  onChange,
+  onSubmit,
+}) => {
+  const theme = themeManager.getTheme();
+
+  // TextInput 步骤不使用 useFocus，让 TextInput 自己处理键盘输入
+  // 这样 Ctrl+V 粘贴等功能才能正常工作
+
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box marginBottom={1}>
+        <Text bold color={theme.colors.info}>
+          {icon} Step {stepNumber}: {title}
+        </Text>
+      </Box>
+      <Box marginBottom={1}>
+        <Text color={theme.colors.text.secondary}>
+          {description}
+        </Text>
+      </Box>
+      {previousValue && (
+        <Box marginBottom={1}>
+          <Text color={theme.colors.success}>
+            ✓ {previousValue}
+          </Text>
+        </Box>
+      )}
+      {hint && (
+        <Box marginBottom={1}>
+          <Text color={theme.colors.text.muted}>
+            {hint}
+          </Text>
+        </Box>
+      )}
+      {examples && examples.length > 0 && (
+        <>
+          <Box marginBottom={1}>
+            <Text color={theme.colors.text.muted}>
+              常见示例：
+            </Text>
+          </Box>
+          <Box marginBottom={1} paddingLeft={2}>
+            <Text color={theme.colors.text.muted}>
+              {examples.join('\n')}
+            </Text>
+          </Box>
+        </>
+      )}
+      <Box>
+        <Text color={theme.colors.primary}>▶ </Text>
+        <TextInput
+          value={value}
+          onChange={onChange}
+          onSubmit={onSubmit}
+          placeholder={placeholder}
+          mask={mask}
+        />
+      </Box>
+    </Box>
+  );
+};
+
+// ========================================
+// 步骤组件：确认配置
+// ========================================
+interface ConfirmStepProps {
+  config: SetupConfig;
+  isSaving: boolean;
+  onConfirm: () => void;
+  onBack: () => void;
+  onCancel: () => void;
+}
+
+const ConfirmStep: React.FC<ConfirmStepProps> = ({
+  config,
+  isSaving,
+  onConfirm,
+  onBack,
+  onCancel,
+}) => {
+  const theme = themeManager.getTheme();
+  const { isFocused } = useFocus({ id: 'confirm-step' });
+
+  useInput(
+    (input, key) => {
+      if (isSaving) return;
+
+      if (input === 'y' || input === 'Y') {
+        onConfirm();
+      } else if (input === 'n' || input === 'N') {
+        onBack();
+      } else if (key.escape) {
+        onCancel();
+      }
+    },
+    { isActive: isFocused && !isSaving }
+  );
+
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box marginBottom={1}>
+        <Text bold color={theme.colors.success}>
+          ✅ Step 5: 确认配置
+        </Text>
+      </Box>
+
+      <Box marginBottom={1}>
+        <Text color={theme.colors.text.secondary}>
+          请确认以下配置信息：
+        </Text>
+      </Box>
+
+      <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
+        <Box marginBottom={1}>
+          <Text color={theme.colors.text.muted}>Provider: </Text>
+          <Text bold color={theme.colors.info}>
+            {config.provider === 'openai-compatible' ? '⚡ OpenAI Compatible' : '🤖 Anthropic'}
+          </Text>
+        </Box>
+
+        <Box marginBottom={1}>
+          <Text color={theme.colors.text.muted}>Base URL: </Text>
+          <Text bold color={theme.colors.success}>
+            {config.baseUrl}
+          </Text>
+        </Box>
+
+        <Box marginBottom={1}>
+          <Text color={theme.colors.text.muted}>API Key: </Text>
+          <Text bold color={theme.colors.warning}>
+            {config.apiKey?.slice(0, 8)}{'*'.repeat(Math.min(32, (config.apiKey?.length || 0) - 8))}
+          </Text>
+        </Box>
+
+        <Box>
+          <Text color={theme.colors.text.muted}>Model: </Text>
+          <Text bold color={theme.colors.info}>
+            {config.model}
+          </Text>
+        </Box>
+      </Box>
+
+      {!isSaving && (
+        <Box marginTop={1}>
+          <Text color={theme.colors.primary}>
+            确认保存配置？ [<Text bold color={theme.colors.success}>Y</Text>/
+            <Text bold color={theme.colors.error}>n</Text>]
+          </Text>
+        </Box>
+      )}
+
+      {isSaving && (
+        <Box>
+          <Text color={theme.colors.warning}>⏳ 正在保存配置到 ~/.blade/config.json...</Text>
+        </Box>
+      )}
+    </Box>
+  );
+};
+
 export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }) => {
   const theme = themeManager.getTheme();
 
@@ -45,12 +280,24 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 焦点管理：SetupWizard 不需要自己有焦点，只负责管理子步骤的焦点
+  const { focus } = useFocusManager();
+
+  // 根据当前步骤切换焦点
+  useEffect(() => {
+    if (currentStep === 'provider') {
+      focus('provider-step');
+    } else if (currentStep === 'confirm') {
+      focus('confirm-step');
+    }
+    // baseUrl、apiKey、model 步骤不调用 focus()，让 TextInput 自然获得键盘控制权
+  }, [currentStep, focus]);
+
   // ========================================
   // 步骤处理函数
   // ========================================
 
-  const handleProviderSelect = (item: { value: string }) => {
-    const provider = item.value as ProviderType;
+  const handleProviderSelect = (provider: ProviderType) => {
     setConfig({ ...config, provider });
     setCurrentStep('baseUrl');
   };
@@ -144,32 +391,6 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
     }
   };
 
-  // 确认步骤的键盘处理
-  useInput(
-    (input, key) => {
-      if (currentStep !== 'confirm' || isSaving) return;
-
-      if (input === 'y' || input === 'Y') {
-        handleConfirm();
-      } else if (input === 'n' || input === 'N') {
-        handleBack();
-      } else if (key.escape) {
-        onCancel();
-      }
-    },
-    { isActive: currentStep === 'confirm' && !isSaving }
-  );
-
-  // ESC 退出 (仅在 provider 选择步骤启用，避免与 TextInput 冲突)
-  useInput(
-    (_input, key) => {
-      if (key.escape) {
-        onCancel();
-      }
-    },
-    { isActive: currentStep === 'provider' && !isSaving }
-  );
-
   // ========================================
   // 渲染
   // ========================================
@@ -221,201 +442,76 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
 
       {/* Provider 选择 */}
       {currentStep === 'provider' && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Box marginBottom={1}>
-            <Text bold color={theme.colors.info}>
-              📡 Step 1: 选择 API 提供商
-            </Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text color={theme.colors.text.secondary}>
-              根据您使用的 LLM 服务选择对应的 API 类型
-            </Text>
-          </Box>
-          <Box marginBottom={1}>
-            <SelectInput
-              items={[
-                { label: '🔵 OpenAI Compatible - 兼容 OpenAI API 的服务 (千问/豆包/DeepSeek等)', value: 'openai-compatible' },
-                { label: '🟣 Anthropic Claude API - Claude 官方 API', value: 'anthropic' },
-              ]}
-              onSelect={handleProviderSelect}
-            />
-          </Box>
-        </Box>
+        <ProviderStep onSelect={handleProviderSelect} onCancel={onCancel} />
       )}
 
       {/* Base URL 输入 */}
       {currentStep === 'baseUrl' && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Box marginBottom={1}>
-            <Text bold color={theme.colors.info}>
-              🌐 Step 2: 配置 Base URL
-            </Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text color={theme.colors.text.secondary}>
-              输入您的 API 端点地址（完整的 URL 包含协议）
-            </Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text color={theme.colors.text.muted}>
-              常见示例：
-            </Text>
-          </Box>
-          <Box marginBottom={1} paddingLeft={2}>
-            <Text color={theme.colors.text.muted}>
-              • OpenAI: https://api.openai.com/v1{'\n'}
-              • 千问: https://dashscope.aliyuncs.com/compatible-mode/v1{'\n'}
-              • 豆包: https://ark.cn-beijing.volces.com/api/v3{'\n'}
-              • DeepSeek: https://api.deepseek.com/v1
-            </Text>
-          </Box>
-          <Box>
-            <Text color={theme.colors.primary}>▶ </Text>
-            <TextInput
-              value={inputValue}
-              onChange={setInputValue}
-              onSubmit={handleBaseUrlSubmit}
-              placeholder="https://api.example.com/v1"
-            />
-          </Box>
-        </Box>
+        <TextInputStep
+          stepNumber={2}
+          icon="🌐"
+          title="配置 Base URL"
+          description="输入您的 API 端点地址（完整的 URL 包含协议）"
+          examples={[
+            '• OpenAI: https://api.openai.com/v1',
+            '• 千问: https://dashscope.aliyuncs.com/compatible-mode/v1',
+            '• 豆包: https://ark.cn-beijing.volces.com/api/v3',
+            '• DeepSeek: https://api.deepseek.com/v1',
+          ]}
+          value={inputValue}
+          placeholder="https://api.example.com/v1"
+          onChange={setInputValue}
+          onSubmit={handleBaseUrlSubmit}
+        />
       )}
 
       {/* API Key 输入 */}
       {currentStep === 'apiKey' && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Box marginBottom={1}>
-            <Text bold color={theme.colors.info}>
-              🔑 Step 3: 输入 API Key
-            </Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text color={theme.colors.text.secondary}>
-              您的 API 密钥将被安全存储在 ~/.blade/config.json (权限 600)
-            </Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text color={theme.colors.success}>
-              ✓ 当前 Base URL: {config.baseUrl}
-            </Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text color={theme.colors.text.muted}>
-              💡 提示: 输入时字符会被隐藏，支持粘贴 (Ctrl+V / Cmd+V)
-            </Text>
-          </Box>
-          <Box>
-            <Text color={theme.colors.primary}>▶ </Text>
-            <TextInput
-              value={inputValue}
-              onChange={setInputValue}
-              onSubmit={handleApiKeySubmit}
-              placeholder="sk-..."
-              mask="*"
-            />
-          </Box>
-        </Box>
+        <TextInputStep
+          stepNumber={3}
+          icon="🔑"
+          title="输入 API Key"
+          description="您的 API 密钥将被安全存储在 ~/.blade/config.json (权限 600)"
+          hint="💡 提示: 输入时字符会被隐藏，支持粘贴 (Ctrl+V / Cmd+V)"
+          previousValue={config.baseUrl ? `✓ 当前 Base URL: ${config.baseUrl}` : undefined}
+          value={inputValue}
+          placeholder="sk-..."
+          mask="*"
+          onChange={setInputValue}
+          onSubmit={handleApiKeySubmit}
+        />
       )}
 
       {/* Model 输入 */}
       {currentStep === 'model' && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Box marginBottom={1}>
-            <Text bold color={theme.colors.info}>
-              🤖 Step 4: 选择模型
-            </Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text color={theme.colors.text.secondary}>
-              输入您想使用的模型名称（请参考您的 API 提供商文档）
-            </Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text color={theme.colors.text.muted}>
-              常见模型示例：
-            </Text>
-          </Box>
-          <Box marginBottom={1} paddingLeft={2}>
-            <Text color={theme.colors.text.muted}>
-              • OpenAI: gpt-4, gpt-4-turbo, gpt-3.5-turbo{'\n'}
-              • Claude: claude-3-5-sonnet-20241022, claude-3-opus{'\n'}
-              • 千问: qwen-max, qwen-plus, qwen-turbo{'\n'}
-              • DeepSeek: deepseek-chat, deepseek-coder
-            </Text>
-          </Box>
-          <Box>
-            <Text color={theme.colors.primary}>▶ </Text>
-            <TextInput
-              value={inputValue}
-              onChange={setInputValue}
-              onSubmit={handleModelSubmit}
-              placeholder="例如: gpt-4"
-            />
-          </Box>
-        </Box>
+        <TextInputStep
+          stepNumber={4}
+          icon="🤖"
+          title="选择模型"
+          description="输入您想使用的模型名称（请参考您的 API 提供商文档）"
+          examples={[
+            '• OpenAI: gpt-5, gpt-5-mini, gpt-5-nano',
+            '• Claude: claude-sonnet-4.5, claude-opus-4.1',
+            '• 千问: qwen3-max, qwen3-235b, qwen3-32b',
+            '• DeepSeek: deepseek-v3.1, deepseek-r1-0528',
+            '• 豆包: doubao-seed-1.6, doubao-seed-1.6-flash',
+          ]}
+          value={inputValue}
+          placeholder="例如: gpt-5"
+          onChange={setInputValue}
+          onSubmit={handleModelSubmit}
+        />
       )}
 
       {/* 确认配置 */}
       {currentStep === 'confirm' && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Box marginBottom={1}>
-            <Text bold color={theme.colors.success}>
-              ✅ Step 5: 确认配置
-            </Text>
-          </Box>
-
-          <Box marginBottom={1}>
-            <Text color={theme.colors.text.secondary}>
-              请确认以下配置信息：
-            </Text>
-          </Box>
-
-          <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
-            <Box marginBottom={1}>
-              <Text color={theme.colors.text.muted}>Provider: </Text>
-              <Text bold color={theme.colors.info}>
-                {config.provider === 'openai-compatible' ? '🔵 OpenAI Compatible' : '🟣 Anthropic'}
-              </Text>
-            </Box>
-
-            <Box marginBottom={1}>
-              <Text color={theme.colors.text.muted}>Base URL: </Text>
-              <Text bold color={theme.colors.success}>
-                {config.baseUrl}
-              </Text>
-            </Box>
-
-            <Box marginBottom={1}>
-              <Text color={theme.colors.text.muted}>API Key: </Text>
-              <Text bold color={theme.colors.warning}>
-                {config.apiKey?.slice(0, 8)}{'*'.repeat(Math.min(32, (config.apiKey?.length || 0) - 8))}
-              </Text>
-            </Box>
-
-            <Box>
-              <Text color={theme.colors.text.muted}>Model: </Text>
-              <Text bold color={theme.colors.info}>
-                {config.model}
-              </Text>
-            </Box>
-          </Box>
-
-          {!isSaving && (
-            <Box marginTop={1}>
-              <Text color={theme.colors.primary}>
-                确认保存配置？ [<Text bold color={theme.colors.success}>Y</Text>/
-                <Text bold color={theme.colors.error}>n</Text>]
-              </Text>
-            </Box>
-          )}
-
-          {isSaving && (
-            <Box>
-              <Text color={theme.colors.warning}>⏳ 正在保存配置到 ~/.blade/config.json...</Text>
-            </Box>
-          )}
-        </Box>
+        <ConfirmStep
+          config={config as SetupConfig}
+          isSaving={isSaving}
+          onConfirm={handleConfirm}
+          onBack={handleBack}
+          onCancel={onCancel}
+        />
       )}
 
       {/* 错误信息 */}

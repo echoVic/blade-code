@@ -1,4 +1,4 @@
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useFocus, useInput } from 'ink';
 import React from 'react';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
 import type { ConfirmationDetails } from '../../tools/types/ToolTypes.js';
@@ -19,24 +19,36 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
   details,
   onResponse,
 }) => {
+  // 使用 useFocus 管理焦点，autoFocus 确保显示时立即获取焦点
+  const { isFocused } = useFocus({ autoFocus: true });
+
   // 使用 Ink 的 useInput hook 处理键盘输入
-  useInput((input, key) => {
-    // 按 Y 或 y 批准
-    if (input === 'y' || input === 'Y') {
-      onResponse({ approved: true });
-    }
-    // 按 N 或 n 拒绝
-    else if (input === 'n' || input === 'N') {
-      onResponse({ approved: false, reason: '用户拒绝' });
-    }
-    // 按 ESC 取消(等同于拒绝)
-    else if (key.escape) {
-      onResponse({ approved: false, reason: '用户取消' });
-    }
-  });
+  // 只有在组件聚焦时才响应输入
+  useInput(
+    (input, key) => {
+      // 按 Y 或 y 批准
+      if (input === 'y' || input === 'Y') {
+        onResponse({ approved: true });
+      }
+      // 按 N 或 n 拒绝
+      else if (input === 'n' || input === 'N') {
+        onResponse({ approved: false, reason: '用户拒绝' });
+      }
+      // 按 ESC 取消(等同于拒绝)
+      else if (key.escape) {
+        onResponse({ approved: false, reason: '用户取消' });
+      }
+    },
+    { isActive: isFocused }
+  );
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" padding={1}>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={isFocused ? 'yellow' : 'gray'}
+      padding={1}
+    >
       <Box marginBottom={1}>
         <Text bold color="yellow">
           🔔 需要用户确认
