@@ -5,42 +5,15 @@ import type {
   ChatCompletionMessageToolCall,
   ChatCompletionTool,
 } from 'openai/resources/chat';
-import type { BladeConfig } from '../config/types.js';
+import type {
+  ChatConfig,
+  ChatResponse,
+  IChatService,
+  Message,
+  StreamChunk,
+} from './ChatServiceInterface.js';
 
-export type Message = {
-  role: 'user' | 'assistant' | 'system' | 'tool';
-  content: string;
-  tool_call_id?: string; // tool 角色必需
-  name?: string; // 工具名称
-  tool_calls?: ChatCompletionMessageToolCall[]; // assistant 返回工具调用时需要
-};
-
-/**
- * ChatConfig - 从 BladeConfig 派生的聊天配置
- * 使用 Pick 直接选择所需字段，保持类型一致性
- */
-export type ChatConfig = Pick<
-  BladeConfig,
-  'apiKey' | 'model' | 'baseUrl' | 'temperature' | 'maxTokens' | 'timeout'
->;
-
-export interface ChatResponse {
-  content: string;
-  toolCalls?: ChatCompletionMessageToolCall[];
-  usage?: {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-  };
-}
-
-export interface StreamChunk {
-  content?: string;
-  toolCalls?: ChatCompletionChunk.Choice.Delta.ToolCall[];
-  finishReason?: string;
-}
-
-export class ChatService {
+export class OpenAIChatService implements IChatService {
   private client: OpenAI;
 
   constructor(private config: ChatConfig) {
@@ -221,11 +194,12 @@ export class ChatService {
     }
   }
 
-  async *chatStream(
+  async *streamChat(
     messages: Message[],
     tools?: Array<{
       name: string;
       description: string;
+      // biome-ignore lint/suspicious/noExplicitAny: 工具参数格式不确定
       parameters: any;
     }>
   ): AsyncGenerator<StreamChunk, void, unknown> {
@@ -389,3 +363,18 @@ export class ChatService {
     });
   }
 }
+
+/**
+ * 向后兼容导出
+ */
+export { OpenAIChatService as ChatService };
+
+/**
+ * 重新导出类型（向后兼容）
+ */
+export type {
+  ChatConfig,
+  ChatResponse,
+  Message,
+  StreamChunk,
+} from './ChatServiceInterface.js';

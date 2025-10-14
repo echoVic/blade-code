@@ -4,7 +4,7 @@
 
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { PermissionConfig } from '../config/types.js';
-import type { Message } from '../services/ChatService.js';
+import type { Message } from '../services/OpenAIChatService.js';
 
 /**
  * 聊天上下文接口

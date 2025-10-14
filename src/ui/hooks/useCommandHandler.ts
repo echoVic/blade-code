@@ -79,9 +79,12 @@ export const useCommandHandler = (
     agentRef.current = agent;
 
     // 设置事件监听器
-    agent.on('loopTurnStart', ({ turn, maxTurns }: { turn: number; maxTurns: number }) => {
-      setLoopState({ active: true, turn, maxTurns, currentTool: undefined });
-    });
+    agent.on(
+      'loopTurnStart',
+      ({ turn, maxTurns }: { turn: number; maxTurns: number }) => {
+        setLoopState({ active: true, turn, maxTurns, currentTool: undefined });
+      }
+    );
     agent.on('toolExecutionStart', ({ tool }: { tool: string }) => {
       setLoopState((prev) => ({ ...prev, currentTool: tool }));
     });

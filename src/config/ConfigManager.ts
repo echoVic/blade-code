@@ -322,17 +322,91 @@ export class ConfigManager {
   }
 
   /**
-   * 更新配置
+   * 保存配置到用户配置文件
+   * 路径: ~/.blade/config.json
+   *
+   * @param updates 要保存的配置项（部分更新）
+   */
+  async saveUserConfig(updates: Partial<BladeConfig>): Promise<void> {
+    const userConfigPath = path.join(os.homedir(), '.blade', 'config.json');
+
+    try {
+      // 1. 确保目录存在
+      await fs.mkdir(path.dirname(userConfigPath), { recursive: true });
+
+      // 2. 读取现有配置（如果存在）
+      let existingConfig: Partial<BladeConfig> = {};
+      if (await this.fileExists(userConfigPath)) {
+        const content = await fs.readFile(userConfigPath, 'utf-8');
+        existingConfig = JSON.parse(content);
+      }
+
+      // 3. 合并配置
+      const newConfig = { ...existingConfig, ...updates };
+
+      // 4. 写入文件（仅保存基础配置字段，不保存 settings）
+      // biome-ignore lint/suspicious/noExplicitAny: 配置对象需要动态属性
+      const configToSave: Record<string, any> = {};
+      if (newConfig.provider !== undefined) configToSave.provider = newConfig.provider;
+      if (newConfig.apiKey !== undefined) configToSave.apiKey = newConfig.apiKey;
+      if (newConfig.baseUrl !== undefined) configToSave.baseUrl = newConfig.baseUrl;
+      if (newConfig.model !== undefined) configToSave.model = newConfig.model;
+      if (newConfig.temperature !== undefined)
+        configToSave.temperature = newConfig.temperature;
+      if (newConfig.maxTokens !== undefined)
+        configToSave.maxTokens = newConfig.maxTokens;
+      if (newConfig.timeout !== undefined) configToSave.timeout = newConfig.timeout;
+      if (newConfig.theme !== undefined) configToSave.theme = newConfig.theme;
+      if (newConfig.language !== undefined) configToSave.language = newConfig.language;
+      if (newConfig.debug !== undefined) configToSave.debug = newConfig.debug;
+      if (newConfig.telemetry !== undefined)
+        configToSave.telemetry = newConfig.telemetry;
+
+      await fs.writeFile(
+        userConfigPath,
+        JSON.stringify(configToSave, null, 2),
+        { mode: 0o600, encoding: 'utf-8' } // 仅用户可读写
+      );
+
+      // 5. 更新内存配置
+      if (this.config) {
+        this.config = { ...this.config, ...updates };
+      } else {
+        // 首次配置（理论上不会发生，但作为保护）
+        this.config = { ...DEFAULT_CONFIG, ...updates };
+        this.configLoaded = true;
+      }
+
+      // 添加日志验证内存配置已更新
+      if (this.config.debug) {
+        console.log('[ConfigManager] Memory config updated:', {
+          hasApiKey: !!this.config.apiKey,
+          provider: this.config.provider,
+          model: this.config.model,
+        });
+      }
+
+      if (this.config.debug) {
+        console.log(`[ConfigManager] Configuration saved to ${userConfigPath}`);
+      }
+    } catch (error) {
+      console.error('[ConfigManager] Failed to save config:', error);
+      throw new Error(
+        `保存配置失败: ${error instanceof Error ? error.message : '未知错误'}`
+      );
+    }
+  }
+
+  /**
+   * 更新配置（持久化到文件）
    */
   async updateConfig(updates: Partial<BladeConfig>): Promise<void> {
     if (!this.config) {
       throw new Error('Config not initialized');
     }
 
-    this.config = {
-      ...this.config,
-      ...updates,
-    };
+    // 持久化到文件
+    await this.saveUserConfig(updates);
   }
 
   /**

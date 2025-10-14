@@ -4,7 +4,7 @@
  * 支持精确匹配、前缀匹配、通配符匹配和 glob 模式
  */
 
-import { minimatch } from 'minimatch';
+import picomatch from 'picomatch';
 import type { PermissionConfig } from './types.js';
 
 /**
@@ -172,7 +172,7 @@ export class PermissionChecker {
 
     // 工具名使用 glob 匹配
     if (ruleToolName.includes('*')) {
-      if (!minimatch(sigToolName, ruleToolName, { dot: true })) {
+      if (!picomatch.isMatch(sigToolName, ruleToolName, { dot: true })) {
         return null;
       }
     } else if (sigToolName !== ruleToolName) {
@@ -202,7 +202,7 @@ export class PermissionChecker {
       }
 
       // 尝试完整签名的 glob 匹配
-      if (minimatch(signature, rule, { dot: true })) {
+      if (picomatch.isMatch(signature, rule, { dot: true })) {
         return rule.includes('**') ? 'glob' : 'wildcard';
       }
     }
@@ -246,7 +246,7 @@ export class PermissionChecker {
         ruleValue.includes('{') ||
         ruleValue.includes('?')
       ) {
-        if (!minimatch(sigValue, ruleValue, { dot: true })) {
+        if (!picomatch.isMatch(sigValue, ruleValue, { dot: true })) {
           return false;
         }
       } else if (sigValue !== ruleValue) {

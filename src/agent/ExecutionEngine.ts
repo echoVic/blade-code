@@ -3,7 +3,8 @@
  * 整合了上下文管理、任务调度、工具执行和子Agent协调功能
  */
 
-import { ChatService, type Message } from '../services/ChatService.js';
+import type { IChatService } from '../services/ChatServiceInterface.js';
+import { type Message } from '../services/OpenAIChatService.js';
 import type { AgentResponse, AgentTask } from './types.js';
 
 export interface ExecutionStep {
@@ -24,10 +25,10 @@ export interface ContextManager {
 }
 
 export class ExecutionEngine {
-  private chatService: ChatService;
+  private chatService: IChatService;
   private contextManager: ContextManager;
 
-  constructor(chatService: ChatService) {
+  constructor(chatService: IChatService) {
     this.chatService = chatService;
     this.contextManager = this.createContextManager();
   }

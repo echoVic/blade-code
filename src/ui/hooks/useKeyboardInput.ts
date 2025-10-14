@@ -15,7 +15,8 @@ export const useKeyboardInput = (
   onNextCommand: () => string,
   onAddToHistory: (command: string) => void,
   onAbort?: () => void,
-  isProcessing?: boolean
+  isProcessing?: boolean,
+  disabled = false
 ) => {
   const [input, setInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -68,8 +69,20 @@ export const useKeyboardInput = (
     }
   });
 
+  // 当禁用时清空输入状态
+  useEffect(() => {
+    if (disabled) {
+      setInput('');
+      setShowSuggestions(false);
+      setSuggestions([]);
+    }
+  }, [disabled]);
+
   // 键盘输入监听
   useInput((inputKey, key) => {
+    // 禁用时忽略所有输入
+    if (disabled) return;
+
     if (key.return) {
       // 回车键提交命令
       handleSubmit();
