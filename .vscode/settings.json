@@ -6,6 +6,7 @@
     "source.organizeImports.biome": "explicit"
   },
   "eslint.enable": false,
+  "prettier.enable": false,
   "typescript.preferences.includePackageJsonAutoImports": "on",
   "typescript.suggest.autoImports": true,
   "files.associations": {

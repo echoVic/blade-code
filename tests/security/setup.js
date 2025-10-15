@@ -48,6 +48,20 @@ vi.mock('child_process', async () => {
   };
 });
 
+// Mock https for secure HTTP client
+vi.mock('https', () => {
+  return {
+    default: {
+      Agent: vi.fn().mockImplementation(() => ({
+        // Mock agent properties
+      })),
+    },
+    Agent: vi.fn().mockImplementation(() => ({
+      // Mock agent properties
+    })),
+  };
+});
+
 // Mock fs for file operations
 vi.mock('fs', async () => {
   const actual = await vi.importActual('fs');

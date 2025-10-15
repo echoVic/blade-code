@@ -2,7 +2,8 @@
  * BaseLLM 单元测试
  */
 
-import { BaseLLM } from '../BaseLLM.js';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { BaseLLM } from '../../../src/services/ChatServiceInterface';
 
 // 模拟子类实现
 class MockLLM extends BaseLLM {
@@ -40,7 +41,7 @@ describe('BaseLLM', () => {
 
   beforeEach(() => {
     // 重置所有 mock
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     // 创建新的 MockLLM 实例
     mockLLM = new MockLLM({
@@ -105,7 +106,7 @@ describe('BaseLLM', () => {
       };
 
       // 监控私有方法调用
-      const chatSpy = jest.spyOn(mockLLM as any, '_chat');
+      const chatSpy = vi.spyOn(mockLLM as any, '_chat');
 
       await mockLLM.chat('Hello, world!', options);
 
@@ -116,7 +117,7 @@ describe('BaseLLM', () => {
     });
 
     test('应该在聊天错误时正确处理', async () => {
-      jest
+      vi
         .spyOn(mockLLM as any, '_chat')
         .mockRejectedValueOnce(new Error('Chat Error'));
 
@@ -141,7 +142,7 @@ describe('BaseLLM', () => {
       };
 
       // 监控私有方法调用
-      const completeSpy = jest.spyOn(mockLLM as any, '_complete');
+      const completeSpy = vi.spyOn(mockLLM as any, '_complete');
 
       await mockLLM.complete('Hello, ', options);
 
@@ -149,7 +150,7 @@ describe('BaseLLM', () => {
     });
 
     test('应该在补全错误时正确处理', async () => {
-      jest
+      vi
         .spyOn(mockLLM as any, '_complete')
         .mockRejectedValueOnce(new Error('Complete Error'));
 
@@ -177,7 +178,7 @@ describe('BaseLLM', () => {
     });
 
     test('应该在嵌入错误时正确处理', async () => {
-      jest
+      vi
         .spyOn(mockLLM as any, '_embed')
         .mockRejectedValueOnce(new Error('Embed Error'));
 
@@ -204,7 +205,7 @@ describe('BaseLLM', () => {
     });
 
     test('应该处理验证错误', () => {
-      jest.spyOn(mockLLM as any, '_validateConfig').mockImplementationOnce(() => {
+      vi.spyOn(mockLLM as any, '_validateConfig').mockImplementationOnce(() => {
         throw new Error('Validation Error');
       });
 
@@ -229,7 +230,7 @@ describe('BaseLLM', () => {
     });
 
     test('应该跟踪错误统计', async () => {
-      jest
+      vi
         .spyOn(mockLLM as any, '_chat')
         .mockRejectedValueOnce(new Error('Test Error'));
 
@@ -258,7 +259,7 @@ describe('BaseLLM', () => {
 
   describe('销毁', () => {
     test('应该正确销毁 LLM', () => {
-      const destroySpy = jest.spyOn(mockLLM, 'destroy');
+      const destroySpy = vi.spyOn(mockLLM, 'destroy');
 
       mockLLM.destroy();
 

@@ -2,60 +2,61 @@
  * ContextManager 单元测试
  */
 
-import { ContextManager } from '../ContextManager.js';
-import { ContextCompressor } from '../processors/ContextCompressor.js';
-import { ContextFilter } from '../processors/ContextFilter.js';
-import { MemoryStore } from '../storage/MemoryStore.js';
-import { PersistentStore } from '../storage/PersistentStore.js';
-import { ContextConfig, ContextEntry } from '../types.js';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { ContextManager } from '../../../src/context/ContextManager';
+import { ContextCompressor } from '../../../src/context/processors/ContextCompressor';
+import { ContextFilter } from '../../../src/context/processors/ContextFilter';
+import { MemoryStore } from '../../../src/context/storage/MemoryStore';
+import { PersistentStore } from '../../../src/context/storage/PersistentStore';
+import { ContextConfig, ContextEntry } from '../../../src/context/types';
 
 // Mock 处理器
 const mockCompressor = {
-  compress: jest.fn().mockImplementation((entries) => Promise.resolve(entries)),
-  decompress: jest.fn().mockImplementation((entries) => Promise.resolve(entries)),
+  compress: vi.fn().mockImplementation((entries) => Promise.resolve(entries)),
+  decompress: vi.fn().mockImplementation((entries) => Promise.resolve(entries)),
 };
 
 const mockFilter = {
-  filter: jest.fn().mockImplementation((entries) => entries),
+  filter: vi.fn().mockImplementation((entries) => entries),
 };
 
 // Mock 存储
 const mockMemoryStore = {
-  get: jest.fn().mockResolvedValue([]),
-  set: jest.fn().mockResolvedValue(undefined),
-  clear: jest.fn().mockResolvedValue(undefined),
-  destroy: jest.fn().mockResolvedValue(undefined),
+  get: vi.fn().mockResolvedValue([]),
+  set: vi.fn().mockResolvedValue(undefined),
+  clear: vi.fn().mockResolvedValue(undefined),
+  destroy: vi.fn().mockResolvedValue(undefined),
 };
 
 const mockPersistentStore = {
-  load: jest.fn().mockResolvedValue([]),
-  save: jest.fn().mockResolvedValue(undefined),
-  clear: jest.fn().mockResolvedValue(undefined),
-  destroy: jest.fn().mockResolvedValue(undefined),
+  load: vi.fn().mockResolvedValue([]),
+  save: vi.fn().mockResolvedValue(undefined),
+  clear: vi.fn().mockResolvedValue(undefined),
+  destroy: vi.fn().mockResolvedValue(undefined),
 };
 
 // Mock 模块
-jest.mock('../processors/ContextCompressor.js', () => {
+vi.mock('../../../src/context/processors/ContextCompressor', () => {
   return {
-    ContextCompressor: jest.fn().mockImplementation(() => mockCompressor),
+    ContextCompressor: vi.fn().mockImplementation(() => mockCompressor),
   };
 });
 
-jest.mock('../processors/ContextFilter.js', () => {
+vi.mock('../../../src/context/processors/ContextFilter', () => {
   return {
-    ContextFilter: jest.fn().mockImplementation(() => mockFilter),
+    ContextFilter: vi.fn().mockImplementation(() => mockFilter),
   };
 });
 
-jest.mock('../storage/MemoryStore.js', () => {
+vi.mock('../../../src/context/storage/MemoryStore', () => {
   return {
-    MemoryStore: jest.fn().mockImplementation(() => mockMemoryStore),
+    MemoryStore: vi.fn().mockImplementation(() => mockMemoryStore),
   };
 });
 
-jest.mock('../storage/PersistentStore.js', () => {
+vi.mock('../../../src/context/storage/PersistentStore', () => {
   return {
-    PersistentStore: jest.fn().mockImplementation(() => mockPersistentStore),
+    PersistentStore: vi.fn().mockImplementation(() => mockPersistentStore),
   };
 });
 
@@ -65,7 +66,7 @@ describe('ContextManager', () => {
 
   beforeEach(() => {
     // 重置所有 mock
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     // 默认配置
     defaultConfig = {

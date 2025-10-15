@@ -1,11 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from '@jest/globals';
 import { existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   LogLevel,
-  LogRotationConfig,
-  LogSearchQuery,
+  LogSearchQuery
 } from '../../src/logging/index.js';
 import {
   FileLogStorage,

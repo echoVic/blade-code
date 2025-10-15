@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from '@jest/globals';
-import { existsSync, rmSync, unlinkSync } from 'fs';
+import { existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   ColoredTextFormatter,
   ConsoleTransport,
@@ -15,11 +15,7 @@ import {
   PerformanceMiddleware,
   TextFormatter,
 } from '../../src/logging/index.js';
-import {
-  HTTPTransport,
-  MultiTransport,
-  RotatingFileTransport,
-} from '../../src/logging/transports.js';
+import { MultiTransport, RotatingFileTransport } from '../../src/logging/transports.js';
 import {
   EnrichmentMiddleware,
   logUtils,

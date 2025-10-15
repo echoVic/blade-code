@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_SYSTEM_PROMPT } from '../../../src/prompts/default.js';
-import { SystemPrompt } from '../../../src/prompts/SystemPrompt.js';
+import { DEFAULT_SYSTEM_PROMPT } from '../../../src/prompts/default';
+import { SystemPrompt } from '../../../src/prompts/SystemPrompt';
 
 describe('SystemPrompt', () => {
   const testDir = join(process.cwd(), 'test-temp');
-  const testConfigPath = join(testDir, 'BLADE.md');
+  const _testConfigPath = join(testDir, 'BLADE.md');
 
   beforeEach(() => {
     // 创建测试目录
@@ -38,8 +38,10 @@ describe('SystemPrompt', () => {
       });
 
       const result = systemPrompt.build();
-      expect(result).toContain('Blade AI');
-      expect(result).toContain('命令行智能编码助手');
+      expect(result).toContain('Blade Code');
+      expect(result).toContain(
+        'professional command line intelligent coding assistant'
+      );
     });
   });
 

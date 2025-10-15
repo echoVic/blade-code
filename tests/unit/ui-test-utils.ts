@@ -1,394 +1,674 @@
 /**
- * UI 测试工具和辅助函数
+ * 测试数据工厂和fixture管理
+ * 提供 Blade 项目测试中常用的测试数据和fixture管理功能
  */
 
-import React from 'react';
-import { expect } from 'vitest';
-
 // 类型定义
-export interface UIComponentTestOptions {
-  renderOptions?: any;
-  mockOptions?: Record<string, any>;
-  timeout?: number;
+export interface FixtureData {
+  id: string;
+  name: string;
+  data: any;
+  type: 'json' | 'text' | 'binary';
+  created: string;
+  updated?: string;
 }
 
-export interface UIComponentTestResult {
-  container: HTMLElement;
-  component: React.ReactElement;
-  metrics: {
-    renderTime: number;
-    memoryUsage: number;
-    updateCount: number;
-  };
+export interface DataFactory<T = any> {
+  create: (overrides?: Partial<T>) => T;
+  createMany: (count: number, overrides?: Partial<T>) => T[];
 }
 
-// UI测试工具类
-export class UIComponentTestUtils {
-  /**
-   * 创建模拟事件
-   */
-  static createMockEvent(type: string, data: Record<string, any> = {}): Event {
-    const event = new Event(type);
-    Object.assign(event, data);
-    return event;
+export interface DataSchema<T = any> {
+  defaults: T;
+  variations?: Record<string, Partial<T>>;
+  sequences?: Record<string, (index: number) => Partial<T>>;
+}
+
+// 基础测试数据生成器
+export class TestDataFactory {
+  private static sequenceCounters: Map<string, number> = new Map();
+
+  static getSequence(key: string): number {
+    const current = this.sequenceCounters.get(key) || 0;
+    this.sequenceCounters.set(key, current + 1);
+    return current;
   }
 
-  /**
-   * 创建模拟键盘事件
-   */
-  static createKeyboardEvent(
-    key: string,
-    options: KeyboardEventInit = {}
-  ): KeyboardEvent {
-    return new KeyboardEvent('keydown', {
-      key,
-      ctrlKey: false,
-      shiftKey: false,
-      metaKey: false,
-      ...options,
-    });
-  }
-
-  /**
-   * 创建模拟鼠标事件
-   */
-  static createMouseEvent(type: string, options: MouseEventInit = {}): MouseEvent {
-    return new MouseEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      ...options,
-    });
-  }
-
-  /**
-   * 等待组件更新
-   */
-  static async waitForComponentUpdate(timeout = 1000): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(resolve, 0);
-      if (timeout > 0) {
-        setTimeout(resolve, timeout);
-      }
-    });
-  }
-
-  /**
-   * 测量组件渲染性能
-   */
-  static async measureRenderPerformance<T>(
-    renderFn: () => T
-  ): Promise<{ result: T; renderTime: number; memoryUsage: number }> {
-    const startTime = performance.now();
-    const startMemory =
-      typeof process !== 'undefined' ? process.memoryUsage() : { heapUsed: 0 };
-
-    const result = renderFn();
-
-    const endTime = performance.now();
-    const endMemory =
-      typeof process !== 'undefined' ? process.memoryUsage() : { heapUsed: 0 };
-
-    return {
-      result,
-      renderTime: endTime - startTime,
-      memoryUsage: endMemory.heapUsed - startMemory.heapUsed,
-    };
-  }
-
-  /**
-   * 创建测试数据生成器
-   */
-  static createTestDataGenerator<T>(template: T): () => T {
-    return () => ({ ...(template as any) });
-  }
-
-  /**
-   * 模拟用户交互
-   */
-  static async simulateUserInteraction(
-    element: HTMLElement,
-    interaction: 'click' | 'hover' | 'focus' | 'blur' | 'keyDown' | 'keyUp',
-    data?: any
-  ): Promise<void> {
-    switch (interaction) {
-      case 'click':
-        element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        break;
-      case 'hover':
-        element.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-        break;
-      case 'focus':
-        element.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
-        break;
-      case 'blur':
-        element.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
-        break;
-      case 'keyDown':
-        element.dispatchEvent(new KeyboardEvent('keydown', data));
-        break;
-      case 'keyUp':
-        element.dispatchEvent(new KeyboardEvent('keyup', data));
-        break;
+  static resetSequence(key?: string): void {
+    if (key) {
+      this.sequenceCounters.delete(key);
+    } else {
+      this.sequenceCounters.clear();
     }
-
-    // 等待事件处理完成
-    await this.waitForComponentUpdate(0);
   }
 
-  /**
-   * 检查组件属性
-   */
-  static checkComponentProps<Props>(
-    component: React.ReactElement<Props>,
-    expectedProps: Partial<Props>
-  ): void {
-    const actualProps = component.props;
-    Object.keys(expectedProps).forEach((key) => {
-      expect(actualProps[key]).toEqual(expectedProps[key as keyof Props]);
-    });
-  }
-
-  /**
-   * 创建模拟上下文提供者
-   */
-  static createMockContextProvider<T>(
-    context: React.Context<T>,
-    value: T
-  ): React.FC<{ children: React.ReactNode }> {
-    return ({ children }) => React.createElement(context.Provider, { value }, children);
-  }
-
-  /**
-   * 测试组件的无障碍性
-   */
-  static async testAccessibility(
-    container: HTMLElement
-  ): Promise<{ violations: any[]; passes: any[] }> {
-    // 这里可以集成 axe-core 或其他无障碍测试工具
-    // 目前返回模拟结果
+  static createFactory<T>(schema: DataSchema<T>): DataFactory<T> {
     return {
-      violations: [],
-      passes: [],
-    };
-  }
+      create: (overrides?: Partial<T>): T => {
+        const base = { ...schema.defaults };
 
-  /**
-   * 比较组件快照
-   */
-  static compareSnapshot(
-    current: string,
-    expected: string
-  ): { isMatch: boolean; differences: string[] } {
-    const isMatch = current === expected;
-    const differences: string[] = [];
-
-    if (!isMatch) {
-      // 简单的差异比较
-      const currentLines = current.split('\n');
-      const expectedLines = expected.split('\n');
-      const maxLines = Math.max(currentLines.length, expectedLines.length);
-
-      for (let i = 0; i < maxLines; i++) {
-        const currentLine = currentLines[i] || '';
-        const expectedLine = expectedLines[i] || '';
-
-        if (currentLine !== expectedLine) {
-          differences.push(
-            `Line ${i + 1}: expected "${expectedLine}", got "${currentLine}"`
-          );
+        // 应用变体
+        if (schema.variations) {
+          const variantKeys = Object.keys(schema.variations);
+          if (variantKeys.length > 0) {
+            const randomVariant =
+              variantKeys[Math.floor(Math.random() * variantKeys.length)];
+            Object.assign(base, schema.variations[randomVariant]);
+          }
         }
-      }
-    }
 
-    return { isMatch, differences };
-  }
-}
+        // 应用序列
+        if (schema.sequences) {
+          Object.entries(schema.sequences).forEach(([key, fn]) => {
+            const sequenceIndex = this.getSequence(key);
+            Object.assign(base, fn(sequenceIndex));
+          });
+        }
 
-// 快捷导出常用工具
-export const {
-  createMockEvent,
-  createKeyboardEvent,
-  createMouseEvent,
-  waitForComponentUpdate,
-  measureRenderPerformance,
-  createTestDataGenerator,
-  simulateUserInteraction,
-  checkComponentProps,
-  createMockContextProvider,
-  testAccessibility,
-  compareSnapshot,
-} = UIComponentTestUtils;
+        // 应用覆盖
+        if (overrides) {
+          Object.assign(base, overrides);
+        }
 
-// UI测试常量
-export const UITestConstants = {
-  DEFAULT_TIMEOUT: 5000,
-  RENDER_TIMEOUT: 1000,
-  INTERACTION_TIMEOUT: 500,
-  PERFORMANCE_THRESHOLD: 100, // ms
-  MEMORY_THRESHOLD: 1000000, // 1MB
-};
+        return base;
+      },
 
-// 测试数据工厂
-export class UITestDataFactory {
-  /**
-   * 生成测试用户数据
-   */
-  static createUser(id: number = 1): any {
-    return {
-      id,
-      name: `User ${id}`,
-      email: `user${id}@example.com`,
-      role: 'user',
-      avatar: `https://example.com/avatar${id}.jpg`,
-    };
-  }
-
-  /**
-   * 生成测试项目数据
-   */
-  static createProject(id: number = 1): any {
-    return {
-      id,
-      name: `Project ${id}`,
-      description: `Description for project ${id}`,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-  }
-
-  /**
-   * 生成测试配置数据
-   */
-  static createConfig(id: number = 1): any {
-    return {
-      id,
-      name: `Config ${id}`,
-      theme: 'default',
-      language: 'en',
-      notifications: true,
-      preferences: {
-        autoSave: true,
-        showTips: true,
+      createMany: (count: number, overrides?: Partial<T>): T[] => {
+        return Array.from({ length: count }, () => this.create(overrides));
       },
     };
   }
+}
 
-  /**
-   * 生成测试错误数据
-   */
-  static createError(
-    message: string = 'Test error',
-    code: string = 'TEST_ERROR'
-  ): Error {
-    const error = new Error(message);
-    (error as any).code = code;
-    return error;
-  }
+// Blade 项目特定的数据工厂
+export class BladeDataFactory {
+  // Agent 相关数据
+  static Agent = TestDataFactory.createFactory({
+    defaults: {
+      id: () => `agent-${TestDataFactory.getSequence('agent')}`,
+      name: 'Test Agent',
+      model: 'gpt-4',
+      maxTokens: 4000,
+      temperature: 0.7,
+      systemPrompt: 'You are a helpful AI assistant',
+      createdAt: new Date().toISOString(),
+      updatedAt: () => new Date().toISOString(),
+      status: 'active',
+      config: {
+        workspace: '/test/workspace',
+        theme: 'default',
+        logging: {
+          level: 'info',
+          format: 'text',
+        },
+      },
+    },
+    variations: {
+      premium: {
+        model: 'gpt-4-turbo',
+        maxTokens: 8000,
+        temperature: 0.5,
+      },
+      basic: {
+        model: 'gpt-3.5-turbo',
+        maxTokens: 2000,
+        temperature: 0.9,
+      },
+    },
+    sequences: {
+      generatedName: (index) => ({
+        name: `Test Agent ${index + 1}`,
+      }),
+    },
+  });
 
-  /**
-   * 生成测试状态数据
-   */
-  static createState(initial: any = {}): any {
-    return {
-      loading: false,
-      error: null,
-      data: null,
-      ...initial,
-    };
+  // 用户相关数据
+  static User = TestDataFactory.createFactory({
+    defaults: {
+      id: () => `user-${TestDataFactory.getSequence('user')}`,
+      username: () => `user${TestDataFactory.getSequence('user')}`,
+      email: () => `user${TestDataFactory.getSequence('user')}@example.com`,
+      name: 'Test User',
+      role: 'user',
+      avatar: 'https://example.com/avatar.jpg',
+      createdAt: new Date().toISOString(),
+      updatedAt: () => new Date().toISOString(),
+      isActive: true,
+      preferences: {
+        theme: 'default',
+        language: 'en',
+        notifications: true,
+      },
+      stats: {
+        logins: 0,
+        projects: 0,
+        filesCreated: 0,
+      },
+    },
+    variations: {
+      admin: {
+        role: 'admin',
+        name: 'Admin User',
+      },
+      developer: {
+        role: 'developer',
+        name: 'Developer User',
+      },
+      guest: {
+        role: 'guest',
+        isActive: false,
+      },
+    },
+    sequences: {
+      email: (index) => ({
+        email: `user${index + 1}@example.com`,
+      }),
+    },
+  });
+
+  // 项目相关数据
+  static Project = TestDataFactory.createFactory({
+    defaults: {
+      id: () => `project-${TestDataFactory.getSequence('project')}`,
+      name: 'Test Project',
+      description: 'A test project for testing purposes',
+      path: '/test/project',
+      type: 'javascript',
+      version: '1.0.0',
+      framework: 'react',
+      createdAt: new Date().toISOString(),
+      updatedAt: () => new Date().toISOString(),
+      status: 'active',
+      owner: BladeDataFactory.User.create(),
+      collaborators: [],
+      settings: {
+        buildCommand: 'npm run build',
+        testCommand: 'npm test',
+        deployCommand: 'npm run deploy',
+        environment: 'development',
+      },
+      stats: {
+        builds: 0,
+        deployments: 0,
+        commits: 0,
+        issues: 0,
+      },
+    },
+    variations: {
+      react: {
+        type: 'javascript',
+        framework: 'react',
+        name: 'React Test Project',
+      },
+      node: {
+        type: 'nodejs',
+        framework: 'express',
+        name: 'Node.js Test Project',
+      },
+      python: {
+        type: 'python',
+        framework: 'django',
+        name: 'Python Test Project',
+      },
+    },
+    sequences: {
+      name: (index) => ({
+        name: `Test Project ${index + 1}`,
+      }),
+    },
+  });
+
+  // Git 相关数据
+  static GitCommit = TestDataFactory.createFactory({
+    defaults: {
+      hash: () => `commit${TestDataFactory.getSequence('commit')}`,
+      message: 'Test commit message',
+      author: {
+        name: 'Test Author',
+        email: 'test@example.com',
+      },
+      committer: {
+        name: 'Test Committer',
+        email: 'test@example.com',
+      },
+      date: new Date().toISOString(),
+      filesChanged: ['file1.ts', 'file2.js'],
+      stats: {
+        additions: 10,
+        deletions: 5,
+        changes: 15,
+      },
+      branch: 'main',
+      tags: [],
+    },
+    variations: {
+      feature: {
+        message: 'feat: Add new feature',
+        branch: 'feature/new-feature',
+      },
+      bugfix: {
+        message: 'fix: Fix critical bug',
+        branch: 'bugfix/critical-bug',
+      },
+      docs: {
+        message: 'docs: Update documentation',
+        filesChanged: ['README.md', 'docs/api.md'],
+      },
+    },
+    sequences: {
+      hash: (index) => ({
+        hash: `a1b2c3d4e5f6${index.toString(16).padStart(8, '0')}`,
+      }),
+    },
+  });
+
+  // 工具相关数据
+  static Tool = TestDataFactory.createFactory({
+    defaults: {
+      id: () => `tool-${TestDataFactory.getSequence('tool')}`,
+      name: 'Test Tool',
+      description: 'A test tool for testing',
+      category: 'development',
+      type: 'built-in',
+      version: '1.0.0',
+      enabled: true,
+      config: {
+        timeout: 30000,
+        retries: 3,
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: () => new Date().toISOString(),
+      usage: {
+        calls: 0,
+        success: 0,
+        errors: 0,
+        lastUsed: null,
+      },
+    },
+    variations: {
+      git: {
+        name: 'Git Tool',
+        category: 'version-control',
+        type: 'built-in',
+      },
+      file: {
+        name: 'File System Tool',
+        category: 'filesystem',
+        type: 'built-in',
+      },
+      network: {
+        name: 'Network Tool',
+        category: 'network',
+        type: 'built-in',
+      },
+    },
+    sequences: {
+      name: (index) => ({
+        name: `Test Tool ${index + 1}`,
+      }),
+    },
+  });
+
+  // 日志相关数据
+  static LogEntry = TestDataFactory.createFactory({
+    defaults: {
+      id: () => `log-${TestDataFactory.getSequence('log')}`,
+      level: 'info',
+      message: 'Test log message',
+      timestamp: new Date().toISOString(),
+      source: 'test',
+      metadata: {
+        userId: 'test-user',
+        sessionId: 'test-session',
+      },
+      tags: ['test'],
+      context: {},
+    },
+    variations: {
+      error: {
+        level: 'error',
+        message: 'Test error message',
+        metadata: {
+          error: 'Test error',
+          stack: 'Error: Test error\n    at test.js:1:1',
+        },
+      },
+      debug: {
+        level: 'debug',
+        message: 'Test debug message',
+        metadata: {
+          debug: true,
+          verbose: true,
+        },
+      },
+      warn: {
+        level: 'warn',
+        message: 'Test warning message',
+        metadata: {
+          warning: 'Test warning',
+        },
+      },
+    },
+    sequences: {
+      message: (index) => ({
+        message: `Test log message ${index + 1}`,
+      }),
+    },
+  });
+
+  // 配置相关数据
+  static Config = TestDataFactory.createFactory({
+    defaults: {
+      id: () => `config-${TestDataFactory.getSequence('config')}`,
+      name: 'Test Configuration',
+      version: '1.0.0',
+      data: {
+        agent: {
+          model: 'gpt-4',
+          maxTokens: 4000,
+          temperature: 0.7,
+        },
+        workspace: {
+          path: '/test/workspace',
+          showHiddenFiles: false,
+        },
+        theme: {
+          name: 'default',
+          colors: {
+            primary: '#007acc',
+            secondary: '#6c757d',
+          },
+        },
+        experimental: {
+          enableBeta: false,
+          enableAlpha: false,
+        },
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: () => new Date().toISOString(),
+    },
+    variations: {
+      production: {
+        name: 'Production Configuration',
+        data: {
+          agent: {
+            model: 'gpt-4-turbo',
+            maxTokens: 8000,
+            temperature: 0.5,
+          },
+          experimental: {
+            enableBeta: false,
+            enableAlpha: false,
+          },
+        },
+      },
+      development: {
+        name: 'Development Configuration',
+        data: {
+          agent: {
+            model: 'gpt-3.5-turbo',
+            maxTokens: 2000,
+            temperature: 0.9,
+          },
+          experimental: {
+            enableBeta: true,
+            enableAlpha: true,
+          },
+        },
+      },
+    },
+    sequences: {
+      name: (index) => ({
+        name: `Test Configuration ${index + 1}`,
+      }),
+    },
+  });
+
+  // 重置所有序列计数器
+  static reset(): void {
+    TestDataFactory.resetSequence();
   }
 }
 
-export const { createUser, createProject, createConfig, createError, createState } =
-  UITestDataFactory;
+// Fixture管理器
+export class FixtureManager {
+  private fixtures: Map<string, FixtureData> = new Map();
 
-// 自定义测试匹配器
-export const UITestMatchers = {
-  /**
-   * 检查元素是否可见
-   */
-  toBeVisible(received: HTMLElement): { pass: boolean; message: () => string } {
-    const isHidden =
-      received.style.display === 'none' ||
-      received.style.visibility === 'hidden' ||
-      received.hidden;
+  constructor(private basePath: string = './tests/fixtures') {}
 
-    return {
-      pass: !isHidden,
-      message: () =>
-        isHidden
-          ? `Expected element to be visible, but it is hidden`
-          : `Expected element to be hidden, but it is visible`,
-    };
-  },
+  async loadFixture(name: string): Promise<FixtureData> {
+    if (this.fixtures.has(name)) {
+      return this.fixtures.get(name)!;
+    }
 
-  /**
-   * 检查元素是否启用
-   */
-  toBeEnabled(received: HTMLElement): { pass: boolean; message: () => string } {
-    const isDisabled =
-      received.hasAttribute('disabled') ||
-      received.getAttribute('aria-disabled') === 'true';
+    const filePath = `${this.basePath}/${name}.json`;
+    try {
+      const { readFileSync } = await import('fs');
+      const { join } = await import('path');
+      const data = readFileSync(join(this.basePath, `${name}.json`), 'utf-8');
+      const fixture: FixtureData = JSON.parse(data);
 
-    return {
-      pass: !isDisabled,
-      message: () =>
-        isDisabled
-          ? `Expected element to be enabled, but it is disabled`
-          : `Expected element to be disabled, but it is enabled`,
-    };
-  },
+      this.fixtures.set(name, fixture);
+      return fixture;
+    } catch (error) {
+      throw new Error(`Failed to load fixture '${name}': ${error}`);
+    }
+  }
 
-  /**
-   * 检查元素是否有特定类名
-   */
-  toHaveClass(
-    received: HTMLElement,
-    className: string
-  ): { pass: boolean; message: () => string } {
-    const hasClass = received.classList.contains(className);
-
-    return {
-      pass: hasClass,
-      message: () =>
-        hasClass
-          ? `Expected element not to have class "${className}"`
-          : `Expected element to have class "${className}"`,
-    };
-  },
-
-  /**
-   * 检查元素是否有特定属性
-   */
-  toHaveAttribute(
-    received: HTMLElement,
+  async saveFixture(
     name: string,
-    value?: string
-  ): { pass: boolean; message: () => string } {
-    const hasAttribute =
-      value !== undefined
-        ? received.getAttribute(name) === value
-        : received.hasAttribute(name);
-
-    return {
-      pass: hasAttribute,
-      message: () =>
-        hasAttribute
-          ? `Expected element not to have attribute "${name}"`
-          : `Expected element to have attribute "${name}"`,
+    data: any,
+    type: 'json' | 'text' | 'binary' = 'json'
+  ): Promise<FixtureData> {
+    const fixture: FixtureData = {
+      id: TestDataFactory.getSequence('fixture').toString(),
+      name,
+      data,
+      type,
+      created: new Date().toISOString(),
+      updated: new Date().toISOString(),
     };
-  },
-};
 
-// 扩展 Vitest 期望
-declare module 'vitest' {
-  interface Assertion<T = any> {
-    toBeVisible(): T;
-    toBeEnabled(): T;
-    toHaveClass(className: string): T;
-    toHaveAttribute(name: string, value?: string): T;
+    this.fixtures.set(name, fixture);
+
+    try {
+      const { writeFileSync } = await import('fs');
+      const { join } = await import('path');
+      const { mkdirSync } = await import('fs');
+
+      // 确保目录存在
+      mkdirSync(this.basePath, { recursive: true });
+
+      // 保存到文件
+      const content = type === 'json' ? JSON.stringify(fixture, null, 2) : data;
+      writeFileSync(join(this.basePath, `${name}.${type}`), content);
+
+      return fixture;
+    } catch (error) {
+      throw new Error(`Failed to save fixture '${name}': ${error}`);
+    }
+  }
+
+  async updateFixture(name: string, updates: Partial<any>): Promise<FixtureData> {
+    const existing = await this.loadFixture(name);
+    const updated = {
+      ...existing,
+      data: { ...existing.data, ...updates },
+      updated: new Date().toISOString(),
+    };
+
+    this.fixtures.set(name, updated);
+    await this.saveFixture(name, updated.data, updated.type);
+
+    return updated;
+  }
+
+  getFixture(name: string): FixtureData | undefined {
+    return this.fixtures.get(name);
+  }
+
+  listFixtures(): string[] {
+    return Array.from(this.fixtures.keys());
+  }
+
+  clear(): void {
+    this.fixtures.clear();
+  }
+
+  static create(basePath?: string): FixtureManager {
+    return new FixtureManager(basePath);
   }
 }
 
-// 应用自定义匹配器
-expect.extend(UITestMatchers);
+// 预定义的测试数据集
+export class TestDataSet {
+  static agentData = {
+    basic: BladeDataFactory.Agent.create(),
+    premium: BladeDataFactory.Agent.create({ model: 'gpt-4-turbo', maxTokens: 8000 }),
+    basic: BladeDataFactory.Agent.create({ model: 'gpt-3.5-turbo', maxTokens: 2000 }),
+  };
+
+  static userData = {
+    admin: BladeDataFactory.User.create({ role: 'admin' }),
+    developer: BladeDataFactory.User.create({ role: 'developer' }),
+    guest: BladeDataFactory.User.create({ role: 'guest' }),
+  };
+
+  static projectData = {
+    react: BladeDataFactory.Project.create({ type: 'javascript', framework: 'react' }),
+    node: BladeDataFactory.Project.create({ type: 'nodejs', framework: 'express' }),
+    python: BladeDataFactory.Project.create({ type: 'python', framework: 'django' }),
+  };
+
+  static gitData = {
+    feature: BladeDataFactory.GitCommit.create({ message: 'feat: Add new feature' }),
+    bugfix: BladeDataFactory.GitCommit.create({ message: 'fix: Fix critical bug' }),
+    docs: BladeDataFactory.GitCommit.create({ message: 'docs: Update documentation' }),
+  };
+
+  static toolData = {
+    git: BladeDataFactory.Tool.create({
+      name: 'Git Tool',
+      category: 'version-control',
+    }),
+    file: BladeDataFactory.Tool.create({
+      name: 'File System Tool',
+      category: 'filesystem',
+    }),
+    network: BladeDataFactory.Tool.create({
+      name: 'Network Tool',
+      category: 'network',
+    }),
+  };
+
+  static logData = {
+    info: BladeDataFactory.LogEntry.create({ level: 'info' }),
+    error: BladeDataFactory.LogEntry.create({ level: 'error' }),
+    debug: BladeDataFactory.LogEntry.create({ level: 'debug' }),
+    warn: BladeDataFactory.LogEntry.create({ level: 'warn' }),
+  };
+
+  static configData = {
+    production: BladeDataFactory.Config.create({ name: 'Production Configuration' }),
+    development: BladeDataFactory.Config.create({ name: 'Development Configuration' }),
+  };
+
+  // 批量生成数据
+  static users = BladeDataFactory.User.createMany(10);
+  static projects = BladeDataFactory.Project.createMany(5);
+  static commits = BladeDataFactory.GitCommit.createMany(20);
+  static tools = BladeDataFactory.Tool.createMany(8);
+  static logs = BladeDataFactory.LogEntry.createMany(30);
+  static configs = BladeDataFactory.Config.createMany(3);
+}
+
+// 测试数据验证器
+export class TestDataValidator {
+  static validateAgent(data: any): boolean {
+    return (
+      data &&
+      typeof data.id === 'string' &&
+      typeof data.name === 'string' &&
+      typeof data.model === 'string' &&
+      typeof data.maxTokens === 'number' &&
+      typeof data.temperature === 'number' &&
+      typeof data.status === 'string'
+    );
+  }
+
+  static validateUser(data: any): boolean {
+    return (
+      data &&
+      typeof data.id === 'string' &&
+      typeof data.username === 'string' &&
+      typeof data.email === 'string' &&
+      typeof data.role === 'string' &&
+      typeof data.isActive === 'boolean'
+    );
+  }
+
+  static validateProject(data: any): boolean {
+    return (
+      data &&
+      typeof data.id === 'string' &&
+      typeof data.name === 'string' &&
+      typeof data.type === 'string' &&
+      typeof data.version === 'string' &&
+      typeof data.status === 'string'
+    );
+  }
+
+  static validateGitCommit(data: any): boolean {
+    return (
+      data &&
+      typeof data.hash === 'string' &&
+      typeof data.message === 'string' &&
+      data.author &&
+      typeof data.author.name === 'string' &&
+      typeof data.author.email === 'string' &&
+      typeof data.date === 'string'
+    );
+  }
+
+  static validateTool(data: any): boolean {
+    return (
+      data &&
+      typeof data.id === 'string' &&
+      typeof data.name === 'string' &&
+      typeof data.category === 'string' &&
+      typeof data.type === 'string' &&
+      typeof data.enabled === 'boolean'
+    );
+  }
+
+  static validateLogEntry(data: any): boolean {
+    return (
+      data &&
+      typeof data.id === 'string' &&
+      typeof data.level === 'string' &&
+      typeof data.message === 'string' &&
+      typeof data.timestamp === 'string' &&
+      typeof data.source === 'string'
+    );
+  }
+
+  static validateConfig(data: any): boolean {
+    return (
+      data &&
+      typeof data.id === 'string' &&
+      typeof data.name === 'string' &&
+      typeof data.version === 'string' &&
+      data.data &&
+      typeof data.data === 'object'
+    );
+  }
+}
+
+// 导出所有工具
+export {
+  TestDataFactory,
+  BladeDataFactory,
+  FixtureManager,
+  TestDataSet,
+  TestDataValidator,
+};

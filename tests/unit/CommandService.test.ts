@@ -1,24 +1,56 @@
-import { vi } from 'vitest';
-import { CommandService } from '../../src/commands/CommandService.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CommandService } from '../../src/services/CommandService';
+import type { BladeConfig } from '../../src/config/types';
 
 describe('CommandService', () => {
   let commandService: CommandService;
+  let mockConfig: BladeConfig;
 
-  beforeEach(() => {
-    // 重置模块缓存以获取新的单例实例
-    vi.resetModules();
-    commandService = CommandService.getInstance();
+  beforeEach(async () => {
+    commandService = new CommandService();
+    mockConfig = {
+      provider: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'http://localhost:3000',
+      model: 'gpt-3.5-turbo',
+      temperature: 0.7,
+      maxTokens: 1000,
+      stream: false,
+      topP: 1,
+      topK: 0,
+      timeout: 30000,
+      theme: 'dark',
+      language: 'zh-CN',
+      fontSize: 14,
+      showStatusBar: true,
+      debug: false,
+      telemetry: false,
+      autoUpdate: true,
+      workingDirectory: '/tmp',
+      logLevel: 'info',
+      logFormat: 'text',
+      mcpEnabled: false,
+      mcpServers: [],
+      permissions: {
+        allow: [],
+        ask: [],
+        deny: []
+      },
+      hooks: {},
+      env: {},
+      disableAllHooks: false,
+      cleanupPeriodDays: 30,
+      includeCoAuthoredBy: false
+    } as BladeConfig;
+    await commandService.initialize(mockConfig);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it('should be a singleton', () => {
-    const instance1 = CommandService.getInstance();
-    const instance2 = CommandService.getInstance();
-
-    expect(instance1).toBe(instance2);
+  it('should initialize properly', () => {
+    expect(commandService).toBeInstanceOf(CommandService);
   });
 
   it('should register and get commands', async () => {
@@ -198,7 +230,7 @@ describe('CommandService', () => {
           name: 'verbose',
           alias: 'v',
           description: '详细输出',
-          type: 'boolean',
+          type: 'boolean' as const,
           default: false,
         },
       ],
