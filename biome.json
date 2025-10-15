@@ -7,6 +7,7 @@
   },
   "formatter": {
     "enabled": true,
+    "formatWithErrors": true,
     "indentStyle": "space",
     "indentWidth": 2,
     "lineWidth": 88
@@ -87,16 +88,22 @@
       "semicolons": "always",
       "trailingCommas": "es5"
     },
-    "globals": ["jest", "describe", "test", "it", "expect", "beforeEach", "afterEach", "beforeAll", "afterAll", "global"]
+    "globals": [
+      "jest",
+      "describe",
+      "test",
+      "it",
+      "expect",
+      "beforeEach",
+      "afterEach",
+      "beforeAll",
+      "afterAll",
+      "global"
+    ]
   },
   "overrides": [
     {
-      "includes": [
-        "tests/**/*",
-        "**/*.test.ts",
-        "**/*.spec.ts",
-        "src/**/*test*"
-      ],
+      "includes": ["tests/**/*", "**/*.test.ts", "**/*.spec.ts", "src/**/*test*"],
       "linter": {
         "rules": {
           "suspicious": {

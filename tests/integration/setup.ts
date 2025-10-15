@@ -2,7 +2,7 @@
  * 集成测试配置和设置
  */
 
-import { jest } from '@jest/globals';
+import { vi } from 'vitest';
 
 // 集成测试环境设置
 export class IntegrationTestSetup {
@@ -16,34 +16,41 @@ export class IntegrationTestSetup {
     process.env.INTEGRATION_TEST = 'true';
 
     // 模拟网络请求
-    global.fetch = jest.fn();
+    global.fetch = vi.fn();
 
     // 模拟文件系统
-    jest.mock('fs', () => ({
-      ...jest.requireActual('fs'),
-      readFileSync: jest.fn(),
-      writeFileSync: jest.fn(),
-      existsSync: jest.fn(),
-      promises: {
-        readFile: jest.fn(),
-        writeFile: jest.fn(),
-        access: jest.fn(),
-      },
-    }));
+    vi.mock('fs', async () => {
+      const actual = await vi.importActual('fs');
+      return {
+        ...actual,
+        readFileSync: vi.fn(),
+        writeFileSync: vi.fn(),
+        existsSync: vi.fn(),
+        promises: {
+          readFile: vi.fn(),
+          writeFile: vi.fn(),
+          access: vi.fn(),
+        },
+      };
+    });
 
     // 模拟子进程
-    jest.mock('child_process', () => ({
-      exec: jest.fn(),
-      execSync: jest.fn(),
-      spawn: jest.fn(),
-    }));
+    vi.mock('child_process', async () => {
+      const actual = await vi.importActual('child_process');
+      return {
+        ...actual,
+        exec: vi.fn(),
+        execSync: vi.fn(),
+        spawn: vi.fn(),
+      };
+    });
 
     this.initialized = true;
   }
 
   static async teardown() {
     // 清理模拟
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     // 重置环境变量
     delete process.env.INTEGRATION_TEST;
@@ -83,9 +90,9 @@ export class IntegrationTestUtils {
   static async createTempDatabase(): Promise<any> {
     // 在实际实现中，这里会创建一个内存数据库或测试数据库连接
     return {
-      query: jest.fn(),
-      execute: jest.fn(),
-      close: jest.fn(),
+      query: vi.fn(),
+      execute: vi.fn(),
+      close: vi.fn(),
     };
   }
 
@@ -117,7 +124,7 @@ export class IntegrationTestUtils {
     const mockService = {
       calls: [] as any[],
       responses: [...responses],
-      call: jest.fn(async (request: any) => {
+      call: vi.fn(async (request: any) => {
         mockService.calls.push(request);
         const response = mockService.responses.shift();
         if (response instanceof Error) {
@@ -245,10 +252,4 @@ export class IntegrationTestLifecycle {
 //   await IntegrationTestSetup.teardown();
 // });
 
-// 导出所有工具
-export {
-  IntegrationTestSetup,
-  IntegrationTestDataManager,
-  IntegrationTestUtils,
-  IntegrationTestLifecycle,
-};
+// 所有类已经在上面导出了，不需要重复导出

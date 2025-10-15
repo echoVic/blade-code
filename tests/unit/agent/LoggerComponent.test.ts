@@ -2,13 +2,14 @@
  * LoggerComponent 单元测试
  */
 
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 import { Agent } from '../../../src/agent/Agent.js';
 import { LoggerComponent } from '../../../src/agent/LoggerComponent.js';
 import { Logger, LogLevel } from '../../../src/logging/EnhancedLogger.js';
 
 // Mock Agent
 const mockAgent = {
-  getConfig: jest.fn().mockReturnValue({
+  getConfig: vi.fn().mockReturnValue({
     logging: {
       level: 'info',
       format: 'json',
@@ -20,30 +21,30 @@ const mockAgent = {
       },
     },
   }),
-  getContext: jest.fn().mockReturnValue({
+  getContext: vi.fn().mockReturnValue({
     sessionId: 'test-session-123',
   }),
 };
 
 // Mock Logger
 const mockLogger = {
-  debug: jest.fn(),
-  info: jest.fn(),
-  warn: jest.fn(),
-  error: jest.fn(),
-  fatal: jest.fn(),
-  setLevel: jest.fn(),
-  getLevel: jest.fn().mockReturnValue(LogLevel.INFO),
-  addTransport: jest.fn(),
-  removeTransport: jest.fn(),
-  setContext: jest.fn(),
-  clearContext: jest.fn(),
-  destroy: jest.fn(),
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  fatal: vi.fn(),
+  setLevel: vi.fn(),
+  getLevel: vi.fn().mockReturnValue(LogLevel.INFO),
+  addTransport: vi.fn(),
+  removeTransport: vi.fn(),
+  setContext: vi.fn(),
+  clearContext: vi.fn(),
+  destroy: vi.fn(),
 };
 
-jest.mock('../../logger/EnhancedLogger.js', () => {
+vi.mock('../../logger/EnhancedLogger.js', () => {
   return {
-    Logger: jest.fn().mockImplementation(() => mockLogger),
+    Logger: vi.fn().mockImplementation(() => mockLogger),
     LogLevel: {
       DEBUG: 'debug',
       INFO: 'info',
@@ -59,7 +60,7 @@ describe('LoggerComponent', () => {
 
   beforeEach(() => {
     // 重置所有 mock
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     // 创建新的 LoggerComponent 实例
     loggerComponent = new LoggerComponent(mockAgent as unknown as Agent);
@@ -94,7 +95,7 @@ describe('LoggerComponent', () => {
     });
 
     test('应该在初始化失败时正确处理', async () => {
-      (Logger as jest.Mock).mockImplementationOnce(() => {
+      (Logger as vi.Mock).mockImplementationOnce(() => {
         throw new Error('Init Error');
       });
 
@@ -187,7 +188,7 @@ describe('LoggerComponent', () => {
     });
 
     test('应该能够添加传输器', () => {
-      const mockTransport = { write: jest.fn(), flush: jest.fn(), close: jest.fn() };
+      const mockTransport = { write: vi.fn(), flush: vi.fn(), close: vi.fn() };
       loggerComponent.addTransport('test', mockTransport);
 
       expect(mockLogger.addTransport).toHaveBeenCalledWith('test', mockTransport);

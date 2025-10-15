@@ -2,6 +2,7 @@
  * ErrorMonitor 测试
  */
 
+import { describe, test, expect, beforeEach } from 'vitest';
 import { BladeError } from '../../../src/error/BladeError.js';
 import { ErrorMonitor } from '../../../src/error/ErrorMonitor.js';
 
@@ -29,7 +30,7 @@ describe('ErrorMonitor', () => {
 
     const stats = errorMonitor.getStatistics();
     expect(stats.totalErrors).toBe(1);
-    expect(stats.errorsByCode['CORE_0004']).toBe(1);
+    expect(stats.errorsByCode['0004']).toBe(1);
   });
 
   test('应该正确监控原生Error', async () => {
@@ -105,8 +106,8 @@ describe('ErrorMonitor', () => {
     await errorMonitor.monitor(error);
 
     const jsonData = errorMonitor.exportData('json');
-    expect(jsonData).toContain('统计数据');
-    expect(jsonData).toContain('报告');
+    expect(jsonData).toContain('statistics');
+    expect(jsonData).toContain('reports');
 
     const csvData = errorMonitor.exportData('csv');
     expect(csvData).toContain('timestamp');

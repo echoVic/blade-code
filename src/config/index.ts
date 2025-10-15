@@ -10,8 +10,8 @@ export { DEFAULT_CONFIG, ENV_VAR_MAPPING } from './defaults.js';
 // 权限检查器
 export {
   PermissionChecker,
-  type PermissionCheckResult,
   PermissionResult,
+  type PermissionCheckResult,
   type ToolInvocationDescriptor,
 } from './PermissionChecker.js';
 // 类型定义

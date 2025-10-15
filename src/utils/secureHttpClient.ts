@@ -3,13 +3,7 @@
  * 提供增强的安全特性
  */
 
-import axios, {
-  AxiosError,
-  AxiosInstance,
-  AxiosRequestConfig,
-  AxiosResponse,
-} from 'axios';
-import crypto, { createHash, createHmac } from 'crypto';
+import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import https from 'https';
 
 export interface SecureHttpClientOptions {

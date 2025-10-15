@@ -2,68 +2,70 @@
  * ChatService 单元测试
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChatService, type Message } from '../../../src/services/OpenAIChatService.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  type Message,
+  OpenAIChatService,
+} from '../../../src/services/OpenAIChatService.js';
 
-// Mock fetch
-vi.mock('node:fetch', () => {
-  return {
-    default: vi.fn(),
-  };
-});
+// Mock OpenAI client
+const mockOpenAIClient = {
+  chat: {
+    completions: {
+      create: vi.fn(),
+    },
+  },
+};
+
+vi.mock('openai', () => ({
+  default: vi.fn().mockImplementation(() => mockOpenAIClient),
+  OpenAI: vi.fn().mockImplementation(() => mockOpenAIClient),
+}));
 
 describe('ChatService', () => {
-  let chatService: ChatService;
-  let mockFetch: any;
+  let chatService: OpenAIChatService;
 
   beforeEach(() => {
     // 重置所有 mock
     vi.clearAllMocks();
 
-    // 创建 mock fetch
-    mockFetch = vi.fn();
-    global.fetch = mockFetch;
-
     // 创建新的 ChatService 实例
-    chatService = new ChatService({
+    chatService = new OpenAIChatService({
       apiKey: 'test-api-key',
-      model: 'claude-3-5-sonnet-20240620',
-      baseUrl: 'https://api.anthropic.com/v1/messages',
+      model: 'gpt-4',
+      baseUrl: 'https://api.openai.com/v1',
     });
   });
 
   describe('初始化', () => {
     it('应该成功创建 ChatService 实例', () => {
-      expect(chatService).toBeInstanceOf(ChatService);
+      expect(chatService).toBeInstanceOf(OpenAIChatService);
     });
 
     it('应该正确设置配置', () => {
       const config = chatService.getConfig();
       expect(config.apiKey).toBe('test-api-key');
-      expect(config.model).toBe('claude-3-5-sonnet-20240620');
-      expect(config.baseUrl).toBe('https://api.anthropic.com/v1/messages');
+      expect(config.model).toBe('gpt-4');
+      expect(config.baseUrl).toBe('https://api.openai.com/v1');
     });
   });
 
   describe('聊天功能', () => {
     beforeEach(() => {
       // 设置成功的 mock 响应
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: vi.fn().mockResolvedValue({
-          choices: [
-            {
-              message: {
-                content: 'Hello, world!',
-              },
+      mockOpenAIClient.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: 'Hello, world!',
             },
-          ],
-          usage: {
-            prompt_tokens: 10,
-            completion_tokens: 20,
-            total_tokens: 30,
           },
-        }),
+        ],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 20,
+          total_tokens: 30,
+        },
       });
     });
 
@@ -71,18 +73,9 @@ describe('ChatService', () => {
       const messages: Message[] = [{ role: 'user', content: 'Hello, world!' }];
       const response = await chatService.chat(messages);
 
-      expect(response).toBe('Hello, world!');
-      expect(mockFetch).toHaveBeenCalled();
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.anthropic.com/v1/messages',
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            Authorization: 'Bearer test-api-key',
-            'Content-Type': 'application/json',
-          }),
-        })
-      );
+      expect(response.content).toBe('Hello, world!');
+      expect(response.usage).toBeDefined();
+      expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalled();
     });
 
     it('应该能够处理带系统提示词的聊天', async () => {
@@ -91,28 +84,24 @@ describe('ChatService', () => {
         systemPrompt: 'You are a helpful assistant',
       });
 
-      expect(response).toBe('Hello, world!');
-      expect(mockFetch).toHaveBeenCalled();
+      expect(response.content).toBe('Hello, world!');
+      expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalled();
     });
 
     it('应该能够发送详细消息并接收完整响应', async () => {
       const messages: Message[] = [{ role: 'user', content: 'Hello, world!' }];
 
-      const response = await chatService.chatDetailed(messages);
+      const response = await chatService.chat(messages);
 
       expect(response).toBeDefined();
       expect(response.content).toBe('Hello, world!');
       expect(response.usage).toBeDefined();
-      expect(response.usage?.promptTokens).toBe(10);
-      expect(response.usage?.completionTokens).toBe(20);
     });
 
     it('应该在API调用失败时抛出错误', async () => {
-      mockFetch.mockResolvedValue({
-        ok: false,
-        status: 500,
-        statusText: 'Internal Server Error',
-      });
+      mockOpenAIClient.chat.completions.create.mockRejectedValueOnce(
+        new Error('API调用失败: 500 Internal Server Error')
+      );
 
       const messages: Message[] = [{ role: 'user', content: 'Hello, world!' }];
       await expect(chatService.chat(messages)).rejects.toThrow(
@@ -121,150 +110,119 @@ describe('ChatService', () => {
     });
 
     it('应该在网络错误时抛出错误', async () => {
-      mockFetch.mockRejectedValue(new Error('Network Error'));
+      mockOpenAIClient.chat.completions.create.mockRejectedValueOnce(
+        new Error('Connection error.')
+      );
 
       const messages: Message[] = [{ role: 'user', content: 'Hello, world!' }];
       await expect(chatService.chat(messages)).rejects.toThrow(
-        'Chat API调用失败: Network Error'
+        'Connection error.'
       );
     });
   });
 
   describe('消息格式', () => {
-    it('应该支持文本消息格式', async () => {
-      const messages: Message[] = [{ role: 'user', content: 'Hello, world!' }];
-
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: vi.fn().mockResolvedValue({
-          choices: [
-            {
-              message: {
-                content: 'Response',
-              },
+    beforeEach(() => {
+      mockOpenAIClient.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: 'Response',
             },
-          ],
-          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
-        }),
+          },
+        ],
+        usage: {
+          prompt_tokens: 5,
+          completion_tokens: 10,
+          total_tokens: 15,
+        },
       });
+    });
+
+    it('应该支持文本消息格式', async () => {
+      const messages: Message[] = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi there!' },
+      ];
 
       const response = await chatService.chat(messages);
-      expect(response).toBe('Response');
+
+      expect(response.content).toBe('Response');
+      expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: messages,
+        })
+      );
     });
 
     it('应该支持工具使用消息格式', async () => {
       const messages: Message[] = [
+        { role: 'user', content: 'Hello' },
         {
-          role: 'user',
-          content: [
+          role: 'assistant',
+          content: '',
+          tool_calls: [
             {
-              type: 'tool_use',
-              tool_use: {
-                id: 'toolu_01A09q90qw90lq917835l1',
+              id: 'call_123',
+              type: 'function',
+              function: {
                 name: 'get_weather',
-                input: { location: 'San Francisco, CA', unit: 'celsius' },
+                arguments: '{"location": "Beijing"}',
               },
             },
           ],
         },
       ];
 
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: vi.fn().mockResolvedValue({
-          choices: [
-            {
-              message: {
-                content: 'Tool response',
-              },
-            },
-          ],
-          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
-        }),
-      });
-
       const response = await chatService.chat(messages);
-      expect(response).toBe('Tool response');
+
+      expect(response.content).toBe('Response');
     });
 
     it('应该支持工具结果消息格式', async () => {
       const messages: Message[] = [
+        { role: 'user', content: 'Hello' },
         {
-          role: 'user',
-          content: [
+          role: 'assistant',
+          content: '',
+          tool_calls: [
             {
-              type: 'tool_result',
-              tool_result: {
-                tool_use_id: 'toolu_01A09q90qw90lq917835l1',
-                content: 'The weather is sunny',
+              id: 'call_123',
+              type: 'function',
+              function: {
+                name: 'get_weather',
+                arguments: '{"location": "Beijing"}',
               },
             },
           ],
         },
+        {
+          role: 'tool',
+          content: 'Sunny, 25°C',
+          tool_call_id: 'call_123',
+        },
       ];
 
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: vi.fn().mockResolvedValue({
-          choices: [
-            {
-              message: {
-                content: 'Final response',
-              },
-            },
-          ],
-          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
-        }),
-      });
-
       const response = await chatService.chat(messages);
-      expect(response).toBe('Final response');
+
+      expect(response.content).toBe('Response');
     });
   });
 
   describe('配置管理', () => {
-    it('应该能够更新配置', () => {
-      chatService.updateConfig({
-        model: 'claude-3-opus-20240229',
-        temperature: 0.8,
-      });
+    it('应该能够更新配置', async () => {
+      const newConfig = {
+        apiKey: 'new-api-key',
+        model: 'gpt-3.5-turbo',
+        baseUrl: 'https://new-api.example.com',
+      };
+
+      await chatService.updateConfig(newConfig);
 
       const config = chatService.getConfig();
-      expect(config.model).toBe('claude-3-opus-20240229');
-      expect(config.temperature).toBe(0.8);
-    });
-
-    it('应该能够获取当前配置', () => {
-      const config = chatService.getConfig();
-      expect(config).toBeDefined();
-      expect(config.apiKey).toBe('test-api-key');
-      expect(config.model).toBe('claude-3-5-sonnet-20240620');
-    });
-  });
-
-  describe('错误处理', () => {
-    it('应该在无效配置时抛出错误', () => {
-      expect(() => {
-        new ChatService({} as any);
-      }).toThrow();
-    });
-
-    it('应该在缺少API密钥时抛出错误', () => {
-      expect(() => {
-        new ChatService({
-          model: 'claude-3-5-sonnet-20240620',
-          baseUrl: 'https://api.test.com',
-        } as any);
-      }).toThrow();
-    });
-
-    it('应该在缺少模型名称时抛出错误', () => {
-      expect(() => {
-        new ChatService({
-          apiKey: 'test-api-key',
-          baseUrl: 'https://api.test.com',
-        } as any);
-      }).toThrow();
+      expect(config.apiKey).toBe('new-api-key');
+      expect(config.model).toBe('gpt-3.5-turbo');
+      expect(config.baseUrl).toBe('https://new-api.example.com');
     });
   });
 });

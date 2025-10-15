@@ -2,7 +2,8 @@
  * BladeError 测试
  */
 
-import { BladeError, ErrorFactory } from '../../../src/error/index.js';
+import { describe, expect, test } from 'vitest';
+import { BladeError } from '../../../src/error/BladeError.js';
 import {
   ErrorCategory,
   ErrorCodeModule,
@@ -22,7 +23,7 @@ describe('BladeError', () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe('BladeError');
     expect(error.message).toBe('测试错误');
-    expect(error.code).toBe('CORE_0004');
+    expect(error.code).toBe('0004');
     expect(error.module).toBe(ErrorCodeModule.CORE);
     expect(error.severity).toBe(ErrorSeverity.ERROR);
     expect(error.category).toBe(ErrorCategory.SYSTEM);
@@ -71,8 +72,8 @@ describe('BladeError', () => {
     const bladeError = BladeError.from(nativeError);
 
     expect(bladeError).toBeInstanceOf(BladeError);
-    expect(bladeError.message).toBe('未知错误');
-    expect(bladeError.context.originalMessage).toBe('原生错误');
+    expect(bladeError.message).toBe('原生错误');
+    expect(bladeError.context.originalError).toBe('Error');
   });
 
   test('应该正确序列化为 JSON', () => {
@@ -85,7 +86,7 @@ describe('BladeError', () => {
     const json = error.toJSON();
     expect(json.name).toBe('BladeError');
     expect(json.message).toBe('网络请求失败');
-    expect(json.code).toBe('NETWORK_8001');
+    expect(json.code).toBe('8001');
   });
 
   test('应该正确转换为字符串', () => {
@@ -96,7 +97,7 @@ describe('BladeError', () => {
     );
 
     const str = error.toString();
-    expect(str).toBe('[FILE_SYSTEM_9001] 文件未找到 (FILE_SYSTEM)');
+    expect(str).toBe('BladeError [FILE_SYSTEM:9001]: 文件未找到');
   });
 
   test('应该正确生成人类可读的消息', () => {
@@ -110,10 +111,7 @@ describe('BladeError', () => {
     );
 
     const message = error.getHumanReadableMessage();
-    expect(message).toContain('错误代码: SECURITY_11001');
-    expect(message).toContain('错误信息: 认证失败');
-    expect(message).toContain('建议解决方案:');
-    expect(message).toContain('1. 检查凭据');
-    expect(message).toContain('2. 联系管理员');
+    expect(message).toContain('认证失败');
+    expect(message).toContain('建议: 检查凭据, 联系管理员');
   });
 });

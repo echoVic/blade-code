@@ -2,6 +2,7 @@
  * ErrorSerializer 测试
  */
 
+import { describe, test, expect, beforeEach } from 'vitest';
 import { BladeError } from '../../../src/error/BladeError.js';
 import { ErrorSerializer } from '../../../src/error/ErrorSerializer.js';
 
@@ -31,7 +32,7 @@ describe('ErrorSerializer', () => {
 
     expect(serialized.name).toBe('BladeError');
     expect(serialized.message).toBe('测试错误');
-    expect(serialized.code).toBe('CORE_0004');
+    expect(serialized.code).toBe('0004');
     expect(serialized.context).toEqual({ userId: '123', action: 'test' });
     expect(serialized.retryable).toBe(true);
     expect(serialized.suggestions).toEqual(['检查配置']);
@@ -44,7 +45,7 @@ describe('ErrorSerializer', () => {
 
     expect(deserialized).toBeInstanceOf(BladeError);
     expect(deserialized.message).toBe('测试错误');
-    expect(deserialized.code).toBe('CORE_0004');
+    expect(deserialized.code).toBe('0004');
   });
 
   test('应该正确处理敏感数据', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SYSTEM_PROMPT } from '../../../src/prompts/default.js';
-import { SystemPrompt } from '../../../src/prompts/SystemPrompt.js';
+import { DEFAULT_SYSTEM_PROMPT } from '../../../src/prompts/default';
+import { SystemPrompt } from '../../../src/prompts/SystemPrompt';
 
 describe('PromptBuilder (Simplified)', () => {
   describe('基础功能测试', () => {
@@ -8,8 +8,10 @@ describe('PromptBuilder (Simplified)', () => {
       const systemPrompt = new SystemPrompt();
 
       const result = systemPrompt.build();
-      expect(result).toContain('Blade AI');
-      expect(result).toContain('命令行智能编码助手');
+      expect(result).toContain('Blade Code');
+      expect(result).toContain(
+        'professional command line intelligent coding assistant'
+      );
     });
 
     it('应该能添加 CLI 提示', () => {

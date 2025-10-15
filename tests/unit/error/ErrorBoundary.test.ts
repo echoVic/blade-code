@@ -2,7 +2,7 @@
  * ErrorBoundary 测试
  */
 
-import { vi } from 'vitest';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 import { BladeError } from '../../../src/error/BladeError.js';
 import { ErrorBoundary } from '../../../src/error/ErrorBoundary.js';
 

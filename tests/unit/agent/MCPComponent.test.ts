@@ -2,13 +2,14 @@
  * MCPComponent 单元测试
  */
 
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 import { Agent } from '../../../src/agent/Agent.js';
 import { MCPComponent } from '../../../src/agent/MCPComponent.js';
 import { MCPClient } from '../../../src/mcp/client/MCPClient.js';
 
 // Mock Agent
 const mockAgent = {
-  getConfig: jest.fn().mockReturnValue({
+  getConfig: vi.fn().mockReturnValue({
     mcp: {
       enabled: true,
       serverUrl: 'ws://localhost:3000',
@@ -16,43 +17,43 @@ const mockAgent = {
       timeout: 30000,
     },
   }),
-  getLogger: jest.fn().mockReturnValue({
-    info: jest.fn(),
-    error: jest.fn(),
-    debug: jest.fn(),
-    warn: jest.fn(),
+  getLogger: vi.fn().mockReturnValue({
+    info: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
   }),
-  getContext: jest.fn().mockReturnValue({
+  getContext: vi.fn().mockReturnValue({
     sessionId: 'test-session-123',
   }),
 };
 
 // Mock MCP Client
 const mockMCPClient = {
-  connect: jest.fn().mockResolvedValue({
+  connect: vi.fn().mockResolvedValue({
     success: true,
     clientId: 'client-123',
   }),
-  disconnect: jest.fn().mockResolvedValue({
+  disconnect: vi.fn().mockResolvedValue({
     success: true,
   }),
-  sendRequest: jest.fn().mockResolvedValue({
+  sendRequest: vi.fn().mockResolvedValue({
     success: true,
     data: { result: 'test response' },
   }),
-  sendNotification: jest.fn().mockResolvedValue({
+  sendNotification: vi.fn().mockResolvedValue({
     success: true,
     notificationId: 'not-456',
   }),
-  isConnected: jest.fn().mockReturnValue(true),
-  on: jest.fn(),
-  off: jest.fn(),
-  destroy: jest.fn(),
+  isConnected: vi.fn().mockReturnValue(true),
+  on: vi.fn(),
+  off: vi.fn(),
+  destroy: vi.fn(),
 };
 
-jest.mock('../../mcp/client/MCPClient.js', () => {
+vi.mock('../../mcp/client/MCPClient.js', () => {
   return {
-    MCPClient: jest.fn().mockImplementation(() => mockMCPClient),
+    MCPClient: vi.fn().mockImplementation(() => mockMCPClient),
   };
 });
 
@@ -61,7 +62,7 @@ describe('MCPComponent', () => {
 
   beforeEach(() => {
     // 重置所有 mock
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     // 创建新的 MCPComponent 实例
     mcpComponent = new MCPComponent(mockAgent as unknown as Agent);
@@ -109,7 +110,7 @@ describe('MCPComponent', () => {
     });
 
     test('应该在初始化失败时正确处理', async () => {
-      (MCPClient as jest.Mock).mockImplementationOnce(() => {
+      (MCPClient as vi.Mock).mockImplementationOnce(() => {
         throw new Error('Init Error');
       });
 
@@ -207,14 +208,14 @@ describe('MCPComponent', () => {
     });
 
     test('应该能够订阅事件', () => {
-      const handler = jest.fn();
+      const handler = vi.fn();
       mcpComponent.on('message', handler);
 
       expect(mockMCPClient.on).toHaveBeenCalledWith('message', handler);
     });
 
     test('应该能够取消订阅事件', () => {
-      const handler = jest.fn();
+      const handler = vi.fn();
       mcpComponent.off('message', handler);
 
       expect(mockMCPClient.off).toHaveBeenCalledWith('message', handler);

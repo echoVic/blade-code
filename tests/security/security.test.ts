@@ -3,19 +3,19 @@
  * 测试所有安全相关的工具和功能
  */
 
-import './setup';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, unlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join, resolve } from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  CommandExecutor,
-  ConfigEncryptor,
-  ErrorHandler,
-  pathSecurity as PathSecurity,
-  PromptSecurity,
-  SecureHttpClient,
-} from '../../src/core';
+import { join } from 'path';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { CommandExecutor } from '../../src/utils/commandExecutor.js';
+import { ConfigEncryptor } from '../../src/utils/configEncryptor.js';
+import { ErrorHandler } from '../../src/utils/errorHandler.js';
+import { PathSecurity } from '../../src/utils/pathSecurity.js';
+import { PromptSecurity } from '../../src/utils/promptSecurity.js';
+import './setup';
+
+// 动态导入 SecureHttpClient 以避免模块级别的 https 依赖
+let SecureHttpClient: any;
 
 describe('安全测试套件', () => {
   // 路径安全测试
@@ -178,9 +178,13 @@ describe('安全测试套件', () => {
 
   // HTTP 客户端安全测试
   describe('HTTP 客户端安全测试', () => {
-    let client: SecureHttpClient;
+    let client: any;
 
-    beforeEach(() => {
+    beforeEach(async () => {
+      if (!SecureHttpClient) {
+        const module = await import('../../src/utils/secureHttpClient.js');
+        SecureHttpClient = module.SecureHttpClient;
+      }
       client = new SecureHttpClient({
         timeout: 5000,
         allowedHosts: ['api.example.com', 'localhost'],
@@ -214,7 +218,7 @@ describe('安全测试套件', () => {
 
       try {
         await Promise.all(promises);
-      } catch (error) {
+      } catch (error: any) {
         expect(error.message).toContain('请求过于频繁');
       }
     });

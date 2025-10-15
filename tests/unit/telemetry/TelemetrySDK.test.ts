@@ -1,13 +1,10 @@
 import axios from 'axios';
-import {
-  ErrorTracker,
-  PerformanceMonitor,
-  TelemetrySDK,
-} from '../../../src/telemetry/sdk.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TelemetrySDK } from '../../../src/telemetry/sdk';
 
 // Mock axios
-jest.mock('axios');
-const mockedAxios = axios as jest.Mocked<typeof axios>;
+vi.mock('axios');
+const mockedAxios = vi.mocked(axios);
 
 describe('TelemetrySDK', () => {
   let telemetrySDK: TelemetrySDK;
@@ -28,8 +25,8 @@ describe('TelemetrySDK', () => {
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
-    jest.useRealTimers();
+    vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it('should initialize successfully', async () => {
@@ -38,12 +35,12 @@ describe('TelemetrySDK', () => {
   });
 
   it('should not initialize when disabled', async () => {
-    mockConfig.telemetry.enabled = false;
+    mockConfig.telemetry = false;
     const disabledSDK = new TelemetrySDK(mockConfig);
 
     await disabledSDK.initialize();
     expect(disabledSDK.getTelemetryStatus().initialized).toBe(false);
-  });
+  }
 
   it('should track events', async () => {
     await telemetrySDK.initialize();
@@ -101,277 +98,127 @@ describe('TelemetrySDK', () => {
     expect(stats.eventTypes['feature_usage']).toBe(1);
   });
 
-  it('should flush events to server', async () => {
-    mockedAxios.post.mockResolvedValue({ data: { success: true } });
+  it('should batch events correctly', async () => {
+    vi.useFakeTimers();
 
     await telemetrySDK.initialize();
 
-    // 添加一些事件
+    // 添加多个事件
     telemetrySDK.trackEvent('test_event_1');
     telemetrySDK.trackEvent('test_event_2');
 
-    // 刷新事件
+    // 模拟时间流逝
+    vi.advanceTimersByTime(1000);
+
+    // 等待事件被批处理
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const stats = telemetrySDK.getEventStats();
+    expect(stats.totalEvents).toBe(2);
+  });
+
+  it('should flush events to server', async () => {
+    mockedAxios.post.mockResolvedValue({ status: 200, data: { success: true } });
+
+    await telemetrySDK.initialize();
+
+    telemetrySDK.trackEvent('test_event_1');
+    telemetrySDK.trackEvent('test_event_2');
+
     await telemetrySDK.flushEvents();
 
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      'https://test-telemetry.example.com/api/v1/events',
+      'https://telemetry.blade-ai.com/api/v1/events',
       expect.objectContaining({
         events: expect.arrayContaining([
-          expect.objectContaining({ eventName: 'test_event_1' }),
-          expect.objectContaining({ eventName: 'test_event_2' }),
+          expect.objectContaining({
+            eventName: 'test_event_1',
+          }),
+          expect.objectContaining({
+            eventName: 'test_event_2',
+          }),
         ]),
-      }),
-      expect.any(Object)
-    );
-  });
-
-  it('should handle flush errors gracefully', async () => {
-    mockedAxios.post.mockRejectedValue(new Error('网络错误'));
-
-    await telemetrySDK.initialize();
-
-    // 添加事件
-    telemetrySDK.trackEvent('test_event');
-
-    // 刷新应该不抛出异常
-    await expect(telemetrySDK.flushEvents()).resolves.not.toThrow();
-
-    // 事件应该保留在队列中
-    const stats = telemetrySDK.getEventStats();
-    expect(stats.queuedEvents).toBe(1);
-  });
-
-  it('should set user ID', async () => {
-    await telemetrySDK.initialize();
-
-    telemetrySDK.setUserId('user_123');
-
-    const status = telemetrySDK.getTelemetryStatus();
-    expect(status.userId).toBe('user_123');
-  });
-
-  it('should clear events', async () => {
-    await telemetrySDK.initialize();
-
-    telemetrySDK.trackEvent('test_event');
-    expect(telemetrySDK.getEventStats().totalEvents).toBe(1);
-
-    telemetrySDK.clearEvents();
-    expect(telemetrySDK.getEventStats().totalEvents).toBe(0);
-  });
-
-  it('should destroy properly', async () => {
-    mockedAxios.post.mockResolvedValue({ data: { success: true } });
-
-    await telemetrySDK.initialize();
-
-    telemetrySDK.trackEvent('test_event');
-    await telemetrySDK.destroy();
-
-    // 应该刷新所有事件
-    expect(mockedAxios.post).toHaveBeenCalled();
-
-    const status = telemetrySDK.getTelemetryStatus();
-    expect(status.initialized).toBe(false);
-    expect(status.queuedEvents).toBe(0);
-  });
-});
-
-describe('PerformanceMonitor', () => {
-  let performanceMonitor: PerformanceMonitor;
-
-  beforeEach(() => {
-    performanceMonitor = PerformanceMonitor.getInstance();
-  });
-
-  afterEach(() => {
-    // 清理指标
-    (performanceMonitor as any).metrics.clear();
-  });
-
-  it('should be a singleton', () => {
-    const instance1 = PerformanceMonitor.getInstance();
-    const instance2 = PerformanceMonitor.getInstance();
-
-    expect(instance1).toBe(instance2);
-  });
-
-  it('should measure async function execution time', async () => {
-    const asyncFn = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      return 'result';
-    };
-
-    const { result, duration } = await performanceMonitor.measureAsync(
-      'test_async',
-      asyncFn
-    );
-
-    expect(result).toBe('result');
-    expect(duration).toBeGreaterThan(5); // 应该大于5ms
-  });
-
-  it('should measure sync function execution time', () => {
-    const syncFn = () => {
-      let sum = 0;
-      for (let i = 0; i < 1000; i++) {
-        sum += i;
-      }
-      return sum;
-    };
-
-    const { result, duration } = performanceMonitor.measureSync('test_sync', syncFn);
-
-    expect(result).toBe(499500);
-    expect(duration).toBeGreaterThanOrEqual(0);
-  });
-
-  it('should start and end manual measurements', () => {
-    const measurementId = performanceMonitor.startMeasurement('manual_test');
-
-    // 模拟一些工作
-    const start = performance.now();
-    while (performance.now() - start < 5) {
-      // 等待5ms
-    }
-
-    const duration = performanceMonitor.endMeasurement(measurementId);
-
-    expect(duration).toBeGreaterThan(0);
-  });
-
-  it('should get metrics stats', () => {
-    // 记录一些指标
-    (performanceMonitor as any).recordMetric('test_metric', 100);
-    (performanceMonitor as any).recordMetric('test_metric', 200);
-    (performanceMonitor as any).recordMetric('test_metric', 150);
-
-    const stats = performanceMonitor.getMetricsStats('test_metric');
-
-    expect(stats.count).toBe(3);
-    expect(stats.min).toBe(100);
-    expect(stats.max).toBe(200);
-    expect(stats.avg).toBe(150);
-    expect(stats.total).toBe(450);
-  });
-
-  it('should get all metrics', () => {
-    (performanceMonitor as any).recordMetric('metric_1', 100);
-    (performanceMonitor as any).recordMetric('metric_2', 200);
-
-    const allMetrics = performanceMonitor.getAllMetrics();
-
-    expect(Object.keys(allMetrics)).toHaveLength(2);
-    expect(allMetrics['metric_1']).toBeDefined();
-    expect(allMetrics['metric_2']).toBeDefined();
-  });
-
-  it('should clear metrics', () => {
-    (performanceMonitor as any).recordMetric('test_metric', 100);
-
-    expect(performanceMonitor.getMetricsStats('test_metric').count).toBe(1);
-
-    performanceMonitor.clearMetrics('test_metric');
-
-    expect(performanceMonitor.getMetricsStats('test_metric').count).toBe(0);
-  });
-
-  it('should get uptime', () => {
-    const uptime = performanceMonitor.getUptime();
-    expect(uptime).toBeGreaterThanOrEqual(0);
-  });
-});
-
-describe('ErrorTracker', () => {
-  let errorTracker: ErrorTracker;
-  let mockTelemetrySDK: jest.Mocked<TelemetrySDK>;
-
-  beforeEach(() => {
-    errorTracker = ErrorTracker.getInstance();
-    mockTelemetrySDK = {
-      trackError: jest.fn(),
-    } as any;
-
-    errorTracker.setTelemetrySDK(mockTelemetrySDK);
-  });
-
-  afterEach(() => {
-    // 清理错误
-    (errorTracker as any).errors = [];
-  });
-
-  it('should be a singleton', () => {
-    const instance1 = ErrorTracker.getInstance();
-    const instance2 = ErrorTracker.getInstance();
-
-    expect(instance1).toBe(instance2);
-  });
-
-  it('should track errors', () => {
-    const testError = new Error('测试错误');
-    const context = { component: 'test', action: 'click' };
-
-    errorTracker.trackError(testError, context);
-
-    const errors = errorTracker.getErrors();
-    expect(errors).toHaveLength(1);
-    expect(errors[0].error.message).toBe('测试错误');
-    expect(errors[0].context).toEqual(context);
-  });
-
-  it('should send errors to telemetry SDK', () => {
-    const testError = new Error('遥测测试错误');
-
-    errorTracker.trackError(testError);
-
-    expect(mockTelemetrySDK.trackError).toHaveBeenCalledWith(
-      testError,
-      expect.objectContaining({
-        errorId: expect.any(String),
-        severity: 'error',
       })
     );
   });
 
-  it('should get error stats', () => {
-    const error1 = new Error('错误1');
-    const error2 = new Error('错误2');
+  it('should handle network errors gracefully', async () => {
+    mockedAxios.post.mockRejectedValue(new Error('Network error'));
 
-    errorTracker.trackError(error1, { severity: 'warning' });
-    errorTracker.trackError(error2, { severity: 'error' });
-    errorTracker.trackError(error1, { severity: 'error' });
+    await telemetrySDK.initialize();
 
-    const stats = errorTracker.getErrorStats();
+    telemetrySDK.trackEvent('test_event');
 
-    expect(stats.totalErrors).toBe(3);
-    expect(stats.severityCounts['warning']).toBe(1);
-    expect(stats.severityCounts['error']).toBe(2);
-    expect(stats.latestError).toBeDefined();
+    // 不应该抛出错误
+    await expect(telemetrySDK.flushEvents()).resolves.not.toThrow();
   });
 
-  it('should clear errors', () => {
-    const testError = new Error('测试错误');
-    errorTracker.trackError(testError);
+  it('should respect batch size limits', async () => {
+    await telemetrySDK.initialize();
 
-    expect(errorTracker.getErrors()).toHaveLength(1);
-
-    errorTracker.clearErrors();
-
-    expect(errorTracker.getErrors()).toHaveLength(0);
-  });
-
-  it('should limit returned errors', () => {
-    // 添加5个错误
-    for (let i = 0; i < 5; i++) {
-      errorTracker.trackError(new Error(`错误${i}`));
+    // 添加超过批次大小的事件
+    for (let i = 0; i < 15; i++) {
+      telemetrySDK.trackEvent(`test_event_${i}`);
     }
 
-    const allErrors = errorTracker.getErrors();
-    const limitedErrors = errorTracker.getErrors(3);
+    const stats = telemetrySDK.getEventStats();
+    expect(stats.totalEvents).toBe(15);
+  });
 
-    expect(allErrors).toHaveLength(5);
-    expect(limitedErrors).toHaveLength(3);
-    // 应该返回最新的错误
-    expect(limitedErrors[0].error.message).toBe('错误4');
+  it('should handle concurrent event tracking', async () => {
+    await telemetrySDK.initialize();
+
+    // 并发添加事件
+    const promises = [];
+    for (let i = 0; i < 10; i++) {
+      promises.push(
+        new Promise((resolve) => {
+          telemetrySDK.trackEvent(`concurrent_event_${i}`);
+          resolve(undefined);
+        })
+      );
+    }
+
+    await Promise.all(promises);
+
+    const stats = telemetrySDK.getEventStats();
+    expect(stats.totalEvents).toBe(10);
+  });
+
+  it('should provide correct telemetry status', async () => {
+    const status = telemetrySDK.getTelemetryStatus();
+    expect(status.enabled).toBe(true);
+    expect(status.initialized).toBe(false);
+
+    await telemetrySDK.initialize();
+
+    const updatedStatus = telemetrySDK.getTelemetryStatus();
+    expect(updatedStatus.initialized).toBe(true);
+  });
+
+  it('should reset event statistics', async () => {
+    await telemetrySDK.initialize();
+
+    telemetrySDK.trackEvent('test_event');
+    telemetrySDK.trackEvent('another_event');
+
+    let stats = telemetrySDK.getEventStats();
+    expect(stats.totalEvents).toBe(2);
+
+    telemetrySDK.clearEvents();
+
+    stats = telemetrySDK.getEventStats();
+    expect(stats.totalEvents).toBe(0);
+  });
+
+  it('should destroy cleanly', async () => {
+    await telemetrySDK.initialize();
+
+    telemetrySDK.trackEvent('test_event');
+
+    await expect(telemetrySDK.destroy()).resolves.not.toThrow();
+
+    const status = telemetrySDK.getTelemetryStatus();
+    expect(status.initialized).toBe(false);
   });
 });

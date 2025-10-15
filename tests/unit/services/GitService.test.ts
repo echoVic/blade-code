@@ -1,9 +1,11 @@
 import { spawn } from 'child_process';
-import { GitService } from '../../../src/services/gitService.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GitService } from '../../../src/services/gitService';
 
-// Mock spawn
-jest.mock('child_process', () => ({
-  spawn: jest.fn(),
+// Mock child_process
+vi.mock('child_process', () => ({
+  spawn: vi.fn(),
+  exec: vi.fn(),
 }));
 
 describe('GitService', () => {
@@ -30,7 +32,7 @@ describe('GitService', () => {
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('should initialize successfully', async () => {
@@ -39,17 +41,17 @@ describe('GitService', () => {
 
   it('should initialize git repository', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
-      stdout: { on: jest.fn() },
-      stderr: { on: jest.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const result = await gitService.init('/test/repo');
 
@@ -59,17 +61,17 @@ describe('GitService', () => {
 
   it('should clone repository', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
-      stdout: { on: jest.fn() },
-      stderr: { on: jest.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const result = await gitService.clone(
       'https://github.com/test/repo.git',
@@ -90,23 +92,23 @@ describe('GitService', () => {
 
   it('should get repository status', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
       stdout: {
-        on: jest.fn((event, callback) => {
+        on: vi.fn((event, callback) => {
           if (event === 'data') {
             callback('M  modified-file.txt\n?? untracked-file.txt\n');
           }
         }),
       },
-      stderr: { on: jest.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const status = await gitService.status('/test/repo');
 
@@ -117,17 +119,17 @@ describe('GitService', () => {
 
   it('should add files to staging', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
-      stdout: { on: jest.fn() },
-      stderr: { on: jest.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const result = await gitService.add('/test/repo', ['file1.txt', 'file2.txt']);
 
@@ -141,23 +143,23 @@ describe('GitService', () => {
 
   it('should commit changes', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
       stdout: {
-        on: jest.fn((event, callback) => {
+        on: vi.fn((event, callback) => {
           if (event === 'data') {
             callback('[main abc1234] Test commit\n 1 file changed\n');
           }
         }),
       },
-      stderr: { on: jest.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const result = await gitService.commit('/test/repo', '测试提交');
 
@@ -172,17 +174,17 @@ describe('GitService', () => {
 
   it('should push changes', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
-      stdout: { on: jest.fn() },
-      stderr: { on: jest.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const result = await gitService.push('/test/repo');
 
@@ -192,17 +194,17 @@ describe('GitService', () => {
 
   it('should pull changes', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
-      stdout: { on: jest.fn() },
-      stderr: { on: jest.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const result = await gitService.pull('/test/repo');
 
@@ -212,17 +214,17 @@ describe('GitService', () => {
 
   it('should create branch', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
-      stdout: { on: jest.fn() },
-      stderr: { on: jest.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const result = await gitService.createBranch('/test/repo', 'feature-branch');
 
@@ -236,17 +238,17 @@ describe('GitService', () => {
 
   it('should checkout branch', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
-      stdout: { on: jest.fn() },
-      stderr: { on: jest.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const result = await gitService.checkout('/test/repo', 'feature-branch');
 
@@ -260,23 +262,23 @@ describe('GitService', () => {
 
   it('should list branches', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
       stdout: {
-        on: jest.fn((event, callback) => {
+        on: vi.fn((event, callback) => {
           if (event === 'data') {
             callback('* main\n  feature-branch\n  develop\n');
           }
         }),
       },
-      stderr: { on: jest.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const branches = await gitService.listBranches('/test/repo');
 
@@ -287,14 +289,14 @@ describe('GitService', () => {
 
   it('should get commit log', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
       stdout: {
-        on: jest.fn((event, callback) => {
+        on: vi.fn((event, callback) => {
           if (event === 'data') {
             callback(
               'abc1234|张三|zhang@example.com|2023-01-01 12:00:00 +0800|首次提交\n' +
@@ -303,10 +305,10 @@ describe('GitService', () => {
           }
         }),
       },
-      stderr: { on: jest.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const commits = await gitService.log('/test/repo');
 
@@ -318,7 +320,7 @@ describe('GitService', () => {
 
   it('should handle git command errors', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(1), 10); // 非零退出码表示错误
         }
@@ -327,9 +329,9 @@ describe('GitService', () => {
         }
         return mockChildProcess;
       }),
-      stdout: { on: jest.fn() },
+      stdout: { on: vi.fn() },
       stderr: {
-        on: jest.fn((event, callback) => {
+        on: vi.fn((event, callback) => {
           if (event === 'data') {
             callback('fatal: not a git repository\n');
           }
@@ -337,24 +339,24 @@ describe('GitService', () => {
       },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     await expect(gitService.status('/invalid/path')).rejects.toThrow('Git命令失败');
   });
 
   it('should check if directory is git repository', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
-      stdout: { on: jest.fn() },
-      stderr: { on: jest.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const isRepo = await gitService.isRepository('/test/repo');
 
@@ -368,23 +370,23 @@ describe('GitService', () => {
 
   it('should get current branch', async () => {
     const mockChildProcess = {
-      on: jest.fn((event, callback) => {
+      on: vi.fn((event, callback) => {
         if (event === 'close') {
           setTimeout(() => callback(0), 10);
         }
         return mockChildProcess;
       }),
       stdout: {
-        on: jest.fn((event, callback) => {
+        on: vi.fn((event, callback) => {
           if (event === 'data') {
             callback('main\n');
           }
         }),
       },
-      stderr: { on: jest.fn() },
+      stderr: { on: vi.fn() },
     };
 
-    (spawn as jest.Mock).mockReturnValue(mockChildProcess);
+    (spawn as vi.Mock).mockReturnValue(mockChildProcess);
 
     const branch = await gitService.getCurrentBranch('/test/repo');
 
