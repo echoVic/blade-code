@@ -95,16 +95,24 @@ export async function main() {
       },
       async (argv) => {
         // 启动 UI 模式
-        const options = { ...argv };
+        // TODO: initialMessage 功能待实现
+        // 当前解析参数但 UI 层未处理，需要在 BladeInterface 中自动发送此消息
         const initialMessage = argv.message ? argv.message.join(' ') : undefined;
 
-        // 启动 React UI
+        // 启动 React UI - 传递所有选项
         const appProps: any = {
+          ...argv,
           initialMessage,
-          ...(options.debug !== undefined && { debug: options.debug }),
-          ...(options.verbose !== undefined && { verbose: Boolean(options.verbose) }),
-          ...(options.print !== undefined && { print: Boolean(options.print) }),
+          // 确保某些字段是正确的类型
+          debug: argv.debug,
+          verbose: Boolean(argv.verbose),
+          print: Boolean(argv.print),
         };
+
+        // 移除内部字段
+        delete appProps._;
+        delete appProps.$0;
+        delete appProps.message;
 
         const { unmount } = render(React.createElement(BladeApp, appProps), {
           patchConsole: true,

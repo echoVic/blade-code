@@ -3,6 +3,7 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../src/agent/Agent.js';
 import type { AgentOptions } from '../../src/agent/types.js';
+import { PermissionMode } from '../../src/config/types.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../../src/prompts/default.js';
 
 // Mock 配置对象
@@ -46,6 +47,7 @@ const mockBladeConfig = {
     ask: [],
     deny: [],
   },
+  permissionMode: PermissionMode.DEFAULT,
 
   // 钩子
   hooks: {},

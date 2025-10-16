@@ -55,7 +55,7 @@ export class PermissionChecker {
    * 检查工具调用权限
    */
   check(descriptor: ToolInvocationDescriptor): PermissionCheckResult {
-    const signature = this.buildSignature(descriptor);
+    const signature = PermissionChecker.buildSignature(descriptor);
 
     // 优先级: deny > allow > ask > 默认(ask)
 
@@ -102,12 +102,21 @@ export class PermissionChecker {
   /**
    * 构建工具调用签名
    * 格式: ToolName(param1:value1, param2:value2)
+   *
+   * 智能参数过滤策略:
+   * - Read/Edit/Write: 只保留核心路径参数,忽略 offset/limit
+   * - Bash: 保留完整命令
+   * - Grep: 保留 pattern 和 path,忽略 output_mode 等
+   * - 其他工具: 保留所有参数
    */
-  private buildSignature(descriptor: ToolInvocationDescriptor): string {
+  static buildSignature(descriptor: ToolInvocationDescriptor): string {
     const { toolName, params } = descriptor;
 
+    // 工具特定的参数过滤
+    const filteredParams = PermissionChecker._normalizeParams(toolName, params);
+
     // 简化参数表示
-    const paramPairs = Object.entries(params)
+    const paramPairs = Object.entries(filteredParams)
       .filter(([_, value]) => value !== undefined && value !== null)
       .map(([key, value]) => {
         if (typeof value === 'string') {
@@ -121,6 +130,64 @@ export class PermissionChecker {
     }
 
     return `${toolName}(${paramPairs.join(', ')})`;
+  }
+
+  /**
+   * 标准化参数 - 工具特定的参数过滤逻辑
+   * 目标: 减少权限签名的粒度,避免频繁确认
+   */
+  private static _normalizeParams(
+    toolName: string,
+    params: Record<string, unknown>
+  ): Record<string, unknown> {
+    switch (toolName) {
+      case 'Read':
+      case 'Edit':
+      case 'Write':
+        // 文件操作: 只保留 file_path/old_string/new_string/content
+        // 忽略 offset/limit/replace_all 等易变参数
+        return {
+          file_path: params.file_path,
+          old_string: params.old_string,
+          new_string: params.new_string,
+          content: params.content,
+        };
+
+      case 'Grep':
+        // 搜索操作: 只保留 pattern 和 path/glob/type
+        // 忽略 output_mode/-A/-B/-C/-i/-n/head_limit 等显示选项
+        return {
+          pattern: params.pattern,
+          path: params.path,
+          glob: params.glob,
+          type: params.type,
+        };
+
+      case 'Glob':
+        // Glob 操作: 保留 pattern 和 path
+        return {
+          pattern: params.pattern,
+          path: params.path,
+        };
+
+      case 'Bash':
+        // Bash 命令: 保留完整的 command 和 description
+        return {
+          command: params.command,
+          description: params.description,
+        };
+
+      case 'WebFetch':
+        // Web 请求: 保留 url 和 domain(如果有)
+        return {
+          url: params.url,
+          domain: params.domain,
+        };
+
+      default:
+        // 其他工具: 保留所有参数
+        return params;
+    }
   }
 
   /**

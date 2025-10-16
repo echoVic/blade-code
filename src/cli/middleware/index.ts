@@ -9,9 +9,16 @@ import type { MiddlewareFunction } from 'yargs';
  * 权限验证中间件
  */
 export const validatePermissions: MiddlewareFunction = (argv) => {
-  // 如果启用了危险跳过权限，记录警告
-  if (argv.dangerouslySkipPermissions) {
-    console.warn('⚠️  Warning: Permissions checks are disabled');
+  // 处理 --yolo 快捷方式
+  if (argv.yolo) {
+    // 如果同时指定了 --yolo 和 --permission-mode，抛出错误
+    if (argv['permission-mode'] && argv['permission-mode'] !== 'yolo') {
+      throw new Error(
+        'Cannot use both --yolo and --permission-mode with different values'
+      );
+    }
+    // 将 --yolo 映射到 --permission-mode=yolo
+    argv['permission-mode'] = 'yolo';
   }
 
   // 验证工具列表冲突

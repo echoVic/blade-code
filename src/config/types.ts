@@ -9,8 +9,20 @@
 export type ProviderType = 'openai-compatible' | 'anthropic';
 
 /**
- * Blade 统一配置接口
+ * 权限模式枚举
+ *
+ * - DEFAULT: 默认模式，Read 工具自动批准，其他工具需要确认
+ * - AUTO_EDIT: 自动编辑模式，Read 和 Edit 工具自动批准
+ * - YOLO: 自动批准所有工具调用（危险）
+ * - PLAN: 计划模式（保留占位，暂未实现）
  */
+export enum PermissionMode {
+  DEFAULT = 'default',
+  AUTO_EDIT = 'autoEdit',
+  YOLO = 'yolo',
+  PLAN = 'plan', // TODO: 暂未实现，仅占位
+}
+
 export interface BladeConfig {
   // =====================================
   // 基础配置 (来自 config.json - 扁平化)
@@ -56,6 +68,7 @@ export interface BladeConfig {
 
   // 权限
   permissions: PermissionConfig;
+  permissionMode: PermissionMode;
 
   // Hooks
   hooks: HookConfig;

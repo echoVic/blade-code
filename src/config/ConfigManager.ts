@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 import { DEFAULT_CONFIG, ENV_VAR_MAPPING } from './defaults.js';
-import { BladeConfig, HookConfig, PermissionConfig } from './types.js';
+import { BladeConfig, HookConfig, PermissionConfig, PermissionMode } from './types.js';
 
 export class ConfigManager {
   private static instance: ConfigManager | null = null;
@@ -58,6 +58,14 @@ export class ConfigManager {
         ...baseConfig,
         ...settingsConfig,
       };
+
+      const legacyMode = (this.config as any).approvalMode;
+      if (legacyMode && !this.config.permissionMode) {
+        this.config.permissionMode = legacyMode as PermissionMode;
+      }
+      if ((this.config as any).approvalMode !== undefined) {
+        delete (this.config as any).approvalMode;
+      }
 
       // 4. 解析环境变量插值
       this.resolveEnvInterpolation(this.config);
@@ -228,6 +236,9 @@ export class ConfigManager {
     if (override.apiKeyHelper !== undefined) {
       result.apiKeyHelper = override.apiKeyHelper;
     }
+    if (override.permissionMode !== undefined) {
+      result.permissionMode = override.permissionMode;
+    }
 
     return result;
   }
@@ -395,6 +406,158 @@ export class ConfigManager {
         `保存配置失败: ${error instanceof Error ? error.message : '未知错误'}`
       );
     }
+  }
+
+  /**
+   * 将权限规则追加到用户 settings.json 的 allow 列表
+   */
+  async appendPermissionAllowRule(rule: string): Promise<void> {
+    const userSettingsPath = path.join(os.homedir(), '.blade', 'settings.json');
+
+    try {
+      await fs.mkdir(path.dirname(userSettingsPath), { recursive: true });
+
+      const existingSettings = (await this.loadJsonFile(userSettingsPath)) ?? {};
+      const permissions = existingSettings.permissions ?? {
+        allow: [],
+        ask: [],
+        deny: [],
+      };
+
+      permissions.allow = Array.isArray(permissions.allow) ? permissions.allow : [];
+      permissions.ask = Array.isArray(permissions.ask) ? permissions.ask : [];
+      permissions.deny = Array.isArray(permissions.deny) ? permissions.deny : [];
+
+      const beforeSize = permissions.allow.length;
+      if (!permissions.allow.includes(rule)) {
+        permissions.allow = [...permissions.allow, rule];
+      }
+
+      if (permissions.allow.length !== beforeSize) {
+        existingSettings.permissions = permissions;
+        await fs.writeFile(
+          userSettingsPath,
+          JSON.stringify(existingSettings, null, 2),
+          { mode: 0o600, encoding: 'utf-8' }
+        );
+      }
+
+      if (this.config) {
+        if (!this.config.permissions.allow.includes(rule)) {
+          this.config.permissions.allow = [...this.config.permissions.allow, rule];
+        }
+      }
+    } catch (error) {
+      console.error('[ConfigManager] Failed to append permission rule:', error);
+      throw new Error(
+        `保存权限规则失败: ${error instanceof Error ? error.message : '未知错误'}`
+      );
+    }
+  }
+
+  /**
+   * 将权限规则追加到项目本地 settings.local.json 的 allow 列表
+   */
+  async appendLocalPermissionAllowRule(rule: string): Promise<void> {
+    const localSettingsPath = path.join(process.cwd(), '.blade', 'settings.local.json');
+
+    try {
+      await fs.mkdir(path.dirname(localSettingsPath), { recursive: true });
+
+      const existingSettings = (await this.loadJsonFile(localSettingsPath)) ?? {};
+      const permissions = existingSettings.permissions ?? {
+        allow: [],
+        ask: [],
+        deny: [],
+      };
+
+      permissions.allow = Array.isArray(permissions.allow) ? permissions.allow : [];
+      permissions.ask = Array.isArray(permissions.ask) ? permissions.ask : [];
+      permissions.deny = Array.isArray(permissions.deny) ? permissions.deny : [];
+
+      if (!permissions.allow.includes(rule)) {
+        permissions.allow = [...permissions.allow, rule];
+        existingSettings.permissions = permissions;
+
+        await fs.writeFile(
+          localSettingsPath,
+          JSON.stringify(existingSettings, null, 2),
+          { mode: 0o600, encoding: 'utf-8' }
+        );
+      }
+
+      if (this.config && !this.config.permissions.allow.includes(rule)) {
+        this.config.permissions.allow = [...this.config.permissions.allow, rule];
+      }
+    } catch (error) {
+      console.error('[ConfigManager] Failed to append local permission rule:', error);
+      throw new Error(
+        `保存本地权限规则失败: ${error instanceof Error ? error.message : '未知错误'}`
+      );
+    }
+  }
+
+  /**
+   * 设置权限模式
+   * @param mode 目标权限模式
+   * @param options.persist 是否持久化到配置文件 (默认仅更新内存)
+   * @param options.scope 持久化范围 (local | project | global)，默认 local
+   */
+  async setPermissionMode(
+    mode: PermissionMode,
+    options: { persist?: boolean; scope?: 'local' | 'project' | 'global' } = {}
+  ): Promise<void> {
+    if (!this.configLoaded || !this.config) {
+      await this.initialize();
+    }
+
+    if (!this.config) {
+      throw new Error('Config not initialized');
+    }
+
+    this.config.permissionMode = mode;
+
+    if (!options.persist) {
+      return;
+    }
+
+    try {
+      const scope = options.scope ?? 'local';
+      const targetPath = this.resolveSettingsPath(scope);
+      await this.writePermissionModeToSettings(targetPath, mode);
+    } catch (error) {
+      console.warn(
+        `[ConfigManager] Failed to persist permission mode (${mode}):`,
+        error
+      );
+      throw error;
+    }
+  }
+
+  private resolveSettingsPath(scope: 'local' | 'project' | 'global'): string {
+    switch (scope) {
+      case 'local':
+        return path.join(process.cwd(), '.blade', 'settings.local.json');
+      case 'project':
+        return path.join(process.cwd(), '.blade', 'settings.json');
+      case 'global':
+        return path.join(os.homedir(), '.blade', 'settings.json');
+      default:
+        return path.join(process.cwd(), '.blade', 'settings.local.json');
+    }
+  }
+
+  private async writePermissionModeToSettings(
+    filePath: string,
+    mode: PermissionMode
+  ): Promise<void> {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    const existingSettings = (await this.loadJsonFile(filePath)) ?? {};
+    existingSettings.permissionMode = mode;
+    await fs.writeFile(filePath, JSON.stringify(existingSettings, null, 2), {
+      mode: 0o600,
+      encoding: 'utf-8',
+    });
   }
 
   /**

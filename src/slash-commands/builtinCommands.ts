@@ -2,6 +2,7 @@
  * 内置的 slash commands
  */
 
+import permissionsCommand from './permissions.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 const helpCommand: SlashCommand = {
@@ -23,6 +24,7 @@ const helpCommand: SlashCommand = {
 **/clear** - 清除屏幕内容
 **/version** - 显示 Blade Code 版本信息
 **/status** - 显示当前配置状态
+**/permissions** - 管理本地权限规则
 
 💡 **使用提示:**
 - 在命令前加上 \`/\` 即可执行 slash command
@@ -306,4 +308,5 @@ export const builtinCommands = {
   config: configCommand,
   context: contextCommand,
   cost: costCommand,
+  permissions: permissionsCommand,
 };

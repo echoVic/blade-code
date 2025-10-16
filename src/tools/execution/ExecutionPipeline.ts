@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import type { PermissionConfig } from '../../config/types.js';
+import { PermissionMode } from '../../config/types.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import { ToolExecution as ToolExecutionImpl } from '../types/ExecutionTypes.js';
 import type {
@@ -25,6 +26,7 @@ export class ExecutionPipeline extends EventEmitter {
   private stages: PipelineStage[];
   private executionHistory: ExecutionHistoryEntry[] = [];
   private readonly maxHistorySize: number;
+  private readonly sessionApprovals = new Set<string>();
 
   constructor(
     private registry: ToolRegistry,
@@ -40,12 +42,13 @@ export class ExecutionPipeline extends EventEmitter {
       ask: [],
       deny: [],
     };
+    const permissionMode = config.permissionMode ?? PermissionMode.DEFAULT;
 
     // 初始化5个执行阶段
     this.stages = [
       new DiscoveryStage(this.registry), // 工具发现
-      new PermissionStage(permissionConfig), // 权限检查（含 Zod 验证和默认值处理）
-      new ConfirmationStage(), // 用户确认
+      new PermissionStage(permissionConfig, this.sessionApprovals, permissionMode), // 权限检查（含 Zod 验证和默认值处理）
+      new ConfirmationStage(this.sessionApprovals, permissionMode), // 用户确认
       new ExecutionStage(), // 实际执行
       new FormattingStage(), // 结果格式化
     ];
@@ -337,6 +340,7 @@ export interface ExecutionPipelineConfig {
   enableMetrics?: boolean;
   customStages?: PipelineStage[];
   permissionConfig?: PermissionConfig;
+  permissionMode?: PermissionMode;
 }
 
 /**

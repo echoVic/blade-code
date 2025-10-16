@@ -9,6 +9,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { ConfigManager } from '../config/ConfigManager.js';
 import type { BladeConfig, PermissionConfig } from '../config/types.js';
+import { PermissionMode } from '../config/types.js';
 import { PromptBuilder } from '../prompts/index.js';
 import {
   createChatService,
@@ -73,8 +74,13 @@ export class Agent extends EventEmitter {
       ...this.config.permissions,
       ...this.runtimeOptions.permissions,
     };
+    const permissionMode =
+      this.runtimeOptions.permissionMode ??
+      this.config.permissionMode ??
+      PermissionMode.DEFAULT;
     return new ExecutionPipeline(registry, {
       permissionConfig: permissions,
+      permissionMode,
       maxHistorySize: 1000,
     });
   }
@@ -374,6 +380,7 @@ export class Agent extends EventEmitter {
                 userId: context.userId || 'default',
                 workspaceRoot: context.workspaceRoot || process.cwd(),
                 signal: signalToUse,
+                confirmationHandler: context.confirmationHandler, // 传递确认处理器
               }
             );
             allToolResults.push(result);
@@ -536,7 +543,7 @@ export class Agent extends EventEmitter {
    */
   public async runAgenticLoop(
     message: string,
-    context: Record<string, unknown>,
+    context: ChatContext,
     options?: LoopOptions
   ): Promise<LoopResult> {
     if (!this.isInitialized) {
@@ -545,10 +552,12 @@ export class Agent extends EventEmitter {
 
     // 规范化上下文为 ChatContext
     const chatContext: ChatContext = {
-      messages: (context.messages as Message[]) || [],
+      messages: context.messages as Message[],
       userId: (context.userId as string) || 'subagent',
       sessionId: (context.sessionId as string) || `subagent_${Date.now()}`,
       workspaceRoot: (context.workspaceRoot as string) || process.cwd(),
+      signal: context.signal,
+      confirmationHandler: context.confirmationHandler,
     };
 
     // 调用重构后的 runLoop

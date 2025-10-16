@@ -1,5 +1,6 @@
 import React, { createContext, ReactNode, useContext, useReducer } from 'react';
 import type { BladeConfig } from '../../config/types.js';
+import { PermissionMode } from '../../config/types.js';
 import type { TodoItem } from '../../tools/builtin/todo/types.js';
 
 // 应用状态类型定义
@@ -14,8 +15,10 @@ export interface AppState {
   performance: PerformanceStats;
   error: AppError | null;
   showThemeSelector: boolean;
+  showPermissionsManager: boolean;
   todos: TodoItem[];
   showTodoPanel: boolean;
+  permissionMode: PermissionMode;
 }
 
 // 用户偏好设置
@@ -91,11 +94,14 @@ type AppAction =
   | { type: 'CLEAR_ERROR' }
   | { type: 'SHOW_THEME_SELECTOR' }
   | { type: 'HIDE_THEME_SELECTOR' }
+  | { type: 'SHOW_PERMISSIONS_MANAGER' }
+  | { type: 'HIDE_PERMISSIONS_MANAGER' }
   | { type: 'SET_TODOS'; payload: TodoItem[] }
   | { type: 'UPDATE_TODO'; payload: TodoItem }
   | { type: 'SHOW_TODO_PANEL' }
   | { type: 'HIDE_TODO_PANEL' }
-  | { type: 'TOGGLE_TODO_PANEL' };
+  | { type: 'TOGGLE_TODO_PANEL' }
+  | { type: 'SET_PERMISSION_MODE'; payload: PermissionMode };
 
 // 默认状态
 const defaultState: AppState = {
@@ -133,8 +139,10 @@ const defaultState: AppState = {
   },
   error: null,
   showThemeSelector: false,
+  showPermissionsManager: false,
   todos: [],
   showTodoPanel: true,
+  permissionMode: PermissionMode.DEFAULT,
 };
 
 // 状态reducer
@@ -194,6 +202,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'HIDE_THEME_SELECTOR':
       return { ...state, showThemeSelector: false };
 
+    case 'SHOW_PERMISSIONS_MANAGER':
+      return { ...state, showPermissionsManager: true };
+
+    case 'HIDE_PERMISSIONS_MANAGER':
+      return { ...state, showPermissionsManager: false };
+
     case 'SET_TODOS':
       return { ...state, todos: action.payload };
 
@@ -213,6 +227,9 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'TOGGLE_TODO_PANEL':
       return { ...state, showTodoPanel: !state.showTodoPanel };
+
+    case 'SET_PERMISSION_MODE':
+      return { ...state, permissionMode: action.payload };
 
     default:
       return state;
@@ -298,6 +315,14 @@ export const AppActions = {
     type: 'HIDE_THEME_SELECTOR' as const,
   }),
 
+  showPermissionsManager: () => ({
+    type: 'SHOW_PERMISSIONS_MANAGER' as const,
+  }),
+
+  hidePermissionsManager: () => ({
+    type: 'HIDE_PERMISSIONS_MANAGER' as const,
+  }),
+
   setTodos: (todos: TodoItem[]) => ({
     type: 'SET_TODOS' as const,
     payload: todos,
@@ -318,6 +343,11 @@ export const AppActions = {
 
   toggleTodoPanel: () => ({
     type: 'TOGGLE_TODO_PANEL' as const,
+  }),
+
+  setPermissionMode: (mode: PermissionMode) => ({
+    type: 'SET_PERMISSION_MODE' as const,
+    payload: mode,
   }),
 };
 

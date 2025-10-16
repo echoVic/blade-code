@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-
+import type { GlobalOptions } from '../cli/types.js';
 import { ConfigManager } from '../config/ConfigManager.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
@@ -8,60 +8,23 @@ import { AppProvider } from './contexts/AppContext.js';
 import { SessionProvider } from './contexts/SessionContext.js';
 import { themeManager } from './themes/ThemeManager.js';
 
-interface AppProps {
-  // 基础选项
-  debug?: boolean | string;
-  testMode?: boolean;
-  verbose?: boolean;
-
-  // 输出选项
-  print?: boolean;
-  outputFormat?: string;
-  includePartialMessages?: boolean;
-  inputFormat?: string;
-  replayUserMessages?: boolean;
-
-  // 权限和安全选项
-  dangerouslySkipPermissions?: boolean;
-  permissionMode?: string;
-  allowedTools?: string[];
-  disallowedTools?: string[];
-
-  // MCP 选项
-  mcpConfig?: string[];
-  strictMcpConfig?: boolean;
-
-  // 会话选项
-  continue?: boolean;
-  resume?: string;
-  forkSession?: boolean;
-  sessionId?: string;
-
-  // 模型选项
-  model?: string;
-  fallbackModel?: string;
-  systemPrompt?: string;
-  appendSystemPrompt?: string;
-  agents?: string;
-
-  // 文件系统选项
-  settings?: string;
-  addDir?: string[];
-  settingSources?: string;
-
-  // IDE 集成
-  ide?: boolean;
-
-  // 初始消息
-  initialMessage?: string;
+/**
+ * UI 入口层的 props 类型
+ * 继承所有 CLI 选项，并添加 UI 特有字段
+ */
+export interface AppProps extends GlobalOptions {
+  // UI 特有字段
+  initialMessage?: string; // 初始消息
+  // TODO: 实现 initialMessage 自动发送功能
+  // 允许用户在启动时直接发送消息：blade "帮我创建一个 React 组件"
+  // 需要在 BladeInterface 或 useAppInitializer 中处理此字段
 }
 
 // 包装器组件 - 提供会话上下文和错误边界
 export const AppWrapper: React.FC<AppProps> = (props) => {
-  // 在这里处理 debug 参数转换，让 BladeInterface 接收纯净的 boolean
+  // 直接传递所有 props，保持 debug 字段的原始类型（支持过滤器）
   const processedProps = {
     ...props,
-    debug: Boolean(props.debug), // 统一转换为 boolean
   };
 
   // 启动时从配置文件加载主题

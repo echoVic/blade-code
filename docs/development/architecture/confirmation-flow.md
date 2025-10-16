@@ -109,6 +109,13 @@ interface ConfirmationResponse {
 
   /** 拒绝原因（如果未批准） */
   reason?: string;
+
+  /**
+   * 授权范围
+   * - once: 仅本次执行
+   * - session: 记住至项目本地配置（settings.local.json）
+   */
+  scope?: 'once' | 'session';
 }
 ```
 
@@ -176,16 +183,52 @@ const useConfirmation = () => {
 
 ```typescript
 const ConfirmationPrompt: React.FC<Props> = ({ details, onResponse }) => {
-  // 使用 Ink 的 useInput hook 处理键盘输入
+  const { isFocused } = useFocus({ autoFocus: true });
+
   useInput((input, key) => {
-    if (input === 'y' || input === 'Y') {
-      onResponse({ approved: true });
-    } else if (input === 'n' || input === 'N') {
-      onResponse({ approved: false, reason: '用户拒绝' });
-    } else if (key.escape) {
+    if (!isFocused) return;
+
+    if (key.escape) {
       onResponse({ approved: false, reason: '用户取消' });
+      return;
+    }
+
+    const normalized = input?.toLowerCase();
+    if (normalized === 'y') {
+      onResponse({ approved: true, scope: 'once' });
+    } else if (normalized === 's' || (key.shift && key.tab)) {
+      onResponse({ approved: true, scope: 'session' });
+    } else if (normalized === 'n') {
+      onResponse({ approved: false, reason: '用户拒绝' });
     }
   });
+
+  const ItemComponent: React.FC<{ label: string; isSelected?: boolean }> = ({
+    label,
+    isSelected,
+  }) => <Text color={isSelected ? 'yellow' : undefined}>{label}</Text>;
+
+  const options = useMemo<
+    Array<{ label: string; key: string; value: ConfirmationResponse }>
+  >(() => {
+    return [
+      {
+        key: 'approve-once',
+        label: '[Y] Yes (once only)',
+        value: { approved: true, scope: 'once' },
+      },
+      {
+        key: 'approve-session',
+        label: '[S] Yes, remember for this project (Shift+Tab)',
+        value: { approved: true, scope: 'session' },
+      },
+      {
+        key: 'reject',
+        label: '[N] No',
+        value: { approved: false, reason: '用户拒绝' },
+      },
+    ];
+  }, []);
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="yellow">
@@ -202,10 +245,15 @@ const ConfirmationPrompt: React.FC<Props> = ({ details, onResponse }) => {
         </Box>
       )}
 
-      <Text>
-        <Text color="green" bold>[Y]</Text> 批准 /
-        <Text color="red" bold>[N]</Text> 拒绝
-      </Text>
+      <Box flexDirection="column">
+        <Text color="gray">使用 ↑ ↓ 选择，回车确认（支持 Y / S / N 快捷键，ESC 取消）</Text>
+        <SelectInput
+          isFocused={isFocused}
+          items={options}
+          itemComponent={ItemComponent}
+          onSelect={(item) => onResponse(item.value)}
+        />
+      </Box>
     </Box>
   );
 };
@@ -317,9 +365,10 @@ await agent.chat('删除所有测试文件', context);
 // 4. ConfirmationPrompt 组件渲染
 // → 显示确认对话框
 
-// 5. 用户按键响应
-// → 按 'Y': onResponse({ approved: true })
-// → 按 'N': onResponse({ approved: false, reason: '用户拒绝' })
+// 5. 用户选择确认选项
+// → 选择“仅此一次允许”: onResponse({ approved: true, scope: 'once' })
+// → 选择“本会话允许”: onResponse({ approved: true, scope: 'session' })
+// → 选择“拒绝”: onResponse({ approved: false, reason: '用户拒绝' })
 
 // 6. handleResponse 调用 resolver
 // → Promise 被 resolve
@@ -328,6 +377,11 @@ await agent.chat('删除所有测试文件', context);
 // → 如果批准: 继续到 ExecutionStage
 // → 如果拒绝: 调用 execution.abort()
 ```
+
+## 授权记忆
+
+- 当用户选择 `scope: 'session'` 时，权限阶段会缓存当前工具调用签名，并将规则追加到 `.blade/settings.local.json`，在当前项目中长期生效。
+- 命中缓存时，权限阶段会直接返回允许结果，并附带原因说明，便于日志审计。
 
 ## 最佳实践
 
@@ -368,8 +422,8 @@ await agent.chat('删除所有测试文件', context);
    - 易于理解的操作提示
 
 2. **良好的键盘交互**
-   - 使用 Ink 的 `useInput` 而非直接监听 stdin
-   - 支持多种确认方式（Y/y, N/n, ESC）
+   - 使用 Ink 的 `useInput` 捕获 ESC 等基础事件
+   - 借助 `ink-select-input` 提供箭头选择 + Enter 的确认体验
    - 防止与其他输入冲突
 
 3. **状态管理**
@@ -451,10 +505,12 @@ const deleteFilesTool: ToolConfig = {
   │   • debug.log                   │
   │   ...还有 12 个文件             │
   │                                 │
-  │ [Y] 批准 / [N] 拒绝             │
+  │ › [Y] Yes (once only)          │
+  │   [S] Yes, remember for this project │
+  │   [N] No                       │
   └─────────────────────────────────┘
-→ 用户按 Y: 继续删除
-→ 用户按 N: 中止操作，向 AI 返回"用户拒绝执行"
+→ 用户通过方向键选择对应项并按回车确认
+→ 选择“记住至本项目”会立刻写入 settings.local.json
 ```
 
 ### 场景 2: 网络请求

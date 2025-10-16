@@ -143,6 +143,11 @@ export const useCommandHandler = (
             return { success: true };
           }
 
+          if (slashResult.message === 'show_permissions_manager') {
+            appDispatch(appActions.showPermissionsManager());
+            return { success: true };
+          }
+
           if (!slashResult.success && slashResult.error) {
             addAssistantMessage(`❌ ${slashResult.error}`);
             return {

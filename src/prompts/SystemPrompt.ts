@@ -5,7 +5,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { DEFAULT_SYSTEM_PROMPT, type SystemPromptConfig } from './default.js';
+import { DEFAULT_SYSTEM_PROMPT_CONFIG, type SystemPromptConfig } from './default.js';
 
 export interface SystemPromptSource {
   type: 'default' | 'file' | 'cli' | 'config';
@@ -30,10 +30,7 @@ export class SystemPrompt {
 
   constructor(config?: Partial<SystemPromptConfig>) {
     this.config = {
-      enabled: true,
-      default: DEFAULT_SYSTEM_PROMPT,
-      allowOverride: true,
-      maxLength: 4000,
+      ...DEFAULT_SYSTEM_PROMPT_CONFIG,
       ...config,
     };
 

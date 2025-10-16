@@ -1,6 +1,5 @@
 import OpenAI from 'openai';
 import type {
-  ChatCompletionChunk,
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
   ChatCompletionTool,
@@ -43,7 +42,7 @@ export class OpenAIChatService implements IChatService {
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseUrl, // OpenAI SDK 使用 baseURL
-      timeout: config.timeout ?? 30000,
+      timeout: config.timeout ?? 90000, // 90秒超时，参考主流 CLI agent 标准
       maxRetries: 3,
     });
 
@@ -128,6 +127,31 @@ export class OpenAIChatService implements IChatService {
       const requestDuration = Date.now() - startTime;
 
       console.log('📥 [ChatService] Response received in', requestDuration, 'ms');
+
+      // ✅ 验证响应格式
+      if (!completion) {
+        console.error('❌ [ChatService] API returned null/undefined response');
+        throw new Error('API returned null/undefined response');
+      }
+
+      if (!completion.choices || !Array.isArray(completion.choices)) {
+        console.error(
+          '❌ [ChatService] Invalid API response format - missing choices array'
+        );
+        console.error(
+          '❌ [ChatService] Response object:',
+          JSON.stringify(completion, null, 2)
+        );
+        throw new Error(
+          `Invalid API response: missing choices array. Response: ${JSON.stringify(completion)}`
+        );
+      }
+
+      if (completion.choices.length === 0) {
+        console.error('❌ [ChatService] API returned empty choices array');
+        throw new Error('API returned empty choices array');
+      }
+
       console.log('📊 [ChatService] Response usage:', completion.usage);
       console.log(
         '📊 [ChatService] Response choices count:',
@@ -281,6 +305,13 @@ export class OpenAIChatService implements IChatService {
 
       for await (const chunk of stream) {
         chunkCount++;
+
+        // ✅ 验证 chunk 格式
+        if (!chunk || !chunk.choices || !Array.isArray(chunk.choices)) {
+          console.warn('⚠️ [ChatService] Invalid chunk format in stream', chunkCount);
+          continue;
+        }
+
         const delta = chunk.choices[0]?.delta;
         if (!delta) {
           console.log('⚠️ [ChatService] Empty delta in chunk', chunkCount);
@@ -348,8 +379,8 @@ export class OpenAIChatService implements IChatService {
     this.client = new OpenAI({
       apiKey: this.config.apiKey,
       baseURL: this.config.baseUrl, // OpenAI SDK 使用 baseURL
-      timeout: this.config.timeout ?? 30000,
-      maxRetries: 3,
+      timeout: this.config.timeout ?? 90000, // 90秒超时，参考主流 CLI agent 标准
+      maxRetries: 2, // 2次重试，平衡稳定性和响应速度
     });
 
     console.log('✅ [ChatService] Configuration updated successfully');

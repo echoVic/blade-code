@@ -1,11 +1,15 @@
+import { ConfigManager } from '../../config/ConfigManager.js';
 import {
   PermissionChecker,
   PermissionResult,
+  type PermissionCheckResult,
   type ToolInvocationDescriptor,
 } from '../../config/PermissionChecker.js';
 import type { PermissionConfig } from '../../config/types.js';
+import { PermissionMode } from '../../config/types.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
+import { ToolKind } from '../types/index.js';
 
 /**
  * 工具发现阶段
@@ -38,9 +42,17 @@ export class DiscoveryStage implements PipelineStage {
 export class PermissionStage implements PipelineStage {
   readonly name = 'permission';
   private permissionChecker: PermissionChecker;
+  private readonly sessionApprovals: Set<string>;
+  private readonly permissionMode: PermissionMode;
 
-  constructor(permissionConfig: PermissionConfig) {
+  constructor(
+    permissionConfig: PermissionConfig,
+    sessionApprovals: Set<string>,
+    permissionMode: PermissionMode
+  ) {
     this.permissionChecker = new PermissionChecker(permissionConfig);
+    this.sessionApprovals = sessionApprovals;
+    this.permissionMode = permissionMode;
   }
 
   async process(execution: ToolExecution): Promise<void> {
@@ -63,9 +75,12 @@ export class PermissionStage implements PipelineStage {
         params: execution.params,
         affectedPaths,
       };
+      const signature = PermissionChecker.buildSignature(descriptor);
+      execution._internal.permissionSignature = signature;
 
       // 使用 PermissionChecker 进行权限检查
-      const checkResult = this.permissionChecker.check(descriptor);
+      let checkResult = this.permissionChecker.check(descriptor);
+      checkResult = this.applyModeOverrides(tool.kind, checkResult);
 
       // 根据检查结果采取行动
       switch (checkResult.result) {
@@ -77,9 +92,18 @@ export class PermissionStage implements PipelineStage {
           return;
 
         case PermissionResult.ASK:
-          // 标记需要用户确认
-          execution._internal.needsConfirmation = true;
-          execution._internal.confirmationReason = checkResult.reason || '需要用户确认';
+          if (this.sessionApprovals.has(signature)) {
+            checkResult = {
+              result: PermissionResult.ALLOW,
+              matchedRule: 'remembered:session',
+              reason: '用户已在本项目会话中允许此操作',
+            };
+          } else {
+            // 标记需要用户确认
+            execution._internal.needsConfirmation = true;
+            execution._internal.confirmationReason =
+              checkResult.reason || '需要用户确认';
+          }
           break;
 
         case PermissionResult.ALLOW:
@@ -110,6 +134,48 @@ export class PermissionStage implements PipelineStage {
       execution.abort(`权限检查出错: ${(error as Error).message}`);
     }
   }
+
+  private applyModeOverrides(
+    toolKind: ToolKind,
+    checkResult: PermissionCheckResult
+  ): PermissionCheckResult {
+    if (this.permissionMode === PermissionMode.YOLO) {
+      return {
+        result: PermissionResult.ALLOW,
+        matchedRule: 'mode:yolo',
+        reason: 'YOLO 模式: 自动批准所有工具调用',
+      };
+    }
+
+    if (checkResult.result === PermissionResult.DENY) {
+      return checkResult;
+    }
+
+    if (checkResult.result === PermissionResult.ALLOW) {
+      return checkResult;
+    }
+
+    if (toolKind === ToolKind.Read) {
+      return {
+        result: PermissionResult.ALLOW,
+        matchedRule: 'mode:default:read',
+        reason: 'Read 工具在当前模式下无需确认',
+      };
+    }
+
+    if (
+      this.permissionMode === PermissionMode.AUTO_EDIT &&
+      toolKind === ToolKind.Edit
+    ) {
+      return {
+        result: PermissionResult.ALLOW,
+        matchedRule: 'mode:autoEdit',
+        reason: 'AUTO_EDIT 模式: 自动批准编辑类工具',
+      };
+    }
+
+    return checkResult;
+  }
 }
 
 /**
@@ -122,6 +188,10 @@ export class PermissionStage implements PipelineStage {
  */
 export class ConfirmationStage implements PipelineStage {
   readonly name = 'confirmation';
+  constructor(
+    private readonly sessionApprovals: Set<string>,
+    private readonly permissionMode: PermissionMode
+  ) {}
 
   async process(execution: ToolExecution): Promise<void> {
     const {
@@ -138,6 +208,7 @@ export class ConfirmationStage implements PipelineStage {
     }
 
     try {
+      // YOLO 模式下所有工具已在权限阶段被标记为 ALLOW，不会进入确认阶段
       let confirmationDetails = null;
 
       // 1. 优先检查权限系统是否要求确认
@@ -156,7 +227,14 @@ export class ConfirmationStage implements PipelineStage {
       }
       // 2. 如果权限系统没有要求确认，检查工具自身是否需要确认
       else {
-        confirmationDetails = await invocation.shouldConfirm();
+        if (
+          this.permissionMode === PermissionMode.AUTO_EDIT &&
+          tool.kind === ToolKind.Edit
+        ) {
+          confirmationDetails = null;
+        } else {
+          confirmationDetails = await invocation.shouldConfirm();
+        }
       }
 
       // 如果需要确认，请求用户确认
@@ -178,6 +256,13 @@ export class ConfirmationStage implements PipelineStage {
             execution.abort(`用户拒绝执行: ${response.reason || '无原因'}`);
             return;
           }
+
+          const scope = response.scope || 'once';
+          if (scope === 'session' && execution._internal.permissionSignature) {
+            const signature = execution._internal.permissionSignature;
+            this.sessionApprovals.add(signature);
+            await this.persistSessionApproval(signature);
+          }
         } else {
           // 如果没有提供 confirmationHandler,则自动通过确认（用于非交互式环境）
           console.warn(
@@ -187,6 +272,19 @@ export class ConfirmationStage implements PipelineStage {
       }
     } catch (error) {
       execution.abort(`用户确认出错: ${(error as Error).message}`);
+    }
+  }
+
+  private async persistSessionApproval(signature: string): Promise<void> {
+    try {
+      const configManager = ConfigManager.getInstance();
+      await configManager.appendLocalPermissionAllowRule(signature);
+    } catch (error) {
+      console.warn(
+        `[ConfirmationStage] 无法保存权限规则 "${signature}": ${
+          error instanceof Error ? error.message : '未知错误'
+        }`
+      );
     }
   }
 

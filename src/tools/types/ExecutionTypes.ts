@@ -4,9 +4,12 @@ import { ToolErrorType } from './ToolTypes.js';
 /**
  * 用户确认响应
  */
+export type PermissionApprovalScope = 'once' | 'session';
+
 export interface ConfirmationResponse {
   approved: boolean;
   reason?: string;
+  scope?: PermissionApprovalScope;
 }
 
 /**
@@ -47,6 +50,7 @@ export interface ToolExecutionInternalState {
   permissionCheckResult?: any;
   needsConfirmation?: boolean;
   confirmationReason?: string;
+  permissionSignature?: string;
 }
 
 /**

@@ -4,7 +4,9 @@
 
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { PermissionConfig } from '../config/types.js';
+import { PermissionMode } from '../config/types.js';
 import type { Message } from '../services/OpenAIChatService.js';
+import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 
 /**
  * 聊天上下文接口
@@ -15,6 +17,7 @@ export interface ChatContext {
   sessionId: string;
   workspaceRoot: string;
   signal?: AbortSignal;
+  confirmationHandler?: ConfirmationHandler;
 }
 
 /**
@@ -26,6 +29,7 @@ export interface AgentOptions {
   systemPrompt?: string; // 完全替换系统提示
   appendSystemPrompt?: string; // 追加系统提示
   permissions?: Partial<PermissionConfig>; // 运行时覆盖权限
+  permissionMode?: PermissionMode;
 }
 
 export interface AgentTask {

@@ -15,7 +15,8 @@ export const useKeyboardInput = (
   onNextCommand: () => string,
   onAddToHistory: (command: string) => void,
   onAbort?: () => void,
-  isProcessing?: boolean
+  isProcessing?: boolean,
+  onTogglePermissionMode?: () => void
 ) => {
   // 使用 useFocus 管理焦点，主输入框使用显式 ID
   // 焦点通过 BladeInterface 的 useFocusManager 集中管理
@@ -102,6 +103,8 @@ export const useKeyboardInput = (
           // 否则退出应用
           handleExit();
         }
+      } else if (key.tab && key.shift) {
+        onTogglePermissionMode?.();
       } else if (key.tab && showSuggestions && suggestions.length > 0) {
         // Tab 键 - 自动补全
         const selectedCommand = suggestions[selectedSuggestionIndex].command;

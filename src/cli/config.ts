@@ -11,8 +11,12 @@ export const globalOptions: Record<keyof GlobalOptions, Options> = {
   debug: {
     alias: 'd',
     type: 'string',
-    describe: 'Enable debug mode with optional category filtering',
+    describe:
+      'Enable debug mode with optional category filtering (e.g., "api,hooks" or "!statsig,!file")',
     group: 'Debug Options:',
+    // TODO: 实现过滤逻辑
+    // 正向过滤：--debug "api,hooks" 只显示 api 和 hooks 类别
+    // 负向过滤：--debug "!statsig,!file" 排除 statsig 和 file 类别
   },
   verbose: {
     type: 'boolean',
@@ -43,11 +47,6 @@ export const globalOptions: Record<keyof GlobalOptions, Options> = {
     default: 'text',
     describe: 'Input format',
     group: 'Input Options:',
-  },
-  dangerouslySkipPermissions: {
-    type: 'boolean',
-    describe: 'Bypass all permission checks',
-    group: 'Security Options:',
   },
   replayUserMessages: {
     type: 'boolean',
@@ -82,10 +81,15 @@ export const globalOptions: Record<keyof GlobalOptions, Options> = {
     describe: 'Append a system prompt to the default system prompt',
     group: 'AI Options:',
   },
-  permissionMode: {
+  'permission-mode': {
     type: 'string',
-    choices: ['acceptEdits', 'bypassPermissions', 'default', 'plan'],
-    describe: 'Permission mode',
+    choices: ['default', 'autoEdit', 'yolo', 'plan'],
+    describe: 'Permission mode (default: ask for non-read tools, autoEdit: auto-approve edits, yolo: auto-approve all, plan: reserved)',
+    group: 'Security Options:',
+  },
+  yolo: {
+    type: 'boolean',
+    describe: 'Auto-approve all tools (shortcut for --permission-mode=yolo)',
     group: 'Security Options:',
   },
   continue: {

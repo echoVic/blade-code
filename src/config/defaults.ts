@@ -2,7 +2,7 @@
  * Blade 默认配置
  */
 
-import { BladeConfig } from './types.js';
+import { BladeConfig, PermissionMode } from './types.js';
 
 export const DEFAULT_CONFIG: BladeConfig = {
   // =====================================
@@ -52,6 +52,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
     ask: [],
     deny: ['Read(./.env)', 'Read(./.env.*)'],
   },
+  permissionMode: PermissionMode.DEFAULT,
 
   // Hooks
   hooks: {},

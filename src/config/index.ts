@@ -15,4 +15,10 @@ export {
   type ToolInvocationDescriptor,
 } from './PermissionChecker.js';
 // 类型定义
-export type { BladeConfig, HookConfig, MCPServer, PermissionConfig } from './types.js';
+export type {
+  BladeConfig,
+  HookConfig,
+  MCPServer,
+  PermissionConfig,
+  PermissionMode,
+} from './types.js';

@@ -10,6 +10,7 @@ import {
   PermissionResult,
 } from '../../src/config/PermissionChecker.js';
 import type { PermissionConfig } from '../../src/config/types.js';
+import { PermissionMode } from '../../src/config/types.js';
 import { createTool } from '../../src/tools/core/createTool.js';
 import { ExecutionPipeline } from '../../src/tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../../src/tools/registry/ToolRegistry.js';
@@ -18,6 +19,7 @@ import type {
   ExecutionContext,
 } from '../../src/tools/types/ExecutionTypes.js';
 import { ToolKind, ToolResult } from '../../src/tools/types/index.js';
+import type { ConfirmationDetails } from '../../src/tools/types/ToolTypes.js';
 
 describe('权限系统集成测试', () => {
   let registry: ToolRegistry;
@@ -332,6 +334,132 @@ describe('权限系统集成测试', () => {
       expect(result.success).toBe(false);
       expect(result.error?.message).toContain('用户拒绝');
       expect(confirmationSpy).toHaveBeenCalledOnce();
+    });
+
+    it('DEFAULT 模式下 Read 工具不需要确认', async () => {
+      const readTool = createTool({
+        name: 'Read',
+        displayName: '读取文件',
+        kind: ToolKind.Read,
+        schema: z.object({
+          file_path: z.string(),
+        }),
+        description: {
+          short: '测试读取工具',
+        },
+        requiresConfirmation: false,
+        async execute(_params, _context: ExecutionContext): Promise<ToolResult> {
+          return {
+            success: true,
+            llmContent: 'ok',
+            displayContent: '读取成功',
+          };
+        },
+      });
+
+      registry.register(readTool);
+
+      const pipeline = new ExecutionPipeline(registry, {
+        permissionConfig: { allow: [], ask: [], deny: [] },
+        permissionMode: PermissionMode.DEFAULT,
+      });
+
+      const result = await pipeline.execute(
+        'Read',
+        { file_path: 'dummy' },
+        {
+          signal: new AbortController().signal,
+          confirmationHandler: mockConfirmationHandler,
+        }
+      );
+
+      expect(result.success).toBe(true);
+      expect(confirmationSpy).not.toHaveBeenCalled();
+    });
+
+    it('AUTO_EDIT 模式会跳过编辑工具确认', async () => {
+      const editTool = createTool({
+        name: 'Edit',
+        displayName: '编辑文件',
+        kind: ToolKind.Edit,
+        schema: z.object({
+          file_path: z.string(),
+          content: z.string(),
+        }),
+        description: {
+          short: '测试编辑工具',
+        },
+        requiresConfirmation: async (): Promise<ConfirmationDetails | null> => ({
+          type: 'edit',
+          title: '确认编辑',
+          message: '这是一个测试编辑操作',
+        }),
+        async execute(_params, _context: ExecutionContext): Promise<ToolResult> {
+          return {
+            success: true,
+            llmContent: 'edited',
+            displayContent: '编辑成功',
+          };
+        },
+      });
+
+      registry.register(editTool);
+
+      const pipeline = new ExecutionPipeline(registry, {
+        permissionConfig: { allow: [], ask: [], deny: [] },
+        permissionMode: PermissionMode.AUTO_EDIT,
+      });
+
+      const result = await pipeline.execute(
+        'Edit',
+        { file_path: 'dummy', content: 'demo' },
+        {
+          signal: new AbortController().signal,
+          confirmationHandler: mockConfirmationHandler,
+        }
+      );
+
+      expect(result.success).toBe(true);
+      expect(confirmationSpy).not.toHaveBeenCalled();
+    });
+
+    it('YOLO 模式会绕过拒绝规则', async () => {
+      const dangerTool = createTool({
+        name: 'DangerTool',
+        displayName: '危险工具',
+        kind: ToolKind.Execute,
+        schema: z.object({}),
+        description: {
+          short: '危险操作',
+        },
+        requiresConfirmation: false,
+        async execute(): Promise<ToolResult> {
+          return {
+            success: true,
+            llmContent: 'danger executed',
+            displayContent: '危险操作执行',
+          };
+        },
+      });
+
+      registry.register(dangerTool);
+
+      const pipeline = new ExecutionPipeline(registry, {
+        permissionConfig: { allow: [], ask: [], deny: ['DangerTool'] },
+        permissionMode: PermissionMode.YOLO,
+      });
+
+      const result = await pipeline.execute(
+        'DangerTool',
+        {},
+        {
+          signal: new AbortController().signal,
+          confirmationHandler: mockConfirmationHandler,
+        }
+      );
+
+      expect(result.success).toBe(true);
+      expect(confirmationSpy).not.toHaveBeenCalled();
     });
   });
 

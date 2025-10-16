@@ -1,6 +1,7 @@
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
+import { useAppState } from '../contexts/AppContext.js';
 
 /**
  * 格式化错误消息，移除敏感信息
@@ -26,6 +27,7 @@ export const useAppInitializer = (
   const [loadingStatus, setLoadingStatus] = useState('正在初始化...');
   const [hasApiKey, setHasApiKey] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const { dispatch: appDispatch, actions: appActions } = useAppState();
 
   // 初始化应用
   const initializeApp = useMemoizedFn(async () => {
@@ -36,6 +38,8 @@ export const useAppInitializer = (
       const configManager = ConfigManager.getInstance();
       await configManager.initialize();
       const config = configManager.getConfig();
+      appDispatch(appActions.setConfig(config));
+      appDispatch(appActions.setPermissionMode(config.permissionMode));
 
       setLoadingStatus('检查 API 密钥...');
 
@@ -87,6 +91,8 @@ export const useAppInitializer = (
 
     setHasApiKey(true);
     setShowSetupWizard(false);
+    appDispatch(appActions.setConfig(config));
+    appDispatch(appActions.setPermissionMode(config.permissionMode));
     addAssistantMessage('✅ 配置保存成功！');
     addAssistantMessage('Blade Code 助手已就绪！');
     addAssistantMessage('请输入您的问题，我将为您提供帮助。');

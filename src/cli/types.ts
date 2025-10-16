@@ -9,14 +9,14 @@ export interface GlobalOptions {
   outputFormat?: 'text' | 'json' | 'stream-json';
   includePartialMessages?: boolean;
   inputFormat?: 'text' | 'stream-json';
-  dangerouslySkipPermissions?: boolean;
   replayUserMessages?: boolean;
   allowedTools?: string[];
   disallowedTools?: string[];
   mcpConfig?: string[];
   systemPrompt?: string;
   appendSystemPrompt?: string;
-  permissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan';
+  'permission-mode'?: 'default' | 'autoEdit' | 'yolo' | 'plan';
+  yolo?: boolean; // --yolo 快捷方式,等同于 --permission-mode=yolo
   continue?: boolean;
   resume?: string;
   forkSession?: boolean;

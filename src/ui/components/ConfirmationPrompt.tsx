@@ -1,7 +1,12 @@
 import { Box, Text, useFocus, useInput } from 'ink';
-import React from 'react';
+import SelectInput, { type ItemProps as SelectItemProps } from 'ink-select-input';
+import React, { useMemo } from 'react';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
 import type { ConfirmationDetails } from '../../tools/types/ToolTypes.js';
+
+const ConfirmationItem = ({ label, isSelected }: SelectItemProps) => (
+  <Text color={isSelected ? 'yellow' : undefined}>{label}</Text>
+);
 
 /**
  * ConfirmationPrompt Props
@@ -19,28 +24,43 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
   details,
   onResponse,
 }) => {
-  // 使用 useFocus 管理焦点，autoFocus 确保显示时立即获取焦点
-  const { isFocused } = useFocus({ autoFocus: true });
+  // 使用 useFocus 管理焦点，使用显式 ID（遵循焦点管理最佳实践）
+  const { isFocused } = useFocus({ id: 'confirmation-prompt' });
 
-  // 使用 Ink 的 useInput hook 处理键盘输入
-  // 只有在组件聚焦时才响应输入
+  // 只处理 ESC 键取消，其他按键交给 SelectInput 处理
   useInput(
     (input, key) => {
-      // 按 Y 或 y 批准
-      if (input === 'y' || input === 'Y') {
-        onResponse({ approved: true });
-      }
-      // 按 N 或 n 拒绝
-      else if (input === 'n' || input === 'N') {
-        onResponse({ approved: false, reason: '用户拒绝' });
-      }
-      // 按 ESC 取消(等同于拒绝)
-      else if (key.escape) {
+      if (!isFocused) return;
+
+      if (key.escape) {
         onResponse({ approved: false, reason: '用户取消' });
+        return;
       }
     },
     { isActive: isFocused }
   );
+
+  const options = useMemo<
+    Array<{ label: string; key: string; value: ConfirmationResponse }>
+  >(() => {
+    return [
+      {
+        key: 'approve-once',
+        label: '[Y] Yes (once only)',
+        value: { approved: true, scope: 'once' },
+      },
+      {
+        key: 'approve-session',
+        label: '[S] Yes, remember for this project (Shift+Tab)',
+        value: { approved: true, scope: 'session' },
+      },
+      {
+        key: 'reject',
+        label: '[N] No',
+        value: { approved: false, reason: '用户拒绝' },
+      },
+    ];
+  }, []);
 
   return (
     <Box
@@ -94,17 +114,18 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
         </Box>
       )}
 
-      <Box>
-        <Text>
-          <Text color="green" bold>
-            [Y]
-          </Text>
-          <Text> 批准 / </Text>
-          <Text color="red" bold>
-            [N]
-          </Text>
-          <Text> 拒绝</Text>
+      <Box flexDirection="column">
+        <Text color="gray">
+          使用 ↑ ↓ 选择，回车确认（支持 Y / S / N 快捷键，ESC 取消）
         </Text>
+        <SelectInput
+          items={options}
+          isFocused={isFocused}
+          itemComponent={ConfirmationItem}
+          onSelect={(item) => {
+            onResponse(item.value);
+          }}
+        />
       </Box>
     </Box>
   );

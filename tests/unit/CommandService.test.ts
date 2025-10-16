@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PermissionMode, type BladeConfig } from '../../src/config/types';
 import { CommandService } from '../../src/services/CommandService';
-import type { BladeConfig } from '../../src/config/types';
 
 describe('CommandService', () => {
   let commandService: CommandService;
@@ -34,13 +34,14 @@ describe('CommandService', () => {
       permissions: {
         allow: [],
         ask: [],
-        deny: []
+        deny: [],
       },
+      permissionMode: PermissionMode.DEFAULT,
       hooks: {},
       env: {},
       disableAllHooks: false,
       cleanupPeriodDays: 30,
-      includeCoAuthoredBy: false
+      includeCoAuthoredBy: false,
     } as BladeConfig;
     await commandService.initialize(mockConfig);
   });

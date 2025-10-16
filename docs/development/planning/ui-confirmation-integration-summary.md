@@ -19,8 +19,8 @@
 
 #### ConfirmationPrompt 组件 ✅
 - ✅ 创建了 [ConfirmationPrompt.tsx](../src/ui/components/ConfirmationPrompt.tsx)
-- ✅ 使用 Ink 的 `useInput` hook 处理键盘输入（替代 process.stdin）
-- ✅ 支持 Y/N/ESC 键进行确认/拒绝/取消
+- ✅ 使用 Ink 的 `useInput` hook 处理基础事件（替代 process.stdin）
+- ✅ 借助 `ink-select-input` 支持箭头选择 + Enter 的确认体验
 - ✅ 显示风险提示和受影响文件列表
 - ✅ 美观的 UI 设计（黄色边框、红色风险提示）
 
@@ -46,7 +46,7 @@ useConfirmation Hook 更新状态
     ↓
 ConfirmationPrompt 组件显示
     ↓
-用户按键响应 (Y/N/ESC)
+用户通过选择菜单确认 (↑↓/Enter/ESC)
     ↓
 handleResponse 处理响应
     ↓
@@ -59,6 +59,7 @@ ExecutionPipeline 继续/中止
 - ✅ 从直接监听 `process.stdin` 改为使用 Ink 的 `useInput` hook
 - ✅ 避免与其他输入处理冲突
 - ✅ 更好的 React 集成
+- ✅ 支持 `Y / S / N` 快捷键与 Shift+Tab 切换
 
 ### 3. 文档 ✅
 

@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs';
-import path from 'path';
+import * as path from 'path';
 import type { BladeConfig } from '../config/types.js';
 import { Command, CommandService } from './CommandService.js';
 
@@ -104,7 +104,7 @@ export class BuiltinCommandLoader {
         }
 
         const subcommand = args[0];
-        const subArgs = args.slice(1);
+        // const subArgs = args.slice(1);
 
         switch (subcommand) {
           case 'status':
@@ -145,7 +145,7 @@ export class BuiltinCommandLoader {
         }
 
         const subcommand = args[0];
-        const subArgs = args.slice(1);
+        // const subArgs = args.slice(1);
 
         switch (subcommand) {
           case 'list':
@@ -180,7 +180,7 @@ export class BuiltinCommandLoader {
         }
 
         const subcommand = args[0];
-        const subArgs = args.slice(1);
+        // const subArgs = args.slice(1);
 
         switch (subcommand) {
           case 'list':
@@ -228,7 +228,7 @@ export class BuiltinCommandLoader {
         }
 
         const subcommand = args[0];
-        const subArgs = args.slice(1);
+        // const subArgs = args.slice(1);
 
         switch (subcommand) {
           case 'info':

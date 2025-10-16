@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import type { Agent } from '../../../agent/Agent.js';
+import type { ChatContext } from '../../../agent/types.js';
 import { createTool } from '../../core/createTool.js';
 import type {
   ConfirmationDetails,
@@ -273,6 +274,7 @@ export const taskTool = createTool({
           context: taskContext,
           timeout,
           signal,
+          executionContext: context, // ✅ 传递 ExecutionContext
         });
 
         const metadata = {
@@ -306,6 +308,7 @@ export const taskTool = createTool({
           timeout,
           signal,
           updateOutput,
+          executionContext: context, // ✅ 传递 ExecutionContext
         });
       }
     } catch (error: any) {
@@ -349,6 +352,7 @@ function scheduleBackgroundTask(
     context?: Record<string, any>;
     timeout: number;
     signal: AbortSignal;
+    executionContext?: ExecutionContext; // ✅ 添加执行上下文参数
   }
 ): void {
   const taskManager = TaskManager.getInstance();
@@ -383,6 +387,7 @@ async function executeTaskSync(
     timeout: number;
     signal: AbortSignal;
     updateOutput?: (output: string) => void;
+    executionContext?: ExecutionContext; // ✅ 添加执行上下文参数
   }
 ): Promise<ToolResult> {
   const taskManager = TaskManager.getInstance();
@@ -447,6 +452,7 @@ async function simulateTaskExecution(
     context?: Record<string, any>;
     timeout: number;
     signal: AbortSignal;
+    executionContext?: ExecutionContext; // 添加执行上下文参数
   }
 ): Promise<any> {
   // 尝试使用真实的子 Agent
@@ -456,10 +462,20 @@ async function simulateTaskExecution(
       // 创建子 Agent
       const subAgent = await agentFactory();
 
+      // 构建完整的 ChatContext，传递 confirmationHandler
+      const subContext: ChatContext = {
+        messages: [], // 子任务从空消息列表开始
+        userId: (options.context?.userId as string) || 'subagent',
+        sessionId: (options.context?.sessionId as string) || `subagent_${Date.now()}`,
+        workspaceRoot: (options.context?.workspaceRoot as string) || process.cwd(),
+        signal: options.signal,
+        confirmationHandler: options.executionContext?.confirmationHandler,
+      };
+
       // 调用 runAgenticLoop
       const result = await subAgent.runAgenticLoop(
         options.prompt || task.description,
-        options.context || {},
+        subContext,
         {
           maxTurns: 10, // 子任务限制为 10 轮
           signal: options.signal,
