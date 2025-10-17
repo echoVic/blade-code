@@ -2,42 +2,32 @@
 
 ## 🎯 三步开始使用
 
-### 步骤1：设置配置（任选其一）
-
-#### 方式A：环境变量（推荐）
-```bash
-export QWEN_API_KEY="your-qwen-api-key"
-export VOLCENGINE_API_KEY="your-volcengine-api-key"
-```
-
-#### 方式B：配置文件
-```bash
-cp config.env.example .env
-# 编辑 .env 文件填入密钥
-```
-
-#### 方式C：命令行参数
-```bash
-blade --api-key your-api-key "你好"
-```
-
-### 步骤2：开始对话
+### 步骤1：启动 Blade
 
 ```bash
-# 单次问答
-blade "你好，世界！"
-
-# 交互式对话
+# 直接进入交互式界面
 blade
 
-# 打印模式（适合管道操作）
-blade --print "解释什么是TypeScript"
+# 零安装体验
+npx blade-code
+```
 
-# 继续最近的对话
+> **提示：** 如果未检测到 API Key，Blade 会自动弹出交互式设置向导，引导完成 provider、Base URL、API Key、模型配置。完成后即可立即继续对话。
+
+### 步骤2：发送你的第一个问题
+
+```bash
+# 传入消息并自动发送（首条消息无需手动敲回车）
+blade "帮我创建一个 React 组件"
+
+# 打印模式（适合脚本和管道）
+blade --print "解释什么是 TypeScript"
+
+# 继续最近的对话会话
 blade --continue
 
-# 使用特定模型
-blade --model qwen-max "复杂问题"
+# 指定模型或其他选项
+blade --model qwen-max --permission-mode autoEdit "帮我修复 lint 错误"
 ```
 
 ### 步骤3：安装（可选）
@@ -56,22 +46,23 @@ blade
 ## 📋 常用命令示例
 
 ```bash
-# 基础使用
+# 基础对话
 blade "什么是人工智能？"
-blade "用Python写一个快速排序"
+blade "用 Python 写一个快速排序"
 
-# 交互模式
+# 交互模式（无参数启动）
 blade
 
 # 会话管理
 blade --session-id "work" "我叫张三，是前端工程师"
 blade --session-id "work" "你还记得我的职业吗？"
 
-# 配置管理
-blade config
+# 配置/诊断工具
+blade config list
+blade doctor
 
-# MCP相关命令
-blade mcp
+# MCP 相关命令
+blade mcp list
 ```
 
 ## 🛠️ API 密钥配置
@@ -85,12 +76,16 @@ blade mcp
 # 方式1: 环境变量（推荐）
 export QWEN_API_KEY="your-qwen-api-key"
 
-# 方式2: 命令行参数
+# 方式2: 首次启动设置向导（交互填写）
+blade
+
+# 方式3: 命令行参数
 blade --api-key your-api-key "你好"
 
-# 方式3: .env 文件
-cp config.env.example .env
-# 编辑 .env 文件填入密钥
+# 方式4: 配置文件
+mkdir -p ~/.blade
+vim ~/.blade/config.json
+# 或在项目中创建 .blade/config.json
 ```
 
 ## ✅ 验证安装

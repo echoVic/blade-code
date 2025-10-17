@@ -50,7 +50,8 @@ echo $QWEN_API_KEY
 echo $VOLCENGINE_API_KEY
 
 # 2. 检查配置文件
-cat .env
+cat ~/.blade/config.json
+cat .blade/config.json
 
 # 3. 测试连接（启用调试模式）
 blade --debug "测试连接"
@@ -249,9 +250,11 @@ blade ide install
 export QWEN_API_KEY="your-qwen-key"
 export VOLCENGINE_API_KEY="your-volcengine-key"
 
-# .env 文件方式
-echo 'QWEN_API_KEY="your-qwen-key"' >> .env
-echo 'VOLCENGINE_API_KEY="your-volcengine-key"' >> .env
+# 配置文件方式
+mkdir -p ~/.blade
+nano ~/.blade/config.json        # 例如 {"provider":"openai-compatible","apiKey":"your-qwen-key"}
+mkdir -p .blade
+nano .blade/config.json          # 为项目单独指定 {"provider":"volcengine","apiKey":"your-volcengine-key"}
 ```
 
 ### Q: 如何自定义系统提示？

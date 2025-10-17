@@ -39,9 +39,9 @@
 
 3. **配置开发环境**：
    ```bash
-   # 复制环境变量模板
-   cp config.env.example .env
-   # 编辑 .env 文件，填入必要的 API 密钥
+   # 或者在配置文件中写入
+   mkdir -p ~/.blade
+   nano ~/.blade/config.json
    ```
 
 #### 开发流程

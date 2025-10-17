@@ -1,288 +1,100 @@
-# 📋 Blade 命令参考
+# 📋 Blade CLI 命令参考
 
-## 🎯 核心命令
+Blade 的命令行分为 **默认交互式入口** 和若干 **辅助子命令**。本页基于当前源码实现（`src/blade.tsx`、`src/commands/*`、`src/cli/config.ts`）整理，确保与实际行为一致。
 
-### `blade chat` - 智能对话
-```bash
-# 基础对话
-blade chat "你好"
-
-# 使用系统提示词
-blade chat -s "你是一个代码助手" "写个Python排序"
-
-# 交互式对话 (REPL 模式)
-blade chat -i
-
-# 流式输出
-blade chat --stream "详细解释AI原理"
-```
-
-**参数**:
-- `-k, --api-key <key>` - API密钥
-- `-u, --base-url <url>` - 基础URL
-- `-m, --model <name>` - 模型名称
-- `-s, --system <prompt>` - 系统提示词
-- `-i, --interactive` - 交互式模式 (REPL)
-- `--stream` - 流式输出
-
-### `blade config` - 配置管理
-```bash
-# 查看配置
-blade config show
-
-# 设置配置项
-blade config set apiKey "sk-xxx"
-
-# 验证配置
-blade config validate
-```
-
-### `blade tools` - 工具管理
-```bash
-# 列出所有可用工具
-blade tools list
-
-# 执行特定工具
-blade tools exec git.status
-
-# 搜索工具
-blade tools search "git"
-```
-
-### `blade mcp` - MCP 协议管理
-```bash
-# 启动 MCP 服务器
-blade mcp start
-
-# 连接 MCP 服务器
-blade mcp connect --name server1
-
-# 列出已连接的 MCP 服务器
-blade mcp list
-```
-
-## 🔄 交互式 REPL 模式
-
-Blade 的交互式模式提供了一个功能丰富的 REPL 环境：
+## 🎯 默认命令：`blade [message..]`
 
 ```bash
-# 启动 REPL 模式
-blade chat -i
-# 或
+# 打开交互式界面
 blade
 
-# 在 REPL 中可用的命令:
-# /help - 显示帮助信息
-# /clear - 清除会话历史
-# /config - 显示当前配置
-# /tools - 列出可用工具
-# /exit - 退出 REPL
-# /quit - 退出 REPL
+# 带首条消息启动，消息会在 UI 就绪后自动发送
+blade "帮我创建一个 README"
+
+# 指定模型、权限模式等选项
+blade --model qwen-max --permission-mode autoEdit "修复 lint 错误"
 ```
 
-### REPL 快捷键
-- `↑`/`↓` - 命令历史导航
-- `Ctrl+C` - 退出 REPL
-- `Ctrl+L` - 清屏
-- `Tab` - 自动补全（未来支持）
+- 无子命令时会进入 Ink 构建的交互式界面（`BladeInterface`）。
+- 首次运行且未设置 API Key 时，自动进入设置向导（`SetupWizard`），填写 provider / base URL / API Key / 模型后即可继续。
+- 传入的 `message` 参数会在 UI 初始化完成后自动注入输入框并执行，无需手动回车。
 
-## ⚙️ 配置方式
+### 常用选项（节选）
+| 选项 | 说明 |
+|------|------|
+| `--debug [filters]` | 打印调试日志，支持类别过滤（如 `--debug api,hooks` 或 `--debug "!statsig,!file"`） |
+| `--print` / `-p` | 启用打印模式（见下文） |
+| `--output-format <text\|json\|stream-json>` | 配合 `--print` 指定输出格式 |
+| `--system-prompt <string>` | 替换默认系统提示词 |
+| `--append-system-prompt <string>` | 在默认系统提示词后追加内容 |
+| `--model <name>` / `--fallback-model <name>` | 控制当前会话模型及回退模型 |
+| `--permission-mode <default\|autoEdit\|yolo\|plan>` | 调整权限模式（也可用 `--yolo` 快捷开启全自动批准） |
+| `--allowed-tools ...` / `--disallowed-tools ...` | 临时显式允许/拒绝工具 |
+| `--session-id <id>` | 固定会话 ID，便于多轮对话 |
+| `--continue` / `--resume <id>` | 继续最近一次或指定会话，`--fork-session` 可在恢复时复制为新 ID |
+| `--mcp-config <path|json>` / `--strict-mcp-config` | 加载 MCP 服务器配置 |
+| `--ide` | 启动时尝试连接 IDE 集成 |
 
-### 1. 环境变量
-```bash
-export BLADE_API_KEY="sk-xxx"
-export BLADE_BASE_URL="https://api.example.com"
-export BLADE_MODEL="qwen3-coder"
-```
+> 完整选项定义见 `src/cli/config.ts` 中的 `globalOptions`。
 
-### 2. 配置文件
-
-**用户配置文件** (`~/.blade/config.json`):
-```json
-{
-  "auth": {
-    "apiKey": "sk-xxx",
-    "baseUrl": "https://api.example.com",
-    "model": "qwen3-coder"
-  },
-  "ui": {
-    "theme": "dark",
-    "hideTips": false
-  },
-  "security": {
-    "sandbox": "none"
-  }
-}
-```
-
-**项目配置文件** (`./.blade.json`):
-```json
-{
-  "auth": {
-    "model": "qwen3-coder-specific"
-  },
-  "ui": {
-    "theme": "light"
-  }
-}
-```
-
-### 3. CLI参数
-```bash
-blade chat -k "sk-xxx" -u "https://api.example.com" -m "qwen3-coder" "你好"
-```
-
-## 📊 配置优先级
-
-Blade 使用分层配置系统，配置项按以下优先级从高到低应用：
-
-```
-CLI参数 > 环境变量 > 项目配置文件 > 用户配置文件 > 默认值
-```
-
-## 🚀 快速验证
+## 🖨️ 打印模式 `--print`
 
 ```bash
-# 检查版本
-blade --version
+# 单次问答并直接输出文本
+blade --print "解释什么是 TypeScript"
 
-# 显示帮助
-blade --help
+# 以 JSON 输出（适合脚本消费）
+blade --print --output-format json "列出项目依赖"
 
-# 快速测试
-blade chat "现在几点了？"
-
-# 启动交互式模式
-blade
+# 从标准输入读取
+echo "请总结这段文字" | blade --print
 ```
 
-## 🛠️ 工具使用示例
+设置 `--print`（或 `-p`）后，CLI 会走 `print` 分支而非交互式 UI，其行为定义在 `src/commands/print.ts`：
 
-### Git 工具
+1. 创建最小化 `Agent` 实例。
+2. 读取命令行参数或标准输入。
+3. 根据 `--output-format` 输出纯文本、JSON 或流式 JSON。
+
+适合脚本、CI、编辑器集成等场景。
+
+## 🧭 会话与输入体验
+
+- 历史记录：在 UI 中使用 `↑/↓` 导航历史指令，`/` 开头可触发 Slash 命令建议（由 `useKeyboardInput` 管理）。
+- 快捷键：`Ctrl+C / Ctrl+D` 退出，`Ctrl+L` 清屏，`Esc` 停止正在执行的任务或退出建议模式，`Shift+Tab` 在 `default ↔ autoEdit` 模式间切换。
+- 入场提示：当初始化成功时，UI 会自动发送“Blade Code 助手已就绪”提示，初始化失败会显示具体错误（详见 `BladeInterface` 中的状态处理）。
+
+## 🛠️ 子命令
+
+| 子命令 | 源码位置 | 作用与示例 |
+|--------|----------|------------|
+| `blade config <set|get|list|reset>` | `src/commands/config.ts` | 管理配置：`blade config list`、`blade config set theme dark` |
+| `blade doctor` | `src/commands/doctor.ts` | 运行环境健康检查（配置、Node 版本、文件权限、依赖） |
+| `blade install [stable\|latest]` | `src/commands/install.ts` | 安装或更新 Blade 原生构建（当前为占位实现） |
+| `blade update` | `src/commands/update.ts` | 检查更新版本 |
+| `blade setup-token [--token sk-xxx]` | `src/commands/setupToken.ts` | 保存长期可用的认证 Token（写入配置） |
+| `blade mcp <list|add|remove|start|stop>` | `src/commands/mcp.ts` | 管理 MCP 服务器，可通过 JSON/文件注册并启动/停止 |
+
+所有子命令均基于 Yargs，自动提供 `--help` 查看详细参数。
+
+## 🔁 典型使用场景
+
 ```bash
-# 在 REPL 中使用 Git 工具
-> /tools git.status
-> /tools git.diff --file src/index.ts
+# 进入交互界面并使用自动发送首条消息
+blade "帮我把 src/ui 目录梳理成 README"
+
+# 调整权限行为后继续对话
+blade --permission-mode autoEdit --continue
+
+# 快速打印总结（非交互式）
+git diff | blade --print --append-system-prompt "请给出代码审查建议"
+
+# 查看当前配置
+blade config list
+
+# 连接并管理 MCP 服务器
+blade mcp add local-server ./mcp/local.json
+blade mcp start local-server
 ```
 
-### 文件系统工具
-```bash
-# 读取文件内容
-> /tools fs.readFile --path package.json
-
-# 写入文件
-> /tools fs.writeFile --path output.txt --content "Hello World"
-```
-
-## 🔧 MCP 集成示例
-
-### 配置 MCP 服务器
-在配置文件中添加 MCP 服务器配置：
-
-```json
-{
-  "mcp": {
-    "mcpServers": {
-      "local-server": {
-        "command": "node",
-        "args": ["server.js"],
-        "env": {
-          "PORT": "3000"
-        }
-      }
-    }
-  }
-}
-```
-
-### 使用 MCP 服务器
-```bash
-# 启动 MCP 服务器
-blade mcp start --name local-server
-
-# 连接 MCP 服务器
-blade mcp connect --name local-server
-
-# 列出已连接的服务器
-blade mcp list
-```
-
-## 📊 遥测和监控
-
-### 启用遥测
-```bash
-# 通过配置启用遥测
-blade config set telemetry.enabled true
-blade config set telemetry.target local
-```
-
-### 查看遥测数据
-```bash
-# 查看使用统计
-blade telemetry stats
-
-# 查看性能指标
-blade telemetry perf
-
-# 导出遥测数据
-blade telemetry export --format json --output telemetry.json
-```
-
-## 🎨 主题和外观
-
-### 内置主题
-- `dark` - 深色主题（默认）
-- `light` - 浅色主题
-- `GitHub` - GitHub 风格主题
-- `auto` - 自动根据系统设置切换
-
-### 配置主题
-```bash
-# 通过 CLI 设置主题
-blade config set ui.theme light
-
-# 通过环境变量设置主题
-export BLADE_THEME=dark
-
-# 在 REPL 中临时更改主题
-> /config set ui.theme GitHub
-```
-
-## 🔒 安全配置
-
-### 沙箱模式
-```bash
-# 启用 Docker 沙箱
-blade config set security.sandbox docker
-
-# 禁用沙箱
-blade config set security.sandbox none
-```
-
-### 安全确认
-某些危险操作需要用户确认：
-```bash
-# 删除文件操作会提示确认
-> /tools fs.delete --path important-file.txt
-⚠️  确认删除文件 important-file.txt? (y/N)
-```
-
-## 📈 使用统计
-
-### 启用使用统计
-```bash
-blade config set usage.usageStatisticsEnabled true
-blade config set usage.maxSessionTurns 100
-```
-
-### 查看使用情况
-```bash
-# 查看会话统计
-blade usage sessions
-
-# 查看工具使用情况
-blade usage tools
-
-# 查看模型使用情况
-blade usage models
-```
+了解更多高级功能（工具系统、MCP 协议等），请继续阅读其他章节。

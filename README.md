@@ -21,7 +21,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>🤖 智能对话</h3>
-      <p>基于大语言模型的自然语言交互，支持上下文理解和多轮对话</p>
+      <p>基于大语言模型的自然语言交互，支持上下文理解和多轮对话，直接运行 <code>blade "任务"</code> 即可自动进入界面并发送首条消息</p>
     </td>
     <td width="50%" valign="top">
       <h3>🛠️ 丰富工具</h3>
@@ -101,6 +101,8 @@ blade
 blade --print "你好，介绍一下自己"
 ```
 
+> 首次运行若未检测到 API 密钥，会自动弹出终端设置向导，按提示填写 Provider / Base URL / API Key / 模型后即可继续使用。
+
 ---
 
 ## 🔐 配置 API 密钥
@@ -119,20 +121,31 @@ export VOLCENGINE_API_KEY="your-volcengine-api-key"
 export BLADE_BASE_URL="https://ark.cn-beijing.volces.com/api/v3"
 ```
 
-### 方式二：命令行参数
+### 方式二：首启设置向导（推荐体验）
+
+```bash
+blade
+# 若未配置 API Key，将自动引导完成 Provider、Base URL、API Key、模型的填写
+```
+
+### 方式三：命令行参数
 
 ```bash
 blade --api-key your-api-key --base-url https://api.example.com "你好"
 ```
 
-### 方式三：配置文件
+### 方式四：配置文件
 
 ```bash
-# 复制示例配置文件
-cp config.env.example .env
+# 用户级配置
+mkdir -p ~/.blade
+nano ~/.blade/config.json
 
-# 编辑 .env 文件，填入您的配置
-nano .env
+# 项目级配置（提交到仓库）
+mkdir -p .blade
+nano .blade/config.json
+# 或者为当前机器准备不提交的设置
+nano .blade/settings.local.json
 ```
 
 ### 获取 API 密钥
@@ -150,7 +163,7 @@ nano .env
 # 交互式模式（默认）
 blade
 
-# 直接发送消息
+# 直接发送消息（会在 UI 初始化后自动输入并执行）
 blade "什么是人工智能？"
 
 # 代码生成
@@ -176,7 +189,7 @@ blade "审查 src/utils 目录的代码质量"
 
 ```bash
 # 创建或使用命名会话
-blade --sessionId "project-alpha" "开始新项目"
+blade --session-id "project-alpha" "开始新项目"
 
 # 继续最近的会话
 blade --continue
@@ -185,7 +198,7 @@ blade --continue
 blade --resume <conversation-id>
 
 # Fork 会话（从现有会话创建新会话）
-blade --resume <id> --forkSession
+blade --resume <id> --fork-session
 ```
 
 ### 打印模式
@@ -197,23 +210,23 @@ blade --resume <id> --forkSession
 blade --print "生成一个 README 模板" > README.md
 
 # 指定输出格式
-blade --print --outputFormat json "获取项目信息"
+blade --print --output-format json "获取项目信息"
 
 # 流式 JSON 输出
-blade --print --outputFormat stream-json "分析代码"
+blade --print --output-format stream-json "分析代码"
 ```
 
 ### 输入/输出选项
 
 ```bash
 # 从标准输入读取（流式 JSON 格式）
-cat input.json | blade --inputFormat stream-json --print
+cat input.json | blade --input-format stream-json --print
 
 # 包含部分消息块
-blade --print --includePartialMessages "长文本生成"
+blade --print --include-partial-messages "长文本生成"
 
 # 重新发送用户消息
-blade --replayUserMessages < input.txt
+blade --replay-user-messages < input.txt
 ```
 
 ---
@@ -229,10 +242,10 @@ Model Context Protocol 允许集成外部工具和资源：
 blade mcp
 
 # 从 JSON 文件加载 MCP 配置
-blade --mcpConfig config.json "使用外部工具"
+blade --mcp-config config.json "使用外部工具"
 
 # 仅使用指定的 MCP 配置（严格模式）
-blade --mcpConfig config.json --strictMcpConfig "查询"
+blade --mcp-config config.json --strict-mcp-config "查询"
 ```
 
 ### 配置管理
@@ -258,10 +271,13 @@ blade setup-token
 blade --model qwen-max "复杂的问题"
 
 # 设置回退模型
-blade --fallbackModel qwen-turbo "问题"
+blade --fallback-model qwen-turbo "问题"
 
 # 自定义系统提示
-blade --appendSystemPrompt "你是一位资深架构师" "设计微服务架构"
+blade --append-system-prompt "你是一位资深架构师" "设计微服务架构"
+
+# 完全替换默认系统提示
+blade --system-prompt "你是一位 TypeScript 专家" "解释装饰器"
 
 # 自定义 Agent 配置
 blade --agents '{"reviewer": {"model": "qwen-max"}}' "审查代码"
@@ -272,21 +288,19 @@ blade --agents '{"reviewer": {"model": "qwen-max"}}' "审查代码"
 Blade 提供强大的三级权限控制系统（allow/ask/deny）：
 
 ```bash
-# 跳过权限检查（危险）
-blade --dangerouslySkipPermissions "执行命令"
-
 # 仅允许特定工具
-blade --allowedTools "read,write" "处理文件"
+blade --allowed-tools "read,write" "处理文件"
 
 # 禁止特定工具
-blade --disallowedTools "bash,execute" "安全操作"
+blade --disallowed-tools "bash,execute" "安全操作"
 
 # 权限模式
-blade --permissionMode plan "规划任务"  # 仅规划不执行
-blade --permissionMode acceptEdits "修改代码"  # 自动接受编辑
+blade --permission-mode plan "规划任务"      # 仅规划不执行
+blade --permission-mode autoEdit "修改代码"   # 自动接受编辑
+blade --yolo "任意工具自动批准"              # 开启 YOLO 模式
 
 # 添加允许访问的目录
-blade --addDir /path/to/dir "访问目录"
+blade --add-dir /path/to/dir "访问目录"
 ```
 
 **权限配置示例** (`.blade/settings.json`):
@@ -327,7 +341,7 @@ blade --ide
 blade --settings settings.json
 
 # 指定配置源
-blade --settingSources "global,user,local"
+blade --setting-sources "global,user,local"
 ```
 
 ---
@@ -359,40 +373,41 @@ blade --settingSources "global,user,local"
 | 选项 | 简写 | 说明 |
 |------|------|------|
 | `--print` | `-p` | 打印响应并退出（适合管道） |
-| `--outputFormat <format>` | | 输出格式：text/json/stream-json（仅与 --print 配合） |
-| `--includePartialMessages` | | 包含部分消息块 |
+| `--output-format <format>` | | 输出格式：text/json/stream-json（仅与 --print 配合） |
+| `--include-partial-messages` | | 包含部分消息块 |
 
 ### 输入选项
 
 | 选项 | 说明 |
 |------|------|
-| `--inputFormat <format>` | 输入格式：text/stream-json |
-| `--replayUserMessages` | 重新发送来自 stdin 的用户消息 |
+| `--input-format <format>` | 输入格式：text/stream-json |
+| `--replay-user-messages` | 重新发送来自 stdin 的用户消息 |
 
 ### 安全选项
 
 | 选项 | 说明 |
 |------|------|
-| `--dangerouslySkipPermissions` | 跳过所有权限检查（危险） |
-| `--allowedTools <tools>` | 允许的工具列表（逗号或空格分隔） |
-| `--disallowedTools <tools>` | 禁止的工具列表（逗号或空格分隔） |
-| `--permissionMode <mode>` | 权限模式：acceptEdits/bypassPermissions/default/plan |
-| `--addDir <dirs>` | 允许工具访问的额外目录 |
+| `--allowed-tools <tools>` | 允许的工具列表（逗号或空格分隔） |
+| `--disallowed-tools <tools>` | 禁止的工具列表（逗号或空格分隔） |
+| `--permission-mode <mode>` | 权限模式：default/autoEdit/yolo/plan |
+| `--yolo` | YOLO 模式快捷开关（等同于 `--permission-mode yolo`） |
+| `--add-dir <dirs>` | 允许工具访问的额外目录 |
 
 ### MCP 选项
 
 | 选项 | 说明 |
 |------|------|
-| `--mcpConfig <files>` | 从 JSON 文件或字符串加载 MCP 服务器 |
-| `--strictMcpConfig` | 仅使用 --mcpConfig 指定的服务器 |
+| `--mcp-config <files>` | 从 JSON 文件或字符串加载 MCP 服务器 |
+| `--strict-mcp-config` | 仅使用 --mcp-config 指定的服务器 |
 
 ### AI 选项
 
 | 选项 | 说明 |
 |------|------|
-| `--appendSystemPrompt <text>` | 追加系统提示到默认提示 |
+| `--append-system-prompt <text>` | 追加系统提示到默认提示 |
+| `--system-prompt <text>` | 完全替换默认系统提示 |
 | `--model <name>` | 当前会话使用的模型 |
-| `--fallbackModel <name>` | 启用自动回退到指定模型 |
+| `--fallback-model <name>` | 启用自动回退到指定模型 |
 | `--agents <json>` | 自定义 Agent 的 JSON 对象 |
 
 ### 会话选项
@@ -401,15 +416,15 @@ blade --settingSources "global,user,local"
 |------|------|------|
 | `--continue` | `-c` | 继续最近的会话 |
 | `--resume <id>` | `-r` | 恢复指定会话 |
-| `--forkSession` | | 恢复会话时创建新会话 ID |
-| `--sessionId <id>` | | 使用特定会话 ID |
+| `--fork-session` | | 恢复会话时创建新会话 ID |
+| `--session-id <id>` | | 使用特定会话 ID |
 
 ### 配置选项
 
 | 选项 | 说明 |
 |------|------|
 | `--settings <path>` | | 设置 JSON 文件路径或 JSON 字符串 |
-| `--settingSources <sources>` | | 要加载的设置源（逗号分隔） |
+| `--setting-sources <sources>` | | 要加载的设置源（逗号分隔） |
 
 ### 集成选项
 

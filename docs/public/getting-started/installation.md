@@ -57,7 +57,7 @@ npx blade "帮我分析代码"
 
 ## 🔐 API 密钥配置
 
-安装后需要配置 API 密钥才能使用：
+安装后需要配置 API 密钥才能使用。首次运行 `blade` 时，如果未检测到有效密钥，会自动启动交互式设置向导，按照提示填写 Provider、Base URL、API Key 和模型即可。
 
 ### 获取 API 密钥
 
@@ -80,17 +80,26 @@ echo 'export QWEN_API_KEY="your-qwen-api-key"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-#### 方式2：配置文件
+#### 方式2：配置向导（首次启动自动出现）
 
 ```bash
-# 复制配置模板
-cp config.env.example .env
-
-# 编辑 .env 文件填入密钥
-vim .env
+blade
+# 按照终端中的步骤依次选择 Provider、输入 Base URL、API Key、模型
 ```
 
-#### 方式3：命令行参数
+#### 方式3：配置文件
+
+```bash
+# 用户级配置
+mkdir -p ~/.blade
+vim ~/.blade/config.json
+
+# 项目级配置
+mkdir -p .blade
+vim .blade/config.json
+```
+
+#### 方式4：命令行参数
 
 ```bash
 # 直接在命令中指定
@@ -172,7 +181,9 @@ npm config set registry https://registry.npmmirror.com
 echo $QWEN_API_KEY
 
 # 检查配置文件
-cat .env
+cat ~/.blade/config.json
+# 如有项目级配置：
+cat .blade/config.json
 
 # 测试 API 连接
 blade --debug "测试连接"

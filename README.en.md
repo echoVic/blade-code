@@ -21,7 +21,7 @@ English | [简体中文](README.md)
   <tr>
     <td width="50%" valign="top">
       <h3>🤖 Intelligent Conversations</h3>
-      <p>Natural language interactions powered by LLMs with context understanding and multi-turn dialogues</p>
+      <p>Natural language interactions powered by LLMs with context understanding and multi-turn dialogues. Simply run <code>blade "task"</code> to launch the UI and auto-send your first message.</p>
     </td>
     <td width="50%" valign="top">
       <h3>🛠️ Rich Toolset</h3>
@@ -92,6 +92,8 @@ blade
 blade --print "Hello, introduce yourself"
 ```
 
+> On the first run, if no API key is detected, Blade will automatically open an interactive setup wizard in your terminal to collect Provider, Base URL, API Key, and model information before continuing.
+
 ---
 
 ## 🔐 Configure API Keys
@@ -110,20 +112,29 @@ export VOLCENGINE_API_KEY="your-volcengine-api-key"
 export BLADE_BASE_URL="https://ark.cn-beijing.volces.com/api/v3"
 ```
 
-### Method 2: Command Line Arguments
+### Method 2: First-Run Setup Wizard (Recommended Experience)
 
 ```bash
-blade --print "Hello"  # Uses configured API key
+blade
+# If no API key is configured, an interactive wizard will guide you through Provider, Base URL, API Key, and model setup.
 ```
 
-### Method 3: Configuration File
+### Method 3: Command Line Arguments
 
 ```bash
-# Copy example config
-cp config.env.example .env
+blade --api-key your-api-key --base-url https://api.example.com "Hello"
+```
 
-# Edit .env file with your credentials
-nano .env
+### Method 4: Configuration File
+
+```bash
+# User-level configuration
+mkdir -p ~/.blade
+nano ~/.blade/config.json
+
+# Project-level configuration
+mkdir -p .blade
+nano .blade/config.json
 ```
 
 ### Get API Keys
@@ -141,12 +152,17 @@ nano .env
 # Interactive mode (default)
 blade
 
-# Direct message (with --print for non-interactive)
-blade --print "What is artificial intelligence?"
+# Direct message (automatically sent once the UI is ready)
+blade "What is artificial intelligence?"
 
 # Code generation
-blade --print "Write a debounce function in JavaScript"
+blade "Write a debounce function in JavaScript"
+
+# Non-interactive quick answer
+blade --print "Summarize the repo in one sentence"
 ```
+
+> Any message passed as `blade "..."` is automatically injected and executed once the interactive UI finishes initializing—no extra keystrokes required.
 
 ### Smart Tool Invocation
 
@@ -154,12 +170,12 @@ Blade Code automatically selects appropriate tools based on your needs:
 
 ```bash
 # File operations
-blade --print "List all TypeScript files in the current directory"
+blade "List all TypeScript files in the current directory"
 
 # Git operations
-blade --print "Show the last 5 commit logs"
+blade "Show the last 5 commit logs"
 
-# Code review
+# Code review (non-interactive example)
 blade --print "Review code quality in src/utils directory"
 ```
 
@@ -167,7 +183,7 @@ blade --print "Review code quality in src/utils directory"
 
 ```bash
 # Create or use named session
-blade --sessionId "project-alpha" "Start new project"
+blade --session-id "project-alpha" "Start new project"
 
 # Continue recent session
 blade --continue
@@ -176,7 +192,7 @@ blade --continue
 blade --resume <conversation-id>
 
 # Fork session (create new session from existing)
-blade --resume <id> --forkSession
+blade --resume <id> --fork-session
 ```
 
 ### Print Mode
@@ -188,23 +204,23 @@ Perfect for piping and scripting:
 blade --print "Generate a README template" > README.md
 
 # Specify output format
-blade --print --outputFormat json "Get project info"
+blade --print --output-format json "Get project info"
 
 # Stream JSON output
-blade --print --outputFormat stream-json "Analyze code"
+blade --print --output-format stream-json "Analyze code"
 ```
 
 ### Input/Output Options
 
 ```bash
 # Read from stdin (stream JSON format)
-cat input.json | blade --inputFormat stream-json --print
+cat input.json | blade --input-format stream-json --print
 
 # Include partial message chunks
-blade --print --includePartialMessages "Generate long text"
+blade --print --include-partial-messages "Generate long text"
 
 # Replay user messages
-blade --replayUserMessages < input.txt
+blade --replay-user-messages < input.txt
 ```
 
 ---
@@ -220,10 +236,10 @@ Model Context Protocol allows integration of external tools and resources:
 blade mcp
 
 # Load MCP config from JSON file
-blade --mcpConfig config.json "Use external tools"
+blade --mcp-config config.json "Use external tools"
 
 # Strict mode (only use specified MCP config)
-blade --mcpConfig config.json --strictMcpConfig "Query"
+blade --mcp-config config.json --strict-mcp-config "Query"
 ```
 
 ### Configuration Management
@@ -249,10 +265,13 @@ blade setup-token
 blade --model qwen-max --print "Complex question"
 
 # Set fallback model
-blade --fallbackModel qwen-turbo --print "Question"
+blade --fallback-model qwen-turbo --print "Question"
 
 # Custom system prompt
-blade --appendSystemPrompt "You are a senior architect" --print "Design microservices architecture"
+blade --append-system-prompt "You are a senior architect" --print "Design microservices architecture"
+
+# Replace default system prompt entirely
+blade --system-prompt "You are a TypeScript expert" --print "Explain decorators"
 
 # Custom agent config
 blade --agents '{"reviewer": {"model": "qwen-max"}}' --print "Review code"
@@ -260,22 +279,22 @@ blade --agents '{"reviewer": {"model": "qwen-max"}}' --print "Review code"
 
 ### Security & Permissions
 
-```bash
-# Skip permission checks (dangerous)
-blade --dangerouslySkipPermissions --print "Execute command"
+Blade ships with a three-tier permission system (`allow` / `ask` / `deny`). You can fine-tune runtime behavior with CLI flags:
 
+```bash
 # Allow specific tools only
-blade --allowedTools "read,write" --print "Handle files"
+blade --allowed-tools "read,write" --print "Handle files"
 
 # Disallow specific tools
-blade --disallowedTools "bash,execute" --print "Safe operations"
+blade --disallowed-tools "bash,execute" --print "Safe operations"
 
 # Permission modes
-blade --permissionMode plan --print "Plan task"  # Plan only, no execution
-blade --permissionMode acceptEdits --print "Modify code"  # Auto-accept edits
+blade --permission-mode plan --print "Plan task"       # Plan only, no execution
+blade --permission-mode autoEdit --print "Modify code" # Auto-approve edits
+blade --yolo --print "Run high-trust operations"       # Approve every tool call
 
 # Add allowed directories
-blade --addDir /path/to/dir --print "Access directory"
+blade --add-dir /path/to/dir --print "Access directory"
 ```
 
 ### IDE Integration
@@ -292,7 +311,7 @@ blade --ide
 blade --settings settings.json
 
 # Specify config sources
-blade --settingSources "global,user,local"
+blade --setting-sources "global,user,local"
 ```
 
 ---
@@ -324,40 +343,41 @@ blade --settingSources "global,user,local"
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--print` | `-p` | Print response and exit (for piping) |
-| `--outputFormat <format>` | | Output format: text/json/stream-json (with --print only) |
-| `--includePartialMessages` | | Include partial message chunks |
+| `--output-format <format>` | | Output format: text/json/stream-json (with --print only) |
+| `--include-partial-messages` | | Include partial message chunks |
 
 ### Input Options
 
 | Option | Description |
 |--------|-------------|
-| `--inputFormat <format>` | Input format: text/stream-json |
-| `--replayUserMessages` | Re-emit user messages from stdin |
+| `--input-format <format>` | Input format: text/stream-json |
+| `--replay-user-messages` | Re-emit user messages from stdin |
 
 ### Security Options
 
 | Option | Description |
 |--------|-------------|
-| `--dangerouslySkipPermissions` | Skip all permission checks (dangerous) |
-| `--allowedTools <tools>` | Allowed tools list (comma or space separated) |
-| `--disallowedTools <tools>` | Disallowed tools list (comma or space separated) |
-| `--permissionMode <mode>` | Permission mode: acceptEdits/bypassPermissions/default/plan |
-| `--addDir <dirs>` | Additional directories for tool access |
+| `--allowed-tools <tools>` | Allowed tools list (comma or space separated) |
+| `--disallowed-tools <tools>` | Disallowed tools list (comma or space separated) |
+| `--permission-mode <mode>` | Permission mode: default/autoEdit/yolo/plan |
+| `--yolo` | Shortcut for `--permission-mode yolo` |
+| `--add-dir <dirs>` | Additional directories for tool access |
 
 ### MCP Options
 
 | Option | Description |
 |--------|-------------|
-| `--mcpConfig <files>` | Load MCP servers from JSON files or strings |
-| `--strictMcpConfig` | Only use servers from --mcpConfig |
+| `--mcp-config <files>` | Load MCP servers from JSON files or strings |
+| `--strict-mcp-config` | Only use servers from --mcp-config |
 
 ### AI Options
 
 | Option | Description |
 |--------|-------------|
-| `--appendSystemPrompt <text>` | Append system prompt to default |
+| `--append-system-prompt <text>` | Append system prompt to default |
+| `--system-prompt <text>` | Replace default system prompt |
 | `--model <name>` | Model for current session |
-| `--fallbackModel <name>` | Enable automatic fallback to specified model |
+| `--fallback-model <name>` | Enable automatic fallback to specified model |
 | `--agents <json>` | Custom agent configuration JSON |
 
 ### Session Options
@@ -366,15 +386,15 @@ blade --settingSources "global,user,local"
 |--------|-------|-------------|
 | `--continue` | `-c` | Continue recent session |
 | `--resume <id>` | `-r` | Resume specific session |
-| `--forkSession` | | Create new session ID when resuming |
-| `--sessionId <id>` | | Use specific session ID |
+| `--fork-session` | | Create new session ID when resuming |
+| `--session-id <id>` | | Use specific session ID |
 
 ### Configuration Options
 
 | Option | Description |
 |--------|-------------|
 | `--settings <path>` | Settings JSON file path or JSON string |
-| `--settingSources <sources>` | Setting sources to load (comma separated) |
+| `--setting-sources <sources>` | Setting sources to load (comma separated) |
 
 ### Integration Options
 

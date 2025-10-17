@@ -5,6 +5,8 @@ Blade 采用双配置文件系统，参考 Claude Code 的设计理念：
 - **config.json** - 基础配置（API、模型、UI 等）
 - **settings.json** - 行为配置（权限、Hooks、环境变量等）
 
+> 首次运行 `blade` 时，如果未检测到 `apiKey`，会自动启动终端设置向导（`SetupWizard`）引导填写 provider、Base URL、API Key、模型，并立即保存到用户配置。
+
 ## 配置文件位置
 
 ### 用户级配置
