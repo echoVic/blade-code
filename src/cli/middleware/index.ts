@@ -12,13 +12,13 @@ export const validatePermissions: MiddlewareFunction = (argv) => {
   // 处理 --yolo 快捷方式
   if (argv.yolo) {
     // 如果同时指定了 --yolo 和 --permission-mode，抛出错误
-    if (argv['permission-mode'] && argv['permission-mode'] !== 'yolo') {
+    if (argv.permissionMode && argv.permissionMode !== 'yolo') {
       throw new Error(
         'Cannot use both --yolo and --permission-mode with different values'
       );
     }
     // 将 --yolo 映射到 --permission-mode=yolo
-    argv['permission-mode'] = 'yolo';
+    argv.permissionMode = 'yolo';
   }
 
   // 验证工具列表冲突

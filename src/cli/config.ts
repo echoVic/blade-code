@@ -5,9 +5,8 @@
 
 import type { Options } from 'yargs';
 import { getDescription, getVersion } from '../utils/packageInfo.js';
-import type { GlobalOptions } from './types.js';
 
-export const globalOptions: Record<keyof GlobalOptions, Options> = {
+export const globalOptions = {
   debug: {
     alias: 'd',
     type: 'string',
@@ -29,59 +28,69 @@ export const globalOptions: Record<keyof GlobalOptions, Options> = {
     describe: 'Print response and exit (useful for pipes)',
     group: 'Output Options:',
   },
-  outputFormat: {
+  'output-format': {
+    alias: ['outputFormat'],
     type: 'string',
     choices: ['text', 'json', 'stream-json'],
     default: 'text',
     describe: 'Output format (only works with --print)',
     group: 'Output Options:',
   },
-  includePartialMessages: {
+  'include-partial-messages': {
+    alias: ['includePartialMessages'],
     type: 'boolean',
     describe: 'Include partial message chunks as they arrive',
     group: 'Output Options:',
   },
-  inputFormat: {
+  'input-format': {
+    alias: ['inputFormat'],
     type: 'string',
     choices: ['text', 'stream-json'],
     default: 'text',
     describe: 'Input format',
     group: 'Input Options:',
   },
-  replayUserMessages: {
+  'replay-user-messages': {
+    alias: ['replayUserMessages'],
     type: 'boolean',
     describe: 'Re-emit user messages from stdin',
     group: 'Input Options:',
   },
-  allowedTools: {
+  'allowed-tools': {
+    alias: ['allowedTools'],
     type: 'array',
     string: true,
     describe: 'Comma or space-separated list of tool names to allow',
     group: 'Security Options:',
   },
-  disallowedTools: {
+  'disallowed-tools': {
+    alias: ['disallowedTools'],
     type: 'array',
     string: true,
     describe: 'Comma or space-separated list of tool names to deny',
     group: 'Security Options:',
   },
-  mcpConfig: {
+  'mcp-config': {
+    alias: ['mcpConfig'],
     type: 'array',
     string: true,
     describe: 'Load MCP servers from JSON files or strings',
     group: 'MCP Options:',
   },
-  systemPrompt: {
+  'system-prompt': {
+    alias: ['systemPrompt'],
     type: 'string',
     describe: 'System prompt to use for the session (replaces default)',
     group: 'AI Options:',
   },
-  appendSystemPrompt: {
+  'append-system-prompt': {
+    alias: ['appendSystemPrompt'],
     type: 'string',
     describe: 'Append a system prompt to the default system prompt',
     group: 'AI Options:',
   },
   'permission-mode': {
+    alias: ['permissionMode'],
     type: 'string',
     choices: ['default', 'autoEdit', 'yolo', 'plan'],
     describe: 'Permission mode (default: ask for non-read tools, autoEdit: auto-approve edits, yolo: auto-approve all, plan: reserved)',
@@ -104,7 +113,8 @@ export const globalOptions: Record<keyof GlobalOptions, Options> = {
     describe: 'Resume a conversation',
     group: 'Session Options:',
   },
-  forkSession: {
+  'fork-session': {
+    alias: ['forkSession'],
     type: 'boolean',
     describe: 'Create a new session ID when resuming',
     group: 'Session Options:',
@@ -114,7 +124,8 @@ export const globalOptions: Record<keyof GlobalOptions, Options> = {
     describe: 'Model for the current session',
     group: 'AI Options:',
   },
-  fallbackModel: {
+  'fallback-model': {
+    alias: ['fallbackModel'],
     type: 'string',
     describe: 'Enable automatic fallback to specified model',
     group: 'AI Options:',
@@ -124,7 +135,8 @@ export const globalOptions: Record<keyof GlobalOptions, Options> = {
     describe: 'Path to a settings JSON file or JSON string',
     group: 'Configuration:',
   },
-  addDir: {
+  'add-dir': {
+    alias: ['addDir'],
     type: 'array',
     string: true,
     describe: 'Additional directories to allow tool access to',
@@ -135,12 +147,14 @@ export const globalOptions: Record<keyof GlobalOptions, Options> = {
     describe: 'Automatically connect to IDE on startup',
     group: 'Integration:',
   },
-  strictMcpConfig: {
+  'strict-mcp-config': {
+    alias: ['strictMcpConfig'],
     type: 'boolean',
     describe: 'Only use MCP servers from --mcp-config',
     group: 'MCP Options:',
   },
-  sessionId: {
+  'session-id': {
+    alias: ['sessionId'],
     type: 'string',
     describe: 'Use a specific session ID for the conversation',
     group: 'Session Options:',
@@ -150,12 +164,13 @@ export const globalOptions: Record<keyof GlobalOptions, Options> = {
     describe: 'JSON object defining custom agents',
     group: 'AI Options:',
   },
-  settingSources: {
+  'setting-sources': {
+    alias: ['settingSources'],
     type: 'string',
     describe: 'Comma-separated list of setting sources to load',
     group: 'Configuration:',
   },
-};
+} satisfies Record<string, Options>;
 
 export const cliConfig = {
   scriptName: 'blade',

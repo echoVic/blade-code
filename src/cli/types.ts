@@ -15,7 +15,7 @@ export interface GlobalOptions {
   mcpConfig?: string[];
   systemPrompt?: string;
   appendSystemPrompt?: string;
-  'permission-mode'?: 'default' | 'autoEdit' | 'yolo' | 'plan';
+  permissionMode?: 'default' | 'autoEdit' | 'yolo' | 'plan'; // --permission-mode 同义词
   yolo?: boolean; // --yolo 快捷方式,等同于 --permission-mode=yolo
   continue?: boolean;
   resume?: string;

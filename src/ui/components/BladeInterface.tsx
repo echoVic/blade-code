@@ -1,6 +1,6 @@
 import { useMemoizedFn } from 'ahooks';
 import { Box, useFocusManager, useStdout } from 'ink';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { PermissionMode } from '../../config/types.js';
 import type { AppProps } from '../App.js';
@@ -46,7 +46,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   // 调试输出：显示接收到的 props
   if (debug) {
     console.log('[Debug] BladeInterface props:', {
-      'permission-mode': otherProps['permission-mode'],
+      permissionMode: otherProps.permissionMode,
       yolo: otherProps.yolo,
     });
   }
@@ -55,8 +55,13 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const { state: sessionState, addUserMessage, addAssistantMessage } = useSession();
   const { todos, showTodoPanel } = useTodos();
 
-  const { isInitialized, hasApiKey, showSetupWizard, handleSetupComplete } =
-    useAppInitializer(addAssistantMessage, Boolean(debug));
+  const {
+    status: initializationStatus,
+    readyForChat,
+    requiresSetup,
+    errorMessage: initializationError,
+    handleSetupComplete,
+  } = useAppInitializer({ debug: Boolean(debug) });
 
   const { stdout } = useStdout();
   const [terminalWidth, setTerminalWidth] = useState(80);
@@ -85,6 +90,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     confirmationHandler
   );
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
+
+  const hasSentInitialMessage = useRef(false);
+  const readyAnnouncementSent = useRef(false);
+  const lastInitializationError = useRef<string | null>(null);
 
   const handlePermissionModeToggle = useMemoizedFn(async () => {
     const configManager = ConfigManager.getInstance();
@@ -125,7 +134,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   // 焦点管理：根据不同状态切换焦点
   const { focus } = useFocusManager();
   useEffect(() => {
-    if (showSetupWizard) {
+    if (requiresSetup) {
       // SetupWizard 显示时，由 SetupWizard 自己管理焦点
       return;
     }
@@ -137,7 +146,64 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       // 其他情况，焦点在主输入框
       focus('main-input');
     }
-  }, [showSetupWizard, confirmationState.isVisible, focus]);
+  }, [requiresSetup, confirmationState.isVisible, focus]);
+
+  useEffect(() => {
+    if (!readyForChat || readyAnnouncementSent.current) {
+      return;
+    }
+
+    readyAnnouncementSent.current = true;
+    addAssistantMessage('Blade Code 助手已就绪！');
+    addAssistantMessage('请输入您的问题，我将为您提供帮助。');
+  }, [readyForChat, addAssistantMessage]);
+
+  useEffect(() => {
+    if (!initializationError) {
+      return;
+    }
+
+    if (lastInitializationError.current === initializationError) {
+      return;
+    }
+
+    lastInitializationError.current = initializationError;
+
+    if (initializationStatus === 'error') {
+      addAssistantMessage(`❌ 初始化失败: ${initializationError}`);
+    } else {
+      addAssistantMessage(`❌ ${initializationError}`);
+      addAssistantMessage('请重新尝试设置，或检查文件权限');
+    }
+  }, [initializationError, initializationStatus, addAssistantMessage]);
+
+  useEffect(() => {
+    const message = otherProps.initialMessage?.trim();
+    if (!message || hasSentInitialMessage.current || !readyForChat || requiresSetup) {
+      return;
+    }
+
+    hasSentInitialMessage.current = true;
+    addToHistory(message);
+
+    (async () => {
+      try {
+        await executeCommand(message, addUserMessage, addAssistantMessage);
+      } catch (error) {
+        const fallback =
+          error instanceof Error ? error.message : '无法发送初始消息';
+        addAssistantMessage(`❌ 初始消息发送失败：${fallback}`);
+      }
+    })();
+  }, [
+    otherProps.initialMessage,
+    readyForChat,
+    requiresSetup,
+    executeCommand,
+    addUserMessage,
+    addAssistantMessage,
+    addToHistory,
+  ]);
 
   // 设置向导取消回调
   const handleSetupCancel = () => {
@@ -148,9 +214,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   };
 
   useEffect(() => {
-    const targetMode = otherProps['permission-mode'] as PermissionMode | undefined;
+    const targetMode = otherProps.permissionMode as PermissionMode | undefined;
     if (debug) {
-      console.log('[Debug] permission-mode from CLI:', targetMode);
+      console.log('[Debug] permissionMode from CLI:', targetMode);
       console.log('[Debug] current appState.permissionMode:', appState.permissionMode);
     }
     if (!targetMode || targetMode === appState.permissionMode) {
@@ -172,10 +238,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         );
       }
     })();
-  }, [otherProps['permission-mode'], appState.permissionMode, appDispatch, appActions]);
+  }, [otherProps.permissionMode, appState.permissionMode, appDispatch, appActions]);
 
   // 如果显示设置向导，渲染 SetupWizard 组件
-  if (showSetupWizard) {
+  if (requiresSetup) {
     return (
       <SetupWizard onComplete={handleSetupComplete} onCancel={handleSetupCancel} />
     );
@@ -209,11 +275,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             sessionState={sessionState}
             terminalWidth={terminalWidth}
             isProcessing={isProcessing}
-            isInitialized={hasApiKey}
+            isInitialized={readyForChat}
             loopState={loopState}
           />
 
-          <InputArea input={input} isProcessing={isProcessing || !isInitialized} />
+          <InputArea input={input} isProcessing={isProcessing || !readyForChat} />
 
           {/* 命令建议列表 - 显示在输入框下方 */}
           <CommandSuggestions
@@ -224,8 +290,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
           <ChatStatusBar
             messageCount={sessionState.messages.length}
-            hasApiKey={hasApiKey}
-            isProcessing={isProcessing || !isInitialized}
+            hasApiKey={readyForChat}
+            isProcessing={isProcessing || !readyForChat}
             permissionMode={appState.permissionMode}
           />
 

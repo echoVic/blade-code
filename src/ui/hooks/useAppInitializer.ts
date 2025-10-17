@@ -19,91 +19,108 @@ function formatErrorMessage(error: unknown): string {
  * 应用初始化 Hook
  * 负责应用的初始化逻辑、配置加载和API密钥检查
  */
+type InitializationStatus = 'idle' | 'loading' | 'ready' | 'needsSetup' | 'error';
+
+interface UseAppInitializerOptions {
+  debug?: boolean;
+}
+
+interface InitializationResult {
+  status: InitializationStatus;
+  readyForChat: boolean;
+  requiresSetup: boolean;
+  errorMessage: string | null;
+  initializeApp: () => Promise<void>;
+  handleSetupComplete: () => void;
+}
+
+/**
+ * 应用初始化 Hook
+ * 负责加载配置、检查 API Key 并同步应用上下文
+ */
 export const useAppInitializer = (
-  addAssistantMessage: (message: string) => void,
-  debug: boolean = false
-) => {
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [loadingStatus, setLoadingStatus] = useState('正在初始化...');
-  const [hasApiKey, setHasApiKey] = useState(false);
-  const [showSetupWizard, setShowSetupWizard] = useState(false);
+  options: UseAppInitializerOptions = {}
+): InitializationResult => {
+  const { debug = false } = options;
+  const [status, setStatus] = useState<InitializationStatus>('idle');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { dispatch: appDispatch, actions: appActions } = useAppState();
 
   // 初始化应用
   const initializeApp = useMemoizedFn(async () => {
-    try {
-      setLoadingStatus('加载配置...');
+    if (debug) {
+      console.log('[Debug] 初始化流程开始');
+    }
 
-      // 初始化配置管理器
+    setStatus('loading');
+    setErrorMessage(null);
+
+    try {
       const configManager = ConfigManager.getInstance();
       await configManager.initialize();
       const config = configManager.getConfig();
+
       appDispatch(appActions.setConfig(config));
       appDispatch(appActions.setPermissionMode(config.permissionMode));
 
-      setLoadingStatus('检查 API 密钥...');
-
-      // 检查 API 密钥配置
       if (!config.apiKey || config.apiKey.trim() === '') {
-        setHasApiKey(false);
-        setShowSetupWizard(true); // 显示设置向导
-        setIsInitialized(true);
-        // 不再显示错误消息，向导会引导用户
+        if (debug) {
+          console.log('[Debug] 未检测到 API Key，进入设置向导');
+        }
+        setStatus('needsSetup');
         return;
       }
 
-      setLoadingStatus('初始化完成!');
-      setHasApiKey(true);
-      setShowSetupWizard(false); // 关闭设置向导
-      setIsInitialized(true);
-
-      addAssistantMessage('Blade Code 助手已就绪！');
-      addAssistantMessage('请输入您的问题，我将为您提供帮助。');
-
-      console.log('Blade 应用初始化完成');
+      if (debug) {
+        console.log('[Debug] 初始化完成，准备就绪');
+      }
+      setStatus('ready');
     } catch (error) {
-      console.error('应用初始化失败:', error);
       const safeMessage = formatErrorMessage(error);
-      addAssistantMessage(`❌ 初始化失败: ${safeMessage}`);
-      setIsInitialized(true);
+
+      if (debug) {
+        console.log('[Debug] 初始化失败:', safeMessage);
+      }
+
+      setErrorMessage(safeMessage);
+      setStatus('error');
     }
   });
 
   // 应用初始化效果
   useEffect(() => {
-    if (!isInitialized) {
+    if (status === 'idle') {
       initializeApp();
     }
-  }, [isInitialized, initializeApp]);
+  }, [status, initializeApp]);
 
   // 设置完成回调（配置已保存，内存已更新，直接更新 UI 状态）
   const handleSetupComplete = useMemoizedFn(() => {
-    // 验证配置是否真正保存成功
     const configManager = ConfigManager.getInstance();
     const config = configManager.getConfig();
 
     if (!config.apiKey || config.apiKey.trim() === '') {
-      addAssistantMessage('❌ 配置验证失败：API 密钥未正确保存');
-      addAssistantMessage('请重新尝试设置，或检查文件权限');
-      setShowSetupWizard(true);
+      setErrorMessage('配置验证失败：API 密钥未正确保存');
+      setStatus('needsSetup');
       return;
     }
 
-    setHasApiKey(true);
-    setShowSetupWizard(false);
     appDispatch(appActions.setConfig(config));
     appDispatch(appActions.setPermissionMode(config.permissionMode));
-    addAssistantMessage('✅ 配置保存成功！');
-    addAssistantMessage('Blade Code 助手已就绪！');
-    addAssistantMessage('请输入您的问题，我将为您提供帮助。');
+    setErrorMessage(null);
+    setStatus('ready');
+
+    if (debug) {
+      console.log('[Debug] 配置保存成功，系统已就绪');
+    }
   });
 
   return {
-    isInitialized,
-    loadingStatus,
-    hasApiKey,
-    showSetupWizard,
+    status,
+    readyForChat: status === 'ready',
+    requiresSetup: status === 'needsSetup',
+    errorMessage,
     initializeApp,
-    handleSetupComplete, // 新增
+    handleSetupComplete,
   };
 };
