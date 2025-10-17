@@ -64,23 +64,12 @@ export interface ToolInvocation<TParams = any, TResult = ToolResult> {
 
   getDescription(): string;
   getAffectedPaths(): string[];
-  shouldConfirm(): Promise<ConfirmationDetails | null>;
   execute(
     signal: AbortSignal,
     updateOutput?: (output: string) => void
   ): Promise<TResult>;
 }
 
-/**
- * 确认详情
- */
-export interface ConfirmationDetails {
-  type: 'edit' | 'execute' | 'delete' | 'network' | 'external';
-  title: string;
-  message: string;
-  risks?: string[];
-  affectedFiles?: string[];
-}
 
 /**
  * 工具描述格式
@@ -101,12 +90,6 @@ export interface ToolDescription {
   important?: string[];
 }
 
-/**
- * 确认回调函数类型
- */
-export type ConfirmationCallback<TParams> = (
-  params: TParams
-) => Promise<ConfirmationDetails | null>;
 
 /**
  * 工具配置 (泛型接口，用于配合 Zod Schema)
@@ -124,8 +107,6 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   schema: TSchema;
   /** 工具描述 */
   description: ToolDescription;
-  /** 是否需要确认 (boolean 或回调函数) */
-  requiresConfirmation?: boolean | ConfirmationCallback<TParams>;
   /** 执行函数 */
   execute: (params: TParams, context: ExecutionContext) => Promise<ToolResult>;
   /** 版本号 */
@@ -148,8 +129,6 @@ export interface Tool<TParams = unknown> {
   readonly kind: ToolKind;
   /** 工具描述 */
   readonly description: ToolDescription;
-  /** 是否需要确认 */
-  readonly requiresConfirmation: boolean;
   /** 版本号 */
   readonly version: string;
   /** 分类 */

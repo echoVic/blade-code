@@ -2,11 +2,7 @@ import { promises as fs } from 'fs';
 import { dirname } from 'path';
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type {
-  ConfirmationDetails,
-  ExecutionContext,
-  ToolResult,
-} from '../../types/index.js';
+import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
@@ -81,28 +77,6 @@ export const writeTool = createTool({
       'Write 工具在覆盖文件前需要用户确认',
       '启用 backup 参数可以在覆盖前创建备份',
     ],
-  },
-
-  // 需要用户确认（覆盖现有文件时）
-  requiresConfirmation: async (params): Promise<ConfirmationDetails | null> => {
-    const { file_path } = params;
-
-    try {
-      // 检查文件是否已存在
-      await fs.access(file_path);
-
-      // 文件存在，需要确认覆盖
-      return {
-        type: 'edit',
-        title: '确认文件覆盖',
-        message: `文件 ${file_path} 已存在，确认要覆盖吗？`,
-        risks: ['现有文件内容将被完全替换', '此操作不可撤销（除非有备份）'],
-        affectedFiles: [file_path],
-      };
-    } catch {
-      // 文件不存在，不需要确认
-      return null;
-    }
   },
 
   // 执行函数

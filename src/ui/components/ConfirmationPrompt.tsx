@@ -1,8 +1,10 @@
 import { Box, Text, useFocus, useInput } from 'ink';
 import SelectInput, { type ItemProps as SelectItemProps } from 'ink-select-input';
 import React, { useMemo } from 'react';
-import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
-import type { ConfirmationDetails } from '../../tools/types/ToolTypes.js';
+import type {
+  ConfirmationDetails,
+  ConfirmationResponse,
+} from '../../tools/types/ExecutionTypes.js';
 
 const ConfirmationItem = ({ label, isSelected }: SelectItemProps) => (
   <Text color={isSelected ? 'yellow' : undefined}>{label}</Text>

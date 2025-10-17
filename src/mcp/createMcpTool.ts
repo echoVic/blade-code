@@ -26,7 +26,6 @@ export function createMcpTool(
       short: toolDef.description || `MCP工具: ${toolDef.name}`,
       important: [`来自 MCP 服务器: ${serverName}`, '执行外部工具，需要用户确认'],
     },
-    requiresConfirmation: true,
     category: 'MCP工具',
     tags: ['mcp', 'external', serverName],
 

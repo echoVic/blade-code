@@ -1,5 +1,15 @@
-import type { ConfirmationDetails, ToolResult } from './ToolTypes.js';
+import type { ToolResult } from './ToolTypes.js';
 import { ToolErrorType } from './ToolTypes.js';
+
+/**
+ * 确认详情
+ */
+export interface ConfirmationDetails {
+  title: string;
+  message: string;
+  risks?: string[];
+  affectedFiles?: string[];
+}
 
 /**
  * 用户确认响应

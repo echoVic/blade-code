@@ -3,11 +3,7 @@ import { z } from 'zod';
 import type { Agent } from '../../../agent/Agent.js';
 import type { ChatContext } from '../../../agent/types.js';
 import { createTool } from '../../core/createTool.js';
-import type {
-  ConfirmationDetails,
-  ExecutionContext,
-  ToolResult,
-} from '../../types/index.js';
+import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 
 /**
@@ -224,28 +220,6 @@ export const taskTool = createTool({
       '后台任务需要手动查看状态',
       '任务超时会自动中止',
     ],
-  },
-
-  // 需要用户确认
-  requiresConfirmation: async (params): Promise<ConfirmationDetails | null> => {
-    const { description, subagent_type, run_in_background } = params;
-
-    if (run_in_background || subagent_type) {
-      return {
-        type: 'execute',
-        title: '确认创建任务',
-        message: `将创建任务: ${description}`,
-        risks: [
-          run_in_background ? '任务将在后台执行' : '任务将立即执行',
-          subagent_type
-            ? `将使用${subagent_type}代理执行任务`
-            : '将使用默认代理执行任务',
-          '任务可能消耗系统资源',
-        ],
-      };
-    }
-
-    return null;
   },
 
   // 执行函数

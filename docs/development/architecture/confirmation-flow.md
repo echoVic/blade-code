@@ -1,5 +1,15 @@
 # 用户确认流程文档
 
+> **⚠️ 文档部分过时**: 本文档描述的 `requiresConfirmation` 工具字段和 `shouldConfirm()` 方法已被废弃。
+>
+> **当前实现**: Blade 的确认逻辑完全由权限系统管理（PermissionStage），不再依赖工具自身的确认配置。
+>
+> - 确认行为由 `settings.json` 中的权限规则控制（allow/ask/deny）
+> - 权限模式（DEFAULT/AUTO_EDIT/YOLO）决定自动批准策略
+> - 工具不再有 `requiresConfirmation` 字段
+>
+> 请参考 [权限系统文档](../../public/configuration/permissions.md) 了解当前的确认机制。
+
 ## 概述
 
 Blade 实现了一个完整的用户确认流程，用于在执行潜在危险操作前获取用户明确同意。该流程集成在工具执行管道（ExecutionPipeline）中，提供了安全、直观的交互体验。

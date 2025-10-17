@@ -2,11 +2,7 @@ import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type {
-  ConfirmationDetails,
-  ExecutionContext,
-  ToolResult,
-} from '../../types/index.js';
+import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
@@ -125,56 +121,6 @@ export const bashTool = createTool({
       '后台命令需要手动终止',
       'NEVER 使用 find, grep, cat, sed 等命令 - 应使用专用工具',
     ],
-  },
-
-  // 需要用户确认(危险命令或后台执行)
-  requiresConfirmation: async (params): Promise<ConfirmationDetails | null> => {
-    const { command, run_in_background } = params;
-
-    // 检查是否是危险命令
-    const dangerousCommands = [
-      'rm -rf',
-      'sudo rm',
-      'del /f',
-      'format',
-      'fdisk',
-      'mkfs',
-      'dd if=',
-      'shred',
-      'wipe',
-      'sudo',
-      'su -',
-      'chmod 777',
-      'chown',
-      'passwd',
-      'useradd',
-      'userdel',
-      'groupadd',
-      'groupdel',
-      'systemctl',
-      'service',
-      'reboot',
-      'shutdown',
-      'killall',
-      'pkill',
-    ];
-
-    const isDangerous = dangerousCommands.some((dangerous) =>
-      command.toLowerCase().includes(dangerous)
-    );
-
-    if (isDangerous || run_in_background) {
-      return {
-        type: 'execute',
-        title: run_in_background ? '确认后台执行命令' : '确认执行危险命令',
-        message: `命令 "${command}" ${run_in_background ? '将在后台持续运行' : '可能对系统造成影响'},确认要执行吗?`,
-        risks: run_in_background
-          ? ['命令将在后台持续运行', '需要手动终止后台进程', '可能消耗系统资源']
-          : ['命令可能修改或删除文件', '命令可能影响系统配置', '操作可能不可逆'],
-      };
-    }
-
-    return null;
   },
 
   // 执行函数

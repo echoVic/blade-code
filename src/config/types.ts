@@ -11,10 +11,22 @@ export type ProviderType = 'openai-compatible' | 'anthropic';
 /**
  * 权限模式枚举
  *
- * - DEFAULT: 默认模式，Read 工具自动批准，其他工具需要确认
- * - AUTO_EDIT: 自动编辑模式，Read 和 Edit 工具自动批准
- * - YOLO: 自动批准所有工具调用（危险）
- * - PLAN: 计划模式（保留占位，暂未实现）
+ * ## DEFAULT 模式（默认）
+ * - ✅ 自动批准: Read, Search (只读操作，安全)
+ * - ❌ 需要确认: Edit, Write, Bash, Delete, Move 等
+ *
+ * ## AUTO_EDIT 模式
+ * - ✅ 自动批准: Read, Search, Edit
+ * - ❌ 需要确认: Write, Bash, Delete, Move 等
+ * - 适用场景：频繁修改代码的开发任务
+ *
+ * ## YOLO 模式（危险）
+ * - ✅ 自动批准: 所有工具
+ * - ⚠️  警告：完全信任 AI，跳过所有确认
+ * - 适用场景：高度可控的环境或演示场景
+ *
+ * ## PLAN 模式（计划中）
+ * - 保留占位，暂未实现
  */
 export enum PermissionMode {
   DEFAULT = 'default',

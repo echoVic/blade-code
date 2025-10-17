@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type {
-  ConfirmationCallback,
   Tool,
   ToolConfig,
   ToolInvocation,
@@ -18,19 +17,11 @@ export function createTool<TSchema extends z.ZodSchema>(
 ): Tool<z.infer<TSchema>> {
   type TParams = z.infer<TSchema>;
 
-  // 解析确认配置
-  const requiresConfirmation = Boolean(config.requiresConfirmation);
-  const confirmationFn: ConfirmationCallback<TParams> | undefined =
-    typeof config.requiresConfirmation === 'function'
-      ? config.requiresConfirmation
-      : undefined;
-
   return {
     name: config.name,
     displayName: config.displayName,
     kind: config.kind,
     description: config.description,
-    requiresConfirmation,
     version: config.version || '1.0.0',
     category: config.category,
     tags: config.tags || [],
@@ -74,7 +65,6 @@ export function createTool<TSchema extends z.ZodSchema>(
         version: config.version || '1.0.0',
         category: config.category,
         tags: config.tags || [],
-        requiresConfirmation,
         description: config.description,
         schema: zodToFunctionSchema(config.schema),
       };
@@ -90,8 +80,7 @@ export function createTool<TSchema extends z.ZodSchema>(
       return new UnifiedToolInvocation<TParams>(
         config.name,
         validatedParams,
-        config.execute,
-        confirmationFn
+        config.execute
       );
     },
 

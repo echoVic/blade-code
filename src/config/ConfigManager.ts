@@ -457,6 +457,9 @@ export class ConfigManager {
 
   /**
    * 将权限规则追加到项目本地 settings.local.json 的 allow 列表
+   * 增强功能：
+   * 1. 去重：检查规则是否已存在
+   * 2. 清理：移除被新规则覆盖的旧规则
    */
   async appendLocalPermissionAllowRule(rule: string): Promise<void> {
     const localSettingsPath = path.join(process.cwd(), '.blade', 'settings.local.json');
@@ -475,19 +478,37 @@ export class ConfigManager {
       permissions.ask = Array.isArray(permissions.ask) ? permissions.ask : [];
       permissions.deny = Array.isArray(permissions.deny) ? permissions.deny : [];
 
-      if (!permissions.allow.includes(rule)) {
-        permissions.allow = [...permissions.allow, rule];
-        existingSettings.permissions = permissions;
+      // 检查新规则是否已存在
+      if (permissions.allow.includes(rule)) {
+        return; // 规则已存在，无需重复添加
+      }
 
-        await fs.writeFile(
-          localSettingsPath,
-          JSON.stringify(existingSettings, null, 2),
-          { mode: 0o600, encoding: 'utf-8' }
+      // 移除被新规则覆盖的旧规则
+      const originalCount = permissions.allow.length;
+      permissions.allow = permissions.allow.filter((oldRule: string) => {
+        return !this.isRuleCoveredBy(oldRule, rule);
+      });
+
+      const removedCount = originalCount - permissions.allow.length;
+      if (removedCount > 0 && this.config?.debug) {
+        console.log(
+          `[ConfigManager] 新规则 "${rule}" 覆盖了 ${removedCount} 条旧规则，已自动清理`
         );
       }
 
-      if (this.config && !this.config.permissions.allow.includes(rule)) {
-        this.config.permissions.allow = [...this.config.permissions.allow, rule];
+      // 添加新规则
+      permissions.allow.push(rule);
+      existingSettings.permissions = permissions;
+
+      await fs.writeFile(
+        localSettingsPath,
+        JSON.stringify(existingSettings, null, 2),
+        { mode: 0o600, encoding: 'utf-8' }
+      );
+
+      // 更新内存配置
+      if (this.config) {
+        this.config.permissions.allow = [...permissions.allow];
       }
     } catch (error) {
       console.error('[ConfigManager] Failed to append local permission rule:', error);
@@ -495,6 +516,113 @@ export class ConfigManager {
         `保存本地权限规则失败: ${error instanceof Error ? error.message : '未知错误'}`
       );
     }
+  }
+
+  /**
+   * 判断 rule1 是否被 rule2 覆盖
+   * 使用 PermissionChecker 的匹配逻辑来判断
+   * @param rule1 旧规则
+   * @param rule2 新规则
+   */
+  private isRuleCoveredBy(rule1: string, rule2: string): boolean {
+    try {
+      // 动态导入 PermissionChecker
+      const { PermissionChecker } = require('./PermissionChecker.js');
+
+      // 创建只包含新规则的 checker
+      const checker = new PermissionChecker({
+        allow: [rule2],
+        ask: [],
+        deny: [],
+      });
+
+      // 从 rule1 解析出工具名和参数
+      const toolName = this.extractToolNameFromRule(rule1);
+      if (!toolName) return false;
+
+      const params = this.extractParamsFromRule(rule1);
+
+      // 构造描述符
+      const descriptor = {
+        toolName,
+        params,
+        affectedPaths: [],
+      };
+
+      // 检查 rule1 是否匹配 rule2
+      const checkResult = checker.check(descriptor);
+      return checkResult.result === 'allow';
+    } catch (error) {
+      // 解析失败，保守处理：不删除
+      console.warn(
+        `[ConfigManager] 无法判断规则覆盖关系: ${error instanceof Error ? error.message : '未知错误'}`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * 从规则字符串中提取工具名
+   */
+  private extractToolNameFromRule(rule: string): string | null {
+    const match = rule.match(/^([A-Za-z0-9_]+)(\(|$)/);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * 从规则字符串中提取参数
+   */
+  private extractParamsFromRule(rule: string): Record<string, unknown> {
+    const match = rule.match(/\((.*)\)$/);
+    if (!match) return {};
+
+    const paramString = match[1];
+    const params: Record<string, unknown> = {};
+
+    // 简单解析参数（key:value 格式）
+    const parts = this.smartSplitParams(paramString);
+    for (const part of parts) {
+      const colonIndex = part.indexOf(':');
+      if (colonIndex > 0) {
+        const key = part.slice(0, colonIndex).trim();
+        const value = part.slice(colonIndex + 1).trim();
+        params[key] = value;
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * 智能分割参数字符串（处理嵌套括号）
+   */
+  private smartSplitParams(str: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let braceDepth = 0;
+    let parenDepth = 0;
+
+    for (let i = 0; i < str.length; i++) {
+      const char = str[i];
+
+      if (char === '{') braceDepth++;
+      else if (char === '}') braceDepth--;
+      else if (char === '(') parenDepth++;
+      else if (char === ')') parenDepth--;
+
+      if (char === ',' && braceDepth === 0 && parenDepth === 0) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+
+    if (current) {
+      result.push(current.trim());
+    }
+
+    return result;
   }
 
   /**

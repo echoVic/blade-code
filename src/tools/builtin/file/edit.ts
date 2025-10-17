@@ -1,11 +1,7 @@
 import { promises as fs } from 'fs';
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type {
-  ConfirmationDetails,
-  ExecutionContext,
-  ToolResult,
-} from '../../types/index.js';
+import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
@@ -81,48 +77,6 @@ export const editTool = createTool({
       '替换多行内容时，old_string 必须包含完整的换行符',
       '如果文件不存在，操作会失败',
     ],
-  },
-
-  // 需要用户确认
-  requiresConfirmation: async (params): Promise<ConfirmationDetails | null> => {
-    const { file_path, old_string, replace_all } = params;
-
-    try {
-      // 读取文件内容预览替换操作
-      const content = await fs.readFile(file_path, 'utf8');
-      const matches = findMatches(content, old_string);
-
-      if (matches.length === 0) {
-        return {
-          type: 'edit',
-          title: '未找到匹配内容',
-          message: `在文件 ${file_path} 中未找到要替换的内容`,
-          risks: ['操作将不会进行任何更改'],
-          affectedFiles: [file_path],
-        };
-      }
-
-      const replaceCount = replace_all ? matches.length : 1;
-      return {
-        type: 'edit',
-        title: '确认文件编辑',
-        message: `将在 ${file_path} 中${replace_all ? '替换所有' : '替换首个'}匹配项 (共找到${matches.length}处)`,
-        risks: [
-          `将替换 ${replaceCount} 处匹配项`,
-          '此操作将直接修改文件',
-          '建议先备份重要文件',
-        ],
-        affectedFiles: [file_path],
-      };
-    } catch (error) {
-      return {
-        type: 'edit',
-        title: '文件访问错误',
-        message: `无法读取文件 ${file_path}: ${(error as Error).message}`,
-        risks: ['文件可能不存在或无权访问'],
-        affectedFiles: [file_path],
-      };
-    }
   },
 
   // 执行函数

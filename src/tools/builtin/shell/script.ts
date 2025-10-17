@@ -3,11 +3,7 @@ import { promises as fs } from 'fs';
 import { extname } from 'path';
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type {
-  ConfirmationDetails,
-  ExecutionContext,
-  ToolResult,
-} from '../../types/index.js';
+import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
@@ -111,72 +107,6 @@ export const scriptTool = createTool({
       '根据扩展名自动选择解释器',
       '支持外部网络访问和文件系统操作的脚本',
     ],
-  },
-
-  // 需要用户确认(危险脚本或自定义解释器)
-  requiresConfirmation: async (params): Promise<ConfirmationDetails | null> => {
-    const { script_path, interpreter } = params;
-
-    try {
-      // 读取脚本内容进行安全检查
-      const content = await fs.readFile(script_path, 'utf8');
-      const risks: string[] = [];
-
-      // 检查潜在危险操作
-      const dangerousPatterns = [
-        /rm\s+-rf/gi,
-        /sudo/gi,
-        /passwd/gi,
-        /chmod\s+777/gi,
-        /eval\s*\(/gi,
-        /exec\s*\(/gi,
-        /system\s*\(/gi,
-        /shell_exec/gi,
-        /\$\(.*\)/gi, // 命令替换
-      ];
-
-      let hasDangerousContent = false;
-      for (const pattern of dangerousPatterns) {
-        if (pattern.test(content)) {
-          hasDangerousContent = true;
-          break;
-        }
-      }
-
-      if (hasDangerousContent) {
-        risks.push('脚本包含可能危险的系统操作');
-      }
-
-      // 检查外部网络访问
-      if (/curl|wget|fetch|http/gi.test(content)) {
-        risks.push('脚本可能访问外部网络资源');
-      }
-
-      // 检查文件系统操作
-      if (/write|create|delete|remove|mkdir|rmdir/gi.test(content)) {
-        risks.push('脚本可能修改文件系统');
-      }
-
-      if (risks.length > 0 || interpreter) {
-        return {
-          type: 'execute',
-          title: '确认执行脚本',
-          message: `将要${interpreter ? `使用 ${interpreter} ` : ''}执行脚本 ${script_path}`,
-          risks: risks.length > 0 ? risks : ['脚本执行可能对系统造成影响'],
-          affectedFiles: [script_path],
-        };
-      }
-    } catch (error) {
-      return {
-        type: 'execute',
-        title: '脚本访问错误',
-        message: `无法读取脚本文件 ${script_path}: ${(error as Error).message}`,
-        risks: ['文件可能不存在或无权访问'],
-        affectedFiles: [script_path],
-      };
-    }
-
-    return null;
   },
 
   // 执行函数

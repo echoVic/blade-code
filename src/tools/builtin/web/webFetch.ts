@@ -1,10 +1,6 @@
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type {
-  ConfirmationDetails,
-  ExecutionContext,
-  ToolResult,
-} from '../../types/index.js';
+import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
@@ -106,33 +102,6 @@ export const webFetchTool = createTool({
       '超时会中止请求',
       '支持 HTTPS',
     ],
-  },
-
-  // 需要用户确认(外部网络请求)
-  requiresConfirmation: async (params): Promise<ConfirmationDetails | null> => {
-    const { url, method = 'GET', body } = params;
-
-    // 检查是否是外部网络请求
-    if (!url.startsWith('http://localhost') && !url.startsWith('http://127.0.0.1')) {
-      const risks = ['将向外部网站发送网络请求'];
-
-      if (method !== 'GET') {
-        risks.push(`使用 ${method} 方法可能修改远程数据`);
-      }
-
-      if (body) {
-        risks.push('请求包含数据内容');
-      }
-
-      return {
-        type: 'network',
-        title: '确认网络请求',
-        message: `将向 ${url} 发送 ${method} 请求`,
-        risks,
-      };
-    }
-
-    return null;
   },
 
   // 执行函数

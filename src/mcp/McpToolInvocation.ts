@@ -1,5 +1,4 @@
 import type {
-  ConfirmationDetails,
   ToolErrorType,
   ToolInvocation,
   ToolResult,
@@ -34,22 +33,6 @@ export class McpToolInvocation implements ToolInvocation {
   getAffectedPaths(): string[] {
     // MCP工具无法预知会影响哪些文件，返回空数组
     return [];
-  }
-
-  async shouldConfirm(): Promise<ConfirmationDetails | null> {
-    // MCP工具默认需要用户确认，因为它们来自外部服务
-    return {
-      type: 'external',
-      title: '确认调用外部MCP工具',
-      message: `将调用MCP工具: ${this.toolName}\n描述: ${this.mcpTool.description}`,
-      risks: [
-        '工具由外部MCP服务器提供',
-        '可能访问本地系统资源',
-        '数据将发送到外部服务进行处理',
-        '执行结果依赖外部服务的可靠性',
-      ],
-      affectedFiles: [],
-    };
   }
 
   async execute(

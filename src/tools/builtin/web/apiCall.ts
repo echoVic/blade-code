@@ -1,10 +1,6 @@
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type {
-  ConfirmationDetails,
-  ExecutionContext,
-  ToolResult,
-} from '../../types/index.js';
+import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
@@ -118,32 +114,6 @@ export const apiCallTool = createTool({
       '认证信息会被安全处理',
       '支持自动 JSON 解析',
     ],
-  },
-
-  // 需要用户确认(API调用)
-  requiresConfirmation: async (params): Promise<ConfirmationDetails | null> => {
-    const { url, method = 'GET', body, auth } = params;
-
-    const risks = ['将向外部API发送请求'];
-
-    if (method !== 'GET') {
-      risks.push(`使用 ${method} 方法可能修改远程数据`);
-    }
-
-    if (body) {
-      risks.push('请求包含数据内容');
-    }
-
-    if (auth) {
-      risks.push('请求包含认证信息');
-    }
-
-    return {
-      type: 'network',
-      title: '确认API调用',
-      message: `将调用API: ${method} ${url}`,
-      risks,
-    };
   },
 
   // 执行函数
@@ -315,12 +285,13 @@ async function performApiCall(options: {
     if (body && method !== 'GET' && method !== 'HEAD') {
       if (typeof body === 'string') {
         fetchOptions.body = body;
-        if (!requestHeaders['Content-Type']) {
-          requestHeaders['Content-Type'] = 'application/json';
+        if (!requestHeaders['Content-Type' as keyof typeof requestHeaders]) {
+          (requestHeaders as Record<string, string>)['Content-Type'] =
+            'application/json';
         }
       } else {
         fetchOptions.body = JSON.stringify(body);
-        requestHeaders['Content-Type'] = 'application/json';
+        (requestHeaders as Record<string, string>)['Content-Type'] = 'application/json';
       }
     }
 

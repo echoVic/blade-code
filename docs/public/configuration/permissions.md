@@ -208,6 +208,168 @@ Blade 支持三级权限控制:
 }
 ```
 
+## 智能模式抽象
+
+从 v0.0.10 开始，Blade 实现了**智能权限模式抽象**机制，自动将具体的工具调用转换为模式规则。
+
+### 工作原理
+
+当你在确认提示中选择 **"Yes, don't ask again this session"**（记住本项目会话）时，Blade 不会保存精确的参数，而是根据工具类型自动生成模式规则：
+
+**优化前（旧行为）**：
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(command:cd /path && npm run typecheck)",
+      "Bash(command:cd /path && npm test)",
+      "Edit(file_path:/path/src/a.ts, old_string:..., new_string:...)",
+      "Edit(file_path:/path/src/b.ts, old_string:..., new_string:...)"
+    ]
+  }
+}
+```
+
+**优化后（新行为）**：
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(command:*npm*)",      // 覆盖所有 npm 命令
+      "Edit(file_path:**/*.ts)"   // 覆盖所有 TS 文件编辑
+    ]
+  }
+}
+```
+
+### 抽象策略
+
+不同工具类型采用不同的抽象策略：
+
+#### Bash 命令
+- **安全命令**（cd/ls/pwd）→ `Bash(command:*)`
+- **包管理器**（npm/pnpm/yarn）→ `Bash(command:*npm*)`
+- **Git 命令**（git status）→ `Bash(command:git status*)`
+- **开发工具**（test/build/lint）→ `Bash(command:*)`
+- **其他命令** → `Bash(command:<主命令>*)`
+
+#### 文件操作（Read/Edit/Write）
+- **有扩展名** → `Tool(file_path:**/*.ext)`
+- **源码目录** → `Tool(file_path:**)`
+- **其他目录** → `Tool(file_path:<dir>/*)`
+
+#### 搜索操作（Grep/Glob）
+- **有类型限制** → `Grep(pattern:*, type:ts)`
+- **有 glob 限制** → `Grep(pattern:*, glob:*.ts)`
+- **有路径限制** → `Grep(pattern:*, path:**/*.ts)`
+- **默认** → `Grep(pattern:*)`
+
+#### Web 请求（WebFetch）
+- **按域名分组** → `WebFetch(domain:api.github.com)`
+
+### 优势
+
+1. **减少权限文件大小**：从数百条规则减少到几条模式
+2. **避免重复确认**：相似操作自动复用权限
+3. **更符合直觉**："记住"意味着"信任这类操作"，而非"仅记住此确切操作"
+
+### 规则覆盖与清理
+
+当添加新的模式规则时，Blade 会自动检测并移除被覆盖的旧规则：
+
+```
+添加 "Edit(file_path:**/*.ts)" 后：
+✅ 保留：Read(file_path:**/*.json)  (不冲突)
+❌ 删除：Edit(file_path:/path/a.ts)  (被覆盖)
+❌ 删除：Edit(file_path:/path/b.ts)  (被覆盖)
+```
+
+## 权限模式
+
+Blade 提供了三种权限模式，控制工具调用的默认行为。
+
+### 模式对比
+
+| 模式 | Read | Search | Edit | Write | Bash | 其他 | 适用场景 |
+|------|------|--------|------|-------|------|------|----------|
+| **DEFAULT** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | 日常开发（默认） |
+| **AUTO_EDIT** | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | 频繁修改代码 |
+| **YOLO** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 演示/高度信任 |
+
+✅ = 自动批准 | ❌ = 需要确认
+
+### DEFAULT 模式（默认）
+
+自动批准只读操作，其他操作需要确认。
+
+**设计理念**：
+- Read/Search 是只读操作，不会修改文件，默认安全
+- Edit/Write/Bash 可能修改系统，需要用户确认
+
+**适用场景**：
+- 日常开发任务
+- 不确定 AI 行为时的保守策略
+
+### AUTO_EDIT 模式
+
+在 DEFAULT 基础上，额外自动批准 Edit 操作。
+
+**设计理念**：
+- 信任 AI 的文件修改能力
+- 减少频繁确认，提升效率
+- 仍需确认 Write（创建新文件）和 Bash（执行命令）
+
+**适用场景**：
+- 重构代码
+- 批量修改文件
+- 频繁的编辑任务
+
+**配置方式**：
+```json
+{
+  "permissionMode": "autoEdit"
+}
+```
+
+或通过命令行：
+```bash
+blade --permission-mode autoEdit
+```
+
+### YOLO 模式
+
+自动批准所有工具调用，完全信任 AI。
+
+**⚠️ 警告**：
+- 跳过所有确认，AI 可以执行任何操作
+- 可能删除文件、执行危险命令
+- 仅在高度可控的环境使用
+
+**适用场景**：
+- 演示场景
+- 测试环境
+- 一次性任务
+
+**配置方式**：
+```json
+{
+  "permissionMode": "yolo"
+}
+```
+
+### 权限规则优先级
+
+权限模式与权限规则的优先级关系：
+
+```
+DENY 规则 > ALLOW 规则 > 权限模式 > ASK（默认）
+```
+
+**示例**：
+- 即使在 YOLO 模式下，`deny` 规则仍然生效
+- `allow` 规则可以覆盖模式的 ASK 行为
+- 权限模式只影响未匹配任何规则的工具调用
+
 ## /permissions 命令
 
 交互式管理项目本地权限规则（`.blade/settings.local.json`）。

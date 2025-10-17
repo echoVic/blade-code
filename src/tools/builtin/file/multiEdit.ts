@@ -1,11 +1,7 @@
 import { promises as fs } from 'fs';
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type {
-  ConfirmationDetails,
-  ExecutionContext,
-  ToolResult,
-} from '../../types/index.js';
+import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
@@ -35,7 +31,7 @@ type EditOperation = z.infer<typeof EditOperationSchema>;
 /**
  * 分析编辑操作预览
  */
-function analyzeEdits(content: string, edits: EditOperation[]) {
+function _analyzeEdits(content: string, edits: EditOperation[]) {
   let totalMatches = 0;
   let totalReplacements = 0;
   let successfulEdits = 0;
@@ -155,47 +151,6 @@ export const multiEditTool = createTool({
   version: '1.0.0',
   category: '文件操作',
   tags: ['file', 'edit', 'batch', 'multi', 'replace'],
-
-  requiresConfirmation: async (params): Promise<ConfirmationDetails | null> => {
-    const { file_path, edits } = params;
-
-    try {
-      // 读取文件内容预览编辑操作
-      const content = await fs.readFile(file_path, 'utf8');
-      const previewInfo = analyzeEdits(content, edits);
-
-      if (previewInfo.totalMatches === 0) {
-        return {
-          type: 'edit',
-          title: '未找到匹配内容',
-          message: `在文件 ${file_path} 中未找到任何要替换的内容`,
-          risks: ['操作将不会进行任何更改'],
-          affectedFiles: [file_path],
-        };
-      }
-
-      return {
-        type: 'edit',
-        title: '确认批量编辑',
-        message: `将在 ${file_path} 中执行 ${edits.length} 个编辑操作`,
-        risks: [
-          `总共将替换 ${previewInfo.totalReplacements} 处内容`,
-          `涉及 ${previewInfo.successfulEdits} 个有效编辑操作`,
-          '此操作将按顺序执行所有编辑，后续编辑基于前面编辑的结果',
-          '建议先备份重要文件',
-        ],
-        affectedFiles: [file_path],
-      };
-    } catch (error) {
-      return {
-        type: 'edit',
-        title: '文件访问错误',
-        message: `无法读取文件 ${file_path}: ${(error as Error).message}`,
-        risks: ['文件可能不存在或无权访问'],
-        affectedFiles: [file_path],
-      };
-    }
-  },
 
   async execute(
     params: MultiEditParams,

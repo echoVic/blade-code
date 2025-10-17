@@ -87,9 +87,6 @@ export const globTool = createTool({
     ],
   },
 
-  // 不需要用户确认
-  requiresConfirmation: false,
-
   // 执行函数
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const {

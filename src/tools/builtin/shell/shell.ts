@@ -1,11 +1,7 @@
 import { spawn } from 'child_process';
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type {
-  ConfirmationDetails,
-  ExecutionContext,
-  ToolResult,
-} from '../../types/index.js';
+import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
@@ -89,53 +85,6 @@ export const shellTool = createTool({
       '命令执行完成后进程自动退出',
       'NEVER 使用 find, grep, cat, sed 等命令 - 应使用专用工具',
     ],
-  },
-
-  // 需要用户确认(危险命令)
-  requiresConfirmation: async (params): Promise<ConfirmationDetails | null> => {
-    const { command, args } = params;
-    const fullCommand = args ? `${command} ${args.join(' ')}` : command;
-
-    // 检查是否是危险命令
-    const dangerousCommands = [
-      'rm',
-      'del',
-      'rmdir',
-      'format',
-      'fdisk',
-      'mkfs',
-      'dd',
-      'shred',
-      'wipe',
-      'sudo',
-      'su',
-      'chmod',
-      'chown',
-      'passwd',
-      'useradd',
-      'userdel',
-      'groupadd',
-      'groupdel',
-      'systemctl',
-      'service',
-      'reboot',
-      'shutdown',
-    ];
-
-    const isDangerous = dangerousCommands.some((dangerous) =>
-      fullCommand.toLowerCase().includes(dangerous)
-    );
-
-    if (isDangerous) {
-      return {
-        type: 'execute',
-        title: '确认执行危险命令',
-        message: `命令 "${fullCommand}" 可能对系统造成影响，确认要执行吗？`,
-        risks: ['命令可能修改或删除文件', '命令可能影响系统配置', '操作可能不可逆'],
-      };
-    }
-
-    return null;
   },
 
   // 执行函数

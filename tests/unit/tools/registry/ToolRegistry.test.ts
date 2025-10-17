@@ -36,7 +36,6 @@ class MockReadTool extends DeclarativeTool {
       params,
       getDescription: () => `读取文件: ${params.path}`,
       getAffectedPaths: () => [params.path],
-      shouldConfirm: async () => null,
       execute: async () => ({
         success: true,
         llmContent: `文件内容: ${params.path}`,
@@ -74,11 +73,6 @@ class MockEditTool extends DeclarativeTool {
       params,
       getDescription: () => `编辑文件: ${params.path}`,
       getAffectedPaths: () => [params.path],
-      shouldConfirm: async () => ({
-        type: 'edit' as const,
-        title: '确认编辑',
-        message: `确定要编辑文件 ${params.path} 吗？`,
-      }),
       execute: async () => ({
         success: true,
         llmContent: `已编辑: ${params.path}`,

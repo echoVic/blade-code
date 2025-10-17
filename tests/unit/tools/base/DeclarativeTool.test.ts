@@ -140,7 +140,6 @@ describe('DeclarativeTool', () => {
         expect(testTool.version).toBe('1.0.0');
         expect(testTool.category).toBe('test');
         expect(testTool.tags).toEqual(['mock', 'validation']);
-        expect(testTool.requiresConfirmation).toBe(false);
       });
 
       it('应该生成正确的函数声明', () => {
@@ -536,7 +535,6 @@ describe('DeclarativeTool', () => {
           version: '1.0.0',
           category: 'test',
           tags: ['mock', 'validation'],
-          requiresConfirmation: false,
           parameterSchema: expect.any(Object),
         });
       });

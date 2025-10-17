@@ -103,9 +103,6 @@ export interface Tool<TParams = unknown> {
   readonly category?: string;
   readonly tags: string[];
 
-  // 安全控制
-  readonly requiresConfirmation: boolean;
-
   // 方法
   getFunctionDeclaration(): FunctionDeclaration;
   getMetadata(): Record<string, unknown>;

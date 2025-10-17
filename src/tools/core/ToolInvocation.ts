@@ -1,6 +1,4 @@
 import type {
-  ConfirmationCallback,
-  ConfirmationDetails,
   ExecutionContext,
   ToolInvocation,
   ToolResult,
@@ -17,7 +15,6 @@ export class UnifiedToolInvocation<TParams = any> implements ToolInvocation<TPar
       params: TParams,
       context: ExecutionContext
     ) => Promise<ToolResult>,
-    private readonly confirmationFn?: ConfirmationCallback<TParams>,
     private readonly descriptionFn?: (params: TParams) => string,
     private readonly affectedPathsFn?: (params: TParams) => string[]
   ) {}
@@ -40,16 +37,6 @@ export class UnifiedToolInvocation<TParams = any> implements ToolInvocation<TPar
       return this.affectedPathsFn(this.params);
     }
     return [];
-  }
-
-  /**
-   * 检查是否需要用户确认
-   */
-  async shouldConfirm(): Promise<ConfirmationDetails | null> {
-    if (this.confirmationFn) {
-      return this.confirmationFn(this.params);
-    }
-    return null;
   }
 
   /**

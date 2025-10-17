@@ -48,7 +48,7 @@ export class ExecutionPipeline extends EventEmitter {
     this.stages = [
       new DiscoveryStage(this.registry), // 工具发现
       new PermissionStage(permissionConfig, this.sessionApprovals, permissionMode), // 权限检查（含 Zod 验证和默认值处理）
-      new ConfirmationStage(this.sessionApprovals, permissionMode), // 用户确认
+      new ConfirmationStage(this.sessionApprovals), // 用户确认
       new ExecutionStage(), // 实际执行
       new FormattingStage(), // 结果格式化
     ];

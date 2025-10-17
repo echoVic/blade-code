@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react';
 import type {
+  ConfirmationDetails,
   ConfirmationHandler,
   ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
-import type { ConfirmationDetails } from '../../tools/types/ToolTypes.js';
 
 /**
  * 确认状态

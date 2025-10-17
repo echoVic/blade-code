@@ -64,8 +64,6 @@ export function createTodoReadTool(opts: { sessionId: string; configDir: string 
       ],
     },
 
-    requiresConfirmation: async () => null,
-
     async execute(params, context: ExecutionContext): Promise<ToolResult> {
       const { filter } = params;
 

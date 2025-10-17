@@ -1,4 +1,5 @@
 import { ConfigManager } from '../../config/ConfigManager.js';
+import { PatternAbstractor } from '../../config/PatternAbstractor.js';
 import {
   PermissionChecker,
   PermissionResult,
@@ -135,10 +136,31 @@ export class PermissionStage implements PipelineStage {
     }
   }
 
+  /**
+   * 应用权限模式覆盖规则
+   *
+   * 权限模式行为：
+   * - DEFAULT: Read/Search 自动批准，其他需要确认
+   * - AUTO_EDIT: Read/Search/Edit 自动批准，其他需要确认
+   * - YOLO: 所有工具自动批准
+   *
+   * 优先级：DENY 规则 > ALLOW 规则 > 模式规则 > ASK
+   */
   private applyModeOverrides(
     toolKind: ToolKind,
     checkResult: PermissionCheckResult
   ): PermissionCheckResult {
+    // 1. 如果已被 deny 规则拒绝，不覆盖（最高优先级）
+    if (checkResult.result === PermissionResult.DENY) {
+      return checkResult;
+    }
+
+    // 2. 如果已被 allow 规则批准，不覆盖
+    if (checkResult.result === PermissionResult.ALLOW) {
+      return checkResult;
+    }
+
+    // 3. YOLO 模式：批准所有工具（在检查规则之后）
     if (this.permissionMode === PermissionMode.YOLO) {
       return {
         result: PermissionResult.ALLOW,
@@ -147,33 +169,25 @@ export class PermissionStage implements PipelineStage {
       };
     }
 
-    if (checkResult.result === PermissionResult.DENY) {
-      return checkResult;
-    }
-
-    if (checkResult.result === PermissionResult.ALLOW) {
-      return checkResult;
-    }
-
-    if (toolKind === ToolKind.Read) {
+    // 4. Read/Search 工具：所有模式下都自动批准（只读操作，安全）
+    if (toolKind === ToolKind.Read || toolKind === ToolKind.Search) {
       return {
         result: PermissionResult.ALLOW,
-        matchedRule: 'mode:default:read',
-        reason: 'Read 工具在当前模式下无需确认',
+        matchedRule: `mode:${this.permissionMode}:readonly`,
+        reason: '只读工具无需确认',
       };
     }
 
-    if (
-      this.permissionMode === PermissionMode.AUTO_EDIT &&
-      toolKind === ToolKind.Edit
-    ) {
+    // 5. AUTO_EDIT 模式：额外批准 Edit 工具
+    if (this.permissionMode === PermissionMode.AUTO_EDIT && toolKind === ToolKind.Edit) {
       return {
         result: PermissionResult.ALLOW,
-        matchedRule: 'mode:autoEdit',
+        matchedRule: 'mode:autoEdit:edit',
         reason: 'AUTO_EDIT 模式: 自动批准编辑类工具',
       };
     }
 
+    // 6. 其他情况：保持原检查结果（通常是 ASK）
     return checkResult;
   }
 }
@@ -182,16 +196,12 @@ export class PermissionStage implements PipelineStage {
  * 用户确认阶段
  * 负责请求用户确认（如果需要）
  *
- * 确认触发条件（优先级）:
- * 1. PermissionStage 标记 needsConfirmation = true (权限规则要求)
- * 2. 工具的 shouldConfirm() 方法返回确认详情 (工具自身要求)
+ * 确认触发条件:
+ * - PermissionStage 标记 needsConfirmation = true (权限规则要求)
  */
 export class ConfirmationStage implements PipelineStage {
   readonly name = 'confirmation';
-  constructor(
-    private readonly sessionApprovals: Set<string>,
-    private readonly permissionMode: PermissionMode
-  ) {}
+  constructor(private readonly sessionApprovals: Set<string>) {}
 
   async process(execution: ToolExecution): Promise<void> {
     const {
@@ -207,78 +217,78 @@ export class ConfirmationStage implements PipelineStage {
       return;
     }
 
+    // 如果权限系统不要求确认，直接通过
+    if (!needsConfirmation) {
+      return;
+    }
+
     try {
-      // YOLO 模式下所有工具已在权限阶段被标记为 ALLOW，不会进入确认阶段
-      let confirmationDetails = null;
+      // 从权限检查结果构建确认详情
+      const confirmationDetails = {
+        title: `权限确认: ${tool.name}`,
+        message: confirmationReason || '此操作需要用户确认',
+        risks: this.extractRisksFromPermissionCheck(
+          tool,
+          execution.params,
+          permissionCheckResult
+        ),
+        affectedFiles: invocation.getAffectedPaths() || [],
+      };
 
-      // 1. 优先检查权限系统是否要求确认
-      if (needsConfirmation) {
-        // 从权限检查结果构建确认详情
-        confirmationDetails = {
-          title: `权限确认: ${tool.name}`,
-          message: confirmationReason || '此操作需要用户确认',
-          risks: this.extractRisksFromPermissionCheck(
-            tool,
-            execution.params,
-            permissionCheckResult
-          ),
-          affectedFiles: invocation.getAffectedPaths() || [],
-        };
-      }
-      // 2. 如果权限系统没有要求确认，检查工具自身是否需要确认
-      else {
-        if (
-          this.permissionMode === PermissionMode.AUTO_EDIT &&
-          tool.kind === ToolKind.Edit
-        ) {
-          confirmationDetails = null;
-        } else {
-          confirmationDetails = await invocation.shouldConfirm();
-        }
+      console.warn(`工具 "${tool.name}" 需要用户确认: ${confirmationDetails.title}`);
+      console.warn(`详情: ${confirmationDetails.message}`);
+
+      if (confirmationDetails.risks && confirmationDetails.risks.length > 0) {
+        console.warn(`风险: ${confirmationDetails.risks.join(', ')}`);
       }
 
-      // 如果需要确认，请求用户确认
-      if (confirmationDetails) {
-        console.warn(`工具 "${tool.name}" 需要用户确认: ${confirmationDetails.title}`);
-        console.warn(`详情: ${confirmationDetails.message}`);
+      // 如果提供了 confirmationHandler,使用它来请求用户确认
+      const confirmationHandler = execution.context.confirmationHandler;
+      if (confirmationHandler) {
+        const response =
+          await confirmationHandler.requestConfirmation(confirmationDetails);
 
-        if (confirmationDetails.risks && confirmationDetails.risks.length > 0) {
-          console.warn(`风险: ${confirmationDetails.risks.join(', ')}`);
+        if (!response.approved) {
+          execution.abort(`用户拒绝执行: ${response.reason || '无原因'}`);
+          return;
         }
 
-        // 如果提供了 confirmationHandler,使用它来请求用户确认
-        const confirmationHandler = execution.context.confirmationHandler;
-        if (confirmationHandler) {
-          const response =
-            await confirmationHandler.requestConfirmation(confirmationDetails);
+        const scope = response.scope || 'once';
+        if (scope === 'session' && execution._internal.permissionSignature) {
+          const signature = execution._internal.permissionSignature;
+          this.sessionApprovals.add(signature);
 
-          if (!response.approved) {
-            execution.abort(`用户拒绝执行: ${response.reason || '无原因'}`);
-            return;
-          }
+          // 构造 descriptor 用于模式抽象
+          const descriptor: ToolInvocationDescriptor = {
+            toolName: tool.name,
+            params: execution.params,
+            affectedPaths: invocation.getAffectedPaths() || [],
+          };
 
-          const scope = response.scope || 'once';
-          if (scope === 'session' && execution._internal.permissionSignature) {
-            const signature = execution._internal.permissionSignature;
-            this.sessionApprovals.add(signature);
-            await this.persistSessionApproval(signature);
-          }
-        } else {
-          // 如果没有提供 confirmationHandler,则自动通过确认（用于非交互式环境）
-          console.warn(
-            '⚠️ 无 ConfirmationHandler,自动批准工具执行（仅用于非交互式环境）'
-          );
+          await this.persistSessionApproval(signature, descriptor);
         }
+      } else {
+        // 如果没有提供 confirmationHandler,则自动通过确认（用于非交互式环境）
+        console.warn(
+          '⚠️ 无 ConfirmationHandler,自动批准工具执行（仅用于非交互式环境）'
+        );
       }
     } catch (error) {
       execution.abort(`用户确认出错: ${(error as Error).message}`);
     }
   }
 
-  private async persistSessionApproval(signature: string): Promise<void> {
+  private async persistSessionApproval(
+    signature: string,
+    descriptor: ToolInvocationDescriptor
+  ): Promise<void> {
     try {
       const configManager = ConfigManager.getInstance();
-      await configManager.appendLocalPermissionAllowRule(signature);
+
+      // 使用 PatternAbstractor 生成模式规则（而非精确签名）
+      const pattern = PatternAbstractor.abstract(descriptor);
+
+      await configManager.appendLocalPermissionAllowRule(pattern);
     } catch (error) {
       console.warn(
         `[ConfirmationStage] 无法保存权限规则 "${signature}": ${
