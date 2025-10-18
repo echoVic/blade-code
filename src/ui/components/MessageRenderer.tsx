@@ -4,16 +4,29 @@
 
 import { Box, Text } from 'ink';
 import React from 'react';
+import type { MessageRole } from '../contexts/SessionContext.js';
 import type { Theme } from '../themes/types.js';
 import { CodeHighlighter } from './CodeHighlighter.js';
 import { TableRenderer } from './TableRenderer.js';
 
 export interface MessageRendererProps {
   content: string;
-  role: 'user' | 'assistant';
+  role: MessageRole;
   terminalWidth: number;
   theme?: Theme;
 }
+
+// 获取角色样式配置
+const getRoleStyle = (role: MessageRole) => {
+  switch (role) {
+    case 'user':
+      return { color: 'cyan' as const, prefix: '> ' };
+    case 'assistant':
+      return { color: 'green' as const, prefix: '• ' };
+    case 'system':
+      return { color: 'yellow' as const, prefix: '⚙ ' };
+  }
+};
 
 // 基础 Markdown 解析正则表达式
 const MARKDOWN_PATTERNS = {
@@ -210,7 +223,7 @@ const CodeBlock: React.FC<{
  */
 const TextBlock: React.FC<{
   content: string;
-  role: 'user' | 'assistant';
+  role: MessageRole;
 }> = ({ content, role }) => {
   // 简单处理内联代码
   const renderInlineCode = (text: string) => {
@@ -238,11 +251,13 @@ const TextBlock: React.FC<{
 
   const lines = content.split('\n');
 
+  const roleStyle = getRoleStyle(role);
+
   return (
     <Box flexDirection="column">
       {lines.map((line, index) => (
         <Box key={index} marginBottom={index < lines.length - 1 ? 0 : 0}>
-          <Text color={role === 'user' ? 'cyan' : 'green'} wrap="wrap">
+          <Text color={roleStyle.color} wrap="wrap">
             {renderInlineCode(line)}
           </Text>
         </Box>
@@ -260,7 +275,8 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
   terminalWidth,
 }) => {
   const blocks = parseMarkdown(content);
-  const prefix = role === 'user' ? '> ' : '• ';
+  const roleStyle = getRoleStyle(role);
+  const { color, prefix } = roleStyle;
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -269,7 +285,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
           {/* 只在第一个块显示前缀 */}
           {index === 0 && (
             <Box marginRight={1}>
-              <Text color={role === 'user' ? 'cyan' : 'green'} bold>
+              <Text color={color} bold>
                 {prefix}
               </Text>
             </Box>

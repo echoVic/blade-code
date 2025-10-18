@@ -1,11 +1,16 @@
 import React, { createContext, ReactNode, useContext, useReducer } from 'react';
 
 /**
+ * 消息角色类型
+ */
+export type MessageRole = 'user' | 'assistant' | 'system';
+
+/**
  * 会话消息
  */
 export interface SessionMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system';
+  role: MessageRole;
   content: string;
   timestamp: number;
   metadata?: Record<string, any>;

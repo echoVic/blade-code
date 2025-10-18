@@ -15,7 +15,7 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
   return createTool({
     name: 'TodoWrite',
     displayName: 'TODO任务写入',
-    kind: ToolKind.Execute,
+    kind: ToolKind.Memory,
 
     schema: z.object({
       todos: z.array(TodoItemSchema).min(1, '至少需要一个任务'),
