@@ -140,54 +140,62 @@ export class PermissionChecker {
     toolName: string,
     params: Record<string, unknown>
   ): Record<string, unknown> {
+    let result: Record<string, unknown>;
+
     switch (toolName) {
       case 'Read':
       case 'Edit':
       case 'Write':
         // 文件操作: 只保留 file_path/old_string/new_string/content
         // 忽略 offset/limit/replace_all 等易变参数
-        return {
+        result = {
           file_path: params.file_path,
           old_string: params.old_string,
           new_string: params.new_string,
           content: params.content,
         };
+        break;
 
       case 'Grep':
         // 搜索操作: 只保留 pattern 和 path/glob/type
         // 忽略 output_mode/-A/-B/-C/-i/-n/head_limit 等显示选项
-        return {
+        result = {
           pattern: params.pattern,
           path: params.path,
           glob: params.glob,
           type: params.type,
         };
+        break;
 
       case 'Glob':
         // Glob 操作: 保留 pattern 和 path
-        return {
+        result = {
           pattern: params.pattern,
           path: params.path,
         };
+        break;
 
       case 'Bash':
-        // Bash 命令: 保留完整的 command 和 description
-        return {
+        result = {
           command: params.command,
-          description: params.description,
         };
+        break;
 
       case 'WebFetch':
         // Web 请求: 保留 url 和 domain(如果有)
-        return {
+        result = {
           url: params.url,
           domain: params.domain,
         };
+        break;
 
       default:
         // 其他工具: 保留所有参数
-        return params;
+        result = params;
+        break;
     }
+
+    return result;
   }
 
   /**
@@ -203,6 +211,7 @@ export class PermissionChecker {
         return { rule, type: matchType };
       }
     }
+
     return null;
   }
 
@@ -279,9 +288,10 @@ export class PermissionChecker {
 
   /**
    * 提取参数部分
+   * 注意：使用 [\s\S] 而不是 . 以匹配包含换行符的多行参数
    */
   private extractParams(signature: string): string {
-    const match = signature.match(/\((.*)\)$/);
+    const match = signature.match(/\(([\s\S]*)\)$/);
     return match ? match[1] : '';
   }
 
@@ -313,7 +323,19 @@ export class PermissionChecker {
         ruleValue.includes('{') ||
         ruleValue.includes('?')
       ) {
-        if (!picomatch.isMatch(sigValue, ruleValue, { dot: true })) {
+        // 特殊处理：如果规则是单个 * 或 **，直接匹配任意内容
+        if (ruleValue === '*' || ruleValue === '**') {
+          continue;
+        }
+
+        // 否则使用 picomatch 进行 glob 匹配
+        // 注意：picomatch 的 * 不匹配 /，但我们需要它匹配空格等字符
+        const isMatch = picomatch.isMatch(sigValue, ruleValue, {
+          dot: true,
+          nobrace: false,
+          noglobstar: false,
+        });
+        if (!isMatch) {
           return false;
         }
       } else if (sigValue !== ruleValue) {

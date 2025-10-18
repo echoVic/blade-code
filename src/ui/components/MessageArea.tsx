@@ -1,15 +1,20 @@
 import { Box, Text } from 'ink';
 import React from 'react';
+import type { TodoItem } from '../../tools/builtin/todo/types.js';
 import { getCopyright } from '../../utils/packageInfo.js';
+import type { SessionState } from '../contexts/SessionContext.js';
 import type { LoopState } from '../hooks/useCommandHandler.js';
 import { MessageRenderer } from './MessageRenderer.js';
+import { TodoPanel } from './TodoPanel.js';
 
 interface MessageAreaProps {
-  sessionState: any;
+  sessionState: SessionState;
   terminalWidth: number;
   isProcessing: boolean;
   isInitialized: boolean;
   loopState: LoopState;
+  todos?: TodoItem[];
+  showTodoPanel?: boolean;
 }
 
 /**
@@ -22,10 +27,17 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
   isProcessing,
   isInitialized,
   loopState,
+  todos = [],
+  showTodoPanel = false,
 }) => {
   // 判断是否显示欢迎界面（只有assistant消息，没有用户消息）
-  const hasUserMessages = sessionState.messages.some((msg: any) => msg.role === 'user');
+  const hasUserMessages = sessionState.messages.some((msg) => msg.role === 'user');
   const showWelcome = !hasUserMessages;
+
+  // 找到最后一条用户消息的索引（TodoPanel 将显示在这之后）
+  const lastUserMessageIndex = sessionState.messages.findLastIndex(
+    (msg) => msg.role === 'user'
+  );
 
   // Blade Logo - 紧凑左对齐版本
   const logo = [
@@ -91,7 +103,7 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
             ) : (
               /* 有系统消息时显示消息内容 - 左对齐 */
               <>
-                {sessionState.messages.map((msg: any, index: number) => (
+                {sessionState.messages.map((msg, index) => (
                   <MessageRenderer
                     key={index}
                     content={msg.content}
@@ -116,12 +128,19 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
         ) : (
           <Box flexDirection="column">
             {sessionState.messages.map((msg: any, index: number) => (
-              <MessageRenderer
-                key={index}
-                content={msg.content}
-                role={msg.role}
-                terminalWidth={terminalWidth}
-              />
+              <React.Fragment key={index}>
+                <MessageRenderer
+                  content={msg.content}
+                  role={msg.role}
+                  terminalWidth={terminalWidth}
+                />
+                {/* 在最后一条用户消息后显示 TodoPanel */}
+                {index === lastUserMessageIndex &&
+                  showTodoPanel &&
+                  todos.length > 0 && (
+                    <TodoPanel todos={todos} visible={true} compact={false} />
+                  )}
+              </React.Fragment>
             ))}
             {isProcessing && (
               <Box paddingX={2} flexDirection="column">

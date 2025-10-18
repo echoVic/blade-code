@@ -218,13 +218,10 @@ export class PatternAbstractor {
 
     const paramPatterns = Object.entries(params)
       .filter(([_, v]) => v !== undefined && v !== null)
-      .map(([k, v]) => {
-        // 字符串参数替换为通配符
-        if (typeof v === 'string') {
-          return `${k}:*`;
-        }
-        // 其他类型保留
-        return `${k}:${v}`;
+      .map(([k, _v]) => {
+        // 所有参数值都替换为通配符，避免生成无效规则
+        // 特别是对象/数组参数（如 TodoWrite 的 todos）会导致 [object Object] 问题
+        return `${k}:*`;
       });
 
     return `${toolName}(${paramPatterns.join(', ')})`;

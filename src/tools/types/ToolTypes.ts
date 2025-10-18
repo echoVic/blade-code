@@ -13,6 +13,7 @@ export enum ToolKind {
   Execute = 'execute',
   Network = 'network',
   Think = 'think',
+  Memory = 'memory', // 内存操作工具（如 TODO 管理），安全且无需确认
   External = 'external',
   Other = 'other',
 }

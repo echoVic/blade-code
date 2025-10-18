@@ -1,5 +1,5 @@
 import { useMemoizedFn } from 'ahooks';
-import { Box, useFocusManager, useStdout } from 'ink';
+import { Box, useApp, useFocusManager, useInput, useStdout } from 'ink';
 import React, { useEffect, useRef, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { PermissionMode } from '../../config/types.js';
@@ -21,7 +21,6 @@ import { PerformanceMonitor } from './PerformanceMonitor.js';
 import { PermissionsManager } from './PermissionsManager.js';
 import { SetupWizard } from './SetupWizard.js';
 import { ThemeSelector } from './ThemeSelector.js';
-import { TodoPanel } from './TodoPanel.js';
 
 /**
  * BladeInterface 组件的 props 类型
@@ -65,6 +64,19 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   const { stdout } = useStdout();
   const [terminalWidth, setTerminalWidth] = useState(80);
+  const { exit } = useApp();
+
+  // 全局 Ctrl+C 处理器 - 不受焦点限制，始终可用
+  // 这确保用户在任何状态下都可以通过 Ctrl+C 退出应用
+  useInput(
+    (input, key) => {
+      if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
+        // Ctrl+C 或 Cmd+C 退出应用
+        exit();
+      }
+    },
+    { isActive: true } // 始终激活
+  );
 
   // 获取终端宽度
   useEffect(() => {
@@ -78,7 +90,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     return () => {
       stdout.off('resize', updateTerminalWidth);
     };
-  }, [stdout]);
+  }, [stdout, exit]);
 
   // 确认管理
   const { confirmationState, confirmationHandler, handleResponse } = useConfirmation();
@@ -97,7 +109,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   const handlePermissionModeToggle = useMemoizedFn(async () => {
     const configManager = ConfigManager.getInstance();
-    const currentMode: PermissionMode = appState.permissionMode || PermissionMode.DEFAULT;
+    const currentMode: PermissionMode =
+      appState.permissionMode || PermissionMode.DEFAULT;
 
     // Shift+Tab 在 DEFAULT 和 AUTO_EDIT 之间切换
     const nextMode: PermissionMode =
@@ -190,8 +203,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       try {
         await executeCommand(message, addUserMessage, addAssistantMessage);
       } catch (error) {
-        const fallback =
-          error instanceof Error ? error.message : '无法发送初始消息';
+        const fallback = error instanceof Error ? error.message : '无法发送初始消息';
         addAssistantMessage(`❌ 初始消息发送失败：${fallback}`);
       }
     })();
@@ -266,17 +278,14 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         <>
           <Header />
 
-          {/* TODO 面板 - 显示在顶部 */}
-          {showTodoPanel && (
-            <TodoPanel todos={todos} visible={showTodoPanel} compact={false} />
-          )}
-
           <MessageArea
             sessionState={sessionState}
             terminalWidth={terminalWidth}
             isProcessing={isProcessing}
             isInitialized={readyForChat}
             loopState={loopState}
+            todos={todos}
+            showTodoPanel={showTodoPanel}
           />
 
           <InputArea input={input} isProcessing={isProcessing || !readyForChat} />
