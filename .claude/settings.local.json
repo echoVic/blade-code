@@ -41,7 +41,12 @@
       "Bash(npm run test:integration:*)",
       "Bash(blade mcp:*)",
       "Bash(test:*)",
-      "Bash(npm run test:unit:*)"
+      "Bash(npm run test:unit:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "Bash(rmdir:*)",
+      "Bash(git add:*)",
+      "Bash(git rm:*)"
     ],
     "deny": [],
     "ask": [],

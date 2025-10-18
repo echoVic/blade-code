@@ -2,8 +2,8 @@ import { ConfigManager } from '../../config/ConfigManager.js';
 import { PatternAbstractor } from '../../config/PatternAbstractor.js';
 import {
   PermissionChecker,
-  PermissionResult,
   type PermissionCheckResult,
+  PermissionResult,
   type ToolInvocationDescriptor,
 } from '../../config/PermissionChecker.js';
 import type { PermissionConfig } from '../../config/types.js';
@@ -11,6 +11,10 @@ import { PermissionMode } from '../../config/types.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
 import { ToolKind } from '../types/index.js';
+import {
+  SensitiveFileDetector,
+  SensitivityLevel,
+} from '../validation/SensitiveFileDetector.js';
 
 /**
  * 工具发现阶段
@@ -112,19 +116,73 @@ export class PermissionStage implements PipelineStage {
           break;
       }
 
-      // 额外的安全检查: 检查是否有危险路径
+      // 额外的安全检查: 检查危险路径和敏感文件
       if (affectedPaths.length > 0) {
-        const dangerousPaths = affectedPaths.filter(
-          (path: string) =>
-            path.includes('..') ||
-            path.startsWith('/') ||
-            path.includes('system32') ||
-            path.includes('/etc/')
-        );
+        // 1. 检查危险系统路径
+        const dangerousSystemPaths = [
+          '/etc/',
+          '/sys/',
+          '/proc/',
+          '/dev/',
+          '/boot/',
+          '/root/',
+          'C:\\Windows\\System32',
+          'C:\\Program Files',
+          'C:\\ProgramData',
+        ];
+
+        const dangerousPaths = affectedPaths.filter((filePath: string) => {
+          // 路径遍历攻击
+          if (filePath.includes('..')) {
+            return true;
+          }
+
+          // 危险系统目录（不再拒绝所有 / 开头的路径）
+          return dangerousSystemPaths.some((dangerous) => filePath.includes(dangerous));
+        });
 
         if (dangerousPaths.length > 0) {
-          execution.abort(`访问危险路径被拒绝: ${dangerousPaths.join(', ')}`);
+          execution.abort(`访问危险系统路径被拒绝: ${dangerousPaths.join(', ')}`);
           return;
+        }
+
+        // 2. 检查敏感文件
+        const sensitiveFiles = SensitiveFileDetector.filterSensitive(
+          affectedPaths,
+          SensitivityLevel.MEDIUM // 默认检测中度及以上敏感文件
+        );
+
+        if (sensitiveFiles.length > 0) {
+          // 构建敏感文件警告信息
+          const warnings = sensitiveFiles.map(
+            ({ path: filePath, result }) =>
+              `${filePath} (${result.level}: ${result.reason})`
+          );
+
+          // 高度敏感文件直接拒绝（除非有明确的 allow 规则）
+          const highSensitiveFiles = sensitiveFiles.filter(
+            ({ result }) => result.level === SensitivityLevel.HIGH
+          );
+
+          if (
+            highSensitiveFiles.length > 0 &&
+            checkResult.result !== PermissionResult.ALLOW
+          ) {
+            execution.abort(
+              `访问高度敏感文件被拒绝:\n${warnings.join('\n')}\n\n如需访问，请在权限配置中明确添加 allow 规则。`
+            );
+            return;
+          }
+
+          // 中度敏感文件：需要用户确认（通过修改 checkResult）
+          if (
+            checkResult.result === PermissionResult.ALLOW &&
+            sensitiveFiles.length > 0
+          ) {
+            // 即使被 allow 规则允许，也需要特别提示
+            execution._internal.confirmationReason = `检测到敏感文件访问:\n${warnings.join('\n')}\n\n请确认是否继续？`;
+            execution._internal.needsConfirmation = true;
+          }
         }
       }
 
@@ -193,7 +251,10 @@ export class PermissionStage implements PipelineStage {
     }
 
     // 6. AUTO_EDIT 模式：额外批准 Edit 工具
-    if (this.permissionMode === PermissionMode.AUTO_EDIT && toolKind === ToolKind.Edit) {
+    if (
+      this.permissionMode === PermissionMode.AUTO_EDIT &&
+      toolKind === ToolKind.Edit
+    ) {
       return {
         result: PermissionResult.ALLOW,
         matchedRule: 'mode:autoEdit:edit',
@@ -283,9 +344,7 @@ export class ConfirmationStage implements PipelineStage {
         }
       } else {
         // 如果没有提供 confirmationHandler,则自动通过确认（用于非交互式环境）
-        console.warn(
-          '⚠️ 无 ConfirmationHandler,自动批准工具执行（仅用于非交互式环境）'
-        );
+        console.warn('⚠️ 无 ConfirmationHandler,自动批准工具执行（仅用于非交互式环境）');
       }
     } catch (error) {
       execution.abort(`用户确认出错: ${(error as Error).message}`);
