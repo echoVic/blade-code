@@ -306,6 +306,16 @@ export const findTool = createTool({
   category: '搜索工具',
   tags: ['file', 'search', 'find', 'filter', 'locate'],
 
+  /**
+   * 提取签名内容：返回文件名模式
+   */
+  extractSignatureContent: (params) => params.name || '*',
+
+  /**
+   * 抽象权限规则：返回通配符模式
+   */
+  abstractPermissionRule: () => '*',
+
   async execute(params: FindParams, context: ExecutionContext): Promise<ToolResult> {
     const {
       name,

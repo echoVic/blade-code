@@ -190,6 +190,25 @@ export const bashTool = createTool({
   version: '2.0.0',
   category: '命令工具',
   tags: ['bash', 'shell', 'non-interactive', 'event-driven'],
+
+  /**
+   * 提取签名内容：使用 mainCommand:fullCommand 格式
+   * 这样可以与 abstractPermissionRule 生成的规则格式匹配
+   */
+  extractSignatureContent: (params) => {
+    const command = params.command.trim();
+    const mainCommand = command.split(/\s+/)[0];
+    return `${mainCommand}:${command}`;
+  },
+
+  /**
+   * 抽象权限规则：提取主命令并添加通配符
+   */
+  abstractPermissionRule: (params) => {
+    const command = params.command.trim();
+    const mainCommand = command.split(/\s+/)[0];
+    return `${mainCommand}:*`;
+  },
 });
 
 /**

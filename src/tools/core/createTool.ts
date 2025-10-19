@@ -91,5 +91,19 @@ export function createTool<TSchema extends z.ZodSchema>(
       const invocation = this.build(params);
       return invocation.execute(signal || new AbortController().signal);
     },
+
+    /**
+     * ✅ 签名内容提取器（从 config 传递或提供默认实现）
+     */
+    extractSignatureContent: config.extractSignatureContent
+      ? (params: TParams) => config.extractSignatureContent!(params)
+      : undefined,
+
+    /**
+     * ✅ 权限规则抽象器（从 config 传递或提供默认实现）
+     */
+    abstractPermissionRule: config.abstractPermissionRule
+      ? (params: TParams) => config.abstractPermissionRule!(params)
+      : undefined,
   };
 }

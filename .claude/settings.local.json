@@ -46,7 +46,9 @@
       "Bash(mv:*)",
       "Bash(rmdir:*)",
       "Bash(git add:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(git checkout:*)",
+      "Bash(git log:*)"
     ],
     "deny": [],
     "ask": [],

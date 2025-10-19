@@ -75,7 +75,7 @@ export class ToolExecution {
 
   constructor(
     public readonly toolName: string,
-    public readonly params: any,
+    public readonly params: Record<string, unknown>,
     public readonly context: ExecutionContext
   ) {}
 

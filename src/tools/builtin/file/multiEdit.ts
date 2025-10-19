@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { extname } from 'path';
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
@@ -263,6 +264,19 @@ export const multiEditTool = createTool({
       displayContent: displayMessage,
       metadata,
     };
+  },
+
+  /**
+   * 提取签名内容：返回文件路径
+   */
+  extractSignatureContent: (params) => params.file_path,
+
+  /**
+   * 抽象权限规则：返回扩展名通配符格式
+   */
+  abstractPermissionRule: (params) => {
+    const ext = extname(params.file_path);
+    return ext ? `**/*${ext}` : '**/*';
   },
 });
 

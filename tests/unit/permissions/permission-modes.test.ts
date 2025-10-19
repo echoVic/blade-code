@@ -280,7 +280,8 @@ describe('权限模式行为', () => {
 
     it('ALLOW 规则应该优先于模式的 ASK 行为', () => {
       const checker = new PermissionChecker({
-        allow: ['Bash(command:npm*)'],
+        // 新格式：使用工具名匹配（不提供 tool 实例时的降级行为）
+        allow: ['Bash'],
         ask: [],
         deny: [],
       });

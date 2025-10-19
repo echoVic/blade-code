@@ -47,7 +47,7 @@ export async function getBuiltinTools(opts?: {
   const sessionId = opts?.sessionId || `session_${Date.now()}`;
   const configDir = opts?.configDir || path.join(os.homedir(), '.blade');
 
-  const builtinTools: Tool[] = [
+  const builtinTools = [
     // 文件操作工具
     readTool,
     editTool,
@@ -74,43 +74,10 @@ export async function getBuiltinTools(opts?: {
     // TODO 工具
     createTodoWriteTool({ sessionId, configDir }),
     createTodoReadTool({ sessionId, configDir }),
-  ];
+  ] as Tool[];
 
   // 添加MCP协议工具
   const mcpTools = await getMcpTools();
 
   return [...builtinTools, ...mcpTools];
-}
-
-/**
- * 按分类获取内置工具
- */
-export async function getBuiltinToolsByCategory(category: string): Promise<Tool[]> {
-  const allTools = await getBuiltinTools();
-  return allTools.filter((tool) => tool.category === category);
-}
-
-/**
- * 按工具类型获取内置工具
- */
-export async function getBuiltinToolsByType(opts?: {
-  sessionId?: string;
-  configDir?: string;
-}): Promise<Record<string, Tool[]>> {
-  const sessionId = opts?.sessionId || `session_${Date.now()}`;
-  const configDir = opts?.configDir || path.join(os.homedir(), '.blade');
-  const mcpTools = await getMcpTools();
-
-  return {
-    file: [readTool, writeTool, editTool, multiEditTool],
-    search: [globTool, grepTool, findTool],
-    shell: [bashTool, shellTool, scriptTool],
-    web: [webFetchTool, apiCallTool],
-    task: [taskTool],
-    todo: [
-      createTodoWriteTool({ sessionId, configDir }),
-      createTodoReadTool({ sessionId, configDir }),
-    ],
-    mcp: mcpTools, // MCP协议外部工具
-  };
 }
