@@ -116,6 +116,32 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   category?: string;
   /** 标签 */
   tags?: string[];
+
+  /**
+   * ✅ 新增：签名内容提取器
+   * 从参数中提取用于权限签名的内容字符串
+   * @param params - 类型安全的参数对象
+   * @returns 签名内容字符串（如 "mv file.txt" 或 "/src/foo.ts"）
+   * @example
+   * // Bash 工具
+   * extractSignatureContent: (params) => params.command
+   * // Read 工具
+   * extractSignatureContent: (params) => params.file_path
+   */
+  extractSignatureContent?: (params: TParams) => string;
+
+  /**
+   * ✅ 新增：权限规则抽象器
+   * 将具体参数抽象为通配符权限规则
+   * @param params - 类型安全的参数对象
+   * @returns 权限规则字符串（如 "mv:*" 或 "**\/*.ts"）
+   * @example
+   * // Bash 工具
+   * abstractPermissionRule: (params) => `${extractMainCmd(params.command)}:*`
+   * // Read 工具
+   * abstractPermissionRule: (params) => `**\/*${path.extname(params.file_path)}`
+   */
+  abstractPermissionRule?: (params: TParams) => string;
 }
 
 /**
@@ -156,4 +182,16 @@ export interface Tool<TParams = unknown> {
    * 一键执行
    */
   execute(params: TParams, signal?: AbortSignal): Promise<ToolResult>;
+
+  /**
+   * ✅ 新增：签名内容提取器
+   * 从参数中提取用于权限签名的内容字符串
+   */
+  extractSignatureContent?: (params: TParams) => string;
+
+  /**
+   * ✅ 新增：权限规则抽象器
+   * 将具体参数抽象为通配符权限规则
+   */
+  abstractPermissionRule?: (params: TParams) => string;
 }

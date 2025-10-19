@@ -106,6 +106,16 @@ export function createTodoReadTool(opts: { sessionId: string; configDir: string 
     version: '1.0.0',
     category: 'TODO工具',
     tags: ['todo', 'query', 'read'],
+
+    /**
+     * 提取签名内容：返回过滤状态
+     */
+    extractSignatureContent: (params) => params.filter,
+
+    /**
+     * 抽象权限规则：返回通配符
+     */
+    abstractPermissionRule: () => '*',
   });
 }
 

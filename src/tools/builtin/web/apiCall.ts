@@ -224,6 +224,23 @@ export const apiCallTool = createTool({
   version: '2.0.0',
   category: '网络工具',
   tags: ['api', 'rest', 'http', 'request', 'web_service'],
+
+  /**
+   * 提取签名内容：返回 URL
+   */
+  extractSignatureContent: (params) => params.url,
+
+  /**
+   * 抽象权限规则：提取域名通配符
+   */
+  abstractPermissionRule: (params) => {
+    try {
+      const urlObj = new URL(params.url);
+      return `${urlObj.protocol}//${urlObj.hostname}/*`;
+    } catch {
+      return '*';
+    }
+  },
 });
 
 /**

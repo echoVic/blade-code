@@ -314,6 +314,17 @@ export const taskTool = createTool({
   version: '2.0.0',
   category: '任务工具',
   tags: ['task', 'agent', 'schedule', 'workflow'],
+
+  /**
+   * 提取签名内容：返回任务描述和提示组合
+   */
+  extractSignatureContent: (params) => `${params.description} | ${params.prompt}`,
+
+  /**
+   * 抽象权限规则：Task 工具禁用自动生成规则
+   * 返回空字符串表示不自动添加权限规则
+   */
+  abstractPermissionRule: () => '',
 });
 
 /**

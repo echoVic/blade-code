@@ -207,6 +207,19 @@ export const readTool = createTool({
   version: '2.0.0',
   category: '文件操作',
   tags: ['file', 'io', 'read'],
+
+  /**
+   * 提取签名内容：返回文件路径
+   */
+  extractSignatureContent: (params) => params.file_path,
+
+  /**
+   * 抽象权限规则：返回扩展名通配符格式
+   */
+  abstractPermissionRule: (params) => {
+    const ext = extname(params.file_path);
+    return ext ? `**/*${ext}` : '**/*';
+  },
 });
 
 /**

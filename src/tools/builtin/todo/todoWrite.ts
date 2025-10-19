@@ -171,6 +171,16 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
     version: '1.0.0',
     category: 'TODO工具',
     tags: ['todo', 'task', 'management', 'planning'],
+
+    /**
+     * 提取签名内容：返回 todos 数量
+     */
+    extractSignatureContent: (params) => `${params.todos.length} todos`,
+
+    /**
+     * 抽象权限规则：返回通配符
+     */
+    abstractPermissionRule: () => '*',
   });
 }
 

@@ -10,6 +10,31 @@ import {
 } from '../../../src/config/PermissionChecker.js';
 import type { PermissionConfig } from '../../../src/config/types.js';
 
+// Mock 工具实例，用于测试完整签名生成
+const createMockTool = (extractFn: (params: Record<string, unknown>) => string) => ({
+  extractSignatureContent: extractFn,
+  abstractPermissionRule: (params: Record<string, unknown>) => {
+    const content = extractFn(params);
+    return content ? `${content.split(':')[0]}:*` : '';
+  },
+});
+
+// 常用的 mock 工具
+const mockReadTool = createMockTool((params) => {
+  const filePath = params.file_path as string;
+  return filePath ? `file_path:${filePath}` : '';
+});
+
+const mockWriteTool = createMockTool((params) => {
+  const filePath = params.file_path as string;
+  return filePath ? `file_path:${filePath}` : '';
+});
+
+const mockBashTool = createMockTool((params) => {
+  const command = params.command as string;
+  return command ? `command:${command}` : '';
+});
+
 describe('PermissionChecker', () => {
   let config: PermissionConfig;
   let checker: PermissionChecker;
@@ -31,6 +56,7 @@ describe('PermissionChecker', () => {
       const descriptor: ToolInvocationDescriptor = {
         toolName: 'Read',
         params: { file_path: 'test.txt' },
+        tool: mockReadTool,
       };
 
       const result = checker.check(descriptor);
@@ -45,6 +71,7 @@ describe('PermissionChecker', () => {
       const descriptor: ToolInvocationDescriptor = {
         toolName: 'Read',
         params: { file_path: '.env' },
+        tool: mockReadTool,
       };
 
       const result = checker.check(descriptor);
@@ -54,18 +81,19 @@ describe('PermissionChecker', () => {
   });
 
   describe('前缀匹配', () => {
-    it('应该匹配工具名称前缀', () => {
+    it('应该匹配工具名称（不提供tool实例时为精确匹配）', () => {
       config.allow = ['Read'];
       checker = new PermissionChecker(config);
 
       const descriptor: ToolInvocationDescriptor = {
         toolName: 'Read',
         params: { file_path: 'any-file.txt' },
+        // 不提供 tool 实例，签名将是 'Read'，与规则 'Read' 精确匹配
       };
 
       const result = checker.check(descriptor);
       expect(result.result).toBe(PermissionResult.ALLOW);
-      expect(result.matchType).toBe('prefix');
+      expect(result.matchType).toBe('exact'); // 签名 'Read' === 规则 'Read'
     });
 
     it('应该拒绝不匹配工具名的调用', () => {
@@ -90,6 +118,7 @@ describe('PermissionChecker', () => {
       const descriptor: ToolInvocationDescriptor = {
         toolName: 'Read',
         params: { file_path: 'production.env' },
+        tool: mockReadTool,
       };
 
       const result = checker.check(descriptor);
@@ -119,6 +148,7 @@ describe('PermissionChecker', () => {
       const descriptor: ToolInvocationDescriptor = {
         toolName: 'Read',
         params: { file_path: 'path/to/nested/.env' },
+        tool: mockReadTool,
       };
 
       const result = checker.check(descriptor);
@@ -136,6 +166,7 @@ describe('PermissionChecker', () => {
         const descriptor: ToolInvocationDescriptor = {
           toolName: 'Read',
           params: { file_path: filePath },
+          tool: mockReadTool,
         };
 
         const result = checker.check(descriptor);
@@ -153,6 +184,7 @@ describe('PermissionChecker', () => {
       const descriptor: ToolInvocationDescriptor = {
         toolName: 'Read',
         params: { file_path: '.env' },
+        tool: mockReadTool,
       };
 
       const result = checker.check(descriptor);
@@ -167,6 +199,7 @@ describe('PermissionChecker', () => {
       const descriptor: ToolInvocationDescriptor = {
         toolName: 'Read',
         params: { file_path: 'safe.txt' },
+        tool: mockReadTool,
       };
 
       const result = checker.check(descriptor);
@@ -269,15 +302,18 @@ describe('PermissionChecker', () => {
 
   describe('复杂场景', () => {
     it('应该处理多参数工具调用', () => {
-      config.allow = ['Edit(file_path:test.txt, content:*)'];
+      // 注意：新架构下tool的extractSignatureContent只返回单个关键参数
+      // 这里测试使用 Write 工具的 file_path 作为签名
+      config.allow = ['Write(file_path:test.txt)'];
       checker = new PermissionChecker(config);
 
       const descriptor: ToolInvocationDescriptor = {
-        toolName: 'Edit',
+        toolName: 'Write',
         params: {
           file_path: 'test.txt',
           content: 'new content',
         },
+        tool: mockWriteTool,
       };
 
       const result = checker.check(descriptor);
@@ -305,6 +341,7 @@ describe('PermissionChecker', () => {
         toolName: 'Write',
         params: { file_path: 'project/.git/config' },
         affectedPaths: ['project/.git/config'],
+        tool: mockWriteTool,
       };
 
       const result = checker.check(descriptor);
@@ -337,6 +374,7 @@ describe('PermissionChecker', () => {
       const descriptor: ToolInvocationDescriptor = {
         toolName: 'Read',
         params: { file_path: 'my-app.env' },
+        tool: mockReadTool,
       };
 
       const result = checker.check(descriptor);
@@ -374,6 +412,7 @@ describe('PermissionChecker', () => {
         const descriptor: ToolInvocationDescriptor = {
           toolName: 'Read',
           params: { file_path: file },
+          tool: mockReadTool,
         };
 
         const result = checker.check(descriptor);
@@ -395,6 +434,7 @@ describe('PermissionChecker', () => {
         const descriptor: ToolInvocationDescriptor = {
           toolName: 'Read',
           params: { file_path: file },
+          tool: mockReadTool,
         };
 
         const result = checker.check(descriptor);

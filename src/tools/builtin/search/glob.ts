@@ -204,6 +204,16 @@ export const globTool = createTool({
   version: '2.0.0',
   category: '搜索工具',
   tags: ['file', 'search', 'glob', 'pattern', 'wildcard'],
+
+  /**
+   * 提取签名内容：返回 glob 模式
+   */
+  extractSignatureContent: (params) => params.pattern,
+
+  /**
+   * 抽象权限规则：返回通配符模式
+   */
+  abstractPermissionRule: () => '*',
 });
 
 /**

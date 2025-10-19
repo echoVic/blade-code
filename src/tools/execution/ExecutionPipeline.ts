@@ -45,10 +45,19 @@ export class ExecutionPipeline extends EventEmitter {
     const permissionMode = config.permissionMode ?? PermissionMode.DEFAULT;
 
     // 初始化5个执行阶段
+    const permissionStage = new PermissionStage(
+      permissionConfig,
+      this.sessionApprovals,
+      permissionMode
+    );
+
     this.stages = [
       new DiscoveryStage(this.registry), // 工具发现
-      new PermissionStage(permissionConfig, this.sessionApprovals, permissionMode), // 权限检查（含 Zod 验证和默认值处理）
-      new ConfirmationStage(this.sessionApprovals), // 用户确认
+      permissionStage, // 权限检查（含 Zod 验证和默认值处理）
+      new ConfirmationStage(
+        this.sessionApprovals,
+        permissionStage.getPermissionChecker()
+      ), // 用户确认
       new ExecutionStage(), // 实际执行
       new FormattingStage(), // 结果格式化
     ];
@@ -59,7 +68,7 @@ export class ExecutionPipeline extends EventEmitter {
    */
   async execute(
     toolName: string,
-    params: unknown,
+    params: Record<string, unknown>,
     context: ExecutionContext
   ): Promise<ToolResult> {
     const startTime = Date.now();
@@ -166,7 +175,7 @@ export class ExecutionPipeline extends EventEmitter {
   async executeAll(
     requests: Array<{
       toolName: string;
-      params: unknown;
+      params: Record<string, unknown>;
       context: ExecutionContext;
     }>
   ): Promise<ToolResult[]> {
@@ -183,7 +192,7 @@ export class ExecutionPipeline extends EventEmitter {
   async executeParallel(
     requests: Array<{
       toolName: string;
-      params: unknown;
+      params: Record<string, unknown>;
       context: ExecutionContext;
     }>,
     maxConcurrency: number = 5

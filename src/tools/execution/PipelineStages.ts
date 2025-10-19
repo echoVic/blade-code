@@ -1,5 +1,4 @@
 import { ConfigManager } from '../../config/ConfigManager.js';
-import { PatternAbstractor } from '../../config/PatternAbstractor.js';
 import {
   PermissionChecker,
   type PermissionCheckResult,
@@ -60,6 +59,13 @@ export class PermissionStage implements PipelineStage {
     this.permissionMode = permissionMode;
   }
 
+  /**
+   * 获取 PermissionChecker 实例（供 ConfirmationStage 使用）
+   */
+  getPermissionChecker(): PermissionChecker {
+    return this.permissionChecker;
+  }
+
   async process(execution: ToolExecution): Promise<void> {
     const tool = execution._internal.tool;
     if (!tool) {
@@ -74,11 +80,12 @@ export class PermissionStage implements PipelineStage {
       // 检查受影响的路径
       const affectedPaths = invocation.getAffectedPaths();
 
-      // 构建工具调用描述符
+      // 构建工具调用描述符（包含工具实例用于权限系统）
       const descriptor: ToolInvocationDescriptor = {
         toolName: tool.name,
         params: execution.params,
         affectedPaths,
+        tool, // 传递工具实例，用于 extractSignatureContent 和 abstractPermissionRule
       };
       const signature = PermissionChecker.buildSignature(descriptor);
       execution._internal.permissionSignature = signature;
@@ -276,7 +283,14 @@ export class PermissionStage implements PipelineStage {
  */
 export class ConfirmationStage implements PipelineStage {
   readonly name = 'confirmation';
-  constructor(private readonly sessionApprovals: Set<string>) {}
+  private permissionChecker: PermissionChecker;
+
+  constructor(
+    private readonly sessionApprovals: Set<string>,
+    permissionChecker: PermissionChecker
+  ) {
+    this.permissionChecker = permissionChecker;
+  }
 
   async process(execution: ToolExecution): Promise<void> {
     const {
@@ -338,6 +352,7 @@ export class ConfirmationStage implements PipelineStage {
             toolName: tool.name,
             params: execution.params,
             affectedPaths: invocation.getAffectedPaths() || [],
+            tool, // 传递工具实例，用于 abstractPermissionRule
           };
 
           await this.persistSessionApproval(signature, descriptor);
@@ -358,10 +373,16 @@ export class ConfirmationStage implements PipelineStage {
     try {
       const configManager = ConfigManager.getInstance();
 
-      // 使用 PatternAbstractor 生成模式规则（而非精确签名）
-      const pattern = PatternAbstractor.abstract(descriptor);
+      // 使用 PermissionChecker.abstractPattern 生成模式规则（而非精确签名）
+      const pattern = PermissionChecker.abstractPattern(descriptor);
 
+      console.debug(`[ConfirmationStage] 保存权限规则: "${pattern}"`);
       await configManager.appendLocalPermissionAllowRule(pattern);
+
+      // 重要：重新加载配置，使新规则立即生效（避免重复确认）
+      const updatedConfig = configManager.getPermissions();
+      console.debug(`[ConfirmationStage] 同步权限配置到 PermissionChecker:`, updatedConfig);
+      this.permissionChecker.replaceConfig(updatedConfig);
     } catch (error) {
       console.warn(
         `[ConfirmationStage] 无法保存权限规则 "${signature}": ${

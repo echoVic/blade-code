@@ -43,7 +43,13 @@ export interface ToolInvocationDescriptor {
   params: Record<string, unknown>;
   /** 受影响的路径 */
   affectedPaths?: string[];
+  /** 工具实例（可选，用于权限系统） */
+  tool?: {
+    extractSignatureContent?: (params: Record<string, unknown>) => string;
+    abstractPermissionRule?: (params: Record<string, unknown>) => string;
+  };
 }
+
 
 /**
  * 权限检查器
@@ -101,101 +107,66 @@ export class PermissionChecker {
 
   /**
    * 构建工具调用签名
-   * 格式: ToolName(param1:value1, param2:value2)
+   * 格式: ToolName(content) 或 ToolName
    *
-   * 智能参数过滤策略:
-   * - Read/Edit/Write: 只保留核心路径参数,忽略 offset/limit
-   * - Bash: 保留完整命令
-   * - Grep: 保留 pattern 和 path,忽略 output_mode 等
-   * - 其他工具: 保留所有参数
+   * 新设计：调用工具自身的 extractSignatureContent 方法
    */
   static buildSignature(descriptor: ToolInvocationDescriptor): string {
-    const { toolName, params } = descriptor;
+    const { toolName, params, tool } = descriptor;
 
-    // 工具特定的参数过滤
-    const filteredParams = PermissionChecker._normalizeParams(toolName, params);
+    try {
+      // 如果提供了工具实例且有提取方法，使用它
+      if (tool?.extractSignatureContent) {
+        const content = tool.extractSignatureContent(params);
+        return content ? `${toolName}(${content})` : toolName;
+      }
 
-    // 简化参数表示
-    const paramPairs = Object.entries(filteredParams)
-      .filter(([_, value]) => value !== undefined && value !== null)
-      .map(([key, value]) => {
-        if (typeof value === 'string') {
-          return `${key}:${value}`;
-        }
-        return `${key}:${JSON.stringify(value)}`;
-      });
-
-    if (paramPairs.length === 0) {
+      // 如果工具没有提供提取方法，返回工具名
+      return toolName;
+    } catch (error) {
+      // 如果执行失败，返回工具名作为降级
+      console.warn(
+        `Failed to build signature for ${toolName}:`,
+        error instanceof Error ? error.message : error
+      );
       return toolName;
     }
-
-    return `${toolName}(${paramPairs.join(', ')})`;
   }
 
   /**
-   * 标准化参数 - 工具特定的参数过滤逻辑
-   * 目标: 减少权限签名的粒度,避免频繁确认
+   * 抽象为权限模式规则
+   * 用于将具体的工具调用转换为可复用的权限规则
+   *
+   * 格式: ToolName(pattern) 或 ToolName
+   * 新设计：调用工具自身的 abstractPermissionRule 方法
    */
-  private static _normalizeParams(
-    toolName: string,
-    params: Record<string, unknown>
-  ): Record<string, unknown> {
-    let result: Record<string, unknown>;
+  static abstractPattern(descriptor: ToolInvocationDescriptor): string {
+    const { toolName, params, tool } = descriptor;
 
-    switch (toolName) {
-      case 'Read':
-      case 'Edit':
-      case 'Write':
-        // 文件操作: 只保留 file_path/old_string/new_string/content
-        // 忽略 offset/limit/replace_all 等易变参数
-        result = {
-          file_path: params.file_path,
-          old_string: params.old_string,
-          new_string: params.new_string,
-          content: params.content,
-        };
-        break;
+    try {
+      // 如果提供了工具实例且有抽象方法，使用它
+      if (tool?.abstractPermissionRule) {
+        const rule = tool.abstractPermissionRule(params);
 
-      case 'Grep':
-        // 搜索操作: 只保留 pattern 和 path/glob/type
-        // 忽略 output_mode/-A/-B/-C/-i/-n/head_limit 等显示选项
-        result = {
-          pattern: params.pattern,
-          path: params.path,
-          glob: params.glob,
-          type: params.type,
-        };
-        break;
+        // 空字符串表示工具禁用自动生成（如 Task 工具）
+        if (rule === '') {
+          return '';
+        }
 
-      case 'Glob':
-        // Glob 操作: 保留 pattern 和 path
-        result = {
-          pattern: params.pattern,
-          path: params.path,
-        };
-        break;
+        // 返回完整的规则格式
+        return rule ? `${toolName}(${rule})` : toolName;
+      }
 
-      case 'Bash':
-        result = {
-          command: params.command,
-        };
-        break;
-
-      case 'WebFetch':
-        // Web 请求: 保留 url 和 domain(如果有)
-        result = {
-          url: params.url,
-          domain: params.domain,
-        };
-        break;
-
-      default:
-        // 其他工具: 保留所有参数
-        result = params;
-        break;
+      // 如果工具没有提供抽象方法，返回工具名（允许该工具的所有调用）
+      return toolName;
+    } catch (error) {
+      // 如果执行失败，返回工具名作为降级
+      console.warn(
+        `Failed to abstract pattern for ${toolName}:`,
+        error instanceof Error ? error.message : error
+      );
+      return toolName;
     }
-
-    return result;
   }
 
   /**
@@ -451,6 +422,13 @@ export class PermissionChecker {
     if (config.deny) {
       this.config.deny = [...this.config.deny, ...config.deny];
     }
+  }
+
+  /**
+   * 替换整个权限配置
+   */
+  replaceConfig(config: PermissionConfig): void {
+    this.config = { ...config };
   }
 
   /**

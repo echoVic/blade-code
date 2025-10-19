@@ -233,6 +233,16 @@ export const scriptTool = createTool({
   version: '2.0.0',
   category: '命令工具',
   tags: ['script', 'execute', 'interpreter', 'automation'],
+
+  /**
+   * 提取签名内容：返回脚本路径
+   */
+  extractSignatureContent: (params) => params.script_path,
+
+  /**
+   * 抽象权限规则：返回解释器通配符
+   */
+  abstractPermissionRule: (params) => `${params.interpreter || '*'}:*`,
 });
 
 /**
