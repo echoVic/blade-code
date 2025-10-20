@@ -312,9 +312,14 @@ export class ConfirmationStage implements PipelineStage {
     }
 
     try {
+      // 使用工具的 extractSignatureContent 生成具体的签名（如果有）
+      const signature = tool.extractSignatureContent
+        ? tool.extractSignatureContent(execution.params)
+        : tool.name;
+
       // 从权限检查结果构建确认详情
       const confirmationDetails = {
-        title: `权限确认: ${tool.name}`,
+        title: `权限确认: ${signature}`,
         message: confirmationReason || '此操作需要用户确认',
         risks: this.extractRisksFromPermissionCheck(
           tool,

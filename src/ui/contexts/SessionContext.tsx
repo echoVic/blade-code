@@ -1,4 +1,5 @@
 import React, { createContext, ReactNode, useContext, useReducer } from 'react';
+import { nanoid } from 'nanoid';
 
 /**
  * 消息角色类型
@@ -20,6 +21,7 @@ export interface SessionMessage {
  * 会话状态
  */
 export interface SessionState {
+  sessionId: string; // 全局唯一会话 ID
   messages: SessionMessage[];
   isThinking: boolean;
   input: string;
@@ -57,6 +59,7 @@ const SessionContext = createContext<SessionContextType | undefined>(undefined);
 
 // 初始状态
 const initialState: SessionState = {
+  sessionId: nanoid(),
   messages: [],
   isThinking: false,
   input: '',
@@ -91,7 +94,11 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       return { ...state, messages: [], error: null };
 
     case 'RESET_SESSION':
-      return { ...initialState, isActive: true };
+      return {
+        ...initialState,
+        sessionId: state.sessionId, // 保持 sessionId 不变
+        isActive: true
+      };
 
     default:
       return state;
