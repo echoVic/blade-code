@@ -1,4 +1,5 @@
 import * as crypto from 'crypto';
+import { nanoid } from 'nanoid';
 import { ContextCompressor } from './processors/ContextCompressor.js';
 import { ContextFilter } from './processors/ContextFilter.js';
 import { CacheStore } from './storage/CacheStore.js';
@@ -14,6 +15,7 @@ import {
   ToolCall,
   WorkspaceContext,
 } from './types.js';
+import { getBladeStorageRoot } from './utils/pathEscape.js';
 
 /**
  * 上下文管理器 - 统一管理所有上下文相关操作
@@ -30,10 +32,14 @@ export class ContextManager {
   private initialized = false;
 
   constructor(options: Partial<ContextManagerOptions> = {}) {
+    // 默认使用 ~/.blade/ 作为存储根目录
+    const defaultPersistentPath =
+      options.storage?.persistentPath || getBladeStorageRoot();
+
     this.options = {
       storage: {
         maxMemorySize: 1000,
-        persistentPath: './blade-context',
+        persistentPath: defaultPersistentPath,
         cacheSize: 100,
         compressionEnabled: true,
         ...options.storage,
@@ -50,7 +56,8 @@ export class ContextManager {
 
     // 初始化存储层
     this.memory = new MemoryStore(this.options.storage.maxMemorySize);
-    this.persistent = new PersistentStore(this.options.storage.persistentPath, 100);
+    // PersistentStore 现在使用项目路径，默认为当前工作目录
+    this.persistent = new PersistentStore(process.cwd(), 100);
     this.cache = new CacheStore(
       this.options.storage.cacheSize,
       5 * 60 * 1000 // 5分钟默认TTL
@@ -239,6 +246,44 @@ export class ContextManager {
   }
 
   /**
+   * 保存消息到 JSONL (直接访问 PersistentStore,不依赖 currentSessionId)
+   */
+  async saveMessage(
+    sessionId: string,
+    role: 'user' | 'assistant' | 'system',
+    content: string,
+    parentUuid: string | null = null,
+    metadata?: { model?: string; usage?: { input_tokens: number; output_tokens: number } }
+  ): Promise<string> {
+    return this.persistent.saveMessage(sessionId, role, content, parentUuid, metadata);
+  }
+
+  /**
+   * 保存工具调用到 JSONL (直接访问 PersistentStore)
+   */
+  async saveToolUse(
+    sessionId: string,
+    toolName: string,
+    toolInput: any,
+    parentUuid: string | null = null
+  ): Promise<string> {
+    return this.persistent.saveToolUse(sessionId, toolName, toolInput, parentUuid);
+  }
+
+  /**
+   * 保存工具结果到 JSONL (直接访问 PersistentStore)
+   */
+  async saveToolResult(
+    sessionId: string,
+    toolId: string,
+    toolOutput: any,
+    parentUuid: string | null = null,
+    error?: string
+  ): Promise<string> {
+    return this.persistent.saveToolResult(sessionId, toolId, toolOutput, parentUuid, error);
+  }
+
+  /**
    * 更新工具状态
    */
   updateToolState(toolName: string, state: any): void {
@@ -389,11 +434,13 @@ export class ContextManager {
   // 私有方法
 
   private generateSessionId(): string {
-    return `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    // 使用 nanoid 生成会话 ID（类似 Claude Code）
+    return nanoid();
   }
 
   private generateMessageId(): string {
-    return `msg_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+    // 使用 nanoid 生成消息 ID
+    return nanoid();
   }
 
   private async createSystemContext(): Promise<SystemContext> {

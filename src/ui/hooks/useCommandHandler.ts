@@ -42,7 +42,7 @@ export const useCommandHandler = (
     maxTurns: 50,
     currentTool: undefined,
   });
-  const { dispatch } = useSession();
+  const { dispatch, state: sessionState } = useSession();
   const { dispatch: appDispatch, actions: appActions } = useAppState();
   const abortControllerRef = useRef<AbortController | undefined>(undefined);
   const agentRef = useRef<Agent | undefined>(undefined);
@@ -178,9 +178,12 @@ export const useCommandHandler = (
             abortControllerRef.current = new AbortController();
 
             const chatContext = {
-              messages: [],
+              messages: sessionState.messages.map(msg => ({
+                role: msg.role as 'user' | 'assistant' | 'system',
+                content: msg.content,
+              })),
               userId: 'cli-user',
-              sessionId: `session-${Date.now()}`,
+              sessionId: sessionState.sessionId,
               workspaceRoot: process.cwd(),
               signal: abortControllerRef.current.signal,
               confirmationHandler,
@@ -234,9 +237,12 @@ export const useCommandHandler = (
         abortControllerRef.current = new AbortController();
 
         const chatContext = {
-          messages: [],
+          messages: sessionState.messages.map(msg => ({
+            role: msg.role as 'user' | 'assistant' | 'system',
+            content: msg.content,
+          })),
           userId: 'cli-user',
-          sessionId: `session-${Date.now()}`,
+          sessionId: sessionState.sessionId,
           workspaceRoot: process.cwd(),
           signal: abortControllerRef.current.signal,
           confirmationHandler,

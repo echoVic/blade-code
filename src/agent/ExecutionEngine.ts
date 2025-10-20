@@ -3,6 +3,7 @@
  * 整合了上下文管理、任务调度、工具执行和子Agent协调功能
  */
 
+import { ContextManager } from '../context/ContextManager.js';
 import type { IChatService } from '../services/ChatServiceInterface.js';
 import { type Message } from '../services/OpenAIChatService.js';
 import type { AgentResponse, AgentTask } from './types.js';
@@ -17,7 +18,12 @@ export interface ExecutionStep {
   metadata?: Record<string, unknown>;
 }
 
-export interface ContextManager {
+/**
+ * 内存消息适配器 - 为向后兼容提供简单的消息管理
+ * 注意：这只用于 ExecutionEngine 内部的临时消息管理
+ * 实际的持久化由真实的 ContextManager 处理
+ */
+export interface MemoryMessageAdapter {
   getMessages(): Message[];
   addMessage(message: Message): void;
   clearContext(): void;
@@ -26,17 +32,21 @@ export interface ContextManager {
 
 export class ExecutionEngine {
   private chatService: IChatService;
-  private contextManager: ContextManager;
+  private contextManager: ContextManager; // 真实的 ContextManager，支持 JSONL 持久化
+  private memoryAdapter: MemoryMessageAdapter; // 内存适配器，用于临时消息
 
-  constructor(chatService: IChatService) {
+  constructor(chatService: IChatService, contextManager?: ContextManager) {
     this.chatService = chatService;
-    this.contextManager = this.createContextManager();
+    // 使用传入的 ContextManager 或创建新的
+    this.contextManager = contextManager || new ContextManager();
+    // 创建内存适配器用于临时消息管理
+    this.memoryAdapter = this.createMemoryAdapter();
   }
 
   /**
-   * 创建上下文管理器
+   * 创建内存消息适配器（临时消息管理）
    */
-  private createContextManager(): ContextManager {
+  private createMemoryAdapter(): MemoryMessageAdapter {
     const messages: Message[] = [];
 
     return {
@@ -52,10 +62,17 @@ export class ExecutionEngine {
   }
 
   /**
-   * 获取上下文管理器
+   * 获取上下文管理器（返回真实的 ContextManager）
    */
   public getContextManager(): ContextManager {
     return this.contextManager;
+  }
+
+  /**
+   * 获取内存适配器（用于临时消息）
+   */
+  public getMemoryAdapter(): MemoryMessageAdapter {
+    return this.memoryAdapter;
   }
 
   /**

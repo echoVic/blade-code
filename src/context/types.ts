@@ -108,3 +108,59 @@ export interface ContextManagerOptions {
   compressionThreshold: number;
   enableVectorSearch?: boolean;
 }
+
+/**
+ * JSONL 消息类型（类似 Claude Code）
+ */
+export type JSONLMessageType =
+  | 'user'
+  | 'assistant'
+  | 'tool_use'
+  | 'tool_result'
+  | 'system'
+  | 'file-history-snapshot';
+
+/**
+ * JSONL 条目 - Blade 会话历史格式
+ */
+export interface BladeJSONLEntry {
+  /** 消息唯一 ID (nanoid) */
+  uuid: string;
+  /** 父消息 ID (用于对话线程追踪) */
+  parentUuid: string | null;
+  /** 会话 ID (nanoid) */
+  sessionId: string;
+  /** ISO 8601 时间戳 */
+  timestamp: string;
+  /** 消息类型 */
+  type: JSONLMessageType;
+  /** 工作目录（绝对路径） */
+  cwd: string;
+  /** Git 分支信息（如果在 Git 仓库中） */
+  gitBranch?: string;
+  /** Blade 版本号 */
+  version: string;
+  /** 消息内容 */
+  message: {
+    role: 'user' | 'assistant' | 'system';
+    content: string | any; // 可以是字符串或复杂内容块
+    model?: string; // AI 模型名称（assistant 消息）
+    usage?: {
+      // Token 使用情况（assistant 消息）
+      input_tokens: number;
+      output_tokens: number;
+    };
+  };
+  /** 工具调用信息（tool_use 类型） */
+  tool?: {
+    id: string;
+    name: string;
+    input: any;
+  };
+  /** 工具结果信息（tool_result 类型） */
+  toolResult?: {
+    id: string;
+    output: any;
+    error?: string;
+  };
+}

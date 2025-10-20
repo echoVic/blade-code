@@ -85,9 +85,24 @@ Root (blade-code)
 
 ### Agent System
 - **Agent** ([src/agent/Agent.ts](src/agent/Agent.ts)): 主要协调器，管理LLM交互、上下文/记忆和执行控制
+  - **无状态设计**: Agent 不保存 sessionId 和消息历史
   - 静态工厂方法 `Agent.create()` 用于创建和初始化实例
+  - 每次命令可创建新 Agent 实例（用完即弃）
   - 通过 `ExecutionEngine` 处理工具执行流程
   - 通过 `LoopDetectionService` 防止无限循环
+
+- **SessionContext** ([src/ui/contexts/SessionContext.tsx](src/ui/contexts/SessionContext.tsx)): 会话状态管理
+  - 维护全局唯一 `sessionId`
+  - 保存完整消息历史
+  - 通过 React Context 跨组件共享
+  - Agent 通过 context 参数获取历史消息
+
+- **架构模式**: 无状态 Agent + 外部 Session
+  - ✅ 状态隔离: Agent 无状态，Session 有状态
+  - ✅ 对话连续: 通过传递历史消息保证上下文
+  - ✅ 内存高效: Agent 用完即释放
+  - ✅ 并发安全: 多个 Agent 可并发执行
+
 - **ToolRegistry** ([src/tools/registry/ToolRegistry.ts](src/tools/registry/ToolRegistry.ts)): 中心化工具注册/执行系统，提供验证和安全控制
 - **ChatService** ([src/services/ChatService.ts](src/services/ChatService.ts)): 统一LLM接口，支持多提供商（基于OpenAI客户端）
   - 支持流式和非流式响应
@@ -108,6 +123,12 @@ Root (blade-code)
   - 事件驱动架构，支持监听各阶段事件
   - 自动记录执行历史
 - **PromptBuilder** ([src/prompts/](src/prompts/)): 提示模板管理和构建
+- **ContextManager** ([src/context/ContextManager.ts](src/context/ContextManager.ts)): 上下文管理系统
+  - **JSONL 格式**: 追加式存储，每行一个 JSON 对象
+  - **项目隔离**: 存储在 `~/.blade/projects/{escaped-path}/` 按项目分离
+  - **会话 ID**: 使用 nanoid 生成，21 字符 URL 友好
+  - **路径转义**: `/Users/foo/project` → `-Users-foo-project`
+  - 支持消息追溯（parentUuid）、Git 分支记录、Token 统计
 
 ## Build & Development Commands
 

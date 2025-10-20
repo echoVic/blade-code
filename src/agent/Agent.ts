@@ -1,6 +1,13 @@
 /**
- * Agent核心类 - 简化架构，基于chat统一调用
- * 负责任务执行和上下文管理
+ * Agent核心类 - 无状态设计
+ *
+ * 设计原则：
+ * 1. Agent 本身不保存任何会话状态（sessionId, messages 等）
+ * 2. 所有状态通过 context 参数传入
+ * 3. Agent 实例可以每次命令创建，用完即弃
+ * 4. 历史连续性由外部 SessionContext 保证
+ *
+ * 负责：LLM 交互、工具执行、循环检测
  */
 
 import { EventEmitter } from 'events';
@@ -21,7 +28,8 @@ import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { Tool, ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
-import { type ContextManager, ExecutionEngine } from './ExecutionEngine.js';
+import { ContextManager } from '../context/ContextManager.js';
+import { ExecutionEngine } from './ExecutionEngine.js';
 import {
   type LoopDetectionConfig,
   LoopDetectionService,
@@ -42,7 +50,7 @@ export class Agent extends EventEmitter {
   private activeTask?: AgentTask;
   private executionPipeline: ExecutionPipeline;
   private systemPrompt?: string;
-  private sessionId: string;
+  // sessionId 已移除 - 改为从 context 参数传入（无状态设计）
 
   // 核心组件
   private chatService!: IChatService;
@@ -53,15 +61,13 @@ export class Agent extends EventEmitter {
   constructor(
     config: BladeConfig,
     runtimeOptions: AgentOptions = {},
-    executionPipeline?: ExecutionPipeline,
-    sessionId?: string
+    executionPipeline?: ExecutionPipeline
   ) {
     super();
     this.config = config;
     this.runtimeOptions = runtimeOptions;
     this.executionPipeline = executionPipeline || this.createDefaultPipeline();
-    this.sessionId =
-      sessionId || `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    // sessionId 不再存储在 Agent 内部，改为从 context 传入
   }
 
   /**
@@ -276,6 +282,18 @@ export class Agent extends EventEmitter {
 
       messages.push(...context.messages, { role: 'user', content: message });
 
+      // === 保存用户消息到 JSONL ===
+      let lastMessageUuid: string | null = null; // 追踪上一条消息的 UUID,用于建立消息链
+      try {
+        const contextMgr = this.executionEngine?.getContextManager();
+        if (contextMgr && context.sessionId) {
+          lastMessageUuid = await contextMgr.saveMessage(context.sessionId, 'user', message);
+        }
+      } catch (error) {
+        console.warn('[Agent] 保存用户消息失败:', error);
+        // 不阻塞主流程
+      }
+
       // === Agentic Loop: 循环调用直到任务完成 ===
       const maxTurns = options?.maxTurns || 50; // 可配置最大循环次数
       let turnsCount = 0;
@@ -311,6 +329,22 @@ export class Agent extends EventEmitter {
         // 4. 检查是否需要工具调用（任务完成条件）
         if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
           console.log('✅ 任务完成 - LLM 未请求工具调用');
+
+          // === 保存助手最终响应到 JSONL ===
+          try {
+            const contextMgr = this.executionEngine?.getContextManager();
+            if (contextMgr && context.sessionId && turnResult.content) {
+              lastMessageUuid = await contextMgr.saveMessage(
+                context.sessionId,
+                'assistant',
+                turnResult.content,
+                lastMessageUuid // 链接到上一条消息
+              );
+            }
+          } catch (error) {
+            console.warn('[Agent] 保存助手消息失败:', error);
+          }
+
           return {
             success: true,
             finalMessage: turnResult.content,
@@ -328,6 +362,22 @@ export class Agent extends EventEmitter {
           content: turnResult.content || '',
           tool_calls: turnResult.toolCalls,
         });
+
+        // === 保存助手的工具调用请求到 JSONL ===
+        try {
+          const contextMgr = this.executionEngine?.getContextManager();
+          if (contextMgr && context.sessionId && turnResult.content) {
+            // 保存助手消息（包含工具调用意图）
+            lastMessageUuid = await contextMgr.saveMessage(
+              context.sessionId,
+              'assistant',
+              turnResult.content,
+              lastMessageUuid // 链接到上一条消息
+            );
+          }
+        } catch (error) {
+          console.warn('[Agent] 保存助手工具调用消息失败:', error);
+        }
 
         // 6. 执行每个工具调用并注入结果
         for (const toolCall of turnResult.toolCalls) {
@@ -370,13 +420,29 @@ export class Agent extends EventEmitter {
               }
             }
 
+            // === 保存工具调用到 JSONL (tool_use) ===
+            let toolUseUuid: string | null = null;
+            try {
+              const contextMgr = this.executionEngine?.getContextManager();
+              if (contextMgr && context.sessionId) {
+                toolUseUuid = await contextMgr.saveToolUse(
+                  context.sessionId,
+                  toolCall.function.name,
+                  params,
+                  lastMessageUuid // 链接到助手消息
+                );
+              }
+            } catch (error) {
+              console.warn('[Agent] 保存工具调用失败:', error);
+            }
+
             // 使用 ExecutionPipeline 执行工具（自动走完6阶段流程）
             const signalToUse = options?.signal || new AbortController().signal;
             const result = await this.executionPipeline.execute(
               toolCall.function.name,
               params,
               {
-                sessionId: this.sessionId,
+                sessionId: context.sessionId,
                 userId: context.userId || 'default',
                 workspaceRoot: context.workspaceRoot || process.cwd(),
                 signal: signalToUse,
@@ -391,6 +457,22 @@ export class Agent extends EventEmitter {
               success: result.success,
               turn: turnsCount,
             });
+
+            // === 保存工具结果到 JSONL (tool_result) ===
+            try {
+              const contextMgr = this.executionEngine?.getContextManager();
+              if (contextMgr && context.sessionId) {
+                lastMessageUuid = await contextMgr.saveToolResult(
+                  context.sessionId,
+                  toolCall.id,
+                  result.success ? result.llmContent : undefined,
+                  toolUseUuid, // 链接到对应的工具调用
+                  result.success ? undefined : result.error?.message
+                );
+              }
+            } catch (error) {
+              console.warn('[Agent] 保存工具结果失败:', error);
+            }
 
             // 如果是 TODO 工具,触发 TODO 更新事件
             if (
@@ -723,8 +805,9 @@ export class Agent extends EventEmitter {
    */
   private async registerBuiltinTools(): Promise<void> {
     try {
+      // 使用默认 sessionId（因为注册时还没有会话上下文）
       const builtinTools = await getBuiltinTools({
-        sessionId: this.sessionId,
+        sessionId: 'default',
         configDir: path.join(os.homedir(), '.blade'),
       });
       console.log(`📦 Registering ${builtinTools.length} builtin tools...`);

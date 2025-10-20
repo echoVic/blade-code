@@ -4,6 +4,8 @@
 
 ## 核心特性
 
+- **JSONL 格式存储**：类似 Claude Code 的 JSONL 追加式存储，便于流式处理和增量写入
+- **项目级隔离**：每个项目独立存储在 `~/.blade/projects/{project-path}/`
 - **分层上下文管理**：系统、会话、对话、工具、工作空间五层结构
 - **智能压缩**：自动压缩历史对话，节省 token 使用
 - **多级存储**：内存、缓存、持久化三级存储架构
@@ -19,10 +21,11 @@
 import { createContextManager } from './context/index.js';
 
 // 创建上下文管理器
+// 默认存储在 ~/.blade/ 目录，按项目隔离
 const contextManager = createContextManager({
   storage: {
     maxMemorySize: 1000,
-    persistentPath: './my-context',
+    persistentPath: '~/.blade', // 可选，默认就是 ~/.blade
     cacheSize: 100
   },
   defaultFilter: {
@@ -31,16 +34,16 @@ const contextManager = createContextManager({
   }
 });
 
-// 初始化
+// 初始化（自动创建 ~/.blade/projects/{project}/ 目录）
 await contextManager.initialize();
 
-// 创建新会话
+// 创建新会话（会话 ID 使用 nanoid）
 const sessionId = await contextManager.createSession('user123', {
   language: 'zh-CN',
   theme: 'dark'
 });
 
-// 添加消息
+// 添加消息（自动追加到 JSONL 文件）
 await contextManager.addMessage('user', '你好，我需要帮助开发一个 TypeScript 项目');
 await contextManager.addMessage('assistant', '我很乐意帮助您！请告诉我您的项目需求。');
 
@@ -353,4 +356,54 @@ class CustomCompressor extends ContextCompressor {
 }
 ```
 
-这个上下文管理模块为 AI Agent CLI 提供了强大而灵活的上下文处理能力，能够有效管理对话历史、工具调用记录和工作空间状态，同时保持高性能和低内存使用。 
+## 存储格式详解
+
+### JSONL 格式
+
+Blade 使用 JSONL (JSON Lines) 格式存储会话历史，每行一个 JSON 对象：
+
+```jsonl
+{"uuid":"V1StGXR8_Z5jdHi6B","parentUuid":null,"sessionId":"abc123","timestamp":"2025-01-20T10:00:00.000Z","type":"user","cwd":"/path/to/project","gitBranch":"main","version":"0.0.10","message":{"role":"user","content":"帮我写一个函数"}}
+{"uuid":"nW0Y7GRG294ig6BG2","parentUuid":"V1StGXR8_Z5jdHi6B","sessionId":"abc123","timestamp":"2025-01-20T10:00:05.000Z","type":"assistant","cwd":"/path/to/project","gitBranch":"main","version":"0.0.10","message":{"role":"assistant","content":"好的，我来帮你...","model":"claude-sonnet-4-5","usage":{"input_tokens":100,"output_tokens":50}}}
+```
+
+### 存储路径结构
+
+```
+~/.blade/
+├── projects/
+│   ├── -Users-example-Documents-GitHub-Blade/  # 项目目录（路径转义）
+│   │   ├── {sessionId}.jsonl                      # 会话文件
+│   │   ├── {sessionId2}.jsonl
+│   │   └── ...
+│   └── -Users-example-other-project/
+│       └── ...
+├── config.json        # 全局配置（未来功能）
+└── settings.json      # 全局设置（未来功能）
+```
+
+### 路径转义规则
+
+- `/` → `-`
+- `/Users/example/Documents/GitHub/Blade` → `-Users-example-Documents-GitHub-Blade`
+
+### 消息类型
+
+- `user` - 用户消息
+- `assistant` - AI 回复
+- `tool_use` - 工具调用
+- `tool_result` - 工具结果
+- `system` - 系统消息
+- `file-history-snapshot` - 文件历史快照（未来功能）
+
+### 优势
+
+1. **追加式写入** - 无需读取整个文件，直接追加新消息
+2. **流式处理** - 支持逐行读取大文件
+3. **人类可读** - 每行都是完整的 JSON，便于调试
+4. **项目隔离** - 不同项目的会话互不干扰
+5. **标准化** - 参考 Claude Code 的成熟方案
+
+---
+
+这个上下文管理模块为 AI Agent CLI 提供了强大而灵活的上下文处理能力，能够有效管理对话历史、工具调用记录和工作空间状态，同时保持高性能和低内存使用。
