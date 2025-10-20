@@ -1,4 +1,4 @@
-import React, { createContext, ReactNode, useContext, useReducer } from 'react';
+import React, { createContext, ReactNode, useCallback, useContext, useReducer } from 'react';
 import { nanoid } from 'nanoid';
 
 /**
@@ -40,7 +40,8 @@ export type SessionAction =
   | { type: 'SET_COMMAND'; payload: string | null }
   | { type: 'SET_ERROR'; payload: string | null }
   | { type: 'CLEAR_MESSAGES' }
-  | { type: 'RESET_SESSION' };
+  | { type: 'RESET_SESSION' }
+  | { type: 'RESTORE_SESSION'; payload: { sessionId: string; messages: SessionMessage[] } };
 
 /**
  * 会话上下文类型
@@ -52,6 +53,7 @@ export interface SessionContextType {
   addAssistantMessage: (content: string) => void;
   clearMessages: () => void;
   resetSession: () => void;
+  restoreSession: (sessionId: string, messages: SessionMessage[]) => void;
 }
 
 // 创建上下文
@@ -100,6 +102,15 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
         isActive: true
       };
 
+    case 'RESTORE_SESSION':
+      return {
+        ...state,
+        sessionId: action.payload.sessionId,
+        messages: action.payload.messages,
+        error: null,
+        isActive: true,
+      };
+
     default:
       return state;
   }
@@ -111,7 +122,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(sessionReducer, initialState);
 
-  const addUserMessage = (content: string) => {
+  const addUserMessage = useCallback((content: string) => {
     const message: SessionMessage = {
       id: `user-${Date.now()}-${Math.random()}`,
       role: 'user',
@@ -119,9 +130,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       timestamp: Date.now(),
     };
     dispatch({ type: 'ADD_MESSAGE', payload: message });
-  };
+  }, []);
 
-  const addAssistantMessage = (content: string) => {
+  const addAssistantMessage = useCallback((content: string) => {
     const message: SessionMessage = {
       id: `assistant-${Date.now()}-${Math.random()}`,
       role: 'assistant',
@@ -129,15 +140,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       timestamp: Date.now(),
     };
     dispatch({ type: 'ADD_MESSAGE', payload: message });
-  };
+  }, []);
 
-  const clearMessages = () => {
+  const clearMessages = useCallback(() => {
     dispatch({ type: 'CLEAR_MESSAGES' });
-  };
+  }, []);
 
-  const resetSession = () => {
+  const resetSession = useCallback(() => {
     dispatch({ type: 'RESET_SESSION' });
-  };
+  }, []);
+
+  const restoreSession = useCallback((sessionId: string, messages: SessionMessage[]) => {
+    dispatch({ type: 'RESTORE_SESSION', payload: { sessionId, messages } });
+  }, []);
 
   const value: SessionContextType = {
     state,
@@ -146,6 +161,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     addAssistantMessage,
     clearMessages,
     resetSession,
+    restoreSession,
   };
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

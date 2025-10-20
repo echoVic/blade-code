@@ -109,9 +109,17 @@ export const globalOptions = {
   },
   resume: {
     alias: 'r',
-    type: 'string',
-    describe: 'Resume a conversation',
+    describe: 'Resume a conversation - provide a session ID or interactively select a conversation to resume',
     group: 'Session Options:',
+    // 移除 type 声明，让 yargs 自动推断
+    coerce: (value: string | boolean | undefined) => {
+      // 如果没有提供值（value === undefined 或 true），返回 'true' 表示交互式选择
+      if (value === undefined || value === true || value === '') {
+        return 'true';
+      }
+      // 如果提供了值，返回 sessionId
+      return String(value);
+    },
   },
   'fork-session': {
     alias: ['forkSession'],
