@@ -2,11 +2,13 @@
  * ThemeSelector - 交互式主题选择器组件
  * 类似 Claude Code 的交互式可视化选择器
  */
-import { Box, Text, useFocus, useInput } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import React, { useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { useAppState } from '../contexts/AppContext.js';
+import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
+import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 import { themes } from '../themes/index.js';
 import { themeManager } from '../themes/ThemeManager.js';
 import type { Theme } from '../themes/types.js';
@@ -193,16 +195,29 @@ export const ThemeSelector: React.FC = () => {
     }
   };
 
-  // 使用 useFocus 管理焦点，主题选择器显示时自动获取焦点
-  const { isFocused } = useFocus({ autoFocus: true });
+  // 使用 FocusContext 管理焦点
+  const { state: focusState } = useFocusContext();
+  const isFocused = focusState.currentFocus === FocusId.THEME_SELECTOR;
 
-  // 监听 Esc 键退出
-  // 只有在聚焦且未处理任务时才响应
-  useInput((input, key) => {
-    if (key.escape) {
-      dispatch(actions.hideThemeSelector());
-    }
-  }, { isActive: isFocused && !isProcessing });
+  // 使用智能 Ctrl+C 处理（没有任务，所以直接退出）
+  const handleCtrlC = useCtrlCHandler(false);
+
+  // 处理键盘输入
+  useInput(
+    (input, key) => {
+      // Ctrl+C 或 Cmd+C: 智能退出应用
+      if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
+        handleCtrlC();
+        return;
+      }
+
+      // Esc: 关闭主题选择器
+      if (key.escape && !isProcessing) {
+        dispatch(actions.hideThemeSelector());
+      }
+    },
+    { isActive: isFocused }
+  );
 
   // 自定义主题项渲染器
   const renderThemeItem = (props: { isSelected?: boolean; label: string }) => {

@@ -1,16 +1,18 @@
 import { useMemoizedFn } from 'ahooks';
-import { Box, useApp, useFocusManager, useInput, useStdout } from 'ink';
+import { Box, useApp, useStdout } from 'ink';
 import React, { useEffect, useRef, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { PermissionMode } from '../../config/types.js';
+import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
 import type { AppProps } from '../App.js';
 import { useAppState, useTodos } from '../contexts/AppContext.js';
+import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
 import { useSession } from '../contexts/SessionContext.js';
 import { useAppInitializer } from '../hooks/useAppInitializer.js';
 import { useCommandHandler } from '../hooks/useCommandHandler.js';
 import { useCommandHistory } from '../hooks/useCommandHistory.js';
 import { useConfirmation } from '../hooks/useConfirmation.js';
-import { useKeyboardInput } from '../hooks/useKeyboardInput.js';
+import { useMainInput } from '../hooks/useMainInput.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
 import { CommandSuggestions } from './CommandSuggestions.js';
 import { ConfirmationPrompt } from './ConfirmationPrompt.js';
@@ -19,6 +21,7 @@ import { InputArea } from './InputArea.js';
 import { MessageArea } from './MessageArea.js';
 import { PerformanceMonitor } from './PerformanceMonitor.js';
 import { PermissionsManager } from './PermissionsManager.js';
+import { SessionSelector } from './SessionSelector.js';
 import { SetupWizard } from './SetupWizard.js';
 import { ThemeSelector } from './ThemeSelector.js';
 
@@ -51,7 +54,13 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   }
 
   const { state: appState, dispatch: appDispatch, actions: appActions } = useAppState();
-  const { state: sessionState, addUserMessage, addAssistantMessage } = useSession();
+
+  const {
+    state: sessionState,
+    addUserMessage,
+    addAssistantMessage,
+    restoreSession,
+  } = useSession();
   const { todos, showTodoPanel } = useTodos();
 
   const {
@@ -66,17 +75,54 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const [terminalWidth, setTerminalWidth] = useState(80);
   const { exit } = useApp();
 
-  // 全局 Ctrl+C 处理器 - 不受焦点限制，始终可用
-  // 这确保用户在任何状态下都可以通过 Ctrl+C 退出应用
-  useInput(
-    (input, key) => {
-      if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
-        // Ctrl+C 或 Cmd+C 退出应用
-        exit();
+  // 处理 --resume CLI 参数
+  const hasProcessedResumeRef = useRef(false);
+  useEffect(() => {
+    if (hasProcessedResumeRef.current) return;
+    if (!otherProps.resume) return;
+
+    hasProcessedResumeRef.current = true;
+
+    const handleResume = async () => {
+      try {
+        // 情况 1: 直接提供了 sessionId (--resume <sessionId>)
+        if (typeof otherProps.resume === 'string' && otherProps.resume !== 'true') {
+          const messages = await SessionService.loadSession(otherProps.resume);
+
+          const sessionMessages = messages
+            .filter((msg) => msg.role !== 'tool')
+            .map((msg, index) => ({
+              id: `restored-${Date.now()}-${index}`,
+              role: msg.role as 'user' | 'assistant' | 'system',
+              content:
+                typeof msg.content === 'string'
+                  ? msg.content
+                  : JSON.stringify(msg.content),
+              timestamp: Date.now() - (messages.length - index) * 1000,
+            }));
+
+          restoreSession(otherProps.resume, sessionMessages);
+          return;
+        }
+
+        // 情况 2: 交互式选择 (--resume 无参数)
+        const sessions = await SessionService.listSessions();
+
+        if (sessions.length === 0) {
+          console.error('没有找到历史会话');
+          process.exit(1);
+        }
+
+        // 显示会话选择器
+        appDispatch(appActions.showSessionSelector(sessions));
+      } catch (error) {
+        console.error('[BladeInterface] 加载会话失败:', error);
+        process.exit(1);
       }
-    },
-    { isActive: true } // 始终激活
-  );
+    };
+
+    handleResume();
+  }, [otherProps.resume, restoreSession, appDispatch, appActions]);
 
   // 获取终端宽度
   useEffect(() => {
@@ -134,7 +180,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   });
 
   const { input, showSuggestions, suggestions, selectedSuggestionIndex } =
-    useKeyboardInput(
+    useMainInput(
       (command: string) => executeCommand(command, addUserMessage, addAssistantMessage),
       getPreviousCommand,
       getNextCommand,
@@ -145,21 +191,38 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     );
 
   // 焦点管理：根据不同状态切换焦点
-  const { focus } = useFocusManager();
+  const { setFocus } = useFocusContext();
   useEffect(() => {
     if (requiresSetup) {
-      // SetupWizard 显示时，由 SetupWizard 自己管理焦点
+      // SetupWizard 显示时，焦点转移到设置向导
+      setFocus(FocusId.SETUP_WIZARD);
       return;
     }
 
     if (confirmationState.isVisible) {
       // 显示确认对话框时，焦点转移到对话框
-      focus('confirmation-prompt');
+      setFocus(FocusId.CONFIRMATION_PROMPT);
+    } else if (appState.showSessionSelector) {
+      // 显示会话选择器时，焦点转移到选择器
+      setFocus(FocusId.SESSION_SELECTOR);
+    } else if (appState.showThemeSelector) {
+      // 显示主题选择器时，焦点转移到选择器
+      setFocus(FocusId.THEME_SELECTOR);
+    } else if (appState.showPermissionsManager) {
+      // 显示权限管理器时，焦点转移到管理器
+      setFocus(FocusId.PERMISSIONS_MANAGER);
     } else {
       // 其他情况，焦点在主输入框
-      focus('main-input');
+      setFocus(FocusId.MAIN_INPUT);
     }
-  }, [requiresSetup, confirmationState.isVisible, focus]);
+  }, [
+    requiresSetup,
+    confirmationState.isVisible,
+    appState.showSessionSelector,
+    appState.showThemeSelector,
+    appState.showPermissionsManager,
+    setFocus,
+  ]);
 
   useEffect(() => {
     if (!readyForChat || readyAnnouncementSent.current) {
@@ -260,6 +323,15 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   }
 
   // 主界面 - 统一显示，不再区分初始化状态
+  if (debug) {
+    console.log('[Debug] 渲染主界面，条件检查:', {
+      confirmationVisible: confirmationState.isVisible,
+      showThemeSelector: appState.showThemeSelector,
+      showPermissionsManager: appState.showPermissionsManager,
+      showSessionSelector: appState.showSessionSelector,
+    });
+  }
+
   return (
     <Box flexDirection="column" width="100%" height="100%">
       {/* 确认对话框覆盖层 */}
@@ -273,6 +345,46 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       ) : appState.showPermissionsManager ? (
         <PermissionsManager
           onClose={() => appDispatch(appActions.hidePermissionsManager())}
+        />
+      ) : appState.showSessionSelector ? (
+        <SessionSelector
+          sessions={appState.sessionSelectorData as SessionMetadata[] | undefined} // 从 AppContext 传递会话数据
+          onSelect={async (sessionId: string) => {
+            try {
+              const messages = await SessionService.loadSession(sessionId);
+
+              // 转换消息格式
+              const sessionMessages = messages
+                .filter((msg) => msg.role !== 'tool')
+                .map((msg, index) => ({
+                  id: `restored-${Date.now()}-${index}`,
+                  role: msg.role as 'user' | 'assistant' | 'system',
+                  content:
+                    typeof msg.content === 'string'
+                      ? msg.content
+                      : JSON.stringify(msg.content),
+                  timestamp: Date.now() - (messages.length - index) * 1000,
+                }));
+
+              // 恢复会话
+              restoreSession(sessionId, sessionMessages);
+
+              // 关闭选择器
+              appDispatch(appActions.hideSessionSelector());
+            } catch (error) {
+              console.error('[BladeInterface] Failed to restore session:', error);
+              appDispatch(appActions.hideSessionSelector());
+            }
+          }}
+          onCancel={() => {
+            // 如果是 --resume CLI 模式，按 Esc 退出应用
+            // 如果是 /resume 斜杠命令模式，按 Esc 关闭选择器
+            if (otherProps.resume) {
+              exit(); // CLI 模式：退出应用
+            } else {
+              appDispatch(appActions.hideSessionSelector()); // 斜杠命令模式：关闭选择器
+            }
+          }}
         />
       ) : (
         <>

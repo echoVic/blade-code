@@ -1,15 +1,17 @@
 import { useMemoizedFn } from 'ahooks';
-import { useApp, useFocus, useInput } from 'ink';
-import { useEffect, useState } from 'react';
+import { useInput } from 'ink';
+import { useEffect, useRef, useState } from 'react';
 import { getFuzzyCommandSuggestions } from '../../slash-commands/index.js';
 import type { CommandSuggestion } from '../../slash-commands/types.js';
+import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
 import { useSession } from '../contexts/SessionContext.js';
+import { useCtrlCHandler } from './useCtrlCHandler.js';
 
 /**
- * 键盘输入处理 Hook
- * 负责键盘事件监听和输入管理
+ * 主输入框处理 Hook
+ * 负责主界面输入框的键盘事件、命令建议和历史记录
  */
-export const useKeyboardInput = (
+export const useMainInput = (
   onSubmit: (input: string) => void,
   onPreviousCommand: () => string,
   onNextCommand: () => string,
@@ -18,17 +20,22 @@ export const useKeyboardInput = (
   isProcessing?: boolean,
   onTogglePermissionMode?: () => void
 ) => {
-  // 使用 useFocus 管理焦点，主输入框使用显式 ID
-  // 焦点通过 BladeInterface 的 useFocusManager 集中管理
-  const { isFocused } = useFocus({
-    id: 'main-input',
-  });
+  // 使用 FocusContext 管理焦点
+  const { state: focusState } = useFocusContext();
+  const isFocused = focusState.currentFocus === FocusId.MAIN_INPUT;
+
   const [input, setInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
-  const { exit } = useApp();
   const { dispatch } = useSession();
+
+  // 使用智能 Ctrl+C 处理
+  const handleCtrlC = useCtrlCHandler(isProcessing || false, onAbort);
+
+  // Esc 双击检测：用于清空输入框
+  const lastEscTimeRef = useRef<number>(0);
+  const ESC_DOUBLE_CLICK_THRESHOLD = 500; // 500ms 内连续两次 Esc 视为双击
 
   // 更新建议列表
   useEffect(() => {
@@ -47,11 +54,6 @@ export const useKeyboardInput = (
   const handleClear = useMemoizedFn(() => {
     dispatch({ type: 'CLEAR_MESSAGES' });
     dispatch({ type: 'SET_ERROR', payload: null });
-  });
-
-  // 处理退出
-  const handleExit = useMemoizedFn(() => {
-    exit();
   });
 
   // 处理提交
@@ -82,26 +84,39 @@ export const useKeyboardInput = (
         // 回车键提交命令
         handleSubmit();
       } else if ((key.ctrl && inputKey === 'c') || (key.meta && inputKey === 'c')) {
-        // Ctrl+C 退出
-        handleExit();
+        // Ctrl+C - 智能处理（有任务时双击，无任务时单击）
+        handleCtrlC();
       } else if ((key.ctrl && inputKey === 'd') || (key.meta && inputKey === 'd')) {
-        // Ctrl+D 退出
-        handleExit();
+        // Ctrl+D - 智能退出
+        handleCtrlC();
       } else if ((key.ctrl && inputKey === 'l') || (key.meta && inputKey === 'l')) {
         // Ctrl+L 清屏
         handleClear();
+      } else if ((key.ctrl && inputKey === 'u') || (key.meta && inputKey === 'u')) {
+        // Ctrl+U 清空输入（Unix 标准）
+        setInput('');
       } else if (key.escape) {
-        // Esc 键 - 停止任务 > 退出建议模式 > 退出应用
+        // Esc 键 - 停止任务 > 退出建议模式 > 双击清空输入
         if (isProcessing && onAbort) {
-          // 如果正在处理任务，触发停止
+          // 第一优先级：如果正在处理任务，触发停止
           onAbort();
         } else if (showSuggestions) {
-          // 如果显示建议，隐藏建议
+          // 第二优先级：如果显示建议，隐藏建议
           setShowSuggestions(false);
           setSuggestions([]);
-        } else {
-          // 否则退出应用
-          handleExit();
+        } else if (input) {
+          // 第三优先级：如果有输入内容，检测双击清空
+          const now = Date.now();
+          const timeSinceLastEsc = now - lastEscTimeRef.current;
+
+          if (timeSinceLastEsc < ESC_DOUBLE_CLICK_THRESHOLD) {
+            // 双击 Esc：清空输入
+            setInput('');
+            lastEscTimeRef.current = 0; // 重置计时器
+          } else {
+            // 单击 Esc：记录时间，等待第二次按下
+            lastEscTimeRef.current = now;
+          }
         }
       } else if (key.tab && key.shift) {
         onTogglePermissionMode?.();

@@ -3,6 +3,7 @@
  */
 
 import type { ConfigManager } from '../config/ConfigManager.js';
+import type { SessionMessage } from '../ui/contexts/SessionContext.js';
 
 export interface SlashCommandResult {
   success: boolean;
@@ -16,6 +17,9 @@ export interface SlashCommandContext {
   addUserMessage: (message: string) => void;
   addAssistantMessage: (message: string) => void;
   configManager?: ConfigManager;
+  // 会话恢复相关
+  restoreSession?: (sessionId: string, messages: SessionMessage[]) => void;
+  sessionId?: string;
 }
 
 export interface SlashCommand {

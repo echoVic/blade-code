@@ -16,6 +16,8 @@ export interface AppState {
   error: AppError | null;
   showThemeSelector: boolean;
   showPermissionsManager: boolean;
+  showSessionSelector: boolean;
+  sessionSelectorData: unknown[] | null; // 会话选择器数据（从斜杠命令传递）
   todos: TodoItem[];
   showTodoPanel: boolean;
   permissionMode: PermissionMode;
@@ -96,6 +98,8 @@ type AppAction =
   | { type: 'HIDE_THEME_SELECTOR' }
   | { type: 'SHOW_PERMISSIONS_MANAGER' }
   | { type: 'HIDE_PERMISSIONS_MANAGER' }
+  | { type: 'SHOW_SESSION_SELECTOR'; payload?: unknown[] }
+  | { type: 'HIDE_SESSION_SELECTOR' }
   | { type: 'SET_TODOS'; payload: TodoItem[] }
   | { type: 'UPDATE_TODO'; payload: TodoItem }
   | { type: 'SHOW_TODO_PANEL' }
@@ -140,6 +144,8 @@ const defaultState: AppState = {
   error: null,
   showThemeSelector: false,
   showPermissionsManager: false,
+  showSessionSelector: false,
+  sessionSelectorData: null,
   todos: [],
   showTodoPanel: true,
   permissionMode: PermissionMode.DEFAULT,
@@ -207,6 +213,20 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'HIDE_PERMISSIONS_MANAGER':
       return { ...state, showPermissionsManager: false };
+
+    case 'SHOW_SESSION_SELECTOR':
+      return {
+        ...state,
+        showSessionSelector: true,
+        sessionSelectorData: action.payload || null,
+      };
+
+    case 'HIDE_SESSION_SELECTOR':
+      return {
+        ...state,
+        showSessionSelector: false,
+        sessionSelectorData: null,
+      };
 
     case 'SET_TODOS':
       return { ...state, todos: action.payload };
@@ -321,6 +341,15 @@ export const AppActions = {
 
   hidePermissionsManager: () => ({
     type: 'HIDE_PERMISSIONS_MANAGER' as const,
+  }),
+
+  showSessionSelector: (sessions?: unknown[]) => ({
+    type: 'SHOW_SESSION_SELECTOR' as const,
+    payload: sessions,
+  }),
+
+  hideSessionSelector: () => ({
+    type: 'HIDE_SESSION_SELECTOR' as const,
   }),
 
   setTodos: (todos: TodoItem[]) => ({

@@ -1,6 +1,6 @@
 import { useMemoizedFn } from 'ahooks';
 import { promises as fs } from 'fs';
-import { Box, Text, useFocus, useInput } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
 import os from 'os';
@@ -8,6 +8,8 @@ import path from 'path';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import type { PermissionConfig } from '../../config/types.js';
+import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
+import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 type RuleSource = 'local' | 'project' | 'global';
 type PermissionType = 'allow' | 'ask' | 'deny';
@@ -128,7 +130,13 @@ function formatRuleLabel(rule: string, source: RuleSource): string {
 }
 
 export const PermissionsManager: React.FC<PermissionsManagerProps> = ({ onClose }) => {
-  const { isFocused } = useFocus({ autoFocus: true });
+  // 使用 FocusContext 管理焦点
+  const { state: focusState } = useFocusContext();
+  const isFocused = focusState.currentFocus === FocusId.PERMISSIONS_MANAGER;
+
+  // 使用智能 Ctrl+C 处理（没有任务，所以直接退出）
+  const handleCtrlC = useCtrlCHandler(false);
+
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const activeTab = tabs[activeTabIndex].key;
   const [entries, setEntries] = useState<PermissionEntries>(initialEntries);
@@ -261,9 +269,14 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({ onClose 
     }
   );
 
+  // 处理键盘输入
   useInput(
     (input, key) => {
-      if (!isFocused) return;
+      // Ctrl+C 或 Cmd+C: 智能退出应用
+      if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
+        handleCtrlC();
+        return;
+      }
 
       if (mode === 'locked') {
         if (lockedAwaitRef.current) {
@@ -298,7 +311,7 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({ onClose 
         }
       }
     },
-    { isActive: true }
+    { isActive: isFocused }
   );
 
   const handleRuleSelect = useMemoizedFn((item: RuleSelectItem) => {

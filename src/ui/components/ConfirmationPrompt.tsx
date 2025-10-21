@@ -1,10 +1,12 @@
-import { Box, Text, useFocus, useInput } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import SelectInput, { type ItemProps as SelectItemProps } from 'ink-select-input';
 import React, { useMemo } from 'react';
 import type {
   ConfirmationDetails,
   ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
+import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
+import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 const ConfirmationItem = ({ label, isSelected }: SelectItemProps) => (
   <Text color={isSelected ? 'yellow' : undefined}>{label}</Text>
@@ -26,14 +28,23 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
   details,
   onResponse,
 }) => {
-  // 使用 useFocus 管理焦点，使用显式 ID（遵循焦点管理最佳实践）
-  const { isFocused } = useFocus({ id: 'confirmation-prompt' });
+  // 使用 FocusContext 管理焦点
+  const { state: focusState } = useFocusContext();
+  const isFocused = focusState.currentFocus === FocusId.CONFIRMATION_PROMPT;
 
-  // 只处理 ESC 键取消，其他按键交给 SelectInput 处理
+  // 使用智能 Ctrl+C 处理（没有任务，所以直接退出）
+  const handleCtrlC = useCtrlCHandler(false);
+
+  // 处理键盘输入
   useInput(
     (input, key) => {
-      if (!isFocused) return;
+      // Ctrl+C 或 Cmd+C: 智能退出应用
+      if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
+        handleCtrlC();
+        return;
+      }
 
+      // Esc: 取消确认
       if (key.escape) {
         onResponse({ approved: false, reason: '用户取消' });
         return;

@@ -42,7 +42,7 @@ export const useCommandHandler = (
     maxTurns: 50,
     currentTool: undefined,
   });
-  const { dispatch, state: sessionState } = useSession();
+  const { dispatch, state: sessionState, restoreSession } = useSession();
   const { dispatch: appDispatch, actions: appActions } = useAppState();
   const abortControllerRef = useRef<AbortController | undefined>(undefined);
   const agentRef = useRef<Agent | undefined>(undefined);
@@ -115,15 +115,11 @@ export const useCommandHandler = (
       addUserMessage: (message: string) => void,
       addAssistantMessage: (message: string) => void
     ): Promise<CommandResult> => {
-      console.log('[DEBUG] handleCommandSubmit 被调用，命令:', command);
-
       try {
-        console.log('[DEBUG] 添加用户消息到UI');
         addUserMessage(command);
 
         // 检查是否为 slash command
         if (isSlashCommand(command)) {
-          console.log('[DEBUG] 检测到 slash command，执行中...');
 
           const configManager = ConfigManager.getInstance();
           await configManager.initialize();
@@ -133,6 +129,8 @@ export const useCommandHandler = (
             addUserMessage,
             addAssistantMessage,
             configManager,
+            restoreSession, // 传递 restoreSession 函数
+            sessionId: sessionState.sessionId, // 传递当前 sessionId
           };
 
           const slashResult = await executeSlashCommand(command, slashContext);
@@ -145,6 +143,14 @@ export const useCommandHandler = (
 
           if (slashResult.message === 'show_permissions_manager') {
             appDispatch(appActions.showPermissionsManager());
+            return { success: true };
+          }
+
+          // 检查是否需要显示会话选择器
+          if (slashResult.message === 'show_session_selector') {
+            // 传递会话数据到 AppContext
+            const sessions = slashResult.data?.sessions as unknown[] | undefined;
+            appDispatch(appActions.showSessionSelector(sessions));
             return { success: true };
           }
 
@@ -228,7 +234,6 @@ export const useCommandHandler = (
           };
         }
 
-        console.log('[DEBUG] 普通命令，发送给 Agent...');
 
         // 创建并设置 Agent
         const agent = await createAndSetupAgent();
@@ -249,7 +254,6 @@ export const useCommandHandler = (
         };
         const output = await agent.chat(command, chatContext);
 
-        console.log('[DEBUG] 命令执行结果:', output);
 
         // 如果返回空字符串，可能是用户中止
         if (!output || output.trim() === '') {
@@ -260,7 +264,6 @@ export const useCommandHandler = (
           };
         }
 
-        console.log('[DEBUG] 添加助手消息到UI');
         addAssistantMessage(output);
 
         return { success: true, output };
@@ -291,32 +294,26 @@ export const useCommandHandler = (
       if (command.trim() && !isProcessing) {
         const trimmedCommand = command.trim();
 
-        console.log('[DEBUG] 开始处理命令:', trimmedCommand);
         setIsProcessing(true);
         dispatch({ type: 'SET_THINKING', payload: true });
 
         try {
-          console.log('[DEBUG] 开始执行 handleCommandSubmit...');
           const result = await handleCommandSubmit(
             trimmedCommand,
             addUserMessage,
             addAssistantMessage
           );
 
-          console.log('[DEBUG] handleCommandSubmit 完成，结果:', result);
 
           if (!result.success && result.error) {
-            console.log('[DEBUG] 设置错误状态:', result.error);
             dispatch({ type: 'SET_ERROR', payload: result.error });
           } else {
-            console.log('[DEBUG] 命令执行成功');
           }
         } catch (error) {
           console.log('[ERROR] executeCommand 异常:', error);
           const errorMessage = error instanceof Error ? error.message : '未知错误';
           dispatch({ type: 'SET_ERROR', payload: `执行失败: ${errorMessage}` });
         } finally {
-          console.log('[DEBUG] 设置处理状态为 false');
           setIsProcessing(false);
           setLoopState({
             active: false,
@@ -327,7 +324,6 @@ export const useCommandHandler = (
           dispatch({ type: 'SET_THINKING', payload: false });
         }
       } else {
-        console.log('[DEBUG] 跳过提交 - 输入为空或正在处理中');
       }
     }
   );

@@ -3,6 +3,7 @@
  */
 
 import permissionsCommand from './permissions.js';
+import resumeCommand from './resume.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 const helpCommand: SlashCommand = {
@@ -22,6 +23,7 @@ const helpCommand: SlashCommand = {
 **/init** - 分析当前项目并生成 BLADE.md 配置文件
 **/help** - 显示此帮助信息
 **/clear** - 清除屏幕内容
+**/resume** - 恢复历史会话
 **/version** - 显示 Blade Code 版本信息
 **/status** - 显示当前配置状态
 **/permissions** - 管理本地权限规则
@@ -309,4 +311,5 @@ export const builtinCommands = {
   context: contextCommand,
   cost: costCommand,
   permissions: permissionsCommand,
+  resume: resumeCommand,
 };
