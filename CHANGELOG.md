@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.11] - 2025-10-23
+
+### ✨ 新功能
+
+- 重构为无状态Agent并实现JSONL持久化存储 (9f7f10f)
+
+### 🔧 其他更改
+
+- release v0.0.10 (16cd9ff)
+
+
 ## [0.0.10] - 2025-10-19
 
 
