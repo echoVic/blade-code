@@ -1,19 +1,19 @@
+import { nanoid } from 'nanoid';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { nanoid } from 'nanoid';
 import type {
   BladeJSONLEntry,
   ContextData,
   ConversationContext,
   SessionContext,
 } from '../types.js';
-import { JSONLStore } from './JSONLStore.js';
 import {
   detectGitBranch,
   getProjectStoragePath,
   getSessionFilePath,
   listProjectDirectories,
 } from '../utils/pathEscape.js';
+import { JSONLStore } from './JSONLStore.js';
 
 /**
  * 持久化存储实现 - JSONL 格式，类似 Claude Code
@@ -69,7 +69,12 @@ export class PersistentStore {
         parentUuid,
         sessionId,
         timestamp: new Date().toISOString(),
-        type: messageRole === 'user' ? 'user' : messageRole === 'assistant' ? 'assistant' : 'system',
+        type:
+          messageRole === 'user'
+            ? 'user'
+            : messageRole === 'assistant'
+              ? 'assistant'
+              : 'system',
         cwd: this.projectPath,
         gitBranch: detectGitBranch(this.projectPath),
         version: this.version,
@@ -124,7 +129,10 @@ export class PersistentStore {
       await store.append(entry);
       return entry.uuid;
     } catch (error) {
-      console.error(`[PersistentStore] 保存工具调用失败 (session: ${sessionId}):`, error);
+      console.error(
+        `[PersistentStore] 保存工具调用失败 (session: ${sessionId}):`,
+        error
+      );
       throw error;
     }
   }
@@ -166,7 +174,85 @@ export class PersistentStore {
       await store.append(entry);
       return entry.uuid;
     } catch (error) {
-      console.error(`[PersistentStore] 保存工具结果失败 (session: ${sessionId}):`, error);
+      console.error(
+        `[PersistentStore] 保存工具结果失败 (session: ${sessionId}):`,
+        error
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 保存压缩边界和总结消息到 JSONL
+   * 用于上下文压缩功能
+   *
+   * @param sessionId 会话 ID
+   * @param summary 压缩总结内容
+   * @param metadata 压缩元数据（触发方式、token 数量、包含的文件等）
+   * @param parentUuid 最后一条保留消息的 UUID（用于建立消息链）
+   * @returns 总结消息的 UUID
+   */
+  async saveCompaction(
+    sessionId: string,
+    summary: string,
+    metadata: {
+      trigger: 'auto' | 'manual';
+      preTokens: number;
+      postTokens?: number;
+      filesIncluded?: string[];
+    },
+    parentUuid: string | null = null
+  ): Promise<string> {
+    try {
+      const filePath = getSessionFilePath(this.projectPath, sessionId);
+      const store = new JSONLStore(filePath);
+
+      // 1. 保存压缩边界标记（compact_boundary）
+      const boundaryEntry: BladeJSONLEntry = {
+        uuid: nanoid(),
+        parentUuid,
+        sessionId,
+        timestamp: new Date().toISOString(),
+        type: 'system',
+        subtype: 'compact_boundary',
+        cwd: this.projectPath,
+        gitBranch: detectGitBranch(this.projectPath),
+        version: this.version,
+        message: {
+          role: 'system',
+          content: '=== 上下文压缩边界 ===',
+        },
+        compactMetadata: metadata,
+      };
+
+      await store.append(boundaryEntry);
+      console.log('[PersistentStore] 保存压缩边界标记');
+
+      // 2. 保存压缩总结消息（isCompactSummary: true）
+      const summaryEntry: BladeJSONLEntry = {
+        uuid: nanoid(),
+        parentUuid: boundaryEntry.uuid, // 链接到边界消息
+        logicalParentUuid: parentUuid ?? undefined, // 逻辑上链接到最后一条保留消息
+        sessionId,
+        timestamp: new Date().toISOString(),
+        type: 'user',
+        isCompactSummary: true,
+        cwd: this.projectPath,
+        gitBranch: detectGitBranch(this.projectPath),
+        version: this.version,
+        message: {
+          role: 'user',
+          content: summary,
+        },
+        compactMetadata: metadata,
+      };
+
+      await store.append(summaryEntry);
+      console.log('[PersistentStore] 保存压缩总结消息');
+
+      return summaryEntry.uuid;
+    } catch (error) {
+      console.error(`[PersistentStore] 保存压缩失败 (session: ${sessionId}):`, error);
       throw error;
     }
   }
@@ -313,7 +399,8 @@ export class PersistentStore {
       return {
         sessionId,
         lastActivity: new Date(lastEntry.timestamp).getTime(),
-        messageCount: entries.filter((e) => ['user', 'assistant'].includes(e.type)).length,
+        messageCount: entries.filter((e) => ['user', 'assistant'].includes(e.type))
+          .length,
         topics: [],
       };
     } catch {
@@ -358,7 +445,9 @@ export class PersistentStore {
         .slice(this.maxSessions)
         .map((summary) => summary.sessionId);
 
-      await Promise.all(sessionsToDelete.map((sessionId) => this.deleteSession(sessionId)));
+      await Promise.all(
+        sessionsToDelete.map((sessionId) => this.deleteSession(sessionId))
+      );
 
       console.log(`[PersistentStore] 已清理 ${sessionsToDelete.length} 个旧会话`);
     } catch (error) {

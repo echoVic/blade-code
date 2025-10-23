@@ -30,6 +30,7 @@ export interface AgentOptions {
   appendSystemPrompt?: string; // 追加系统提示
   permissions?: Partial<PermissionConfig>; // 运行时覆盖权限
   permissionMode?: PermissionMode;
+  maxTurns?: number; // 最大对话轮次 (-1=无限制, 0=禁用对话, N>0=限制轮次)
 }
 
 export interface AgentTask {
@@ -89,18 +90,6 @@ export interface ContextConfig {
 
 // ===== Agentic Loop Types =====
 
-export interface LoopConfig {
-  maxTurns?: number;
-  autoCompact?: boolean;
-  compressionThreshold?: number;
-  loopDetection?: {
-    enabled: boolean;
-    toolCallThreshold: number;
-    contentRepeatThreshold: number;
-    llmCheckInterval: number;
-  };
-}
-
 export interface LoopOptions {
   maxTurns?: number;
   autoCompact?: boolean;
@@ -121,7 +110,13 @@ export interface LoopResult {
   success: boolean;
   finalMessage?: string;
   error?: {
-    type: 'canceled' | 'max_turns_exceeded' | 'api_error' | 'loop_detected' | 'aborted';
+    type:
+      | 'canceled'
+      | 'max_turns_exceeded'
+      | 'api_error'
+      | 'loop_detected'
+      | 'aborted'
+      | 'chat_disabled';
     message: string;
     details?: any;
   };
@@ -129,5 +124,8 @@ export interface LoopResult {
     turnsCount: number;
     toolCallsCount: number;
     duration: number;
+    configuredMaxTurns?: number;
+    actualMaxTurns?: number;
+    hitSafetyLimit?: boolean;
   };
 }

@@ -29,6 +29,7 @@ export interface GlobalOptions {
   sessionId?: string;
   agents?: string;
   settingSources?: string;
+  maxTurns?: number; // 最大对话轮次 (-1=无限制, 0=禁用对话, N>0=限制轮次)
 }
 
 export interface ConfigSetOptions extends GlobalOptions {

@@ -13,7 +13,7 @@ interface ChatStatusBarProps {
  * 聊天状态栏组件
  * 显示消息计数、API状态和处理状态
  */
-export const ChatStatusBar: React.FC<ChatStatusBarProps> = ({
+export const ChatStatusBar: React.FC<ChatStatusBarProps> = React.memo(({
   messageCount,
   hasApiKey,
   isProcessing,
@@ -61,4 +61,4 @@ export const ChatStatusBar: React.FC<ChatStatusBarProps> = ({
       )}
     </Box>
   );
-};
+});

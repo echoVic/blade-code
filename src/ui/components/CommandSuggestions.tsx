@@ -9,7 +9,7 @@ interface CommandSuggestionsProps {
   maxDisplay?: number;
 }
 
-export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
+export const CommandSuggestions: React.FC<CommandSuggestionsProps> = React.memo(({
   suggestions,
   selectedIndex,
   visible,
@@ -65,4 +65,4 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
       )}
     </Box>
   );
-};
+});

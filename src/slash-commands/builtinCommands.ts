@@ -2,6 +2,7 @@
  * 内置的 slash commands
  */
 
+import compactCommand from './compact.js';
 import permissionsCommand from './permissions.js';
 import resumeCommand from './resume.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
@@ -24,6 +25,7 @@ const helpCommand: SlashCommand = {
 **/help** - 显示此帮助信息
 **/clear** - 清除屏幕内容
 **/resume** - 恢复历史会话
+**/compact** - 手动压缩上下文，生成总结并节省 token
 **/version** - 显示 Blade Code 版本信息
 **/status** - 显示当前配置状态
 **/permissions** - 管理本地权限规则
@@ -312,4 +314,5 @@ export const builtinCommands = {
   cost: costCommand,
   permissions: permissionsCommand,
   resume: resumeCommand,
+  compact: compactCommand,
 };

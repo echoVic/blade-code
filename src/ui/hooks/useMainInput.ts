@@ -76,27 +76,28 @@ export const useMainInput = (
     }
   });
 
-  // 键盘输入监听
+  // 键盘输入监听 - 只处理特殊快捷键，让 TextInput 处理基本编辑
   // 使用 isActive 配合 isFocused，只有在聚焦时才响应输入
   useInput(
     (inputKey, key) => {
-      if (key.return) {
-        // 回车键提交命令
-        handleSubmit();
-      } else if ((key.ctrl && inputKey === 'c') || (key.meta && inputKey === 'c')) {
-        // Ctrl+C - 智能处理（有任务时双击，无任务时单击）
+      // Ctrl+C - 智能处理（有任务时双击，无任务时单击）
+      if ((key.ctrl && inputKey === 'c') || (key.meta && inputKey === 'c')) {
         handleCtrlC();
-      } else if ((key.ctrl && inputKey === 'd') || (key.meta && inputKey === 'd')) {
-        // Ctrl+D - 智能退出
+      }
+      // Ctrl+D - 智能退出
+      else if ((key.ctrl && inputKey === 'd') || (key.meta && inputKey === 'd')) {
         handleCtrlC();
-      } else if ((key.ctrl && inputKey === 'l') || (key.meta && inputKey === 'l')) {
-        // Ctrl+L 清屏
+      }
+      // Ctrl+L 清屏
+      else if ((key.ctrl && inputKey === 'l') || (key.meta && inputKey === 'l')) {
         handleClear();
-      } else if ((key.ctrl && inputKey === 'u') || (key.meta && inputKey === 'u')) {
-        // Ctrl+U 清空输入（Unix 标准）
+      }
+      // Ctrl+U 清空输入（Unix 标准）
+      else if ((key.ctrl && inputKey === 'u') || (key.meta && inputKey === 'u')) {
         setInput('');
-      } else if (key.escape) {
-        // Esc 键 - 停止任务 > 退出建议模式 > 双击清空输入
+      }
+      // Esc 键 - 停止任务 > 退出建议模式 > 双击清空输入
+      else if (key.escape) {
         if (isProcessing && onAbort) {
           // 第一优先级：如果正在处理任务，触发停止
           onAbort();
@@ -118,19 +119,23 @@ export const useMainInput = (
             lastEscTimeRef.current = now;
           }
         }
-      } else if (key.tab && key.shift) {
+      }
+      // Shift+Tab 切换权限模式
+      else if (key.tab && key.shift) {
         onTogglePermissionMode?.();
-      } else if (key.tab && showSuggestions && suggestions.length > 0) {
-        // Tab 键 - 自动补全
+      }
+      // Tab 键 - 自动补全
+      else if (key.tab && showSuggestions && suggestions.length > 0) {
         const selectedCommand = suggestions[selectedSuggestionIndex].command;
         setInput(selectedCommand);
         setShowSuggestions(false);
         setSuggestions([]);
-      } else if (key.upArrow) {
+      }
+      // 上箭头 - 在建议中导航或历史命令
+      else if (key.upArrow) {
         if (showSuggestions && suggestions.length > 0) {
           // 在建议列表中向上导航
           const maxIndex = suggestions.length - 1;
-
           setSelectedSuggestionIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
         } else {
           // 上箭头 - 历史命令
@@ -139,23 +144,18 @@ export const useMainInput = (
             setInput(prevCommand);
           }
         }
-      } else if (key.downArrow) {
+      }
+      // 下箭头 - 在建议中导航或历史命令
+      else if (key.downArrow) {
         if (showSuggestions && suggestions.length > 0) {
           // 在建议列表中向下导航
           const maxIndex = suggestions.length - 1;
-
           setSelectedSuggestionIndex((prev) => (prev < maxIndex ? prev + 1 : 0));
         } else {
           // 下箭头 - 历史命令
           const nextCommand = onNextCommand();
           setInput(nextCommand);
         }
-      } else if (key.backspace || key.delete) {
-        // 退格键删除字符
-        setInput((prev) => prev.slice(0, -1));
-      } else if (inputKey && inputKey !== '\u001b') {
-        // 普通字符输入（排除 Escape 键）
-        setInput((prev) => prev + inputKey);
       }
     },
     { isActive: isFocused }
@@ -164,6 +164,7 @@ export const useMainInput = (
   return {
     input,
     setInput,
+    handleSubmit,
     showSuggestions,
     suggestions,
     selectedSuggestionIndex,

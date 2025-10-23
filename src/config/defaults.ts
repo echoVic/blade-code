@@ -17,7 +17,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
   // 模型
   model: 'qwen3-coder-plus',
   temperature: 0.0,
-  maxTokens: 32000,
+  maxTokens: 200000, // 200k - 主流 Agent 模型的标准窗口大小
   stream: true,
   topP: 0.9,
   topK: 50,
@@ -64,6 +64,9 @@ export const DEFAULT_CONFIG: BladeConfig = {
   disableAllHooks: false,
   cleanupPeriodDays: 30,
   includeCoAuthoredBy: true,
+
+  // Agentic Loop 配置
+  maxTurns: -1, // 默认无限制（受安全上限 100 保护）
 };
 
 /**
@@ -88,4 +91,7 @@ export const ENV_VAR_MAPPING: Record<string, keyof BladeConfig> = {
   // 核心
   BLADE_DEBUG: 'debug',
   BLADE_TELEMETRY: 'telemetry',
+
+  // Agentic Loop
+  BLADE_MAX_TURNS: 'maxTurns',
 };

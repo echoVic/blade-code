@@ -205,17 +205,26 @@ export const webFetchTool = createTool({
   tags: ['web', 'http', 'fetch', 'request', 'api'],
 
   /**
-   * 提取签名内容：返回 URL
+   * 提取签名内容：返回 domain:hostname 格式
+   * 例如：domain:github.com
    */
-  extractSignatureContent: (params) => params.url,
+  extractSignatureContent: (params) => {
+    try {
+      const urlObj = new URL(params.url);
+      return `domain:${urlObj.hostname}`;
+    } catch {
+      return params.url;
+    }
+  },
 
   /**
    * 抽象权限规则：提取域名通配符
+   * 例如：domain:github.com
    */
   abstractPermissionRule: (params) => {
     try {
       const urlObj = new URL(params.url);
-      return `${urlObj.protocol}//${urlObj.hostname}/*`;
+      return `domain:${urlObj.hostname}`;
     } catch {
       return '*';
     }

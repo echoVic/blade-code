@@ -21,7 +21,7 @@ interface MessageAreaProps {
  * 消息区域组件
  * 负责显示消息列表、欢迎界面和处理状态
  */
-export const MessageArea: React.FC<MessageAreaProps> = ({
+export const MessageArea: React.FC<MessageAreaProps> = React.memo(({
   sessionState,
   terminalWidth,
   isProcessing,
@@ -169,4 +169,4 @@ export const MessageArea: React.FC<MessageAreaProps> = ({
       </Box>
     </Box>
   );
-};
+});

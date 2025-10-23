@@ -284,6 +284,23 @@ export class ContextManager {
   }
 
   /**
+   * 保存压缩边界和总结到 JSONL (直接访问 PersistentStore)
+   */
+  async saveCompaction(
+    sessionId: string,
+    summary: string,
+    metadata: {
+      trigger: 'auto' | 'manual';
+      preTokens: number;
+      postTokens?: number;
+      filesIncluded?: string[];
+    },
+    parentUuid: string | null = null
+  ): Promise<string> {
+    return this.persistent.saveCompaction(sessionId, summary, metadata, parentUuid);
+  }
+
+  /**
    * 更新工具状态
    */
   updateToolState(toolName: string, state: any): void {

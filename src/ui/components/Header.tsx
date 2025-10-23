@@ -11,7 +11,7 @@ interface HeaderProps {
  * 应用头部组件
  * 显示应用标题和退出提示
  */
-export const Header: React.FC<HeaderProps> = ({ useBigText = false }) => {
+export const Header: React.FC<HeaderProps> = React.memo(({ useBigText = false }) => {
   // 渲染大标题版本
   if (useBigText) {
     return (
@@ -45,4 +45,4 @@ export const Header: React.FC<HeaderProps> = ({ useBigText = false }) => {
       </Text>
     </Box>
   );
-};
+});

@@ -8,7 +8,7 @@ interface PerformanceMonitorProps {
   className?: string;
 }
 
-export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
+export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = React.memo(({
   interval = 1000,
   showGraph = false,
   className,
@@ -175,7 +175,7 @@ export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
       )}
     </Box>
   );
-};
+});
 
 // 静态性能监控类
 export class PerformanceMonitorStatic {

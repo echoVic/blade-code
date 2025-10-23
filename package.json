@@ -115,6 +115,7 @@
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
     "inquirer": "^12.6.3",
+    "js-tiktoken": "^1.0.21",
     "lodash-es": "^4.17.21",
     "lowlight": "^3.3.0",
     "nanoid": "^5.1.6",

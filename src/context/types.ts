@@ -128,6 +128,8 @@ export interface BladeJSONLEntry {
   uuid: string;
   /** 父消息 ID (用于对话线程追踪) */
   parentUuid: string | null;
+  /** 逻辑父消息 ID (跨压缩边界的逻辑关联) */
+  logicalParentUuid?: string;
   /** 会话 ID (nanoid) */
   sessionId: string;
   /** ISO 8601 时间戳 */
@@ -162,5 +164,22 @@ export interface BladeJSONLEntry {
     id: string;
     output: any;
     error?: string;
+  };
+
+  // === 压缩相关字段（新增） ===
+  /** 消息子类型（用于标记特殊消息，如压缩边界） */
+  subtype?: 'compact_boundary';
+  /** 是否为压缩总结消息 */
+  isCompactSummary?: boolean;
+  /** 压缩元数据 */
+  compactMetadata?: {
+    /** 触发方式：自动或手动 */
+    trigger: 'auto' | 'manual';
+    /** 压缩前的 token 数量 */
+    preTokens: number;
+    /** 压缩后的 token 数量 */
+    postTokens?: number;
+    /** 包含的文件列表 */
+    filesIncluded?: string[];
   };
 }

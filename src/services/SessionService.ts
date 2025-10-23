@@ -57,7 +57,11 @@ export class SessionService {
           const sessionId = file.replace('.jsonl', '');
 
           try {
-            const metadata = await this.extractMetadata(filePath, sessionId, projectPath);
+            const metadata = await this.extractMetadata(
+              filePath,
+              sessionId,
+              projectPath
+            );
             sessions.push(metadata);
           } catch (error) {
             console.warn(`[SessionService] 跳过损坏的会话文件: ${filePath}`, error);
@@ -67,7 +71,8 @@ export class SessionService {
 
       // 按最后消息时间降序排序
       sessions.sort(
-        (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
+        (a, b) =>
+          new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
       );
 
       return sessions;
@@ -86,7 +91,10 @@ export class SessionService {
     projectPath: string
   ): Promise<SessionMetadata> {
     const content = await readFile(filePath, 'utf-8');
-    const lines = content.trim().split('\n').filter((line) => line.trim());
+    const lines = content
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim());
 
     if (lines.length === 0) {
       throw new Error('空的 JSONL 文件');
@@ -123,7 +131,10 @@ export class SessionService {
    * @param sessionId 会话 ID
    * @param projectPath 项目路径（可选，如果不提供则搜索所有项目）
    */
-  static async loadSession(sessionId: string, projectPath?: string): Promise<Message[]> {
+  static async loadSession(
+    sessionId: string,
+    projectPath?: string
+  ): Promise<Message[]> {
     try {
       // 如果提供了项目路径，直接查找
       if (projectPath) {
@@ -151,9 +162,14 @@ export class SessionService {
    */
   private static async loadSessionFromFile(filePath: string): Promise<Message[]> {
     const content = await readFile(filePath, 'utf-8');
-    const lines = content.trim().split('\n').filter((line) => line.trim());
+    const lines = content
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim());
 
-    const entries: BladeJSONLEntry[] = lines.map((line) => JSON.parse(line) as BladeJSONLEntry);
+    const entries: BladeJSONLEntry[] = lines.map(
+      (line) => JSON.parse(line) as BladeJSONLEntry
+    );
 
     return this.convertJSONLToMessages(entries);
   }
@@ -165,23 +181,56 @@ export class SessionService {
    * - user/assistant/system 消息直接转换
    * - tool_use 跳过（工具调用包含在 assistant 的 tool_calls 中）
    * - tool_result 转换为 tool 角色消息
+   * - compact_boundary 作为分界点：清空之前的消息，只保留总结
+   * - isCompactSummary 消息作为压缩总结保留
    */
   static convertJSONLToMessages(entries: BladeJSONLEntry[]): Message[] {
     const messages: Message[] = [];
+    let lastCompactBoundaryIndex = -1;
 
-    for (const entry of entries) {
+    // 第一步：找到最后一个压缩边界
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].subtype === 'compact_boundary') {
+        lastCompactBoundaryIndex = i;
+        console.log(`[SessionService] 检测到压缩边界 at index ${i}`);
+        break;
+      }
+    }
+
+    // 第二步：转换消息
+    // 如果有压缩边界，从边界开始转换；否则转换全部
+    const startIndex = lastCompactBoundaryIndex >= 0 ? lastCompactBoundaryIndex : 0;
+
+    for (let i = startIndex; i < entries.length; i++) {
+      const entry = entries[i];
+
+      // 跳过 compact_boundary 本身（它只是标记，不是实际消息）
+      if (entry.subtype === 'compact_boundary') {
+        console.log('[SessionService] 跳过 compact_boundary 消息');
+        continue;
+      }
+
       switch (entry.type) {
         case 'user':
         case 'assistant':
-        case 'system':
+        case 'system': {
           // 直接转换用户/助手/系统消息
-          messages.push({
+          const message: Message = {
             role: entry.message.role,
-            content: typeof entry.message.content === 'string'
-              ? entry.message.content
-              : JSON.stringify(entry.message.content),
-          });
+            content:
+              typeof entry.message.content === 'string'
+                ? entry.message.content
+                : JSON.stringify(entry.message.content),
+          };
+
+          // 如果是压缩总结，记录日志（metadata 在 JSONL 中已保存）
+          if (entry.isCompactSummary) {
+            console.log('[SessionService] 加载压缩总结消息');
+          }
+
+          messages.push(message);
           break;
+        }
 
         case 'tool_result':
           // 转换工具结果为 tool 消息
@@ -211,6 +260,12 @@ export class SessionService {
           // 跳过其他类型（如 file-history-snapshot）
           break;
       }
+    }
+
+    if (lastCompactBoundaryIndex >= 0) {
+      console.log(
+        `[SessionService] 会话已压缩，跳过前 ${lastCompactBoundaryIndex} 条历史，加载 ${messages.length} 条消息`
+      );
     }
 
     return messages;

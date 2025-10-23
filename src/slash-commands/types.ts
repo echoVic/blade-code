@@ -20,6 +20,8 @@ export interface SlashCommandContext {
   // 会话恢复相关
   restoreSession?: (sessionId: string, messages: SessionMessage[]) => void;
   sessionId?: string;
+  // 当前会话消息列表（用于 /compact 等需要访问历史的命令）
+  messages?: SessionMessage[];
 }
 
 export interface SlashCommand {

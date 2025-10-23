@@ -36,7 +36,7 @@ const MARKDOWN_PATTERNS = {
   bold: /\*\*([^*]+)\*\*/g,
   italic: /\*([^*]+)\*/g,
   listItem: /^[-*+]\s+(.+)$/gm,
-  table: /^\|(.+)\|$/gm,
+  table: /^\|(.+)\|$/,  // 移除 gm 标志以获取捕获组
   tableSeparator: /^\|[\s]*:?-+:?[\s]*\|/,
 } as const;
 
@@ -269,7 +269,7 @@ const TextBlock: React.FC<{
 /**
  * 主要的消息渲染器组件
  */
-export const MessageRenderer: React.FC<MessageRendererProps> = ({
+export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(({
   content,
   role,
   terminalWidth,
@@ -315,4 +315,4 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
       ))}
     </Box>
   );
-};
+});

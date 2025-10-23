@@ -145,7 +145,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const { isProcessing, executeCommand, loopState, handleAbort } = useCommandHandler(
     otherProps.systemPrompt,
     otherProps.appendSystemPrompt,
-    confirmationHandler
+    confirmationHandler,
+    otherProps.maxTurns
   );
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
 
@@ -179,7 +180,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   });
 
-  const { input, showSuggestions, suggestions, selectedSuggestionIndex } =
+  const { input, setInput, handleSubmit, showSuggestions, suggestions, selectedSuggestionIndex } =
     useMainInput(
       (command: string) => executeCommand(command, addUserMessage, addAssistantMessage),
       getPreviousCommand,
@@ -400,7 +401,12 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             showTodoPanel={showTodoPanel}
           />
 
-          <InputArea input={input} isProcessing={isProcessing || !readyForChat} />
+          <InputArea
+            input={input}
+            onChange={setInput}
+            onSubmit={handleSubmit}
+            isProcessing={isProcessing || !readyForChat}
+          />
 
           {/* 命令建议列表 - 显示在输入框下方 */}
           <CommandSuggestions

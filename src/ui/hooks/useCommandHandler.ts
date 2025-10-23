@@ -33,7 +33,8 @@ export interface LoopState {
 export const useCommandHandler = (
   replaceSystemPrompt?: string, // --system-prompt (完全替换)
   appendSystemPrompt?: string, // --append-system-prompt (追加)
-  confirmationHandler?: ConfirmationHandler
+  confirmationHandler?: ConfirmationHandler,
+  maxTurns?: number // --max-turns (最大对话轮次)
 ) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [loopState, setLoopState] = useState<LoopState>({
@@ -75,6 +76,7 @@ export const useCommandHandler = (
     const agent = await Agent.create({
       systemPrompt: replaceSystemPrompt,
       appendSystemPrompt: appendSystemPrompt,
+      maxTurns: maxTurns, // 传递 CLI 参数
     });
     agentRef.current = agent;
 
@@ -120,7 +122,6 @@ export const useCommandHandler = (
 
         // 检查是否为 slash command
         if (isSlashCommand(command)) {
-
           const configManager = ConfigManager.getInstance();
           await configManager.initialize();
 
@@ -131,6 +132,7 @@ export const useCommandHandler = (
             configManager,
             restoreSession, // 传递 restoreSession 函数
             sessionId: sessionState.sessionId, // 传递当前 sessionId
+            messages: sessionState.messages, // 传递会话消息（用于 /compact 等命令）
           };
 
           const slashResult = await executeSlashCommand(command, slashContext);
@@ -184,7 +186,7 @@ export const useCommandHandler = (
             abortControllerRef.current = new AbortController();
 
             const chatContext = {
-              messages: sessionState.messages.map(msg => ({
+              messages: sessionState.messages.map((msg) => ({
                 role: msg.role as 'user' | 'assistant' | 'system',
                 content: msg.content,
               })),
@@ -234,7 +236,6 @@ export const useCommandHandler = (
           };
         }
 
-
         // 创建并设置 Agent
         const agent = await createAndSetupAgent();
 
@@ -242,7 +243,7 @@ export const useCommandHandler = (
         abortControllerRef.current = new AbortController();
 
         const chatContext = {
-          messages: sessionState.messages.map(msg => ({
+          messages: sessionState.messages.map((msg) => ({
             role: msg.role as 'user' | 'assistant' | 'system',
             content: msg.content,
           })),
@@ -253,7 +254,6 @@ export const useCommandHandler = (
           confirmationHandler,
         };
         const output = await agent.chat(command, chatContext);
-
 
         // 如果返回空字符串，可能是用户中止
         if (!output || output.trim() === '') {
@@ -294,6 +294,9 @@ export const useCommandHandler = (
       if (command.trim() && !isProcessing) {
         const trimmedCommand = command.trim();
 
+        // 清空上一轮对话的 todos
+        appDispatch({ type: 'SET_TODOS', payload: [] });
+
         setIsProcessing(true);
         dispatch({ type: 'SET_THINKING', payload: true });
 
@@ -304,10 +307,8 @@ export const useCommandHandler = (
             addAssistantMessage
           );
 
-
           if (!result.success && result.error) {
             dispatch({ type: 'SET_ERROR', payload: result.error });
-          } else {
           }
         } catch (error) {
           console.log('[ERROR] executeCommand 异常:', error);
@@ -323,7 +324,6 @@ export const useCommandHandler = (
           });
           dispatch({ type: 'SET_THINKING', payload: false });
         }
-      } else {
       }
     }
   );

@@ -226,17 +226,26 @@ export const apiCallTool = createTool({
   tags: ['api', 'rest', 'http', 'request', 'web_service'],
 
   /**
-   * 提取签名内容：返回 URL
+   * 提取签名内容：返回 domain:hostname 格式
+   * 例如：domain:api.example.com
    */
-  extractSignatureContent: (params) => params.url,
+  extractSignatureContent: (params) => {
+    try {
+      const urlObj = new URL(params.url);
+      return `domain:${urlObj.hostname}`;
+    } catch {
+      return params.url;
+    }
+  },
 
   /**
    * 抽象权限规则：提取域名通配符
+   * 例如：domain:api.example.com
    */
   abstractPermissionRule: (params) => {
     try {
       const urlObj = new URL(params.url);
-      return `${urlObj.protocol}//${urlObj.hostname}/*`;
+      return `domain:${urlObj.hostname}`;
     } catch {
       return '*';
     }

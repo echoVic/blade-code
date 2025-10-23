@@ -49,7 +49,8 @@
       "Bash(git rm:*)",
       "Bash(git checkout:*)",
       "Bash(git log:*)",
-      "Bash(pnpm remove:*)"
+      "Bash(pnpm remove:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": [],

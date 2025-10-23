@@ -17,6 +17,9 @@ import * as path from 'path';
 import { ConfigManager } from '../config/ConfigManager.js';
 import type { BladeConfig, PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
+import { CompactionService } from '../context/CompactionService.js';
+import { ContextManager } from '../context/ContextManager.js';
+import { TokenCounter } from '../context/TokenCounter.js';
 import { PromptBuilder } from '../prompts/index.js';
 import {
   createChatService,
@@ -28,7 +31,6 @@ import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { Tool, ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
-import { ContextManager } from '../context/ContextManager.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import {
   type LoopDetectionConfig,
@@ -287,7 +289,11 @@ export class Agent extends EventEmitter {
       try {
         const contextMgr = this.executionEngine?.getContextManager();
         if (contextMgr && context.sessionId) {
-          lastMessageUuid = await contextMgr.saveMessage(context.sessionId, 'user', message);
+          lastMessageUuid = await contextMgr.saveMessage(
+            context.sessionId,
+            'user',
+            message
+          );
         }
       } catch (error) {
         console.warn('[Agent] 保存用户消息失败:', error);
@@ -295,12 +301,49 @@ export class Agent extends EventEmitter {
       }
 
       // === Agentic Loop: 循环调用直到任务完成 ===
-      const maxTurns = options?.maxTurns || 50; // 可配置最大循环次数
+      const SAFETY_LIMIT = 100; // 硬编码安全上限，防止无限循环
+      // 优先级: runtimeOptions (CLI参数) > options (chat调用参数) > config (配置文件) > 默认值(-1)
+      const configuredMaxTurns =
+        this.runtimeOptions.maxTurns ?? options?.maxTurns ?? this.config.maxTurns ?? -1;
+
+      // 特殊值处理：maxTurns = 0 完全禁用对话功能
+      if (configuredMaxTurns === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'chat_disabled',
+            message:
+              '对话功能已被禁用 (maxTurns=0)。如需启用，请调整配置：\n' +
+              '  • CLI 参数: blade --max-turns -1\n' +
+              '  • 配置文件: ~/.blade/config.json 中设置 "maxTurns": -1\n' +
+              '  • 环境变量: export BLADE_MAX_TURNS=-1',
+          },
+          metadata: {
+            turnsCount: 0,
+            toolCallsCount: 0,
+            duration: 0,
+          },
+        };
+      }
+
+      // 应用安全上限：-1 表示无限制，但仍受安全上限保护
+      const maxTurns =
+        configuredMaxTurns === -1
+          ? SAFETY_LIMIT
+          : Math.min(configuredMaxTurns, SAFETY_LIMIT);
+
+      // 调试日志
+      if (this.config.debug) {
+        console.log(
+          `[MaxTurns] 配置值: ${configuredMaxTurns}, 实际限制: ${maxTurns}, 安全上限: ${SAFETY_LIMIT}`
+        );
+      }
+
       let turnsCount = 0;
       const allToolResults: ToolResult[] = [];
 
       while (turnsCount < maxTurns) {
-        // === 检查中断信号 ===
+        // === 1. 检查中断信号 ===
         if (options?.signal?.aborted) {
           return {
             success: false,
@@ -316,6 +359,11 @@ export class Agent extends EventEmitter {
           };
         }
 
+        // === 2. 每轮循环前检查并压缩上下文 ===
+        // 传递实际要发送给 LLM 的 messages 数组（包含 system prompt）
+        await this.checkAndCompactInLoop(messages, context, turnsCount);
+
+        // === 3. 轮次计数 ===
         turnsCount++;
         console.log(`🔄 [轮次 ${turnsCount}/${maxTurns}] 调用 LLM...`);
 
@@ -589,17 +637,43 @@ export class Agent extends EventEmitter {
       }
 
       // 8. 达到最大轮次限制
-      console.warn(`⚠️ 达到最大轮次限制 ${maxTurns}`);
+      const isHitSafetyLimit =
+        configuredMaxTurns === -1 || configuredMaxTurns > SAFETY_LIMIT;
+      const actualLimit = isHitSafetyLimit ? SAFETY_LIMIT : configuredMaxTurns;
+
+      console.warn(
+        `⚠️ 达到${isHitSafetyLimit ? '安全上限' : '最大轮次限制'} ${actualLimit}`
+      );
+
+      let helpMessage = `已达到${isHitSafetyLimit ? '安全上限' : '最大处理轮次'} ${actualLimit}。\n\n`;
+
+      if (isHitSafetyLimit) {
+        helpMessage += `💡 这是为了防止无限循环的硬编码安全限制。\n`;
+        helpMessage += `   当前配置: maxTurns=${configuredMaxTurns}\n\n`;
+      }
+
+      helpMessage += `📝 如需调整限制，请使用以下方式：\n`;
+      helpMessage += `  • CLI 参数: blade --max-turns 200\n`;
+      helpMessage += `  • 配置文件: ~/.blade/config.json 中设置 "maxTurns": 200\n`;
+      helpMessage += `  • 环境变量: export BLADE_MAX_TURNS=200\n\n`;
+      helpMessage += `⚠️  提示:\n`;
+      helpMessage += `  • -1 = 无限制（受安全上限 ${SAFETY_LIMIT} 保护）\n`;
+      helpMessage += `  •  0 = 完全禁用对话功能\n`;
+      helpMessage += `  •  N > 0 = 限制为 N 轮（最多 ${SAFETY_LIMIT} 轮）`;
+
       return {
         success: false,
         error: {
           type: 'max_turns_exceeded',
-          message: `已达到最大处理轮次 ${maxTurns}`,
+          message: helpMessage,
         },
         metadata: {
           turnsCount,
           toolCallsCount: allToolResults.length,
           duration: Date.now() - startTime,
+          configuredMaxTurns,
+          actualMaxTurns: actualLimit,
+          hitSafetyLimit: isHitSafetyLimit,
         },
       };
     } catch (error) {
@@ -798,6 +872,110 @@ export class Agent extends EventEmitter {
    */
   public getSystemPrompt(): string | undefined {
     return this.systemPrompt;
+  }
+
+  /**
+   * 在 Agent 循环中检查并执行压缩
+   * 使用实际发送给 LLM 的 messages 进行 token 计算
+   */
+  private async checkAndCompactInLoop(
+    messages: Message[],
+    context: ChatContext,
+    currentTurn: number
+  ): Promise<void> {
+    const modelName = this.config.model;
+    const maxTokens = this.config.maxTokens;
+
+    // 调试：打印配置和 token 计数（使用实际发送给 LLM 的 messages）
+    const currentTokens = TokenCounter.countTokens(messages, modelName);
+    const threshold = Math.floor(maxTokens * 0.8);
+    const logPrefix =
+      currentTurn === 0 ? '[Agent] 压缩检查' : `[Agent] [轮次 ${currentTurn}] 压缩检查`;
+    console.log(`${logPrefix}:`, {
+      currentTokens,
+      maxTokens,
+      threshold,
+      shouldCompact: currentTokens >= threshold,
+    });
+
+    // 检查是否需要压缩（使用实际发送给 LLM 的 messages）
+    if (!TokenCounter.shouldCompact(messages, modelName, maxTokens)) {
+      return; // 不需要压缩
+    }
+
+    const compactLogPrefix =
+      currentTurn === 0
+        ? '[Agent] 触发自动压缩'
+        : `[Agent] [轮次 ${currentTurn}] 触发循环内自动压缩`;
+    console.log(compactLogPrefix);
+    this.emit('compactionStart', { turn: currentTurn });
+
+    try {
+      const result = await CompactionService.compact(context.messages, {
+        trigger: 'auto',
+        modelName,
+        maxTokens,
+        apiKey: this.config.apiKey,
+        baseURL: this.config.baseUrl,
+      });
+
+      if (result.success) {
+        // 使用压缩后的消息列表
+        context.messages = result.compactedMessages;
+
+        // 触发完成事件（带轮次信息）
+        this.emit('compactionComplete', {
+          turn: currentTurn,
+          preTokens: result.preTokens,
+          postTokens: result.postTokens,
+          filesIncluded: result.filesIncluded,
+        });
+
+        console.log(
+          `[Agent] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} → ${result.postTokens} tokens (-${((1 - result.postTokens / result.preTokens) * 100).toFixed(1)}%)`
+        );
+      } else {
+        // 降级策略执行成功，但使用了截断
+        context.messages = result.compactedMessages;
+
+        this.emit('compactionFallback', {
+          turn: currentTurn,
+          preTokens: result.preTokens,
+          postTokens: result.postTokens,
+          error: result.error,
+        });
+
+        console.warn(
+          `[Agent] [轮次 ${currentTurn}] 压缩使用降级策略: ${result.preTokens} → ${result.postTokens} tokens`
+        );
+      }
+
+      // 保存压缩边界和总结到 JSONL
+      try {
+        const contextMgr = this.executionEngine?.getContextManager();
+        if (contextMgr && context.sessionId) {
+          await contextMgr.saveCompaction(
+            context.sessionId,
+            result.summary,
+            {
+              trigger: 'auto',
+              preTokens: result.preTokens,
+              postTokens: result.postTokens,
+              filesIncluded: result.filesIncluded,
+            },
+            null
+          );
+          console.log(`[Agent] [轮次 ${currentTurn}] 压缩数据已保存到 JSONL`);
+        }
+      } catch (saveError) {
+        console.warn(`[Agent] [轮次 ${currentTurn}] 保存压缩数据失败:`, saveError);
+        // 不阻塞流程
+      }
+    } catch (error) {
+      console.error(`[Agent] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
+      this.emit('compactionFailed', { turn: currentTurn, error });
+      // 不阻塞对话，继续执行
+    }
   }
 
   /**

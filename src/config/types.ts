@@ -93,6 +93,9 @@ export interface BladeConfig {
   cleanupPeriodDays: number;
   includeCoAuthoredBy: boolean;
   apiKeyHelper?: string;
+
+  // Agentic Loop 配置
+  maxTurns: number; // -1 = 无限制, 0 = 完全禁用对话, N > 0 = 限制轮次
 }
 
 /**

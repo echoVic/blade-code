@@ -89,6 +89,13 @@ export const globalOptions = {
     describe: 'Append a system prompt to the default system prompt',
     group: 'AI Options:',
   },
+  'max-turns': {
+    alias: ['maxTurns'],
+    type: 'number',
+    describe: 'Maximum conversation turns (-1: unlimited, 0: disable chat, N>0: limit to N turns)',
+    group: 'AI Options:',
+    default: undefined, // 不设置默认值，优先使用配置文件
+  },
   'permission-mode': {
     alias: ['permissionMode'],
     type: 'string',
