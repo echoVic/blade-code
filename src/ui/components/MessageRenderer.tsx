@@ -1,19 +1,28 @@
 /**
- * 消息渲染器 - 支持 Markdown 格式化
+ * 消息渲染器 - 完整的 Markdown 格式化支持
+ *
+ * 支持的 Markdown 特性：
+ * - 代码块（语法高亮）
+ * - 表格
+ * - 标题（H1-H4）
+ * - 列表（有序/无序，支持嵌套）
+ * - 水平线
+ * - 内联格式（粗体、斜体、删除线、内联代码、链接）
  */
 
 import { Box, Text } from 'ink';
 import React from 'react';
 import type { MessageRole } from '../contexts/SessionContext.js';
-import type { Theme } from '../themes/types.js';
+import { themeManager } from '../themes/ThemeManager.js';
 import { CodeHighlighter } from './CodeHighlighter.js';
+import { InlineRenderer } from './InlineRenderer.js';
+import { ListItem } from './ListItem.js';
 import { TableRenderer } from './TableRenderer.js';
 
 export interface MessageRendererProps {
   content: string;
   role: MessageRole;
   terminalWidth: number;
-  theme?: Theme;
 }
 
 // 获取角色样式配置
@@ -28,23 +37,25 @@ const getRoleStyle = (role: MessageRole) => {
   }
 };
 
-// 基础 Markdown 解析正则表达式
+// Markdown 解析正则表达式
 const MARKDOWN_PATTERNS = {
-  codeBlock: /^```(\w+)?\s*\n([\s\S]*?)\n```$/gm,
-  inlineCode: /`([^`]+)`/g,
-  heading: /^(#{1,4})\s+(.+)$/gm,
-  bold: /\*\*([^*]+)\*\*/g,
-  italic: /\*([^*]+)\*/g,
-  listItem: /^[-*+]\s+(.+)$/gm,
-  table: /^\|(.+)\|$/,  // 移除 gm 标志以获取捕获组
-  tableSeparator: /^\|[\s]*:?-+:?[\s]*\|/,
+  codeBlock: /^```(\w+)?\s*$/,
+  heading: /^ *(#{1,4}) +(.+)/,
+  ulItem: /^([ \t]*)([-*+]) +(.+)/,
+  olItem: /^([ \t]*)(\d+)\. +(.+)/,
+  hr: /^ *([-*_] *){3,} *$/,
+  table: /^\|(.+)\|$/,
+  tableSeparator: /^\|[\s]*:?-+:?[\s]*(\|[\s]*:?-+:?[\s]*)+\|?$/,
 } as const;
 
 interface ParsedBlock {
-  type: 'text' | 'code' | 'heading' | 'table';
+  type: 'text' | 'code' | 'heading' | 'table' | 'list' | 'hr' | 'empty';
   content: string;
   language?: string;
   level?: number;
+  listType?: 'ul' | 'ol';
+  marker?: string;
+  indentation?: number;
   tableData?: {
     headers: string[];
     rows: string[][];
@@ -56,148 +67,199 @@ interface ParsedBlock {
  */
 function parseMarkdown(content: string): ParsedBlock[] {
   const blocks: ParsedBlock[] = [];
-  const remainingContent = content;
+  const lines = content.split(/\r?\n/);
 
-  // 先处理代码块
-  const codeBlockMatches = Array.from(
-    remainingContent.matchAll(MARKDOWN_PATTERNS.codeBlock)
-  );
+  let inCodeBlock = false;
+  let codeBlockContent: string[] = [];
+  let codeBlockLang: string | null = null;
 
-  if (codeBlockMatches.length > 0) {
-    let lastIndex = 0;
-
-    for (const match of codeBlockMatches) {
-      const [fullMatch, language = '', code] = match;
-      const matchStart = match.index || 0;
-
-      // 添加代码块前的文本
-      if (matchStart > lastIndex) {
-        const textContent = remainingContent.slice(lastIndex, matchStart).trim();
-        if (textContent) {
-          // 检查文本中是否包含表格
-          const textBlocks = parseTextForTables(textContent);
-          blocks.push(...textBlocks);
-        }
-      }
-
-      // 添加代码块
-      blocks.push({
-        type: 'code',
-        content: code.trim(),
-        language: language || undefined,
-      });
-
-      lastIndex = matchStart + fullMatch.length;
-    }
-
-    // 添加最后剩余的文本
-    if (lastIndex < remainingContent.length) {
-      const textContent = remainingContent.slice(lastIndex).trim();
-      if (textContent) {
-        const textBlocks = parseTextForTables(textContent);
-        blocks.push(...textBlocks);
-      }
-    }
-  } else {
-    // 没有代码块，直接处理文本和表格
-    const textBlocks = parseTextForTables(remainingContent);
-    blocks.push(...textBlocks);
-  }
-
-  return blocks;
-}
-
-/**
- * 解析文本中的表格
- */
-function parseTextForTables(text: string): ParsedBlock[] {
-  const blocks: ParsedBlock[] = [];
-  const lines = text.split('\n');
-  let currentTextLines: string[] = [];
-  let currentTable: { headers: string[]; rows: string[][] } | null = null;
   let inTable = false;
+  let tableHeaders: string[] = [];
+  let tableRows: string[][] = [];
+
+  let lastLineEmpty = true;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const isTableRow = line.match(MARKDOWN_PATTERNS.table);
-    const isTableSeparator = line.match(MARKDOWN_PATTERNS.tableSeparator);
 
-    if (isTableRow && !inTable) {
+    // 代码块处理
+    if (inCodeBlock) {
+      const codeBlockMatch = line.match(MARKDOWN_PATTERNS.codeBlock);
+      if (codeBlockMatch) {
+        // 代码块结束
+        blocks.push({
+          type: 'code',
+          content: codeBlockContent.join('\n'),
+          language: codeBlockLang || undefined,
+        });
+        inCodeBlock = false;
+        codeBlockContent = [];
+        codeBlockLang = null;
+        lastLineEmpty = false;
+      } else {
+        codeBlockContent.push(line);
+      }
+      continue;
+    }
+
+    // 检查代码块开始
+    const codeBlockMatch = line.match(MARKDOWN_PATTERNS.codeBlock);
+    if (codeBlockMatch) {
+      inCodeBlock = true;
+      codeBlockLang = codeBlockMatch[1] || null;
+      lastLineEmpty = false;
+      continue;
+    }
+
+    // 表格处理
+    const tableMatch = line.match(MARKDOWN_PATTERNS.table);
+    const tableSepMatch = line.match(MARKDOWN_PATTERNS.tableSeparator);
+
+    if (tableMatch && !inTable) {
       // 检查下一行是否是分隔符
-      const nextLine = lines[i + 1];
-      if (nextLine && nextLine.match(MARKDOWN_PATTERNS.tableSeparator)) {
-        // 开始表格
-        inTable = true;
-
-        // 保存之前的文本
-        if (currentTextLines.length > 0) {
-          blocks.push({
-            type: 'text',
-            content: currentTextLines.join('\n').trim(),
-          });
-          currentTextLines = [];
+      if (i + 1 < lines.length) {
+        const nextLine = lines[i + 1];
+        if (nextLine.match(MARKDOWN_PATTERNS.tableSeparator)) {
+          inTable = true;
+          tableHeaders = tableMatch[1]
+            .split('|')
+            .map((cell) => cell.trim())
+            .filter((cell) => cell.length > 0);
+          tableRows = [];
+          lastLineEmpty = false;
+          continue;
         }
-
-        // 解析表头
-        const headers = isTableRow[1]
-          .split('|')
-          .map((cell) => cell.trim())
-          .filter((cell) => cell.length > 0);
-
-        currentTable = { headers, rows: [] };
-        i++; // 跳过分隔符行
-        continue;
       }
     }
 
-    if (inTable && isTableRow) {
+    if (inTable && tableSepMatch) {
+      // 跳过分隔符行
+      continue;
+    }
+
+    if (inTable && tableMatch) {
       // 添加表格行
-      const cells = isTableRow[1]
+      const cells = tableMatch[1]
         .split('|')
         .map((cell) => cell.trim())
         .filter((cell) => cell.length > 0);
 
-      currentTable!.rows.push(cells);
-    } else if (inTable && !isTableRow && !isTableSeparator) {
+      // 确保列数一致
+      while (cells.length < tableHeaders.length) {
+        cells.push('');
+      }
+      if (cells.length > tableHeaders.length) {
+        cells.length = tableHeaders.length;
+      }
+
+      tableRows.push(cells);
+      continue;
+    }
+
+    if (inTable && !tableMatch) {
       // 表格结束
-      if (currentTable) {
+      if (tableHeaders.length > 0 && tableRows.length > 0) {
         blocks.push({
           type: 'table',
           content: '',
-          tableData: currentTable,
+          tableData: { headers: tableHeaders, rows: tableRows },
         });
       }
       inTable = false;
-      currentTable = null;
-
-      // 当前行作为普通文本处理
-      if (line.trim()) {
-        currentTextLines.push(line);
-      }
-    } else if (!inTable) {
-      // 普通文本行
-      currentTextLines.push(line);
+      tableHeaders = [];
+      tableRows = [];
     }
+
+    // 标题
+    const headingMatch = line.match(MARKDOWN_PATTERNS.heading);
+    if (headingMatch) {
+      blocks.push({
+        type: 'heading',
+        content: headingMatch[2],
+        level: headingMatch[1].length,
+      });
+      lastLineEmpty = false;
+      continue;
+    }
+
+    // 无序列表
+    const ulMatch = line.match(MARKDOWN_PATTERNS.ulItem);
+    if (ulMatch) {
+      blocks.push({
+        type: 'list',
+        content: ulMatch[3],
+        listType: 'ul',
+        marker: ulMatch[2],
+        indentation: ulMatch[1].length,
+      });
+      lastLineEmpty = false;
+      continue;
+    }
+
+    // 有序列表
+    const olMatch = line.match(MARKDOWN_PATTERNS.olItem);
+    if (olMatch) {
+      blocks.push({
+        type: 'list',
+        content: olMatch[3],
+        listType: 'ol',
+        marker: olMatch[2],
+        indentation: olMatch[1].length,
+      });
+      lastLineEmpty = false;
+      continue;
+    }
+
+    // 水平线
+    const hrMatch = line.match(MARKDOWN_PATTERNS.hr);
+    if (hrMatch) {
+      blocks.push({
+        type: 'hr',
+        content: '',
+      });
+      lastLineEmpty = false;
+      continue;
+    }
+
+    // 空行
+    if (line.trim().length === 0) {
+      if (!lastLineEmpty) {
+        blocks.push({
+          type: 'empty',
+          content: '',
+        });
+        lastLineEmpty = true;
+      }
+      continue;
+    }
+
+    // 普通文本
+    blocks.push({
+      type: 'text',
+      content: line,
+    });
+    lastLineEmpty = false;
   }
 
-  // 处理剩余内容
-  if (inTable && currentTable) {
+  // 处理未闭合的代码块
+  if (inCodeBlock) {
+    blocks.push({
+      type: 'code',
+      content: codeBlockContent.join('\n'),
+      language: codeBlockLang || undefined,
+    });
+  }
+
+  // 处理未闭合的表格
+  if (inTable && tableHeaders.length > 0 && tableRows.length > 0) {
     blocks.push({
       type: 'table',
       content: '',
-      tableData: currentTable,
-    });
-  } else if (currentTextLines.length > 0) {
-    blocks.push({
-      type: 'text',
-      content: currentTextLines.join('\n').trim(),
+      tableData: { headers: tableHeaders, rows: tableRows },
     });
   }
 
-  return blocks.filter(
-    (block) =>
-      block.type !== 'text' || (block.content && block.content.trim().length > 0)
-  );
+  return blocks;
 }
 
 /**
@@ -219,100 +281,136 @@ const CodeBlock: React.FC<{
 };
 
 /**
- * 渲染普通文本（支持内联格式）
+ * 渲染标题
  */
-const TextBlock: React.FC<{
+const Heading: React.FC<{
   content: string;
-  role: MessageRole;
-}> = ({ content, role }) => {
-  // 简单处理内联代码
-  const renderInlineCode = (text: string) => {
-    const parts = text.split(MARKDOWN_PATTERNS.inlineCode);
-    const result: React.ReactNode[] = [];
+  level: number;
+}> = ({ content, level }) => {
+  const theme = themeManager.getTheme();
 
-    for (let i = 0; i < parts.length; i++) {
-      if (i % 2 === 0) {
-        // 普通文本
-        if (parts[i]) {
-          result.push(<Text key={i}>{parts[i]}</Text>);
-        }
-      } else {
-        // 内联代码
-        result.push(
-          <Text key={i} backgroundColor="gray" color="white">
-            {` ${parts[i]} `}
-          </Text>
-        );
-      }
-    }
+  // 根据级别设置样式
+  switch (level) {
+    case 1: // # H1
+      return (
+        <Text bold color={theme.colors.primary}>
+          <InlineRenderer text={content} />
+        </Text>
+      );
+    case 2: // ## H2
+      return (
+        <Text bold color={theme.colors.primary}>
+          <InlineRenderer text={content} />
+        </Text>
+      );
+    case 3: // ### H3
+      return (
+        <Text bold color={theme.colors.text.primary}>
+          <InlineRenderer text={content} />
+        </Text>
+      );
+    case 4: // #### H4
+      return (
+        <Text italic color={theme.colors.text.muted}>
+          <InlineRenderer text={content} />
+        </Text>
+      );
+    default:
+      return (
+        <Text>
+          <InlineRenderer text={content} />
+        </Text>
+      );
+  }
+};
 
-    return result.length > 0 ? result : [<Text key="empty">{text}</Text>];
-  };
-
-  const lines = content.split('\n');
-
-  const roleStyle = getRoleStyle(role);
-
+/**
+ * 渲染水平线
+ */
+const HorizontalRule: React.FC<{ terminalWidth: number }> = ({ terminalWidth }) => {
+  const theme = themeManager.getTheme();
+  const lineWidth = Math.min(terminalWidth - 4, 80);
   return (
-    <Box flexDirection="column">
-      {lines.map((line, index) => (
-        <Box key={index} marginBottom={index < lines.length - 1 ? 0 : 0}>
-          <Text color={roleStyle.color} wrap="wrap">
-            {renderInlineCode(line)}
-          </Text>
-        </Box>
-      ))}
-    </Box>
+    <Text dimColor color={theme.colors.text.muted}>
+      {'─'.repeat(lineWidth)}
+    </Text>
+  );
+};
+
+/**
+ * 渲染普通文本
+ */
+const TextBlock: React.FC<{ content: string }> = ({ content }) => {
+  return (
+    <Text wrap="wrap">
+      <InlineRenderer text={content} />
+    </Text>
   );
 };
 
 /**
  * 主要的消息渲染器组件
  */
-export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(({
-  content,
-  role,
-  terminalWidth,
-}) => {
-  const blocks = parseMarkdown(content);
-  const roleStyle = getRoleStyle(role);
-  const { color, prefix } = roleStyle;
+export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
+  ({ content, role, terminalWidth }) => {
+    const blocks = parseMarkdown(content);
+    const roleStyle = getRoleStyle(role);
+    const { color, prefix } = roleStyle;
 
-  return (
-    <Box flexDirection="column" marginBottom={1}>
-      {blocks.map((block, index) => (
-        <Box key={index} flexDirection="row">
-          {/* 只在第一个块显示前缀 */}
-          {index === 0 && (
-            <Box marginRight={1}>
-              <Text color={color} bold>
-                {prefix}
-              </Text>
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        {blocks.map((block, index) => {
+          // 空行
+          if (block.type === 'empty') {
+            return <Box key={index} height={1} />;
+          }
+
+          return (
+            <Box key={index} flexDirection="row">
+              {/* 只在第一个非空块显示前缀 */}
+              {index === 0 && (
+                <Box marginRight={1}>
+                  <Text color={color} bold>
+                    {prefix}
+                  </Text>
+                </Box>
+              )}
+
+              {/* 为非第一个块添加缩进对齐 */}
+              {index > 0 && <Box width={prefix.length + 1} />}
+
+              <Box flexGrow={1}>
+                {block.type === 'code' ? (
+                  <CodeBlock
+                    content={block.content}
+                    language={block.language}
+                    terminalWidth={terminalWidth - (prefix.length + 1)}
+                  />
+                ) : block.type === 'table' && block.tableData ? (
+                  <TableRenderer
+                    headers={block.tableData.headers}
+                    rows={block.tableData.rows}
+                    terminalWidth={terminalWidth - (prefix.length + 1)}
+                  />
+                ) : block.type === 'heading' ? (
+                  <Heading content={block.content} level={block.level || 1} />
+                ) : block.type === 'list' ? (
+                  <ListItem
+                    type={block.listType || 'ul'}
+                    marker={block.marker || '-'}
+                    itemText={block.content}
+                    leadingWhitespace={' '.repeat(block.indentation || 0)}
+                  />
+                ) : block.type === 'hr' ? (
+                  <HorizontalRule terminalWidth={terminalWidth - (prefix.length + 1)} />
+                ) : (
+                  <TextBlock content={block.content} />
+                )}
+              </Box>
             </Box>
-          )}
-
-          {/* 为非第一个块添加缩进对齐 */}
-          {index > 0 && <Box width={prefix.length + 1} />}
-
-          <Box flexGrow={1}>
-            {block.type === 'code' ? (
-              <CodeBlock
-                content={block.content}
-                language={block.language}
-                terminalWidth={terminalWidth - (prefix.length + 1)}
-              />
-            ) : block.type === 'table' && block.tableData ? (
-              <TableRenderer
-                headers={block.tableData.headers}
-                rows={block.tableData.rows}
-                terminalWidth={terminalWidth - (prefix.length + 1)}
-              />
-            ) : (
-              <TextBlock content={block.content} role={role} />
-            )}
-          </Box>
-        </Box>
-      ))}
-    </Box>
-  );
-});
+          );
+        })}
+      </Box>
+    );
+  }
+);

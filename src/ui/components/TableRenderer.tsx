@@ -1,278 +1,18 @@
 /**
- * 表格渲染器 - 基于 ink-table 源码实现
+ * 表格渲染器 - 优化版
  *
- * 原始来源: https://github.com/maticzav/ink-table
- * 许可证: MIT
- * 作者: Matic Zavadlal
- *
- * 修改说明:
- * - 移除了 object-hash 依赖，使用简单的索引作为 key
- * - 简化了组件结构，适配我们的使用场景
- * - 保留了核心的表格渲染逻辑和样式
+ * 主要改进：
+ * - 使用 getPlainTextLength() 计算真实显示宽度（考虑 Markdown 格式）
+ * - 自动缩放表格以适应终端宽度
+ * - 二分搜索智能截断（保留 Markdown 格式完整性）
+ * - 支持内联 Markdown 渲染
  */
 
 import { Box, Text } from 'ink';
 import React from 'react';
-
-/* Types */
-
-type Scalar = string | number | boolean | null | undefined;
-
-type ScalarDict = {
-  [key: string]: Scalar;
-};
-
-type CellProps = React.PropsWithChildren<{ column: number }>;
-
-type TableProps<T extends ScalarDict> = {
-  data: T[];
-  columns?: (keyof T)[];
-  padding?: number;
-  header?: (props: React.PropsWithChildren<{}>) => React.ReactElement;
-  cell?: (props: CellProps) => React.ReactElement;
-  skeleton?: (props: React.PropsWithChildren<{}>) => React.ReactElement;
-};
-
-type Column<T> = {
-  key: string;
-  column: keyof T;
-  width: number;
-};
-
-type RowConfig = {
-  cell: (props: CellProps) => React.ReactElement;
-  padding: number;
-  skeleton: {
-    component: (props: React.PropsWithChildren<{}>) => React.ReactElement;
-    left: string;
-    right: string;
-    cross: string;
-    line: string;
-  };
-};
-
-type RowProps<T extends ScalarDict> = {
-  key: string;
-  data: Partial<T>;
-  columns: Column<T>[];
-};
-
-/* Helper Components */
-
-function Header(props: React.PropsWithChildren<{}>) {
-  return (
-    <Text bold color="cyan">
-      {props.children}
-    </Text>
-  );
-}
-
-function Cell(props: CellProps) {
-  return <Text>{props.children}</Text>;
-}
-
-function Skeleton(props: React.PropsWithChildren<{}>) {
-  return <Text bold>{props.children}</Text>;
-}
-
-/* Utility Functions */
-
-function intersperse<T, I>(
-  intersperser: (index: number) => I,
-  elements: T[]
-): (T | I)[] {
-  const interspersed: (T | I)[] = elements.reduce(
-    (acc, element, index) => {
-      if (acc.length === 0) return [element];
-      return [...acc, intersperser(index), element];
-    },
-    [] as (T | I)[]
-  );
-
-  return interspersed;
-}
-
-function row<T extends ScalarDict>(
-  config: RowConfig
-): (props: RowProps<T>) => React.ReactElement {
-  const skeleton = config.skeleton;
-
-  return (props) => (
-    <Box flexDirection="row">
-      {/* Left */}
-      <skeleton.component>{skeleton.left}</skeleton.component>
-      {/* Data */}
-      {...intersperse(
-        (i) => {
-          const key = `${props.key}-hseparator-${i}`;
-          return <skeleton.component key={key}>{skeleton.cross}</skeleton.component>;
-        },
-        props.columns.map((column, colI) => {
-          const value = props.data[column.column];
-
-          if (value == undefined || value == null) {
-            const key = `${props.key}-empty-${column.key}`;
-            return (
-              <config.cell key={key} column={colI}>
-                {skeleton.line.repeat(column.width)}
-              </config.cell>
-            );
-          } else {
-            const key = `${props.key}-cell-${column.key}`;
-            const ml = config.padding;
-            const mr = column.width - String(value).length - config.padding;
-
-            return (
-              <config.cell key={key} column={colI}>
-                {`${skeleton.line.repeat(ml)}${String(value)}${skeleton.line.repeat(mr)}`}
-              </config.cell>
-            );
-          }
-        })
-      )}
-      {/* Right */}
-      <skeleton.component>{skeleton.right}</skeleton.component>
-    </Box>
-  );
-}
-
-/* Table Component */
-
-class InkTable<T extends ScalarDict> extends React.Component<TableProps<T>> {
-  getConfig(): Required<TableProps<T>> {
-    return {
-      data: this.props.data,
-      columns: this.props.columns || this.getDataKeys(),
-      padding: this.props.padding || 1,
-      header: this.props.header || Header,
-      cell: this.props.cell || Cell,
-      skeleton: this.props.skeleton || Skeleton,
-    };
-  }
-
-  getDataKeys(): (keyof T)[] {
-    const keys = new Set<keyof T>();
-    for (const data of this.props.data) {
-      for (const key in data) {
-        keys.add(key);
-      }
-    }
-    return Array.from(keys);
-  }
-
-  getColumns(): Column<T>[] {
-    const { columns, padding } = this.getConfig();
-
-    return columns.map((key) => {
-      const header = String(key).length;
-      const data = this.props.data.map((data) => {
-        const value = data[key];
-        if (value == undefined || value == null) return 0;
-        return String(value).length;
-      });
-
-      const width = Math.max(...data, header) + padding * 2;
-
-      return {
-        column: key,
-        width: width,
-        key: String(key),
-      };
-    });
-  }
-
-  getHeadings(): Partial<T> {
-    const { columns } = this.getConfig();
-    return columns.reduce((acc, column) => ({ ...acc, [column]: column }), {});
-  }
-
-  header = row<T>({
-    cell: this.getConfig().skeleton,
-    padding: this.getConfig().padding,
-    skeleton: {
-      component: this.getConfig().skeleton,
-      line: '─',
-      left: '┌',
-      right: '┐',
-      cross: '┬',
-    },
-  });
-
-  heading = row<T>({
-    cell: this.getConfig().header,
-    padding: this.getConfig().padding,
-    skeleton: {
-      component: this.getConfig().skeleton,
-      line: ' ',
-      left: '│',
-      right: '│',
-      cross: '│',
-    },
-  });
-
-  separator = row<T>({
-    cell: this.getConfig().skeleton,
-    padding: this.getConfig().padding,
-    skeleton: {
-      component: this.getConfig().skeleton,
-      line: '─',
-      left: '├',
-      right: '┤',
-      cross: '┼',
-    },
-  });
-
-  data = row<T>({
-    cell: this.getConfig().cell,
-    padding: this.getConfig().padding,
-    skeleton: {
-      component: this.getConfig().skeleton,
-      line: ' ',
-      left: '│',
-      right: '│',
-      cross: '│',
-    },
-  });
-
-  footer = row<T>({
-    cell: this.getConfig().skeleton,
-    padding: this.getConfig().padding,
-    skeleton: {
-      component: this.getConfig().skeleton,
-      line: '─',
-      left: '└',
-      right: '┘',
-      cross: '┴',
-    },
-  });
-
-  render() {
-    const columns = this.getColumns();
-    const headings = this.getHeadings();
-
-    return (
-      <Box flexDirection="column">
-        {/* Header */}
-        {this.header({ key: 'header', columns, data: {} })}
-        {this.heading({ key: 'heading', columns, data: headings })}
-        {/* Data */}
-        {this.props.data.map((row, index) => {
-          const key = `row-${index}`;
-          return (
-            <Box flexDirection="column" key={key}>
-              {this.separator({ key: `separator-${key}`, columns, data: {} })}
-              {this.data({ key: `data-${key}`, columns, data: row })}
-            </Box>
-          );
-        })}
-        {/* Footer */}
-        {this.footer({ key: 'footer', columns, data: {} })}
-      </Box>
-    );
-  }
-}
-
-/* Adapter for our existing TableRenderer interface */
+import { themeManager } from '../themes/ThemeManager.js';
+import { getPlainTextLength, truncateText } from '../utils/markdown.js';
+import { InlineRenderer } from './InlineRenderer.js';
 
 interface TableRendererProps {
   headers: string[];
@@ -280,27 +20,141 @@ interface TableRendererProps {
   terminalWidth: number;
 }
 
-export const TableRenderer: React.FC<TableRendererProps> = ({ headers, rows }) => {
+/**
+ * 表格渲染器组件
+ *
+ * 特性：
+ * - 自动计算列宽（考虑 Markdown 格式后的真实显示宽度）
+ * - 自动缩放以适应终端宽度
+ * - 智能截断单元格内容（保留 Markdown 格式）
+ * - 美观的 Unicode 边框
+ * - 表头特殊样式
+ */
+export const TableRenderer: React.FC<TableRendererProps> = ({
+  headers,
+  rows,
+  terminalWidth,
+}) => {
+  const theme = themeManager.getTheme();
+
   if (headers.length === 0 || rows.length === 0) {
     return null;
   }
 
-  // 将数据转换为 ink-table 需要的格式
-  const data = rows.map((row) => {
-    const rowData: Record<string, string> = {};
-    headers.forEach((header, index) => {
-      rowData[header] = row[index] || '';
-    });
-    return rowData;
+  // 1. 计算列宽（使用真实显示宽度）
+  const columnWidths = headers.map((header, index) => {
+    const headerWidth = getPlainTextLength(header);
+    const maxRowWidth = Math.max(
+      ...rows.map((row) => getPlainTextLength(row[index] || ''))
+    );
+    return Math.max(headerWidth, maxRowWidth) + 2; // 加 2 作为内边距
   });
+
+  // 2. 计算总宽度并应用缩放因子
+  const borderWidth = headers.length + 1; // 左右边框 + 分隔符
+  const totalWidth = columnWidths.reduce((sum, w) => sum + w, 0) + borderWidth;
+  const scaleFactor = totalWidth > terminalWidth ? terminalWidth / totalWidth : 1;
+  const adjustedWidths = columnWidths.map((w) => Math.floor(w * scaleFactor));
+
+  /**
+   * 渲染单元格（支持内联 Markdown）
+   */
+  const renderCell = (
+    content: string,
+    width: number,
+    isHeader = false
+  ): React.ReactNode => {
+    const contentWidth = Math.max(0, width - 2); // 减去内边距
+    const displayWidth = getPlainTextLength(content);
+
+    // 截断过长的内容（保留 Markdown 格式）
+    let cellContent = content;
+    if (displayWidth > contentWidth) {
+      cellContent = truncateText(content, contentWidth);
+    }
+
+    // 计算需要的填充空格
+    const actualDisplayWidth = getPlainTextLength(cellContent);
+    const paddingNeeded = Math.max(0, contentWidth - actualDisplayWidth);
+
+    return (
+      <Text>
+        {isHeader ? (
+          <Text bold color={theme.colors.primary}>
+            <InlineRenderer text={cellContent} />
+          </Text>
+        ) : (
+          <InlineRenderer text={cellContent} />
+        )}
+        {' '.repeat(paddingNeeded)}
+      </Text>
+    );
+  };
+
+  /**
+   * 渲染边框
+   */
+  const renderBorder = (type: 'top' | 'middle' | 'bottom'): React.ReactNode => {
+    const chars = {
+      top: { left: '┌', middle: '┬', right: '┐', horizontal: '─' },
+      middle: { left: '├', middle: '┼', right: '┤', horizontal: '─' },
+      bottom: { left: '└', middle: '┴', right: '┘', horizontal: '─' },
+    };
+
+    const char = chars[type];
+    const borderParts = adjustedWidths.map((w) => char.horizontal.repeat(w));
+    const border = char.left + borderParts.join(char.middle) + char.right;
+
+    return (
+      <Text color={theme.colors.text.muted} dimColor>
+        {border}
+      </Text>
+    );
+  };
+
+  /**
+   * 渲染表格行
+   */
+  const renderRow = (cells: string[], isHeader = false): React.ReactNode => {
+    const renderedCells = cells.map((cell, index) => {
+      const width = adjustedWidths[index] || 0;
+      return renderCell(cell || '', width, isHeader);
+    });
+
+    return (
+      <Text>
+        <Text color={theme.colors.text.muted}>│ </Text>
+        {renderedCells.map((cell, index) => (
+          <React.Fragment key={index}>
+            {cell}
+            {index < renderedCells.length - 1 && (
+              <Text color={theme.colors.text.muted}> │ </Text>
+            )}
+          </React.Fragment>
+        ))}
+        <Text color={theme.colors.text.muted}> │</Text>
+      </Text>
+    );
+  };
 
   return (
     <Box flexDirection="column" marginY={1}>
-      <InkTable data={data} />
+      {/* 顶部边框 */}
+      {renderBorder('top')}
+
+      {/* 表头行 */}
+      {renderRow(headers, true)}
+
+      {/* 中间边框 */}
+      {renderBorder('middle')}
+
+      {/* 数据行 */}
+      {rows.map((row, index) => (
+        <React.Fragment key={index}>{renderRow(row)}</React.Fragment>
+      ))}
+
+      {/* 底部边框 */}
+      {renderBorder('bottom')}
     </Box>
   );
 };
-
-// 导出 InkTable 供其他地方使用
-export { InkTable };
-export type { ScalarDict, TableProps };

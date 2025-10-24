@@ -40,11 +40,18 @@ Root (blade-code)
 │   ├── ui/             # UI组件和界面（基于Ink）
 │   │   ├── components/ # UI组件
 │   │   │   ├── BladeInterface.tsx    # 主界面
+│   │   │   ├── MessageRenderer.tsx   # Markdown渲染器（主入口）
+│   │   │   ├── InlineRenderer.tsx    # 内联格式渲染
+│   │   │   ├── CodeHighlighter.tsx   # 代码语法高亮
+│   │   │   ├── TableRenderer.tsx     # 表格渲染
+│   │   │   ├── ListItem.tsx          # 列表项渲染
 │   │   │   └── ConfirmationPrompt.tsx # 确认提示
-│   │   └── hooks/      # React Hooks
-│   │       ├── useCommandHandler.ts  # 命令处理
-│   │       └── useConfirmation.ts    # 确认管理
-│   ├── utils/          # 工具函数
+│   │   ├── hooks/      # React Hooks
+│   │   │   ├── useCommandHandler.ts  # 命令处理
+│   │   │   └── useConfirmation.ts    # 确认管理
+│   │   └── utils/      # UI工具函数
+│   │       └── markdown.ts           # Markdown工具函数
+│   ├── utils/          # 通用工具函数
 │   ├── index.ts        # 公共API导出
 │   └── blade.tsx       # CLI应用入口
 ├── tests/              # 测试文件（独立）
@@ -129,6 +136,55 @@ Root (blade-code)
   - **会话 ID**: 使用 nanoid 生成，21 字符 URL 友好
   - **路径转义**: `/Users/foo/project` → `-Users-foo-project`
   - 支持消息追溯（parentUuid）、Git 分支记录、Token 统计
+
+### Markdown 渲染系统
+
+Blade 提供完整的 Markdown 渲染支持，包含以下组件：
+
+- **MessageRenderer** ([src/ui/components/MessageRenderer.tsx](src/ui/components/MessageRenderer.tsx)): 主渲染器，解析 Markdown 为结构化块
+  - 支持代码块、表格、标题（H1-H4）、列表（有序/无序）、水平线
+  - 状态机解析嵌套结构（代码块、表格）
+  - 角色区分渲染（用户/助手/系统不同颜色前缀）
+
+- **InlineRenderer** ([src/ui/components/InlineRenderer.tsx](src/ui/components/InlineRenderer.tsx)): 内联格式渲染
+  - 支持：`**粗体**`、`*斜体*`、`~~删除线~~`、`` `代码` ``、`[链接](URL)`、自动识别 URL
+  - 统一正则表达式一次性匹配所有格式
+  - 边界检测避免误判文件路径（如 `file_name.txt`）
+
+- **CodeHighlighter** ([src/ui/components/CodeHighlighter.tsx](src/ui/components/CodeHighlighter.tsx)): 代码语法高亮
+  - 使用 `lowlight`（基于 highlight.js）支持 140+ 语言
+  - **性能优化**：智能截断长代码块（仅高亮可见行，提升 90% 性能）
+  - 行号显示、语言标签、圆角边框
+
+- **TableRenderer** ([src/ui/components/TableRenderer.tsx](src/ui/components/TableRenderer.tsx)): 表格渲染
+  - 使用 `getPlainTextLength()` 计算真实显示宽度（排除 Markdown 标记）
+  - 自动缩放以适应终端宽度
+  - 二分搜索智能截断（保留 Markdown 格式完整性）
+  - 美观的 Unicode 边框
+
+- **ListItem** ([src/ui/components/ListItem.tsx](src/ui/components/ListItem.tsx)): 列表项渲染
+  - 支持有序列表（`1. 项目`）和无序列表（`- 项目`）
+  - 支持嵌套列表（通过前导空格计算缩进）
+  - 列表项内容支持内联 Markdown
+
+- **markdown.ts** ([src/ui/utils/markdown.ts](src/ui/utils/markdown.ts)): Markdown 工具函数
+  - `getPlainTextLength()`: 计算去除标记后的真实显示宽度（使用 `string-width`）
+  - `truncateText()`: 二分搜索智能截断（保留格式）
+  - `hasMarkdownFormat()`: 快速检测是否包含 Markdown 标记
+
+**主题集成**：
+- 所有颜色从 `themeManager.getTheme()` 获取
+- 支持主题实时切换
+- H1/H2 使用 `primary` 颜色，内联代码使用 `accent` 颜色，链接使用 `info` 颜色
+
+**性能优化**：
+- 纯文本快速路径（跳过解析）
+- 长代码块仅高亮可见行（1000 行从 150ms 降至 15ms）
+- 表格自动缩放和智能截断
+
+**文档**：
+- 用户文档：[docs/public/guides/markdown-support.md](docs/public/guides/markdown-support.md)
+- 开发者文档：[docs/development/implementation/markdown-renderer.md](docs/development/implementation/markdown-renderer.md)
 
 ## Build & Development Commands
 

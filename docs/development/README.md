@@ -19,6 +19,7 @@
 
 - **[错误处理](implementation/error-handling.md)** - 错误处理机制
 - **[日志系统](implementation/logging-system.md)** - 日志系统实现
+- **[Markdown 渲染器](implementation/markdown-renderer.md)** ⭐ - 完整 Markdown 渲染系统
 
 ## 📋 技术方案
 

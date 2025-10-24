@@ -9,6 +9,9 @@
   * [权限控制](configuration/permissions.md)
   * [主题配置](configuration/themes.md)
 
+* 使用指南
+  * [Markdown 支持](guides/markdown-support.md)
+
 * 参考
   * [CLI 命令](reference/cli-commands.md)
   * [工具列表](reference/tool-list.md)
