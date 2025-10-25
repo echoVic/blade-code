@@ -9,7 +9,7 @@ import type { PermissionConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
-import { ToolKind } from '../types/index.js';
+import { isReadOnlyKind, ToolKind } from '../types/index.js';
 import {
   SensitiveFileDetector,
   SensitivityLevel,
@@ -239,21 +239,14 @@ export class PermissionStage implements PipelineStage {
       };
     }
 
-    // 4. Read/Search 工具：所有模式下都自动批准（只读操作，安全）
-    if (toolKind === ToolKind.Read || toolKind === ToolKind.Search) {
+    // 4. 只读工具：所有模式下都自动批准（Read/Search/Network/Think/Memory）
+    // 使用 isReadOnlyKind 统一判断，避免遗漏
+    if (isReadOnlyKind(toolKind)) {
+      const kindName = toolKind === ToolKind.Memory ? 'memory' : 'readonly';
       return {
         result: PermissionResult.ALLOW,
-        matchedRule: `mode:${this.permissionMode}:readonly`,
+        matchedRule: `mode:${this.permissionMode}:${kindName}`,
         reason: '只读工具无需确认',
-      };
-    }
-
-    // 5. Memory 工具：所有模式下都自动批准（内存操作，安全）
-    if (toolKind === ToolKind.Memory) {
-      return {
-        result: PermissionResult.ALLOW,
-        matchedRule: `mode:${this.permissionMode}:memory`,
-        reason: '内存操作工具无需确认（如 TODO 管理）',
       };
     }
 
@@ -386,7 +379,10 @@ export class ConfirmationStage implements PipelineStage {
 
       // 重要：重新加载配置，使新规则立即生效（避免重复确认）
       const updatedConfig = configManager.getPermissions();
-      console.debug(`[ConfirmationStage] 同步权限配置到 PermissionChecker:`, updatedConfig);
+      console.debug(
+        `[ConfirmationStage] 同步权限配置到 PermissionChecker:`,
+        updatedConfig
+      );
       this.permissionChecker.replaceConfig(updatedConfig);
     } catch (error) {
       console.warn(
@@ -450,10 +446,11 @@ export class ExecutionStage implements PipelineStage {
     }
 
     try {
-      // 执行工具
+      // 执行工具，传递完整的执行上下文
       const result = await invocation.execute(
         execution.context.signal,
-        execution.context.onProgress
+        execution.context.onProgress,
+        execution.context // 传递完整 context（包含 confirmationHandler、permissionMode 等）
       );
 
       execution.setResult(result);

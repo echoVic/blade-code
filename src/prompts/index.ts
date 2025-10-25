@@ -8,6 +8,8 @@ export { defaultPromptBuilder, PromptBuilder } from './builder.js';
 export {
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_SYSTEM_PROMPT_CONFIG,
+  PLAN_MODE_SYSTEM_PROMPT,
+  createPlanModeReminder,
   type SystemPromptConfig,
 } from './default.js';
 

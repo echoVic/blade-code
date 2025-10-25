@@ -67,7 +67,11 @@ const ProviderStep: React.FC<ProviderStepProps> = ({ onSelect, onCancel }) => {
       <Box marginBottom={1}>
         <SelectInput
           items={[
-            { label: '⚡ OpenAI Compatible - 兼容 OpenAI API 的服务 (千问/豆包/DeepSeek等)', value: 'openai-compatible' },
+            {
+              label:
+                '⚡ OpenAI Compatible - 兼容 OpenAI API 的服务 (千问/豆包/DeepSeek等)',
+              value: 'openai-compatible',
+            },
             { label: '🤖 Anthropic Claude API - Claude 官方 API', value: 'anthropic' },
           ]}
           onSelect={(item) => onSelect(item.value as ProviderType)}
@@ -122,35 +126,25 @@ const TextInputStep: React.FC<TextInputStepProps> = ({
         </Text>
       </Box>
       <Box marginBottom={1}>
-        <Text color={theme.colors.text.secondary}>
-          {description}
-        </Text>
+        <Text color={theme.colors.text.secondary}>{description}</Text>
       </Box>
       {previousValue && (
         <Box marginBottom={1}>
-          <Text color={theme.colors.success}>
-            ✓ {previousValue}
-          </Text>
+          <Text color={theme.colors.success}>✓ {previousValue}</Text>
         </Box>
       )}
       {hint && (
         <Box marginBottom={1}>
-          <Text color={theme.colors.text.muted}>
-            {hint}
-          </Text>
+          <Text color={theme.colors.text.muted}>{hint}</Text>
         </Box>
       )}
       {examples && examples.length > 0 && (
         <>
           <Box marginBottom={1}>
-            <Text color={theme.colors.text.muted}>
-              常见示例：
-            </Text>
+            <Text color={theme.colors.text.muted}>常见示例：</Text>
           </Box>
           <Box marginBottom={1} paddingLeft={2}>
-            <Text color={theme.colors.text.muted}>
-              {examples.join('\n')}
-            </Text>
+            <Text color={theme.colors.text.muted}>{examples.join('\n')}</Text>
           </Box>
         </>
       )}
@@ -213,16 +207,16 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
       </Box>
 
       <Box marginBottom={1}>
-        <Text color={theme.colors.text.secondary}>
-          请确认以下配置信息：
-        </Text>
+        <Text color={theme.colors.text.secondary}>请确认以下配置信息：</Text>
       </Box>
 
       <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
         <Box marginBottom={1}>
           <Text color={theme.colors.text.muted}>Provider: </Text>
           <Text bold color={theme.colors.info}>
-            {config.provider === 'openai-compatible' ? '⚡ OpenAI Compatible' : '🤖 Anthropic'}
+            {config.provider === 'openai-compatible'
+              ? '⚡ OpenAI Compatible'
+              : '🤖 Anthropic'}
           </Text>
         </Box>
 
@@ -236,7 +230,8 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
         <Box marginBottom={1}>
           <Text color={theme.colors.text.muted}>API Key: </Text>
           <Text bold color={theme.colors.warning}>
-            {config.apiKey?.slice(0, 8)}{'*'.repeat(Math.min(32, (config.apiKey?.length || 0) - 8))}
+            {config.apiKey?.slice(0, 8)}
+            {'*'.repeat(Math.min(32, (config.apiKey?.length || 0) - 8))}
           </Text>
         </Box>
 
@@ -251,15 +246,24 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
       {!isSaving && (
         <Box marginTop={1}>
           <Text color={theme.colors.primary}>
-            确认保存配置？ [<Text bold color={theme.colors.success}>Y</Text>/
-            <Text bold color={theme.colors.error}>n</Text>]
+            确认保存配置？ [
+            <Text bold color={theme.colors.success}>
+              Y
+            </Text>
+            /
+            <Text bold color={theme.colors.error}>
+              n
+            </Text>
+            ]
           </Text>
         </Box>
       )}
 
       {isSaving && (
         <Box>
-          <Text color={theme.colors.warning}>⏳ 正在保存配置到 ~/.blade/config.json...</Text>
+          <Text color={theme.colors.warning}>
+            ⏳ 正在保存配置到 ~/.blade/config.json...
+          </Text>
         </Box>
       )}
     </Box>
@@ -397,12 +401,17 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
 
   // 计算进度
   const stepNumber =
-    currentStep === 'provider' ? 1 :
-    currentStep === 'baseUrl' ? 2 :
-    currentStep === 'apiKey' ? 3 :
-    currentStep === 'model' ? 4 : 5;
+    currentStep === 'provider'
+      ? 1
+      : currentStep === 'baseUrl'
+        ? 2
+        : currentStep === 'apiKey'
+          ? 3
+          : currentStep === 'model'
+            ? 4
+            : 5;
 
-  const progress = Math.floor((stepNumber - 1) / 4 * 40);
+  const progress = Math.floor(((stepNumber - 1) / 4) * 40);
 
   return (
     <Box flexDirection="column" padding={1}>
@@ -421,12 +430,8 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
 
       {/* 进度条 */}
       <Box marginBottom={1}>
-        <Text color={theme.colors.success}>
-          {'█'.repeat(progress)}
-        </Text>
-        <Text color={theme.colors.text.muted}>
-          {'░'.repeat(40 - progress)}
-        </Text>
+        <Text color={theme.colors.success}>{'█'.repeat(progress)}</Text>
+        <Text color={theme.colors.text.muted}>{'░'.repeat(40 - progress)}</Text>
         <Text> </Text>
         <Text bold color={theme.colors.info}>
           {stepNumber}/5
@@ -473,7 +478,9 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
           title="输入 API Key"
           description="您的 API 密钥将被安全存储在 ~/.blade/config.json (权限 600)"
           hint="💡 提示: 输入时字符会被隐藏，支持粘贴 (Ctrl+V / Cmd+V)"
-          previousValue={config.baseUrl ? `✓ 当前 Base URL: ${config.baseUrl}` : undefined}
+          previousValue={
+            config.baseUrl ? `✓ 当前 Base URL: ${config.baseUrl}` : undefined
+          }
           value={inputValue}
           placeholder="sk-..."
           mask="*"
@@ -531,7 +538,8 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
       {!isSaving && currentStep === 'provider' && (
         <Box marginTop={1}>
           <Text color={theme.colors.text.muted}>
-            💡 使用 <Text bold>↑/↓</Text> 键选择，<Text bold>Enter</Text> 确认，<Text bold>Esc</Text> 取消
+            💡 使用 <Text bold>↑/↓</Text> 键选择，<Text bold>Enter</Text> 确认，
+            <Text bold>Esc</Text> 取消
           </Text>
         </Box>
       )}
@@ -545,8 +553,15 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
       {!isSaving && currentStep === 'confirm' && (
         <Box marginTop={1}>
           <Text color={theme.colors.text.muted}>
-            💡 按 <Text bold color={theme.colors.success}>Y</Text> 保存，
-            <Text bold color={theme.colors.error}>N</Text> 返回修改，
+            💡 按{' '}
+            <Text bold color={theme.colors.success}>
+              Y
+            </Text>{' '}
+            保存，
+            <Text bold color={theme.colors.error}>
+              N
+            </Text>{' '}
+            返回修改，
             <Text bold>Esc</Text> 取消
           </Text>
         </Box>

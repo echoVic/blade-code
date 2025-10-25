@@ -117,9 +117,7 @@ describe('BaseLLM', () => {
     });
 
     test('应该在聊天错误时正确处理', async () => {
-      vi
-        .spyOn(mockLLM as any, '_chat')
-        .mockRejectedValueOnce(new Error('Chat Error'));
+      vi.spyOn(mockLLM as any, '_chat').mockRejectedValueOnce(new Error('Chat Error'));
 
       await expect(mockLLM.chat('Hello')).rejects.toThrow('Chat Error');
     });
@@ -150,9 +148,9 @@ describe('BaseLLM', () => {
     });
 
     test('应该在补全错误时正确处理', async () => {
-      vi
-        .spyOn(mockLLM as any, '_complete')
-        .mockRejectedValueOnce(new Error('Complete Error'));
+      vi.spyOn(mockLLM as any, '_complete').mockRejectedValueOnce(
+        new Error('Complete Error')
+      );
 
       await expect(mockLLM.complete('Hello')).rejects.toThrow('Complete Error');
     });
@@ -178,9 +176,9 @@ describe('BaseLLM', () => {
     });
 
     test('应该在嵌入错误时正确处理', async () => {
-      vi
-        .spyOn(mockLLM as any, '_embed')
-        .mockRejectedValueOnce(new Error('Embed Error'));
+      vi.spyOn(mockLLM as any, '_embed').mockRejectedValueOnce(
+        new Error('Embed Error')
+      );
 
       await expect(mockLLM.embed(['Hello'])).rejects.toThrow('Embed Error');
     });
@@ -230,9 +228,7 @@ describe('BaseLLM', () => {
     });
 
     test('应该跟踪错误统计', async () => {
-      vi
-        .spyOn(mockLLM as any, '_chat')
-        .mockRejectedValueOnce(new Error('Test Error'));
+      vi.spyOn(mockLLM as any, '_chat').mockRejectedValueOnce(new Error('Test Error'));
 
       try {
         await mockLLM.chat('Hello');

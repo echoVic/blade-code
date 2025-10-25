@@ -50,7 +50,6 @@ export interface ToolInvocationDescriptor {
   };
 }
 
-
 /**
  * 权限检查器
  */

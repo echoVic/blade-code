@@ -9,14 +9,12 @@ import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './ty
 const resumeCommand: SlashCommand = {
   name: 'resume',
   description: 'Resume a conversation',
-  fullDescription: '恢复历史会话。可以指定 sessionId 直接恢复，或不带参数打开会话选择器',
+  fullDescription:
+    '恢复历史会话。可以指定 sessionId 直接恢复，或不带参数打开会话选择器',
   usage: '/resume [sessionId]',
   aliases: ['r'],
   category: 'Session',
-  examples: [
-    '/resume - 打开会话选择器',
-    '/resume abc123xyz - 直接恢复指定的会话',
-  ],
+  examples: ['/resume - 打开会话选择器', '/resume abc123xyz - 直接恢复指定的会话'],
   async handler(
     args: string[],
     context: SlashCommandContext
@@ -47,7 +45,10 @@ const resumeCommand: SlashCommand = {
             .map((msg, index) => ({
               id: `restored-${Date.now()}-${index}`,
               role: msg.role as 'user' | 'assistant' | 'system',
-              content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+              content:
+                typeof msg.content === 'string'
+                  ? msg.content
+                  : JSON.stringify(msg.content),
               timestamp: Date.now() - (messages.length - index) * 1000,
             }));
 
@@ -73,8 +74,7 @@ const resumeCommand: SlashCommand = {
           error: 'restoreSession 不可用',
         };
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : '未知错误';
+        const errorMessage = error instanceof Error ? error.message : '未知错误';
         addAssistantMessage(`❌ 加载会话失败: ${errorMessage}`);
         return {
           success: false,

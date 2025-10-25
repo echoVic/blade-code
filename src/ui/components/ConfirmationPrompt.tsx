@@ -1,4 +1,4 @@
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useInput, useStdout } from 'ink';
 import SelectInput, { type ItemProps as SelectItemProps } from 'ink-select-input';
 import React, { useMemo } from 'react';
 import type {
@@ -7,6 +7,7 @@ import type {
 } from '../../tools/types/ExecutionTypes.js';
 import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { MessageRenderer } from './MessageRenderer.js';
 
 const ConfirmationItem = ({ label, isSelected }: SelectItemProps) => (
   <Text color={isSelected ? 'yellow' : undefined}>{label}</Text>
@@ -28,6 +29,10 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
   details,
   onResponse,
 }) => {
+  // 获取终端宽度（用于 MessageRenderer）
+  const { stdout } = useStdout();
+  const terminalWidth = stdout.columns || 80;
+
   // 使用 FocusContext 管理焦点
   const { state: focusState } = useFocusContext();
   const isFocused = focusState.currentFocus === FocusId.CONFIRMATION_PROMPT;
@@ -49,13 +54,67 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
         onResponse({ approved: false, reason: '用户取消' });
         return;
       }
+
+      // 快捷键处理
+      const lowerInput = input.toLowerCase();
+      if (isPlanModeExit) {
+        // Plan 模式: Y/S/N
+        if (lowerInput === 'y') {
+          onResponse({ approved: true, targetMode: 'auto_edit' });
+          return;
+        }
+        if (lowerInput === 's') {
+          onResponse({ approved: true, targetMode: 'default' });
+          return;
+        }
+        if (lowerInput === 'n') {
+          onResponse({ approved: false, reason: '方案需要改进' });
+          return;
+        }
+      } else {
+        // 普通确认: Y/S/N
+        if (lowerInput === 'y') {
+          onResponse({ approved: true, scope: 'once' });
+          return;
+        }
+        if (lowerInput === 's') {
+          onResponse({ approved: true, scope: 'session' });
+          return;
+        }
+        if (lowerInput === 'n') {
+          onResponse({ approved: false, reason: '用户拒绝' });
+          return;
+        }
+      }
     },
     { isActive: isFocused }
   );
 
+  const isPlanModeExit = details.type === 'exitPlanMode';
+
   const options = useMemo<
     Array<{ label: string; key: string; value: ConfirmationResponse }>
   >(() => {
+    if (isPlanModeExit) {
+      return [
+        {
+          key: 'approve-auto',
+          label: '[Y] Yes, execute with auto-edit mode',
+          value: { approved: true, targetMode: 'auto_edit' },
+        },
+        {
+          key: 'approve-default',
+          label: '[S] Yes, execute with default mode (ask for each operation)',
+          value: { approved: true, targetMode: 'default' },
+        },
+        {
+          key: 'reject',
+          label: '[N] No, keep planning',
+          value: { approved: false, reason: '方案需要改进' },
+        },
+      ];
+    }
+
     return [
       {
         key: 'approve-once',
@@ -73,7 +132,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
         value: { approved: false, reason: '用户拒绝' },
       },
     ];
-  }, []);
+  }, [isPlanModeExit]);
 
   return (
     <Box
@@ -83,18 +142,41 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
       padding={1}
     >
       <Box marginBottom={1}>
-        <Text bold color="yellow">
-          🔔 需要用户确认
+        <Text bold color={isPlanModeExit ? 'cyan' : 'yellow'}>
+          {isPlanModeExit ? '🔵 Plan 模式 - 方案审查' : '🔔 需要用户确认'}
         </Text>
       </Box>
 
-      <Box marginBottom={1}>
-        <Text bold>{details.title}</Text>
-      </Box>
+      {details.title && (
+        <Box marginBottom={1}>
+          <Text bold>{details.title}</Text>
+        </Box>
+      )}
 
       <Box marginBottom={1}>
         <Text>{details.message}</Text>
       </Box>
+
+      {isPlanModeExit && details.details && (
+        <Box
+          flexDirection="column"
+          marginBottom={1}
+          borderStyle="single"
+          borderColor="cyan"
+          padding={1}
+        >
+          <Text bold color="cyan">
+            📋 实现方案:
+          </Text>
+          <Box marginTop={1}>
+            <MessageRenderer
+              content={details.details}
+              role="assistant"
+              terminalWidth={terminalWidth - 4}
+            />
+          </Box>
+        </Box>
+      )}
 
       {details.risks && details.risks.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
@@ -128,9 +210,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
       )}
 
       <Box flexDirection="column">
-        <Text color="gray">
-          使用 ↑ ↓ 选择，回车确认（支持 Y / S / N 快捷键，ESC 取消）
-        </Text>
+        <Text color="gray">使用 ↑ ↓ 选择，回车确认（支持 Y/S/N 快捷键，ESC 取消）</Text>
         <SelectInput
           items={options}
           isFocused={isFocused}

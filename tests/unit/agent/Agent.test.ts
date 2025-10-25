@@ -29,13 +29,15 @@ vi.mock('../../../src/services/ChatService.js', () => ({
 vi.mock('../../../src/agent/ExecutionEngine.js', () => ({
   ExecutionEngine: vi.fn().mockImplementation(() => ({
     initialize: vi.fn().mockResolvedValue(undefined),
-    executeSimpleTask: vi.fn().mockImplementation((task) => Promise.resolve({
-      taskId: task.id,
-      content: 'Mock task result',
-      subAgentResults: [],
-      executionPlan: null,
-      metadata: {},
-    })),
+    executeSimpleTask: vi.fn().mockImplementation((task) =>
+      Promise.resolve({
+        taskId: task.id,
+        content: 'Mock task result',
+        subAgentResults: [],
+        executionPlan: null,
+        metadata: {},
+      })
+    ),
     getContextManager: vi.fn().mockReturnValue({
       init: vi.fn().mockResolvedValue(undefined),
       addAssistantMessage: vi.fn(),
@@ -158,7 +160,7 @@ describe('Agent', () => {
       provider: 'openai-compatible',
       apiKey: 'test-key',
       baseUrl: 'https://mock.api',
-      
+
       // 模型
       model: 'mock-model',
       temperature: 0.7,
@@ -167,26 +169,26 @@ describe('Agent', () => {
       topP: 0.9,
       topK: 50,
       timeout: 30000,
-      
+
       // UI
       theme: 'GitHub',
       language: 'zh-CN',
       fontSize: 14,
       showStatusBar: true,
-      
+
       // 核心
       debug: false,
       telemetry: false,
       autoUpdate: true,
       workingDirectory: process.cwd(),
-      
+
       // 日志
       logLevel: 'info',
       logFormat: 'text',
-      
+
       // MCP
       mcpEnabled: false,
-      
+
       // 行为配置
       permissions: {
         allow: [],
@@ -238,7 +240,10 @@ describe('Agent', () => {
 
     it('应该能够发送消息并接收响应', async () => {
       // 使用系统提示词聊天，避免网络调用
-      const response = await agent.chatWithSystem('You are a helpful assistant', 'Hello, world!');
+      const response = await agent.chatWithSystem(
+        'You are a helpful assistant',
+        'Hello, world!'
+      );
 
       expect(response).toBe('Mock AI response');
       expect(mockChatService.chat).toHaveBeenCalled();
@@ -269,7 +274,9 @@ describe('Agent', () => {
       // 让 chatWithSystem 方法抛出错误
       mockChatService.chat.mockRejectedValueOnce(new Error('Connection error.'));
 
-      await expect(agent.chatWithSystem('System prompt', 'Hello')).rejects.toThrow('Connection error.');
+      await expect(agent.chatWithSystem('System prompt', 'Hello')).rejects.toThrow(
+        'Connection error.'
+      );
     });
   });
 
@@ -326,7 +333,7 @@ describe('Agent', () => {
       // 临时替换 ExecutionEngine mock 为失败版本
       const { ExecutionEngine } = await import('../../../src/agent/ExecutionEngine.js');
       const originalImplementation = vi.mocked(ExecutionEngine).getMockImplementation();
-      
+
       vi.mocked(ExecutionEngine).mockImplementationOnce(() => {
         throw new Error('Init Error');
       });
@@ -336,7 +343,7 @@ describe('Agent', () => {
         provider: 'openai-compatible',
         apiKey: 'test-key',
         baseUrl: 'https://mock.api',
-        
+
         // 模型
         model: 'mock-model',
         temperature: 0.7,
@@ -345,26 +352,26 @@ describe('Agent', () => {
         topP: 0.9,
         topK: 50,
         timeout: 30000,
-        
+
         // UI
         theme: 'GitHub',
         language: 'zh-CN',
         fontSize: 14,
         showStatusBar: true,
-        
+
         // 核心
         debug: false,
         telemetry: false,
         autoUpdate: true,
         workingDirectory: process.cwd(),
-        
+
         // 日志
         logLevel: 'info',
         logFormat: 'text',
-        
+
         // MCP
         mcpEnabled: false,
-        
+
         // 行为配置
         permissions: {
           allow: [],
@@ -379,7 +386,7 @@ describe('Agent', () => {
       });
 
       await expect(failingAgent.initialize()).rejects.toThrow('Init Error');
-      
+
       // 恢复原始mock
       if (originalImplementation) {
         vi.mocked(ExecutionEngine).mockImplementation(originalImplementation);

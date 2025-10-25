@@ -39,7 +39,11 @@ import {
 describe('错误处理工具函数', () => {
   test('isError 应该正确识别错误', () => {
     const nativeError = new Error('原生错误');
-    const bladeError = new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INTERNAL_ERROR, 'Blade错误');
+    const bladeError = new BladeError(
+      ErrorCodeModule.CORE,
+      ErrorCodes.CORE.INTERNAL_ERROR,
+      'Blade错误'
+    );
     const notError = '不是错误';
 
     expect(isError(nativeError)).toBe(true);
@@ -49,14 +53,22 @@ describe('错误处理工具函数', () => {
 
   test('isBladeError 应该正确识别BladeError', () => {
     const nativeError = new Error('原生错误');
-    const bladeError = new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INTERNAL_ERROR, 'Blade错误');
+    const bladeError = new BladeError(
+      ErrorCodeModule.CORE,
+      ErrorCodes.CORE.INTERNAL_ERROR,
+      'Blade错误'
+    );
 
     expect(isBladeError(nativeError)).toBe(false);
     expect(isBladeError(bladeError)).toBe(true);
   });
 
   test('isErrorType 应该正确检查错误类型', () => {
-    const bladeError = new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INTERNAL_ERROR, 'Blade错误');
+    const bladeError = new BladeError(
+      ErrorCodeModule.CORE,
+      ErrorCodes.CORE.INTERNAL_ERROR,
+      'Blade错误'
+    );
     const nativeError = new Error('原生错误');
 
     expect(isErrorType(bladeError, 'BladeError')).toBe(true);
@@ -103,7 +115,11 @@ describe('错误处理工具函数', () => {
   });
 
   test('errorToString 应该正确转换错误为字符串', () => {
-    const bladeError = new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INTERNAL_ERROR, 'Blade错误');
+    const bladeError = new BladeError(
+      ErrorCodeModule.CORE,
+      ErrorCodes.CORE.INTERNAL_ERROR,
+      'Blade错误'
+    );
     const nativeError = new Error('原生错误');
 
     expect(errorToString(bladeError)).toBe('BladeError [CORE:0004]: Blade错误');
@@ -111,10 +127,15 @@ describe('错误处理工具函数', () => {
   });
 
   test('getErrorDetails 应该正确获取错误详细信息', () => {
-    const bladeError = new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INTERNAL_ERROR, 'Blade错误', {
-      context: { test: 'value' },
-      retryable: true,
-    });
+    const bladeError = new BladeError(
+      ErrorCodeModule.CORE,
+      ErrorCodes.CORE.INTERNAL_ERROR,
+      'Blade错误',
+      {
+        context: { test: 'value' },
+        retryable: true,
+      }
+    );
     const nativeError = new Error('原生错误');
 
     const bladeDetails = getErrorDetails(bladeError);
@@ -129,8 +150,14 @@ describe('错误处理工具函数', () => {
   test('filterErrors 应该正确过滤错误', () => {
     const errors = [
       new Error('原生错误'),
-      new BladeError(ErrorCodeModule.CONFIG, ErrorCodes.CONFIG.CONFIG_NOT_FOUND, '配置错误'),
-      new BladeError(ErrorCodeModule.LLM, ErrorCodes.LLM.API_CALL_FAILED, 'API错误', { retryable: true }),
+      new BladeError(
+        ErrorCodeModule.CONFIG,
+        ErrorCodes.CONFIG.CONFIG_NOT_FOUND,
+        '配置错误'
+      ),
+      new BladeError(ErrorCodeModule.LLM, ErrorCodes.LLM.API_CALL_FAILED, 'API错误', {
+        retryable: true,
+      }),
     ];
 
     const bladeErrors = filterErrors(errors, isBladeError);
@@ -143,9 +170,22 @@ describe('错误处理工具函数', () => {
 
   test('filterErrorsByCategory 应该按类别过滤错误', () => {
     const errors = [
-      new BladeError(ErrorCodeModule.CONFIG, ErrorCodes.CONFIG.CONFIG_NOT_FOUND, '配置错误'),
-      new BladeError(ErrorCodeModule.NETWORK, ErrorCodes.NETWORK.REQUEST_FAILED, '网络错误', { retryable: true }),
-      new BladeError(ErrorCodeModule.FILE_SYSTEM, ErrorCodes.FILE_SYSTEM.FILE_NOT_FOUND, '文件错误'),
+      new BladeError(
+        ErrorCodeModule.CONFIG,
+        ErrorCodes.CONFIG.CONFIG_NOT_FOUND,
+        '配置错误'
+      ),
+      new BladeError(
+        ErrorCodeModule.NETWORK,
+        ErrorCodes.NETWORK.REQUEST_FAILED,
+        '网络错误',
+        { retryable: true }
+      ),
+      new BladeError(
+        ErrorCodeModule.FILE_SYSTEM,
+        ErrorCodes.FILE_SYSTEM.FILE_NOT_FOUND,
+        '文件错误'
+      ),
     ];
 
     const systemErrors = filterErrorsByCategory(errors, ErrorCategory.SYSTEM);
@@ -155,8 +195,16 @@ describe('错误处理工具函数', () => {
 
   test('filterErrorsBySeverity 应该按严重程度过滤错误', () => {
     const errors = [
-      new BladeError(ErrorCodeModule.CONFIG, ErrorCodes.CONFIG.CONFIG_NOT_FOUND, '配置警告'),
-      new BladeError(ErrorCodeModule.SECURITY, ErrorCodes.SECURITY.AUTHENTICATION_FAILED, '安全错误'),
+      new BladeError(
+        ErrorCodeModule.CONFIG,
+        ErrorCodes.CONFIG.CONFIG_NOT_FOUND,
+        '配置警告'
+      ),
+      new BladeError(
+        ErrorCodeModule.SECURITY,
+        ErrorCodes.SECURITY.AUTHENTICATION_FAILED,
+        '安全错误'
+      ),
     ];
 
     const errorSeverityErrors = filterErrorsBySeverity(errors, ErrorSeverity.ERROR);
@@ -166,8 +214,17 @@ describe('错误处理工具函数', () => {
 
   test('getRetryableErrors 应该获取可重试的错误', () => {
     const errors = [
-      new BladeError(ErrorCodeModule.NETWORK, ErrorCodes.NETWORK.REQUEST_FAILED, '网络错误', { retryable: true }), // 可重试
-      new BladeError(ErrorCodeModule.FILE_SYSTEM, ErrorCodes.FILE_SYSTEM.FILE_NOT_FOUND, '文件错误'), // 不可重试
+      new BladeError(
+        ErrorCodeModule.NETWORK,
+        ErrorCodes.NETWORK.REQUEST_FAILED,
+        '网络错误',
+        { retryable: true }
+      ), // 可重试
+      new BladeError(
+        ErrorCodeModule.FILE_SYSTEM,
+        ErrorCodes.FILE_SYSTEM.FILE_NOT_FOUND,
+        '文件错误'
+      ), // 不可重试
     ];
 
     const retryable = getRetryableErrors(errors);
@@ -176,12 +233,22 @@ describe('错误处理工具函数', () => {
   });
 
   test('getRecoverableErrors 应该获取可恢复的错误', () => {
-    const recoverableError = new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INTERNAL_ERROR, '可恢复错误', {
-      recoverable: true,
-    });
-    const nonRecoverableError = new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INTERNAL_ERROR, '不可恢复错误', {
-      recoverable: false,
-    });
+    const recoverableError = new BladeError(
+      ErrorCodeModule.CORE,
+      ErrorCodes.CORE.INTERNAL_ERROR,
+      '可恢复错误',
+      {
+        recoverable: true,
+      }
+    );
+    const nonRecoverableError = new BladeError(
+      ErrorCodeModule.CORE,
+      ErrorCodes.CORE.INTERNAL_ERROR,
+      '不可恢复错误',
+      {
+        recoverable: false,
+      }
+    );
 
     const errors = [recoverableError, nonRecoverableError];
     const recoverable = getRecoverableErrors(errors);
@@ -192,8 +259,17 @@ describe('错误处理工具函数', () => {
 
   test('analyzeErrors 应该正确分析错误统计', () => {
     const errors = [
-      new BladeError(ErrorCodeModule.CONFIG, ErrorCodes.CONFIG.CONFIG_NOT_FOUND, '配置错误'),
-      new BladeError(ErrorCodeModule.NETWORK, ErrorCodes.NETWORK.REQUEST_FAILED, '网络错误', { retryable: true }),
+      new BladeError(
+        ErrorCodeModule.CONFIG,
+        ErrorCodes.CONFIG.CONFIG_NOT_FOUND,
+        '配置错误'
+      ),
+      new BladeError(
+        ErrorCodeModule.NETWORK,
+        ErrorCodes.NETWORK.REQUEST_FAILED,
+        '网络错误',
+        { retryable: true }
+      ),
       new Error('原生错误'),
     ];
 
@@ -208,8 +284,16 @@ describe('错误处理工具函数', () => {
 
   test('createErrorChain 应该正确创建错误链', () => {
     const error1 = new Error('第一个错误');
-    const error2 = new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INTERNAL_ERROR, '第二个错误');
-    const error3 = new BladeError(ErrorCodeModule.CONFIG, ErrorCodes.CONFIG.CONFIG_NOT_FOUND, '第三个错误');
+    const error2 = new BladeError(
+      ErrorCodeModule.CORE,
+      ErrorCodes.CORE.INTERNAL_ERROR,
+      '第二个错误'
+    );
+    const error3 = new BladeError(
+      ErrorCodeModule.CONFIG,
+      ErrorCodes.CONFIG.CONFIG_NOT_FOUND,
+      '第三个错误'
+    );
 
     const chainedError = createErrorChain(error1, error2, error3);
 
@@ -219,7 +303,11 @@ describe('错误处理工具函数', () => {
   });
 
   test('formatErrorForDisplay 应该正确格式化错误显示', () => {
-    const error = new BladeError(ErrorCodeModule.CONFIG, ErrorCodes.CONFIG.CONFIG_NOT_FOUND, '配置错误');
+    const error = new BladeError(
+      ErrorCodeModule.CONFIG,
+      ErrorCodes.CONFIG.CONFIG_NOT_FOUND,
+      '配置错误'
+    );
 
     const simpleFormat = formatErrorForDisplay(error, false);
     expect(simpleFormat).toBe('BladeError [CONFIG:1001]: 配置错误');
@@ -230,9 +318,21 @@ describe('错误处理工具函数', () => {
   });
 
   test('createErrorHash 应该创建错误哈希', () => {
-    const error1 = new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INTERNAL_ERROR, '相同错误');
-    const error2 = new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INTERNAL_ERROR, '相同错误');
-    const error3 = new BladeError(ErrorCodeModule.CORE, ErrorCodes.CORE.INTERNAL_ERROR, '不同错误');
+    const error1 = new BladeError(
+      ErrorCodeModule.CORE,
+      ErrorCodes.CORE.INTERNAL_ERROR,
+      '相同错误'
+    );
+    const error2 = new BladeError(
+      ErrorCodeModule.CORE,
+      ErrorCodes.CORE.INTERNAL_ERROR,
+      '相同错误'
+    );
+    const error3 = new BladeError(
+      ErrorCodeModule.CORE,
+      ErrorCodes.CORE.INTERNAL_ERROR,
+      '不同错误'
+    );
 
     const hash1 = createErrorHash(error1);
     const hash2 = createErrorHash(error2);
@@ -255,8 +355,16 @@ describe('错误处理工具函数', () => {
 
   test('getMostRelevantError 应该获取最相关的错误', () => {
     const errors = [
-      new BladeError(ErrorCodeModule.CONFIG, ErrorCodes.CONFIG.CONFIG_NOT_FOUND, '配置警告'),
-      new BladeError(ErrorCodeModule.SECURITY, ErrorCodes.SECURITY.AUTHENTICATION_FAILED, '安全错误'),
+      new BladeError(
+        ErrorCodeModule.CONFIG,
+        ErrorCodes.CONFIG.CONFIG_NOT_FOUND,
+        '配置警告'
+      ),
+      new BladeError(
+        ErrorCodeModule.SECURITY,
+        ErrorCodes.SECURITY.AUTHENTICATION_FAILED,
+        '安全错误'
+      ),
       new Error('原生错误'),
     ];
 
@@ -268,7 +376,11 @@ describe('错误处理工具函数', () => {
   });
 
   test('errorMatchesPattern 应该正确匹配错误模式', () => {
-    const error = new BladeError(ErrorCodeModule.CONFIG, ErrorCodes.CONFIG.CONFIG_NOT_FOUND, '配置验证失败');
+    const error = new BladeError(
+      ErrorCodeModule.CONFIG,
+      ErrorCodes.CONFIG.CONFIG_NOT_FOUND,
+      '配置验证失败'
+    );
 
     expect(errorMatchesPattern(error, '配置')).toBe(true);
     expect(errorMatchesPattern(error, /验证/)).toBe(true);
@@ -276,7 +388,11 @@ describe('错误处理工具函数', () => {
   });
 
   test('formatErrorForCLI 应该正确格式化CLI错误', () => {
-    const error = new BladeError(ErrorCodeModule.CONFIG, ErrorCodes.CONFIG.CONFIG_NOT_FOUND, '配置错误');
+    const error = new BladeError(
+      ErrorCodeModule.CONFIG,
+      ErrorCodes.CONFIG.CONFIG_NOT_FOUND,
+      '配置错误'
+    );
 
     const coloredFormat = formatErrorForCLI(error, true);
     expect(coloredFormat).toContain('1001');

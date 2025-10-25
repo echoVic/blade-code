@@ -25,14 +25,17 @@ export type ProviderType = 'openai-compatible' | 'anthropic';
  * - ⚠️  警告：完全信任 AI，跳过所有确认
  * - 适用场景：高度可控的环境或演示场景
  *
- * ## PLAN 模式（计划中）
- * - 保留占位，暂未实现
+ * ## PLAN 模式
+ * - ✅ 自动批准: Read, Search, Network, Think, Memory（只读工具）
+ * - ❌ 拦截所有修改: Edit, Write, Bash, Delete, Move 等
+ * - 🔵 特殊工具: ExitPlanMode（用于提交方案）
+ * - 适用场景：调研阶段，生成实现方案，用户批准后退出 Plan 模式
  */
 export enum PermissionMode {
   DEFAULT = 'default',
   AUTO_EDIT = 'autoEdit',
   YOLO = 'yolo',
-  PLAN = 'plan', // TODO: 暂未实现，仅占位
+  PLAN = 'plan',
 }
 
 export interface BladeConfig {

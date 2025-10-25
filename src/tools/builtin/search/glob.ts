@@ -169,11 +169,22 @@ export const globTool = createTool({
 
       const displayMessage = formatDisplayMessage(metadata);
 
+      // 为 LLM 生成更友好的文本格式
+      const llmFriendlyText =
+        limitedMatches.length > 0
+          ? `Found ${limitedMatches.length} file(s) matching "${pattern}":\n\n` +
+            limitedMatches.map((m) => `- ${m.relative_path}`).join('\n') +
+            '\n\nUse the relative_path values above for Read/Edit operations.'
+          : `No files found matching "${pattern}"`;
+
       return {
         success: true,
-        llmContent: limitedMatches,
+        llmContent: llmFriendlyText,
         displayContent: displayMessage,
-        metadata,
+        metadata: {
+          ...metadata,
+          matches: limitedMatches, // 保留原始数据在 metadata 中
+        },
       };
     } catch (error: any) {
       if (error.name === 'AbortError') {

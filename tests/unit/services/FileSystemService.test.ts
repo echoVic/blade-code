@@ -142,12 +142,15 @@ describe('FileSystemService', () => {
 
     await fileService.deleteDirectory('/test/dir');
 
-    expect(fs.rm).toHaveBeenCalledWith('/test/dir', { recursive: undefined, force: undefined });
+    expect(fs.rm).toHaveBeenCalledWith('/test/dir', {
+      recursive: undefined,
+      force: undefined,
+    });
   });
 
   it('should handle file permissions', async () => {
     const mockContent = '文件内容';
-    
+
     // 设置阻止路径
     mockConfig.tools.fileSystem.blockedPaths = ['/blocked'];
 
@@ -160,7 +163,7 @@ describe('FileSystemService', () => {
 
     // 被阻止路径应该在权限检查时抛出错误
     (fs.stat as Mock).mockRejectedValue(new Error('访问被阻止的路径'));
-    
+
     await expect(fileService.readFile('/blocked/file.txt')).rejects.toThrow(
       '访问被阻止的路径'
     );

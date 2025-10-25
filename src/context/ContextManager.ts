@@ -253,7 +253,10 @@ export class ContextManager {
     role: 'user' | 'assistant' | 'system',
     content: string,
     parentUuid: string | null = null,
-    metadata?: { model?: string; usage?: { input_tokens: number; output_tokens: number } }
+    metadata?: {
+      model?: string;
+      usage?: { input_tokens: number; output_tokens: number };
+    }
   ): Promise<string> {
     return this.persistent.saveMessage(sessionId, role, content, parentUuid, metadata);
   }
@@ -280,7 +283,13 @@ export class ContextManager {
     parentUuid: string | null = null,
     error?: string
   ): Promise<string> {
-    return this.persistent.saveToolResult(sessionId, toolId, toolOutput, parentUuid, error);
+    return this.persistent.saveToolResult(
+      sessionId,
+      toolId,
+      toolOutput,
+      parentUuid,
+      error
+    );
   }
 
   /**

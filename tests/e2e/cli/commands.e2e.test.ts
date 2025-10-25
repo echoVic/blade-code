@@ -15,7 +15,10 @@ const bladeCli = join(process.cwd(), 'dist', 'blade.js');
 /**
  * 执行 CLI 命令并返回结果
  */
-async function runBladeCommand(args: string[], options: { cwd?: string; timeout?: number } = {}) {
+async function runBladeCommand(
+  args: string[],
+  options: { cwd?: string; timeout?: number } = {}
+) {
   try {
     const result = await execa('node', [bladeCli, ...args], {
       cwd: options.cwd || testDir,
@@ -23,7 +26,7 @@ async function runBladeCommand(args: string[], options: { cwd?: string; timeout?
       timeout: options.timeout || 10000,
       reject: false, // 不自动抛出错误，让我们手动处理
     });
-    
+
     return {
       stdout: result.stdout,
       stderr: result.stderr,
@@ -69,7 +72,7 @@ describe('CLI 命令 E2E 测试', () => {
   describe('基础命令', () => {
     test('应该显示帮助信息', async () => {
       const result = await runBladeCommand(['--help'], { timeout: 5000 });
-      
+
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Commands:');
       expect(result.stdout).toContain('Options:');
@@ -77,14 +80,14 @@ describe('CLI 命令 E2E 测试', () => {
 
     test('应该显示版本信息', async () => {
       const result = await runBladeCommand(['--version'], { timeout: 5000 });
-      
+
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toMatch(/\d+\.\d+\.\d+/);
     });
 
     test('应该支持命令补全', async () => {
       const result = await runBladeCommand(['completion'], { timeout: 5000 });
-      
+
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('blade');
     });
@@ -93,7 +96,7 @@ describe('CLI 命令 E2E 测试', () => {
   describe('doctor 命令', () => {
     test('应该执行健康检查', async () => {
       const result = await runBladeCommand(['doctor']);
-      
+
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Running Blade health check');
       expect(result.stdout).toContain('Node.js version');
@@ -104,7 +107,7 @@ describe('CLI 命令 E2E 测试', () => {
   describe('config 命令', () => {
     test('应该显示配置帮助', async () => {
       const result = await runBladeCommand(['config', '--help']);
-      
+
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Manage configuration');
       expect(result.stdout).toContain('set');
@@ -115,14 +118,14 @@ describe('CLI 命令 E2E 测试', () => {
 
     test('应该列出配置', async () => {
       const result = await runBladeCommand(['config', 'list']);
-      
+
       // 配置命令应该能执行，即使没有配置文件
       expect([0, 1]).toContain(result.exitCode);
     });
 
     test('应该能列出配置', async () => {
       const result = await runBladeCommand(['config', 'list'], { timeout: 5000 });
-      
+
       expect(result.exitCode).toBe(0);
       // 配置列表应该包含一些基本信息
       expect(result.stdout.length).toBeGreaterThan(0);
@@ -132,7 +135,7 @@ describe('CLI 命令 E2E 测试', () => {
   describe('doctor 命令', () => {
     test('应该能执行 doctor 命令', async () => {
       const result = await runBladeCommand(['doctor'], { timeout: 5000 });
-      
+
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Blade');
     });
@@ -141,7 +144,7 @@ describe('CLI 命令 E2E 测试', () => {
   describe('config 命令', () => {
     test('应该能显示 config 帮助', async () => {
       const result = await runBladeCommand(['config', '--help'], { timeout: 5000 });
-      
+
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('config');
     });
@@ -152,7 +155,7 @@ describe('CLI 命令 E2E 测试', () => {
       // 跳过交互模式测试，因为它会持续运行
       // 这里只测试能否正常启动进程
       const result = await runBladeCommand(['--help'], { timeout: 5000 });
-      
+
       // 帮助命令应该正常退出
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Commands:');

@@ -151,6 +151,7 @@ export const taskTool = createTool({
   name: 'Task',
   displayName: 'Agent任务调度',
   kind: ToolKind.Execute,
+  isReadOnly: true, // 🆕 显式标记为只读（启动子 Agent 不修改系统状态）
 
   // Zod Schema 定义
   schema: z.object({

@@ -3,21 +3,27 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 const BaseComponent = {};
 const LoggerComponent = function LoggerComponent(name: string) {
   this.name = name;
-  this.setLogLevel = function(level: string) {};
-  this.debug = function(message: string, metadata?: any) {};
-  this.info = function(message: string, metadata?: any) {};
-  this.warn = function(message: string, metadata?: any) {};
-  this.error = function(message: string, error?: Error, metadata?: any) {};
-  this.fatal = function(message: string, error?: Error, metadata?: any) {};
-  this.init = function() { return Promise.resolve(); };
-  this.destroy = function() { return Promise.resolve(); };
-  this.setContext = function(context: any) {};
-  this.clearContext = function() {};
-  this.getLogger = function() {};
-  this.getLoggerManager = function() {};
-  this.isFallbackMode = function() { return false; };
-  this.addTransport = function(transport: any) {};
-  this.addMiddleware = function(middleware: any) {};
+  this.setLogLevel = function (level: string) {};
+  this.debug = function (message: string, metadata?: any) {};
+  this.info = function (message: string, metadata?: any) {};
+  this.warn = function (message: string, metadata?: any) {};
+  this.error = function (message: string, error?: Error, metadata?: any) {};
+  this.fatal = function (message: string, error?: Error, metadata?: any) {};
+  this.init = function () {
+    return Promise.resolve();
+  };
+  this.destroy = function () {
+    return Promise.resolve();
+  };
+  this.setContext = function (context: any) {};
+  this.clearContext = function () {};
+  this.getLogger = function () {};
+  this.getLoggerManager = function () {};
+  this.isFallbackMode = function () {
+    return false;
+  };
+  this.addTransport = function (transport: any) {};
+  this.addMiddleware = function (middleware: any) {};
 };
 
 describe('LoggerComponent 集成测试', () => {

@@ -87,7 +87,7 @@ describe('RetryManager', () => {
 
     // 测试退避计算（由于抖动，只能检查大致范围）
     const delay = (retryManagerWithJitter as any).calculateDelay(1);
-    expect(delay).toBeGreaterThanOrEqual(50);  // 考虑抖动，最小值可能是50
+    expect(delay).toBeGreaterThanOrEqual(50); // 考虑抖动，最小值可能是50
     expect(delay).toBeLessThanOrEqual(150);
   });
 

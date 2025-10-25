@@ -500,11 +500,10 @@ export class ConfigManager {
       permissions.allow.push(rule);
       existingSettings.permissions = permissions;
 
-      await fs.writeFile(
-        localSettingsPath,
-        JSON.stringify(existingSettings, null, 2),
-        { mode: 0o600, encoding: 'utf-8' }
-      );
+      await fs.writeFile(localSettingsPath, JSON.stringify(existingSettings, null, 2), {
+        mode: 0o600,
+        encoding: 'utf-8',
+      });
 
       // 更新内存配置
       if (this.config) {

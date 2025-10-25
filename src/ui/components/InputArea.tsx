@@ -60,9 +60,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
         showCursor={!isProcessing}
         focus={true}
       />
-      {isProcessing && (
-        <Text color="yellow"> {SPINNER_FRAMES[spinnerFrame]}</Text>
-      )}
+      {isProcessing && <Text color="yellow"> {SPINNER_FRAMES[spinnerFrame]}</Text>}
     </Box>
   );
 };

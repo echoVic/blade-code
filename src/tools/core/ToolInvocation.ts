@@ -1,8 +1,4 @@
-import type {
-  ExecutionContext,
-  ToolInvocation,
-  ToolResult,
-} from '../types/index.js';
+import type { ExecutionContext, ToolInvocation, ToolResult } from '../types/index.js';
 
 /**
  * 统一的工具调用实现
@@ -41,11 +37,21 @@ export class UnifiedToolInvocation<TParams = any> implements ToolInvocation<TPar
 
   /**
    * 执行工具
+   * @param signal - 中止信号
+   * @param updateOutput - 输出更新回调
+   * @param context - 额外的执行上下文（包含 confirmationHandler、permissionMode 等）
    */
   async execute(
     signal: AbortSignal,
-    updateOutput?: (output: string) => void
+    updateOutput?: (output: string) => void,
+    context?: Partial<ExecutionContext>
   ): Promise<ToolResult> {
-    return this.executeFn(this.params, { signal, updateOutput });
+    // 合并基础 context 和额外字段
+    const fullContext: ExecutionContext = {
+      signal,
+      updateOutput,
+      ...context, // 包含 confirmationHandler, permissionMode, userId, sessionId 等
+    };
+    return this.executeFn(this.params, fullContext);
   }
 }

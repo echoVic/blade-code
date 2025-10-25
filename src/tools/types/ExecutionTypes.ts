@@ -5,8 +5,10 @@ import { ToolErrorType } from './ToolTypes.js';
  * 确认详情
  */
 export interface ConfirmationDetails {
-  title: string;
+  type?: 'permission' | 'exitPlanMode'; // 🆕 确认类型
+  title?: string;
   message: string;
+  details?: string; // 🆕 Plan 方案内容或其他详细信息
   risks?: string[];
   affectedFiles?: string[];
 }
@@ -20,6 +22,7 @@ export interface ConfirmationResponse {
   approved: boolean;
   reason?: string;
   scope?: PermissionApprovalScope;
+  targetMode?: 'default' | 'auto_edit'; // 🆕 Plan 模式退出后的目标权限模式
 }
 
 /**
@@ -46,6 +49,9 @@ export interface ExecutionContext {
   onProgress?: (message: string) => void;
   updateOutput?: (output: string) => void; // 别名，与 onProgress 功能相同
   confirmationHandler?: ConfirmationHandler; // 用于处理需要用户确认的工具调用
+
+  // 权限模式（用于 Plan 模式判断）
+  permissionMode?: string;
 }
 
 /**

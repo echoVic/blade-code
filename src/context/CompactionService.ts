@@ -4,10 +4,7 @@
  */
 
 import { nanoid } from 'nanoid';
-import {
-  createChatService,
-  type Message,
-} from '../services/ChatServiceInterface.js';
+import { createChatService, type Message } from '../services/ChatServiceInterface.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
 import { TokenCounter } from './TokenCounter.js';
 
@@ -117,10 +114,7 @@ export class CompactionService {
 
       // 5. 构建新消息列表（用于发送给 LLM）
       const compactedMessages = [summaryMessage, ...retainedMessages];
-      const postTokens = TokenCounter.countTokens(
-        compactedMessages,
-        options.modelName
-      );
+      const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
 
       console.log('[CompactionService] 压缩完成！');
       console.log(
@@ -169,7 +163,8 @@ export class CompactionService {
     // 创建 ChatService
     const chatService = createChatService({
       apiKey: options.apiKey || process.env.BLADE_API_KEY || '',
-      baseUrl: options.baseURL || process.env.BLADE_BASE_URL || 'https://api.openai.com/v1',
+      baseUrl:
+        options.baseURL || process.env.BLADE_BASE_URL || 'https://api.openai.com/v1',
       model: compactionModel,
       temperature: 0.3,
       maxTokens: 8000,
@@ -210,12 +205,15 @@ export class CompactionService {
     const messagesText = messages
       .map((msg, i) => {
         const role = msg.role || 'unknown';
-        const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+        const content =
+          typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
 
         // 如果消息太长，截断
         const maxLength = 5000;
         const truncatedContent =
-          content.length > maxLength ? content.substring(0, maxLength) + '...' : content;
+          content.length > maxLength
+            ? content.substring(0, maxLength) + '...'
+            : content;
 
         return `[${i + 1}] ${role}: ${truncatedContent}`;
       })

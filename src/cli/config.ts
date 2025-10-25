@@ -92,7 +92,8 @@ export const globalOptions = {
   'max-turns': {
     alias: ['maxTurns'],
     type: 'number',
-    describe: 'Maximum conversation turns (-1: unlimited, 0: disable chat, N>0: limit to N turns)',
+    describe:
+      'Maximum conversation turns (-1: unlimited, 0: disable chat, N>0: limit to N turns)',
     group: 'AI Options:',
     default: undefined, // 不设置默认值，优先使用配置文件
   },
@@ -100,7 +101,8 @@ export const globalOptions = {
     alias: ['permissionMode'],
     type: 'string',
     choices: ['default', 'autoEdit', 'yolo', 'plan'],
-    describe: 'Permission mode (default: ask for non-read tools, autoEdit: auto-approve edits, yolo: auto-approve all, plan: reserved)',
+    describe:
+      'Permission mode (default: ask for non-read tools, autoEdit: auto-approve edits, yolo: auto-approve all, plan: reserved)',
     group: 'Security Options:',
   },
   yolo: {
@@ -116,7 +118,8 @@ export const globalOptions = {
   },
   resume: {
     alias: 'r',
-    describe: 'Resume a conversation - provide a session ID or interactively select a conversation to resume',
+    describe:
+      'Resume a conversation - provide a session ID or interactively select a conversation to resume',
     group: 'Session Options:',
     // 移除 type 声明，让 yargs 自动推断
     coerce: (value: string | boolean | undefined) => {

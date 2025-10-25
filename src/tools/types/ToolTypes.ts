@@ -71,7 +71,6 @@ export interface ToolInvocation<TParams = any, TResult = ToolResult> {
   ): Promise<TResult>;
 }
 
-
 /**
  * 工具描述格式
  */
@@ -91,7 +90,6 @@ export interface ToolDescription {
   important?: string[];
 }
 
-
 /**
  * 工具配置 (泛型接口，用于配合 Zod Schema)
  * TSchema: Schema 类型 (如 z.ZodObject)
@@ -104,6 +102,8 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   displayName: string;
   /** 工具类型 */
   kind: ToolKind;
+  /** 🆕 是否为只读工具（可选，默认根据 kind 推断） */
+  isReadOnly?: boolean;
   /** Schema 定义 (通常是 Zod Schema) */
   schema: TSchema;
   /** 工具描述 */
@@ -154,6 +154,8 @@ export interface Tool<TParams = unknown> {
   readonly displayName: string;
   /** 工具类型 */
   readonly kind: ToolKind;
+  /** 🆕 是否为只读工具 */
+  readonly isReadOnly: boolean;
   /** 工具描述 */
   readonly description: ToolDescription;
   /** 版本号 */
@@ -194,4 +196,19 @@ export interface Tool<TParams = unknown> {
    * 将具体参数抽象为通配符权限规则
    */
   abstractPermissionRule?: (params: TParams) => string;
+}
+
+/**
+ * 根据 ToolKind 推断是否为只读工具
+ */
+export function isReadOnlyKind(kind: ToolKind): boolean {
+  const READ_ONLY_KINDS = [
+    ToolKind.Read, // 文件读取
+    ToolKind.Search, // 搜索工具
+    ToolKind.Network, // 网络请求（仅 GET）
+    ToolKind.Think, // 思考工具
+    ToolKind.Memory, // TODO 管理（记录计划）
+  ];
+
+  return READ_ONLY_KINDS.includes(kind);
 }

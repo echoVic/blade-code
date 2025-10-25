@@ -115,9 +115,7 @@ describe('ChatService', () => {
       );
 
       const messages: Message[] = [{ role: 'user', content: 'Hello, world!' }];
-      await expect(chatService.chat(messages)).rejects.toThrow(
-        'Connection error.'
-      );
+      await expect(chatService.chat(messages)).rejects.toThrow('Connection error.');
     });
   });
 

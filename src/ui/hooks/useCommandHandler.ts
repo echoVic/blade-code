@@ -36,6 +36,13 @@ export const useCommandHandler = (
   confirmationHandler?: ConfirmationHandler,
   maxTurns?: number // --max-turns (最大对话轮次)
 ) => {
+  // 调试日志：追踪 confirmationHandler 参数接收
+  console.log('[useCommandHandler] Received confirmationHandler parameter:', {
+    hasHandler: !!confirmationHandler,
+    hasMethod: !!confirmationHandler?.requestConfirmation,
+    methodType: typeof confirmationHandler?.requestConfirmation,
+  });
+
   const [isProcessing, setIsProcessing] = useState(false);
   const [loopState, setLoopState] = useState<LoopState>({
     active: false,
@@ -44,7 +51,7 @@ export const useCommandHandler = (
     currentTool: undefined,
   });
   const { dispatch, state: sessionState, restoreSession } = useSession();
-  const { dispatch: appDispatch, actions: appActions } = useAppState();
+  const { dispatch: appDispatch, actions: appActions, state: appState } = useAppState();
   const abortControllerRef = useRef<AbortController | undefined>(undefined);
   const agentRef = useRef<Agent | undefined>(undefined);
 
@@ -195,7 +202,18 @@ export const useCommandHandler = (
               workspaceRoot: process.cwd(),
               signal: abortControllerRef.current.signal,
               confirmationHandler,
+              permissionMode: appState.permissionMode,
             };
+
+            // 调试日志：追踪 chatContext 中的 confirmationHandler
+            console.log(
+              '[useCommandHandler] Created chatContext with confirmationHandler:',
+              {
+                hasHandler: !!chatContext.confirmationHandler,
+                hasMethod: !!chatContext.confirmationHandler?.requestConfirmation,
+                methodType: typeof chatContext.confirmationHandler?.requestConfirmation,
+              }
+            );
 
             try {
               const aiOutput = await agent.chat(analysisPrompt, chatContext);
@@ -252,7 +270,19 @@ export const useCommandHandler = (
           workspaceRoot: process.cwd(),
           signal: abortControllerRef.current.signal,
           confirmationHandler,
+          permissionMode: appState.permissionMode,
         };
+
+        // 调试日志：追踪 chatContext 中的 confirmationHandler（普通命令）
+        console.log(
+          '[useCommandHandler] Created chatContext (normal command) with confirmationHandler:',
+          {
+            hasHandler: !!chatContext.confirmationHandler,
+            hasMethod: !!chatContext.confirmationHandler?.requestConfirmation,
+            methodType: typeof chatContext.confirmationHandler?.requestConfirmation,
+          }
+        );
+
         const output = await agent.chat(command, chatContext);
 
         // 如果返回空字符串，可能是用户中止

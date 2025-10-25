@@ -120,7 +120,7 @@ export const useMainInput = (
           }
         }
       }
-      // Shift+Tab 切换权限模式
+      // Shift+Tab 循环切换权限模式 (DEFAULT → AUTO_EDIT → PLAN → DEFAULT)
       else if (key.tab && key.shift) {
         onTogglePermissionMode?.();
       }

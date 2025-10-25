@@ -39,7 +39,9 @@ const FocusContext = createContext<FocusContextType | undefined>(undefined);
  * 焦点提供者组件
  * 负责管理全局焦点状态
  */
-export const FocusProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const FocusProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const [state, setState] = useState<FocusState>({
     currentFocus: FocusId.MAIN_INPUT,
     previousFocus: null,

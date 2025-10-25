@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { PermissionMode } from '../../config/types.js';
 import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
+import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
 import type { AppProps } from '../App.js';
 import { useAppState, useTodos } from '../contexts/AppContext.js';
 import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
@@ -139,7 +140,42 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   }, [stdout, exit]);
 
   // 确认管理
-  const { confirmationState, confirmationHandler, handleResponse } = useConfirmation();
+  const {
+    confirmationState,
+    confirmationHandler,
+    handleResponse: handleResponseRaw,
+  } = useConfirmation();
+
+  // 调试日志：追踪 confirmationHandler 接收
+  console.log('[BladeInterface] Received confirmationHandler from useConfirmation:', {
+    hasHandler: !!confirmationHandler,
+    hasMethod: !!confirmationHandler?.requestConfirmation,
+    methodType: typeof confirmationHandler?.requestConfirmation,
+  });
+
+  const handleResponse = useMemoizedFn(async (response: ConfirmationResponse) => {
+    if (confirmationState.details?.type === 'exitPlanMode' && response.approved) {
+      // 批准方案后，根据用户选择切换权限模式
+      const targetMode =
+        response.targetMode === 'auto_edit'
+          ? PermissionMode.AUTO_EDIT
+          : PermissionMode.DEFAULT;
+
+      const configManager = ConfigManager.getInstance();
+      try {
+        await configManager.setPermissionMode(targetMode);
+        appDispatch(appActions.setPermissionMode(targetMode));
+
+        // 打印模式切换信息（调试用）
+        const modeName =
+          targetMode === PermissionMode.AUTO_EDIT ? 'Auto-Edit' : 'Default';
+        console.log(`[BladeInterface] Plan 模式已退出，切换到 ${modeName} 模式`);
+      } catch (error) {
+        console.error('[BladeInterface] 退出 Plan 模式失败:', error);
+      }
+    }
+    handleResponseRaw(response);
+  });
 
   // 使用 hooks
   const { isProcessing, executeCommand, loopState, handleAbort } = useCommandHandler(
@@ -159,11 +195,15 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     const currentMode: PermissionMode =
       appState.permissionMode || PermissionMode.DEFAULT;
 
-    // Shift+Tab 在 DEFAULT 和 AUTO_EDIT 之间切换
-    const nextMode: PermissionMode =
-      currentMode === PermissionMode.DEFAULT
-        ? PermissionMode.AUTO_EDIT
-        : PermissionMode.DEFAULT;
+    // Shift+Tab 循环切换: DEFAULT → AUTO_EDIT → PLAN → DEFAULT
+    let nextMode: PermissionMode;
+    if (currentMode === PermissionMode.DEFAULT) {
+      nextMode = PermissionMode.AUTO_EDIT;
+    } else if (currentMode === PermissionMode.AUTO_EDIT) {
+      nextMode = PermissionMode.PLAN;
+    } else {
+      nextMode = PermissionMode.DEFAULT;
+    }
 
     try {
       await configManager.setPermissionMode(nextMode);
@@ -180,16 +220,22 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   });
 
-  const { input, setInput, handleSubmit, showSuggestions, suggestions, selectedSuggestionIndex } =
-    useMainInput(
-      (command: string) => executeCommand(command, addUserMessage, addAssistantMessage),
-      getPreviousCommand,
-      getNextCommand,
-      addToHistory,
-      handleAbort,
-      isProcessing,
-      handlePermissionModeToggle
-    );
+  const {
+    input,
+    setInput,
+    handleSubmit,
+    showSuggestions,
+    suggestions,
+    selectedSuggestionIndex,
+  } = useMainInput(
+    (command: string) => executeCommand(command, addUserMessage, addAssistantMessage),
+    getPreviousCommand,
+    getNextCommand,
+    addToHistory,
+    handleAbort,
+    isProcessing,
+    handlePermissionModeToggle
+  );
 
   // 焦点管理：根据不同状态切换焦点
   const { setFocus } = useFocusContext();

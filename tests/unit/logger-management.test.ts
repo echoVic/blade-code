@@ -2,10 +2,7 @@ import { existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import {
-  LogLevel,
-  LogSearchQuery
-} from '../../src/logging/index.js';
+import { LogLevel, LogSearchQuery } from '../../src/logging/index.js';
 import {
   FileLogStorage,
   LogAnalyzer,

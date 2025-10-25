@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type {
   ConfirmationDetails,
   ConfirmationHandler,
@@ -62,10 +62,21 @@ export const useConfirmation = () => {
 
   /**
    * 创建 ConfirmationHandler 实例
+   * 使用 useMemo 确保引用稳定性，避免 React 闭包捕获过时引用
    */
-  const confirmationHandler: ConfirmationHandler = {
-    requestConfirmation: showConfirmation,
-  };
+  const confirmationHandler: ConfirmationHandler = useMemo(
+    () => ({
+      requestConfirmation: showConfirmation,
+    }),
+    [showConfirmation]
+  );
+
+  // 调试日志：追踪 confirmationHandler 创建
+  console.log('[useConfirmation] confirmationHandler created:', {
+    hasHandler: !!confirmationHandler,
+    hasMethod: !!confirmationHandler?.requestConfirmation,
+    methodType: typeof confirmationHandler?.requestConfirmation,
+  });
 
   return {
     confirmationState,

@@ -20,7 +20,11 @@ import { PermissionMode } from '../config/types.js';
 import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { TokenCounter } from '../context/TokenCounter.js';
-import { PromptBuilder } from '../prompts/index.js';
+import {
+  PLAN_MODE_SYSTEM_PROMPT,
+  PromptBuilder,
+  createPlanModeReminder,
+} from '../prompts/index.js';
 import {
   createChatService,
   type IChatService,
@@ -219,9 +223,12 @@ export class Agent extends EventEmitter {
 
     // 如果提供了 context，使用增强的工具调用流程
     if (context) {
-      const result = await this.runLoop(message, context, {
-        signal: context.signal,
-      });
+      // Plan 模式使用专门的 runPlanLoop 方法
+      const result =
+        context.permissionMode === 'plan'
+          ? await this.runPlanLoop(message, context, { signal: context.signal })
+          : await this.runLoop(message, context, { signal: context.signal });
+
       if (!result.success) {
         // 如果是用户中止，触发事件并返回空字符串（不抛出异常）
         if (result.error?.type === 'aborted') {
@@ -231,6 +238,28 @@ export class Agent extends EventEmitter {
         // 其他错误则抛出异常
         throw new Error(result.error?.message || '执行失败');
       }
+
+      // 🆕 检查是否需要切换模式并重新执行（Plan 模式批准后）
+      if (result.metadata?.targetMode && context.permissionMode === 'plan') {
+        console.log(
+          `🔄 Plan 模式已批准，切换到 ${result.metadata.targetMode} 模式并重新执行`
+        );
+
+        // 创建新的 context，使用批准的目标模式
+        const newContext: ChatContext = {
+          ...context,
+          permissionMode: result.metadata.targetMode,
+        };
+
+        // 重新执行原始请求（使用新模式）
+        return this.runLoop(message, newContext, { signal: context.signal }).then((newResult) => {
+          if (!newResult.success) {
+            throw new Error(newResult.error?.message || '执行失败');
+          }
+          return newResult.finalMessage || '';
+        });
+      }
+
       return result.finalMessage || '';
     }
 
@@ -246,13 +275,84 @@ export class Agent extends EventEmitter {
   }
 
   /**
-   * 运行 Agentic Loop - 核心循环调用逻辑
-   * 持续执行 LLM → 工具 → 结果注入 直到任务完成或达到限制
+   * 运行 Plan 模式循环 - 专门处理 Plan 模式的逻辑
+   * Plan 模式特点：只读调研、系统化研究方法论、最终输出实现计划
+   */
+  /**
+   * Plan 模式入口 - 准备 Plan 专用配置后调用通用循环
+   */
+  private async runPlanLoop(
+    message: string,
+    context: ChatContext,
+    options?: LoopOptions
+  ): Promise<LoopResult> {
+    console.log('🔵 Processing Plan mode message...');
+
+    // Plan 模式差异 1: 使用独立的系统提示词
+    const envContext = getEnvironmentContext();
+    const systemPrompt = `${envContext}\n\n---\n\n${PLAN_MODE_SYSTEM_PROMPT}`;
+
+    // Plan 模式差异 2: 在用户消息中注入 system-reminder
+    const messageWithReminder = createPlanModeReminder(message);
+
+    // Plan 模式差异 3: 跳过内容循环检测
+    const skipContentDetection = true;
+
+    // 调用通用循环，传入 Plan 模式专用配置
+    return this.executeLoop(
+      messageWithReminder,
+      context,
+      options,
+      systemPrompt,
+      skipContentDetection
+    );
+  }
+
+  /**
+   * 普通模式入口 - 准备普通模式配置后调用通用循环
    */
   private async runLoop(
     message: string,
     context: ChatContext,
     options?: LoopOptions
+  ): Promise<LoopResult> {
+    console.log('💬 Processing enhanced chat message...');
+
+    // 普通模式使用标准系统提示词
+    const envContext = getEnvironmentContext();
+    const systemPrompt = this.systemPrompt
+      ? `${envContext}\n\n---\n\n${this.systemPrompt}`
+      : envContext;
+
+    // 普通模式不跳过内容循环检测
+    const skipContentDetection = false;
+
+    // 调用通用循环
+    return this.executeLoop(
+      message,
+      context,
+      options,
+      systemPrompt,
+      skipContentDetection
+    );
+  }
+
+  /**
+   * 核心执行循环 - 所有模式共享的通用循环逻辑
+   * 持续执行 LLM → 工具 → 结果注入 直到任务完成或达到限制
+   *
+   * @param message - 用户消息（可能已被 Plan 模式注入 system-reminder）
+   * @param context - 聊天上下文
+   * @param options - 循环选项
+   * @param systemPrompt - 系统提示词（Plan 模式和普通模式使用不同的提示词）
+   * @param skipContentDetection - 是否跳过内容循环检测（Plan 模式为 true）
+   */
+  private async executeLoop(
+    message: string,
+    context: ChatContext,
+    options?: LoopOptions,
+    systemPrompt?: string,
+    skipContentDetection = false
   ): Promise<LoopResult> {
     if (!this.isInitialized) {
       throw new Error('Agent未初始化');
@@ -261,27 +361,22 @@ export class Agent extends EventEmitter {
     const startTime = Date.now();
 
     try {
-      console.log('💬 Processing enhanced chat message...');
-
       // 1. 获取可用工具定义
       const tools = this.executionPipeline.getRegistry().getFunctionDeclarations();
 
       // 2. 构建消息历史
-      // 只在会话第一次时注入完整的 system 消息（环境上下文 + DEFAULT_SYSTEM_PROMPT）
       const needsSystemPrompt =
         context.messages.length === 0 ||
         !context.messages.some((msg) => msg.role === 'system');
 
       const messages: Message[] = [];
 
-      if (needsSystemPrompt) {
-        const envContext = getEnvironmentContext();
-        const fullSystemPrompt = this.systemPrompt
-          ? `${envContext}\n\n---\n\n${this.systemPrompt}`
-          : envContext;
-        messages.push({ role: 'system', content: fullSystemPrompt });
+      // 注入系统提示词（由调用方决定使用哪个提示词）
+      if (needsSystemPrompt && systemPrompt) {
+        messages.push({ role: 'system', content: systemPrompt });
       }
 
+      // 添加历史消息和当前用户消息
       messages.push(...context.messages, { role: 'user', content: message });
 
       // === 保存用户消息到 JSONL ===
@@ -371,8 +466,39 @@ export class Agent extends EventEmitter {
         this.emit('loopTurnStart', { turn: turnsCount, maxTurns });
         options?.onTurnStart?.({ turn: turnsCount, maxTurns });
 
+        // 🔍 调试：打印发送给 LLM 的消息
+        console.log('\n========== 发送给 LLM ==========');
+        console.log('轮次:', turnsCount + 1);
+        console.log('消息数量:', messages.length);
+        console.log('最后 3 条消息:');
+        messages.slice(-3).forEach((msg, idx) => {
+          console.log(
+            `  [${idx}] ${msg.role}:`,
+            typeof msg.content === 'string'
+              ? msg.content.substring(0, 100) + (msg.content.length > 100 ? '...' : '')
+              : JSON.stringify(msg.content).substring(0, 100)
+          );
+          if (msg.tool_calls) {
+            console.log(
+              '    tool_calls:',
+              msg.tool_calls
+                .map((tc) => ('function' in tc ? tc.function.name : tc.type))
+                .join(', ')
+            );
+          }
+        });
+        console.log('可用工具数量:', tools.length);
+        console.log('================================\n');
+
         // 3. 直接调用 ChatService（OpenAI SDK 已内置重试机制）
         const turnResult = await this.chatService.chat(messages, tools);
+
+        // 🔍 调试：打印模型返回
+        console.log('\n========== LLM 返回 ==========');
+        console.log('Content:', turnResult.content);
+        console.log('Tool Calls:', JSON.stringify(turnResult.toolCalls, null, 2));
+        console.log('当前权限模式:', context.permissionMode);
+        console.log('================================\n');
 
         // 4. 检查是否需要工具调用（任务完成条件）
         if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
@@ -486,6 +612,18 @@ export class Agent extends EventEmitter {
 
             // 使用 ExecutionPipeline 执行工具（自动走完6阶段流程）
             const signalToUse = options?.signal || new AbortController().signal;
+
+            // 调试日志：追踪传递给 ExecutionPipeline 的 confirmationHandler
+            console.log(
+              '[Agent] Passing confirmationHandler to ExecutionPipeline.execute:',
+              {
+                toolName: toolCall.function.name,
+                hasHandler: !!context.confirmationHandler,
+                hasMethod: !!context.confirmationHandler?.requestConfirmation,
+                methodType: typeof context.confirmationHandler?.requestConfirmation,
+              }
+            );
+
             const result = await this.executionPipeline.execute(
               toolCall.function.name,
               params,
@@ -494,10 +632,44 @@ export class Agent extends EventEmitter {
                 userId: context.userId || 'default',
                 workspaceRoot: context.workspaceRoot || process.cwd(),
                 signal: signalToUse,
-                confirmationHandler: context.confirmationHandler, // 传递确认处理器
+                confirmationHandler: context.confirmationHandler,
+                permissionMode: context.permissionMode, // 传递权限模式
               }
             );
             allToolResults.push(result);
+
+            // 🔍 调试：打印工具执行结果
+            console.log('\n========== 工具执行结果 ==========');
+            console.log('工具名称:', toolCall.function.name);
+            console.log('成功:', result.success);
+            console.log('LLM Content:', result.llmContent);
+            console.log('Display Content:', result.displayContent);
+            if (result.error) {
+              console.log('错误:', result.error);
+            }
+            console.log('==================================\n');
+
+            // 🆕 检查是否应该退出循环（ExitPlanMode 返回时设置此标记）
+            if (result.metadata?.shouldExitLoop) {
+              console.log('🚪 检测到退出循环标记，结束 Agent 循环');
+
+              // 确保 finalMessage 是字符串类型
+              const finalMessage = typeof result.llmContent === 'string'
+                ? result.llmContent
+                : '循环已退出';
+
+              return {
+                success: result.success,
+                finalMessage,
+                metadata: {
+                  turnsCount,
+                  toolCallsCount: allToolResults.length,
+                  duration: Date.now() - startTime,
+                  shouldExitLoop: true,
+                  targetMode: result.metadata.targetMode, // 🆕 传递目标模式
+                },
+              };
+            }
 
             // 触发工具执行完成事件
             this.emit('toolExecutionComplete', {
@@ -596,7 +768,8 @@ export class Agent extends EventEmitter {
             (tc: ChatCompletionMessageToolCall) => tc.type === 'function'
           ),
           turnsCount,
-          messages
+          messages,
+          skipContentDetection // 使用传入的参数
         );
 
         if (loopDetected?.detected) {

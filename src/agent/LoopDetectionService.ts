@@ -42,11 +42,13 @@ export class LoopDetectionService {
 
   /**
    * 主检测方法 - 三层检测机制
+   * @param skipContentDetection - 跳过内容循环检测（Plan 模式下推荐）
    */
   async detect(
     toolCalls: ChatCompletionMessageToolCall[],
     currentTurn: number,
-    messages: Message[]
+    messages: Message[],
+    skipContentDetection = false
   ): Promise<LoopDetectionResult | null> {
     this.turnsInCurrentPrompt = currentTurn;
 
@@ -61,13 +63,16 @@ export class LoopDetectionService {
     }
 
     // === 层2: 内容循环检测 ===
-    const contentLoop = this.detectContentLoop(messages);
-    if (contentLoop) {
-      return {
-        detected: true,
-        type: 'content',
-        reason: '检测到重复内容模式',
-      };
+    // Plan 模式下跳过，因为调研阶段输出格式相似是正常现象
+    if (!skipContentDetection) {
+      const contentLoop = this.detectContentLoop(messages);
+      if (contentLoop) {
+        return {
+          detected: true,
+          type: 'content',
+          reason: '检测到重复内容模式',
+        };
+      }
     }
 
     // === 层3: LLM 智能检测 (暂时禁用，需要集成ChatService) ===

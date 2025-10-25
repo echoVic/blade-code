@@ -38,9 +38,7 @@ describe('SensitiveFileDetector', () => {
     });
 
     it('应该识别服务账号密钥', () => {
-      const result = SensitiveFileDetector.check(
-        '/config/service-account-key.json'
-      );
+      const result = SensitiveFileDetector.check('/config/service-account-key.json');
       expect(result.isSensitive).toBe(true);
       expect(result.level).toBe(SensitivityLevel.HIGH);
     });
@@ -110,12 +108,7 @@ describe('SensitiveFileDetector', () => {
 
   describe('非敏感文件检测', () => {
     it('普通源代码文件不应被标记为敏感', () => {
-      const files = [
-        'src/index.ts',
-        'README.md',
-        'package.json',
-        'tsconfig.json',
-      ];
+      const files = ['src/index.ts', 'README.md', 'package.json', 'tsconfig.json'];
 
       for (const file of files) {
         const result = SensitiveFileDetector.check(file);

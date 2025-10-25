@@ -1,4 +1,10 @@
-import React, { createContext, ReactNode, useCallback, useContext, useReducer } from 'react';
+import React, {
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useReducer,
+} from 'react';
 import { nanoid } from 'nanoid';
 
 /**
@@ -41,7 +47,10 @@ export type SessionAction =
   | { type: 'SET_ERROR'; payload: string | null }
   | { type: 'CLEAR_MESSAGES' }
   | { type: 'RESET_SESSION' }
-  | { type: 'RESTORE_SESSION'; payload: { sessionId: string; messages: SessionMessage[] } };
+  | {
+      type: 'RESTORE_SESSION';
+      payload: { sessionId: string; messages: SessionMessage[] };
+    };
 
 /**
  * 会话上下文类型
@@ -99,7 +108,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       return {
         ...initialState,
         sessionId: state.sessionId, // 保持 sessionId 不变
-        isActive: true
+        isActive: true,
       };
 
     case 'RESTORE_SESSION':
@@ -150,9 +159,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'RESET_SESSION' });
   }, []);
 
-  const restoreSession = useCallback((sessionId: string, messages: SessionMessage[]) => {
-    dispatch({ type: 'RESTORE_SESSION', payload: { sessionId, messages } });
-  }, []);
+  const restoreSession = useCallback(
+    (sessionId: string, messages: SessionMessage[]) => {
+      dispatch({ type: 'RESTORE_SESSION', payload: { sessionId, messages } });
+    },
+    []
+  );
 
   const value: SessionContextType = {
     state,

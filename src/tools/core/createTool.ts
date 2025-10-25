@@ -1,10 +1,6 @@
 import { z } from 'zod';
-import type {
-  Tool,
-  ToolConfig,
-  ToolInvocation,
-  ToolResult,
-} from '../types/index.js';
+import type { Tool, ToolConfig, ToolInvocation, ToolResult } from '../types/index.js';
+import { isReadOnlyKind } from '../types/ToolTypes.js';
 import { parseWithZod } from '../validation/errorFormatter.js';
 import { zodToFunctionSchema } from '../validation/zodToJson.js';
 import { UnifiedToolInvocation } from './ToolInvocation.js';
@@ -21,6 +17,11 @@ export function createTool<TSchema extends z.ZodSchema>(
     name: config.name,
     displayName: config.displayName,
     kind: config.kind,
+
+    // 🆕 isReadOnly 字段
+    // 优先使用 config 中的显式设置，否则根据 kind 推断
+    isReadOnly: config.isReadOnly ?? isReadOnlyKind(config.kind),
+
     description: config.description,
     version: config.version || '1.0.0',
     category: config.category,
