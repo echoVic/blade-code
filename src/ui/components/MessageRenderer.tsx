@@ -35,6 +35,8 @@ const getRoleStyle = (role: MessageRole) => {
       return { color: 'green' as const, prefix: '• ' };
     case 'system':
       return { color: 'yellow' as const, prefix: '⚙ ' };
+    case 'tool':
+      return { color: 'blue' as const, prefix: '🔧 ' };
   }
 };
 

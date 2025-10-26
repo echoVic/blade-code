@@ -174,7 +174,7 @@ export const writeTool = createTool({
         last_modified: stats.mtime.toISOString(),
       };
 
-      const displayMessage = formatDisplayMessage(file_path, metadata);
+      const displayMessage = formatDisplayMessage(file_path, metadata, content);
 
       return {
         success: true,
@@ -233,7 +233,11 @@ export const writeTool = createTool({
 /**
  * 格式化显示消息
  */
-function formatDisplayMessage(filePath: string, metadata: Record<string, any>): string {
+function formatDisplayMessage(
+  filePath: string,
+  metadata: Record<string, any>,
+  content?: string
+): string {
   let message = `✅ 成功写入文件: ${filePath}`;
 
   if (metadata.file_size !== undefined) {
@@ -248,7 +252,97 @@ function formatDisplayMessage(filePath: string, metadata: Record<string, any>): 
     message += `\n🔐 使用编码: ${metadata.encoding}`;
   }
 
+  // 添加内容预览（仅对文本文件）
+  if (content && metadata.encoding === 'utf8') {
+    const preview = generateContentPreview(filePath, content);
+    if (preview) {
+      message += '\n\n' + preview;
+    }
+  }
+
   return message;
+}
+
+/**
+ * 生成文件内容预览（Markdown 代码块格式）
+ */
+function generateContentPreview(filePath: string, content: string): string | null {
+  // 获取文件扩展名，用于语法高亮
+  const ext = extname(filePath).toLowerCase();
+  const languageMap: Record<string, string> = {
+    '.ts': 'typescript',
+    '.tsx': 'tsx',
+    '.js': 'javascript',
+    '.jsx': 'jsx',
+    '.py': 'python',
+    '.go': 'go',
+    '.rs': 'rust',
+    '.java': 'java',
+    '.c': 'c',
+    '.cpp': 'cpp',
+    '.h': 'c',
+    '.hpp': 'cpp',
+    '.cs': 'csharp',
+    '.rb': 'ruby',
+    '.php': 'php',
+    '.swift': 'swift',
+    '.kt': 'kotlin',
+    '.scala': 'scala',
+    '.sh': 'bash',
+    '.bash': 'bash',
+    '.zsh': 'zsh',
+    '.json': 'json',
+    '.yaml': 'yaml',
+    '.yml': 'yaml',
+    '.toml': 'toml',
+    '.xml': 'xml',
+    '.html': 'html',
+    '.css': 'css',
+    '.scss': 'scss',
+    '.sass': 'sass',
+    '.less': 'less',
+    '.md': 'markdown',
+    '.sql': 'sql',
+    '.graphql': 'graphql',
+    '.proto': 'protobuf',
+  };
+
+  const language = languageMap[ext] || '';
+
+  // 限制预览长度（最多 100 行或 5000 字符）
+  const MAX_LINES = 100;
+  const MAX_CHARS = 5000;
+
+  let previewContent = content;
+  let truncated = false;
+
+  // 按行数截断
+  const lines = content.split('\n');
+  if (lines.length > MAX_LINES) {
+    previewContent = lines.slice(0, MAX_LINES).join('\n');
+    truncated = true;
+  }
+
+  // 按字符数截断
+  if (previewContent.length > MAX_CHARS) {
+    previewContent = previewContent.substring(0, MAX_CHARS);
+    truncated = true;
+  }
+
+  // 生成 Markdown 代码块
+  let preview = '📄 文件内容:\n\n';
+  preview += '```' + language + '\n';
+  preview += previewContent;
+  if (!previewContent.endsWith('\n')) {
+    preview += '\n';
+  }
+  preview += '```';
+
+  if (truncated) {
+    preview += `\n\n⚠️ 内容已截断（完整文件共 ${lines.length} 行，${content.length} 字符）`;
+  }
+
+  return preview;
 }
 
 /**

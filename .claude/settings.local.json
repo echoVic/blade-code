@@ -51,7 +51,8 @@
       "Bash(git log:*)",
       "Bash(pnpm remove:*)",
       "Bash(python3:*)",
-      "Bash(npm run format:*)"
+      "Bash(npm run format:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nfeat(Write工具): 添加文件内容预览功能\n\n现在 Write 工具创建文件后会显示完整的文件内容预览，带语法高亮。\n\n## 功能特性\n\n- ✅ 自动检测文件类型（支持 30+ 种编程语言）\n- ✅ Markdown 代码块格式（自动触发语法高亮）\n- ✅ 智能截断（最多 100 行或 5000 字符）\n- ✅ 截断提示（显示完整文件的行数和字符数）\n- ✅ 仅对文本文件生效（binary/base64 编码跳过）\n\n## 支持的语言\n\nTypeScript, JavaScript, Python, Go, Rust, Java, C/C++, C#, Ruby, \nPHP, Swift, Kotlin, Scala, Bash, JSON, YAML, XML, HTML, CSS, \nMarkdown, SQL, GraphQL, Protobuf 等\n\n## 示例输出\n\n```\n✅ 成功写入文件: /path/to/file.ts (1.2 KB)\n\n📄 文件内容:\n\n```typescript\nfunction quickSort(arr: number[]): number[] {\n  if (arr.length <= 1) return arr;\n  // ...\n}\n```\n\n## 修改文件\n\n- src/tools/builtin/file/write.ts\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": [],
     "ask": [],

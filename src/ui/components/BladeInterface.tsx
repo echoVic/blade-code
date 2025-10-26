@@ -91,10 +91,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           const messages = await SessionService.loadSession(otherProps.resume);
 
           const sessionMessages = messages
-            .filter((msg) => msg.role !== 'tool')
+            // 不再过滤 tool 消息，让工具输出也能被渲染
             .map((msg, index) => ({
               id: `restored-${Date.now()}-${index}`,
-              role: msg.role as 'user' | 'assistant' | 'system',
+              role: msg.role as 'user' | 'assistant' | 'system' | 'tool',
               content:
                 typeof msg.content === 'string'
                   ? msg.content
@@ -400,18 +400,16 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             try {
               const messages = await SessionService.loadSession(sessionId);
 
-              // 转换消息格式
-              const sessionMessages = messages
-                .filter((msg) => msg.role !== 'tool')
-                .map((msg, index) => ({
-                  id: `restored-${Date.now()}-${index}`,
-                  role: msg.role as 'user' | 'assistant' | 'system',
-                  content:
-                    typeof msg.content === 'string'
-                      ? msg.content
-                      : JSON.stringify(msg.content),
-                  timestamp: Date.now() - (messages.length - index) * 1000,
-                }));
+              // 转换消息格式（不再过滤 tool 消息）
+              const sessionMessages = messages.map((msg, index) => ({
+                id: `restored-${Date.now()}-${index}`,
+                role: msg.role as 'user' | 'assistant' | 'system' | 'tool',
+                content:
+                  typeof msg.content === 'string'
+                    ? msg.content
+                    : JSON.stringify(msg.content),
+                timestamp: Date.now() - (messages.length - index) * 1000,
+              }));
 
               // 恢复会话
               restoreSession(sessionId, sessionMessages);

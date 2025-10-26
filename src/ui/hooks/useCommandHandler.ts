@@ -50,7 +50,12 @@ export const useCommandHandler = (
     maxTurns: 50,
     currentTool: undefined,
   });
-  const { dispatch, state: sessionState, restoreSession } = useSession();
+  const {
+    dispatch,
+    state: sessionState,
+    restoreSession,
+    addToolMessage,
+  } = useSession();
   const { dispatch: appDispatch, actions: appActions, state: appState } = useAppState();
   const abortControllerRef = useRef<AbortController | undefined>(undefined);
   const agentRef = useRef<Agent | undefined>(undefined);
@@ -205,6 +210,14 @@ export const useCommandHandler = (
               permissionMode: appState.permissionMode,
             };
 
+            const loopOptions = {
+              onToolResult: async (toolCall: any, result: any) => {
+                if (result && result.displayContent) {
+                  addToolMessage(result.displayContent);
+                }
+              },
+            };
+
             // 调试日志：追踪 chatContext 中的 confirmationHandler
             console.log(
               '[useCommandHandler] Created chatContext with confirmationHandler:',
@@ -216,7 +229,7 @@ export const useCommandHandler = (
             );
 
             try {
-              const aiOutput = await agent.chat(analysisPrompt, chatContext);
+              const aiOutput = await agent.chat(analysisPrompt, chatContext, loopOptions);
 
               // 如果返回空字符串，可能是用户中止
               if (!aiOutput || aiOutput.trim() === '') {
@@ -273,6 +286,15 @@ export const useCommandHandler = (
           permissionMode: appState.permissionMode,
         };
 
+        const loopOptions = {
+          // 工具执行结果回调：将工具输出添加到 UI
+          onToolResult: async (toolCall: any, result: any) => {
+            if (result && result.displayContent) {
+              addToolMessage(result.displayContent);
+            }
+          },
+        };
+
         // 调试日志：追踪 chatContext 中的 confirmationHandler（普通命令）
         console.log(
           '[useCommandHandler] Created chatContext (normal command) with confirmationHandler:',
@@ -283,7 +305,7 @@ export const useCommandHandler = (
           }
         );
 
-        const output = await agent.chat(command, chatContext);
+        const output = await agent.chat(command, chatContext, loopOptions);
 
         // 如果返回空字符串，可能是用户中止
         if (!output || output.trim() === '') {

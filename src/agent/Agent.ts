@@ -220,18 +220,28 @@ export class Agent extends EventEmitter {
   /**
    * 简单聊天接口
    */
-  public async chat(message: string, context?: ChatContext): Promise<string> {
+  public async chat(
+    message: string,
+    context?: ChatContext,
+    options?: LoopOptions
+  ): Promise<string> {
     if (!this.isInitialized) {
       throw new Error('Agent未初始化');
     }
 
     // 如果提供了 context，使用增强的工具调用流程
     if (context) {
+      // 合并 signal 和 options
+      const loopOptions: LoopOptions = {
+        signal: context.signal,
+        ...options,
+      };
+
       // Plan 模式使用专门的 runPlanLoop 方法
       const result =
         context.permissionMode === 'plan'
-          ? await this.runPlanLoop(message, context, { signal: context.signal })
-          : await this.runLoop(message, context, { signal: context.signal });
+          ? await this.runPlanLoop(message, context, loopOptions)
+          : await this.runLoop(message, context, loopOptions);
 
       if (!result.success) {
         // 如果是用户中止，触发事件并返回空字符串（不抛出异常）
@@ -256,14 +266,12 @@ export class Agent extends EventEmitter {
         };
 
         // 重新执行原始请求（使用新模式）
-        return this.runLoop(message, newContext, { signal: context.signal }).then(
-          (newResult) => {
-            if (!newResult.success) {
-              throw new Error(newResult.error?.message || '执行失败');
-            }
-            return newResult.finalMessage || '';
+        return this.runLoop(message, newContext, loopOptions).then((newResult) => {
+          if (!newResult.success) {
+            throw new Error(newResult.error?.message || '执行失败');
           }
-        );
+          return newResult.finalMessage || '';
+        });
       }
 
       return result.finalMessage || '';
@@ -684,6 +692,16 @@ export class Agent extends EventEmitter {
               success: result.success,
               turn: turnsCount,
             });
+
+            // 调用 onToolResult 回调（如果提供）
+            // 注意: onToolResult 现在在 LoopOptions 中（循环事件回调）
+            if (options?.onToolResult) {
+              try {
+                await options.onToolResult(toolCall, result);
+              } catch (error) {
+                console.error('[Agent] onToolResult callback error:', error);
+              }
+            }
 
             // === 保存工具结果到 JSONL (tool_result) ===
             try {

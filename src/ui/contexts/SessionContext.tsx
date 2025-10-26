@@ -1,3 +1,4 @@
+import { nanoid } from 'nanoid';
 import React, {
   createContext,
   ReactNode,
@@ -5,12 +6,11 @@ import React, {
   useContext,
   useReducer,
 } from 'react';
-import { nanoid } from 'nanoid';
 
 /**
  * 消息角色类型
  */
-export type MessageRole = 'user' | 'assistant' | 'system';
+export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
 /**
  * 会话消息
@@ -60,6 +60,7 @@ export interface SessionContextType {
   dispatch: React.Dispatch<SessionAction>;
   addUserMessage: (content: string) => void;
   addAssistantMessage: (content: string) => void;
+  addToolMessage: (content: string) => void;
   clearMessages: () => void;
   resetSession: () => void;
   restoreSession: (sessionId: string, messages: SessionMessage[]) => void;
@@ -151,6 +152,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'ADD_MESSAGE', payload: message });
   }, []);
 
+  const addToolMessage = useCallback((content: string) => {
+    const message: SessionMessage = {
+      id: `tool-${Date.now()}-${Math.random()}`,
+      role: 'tool',
+      content,
+      timestamp: Date.now(),
+    };
+    dispatch({ type: 'ADD_MESSAGE', payload: message });
+  }, []);
+
   const clearMessages = useCallback(() => {
     dispatch({ type: 'CLEAR_MESSAGES' });
   }, []);
@@ -171,6 +182,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     dispatch,
     addUserMessage,
     addAssistantMessage,
+    addToolMessage,
     clearMessages,
     resetSession,
     restoreSession,
