@@ -13,6 +13,17 @@ import React, {
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
 /**
+ * 工具消息元数据
+ */
+export interface ToolMessageMetadata {
+  toolName: string;
+  phase: 'start' | 'complete'; // 控制前缀样式
+  summary?: string; // 简洁摘要（如 "Wrote 2 lines to hello.ts"）
+  detail?: string; // 详细内容（可选，如完整的文件预览、diff 等）
+  params?: Record<string, unknown>; // 工具参数（用于显示调用信息）
+}
+
+/**
  * 会话消息
  */
 export interface SessionMessage {
@@ -20,7 +31,7 @@ export interface SessionMessage {
   role: MessageRole;
   content: string;
   timestamp: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, any> | ToolMessageMetadata;
 }
 
 /**
@@ -60,7 +71,7 @@ export interface SessionContextType {
   dispatch: React.Dispatch<SessionAction>;
   addUserMessage: (content: string) => void;
   addAssistantMessage: (content: string) => void;
-  addToolMessage: (content: string) => void;
+  addToolMessage: (content: string, metadata?: ToolMessageMetadata) => void;
   clearMessages: () => void;
   resetSession: () => void;
   restoreSession: (sessionId: string, messages: SessionMessage[]) => void;
@@ -152,15 +163,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'ADD_MESSAGE', payload: message });
   }, []);
 
-  const addToolMessage = useCallback((content: string) => {
-    const message: SessionMessage = {
-      id: `tool-${Date.now()}-${Math.random()}`,
-      role: 'tool',
-      content,
-      timestamp: Date.now(),
-    };
-    dispatch({ type: 'ADD_MESSAGE', payload: message });
-  }, []);
+  const addToolMessage = useCallback(
+    (content: string, metadata?: ToolMessageMetadata) => {
+      const message: SessionMessage = {
+        id: `tool-${Date.now()}-${Math.random()}`,
+        role: 'tool',
+        content,
+        timestamp: Date.now(),
+        metadata,
+      };
+      dispatch({ type: 'ADD_MESSAGE', payload: message });
+    },
+    []
+  );
 
   const clearMessages = useCallback(() => {
     dispatch({ type: 'CLEAR_MESSAGES' });

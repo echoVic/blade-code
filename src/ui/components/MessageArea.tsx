@@ -110,6 +110,7 @@ export const MessageArea: React.FC<MessageAreaProps> = React.memo(
                       content={msg.content}
                       role={msg.role}
                       terminalWidth={terminalWidth}
+                      metadata={msg.metadata}
                     />
                   ))}
 
@@ -134,6 +135,7 @@ export const MessageArea: React.FC<MessageAreaProps> = React.memo(
                     content={msg.content}
                     role={msg.role}
                     terminalWidth={terminalWidth}
+                    metadata={msg.metadata}
                   />
                   {/* 在最后一条用户消息后显示 TodoPanel */}
                   {index === lastUserMessageIndex &&

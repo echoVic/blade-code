@@ -24,10 +24,11 @@ export interface MessageRendererProps {
   content: string;
   role: MessageRole;
   terminalWidth: number;
+  metadata?: Record<string, unknown>; // 🆕 用于 tool-progress 等消息的元数据
 }
 
 // 获取角色样式配置
-const getRoleStyle = (role: MessageRole) => {
+const getRoleStyle = (role: MessageRole, metadata?: Record<string, unknown>) => {
   switch (role) {
     case 'user':
       return { color: 'cyan' as const, prefix: '> ' };
@@ -35,8 +36,15 @@ const getRoleStyle = (role: MessageRole) => {
       return { color: 'green' as const, prefix: '• ' };
     case 'system':
       return { color: 'yellow' as const, prefix: '⚙ ' };
-    case 'tool':
-      return { color: 'blue' as const, prefix: '🔧 ' };
+    case 'tool': {
+      // 根据 phase 控制前缀（流式显示风格）
+      const phase =
+        metadata && 'phase' in metadata ? (metadata.phase as string) : undefined;
+      return {
+        color: 'blue' as const,
+        prefix: phase === 'start' ? '• ' : phase === 'complete' ? '  └ ' : '  ',
+      };
+    }
   }
 };
 
@@ -110,7 +118,7 @@ function parseMarkdown(content: string): ParsedBlock[] {
               matchLine: diffJson.matchLine,
             },
           });
-        } catch (error) {
+        } catch (_error) {
           // 解析失败，当作普通文本
           blocks.push({
             type: 'text',
@@ -401,13 +409,144 @@ const TextBlock: React.FC<{ content: string }> = ({ content }) => {
 };
 
 /**
+ * 工具详细内容渲染器（优化版）
+ *
+ * 优化策略：
+ * 1. 只支持代码块和 diff（简化 Markdown）
+ * 2. 限制最大行数（避免过大的组件树）
+ * 3. 使用 memo 优化（避免不必要的重渲染）
+ */
+const ToolDetailRenderer: React.FC<{
+  detail: string;
+  terminalWidth: number;
+}> = React.memo(({ detail, terminalWidth }) => {
+  const theme = themeManager.getTheme();
+  const MAX_LINES = 50; // 最大显示行数
+  const lines = detail.split('\n');
+
+  // 限制行数，超过部分显示省略提示
+  const isTruncated = lines.length > MAX_LINES;
+  const displayLines = isTruncated ? lines.slice(0, MAX_LINES) : lines;
+  const displayContent = displayLines.join('\n');
+
+  // 检测内容类型
+  const isDiff = displayContent.includes('<<<DIFF>>>');
+  const isCodeBlock = displayContent.includes('```');
+
+  // 渲染 diff 内容
+  if (isDiff) {
+    const diffMatch = displayContent.match(/<<<DIFF>>>\s*({[\s\S]*?})\s*<<<\/DIFF>>>/);
+    if (diffMatch) {
+      try {
+        const diffData = JSON.parse(diffMatch[1]);
+        return (
+          <Box flexDirection="column">
+            <DiffRenderer
+              patch={diffData.patch}
+              startLine={diffData.startLine}
+              matchLine={diffData.matchLine}
+              terminalWidth={terminalWidth}
+            />
+            {isTruncated && (
+              <Box marginTop={1}>
+                <Text dimColor color={theme.colors.text.muted}>
+                  ... 省略 {lines.length - MAX_LINES} 行 ...
+                </Text>
+              </Box>
+            )}
+          </Box>
+        );
+      } catch {
+        // diff 解析失败，降级为纯文本
+      }
+    }
+  }
+
+  // 渲染代码块
+  if (isCodeBlock) {
+    const codeMatch = displayContent.match(/```(\w+)?\s*\n([\s\S]*?)\n```/);
+    if (codeMatch) {
+      const language = codeMatch[1] || 'text';
+      const code = codeMatch[2];
+      return (
+        <Box flexDirection="column">
+          <CodeHighlighter
+            content={code}
+            language={language}
+            showLineNumbers={false}
+            terminalWidth={terminalWidth}
+          />
+          {isTruncated && (
+            <Box marginTop={1}>
+              <Text dimColor color={theme.colors.text.muted}>
+                ... 省略 {lines.length - MAX_LINES} 行 ...
+              </Text>
+            </Box>
+          )}
+        </Box>
+      );
+    }
+  }
+
+  // 降级为纯文本显示（按行渲染，避免单个巨大的 Text 组件）
+  return (
+    <Box flexDirection="column">
+      {displayLines.map((line, index) => (
+        <Text key={index} color={theme.colors.text.primary}>
+          {line}
+        </Text>
+      ))}
+      {isTruncated && (
+        <Box marginTop={1}>
+          <Text dimColor color={theme.colors.text.muted}>
+            ... 省略 {lines.length - MAX_LINES} 行 ...
+          </Text>
+        </Box>
+      )}
+    </Box>
+  );
+});
+
+ToolDetailRenderer.displayName = 'ToolDetailRenderer';
+
+/**
  * 主要的消息渲染器组件
  */
 export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
-  ({ content, role, terminalWidth }) => {
-    const blocks = parseMarkdown(content);
-    const roleStyle = getRoleStyle(role);
+  ({ content, role, terminalWidth, metadata }) => {
+    const roleStyle = getRoleStyle(role, metadata);
     const { color, prefix } = roleStyle;
+
+    // 处理 tool 消息的详细内容
+    if (role === 'tool' && metadata && 'detail' in metadata) {
+      const toolMetadata = metadata as { detail?: string; phase?: string };
+      if (toolMetadata.detail) {
+        return (
+          <Box flexDirection="column" marginBottom={1}>
+            {/* 摘要行 */}
+            <Box flexDirection="row">
+              <Box marginRight={1}>
+                <Text color={color} bold>
+                  {prefix}
+                </Text>
+              </Box>
+              <Text color={color}>{content}</Text>
+            </Box>
+
+            {/* 详细内容（优化渲染） */}
+            <Box marginLeft={prefix.length + 1} marginTop={1}>
+              <ToolDetailRenderer
+                detail={toolMetadata.detail}
+                terminalWidth={terminalWidth - (prefix.length + 1)}
+              />
+            </Box>
+          </Box>
+        );
+      }
+    }
+
+    // 正常渲染（摘要行或无 detail 的消息）
+    const blocks = parseMarkdown(content);
 
     return (
       <Box flexDirection="column" marginBottom={1}>

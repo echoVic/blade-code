@@ -162,6 +162,10 @@ export const writeTool = createTool({
       // 验证写入是否成功
       const stats = await fs.stat(file_path);
 
+      // 计算写入的行数（仅对文本文件）
+      const lineCount = encoding === 'utf8' ? content.split('\n').length : 0;
+      const fileName = file_path.split('/').pop() || file_path;
+
       const metadata: Record<string, any> = {
         file_path,
         content_size: content.length,
@@ -172,6 +176,9 @@ export const writeTool = createTool({
         session_id: sessionId,
         message_id: messageId,
         last_modified: stats.mtime.toISOString(),
+        summary: encoding === 'utf8'
+          ? `写入 ${lineCount} 行到 ${fileName}`
+          : `写入 ${formatFileSize(stats.size)} 到 ${fileName}`,
       };
 
       const displayMessage = formatDisplayMessage(file_path, metadata, content);
