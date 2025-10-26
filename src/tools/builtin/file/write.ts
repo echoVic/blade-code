@@ -5,6 +5,8 @@ import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { FileAccessTracker } from './FileAccessTracker.js';
+import { SnapshotManager } from './SnapshotManager.js';
 
 /**
  * WriteTool - 文件写入工具
@@ -14,6 +16,8 @@ export const writeTool = createTool({
   name: 'Write',
   displayName: '文件写入',
   kind: ToolKind.Edit,
+  strict: true, // 启用 OpenAI Structured Outputs
+  isConcurrencySafe: false, // 文件写入不支持并发
 
   // Zod Schema 定义
   schema: z.object({
@@ -26,22 +30,18 @@ export const writeTool = createTool({
       .boolean()
       .default(true)
       .describe('是否自动创建不存在的父目录'),
-    backup: z
-      .boolean()
-      .default(false)
-      .describe('是否在覆盖文件前创建备份（备份文件名：原文件名.backup.时间戳）'),
   }),
 
   // 工具描述
   description: {
-    short: '将内容写入到本地文件系统，支持自动创建目录和备份功能',
-    long: `提供安全的文件写入功能，可以创建新文件或覆盖现有文件。支持多种编码格式和自动目录创建。`,
+    short: '将内容写入到本地文件系统，支持自动创建目录和快照功能',
+    long: `提供安全的文件写入功能，可以创建新文件或覆盖现有文件。支持多种编码格式和自动目录创建。覆盖文件前会自动创建快照。`,
     usageNotes: [
       'file_path 必须是绝对路径',
       '默认会自动创建不存在的父目录',
       '如果文件已存在，会完全覆盖原文件内容',
-      '可以通过 backup 参数在覆盖前创建备份',
-      '备份文件格式：原文件名.backup.{时间戳}',
+      '覆盖前自动创建快照（存储在 ~/.blade/file-history/{sessionId}/）',
+      '快照可用于回滚操作',
       '支持 utf8、base64、binary 三种编码',
       'NEVER 用于修改现有文件，应该优先使用 Edit 工具',
       'ALWAYS 用于创建全新文件',
@@ -55,11 +55,10 @@ export const writeTool = createTool({
         },
       },
       {
-        description: '覆盖文件并创建备份',
+        description: '覆盖现有文件（自动创建快照）',
         params: {
           file_path: '/path/to/existing-file.txt',
           content: 'New content',
-          backup: true,
         },
       },
       {
@@ -72,17 +71,17 @@ export const writeTool = createTool({
       },
     ],
     important: [
-      '如果文件已存在，Write 工具会完全覆盖原文件（无法撤销）',
+      '如果文件已存在，Write 工具会完全覆盖原文件',
+      '覆盖前会自动创建快照，可通过快照恢复',
       '修改现有文件应该优先使用 Edit 工具而非 Write',
       'Write 工具在覆盖文件前需要用户确认',
-      '启用 backup 参数可以在覆盖前创建备份',
     ],
   },
 
   // 执行函数
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
-    const { file_path, content, encoding, create_directories, backup } = params;
-    const { signal, updateOutput } = context;
+    const { file_path, content, encoding, create_directories } = params;
+    const { signal, updateOutput, sessionId, messageId } = context;
 
     try {
       updateOutput?.('开始写入文件...');
@@ -101,16 +100,45 @@ export const writeTool = createTool({
 
       signal.throwIfAborted();
 
-      // 创建备份（如果文件存在且启用备份）
-      let backupPath: string | undefined;
-      if (backup) {
+      // 检查文件是否存在（用于后续验证和快照）
+      let fileExists = false;
+      try {
+        await fs.access(file_path);
+        fileExists = true;
+      } catch {
+        // 文件不存在
+      }
+
+      // Read-Before-Write 验证（如果文件已存在且有 sessionId）
+      // 始终使用宽松模式（仅警告）
+      if (fileExists && sessionId) {
+        const tracker = FileAccessTracker.getInstance();
+
+        // 检查文件是否已读取
+        if (!tracker.hasFileBeenRead(file_path, sessionId)) {
+          console.warn(
+            `[WriteTool] 警告：覆盖文件 ${file_path}，但未通过 Read 工具读取`
+          );
+        }
+
+        // 检查文件是否在读取后被修改
+        const modificationCheck = await tracker.checkFileModification(file_path);
+        if (modificationCheck.modified) {
+          console.warn(`[WriteTool] 警告：${modificationCheck.message}`);
+        }
+      }
+
+      // 创建快照（如果文件存在且有 sessionId 和 messageId）
+      let snapshotCreated = false;
+      if (fileExists && sessionId && messageId) {
         try {
-          await fs.access(file_path);
-          backupPath = `${file_path}.backup.${Date.now()}`;
-          await fs.copyFile(file_path, backupPath);
-          updateOutput?.(`已创建备份: ${backupPath}`);
-        } catch {
-          // 文件不存在，无需备份
+          const snapshotManager = new SnapshotManager({ sessionId });
+          await snapshotManager.initialize();
+          await snapshotManager.createSnapshot(file_path, messageId);
+          snapshotCreated = true;
+        } catch (error) {
+          console.warn('[WriteTool] 创建快照失败:', error);
+          // 快照失败不中断写入操作
         }
       }
 
@@ -140,8 +168,9 @@ export const writeTool = createTool({
         file_size: stats.size,
         encoding,
         created_directories: create_directories,
-        backup_created: backup && backupPath !== undefined,
-        backup_path: backupPath,
+        snapshot_created: snapshotCreated, // 是否创建了快照
+        session_id: sessionId,
+        message_id: messageId,
         last_modified: stats.mtime.toISOString(),
       };
 
@@ -211,8 +240,8 @@ function formatDisplayMessage(filePath: string, metadata: Record<string, any>): 
     message += ` (${formatFileSize(metadata.file_size)})`;
   }
 
-  if (metadata.backup_created) {
-    message += `\n💾 已创建备份: ${metadata.backup_path}`;
+  if (metadata.snapshot_created) {
+    message += `\n📸 已创建快照 (可回滚)`;
   }
 
   if (metadata.encoding !== 'utf8') {

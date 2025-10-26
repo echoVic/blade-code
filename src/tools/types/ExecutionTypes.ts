@@ -44,6 +44,7 @@ export interface ConfirmationHandler {
 export interface ExecutionContext {
   userId?: string;
   sessionId?: string;
+  messageId?: string; // 对话消息 ID（用于快照管理）
   workspaceRoot?: string;
   signal: AbortSignal;
   onProgress?: (message: string) => void;

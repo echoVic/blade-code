@@ -10,6 +10,7 @@ import type {
   ToolResult,
 } from '../types/index.js';
 import { ToolErrorType } from '../types/ToolTypes.js';
+import { FileLockManager } from './FileLockManager.js';
 import {
   ConfirmationStage,
   DiscoveryStage,
@@ -88,6 +89,32 @@ export class ExecutionPipeline extends EventEmitter {
       timestamp: startTime,
     });
 
+    // 检查工具是否需要文件锁
+    const tool = this.registry.get(toolName);
+    const needsFileLock = tool && !tool.isConcurrencySafe;
+    const filePath =
+      needsFileLock && params.file_path ? String(params.file_path) : null;
+
+    // 如果需要文件锁，使用 FileLockManager
+    if (needsFileLock && filePath) {
+      const lockManager = FileLockManager.getInstance();
+      return lockManager.acquireLock(filePath, () =>
+        this.executeWithPipeline(execution, executionId, startTime)
+      );
+    }
+
+    // 否则直接执行
+    return this.executeWithPipeline(execution, executionId, startTime);
+  }
+
+  /**
+   * 通过管道执行工具（内部方法）
+   */
+  private async executeWithPipeline(
+    execution: ToolExecutionImpl,
+    executionId: string,
+    startTime: number
+  ): Promise<ToolResult> {
     try {
       // 依次执行各个阶段
       // Plan 模式 只读工具通过权限阶段自动放行，非只读工具走权限确认流程
@@ -118,17 +145,17 @@ export class ExecutionPipeline extends EventEmitter {
       // 记录执行历史
       this.addToHistory({
         executionId,
-        toolName,
-        params,
+        toolName: execution.toolName,
+        params: execution.params,
         result,
         startTime,
         endTime,
-        context,
+        context: execution.context,
       });
 
       this.emit('executionCompleted', {
         executionId,
-        toolName,
+        toolName: execution.toolName,
         result,
         duration: endTime - startTime,
         timestamp: endTime,
@@ -150,17 +177,17 @@ export class ExecutionPipeline extends EventEmitter {
 
       this.addToHistory({
         executionId,
-        toolName,
-        params,
+        toolName: execution.toolName,
+        params: execution.params,
         result: errorResult,
         startTime,
         endTime,
-        context,
+        context: execution.context,
       });
 
       this.emit('executionFailed', {
         executionId,
-        toolName,
+        toolName: execution.toolName,
         error,
         duration: endTime - startTime,
         timestamp: endTime,

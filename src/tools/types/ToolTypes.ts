@@ -104,6 +104,10 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   kind: ToolKind;
   /** 🆕 是否为只读工具（可选，默认根据 kind 推断） */
   isReadOnly?: boolean;
+  /** 🆕 是否支持并发安全（可选，默认 true） */
+  isConcurrencySafe?: boolean;
+  /** 🆕 是否启用 OpenAI Structured Outputs（可选，默认 false） */
+  strict?: boolean;
   /** Schema 定义 (通常是 Zod Schema) */
   schema: TSchema;
   /** 工具描述 */
@@ -156,6 +160,10 @@ export interface Tool<TParams = unknown> {
   readonly kind: ToolKind;
   /** 🆕 是否为只读工具 */
   readonly isReadOnly: boolean;
+  /** 🆕 是否支持并发安全 */
+  readonly isConcurrencySafe: boolean;
+  /** 🆕 是否启用 OpenAI Structured Outputs */
+  readonly strict: boolean;
   /** 工具描述 */
   readonly description: ToolDescription;
   /** 版本号 */

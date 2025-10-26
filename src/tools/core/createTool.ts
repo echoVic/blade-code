@@ -22,6 +22,14 @@ export function createTool<TSchema extends z.ZodSchema>(
     // 优先使用 config 中的显式设置，否则根据 kind 推断
     isReadOnly: config.isReadOnly ?? isReadOnlyKind(config.kind),
 
+    // 🆕 isConcurrencySafe 字段
+    // 优先使用 config 中的显式设置，否则默认 true
+    isConcurrencySafe: config.isConcurrencySafe ?? true,
+
+    // 🆕 strict 字段（OpenAI Structured Outputs）
+    // 优先使用 config 中的显式设置，否则默认 false
+    strict: config.strict ?? false,
+
     description: config.description,
     version: config.version || '1.0.0',
     category: config.category,

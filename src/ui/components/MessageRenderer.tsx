@@ -15,6 +15,7 @@ import React from 'react';
 import type { MessageRole } from '../contexts/SessionContext.js';
 import { themeManager } from '../themes/ThemeManager.js';
 import { CodeHighlighter } from './CodeHighlighter.js';
+import { DiffRenderer } from './DiffRenderer.js';
 import { InlineRenderer } from './InlineRenderer.js';
 import { ListItem } from './ListItem.js';
 import { TableRenderer } from './TableRenderer.js';
@@ -46,10 +47,12 @@ const MARKDOWN_PATTERNS = {
   hr: /^ *([-*_] *){3,} *$/,
   table: /^\|(.+)\|$/,
   tableSeparator: /^\|[\s]*:?-+:?[\s]*(\|[\s]*:?-+:?[\s]*)+\|?$/,
+  diffStart: /^<<<DIFF>>>$/,
+  diffEnd: /^<<<\/DIFF>>>$/,
 } as const;
 
 interface ParsedBlock {
-  type: 'text' | 'code' | 'heading' | 'table' | 'list' | 'hr' | 'empty';
+  type: 'text' | 'code' | 'heading' | 'table' | 'list' | 'hr' | 'empty' | 'diff';
   content: string;
   language?: string;
   level?: number;
@@ -59,6 +62,11 @@ interface ParsedBlock {
   tableData?: {
     headers: string[];
     rows: string[][];
+  };
+  diffData?: {
+    patch: string;
+    startLine: number;
+    matchLine: number;
   };
 }
 
@@ -77,10 +85,52 @@ function parseMarkdown(content: string): ParsedBlock[] {
   let tableHeaders: string[] = [];
   let tableRows: string[][] = [];
 
+  let inDiff = false;
+  let diffContent: string[] = [];
+
   let lastLineEmpty = true;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+
+    // Diff 块处理
+    if (inDiff) {
+      if (line.match(MARKDOWN_PATTERNS.diffEnd)) {
+        // Diff 块结束
+        try {
+          const diffJson = JSON.parse(diffContent.join('\n'));
+          blocks.push({
+            type: 'diff',
+            content: '',
+            diffData: {
+              patch: diffJson.patch,
+              startLine: diffJson.startLine,
+              matchLine: diffJson.matchLine,
+            },
+          });
+        } catch (error) {
+          // 解析失败，当作普通文本
+          blocks.push({
+            type: 'text',
+            content: diffContent.join('\n'),
+          });
+        }
+        inDiff = false;
+        diffContent = [];
+        lastLineEmpty = false;
+        continue;
+      }
+      diffContent.push(line);
+      continue;
+    }
+
+    // 检查 Diff 块开始
+    if (line.match(MARKDOWN_PATTERNS.diffStart)) {
+      inDiff = true;
+      diffContent = [];
+      lastLineEmpty = false;
+      continue;
+    }
 
     // 代码块处理
     if (inCodeBlock) {
@@ -403,6 +453,13 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
                   />
                 ) : block.type === 'hr' ? (
                   <HorizontalRule terminalWidth={terminalWidth - (prefix.length + 1)} />
+                ) : block.type === 'diff' && block.diffData ? (
+                  <DiffRenderer
+                    patch={block.diffData.patch}
+                    startLine={block.diffData.startLine}
+                    matchLine={block.diffData.matchLine}
+                    terminalWidth={terminalWidth - (prefix.length + 1)}
+                  />
                 ) : (
                   <TextBlock content={block.content} />
                 )}
