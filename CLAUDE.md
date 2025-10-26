@@ -96,7 +96,7 @@ Root (blade-code)
   - 静态工厂方法 `Agent.create()` 用于创建和初始化实例
   - 每次命令可创建新 Agent 实例（用完即弃）
   - 通过 `ExecutionEngine` 处理工具执行流程
-  - 通过 `LoopDetectionService` 防止无限循环
+  - 通过 `LoopDetectionService` 防止无限循环（三层检测机制）
 
 - **SessionContext** ([src/ui/contexts/SessionContext.tsx](src/ui/contexts/SessionContext.tsx)): 会话状态管理
   - 维护全局唯一 `sessionId`
@@ -129,6 +129,12 @@ Root (blade-code)
   - Discovery → Permission (Zod验证+默认值) → Confirmation → Execution → Formatting
   - 事件驱动架构，支持监听各阶段事件
   - 自动记录执行历史
+- **LoopDetectionService** ([src/agent/LoopDetectionService.ts](src/agent/LoopDetectionService.ts)): 三层循环检测系统
+  - **层1**: 工具调用循环检测（MD5 哈希 + 动态阈值）
+  - **层2**: 内容循环检测（滑动窗口 + 动态相似度）
+  - **层3**: LLM 智能检测（认知循环分析）
+  - 支持白名单工具、Plan 模式跳过内容检测
+  - 详见: [循环检测系统文档](docs/development/implementation/loop-detection-system.md)
 - **PromptBuilder** ([src/prompts/](src/prompts/)): 提示模板管理和构建
 - **ContextManager** ([src/context/ContextManager.ts](src/context/ContextManager.ts)): 上下文管理系统
   - **JSONL 格式**: 追加式存储，每行一个 JSON 对象

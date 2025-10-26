@@ -158,8 +158,12 @@ export class Agent extends EventEmitter {
         toolCallThreshold: 5, // 工具调用重复5次触发
         contentRepeatThreshold: 10, // 内容重复10次触发
         llmCheckInterval: 30, // 每30轮进行LLM检测
+        enableDynamicThreshold: true, // 启用动态阈值调整
+        enableLlmDetection: true, // 启用LLM智能检测
+        whitelistedTools: [], // 白名单工具（如监控工具）
+        maxWarnings: 2, // 最大警告次数（默认2次）
       };
-      this.loopDetector = new LoopDetectionService(loopConfig);
+      this.loopDetector = new LoopDetectionService(loopConfig, this.chatService);
 
       this.isInitialized = true;
       this.log(
@@ -252,12 +256,14 @@ export class Agent extends EventEmitter {
         };
 
         // 重新执行原始请求（使用新模式）
-        return this.runLoop(message, newContext, { signal: context.signal }).then((newResult) => {
-          if (!newResult.success) {
-            throw new Error(newResult.error?.message || '执行失败');
+        return this.runLoop(message, newContext, { signal: context.signal }).then(
+          (newResult) => {
+            if (!newResult.success) {
+              throw new Error(newResult.error?.message || '执行失败');
+            }
+            return newResult.finalMessage || '';
           }
-          return newResult.finalMessage || '';
-        });
+        );
       }
 
       return result.finalMessage || '';
@@ -654,9 +660,10 @@ export class Agent extends EventEmitter {
               console.log('🚪 检测到退出循环标记，结束 Agent 循环');
 
               // 确保 finalMessage 是字符串类型
-              const finalMessage = typeof result.llmContent === 'string'
-                ? result.llmContent
-                : '循环已退出';
+              const finalMessage =
+                typeof result.llmContent === 'string'
+                  ? result.llmContent
+                  : '循环已退出';
 
               return {
                 success: result.success,
@@ -773,19 +780,33 @@ export class Agent extends EventEmitter {
         );
 
         if (loopDetected?.detected) {
-          console.warn(`🔴 检测到循环: ${loopDetected.reason}`);
-          return {
-            success: false,
-            error: {
-              type: 'loop_detected',
-              message: `检测到循环: ${loopDetected.reason}`,
-            },
-            metadata: {
-              turnsCount,
-              toolCallsCount: allToolResults.length,
-              duration: Date.now() - startTime,
-            },
-          };
+          // 渐进式策略: 先警告,多次后才停止
+          const warningMsg = `⚠️ 检测到循环 (${loopDetected.warningCount}/${this.loopDetector['maxWarnings']}): ${loopDetected.reason}\n请尝试不同的方法。`;
+
+          if (loopDetected.shouldStop) {
+            // 超过最大警告次数,停止任务
+            console.warn(`🔴 ${warningMsg}\n任务已停止。`);
+            return {
+              success: false,
+              error: {
+                type: 'loop_detected',
+                message: `检测到循环: ${loopDetected.reason}`,
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+              },
+            };
+          } else {
+            // 注入警告消息,让 LLM 有机会自我修正
+            console.warn(`⚠️ ${warningMsg}`);
+            messages.push({
+              role: 'user',
+              content: warningMsg,
+            });
+            continue; // 跳过工具执行,让 LLM 重新思考
+          }
         }
 
         // 8. 历史压缩 - 可配置（默认开启）
