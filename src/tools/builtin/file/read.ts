@@ -5,6 +5,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { FileAccessTracker } from './FileAccessTracker.js';
 
 /**
  * ReadTool - 文件读取工具
@@ -70,7 +71,7 @@ export const readTool = createTool({
   // 执行函数
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const { file_path, offset, limit, encoding = 'utf8' } = params;
-    const { signal, updateOutput } = context;
+    const { signal, updateOutput, sessionId } = context;
 
     try {
       updateOutput?.('开始读取文件...');
@@ -92,6 +93,12 @@ export const readTool = createTool({
 
       // 检查中止信号
       signal.throwIfAborted();
+
+      // 记录文件访问（用于 Read-Before-Write 验证）
+      if (sessionId) {
+        const tracker = FileAccessTracker.getInstance();
+        await tracker.recordFileRead(file_path, sessionId);
+      }
 
       // 获取文件统计信息
       const stats = await fs.stat(file_path);
