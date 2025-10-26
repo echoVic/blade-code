@@ -229,12 +229,17 @@ function executeInBackground(
   // 分离进程,让它在后台独立运行
   bashProcess.unref();
 
+  // 生成 summary 用于流式显示
+  const cmdPreview = command.length > 30 ? `${command.substring(0, 30)}...` : command;
+  const summary = `后台启动命令: ${cmdPreview}`;
+
   const metadata = {
     session_id: sessionId,
     command,
     background: true,
     pid: bashProcess.pid,
     message: '命令已在后台启动',
+    summary, // 🆕 流式显示摘要
   };
 
   const displayMessage =
@@ -373,6 +378,12 @@ async function executeWithTimeout(
       }
 
       // 正常完成
+      // 生成 summary 用于流式显示
+      const cmdPreview = command.length > 30 ? `${command.substring(0, 30)}...` : command;
+      const summary = code === 0
+        ? `执行命令成功 (${executionTime}ms): ${cmdPreview}`
+        : `执行命令完成 (退出码 ${code}, ${executionTime}ms): ${cmdPreview}`;
+
       const metadata = {
         session_id: sessionId,
         command,
@@ -382,6 +393,7 @@ async function executeWithTimeout(
         stdout_length: stdout.length,
         stderr_length: stderr.length,
         has_stderr: stderr.length > 0,
+        summary, // 🆕 流式显示摘要
       };
 
       const displayMessage = formatDisplayMessage({

@@ -27,6 +27,60 @@ export interface LoopState {
 }
 
 /**
+ * 格式化工具调用摘要（用于流式显示）
+ */
+function formatToolCallSummary(
+  toolName: string,
+  params: Record<string, unknown>
+): string {
+  switch (toolName) {
+    case 'Write':
+      return `Write(${params.file_path || 'file'})`;
+    case 'Edit':
+      return `Edit(${params.file_path || 'file'})`;
+    case 'Read':
+      return `Read(${params.file_path || 'file'})`;
+    case 'Bash': {
+      const cmd = params.command as string;
+      return `Bash(${cmd ? cmd.substring(0, 50) : 'command'}${cmd && cmd.length > 50 ? '...' : ''})`;
+    }
+    default:
+      return `${toolName}()`;
+  }
+}
+
+/**
+ * 判断是否显示工具详细内容
+ */
+function shouldShowToolDetail(toolName: string, result: any): boolean {
+  if (!result?.displayContent) return false;
+
+  switch (toolName) {
+    case 'Write':
+      // 小文件显示预览（小于 10KB）
+      return (result.metadata?.file_size || 0) < 10000;
+
+    case 'Edit':
+      // 总是显示 diff 片段
+      return true;
+
+    case 'Bash':
+      // 短输出显示（小于 1000 字符）
+      return (result.metadata?.stdout_length || 0) < 1000;
+
+    case 'Read':
+    case 'TodoWrite':
+    case 'TodoRead':
+      // 不显示详细内容
+      return false;
+
+    default:
+      // 其他工具默认不显示
+      return false;
+  }
+}
+
+/**
  * 命令处理 Hook
  * 负责命令的执行和状态管理
  */
@@ -55,6 +109,7 @@ export const useCommandHandler = (
     state: sessionState,
     restoreSession,
     addToolMessage,
+    addAssistantMessage,
   } = useSession();
   const { dispatch: appDispatch, actions: appActions, state: appState } = useAppState();
   const abortControllerRef = useRef<AbortController | undefined>(undefined);
@@ -211,10 +266,51 @@ export const useCommandHandler = (
             };
 
             const loopOptions = {
-              onToolResult: async (toolCall: any, result: any) => {
-                if (result && result.displayContent) {
-                  addToolMessage(result.displayContent);
+              // 🆕 LLM 意图说明
+              onThinking: (content: string) => {
+                if (content.trim()) {
+                  addAssistantMessage(content);
                 }
+              },
+              // 🆕 工具调用开始
+              onToolStart: (toolCall: any) => {
+                // 跳过 TodoWrite/TodoRead 的显示
+                if (
+                  toolCall.function.name === 'TodoWrite' ||
+                  toolCall.function.name === 'TodoRead'
+                ) {
+                  return;
+                }
+
+                try {
+                  const params = JSON.parse(toolCall.function.arguments);
+                  const summary = formatToolCallSummary(toolCall.function.name, params);
+                  addToolMessage(summary, {
+                    toolName: toolCall.function.name,
+                    phase: 'start',
+                    summary,
+                    params,
+                  });
+                } catch (error) {
+                  console.error('[useCommandHandler] onToolStart error:', error);
+                }
+              },
+              // 🆕 工具执行完成（显示摘要 + 可选的详细内容）
+              onToolResult: async (toolCall: any, result: any) => {
+                if (!result?.metadata?.summary) {
+                  return;
+                }
+
+                const detail = shouldShowToolDetail(toolCall.function.name, result)
+                  ? result.displayContent
+                  : undefined;
+
+                addToolMessage(result.metadata.summary, {
+                  toolName: toolCall.function.name,
+                  phase: 'complete',
+                  summary: result.metadata.summary,
+                  detail,
+                });
               },
             };
 
@@ -229,7 +325,11 @@ export const useCommandHandler = (
             );
 
             try {
-              const aiOutput = await agent.chat(analysisPrompt, chatContext, loopOptions);
+              const aiOutput = await agent.chat(
+                analysisPrompt,
+                chatContext,
+                loopOptions
+              );
 
               // 如果返回空字符串，可能是用户中止
               if (!aiOutput || aiOutput.trim() === '') {
@@ -241,7 +341,7 @@ export const useCommandHandler = (
                 };
               }
 
-              addAssistantMessage(aiOutput);
+              // 注意：LLM 的输出已经通过 onThinking 回调添加到消息历史了，不需要再次添加
 
               return {
                 success: true,
@@ -287,11 +387,51 @@ export const useCommandHandler = (
         };
 
         const loopOptions = {
-          // 工具执行结果回调：将工具输出添加到 UI
-          onToolResult: async (toolCall: any, result: any) => {
-            if (result && result.displayContent) {
-              addToolMessage(result.displayContent);
+          // 🆕 LLM 意图说明
+          onThinking: (content: string) => {
+            if (content.trim()) {
+              addAssistantMessage(content);
             }
+          },
+          // 🆕 工具调用开始
+          onToolStart: (toolCall: any) => {
+            // 跳过 TodoWrite/TodoRead 的显示
+            if (
+              toolCall.function.name === 'TodoWrite' ||
+              toolCall.function.name === 'TodoRead'
+            ) {
+              return;
+            }
+
+            try {
+              const params = JSON.parse(toolCall.function.arguments);
+              const summary = formatToolCallSummary(toolCall.function.name, params);
+              addToolMessage(summary, {
+                toolName: toolCall.function.name,
+                phase: 'start',
+                summary,
+                params,
+              });
+            } catch (error) {
+              console.error('[useCommandHandler] onToolStart error:', error);
+            }
+          },
+          // 🆕 工具执行完成（显示摘要 + 可选的详细内容）
+          onToolResult: async (toolCall: any, result: any) => {
+            if (!result?.metadata?.summary) {
+              return;
+            }
+
+            const detail = shouldShowToolDetail(toolCall.function.name, result)
+              ? result.displayContent
+              : undefined;
+
+            addToolMessage(result.metadata.summary, {
+              toolName: toolCall.function.name,
+              phase: 'complete',
+              summary: result.metadata.summary,
+              detail,
+            });
           },
         };
 
@@ -316,7 +456,7 @@ export const useCommandHandler = (
           };
         }
 
-        addAssistantMessage(output);
+        // 注意：LLM 的输出已经通过 onThinking 回调添加到消息历史了，不需要再次添加
 
         return { success: true, output };
       } catch (error) {

@@ -249,6 +249,12 @@ export const editTool = createTool({
         4 // 上下文行数
       );
 
+      // 生成 summary 用于流式显示
+      const fileName = file_path.split('/').pop() || file_path;
+      const summary = replacedCount === 1
+        ? `替换 1 处匹配到 ${fileName}`
+        : `替换 ${replacedCount} 处匹配到 ${fileName}`;
+
       const metadata: Record<string, any> = {
         file_path,
         matches_found: matches.length,
@@ -264,6 +270,7 @@ export const editTool = createTool({
         session_id: sessionId,
         message_id: messageId,
         diff_snippet: diffSnippet, // 添加差异片段
+        summary, // 🆕 流式显示摘要
       };
 
       const displayMessage = formatDisplayMessage(metadata, diffSnippet);

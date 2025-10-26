@@ -118,14 +118,15 @@ export interface LoopOptions {
 
   // 循环事件回调（监听循环过程）
   onTurnStart?: (data: { turn: number; maxTurns: number }) => void;
-  onToolUse?: (
-    toolCall: ChatCompletionMessageToolCall
-  ) => Promise<ChatCompletionMessageToolCall | void>;
   onToolApprove?: (toolCall: ChatCompletionMessageToolCall) => Promise<boolean>;
   onToolResult?: (
     toolCall: ChatCompletionMessageToolCall,
     result: ToolResult
   ) => Promise<ToolResult | void>;
+
+  // 🆕 流式信息显示回调（实现 Claude Code 风格的工具执行流）
+  onThinking?: (content: string) => void;  // LLM 意图说明
+  onToolStart?: (toolCall: ChatCompletionMessageToolCall) => void;  // 工具调用开始
 }
 
 export interface LoopResult {

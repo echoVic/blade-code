@@ -514,6 +514,11 @@ export class Agent extends EventEmitter {
         console.log('当前权限模式:', context.permissionMode);
         console.log('================================\n');
 
+        // 🆕 如果 LLM 返回了 content（意图说明），立即显示
+        if (turnResult.content && turnResult.content.trim() && options?.onThinking) {
+          options.onThinking(turnResult.content);
+        }
+
         // 4. 检查是否需要工具调用（任务完成条件）
         if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
           console.log('✅ 任务完成 - LLM 未请求工具调用');
@@ -593,6 +598,11 @@ export class Agent extends EventEmitter {
               tool: toolCall.function.name,
               turn: turnsCount,
             });
+
+            // 🆕 触发工具开始回调（流式显示）
+            if (options?.onToolStart) {
+              options.onToolStart(toolCall);
+            }
 
             // 解析工具参数
             const params = JSON.parse(toolCall.function.arguments);
@@ -694,13 +704,26 @@ export class Agent extends EventEmitter {
             });
 
             // 调用 onToolResult 回调（如果提供）
-            // 注意: onToolResult 现在在 LoopOptions 中（循环事件回调）
+            // 用于显示工具执行的完成摘要和详细内容
             if (options?.onToolResult) {
+              console.log('[Agent] Calling onToolResult:', {
+                toolName: toolCall.function.name,
+                hasCallback: true,
+                resultSuccess: result.success,
+                resultKeys: Object.keys(result),
+                hasMetadata: !!result.metadata,
+                metadataKeys: result.metadata ? Object.keys(result.metadata) : [],
+                hasSummary: !!result.metadata?.summary,
+                summary: result.metadata?.summary,
+              });
               try {
                 await options.onToolResult(toolCall, result);
+                console.log('[Agent] onToolResult callback completed successfully');
               } catch (error) {
                 console.error('[Agent] onToolResult callback error:', error);
               }
+            } else {
+              console.log('[Agent] No onToolResult callback provided');
             }
 
             // === 保存工具结果到 JSONL (tool_result) ===

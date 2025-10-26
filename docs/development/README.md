@@ -20,6 +20,7 @@
 - **[错误处理](implementation/error-handling.md)** - 错误处理机制
 - **[日志系统](implementation/logging-system.md)** - 日志系统实现
 - **[Markdown 渲染器](implementation/markdown-renderer.md)** ⭐ - 完整 Markdown 渲染系统
+- **[流式工具执行显示](implementation/streaming-tool-execution-display.md)** ⭐ - Claude Code 风格的工具执行流
 
 ## 📋 技术方案
 
@@ -61,4 +62,4 @@
 
 ---
 
-最后更新: 2025-10-13
+最后更新: 2025-10-26
