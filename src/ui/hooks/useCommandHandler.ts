@@ -48,6 +48,34 @@ function formatToolCallSummary(
       const cmd = params.command as string;
       return `Bash(${cmd ? cmd.substring(0, 50) : 'command'}${cmd && cmd.length > 50 ? '...' : ''})`;
     }
+    case 'Glob':
+      return `Glob(${params.pattern || '*'})`;
+    case 'Grep': {
+      const pattern = params.pattern as string;
+      const path = params.path as string;
+      if (path) {
+        return `Grep("${pattern}" in ${path})`;
+      }
+      return `Grep("${pattern}")`;
+    }
+    case 'WebFetch': {
+      const url = params.url as string;
+      if (url) {
+        try {
+          const urlObj = new URL(url);
+          return `WebFetch(${urlObj.hostname})`;
+        } catch {
+          return `WebFetch(${url.substring(0, 30)}${url.length > 30 ? '...' : ''})`;
+        }
+      }
+      return 'WebFetch(url)';
+    }
+    case 'WebSearch':
+      return `WebSearch("${params.query || 'query'}")`;
+    case 'TodoWrite':
+      return `TodoWrite(${(params.todos as unknown[])?.length || 0} items)`;
+    case 'UndoEdit':
+      return `UndoEdit(${params.file_path || 'file'})`;
     default:
       return `${toolName}()`;
   }
@@ -106,7 +134,6 @@ export const useCommandHandler = (
     state: sessionState,
     restoreSession,
     addToolMessage,
-    addAssistantMessage,
   } = useSession();
   const { dispatch: appDispatch, actions: appActions, state: appState } = useAppState();
   const abortControllerRef = useRef<AbortController | undefined>(undefined);

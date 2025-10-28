@@ -27,17 +27,10 @@ export const DEFAULT_CONFIG: BladeConfig = {
   theme: 'GitHub',
   language: 'zh-CN',
   fontSize: 14,
-  showStatusBar: true,
 
   // 核心
   debug: false,
   telemetry: true,
-  autoUpdate: true,
-  workingDirectory: process.cwd(),
-
-  // 日志
-  logLevel: 'info',
-  logFormat: 'text',
 
   // MCP
   mcpEnabled: false,
@@ -62,35 +55,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
 
   // 其他
   disableAllHooks: false,
-  cleanupPeriodDays: 30,
-  includeCoAuthoredBy: true,
 
   // Agentic Loop 配置
   maxTurns: -1, // 默认无限制（受安全上限 100 保护）
-};
-
-/**
- * 环境变量映射表
- */
-export const ENV_VAR_MAPPING: Record<string, keyof BladeConfig> = {
-  // 认证
-  BLADE_PROVIDER: 'provider',
-  BLADE_API_KEY: 'apiKey',
-  BLADE_BASE_URL: 'baseUrl',
-
-  // 模型
-  BLADE_MODEL: 'model',
-  BLADE_TEMPERATURE: 'temperature',
-  BLADE_MAX_TOKENS: 'maxTokens',
-  BLADE_TIMEOUT: 'timeout',
-
-  // UI
-  BLADE_THEME: 'theme',
-  BLADE_LANGUAGE: 'language',
-
-  // 核心
-  BLADE_TELEMETRY: 'telemetry',
-
-  // Agentic Loop
-  BLADE_MAX_TURNS: 'maxTurns',
 };

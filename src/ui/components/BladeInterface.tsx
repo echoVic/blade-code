@@ -2,7 +2,7 @@ import { useMemoizedFn } from 'ahooks';
 import { Box, useApp, useStdout } from 'ink';
 import React, { useEffect, useRef, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
-import { PermissionMode } from '../../config/types.js';
+import { PermissionMode, type SetupConfig } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
@@ -10,7 +10,6 @@ import type { AppProps } from '../App.js';
 import { useAppState, useTodos } from '../contexts/AppContext.js';
 import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
 import { useSession } from '../contexts/SessionContext.js';
-import { useAppInitializer } from '../hooks/useAppInitializer.js';
 import { useCommandHandler } from '../hooks/useCommandHandler.js';
 import { useCommandHistory } from '../hooks/useCommandHistory.js';
 import { useConfirmation } from '../hooks/useConfirmation.js';
@@ -22,7 +21,6 @@ import { Header } from './Header.js';
 import { InputArea } from './InputArea.js';
 import { LoadingIndicator } from './LoadingIndicator.js';
 import { MessageArea } from './MessageArea.js';
-import { PerformanceMonitor } from './PerformanceMonitor.js';
 import { PermissionsManager } from './PermissionsManager.js';
 import { SessionSelector } from './SessionSelector.js';
 import { SetupWizard } from './SetupWizard.js';
@@ -73,13 +71,13 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const { exit } = useApp();
 
   // ==================== Custom Hooks ====================
-  const {
-    status: initializationStatus,
-    readyForChat,
-    requiresSetup,
-    errorMessage: initializationError,
-    handleSetupComplete,
-  } = useAppInitializer({ debug: Boolean(debug) });
+  // 从 AppState 读取初始化状态（由 AppProvider 检查 API Key 后设置）
+  const initializationStatus = appState.initializationStatus;
+  const initializationError = appState.initializationError;
+
+  // 从 status 派生布尔值
+  const readyForChat = initializationStatus === 'ready';
+  const requiresSetup = initializationStatus === 'needsSetup';
 
   const {
     confirmationState,
@@ -93,7 +91,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     confirmationHandler,
     otherProps.maxTurns
   );
-  
+
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
 
   // ==================== Memoized Handlers ====================
@@ -124,6 +122,17 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   });
 
+  const handleSetupComplete = useMemoizedFn((newConfig: SetupConfig) => {
+    // 合并新配置到现有 RuntimeConfig
+    const updatedConfig = {
+      ...appState.config!,
+      ...newConfig,
+    };
+    appDispatch(appActions.setConfig(updatedConfig));
+    // 设置完成后，将状态改为 ready（因为 API Key 已经配置）
+    appDispatch(appActions.setInitializationStatus('ready'));
+  });
+
   const {
     input,
     setInput,
@@ -140,7 +149,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     isProcessing,
     handlePermissionModeToggle
   );
-  
+
   const handleResume = useMemoizedFn(async () => {
     try {
       // 情况 1: 直接提供了 sessionId (--resume <sessionId>)
@@ -232,7 +241,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     addAssistantMessage('您可以稍后运行 Blade 重新进入设置向导。');
     process.exit(0); // 退出程序
   });
-
 
   // ==================== Effects ====================
   // 焦点管理：根据不同状态切换焦点
@@ -377,7 +385,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         <ThemeSelector />
       ) : appState.showPermissionsManager ? (
         <PermissionsManager
-          onClose={useMemoizedFn(() => appDispatch(appActions.hidePermissionsManager()))}
+          onClose={useMemoizedFn(() =>
+            appDispatch(appActions.hidePermissionsManager())
+          )}
         />
       ) : appState.showSessionSelector ? (
         <SessionSelector
@@ -455,13 +465,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             isProcessing={isProcessing || !readyForChat}
             permissionMode={appState.permissionMode}
           />
-
-          {/* 性能监控 - Debug 模式 */}
-          {debug && (
-            <Box position="absolute" width={30}>
-              <PerformanceMonitor />
-            </Box>
-          )}
         </>
       )}
     </Box>

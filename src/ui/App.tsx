@@ -1,12 +1,17 @@
-import React, { useEffect } from 'react';
+import { useMemoizedFn } from 'ahooks';
+import React, { useEffect, useState } from 'react';
 import type { GlobalOptions } from '../cli/types.js';
-import { ConfigManager } from '../config/ConfigManager.js';
+import { ConfigManager, mergeRuntimeConfig } from '../config/ConfigManager.js';
+import { DEFAULT_CONFIG } from '../config/defaults.js';
+import type { RuntimeConfig } from '../config/types.js';
+import { Logger } from '../logging/Logger.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { AppProvider } from './contexts/AppContext.js';
 import { FocusProvider } from './contexts/FocusContext.js';
 import { SessionProvider } from './contexts/SessionContext.js';
 import { themeManager } from './themes/ThemeManager.js';
+import { formatErrorMessage } from './utils/security.js';
 
 /**
  * UI 入口层的 props 类型
@@ -22,43 +27,72 @@ export interface AppProps extends GlobalOptions {
 
 // 包装器组件 - 提供会话上下文和错误边界
 export const AppWrapper: React.FC<AppProps> = (props) => {
-  // 直接传递所有 props，保持 debug 字段的原始类型（支持过滤器）
-  const processedProps = {
-    ...props,
-  };
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
 
-  // 启动时从配置文件加载主题
-  useEffect(() => {
-    const loadTheme = async () => {
-      try {
-        const configManager = ConfigManager.getInstance();
-        await configManager.initialize();
-        const config = configManager.getConfig();
-        const savedTheme = config?.theme;
+  const initialize = useMemoizedFn(async () => {
+    try {
+      // 1. 加载配置文件
+      const configManager = ConfigManager.getInstance();
+      await configManager.initialize();
+      const baseConfig = configManager.getConfig();
 
-        if (savedTheme && themeManager.hasTheme(savedTheme)) {
-          themeManager.setTheme(savedTheme);
-          if (props.debug) {
-            console.log(`✓ 已加载主题: ${savedTheme}`);
-          }
-        }
-      } catch (error) {
-        // 静默失败，使用默认主题
+      // 2. 合并 CLI 参数生成 RuntimeConfig
+      const mergedConfig = mergeRuntimeConfig(baseConfig, props);
+      setRuntimeConfig(mergedConfig);
+
+      // 3. 设置全局 Logger 配置（让所有新创建的 Logger 都使用 CLI debug 配置）
+      if (mergedConfig.debug) {
+        Logger.setGlobalDebug(mergedConfig.debug);
+        console.error('[Debug] 全局 Logger 已启用 debug 模式');
+        console.error('[Debug] 运行时配置:', mergedConfig);
+      }
+
+      // 4. 加载主题
+      const savedTheme = mergedConfig.theme;
+      if (savedTheme && themeManager.hasTheme(savedTheme)) {
+        themeManager.setTheme(savedTheme);
         if (props.debug) {
-          console.warn('⚠️ 主题加载失败，使用默认主题:', error);
+          console.log(`✓ 已加载主题: ${savedTheme}`);
         }
       }
-    };
 
-    loadTheme();
+      setIsInitialized(true);
+    } catch (error) {
+      // 静默失败，使用默认配置
+      if (props.debug) {
+        console.warn('⚠️ 配置初始化失败，使用默认配置:', formatErrorMessage(error));
+      }
+      // 即使失败也设置为已初始化，使用默认配置 + CLI 参数
+      const fallbackConfig = mergeRuntimeConfig(DEFAULT_CONFIG, props);
+      setRuntimeConfig(fallbackConfig);
+
+      // 设置全局 Logger 配置（fallback 情况）
+      if (fallbackConfig.debug) {
+        Logger.setGlobalDebug(fallbackConfig.debug);
+        console.error('[Debug] 全局 Logger 已启用 debug 模式（fallback）');
+      }
+
+      setIsInitialized(true);
+    }
+  });
+
+  // 启动时初始化配置和主题
+  useEffect(() => {
+    initialize();
   }, []); // 只在组件挂载时执行一次
+
+  // 等待配置初始化完成
+  if (!isInitialized || !runtimeConfig) {
+    return null; // 或者显示一个加载指示器
+  }
 
   return (
     <ErrorBoundary>
       <FocusProvider>
-        <AppProvider>
+        <AppProvider initialConfig={runtimeConfig}>
           <SessionProvider>
-            <BladeInterface {...processedProps} />
+            <BladeInterface {...props} />
           </SessionProvider>
         </AppProvider>
       </FocusProvider>

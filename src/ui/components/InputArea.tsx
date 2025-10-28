@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
 import React from 'react';
+import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
 
 interface InputAreaProps {
   input: string;
@@ -16,6 +17,10 @@ interface InputAreaProps {
  */
 export const InputArea: React.FC<InputAreaProps> = React.memo(
   ({ input, isProcessing, onChange, onSubmit }) => {
+    // 使用焦点上下文来控制是否聚焦
+    const { state: focusState } = useFocusContext();
+    const isFocused = focusState.currentFocus === FocusId.MAIN_INPUT;
+
     return (
       <Box
         flexDirection="row"
@@ -32,8 +37,8 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
           onChange={onChange}
           onSubmit={onSubmit}
           placeholder=" 输入命令..."
-          showCursor={!isProcessing}
-          focus={true}
+          showCursor={!isProcessing && isFocused}
+          focus={isFocused}
         />
       </Box>
     );

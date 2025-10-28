@@ -30,7 +30,7 @@ import {
   createChatService,
   type IChatService,
 } from '../services/ChatServiceInterface.js';
-import { type Message } from '../services/OpenAIChatService.js';
+import { type Message } from '../services/ChatServiceInterface.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';

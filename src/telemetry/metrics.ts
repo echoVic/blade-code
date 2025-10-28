@@ -361,7 +361,8 @@ export class LogCollector {
   }
 
   private shouldSendLog(level: LogLevel): boolean {
-    const logLevel = this.config.logLevel || 'info';
+    // 默认日志级别为 info
+    const logLevel: LogLevel = 'info';
 
     const levelPriority: Record<LogLevel, number> = {
       debug: 0,
@@ -370,7 +371,7 @@ export class LogCollector {
       error: 3,
     };
 
-    return levelPriority[level] >= levelPriority[logLevel as LogLevel];
+    return levelPriority[level] >= levelPriority[logLevel];
   }
 
   // 获取日志

@@ -40,20 +40,43 @@ export interface LoggerOptions {
  * Logger 类 - 统一日志管理
  */
 export class Logger {
+  // 静态全局 debug 配置（优先级最高）
+  // 支持 boolean 或字符串过滤器（如 "agent,ui" 或 "!chat,!loop"）
+  private static globalDebugConfig: string | boolean | null = null;
+
   private enabled: boolean;
   private minLevel: LogLevel;
   private category: LogCategory;
 
   constructor(options: LoggerOptions = {}) {
-    // 优先使用 options.enabled，否则从 ConfigManager 获取
+    // 优先级：options.enabled > globalDebugConfig > ConfigManager
     if (options.enabled !== undefined) {
       this.enabled = options.enabled;
+    } else if (Logger.globalDebugConfig !== null) {
+      this.enabled = Boolean(Logger.globalDebugConfig);
     } else {
       this.enabled = this.getDebugFromConfig();
     }
 
     this.minLevel = options.minLevel ?? LogLevel.DEBUG;
     this.category = options.category ?? LogCategory.GENERAL;
+  }
+
+  /**
+   * 设置全局 debug 配置（用于 CLI 参数覆盖）
+   * 调用此方法后，所有 Logger 实例都会使用此配置
+   *
+   * @param config - debug 配置（boolean 或字符串过滤器）
+   */
+  public static setGlobalDebug(config: string | boolean): void {
+    Logger.globalDebugConfig = config;
+  }
+
+  /**
+   * 清除全局 debug 配置（恢复使用 ConfigManager）
+   */
+  public static clearGlobalDebug(): void {
+    Logger.globalDebugConfig = null;
   }
 
   /**
@@ -157,23 +180,18 @@ export class Logger {
   }
 
   /**
-   * 检查当前是否应该输出日志（动态检查）
+   * 检查当前是否应该输出日志
+   *
+   * 注意：debug 配置在 AppWrapper 初始化时就通过 Logger.setGlobalDebug() 设置了
+   * 之后不会再动态变化，所以只需要检查全局配置即可
    */
   private shouldLog(level: LogLevel): boolean {
-    // 如果显式设置了 enabled = false，直接禁用
-    if (this.enabled === false) {
-      return false;
-    }
-
-    // 动态检查 ConfigManager 的 debug 配置
-    try {
-      const configManager = ConfigManager.getInstance();
-      const config = configManager.getConfig();
-
+    // 检查全局 debug 配置（由 AppWrapper 在初始化时设置）
+    if (Logger.globalDebugConfig !== null) {
       // 解析 debug 配置和过滤器
-      const { enabled, filter } = this.parseDebugFilter(config.debug);
+      const { enabled, filter } = this.parseDebugFilter(Logger.globalDebugConfig);
 
-      // debug 未开启
+      // debug 未启用
       if (!enabled) {
         return false;
       }
@@ -185,10 +203,11 @@ export class Logger {
 
       // 检查分类过滤
       return this.shouldLogCategory(filter);
-    } catch {
-      // ConfigManager 未初始化时，回退到 this.enabled
-      return this.enabled && level >= this.minLevel;
     }
+
+    // 如果全局配置未设置，回退到实例级别的 enabled
+    // （这种情况仅在 AppWrapper 初始化之前可能发生）
+    return this.enabled && level >= this.minLevel;
   }
 
   /**

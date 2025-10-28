@@ -4,9 +4,9 @@
  */
 
 // 配置管理器
-export { ConfigManager } from './ConfigManager.js';
+export { ConfigManager, mergeRuntimeConfig } from './ConfigManager.js';
 // 默认配置
-export { DEFAULT_CONFIG, ENV_VAR_MAPPING } from './defaults.js';
+export { DEFAULT_CONFIG } from './defaults.js';
 // 权限检查器
 export {
   PermissionChecker,
@@ -21,4 +21,5 @@ export type {
   MCPServer,
   PermissionConfig,
   PermissionMode,
+  RuntimeConfig,
 } from './types.js';
