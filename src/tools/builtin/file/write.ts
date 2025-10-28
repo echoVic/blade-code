@@ -32,33 +32,25 @@ export const writeTool = createTool({
       .describe('是否自动创建不存在的父目录'),
   }),
 
-  // 工具描述
+  // 工具描述（对齐 Claude Code 官方）
   description: {
-    short: '将内容写入到本地文件系统，支持自动创建目录和快照功能',
-    long: `提供安全的文件写入功能，可以创建新文件或覆盖现有文件。支持多种编码格式和自动目录创建。覆盖文件前会自动创建快照。`,
+    short: '将内容写入到本地文件系统',
+    long: `Writes a file to the local filesystem. Can create new files or overwrite existing files. Automatically creates snapshots before overwriting.`,
     usageNotes: [
-      'file_path 必须是绝对路径',
-      '默认会自动创建不存在的父目录',
-      '如果文件已存在，会完全覆盖原文件内容',
-      '覆盖前自动创建快照（存储在 ~/.blade/file-history/{sessionId}/）',
-      '快照可用于回滚操作',
-      '支持 utf8、base64、binary 三种编码',
-      'NEVER 用于修改现有文件，应该优先使用 Edit 工具',
-      'ALWAYS 用于创建全新文件',
+      'This tool will overwrite the existing file if there is one at the provided path.',
+      'If this is an existing file, you MUST use the Read tool first to read the file\'s contents. This tool will fail if you did not read the file first.',
+      'ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.',
+      'NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.',
+      'Supports multiple encodings: utf8 (default), base64, binary',
+      'Automatically creates parent directories if they don\'t exist',
+      'Creates snapshots before overwriting (stored in ~/.blade/file-history/{sessionId}/)',
     ],
     examples: [
       {
         description: '创建新的文本文件',
         params: {
-          file_path: '/path/to/new-file.txt',
-          content: 'Hello, World!',
-        },
-      },
-      {
-        description: '覆盖现有文件（自动创建快照）',
-        params: {
-          file_path: '/path/to/existing-file.txt',
-          content: 'New content',
+          file_path: '/path/to/new-file.ts',
+          content: 'export const hello = "world";',
         },
       },
       {
@@ -69,12 +61,19 @@ export const writeTool = createTool({
           encoding: 'base64',
         },
       },
+      {
+        description: '覆盖现有文件（必须先 Read）',
+        params: {
+          file_path: '/path/to/existing-file.txt',
+          content: 'New content',
+        },
+      },
     ],
     important: [
-      '如果文件已存在，Write 工具会完全覆盖原文件',
-      '覆盖前会自动创建快照，可通过快照恢复',
-      '修改现有文件应该优先使用 Edit 工具而非 Write',
-      'Write 工具在覆盖文件前需要用户确认',
+      '**如果文件已存在，必须先使用 Read 工具读取**，否则写入会失败',
+      '**优先使用 Edit 工具修改现有文件**，Write 仅用于创建新文件或整体覆盖',
+      '不要主动创建文档文件（*.md），除非用户明确要求',
+      '覆盖前会自动创建快照，可通过 UndoEdit 工具回滚',
     ],
   },
 
@@ -109,19 +108,24 @@ export const writeTool = createTool({
         // 文件不存在
       }
 
-      // Read-Before-Write 验证（如果文件已存在且有 sessionId）
-      // 始终使用宽松模式（仅警告）
+      // Read-Before-Write 验证（对齐 Claude Code 官方：强制模式）
       if (fileExists && sessionId) {
         const tracker = FileAccessTracker.getInstance();
 
-        // 检查文件是否已读取
+        // 检查文件是否已读取（强制失败）
         if (!tracker.hasFileBeenRead(file_path, sessionId)) {
-          console.warn(
-            `[WriteTool] 警告：覆盖文件 ${file_path}，但未通过 Read 工具读取`
-          );
+          return {
+            success: false,
+            llmContent: `If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.`,
+            displayContent: `❌ 写入失败：必须先使用 Read 工具读取文件\n\n文件 ${file_path} 已存在，请先用 Read 工具查看其内容。`,
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'File not read before write',
+            },
+          };
         }
 
-        // 检查文件是否在读取后被修改
+        // 检查文件是否在读取后被修改（警告但不阻止）
         const modificationCheck = await tracker.checkFileModification(file_path);
         if (modificationCheck.modified) {
           console.warn(`[WriteTool] 警告：${modificationCheck.message}`);

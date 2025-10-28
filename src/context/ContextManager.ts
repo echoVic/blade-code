@@ -460,7 +460,7 @@ export class ContextManager {
   // 私有方法
 
   private generateSessionId(): string {
-    // 使用 nanoid 生成会话 ID（类似 Claude Code）
+    // 使用 nanoid 生成会话 ID
     return nanoid();
   }
 

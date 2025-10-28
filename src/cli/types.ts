@@ -4,7 +4,6 @@
 
 export interface GlobalOptions {
   debug?: string;
-  verbose?: boolean;
   print?: boolean;
   outputFormat?: 'text' | 'json' | 'stream-json';
   includePartialMessages?: boolean;

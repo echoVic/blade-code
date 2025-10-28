@@ -78,29 +78,36 @@ function renderHastNode(
 function highlightLine(
   line: string,
   language?: string,
-  syntaxColors?: SyntaxColors
+  syntaxColors?: SyntaxColors,
+  maxWidth?: number
 ): React.ReactNode {
   const colors = syntaxColors || themeManager.getTheme().colors.syntax;
+
+  // 截断过长的行（预留 "..." 的空间）
+  let displayLine = line;
+  if (maxWidth && line.length > maxWidth) {
+    displayLine = line.slice(0, maxWidth - 3) + '...';
+  }
 
   try {
     if (!language || !lowlight.registered(language)) {
       // 尝试自动检测语言
-      const result = lowlight.highlightAuto(line);
+      const result = lowlight.highlightAuto(displayLine);
       return renderHastNode(result, colors);
     }
 
-    const result = lowlight.highlight(language, line);
+    const result = lowlight.highlight(language, displayLine);
     return renderHastNode(result, colors);
-  } catch (error) {
+  } catch (_error) {
     // 高亮失败，返回原始文本
-    return <Text color={colors.default}>{line}</Text>;
+    return <Text color={colors.default}>{displayLine}</Text>;
   }
 }
 
 /**
  * 代码高亮器组件
  *
- * 性能优化（参考 Gemini CLI）：
+ * 性能优化
  * - 支持 availableHeight 参数，仅高亮可见行
  * - 长代码块显示隐藏行数提示
  * - 减少不必要的语法高亮计算
@@ -129,7 +136,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
 
   const totalLines = lines.length + hiddenLinesCount;
   const lineNumberWidth = String(totalLines).length + 1;
-  const maxCodeWidth = Math.max(20, terminalWidth - lineNumberWidth - 4); // 预留边框和间距
+  const maxCodeWidth = Math.max(20, terminalWidth - lineNumberWidth - 6); // 预留边框、padding 和间距
 
   return (
     <Box
@@ -139,14 +146,11 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
       paddingY={0}
       marginY={1}
       flexDirection="column"
-      width={Math.min(terminalWidth, maxCodeWidth + lineNumberWidth + 4)}
     >
       {/* 语言标签 */}
       {language && (
         <Box marginBottom={0}>
-          <Text color={theme.colors.text.muted} dimColor>
-            {language}
-          </Text>
+          <Text color={theme.colors.text.secondary}>{language}</Text>
         </Box>
       )}
 
@@ -179,7 +183,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
               {line.trim() === '' ? (
                 <Text> </Text>
               ) : (
-                highlightLine(line, language, theme.colors.syntax)
+                highlightLine(line, language, theme.colors.syntax, maxCodeWidth)
               )}
             </Box>
           </Box>

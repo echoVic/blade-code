@@ -2,6 +2,7 @@ import { useMemoizedFn } from 'ahooks';
 import { useEffect, useRef, useState } from 'react';
 import { Agent } from '../../agent/Agent.js';
 import { ConfigManager } from '../../config/ConfigManager.js';
+import { createLogger, LogCategory } from '../../logging/Logger.js';
 import {
   executeSlashCommand,
   isSlashCommand,
@@ -11,6 +12,9 @@ import type { TodoItem } from '../../tools/builtin/todo/types.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import { useAppState } from '../contexts/AppContext.js';
 import { useSession } from '../contexts/SessionContext.js';
+
+// 创建 UI Hook 专用 Logger
+const logger = createLogger(LogCategory.UI);
 
 export interface CommandResult {
   success: boolean;
@@ -90,13 +94,6 @@ export const useCommandHandler = (
   confirmationHandler?: ConfirmationHandler,
   maxTurns?: number // --max-turns (最大对话轮次)
 ) => {
-  // 调试日志：追踪 confirmationHandler 参数接收
-  console.log('[useCommandHandler] Received confirmationHandler parameter:', {
-    hasHandler: !!confirmationHandler,
-    hasMethod: !!confirmationHandler?.requestConfirmation,
-    methodType: typeof confirmationHandler?.requestConfirmation,
-  });
-
   const [isProcessing, setIsProcessing] = useState(false);
   const [loopState, setLoopState] = useState<LoopState>({
     active: false,
@@ -241,7 +238,7 @@ export const useCommandHandler = (
           ) {
             const { analysisPrompt } = slashResult.data;
 
-            console.log(
+            logger.debug(
               '[DEBUG] 触发 AI 分析，提示:',
               analysisPrompt.substring(0, 100) + '...'
             );
@@ -292,7 +289,7 @@ export const useCommandHandler = (
                     params,
                   });
                 } catch (error) {
-                  console.error('[useCommandHandler] onToolStart error:', error);
+                  logger.error('[useCommandHandler] onToolStart error:', error);
                 }
               },
               // 🆕 工具执行完成（显示摘要 + 可选的详细内容）
@@ -313,16 +310,6 @@ export const useCommandHandler = (
                 });
               },
             };
-
-            // 调试日志：追踪 chatContext 中的 confirmationHandler
-            console.log(
-              '[useCommandHandler] Created chatContext with confirmationHandler:',
-              {
-                hasHandler: !!chatContext.confirmationHandler,
-                hasMethod: !!chatContext.confirmationHandler?.requestConfirmation,
-                methodType: typeof chatContext.confirmationHandler?.requestConfirmation,
-              }
-            );
 
             try {
               const aiOutput = await agent.chat(
@@ -413,7 +400,7 @@ export const useCommandHandler = (
                 params,
               });
             } catch (error) {
-              console.error('[useCommandHandler] onToolStart error:', error);
+              logger.error('[useCommandHandler] onToolStart error:', error);
             }
           },
           // 🆕 工具执行完成（显示摘要 + 可选的详细内容）
@@ -435,16 +422,6 @@ export const useCommandHandler = (
           },
         };
 
-        // 调试日志：追踪 chatContext 中的 confirmationHandler（普通命令）
-        console.log(
-          '[useCommandHandler] Created chatContext (normal command) with confirmationHandler:',
-          {
-            hasHandler: !!chatContext.confirmationHandler,
-            hasMethod: !!chatContext.confirmationHandler?.requestConfirmation,
-            methodType: typeof chatContext.confirmationHandler?.requestConfirmation,
-          }
-        );
-
         const output = await agent.chat(command, chatContext, loopOptions);
 
         // 如果返回空字符串，可能是用户中止
@@ -460,7 +437,7 @@ export const useCommandHandler = (
 
         return { success: true, output };
       } catch (error) {
-        console.log('[ERROR] handleCommandSubmit 异常:', error);
+        logger.debug('[ERROR] handleCommandSubmit 异常:', error);
         const errorMessage = error instanceof Error ? error.message : '未知错误';
         const errorResult = { success: false, error: errorMessage };
         addAssistantMessage(`❌ ${errorMessage}`);
@@ -476,7 +453,7 @@ export const useCommandHandler = (
       addUserMessage: (message: string) => void,
       addAssistantMessage: (message: string) => void
     ) => {
-      console.log(
+      logger.debug(
         '[DEBUG] executeCommand 被调用，输入:',
         command,
         '处理中:',
@@ -503,7 +480,7 @@ export const useCommandHandler = (
             dispatch({ type: 'SET_ERROR', payload: result.error });
           }
         } catch (error) {
-          console.log('[ERROR] executeCommand 异常:', error);
+          logger.debug('[ERROR] executeCommand 异常:', error);
           const errorMessage = error instanceof Error ? error.message : '未知错误';
           dispatch({ type: 'SET_ERROR', payload: `执行失败: ${errorMessage}` });
         } finally {

@@ -62,15 +62,14 @@ describe('ConfigurationManager', () => {
     });
 
     it('应该能够从环境变量加载配置', async () => {
-      // 设置环境变量
+      // 设置环境变量（BLADE_DEBUG 已废弃）
       process.env.BLADE_API_KEY = 'test-api-key';
       process.env.BLADE_THEME = 'dark';
-      process.env.BLADE_DEBUG = 'true';
 
       const config = await configManager.loadAllConfigs();
       expect(config.auth.apiKey).toBe('test-api-key');
       expect(config.ui.theme).toBe('dark');
-      expect(config.debug.debug).toBe(true);
+      // debug 现在只能通过 --debug CLI 参数或配置文件设置
     });
 
     it('应该处理无效的环境变量值', async () => {

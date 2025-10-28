@@ -106,7 +106,6 @@ describe('ConfigManager', () => {
   });
 
   it('should apply environment variables', async () => {
-    process.env.BLADE_DEBUG = 'true';
     process.env.BLADE_THEME = 'highContrast';
 
     (fs.readFile as Mock).mockImplementation((filePath: string) => {
@@ -123,11 +122,9 @@ describe('ConfigManager', () => {
     const _config = await configManager.initialize();
 
     // 暂时跳过检查，因为配置结构可能已更改
-    // expect(config.core.debug).toBe(true);
     // expect(config.ui.theme).toBe('highContrast');
 
     // 清理环境变量
-    delete process.env.BLADE_DEBUG;
     delete process.env.BLADE_THEME;
   });
 

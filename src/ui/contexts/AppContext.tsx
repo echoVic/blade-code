@@ -9,7 +9,6 @@ export interface AppState {
   isLoading: boolean;
   currentCommand: string | null;
   selectedTool: string | null;
-  notifications: Notification[];
   config: BladeConfig | null;
   userPreferences: UserPreferences;
   performance: PerformanceStats;
@@ -33,24 +32,6 @@ export interface UserPreferences {
   shortcuts: Record<string, string>;
   fontSize: number;
   showStatusBar: boolean;
-  showNotifications: boolean;
-}
-
-// 通知类型
-export interface Notification {
-  id: string;
-  type: 'info' | 'success' | 'warning' | 'error';
-  title: string;
-  message: string;
-  timestamp: number;
-  duration?: number;
-  actions?: NotificationAction[];
-}
-
-export interface NotificationAction {
-  label: string;
-  action: () => void;
-  style?: 'primary' | 'secondary';
 }
 
 // 性能统计
@@ -86,9 +67,6 @@ type AppAction =
   | { type: 'SET_LOADING'; payload: boolean }
   | { type: 'SET_CURRENT_COMMAND'; payload: string | null }
   | { type: 'SET_SELECTED_TOOL'; payload: string | null }
-  | { type: 'ADD_NOTIFICATION'; payload: Notification }
-  | { type: 'REMOVE_NOTIFICATION'; payload: string }
-  | { type: 'CLEAR_NOTIFICATIONS' }
   | { type: 'SET_CONFIG'; payload: BladeConfig }
   | { type: 'UPDATE_PREFERENCES'; payload: Partial<UserPreferences> }
   | { type: 'SET_PERFORMANCE_STATS'; payload: Partial<PerformanceStats> }
@@ -113,7 +91,6 @@ const defaultState: AppState = {
   isLoading: false,
   currentCommand: null,
   selectedTool: null,
-  notifications: [],
   config: null,
   userPreferences: {
     theme: 'default',
@@ -124,7 +101,6 @@ const defaultState: AppState = {
     shortcuts: {},
     fontSize: 14,
     showStatusBar: true,
-    showNotifications: true,
   },
   performance: {
     memory: {
@@ -165,21 +141,6 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_SELECTED_TOOL':
       return { ...state, selectedTool: action.payload };
-
-    case 'ADD_NOTIFICATION':
-      return {
-        ...state,
-        notifications: [...state.notifications, action.payload],
-      };
-
-    case 'REMOVE_NOTIFICATION':
-      return {
-        ...state,
-        notifications: state.notifications.filter((n) => n.id !== action.payload),
-      };
-
-    case 'CLEAR_NOTIFICATIONS':
-      return { ...state, notifications: [] };
 
     case 'SET_CONFIG':
       return { ...state, config: action.payload };
@@ -285,24 +246,6 @@ export const AppActions = {
     payload: tool,
   }),
 
-  addNotification: (notification: Omit<Notification, 'id' | 'timestamp'>) => {
-    const newNotification: Notification = {
-      ...notification,
-      id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      timestamp: Date.now(),
-    };
-    return { type: 'ADD_NOTIFICATION' as const, payload: newNotification };
-  },
-
-  removeNotification: (id: string) => ({
-    type: 'REMOVE_NOTIFICATION' as const,
-    payload: id,
-  }),
-
-  clearNotifications: () => ({
-    type: 'CLEAR_NOTIFICATIONS' as const,
-  }),
-
   setConfig: (config: BladeConfig) => ({
     type: 'SET_CONFIG' as const,
     payload: config,
@@ -405,16 +348,6 @@ export const useAppState = () => {
 };
 
 // 选择器hooks
-export const useNotifications = () => {
-  const { state, actions } = useAppState();
-  return {
-    notifications: state.notifications,
-    addNotification: actions.addNotification,
-    removeNotification: actions.removeNotification,
-    clearNotifications: actions.clearNotifications,
-  };
-};
-
 export const useUserPreferences = () => {
   const { state, actions } = useAppState();
   return {

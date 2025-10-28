@@ -11,16 +11,12 @@ export const globalOptions = {
     alias: 'd',
     type: 'string',
     describe:
-      'Enable debug mode with optional category filtering (e.g., "api,hooks" or "!statsig,!file")',
+      'Enable debug mode with optional category filtering (e.g., "agent,ui" or "!chat,!loop")',
     group: 'Debug Options:',
-    // TODO: 实现过滤逻辑
-    // 正向过滤：--debug "api,hooks" 只显示 api 和 hooks 类别
-    // 负向过滤：--debug "!statsig,!file" 排除 statsig 和 file 类别
-  },
-  verbose: {
-    type: 'boolean',
-    describe: 'Override verbose mode setting from config',
-    group: 'Debug Options:',
+    // 过滤逻辑已实现：
+    // 正向过滤：--debug "agent,ui" 只显示 Agent 和 UI 类别
+    // 负向过滤：--debug "!chat,!loop" 排除 Chat 和 Loop 类别
+    // 支持的分类：agent, ui, tool, service, config, context, execution, loop, chat, general
   },
   print: {
     alias: 'p',

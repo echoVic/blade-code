@@ -3,6 +3,7 @@ import { Box, useApp, useStdout } from 'ink';
 import React, { useEffect, useRef, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { PermissionMode } from '../../config/types.js';
+import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
 import type { AppProps } from '../App.js';
@@ -19,12 +20,16 @@ import { CommandSuggestions } from './CommandSuggestions.js';
 import { ConfirmationPrompt } from './ConfirmationPrompt.js';
 import { Header } from './Header.js';
 import { InputArea } from './InputArea.js';
+import { LoadingIndicator } from './LoadingIndicator.js';
 import { MessageArea } from './MessageArea.js';
 import { PerformanceMonitor } from './PerformanceMonitor.js';
 import { PermissionsManager } from './PermissionsManager.js';
 import { SessionSelector } from './SessionSelector.js';
 import { SetupWizard } from './SetupWizard.js';
 import { ThemeSelector } from './ThemeSelector.js';
+
+// 创建 BladeInterface 专用 Logger
+const logger = createLogger(LogCategory.UI);
 
 /**
  * BladeInterface 组件的 props 类型
@@ -40,22 +45,22 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   debug,
   ...otherProps
 }) => {
-  // TODO: 实现 debug 过滤功能
-  // 支持 --debug api,hooks 或 --debug "!statsig,!file" 等过滤模式
-  // debug 字段类型为 string | undefined，可以包含逗号分隔的类别列表
-  // 正向过滤：只显示指定类别（如 "api,hooks"）
-  // 负向过滤：排除指定类别（如 "!statsig,!file"）
-
-  // 调试输出：显示接收到的 props
   if (debug) {
-    console.log('[Debug] BladeInterface props:', {
+    logger.debug('[Debug] BladeInterface props:', {
       permissionMode: otherProps.permissionMode,
       yolo: otherProps.yolo,
     });
   }
 
-  const { state: appState, dispatch: appDispatch, actions: appActions } = useAppState();
+  // ==================== State & Refs ====================
+  const [terminalWidth, setTerminalWidth] = useState(80);
+  const hasProcessedResumeRef = useRef(false);
+  const hasSentInitialMessage = useRef(false);
+  const readyAnnouncementSent = useRef(false);
+  const lastInitializationError = useRef<string | null>(null);
 
+  // ==================== Context & Hooks ====================
+  const { state: appState, dispatch: appDispatch, actions: appActions } = useAppState();
   const {
     state: sessionState,
     addUserMessage,
@@ -63,7 +68,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     restoreSession,
   } = useSession();
   const { todos, showTodoPanel } = useTodos();
+  const { setFocus } = useFocusContext();
+  const { stdout } = useStdout();
+  const { exit } = useApp();
 
+  // ==================== Custom Hooks ====================
   const {
     status: initializationStatus,
     readyForChat,
@@ -72,124 +81,22 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     handleSetupComplete,
   } = useAppInitializer({ debug: Boolean(debug) });
 
-  const { stdout } = useStdout();
-  const [terminalWidth, setTerminalWidth] = useState(80);
-  const { exit } = useApp();
-
-  // 处理 --resume CLI 参数
-  const hasProcessedResumeRef = useRef(false);
-  useEffect(() => {
-    if (hasProcessedResumeRef.current) return;
-    if (!otherProps.resume) return;
-
-    hasProcessedResumeRef.current = true;
-
-    const handleResume = async () => {
-      try {
-        // 情况 1: 直接提供了 sessionId (--resume <sessionId>)
-        if (typeof otherProps.resume === 'string' && otherProps.resume !== 'true') {
-          const messages = await SessionService.loadSession(otherProps.resume);
-
-          const sessionMessages = messages
-            // 不再过滤 tool 消息，让工具输出也能被渲染
-            .map((msg, index) => ({
-              id: `restored-${Date.now()}-${index}`,
-              role: msg.role as 'user' | 'assistant' | 'system' | 'tool',
-              content:
-                typeof msg.content === 'string'
-                  ? msg.content
-                  : JSON.stringify(msg.content),
-              timestamp: Date.now() - (messages.length - index) * 1000,
-            }));
-
-          restoreSession(otherProps.resume, sessionMessages);
-          return;
-        }
-
-        // 情况 2: 交互式选择 (--resume 无参数)
-        const sessions = await SessionService.listSessions();
-
-        if (sessions.length === 0) {
-          console.error('没有找到历史会话');
-          process.exit(1);
-        }
-
-        // 显示会话选择器
-        appDispatch(appActions.showSessionSelector(sessions));
-      } catch (error) {
-        console.error('[BladeInterface] 加载会话失败:', error);
-        process.exit(1);
-      }
-    };
-
-    handleResume();
-  }, [otherProps.resume, restoreSession, appDispatch, appActions]);
-
-  // 获取终端宽度
-  useEffect(() => {
-    const updateTerminalWidth = () => {
-      setTerminalWidth(stdout.columns || 80);
-    };
-
-    updateTerminalWidth();
-    stdout.on('resize', updateTerminalWidth);
-
-    return () => {
-      stdout.off('resize', updateTerminalWidth);
-    };
-  }, [stdout, exit]);
-
-  // 确认管理
   const {
     confirmationState,
     confirmationHandler,
     handleResponse: handleResponseRaw,
   } = useConfirmation();
 
-  // 调试日志：追踪 confirmationHandler 接收
-  console.log('[BladeInterface] Received confirmationHandler from useConfirmation:', {
-    hasHandler: !!confirmationHandler,
-    hasMethod: !!confirmationHandler?.requestConfirmation,
-    methodType: typeof confirmationHandler?.requestConfirmation,
-  });
-
-  const handleResponse = useMemoizedFn(async (response: ConfirmationResponse) => {
-    if (confirmationState.details?.type === 'exitPlanMode' && response.approved) {
-      // 批准方案后，根据用户选择切换权限模式
-      const targetMode =
-        response.targetMode === 'auto_edit'
-          ? PermissionMode.AUTO_EDIT
-          : PermissionMode.DEFAULT;
-
-      const configManager = ConfigManager.getInstance();
-      try {
-        await configManager.setPermissionMode(targetMode);
-        appDispatch(appActions.setPermissionMode(targetMode));
-
-        // 打印模式切换信息（调试用）
-        const modeName =
-          targetMode === PermissionMode.AUTO_EDIT ? 'Auto-Edit' : 'Default';
-        console.log(`[BladeInterface] Plan 模式已退出，切换到 ${modeName} 模式`);
-      } catch (error) {
-        console.error('[BladeInterface] 退出 Plan 模式失败:', error);
-      }
-    }
-    handleResponseRaw(response);
-  });
-
-  // 使用 hooks
   const { isProcessing, executeCommand, loopState, handleAbort } = useCommandHandler(
     otherProps.systemPrompt,
     otherProps.appendSystemPrompt,
     confirmationHandler,
     otherProps.maxTurns
   );
+  
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
 
-  const hasSentInitialMessage = useRef(false);
-  const readyAnnouncementSent = useRef(false);
-  const lastInitializationError = useRef<string | null>(null);
-
+  // ==================== Memoized Handlers ====================
   const handlePermissionModeToggle = useMemoizedFn(async () => {
     const configManager = ConfigManager.getInstance();
     const currentMode: PermissionMode =
@@ -209,13 +116,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       await configManager.setPermissionMode(nextMode);
       appDispatch(appActions.setPermissionMode(nextMode));
     } catch (error) {
-      // 只在失败时显示错误通知
-      appDispatch(
-        appActions.addNotification({
-          type: 'error',
-          title: '权限模式切换失败',
-          message: error instanceof Error ? error.message : '未知错误',
-        })
+      // 输出错误到控制台
+      logger.error(
+        '❌ 权限模式切换失败:',
+        error instanceof Error ? error.message : error
       );
     }
   });
@@ -236,9 +140,102 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     isProcessing,
     handlePermissionModeToggle
   );
+  
+  const handleResume = useMemoizedFn(async () => {
+    try {
+      // 情况 1: 直接提供了 sessionId (--resume <sessionId>)
+      if (typeof otherProps.resume === 'string' && otherProps.resume !== 'true') {
+        const messages = await SessionService.loadSession(otherProps.resume);
 
+        const sessionMessages = messages
+          // 不再过滤 tool 消息，让工具输出也能被渲染
+          .map((msg, index) => ({
+            id: `restored-${Date.now()}-${index}`,
+            role: msg.role as 'user' | 'assistant' | 'system' | 'tool',
+            content:
+              typeof msg.content === 'string'
+                ? msg.content
+                : JSON.stringify(msg.content),
+            timestamp: Date.now() - (messages.length - index) * 1000,
+          }));
+
+        restoreSession(otherProps.resume, sessionMessages);
+        return;
+      }
+
+      // 情况 2: 交互式选择 (--resume 无参数)
+      const sessions = await SessionService.listSessions();
+
+      if (sessions.length === 0) {
+        logger.error('没有找到历史会话');
+        process.exit(1);
+      }
+
+      // 显示会话选择器
+      appDispatch(appActions.showSessionSelector(sessions));
+    } catch (error) {
+      logger.error('[BladeInterface] 加载会话失败:', error);
+      process.exit(1);
+    }
+  });
+
+  useEffect(() => {
+    if (hasProcessedResumeRef.current) return;
+    if (!otherProps.resume) return;
+
+    hasProcessedResumeRef.current = true;
+    handleResume();
+  }, [otherProps.resume, handleResume]);
+
+  // 获取终端宽度
+  const updateTerminalWidth = useMemoizedFn(() => {
+    setTerminalWidth(stdout.columns || 80);
+  });
+
+  useEffect(() => {
+    updateTerminalWidth();
+    stdout.on('resize', updateTerminalWidth);
+
+    return () => {
+      stdout.off('resize', updateTerminalWidth);
+    };
+  }, [stdout, exit, updateTerminalWidth]);
+
+  // ==================== Memoized Methods ====================
+  const handleResponse = useMemoizedFn(async (response: ConfirmationResponse) => {
+    if (confirmationState.details?.type === 'exitPlanMode' && response.approved) {
+      // 批准方案后，根据用户选择切换权限模式
+      const targetMode =
+        response.targetMode === 'auto_edit'
+          ? PermissionMode.AUTO_EDIT
+          : PermissionMode.DEFAULT;
+
+      const configManager = ConfigManager.getInstance();
+      try {
+        await configManager.setPermissionMode(targetMode);
+        appDispatch(appActions.setPermissionMode(targetMode));
+
+        // 打印模式切换信息（调试用）
+        const modeName =
+          targetMode === PermissionMode.AUTO_EDIT ? 'Auto-Edit' : 'Default';
+        logger.debug(`[BladeInterface] Plan 模式已退出，切换到 ${modeName} 模式`);
+      } catch (error) {
+        logger.error('[BladeInterface] 退出 Plan 模式失败:', error);
+      }
+    }
+    handleResponseRaw(response);
+  });
+
+  const handleSetupCancel = useMemoizedFn(() => {
+    addAssistantMessage('❌ 设置已取消');
+    addAssistantMessage('Blade 需要 API 配置才能正常工作。');
+    addAssistantMessage('您可以稍后运行 Blade 重新进入设置向导。');
+    process.exit(0); // 退出程序
+  });
+
+
+  // ==================== Effects ====================
   // 焦点管理：根据不同状态切换焦点
-  const { setFocus } = useFocusContext();
   useEffect(() => {
     if (requiresSetup) {
       // SetupWizard 显示时，焦点转移到设置向导
@@ -277,7 +274,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
 
     readyAnnouncementSent.current = true;
-    addAssistantMessage('Blade Code 助手已就绪！');
     addAssistantMessage('请输入您的问题，我将为您提供帮助。');
   }, [readyForChat, addAssistantMessage]);
 
@@ -327,19 +323,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     addToHistory,
   ]);
 
-  // 设置向导取消回调
-  const handleSetupCancel = () => {
-    addAssistantMessage('❌ 设置已取消');
-    addAssistantMessage('Blade 需要 API 配置才能正常工作。');
-    addAssistantMessage('您可以稍后运行 Blade 重新进入设置向导。');
-    process.exit(0); // 退出程序
-  };
-
   useEffect(() => {
     const targetMode = otherProps.permissionMode as PermissionMode | undefined;
     if (debug) {
-      console.log('[Debug] permissionMode from CLI:', targetMode);
-      console.log('[Debug] current appState.permissionMode:', appState.permissionMode);
+      logger.debug('[Debug] permissionMode from CLI:', targetMode);
+      logger.debug('[Debug] current appState.permissionMode:', appState.permissionMode);
     }
     if (!targetMode || targetMode === appState.permissionMode) {
       return;
@@ -351,12 +339,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         await configManager.setPermissionMode(targetMode);
         appDispatch(appActions.setPermissionMode(targetMode));
       } catch (error) {
-        appDispatch(
-          appActions.addNotification({
-            type: 'error',
-            title: '权限模式初始化失败',
-            message: error instanceof Error ? error.message : '未知错误',
-          })
+        // 输出错误到控制台
+        logger.error(
+          '❌ 权限模式初始化失败:',
+          error instanceof Error ? error.message : error
         );
       }
     })();
@@ -371,7 +357,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   // 主界面 - 统一显示，不再区分初始化状态
   if (debug) {
-    console.log('[Debug] 渲染主界面，条件检查:', {
+    logger.debug('[Debug] 渲染主界面，条件检查:', {
       confirmationVisible: confirmationState.isVisible,
       showThemeSelector: appState.showThemeSelector,
       showPermissionsManager: appState.showPermissionsManager,
@@ -391,12 +377,12 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         <ThemeSelector />
       ) : appState.showPermissionsManager ? (
         <PermissionsManager
-          onClose={() => appDispatch(appActions.hidePermissionsManager())}
+          onClose={useMemoizedFn(() => appDispatch(appActions.hidePermissionsManager()))}
         />
       ) : appState.showSessionSelector ? (
         <SessionSelector
           sessions={appState.sessionSelectorData as SessionMetadata[] | undefined} // 从 AppContext 传递会话数据
-          onSelect={async (sessionId: string) => {
+          onSelect={useMemoizedFn(async (sessionId: string) => {
             try {
               const messages = await SessionService.loadSession(sessionId);
 
@@ -417,11 +403,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
               // 关闭选择器
               appDispatch(appActions.hideSessionSelector());
             } catch (error) {
-              console.error('[BladeInterface] Failed to restore session:', error);
+              logger.error('[BladeInterface] Failed to restore session:', error);
               appDispatch(appActions.hideSessionSelector());
             }
-          }}
-          onCancel={() => {
+          })}
+          onCancel={useMemoizedFn(() => {
             // 如果是 --resume CLI 模式，按 Esc 退出应用
             // 如果是 /resume 斜杠命令模式，按 Esc 关闭选择器
             if (otherProps.resume) {
@@ -429,20 +415,24 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             } else {
               appDispatch(appActions.hideSessionSelector()); // 斜杠命令模式：关闭选择器
             }
-          }}
+          })}
         />
       ) : (
         <>
-          <Header />
+          <Header isInitialized={readyForChat} />
 
           <MessageArea
             sessionState={sessionState}
             terminalWidth={terminalWidth}
-            isProcessing={isProcessing}
-            isInitialized={readyForChat}
-            loopState={loopState}
             todos={todos}
             showTodoPanel={showTodoPanel}
+          />
+
+          {/* 加载指示器 - 显示在输入框上方 */}
+          <LoadingIndicator
+            visible={isProcessing || !readyForChat}
+            message="正在思考中..."
+            loopState={loopState}
           />
 
           <InputArea

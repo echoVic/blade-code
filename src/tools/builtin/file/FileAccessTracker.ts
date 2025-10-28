@@ -1,4 +1,8 @@
 import { promises as fs } from 'node:fs';
+import { createLogger, LogCategory } from '../../../logging/Logger.js';
+
+// 创建 FileAccessTracker 专用 Logger
+const logger = createLogger(LogCategory.TOOL);
 
 /**
  * 文件访问记录
@@ -9,7 +13,6 @@ export interface FileAccessRecord {
   mtime: number; // 读取时文件的修改时间戳
   sessionId: string; // 会话 ID
 }
-
 /**
  * 文件访问跟踪器
  *
@@ -58,9 +61,9 @@ export class FileAccessTracker {
 
       this.accessedFiles.set(filePath, record);
 
-      console.log(`[FileAccessTracker] 记录文件读取: ${filePath}`);
+      logger.debug(`记录文件读取: ${filePath}`);
     } catch (error) {
-      console.warn(`[FileAccessTracker] 记录文件读取失败: ${filePath}`, error);
+      logger.warn(`记录文件读取失败: ${filePath}`, error);
     }
   }
 

@@ -21,7 +21,6 @@ import {
 
 /**
  * 5阶段执行管道
- * 实现Claude Code的执行管道架构
  */
 export class ExecutionPipeline extends EventEmitter {
   private stages: PipelineStage[];

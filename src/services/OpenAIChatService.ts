@@ -1,3 +1,4 @@
+import { createLogger, LogCategory } from '@/logging/Logger.js';
 import OpenAI from 'openai';
 import type {
   ChatCompletionMessageParam,
@@ -12,12 +13,14 @@ import type {
   StreamChunk,
 } from './ChatServiceInterface.js';
 
+const _logger = createLogger(LogCategory.CHAT);
+
 export class OpenAIChatService implements IChatService {
   private client: OpenAI;
 
   constructor(private config: ChatConfig) {
-    console.log('🚀 [ChatService] Initializing ChatService');
-    console.log('⚙️ [ChatService] Config:', {
+    _logger.debug('🚀 [ChatService] Initializing ChatService');
+    _logger.debug('⚙️ [ChatService] Config:', {
       model: config.model,
       baseUrl: config.baseUrl,
       temperature: config.temperature,
@@ -27,15 +30,15 @@ export class OpenAIChatService implements IChatService {
     });
 
     if (!config.baseUrl) {
-      console.error('❌ [ChatService] baseUrl is required in ChatConfig');
+      _logger.error('❌ [ChatService] baseUrl is required in ChatConfig');
       throw new Error('baseUrl is required in ChatConfig');
     }
     if (!config.apiKey) {
-      console.error('❌ [ChatService] apiKey is required in ChatConfig');
+      _logger.error('❌ [ChatService] apiKey is required in ChatConfig');
       throw new Error('apiKey is required in ChatConfig');
     }
     if (!config.model) {
-      console.error('❌ [ChatService] model is required in ChatConfig');
+      _logger.error('❌ [ChatService] model is required in ChatConfig');
       throw new Error('model is required in ChatConfig');
     }
 
@@ -46,7 +49,7 @@ export class OpenAIChatService implements IChatService {
       maxRetries: 3,
     });
 
-    console.log('✅ [ChatService] ChatService initialized successfully');
+    _logger.debug('✅ [ChatService] ChatService initialized successfully');
   }
 
   async chat(
@@ -58,9 +61,9 @@ export class OpenAIChatService implements IChatService {
     }>
   ): Promise<ChatResponse> {
     const startTime = Date.now();
-    console.log('🚀 [ChatService] Starting chat request');
-    console.log('📝 [ChatService] Messages count:', messages.length);
-    console.log(
+    _logger.debug('🚀 [ChatService] Starting chat request');
+    _logger.debug('📝 [ChatService] Messages count:', messages.length);
+    _logger.debug(
       '📝 [ChatService] Messages preview:',
       messages.map((m) => ({ role: m.role, contentLength: m.content.length }))
     );
@@ -94,10 +97,9 @@ export class OpenAIChatService implements IChatService {
         parameters: tool.parameters,
       },
     }));
-
-    console.log('🔧 [ChatService] Tools count:', openaiTools?.length || 0);
+    _logger.debug('🔧 [ChatService] Tools count:', openaiTools?.length || 0);
     if (openaiTools && openaiTools.length > 0) {
-      console.log(
+      _logger.debug(
         '🔧 [ChatService] Available tools:',
         openaiTools.map((t) => (t.type === 'function' ? t.function.name : 'unknown'))
       );
@@ -113,7 +115,7 @@ export class OpenAIChatService implements IChatService {
       temperature: this.config.temperature ?? 0.0,
     };
 
-    console.log('📤 [ChatService] Request params:', {
+    _logger.debug('📤 [ChatService] Request params:', {
       model: requestParams.model,
       messagesCount: requestParams.messages.length,
       toolsCount: requestParams.tools?.length || 0,
@@ -126,19 +128,19 @@ export class OpenAIChatService implements IChatService {
       const completion = await this.client.chat.completions.create(requestParams);
       const requestDuration = Date.now() - startTime;
 
-      console.log('📥 [ChatService] Response received in', requestDuration, 'ms');
+      _logger.debug('📥 [ChatService] Response received in', requestDuration, 'ms');
 
       // ✅ 验证响应格式
       if (!completion) {
-        console.error('❌ [ChatService] API returned null/undefined response');
+        _logger.error('❌ [ChatService] API returned null/undefined response');
         throw new Error('API returned null/undefined response');
       }
 
       if (!completion.choices || !Array.isArray(completion.choices)) {
-        console.error(
+        _logger.error(
           '❌ [ChatService] Invalid API response format - missing choices array'
         );
-        console.error(
+        _logger.error(
           '❌ [ChatService] Response object:',
           JSON.stringify(completion, null, 2)
         );
@@ -148,23 +150,23 @@ export class OpenAIChatService implements IChatService {
       }
 
       if (completion.choices.length === 0) {
-        console.error('❌ [ChatService] API returned empty choices array');
+        _logger.error('❌ [ChatService] API returned empty choices array');
         throw new Error('API returned empty choices array');
       }
 
-      console.log('📊 [ChatService] Response usage:', completion.usage);
-      console.log(
+      _logger.debug('📊 [ChatService] Response usage:', completion.usage);
+      _logger.debug(
         '📊 [ChatService] Response choices count:',
         completion.choices.length
       );
 
       const choice = completion.choices[0];
       if (!choice) {
-        console.error('❌ [ChatService] No completion choice returned');
+        _logger.error('❌ [ChatService] No completion choice returned');
         throw new Error('No completion choice returned');
       }
 
-      console.log('📝 [ChatService] Response choice:', {
+      _logger.debug('📝 [ChatService] Response choice:', {
         finishReason: choice.finish_reason,
         contentLength: choice.message.content?.length || 0,
         hasToolCalls: !!choice.message.tool_calls,
@@ -172,7 +174,7 @@ export class OpenAIChatService implements IChatService {
       });
 
       if (choice.message.tool_calls) {
-        console.log(
+        _logger.debug(
           '🔧 [ChatService] Tool calls:',
           choice.message.tool_calls.map((tc) => ({
             id: tc.id,
@@ -198,8 +200,8 @@ export class OpenAIChatService implements IChatService {
         },
       };
 
-      console.log('✅ [ChatService] Chat completed successfully');
-      console.log('📊 [ChatService] Final response:', {
+      _logger.debug('✅ [ChatService] Chat completed successfully');
+      _logger.debug('📊 [ChatService] Final response:', {
         contentLength: response.content.length,
         toolCallsCount: response.toolCalls?.length || 0,
         usage: response.usage,
@@ -208,12 +210,12 @@ export class OpenAIChatService implements IChatService {
       return response;
     } catch (error) {
       const requestDuration = Date.now() - startTime;
-      console.error(
+      _logger.error(
         '❌ [ChatService] Chat request failed after',
         requestDuration,
         'ms'
       );
-      console.error('❌ [ChatService] Error details:', error);
+      _logger.error('❌ [ChatService] Error details:', error);
       throw error;
     }
   }
@@ -228,9 +230,9 @@ export class OpenAIChatService implements IChatService {
     }>
   ): AsyncGenerator<StreamChunk, void, unknown> {
     const startTime = Date.now();
-    console.log('🚀 [ChatService] Starting chat stream request');
-    console.log('📝 [ChatService] Messages count:', messages.length);
-    console.log(
+    _logger.debug('🚀 [ChatService] Starting chat stream request');
+    _logger.debug('📝 [ChatService] Messages count:', messages.length);
+    _logger.debug(
       '📝 [ChatService] Messages preview:',
       messages.map((m) => ({ role: m.role, contentLength: m.content.length }))
     );
@@ -265,9 +267,9 @@ export class OpenAIChatService implements IChatService {
       },
     }));
 
-    console.log('🔧 [ChatService] Stream tools count:', openaiTools?.length || 0);
+    _logger.debug('🔧 [ChatService] Stream tools count:', openaiTools?.length || 0);
     if (openaiTools && openaiTools.length > 0) {
-      console.log(
+      _logger.debug(
         '🔧 [ChatService] Stream available tools:',
         openaiTools.map((t) => (t.type === 'function' ? t.function.name : 'unknown'))
       );
@@ -284,7 +286,7 @@ export class OpenAIChatService implements IChatService {
       stream: true as const,
     };
 
-    console.log('📤 [ChatService] Stream request params:', {
+    _logger.debug('📤 [ChatService] Stream request params:', {
       model: requestParams.model,
       messagesCount: requestParams.messages.length,
       toolsCount: requestParams.tools?.length || 0,
@@ -297,7 +299,7 @@ export class OpenAIChatService implements IChatService {
     try {
       const stream = await this.client.chat.completions.create(requestParams);
       const requestDuration = Date.now() - startTime;
-      console.log('📥 [ChatService] Stream started in', requestDuration, 'ms');
+      _logger.debug('📥 [ChatService] Stream started in', requestDuration, 'ms');
 
       let chunkCount = 0;
       let totalContent = '';
@@ -308,13 +310,13 @@ export class OpenAIChatService implements IChatService {
 
         // ✅ 验证 chunk 格式
         if (!chunk || !chunk.choices || !Array.isArray(chunk.choices)) {
-          console.warn('⚠️ [ChatService] Invalid chunk format in stream', chunkCount);
+          _logger.warn('⚠️ [ChatService] Invalid chunk format in stream', chunkCount);
           continue;
         }
 
         const delta = chunk.choices[0]?.delta;
         if (!delta) {
-          console.log('⚠️ [ChatService] Empty delta in chunk', chunkCount);
+          _logger.warn('⚠️ [ChatService] Empty delta in chunk', chunkCount);
           continue;
         }
 
@@ -324,13 +326,13 @@ export class OpenAIChatService implements IChatService {
 
         if (delta.tool_calls && !toolCallsReceived) {
           toolCallsReceived = true;
-          console.log('🔧 [ChatService] Tool calls detected in stream');
+          _logger.debug('🔧 [ChatService] Tool calls detected in stream');
         }
 
         const finishReason = chunk.choices[0]?.finish_reason;
         if (finishReason) {
-          console.log('🏁 [ChatService] Stream finished with reason:', finishReason);
-          console.log('📊 [ChatService] Stream summary:', {
+          _logger.debug('🏁 [ChatService] Stream finished with reason:', finishReason);
+          _logger.debug('📊 [ChatService] Stream summary:', {
             totalChunks: chunkCount,
             totalContentLength: totalContent.length,
             hadToolCalls: toolCallsReceived,
@@ -345,15 +347,15 @@ export class OpenAIChatService implements IChatService {
         };
       }
 
-      console.log('✅ [ChatService] Stream completed successfully');
+      _logger.debug('✅ [ChatService] Stream completed successfully');
     } catch (error) {
       const requestDuration = Date.now() - startTime;
-      console.error(
+      _logger.error(
         '❌ [ChatService] Stream request failed after',
         requestDuration,
         'ms'
       );
-      console.error('❌ [ChatService] Stream error details:', error);
+      _logger.error('❌ [ChatService] Stream error details:', error);
       throw error;
     }
   }
@@ -363,8 +365,8 @@ export class OpenAIChatService implements IChatService {
   }
 
   updateConfig(newConfig: Partial<ChatConfig>): void {
-    console.log('🔄 [ChatService] Updating configuration');
-    console.log('🔄 [ChatService] New config:', {
+    _logger.debug('🔄 [ChatService] Updating configuration');
+    _logger.debug('🔄 [ChatService] New config:', {
       model: newConfig.model,
       baseUrl: newConfig.baseUrl,
       temperature: newConfig.temperature,
@@ -383,8 +385,8 @@ export class OpenAIChatService implements IChatService {
       maxRetries: 2, // 2次重试，平衡稳定性和响应速度
     });
 
-    console.log('✅ [ChatService] Configuration updated successfully');
-    console.log('📊 [ChatService] Config changes:', {
+    _logger.debug('✅ [ChatService] Configuration updated successfully');
+    _logger.debug('📊 [ChatService] Config changes:', {
       modelChanged: oldConfig.model !== this.config.model,
       baseUrlChanged: oldConfig.baseUrl !== this.config.baseUrl,
       temperatureChanged: oldConfig.temperature !== this.config.temperature,
@@ -399,13 +401,3 @@ export class OpenAIChatService implements IChatService {
  * 向后兼容导出
  */
 export { OpenAIChatService as ChatService };
-
-/**
- * 重新导出类型（向后兼容）
- */
-export type {
-  ChatConfig,
-  ChatResponse,
-  Message,
-  StreamChunk,
-} from './ChatServiceInterface.js';
