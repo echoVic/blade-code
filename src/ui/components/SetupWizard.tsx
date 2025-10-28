@@ -14,22 +14,15 @@ import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
 import React, { useEffect, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
-import type { ProviderType } from '../../config/types.js';
+import type { ProviderType, SetupConfig } from '../../config/types.js';
 import { themeManager } from '../themes/ThemeManager.js';
 
 interface SetupWizardProps {
-  onComplete: () => void; // 设置完成回调
+  onComplete: (config: SetupConfig) => void; // 设置完成回调，传递配置数据
   onCancel: () => void; // 取消回调
 }
 
 type SetupStep = 'provider' | 'baseUrl' | 'apiKey' | 'model' | 'confirm';
-
-interface SetupConfig {
-  provider: ProviderType;
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-}
 
 // ========================================
 // 步骤组件：Provider 选择
@@ -358,15 +351,16 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
       const configManager = ConfigManager.getInstance();
 
       // 保存配置到 ~/.blade/config.json
-      await configManager.saveUserConfig({
+      const savedConfig = {
         provider: config.provider!,
         baseUrl: config.baseUrl!,
         apiKey: config.apiKey!,
         model: config.model!,
-      });
+      };
+      await configManager.saveUserConfig(savedConfig);
 
-      // 完成回调
-      onComplete();
+      // 完成回调，传递配置数据（避免重复读取文件）
+      onComplete(savedConfig);
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存配置失败');
       setIsSaving(false);

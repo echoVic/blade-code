@@ -61,18 +61,12 @@ export interface BladeConfig {
   theme: string;
   language: string;
   fontSize: number;
-  showStatusBar: boolean;
 
   // 核心
-  debug: boolean;
+  // debug 支持 boolean 或字符串过滤器（如 "agent,ui" 或 "!chat,!loop"）
+  debug: string | boolean;
   telemetry: boolean;
   telemetryEndpoint?: string; // 遥测数据上报端点
-  autoUpdate: boolean;
-  workingDirectory: string;
-
-  // 日志
-  logLevel: 'debug' | 'info' | 'warn' | 'error';
-  logFormat: 'json' | 'text';
 
   // MCP
   mcpEnabled: boolean;
@@ -93,9 +87,6 @@ export interface BladeConfig {
 
   // 其他
   disableAllHooks: boolean;
-  cleanupPeriodDays: number;
-  includeCoAuthoredBy: boolean;
-  apiKeyHelper?: string;
 
   // Agentic Loop 配置
   maxTurns: number; // -1 = 无限制, 0 = 完全禁用对话, N > 0 = 限制轮次
@@ -119,6 +110,42 @@ export interface HookConfig {
 }
 
 /**
+ * 运行时配置类型
+ * 继承 BladeConfig (持久化配置) + CLI 专属字段 (临时配置)
+ *
+ * CLI 专属字段只在当前会话有效，不会保存到配置文件
+ */
+export interface RuntimeConfig extends BladeConfig {
+  // CLI 专属字段 - 系统提示
+  systemPrompt?: string; // 替换默认系统提示
+  appendSystemPrompt?: string; // 追加到默认系统提示
+
+  // CLI 专属字段 - 会话管理
+  initialMessage?: string; // 初始消息（用于自动发送）
+  resumeSessionId?: string; // 恢复会话 ID
+  forkSession?: boolean; // 创建新会话 ID（fork 模式）
+
+  // CLI 专属字段 - 工具过滤
+  allowedTools?: string[]; // 允许的工具列表（白名单）
+  disallowedTools?: string[]; // 禁止的工具列表（黑名单）
+
+  // CLI 专属字段 - MCP
+  mcpConfigPaths?: string[]; // MCP 配置文件路径
+  strictMcpConfig?: boolean; // 仅使用 CLI 指定的 MCP 服务器
+
+  // CLI 专属字段 - 其他
+  fallbackModel?: string; // 备用模型
+  addDirs?: string[]; // 额外允许访问的目录
+  outputFormat?: 'text' | 'json' | 'stream-json'; // 输出格式
+  inputFormat?: 'text' | 'stream-json'; // 输入格式
+  print?: boolean; // 打印响应后退出
+  includePartialMessages?: boolean; // 包含部分消息
+  replayUserMessages?: boolean; // 重放用户消息
+  agentsConfig?: string; // 自定义 Agent 配置
+  settingSources?: string; // 配置来源列表
+}
+
+/**
  * MCP 服务器配置
  */
 export interface MCPServer {
@@ -129,3 +156,9 @@ export interface MCPServer {
   env?: Record<string, string>;
   enabled: boolean;
 }
+
+/**
+ * SetupWizard 保存的配置字段
+ * （API 连接相关的核心配置）
+ */
+export type SetupConfig = Pick<BladeConfig, 'provider' | 'baseUrl' | 'apiKey' | 'model'>;

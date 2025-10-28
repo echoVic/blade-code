@@ -7,8 +7,15 @@
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
-import { DEFAULT_CONFIG, ENV_VAR_MAPPING } from './defaults.js';
-import { BladeConfig, HookConfig, PermissionConfig, PermissionMode } from './types.js';
+import type { GlobalOptions } from '../cli/types.js';
+import { DEFAULT_CONFIG } from './defaults.js';
+import {
+  BladeConfig,
+  HookConfig,
+  PermissionConfig,
+  PermissionMode,
+  RuntimeConfig,
+} from './types.js';
 
 export class ConfigManager {
   private static instance: ConfigManager | null = null;
@@ -59,14 +66,6 @@ export class ConfigManager {
         ...settingsConfig,
       };
 
-      const legacyMode = (this.config as any).approvalMode;
-      if (legacyMode && !this.config.permissionMode) {
-        this.config.permissionMode = legacyMode as PermissionMode;
-      }
-      if ((this.config as any).approvalMode !== undefined) {
-        delete (this.config as any).approvalMode;
-      }
-
       // 4. 解析环境变量插值
       this.resolveEnvInterpolation(this.config);
 
@@ -90,7 +89,7 @@ export class ConfigManager {
 
   /**
    * 加载 config.json 文件 (2层优先级)
-   * 优先级: 环境变量 > 项目配置 > 用户配置 > 默认配置
+   * 优先级: 项目配置 > 用户配置 > 默认配置
    */
   private async loadConfigFiles(): Promise<Partial<BladeConfig>> {
     const userConfigPath = path.join(os.homedir(), '.blade', 'config.json');
@@ -109,9 +108,6 @@ export class ConfigManager {
     if (projectConfig) {
       config = { ...config, ...projectConfig };
     }
-
-    // 3. 应用环境变量
-    config = this.applyEnvToConfig(config);
 
     return config;
   }
@@ -146,30 +142,6 @@ export class ConfigManager {
     }
 
     return settings;
-  }
-
-  /**
-   * 应用环境变量到 config
-   */
-  private applyEnvToConfig(config: Partial<BladeConfig>): Partial<BladeConfig> {
-    const result = { ...config };
-
-    // 遍历环境变量映射表
-    for (const [envKey, configKey] of Object.entries(ENV_VAR_MAPPING)) {
-      const envValue = process.env[envKey];
-      if (envValue !== undefined) {
-        // 根据目标字段类型转换值
-        if (configKey === 'temperature' || configKey === 'maxTokens') {
-          result[configKey] = parseFloat(envValue) as any;
-        } else if (configKey === 'debug' || configKey === 'telemetry') {
-          result[configKey] = (envValue === '1' || envValue === 'true') as any;
-        } else {
-          result[configKey] = envValue as any;
-        }
-      }
-    }
-
-    return result;
   }
 
   /**
@@ -227,15 +199,6 @@ export class ConfigManager {
     if (override.disableAllHooks !== undefined) {
       result.disableAllHooks = override.disableAllHooks;
     }
-    if (override.cleanupPeriodDays !== undefined) {
-      result.cleanupPeriodDays = override.cleanupPeriodDays;
-    }
-    if (override.includeCoAuthoredBy !== undefined) {
-      result.includeCoAuthoredBy = override.includeCoAuthoredBy;
-    }
-    if (override.apiKeyHelper !== undefined) {
-      result.apiKeyHelper = override.apiKeyHelper;
-    }
     if (override.permissionMode !== undefined) {
       result.permissionMode = override.permissionMode;
     }
@@ -250,7 +213,7 @@ export class ConfigManager {
   private resolveEnvInterpolation(config: BladeConfig): void {
     const envPattern = /\$\{?([A-Z_][A-Z0-9_]*)(:-([^}]+))?\}?/g;
 
-    const resolve = (value: any): any => {
+    const resolve = (value: unknown): unknown => {
       if (typeof value === 'string') {
         return value.replace(envPattern, (match, varName, _, defaultValue) => {
           return process.env[varName] || defaultValue || match;
@@ -262,7 +225,7 @@ export class ConfigManager {
     // 只解析字符串字段
     for (const [key, value] of Object.entries(config)) {
       if (typeof value === 'string') {
-        (config as any)[key] = resolve(value);
+        (config as unknown as Record<string, unknown>)[key] = resolve(value);
       }
     }
   }
@@ -298,11 +261,11 @@ export class ConfigManager {
   /**
    * 加载 JSON 文件
    */
-  private async loadJsonFile(filePath: string): Promise<any> {
+  private async loadJsonFile(filePath: string): Promise<Partial<BladeConfig> | null> {
     try {
       if (await this.fileExists(filePath)) {
         const content = await fs.readFile(filePath, 'utf-8');
-        return JSON.parse(content);
+        return JSON.parse(content) as Partial<BladeConfig>;
       }
     } catch (error) {
       console.warn(`[ConfigManager] Failed to load ${filePath}:`, error);
@@ -356,8 +319,7 @@ export class ConfigManager {
       const newConfig = { ...existingConfig, ...updates };
 
       // 4. 写入文件（仅保存基础配置字段，不保存 settings）
-      // biome-ignore lint/suspicious/noExplicitAny: 配置对象需要动态属性
-      const configToSave: Record<string, any> = {};
+      const configToSave: Partial<BladeConfig> = {};
       if (newConfig.provider !== undefined) configToSave.provider = newConfig.provider;
       if (newConfig.apiKey !== undefined) configToSave.apiKey = newConfig.apiKey;
       if (newConfig.baseUrl !== undefined) configToSave.baseUrl = newConfig.baseUrl;
@@ -745,7 +707,7 @@ export class ConfigManager {
    * 是否处于调试模式
    */
   isDebug(): boolean {
-    return this.getConfig().debug;
+    return Boolean(this.getConfig().debug);
   }
 
   /**
@@ -774,4 +736,80 @@ export class ConfigManager {
       );
     }
   }
+}
+
+/**
+ * 合并 BladeConfig 和 GlobalOptions 生成 RuntimeConfig
+ *
+ * **优先级**: CLI 参数 > 配置文件
+ *
+ * @param baseConfig - 来自配置文件的基础配置
+ * @param cliOptions - 来自命令行的 GlobalOptions
+ * @returns RuntimeConfig - 合并后的运行时配置
+ */
+export function mergeRuntimeConfig(
+  baseConfig: BladeConfig,
+  cliOptions: Partial<GlobalOptions> = {}
+): RuntimeConfig {
+  const result: RuntimeConfig = { ...baseConfig };
+
+  // 1. 模型配置 (CLI 优先)
+  if (cliOptions.model !== undefined) {
+    result.model = cliOptions.model;
+  }
+  if (cliOptions.fallbackModel !== undefined) {
+    result.fallbackModel = cliOptions.fallbackModel;
+  }
+
+  // 2. Debug 模式 (CLI 优先，支持字符串过滤器)
+  if (cliOptions.debug !== undefined) {
+    // --debug 不带参数时，yargs 会解析为空字符串 ""
+    // 空字符串应该被视为 true（启用所有 debug 日志）
+    // 如果是非空字符串，保持原样（如 "agent,ui" 或 "!chat,!loop"）
+    result.debug = cliOptions.debug === '' ? true : cliOptions.debug;
+  }
+
+  // 3. 权限模式 (CLI 优先，yolo 快捷方式)
+  if (cliOptions.yolo === true) {
+    result.permissionMode = PermissionMode.YOLO;
+  } else if (cliOptions.permissionMode !== undefined) {
+    result.permissionMode = cliOptions.permissionMode as PermissionMode;
+  }
+
+  // 4. 最大轮次 (CLI 优先)
+  if (cliOptions.maxTurns !== undefined) {
+    result.maxTurns = cliOptions.maxTurns;
+  }
+
+  // 5. CLI 专属字段 - 系统提示
+  result.systemPrompt = cliOptions.systemPrompt;
+  result.appendSystemPrompt = cliOptions.appendSystemPrompt;
+
+  // 6. CLI 专属字段 - 会话管理
+  result.resumeSessionId = cliOptions.sessionId;
+  result.forkSession = cliOptions.forkSession;
+
+  // 7. CLI 专属字段 - 工具过滤
+  result.allowedTools = cliOptions.allowedTools;
+  result.disallowedTools = cliOptions.disallowedTools;
+
+  // 8. CLI 专属字段 - MCP
+  result.mcpConfigPaths = cliOptions.mcpConfig;
+  result.strictMcpConfig = cliOptions.strictMcpConfig;
+
+  // 9. CLI 专属字段 - 目录访问
+  result.addDirs = cliOptions.addDir;
+
+  // 10. CLI 专属字段 - 输入输出
+  result.outputFormat = cliOptions.outputFormat;
+  result.inputFormat = cliOptions.inputFormat;
+  result.print = cliOptions.print;
+  result.includePartialMessages = cliOptions.includePartialMessages;
+  result.replayUserMessages = cliOptions.replayUserMessages;
+
+  // 11. CLI 专属字段 - 其他
+  result.agentsConfig = cliOptions.agents;
+  result.settingSources = cliOptions.settingSources;
+
+  return result;
 }

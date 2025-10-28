@@ -1,77 +1,30 @@
-import React, { createContext, ReactNode, useContext, useReducer } from 'react';
-import type { BladeConfig } from '../../config/types.js';
+import React, { createContext, ReactNode, useContext, useEffect, useReducer } from 'react';
+import type { RuntimeConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
 import type { TodoItem } from '../../tools/builtin/todo/types.js';
 
+// 初始化状态类型
+export type InitializationStatus = 'idle' | 'loading' | 'ready' | 'needsSetup' | 'error';
+
 // 应用状态类型定义
 export interface AppState {
-  isInitialized: boolean;
-  isLoading: boolean;
-  currentCommand: string | null;
-  selectedTool: string | null;
-  config: BladeConfig | null;
-  userPreferences: UserPreferences;
-  performance: PerformanceStats;
-  error: AppError | null;
-  showThemeSelector: boolean;
-  showPermissionsManager: boolean;
-  showSessionSelector: boolean;
-  sessionSelectorData: unknown[] | null; // 会话选择器数据（从斜杠命令传递）
-  todos: TodoItem[];
-  showTodoPanel: boolean;
-  permissionMode: PermissionMode;
-}
-
-// 用户偏好设置
-export interface UserPreferences {
-  theme: string;
-  language: string;
-  autoSave: boolean;
-  debugMode: boolean;
-  telemetry: boolean;
-  shortcuts: Record<string, string>;
-  fontSize: number;
-  showStatusBar: boolean;
-}
-
-// 性能统计
-export interface PerformanceStats {
-  memory: {
-    used: number;
-    total: number;
-    percentage: number;
-  };
-  render: {
-    fps: number;
-    renderTime: number;
-  };
-  cpu: {
-    usage: number;
-  };
-  uptime: number;
-}
-
-// 应用错误
-export interface AppError {
-  id: string;
-  type: 'config' | 'network' | 'permission' | 'system' | 'unknown';
-  message: string;
-  timestamp: number;
-  stack?: string;
-  details?: Record<string, any>;
+  config: RuntimeConfig | null; // 运行时配置（包含 CLI 参数）
+  initializationStatus: InitializationStatus; // 初始化状态
+  initializationError: string | null; // 初始化错误信息
+  showThemeSelector: boolean; // 主题选择器显示状态
+  showPermissionsManager: boolean; // 权限管理器显示状态
+  showSessionSelector: boolean; // 会话选择器显示状态
+  sessionSelectorData: unknown[] | null; // 会话选择器数据
+  todos: TodoItem[]; // 任务列表
+  showTodoPanel: boolean; // Todo 面板显示状态
+  permissionMode: PermissionMode; // 权限模式
 }
 
 // Action类型
 type AppAction =
-  | { type: 'SET_INITIALIZED'; payload: boolean }
-  | { type: 'SET_LOADING'; payload: boolean }
-  | { type: 'SET_CURRENT_COMMAND'; payload: string | null }
-  | { type: 'SET_SELECTED_TOOL'; payload: string | null }
-  | { type: 'SET_CONFIG'; payload: BladeConfig }
-  | { type: 'UPDATE_PREFERENCES'; payload: Partial<UserPreferences> }
-  | { type: 'SET_PERFORMANCE_STATS'; payload: Partial<PerformanceStats> }
-  | { type: 'SET_ERROR'; payload: AppError | null }
-  | { type: 'CLEAR_ERROR' }
+  | { type: 'SET_CONFIG'; payload: RuntimeConfig }
+  | { type: 'SET_INITIALIZATION_STATUS'; payload: InitializationStatus }
+  | { type: 'SET_INITIALIZATION_ERROR'; payload: string | null }
   | { type: 'SHOW_THEME_SELECTOR' }
   | { type: 'HIDE_THEME_SELECTOR' }
   | { type: 'SHOW_PERMISSIONS_MANAGER' }
@@ -87,37 +40,9 @@ type AppAction =
 
 // 默认状态
 const defaultState: AppState = {
-  isInitialized: false,
-  isLoading: false,
-  currentCommand: null,
-  selectedTool: null,
   config: null,
-  userPreferences: {
-    theme: 'default',
-    language: 'zh-CN',
-    autoSave: true,
-    debugMode: false,
-    telemetry: true,
-    shortcuts: {},
-    fontSize: 14,
-    showStatusBar: true,
-  },
-  performance: {
-    memory: {
-      used: 0,
-      total: 0,
-      percentage: 0,
-    },
-    render: {
-      fps: 60,
-      renderTime: 16,
-    },
-    cpu: {
-      usage: 0,
-    },
-    uptime: 0,
-  },
-  error: null,
+  initializationStatus: 'idle',
+  initializationError: null,
   showThemeSelector: false,
   showPermissionsManager: false,
   showSessionSelector: false,
@@ -130,38 +55,14 @@ const defaultState: AppState = {
 // 状态reducer
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
-    case 'SET_INITIALIZED':
-      return { ...state, isInitialized: action.payload };
-
-    case 'SET_LOADING':
-      return { ...state, isLoading: action.payload };
-
-    case 'SET_CURRENT_COMMAND':
-      return { ...state, currentCommand: action.payload };
-
-    case 'SET_SELECTED_TOOL':
-      return { ...state, selectedTool: action.payload };
-
     case 'SET_CONFIG':
       return { ...state, config: action.payload };
 
-    case 'UPDATE_PREFERENCES':
-      return {
-        ...state,
-        userPreferences: { ...state.userPreferences, ...action.payload },
-      };
+    case 'SET_INITIALIZATION_STATUS':
+      return { ...state, initializationStatus: action.payload };
 
-    case 'SET_PERFORMANCE_STATS':
-      return {
-        ...state,
-        performance: { ...state.performance, ...action.payload },
-      };
-
-    case 'SET_ERROR':
-      return { ...state, error: action.payload };
-
-    case 'CLEAR_ERROR':
-      return { ...state, error: null };
+    case 'SET_INITIALIZATION_ERROR':
+      return { ...state, initializationError: action.payload };
 
     case 'SHOW_THEME_SELECTOR':
       return { ...state, showThemeSelector: true };
@@ -226,48 +127,19 @@ const AppContext = createContext<{
 
 // Action creators
 export const AppActions = {
-  setInitialized: (isInitialized: boolean) => ({
-    type: 'SET_INITIALIZED' as const,
-    payload: isInitialized,
-  }),
-
-  setLoading: (isLoading: boolean) => ({
-    type: 'SET_LOADING' as const,
-    payload: isLoading,
-  }),
-
-  setCurrentCommand: (command: string | null) => ({
-    type: 'SET_CURRENT_COMMAND' as const,
-    payload: command,
-  }),
-
-  setSelectedTool: (tool: string | null) => ({
-    type: 'SET_SELECTED_TOOL' as const,
-    payload: tool,
-  }),
-
-  setConfig: (config: BladeConfig) => ({
+  setConfig: (config: RuntimeConfig) => ({
     type: 'SET_CONFIG' as const,
     payload: config,
   }),
 
-  updatePreferences: (preferences: Partial<UserPreferences>) => ({
-    type: 'UPDATE_PREFERENCES' as const,
-    payload: preferences,
+  setInitializationStatus: (status: InitializationStatus) => ({
+    type: 'SET_INITIALIZATION_STATUS' as const,
+    payload: status,
   }),
 
-  setPerformanceStats: (stats: Partial<PerformanceStats>) => ({
-    type: 'SET_PERFORMANCE_STATS' as const,
-    payload: stats,
-  }),
-
-  setError: (error: AppError) => ({
-    type: 'SET_ERROR' as const,
+  setInitializationError: (error: string | null) => ({
+    type: 'SET_INITIALIZATION_ERROR' as const,
     payload: error,
-  }),
-
-  clearError: () => ({
-    type: 'CLEAR_ERROR' as const,
   }),
 
   showThemeSelector: () => ({
@@ -326,10 +198,40 @@ export const AppActions = {
 type AppActions = typeof AppActions;
 
 // Provider组件
-export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [state, dispatch] = useReducer(appReducer, defaultState);
+export const AppProvider: React.FC<{
+  children: ReactNode;
+  initialConfig?: RuntimeConfig;
+}> = ({ children, initialConfig }) => {
+  const [state, dispatch] = useReducer(appReducer, {
+    ...defaultState,
+    config: initialConfig || null,
+    permissionMode: initialConfig?.permissionMode || defaultState.permissionMode,
+  });
 
   const actions = AppActions;
+
+  // 检查 API Key 并设置初始化状态
+  useEffect(() => {
+    if (!initialConfig) {
+      dispatch(AppActions.setInitializationStatus('error'));
+      dispatch(AppActions.setInitializationError('RuntimeConfig 未初始化'));
+      return;
+    }
+
+    // 检查 API Key
+    if (!initialConfig.apiKey || initialConfig.apiKey.trim() === '') {
+      if (initialConfig.debug) {
+        console.log('[Debug] 未检测到 API Key，进入设置向导');
+      }
+      dispatch(AppActions.setInitializationStatus('needsSetup'));
+      return;
+    }
+
+    if (initialConfig.debug) {
+      console.log('[Debug] API Key 检查通过，准备就绪');
+    }
+    dispatch(AppActions.setInitializationStatus('ready'));
+  }, [initialConfig]);
 
   return (
     <AppContext.Provider value={{ state, dispatch, actions }}>
@@ -348,36 +250,11 @@ export const useAppState = () => {
 };
 
 // 选择器hooks
-export const useUserPreferences = () => {
-  const { state, actions } = useAppState();
-  return {
-    preferences: state.userPreferences,
-    updatePreferences: actions.updatePreferences,
-  };
-};
-
-export const usePerformance = () => {
-  const { state, actions } = useAppState();
-  return {
-    performance: state.performance,
-    updatePerformance: actions.setPerformanceStats,
-  };
-};
-
 export const useAppConfig = () => {
   const { state, actions } = useAppState();
   return {
     config: state.config,
     setConfig: actions.setConfig,
-  };
-};
-
-export const useAppError = () => {
-  const { state, actions } = useAppState();
-  return {
-    error: state.error,
-    setError: actions.setError,
-    clearError: actions.clearError,
   };
 };
 

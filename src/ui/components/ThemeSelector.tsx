@@ -1,6 +1,8 @@
 /**
  * ThemeSelector - 交互式主题选择器组件
  */
+
+import { useMemoizedFn } from 'ahooks';
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import React, { useState } from 'react';
@@ -148,7 +150,7 @@ export const ThemeSelector: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
 
   // 处理主题选择
-  const handleSelect = async (item: { label: string; value: string }) => {
+  const handleSelect = useMemoizedFn(async (item: { label: string; value: string }) => {
     if (isProcessing) return;
 
     setIsProcessing(true);
@@ -176,7 +178,7 @@ export const ThemeSelector: React.FC = () => {
     } finally {
       setIsProcessing(false);
     }
-  };
+  });
 
   // 处理主题切换 (上下键预览)
   const handleHighlight = (item: { label: string; value: string }) => {
