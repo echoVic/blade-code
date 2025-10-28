@@ -62,7 +62,7 @@ describe('配置管理集成测试', () => {
     // 清理环境变量
     delete process.env.BLADE_API_KEY;
     delete process.env.BLADE_THEME;
-    delete process.env.BLADE_DEBUG;
+    // BLADE_DEBUG 已废弃
     ConfigurationManager.resetInstance();
   });
 

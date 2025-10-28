@@ -3,7 +3,6 @@ import type { GlobalOptions } from '../cli/types.js';
 import { ConfigManager } from '../config/ConfigManager.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
-import { NotificationSystem } from './components/NotificationSystem.js';
 import { AppProvider } from './contexts/AppContext.js';
 import { FocusProvider } from './contexts/FocusContext.js';
 import { SessionProvider } from './contexts/SessionContext.js';
@@ -60,7 +59,6 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
         <AppProvider>
           <SessionProvider>
             <BladeInterface {...processedProps} />
-            <NotificationSystem />
           </SessionProvider>
         </AppProvider>
       </FocusProvider>

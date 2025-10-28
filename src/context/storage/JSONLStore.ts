@@ -7,7 +7,6 @@ import type { BladeJSONLEntry } from '../types.js';
 
 /**
  * JSONL 存储类 - 处理 JSONL 格式的读写
- * 参考 Claude Code 的 JSONL 存储实现
  */
 export class JSONLStore {
   private readonly filePath: string;

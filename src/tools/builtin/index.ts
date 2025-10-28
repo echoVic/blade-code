@@ -8,7 +8,7 @@ import * as os from 'os';
 import * as path from 'path';
 import type { Tool } from '../types/index.js';
 // 文件操作工具 - 新版本（基于 Zod）
-import { editTool, multiEditTool, readTool, undoEditTool, writeTool } from './file/index.js';
+import { editTool, readTool, undoEditTool, writeTool } from './file/index.js';
 // Plan 工具
 import { exitPlanModeTool } from './plan/index.js';
 // 搜索工具 - 新版本（基于 Zod）
@@ -51,7 +51,6 @@ export async function getBuiltinTools(opts?: {
     readTool,
     editTool,
     writeTool,
-    multiEditTool,
     undoEditTool,
 
     // 搜索工具

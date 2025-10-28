@@ -5,7 +5,7 @@
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
-import type { Message } from '../services/OpenAIChatService.js';
+import type { Message } from '../services/ChatServiceInterface.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../tools/types/ToolTypes.js';
 
@@ -124,9 +124,9 @@ export interface LoopOptions {
     result: ToolResult
   ) => Promise<ToolResult | void>;
 
-  // 🆕 流式信息显示回调（实现 Claude Code 风格的工具执行流）
-  onThinking?: (content: string) => void;  // LLM 意图说明
-  onToolStart?: (toolCall: ChatCompletionMessageToolCall) => void;  // 工具调用开始
+  // 🆕 流式信息显示回调
+  onThinking?: (content: string) => void; // LLM 意图说明
+  onToolStart?: (toolCall: ChatCompletionMessageToolCall) => void; // 工具调用开始
 }
 
 export interface LoopResult {

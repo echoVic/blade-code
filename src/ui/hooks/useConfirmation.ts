@@ -71,13 +71,6 @@ export const useConfirmation = () => {
     [showConfirmation]
   );
 
-  // 调试日志：追踪 confirmationHandler 创建
-  console.log('[useConfirmation] confirmationHandler created:', {
-    hasHandler: !!confirmationHandler,
-    hasMethod: !!confirmationHandler?.requestConfirmation,
-    methodType: typeof confirmationHandler?.requestConfirmation,
-  });
-
   return {
     confirmationState,
     confirmationHandler,

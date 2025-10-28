@@ -1,6 +1,5 @@
 /**
  * ThemeSelector - 交互式主题选择器组件
- * 类似 Claude Code 的交互式可视化选择器
  */
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
@@ -138,9 +137,15 @@ const ColorInfo: React.FC<{ theme: Theme }> = ({ theme }) => {
  */
 export const ThemeSelector: React.FC = () => {
   const { dispatch, actions } = useAppState();
-  const [selectedTheme, setSelectedTheme] = useState<Theme>(themeManager.getTheme());
-  const [isProcessing, setIsProcessing] = useState(false);
   const currentThemeName = themeManager.getCurrentThemeName();
+
+  // 找到当前主题在列表中的索引，默认高亮当前主题
+  const currentThemeIndex = themes.findIndex((t) => t.label === currentThemeName);
+  const initialTheme =
+    currentThemeIndex >= 0 ? themes[currentThemeIndex].theme : themes[0].theme;
+
+  const [selectedTheme, setSelectedTheme] = useState<Theme>(initialTheme);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // 处理主题选择
   const handleSelect = async (item: { label: string; value: string }) => {
@@ -160,28 +165,14 @@ export const ThemeSelector: React.FC = () => {
         theme: item.value,
       });
 
-      // 显示成功通知
-      dispatch(
-        actions.addNotification({
-          type: 'success',
-          title: '主题已更新',
-          message: `已切换到 ${item.label} 主题`,
-          duration: 3000,
-        })
-      );
+      // 不显示成功通知（用户反馈：这个提示不需要显示）
+      // 主题切换效果是立即可见的，无需额外通知
 
       // 关闭选择器
       dispatch(actions.hideThemeSelector());
     } catch (error) {
-      // 显示错误通知
-      dispatch(
-        actions.addNotification({
-          type: 'error',
-          title: '主题切换失败',
-          message: error instanceof Error ? error.message : '未知错误',
-          duration: 5000,
-        })
-      );
+      // 输出错误到控制台
+      console.error('❌ 主题切换失败:', error instanceof Error ? error.message : error);
     } finally {
       setIsProcessing(false);
     }
@@ -267,6 +258,7 @@ export const ThemeSelector: React.FC = () => {
             </Box>
             <SelectInput
               items={themeSelectItems}
+              initialIndex={currentThemeIndex >= 0 ? currentThemeIndex : 0}
               onSelect={handleSelect}
               onHighlight={handleHighlight}
               itemComponent={renderThemeItem}

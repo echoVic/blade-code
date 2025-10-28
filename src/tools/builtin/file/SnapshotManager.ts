@@ -294,11 +294,11 @@ export class SnapshotManager {
    * @returns 16 位十六进制哈希字符串
    */
   private generateFileHash(filePath: string, version: number): string {
-    // 使用 MD5 哈希算法（Claude Code 使用的算法）
+    // 使用 MD5 哈希算法
     const hash = crypto.createHash('md5');
     hash.update(`${filePath}:${version}`);
 
-    // 返回前 16 位十六进制（模拟 Claude Code 的 SK6 函数）
+    // 返回前 16 位十六进制
     return hash.digest('hex').substring(0, 16);
   }
 

@@ -16,7 +16,7 @@ import {
 import { JSONLStore } from './JSONLStore.js';
 
 /**
- * 持久化存储实现 - JSONL 格式，类似 Claude Code
+ * 持久化存储实现 - JSONL 格式
  * 存储路径: ~/.blade/projects/{escaped-path}/{sessionId}.jsonl
  */
 export class PersistentStore {

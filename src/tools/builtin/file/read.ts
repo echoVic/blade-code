@@ -32,39 +32,40 @@ export const readTool = createTool({
 
   // 工具描述
   description: {
-    short: '读取本地文件系统中的文件，支持文本、图片、PDF等多种格式',
-    long: `支持多种文件格式和编码方式，可以按行切片读取文本文件。二进制文件会自动使用 base64 编码。`,
+    short: '读取本地文件系统中的文件',
+    long: `Reads a file from the local filesystem. You can access any file directly by using this tool. Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.`,
     usageNotes: [
-      'file_path 参数必须是绝对路径，不能是相对路径',
-      '默认读取整个文件内容，最多 2000 行',
-      '可通过 offset 和 limit 参数控制读取的行范围（仅文本文件）',
-      '文本文件会显示行号（格式：行号→内容）',
-      '二进制文件（如图片、PDF等）自动使用 base64 编码',
-      '支持的文本格式：.txt, .md, .js, .ts, .tsx, .json, .xml, .html, .css, .yml, .py, .rb, .php, .java, .cpp, .c, .h, .rs, .go, .sh, .sql 等',
-      '读取前会检查文件是否存在，不存在会返回错误',
+      'The file_path parameter must be an absolute path, not a relative path',
+      'By default, it reads up to 2000 lines starting from the beginning of the file',
+      'You can optionally specify a line offset and limit (especially handy for long files), but it\'s recommended to read the whole file by not providing these parameters',
+      'Any lines longer than 2000 characters will be truncated',
+      'Results are returned using cat -n format, with line numbers starting at 1',
+      'This tool allows Blade Code reading images (eg PNG, JPG, etc). When reading an image file the contents are presented visually for multimodal analysis.',
+      'This tool can read PDF files (.pdf). PDFs are processed page by page, extracting both text and visual content for analysis.',
+      'This tool can read Jupyter notebooks (.ipynb files) and returns all cells with their outputs, combining code, text, and visualizations.',
+      'This tool can only read files, not directories. To read a directory, use an ls command via the Bash tool.',
+      'You have the capability to call multiple tools in a single response. It is always better to speculatively read multiple files as a batch that are potentially useful.',
+      'If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.',
     ],
     examples: [
       {
-        description: '读取整个文件',
-        params: { file_path: '/path/to/file.txt' },
+        description: '读取整个文件（推荐）',
+        params: { file_path: '/path/to/file.ts' },
       },
       {
         description: '读取文件的前 100 行',
         params: { file_path: '/path/to/file.txt', limit: 100 },
       },
       {
-        description: '从第 50 行开始读取 100 行',
-        params: { file_path: '/path/to/file.txt', offset: 50, limit: 100 },
-      },
-      {
-        description: '使用 base64 编码读取二进制文件',
-        params: { file_path: '/path/to/image.png', encoding: 'base64' },
+        description: '从第 50 行开始读取 100 行（大文件场景）',
+        params: { file_path: '/path/to/large-file.log', offset: 50, limit: 100 },
       },
     ],
     important: [
-      '读取超大文件时建议使用 offset 和 limit 参数限制读取范围',
-      '每行内容超过 2000 字符会被截断',
-      '二进制文件会自动检测并切换到 base64 编码',
+      'file_path 必须是绝对路径',
+      '推荐读取整个文件（不提供 offset 和 limit）',
+      '只对超大文件使用 offset 和 limit 参数',
+      '行号从 1 开始（cat -n 格式）',
     ],
   },
 

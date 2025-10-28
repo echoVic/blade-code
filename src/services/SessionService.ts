@@ -10,7 +10,10 @@ import {
   getBladeStorageRoot,
   unescapeProjectPath,
 } from '../context/utils/pathEscape.js';
+import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { Message } from './ChatServiceInterface.js';
+
+const logger = createLogger(LogCategory.SERVICE);
 
 /**
  * 会话元数据
@@ -64,7 +67,7 @@ export class SessionService {
             );
             sessions.push(metadata);
           } catch (error) {
-            console.warn(`[SessionService] 跳过损坏的会话文件: ${filePath}`, error);
+            logger.warn(`[SessionService] 跳过损坏的会话文件: ${filePath}`, error);
           }
         }
       }
@@ -77,7 +80,7 @@ export class SessionService {
 
       return sessions;
     } catch (error) {
-      console.error('[SessionService] 列出会话失败:', error);
+      logger.error('[SessionService] 列出会话失败:', error);
       return [];
     }
   }
@@ -152,7 +155,7 @@ export class SessionService {
 
       return await this.loadSessionFromFile(session.filePath);
     } catch (error) {
-      console.error(`[SessionService] 加载会话失败 (${sessionId}):`, error);
+      logger.error(`[SessionService] 加载会话失败 (${sessionId}):`, error);
       throw error;
     }
   }
@@ -192,7 +195,7 @@ export class SessionService {
     for (let i = entries.length - 1; i >= 0; i--) {
       if (entries[i].subtype === 'compact_boundary') {
         lastCompactBoundaryIndex = i;
-        console.log(`[SessionService] 检测到压缩边界 at index ${i}`);
+        logger.debug(`[SessionService] 检测到压缩边界 at index ${i}`);
         break;
       }
     }
@@ -206,7 +209,7 @@ export class SessionService {
 
       // 跳过 compact_boundary 本身（它只是标记，不是实际消息）
       if (entry.subtype === 'compact_boundary') {
-        console.log('[SessionService] 跳过 compact_boundary 消息');
+        logger.debug('[SessionService] 跳过 compact_boundary 消息');
         continue;
       }
 
@@ -225,7 +228,7 @@ export class SessionService {
 
           // 如果是压缩总结，记录日志（metadata 在 JSONL 中已保存）
           if (entry.isCompactSummary) {
-            console.log('[SessionService] 加载压缩总结消息');
+            logger.debug('[SessionService] 加载压缩总结消息');
           }
 
           messages.push(message);
@@ -263,7 +266,7 @@ export class SessionService {
     }
 
     if (lastCompactBoundaryIndex >= 0) {
-      console.log(
+      logger.debug(
         `[SessionService] 会话已压缩，跳过前 ${lastCompactBoundaryIndex} 条历史，加载 ${messages.length} 条消息`
       );
     }

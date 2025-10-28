@@ -38,32 +38,30 @@ export const editTool = createTool({
 
   // 工具描述
   description: {
-    short: '在文件中进行精确的字符串替换，支持替换单个或所有匹配项',
-    long: `提供精确的字符串搜索和替换功能。默认只替换第一个匹配项，可通过 replace_all 参数替换所有匹配项。`,
+    short: '在文件中进行精确的字符串替换',
+    long: `Performs exact string replacements in files. Supports replacing a single occurrence or all occurrences with the replace_all parameter.`,
     usageNotes: [
-      'file_path 必须是绝对路径',
-      'old_string 必须在文件中存在，否则操作失败',
-      'old_string 必须是唯一的（或使用 replace_all），避免误替换',
-      '替换时会保留原文件的缩进和格式',
-      'new_string 和 old_string 不能相同',
-      '替换前建议先用 Read 工具确认文件内容',
-      '替换操作会直接修改文件，无法撤销',
+      'You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.',
+      'When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.',
+      'ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.',
+      '**The edit will FAIL if old_string is not unique in the file.** Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.',
+      'Use replace_all for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.',
     ],
     examples: [
       {
-        description: '替换第一个匹配项',
+        description: '替换唯一的字符串',
         params: {
           file_path: '/path/to/file.ts',
-          old_string: 'const foo = 1;',
-          new_string: 'const foo = 2;',
+          old_string: 'function calculateTotal(items: Item[]) {\n  return items.reduce((sum, item) => sum + item.price, 0);\n}',
+          new_string: 'function calculateTotal(items: Item[]) {\n  return items.reduce((sum, item) => sum + item.price * item.quantity, 0);\n}',
         },
       },
       {
-        description: '替换所有匹配项',
+        description: '使用 replace_all 重命名变量',
         params: {
           file_path: '/path/to/file.ts',
-          old_string: 'console.log',
-          new_string: 'logger.info',
+          old_string: 'oldVariableName',
+          new_string: 'newVariableName',
           replace_all: true,
         },
       },
@@ -77,11 +75,11 @@ export const editTool = createTool({
       },
     ],
     important: [
-      '使用 Edit 工具前必须先用 Read 工具读取文件',
-      '如果 old_string 在文件中不唯一，必须提供更大的上下文或使用 replace_all',
-      'Edit 操作会保留 Read 工具输出中的缩进（行号前缀之后的内容）',
+      '**必须先使用 Read 工具读取文件**，否则编辑会失败',
+      '**如果 old_string 不唯一，编辑会失败**。请提供更多上下文或使用 replace_all',
+      '从 Read 工具输出复制内容时，确保保留精确的缩进（忽略行号前缀）',
       '替换多行内容时，old_string 必须包含完整的换行符',
-      '如果文件不存在，操作会失败',
+      'new_string 和 old_string 不能相同',
     ],
   },
 
@@ -114,19 +112,24 @@ export const editTool = createTool({
 
       signal.throwIfAborted();
 
-      // Read-Before-Write 验证（如果有 sessionId）
-      // 始终使用宽松模式（仅警告）
+      // Read-Before-Write 验证（对齐 Claude Code 官方：强制模式）
       if (sessionId) {
         const tracker = FileAccessTracker.getInstance();
 
-        // 检查文件是否已读取
+        // 检查文件是否已读取（强制失败）
         if (!tracker.hasFileBeenRead(file_path, sessionId)) {
-          console.warn(
-            `[EditTool] 警告：文件 ${file_path} 未通过 Read 工具读取`
-          );
+          return {
+            success: false,
+            llmContent: `You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.`,
+            displayContent: `❌ 编辑失败：必须先使用 Read 工具读取文件\n\n请先用 Read 工具查看文件内容，再进行编辑。`,
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'File not read before edit',
+            },
+          };
         }
 
-        // 检查文件是否在读取后被修改
+        // 检查文件是否在读取后被修改（警告但不阻止）
         const modificationCheck = await tracker.checkFileModification(file_path);
         if (modificationCheck.modified) {
           console.warn(`[EditTool] 警告：${modificationCheck.message}`);
@@ -176,7 +179,7 @@ export const editTool = createTool({
       // 使用实际匹配的字符串查找所有位置
       const matches = findMatches(content, old_string);
 
-      // 增强多重匹配警告
+      // 🔴 对齐 Claude Code 官方：多重匹配时直接失败
       if (matches.length > 1 && !replace_all) {
         // 计算每个匹配项的行号
         const lines = content.split('\n');
@@ -201,15 +204,22 @@ export const editTool = createTool({
           currentPos = lineEnd + 1; // +1 for newline character
         }
 
-        // 生成警告消息
+        // 生成位置列表
         const locationsList = matchLocations
           .map((loc) => `行 ${loc.line}:${loc.column}`)
           .join(', ');
 
-        updateOutput?.(
-          `⚠️ 警告：找到 ${matches.length} 个匹配项（位于 ${locationsList}），将只替换第一个。` +
-            `\n提示：使用 replace_all=true 替换所有匹配项，或提供更多上下文以精确匹配。`
-        );
+        // 直接失败（对齐 Claude Code 官方行为）
+        return {
+          success: false,
+          llmContent: `The edit will FAIL if old_string is not unique in the file. Found ${matches.length} matches at: ${locationsList}. Either provide a larger string with more surrounding context to make it unique or use replace_all=true.`,
+          displayContent: `❌ 编辑失败：old_string 不唯一\n\n找到 ${matches.length} 个匹配项:\n${locationsList}\n\n💡 解决方案:\n1. 提供更多周围代码以确保唯一性\n2. 或使用 replace_all=true 替换所有匹配项`,
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: 'old_string is not unique',
+            details: { matches: matchLocations, count: matches.length }
+          }
+        };
       } else {
         updateOutput?.(`找到 ${matches.length} 个匹配项，开始替换...`);
       }

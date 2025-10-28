@@ -4,7 +4,6 @@ import * as path from 'node:path';
 
 /**
  * 路径转义工具 - 将项目路径转为目录名
- * 参考 Claude Code 的路径转义方式
  */
 
 /**

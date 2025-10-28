@@ -6,6 +6,11 @@
  * 2. 不同文件可以并发编辑
  * 3. 使用 Promise 队列实现顺序执行
  */
+
+import { LogCategory, createLogger } from '../../logging/Logger.js';
+
+const logger = createLogger(LogCategory.EXECUTION);
+
 export class FileLockManager {
   // 全局单例实例
   private static instance: FileLockManager | null = null;
@@ -61,13 +66,13 @@ export class FileLockManager {
     filePath: string,
     operation: () => Promise<T>
   ): Promise<T> {
-    console.log(`[FileLockManager] 获取文件锁: ${filePath}`);
+    logger.debug(`获取文件锁: ${filePath}`);
     try {
       const result = await operation();
-      console.log(`[FileLockManager] 释放文件锁: ${filePath}`);
+      logger.debug(`释放文件锁: ${filePath}`);
       return result;
     } catch (error) {
-      console.log(`[FileLockManager] 操作失败，释放文件锁: ${filePath}`);
+      logger.debug(`操作失败，释放文件锁: ${filePath}`);
       throw error;
     }
   }

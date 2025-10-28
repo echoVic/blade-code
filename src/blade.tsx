@@ -9,7 +9,6 @@ import { hideBin } from 'yargs/helpers';
 import { cliConfig, globalOptions } from './cli/config.js';
 import {
   loadConfiguration,
-  setupLogging,
   validateOutput,
   validatePermissions,
 } from './cli/middleware/index.js';
@@ -43,7 +42,7 @@ export async function main() {
     .options(globalOptions)
 
     // 应用中间件
-    .middleware([validatePermissions, loadConfiguration, setupLogging, validateOutput])
+    .middleware([validatePermissions, loadConfiguration, validateOutput])
 
     // 注册命令
     .command(configCommands)
@@ -66,10 +65,9 @@ export async function main() {
       if (err) {
         console.error('💥 An error occurred:');
         console.error(err.message);
-        if (process.env.BLADE_DEBUG) {
-          console.error('\nStack trace:');
-          console.error(err.stack);
-        }
+        // 总是显示堆栈信息（用于调试）
+        console.error('\nStack trace:');
+        console.error(err.stack);
         process.exit(1);
       }
 
@@ -95,8 +93,6 @@ export async function main() {
       },
       async (argv) => {
         // 启动 UI 模式
-        // TODO: initialMessage 功能待实现
-        // 当前解析参数但 UI 层未处理，需要在 BladeInterface 中自动发送此消息
         const initialMessage = argv.message ? argv.message.join(' ') : undefined;
 
         // 启动 React UI - 传递所有选项
@@ -105,7 +101,6 @@ export async function main() {
           initialMessage,
           // 确保某些字段是正确的类型
           debug: argv.debug,
-          verbose: Boolean(argv.verbose),
           print: Boolean(argv.print),
         };
 

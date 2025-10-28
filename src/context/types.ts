@@ -110,7 +110,7 @@ export interface ContextManagerOptions {
 }
 
 /**
- * JSONL 消息类型（类似 Claude Code）
+ * JSONL 消息类型
  */
 export type JSONLMessageType =
   | 'user'

@@ -51,23 +51,6 @@ export const loadConfiguration: MiddlewareFunction = (argv) => {
 };
 
 /**
- * 调试和日志中间件
- */
-export const setupLogging: MiddlewareFunction = (argv) => {
-  // 设置调试模式
-  if (argv.debug) {
-    process.env.BLADE_DEBUG = argv.debug === true ? '1' : String(argv.debug);
-    console.log(`Debug mode enabled: ${argv.debug}`);
-  }
-
-  // 设置详细模式
-  if (argv.verbose) {
-    process.env.BLADE_VERBOSE = '1';
-    console.log('Verbose mode enabled');
-  }
-};
-
-/**
  * 输出格式验证中间件
  */
 export const validateOutput: MiddlewareFunction = (argv) => {

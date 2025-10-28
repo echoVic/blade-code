@@ -20,10 +20,11 @@ import { PermissionMode } from '../config/types.js';
 import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { TokenCounter } from '../context/TokenCounter.js';
+import { createLogger, LogCategory } from '../logging/Logger.js';
 import {
+  createPlanModeReminder,
   PLAN_MODE_SYSTEM_PROMPT,
   PromptBuilder,
-  createPlanModeReminder,
 } from '../prompts/index.js';
 import {
   createChatService,
@@ -48,6 +49,9 @@ import type {
   LoopOptions,
   LoopResult,
 } from './types.js';
+
+// 创建 Agent 专用 Logger
+const logger = createLogger(LogCategory.AGENT);
 
 export class Agent extends EventEmitter {
   private config: BladeConfig;
@@ -255,7 +259,7 @@ export class Agent extends EventEmitter {
 
       // 🆕 检查是否需要切换模式并重新执行（Plan 模式批准后）
       if (result.metadata?.targetMode && context.permissionMode === 'plan') {
-        console.log(
+        logger.debug(
           `🔄 Plan 模式已批准，切换到 ${result.metadata.targetMode} 模式并重新执行`
         );
 
@@ -300,7 +304,7 @@ export class Agent extends EventEmitter {
     context: ChatContext,
     options?: LoopOptions
   ): Promise<LoopResult> {
-    console.log('🔵 Processing Plan mode message...');
+    logger.debug('🔵 Processing Plan mode message...');
 
     // Plan 模式差异 1: 使用独立的系统提示词
     const envContext = getEnvironmentContext();
@@ -330,7 +334,7 @@ export class Agent extends EventEmitter {
     context: ChatContext,
     options?: LoopOptions
   ): Promise<LoopResult> {
-    console.log('💬 Processing enhanced chat message...');
+    logger.debug('💬 Processing enhanced chat message...');
 
     // 普通模式使用标准系统提示词
     const envContext = getEnvironmentContext();
@@ -405,7 +409,7 @@ export class Agent extends EventEmitter {
           );
         }
       } catch (error) {
-        console.warn('[Agent] 保存用户消息失败:', error);
+        logger.warn('[Agent] 保存用户消息失败:', error);
         // 不阻塞主流程
       }
 
@@ -443,7 +447,7 @@ export class Agent extends EventEmitter {
 
       // 调试日志
       if (this.config.debug) {
-        console.log(
+        logger.debug(
           `[MaxTurns] 配置值: ${configuredMaxTurns}, 实际限制: ${maxTurns}, 安全上限: ${SAFETY_LIMIT}`
         );
       }
@@ -474,26 +478,26 @@ export class Agent extends EventEmitter {
 
         // === 3. 轮次计数 ===
         turnsCount++;
-        console.log(`🔄 [轮次 ${turnsCount}/${maxTurns}] 调用 LLM...`);
+        logger.debug(`🔄 [轮次 ${turnsCount}/${maxTurns}] 调用 LLM...`);
 
         // 触发轮次开始事件 (供 UI 显示进度)
         this.emit('loopTurnStart', { turn: turnsCount, maxTurns });
         options?.onTurnStart?.({ turn: turnsCount, maxTurns });
 
         // 🔍 调试：打印发送给 LLM 的消息
-        console.log('\n========== 发送给 LLM ==========');
-        console.log('轮次:', turnsCount + 1);
-        console.log('消息数量:', messages.length);
-        console.log('最后 3 条消息:');
+        logger.debug('\n========== 发送给 LLM ==========');
+        logger.debug('轮次:', turnsCount + 1);
+        logger.debug('消息数量:', messages.length);
+        logger.debug('最后 3 条消息:');
         messages.slice(-3).forEach((msg, idx) => {
-          console.log(
+          logger.debug(
             `  [${idx}] ${msg.role}:`,
             typeof msg.content === 'string'
               ? msg.content.substring(0, 100) + (msg.content.length > 100 ? '...' : '')
               : JSON.stringify(msg.content).substring(0, 100)
           );
           if (msg.tool_calls) {
-            console.log(
+            logger.debug(
               '    tool_calls:',
               msg.tool_calls
                 .map((tc) => ('function' in tc ? tc.function.name : tc.type))
@@ -501,18 +505,18 @@ export class Agent extends EventEmitter {
             );
           }
         });
-        console.log('可用工具数量:', tools.length);
-        console.log('================================\n');
+        logger.debug('可用工具数量:', tools.length);
+        logger.debug('================================\n');
 
         // 3. 直接调用 ChatService（OpenAI SDK 已内置重试机制）
         const turnResult = await this.chatService.chat(messages, tools);
 
         // 🔍 调试：打印模型返回
-        console.log('\n========== LLM 返回 ==========');
-        console.log('Content:', turnResult.content);
-        console.log('Tool Calls:', JSON.stringify(turnResult.toolCalls, null, 2));
-        console.log('当前权限模式:', context.permissionMode);
-        console.log('================================\n');
+        logger.debug('\n========== LLM 返回 ==========');
+        logger.debug('Content:', turnResult.content);
+        logger.debug('Tool Calls:', JSON.stringify(turnResult.toolCalls, null, 2));
+        logger.debug('当前权限模式:', context.permissionMode);
+        logger.debug('================================\n');
 
         // 🆕 如果 LLM 返回了 content（意图说明），立即显示
         if (turnResult.content && turnResult.content.trim() && options?.onThinking) {
@@ -521,7 +525,7 @@ export class Agent extends EventEmitter {
 
         // 4. 检查是否需要工具调用（任务完成条件）
         if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
-          console.log('✅ 任务完成 - LLM 未请求工具调用');
+          logger.debug('✅ 任务完成 - LLM 未请求工具调用');
 
           // === 保存助手最终响应到 JSONL ===
           try {
@@ -535,7 +539,7 @@ export class Agent extends EventEmitter {
               );
             }
           } catch (error) {
-            console.warn('[Agent] 保存助手消息失败:', error);
+            logger.warn('[Agent] 保存助手消息失败:', error);
           }
 
           return {
@@ -569,7 +573,7 @@ export class Agent extends EventEmitter {
             );
           }
         } catch (error) {
-          console.warn('[Agent] 保存助手工具调用消息失败:', error);
+          logger.warn('[Agent] 保存助手工具调用消息失败:', error);
         }
 
         // 6. 执行每个工具调用并注入结果
@@ -631,14 +635,14 @@ export class Agent extends EventEmitter {
                 );
               }
             } catch (error) {
-              console.warn('[Agent] 保存工具调用失败:', error);
+              logger.warn('[Agent] 保存工具调用失败:', error);
             }
 
             // 使用 ExecutionPipeline 执行工具（自动走完6阶段流程）
             const signalToUse = options?.signal || new AbortController().signal;
 
             // 调试日志：追踪传递给 ExecutionPipeline 的 confirmationHandler
-            console.log(
+            logger.debug(
               '[Agent] Passing confirmationHandler to ExecutionPipeline.execute:',
               {
                 toolName: toolCall.function.name,
@@ -663,19 +667,19 @@ export class Agent extends EventEmitter {
             allToolResults.push(result);
 
             // 🔍 调试：打印工具执行结果
-            console.log('\n========== 工具执行结果 ==========');
-            console.log('工具名称:', toolCall.function.name);
-            console.log('成功:', result.success);
-            console.log('LLM Content:', result.llmContent);
-            console.log('Display Content:', result.displayContent);
+            logger.debug('\n========== 工具执行结果 ==========');
+            logger.debug('工具名称:', toolCall.function.name);
+            logger.debug('成功:', result.success);
+            logger.debug('LLM Content:', result.llmContent);
+            logger.debug('Display Content:', result.displayContent);
             if (result.error) {
-              console.log('错误:', result.error);
+              logger.debug('错误:', result.error);
             }
-            console.log('==================================\n');
+            logger.debug('==================================\n');
 
             // 🆕 检查是否应该退出循环（ExitPlanMode 返回时设置此标记）
             if (result.metadata?.shouldExitLoop) {
-              console.log('🚪 检测到退出循环标记，结束 Agent 循环');
+              logger.debug('🚪 检测到退出循环标记，结束 Agent 循环');
 
               // 确保 finalMessage 是字符串类型
               const finalMessage =
@@ -706,7 +710,7 @@ export class Agent extends EventEmitter {
             // 调用 onToolResult 回调（如果提供）
             // 用于显示工具执行的完成摘要和详细内容
             if (options?.onToolResult) {
-              console.log('[Agent] Calling onToolResult:', {
+              logger.debug('[Agent] Calling onToolResult:', {
                 toolName: toolCall.function.name,
                 hasCallback: true,
                 resultSuccess: result.success,
@@ -718,12 +722,12 @@ export class Agent extends EventEmitter {
               });
               try {
                 await options.onToolResult(toolCall, result);
-                console.log('[Agent] onToolResult callback completed successfully');
+                logger.debug('[Agent] onToolResult callback completed successfully');
               } catch (error) {
-                console.error('[Agent] onToolResult callback error:', error);
+                logger.error('[Agent] onToolResult callback error:', error);
               }
             } else {
-              console.log('[Agent] No onToolResult callback provided');
+              logger.debug('[Agent] No onToolResult callback provided');
             }
 
             // === 保存工具结果到 JSONL (tool_result) ===
@@ -739,7 +743,7 @@ export class Agent extends EventEmitter {
                 );
               }
             } catch (error) {
-              console.warn('[Agent] 保存工具结果失败:', error);
+              logger.warn('[Agent] 保存工具结果失败:', error);
             }
 
             // 如果是 TODO 工具,触发 TODO 更新事件
@@ -781,10 +785,7 @@ export class Agent extends EventEmitter {
               content: finalContent,
             });
           } catch (error) {
-            console.error(
-              `Tool execution failed for ${toolCall.function.name}:`,
-              error
-            );
+            logger.error(`Tool execution failed for ${toolCall.function.name}:`, error);
             messages.push({
               role: 'tool',
               tool_call_id: toolCall.id,
@@ -826,7 +827,7 @@ export class Agent extends EventEmitter {
 
           if (loopDetected.shouldStop) {
             // 超过最大警告次数,停止任务
-            console.warn(`🔴 ${warningMsg}\n任务已停止。`);
+            logger.warn(`🔴 ${warningMsg}\n任务已停止。`);
             return {
               success: false,
               error: {
@@ -841,7 +842,7 @@ export class Agent extends EventEmitter {
             };
           } else {
             // 注入警告消息,让 LLM 有机会自我修正
-            console.warn(`⚠️ ${warningMsg}`);
+            logger.warn(`⚠️ ${warningMsg}`);
             messages.push({
               role: 'user',
               content: warningMsg,
@@ -856,7 +857,7 @@ export class Agent extends EventEmitter {
           turnsCount % 10 === 0 &&
           messages.length > 100
         ) {
-          console.log(`🗜️ 历史消息过长 (${messages.length}条)，进行压缩...`);
+          logger.debug(`🗜️ 历史消息过长 (${messages.length}条)，进行压缩...`);
           // 保留系统提示 + 最近80条消息
           const systemMsg = messages.find((m) => m.role === 'system');
           const recentMessages = messages.slice(-80);
@@ -865,7 +866,7 @@ export class Agent extends EventEmitter {
             messages.push(systemMsg);
           }
           messages.push(...recentMessages);
-          console.log(`🗜️ 压缩后保留 ${messages.length} 条消息`);
+          logger.debug(`🗜️ 压缩后保留 ${messages.length} 条消息`);
         }
 
         // 继续下一轮循环...
@@ -876,7 +877,7 @@ export class Agent extends EventEmitter {
         configuredMaxTurns === -1 || configuredMaxTurns > SAFETY_LIMIT;
       const actualLimit = isHitSafetyLimit ? SAFETY_LIMIT : configuredMaxTurns;
 
-      console.warn(
+      logger.warn(
         `⚠️ 达到${isHitSafetyLimit ? '安全上限' : '最大轮次限制'} ${actualLimit}`
       );
 
@@ -912,7 +913,7 @@ export class Agent extends EventEmitter {
         },
       };
     } catch (error) {
-      console.error('Enhanced chat processing error:', error);
+      logger.error('Enhanced chat processing error:', error);
       return {
         success: false,
         error: {
@@ -1060,14 +1061,14 @@ export class Agent extends EventEmitter {
    * 日志记录
    */
   private log(message: string, data?: unknown): void {
-    console.log(`[MainAgent] ${message}`, data || '');
+    logger.debug(`[MainAgent] ${message}`, data || '');
   }
 
   /**
    * 错误记录
    */
   private error(message: string, error?: unknown): void {
-    console.error(`[MainAgent] ${message}`, error || '');
+    logger.error(`[MainAgent] ${message}`, error || '');
   }
 
   /**
@@ -1126,7 +1127,7 @@ export class Agent extends EventEmitter {
     const threshold = Math.floor(maxTokens * 0.8);
     const logPrefix =
       currentTurn === 0 ? '[Agent] 压缩检查' : `[Agent] [轮次 ${currentTurn}] 压缩检查`;
-    console.log(`${logPrefix}:`, {
+    logger.debug(`${logPrefix}:`, {
       currentTokens,
       maxTokens,
       threshold,
@@ -1142,7 +1143,7 @@ export class Agent extends EventEmitter {
       currentTurn === 0
         ? '[Agent] 触发自动压缩'
         : `[Agent] [轮次 ${currentTurn}] 触发循环内自动压缩`;
-    console.log(compactLogPrefix);
+    logger.debug(compactLogPrefix);
     this.emit('compactionStart', { turn: currentTurn });
 
     try {
@@ -1166,7 +1167,7 @@ export class Agent extends EventEmitter {
           filesIncluded: result.filesIncluded,
         });
 
-        console.log(
+        logger.debug(
           `[Agent] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} → ${result.postTokens} tokens (-${((1 - result.postTokens / result.preTokens) * 100).toFixed(1)}%)`
         );
       } else {
@@ -1180,7 +1181,7 @@ export class Agent extends EventEmitter {
           error: result.error,
         });
 
-        console.warn(
+        logger.warn(
           `[Agent] [轮次 ${currentTurn}] 压缩使用降级策略: ${result.preTokens} → ${result.postTokens} tokens`
         );
       }
@@ -1200,14 +1201,14 @@ export class Agent extends EventEmitter {
             },
             null
           );
-          console.log(`[Agent] [轮次 ${currentTurn}] 压缩数据已保存到 JSONL`);
+          logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩数据已保存到 JSONL`);
         }
       } catch (saveError) {
-        console.warn(`[Agent] [轮次 ${currentTurn}] 保存压缩数据失败:`, saveError);
+        logger.warn(`[Agent] [轮次 ${currentTurn}] 保存压缩数据失败:`, saveError);
         // 不阻塞流程
       }
     } catch (error) {
-      console.error(`[Agent] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
+      logger.error(`[Agent] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
       this.emit('compactionFailed', { turn: currentTurn, error });
       // 不阻塞对话，继续执行
     }
@@ -1223,7 +1224,7 @@ export class Agent extends EventEmitter {
         sessionId: 'default',
         configDir: path.join(os.homedir(), '.blade'),
       });
-      console.log(`📦 Registering ${builtinTools.length} builtin tools...`);
+      logger.debug(`📦 Registering ${builtinTools.length} builtin tools...`);
 
       // 为 TaskTool 注入 agentFactory（支持子任务递归）
       const taskTool = builtinTools.find((t) => t.name === 'task');
@@ -1232,7 +1233,7 @@ export class Agent extends EventEmitter {
         'setAgentFactory' in taskTool &&
         typeof taskTool.setAgentFactory === 'function'
       ) {
-        console.log('🔧 Injecting agentFactory into TaskTool...');
+        logger.debug('🔧 Injecting agentFactory into TaskTool...');
         taskTool.setAgentFactory(async () => {
           // 创建新的子 Agent 实例（使用默认 pipeline）
           const subAgent = new Agent(this.config, {});
@@ -1244,8 +1245,8 @@ export class Agent extends EventEmitter {
       this.executionPipeline.getRegistry().registerAll(builtinTools);
 
       const registeredCount = this.executionPipeline.getRegistry().getAll().length;
-      console.log(`✅ Builtin tools registered: ${registeredCount} tools`);
-      console.log(
+      logger.debug(`✅ Builtin tools registered: ${registeredCount} tools`);
+      logger.debug(
         `[Tools] ${this.executionPipeline
           .getRegistry()
           .getAll()
@@ -1254,7 +1255,7 @@ export class Agent extends EventEmitter {
       );
       this.emit('toolsRegistered', builtinTools);
     } catch (error) {
-      console.error('Failed to register builtin tools:', error);
+      logger.error('Failed to register builtin tools:', error);
       throw error;
     }
   }

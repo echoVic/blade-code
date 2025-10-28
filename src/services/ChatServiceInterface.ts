@@ -5,7 +5,10 @@
 
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { BladeConfig } from '../config/types.js';
+import { LogCategory, createLogger } from '../logging/Logger.js';
 import { OpenAIChatService } from './OpenAIChatService.js';
+
+const logger = createLogger(LogCategory.SERVICE);
 
 /**
  * 消息类型
@@ -104,7 +107,7 @@ export function createChatService(config: ChatConfig): IChatService {
       );
 
     default:
-      console.warn(`⚠️  未知的 provider: ${config.provider}, 回退到 openai-compatible`);
+      logger.warn(`⚠️  未知的 provider: ${config.provider}, 回退到 openai-compatible`);
       return new OpenAIChatService(config);
   }
 }

@@ -29,22 +29,28 @@ export interface MessageRendererProps {
 
 // 获取角色样式配置
 const getRoleStyle = (role: MessageRole, metadata?: Record<string, unknown>) => {
+  const theme = themeManager.getTheme();
+  const colors = theme.colors;
+
   switch (role) {
     case 'user':
-      return { color: 'cyan' as const, prefix: '> ' };
+      return { color: colors.info, prefix: '> ' };
     case 'assistant':
-      return { color: 'green' as const, prefix: '• ' };
+      return { color: colors.success, prefix: '• ' };
     case 'system':
-      return { color: 'yellow' as const, prefix: '⚙ ' };
+      return { color: colors.warning, prefix: '⚙ ' };
     case 'tool': {
       // 根据 phase 控制前缀（流式显示风格）
       const phase =
         metadata && 'phase' in metadata ? (metadata.phase as string) : undefined;
       return {
-        color: 'blue' as const,
+        color: colors.text.secondary,
         prefix: phase === 'start' ? '• ' : phase === 'complete' ? '  └ ' : '  ',
       };
     }
+    default:
+      // 未知角色，使用默认样式
+      return { color: colors.text.primary, prefix: '  ' };
   }
 };
 
@@ -506,8 +512,6 @@ const ToolDetailRenderer: React.FC<{
     </Box>
   );
 });
-
-ToolDetailRenderer.displayName = 'ToolDetailRenderer';
 
 /**
  * 主要的消息渲染器组件

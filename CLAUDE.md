@@ -431,91 +431,16 @@ useEffect(() => {
    - 发布流程、安全策略
    - 适合 GitHub 仓库展示
 
-### 创建新文档指南
+### 文档分类
 
-#### 1. 确定文档类型
-
-**问自己以下问题：**
-- 这个文档是给谁看的？（用户/开发者/贡献者）
-- 这个文档的目的是什么？（教程/指南/参考/技术方案）
-- 这个文档需要对外公开吗？
-
-**文档归属判断：**
-
-| 文档内容 | 目标目录 | 示例 |
+| 文档类型 | 目标目录 | 用途 |
 |---------|---------|------|
-| 用户安装、配置 | `docs/public/getting-started/` | installation.md, quick-start.md |
-| 用户配置指南 | `docs/public/configuration/` | config-system.md, permissions.md |
-| 用户使用教程 | `docs/public/guides/` | advanced-usage.md |
-| CLI/工具参考 | `docs/public/reference/` | cli-commands.md, tool-list.md |
-| 架构设计 | `docs/development/architecture/` | execution-pipeline.md, tool-system.md |
-| 实现细节 | `docs/development/implementation/` | logging-system.md, mcp-support.md |
-| 技术方案 | `docs/development/planning/` | xxx-plan.md, xxx-proposal.md |
-| 测试相关 | `docs/development/testing/` | index.md, coverage.md |
-| 贡献规范 | `docs/contributing/` | README.md, pr-creation-guide.md |
-| 过时文档 | `docs/archive/` | 历史参考文档 |
+| 用户文档 | `docs/public/` | 安装、配置、使用指南（Docsify 站点） |
+| 开发者文档 | `docs/development/` | 架构、实现细节、技术方案 |
+| 贡献者文档 | `docs/contributing/` | 贡献指南、PR 规范、发布流程 |
+| 归档文档 | `docs/archive/` | 过时但保留的历史文档 |
 
-#### 2. 文档命名规范
-
-- 使用小写字母和连字符：`config-system.md`（不是 `ConfigSystem.md`）
-- 名称要描述性强：`execution-pipeline.md`（不是 `pipeline.md`）
-- 技术方案文档加后缀：`feature-name-plan.md` 或 `feature-name-proposal.md`
-
-#### 3. 文档内容规范
-
-**每个文档应包含：**
-
-```markdown
-# 标题
-
-> 简短描述：一句话说明这个文档的目的
-
-## 目录（可选，复杂文档需要）
-
-- [章节1](#章节1)
-- [章节2](#章节2)
-
-## 正文内容
-
-### 使用代码示例
-
-\`\`\`typescript
-// 代码示例要完整且可运行
-const example = 'hello';
-\`\`\`
-
-### 使用相对链接
-
-引用其他文档时使用相对路径：
-- 同目录：[其他文档](other-doc.md)
-- 父目录：[上级文档](../parent-doc.md)
-- 其他分类：[开发文档](../../development/architecture/tool-system.md)
-
-### 使用表格和图表
-
-让文档易于理解。
-
-## 参考资源（可选）
-
-- 相关文档链接
-- 外部资源链接
-```
-
-#### 4. 更新文档索引
-
-创建新文档后，必须更新相应的索引：
-
-- **用户文档**: 更新 `docs/public/_sidebar.md` 和 `docs/public/README.md`
-- **开发者文档**: 更新 `docs/development/README.md`
-- **贡献者文档**: 更新 `docs/contributing/README.md`
-- **文档中心**: 如果是重要文档，更新 `docs/index.md`
-
-#### 5. 文档维护原则
-
-- **避免重复**：一个主题只写一份文档，其他地方通过链接引用
-- **保持同步**：代码变更时及时更新相关文档
-- **及时归档**：过时文档移到 `docs/archive/`，不要直接删除
-- **交叉引用**：相关文档之间相互链接，形成文档网络
+创建新文档后更新相应的索引文件（`_sidebar.md` 或 `README.md`）
 
 ### Docsify 用户文档站点
 
@@ -547,3 +472,73 @@ const example = 'hello';
 4. **使用视觉辅助**：表格、流程图、代码高亮让文档更易读
 5. **保持简洁**：一个文档只讲一个主题，不要贪多
 6. **定期审查**：每个月检查文档是否还与代码实现一致
+
+## 文本编辑工具设计
+
+
+### 核心工具
+
+
+1. **Read** - 读取文件
+   - 支持 offset/limit 参数（大文件分页）
+   - 默认推荐读取整个文件
+   - cat -n 格式（行号从 1 开始）
+   - 支持图片、PDF、Jupyter notebooks
+
+2. **Edit** - 字符串替换
+   - **强制唯一性**：多重匹配时直接失败（LLM 会自动重试）
+   - **Read-Before-Write**：编辑前必须先 Read，否则失败
+   - 支持 `replace_all` 参数批量替换
+   - 智能引号标准化（支持富文本复制）
+
+3. **Write** - 写入/覆盖文件
+   - **Read-Before-Write**：覆盖文件前必须先 Read
+   - 支持 utf8、base64、binary 编码
+   - 自动创建父目录
+   - 自动创建快照（可回滚）
+
+4. **UndoEdit** - 回滚编辑（Blade 扩展）
+   - 按 message_id 回滚文件
+   - 查看历史版本
+   - 集中式快照管理（`~/.blade/file-history/`）
+
+**移除的工具**：
+
+- ❌ **MultiEdit** - 批量编辑（不必要，LLM 可自行批量调用 Edit）
+
+### 关键行为对齐
+
+| 场景 | Claude Code 官方 | Blade 实现 | 状态 |
+|-----|-----------------|-----------|------|
+| 多重匹配 | 直接失败 | 直接失败 | ✅ 对齐 |
+| Read-Before-Edit | 强制失败 | 强制失败 | ✅ 对齐 |
+| Read-Before-Write | 强制失败 | 强制失败 | ✅ 对齐 |
+| Prompt 描述 | 官方英文 | 官方英文 | ✅ 对齐 |
+| 工具数量 | 3 个 | 4 个（+UndoEdit） | ✅ 扩展 |
+
+### 设计理念
+
+1. **简单工具组合 > 复杂单一工具**
+   - 保持 Read/Edit/Write 独立
+   - LLM 可自由组合批量调用
+   - 不引入 MultiEdit 或 TextEditor 统一工具
+
+2. **强制最佳实践**
+   - 编辑前必须先读取（防止误操作）
+   - 多重匹配时强制提供更多上下文（防止误替换）
+   - 自动创建快照（支持回滚）
+
+3. **Prompt 一致性**
+   - 降低 LLM 理解成本
+   - 与官方文档行为一致
+
+### 技术实现
+
+**安全验证**：
+- `FileAccessTracker` - 跟踪已读文件
+- `FileLockManager` - 防止并发编辑冲突
+- `SnapshotManager` - 集中式快照管理
+
+**详细文档**：
+- 实现细节：[text-editor-optimization.md](docs/development/implementation/text-editor-optimization.md)
+- 用户指南：待补充

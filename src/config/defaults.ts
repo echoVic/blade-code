@@ -89,7 +89,6 @@ export const ENV_VAR_MAPPING: Record<string, keyof BladeConfig> = {
   BLADE_LANGUAGE: 'language',
 
   // 核心
-  BLADE_DEBUG: 'debug',
   BLADE_TELEMETRY: 'telemetry',
 
   // Agentic Loop
