@@ -161,4 +161,7 @@ export interface MCPServer {
  * SetupWizard 保存的配置字段
  * （API 连接相关的核心配置）
  */
-export type SetupConfig = Pick<BladeConfig, 'provider' | 'baseUrl' | 'apiKey' | 'model'>;
+export type SetupConfig = Pick<
+  BladeConfig,
+  'provider' | 'baseUrl' | 'apiKey' | 'model'
+>;

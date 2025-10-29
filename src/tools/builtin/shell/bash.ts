@@ -379,10 +379,12 @@ async function executeWithTimeout(
 
       // 正常完成
       // 生成 summary 用于流式显示
-      const cmdPreview = command.length > 30 ? `${command.substring(0, 30)}...` : command;
-      const summary = code === 0
-        ? `执行命令成功 (${executionTime}ms): ${cmdPreview}`
-        : `执行命令完成 (退出码 ${code}, ${executionTime}ms): ${cmdPreview}`;
+      const cmdPreview =
+        command.length > 30 ? `${command.substring(0, 30)}...` : command;
+      const summary =
+        code === 0
+          ? `执行命令成功 (${executionTime}ms): ${cmdPreview}`
+          : `执行命令完成 (退出码 ${code}, ${executionTime}ms): ${cmdPreview}`;
 
       const metadata = {
         session_id: sessionId,

@@ -38,11 +38,11 @@ export const writeTool = createTool({
     long: `Writes a file to the local filesystem. Can create new files or overwrite existing files. Automatically creates snapshots before overwriting.`,
     usageNotes: [
       'This tool will overwrite the existing file if there is one at the provided path.',
-      'If this is an existing file, you MUST use the Read tool first to read the file\'s contents. This tool will fail if you did not read the file first.',
+      "If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.",
       'ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.',
       'NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.',
       'Supports multiple encodings: utf8 (default), base64, binary',
-      'Automatically creates parent directories if they don\'t exist',
+      "Automatically creates parent directories if they don't exist",
       'Creates snapshots before overwriting (stored in ~/.blade/file-history/{sessionId}/)',
     ],
     examples: [
@@ -180,9 +180,10 @@ export const writeTool = createTool({
         session_id: sessionId,
         message_id: messageId,
         last_modified: stats.mtime.toISOString(),
-        summary: encoding === 'utf8'
-          ? `写入 ${lineCount} 行到 ${fileName}`
-          : `写入 ${formatFileSize(stats.size)} 到 ${fileName}`,
+        summary:
+          encoding === 'utf8'
+            ? `写入 ${lineCount} 行到 ${fileName}`
+            : `写入 ${formatFileSize(stats.size)} 到 ${fileName}`,
       };
 
       const displayMessage = formatDisplayMessage(file_path, metadata, content);

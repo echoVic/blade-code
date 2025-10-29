@@ -52,8 +52,10 @@ export const editTool = createTool({
         description: '替换唯一的字符串',
         params: {
           file_path: '/path/to/file.ts',
-          old_string: 'function calculateTotal(items: Item[]) {\n  return items.reduce((sum, item) => sum + item.price, 0);\n}',
-          new_string: 'function calculateTotal(items: Item[]) {\n  return items.reduce((sum, item) => sum + item.price * item.quantity, 0);\n}',
+          old_string:
+            'function calculateTotal(items: Item[]) {\n  return items.reduce((sum, item) => sum + item.price, 0);\n}',
+          new_string:
+            'function calculateTotal(items: Item[]) {\n  return items.reduce((sum, item) => sum + item.price * item.quantity, 0);\n}',
         },
       },
       {
@@ -217,8 +219,8 @@ export const editTool = createTool({
           error: {
             type: ToolErrorType.VALIDATION_ERROR,
             message: 'old_string is not unique',
-            details: { matches: matchLocations, count: matches.length }
-          }
+            details: { matches: matchLocations, count: matches.length },
+          },
         };
       } else {
         updateOutput?.(`找到 ${matches.length} 个匹配项，开始替换...`);
@@ -261,9 +263,10 @@ export const editTool = createTool({
 
       // 生成 summary 用于流式显示
       const fileName = file_path.split('/').pop() || file_path;
-      const summary = replacedCount === 1
-        ? `替换 1 处匹配到 ${fileName}`
-        : `替换 ${replacedCount} 处匹配到 ${fileName}`;
+      const summary =
+        replacedCount === 1
+          ? `替换 1 处匹配到 ${fileName}`
+          : `替换 ${replacedCount} 处匹配到 ${fileName}`;
 
       const metadata: Record<string, any> = {
         file_path,
@@ -429,22 +432,23 @@ function generateDiffSnippet(
   const oldStringLines = oldString.split('\n');
   const newStringLines = newString.split('\n');
   const startLine = Math.max(0, matchLine - contextLines);
-  const oldEndLine = Math.min(oldLines.length, matchLine + oldStringLines.length + contextLines);
-  const newEndLine = Math.min(newLines.length, matchLine + newStringLines.length + contextLines);
+  const oldEndLine = Math.min(
+    oldLines.length,
+    matchLine + oldStringLines.length + contextLines
+  );
+  const newEndLine = Math.min(
+    newLines.length,
+    matchLine + newStringLines.length + contextLines
+  );
 
   // 提取上下文片段
   const oldSnippet = oldLines.slice(startLine, oldEndLine).join('\n');
   const newSnippet = newLines.slice(startLine, newEndLine).join('\n');
 
   // 使用 diff 库生成 unified diff
-  const patch = Diff.createPatch(
-    'file',
-    oldSnippet,
-    newSnippet,
-    '',
-    '',
-    { context: contextLines }
-  );
+  const patch = Diff.createPatch('file', oldSnippet, newSnippet, '', '', {
+    context: contextLines,
+  });
 
   // 返回特殊格式，包含 patch 和行号信息
   // 使用特殊分隔符，方便前端识别为 diff 内容

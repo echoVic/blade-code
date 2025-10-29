@@ -10,9 +10,7 @@ import { SnapshotManager } from './SnapshotManager.js';
  * UndoEdit 工具参数 Schema
  */
 const undoEditParamsSchema = z.object({
-  file_path: z
-    .string()
-    .describe('要回滚的文件绝对路径'),
+  file_path: z.string().describe('要回滚的文件绝对路径'),
   message_id: z
     .string()
     .optional()

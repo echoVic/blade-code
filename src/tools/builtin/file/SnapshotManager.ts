@@ -134,9 +134,7 @@ export class SnapshotManager {
         filePath,
       });
 
-      console.log(
-        `[SnapshotManager] 创建快照: ${filePath} -> ${fileHash}@v${version}`
-      );
+      console.log(`[SnapshotManager] 创建快照: ${filePath} -> ${fileHash}@v${version}`);
 
       // 清理旧快照
       await this.cleanupOldSnapshots(filePath);
@@ -162,9 +160,7 @@ export class SnapshotManager {
       .find((s) => s.messageId === messageId && s.filePath === filePath);
 
     if (!snapshot) {
-      throw new Error(
-        `未找到快照: messageId=${messageId}, filePath=${filePath}`
-      );
+      throw new Error(`未找到快照: messageId=${messageId}, filePath=${filePath}`);
     }
 
     const metadata = this.trackedFileBackups.get(filePath);
@@ -218,10 +214,7 @@ export class SnapshotManager {
     const sortedSnapshots = fileSnapshots.sort(
       (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
     );
-    const toDelete = sortedSnapshots.slice(
-      0,
-      fileSnapshots.length - this.maxSnapshots
-    );
+    const toDelete = sortedSnapshots.slice(0, fileSnapshots.length - this.maxSnapshots);
 
     for (const snapshot of toDelete) {
       const metadata = this.trackedFileBackups.get(snapshot.filePath);

@@ -1,10 +1,21 @@
-import React, { createContext, ReactNode, useContext, useEffect, useReducer } from 'react';
+import React, {
+  createContext,
+  ReactNode,
+  useContext,
+  useEffect,
+  useReducer,
+} from 'react';
 import type { RuntimeConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
 import type { TodoItem } from '../../tools/builtin/todo/types.js';
 
 // 初始化状态类型
-export type InitializationStatus = 'idle' | 'loading' | 'ready' | 'needsSetup' | 'error';
+export type InitializationStatus =
+  | 'idle'
+  | 'loading'
+  | 'ready'
+  | 'needsSetup'
+  | 'error';
 
 // 应用状态类型定义
 export interface AppState {

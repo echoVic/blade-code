@@ -85,7 +85,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     handleResponse: handleResponseRaw,
   } = useConfirmation();
 
-  const { isProcessing, executeCommand, loopState, handleAbort } = useCommandHandler(
+  const { isProcessing, executeCommand, handleAbort } = useCommandHandler(
     otherProps.systemPrompt,
     otherProps.appendSystemPrompt,
     confirmationHandler,
@@ -442,7 +442,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           <LoadingIndicator
             visible={isProcessing || !readyForChat}
             message="正在思考中..."
-            loopState={loopState}
           />
 
           <InputArea

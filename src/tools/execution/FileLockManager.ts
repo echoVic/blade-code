@@ -38,10 +38,7 @@ export class FileLockManager {
    * @param operation 要执行的操作
    * @returns 操作结果
    */
-  async acquireLock<T>(
-    filePath: string,
-    operation: () => Promise<T>
-  ): Promise<T> {
+  async acquireLock<T>(filePath: string, operation: () => Promise<T>): Promise<T> {
     // 等待该文件的前一个操作完成
     const previousLock = this.locks.get(filePath);
     if (previousLock) {
@@ -54,7 +51,10 @@ export class FileLockManager {
 
     // 创建新的锁 Promise
     const currentLock = this.executeWithLock(filePath, operation);
-    this.locks.set(filePath, currentLock.then(() => undefined));
+    this.locks.set(
+      filePath,
+      currentLock.then(() => undefined)
+    );
 
     return currentLock;
   }
