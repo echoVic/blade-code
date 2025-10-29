@@ -130,8 +130,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
   (prevProps, nextProps) => {
     // 精确比较，只在必要时重渲染
     return (
-      prevProps.visible === nextProps.visible &&
-      prevProps.message === nextProps.message
+      prevProps.visible === nextProps.visible && prevProps.message === nextProps.message
     );
   }
 );

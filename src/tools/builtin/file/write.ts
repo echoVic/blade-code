@@ -5,6 +5,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { generateDiffSnippet } from './diffUtils.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 import { SnapshotManager } from './SnapshotManager.js';
 
@@ -101,9 +102,18 @@ export const writeTool = createTool({
 
       // 检查文件是否存在（用于后续验证和快照）
       let fileExists = false;
+      let oldContent: string | null = null;
       try {
         await fs.access(file_path);
         fileExists = true;
+        // 如果文件存在且是文本文件，读取旧内容用于生成 diff
+        if (encoding === 'utf8') {
+          try {
+            oldContent = await fs.readFile(file_path, 'utf8');
+          } catch (error) {
+            console.warn('[WriteTool] 读取旧文件内容失败:', error);
+          }
+        }
       } catch {
         // 文件不存在
       }
@@ -170,6 +180,16 @@ export const writeTool = createTool({
       const lineCount = encoding === 'utf8' ? content.split('\n').length : 0;
       const fileName = file_path.split('/').pop() || file_path;
 
+      // 生成 diff（如果是覆盖现有文本文件）
+      let diffSnippet: string | null = null;
+      if (oldContent && encoding === 'utf8' && oldContent !== content) {
+        // 文件大小限制：超过 1MB 跳过 diff 生成（避免性能问题）
+        const MAX_DIFF_SIZE = 1024 * 1024; // 1MB
+        if (oldContent.length < MAX_DIFF_SIZE && content.length < MAX_DIFF_SIZE) {
+          diffSnippet = generateDiffSnippet(oldContent, content, 4);
+        }
+      }
+
       const metadata: Record<string, any> = {
         file_path,
         content_size: content.length,
@@ -180,13 +200,19 @@ export const writeTool = createTool({
         session_id: sessionId,
         message_id: messageId,
         last_modified: stats.mtime.toISOString(),
+        has_diff: !!diffSnippet, // 是否生成了 diff
         summary:
           encoding === 'utf8'
             ? `写入 ${lineCount} 行到 ${fileName}`
             : `写入 ${formatFileSize(stats.size)} 到 ${fileName}`,
       };
 
-      const displayMessage = formatDisplayMessage(file_path, metadata, content);
+      const displayMessage = formatDisplayMessage(
+        file_path,
+        metadata,
+        content,
+        diffSnippet
+      );
 
       return {
         success: true,
@@ -248,7 +274,8 @@ export const writeTool = createTool({
 function formatDisplayMessage(
   filePath: string,
   metadata: Record<string, any>,
-  content?: string
+  content?: string,
+  diffSnippet?: string | null
 ): string {
   let message = `✅ 成功写入文件: ${filePath}`;
 
@@ -264,8 +291,13 @@ function formatDisplayMessage(
     message += `\n🔐 使用编码: ${metadata.encoding}`;
   }
 
-  // 添加内容预览（仅对文本文件）
-  if (content && metadata.encoding === 'utf8') {
+  // 优先显示 diff（如果有）
+  if (diffSnippet) {
+    message += diffSnippet;
+  }
+
+  // 添加内容预览（仅对文本文件且没有 diff 时才显示完整预览）
+  if (content && metadata.encoding === 'utf8' && !diffSnippet) {
     const preview = generateContentPreview(filePath, content);
     if (preview) {
       message += '\n\n' + preview;
