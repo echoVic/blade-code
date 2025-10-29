@@ -1,4 +1,3 @@
-import * as Diff from 'diff';
 import { promises as fs } from 'fs';
 import { extname } from 'path';
 import { z } from 'zod';
@@ -6,6 +5,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { generateDiffSnippetWithMatch } from './diffUtils.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 import { SnapshotManager } from './SnapshotManager.js';
 
@@ -253,7 +253,7 @@ export const editTool = createTool({
       const stats = await fs.stat(file_path);
 
       // 生成差异片段（仅显示第一个替换的上下文）
-      const diffSnippet = generateDiffSnippet(
+      const diffSnippet = generateDiffSnippetWithMatch(
         content,
         newContent,
         actualString,
@@ -406,58 +406,7 @@ function findMatches(content: string, searchString: string): number[] {
   return matches;
 }
 
-/**
- * 生成差异片段（使用 unified diff 格式，显示替换前后的代码上下文）
- */
-function generateDiffSnippet(
-  oldContent: string,
-  newContent: string,
-  oldString: string,
-  newString: string,
-  contextLines: number = 4
-): string | null {
-  // 找到第一个替换位置
-  const firstMatchIndex = oldContent.indexOf(oldString);
-  if (firstMatchIndex === -1) return null;
-
-  // 计算替换位置的行号
-  const beforeLines = oldContent.substring(0, firstMatchIndex).split('\n');
-  const matchLine = beforeLines.length - 1;
-
-  // 分割旧内容和新内容为行数组
-  const oldLines = oldContent.split('\n');
-  const newLines = newContent.split('\n');
-
-  // 计算显示范围（考虑替换可能改变行数）
-  const oldStringLines = oldString.split('\n');
-  const newStringLines = newString.split('\n');
-  const startLine = Math.max(0, matchLine - contextLines);
-  const oldEndLine = Math.min(
-    oldLines.length,
-    matchLine + oldStringLines.length + contextLines
-  );
-  const newEndLine = Math.min(
-    newLines.length,
-    matchLine + newStringLines.length + contextLines
-  );
-
-  // 提取上下文片段
-  const oldSnippet = oldLines.slice(startLine, oldEndLine).join('\n');
-  const newSnippet = newLines.slice(startLine, newEndLine).join('\n');
-
-  // 使用 diff 库生成 unified diff
-  const patch = Diff.createPatch('file', oldSnippet, newSnippet, '', '', {
-    context: contextLines,
-  });
-
-  // 返回特殊格式，包含 patch 和行号信息
-  // 使用特殊分隔符，方便前端识别为 diff 内容
-  return `\n<<<DIFF>>>\n${JSON.stringify({
-    patch,
-    startLine: startLine + 1,
-    matchLine: matchLine + 1,
-  })}\n<<</DIFF>>>\n`;
-}
+// diff 生成函数已移动到 diffUtils.ts，供 Edit 和 Write 工具共享
 
 /**
  * 格式化显示消息

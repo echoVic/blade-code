@@ -8,9 +8,10 @@ import { themeManager } from '../themes/ThemeManager.js';
 
 interface DiffRendererProps {
   patch: string; // unified diff 格式的 patch
-  startLine: number; // 起始行号
-  matchLine: number; // 变更所在行号
+  startLine?: number; // 起始行号（保留用于向后兼容，但不再显示）
+  matchLine?: number; // 变更所在行号（保留用于向后兼容，但不再显示）
   terminalWidth: number;
+  maxLines?: number; // 默认显示的最大行数（默认 20 行）
 }
 
 /**
@@ -97,6 +98,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   startLine,
   matchLine,
   terminalWidth,
+  maxLines = 20, // 默认显示 20 行
 }) => {
   const theme = themeManager.getTheme();
   const parsedLines = parsePatch(patch);
@@ -105,21 +107,31 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   const maxLineNum = Math.max(...parsedLines.map((l) => l.lineNumber || 0));
   const lineNumWidth = maxLineNum.toString().length + 1;
 
+  // 判断是否需要折叠
+  const totalLines = parsedLines.length;
+  const needsCollapse = totalLines > maxLines;
+  const displayLines = needsCollapse ? parsedLines.slice(0, maxLines) : parsedLines;
+  const hiddenLines = totalLines - maxLines;
+
   return (
     <Box flexDirection="column" marginTop={1} marginBottom={1}>
       {/* 分隔符 */}
       <Text color={theme.colors.muted}>{'─'.repeat(Math.min(60, terminalWidth))}</Text>
 
-      {/* 变更位置提示 */}
-      <Text color={theme.colors.info}>
-        📍 变更位置：第 {matchLine} 行（从第 {startLine} 行开始显示）
-      </Text>
+      {/* diff 统计信息 */}
+      {needsCollapse && (
+        <Text color={theme.colors.info}>
+          📊 显示前 {maxLines} 行，共 {totalLines} 行 diff
+        </Text>
+      )}
 
-      {/* 分隔符 */}
-      <Text color={theme.colors.muted}>{'─'.repeat(Math.min(60, terminalWidth))}</Text>
+      {/* 分隔符（仅在有统计信息时显示） */}
+      {needsCollapse && (
+        <Text color={theme.colors.muted}>{'─'.repeat(Math.min(60, terminalWidth))}</Text>
+      )}
 
       {/* 渲染 diff 内容 */}
-      {parsedLines.map((line, index) => {
+      {displayLines.map((line, index) => {
         if (line.type === 'header') {
           return (
             <Text key={index} color={theme.colors.muted} dimColor>
@@ -147,7 +159,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
           fgColor = theme.colors.error;
           bgColor = undefined;
         } else {
-          fgColor = theme.colors.text;
+          fgColor = theme.colors.text.primary;
         }
 
         // 截断过长的行（保留空间给行号和前缀）
@@ -165,6 +177,15 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
           </Text>
         );
       })}
+
+      {/* 折叠提示 */}
+      {needsCollapse && (
+        <Box marginTop={1}>
+          <Text color={theme.colors.warning} dimColor>
+            ⚠️  已隐藏剩余 {hiddenLines} 行 diff（总共 {totalLines} 行）
+          </Text>
+        </Box>
+      )}
 
       {/* 分隔符 */}
       <Text color={theme.colors.muted}>{'─'.repeat(Math.min(60, terminalWidth))}</Text>
