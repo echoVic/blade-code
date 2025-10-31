@@ -21,6 +21,9 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
     const { state: focusState } = useFocusContext();
     const isFocused = focusState.currentFocus === FocusId.MAIN_INPUT;
 
+    // 处理中时，禁用输入框（移除焦点和光标）
+    const isEnabled = !isProcessing && isFocused;
+
     return (
       <Box
         flexDirection="row"
@@ -37,8 +40,8 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
           onChange={onChange}
           onSubmit={onSubmit}
           placeholder=" 输入命令..."
-          showCursor={!isProcessing && isFocused}
-          focus={isFocused}
+          showCursor={isEnabled}
+          focus={isEnabled}
         />
       </Box>
     );

@@ -314,6 +314,7 @@ export class ConfirmationStage implements PipelineStage {
       const confirmationDetails = {
         title: `权限确认: ${signature}`,
         message: confirmationReason || '此操作需要用户确认',
+        details: this.generatePreviewForTool(tool.name, execution.params),
         risks: this.extractRisksFromPermissionCheck(
           tool,
           execution.params,
@@ -390,6 +391,67 @@ export class ConfirmationStage implements PipelineStage {
           error instanceof Error ? error.message : '未知错误'
         }`
       );
+    }
+  }
+
+  /**
+   * 为工具生成预览内容
+   * 用于在确认提示中显示操作详情
+   */
+  private generatePreviewForTool(
+    toolName: string,
+    params: Record<string, unknown>
+  ): string | undefined {
+    switch (toolName) {
+      case 'Edit': {
+        const oldString = params.old_string as string;
+        const newString = params.new_string as string;
+
+        if (!oldString && !newString) {
+          return undefined;
+        }
+
+        // 限制预览长度
+        const maxLines = 20;
+        const truncate = (text: string): string => {
+          const lines = text.split('\n');
+          if (lines.length <= maxLines) {
+            return text;
+          }
+          return `${lines.slice(0, maxLines).join('\n')}\n... (还有 ${lines.length - maxLines} 行)`;
+        };
+
+        return `**变更前:**\n\`\`\`\n${truncate(oldString || '(空)')}\n\`\`\`\n\n**变更后:**\n\`\`\`\n${truncate(newString || '(删除)')}\n\`\`\``;
+      }
+
+      case 'Write': {
+        const content = params.content as string;
+        const encoding = (params.encoding as string) || 'utf8';
+
+        if (encoding !== 'utf8' || !content) {
+          return `将写入 ${encoding === 'base64' ? 'Base64 编码' : encoding === 'binary' ? '二进制' : ''} 内容`;
+        }
+
+        // 限制预览长度
+        const maxLines = 30;
+        const lines = content.split('\n');
+
+        if (lines.length <= maxLines) {
+          return `**文件内容预览:**\n\`\`\`\n${content}\n\`\`\``;
+        }
+
+        const preview = lines.slice(0, maxLines).join('\n');
+        return `**文件内容预览 (前 ${maxLines} 行):**\n\`\`\`\n${preview}\n\`\`\`\n\n... (还有 ${lines.length - maxLines} 行)`;
+      }
+
+      case 'Bash':
+      case 'Shell': {
+        const command = params.command as string;
+        return command ? `**命令:**\n\`\`\`bash\n${command}\n\`\`\`` : undefined;
+      }
+
+      default:
+        return undefined;
     }
   }
 

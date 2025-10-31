@@ -157,16 +157,16 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
         <Text>{details.message}</Text>
       </Box>
 
-      {isPlanModeExit && details.details && (
+      {details.details && (
         <Box
           flexDirection="column"
           marginBottom={1}
           borderStyle="single"
-          borderColor="cyan"
+          borderColor={isPlanModeExit ? 'cyan' : 'blue'}
           padding={1}
         >
-          <Text bold color="cyan">
-            📋 实现方案:
+          <Text bold color={isPlanModeExit ? 'cyan' : 'blue'}>
+            {isPlanModeExit ? '📋 实现方案:' : '📄 操作详情:'}
           </Text>
           <Box marginTop={1}>
             <MessageRenderer

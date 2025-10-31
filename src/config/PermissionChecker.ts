@@ -278,7 +278,36 @@ export class PermissionChecker {
     const sigPairs = this.parseParamPairs(sigParams);
     const rulePairs = this.parseParamPairs(ruleParams);
 
-    // 检查每个规则参数是否匹配
+    // 检查格式一致性
+    const hasRuleKey = Object.keys(rulePairs).length > 0;
+    const hasSigKey = Object.keys(sigPairs).length > 0;
+
+    // 如果格式不一致（一个有键一个没有），则不匹配
+    if (hasRuleKey !== hasSigKey) {
+      return false;
+    }
+
+    // 如果两个都没有键值对，直接对原始字符串进行 glob 匹配
+    if (!hasRuleKey && !hasSigKey) {
+      // 通配符匹配
+      if (ruleParams === '*' || ruleParams === '**') {
+        return true;
+      }
+
+      // Glob 模式匹配
+      if (
+        ruleParams.includes('*') ||
+        ruleParams.includes('{') ||
+        ruleParams.includes('?')
+      ) {
+        return picomatch.isMatch(sigParams, ruleParams, { dot: true });
+      }
+
+      // 精确匹配
+      return sigParams === ruleParams;
+    }
+
+    // 有键值对的情况：检查每个规则参数是否匹配
     for (const [ruleKey, ruleValue] of Object.entries(rulePairs)) {
       const sigValue = sigPairs[ruleKey];
 
