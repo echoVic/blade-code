@@ -1,5 +1,6 @@
 import { useMemoizedFn } from 'ahooks';
 import { Box, useApp, useStdout } from 'ink';
+import { debounce } from 'lodash-es';
 import React, { useEffect, useRef, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { PermissionMode, type SetupConfig } from '../../config/types.js';
@@ -197,9 +198,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   }, [otherProps.resume, handleResume]);
 
   // 获取终端宽度
-  const updateTerminalWidth = useMemoizedFn(() => {
-    setTerminalWidth(stdout.columns || 80);
-  });
+  const updateTerminalWidth = useMemoizedFn(
+    debounce(() => {
+      setTerminalWidth(stdout.columns || 80);
+    }, 200)
+  );
 
   useEffect(() => {
     updateTerminalWidth();
@@ -429,8 +432,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         />
       ) : (
         <>
-          <Header isInitialized={readyForChat} />
-
+          {/* MessageArea 内部直接引入 Header，作为 Static 的第一个子项 */}
           <MessageArea
             sessionState={sessionState}
             terminalWidth={terminalWidth}
@@ -457,7 +459,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             selectedIndex={selectedSuggestionIndex}
             visible={showSuggestions}
           />
-
           <ChatStatusBar
             messageCount={sessionState.messages.length}
             hasApiKey={readyForChat}

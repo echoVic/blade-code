@@ -1,7 +1,8 @@
-import { Box } from 'ink';
-import React from 'react';
+import { Box, Static } from 'ink';
+import React, { ReactNode, useMemo } from 'react';
 import type { TodoItem } from '../../tools/builtin/todo/types.js';
-import type { SessionState } from '../contexts/SessionContext.js';
+import type { SessionMessage, SessionState } from '../contexts/SessionContext.js';
+import { Header } from './Header.js';
 import { MessageRenderer } from './MessageRenderer.js';
 import { TodoPanel } from './TodoPanel.js';
 
@@ -15,32 +16,83 @@ interface MessageAreaProps {
 /**
  * 消息区域组件
  * 负责显示消息列表
+ *
+ * 性能优化：
+ * - 使用 Ink 的 Static 组件将已完成的消息隔离，避免重新渲染
+ * - 只有正在流式传输的消息会重新渲染
+ * - 使用 useMemo 缓存计算结果
+ *
+ * 布局优化：
+ * - Header 作为 Static 的第一个子项，确保永远在历史消息顶部
  */
 export const MessageArea: React.FC<MessageAreaProps> = React.memo(
   ({ sessionState, terminalWidth, todos = [], showTodoPanel = false }) => {
-    // 找到最后一条用户消息的索引（TodoPanel 将显示在这之后）
-    const lastUserMessageIndex = sessionState.messages.findLastIndex(
-      (msg) => msg.role === 'user'
+    // 分离已完成的消息和正在流式传输的消息
+    const { completedMessages, streamingMessage } = useMemo(() => {
+      const messages = sessionState.messages;
+      const isStreaming = sessionState.isThinking;
+
+      // 如果正在思考，最后一条消息视为流式传输中
+      if (isStreaming && messages.length > 0) {
+        return {
+          completedMessages: messages.slice(0, -1),
+          streamingMessage: messages[messages.length - 1],
+        };
+      }
+
+      // 否则所有消息都是已完成的
+      return {
+        completedMessages: messages,
+        streamingMessage: null,
+      };
+    }, [sessionState.messages, sessionState.isThinking]);
+
+    // 找到最后一条用户消息的索引（用于 TodoPanel 定位）
+    const lastUserMessageIndex = useMemo(() => {
+      return sessionState.messages.findLastIndex((msg) => msg.role === 'user');
+    }, [sessionState.messages]);
+
+    // 渲染单个消息（用于 Static 和 dynamic 区域）
+    const renderMessage = (msg: SessionMessage, index: number, isPending = false) => (
+      <Box key={msg.id} flexDirection="column">
+        <MessageRenderer
+          content={msg.content}
+          role={msg.role}
+          terminalWidth={terminalWidth}
+          metadata={msg.metadata as Record<string, unknown>}
+          isPending={isPending}
+        />
+        {/* 在最后一条用户消息后显示 TodoPanel */}
+        {index === lastUserMessageIndex && showTodoPanel && todos.length > 0 && (
+          <TodoPanel todos={todos} visible={true} compact={false} />
+        )}
+      </Box>
     );
+
+    // 构建 Static items：Header + 已完成的消息
+    const staticItems = useMemo(() => {
+      const items: ReactNode[] = [];
+
+      // 1. Header 作为第一个子项（永远在顶部）
+      items.push(<Header key="header" />);
+
+      // 2. 已完成的消息
+      completedMessages.forEach((msg, index) => {
+        items.push(renderMessage(msg, index));
+      });
+
+      return items;
+    }, [completedMessages, lastUserMessageIndex, showTodoPanel, todos]);
 
     return (
       <Box flexDirection="column" flexGrow={1} paddingX={2}>
         <Box flexDirection="column" flexGrow={1}>
-          {/* 渲染消息列表 */}
-          {sessionState.messages.map((msg, index) => (
-            <Box key={msg.id} flexDirection="column">
-              <MessageRenderer
-                content={msg.content}
-                role={msg.role}
-                terminalWidth={terminalWidth}
-                metadata={msg.metadata as Record<string, unknown>}
-              />
-              {/* 在最后一条用户消息后显示 TodoPanel */}
-              {index === lastUserMessageIndex && showTodoPanel && todos.length > 0 && (
-                <TodoPanel todos={todos} visible={true} compact={false} />
-              )}
-            </Box>
-          ))}
+          {/* 静态区域：Header + 已完成的消息永不重新渲染 */}
+          <Static items={staticItems}>{(item) => item}</Static>
+
+          {/* 动态区域：只有流式传输的消息会重新渲染 */}
+          {streamingMessage &&
+            renderMessage(streamingMessage, completedMessages.length, true)}
         </Box>
       </Box>
     );

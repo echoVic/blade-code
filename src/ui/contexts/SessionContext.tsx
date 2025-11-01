@@ -6,6 +6,10 @@ import React, {
   useContext,
   useReducer,
 } from 'react';
+import { createLogger, LogCategory } from '../../logging/Logger.js';
+
+// 创建 SessionContext 专用 Logger
+const logger = createLogger(LogCategory.UI);
 
 /**
  * 消息角色类型
@@ -144,6 +148,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(sessionReducer, initialState);
 
   const addUserMessage = useCallback((content: string) => {
+    logger.debug('[DIAG] addUserMessage called:', {
+      contentLength: content.length,
+      contentPreview: content.substring(0, 50) + (content.length > 50 ? '...' : ''),
+    });
     const message: SessionMessage = {
       id: `user-${Date.now()}-${Math.random()}`,
       role: 'user',
@@ -151,6 +159,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       timestamp: Date.now(),
     };
     dispatch({ type: 'ADD_MESSAGE', payload: message });
+    logger.debug('[DIAG] User message dispatched:', { messageId: message.id });
   }, []);
 
   const addAssistantMessage = useCallback((content: string) => {

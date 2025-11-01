@@ -25,6 +25,7 @@ export interface MessageRendererProps {
   role: MessageRole;
   terminalWidth: number;
   metadata?: Record<string, unknown>; // 🆕 用于 tool-progress 等消息的元数据
+  isPending?: boolean; // 🆕 标记是否为流式传输中的消息
 }
 
 // 获取角色样式配置
@@ -517,8 +518,12 @@ const ToolDetailRenderer: React.FC<{
  * 主要的消息渲染器组件
  */
 export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
-  ({ content, role, terminalWidth, metadata }) => {
-    const roleStyle = getRoleStyle(role, metadata);
+  ({ content, role, terminalWidth, metadata, isPending = false }) => {
+    // 使用 useMemo 缓存角色样式计算
+    const roleStyle = React.useMemo(
+      () => getRoleStyle(role, metadata),
+      [role, metadata]
+    );
     const { color, prefix } = roleStyle;
 
     // 处理 tool 消息的详细内容
@@ -549,8 +554,11 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
       }
     }
 
-    // 正常渲染（摘要行或无 detail 的消息）
-    const blocks = parseMarkdown(content);
+    // 使用 useMemo 缓存 Markdown 解析结果（仅在 content 变化时重新解析）
+    const blocks = React.useMemo(
+      () => parseMarkdown(content),
+      [content]
+    );
 
     return (
       <Box flexDirection="column" marginBottom={1}>
@@ -613,6 +621,17 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
           );
         })}
       </Box>
+    );
+  },
+  // 自定义比较函数：只在关键属性变化时才重新渲染
+  (prevProps, nextProps) => {
+    return (
+      prevProps.content === nextProps.content &&
+      prevProps.role === nextProps.role &&
+      prevProps.terminalWidth === nextProps.terminalWidth &&
+      prevProps.isPending === nextProps.isPending &&
+      // 对 metadata 进行浅比较
+      JSON.stringify(prevProps.metadata) === JSON.stringify(nextProps.metadata)
     );
   }
 );
