@@ -24,6 +24,8 @@ interface MessageAreaProps {
  *
  * 布局优化：
  * - Header 作为 Static 的第一个子项，确保永远在历史消息顶部
+ * - TodoPanel 独立显示在动态区域底部，不随消息滚动被冻结
+ * - 只在有活动 TODO（pending/in_progress）时显示 TodoPanel
  */
 export const MessageArea: React.FC<MessageAreaProps> = React.memo(
   ({ sessionState, terminalWidth, todos = [], showTodoPanel = false }) => {
@@ -47,10 +49,12 @@ export const MessageArea: React.FC<MessageAreaProps> = React.memo(
       };
     }, [sessionState.messages, sessionState.isThinking]);
 
-    // 找到最后一条用户消息的索引（用于 TodoPanel 定位）
-    const lastUserMessageIndex = useMemo(() => {
-      return sessionState.messages.findLastIndex((msg) => msg.role === 'user');
-    }, [sessionState.messages]);
+    // 检测是否有活动的 TODO（进行中或待处理）
+    const hasActiveTodos = useMemo(() => {
+      return todos.some(
+        (todo) => todo.status === 'pending' || todo.status === 'in_progress'
+      );
+    }, [todos]);
 
     // 渲染单个消息（用于 Static 和 dynamic 区域）
     const renderMessage = (msg: SessionMessage, index: number, isPending = false) => (
@@ -62,10 +66,6 @@ export const MessageArea: React.FC<MessageAreaProps> = React.memo(
           metadata={msg.metadata as Record<string, unknown>}
           isPending={isPending}
         />
-        {/* 在最后一条用户消息后显示 TodoPanel */}
-        {index === lastUserMessageIndex && showTodoPanel && todos.length > 0 && (
-          <TodoPanel todos={todos} visible={true} compact={false} />
-        )}
       </Box>
     );
 
@@ -82,7 +82,7 @@ export const MessageArea: React.FC<MessageAreaProps> = React.memo(
       });
 
       return items;
-    }, [completedMessages, lastUserMessageIndex, showTodoPanel, todos]);
+    }, [completedMessages]);
 
     return (
       <Box flexDirection="column" flexGrow={1} paddingX={2}>
@@ -93,6 +93,13 @@ export const MessageArea: React.FC<MessageAreaProps> = React.memo(
           {/* 动态区域：只有流式传输的消息会重新渲染 */}
           {streamingMessage &&
             renderMessage(streamingMessage, completedMessages.length, true)}
+
+          {/* TodoPanel 独立显示（仅在有活动 TODO 时） */}
+          {showTodoPanel && hasActiveTodos && (
+            <Box marginTop={1}>
+              <TodoPanel todos={todos} visible={true} compact={false} />
+            </Box>
+          )}
         </Box>
       </Box>
     );
