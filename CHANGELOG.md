@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.12] - 2025-11-01
+
+### ♻️ 代码重构
+
+- 重构日志系统并优化文本编辑工具 (4b1a57b)
+
+
 ## [0.0.11] - 2025-10-23
 
 ### ✨ 新功能
