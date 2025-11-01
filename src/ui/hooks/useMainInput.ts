@@ -1,11 +1,15 @@
 import { useMemoizedFn } from 'ahooks';
 import { useInput } from 'ink';
 import { useEffect, useRef, useState } from 'react';
+import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getFuzzyCommandSuggestions } from '../../slash-commands/index.js';
 import type { CommandSuggestion } from '../../slash-commands/types.js';
 import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
 import { useSession } from '../contexts/SessionContext.js';
 import { useCtrlCHandler } from './useCtrlCHandler.js';
+
+// 创建 UI Hook 专用 Logger
+const logger = createLogger(LogCategory.UI);
 
 /**
  * 主输入框处理 Hook
@@ -58,14 +62,18 @@ export const useMainInput = (
 
   // 处理提交
   const handleSubmit = useMemoizedFn(() => {
+    logger.debug('[DIAG] handleSubmit called:', { input, showSuggestions });
+
     let commandToSubmit = input.trim();
 
     // 如果显示建议并且有选中项，使用选中的命令
     if (showSuggestions && suggestions.length > 0 && selectedSuggestionIndex >= 0) {
       commandToSubmit = suggestions[selectedSuggestionIndex].command;
+      logger.debug('[DIAG] Using suggestion:', commandToSubmit);
     }
 
     if (commandToSubmit) {
+      logger.debug('[DIAG] Submitting command:', commandToSubmit);
       // 隐藏建议
       setShowSuggestions(false);
       setSuggestions([]);
@@ -73,6 +81,9 @@ export const useMainInput = (
       onAddToHistory(commandToSubmit);
       setInput('');
       onSubmit(commandToSubmit);
+      logger.debug('[DIAG] Command submitted to onSubmit callback');
+    } else {
+      logger.debug('[DIAG] Empty command, not submitting');
     }
   });
 

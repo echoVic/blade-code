@@ -487,8 +487,26 @@ export const useCommandHandler = (
         isProcessing
       );
 
+      logger.debug('[DIAG] executeCommand called:', {
+        command: command.substring(0, 50) + (command.length > 50 ? '...' : ''),
+        isProcessing,
+        isEmpty: !command.trim(),
+      });
+
+      if (!command.trim()) {
+        logger.debug('[DIAG] Command blocked: empty command');
+        return;
+      }
+
+      if (isProcessing) {
+        logger.debug('[DIAG] Command blocked: isProcessing=true (another command is running)');
+        return;
+      }
+
       if (command.trim() && !isProcessing) {
         const trimmedCommand = command.trim();
+
+        logger.debug('[DIAG] Command accepted, starting execution');
 
         // 清空上一轮对话的 todos
         appDispatch({ type: 'SET_TODOS', payload: [] });
@@ -496,12 +514,20 @@ export const useCommandHandler = (
         setIsProcessing(true);
         dispatch({ type: 'SET_THINKING', payload: true });
 
+        logger.debug('[DIAG] States set: isProcessing=true, isThinking=true');
+
         try {
+          logger.debug('[DIAG] Calling handleCommandSubmit');
           const result = await handleCommandSubmit(
             trimmedCommand,
             addUserMessage,
             addAssistantMessage
           );
+
+          logger.debug('[DIAG] handleCommandSubmit completed:', {
+            success: result.success,
+            hasError: !!result.error,
+          });
 
           if (!result.success && result.error) {
             dispatch({ type: 'SET_ERROR', payload: result.error });
@@ -511,14 +537,29 @@ export const useCommandHandler = (
           const errorMessage = error instanceof Error ? error.message : '未知错误';
           dispatch({ type: 'SET_ERROR', payload: `执行失败: ${errorMessage}` });
         } finally {
-          setIsProcessing(false);
-          setLoopState({
-            active: false,
-            turn: 0,
-            maxTurns: 50,
-            currentTool: undefined,
-          });
-          dispatch({ type: 'SET_THINKING', payload: false });
+          // 为每个状态重置添加独立的错误处理，防止某一个失败导致其他状态无法重置
+          try {
+            setIsProcessing(false);
+          } catch (e) {
+            console.error('[CRITICAL] Failed to reset isProcessing:', e);
+          }
+
+          try {
+            setLoopState({
+              active: false,
+              turn: 0,
+              maxTurns: 50,
+              currentTool: undefined,
+            });
+          } catch (e) {
+            console.error('[CRITICAL] Failed to reset loopState:', e);
+          }
+
+          try {
+            dispatch({ type: 'SET_THINKING', payload: false });
+          } catch (e) {
+            console.error('[CRITICAL] Failed to reset isThinking:', e);
+          }
         }
       }
     }
