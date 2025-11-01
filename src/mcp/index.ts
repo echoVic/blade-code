@@ -8,13 +8,5 @@ export { createMcpTool } from './createMcpTool.js';
 export { McpClient } from './McpClient.js';
 export { McpRegistry } from './McpRegistry.js';
 
-// === OAuth支持 ===
-export {
-  GitHubOAuthProvider,
-  GoogleOAuthProvider,
-  OAuthProvider,
-} from './OAuthProvider.js';
-export { OAuthTokenStorage } from './oauthTokenStorage.js';
-
 // === 类型定义 ===
 export type * from './types.js';

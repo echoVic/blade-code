@@ -96,7 +96,7 @@ describe('配置系统', () => {
       });
 
       // 验证配置已更新
-      let updatedConfig = configManager.getConfig();
+      const updatedConfig = configManager.getConfig();
       expect(updatedConfig?.theme).toBe('dark');
 
       // 重置配置
