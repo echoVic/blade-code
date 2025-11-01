@@ -131,10 +131,19 @@ export const editTool = createTool({
           };
         }
 
-        // 检查文件是否在读取后被修改（警告但不阻止）
-        const modificationCheck = await tracker.checkFileModification(file_path);
-        if (modificationCheck.modified) {
-          console.warn(`[EditTool] 警告：${modificationCheck.message}`);
+        // 🔴 检查文件是否被外部程序修改
+        const externalModCheck = await tracker.checkExternalModification(file_path);
+        if (externalModCheck.isExternal) {
+          return {
+            success: false,
+            llmContent: `The file has been modified by an external program since you last read it. You must use the Read tool again to see the current content before editing.\n\nDetails: ${externalModCheck.message}`,
+            displayContent: `❌ 编辑失败：文件已被外部程序修改\n\n${externalModCheck.message}\n\n💡 请重新使用 Read 工具读取最新内容后再编辑`,
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'File modified externally',
+              details: { externalModification: externalModCheck.message },
+            },
+          };
         }
       }
 
@@ -248,6 +257,12 @@ export const editTool = createTool({
 
       // 写入文件
       await fs.writeFile(file_path, newContent, 'utf8');
+
+      // 🔴 更新文件访问记录（记录编辑操作）
+      if (sessionId) {
+        const tracker = FileAccessTracker.getInstance();
+        await tracker.recordFileEdit(file_path, sessionId, 'edit');
+      }
 
       // 验证写入成功
       const stats = await fs.stat(file_path);

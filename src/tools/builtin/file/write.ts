@@ -135,10 +135,19 @@ export const writeTool = createTool({
           };
         }
 
-        // 检查文件是否在读取后被修改（警告但不阻止）
-        const modificationCheck = await tracker.checkFileModification(file_path);
-        if (modificationCheck.modified) {
-          console.warn(`[WriteTool] 警告：${modificationCheck.message}`);
+        // 🔴 检查文件是否被外部程序修改（对齐 gemini-cli：强制失败）
+        const externalModCheck = await tracker.checkExternalModification(file_path);
+        if (externalModCheck.isExternal) {
+          return {
+            success: false,
+            llmContent: `The file has been modified by an external program since you last read it. You must use the Read tool again to see the current content before writing.\n\nDetails: ${externalModCheck.message}`,
+            displayContent: `❌ 写入失败：文件已被外部程序修改\n\n${externalModCheck.message}\n\n💡 请重新使用 Read 工具读取最新内容后再写入`,
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'File modified externally',
+              details: { externalModification: externalModCheck.message },
+            },
+          };
         }
       }
 
@@ -170,6 +179,12 @@ export const writeTool = createTool({
       }
 
       await fs.writeFile(file_path, writeBuffer);
+
+      // 🔴 更新文件访问记录（记录写入操作）
+      if (sessionId) {
+        const tracker = FileAccessTracker.getInstance();
+        await tracker.recordFileEdit(file_path, sessionId, 'write');
+      }
 
       signal.throwIfAborted();
 

@@ -9,9 +9,10 @@ const logger = createLogger(LogCategory.TOOL);
  */
 export interface FileAccessRecord {
   filePath: string; // 文件绝对路径
-  readTime: number; // 读取时间戳（毫秒）
-  mtime: number; // 读取时文件的修改时间戳
+  accessTime: number; // 最后访问时间戳（毫秒）- 包括 read/edit/write
+  mtime: number; // 访问时文件的修改时间戳
   sessionId: string; // 会话 ID
+  lastOperation: 'read' | 'edit' | 'write'; // 最后操作类型
 }
 /**
  * 文件访问跟踪器
@@ -54,9 +55,10 @@ export class FileAccessTracker {
 
       const record: FileAccessRecord = {
         filePath,
-        readTime: Date.now(),
+        accessTime: Date.now(),
         mtime: stats.mtimeMs,
         sessionId,
+        lastOperation: 'read',
       };
 
       this.accessedFiles.set(filePath, record);
@@ -64,6 +66,39 @@ export class FileAccessTracker {
       logger.debug(`记录文件读取: ${filePath}`);
     } catch (error) {
       logger.warn(`记录文件读取失败: ${filePath}`, error);
+    }
+  }
+
+  /**
+   * 记录文件编辑操作
+   * 在 Edit/Write 工具成功执行后调用，更新文件的访问时间和 mtime
+   *
+   * @param filePath 文件绝对路径
+   * @param sessionId 会话 ID
+   * @param operation 操作类型（'edit' 或 'write'）
+   */
+  async recordFileEdit(
+    filePath: string,
+    sessionId: string,
+    operation: 'edit' | 'write' = 'edit'
+  ): Promise<void> {
+    try {
+      // 获取文件的当前修改时间
+      const stats = await fs.stat(filePath);
+
+      const record: FileAccessRecord = {
+        filePath,
+        accessTime: Date.now(),
+        mtime: stats.mtimeMs,
+        sessionId,
+        lastOperation: operation,
+      };
+
+      this.accessedFiles.set(filePath, record);
+
+      logger.debug(`记录文件${operation === 'edit' ? '编辑' : '写入'}: ${filePath}`);
+    } catch (error) {
+      logger.warn(`记录文件${operation === 'edit' ? '编辑' : '写入'}失败: ${filePath}`, error);
     }
   }
 
@@ -116,7 +151,7 @@ export class FileAccessTracker {
       if (timeDiff > 1) {
         return {
           modified: true,
-          message: `文件在读取后被修改（读取时间: ${new Date(record.readTime).toISOString()}, 当前修改时间: ${stats.mtime.toISOString()}）`,
+          message: `文件在访问后被修改（访问时间: ${new Date(record.accessTime).toISOString()}, 当前修改时间: ${stats.mtime.toISOString()}）`,
         };
       }
 
@@ -131,6 +166,58 @@ export class FileAccessTracker {
 
       return {
         modified: false,
+        message: `无法检查文件状态: ${error.message}`,
+      };
+    }
+  }
+
+  /**
+   * 检查文件是否被外部程序修改
+   * 对比文件 mtime 与我们最后操作时间
+   *
+   * @param filePath 文件绝对路径
+   * @returns { isExternal: boolean, message?: string }
+   */
+  async checkExternalModification(
+    filePath: string
+  ): Promise<{ isExternal: boolean; message?: string }> {
+    const record = this.accessedFiles.get(filePath);
+
+    if (!record) {
+      return {
+        isExternal: false,
+        message: '文件未被跟踪',
+      };
+    }
+
+    try {
+      // 获取文件当前的修改时间
+      const stats = await fs.stat(filePath);
+
+      // 计算时间差（文件 mtime - 我们的操作时间）
+      const timeDiff = stats.mtimeMs - record.mtime;
+
+      // 使用 2 秒缓冲（对齐 gemini-cli）
+      // 如果文件在我们操作后 2 秒之后被修改，判定为外部修改
+      if (timeDiff > 2000) {
+        return {
+          isExternal: true,
+          message: `文件在 ${new Date(record.accessTime).toISOString()} (${record.lastOperation}) 之后被外部程序修改（当前修改时间: ${stats.mtime.toISOString()}）`,
+        };
+      }
+
+      return { isExternal: false };
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        return {
+          isExternal: true,
+          message: '文件已被删除',
+        };
+      }
+
+      logger.warn(`检查文件外部修改失败: ${filePath}`, error);
+      return {
+        isExternal: false,
         message: `无法检查文件状态: ${error.message}`,
       };
     }
