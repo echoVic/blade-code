@@ -8,6 +8,12 @@ import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { generateDiffSnippetWithMatch } from './diffUtils.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 import { SnapshotManager } from './SnapshotManager.js';
+import {
+  unescapeString,
+  flexibleMatch,
+  MatchStrategy,
+  type MatchResult,
+} from './editCorrector.js';
 
 /**
  * EditTool - 文件编辑工具
@@ -173,9 +179,9 @@ export const editTool = createTool({
       }
 
       // 智能匹配并查找匹配项
-      const actualString = smartMatch(content, old_string);
+      const matchResult = smartMatch(content, old_string);
 
-      if (!actualString) {
+      if (!matchResult.matched) {
         return {
           success: false,
           llmContent: `在文件中未找到要替换的字符串: "${old_string}"`,
@@ -185,6 +191,13 @@ export const editTool = createTool({
             message: '未找到匹配内容',
           },
         };
+      }
+
+      const actualString = matchResult.matched;
+
+      // 记录使用的匹配策略（用于调试和优化）
+      if (matchResult.strategy !== MatchStrategy.EXACT) {
+        console.log(`[SmartEdit] 使用策略: ${matchResult.strategy}`);
       }
 
       // 使用实际匹配的字符串查找所有位置
@@ -374,29 +387,43 @@ function normalizeQuotes(text: string): string {
 
 /**
  * 智能匹配字符串
- * 渐进式匹配：先直接匹配，失败后标准化匹配
+ * 渐进式匹配：依次尝试多种策略
  *
  * @param content 文件内容
  * @param searchString 要搜索的字符串
- * @returns 匹配的字符串（保留原文件中的实际字符）或 null
+ * @returns { matched: string | null, strategy: MatchStrategy }
  */
-function smartMatch(content: string, searchString: string): string | null {
-  // 第一步：直接匹配
+function smartMatch(content: string, searchString: string): MatchResult {
+  // 策略 1: 精确匹配
   if (content.includes(searchString)) {
-    return searchString;
+    return { matched: searchString, strategy: MatchStrategy.EXACT };
   }
 
-  // 第二步：标准化引号后匹配
+  // 策略 2: 标准化引号后匹配
   const normalizedSearch = normalizeQuotes(searchString);
   const normalizedContent = normalizeQuotes(content);
 
-  const index = normalizedContent.indexOf(normalizedSearch);
-  if (index !== -1) {
+  const quoteIndex = normalizedContent.indexOf(normalizedSearch);
+  if (quoteIndex !== -1) {
     // 返回原文件中的实际字符串（保持格式）
-    return content.substring(index, index + searchString.length);
+    const actualString = content.substring(quoteIndex, quoteIndex + searchString.length);
+    return { matched: actualString, strategy: MatchStrategy.NORMALIZE_QUOTES };
   }
 
-  return null;
+  // 策略 3: 反转义后匹配
+  const unescaped = unescapeString(searchString);
+  if (unescaped !== searchString && content.includes(unescaped)) {
+    return { matched: unescaped, strategy: MatchStrategy.UNESCAPE };
+  }
+
+  // 策略 4: 弹性缩进匹配
+  const flexible = flexibleMatch(content, searchString);
+  if (flexible) {
+    return { matched: flexible, strategy: MatchStrategy.FLEXIBLE };
+  }
+
+  // 所有策略都失败
+  return { matched: null, strategy: MatchStrategy.FAILED };
 }
 
 /**
@@ -404,10 +431,12 @@ function smartMatch(content: string, searchString: string): string | null {
  */
 function findMatches(content: string, searchString: string): number[] {
   // 先尝试智能匹配
-  const actualString = smartMatch(content, searchString);
-  if (!actualString) {
+  const matchResult = smartMatch(content, searchString);
+  if (!matchResult.matched) {
     return []; // 未找到匹配
   }
+
+  const actualString = matchResult.matched;
 
   // 使用实际匹配的字符串查找所有位置
   const matches: number[] = [];
