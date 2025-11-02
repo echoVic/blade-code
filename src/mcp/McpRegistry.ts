@@ -1,10 +1,10 @@
 import { EventEmitter } from 'events';
 import type { Tool } from '../tools/types/index.js';
+import type { McpServerConfig } from '../config/types.js';
 import { createMcpTool } from './createMcpTool.js';
 import { McpClient } from './McpClient.js';
 import {
   McpConnectionStatus,
-  type McpServerConfig,
   type McpToolDefinition,
 } from './types.js';
 
@@ -46,12 +46,12 @@ export class McpRegistry extends EventEmitter {
   /**
    * 注册MCP服务器
    */
-  async registerServer(config: McpServerConfig): Promise<void> {
-    if (this.servers.has(config.name)) {
-      throw new Error(`MCP服务器 "${config.name}" 已经注册`);
+  async registerServer(name: string, config: McpServerConfig): Promise<void> {
+    if (this.servers.has(name)) {
+      throw new Error(`MCP服务器 "${name}" 已经注册`);
     }
 
-    const client = new McpClient(config);
+    const client = new McpClient(config, name, config.healthCheck);
     const serverInfo: McpServerInfo = {
       config,
       client,
@@ -60,15 +60,15 @@ export class McpRegistry extends EventEmitter {
     };
 
     // 设置客户端事件处理器
-    this.setupClientEventHandlers(client, serverInfo);
+    this.setupClientEventHandlers(client, serverInfo, name);
 
-    this.servers.set(config.name, serverInfo);
-    this.emit('serverRegistered', config.name, serverInfo);
+    this.servers.set(name, serverInfo);
+    this.emit('serverRegistered', name, serverInfo);
 
     try {
-      await this.connectServer(config.name);
+      await this.connectServer(name);
     } catch (error) {
-      console.warn(`MCP服务器 "${config.name}" 连接失败:`, error);
+      console.warn(`MCP服务器 "${name}" 连接失败:`, error);
     }
   }
 
@@ -131,15 +131,36 @@ export class McpRegistry extends EventEmitter {
   }
 
   /**
-   * 获取所有可用工具
+   * 获取所有可用工具（包含冲突处理）
+   *
+   * 工具命名策略：
+   * - 无冲突: toolName
+   * - 有冲突: serverName__toolName
    */
   async getAvailableTools(): Promise<Tool[]> {
     const tools: Tool[] = [];
+    const nameConflicts = new Map<string, number>();
 
+    // 第一遍：检测冲突
     for (const [serverName, serverInfo] of this.servers) {
       if (serverInfo.status === McpConnectionStatus.CONNECTED) {
         for (const mcpTool of serverInfo.tools) {
-          const tool = createMcpTool(serverInfo.client, serverName, mcpTool);
+          const count = nameConflicts.get(mcpTool.name) || 0;
+          nameConflicts.set(mcpTool.name, count + 1);
+        }
+      }
+    }
+
+    // 第二遍：创建工具（冲突时添加前缀）
+    for (const [serverName, serverInfo] of this.servers) {
+      if (serverInfo.status === McpConnectionStatus.CONNECTED) {
+        for (const mcpTool of serverInfo.tools) {
+          const hasConflict = (nameConflicts.get(mcpTool.name) || 0) > 1;
+          const toolName = hasConflict
+            ? `${serverName}__${mcpTool.name}`
+            : mcpTool.name;
+
+          const tool = createMcpTool(serverInfo.client, serverName, mcpTool, toolName);
           tools.push(tool);
         }
       }
@@ -230,36 +251,36 @@ export class McpRegistry extends EventEmitter {
   /**
    * 设置客户端事件处理器
    */
-  private setupClientEventHandlers(client: McpClient, serverInfo: McpServerInfo): void {
+  private setupClientEventHandlers(client: McpClient, serverInfo: McpServerInfo, name: string): void {
     client.on('connected', (server) => {
       serverInfo.status = McpConnectionStatus.CONNECTED;
       serverInfo.connectedAt = new Date();
       serverInfo.tools = client.availableTools;
-      this.emit('serverConnected', serverInfo.config.name, server);
+      this.emit('serverConnected', name, server);
     });
 
     client.on('disconnected', () => {
       serverInfo.status = McpConnectionStatus.DISCONNECTED;
       serverInfo.connectedAt = undefined;
       serverInfo.tools = [];
-      this.emit('serverDisconnected', serverInfo.config.name);
+      this.emit('serverDisconnected', name);
     });
 
     client.on('error', (error) => {
       serverInfo.status = McpConnectionStatus.ERROR;
       serverInfo.lastError = error;
-      this.emit('serverError', serverInfo.config.name, error);
+      this.emit('serverError', name, error);
     });
 
     client.on('toolsUpdated', (tools) => {
       const oldToolsCount = serverInfo.tools.length;
       serverInfo.tools = tools;
-      this.emit('toolsUpdated', serverInfo.config.name, tools, oldToolsCount);
+      this.emit('toolsUpdated', name, tools, oldToolsCount);
     });
 
     client.on('statusChanged', (newStatus, oldStatus) => {
       serverInfo.status = newStatus;
-      this.emit('serverStatusChanged', serverInfo.config.name, newStatus, oldStatus);
+      this.emit('serverStatusChanged', name, newStatus, oldStatus);
     });
   }
 
@@ -290,10 +311,10 @@ export class McpRegistry extends EventEmitter {
   /**
    * 批量注册服务器
    */
-  async registerServers(configs: McpServerConfig[]): Promise<void> {
-    const registrationPromises = configs.map((config) =>
-      this.registerServer(config).catch((error) => {
-        console.warn(`注册MCP服务器 "${config.name}" 失败:`, error);
+  async registerServers(servers: Record<string, McpServerConfig>): Promise<void> {
+    const registrationPromises = Object.entries(servers).map(([name, config]) =>
+      this.registerServer(name, config).catch((error) => {
+        console.warn(`注册MCP服务器 "${name}" 失败:`, error);
         return error;
       })
     );

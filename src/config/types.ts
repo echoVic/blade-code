@@ -148,13 +148,57 @@ export interface RuntimeConfig extends BladeConfig {
 /**
  * MCP 服务器配置
  */
-export interface MCPServer {
-  id: string;
-  name: string;
+export interface McpServerConfig {
+  type: 'stdio' | 'sse' | 'http';
+
+  // stdio 传输
   command?: string;
   args?: string[];
   env?: Record<string, string>;
-  enabled: boolean;
+
+  // http/sse 传输
+  url?: string;
+  headers?: Record<string, string>;
+
+  // 通用配置
+  timeout?: number;
+
+  // OAuth 配置
+  oauth?: {
+    enabled?: boolean;
+    clientId?: string;
+    clientSecret?: string;
+    authorizationUrl?: string;
+    tokenUrl?: string;
+    scopes?: string[];
+    redirectUri?: string;
+  };
+
+  // 健康监控配置
+  healthCheck?: {
+    enabled?: boolean;
+    interval?: number; // 检查间隔（毫秒）
+    timeout?: number; // 超时时间（毫秒）
+    failureThreshold?: number; // 失败阈值
+  };
+}
+
+/**
+ * 项目配置（按项目路径组织）
+ */
+export interface ProjectConfig {
+  mcpServers?: Record<string, McpServerConfig>;
+  enabledMcpjsonServers?: string[]; // .mcp.json 中已批准的服务器名
+  disabledMcpjsonServers?: string[]; // .mcp.json 中已拒绝的服务器名
+  allowedTools?: string[];
+  mcpContextUris?: string[];
+}
+
+/**
+ * MCP 项目配置（按项目路径组织）
+ */
+export interface McpProjectsConfig {
+  [projectPath: string]: ProjectConfig;
 }
 
 /**

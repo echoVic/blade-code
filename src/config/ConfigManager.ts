@@ -11,9 +11,12 @@ import type { GlobalOptions } from '../cli/types.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import {
   BladeConfig,
+  McpProjectsConfig,
   HookConfig,
+  McpServerConfig,
   PermissionConfig,
   PermissionMode,
+  ProjectConfig,
   RuntimeConfig,
 } from './types.js';
 
@@ -735,6 +738,130 @@ export class ConfigManager {
           `  3. 命令行参数: blade --api-key <key> --model <model>`
       );
     }
+  }
+
+  // =========================================
+  // MCP 项目配置管理（新增）
+  // =========================================
+
+  /**
+   * 获取用户配置文件路径
+   */
+  private getUserConfigPath(): string {
+    return path.join(os.homedir(), '.blade', 'config.json');
+  }
+
+  /**
+   * 获取当前项目路径
+   */
+  private getCurrentProjectPath(): string {
+    return process.cwd();
+  }
+
+  /**
+   * 加载用户配置（按项目组织）
+   */
+  private async loadUserConfigByProject(): Promise<McpProjectsConfig> {
+    const userConfigPath = this.getUserConfigPath();
+
+    try {
+      if (await this.fileExists(userConfigPath)) {
+        const content = await fs.readFile(userConfigPath, 'utf-8');
+        return JSON.parse(content) as McpProjectsConfig;
+      }
+    } catch (error) {
+      console.warn(`[ConfigManager] Failed to load user config:`, error);
+    }
+
+    return {};
+  }
+
+  /**
+   * 保存用户配置（按项目组织）
+   */
+  private async saveUserConfigByProject(config: McpProjectsConfig): Promise<void> {
+    const userConfigPath = this.getUserConfigPath();
+    const dir = path.dirname(userConfigPath);
+
+    if (!(await this.fileExists(dir))) {
+      await fs.mkdir(dir, { recursive: true });
+    }
+
+    await fs.writeFile(
+      userConfigPath,
+      JSON.stringify(config, null, 2),
+      'utf-8'
+    );
+  }
+
+  /**
+   * 获取当前项目的配置
+   */
+  getProjectConfig(): ProjectConfig {
+    const projectPath = this.getCurrentProjectPath();
+    // 这里需要同步加载，因为方法签名是同步的
+    // 在实际使用时，应该在初始化时预加载
+    return {};
+  }
+
+  /**
+   * 获取当前项目的配置（异步版本）
+   */
+  async getProjectConfigAsync(): Promise<ProjectConfig> {
+    const projectPath = this.getCurrentProjectPath();
+    const userConfig = await this.loadUserConfigByProject();
+    return userConfig[projectPath] || {};
+  }
+
+  /**
+   * 更新当前项目的配置
+   */
+  async updateProjectConfig(updates: Partial<ProjectConfig>): Promise<void> {
+    const projectPath = this.getCurrentProjectPath();
+    const userConfig = await this.loadUserConfigByProject();
+
+    userConfig[projectPath] = {
+      ...userConfig[projectPath],
+      ...updates,
+    };
+
+    await this.saveUserConfigByProject(userConfig);
+  }
+
+  /**
+   * 获取当前项目的 MCP 服务器配置
+   */
+  async getMcpServers(): Promise<Record<string, McpServerConfig>> {
+    const projectConfig = await this.getProjectConfigAsync();
+    return projectConfig.mcpServers || {};
+  }
+
+  /**
+   * 添加 MCP 服务器到当前项目
+   */
+  async addMcpServer(name: string, config: McpServerConfig): Promise<void> {
+    const servers = await this.getMcpServers();
+    servers[name] = config;
+    await this.updateProjectConfig({ mcpServers: servers });
+  }
+
+  /**
+   * 删除 MCP 服务器
+   */
+  async removeMcpServer(name: string): Promise<void> {
+    const servers = await this.getMcpServers();
+    delete servers[name];
+    await this.updateProjectConfig({ mcpServers: servers });
+  }
+
+  /**
+   * 重置项目级 .mcp.json 确认记录
+   */
+  async resetProjectChoices(): Promise<void> {
+    await this.updateProjectConfig({
+      enabledMcpjsonServers: [],
+      disabledMcpjsonServers: [],
+    });
   }
 }
 
