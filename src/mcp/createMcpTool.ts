@@ -11,14 +11,28 @@ import type { McpToolDefinition } from './types.js';
 export function createMcpTool(
   mcpClient: McpClient,
   serverName: string,
-  toolDef: McpToolDefinition
+  toolDef: McpToolDefinition,
+  customName?: string  // 可选的自定义工具名（用于冲突处理）
 ) {
-  // 1. JSON Schema → Zod Schema 转换
-  const zodSchema = convertJsonSchemaToZod(toolDef.inputSchema);
+  // 1. JSON Schema → Zod Schema 转换（带错误处理）
+  let zodSchema: z.ZodSchema;
+  try {
+    zodSchema = convertJsonSchemaToZod(toolDef.inputSchema);
+  } catch (error) {
+    console.warn(
+      `[createMcpTool] Schema 转换失败，使用降级 schema: ${toolDef.name}`,
+      error
+    );
+    // 降级：使用 z.any() 接受任意参数
+    zodSchema = z.any();
+  }
 
-  // 2. 使用 createTool 创建标准工具
+  // 2. 决定工具名称
+  const toolName = customName || toolDef.name;
+
+  // 3. 使用 createTool 创建标准工具
   return createTool({
-    name: `mcp__${serverName}__${toolDef.name}`,
+    name: toolName,
     displayName: `${serverName}: ${toolDef.name}`,
     kind: ToolKind.External,
     schema: zodSchema,

@@ -36,6 +36,8 @@ import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { Tool, ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
+import { loadProjectMcpConfig } from '../mcp/loadProjectMcpConfig.js';
+import { McpRegistry } from '../mcp/McpRegistry.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import {
   type LoopDetectionConfig,
@@ -1254,9 +1256,67 @@ export class Agent extends EventEmitter {
           .join(', ')}`
       );
       this.emit('toolsRegistered', builtinTools);
+
+      // 注册 MCP 工具
+      await this.registerMcpTools();
     } catch (error) {
       logger.error('Failed to register builtin tools:', error);
       throw error;
+    }
+  }
+
+  /**
+   * 注册 MCP 工具
+   */
+  private async registerMcpTools(): Promise<void> {
+    try {
+      // 1. 加载 .mcp.json（如果存在）
+      const loadedFromMcpJson = await loadProjectMcpConfig({
+        interactive: false,  // Agent 初始化时不启用交互
+        silent: true,        // 静默模式
+      });
+
+      if (loadedFromMcpJson > 0) {
+        logger.debug(`✅ Loaded ${loadedFromMcpJson} servers from .mcp.json`);
+      }
+
+      // 2. 获取所有 MCP 服务器配置
+      const configManager = ConfigManager.getInstance();
+      const mcpServers = await configManager.getMcpServers();
+
+      if (Object.keys(mcpServers).length === 0) {
+        logger.debug('📦 No MCP servers configured');
+        return;
+      }
+
+      // 3. 连接所有 MCP 服务器并注册工具
+      const registry = McpRegistry.getInstance();
+
+      for (const [name, config] of Object.entries(mcpServers)) {
+        try {
+          logger.debug(`🔌 Connecting to MCP server: ${name}`);
+          await registry.registerServer(name, config);
+          logger.debug(`✅ MCP server "${name}" connected`);
+        } catch (error) {
+          logger.warn(`⚠️  MCP server "${name}" connection failed:`, error);
+          // 继续处理其他服务器，不抛出错误
+        }
+      }
+
+      // 4. 获取所有 MCP 工具（包含冲突处理）
+      const mcpTools = await registry.getAvailableTools();
+
+      if (mcpTools.length > 0) {
+        // 5. 注册到工具注册表
+        this.executionPipeline.getRegistry().registerAll(mcpTools);
+        logger.debug(`✅ Registered ${mcpTools.length} MCP tools`);
+        logger.debug(
+          `[MCP Tools] ${mcpTools.map((t) => t.name).join(', ')}`
+        );
+      }
+    } catch (error) {
+      logger.warn('Failed to register MCP tools:', error);
+      // 不抛出错误，允许 Agent 继续初始化
     }
   }
 }

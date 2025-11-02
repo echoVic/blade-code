@@ -18,8 +18,10 @@ export {
 export type {
   BladeConfig,
   HookConfig,
-  MCPServer,
+  McpProjectsConfig,
+  McpServerConfig,
   PermissionConfig,
   PermissionMode,
+  ProjectConfig,
   RuntimeConfig,
 } from './types.js';
