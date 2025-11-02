@@ -11,8 +11,8 @@ import type { GlobalOptions } from '../cli/types.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import {
   BladeConfig,
-  McpProjectsConfig,
   HookConfig,
+  McpProjectsConfig,
   McpServerConfig,
   PermissionConfig,
   PermissionMode,
@@ -733,9 +733,21 @@ export class ConfigManager {
       throw new Error(
         `配置验证失败:\n${errors.map((e) => `  - ${e}`).join('\n')}\n\n` +
           `请通过以下方式之一提供配置:\n` +
-          `  1. 配置文件: ~/.blade/config.json\n` +
-          `  2. 环境变量: BLADE_API_KEY, BLADE_BASE_URL, BLADE_MODEL\n` +
-          `  3. 命令行参数: blade --api-key <key> --model <model>`
+          `  1. 配置文件: ~/.blade/config.json 或 .blade/config.json\n` +
+          `  2. 首次启动设置向导: 直接运行 blade，系统会自动引导配置\n` +
+          `  3. 配置命令: blade config\n\n` +
+          `配置文件示例:\n` +
+          `{\n` +
+          `  "provider": "openai-compatible",\n` +
+          `  "apiKey": "your-api-key",\n` +
+          `  "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",\n` +
+          `  "model": "qwen-max"\n` +
+          `}\n\n` +
+          `或使用环境变量插值:\n` +
+          `{\n` +
+          `  "apiKey": "\${BLADE_API_KEY}",\n` +
+          `  "baseUrl": "\${BLADE_BASE_URL:-https://apis.iflow.cn/v1}"\n` +
+          `}`
       );
     }
   }
@@ -787,27 +799,13 @@ export class ConfigManager {
       await fs.mkdir(dir, { recursive: true });
     }
 
-    await fs.writeFile(
-      userConfigPath,
-      JSON.stringify(config, null, 2),
-      'utf-8'
-    );
+    await fs.writeFile(userConfigPath, JSON.stringify(config, null, 2), 'utf-8');
   }
 
   /**
    * 获取当前项目的配置
    */
-  getProjectConfig(): ProjectConfig {
-    const projectPath = this.getCurrentProjectPath();
-    // 这里需要同步加载，因为方法签名是同步的
-    // 在实际使用时，应该在初始化时预加载
-    return {};
-  }
-
-  /**
-   * 获取当前项目的配置（异步版本）
-   */
-  async getProjectConfigAsync(): Promise<ProjectConfig> {
+  async getProjectConfig(): Promise<ProjectConfig> {
     const projectPath = this.getCurrentProjectPath();
     const userConfig = await this.loadUserConfigByProject();
     return userConfig[projectPath] || {};
@@ -832,7 +830,7 @@ export class ConfigManager {
    * 获取当前项目的 MCP 服务器配置
    */
   async getMcpServers(): Promise<Record<string, McpServerConfig>> {
-    const projectConfig = await this.getProjectConfigAsync();
+    const projectConfig = await this.getProjectConfig();
     return projectConfig.mcpServers || {};
   }
 

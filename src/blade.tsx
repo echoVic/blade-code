@@ -18,7 +18,6 @@ import { doctorCommands } from './commands/doctor.js';
 import { installCommands } from './commands/install.js';
 import { mcpCommands } from './commands/mcp.js';
 import { handlePrintMode } from './commands/print.js';
-import { setupTokenCommands } from './commands/setupToken.js';
 import { updateCommands } from './commands/update.js';
 import { AppWrapper as BladeApp } from './ui/App.js';
 
@@ -50,10 +49,9 @@ export async function main() {
     .command(doctorCommands)
     .command(updateCommands)
     .command(installCommands)
-    .command(setupTokenCommands)
 
-    // 自动生成补全
-    .completion('completion', 'Generate completion script for bash/zsh')
+    // 自动生成补全（隐藏，避免干扰普通用户）
+    .completion('completion', false)
 
     // 帮助和版本
     .help('help', 'Show help')
@@ -82,18 +80,16 @@ export async function main() {
 
     // 处理默认行为（无命令时启动UI）
     .command(
-      '$0 [message..]',
-      'Start interactive AI assistant',
-      (yargs) => {
-        return yargs.positional('message', {
-          describe: 'Initial message to send to the AI',
-          type: 'string',
-          array: true,
-        });
+      '$0',
+      false, // 隐藏此命令，不在 help 中显示
+      () => {
+        // 不定义 positional，避免在 --help 中显示 Positionals 部分
       },
       async (argv) => {
         // 启动 UI 模式
-        const initialMessage = argv.message ? argv.message.join(' ') : undefined;
+        // 从 argv._ 中获取额外的参数作为 initialMessage
+        const nonOptionArgs = (argv._ as string[]).slice(1); // 跳过命令名
+        const initialMessage = nonOptionArgs.length > 0 ? nonOptionArgs.join(' ') : undefined;
 
         // 启动 React UI - 传递所有选项
         const appProps: any = {

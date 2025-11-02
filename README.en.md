@@ -21,7 +21,7 @@ English | [简体中文](README.md)
   <tr>
     <td width="50%" valign="top">
       <h3>🤖 Intelligent Conversations</h3>
-      <p>Natural language interactions powered by LLMs with context understanding and multi-turn dialogues. Simply run <code>blade "task"</code> to launch the UI and auto-send your first message.</p>
+      <p>Natural language interactions powered by LLMs with context understanding and multi-turn dialogues. Simply run <code>blade</code> to launch the interactive UI.</p>
     </td>
     <td width="50%" valign="top">
       <h3>🛠️ Rich Toolset</h3>
@@ -100,16 +100,27 @@ blade --print "Hello, introduce yourself"
 
 Blade Code supports multiple LLM providers. You need to configure the appropriate API key:
 
-### Method 1: Environment Variables (Recommended)
+### Method 1: Configuration File (Recommended)
 
 ```bash
-# Qwen (Alibaba Cloud)
-export QWEN_API_KEY="your-qwen-api-key"
-export BLADE_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+# Create user-level configuration file
+mkdir -p ~/.blade
+cat > ~/.blade/config.json << 'EOF'
+{
+  "provider": "openai-compatible",
+  "apiKey": "your-api-key",
+  "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "model": "qwen-max"
+}
+EOF
 
-# VolcEngine
-export VOLCENGINE_API_KEY="your-volcengine-api-key"
-export BLADE_BASE_URL="https://ark.cn-beijing.volces.com/api/v3"
+# Or use environment variable interpolation in config file
+cat > ~/.blade/config.json << 'EOF'
+{
+  "apiKey": "${BLADE_API_KEY}",
+  "baseUrl": "${BLADE_BASE_URL:-https://apis.iflow.cn/v1}"
+}
+EOF
 ```
 
 ### Method 2: First-Run Setup Wizard (Recommended Experience)
@@ -119,23 +130,13 @@ blade
 # If no API key is configured, an interactive wizard will guide you through Provider, Base URL, API Key, and model setup.
 ```
 
-### Method 3: Command Line Arguments
+### Method 3: Config Command
 
 ```bash
-blade --api-key your-api-key --base-url https://api.example.com "Hello"
+# Use config command to manage configuration
+blade config
 ```
 
-### Method 4: Configuration File
-
-```bash
-# User-level configuration
-mkdir -p ~/.blade
-nano ~/.blade/config.json
-
-# Project-level configuration
-mkdir -p .blade
-nano .blade/config.json
-```
 
 ### Get API Keys
 
@@ -152,38 +153,33 @@ nano .blade/config.json
 # Interactive mode (default)
 blade
 
-# Direct message (automatically sent once the UI is ready)
-blade "What is artificial intelligence?"
+# Non-interactive quick answer (print mode)
+blade --print "What is artificial intelligence?"
 
-# Code generation
-blade "Write a debounce function in JavaScript"
-
-# Non-interactive quick answer
-blade --print "Summarize the repo in one sentence"
+# Code generation (print mode)
+blade --print "Write a debounce function in JavaScript"
 ```
-
-> Any message passed as `blade "..."` is automatically injected and executed once the interactive UI finishes initializing—no extra keystrokes required.
 
 ### Smart Tool Invocation
 
 Blade Code automatically selects appropriate tools based on your needs:
 
 ```bash
-# File operations
-blade "List all TypeScript files in the current directory"
+# File operations (print mode)
+blade --print "List all TypeScript files in the current directory"
 
-# Git operations
-blade "Show the last 5 commit logs"
+# Git operations (print mode)
+blade --print "Show the last 5 commit logs"
 
-# Code review (non-interactive example)
+# Code review (print mode)
 blade --print "Review code quality in src/utils directory"
 ```
 
 ### Session Management
 
 ```bash
-# Create or use named session
-blade --session-id "project-alpha" "Start new project"
+# Create or use named session (print mode)
+blade --session-id "project-alpha" --print "Start new project"
 
 # Continue recent session
 blade --continue
@@ -253,9 +249,6 @@ blade doctor
 
 # Check for updates
 blade update
-
-# Set up authentication token
-blade setup-token
 ```
 
 ### AI Model Options
@@ -322,21 +315,18 @@ blade --setting-sources "global,user,local"
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `blade [message..]` | Send message or launch interactive mode (default) | `blade "Hello"` |
+| `blade` | Start interactive AI assistant (default) | `blade` |
 | `blade config` | Configuration management | `blade config` |
 | `blade mcp` | Configure and manage MCP servers | `blade mcp` |
 | `blade doctor` | System health check | `blade doctor` |
 | `blade update` | Check and install updates | `blade update` |
 | `blade install [target]` | Install specific version (stable/latest/version) | `blade install latest` |
-| `blade setup-token` | Set up authentication token | `blade setup-token` |
-| `blade completion` | Generate shell completion script | `blade completion` |
 
 ### Debug Options
 
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--debug [category]` | `-d` | Enable debug mode with optional category filtering |
-| `--verbose` | | Enable verbose output mode |
 
 ### Output Options
 

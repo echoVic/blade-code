@@ -269,7 +269,7 @@ await configManager.initialize();  // 幂等，多次调用安全
 5. `src/ui/App.tsx`
 6. `src/commands/doctor.ts`
 7. `src/commands/config.ts`
-8. `src/commands/setupToken.ts`
+8. ~~`src/commands/setupToken.ts`~~ (已删除)
 9. 其他所有使用 `new ConfigManager()` 的地方
 
 ## 优点

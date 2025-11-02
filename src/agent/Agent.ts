@@ -1270,10 +1270,12 @@ export class Agent extends EventEmitter {
    */
   private async registerMcpTools(): Promise<void> {
     try {
-      // 1. 加载 .mcp.json（如果存在）
+      // 1. 加载 MCP 配置（支持 CLI 参数 --mcp-config 和 --strict-mcp-config）
       const loadedFromMcpJson = await loadProjectMcpConfig({
         interactive: false,  // Agent 初始化时不启用交互
         silent: true,        // 静默模式
+        mcpConfig: this.runtimeOptions.mcpConfig,         // 从 CLI 参数传入
+        strictMcpConfig: this.runtimeOptions.strictMcpConfig, // 从 CLI 参数传入
       });
 
       if (loadedFromMcpJson > 0) {

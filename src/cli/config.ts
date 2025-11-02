@@ -144,6 +144,7 @@ export const globalOptions = {
     describe: 'Enable automatic fallback to specified model',
     group: 'AI Options:',
   },
+  // TODO: 未实现 - 需要在 UI/Agent 中读取并使用
   settings: {
     type: 'string',
     describe: 'Path to a settings JSON file or JSON string',
@@ -156,6 +157,7 @@ export const globalOptions = {
     describe: 'Additional directories to allow tool access to',
     group: 'Security Options:',
   },
+  // TODO: 未实现 - 需要在 UI 启动时自动连接 IDE
   ide: {
     type: 'boolean',
     describe: 'Automatically connect to IDE on startup',
@@ -173,6 +175,7 @@ export const globalOptions = {
     describe: 'Use a specific session ID for the conversation',
     group: 'Session Options:',
   },
+  // TODO: 未实现 - 需要解析 JSON 并配置自定义 Agent
   agents: {
     type: 'string',
     describe: 'JSON object defining custom agents',

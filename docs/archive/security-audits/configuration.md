@@ -32,7 +32,7 @@ chmod 600 ~/.blade/config.json
 
 3. **命令行参数**（不推荐用于生产环境）
 ```bash
-blade --api-key="your-api-key-here" chat
+blade config  # 已废弃的参数: --api-key (请使用配置文件或环境变量)
 ```
 
 ### 安全最佳实践

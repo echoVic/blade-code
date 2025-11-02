@@ -79,8 +79,8 @@ export QWEN_API_KEY="your-qwen-api-key"
 # 方式2: 首次启动设置向导（交互填写）
 blade
 
-# 方式3: 命令行参数
-blade --api-key your-api-key "你好"
+# 方式3: 配置命令
+blade config
 
 # 方式4: 配置文件
 mkdir -p ~/.blade

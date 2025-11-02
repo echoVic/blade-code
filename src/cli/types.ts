@@ -73,7 +73,3 @@ export interface InstallOptions extends GlobalOptions {
   mcp?: string;
 }
 
-export interface SetupTokenOptions extends GlobalOptions {
-  provider?: string;
-  token?: string;
-}

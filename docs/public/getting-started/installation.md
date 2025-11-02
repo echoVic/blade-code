@@ -99,14 +99,11 @@ mkdir -p .blade
 vim .blade/config.json
 ```
 
-#### 方式4：命令行参数
+#### 方式4：配置命令
 
 ```bash
-# 直接在命令中指定
-blade --api-key your-api-key "你好"
-
-# 指定特定提供商
-blade --provider volcengine --api-key your-key "复杂问题"
+# 使用交互式配置命令
+blade config
 ```
 
 ## ✅ 验证安装

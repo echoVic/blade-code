@@ -56,8 +56,8 @@ cat .blade/config.json
 # 3. 测试连接（启用调试模式）
 blade --debug "测试连接"
 
-# 4. 直接指定密钥测试
-blade --api-key your-key "测试"
+# 4. 使用配置命令检查
+blade config
 ```
 
 **获取正确的 API 密钥：**
@@ -66,14 +66,18 @@ blade --api-key your-key "测试"
 
 ### Q: 如何更换模型？
 
-**A:** 可以通过命令行参数指定：
+**A:** 可以通过以下方式指定：
 
 ```bash
-# 使用千问模型
-blade --provider qwen --model qwen-max "复杂问题"
+# 方式一：在配置文件中设置（推荐）
+# 编辑 ~/.blade/config.json 或 .blade/config.json
+{
+  "model": "qwen-max",
+  "provider": "openai-compatible"
+}
 
-# 使用火山引擎模型
-blade --provider volcengine "你好"
+# 方式二：使用命令行参数
+blade --model qwen-max "复杂问题"
 
 # 设置回退模型
 blade --fallback-model qwen-turbo "问题"
@@ -299,8 +303,8 @@ blade
    # 查看错误日志
    cat ~/.blade/logs/error.log
 
-   # 查看调试日志
-   blade --debug --log-level verbose "问题"
+   # 启用调试模式
+   blade --debug "问题"
    ```
 
 ---

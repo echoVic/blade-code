@@ -109,16 +109,27 @@ blade --print "你好，介绍一下自己"
 
 Blade Code 支持多种 LLM 提供商，您需要配置相应的 API 密钥：
 
-### 方式一：环境变量（推荐）
+### 方式一：配置文件（推荐）
 
 ```bash
-# 千问（阿里云）
-export QWEN_API_KEY="your-qwen-api-key"
-export BLADE_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+# 创建用户级配置文件
+mkdir -p ~/.blade
+cat > ~/.blade/config.json << 'EOF'
+{
+  "provider": "openai-compatible",
+  "apiKey": "your-api-key",
+  "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "model": "qwen-max"
+}
+EOF
 
-# 火山引擎
-export VOLCENGINE_API_KEY="your-volcengine-api-key"
-export BLADE_BASE_URL="https://ark.cn-beijing.volces.com/api/v3"
+# 或在配置文件中使用环境变量插值
+cat > ~/.blade/config.json << 'EOF'
+{
+  "apiKey": "${BLADE_API_KEY}",
+  "baseUrl": "${BLADE_BASE_URL:-https://apis.iflow.cn/v1}"
+}
+EOF
 ```
 
 ### 方式二：首启设置向导（推荐体验）
@@ -128,24 +139,11 @@ blade
 # 若未配置 API Key，将自动引导完成 Provider、Base URL、API Key、模型的填写
 ```
 
-### 方式三：命令行参数
+### 方式三：配置命令
 
 ```bash
-blade --api-key your-api-key --base-url https://api.example.com "你好"
-```
-
-### 方式四：配置文件
-
-```bash
-# 用户级配置
-mkdir -p ~/.blade
-nano ~/.blade/config.json
-
-# 项目级配置（提交到仓库）
-mkdir -p .blade
-nano .blade/config.json
-# 或者为当前机器准备不提交的设置
-nano .blade/settings.local.json
+# 使用 config 命令管理配置
+blade config
 ```
 
 ### 获取 API 密钥
@@ -259,9 +257,6 @@ blade doctor
 
 # 检查更新
 blade update
-
-# 设置认证令牌
-blade setup-token
 ```
 
 ### AI 模型选项
@@ -352,21 +347,18 @@ blade --setting-sources "global,user,local"
 
 | 命令 | 说明 | 示例 |
 |------|------|------|
-| `blade [message..]` | 发送消息或启动交互式界面（默认） | `blade "你好"` |
+| `blade` | 启动交互式 AI 助手（默认） | `blade` |
 | `blade config` | 配置管理 | `blade config` |
 | `blade mcp` | 配置和管理 MCP 服务器 | `blade mcp` |
 | `blade doctor` | 系统健康检查 | `blade doctor` |
 | `blade update` | 检查更新并安装 | `blade update` |
 | `blade install [target]` | 安装指定版本（stable/latest/版本号） | `blade install latest` |
-| `blade setup-token` | 设置认证令牌 | `blade setup-token` |
-| `blade completion` | 生成 shell 补全脚本 | `blade completion` |
 
 ### 调试选项
 
 | 选项 | 简写 | 说明 |
 |------|------|------|
 | `--debug [category]` | `-d` | 启用调试模式，可选分类过滤 |
-| `--verbose` | | 启用详细输出模式 |
 
 ### 输出选项
 

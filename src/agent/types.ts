@@ -39,6 +39,10 @@ export interface AgentOptions {
   permissions?: Partial<PermissionConfig>; // 运行时覆盖权限
   permissionMode?: PermissionMode;
   maxTurns?: number; // 最大对话轮次 (-1=无限制, 0=禁用对话, N>0=限制轮次)
+
+  // MCP 配置
+  mcpConfig?: string[]; // CLI 参数：MCP 配置文件路径或 JSON 字符串数组
+  strictMcpConfig?: boolean; // CLI 参数：严格模式，仅使用 --mcp-config 指定的配置
 }
 
 export interface AgentTask {

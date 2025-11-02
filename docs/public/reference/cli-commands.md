@@ -72,7 +72,6 @@ echo "请总结这段文字" | blade --print
 | `blade doctor` | `src/commands/doctor.ts` | 运行环境健康检查（配置、Node 版本、文件权限、依赖） |
 | `blade install [stable\|latest]` | `src/commands/install.ts` | 安装或更新 Blade 原生构建（当前为占位实现） |
 | `blade update` | `src/commands/update.ts` | 检查更新版本 |
-| `blade setup-token [--token sk-xxx]` | `src/commands/setupToken.ts` | 保存长期可用的认证 Token（写入配置） |
 | `blade mcp <list|add|remove|start|stop>` | `src/commands/mcp.ts` | 管理 MCP 服务器，可通过 JSON/文件注册并启动/停止 |
 
 所有子命令均基于 Yargs，自动提供 `--help` 查看详细参数。
