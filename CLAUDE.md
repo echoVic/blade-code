@@ -216,7 +216,7 @@ Blade 提供完整的 Markdown 渲染支持，包含以下组件：
 - **覆盖率**: `npm run test:coverage` - 生成 V8 覆盖率报告
 - **单元测试**: `npm run test:unit` - 仅运行单元测试
 - **集成测试**: `npm run test:integration` - 仅运行集成测试
-- **端到端测试**: `npm run test:e2e` - 仅运行 E2E 测试
+- **CLI 测试**: `npm run test:cli` - 运行命令行行为测试
 - **性能测试**: `npm run test:performance` - 运行性能测试
 - **调试模式**: `npm run test:debug` - 详细输出模式
 

@@ -35,6 +35,7 @@ describe('ConfigManager', () => {
 
     (os.homedir as Mock).mockReturnValue(mockHomedir);
     (os.tmpdir as Mock).mockReturnValue(mockTmpdir);
+    (fs.access as Mock).mockRejectedValue(new Error('File not found'));
 
     // 重置模块缓存以获取新的单例实例
     vi.resetModules();

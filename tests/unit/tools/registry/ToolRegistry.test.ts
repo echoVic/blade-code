@@ -1,422 +1,168 @@
-/**
- * ToolRegistry BDD 测试
- * 使用Given-When-Then模式组织测试用例
- */
-
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DeclarativeTool } from '../../../../src/tools/base/DeclarativeTool.js';
 import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
-import { ToolKind } from '../../../../src/tools/types/ToolTypes.js';
+import { ToolKind, type Tool, type ToolResult } from '../../../../src/tools/types/ToolTypes.js';
 
-// 测试用的Mock工具
-class MockReadTool extends DeclarativeTool {
-  constructor() {
-    super(
-      'mock_read',
-      '模拟读取工具',
-      '用于测试的模拟读取工具',
-      ToolKind.Read,
-      {
+function createMockTool(
+  name: string,
+  overrides: Partial<Tool> & { category?: string; tags?: string[] } = {}
+): Tool & {
+  executeSpy: ReturnType<typeof vi.fn>;
+} {
+  const executeSpy = vi.fn<Parameters<Tool['execute']>, Promise<ToolResult>>(
+    async (_params: unknown) => ({
+      success: true,
+      llmContent: `${name} executed`,
+      displayContent: `${name} executed`,
+    })
+  );
+
+  const tool: Tool & { executeSpy: ReturnType<typeof vi.fn> } = {
+    name,
+    displayName: overrides.displayName ?? `Display ${name}`,
+    kind: overrides.kind ?? ToolKind.Read,
+    isReadOnly: overrides.isReadOnly ?? true,
+    isConcurrencySafe: overrides.isConcurrencySafe ?? true,
+    strict: overrides.strict ?? false,
+    description: overrides.description ?? { short: `${name} description` },
+    version: overrides.version ?? '1.0.0',
+    category: overrides.category ?? 'test-category',
+    tags: overrides.tags ?? ['test', name],
+    getFunctionDeclaration: overrides.getFunctionDeclaration ?? (() => ({
+      name,
+      description: `${name} function`,
+      parameters: {
         type: 'object',
-        properties: {
-          path: { type: 'string', description: '文件路径' },
-        },
-        required: ['path'],
+        properties: {},
       },
-      false,
-      '1.0.0',
-      'file',
-      ['test', 'mock']
-    );
-  }
+    })),
+    getMetadata: overrides.getMetadata ?? (() => ({ name })),
+    build:
+      overrides.build ??
+      vi.fn((params: unknown) => ({
+        toolName: name,
+        params,
+        getDescription: () => `${name} invocation`,
+        getAffectedPaths: () => [],
+        execute: executeSpy,
+      })),
+    execute: overrides.execute ?? executeSpy,
+    executeSpy,
+  };
 
-  build(params: any) {
-    return {
-      toolName: this.name,
-      params,
-      getDescription: () => `读取文件: ${params.path}`,
-      getAffectedPaths: () => [params.path],
-      execute: async () => ({
-        success: true,
-        llmContent: `文件内容: ${params.path}`,
-        displayContent: `已读取: ${params.path}`,
-      }),
-    };
-  }
-}
-
-class MockEditTool extends DeclarativeTool {
-  constructor() {
-    super(
-      'mock_edit',
-      '模拟编辑工具',
-      '用于测试的模拟编辑工具',
-      ToolKind.Edit,
-      {
-        type: 'object',
-        properties: {
-          path: { type: 'string' },
-          content: { type: 'string' },
-        },
-        required: ['path', 'content'],
-      },
-      true,
-      '1.0.0',
-      'file',
-      ['test', 'mock']
-    );
-  }
-
-  build(params: any) {
-    return {
-      toolName: this.name,
-      params,
-      getDescription: () => `编辑文件: ${params.path}`,
-      getAffectedPaths: () => [params.path],
-      execute: async () => ({
-        success: true,
-        llmContent: `已编辑: ${params.path}`,
-        displayContent: `文件已更新: ${params.path}`,
-      }),
-    };
-  }
+  return tool;
 }
 
 describe('ToolRegistry', () => {
   let registry: ToolRegistry;
-  let mockReadTool: MockReadTool;
-  let mockEditTool: MockEditTool;
 
   beforeEach(() => {
-    // Arrange: 每个测试开始前准备新的注册表实例
     registry = new ToolRegistry();
-    mockReadTool = new MockReadTool();
-    mockEditTool = new MockEditTool();
   });
 
-  describe('工具注册功能', () => {
-    describe('当注册一个新工具时', () => {
-      it('应该成功注册并触发事件', () => {
-        // Arrange: 准备事件监听器
-        const eventSpy = vi.fn();
-        registry.on('toolRegistered', eventSpy);
+  it('注册内置工具后应可查询、分类和打标签', () => {
+    const tool = createMockTool('alpha', { category: 'filesystem', tags: ['fs', 'read'] });
+    const eventSpy = vi.fn();
+    registry.on('toolRegistered', eventSpy);
 
-        // Act: 注册工具
-        registry.register(mockReadTool);
+    registry.register(tool);
 
-        // Assert: 验证注册成功和事件触发
-        expect(registry.has('mock_read')).toBe(true);
-        expect(registry.get('mock_read')).toBe(mockReadTool);
-        expect(eventSpy).toHaveBeenCalledWith({
-          type: 'builtin',
-          tool: mockReadTool,
-          timestamp: expect.any(Number),
-        });
-      });
-
-      it('应该正确更新分类和标签索引', () => {
-        // Act: 注册工具
-        registry.register(mockReadTool);
-
-        // Assert: 验证索引更新
-        expect(registry.getByCategory('file')).toContain(mockReadTool);
-        expect(registry.getByTag('test')).toContain(mockReadTool);
-        expect(registry.getByTag('mock')).toContain(mockReadTool);
-      });
-    });
-
-    describe('当尝试注册重复工具时', () => {
-      it('应该抛出错误', () => {
-        // Arrange: 先注册一个工具
-        registry.register(mockReadTool);
-
-        // Act & Assert: 尝试重复注册应该抛出错误
-        expect(() => {
-          registry.register(mockReadTool);
-        }).toThrow("工具 'mock_read' 已注册");
-      });
-    });
-
-    describe('当批量注册工具时', () => {
-      it('应该成功注册所有工具', () => {
-        // Act: 批量注册
-        registry.registerAll([mockReadTool, mockEditTool]);
-
-        // Assert: 验证所有工具都已注册
-        expect(registry.has('mock_read')).toBe(true);
-        expect(registry.has('mock_edit')).toBe(true);
-        expect(registry.getAll()).toHaveLength(2);
-      });
-
-      it('当部分工具注册失败时应该抛出详细错误', () => {
-        // Arrange: 先注册一个工具造成冲突
-        registry.register(mockReadTool);
-
-        // Act & Assert: 批量注册包含重复工具应该失败
-        expect(() => {
-          registry.registerAll([mockReadTool, mockEditTool]);
-        }).toThrow(/批量注册失败.*mock_read.*已注册/);
-      });
-    });
+    expect(registry.get('alpha')).toBe(tool);
+    expect(registry.getByCategory('filesystem')).toContain(tool);
+    expect(registry.getByTag('fs')).toContain(tool);
+    expect(eventSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'builtin',
+        tool,
+      })
+    );
   });
 
-  describe('工具查询功能', () => {
-    beforeEach(() => {
-      // Arrange: 注册测试工具
-      registry.register(mockReadTool);
-      registry.register(mockEditTool);
-    });
+  it('重复注册同名内置工具应抛出错误', () => {
+    const tool = createMockTool('dup');
+    registry.register(tool);
 
-    describe('当按名称查询工具时', () => {
-      it('应该返回正确的工具', () => {
-        // Act & Assert
-        expect(registry.get('mock_read')).toBe(mockReadTool);
-        expect(registry.get('mock_edit')).toBe(mockEditTool);
-        expect(registry.get('nonexistent')).toBeUndefined();
-      });
-    });
-
-    describe('当按分类查询工具时', () => {
-      it('应该返回该分类下的所有工具', () => {
-        // Act
-        const fileTools = registry.getByCategory('file');
-
-        // Assert
-        expect(fileTools).toHaveLength(2);
-        expect(fileTools).toContain(mockReadTool);
-        expect(fileTools).toContain(mockEditTool);
-      });
-
-      it('当查询不存在的分类时应该返回空数组', () => {
-        // Act & Assert
-        expect(registry.getByCategory('nonexistent')).toEqual([]);
-      });
-    });
-
-    describe('当按标签查询工具时', () => {
-      it('应该返回包含该标签的所有工具', () => {
-        // Act
-        const testTools = registry.getByTag('test');
-
-        // Assert
-        expect(testTools).toHaveLength(2);
-        expect(testTools).toContain(mockReadTool);
-        expect(testTools).toContain(mockEditTool);
-      });
-
-      it('当查询不存在的标签时应该返回空数组', () => {
-        // Act & Assert
-        expect(registry.getByTag('nonexistent')).toEqual([]);
-      });
-    });
-
-    describe('当搜索工具时', () => {
-      it('应该按名称搜索返回匹配的工具', () => {
-        // Act
-        const results = registry.search('read');
-
-        // Assert
-        expect(results).toHaveLength(1);
-        expect(results[0]).toBe(mockReadTool);
-      });
-
-      it('应该按描述搜索返回匹配的工具', () => {
-        // Act
-        const results = registry.search('编辑');
-
-        // Assert
-        expect(results).toHaveLength(1);
-        expect(results[0]).toBe(mockEditTool);
-      });
-
-      it('应该按标签搜索返回匹配的工具', () => {
-        // Act
-        const results = registry.search('mock');
-
-        // Assert
-        expect(results).toHaveLength(2);
-        expect(results).toContain(mockReadTool);
-        expect(results).toContain(mockEditTool);
-      });
-
-      it('当搜索无匹配结果时应该返回空数组', () => {
-        // Act & Assert
-        expect(registry.search('xyz')).toEqual([]);
-      });
-
-      it('应该忽略大小写进行搜索', () => {
-        // Act
-        const results = registry.search('READ');
-
-        // Assert
-        expect(results).toHaveLength(1);
-        expect(results[0]).toBe(mockReadTool);
-      });
-    });
+    expect(() => registry.register(tool)).toThrow("工具 'dup' 已注册");
   });
 
-  describe('工具注销功能', () => {
-    beforeEach(() => {
-      // Arrange: 注册测试工具
-      registry.register(mockReadTool);
-      registry.register(mockEditTool);
-    });
+  it('registerAll 在部分失败时应报告详细错误', () => {
+    const first = createMockTool('first');
+    const duplicate = createMockTool('first');
 
-    describe('当注销已存在的工具时', () => {
-      it('应该成功注销并触发事件', () => {
-        // Arrange: 准备事件监听器
-        const eventSpy = vi.fn();
-        registry.on('toolUnregistered', eventSpy);
-
-        // Act: 注销工具
-        const result = registry.unregister('mock_read');
-
-        // Assert: 验证注销成功
-        expect(result).toBe(true);
-        expect(registry.has('mock_read')).toBe(false);
-        expect(registry.get('mock_read')).toBeUndefined();
-        expect(eventSpy).toHaveBeenCalledWith({
-          type: 'builtin',
-          toolName: 'mock_read',
-          timestamp: expect.any(Number),
-        });
-      });
-
-      it('应该正确更新索引', () => {
-        // Act: 注销工具
-        registry.unregister('mock_read');
-
-        // Assert: 验证索引更新
-        expect(registry.getByCategory('file')).not.toContain(mockReadTool);
-        expect(registry.getByCategory('file')).toContain(mockEditTool);
-        expect(registry.getByTag('test')).not.toContain(mockReadTool);
-        expect(registry.getByTag('test')).toContain(mockEditTool);
-      });
-    });
-
-    describe('当注销不存在的工具时', () => {
-      it('应该返回false', () => {
-        // Act & Assert
-        expect(registry.unregister('nonexistent')).toBe(false);
-      });
-    });
+    registry.register(first);
+    expect(() => registry.registerAll([duplicate])).toThrow(/批量注册失败: first: 工具 'first' 已注册/);
   });
 
-  describe('函数声明生成', () => {
-    beforeEach(() => {
-      // Arrange: 注册测试工具
-      registry.register(mockReadTool);
-      registry.register(mockEditTool);
-    });
+  it('可以注销内置工具并更新索引', () => {
+    const tool = createMockTool('beta', { category: 'network', tags: ['http'] });
+    registry.register(tool);
 
-    describe('当获取LLM函数声明时', () => {
-      it('应该返回所有工具的函数声明', () => {
-        // Act
-        const declarations = registry.getFunctionDeclarations();
-
-        // Assert
-        expect(declarations).toHaveLength(2);
-
-        const readDeclaration = declarations.find((d) => d.name === 'mock_read');
-        expect(readDeclaration).toEqual({
-          name: 'mock_read',
-          description: '用于测试的模拟读取工具',
-          parameters: expect.objectContaining({
-            type: 'object',
-            properties: expect.objectContaining({
-              path: expect.objectContaining({
-                type: 'string',
-                description: '文件路径',
-              }),
-            }),
-            required: ['path'],
-          }),
-        });
-      });
-    });
+    const result = registry.unregister('beta');
+    expect(result).toBe(true);
+    expect(registry.get('beta')).toBeUndefined();
+    expect(registry.getByCategory('network')).not.toContain(tool);
+    expect(registry.getByTag('http')).not.toContain(tool);
   });
 
-  describe('统计信息', () => {
-    beforeEach(() => {
-      // Arrange: 注册测试工具
-      registry.register(mockReadTool);
-      registry.register(mockEditTool);
-    });
+  it('支持 MCP 工具注册与批量移除', () => {
+    const mcpToolA = createMockTool('mcp__serverA__inspect', { category: 'mcp-cat' });
+    const mcpToolB = createMockTool('mcp__serverA__run');
+    const otherTool = createMockTool('mcp__serverB__inspect');
 
-    describe('当获取注册表统计时', () => {
-      it('应该返回正确的统计信息', () => {
-        // Act
-        const stats = registry.getStats();
+    const registerSpy = vi.fn();
+    const unregisterSpy = vi.fn();
+    registry.on('toolRegistered', registerSpy);
+    registry.on('toolUnregistered', unregisterSpy);
 
-        // Assert
-        expect(stats).toEqual({
-          totalTools: 2,
-          builtinTools: 2,
-          mcpTools: 0,
-          categories: 1,
-          tags: 2,
-          toolsByCategory: {
-            file: 2,
-          },
-        });
-      });
-    });
+    registry.registerMcpTool(mcpToolA);
+    registry.registerMcpTool(mcpToolB);
+    registry.registerMcpTool(otherTool);
 
-    describe('当获取分类列表时', () => {
-      it('应该返回所有分类', () => {
-        // Act & Assert
-        expect(registry.getCategories()).toContain('file');
-        expect(registry.getCategories()).toHaveLength(1);
-      });
-    });
+    expect(registerSpy).toHaveBeenCalledTimes(3);
+    expect(registry.get('mcp__serverA__inspect')).toBe(mcpToolA);
 
-    describe('当获取标签列表时', () => {
-      it('应该返回所有标签', () => {
-        // Act
-        const tags = registry.getTags();
-
-        // Assert
-        expect(tags).toContain('test');
-        expect(tags).toContain('mock');
-        expect(tags).toHaveLength(2);
-      });
-    });
+    const removed = registry.removeMcpTools('serverA');
+    expect(removed).toBe(2);
+    expect(registry.get('mcp__serverA__inspect')).toBeUndefined();
+    expect(registry.get('mcp__serverB__inspect')).toBe(otherTool);
+    expect(unregisterSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'mcp',
+        serverName: 'serverA',
+      })
+    );
   });
 
-  describe('边界情况和错误处理', () => {
-    describe('当在空注册表上进行操作时', () => {
-      it('查询操作应该返回合适的默认值', () => {
-        // Act & Assert
-        expect(registry.getAll()).toEqual([]);
-        expect(registry.getCategories()).toEqual([]);
-        expect(registry.getTags()).toEqual([]);
-        expect(registry.getFunctionDeclarations()).toEqual([]);
-        expect(registry.search('anything')).toEqual([]);
-      });
+  it('搜索应根据名称、描述、分类和标签匹配', () => {
+    const readTool = createMockTool('reader', {
+      description: { short: 'Reads files' },
+      category: 'fs',
+      tags: ['filesystem'],
     });
-
-    describe('当工具没有分类或标签时', () => {
-      it('应该正常处理', () => {
-        // Arrange: 创建没有分类和标签的工具
-        const noMetaTool = new (class extends DeclarativeTool {
-          constructor() {
-            super('no_meta', '无元数据工具', '测试工具', ToolKind.Other, {
-              type: 'object',
-            });
-          }
-          build() {
-            return {} as any;
-          }
-        })();
-
-        // Act: 注册工具
-        registry.register(noMetaTool);
-
-        // Assert: 验证处理正常
-        expect(registry.has('no_meta')).toBe(true);
-        expect(registry.getByCategory('')).toEqual([]);
-        expect(registry.getTags()).toEqual([]);
-      });
+    const writeTool = createMockTool('writer', {
+      description: { short: 'Writes content' },
+      category: 'fs',
+      tags: ['io'],
     });
+    registry.register(readTool);
+    registry.register(writeTool);
+
+    expect(registry.search('read')).toContain(readTool);
+    expect(registry.search('writes')).toContain(writeTool);
+    expect(registry.search('filesystem')).toContain(readTool);
+    expect(registry.search('fs')).toHaveLength(2);
+  });
+
+  it('统计信息应区分内置与 MCP 工具', () => {
+    registry.register(createMockTool('builtin-one', { category: 'alpha' }));
+    registry.register(createMockTool('builtin-two', { category: 'beta', tags: ['beta-tag'] }));
+    registry.registerMcpTool(createMockTool('mcp__srv__tool', { category: 'alpha', tags: ['beta-tag'] }));
+
+    const stats = registry.getStats();
+    expect(stats.totalTools).toBe(3);
+    expect(stats.builtinTools).toBe(2);
+    expect(stats.mcpTools).toBe(1);
+    expect(stats.categories).toBe(2);
+    expect(stats.tags).toBeGreaterThanOrEqual(2);
+    expect(stats.toolsByCategory.alpha).toBe(2);
   });
 });

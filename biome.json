@@ -89,7 +89,6 @@
       "trailingCommas": "es5"
     },
     "globals": [
-      "jest",
       "describe",
       "test",
       "it",

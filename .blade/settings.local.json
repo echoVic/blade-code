@@ -1,6 +1,8 @@
 {
   "permissions": {
-    "allow": [],
+    "allow": [
+      "TestTool"
+    ],
     "ask": [],
     "deny": []
   }

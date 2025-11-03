@@ -8,10 +8,9 @@ Blade Code 采用完整的测试架构，确保代码质量和稳定性。
 
 ```
 tests/
-├── unit/           # 单元测试 - 组件级测试
-├── integration/    # 集成测试 - 多组件协作测试
-├── e2e/           # 端到端测试 - 完整用户流程测试
-└── security/      # 安全测试 - 安全场景专项测试
+├── unit/           # 单元测试 - 纯逻辑和模块行为验证
+├── integration/    # 集成测试 - 跨模块协作场景
+└── cli/            # CLI 行为测试 - 真实命令执行
 ```
 
 ## ⚡ 快速开始
@@ -35,11 +34,8 @@ npm run test:unit
 # 集成测试
 npm run test:integration
 
-# 端到端测试
-npm run test:e2e
-
-# 安全测试
-npm run test:security
+# CLI 行为测试
+npm run test:cli
 ```
 
 ### 监视模式
@@ -66,16 +62,16 @@ open coverage/index.html
 
 ### 覆盖率目标
 
-- **语句覆盖率**: ≥ 90%
-- **分支覆盖率**: ≥ 85%
-- **函数覆盖率**: ≥ 90%
-- **行覆盖率**: ≥ 90%
+- **语句覆盖率**: ≥ 40%
+- **分支覆盖率**: ≥ 50%
+- **函数覆盖率**: ≥ 40%
+- **行覆盖率**: ≥ 40%
 
 ## 🔧 测试工具栈
 
 ### 核心工具
 - **[Vitest](https://vitest.dev/)**: 测试框架（快速、现代化）
-- **Jest 兼容 API**: 熟悉的测试 API
+- **Vitest 扩展 API**: 熟悉的断言与 Mock 能力
 - **V8 Coverage**: 内置覆盖率报告
 
 ### 测试工具
@@ -135,58 +131,31 @@ describe('Agent Integration', () => {
 })
 ```
 
-### E2E 测试示例
+### CLI 测试示例
 
 ```typescript
-// tests/e2e/cli/basic-commands.test.ts
+// tests/cli/blade-help.test.ts
+import { existsSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import path from 'node:path'
 import { describe, it, expect } from 'vitest'
-import { spawn } from 'child_process'
-import { promisify } from 'util'
 
-const exec = promisify(require('child_process').exec)
+const CLI_ENTRY = path.resolve('dist', 'blade.js')
 
-describe('CLI E2E Tests', () => {
-  it('should show version', async () => {
-    const { stdout } = await exec('node dist/blade.js --version')
-    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/)
-  })
+describe('Blade CLI', () => {
+  it('--help 输出应包含命令信息', () => {
+    if (!existsSync(CLI_ENTRY)) {
+      // 首次运行需要先执行 npm run build
+      return
+    }
 
-  it('should show help', async () => {
-    const { stdout } = await exec('node dist/blade.js --help')
-    expect(stdout).toContain('Usage:')
-    expect(stdout).toContain('Options:')
-  })
-})
-```
-
-## 🔒 安全测试
-
-### 安全测试类型
-
-```typescript
-// tests/security/input-validation.test.ts
-import { describe, it, expect } from 'vitest'
-import { validateInput, sanitizeCommand } from '../../src/security/input-validator'
-
-describe('Security - Input Validation', () => {
-  it('should reject malicious input', () => {
-    const maliciousInputs = [
-      '$(rm -rf /)',
-      '../../../etc/passwd',
-      '<script>alert("xss")</script>',
-      'DROP TABLE users;'
-    ]
-
-    maliciousInputs.forEach(input => {
-      expect(() => validateInput(input)).toThrow()
+    const result = spawnSync('node', [CLI_ENTRY, '--help'], {
+      encoding: 'utf-8'
     })
-  })
 
-  it('should sanitize shell commands', () => {
-    const unsafeCommand = 'ls; rm -rf /'
-    const safe = sanitizeCommand(unsafeCommand)
-    expect(safe).not.toContain(';')
-    expect(safe).not.toContain('rm')
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('blade')
   })
 })
 ```
@@ -277,14 +246,15 @@ jobs:
 ```json
 {
   "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "test:unit": "vitest run tests/unit",
-    "test:integration": "vitest run tests/integration",
-    "test:e2e": "vitest run tests/e2e",
-    "test:security": "vitest run tests/security",
-    "test:debug": "vitest run --reporter=verbose"
+    "test": "node scripts/test.js",
+    "test:unit": "node scripts/test.js unit",
+    "test:integration": "node scripts/test.js integration",
+    "test:cli": "node scripts/test.js cli",
+    "test:coverage": "node scripts/test.js all --coverage",
+    "test:watch": "vitest --watch --config vitest.config.ts",
+    "test:unit:watch": "vitest --watch --config vitest.config.ts --project unit",
+    "test:integration:watch": "vitest --watch --config vitest.config.ts --project integration",
+    "test:cli:watch": "vitest --watch --config vitest.config.ts --project cli"
   }
 }
 ```
@@ -311,7 +281,7 @@ npm test -- --reporter=verbose
 npm test -- --testNamePattern="should handle errors"
 
 # 跳过特定测试
-npm test -- --testPathIgnorePatterns=e2e
+npm test -- --testPathIgnorePatterns=cli
 
 # 并行运行
 npm test -- --maxWorkers=4

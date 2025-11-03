@@ -127,7 +127,7 @@ https://github.com/echoVic/Blade/compare/main...feature/monorepo-refactor-securi
 ### 🧪 测试基础设施
 
 #### 测试框架
-- **单元测试**: Jest + React Testing Library
+- **单元测试**: Vitest + React Testing Library
 - **集成测试**: 组件和API集成测试
 - **端到端测试**: 完整用户流程测试
 - **性能测试**: 渲染性能和内存使用测试
