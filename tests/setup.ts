@@ -51,67 +51,72 @@ process.on('uncaughtException', (error) => {
   }
 });
 
-// 文件系统模拟
-vi.mock('fs', () => ({
-  ...vi.importActual('fs'),
-  readFileSync: vi.fn(),
-  writeFileSync: vi.fn(),
-  existsSync: vi.fn(),
-  mkdirSync: vi.fn(),
-  readdirSync: vi.fn(),
-  statSync: vi.fn(),
-  unlinkSync: vi.fn(),
-  rmdirSync: vi.fn(),
-  promises: {
-    readFile: vi.fn(),
-    writeFile: vi.fn(),
-    access: vi.fn(),
-    mkdir: vi.fn(),
-    readdir: vi.fn(),
-    stat: vi.fn(),
-    unlink: vi.fn(),
-    rmdir: vi.fn(),
-    rm: vi.fn(),
-  },
-}));
+// 文件系统模拟（默认调用真实实现，便于按需覆写）
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs');
 
-// 路径模块模拟
-vi.mock('path', () => ({
-  ...vi.importActual('path'),
-  default: {
-    join: vi.fn((...args) => args.join('/')),
-    resolve: vi.fn((...args) => args.join('/')),
-    dirname: vi.fn((path) => path.split('/').slice(0, -1).join('/')),
-    basename: vi.fn((path) => path.split('/').pop() || ''),
-    extname: vi.fn((path) => {
-      const lastDot = path.lastIndexOf('.');
-      return lastDot === -1 ? '' : path.slice(lastDot);
-    }),
-  },
-  join: vi.fn((...args) => args.join('/')),
-  resolve: vi.fn((...args) => args.join('/')),
-  dirname: vi.fn((path) => path.split('/').slice(0, -1).join('/')),
-  basename: vi.fn((path) => path.split('/').pop() || ''),
-  extname: vi.fn((path) => {
-    const lastDot = path.lastIndexOf('.');
-    return lastDot === -1 ? '' : path.slice(lastDot);
-  }),
-}));
+  const wrapSync = <K extends keyof typeof actual>(key: K) => {
+    const original = actual[key];
+    if (typeof original !== 'function') {
+      return original;
+    }
+    return vi.fn((...args: unknown[]) =>
+      (original as (...inner: unknown[]) => unknown).apply(actual, args)
+    );
+  };
+
+  const wrapAsync = <K extends keyof typeof actual.promises>(key: K) => {
+    const original = actual.promises[key];
+    if (typeof original !== 'function') {
+      return original;
+    }
+    return vi.fn((...args: unknown[]) =>
+      (original as (...inner: unknown[]) => unknown).apply(actual.promises, args)
+    );
+  };
+
+  return {
+    ...actual,
+    readFileSync: wrapSync('readFileSync'),
+    writeFileSync: wrapSync('writeFileSync'),
+    existsSync: wrapSync('existsSync'),
+    mkdirSync: wrapSync('mkdirSync'),
+    readdirSync: wrapSync('readdirSync'),
+    statSync: wrapSync('statSync'),
+    unlinkSync: wrapSync('unlinkSync'),
+    rmdirSync: wrapSync('rmdirSync'),
+    promises: {
+      ...actual.promises,
+      readFile: wrapAsync('readFile'),
+      writeFile: wrapAsync('writeFile'),
+      access: wrapAsync('access'),
+      mkdir: wrapAsync('mkdir'),
+      readdir: wrapAsync('readdir'),
+      stat: wrapAsync('stat'),
+      unlink: wrapAsync('unlink'),
+      rmdir: wrapAsync('rmdir'),
+      rm: wrapAsync('rm'),
+    },
+  };
+});
 
 // 子进程模拟
-vi.mock('child_process', () => ({
-  ...vi.importActual('child_process'),
-  execSync: vi.fn(),
-  exec: vi.fn(),
-  spawn: vi.fn(),
-  fork: vi.fn(),
-  execFile: vi.fn(),
-}));
+vi.mock('child_process', async () => {
+  const actual = await vi.importActual<typeof import('child_process')>('child_process');
+  return {
+    ...actual,
+    execSync: vi.fn(),
+    exec: vi.fn(),
+    spawn: vi.fn(),
+    fork: vi.fn(),
+    execFile: vi.fn(),
+  };
+});
 
 // 网络请求模拟
-vi.mock('axios', () => ({
-  ...vi.importActual('axios'),
-  create: vi.fn(() => ({
+vi.mock('axios', async () => {
+  const actual = await vi.importActual<typeof import('axios')>('axios');
+  const createInstance = () => ({
     get: vi.fn(),
     post: vi.fn(),
     put: vi.fn(),
@@ -123,60 +128,61 @@ vi.mock('axios', () => ({
       request: { use: vi.fn() },
       response: { use: vi.fn() },
     },
-  })),
-  get: vi.fn(),
-  post: vi.fn(),
-  put: vi.fn(),
-  delete: vi.fn(),
-  patch: vi.fn(),
-  head: vi.fn(),
-  options: vi.fn(),
-  interceptors: {
-    request: { use: vi.fn() },
-    response: { use: vi.fn() },
-  },
-}));
+  });
+  const mockAxios = {
+    ...createInstance(),
+    create: vi.fn(createInstance),
+  };
+  return {
+    ...actual,
+    default: mockAxios,
+    create: mockAxios.create,
+    get: mockAxios.get,
+    post: mockAxios.post,
+    put: mockAxios.put,
+    delete: mockAxios.delete,
+    patch: mockAxios.patch,
+    head: mockAxios.head,
+    options: mockAxios.options,
+    interceptors: mockAxios.interceptors,
+  };
+});
 
 // WebSocket模拟
-vi.mock('ws', () => ({
-  ...vi.importActual('ws'),
-  WebSocket: vi.fn(() => ({
-    on: vi.fn(),
-    send: vi.fn(),
-    close: vi.fn(),
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  })),
-}));
+vi.mock('ws', async () => {
+  const actual = await vi.importActual<typeof import('ws')>('ws');
+  return {
+    ...actual,
+    WebSocket: vi.fn(() => ({
+      on: vi.fn(),
+      send: vi.fn(),
+      close: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })),
+  };
+});
 
 // HTTP/HTTPS模拟
-vi.mock('http', () => ({
-  ...vi.importActual('http'),
-  createServer: vi.fn(),
-  request: vi.fn(),
-  get: vi.fn(),
-}));
+vi.mock('http', async () => {
+  const actual = await vi.importActual<typeof import('http')>('http');
+  return {
+    ...actual,
+    createServer: vi.fn(),
+    request: vi.fn(),
+    get: vi.fn(),
+  };
+});
 
-vi.mock('https', () => ({
-  ...vi.importActual('https'),
-  createServer: vi.fn(),
-  request: vi.fn(),
-  get: vi.fn(),
-}));
-
-// 加密模块模拟
-vi.mock('crypto', () => ({
-  ...vi.importActual('crypto'),
-  randomBytes: vi.fn(() => Buffer.from('mock-random-bytes')),
-  createHash: vi.fn(() => ({
-    update: vi.fn().mockReturnThis(),
-    digest: vi.fn(() => 'mock-hash'),
-  })),
-  createHmac: vi.fn(() => ({
-    update: vi.fn().mockReturnThis(),
-    digest: vi.fn(() => 'mock-hmac'),
-  })),
-}));
+vi.mock('https', async () => {
+  const actual = await vi.importActual<typeof import('https')>('https');
+  return {
+    ...actual,
+    createServer: vi.fn(),
+    request: vi.fn(),
+    get: vi.fn(),
+  };
+});
 
 // 测试工具函数
 const testUtils = {

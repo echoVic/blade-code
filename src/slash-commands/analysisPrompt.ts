@@ -107,8 +107,8 @@ export function detectProjectFeatures(
 
   // 检测测试框架
   let testFramework = undefined;
-  if (allDeps.jest) testFramework = 'Jest';
-  else if (allDeps.vitest) testFramework = 'Vitest';
+  if (allDeps.vitest) testFramework = 'Vitest';
+  else if (allDeps.jest) testFramework = 'Jest';
   else if (allDeps.mocha) testFramework = 'Mocha';
   else if (allDeps.jasmine) testFramework = 'Jasmine';
   else if (allDeps['@playwright/test']) testFramework = 'Playwright';

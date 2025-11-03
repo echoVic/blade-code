@@ -1,10 +1,5 @@
 #!/usr/bin/env node
 
-/**
- * 测试运行脚本
- * 支持运行不同类型的测试：unit, integration, e2e, security, all
- */
-
 import { execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,35 +10,24 @@ const __dirname = path.dirname(__filename);
 const testTypes = {
   unit: {
     name: '单元测试',
-    command: 'vitest run tests/unit',
-    timeout: 30000,
+    project: 'unit',
+    timeout: 45000,
   },
   integration: {
     name: '集成测试',
-    command: 'vitest run tests/integration',
-    timeout: 60000,
+    project: 'integration',
+    timeout: 90000,
   },
-  e2e: {
-    name: '端到端测试',
-    command: 'vitest run tests/e2e',
-    timeout: 120000,
-  },
-  security: {
-    name: '安全测试',
-    command: 'vitest run tests/security',
+  cli: {
+    name: 'CLI 测试',
+    project: 'cli',
     timeout: 60000,
   },
   all: {
     name: '所有测试',
-    command: 'vitest run --config vitest.config.ts',
+    project: null,
     timeout: 180000,
   },
-};
-
-const coverageTypes = {
-  unit: 'vitest run tests/unit --coverage',
-  integration: 'vitest run tests/integration --coverage',
-  all: 'vitest run --config vitest.config.ts --coverage',
 };
 
 function printUsage() {
@@ -56,9 +40,8 @@ function printUsage() {
 测试类型:
   unit        运行单元测试
   integration 运行集成测试
-  e2e         运行端到端测试
-  security    运行安全测试
-  all         运行所有测试
+  cli         运行 CLI 行为测试
+  all         运行所有项目
 
 选项:
   --coverage  生成覆盖率报告
@@ -71,7 +54,7 @@ function printUsage() {
   npm run test unit
   npm run test integration --coverage
   npm run test all --watch
-  npm run test e2e --debug
+  npm run test cli --debug
 `);
 }
 
@@ -84,39 +67,51 @@ function runTest(testType, options = {}) {
   }
 
   console.log(`🚀 开始运行${config.name}...`);
-  
-  let command = config.command;
-  
-  // 添加选项
-  if (options.coverage) {
-    command = coverageTypes[testType] || command + ' --coverage';
+
+  if (options.watch && options.coverage) {
+    console.warn('⚠️ 监听模式暂不支持覆盖率统计，忽略 --coverage');
+    options.coverage = false;
   }
-  
+
+  const baseArgs = ['vitest'];
   if (options.watch) {
-    command = command.replace('run', '');
+    baseArgs.push('--watch');
+  } else {
+    baseArgs.push('run');
   }
-  
+
+  baseArgs.push('--config', path.join(__dirname, '..', 'vitest.config.ts'));
+
+  if (config.project) {
+    baseArgs.push('--project', config.project);
+  }
+
+  if (options.coverage) {
+    baseArgs.push('--coverage');
+  }
+
   if (options.debug) {
     process.env.DEBUG_TESTS = 'true';
   }
-  
+
   if (options.verbose) {
     process.env.VERBOSE_TESTS = 'true';
   }
 
+  const command = baseArgs.join(' ');
+
   try {
     console.log(`📝 执行命令: ${command}`);
-    
+
     const startTime = Date.now();
     execSync(command, {
       stdio: 'inherit',
       cwd: process.cwd(),
       timeout: config.timeout,
     });
-    
+
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(`✅ ${config.name}完成! 耗时: ${duration}s`);
-    
   } catch (error) {
     console.error(`❌ ${config.name}失败:`, error.message);
     process.exit(1);

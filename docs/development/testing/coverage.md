@@ -35,26 +35,36 @@ Blade 项目采用分层覆盖率策略，确保不同模块的测试质量：
 
 ## 覆盖率工具配置
 
-### Jest 覆盖率
-```json
-{
-  "collectCoverageFrom": [
-    "src/**/*.{ts,tsx}",
-    "packages/*/src/**/*.{ts,tsx}",
-    "!src/**/*.d.ts",
-    "!packages/*/src/**/*.d.ts",
-    "!src/**/index.ts",
-    "!packages/*/src/**/index.{ts,tsx}"
-  ],
-  "coverageThreshold": {
-    "global": {
-      "branches": 80,
-      "functions": 80,
-      "lines": 80,
-      "statements": 80
-    }
-  }
-}
+### Vitest 覆盖率
+```ts
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html', 'json'],
+      include: [
+        'src/**/*.{ts,tsx}',
+        'packages/*/src/**/*.{ts,tsx}',
+      ],
+      exclude: [
+        'src/**/*.d.ts',
+        'packages/*/src/**/*.d.ts',
+        'src/**/index.{ts,tsx}',
+        'packages/*/src/**/index.{ts,tsx}',
+      ],
+      thresholds: {
+        global: {
+          branches: 80,
+          functions: 80,
+          lines: 80,
+          statements: 80,
+        },
+      },
+    },
+  },
+});
 ```
 
 ### NYC (Istanbul) 覆盖率

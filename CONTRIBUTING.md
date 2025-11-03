@@ -80,8 +80,8 @@
 
 - **单元测试**：`npm run test:unit`
 - **集成测试**：`npm run test:integration`
-- **E2E 测试**：`npm run test:e2e`
-- **测试覆盖率**：`npm run test:coverage`
+- **CLI 测试**：`npm run test:cli`
+- **覆盖率报告**：`npm run test:coverage`
 
 #### Pull Request 指南
 

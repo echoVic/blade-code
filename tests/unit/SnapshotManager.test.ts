@@ -1,7 +1,23 @@
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const { mockBladeRootState } = vi.hoisted(() => ({
+  mockBladeRootState: { bladeRoot: '' },
+}));
+
+vi.mock('../../src/context/utils/pathEscape.js', async () => {
+  const actual = await vi.importActual<typeof import('../../src/context/utils/pathEscape.js')>(
+    '../../src/context/utils/pathEscape.js'
+  );
+  return {
+    ...actual,
+    getBladeStorageRoot: vi.fn(() =>
+      mockBladeRootState.bladeRoot ? mockBladeRootState.bladeRoot : actual.getBladeStorageRoot()
+    ),
+  };
+});
+
 import { SnapshotManager } from '../../src/tools/builtin/file/SnapshotManager.js';
 
 describe('SnapshotManager', () => {
@@ -15,6 +31,9 @@ describe('SnapshotManager', () => {
     // 创建临时测试目录
     tempDir = path.join(os.tmpdir(), `blade-snapshot-test-${Date.now()}`);
     await fs.mkdir(tempDir, { recursive: true });
+
+    // 设置 Blade 根目录 mock
+    mockBladeRootState.bladeRoot = path.join(tempDir, 'blade-root');
 
     // 创建测试文件
     testFile = path.join(tempDir, 'test.txt');
@@ -35,6 +54,8 @@ describe('SnapshotManager', () => {
     } catch {
       // 忽略清理错误
     }
+
+    mockBladeRootState.bladeRoot = '';
   });
 
   describe('初始化', () => {

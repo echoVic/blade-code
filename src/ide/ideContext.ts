@@ -340,6 +340,7 @@ export class IdeContext {
 
     // 测试工具
     if (deps.jest) tools.push('jest');
+    if (deps.vitest) tools.push('vitest');
     if (deps.mocha) tools.push('mocha');
     if (deps.cypress) tools.push('cypress');
     if (deps.puppeteer) tools.push('puppeteer');
