@@ -4,20 +4,20 @@
  * 支持重试、自动重连、错误分类、OAuth 认证、健康监控
  */
 
-import { EventEmitter } from 'events';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { EventEmitter } from 'events';
+import type { McpServerConfig } from '../config/types.js';
+import { getPackageName, getVersion } from '../utils/packageInfo.js';
+import { OAuthProvider } from './auth/index.js';
+import { type HealthCheckConfig, HealthMonitor } from './HealthMonitor.js';
 import {
   McpConnectionStatus,
   type McpToolCallResponse,
   type McpToolDefinition,
 } from './types.js';
-import type { McpServerConfig } from '../config/types.js';
-import { getPackageName, getVersion } from '../utils/packageInfo.js';
-import { OAuthProvider } from './auth/index.js';
-import { HealthMonitor, type HealthCheckConfig } from './HealthMonitor.js';
 
 /**
  * 错误类型枚举
@@ -73,7 +73,11 @@ function classifyError(error: unknown): ClassifiedError {
   }
 
   // 认证错误（不应自动重试，需要用户介入）
-  if (msg.includes('unauthorized') || msg.includes('401') || msg.includes('authentication failed')) {
+  if (
+    msg.includes('unauthorized') ||
+    msg.includes('401') ||
+    msg.includes('authentication failed')
+  ) {
     return {
       type: ErrorType.AUTH_ERROR,
       isRetryable: false,
@@ -219,7 +223,9 @@ export class McpClient extends EventEmitter {
         // 如果还有重试机会，等待后重试
         if (attempt < maxRetries) {
           const delay = initialDelay * Math.pow(2, attempt - 1); // 指数退避
-          console.warn(`[McpClient] 连接失败（${attempt}/${maxRetries}），${delay}ms 后重试...`);
+          console.warn(
+            `[McpClient] 连接失败（${attempt}/${maxRetries}），${delay}ms 后重试...`
+          );
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -326,7 +332,9 @@ export class McpClient extends EventEmitter {
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
     this.reconnectAttempts++;
 
-    console.log(`[McpClient] 将在 ${delay}ms 后进行第 ${this.reconnectAttempts} 次重连...`);
+    console.log(
+      `[McpClient] 将在 ${delay}ms 后进行第 ${this.reconnectAttempts} 次重连...`
+    );
 
     this.reconnectTimer = setTimeout(async () => {
       try {
@@ -433,7 +441,7 @@ export class McpClient extends EventEmitter {
     const { type, command, args, env, url, headers, oauth } = this.config;
 
     // 准备请求头（可能包含 OAuth 令牌）
-    let finalHeaders = { ...headers };
+    const finalHeaders = { ...headers };
 
     // 如果启用了 OAuth 且是 HTTP/SSE 传输
     if (oauth?.enabled && this.oauthProvider && (type === 'sse' || type === 'http')) {
@@ -444,7 +452,10 @@ export class McpClient extends EventEmitter {
         if (!token) {
           // 没有令牌，需要认证
           console.log(`[McpClient] 服务器 "${this.serverName}" 需要 OAuth 认证`);
-          const newToken = await this.oauthProvider.authenticate(this.serverName, oauth);
+          const newToken = await this.oauthProvider.authenticate(
+            this.serverName,
+            oauth
+          );
           finalHeaders['Authorization'] = `Bearer ${newToken.accessToken}`;
         } else {
           // 有有效令牌
@@ -452,7 +463,9 @@ export class McpClient extends EventEmitter {
         }
       } catch (error) {
         console.error('[McpClient] OAuth 认证失败:', error);
-        throw new Error(`OAuth 认证失败: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(
+          `OAuth 认证失败: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     }
 
@@ -471,6 +484,7 @@ export class McpClient extends EventEmitter {
         command,
         args: args || [],
         env: { ...processEnv, ...env },
+        stderr: 'ignore', // 忽略子进程的 stderr 输出
       });
     } else if (type === 'sse') {
       if (!url) {

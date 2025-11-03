@@ -3,6 +3,7 @@
  */
 
 import compactCommand from './compact.js';
+import mcpCommand from './mcp.js';
 import permissionsCommand from './permissions.js';
 import resumeCommand from './resume.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
@@ -22,6 +23,7 @@ const helpCommand: SlashCommand = {
     const helpText = `🔧 **可用的 Slash Commands:**
 
 **/init** - 分析当前项目并生成 BLADE.md 配置文件
+**/mcp** - 显示 MCP 服务器状态和可用工具
 **/help** - 显示此帮助信息
 **/clear** - 清除屏幕内容
 **/resume** - 恢复历史会话
@@ -315,4 +317,5 @@ export const builtinCommands = {
   permissions: permissionsCommand,
   resume: resumeCommand,
   compact: compactCommand,
+  mcp: mcpCommand,
 };

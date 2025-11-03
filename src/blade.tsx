@@ -36,6 +36,7 @@ export async function main() {
     .demandCommand(0, '')
     .recommendCommands()
     .strict(cliConfig.strict)
+    .parserConfiguration({ 'populate--': true })
 
     // 应用全局选项
     .options(globalOptions)

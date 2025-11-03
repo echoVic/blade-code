@@ -6,6 +6,31 @@
 import type { CommandModule } from 'yargs';
 import { ConfigManager } from '../config/ConfigManager.js';
 import type { McpServerConfig } from '../config/types.js';
+import { McpRegistry } from '../mcp/McpRegistry.js';
+import { McpConnectionStatus } from '../mcp/types.js';
+
+/**
+ * 显示 MCP 命令的帮助信息
+ */
+function showMcpHelp(): void {
+  console.log('\nblade mcp\n');
+  console.log('管理 MCP 服务器\n');
+  console.log('Commands:');
+  console.log('  blade mcp add <name> <commandOrUrl> [args...]  添加 MCP 服务器');
+  console.log('  blade mcp remove <name>                         删除 MCP 服务器 [aliases: rm]');
+  console.log('  blade mcp list                                  列出所有 MCP 服务器并检查健康状态 [aliases: ls]');
+  console.log('  blade mcp get <name>                            获取服务器详情');
+  console.log('  blade mcp add-json <name> <json>                从 JSON 字符串添加服务器');
+  console.log('  blade mcp reset-project-choices                 重置项目级 .mcp.json 确认记录\n');
+  console.log('Options:');
+  console.log('  -h, --help     显示帮助信息                     [boolean]\n');
+  console.log('Examples:');
+  console.log('  blade mcp list');
+  console.log('  blade mcp add github npx -y @modelcontextprotocol/server-github');
+  console.log('  blade mcp add api --transport http http://localhost:3000');
+  console.log('  blade mcp remove github\n');
+  console.log('使用 blade mcp <command> --help 查看各子命令的详细帮助\n');
+}
 
 // 工具函数：解析环境变量数组
 function parseEnvArray(envArray: string[]): Record<string, string> {
@@ -27,7 +52,7 @@ function parseHeaderArray(headerArray: string[]): Record<string, string> {
 
 // MCP Add 子命令
 const mcpAddCommand: CommandModule = {
-  command: 'add <name> <commandOrUrl> [args...]',
+  command: 'add <name> [commandOrUrl] [args...]',
   describe: '添加 MCP 服务器',
   builder: (yargs) => {
     return yargs
@@ -39,7 +64,6 @@ const mcpAddCommand: CommandModule = {
       .positional('commandOrUrl', {
         type: 'string',
         describe: 'stdio: 命令 | http/sse: URL',
-        demandOption: true,
       })
       .positional('args', {
         type: 'string',
@@ -69,7 +93,11 @@ const mcpAddCommand: CommandModule = {
       })
       .example([
         [
-          '$0 mcp add github npx -y @modelcontextprotocol/server-github -e GITHUB_TOKEN=xxx',
+          '$0 mcp add github -- npx -y @modelcontextprotocol/server-github',
+          'Add stdio server (recommended)',
+        ],
+        [
+          '$0 mcp add github npx @modelcontextprotocol/server-github -e GITHUB_TOKEN=xxx',
           'Add stdio server with env',
         ],
         [
@@ -81,7 +109,27 @@ const mcpAddCommand: CommandModule = {
   handler: async (argv: any) => {
     try {
       const configManager = ConfigManager.getInstance();
-      const { name, commandOrUrl, args, transport, env, header, timeout } = argv;
+      let { name, commandOrUrl, args, transport, env, header, timeout } = argv;
+
+      // 处理 -- 分隔符的情况
+      // 当使用 `blade mcp add name -- command args` 时，yargs 会把 -- 后的内容放到 argv['--'] 中
+      if (argv['--'] && argv['--'].length > 0) {
+        // argv['--'] = ['command', ...args]
+        commandOrUrl = argv['--'][0];
+        args = argv['--'].slice(1);
+      }
+
+      // 验证必需参数
+      if (!name || !commandOrUrl) {
+        console.error('❌ 缺少必需参数: name 和 commandOrUrl');
+        console.log('\n💡 用法:');
+        console.log('  blade mcp add <name> <command> [args...]');
+        console.log('  blade mcp add <name> -- <command> [args...]');
+        console.log('\n示例:');
+        console.log('  blade mcp add github npx -y @modelcontextprotocol/server-github');
+        console.log('  blade mcp add github -- npx -y @modelcontextprotocol/server-github');
+        process.exit(1);
+      }
 
       const config: McpServerConfig = { type: transport };
 
@@ -152,7 +200,7 @@ const mcpRemoveCommand: CommandModule = {
 // MCP List 子命令
 const mcpListCommand: CommandModule = {
   command: 'list',
-  describe: '列出所有 MCP 服务器',
+  describe: '列出所有 MCP 服务器并检查健康状态',
   aliases: ['ls'],
   handler: async () => {
     try {
@@ -166,29 +214,59 @@ const mcpListCommand: CommandModule = {
         return;
       }
 
-      console.log('MCP 服务器列表:\n');
-      for (const [name, config] of Object.entries(servers)) {
-        console.log(`📦 ${name}`);
-        console.log(`  类型: ${config.type}`);
+      console.log('检查 MCP 服务器健康状态...\n');
 
-        if (config.type === 'stdio') {
-          console.log(`  命令: ${config.command} ${config.args?.join(' ') || ''}`);
-          if (config.env && Object.keys(config.env).length > 0) {
-            console.log(`  环境变量: ${Object.keys(config.env).join(', ')}`);
+      const mcpRegistry = McpRegistry.getInstance();
+
+      // 尝试连接所有服务器
+      const checkPromises = Object.entries(servers).map(async ([name, config]) => {
+        try {
+          // 检查服务器是否已注册
+          let serverInfo = mcpRegistry.getServerStatus(name);
+
+          if (!serverInfo) {
+            // 如果未注册，先注册
+            await mcpRegistry.registerServer(name, config);
+            serverInfo = mcpRegistry.getServerStatus(name);
+          } else if (serverInfo.status === McpConnectionStatus.DISCONNECTED) {
+            // 如果已注册但未连接，尝试连接
+            await mcpRegistry.connectServer(name);
           }
-        } else {
-          console.log(`  URL: ${config.url}`);
-          if (config.headers) {
-            console.log(`  Headers: ${Object.keys(config.headers).length} 个`);
-          }
-        }
 
-        if (config.timeout) {
-          console.log(`  超时: ${config.timeout}ms`);
+          return { name, config, serverInfo };
+        } catch (error) {
+          return { name, config, serverInfo: null, error };
         }
+      });
 
-        console.log('');
+      const results = await Promise.all(checkPromises);
+
+      // 显示结果
+      for (const { name, config, serverInfo, error } of results) {
+        const status = serverInfo?.status || McpConnectionStatus.DISCONNECTED;
+        const statusSymbol = status === McpConnectionStatus.CONNECTED ? '✓' : '✗';
+        const statusText = status === McpConnectionStatus.CONNECTED ? 'Connected' : 'Failed';
+
+        console.log(`${name}: ${config.type === 'stdio' ? config.command : config.url} - ${statusSymbol} ${statusText}`);
+
+        if (error && status !== McpConnectionStatus.CONNECTED) {
+          console.log(`  错误: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
+
+      console.log('');
+
+      // 断开所有服务器连接并清理
+      for (const { name } of results) {
+        try {
+          await mcpRegistry.unregisterServer(name);
+        } catch (error) {
+          // 忽略断开连接时的错误
+        }
+      }
+
+      // 确保进程退出
+      process.exit(0);
     } catch (error) {
       console.error(
         `❌ 列表获取失败: ${error instanceof Error ? error.message : '未知错误'}`
@@ -309,16 +387,23 @@ export const mcpCommands: CommandModule = {
       .command(mcpGetCommand)
       .command(mcpAddJsonCommand)
       .command(mcpResetProjectChoicesCommand)
-      .demandCommand(1, '请指定子命令')
-      .help()
-      .example([
-        ['$0 mcp list', 'List all MCP servers'],
-        ['$0 mcp add github npx -y @modelcontextprotocol/server-github', 'Add stdio server'],
-        ['$0 mcp add api --transport http http://localhost:3000', 'Add HTTP server'],
-        ['$0 mcp remove github', 'Remove server'],
-      ]);
+      .demandCommand(0) // 允许不传子命令
+      .help(false) // 禁用自动帮助，我们自己处理
+      .option('help', {
+        alias: 'h',
+        type: 'boolean',
+        describe: '显示帮助信息',
+      });
   },
-  handler: () => {
-    // 如果没有子命令，yargs 会自动显示帮助
+  handler: (argv: any) => {
+    // 检查是否有子命令
+    const subcommands = ['add', 'remove', 'list', 'ls', 'get', 'add-json', 'reset-project-choices'];
+    const hasSubcommand = argv._.some((arg: string) => subcommands.includes(arg));
+
+    // 如果没有子命令或者显式请求帮助，显示帮助信息
+    if (!hasSubcommand || argv.help) {
+      showMcpHelp();
+      process.exit(0);
+    }
   },
 };
