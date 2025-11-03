@@ -64,13 +64,9 @@ export const useMainInput = (
   const handleSubmit = useMemoizedFn(() => {
     logger.debug('[DIAG] handleSubmit called:', { input, showSuggestions });
 
-    let commandToSubmit = input.trim();
-
-    // 如果显示建议并且有选中项，使用选中的命令
-    if (showSuggestions && suggestions.length > 0 && selectedSuggestionIndex >= 0) {
-      commandToSubmit = suggestions[selectedSuggestionIndex].command;
-      logger.debug('[DIAG] Using suggestion:', commandToSubmit);
-    }
+    // 直接使用用户输入的内容，不使用建议
+    // 如果用户想使用建议，应该先按 Tab 键选择，然后再按 Enter 提交
+    const commandToSubmit = input.trim();
 
     if (commandToSubmit) {
       logger.debug('[DIAG] Submitting command:', commandToSubmit);

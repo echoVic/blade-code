@@ -7,6 +7,7 @@ import {
 } from '../../config/PermissionChecker.js';
 import type { PermissionConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
+import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
 import { isReadOnlyKind, ToolKind } from '../types/index.js';
@@ -14,6 +15,8 @@ import {
   SensitiveFileDetector,
   SensitivityLevel,
 } from '../validation/SensitiveFileDetector.js';
+
+const logger = createLogger(LogCategory.EXECUTION);
 
 /**
  * 工具发现阶段
@@ -323,11 +326,11 @@ export class ConfirmationStage implements PipelineStage {
         affectedFiles: invocation.getAffectedPaths() || [],
       };
 
-      console.warn(`工具 "${tool.name}" 需要用户确认: ${confirmationDetails.title}`);
-      console.warn(`详情: ${confirmationDetails.message}`);
+      logger.warn(`工具 "${tool.name}" 需要用户确认: ${confirmationDetails.title}`);
+      logger.warn(`详情: ${confirmationDetails.message}`);
 
       if (confirmationDetails.risks && confirmationDetails.risks.length > 0) {
-        console.warn(`风险: ${confirmationDetails.risks.join(', ')}`);
+        logger.warn(`风险: ${confirmationDetails.risks.join(', ')}`);
       }
 
       // 如果提供了 confirmationHandler,使用它来请求用户确认
@@ -358,7 +361,7 @@ export class ConfirmationStage implements PipelineStage {
         }
       } else {
         // 如果没有提供 confirmationHandler,则自动通过确认（用于非交互式环境）
-        console.warn('⚠️ 无 ConfirmationHandler,自动批准工具执行（仅用于非交互式环境）');
+        logger.warn('⚠️ 无 ConfirmationHandler,自动批准工具执行（仅用于非交互式环境）');
       }
     } catch (error) {
       execution.abort(`用户确认出错: ${(error as Error).message}`);
@@ -375,19 +378,16 @@ export class ConfirmationStage implements PipelineStage {
       // 使用 PermissionChecker.abstractPattern 生成模式规则（而非精确签名）
       const pattern = PermissionChecker.abstractPattern(descriptor);
 
-      console.debug(`[ConfirmationStage] 保存权限规则: "${pattern}"`);
+      logger.debug(`保存权限规则: "${pattern}"`);
       await configManager.appendLocalPermissionAllowRule(pattern);
 
       // 重要：重新加载配置，使新规则立即生效（避免重复确认）
       const updatedConfig = configManager.getPermissions();
-      console.debug(
-        `[ConfirmationStage] 同步权限配置到 PermissionChecker:`,
-        updatedConfig
-      );
+      logger.debug(`同步权限配置到 PermissionChecker:`, updatedConfig);
       this.permissionChecker.replaceConfig(updatedConfig);
     } catch (error) {
-      console.warn(
-        `[ConfirmationStage] 无法保存权限规则 "${signature}": ${
+      logger.warn(
+        `无法保存权限规则 "${signature}": ${
           error instanceof Error ? error.message : '未知错误'
         }`
       );

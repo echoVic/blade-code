@@ -180,6 +180,7 @@ export const INFORMATIVE_TIPS = [
   'Tab - 补全斜杠命令',
   '↑↓ - 浏览命令历史',
   '/config - 查看配置信息',
+  '/mcp - 查看 MCP 服务器状态',
 ];
 
 /**
