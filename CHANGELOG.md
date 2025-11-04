@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.13] - 2025-11-04
+
+### ✨ 新功能
+
+- 实现智能文件提及功能(@提及) (24d426f)
+
+### ♻️ 代码重构
+
+- 移除错误处理和遥测相关代码 (647ae4c)
+
+
 ## [0.0.12] - 2025-11-01
 
 ### ♻️ 代码重构
