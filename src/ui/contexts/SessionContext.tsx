@@ -46,6 +46,7 @@ export interface SessionState {
   messages: SessionMessage[];
   isThinking: boolean;
   input: string;
+  cursorPosition: number; // 光标位置（字符数）
   currentCommand: string | null;
   error: string | null;
   isActive: boolean;
@@ -57,6 +58,7 @@ export interface SessionState {
 export type SessionAction =
   | { type: 'ADD_MESSAGE'; payload: SessionMessage }
   | { type: 'SET_INPUT'; payload: string }
+  | { type: 'SET_CURSOR_POSITION'; payload: number }
   | { type: 'SET_THINKING'; payload: boolean }
   | { type: 'SET_COMMAND'; payload: string | null }
   | { type: 'SET_ERROR'; payload: string | null }
@@ -90,6 +92,7 @@ const initialState: SessionState = {
   messages: [],
   isThinking: false,
   input: '',
+  cursorPosition: 0,
   currentCommand: null,
   error: null,
   isActive: true,
@@ -106,7 +109,15 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       };
 
     case 'SET_INPUT':
-      return { ...state, input: action.payload };
+      return {
+        ...state,
+        input: action.payload,
+        // 输入改变时,光标默认移动到末尾
+        cursorPosition: action.payload.length,
+      };
+
+    case 'SET_CURSOR_POSITION':
+      return { ...state, cursorPosition: action.payload };
 
     case 'SET_THINKING':
       return { ...state, isThinking: action.payload };

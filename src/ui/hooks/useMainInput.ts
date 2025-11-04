@@ -6,6 +6,7 @@ import { getFuzzyCommandSuggestions } from '../../slash-commands/index.js';
 import type { CommandSuggestion } from '../../slash-commands/types.js';
 import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
 import { useSession } from '../contexts/SessionContext.js';
+import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
 import { useCtrlCHandler } from './useCtrlCHandler.js';
 
 // 创建 UI Hook 专用 Logger
@@ -32,7 +33,13 @@ export const useMainInput = (
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
-  const { dispatch } = useSession();
+  const { state: sessionState, dispatch } = useSession();
+
+  // @ 文件自动补全（使用真实光标位置）
+  const atCompletion = useAtCompletion(input, sessionState.cursorPosition, {
+    cwd: process.cwd(),
+    maxSuggestions: 10,
+  });
 
   // 使用智能 Ctrl+C 处理
   const handleCtrlC = useCtrlCHandler(isProcessing || false, onAbort);
@@ -41,18 +48,41 @@ export const useMainInput = (
   const lastEscTimeRef = useRef<number>(0);
   const ESC_DOUBLE_CLICK_THRESHOLD = 500; // 500ms 内连续两次 Esc 视为双击
 
-  // 更新建议列表
+  // 防止重复取消
+  const abortCalledRef = useRef<boolean>(false);
+
+  // 当 isProcessing 变化时，重置 abortCalledRef
+  useEffect(() => {
+    if (isProcessing) {
+      abortCalledRef.current = false;
+    }
+  }, [isProcessing]);
+
+  // 更新建议列表（支持斜杠命令和 @ 文件提及）
   useEffect(() => {
     if (input.startsWith('/')) {
+      // 斜杠命令建议
       const newSuggestions = getFuzzyCommandSuggestions(input);
       setSuggestions(newSuggestions);
       setShowSuggestions(newSuggestions.length > 0);
+      setSelectedSuggestionIndex(0);
+    } else if (atCompletion.hasQuery && atCompletion.suggestions.length > 0) {
+      // @ 文件建议（转换为 CommandSuggestion 格式）
+      const fileSuggestions: CommandSuggestion[] = atCompletion.suggestions.map(
+        (file) => ({
+          command: file,
+          description: `File: ${file}`,
+          matchScore: 1,
+        })
+      );
+      setSuggestions(fileSuggestions);
+      setShowSuggestions(true);
       setSelectedSuggestionIndex(0);
     } else {
       setShowSuggestions(false);
       setSuggestions([]);
     }
-  }, [input]);
+  }, [input, atCompletion.hasQuery, atCompletion.suggestions]);
 
   // 处理清屏
   const handleClear = useMemoizedFn(() => {
@@ -83,89 +113,126 @@ export const useMainInput = (
     }
   });
 
-  // 键盘输入监听 - 只处理特殊快捷键，让 TextInput 处理基本编辑
-  // 使用 isActive 配合 isFocused，只有在聚焦时才响应输入
+  // 键盘输入监听 - 只处理全局快捷键和建议导航
+  // CustomTextInput 处理基本编辑键 (backspace, delete, arrows, typing)
+  // useMainInput 处理全局快捷键 (Ctrl+C/L, Esc) 和建议 (Tab, 上下箭头)
   useInput(
     (inputKey, key) => {
-      // Ctrl+C - 智能处理（有任务时双击，无任务时单击）
-      if ((key.ctrl && inputKey === 'c') || (key.meta && inputKey === 'c')) {
-        handleCtrlC();
+      // 跳过基本编辑键和普通字符输入，交给 CustomTextInput 处理
+      const shouldSkip =
+        key.backspace || key.delete || key.leftArrow || key.rightArrow ||
+        key.pageUp || key.pageDown ||
+        // 跳过普通字符输入（没有任何修饰键，且不是特殊键）
+        (!key.ctrl && !key.meta && !key.escape && !key.tab && !key.upArrow && !key.downArrow && !key.return);
+
+      if (shouldSkip) {
+        return;
       }
-      // Ctrl+D - 智能退出
-      else if ((key.ctrl && inputKey === 'd') || (key.meta && inputKey === 'd')) {
+
+      // Ctrl+C / Ctrl+D - 停止任务或退出
+      if ((key.ctrl && inputKey === 'c') || (key.meta && inputKey === 'c') ||
+          (key.ctrl && inputKey === 'd') || (key.meta && inputKey === 'd')) {
         handleCtrlC();
+        return;
       }
-      // Ctrl+L 清屏
-      else if ((key.ctrl && inputKey === 'l') || (key.meta && inputKey === 'l')) {
+      // Ctrl+L - 清屏
+      if ((key.ctrl && inputKey === 'l') || (key.meta && inputKey === 'l')) {
         handleClear();
+        return;
       }
-      // Ctrl+U 清空输入（Unix 标准）
-      else if ((key.ctrl && inputKey === 'u') || (key.meta && inputKey === 'u')) {
-        setInput('');
-      }
-      // Esc 键 - 停止任务 > 退出建议模式 > 双击清空输入
-      else if (key.escape) {
+      // Esc - 停止任务 > 隐藏建议 > 双击清空输入
+      if (key.escape) {
         if (isProcessing && onAbort) {
-          // 第一优先级：如果正在处理任务，触发停止
+          if (abortCalledRef.current) {
+            return;
+          }
+          abortCalledRef.current = true;
           onAbort();
         } else if (showSuggestions) {
-          // 第二优先级：如果显示建议，隐藏建议
           setShowSuggestions(false);
           setSuggestions([]);
         } else if (input) {
-          // 第三优先级：如果有输入内容，检测双击清空
           const now = Date.now();
           const timeSinceLastEsc = now - lastEscTimeRef.current;
-
           if (timeSinceLastEsc < ESC_DOUBLE_CLICK_THRESHOLD) {
-            // 双击 Esc：清空输入
             setInput('');
-            lastEscTimeRef.current = 0; // 重置计时器
+            lastEscTimeRef.current = 0;
           } else {
-            // 单击 Esc：记录时间，等待第二次按下
             lastEscTimeRef.current = now;
           }
         }
+        return;
       }
-      // Shift+Tab 循环切换权限模式 (DEFAULT → AUTO_EDIT → PLAN → DEFAULT)
-      else if (key.tab && key.shift) {
+      // Shift+Tab - 切换权限模式
+      if (key.tab && key.shift) {
         onTogglePermissionMode?.();
+        return;
       }
-      // Tab 键 - 自动补全
-      else if (key.tab && showSuggestions && suggestions.length > 0) {
+      // Tab - 选中建议
+      if (key.tab && showSuggestions && suggestions.length > 0) {
         const selectedCommand = suggestions[selectedSuggestionIndex].command;
-        setInput(selectedCommand);
+        if (atCompletion.hasQuery && atCompletion.suggestions.includes(selectedCommand)) {
+          const { newInput, newCursorPos } = applySuggestion(input, atCompletion, selectedCommand);
+          setInput(newInput);
+          dispatch({ type: 'SET_CURSOR_POSITION', payload: newCursorPos });
+        } else {
+          const newInput = selectedCommand + ' ';
+          setInput(newInput);
+          dispatch({ type: 'SET_CURSOR_POSITION', payload: newInput.length });
+        }
         setShowSuggestions(false);
         setSuggestions([]);
+        return;
       }
-      // 上箭头 - 在建议中导航或历史命令
-      else if (key.upArrow) {
+      // Enter - 选中建议或提交命令
+      if (key.return) {
         if (showSuggestions && suggestions.length > 0) {
-          // 在建议列表中向上导航
+          const selectedCommand = suggestions[selectedSuggestionIndex].command;
+          if (atCompletion.hasQuery && atCompletion.suggestions.includes(selectedCommand)) {
+            const { newInput, newCursorPos } = applySuggestion(input, atCompletion, selectedCommand);
+            setInput(newInput);
+            dispatch({ type: 'SET_CURSOR_POSITION', payload: newCursorPos });
+          } else {
+            const newInput = selectedCommand + ' ';
+            setInput(newInput);
+            dispatch({ type: 'SET_CURSOR_POSITION', payload: newInput.length });
+          }
+          setShowSuggestions(false);
+          setSuggestions([]);
+        } else {
+          handleSubmit();
+        }
+        return;
+      }
+      // 上下箭头 - 建议导航或历史命令
+      if (key.upArrow) {
+        if (showSuggestions && suggestions.length > 0) {
           const maxIndex = suggestions.length - 1;
           setSelectedSuggestionIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
         } else {
-          // 上箭头 - 历史命令
           const prevCommand = onPreviousCommand();
           if (prevCommand !== '') {
             setInput(prevCommand);
+            dispatch({ type: 'SET_CURSOR_POSITION', payload: prevCommand.length });
           }
         }
+        return;
       }
-      // 下箭头 - 在建议中导航或历史命令
-      else if (key.downArrow) {
+      if (key.downArrow) {
         if (showSuggestions && suggestions.length > 0) {
-          // 在建议列表中向下导航
           const maxIndex = suggestions.length - 1;
           setSelectedSuggestionIndex((prev) => (prev < maxIndex ? prev + 1 : 0));
         } else {
-          // 下箭头 - 历史命令
           const nextCommand = onNextCommand();
-          setInput(nextCommand);
+          if (nextCommand !== '') {
+            setInput(nextCommand);
+            dispatch({ type: 'SET_CURSOR_POSITION', payload: nextCommand.length });
+          }
         }
+        return;
       }
     },
-    { isActive: isFocused }
+    { isActive: isFocused } // 当输入框聚焦时激活，但只处理上面列出的特定按键
   );
 
   return {

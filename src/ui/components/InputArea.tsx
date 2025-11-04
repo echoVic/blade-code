@@ -1,28 +1,107 @@
+import { useMemoizedFn } from 'ahooks';
 import { Box, Text } from 'ink';
-import TextInput from 'ink-text-input';
 import React from 'react';
 import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
+import { useSession } from '../contexts/SessionContext.js';
+import { saveImageToTemp } from '../utils/imageHandler.js';
+import { CustomTextInput } from './CustomTextInput.js';
 
 interface InputAreaProps {
   input: string;
   isProcessing: boolean;
   onChange: (value: string) => void;
-  onSubmit: (value: string) => void;
 }
 
 /**
  * 输入区域组件
- * 使用 TextInput 组件处理光标和基本编辑
+ * 使用 CustomTextInput 组件处理光标、编辑、粘贴和图片
  * 注意：加载动画已移至 LoadingIndicator 组件，显示在输入框上方
  */
 export const InputArea: React.FC<InputAreaProps> = React.memo(
-  ({ input, isProcessing, onChange, onSubmit }) => {
+  ({ input, isProcessing, onChange }) => {
     // 使用焦点上下文来控制是否聚焦
     const { state: focusState } = useFocusContext();
     const isFocused = focusState.currentFocus === FocusId.MAIN_INPUT;
 
+    // 使用会话上下文获取光标偏移量
+    const { state: sessionState, dispatch } = useSession();
+
     // 处理中时，禁用输入框（移除焦点和光标）
     const isEnabled = !isProcessing && isFocused;
+
+    // 文本粘贴回调 - 处理大段文本粘贴
+    const handlePaste = useMemoizedFn( (text: string): { prompt?: string } => {
+      const lineCount = text.split('\n').length;
+      const charCount = text.length;
+
+      // 根据文本大小决定是否显示摘要
+      const SUMMARY_THRESHOLD_CHARS = 500;
+      const SUMMARY_THRESHOLD_LINES = 10;
+
+      if (charCount > SUMMARY_THRESHOLD_CHARS || lineCount > SUMMARY_THRESHOLD_LINES) {
+        // 生成摘要：显示前 30 个字符 + 统计信息
+        const preview = text.slice(0, 30).replace(/\n/g, ' ');
+        const summary = `[Pasted: ${charCount} chars, ${lineCount} lines] ${preview}...`;
+        return { prompt: summary };
+      }
+
+      // 小文本直接插入，不做处理
+      return {};
+    });
+
+    // 图片粘贴回调 - 处理图片粘贴（路径或剪贴板）
+    const handleImagePaste = useMemoizedFn( async (
+      base64: string,
+      mediaType: string,
+      filename?: string,
+    ): Promise<{ prompt?: string }> => {
+      try {
+        // 保存图片到临时目录
+        const result = saveImageToTemp(base64, mediaType, filename);
+
+        // TODO: 未来需要实现图片处理逻辑
+        //
+        // 问题：当前的 @ 引用机制只支持文本文件
+        // AttachmentCollector.readFile() 会用 fs.readFile(path, 'utf-8')
+        // 读取图片会失败："Cannot read file as text. It may be a binary file."
+        //
+        // 解决方案（三选一）：
+        //
+        // 方案1：扩展 AttachmentCollector 支持图片
+        //   - 检测文件扩展名，如果是图片则读取为 base64
+        //   - 在 Message 中添加图片附件支持
+        //   - 修改 ChatService 将图片发送给 LLM
+        //   优点：符合 Blade 架构，图片作为附件发送
+        //   缺点：需要修改多个模块
+        //
+        // 方案2：直接将 base64 嵌入 prompt
+        //   - 返回 data URI 格式：`data:image/png;base64,${base64}`
+        //   - 但这会使 prompt 非常长，且不是所有 LLM 都支持
+        //   优点：简单直接
+        //   缺点：token 消耗大，兼容性问题
+        //
+        // 方案3：先上传到图床/对象存储，返回 URL
+        //   - 调用图床 API 上传图片
+        //   - 获取公网 URL
+        //   - 返回 URL 给 LLM
+        //   优点：不占用 prompt 空间
+        //   缺点：需要外部服务，有网络依赖
+        //
+        // 当前实现（临时方案）：
+        // 返回 @"文件路径"，但会失败，因为 @ 机制不支持二进制文件
+        // 这只是占位符，提醒用户图片已保存，需要手动处理
+
+        return {
+          prompt: `[Image saved to ${result.filePath}. Note: Image attachments not yet supported by @ mentions] `,
+        };
+      } catch (error) {
+        console.error(`[Image Paste] Failed to process image:`, error);
+        return {
+          prompt: `[Image paste failed: ${error instanceof Error ? error.message : 'Unknown error'}] `,
+        };
+      }
+    });
+
 
     return (
       <Box
@@ -35,13 +114,16 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
         <Text color="blue" bold>
           {'> '}
         </Text>
-        <TextInput
+        <CustomTextInput
           value={input}
           onChange={onChange}
-          onSubmit={onSubmit}
+          cursorPosition={sessionState.cursorPosition}
+          onChangeCursorPosition={(position) => dispatch({ type: 'SET_CURSOR_POSITION', payload: position })}
+          onPaste={handlePaste}
+          onImagePaste={handleImagePaste}
           placeholder=" 输入命令..."
-          showCursor={isEnabled}
           focus={isEnabled}
+          disabledKeys={['upArrow', 'downArrow', 'tab', 'return', 'escape']}
         />
       </Box>
     );

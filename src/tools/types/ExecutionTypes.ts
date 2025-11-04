@@ -46,7 +46,7 @@ export interface ExecutionContext {
   sessionId?: string;
   messageId?: string; // 对话消息 ID（用于快照管理）
   workspaceRoot?: string;
-  signal: AbortSignal;
+  signal?: AbortSignal;
   onProgress?: (message: string) => void;
   updateOutput?: (output: string) => void; // 别名，与 onProgress 功能相同
   confirmationHandler?: ConfirmationHandler; // 用于处理需要用户确认的工具调用
@@ -87,7 +87,7 @@ export class ToolExecution {
   ) {}
 
   shouldAbort(): boolean {
-    return this.aborted || this.context.signal.aborted;
+    return this.aborted || (this.context.signal?.aborted ?? false);
   }
 
   abort(reason?: string): void {

@@ -22,6 +22,7 @@
 #### 核心功能
 - [配置系统](public/configuration/config-system.md) ⭐ - 双文件配置系统
 - [权限控制](public/configuration/permissions.md) ⭐ - 三级权限管理
+- [@ 文件提及](public/guides/at-file-mentions.md) ⭐ - 智能文件引用功能
 - [工具列表](public/reference/tool-list.md) - 所有可用工具
 - [CLI 命令](public/reference/cli-commands.md) - 命令行参考
 

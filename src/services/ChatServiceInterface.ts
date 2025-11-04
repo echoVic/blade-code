@@ -68,7 +68,8 @@ export interface IChatService {
       description: string;
       // biome-ignore lint/suspicious/noExplicitAny: 工具参数格式不确定
       parameters: any;
-    }>
+    }>,
+    signal?: AbortSignal
   ): Promise<ChatResponse>;
 
   /**
@@ -81,7 +82,8 @@ export interface IChatService {
       description: string;
       // biome-ignore lint/suspicious/noExplicitAny: 工具参数格式不确定
       parameters: any;
-    }>
+    }>,
+    signal?: AbortSignal
   ): AsyncGenerator<StreamChunk, void, unknown>;
 }
 

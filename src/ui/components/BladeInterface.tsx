@@ -137,12 +137,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const {
     input,
     setInput,
-    handleSubmit,
     showSuggestions,
     suggestions,
     selectedSuggestionIndex,
   } = useMainInput(
-    (command: string) => executeCommand(command, addUserMessage, addAssistantMessage),
+    executeCommand,
     getPreviousCommand,
     getNextCommand,
     addToHistory,
@@ -318,7 +317,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
     (async () => {
       try {
-        await executeCommand(message, addUserMessage, addAssistantMessage);
+        await executeCommand(message);
       } catch (error) {
         const fallback = error instanceof Error ? error.message : '无法发送初始消息';
         addAssistantMessage(`❌ 初始消息发送失败：${fallback}`);
@@ -329,8 +328,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     readyForChat,
     requiresSetup,
     executeCommand,
-    addUserMessage,
-    addAssistantMessage,
     addToHistory,
   ]);
 
@@ -449,7 +446,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           <InputArea
             input={input}
             onChange={setInput}
-            onSubmit={handleSubmit}
             isProcessing={isProcessing || !readyForChat}
           />
 

@@ -58,7 +58,8 @@ export class OpenAIChatService implements IChatService {
       name: string;
       description: string;
       parameters: any;
-    }>
+    }>,
+    signal?: AbortSignal
   ): Promise<ChatResponse> {
     const startTime = Date.now();
     _logger.debug('🚀 [ChatService] Starting chat request');
@@ -125,7 +126,9 @@ export class OpenAIChatService implements IChatService {
     });
 
     try {
-      const completion = await this.client.chat.completions.create(requestParams);
+      const completion = await this.client.chat.completions.create(requestParams, {
+        signal,
+      });
       const requestDuration = Date.now() - startTime;
 
       _logger.debug('📥 [ChatService] Response received in', requestDuration, 'ms');
@@ -227,7 +230,8 @@ export class OpenAIChatService implements IChatService {
       description: string;
       // biome-ignore lint/suspicious/noExplicitAny: 工具参数格式不确定
       parameters: any;
-    }>
+    }>,
+    signal?: AbortSignal
   ): AsyncGenerator<StreamChunk, void, unknown> {
     const startTime = Date.now();
     _logger.debug('🚀 [ChatService] Starting chat stream request');
@@ -297,7 +301,9 @@ export class OpenAIChatService implements IChatService {
     });
 
     try {
-      const stream = await this.client.chat.completions.create(requestParams);
+      const stream = await this.client.chat.completions.create(requestParams, {
+        signal,
+      });
       const requestDuration = Date.now() - startTime;
       _logger.debug('📥 [ChatService] Stream started in', requestDuration, 'ms');
 

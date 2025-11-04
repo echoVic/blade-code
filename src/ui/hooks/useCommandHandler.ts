@@ -23,13 +23,6 @@ export interface CommandResult {
   metadata?: Record<string, unknown>;
 }
 
-export interface LoopState {
-  active: boolean;
-  turn: number;
-  maxTurns: number;
-  currentTool?: string;
-}
-
 /**
  * 格式化工具调用摘要（用于流式显示）
  */
@@ -123,21 +116,18 @@ export const useCommandHandler = (
   maxTurns?: number // --max-turns (最大对话轮次)
 ) => {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [loopState, setLoopState] = useState<LoopState>({
-    active: false,
-    turn: 0,
-    maxTurns: 50,
-    currentTool: undefined,
-  });
   const {
     dispatch,
     state: sessionState,
     restoreSession,
     addToolMessage,
+    addAssistantMessage,
+    addUserMessage,
   } = useSession();
   const { dispatch: appDispatch, actions: appActions, state: appState } = useAppState();
   const abortControllerRef = useRef<AbortController | undefined>(undefined);
   const agentRef = useRef<Agent | undefined>(undefined);
+  const abortMessageSentRef = useRef(false);
 
   // 清理函数
   useEffect(() => {
@@ -150,10 +140,44 @@ export const useCommandHandler = (
 
   // 停止任务
   const handleAbort = useMemoizedFn(() => {
-    if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
-      abortControllerRef.current.abort();
-      setLoopState({ active: false, turn: 0, maxTurns: 50, currentTool: undefined });
+    // 如果没有任务在执行，忽略
+    if (!isProcessing) {
+      return;
     }
+
+    // 乐观显示任务停止提示
+    if (!abortMessageSentRef.current) {
+      addAssistantMessage('✋ 任务已停止');
+      abortMessageSentRef.current = true;
+    }
+
+    // 防御性检查：确保 Controller 存在
+    if (!abortControllerRef.current) {
+      logger.error('[handleAbort] AbortController不存在，这不应该发生');
+      // 直接重置状态
+      setIsProcessing(false);
+      dispatch({ type: 'SET_THINKING', payload: false });
+      return;
+    }
+
+    // 发送 abort signal
+    if (!abortControllerRef.current.signal.aborted) {
+      abortControllerRef.current.abort();
+    }
+
+    // 清理 Agent 监听器
+    if (agentRef.current) {
+      agentRef.current.removeAllListeners();
+    }
+
+    // 立即重置状态，允许用户提交新命令
+    setIsProcessing(false);
+    dispatch({ type: 'SET_THINKING', payload: false });
+    appDispatch({ type: 'SET_TODOS', payload: [] });
+
+    // 注意：不要清理 abortControllerRef.current
+    // 因为 handleCommandSubmit 可能还在执行中，需要读取 signal
+    // 清理工作由 executeCommand 的 finally 块负责
   });
 
   // 创建并初始化 Agent（共享逻辑）
@@ -172,27 +196,6 @@ export const useCommandHandler = (
     agentRef.current = agent;
 
     // 设置事件监听器
-    agent.on(
-      'loopTurnStart',
-      ({ turn, maxTurns }: { turn: number; maxTurns: number }) => {
-        setLoopState({ active: true, turn, maxTurns, currentTool: undefined });
-      }
-    );
-    agent.on('toolExecutionStart', ({ tool }: { tool: string }) => {
-      setLoopState((prev) => ({ ...prev, currentTool: tool }));
-    });
-    agent.on('toolExecutionComplete', () => {
-      setLoopState((prev) => ({ ...prev, currentTool: undefined }));
-    });
-    agent.on('taskCompleted', () => {
-      setLoopState({ active: false, turn: 0, maxTurns: 50, currentTool: undefined });
-    });
-    agent.on('taskFailed', () => {
-      setLoopState({ active: false, turn: 0, maxTurns: 50, currentTool: undefined });
-    });
-    agent.on('taskAborted', () => {
-      setLoopState({ active: false, turn: 0, maxTurns: 50, currentTool: undefined });
-    });
     agent.on('todoUpdate', ({ todos }: { todos: TodoItem[] }) => {
       appDispatch(appActions.setTodos(todos));
       appDispatch(appActions.showTodoPanel());
@@ -203,11 +206,7 @@ export const useCommandHandler = (
 
   // 处理命令提交
   const handleCommandSubmit = useMemoizedFn(
-    async (
-      command: string,
-      addUserMessage: (message: string) => void,
-      addAssistantMessage: (message: string) => void
-    ): Promise<CommandResult> => {
+    async (command: string): Promise<CommandResult> => {
       try {
         addUserMessage(command);
 
@@ -265,16 +264,13 @@ export const useCommandHandler = (
           ) {
             const { analysisPrompt } = slashResult.data;
 
-            logger.debug(
-              '[DEBUG] 触发 AI 分析，提示:',
-              analysisPrompt.substring(0, 100) + '...'
-            );
-
             // 创建并设置 Agent
             const agent = await createAndSetupAgent();
 
-            // 创建新的 AbortController
-            abortControllerRef.current = new AbortController();
+            // 确保 AbortController 存在（应该在 executeCommand 中已创建）
+            if (!abortControllerRef.current) {
+              throw new Error('[handleCommandSubmit] AbortController should exist at this point');
+            }
 
             const chatContext = {
               messages: sessionState.messages.map((msg) => ({
@@ -290,8 +286,8 @@ export const useCommandHandler = (
             };
 
             const loopOptions = {
-              // 🆕 LLM 意图说明
-              onThinking: (content: string) => {
+              // 🆕 LLM 输出内容
+              onContent: (content: string) => {
                 if (content.trim()) {
                   addAssistantMessage(content);
                 }
@@ -347,7 +343,10 @@ export const useCommandHandler = (
 
               // 如果返回空字符串，可能是用户中止
               if (!aiOutput || aiOutput.trim() === '') {
-                addAssistantMessage('✋ 任务已停止');
+                if (!abortMessageSentRef.current) {
+                  addAssistantMessage('✋ 任务已停止');
+                  abortMessageSentRef.current = true;
+                }
                 return {
                   success: true,
                   output: '任务已停止',
@@ -384,8 +383,10 @@ export const useCommandHandler = (
         // 创建并设置 Agent
         const agent = await createAndSetupAgent();
 
-        // 创建新的 AbortController
-        abortControllerRef.current = new AbortController();
+        // 确保 AbortController 存在（应该在 executeCommand 中已创建）
+        if (!abortControllerRef.current) {
+          throw new Error('[handleCommandSubmit] AbortController should exist at this point');
+        }
 
         const chatContext = {
           messages: sessionState.messages.map((msg) => ({
@@ -401,8 +402,8 @@ export const useCommandHandler = (
         };
 
         const loopOptions = {
-          // 🆕 LLM 意图说明
-          onThinking: (content: string) => {
+          // 🆕 LLM 输出内容
+          onContent: (content: string) => {
             if (content.trim()) {
               addAssistantMessage(content);
             }
@@ -453,7 +454,10 @@ export const useCommandHandler = (
 
         // 如果返回空字符串，可能是用户中止
         if (!output || output.trim() === '') {
-          addAssistantMessage('✋ 任务已停止');
+          if (!abortMessageSentRef.current) {
+            addAssistantMessage('✋ 任务已停止');
+            abortMessageSentRef.current = true;
+          }
           return {
             success: true,
             output: '任务已停止',
@@ -464,7 +468,6 @@ export const useCommandHandler = (
 
         return { success: true, output };
       } catch (error) {
-        logger.debug('[ERROR] handleCommandSubmit 异常:', error);
         const errorMessage = error instanceof Error ? error.message : '未知错误';
         const errorResult = { success: false, error: errorMessage };
         addAssistantMessage(`❌ ${errorMessage}`);
@@ -475,91 +478,54 @@ export const useCommandHandler = (
 
   // 处理提交
   const executeCommand = useMemoizedFn(
-    async (
-      command: string,
-      addUserMessage: (message: string) => void,
-      addAssistantMessage: (message: string) => void
-    ) => {
-      logger.debug(
-        '[DEBUG] executeCommand 被调用，输入:',
-        command,
-        '处理中:',
-        isProcessing
-      );
-
-      logger.debug('[DIAG] executeCommand called:', {
-        command: command.substring(0, 50) + (command.length > 50 ? '...' : ''),
-        isProcessing,
-        isEmpty: !command.trim(),
-      });
-
+    async (command: string) => {
       if (!command.trim()) {
-        logger.debug('[DIAG] Command blocked: empty command');
         return;
       }
 
       if (isProcessing) {
-        logger.debug('[DIAG] Command blocked: isProcessing=true (another command is running)');
         return;
       }
 
       if (command.trim() && !isProcessing) {
         const trimmedCommand = command.trim();
 
-        logger.debug('[DIAG] Command accepted, starting execution');
-
         // 清空上一轮对话的 todos
         appDispatch({ type: 'SET_TODOS', payload: [] });
+
+        // 重置中止提示标记，准备新的执行循环
+        abortMessageSentRef.current = false;
+
+        // 立即创建 AbortController（在 setIsProcessing 之前）
+        abortControllerRef.current = new AbortController();
 
         setIsProcessing(true);
         dispatch({ type: 'SET_THINKING', payload: true });
 
-        logger.debug('[DIAG] States set: isProcessing=true, isThinking=true');
-
         try {
-          logger.debug('[DIAG] Calling handleCommandSubmit');
-          const result = await handleCommandSubmit(
-            trimmedCommand,
-            addUserMessage,
-            addAssistantMessage
-          );
-
-          logger.debug('[DIAG] handleCommandSubmit completed:', {
-            success: result.success,
-            hasError: !!result.error,
-          });
+          const result = await handleCommandSubmit(trimmedCommand);
 
           if (!result.success && result.error) {
             dispatch({ type: 'SET_ERROR', payload: result.error });
           }
         } catch (error) {
-          logger.debug('[ERROR] executeCommand 异常:', error);
-          const errorMessage = error instanceof Error ? error.message : '未知错误';
-          dispatch({ type: 'SET_ERROR', payload: `执行失败: ${errorMessage}` });
+          // 检查是否是用户主动中止（AbortError）
+          if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted'))) {
+            if (!abortMessageSentRef.current) {
+              addAssistantMessage('✋ 任务已停止');
+              abortMessageSentRef.current = true;
+            }
+          } else {
+            const errorMessage = error instanceof Error ? error.message : '未知错误';
+            dispatch({ type: 'SET_ERROR', payload: `执行失败: ${errorMessage}` });
+          }
         } finally {
-          // 为每个状态重置添加独立的错误处理，防止某一个失败导致其他状态无法重置
-          try {
-            setIsProcessing(false);
-          } catch (e) {
-            console.error('[CRITICAL] Failed to reset isProcessing:', e);
-          }
+          // 清理 AbortController
+          abortControllerRef.current = undefined;
 
-          try {
-            setLoopState({
-              active: false,
-              turn: 0,
-              maxTurns: 50,
-              currentTool: undefined,
-            });
-          } catch (e) {
-            console.error('[CRITICAL] Failed to reset loopState:', e);
-          }
-
-          try {
-            dispatch({ type: 'SET_THINKING', payload: false });
-          } catch (e) {
-            console.error('[CRITICAL] Failed to reset isThinking:', e);
-          }
+          // 重置状态
+          setIsProcessing(false);
+          dispatch({ type: 'SET_THINKING', payload: false });
         }
       }
     }
@@ -568,7 +534,6 @@ export const useCommandHandler = (
   return {
     isProcessing,
     executeCommand,
-    loopState,
     handleAbort,
   };
 };
