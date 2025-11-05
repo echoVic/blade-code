@@ -1,3 +1,4 @@
+import { SessionMetadata } from '@/services/SessionService.js';
 import React, {
   createContext,
   ReactNode,
@@ -17,18 +18,23 @@ export type InitializationStatus =
   | 'needsSetup'
   | 'error';
 
+// 模态框类型
+export type ActiveModal =
+  | 'none'
+  | 'themeSelector'
+  | 'permissionsManager'
+  | 'sessionSelector'
+  | 'todoPanel'
+  | 'shortcuts';
+
 // 应用状态类型定义
 export interface AppState {
   config: RuntimeConfig | null; // 运行时配置（包含 CLI 参数）
   initializationStatus: InitializationStatus; // 初始化状态
   initializationError: string | null; // 初始化错误信息
-  showThemeSelector: boolean; // 主题选择器显示状态
-  showPermissionsManager: boolean; // 权限管理器显示状态
-  showSessionSelector: boolean; // 会话选择器显示状态
-  sessionSelectorData: unknown[] | null; // 会话选择器数据
+  activeModal: ActiveModal; // 当前活跃的模态框
+  sessionSelectorData: SessionMetadata[] | undefined; // 会话选择器数据
   todos: TodoItem[]; // 任务列表
-  showTodoPanel: boolean; // Todo 面板显示状态
-  permissionMode: PermissionMode; // 权限模式
 }
 
 // Action类型
@@ -36,31 +42,20 @@ type AppAction =
   | { type: 'SET_CONFIG'; payload: RuntimeConfig }
   | { type: 'SET_INITIALIZATION_STATUS'; payload: InitializationStatus }
   | { type: 'SET_INITIALIZATION_ERROR'; payload: string | null }
-  | { type: 'SHOW_THEME_SELECTOR' }
-  | { type: 'HIDE_THEME_SELECTOR' }
-  | { type: 'SHOW_PERMISSIONS_MANAGER' }
-  | { type: 'HIDE_PERMISSIONS_MANAGER' }
-  | { type: 'SHOW_SESSION_SELECTOR'; payload?: unknown[] }
-  | { type: 'HIDE_SESSION_SELECTOR' }
+  | { type: 'SET_ACTIVE_MODAL'; payload: ActiveModal }
+  | { type: 'SHOW_SESSION_SELECTOR'; payload?: SessionMetadata[] }
+  | { type: 'CLOSE_MODAL' }
   | { type: 'SET_TODOS'; payload: TodoItem[] }
-  | { type: 'UPDATE_TODO'; payload: TodoItem }
-  | { type: 'SHOW_TODO_PANEL' }
-  | { type: 'HIDE_TODO_PANEL' }
-  | { type: 'TOGGLE_TODO_PANEL' }
-  | { type: 'SET_PERMISSION_MODE'; payload: PermissionMode };
+  | { type: 'UPDATE_TODO'; payload: TodoItem };
 
 // 默认状态
 const defaultState: AppState = {
   config: null,
   initializationStatus: 'idle',
   initializationError: null,
-  showThemeSelector: false,
-  showPermissionsManager: false,
-  showSessionSelector: false,
-  sessionSelectorData: null,
+  activeModal: 'none',
+  sessionSelectorData: undefined,
   todos: [],
-  showTodoPanel: true,
-  permissionMode: PermissionMode.DEFAULT,
 };
 
 // 状态reducer
@@ -75,30 +70,21 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'SET_INITIALIZATION_ERROR':
       return { ...state, initializationError: action.payload };
 
-    case 'SHOW_THEME_SELECTOR':
-      return { ...state, showThemeSelector: true };
-
-    case 'HIDE_THEME_SELECTOR':
-      return { ...state, showThemeSelector: false };
-
-    case 'SHOW_PERMISSIONS_MANAGER':
-      return { ...state, showPermissionsManager: true };
-
-    case 'HIDE_PERMISSIONS_MANAGER':
-      return { ...state, showPermissionsManager: false };
+    case 'SET_ACTIVE_MODAL':
+      return { ...state, activeModal: action.payload };
 
     case 'SHOW_SESSION_SELECTOR':
       return {
         ...state,
-        showSessionSelector: true,
-        sessionSelectorData: action.payload || null,
+        activeModal: 'sessionSelector',
+        sessionSelectorData: action.payload || undefined,
       };
 
-    case 'HIDE_SESSION_SELECTOR':
+    case 'CLOSE_MODAL':
       return {
         ...state,
-        showSessionSelector: false,
-        sessionSelectorData: null,
+        activeModal: 'none',
+        sessionSelectorData: undefined,
       };
 
     case 'SET_TODOS':
@@ -111,18 +97,6 @@ function appReducer(state: AppState, action: AppAction): AppState {
           todo.id === action.payload.id ? action.payload : todo
         ),
       };
-
-    case 'SHOW_TODO_PANEL':
-      return { ...state, showTodoPanel: true };
-
-    case 'HIDE_TODO_PANEL':
-      return { ...state, showTodoPanel: false };
-
-    case 'TOGGLE_TODO_PANEL':
-      return { ...state, showTodoPanel: !state.showTodoPanel };
-
-    case 'SET_PERMISSION_MODE':
-      return { ...state, permissionMode: action.payload };
 
     default:
       return state;
@@ -153,29 +127,33 @@ export const AppActions = {
     payload: error,
   }),
 
-  showThemeSelector: () => ({
-    type: 'SHOW_THEME_SELECTOR' as const,
+  setActiveModal: (modal: ActiveModal) => ({
+    type: 'SET_ACTIVE_MODAL' as const,
+    payload: modal,
   }),
 
-  hideThemeSelector: () => ({
-    type: 'HIDE_THEME_SELECTOR' as const,
+  showThemeSelector: () => ({
+    type: 'SET_ACTIVE_MODAL' as const,
+    payload: 'themeSelector' as ActiveModal,
   }),
 
   showPermissionsManager: () => ({
-    type: 'SHOW_PERMISSIONS_MANAGER' as const,
+    type: 'SET_ACTIVE_MODAL' as const,
+    payload: 'permissionsManager' as ActiveModal,
   }),
 
-  hidePermissionsManager: () => ({
-    type: 'HIDE_PERMISSIONS_MANAGER' as const,
-  }),
-
-  showSessionSelector: (sessions?: unknown[]) => ({
+  showSessionSelector: (sessions?: SessionMetadata[]) => ({
     type: 'SHOW_SESSION_SELECTOR' as const,
     payload: sessions,
   }),
 
-  hideSessionSelector: () => ({
-    type: 'HIDE_SESSION_SELECTOR' as const,
+  showShortcuts: () => ({
+    type: 'SET_ACTIVE_MODAL' as const,
+    payload: 'shortcuts' as ActiveModal,
+  }),
+
+  closeModal: () => ({
+    type: 'CLOSE_MODAL' as const,
   }),
 
   setTodos: (todos: TodoItem[]) => ({
@@ -186,23 +164,6 @@ export const AppActions = {
   updateTodo: (todo: TodoItem) => ({
     type: 'UPDATE_TODO' as const,
     payload: todo,
-  }),
-
-  showTodoPanel: () => ({
-    type: 'SHOW_TODO_PANEL' as const,
-  }),
-
-  hideTodoPanel: () => ({
-    type: 'HIDE_TODO_PANEL' as const,
-  }),
-
-  toggleTodoPanel: () => ({
-    type: 'TOGGLE_TODO_PANEL' as const,
-  }),
-
-  setPermissionMode: (mode: PermissionMode) => ({
-    type: 'SET_PERMISSION_MODE' as const,
-    payload: mode,
   }),
 };
 
@@ -216,7 +177,6 @@ export const AppProvider: React.FC<{
   const [state, dispatch] = useReducer(appReducer, {
     ...defaultState,
     config: initialConfig || null,
-    permissionMode: initialConfig?.permissionMode || defaultState.permissionMode,
   });
 
   const actions = AppActions;
@@ -273,9 +233,17 @@ export const useTodos = () => {
   const { state, actions } = useAppState();
   return {
     todos: state.todos,
-    showTodoPanel: state.showTodoPanel,
+    showTodoPanel: state.todos.length > 0,
     setTodos: actions.setTodos,
     updateTodo: actions.updateTodo,
-    toggleTodoPanel: actions.toggleTodoPanel,
   };
+};
+
+/**
+ * 权限模式选择器 Hook
+ * 从 RuntimeConfig 中读取 permissionMode，避免状态重复
+ */
+export const usePermissionMode = () => {
+  const { state } = useAppState();
+  return state.config?.permissionMode || PermissionMode.DEFAULT;
 };

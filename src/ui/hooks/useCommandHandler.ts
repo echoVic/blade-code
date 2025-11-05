@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Agent } from '../../agent/Agent.js';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import type { SessionMetadata } from '../../services/SessionService.js';
 import {
   executeSlashCommand,
   isSlashCommand,
@@ -10,7 +11,7 @@ import {
 } from '../../slash-commands/index.js';
 import type { TodoItem } from '../../tools/builtin/todo/types.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
-import { useAppState } from '../contexts/AppContext.js';
+import { useAppState, usePermissionMode } from '../contexts/AppContext.js';
 import { useSession } from '../contexts/SessionContext.js';
 
 // 创建 UI Hook 专用 Logger
@@ -124,7 +125,8 @@ export const useCommandHandler = (
     addAssistantMessage,
     addUserMessage,
   } = useSession();
-  const { dispatch: appDispatch, actions: appActions, state: appState } = useAppState();
+  const { dispatch: appDispatch, actions: appActions } = useAppState();
+  const permissionMode = usePermissionMode();
   const abortControllerRef = useRef<AbortController | undefined>(undefined);
   const agentRef = useRef<Agent | undefined>(undefined);
   const abortMessageSentRef = useRef(false);
@@ -145,7 +147,7 @@ export const useCommandHandler = (
       return;
     }
 
-    // 乐观显示任务停止提示
+    // 乐观更新：立即显示"任务已停止"消息（防止重复）
     if (!abortMessageSentRef.current) {
       addAssistantMessage('✋ 任务已停止');
       abortMessageSentRef.current = true;
@@ -198,7 +200,6 @@ export const useCommandHandler = (
     // 设置事件监听器
     agent.on('todoUpdate', ({ todos }: { todos: TodoItem[] }) => {
       appDispatch(appActions.setTodos(todos));
-      appDispatch(appActions.showTodoPanel());
     });
 
     return agent;
@@ -241,7 +242,9 @@ export const useCommandHandler = (
           // 检查是否需要显示会话选择器
           if (slashResult.message === 'show_session_selector') {
             // 传递会话数据到 AppContext
-            const sessions = slashResult.data?.sessions as unknown[] | undefined;
+            const sessions = slashResult.data?.sessions as
+              | SessionMetadata[]
+              | undefined;
             appDispatch(appActions.showSessionSelector(sessions));
             return { success: true };
           }
@@ -269,7 +272,9 @@ export const useCommandHandler = (
 
             // 确保 AbortController 存在（应该在 executeCommand 中已创建）
             if (!abortControllerRef.current) {
-              throw new Error('[handleCommandSubmit] AbortController should exist at this point');
+              throw new Error(
+                '[handleCommandSubmit] AbortController should exist at this point'
+              );
             }
 
             const chatContext = {
@@ -282,7 +287,7 @@ export const useCommandHandler = (
               workspaceRoot: process.cwd(),
               signal: abortControllerRef.current.signal,
               confirmationHandler,
-              permissionMode: appState.permissionMode,
+              permissionMode: permissionMode,
             };
 
             const loopOptions = {
@@ -342,11 +347,8 @@ export const useCommandHandler = (
               );
 
               // 如果返回空字符串，可能是用户中止
+              // 注意：handleAbort 已经乐观显示了"任务已停止"消息
               if (!aiOutput || aiOutput.trim() === '') {
-                if (!abortMessageSentRef.current) {
-                  addAssistantMessage('✋ 任务已停止');
-                  abortMessageSentRef.current = true;
-                }
                 return {
                   success: true,
                   output: '任务已停止',
@@ -385,7 +387,9 @@ export const useCommandHandler = (
 
         // 确保 AbortController 存在（应该在 executeCommand 中已创建）
         if (!abortControllerRef.current) {
-          throw new Error('[handleCommandSubmit] AbortController should exist at this point');
+          throw new Error(
+            '[handleCommandSubmit] AbortController should exist at this point'
+          );
         }
 
         const chatContext = {
@@ -398,7 +402,7 @@ export const useCommandHandler = (
           workspaceRoot: process.cwd(),
           signal: abortControllerRef.current.signal,
           confirmationHandler,
-          permissionMode: appState.permissionMode,
+          permissionMode: permissionMode,
         };
 
         const loopOptions = {
@@ -453,11 +457,8 @@ export const useCommandHandler = (
         const output = await agent.chat(command, chatContext, loopOptions);
 
         // 如果返回空字符串，可能是用户中止
+        // 注意：handleAbort 已经乐观显示了"任务已停止"消息
         if (!output || output.trim() === '') {
-          if (!abortMessageSentRef.current) {
-            addAssistantMessage('✋ 任务已停止');
-            abortMessageSentRef.current = true;
-          }
           return {
             success: true,
             output: '任务已停止',
@@ -477,62 +478,63 @@ export const useCommandHandler = (
   );
 
   // 处理提交
-  const executeCommand = useMemoizedFn(
-    async (command: string) => {
-      if (!command.trim()) {
-        return;
-      }
+  const executeCommand = useMemoizedFn(async (command: string) => {
+    if (!command.trim()) {
+      return;
+    }
 
-      if (isProcessing) {
-        return;
-      }
+    if (isProcessing) {
+      return;
+    }
 
-      if (command.trim() && !isProcessing) {
-        const trimmedCommand = command.trim();
+    if (command.trim() && !isProcessing) {
+      const trimmedCommand = command.trim();
 
-        // 清空上一轮对话的 todos
-        appDispatch({ type: 'SET_TODOS', payload: [] });
+      // 清空上一轮对话的 todos
+      appDispatch({ type: 'SET_TODOS', payload: [] });
 
-        // 重置中止提示标记，准备新的执行循环
-        abortMessageSentRef.current = false;
+      // 重置中止提示标记，准备新的执行循环
+      abortMessageSentRef.current = false;
 
-        // 立即创建 AbortController（在 setIsProcessing 之前）
-        abortControllerRef.current = new AbortController();
+      // 立即创建 AbortController（在 setIsProcessing 之前）
+      const taskController = new AbortController();
+      abortControllerRef.current = taskController;
 
-        setIsProcessing(true);
-        dispatch({ type: 'SET_THINKING', payload: true });
+      setIsProcessing(true);
+      dispatch({ type: 'SET_THINKING', payload: true });
 
-        try {
-          const result = await handleCommandSubmit(trimmedCommand);
+      try {
+        const result = await handleCommandSubmit(trimmedCommand);
 
-          if (!result.success && result.error) {
-            dispatch({ type: 'SET_ERROR', payload: result.error });
-          }
-        } catch (error) {
-          // 检查是否是用户主动中止（AbortError）
-          if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted'))) {
-            if (!abortMessageSentRef.current) {
-              addAssistantMessage('✋ 任务已停止');
-              abortMessageSentRef.current = true;
-            }
-          } else {
-            const errorMessage = error instanceof Error ? error.message : '未知错误';
-            dispatch({ type: 'SET_ERROR', payload: `执行失败: ${errorMessage}` });
-          }
-        } finally {
-          // 清理 AbortController
+        if (!result.success && result.error) {
+          dispatch({ type: 'SET_ERROR', payload: result.error });
+        }
+      } catch (error) {
+        // handleAbort 已经乐观显示了"任务已停止"消息
+        if (
+          error instanceof Error &&
+          (error.name === 'AbortError' || error.message.includes('aborted'))
+        ) {
+          // AbortError 静默处理，不显示错误
+        } else {
+          const errorMessage = error instanceof Error ? error.message : '未知错误';
+          dispatch({ type: 'SET_ERROR', payload: `执行失败: ${errorMessage}` });
+        }
+      } finally {
+        // 只清理自己的 AbortController（防止清理新任务的）
+        if (abortControllerRef.current === taskController) {
           abortControllerRef.current = undefined;
 
-          // 重置状态
+          // 重置状态（只有当前任务才重置）
           setIsProcessing(false);
           dispatch({ type: 'SET_THINKING', payload: false });
         }
+        // 如果 abortControllerRef 已经被新任务覆盖，旧任务静默退出
       }
     }
-  );
+  });
 
   return {
-    isProcessing,
     executeCommand,
     handleAbort,
   };

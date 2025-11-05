@@ -171,7 +171,7 @@ export const ThemeSelector: React.FC = () => {
       // 主题切换效果是立即可见的，无需额外通知
 
       // 关闭选择器
-      dispatch(actions.hideThemeSelector());
+      dispatch(actions.closeModal());
     } catch (error) {
       // 输出错误到控制台
       console.error('❌ 主题切换失败:', error instanceof Error ? error.message : error);
@@ -206,7 +206,7 @@ export const ThemeSelector: React.FC = () => {
 
       // Esc: 关闭主题选择器
       if (key.escape && !isProcessing) {
-        dispatch(actions.hideThemeSelector());
+        dispatch(actions.closeModal());
       }
     },
     { isActive: isFocused }

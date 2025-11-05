@@ -23,7 +23,9 @@ export const useMainInput = (
   onAddToHistory: (command: string) => void,
   onAbort?: () => void,
   isProcessing?: boolean,
-  onTogglePermissionMode?: () => void
+  onTogglePermissionMode?: () => void,
+  onToggleShortcuts?: () => void,
+  isShortcutsModalOpen?: boolean
 ) => {
   // 使用 FocusContext 管理焦点
   const { state: focusState } = useFocusContext();
@@ -118,12 +120,24 @@ export const useMainInput = (
   // useMainInput 处理全局快捷键 (Ctrl+C/L, Esc) 和建议 (Tab, 上下箭头)
   useInput(
     (inputKey, key) => {
+      // ? - 切换快捷键帮助（仅当输入框为空时）
+      // 必须在 shouldSkip 之前检查，否则会被当作普通字符处理
+      if (inputKey === '?' && !input) {
+        onToggleShortcuts?.();
+        // 防止 ? 被添加到输入框（通过延迟清空）
+        setTimeout(() => setInput(''), 0);
+        return;
+      }
+
       // 跳过基本编辑键和普通字符输入，交给 CustomTextInput 处理
+      // 但是 ? 键（当输入框为空时）要保留，用于切换快捷键帮助
       const shouldSkip =
         key.backspace || key.delete || key.leftArrow || key.rightArrow ||
         key.pageUp || key.pageDown ||
         // 跳过普通字符输入（没有任何修饰键，且不是特殊键）
-        (!key.ctrl && !key.meta && !key.escape && !key.tab && !key.upArrow && !key.downArrow && !key.return);
+        // 但是排除空输入框时的 ? 键
+        ((!key.ctrl && !key.meta && !key.escape && !key.tab && !key.upArrow && !key.downArrow && !key.return) &&
+         !(inputKey === '?' && !input));
 
       if (shouldSkip) {
         return;
@@ -140,9 +154,12 @@ export const useMainInput = (
         handleClear();
         return;
       }
-      // Esc - 停止任务 > 隐藏建议 > 双击清空输入
+      // Esc - 关闭快捷键帮助 > 停止任务 > 隐藏建议 > 双击清空输入
       if (key.escape) {
-        if (isProcessing && onAbort) {
+        if (isShortcutsModalOpen) {
+          // 如果快捷键帮助面板打开，先关闭它
+          onToggleShortcuts?.();
+        } else if (isProcessing && onAbort) {
           if (abortCalledRef.current) {
             return;
           }

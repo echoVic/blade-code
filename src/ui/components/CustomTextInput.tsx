@@ -214,7 +214,9 @@ export function CustomTextInput({
     const isDisabledKey = disabledKeys.some((disabledKey) => key[disabledKey]);
 
     // 跳过被禁用的按键和 Ctrl+C（由外部处理）
-    if (isDisabledKey || (key.ctrl && input === 'c') || (key.shift && key.tab)) {
+    // 空输入时的 ? 键也跳过（用于切换快捷键帮助）
+    if (isDisabledKey || (key.ctrl && input === 'c') || (key.shift && key.tab) ||
+        (input === '?' && originalValue === '')) {
       return;
     }
 

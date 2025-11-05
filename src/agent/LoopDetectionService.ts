@@ -4,8 +4,7 @@
 
 import { createHash } from 'crypto';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
-import type { IChatService } from '../services/ChatServiceInterface.js';
-import type { Message } from '../services/OpenAIChatService.js';
+import type { IChatService, Message } from '../services/ChatServiceInterface.js';
 
 export interface LoopDetectionConfig {
   toolCallThreshold: number; // 工具调用重复次数阈值 (默认5)
