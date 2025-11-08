@@ -4,8 +4,8 @@
  */
 
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
-import type { BladeConfig } from '../config/types.js';
-import { LogCategory, createLogger } from '../logging/Logger.js';
+import type { ProviderType } from '../config/types.js';
+import { createLogger, LogCategory } from '../logging/Logger.js';
 import { OpenAIChatService } from './OpenAIChatService.js';
 
 const logger = createLogger(LogCategory.SERVICE);
@@ -22,13 +22,18 @@ export type Message = {
 };
 
 /**
- * ChatConfig - 从 BladeConfig 派生的聊天配置
- * 使用 Pick 直接选择所需字段，保持类型一致性
+ * ChatConfig - 聊天服务所需的配置
+ * 注意：这些字段现在从 ModelConfig 中获取，而非直接从 BladeConfig
  */
-export type ChatConfig = Pick<
-  BladeConfig,
-  'apiKey' | 'model' | 'baseUrl' | 'temperature' | 'maxTokens' | 'timeout' | 'provider'
->;
+export interface ChatConfig {
+  provider: ProviderType;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  temperature?: number;
+  maxTokens?: number;
+  timeout?: number;
+}
 
 /**
  * 聊天响应
@@ -85,6 +90,16 @@ export interface IChatService {
     }>,
     signal?: AbortSignal
   ): AsyncGenerator<StreamChunk, void, unknown>;
+
+  /**
+   * 获取当前配置
+   */
+  getConfig(): ChatConfig;
+
+  /**
+   * 更新配置
+   */
+  updateConfig(newConfig: Partial<ChatConfig>): void;
 }
 
 /**

@@ -38,18 +38,34 @@ export enum PermissionMode {
   PLAN = 'plan',
 }
 
+/**
+ * 单个模型配置
+ */
+export interface ModelConfig {
+  id: string; // nanoid 自动生成
+  name: string; // 显示名称
+  provider: ProviderType;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+
+  // 可选：模型特定参数
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  topK?: number;
+}
+
 export interface BladeConfig {
   // =====================================
   // 基础配置 (来自 config.json - 扁平化)
   // =====================================
 
-  // 认证
-  provider: ProviderType;
-  apiKey: string;
-  baseUrl: string;
+  // 多模型配置
+  currentModelId: string; // 当前激活的模型 ID
+  models: ModelConfig[]; // 所有模型配置
 
-  // 模型
-  model: string;
+  // 全局默认参数
   temperature: number;
   maxTokens: number;
   stream: boolean;
@@ -204,8 +220,12 @@ export interface McpProjectsConfig {
 /**
  * SetupWizard 保存的配置字段
  * （API 连接相关的核心配置）
+ * 注意：这是用于创建第一个模型配置的数据
  */
-export type SetupConfig = Pick<
-  BladeConfig,
-  'provider' | 'baseUrl' | 'apiKey' | 'model'
->;
+export interface SetupConfig {
+  name: string;        // 模型配置名称
+  provider: ProviderType;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}

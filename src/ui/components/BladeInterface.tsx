@@ -14,6 +14,7 @@ import { useSession } from '../contexts/SessionContext.js';
 import { useCommandHandler } from '../hooks/useCommandHandler.js';
 import { useCommandHistory } from '../hooks/useCommandHistory.js';
 import { useConfirmation } from '../hooks/useConfirmation.js';
+import { useInputBuffer } from '../hooks/useInputBuffer.js';
 import { useMainInput } from '../hooks/useMainInput.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
 import { CommandSuggestions } from './CommandSuggestions.js';
@@ -21,9 +22,10 @@ import { ConfirmationPrompt } from './ConfirmationPrompt.js';
 import { InputArea } from './InputArea.js';
 import { LoadingIndicator } from './LoadingIndicator.js';
 import { MessageArea } from './MessageArea.js';
+import { ModelConfigWizard } from './ModelConfigWizard.js';
+import { ModelSelector } from './ModelSelector.js';
 import { PermissionsManager } from './PermissionsManager.js';
 import { SessionSelector } from './SessionSelector.js';
-import { SetupWizard } from './SetupWizard.js';
 import { ThemeSelector } from './ThemeSelector.js';
 
 // 创建 BladeInterface 专用 Logger
@@ -73,6 +75,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   // 从 status 派生布尔值
   const readyForChat = initializationStatus === 'ready';
   const requiresSetup = initializationStatus === 'needsSetup';
+  const isInitializing = initializationStatus === 'idle';
 
   const {
     confirmationState,
@@ -89,6 +92,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
   const permissionMode = usePermissionMode();
+
+  // ==================== Input Buffer ====================
+  // 使用 useInputBuffer 创建稳定的输入状态，避免 resize 时重建
+  // 参考 Gemini-cli 的实现，buffer 使用 ref 存储状态，不受组件重渲染影响
+  const inputBuffer = useInputBuffer('', 0);
 
   // ==================== Memoized Handlers ====================
   const handlePermissionModeToggle = useMemoizedFn(async () => {
@@ -123,15 +131,41 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   });
 
-  const handleSetupComplete = useMemoizedFn((newConfig: SetupConfig) => {
-    // 合并新配置到现有 RuntimeConfig
-    const updatedConfig = {
-      ...appState.config!,
-      ...newConfig,
-    };
-    appDispatch(appActions.setConfig(updatedConfig));
-    // 设置完成后，将状态改为 ready（因为 API Key 已经配置）
-    appDispatch(appActions.setInitializationStatus('ready'));
+  const handleSetupComplete = useMemoizedFn(async (newConfig: SetupConfig) => {
+    try {
+      // 创建第一个模型配置
+      const configManager = ConfigManager.getInstance();
+
+      await configManager.addModel({
+        name: newConfig.name,
+        provider: newConfig.provider,
+        apiKey: newConfig.apiKey,
+        baseUrl: newConfig.baseUrl,
+        model: newConfig.model,
+      });
+
+      // 合并新配置到现有 RuntimeConfig
+      const updatedConfig = {
+        ...appState.config!,
+        ...newConfig,
+      };
+      appDispatch(appActions.setConfig(updatedConfig));
+
+      // 设置完成后，将状态改为 ready（因为 API Key 已经配置）
+      appDispatch(appActions.setInitializationStatus('ready'));
+    } catch (error) {
+      logger.error(
+        '❌ 初始化配置保存失败:',
+        error instanceof Error ? error.message : error
+      );
+      // 即使出错也继续，让用户可以进入主界面
+      const updatedConfig = {
+        ...appState.config!,
+        ...newConfig,
+      };
+      appDispatch(appActions.setConfig(updatedConfig));
+      appDispatch(appActions.setInitializationStatus('ready'));
+    }
   });
 
   const handleToggleShortcuts = useMemoizedFn(() => {
@@ -142,8 +176,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   });
 
-  const { input, setInput, showSuggestions, suggestions, selectedSuggestionIndex } =
+  const { showSuggestions, suggestions, selectedSuggestionIndex } =
     useMainInput(
+      inputBuffer,
       executeCommand,
       getPreviousCommand,
       getNextCommand,
@@ -157,10 +192,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   // 当有输入内容时，自动关闭快捷键帮助
   useEffect(() => {
-    if (input && appState.activeModal === 'shortcuts') {
+    if (inputBuffer.value && appState.activeModal === 'shortcuts') {
       appDispatch(appActions.closeModal());
     }
-  }, [input, appState.activeModal, appDispatch, appActions]);
+  }, [inputBuffer.value, appState.activeModal, appDispatch, appActions]);
 
   const handleResume = useMemoizedFn(async () => {
     try {
@@ -262,12 +297,44 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     process.exit(0); // 退出程序
   });
 
+  const closeModal = useMemoizedFn(() => {
+    appDispatch(appActions.closeModal());
+  });
+
+  const handleSessionSelect = useMemoizedFn(async (sessionId: string) => {
+    try {
+      const messages = await SessionService.loadSession(sessionId);
+
+      const sessionMessages = messages.map((msg, index) => ({
+        id: `restored-${Date.now()}-${index}`,
+        role: msg.role as 'user' | 'assistant' | 'system' | 'tool',
+        content:
+          typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+        timestamp: Date.now() - (messages.length - index) * 1000,
+      }));
+
+      restoreSession(sessionId, sessionMessages);
+      appDispatch(appActions.closeModal());
+    } catch (error) {
+      logger.error('[BladeInterface] Failed to restore session:', error);
+      appDispatch(appActions.closeModal());
+    }
+  });
+
+  const handleSessionCancel = useMemoizedFn(() => {
+    if (otherProps.resume) {
+      exit();
+    } else {
+      appDispatch(appActions.closeModal());
+    }
+  });
+
   // ==================== Effects ====================
   // 焦点管理：根据不同状态切换焦点
   useEffect(() => {
     if (requiresSetup) {
-      // SetupWizard 显示时，焦点转移到设置向导
-      setFocus(FocusId.SETUP_WIZARD);
+      // ModelConfigWizard (setup 模式) 显示时，焦点转移到向导
+      setFocus(FocusId.MODEL_CONFIG_WIZARD);
       return;
     }
 
@@ -280,6 +347,12 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     } else if (appState.activeModal === 'themeSelector') {
       // 显示主题选择器时，焦点转移到选择器
       setFocus(FocusId.THEME_SELECTOR);
+    } else if (appState.activeModal === 'modelSelector') {
+      // 显示模型选择器时，焦点转移到选择器
+      setFocus(FocusId.MODEL_SELECTOR);
+    } else if (appState.activeModal === 'modelAddWizard') {
+      // ModelConfigWizard (add 模式) 显示时，焦点转移到向导
+      setFocus(FocusId.MODEL_CONFIG_WIZARD);
     } else if (appState.activeModal === 'permissionsManager') {
       // 显示权限管理器时，焦点转移到管理器
       setFocus(FocusId.PERMISSIONS_MANAGER);
@@ -376,10 +449,19 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     })();
   }, [otherProps.permissionMode, permissionMode]);
 
-  // 如果显示设置向导，渲染 SetupWizard 组件
+  // 初始化中 - 不渲染任何内容，避免闪烁
+  if (isInitializing) {
+    return null;
+  }
+
+  // 如果显示设置向导，渲染 ModelConfigWizard 组件（setup 模式）
   if (requiresSetup) {
     return (
-      <SetupWizard onComplete={handleSetupComplete} onCancel={handleSetupCancel} />
+      <ModelConfigWizard
+        mode="setup"
+        onComplete={handleSetupComplete}
+        onCancel={handleSetupCancel}
+      />
     );
   }
 
@@ -401,47 +483,21 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         />
       ) : appState.activeModal === 'themeSelector' ? (
         <ThemeSelector />
-      ) : appState.activeModal === 'permissionsManager' ? (
-        <PermissionsManager
-          onClose={useMemoizedFn(() => appDispatch(appActions.closeModal()))}
+      ) : appState.activeModal === 'modelSelector' ? (
+        <ModelSelector onClose={closeModal} />
+      ) : appState.activeModal === 'modelAddWizard' ? (
+        <ModelConfigWizard
+          mode="add"
+          onComplete={closeModal}
+          onCancel={closeModal}
         />
+      ) : appState.activeModal === 'permissionsManager' ? (
+        <PermissionsManager onClose={closeModal} />
       ) : appState.activeModal === 'sessionSelector' ? (
         <SessionSelector
           sessions={appState.sessionSelectorData} // 从 AppContext 传递会话数据
-          onSelect={useMemoizedFn(async (sessionId: string) => {
-            try {
-              const messages = await SessionService.loadSession(sessionId);
-
-              // 转换消息格式（不再过滤 tool 消息）
-              const sessionMessages = messages.map((msg, index) => ({
-                id: `restored-${Date.now()}-${index}`,
-                role: msg.role as 'user' | 'assistant' | 'system' | 'tool',
-                content:
-                  typeof msg.content === 'string'
-                    ? msg.content
-                    : JSON.stringify(msg.content),
-                timestamp: Date.now() - (messages.length - index) * 1000,
-              }));
-
-              // 恢复会话
-              restoreSession(sessionId, sessionMessages);
-
-              // 关闭选择器
-              appDispatch(appActions.closeModal());
-            } catch (error) {
-              logger.error('[BladeInterface] Failed to restore session:', error);
-              appDispatch(appActions.closeModal());
-            }
-          })}
-          onCancel={useMemoizedFn(() => {
-            // 如果是 --resume CLI 模式，按 Esc 退出应用
-            // 如果是 /resume 斜杠命令模式，按 Esc 关闭选择器
-            if (otherProps.resume) {
-              exit(); // CLI 模式：退出应用
-            } else {
-              appDispatch(appActions.closeModal()); // 斜杠命令模式：关闭选择器
-            }
-          })}
+          onSelect={handleSessionSelect}
+          onCancel={handleSessionCancel}
         />
       ) : (
         <>
@@ -460,8 +516,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           />
 
           <InputArea
-            input={input}
-            onChange={setInput}
+            input={inputBuffer.value}
+            onChange={inputBuffer.setValue}
             isProcessing={sessionState.isThinking || !readyForChat}
           />
 

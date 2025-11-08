@@ -117,13 +117,24 @@ export class Agent extends EventEmitter {
     // 2. 确保已初始化（幂等操作）
     await configManager.initialize();
 
-    // 3. 获取 BladeConfig（不需要转换）
+    // 3. 检查是否有可用的模型配置
+    if (configManager.getAllModels().length === 0) {
+      throw new Error(
+        '❌ 没有可用的模型配置\n\n' +
+          '请先使用以下命令添加模型：\n' +
+          '  /model add\n\n' +
+          '或运行初始化向导：\n' +
+          '  /init'
+      );
+    }
+
+    // 4. 获取 BladeConfig（不需要转换）
     const config = configManager.getConfig();
 
-    // 4. 验证配置
+    // 5. 验证配置
     configManager.validateConfig(config);
 
-    // 5. 创建并初始化 Agent
+    // 6. 创建并初始化 Agent
     // 将 options 作为运行时参数传递
     const agent = new Agent(config, options);
     await agent.initialize();
@@ -148,14 +159,20 @@ export class Agent extends EventEmitter {
       await this.registerBuiltinTools();
 
       // 3. 初始化核心组件
+      // 获取当前模型配置
+      const configManager = ConfigManager.getInstance();
+      const modelConfig = configManager.getCurrentModel();
+
+      this.log(`🚀 使用模型: ${modelConfig.name} (${modelConfig.model})`);
+
       // 使用工厂函数创建 ChatService（根据 provider 选择实现）
       this.chatService = createChatService({
-        provider: this.config.provider,
-        apiKey: this.config.apiKey,
-        model: this.config.model,
-        baseUrl: this.config.baseUrl,
-        temperature: this.config.temperature,
-        maxTokens: this.config.maxTokens,
+        provider: modelConfig.provider,
+        apiKey: modelConfig.apiKey,
+        model: modelConfig.model,
+        baseUrl: modelConfig.baseUrl,
+        temperature: modelConfig.temperature ?? this.config.temperature,
+        maxTokens: modelConfig.maxTokens ?? this.config.maxTokens,
         timeout: this.config.timeout,
       });
 
@@ -1170,8 +1187,9 @@ export class Agent extends EventEmitter {
     context: ChatContext,
     currentTurn: number
   ): Promise<void> {
-    const modelName = this.config.model;
-    const maxTokens = this.config.maxTokens;
+    const chatConfig = this.chatService.getConfig();
+    const modelName = chatConfig.model;
+    const maxTokens = chatConfig.maxTokens ?? this.config.maxTokens;
 
     // 调试：打印配置和 token 计数（使用实际发送给 LLM 的 messages）
     const currentTokens = TokenCounter.countTokens(messages, modelName);
@@ -1202,8 +1220,8 @@ export class Agent extends EventEmitter {
         trigger: 'auto',
         modelName,
         maxTokens,
-        apiKey: this.config.apiKey,
-        baseURL: this.config.baseUrl,
+        apiKey: chatConfig.apiKey,
+        baseURL: chatConfig.baseUrl,
       });
 
       if (result.success) {

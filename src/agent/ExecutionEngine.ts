@@ -4,8 +4,7 @@
  */
 
 import { ContextManager } from '../context/ContextManager.js';
-import type { IChatService } from '../services/ChatServiceInterface.js';
-import { type Message } from '../services/OpenAIChatService.js';
+import type { IChatService, Message } from '../services/ChatServiceInterface.js';
 import type { AgentResponse, AgentTask } from './types.js';
 
 export interface ExecutionStep {

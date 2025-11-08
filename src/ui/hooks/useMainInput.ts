@@ -8,6 +8,7 @@ import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
 import { useSession } from '../contexts/SessionContext.js';
 import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
 import { useCtrlCHandler } from './useCtrlCHandler.js';
+import type { InputBuffer } from './useInputBuffer.js';
 
 // 创建 UI Hook 专用 Logger
 const logger = createLogger(LogCategory.UI);
@@ -17,6 +18,7 @@ const logger = createLogger(LogCategory.UI);
  * 负责主界面输入框的键盘事件、命令建议和历史记录
  */
 export const useMainInput = (
+  buffer: InputBuffer,
   onSubmit: (input: string) => void,
   onPreviousCommand: () => string,
   onNextCommand: () => string,
@@ -31,7 +33,10 @@ export const useMainInput = (
   const { state: focusState } = useFocusContext();
   const isFocused = focusState.currentFocus === FocusId.MAIN_INPUT;
 
-  const [input, setInput] = useState('');
+  // 从 buffer 读取输入值
+  const input = buffer.value;
+  const setInput = buffer.setValue;
+
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
@@ -107,7 +112,7 @@ export const useMainInput = (
       setSuggestions([]);
 
       onAddToHistory(commandToSubmit);
-      setInput('');
+      buffer.clear(); // 使用 buffer.clear() 清空输入
       onSubmit(commandToSubmit);
       logger.debug('[DIAG] Command submitted to onSubmit callback');
     } else {
@@ -125,7 +130,7 @@ export const useMainInput = (
       if (inputKey === '?' && !input) {
         onToggleShortcuts?.();
         // 防止 ? 被添加到输入框（通过延迟清空）
-        setTimeout(() => setInput(''), 0);
+        setTimeout(() => buffer.clear(), 0);
         return;
       }
 
@@ -172,7 +177,7 @@ export const useMainInput = (
           const now = Date.now();
           const timeSinceLastEsc = now - lastEscTimeRef.current;
           if (timeSinceLastEsc < ESC_DOUBLE_CLICK_THRESHOLD) {
-            setInput('');
+            buffer.clear();
             lastEscTimeRef.current = 0;
           } else {
             lastEscTimeRef.current = now;
@@ -253,8 +258,6 @@ export const useMainInput = (
   );
 
   return {
-    input,
-    setInput,
     handleSubmit,
     showSuggestions,
     suggestions,

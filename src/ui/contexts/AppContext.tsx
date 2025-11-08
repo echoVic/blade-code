@@ -25,7 +25,9 @@ export type ActiveModal =
   | 'permissionsManager'
   | 'sessionSelector'
   | 'todoPanel'
-  | 'shortcuts';
+  | 'shortcuts'
+  | 'modelSelector'
+  | 'modelAddWizard';
 
 // 应用状态类型定义
 export interface AppState {
@@ -152,6 +154,16 @@ export const AppActions = {
     payload: 'shortcuts' as ActiveModal,
   }),
 
+  showModelSelector: () => ({
+    type: 'SET_ACTIVE_MODAL' as const,
+    payload: 'modelSelector' as ActiveModal,
+  }),
+
+  showModelAddWizard: () => ({
+    type: 'SET_ACTIVE_MODAL' as const,
+    payload: 'modelAddWizard' as ActiveModal,
+  }),
+
   closeModal: () => ({
     type: 'CLOSE_MODAL' as const,
   }),
@@ -165,6 +177,7 @@ export const AppActions = {
     type: 'UPDATE_TODO' as const,
     payload: todo,
   }),
+
 };
 
 type AppActions = typeof AppActions;
@@ -189,17 +202,17 @@ export const AppProvider: React.FC<{
       return;
     }
 
-    // 检查 API Key
-    if (!initialConfig.apiKey || initialConfig.apiKey.trim() === '') {
+    // 检查是否有模型配置
+    if (!initialConfig.models || initialConfig.models.length === 0) {
       if (initialConfig.debug) {
-        console.log('[Debug] 未检测到 API Key，进入设置向导');
+        console.log('[Debug] 未检测到模型配置，进入设置向导');
       }
       dispatch(AppActions.setInitializationStatus('needsSetup'));
       return;
     }
 
     if (initialConfig.debug) {
-      console.log('[Debug] API Key 检查通过，准备就绪');
+      console.log('[Debug] 模型配置检查通过，准备就绪');
     }
     dispatch(AppActions.setInitializationStatus('ready'));
   }, [initialConfig]);

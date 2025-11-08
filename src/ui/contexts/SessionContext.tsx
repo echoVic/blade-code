@@ -6,6 +6,7 @@ import React, {
   useContext,
   useReducer,
 } from 'react';
+import { ConfigManager } from '../../config/ConfigManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 
 // 创建 SessionContext 专用 Logger
@@ -81,6 +82,7 @@ export interface SessionContextType {
   clearMessages: () => void;
   resetSession: () => void;
   restoreSession: (sessionId: string, messages: SessionMessage[]) => void;
+  configManager: ConfigManager; // 添加 configManager
 }
 
 // 创建上下文
@@ -157,6 +159,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
  */
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(sessionReducer, initialState);
+  const configManager = ConfigManager.getInstance();
 
   const addUserMessage = useCallback((content: string) => {
     logger.debug('[DIAG] addUserMessage called:', {
@@ -221,6 +224,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     clearMessages,
     resetSession,
     restoreSession,
+    configManager,
   };
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

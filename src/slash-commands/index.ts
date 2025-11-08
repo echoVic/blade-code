@@ -4,6 +4,7 @@
 
 import { builtinCommands } from './builtinCommands.js';
 import initCommand from './init.js';
+import modelCommand from './model.js';
 import permissionsCommand from './permissions.js';
 import themeCommand from './theme.js';
 import type {
@@ -20,6 +21,7 @@ const slashCommands: SlashCommandRegistry = {
   init: initCommand,
   theme: themeCommand,
   permissions: permissionsCommand,
+  model: modelCommand,
 };
 
 /**
