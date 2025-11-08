@@ -26,6 +26,7 @@ async function compactCommandHandler(
     }
 
     const config = configManager.getConfig();
+    const currentModel = configManager.getCurrentModel();
 
     // 获取会话消息
     const sessionMessages = context.messages;
@@ -45,8 +46,8 @@ async function compactCommandHandler(
     }));
 
     // 显示压缩前信息
-    const preTokens = TokenCounter.countTokens(messages, config.model);
-    const tokenLimit = config.maxTokens;
+    const preTokens = TokenCounter.countTokens(messages, currentModel.model);
+    const tokenLimit = currentModel.maxTokens ?? config.maxTokens;
     const usagePercent = ((preTokens / tokenLimit) * 100).toFixed(1);
 
     addAssistantMessage(`📊 **当前上下文统计**`);
@@ -73,10 +74,10 @@ async function compactCommandHandler(
     // 执行压缩
     const result = await CompactionService.compact(messages, {
       trigger: 'manual',
-      modelName: config.model,
-      maxTokens: config.maxTokens,
-      apiKey: config.apiKey,
-      baseURL: config.baseUrl,
+      modelName: currentModel.model,
+      maxTokens: tokenLimit,
+      apiKey: currentModel.apiKey,
+      baseURL: currentModel.baseUrl,
     });
 
     if (result.success) {

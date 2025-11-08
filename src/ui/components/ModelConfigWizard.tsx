@@ -1,28 +1,34 @@
 /**
- * SetupWizard - 首次设置向导
+ * ModelConfigWizard - 模型配置向导（通用组件）
+ *
+ * 用于两种场景：
+ * 1. 首次初始化（mode='setup'）- 全屏显示，带欢迎标题和进度条
+ * 2. 添加新模型（mode='add'）- 模态框显示
  *
  * 交互式配置流程:
- * Step 1: 选择 Provider
- * Step 2: 输入 Base URL
- * Step 3: 输入 API Key (密码输入)
- * Step 4: 输入 Model
- * Step 5: 确认配置
+ * Step 1: 配置名称
+ * Step 2: 选择 Provider
+ * Step 3: 输入 Base URL
+ * Step 4: 输入 API Key (密码输入)
+ * Step 5: 输入 Model
+ * Step 6: 确认配置
  */
 
 import { Box, Text, useFocus, useFocusManager, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
 import React, { useEffect, useState } from 'react';
-import { ConfigManager } from '../../config/ConfigManager.js';
 import type { ProviderType, SetupConfig } from '../../config/types.js';
-import { themeManager } from '../themes/ThemeManager.js';
+import { useSession } from '../contexts/SessionContext.js';
+import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
-interface SetupWizardProps {
+interface ModelConfigWizardProps {
+  mode: 'setup' | 'add'; // setup=首次初始化(全屏), add=添加新模型(模态框)
   onComplete: (config: SetupConfig) => void; // 设置完成回调，传递配置数据
   onCancel: () => void; // 取消回调
 }
 
-type SetupStep = 'provider' | 'baseUrl' | 'apiKey' | 'model' | 'confirm';
+type WizardStep = 'name' | 'provider' | 'baseUrl' | 'apiKey' | 'model' | 'confirm';
 
 // ========================================
 // 步骤组件：Provider 选择
@@ -32,8 +38,23 @@ interface ProviderStepProps {
   onCancel: () => void;
 }
 
+// 自定义 SelectInput 组件 - 高对比度样式
+const SelectIndicator: React.FC<{ isSelected?: boolean }> = ({ isSelected }) => (
+  <Box marginRight={1}>
+    <Text color={isSelected ? 'yellow' : 'gray'}>{isSelected ? '▶' : ' '}</Text>
+  </Box>
+);
+
+const SelectItem: React.FC<{ isSelected?: boolean; label: string }> = ({
+  isSelected,
+  label,
+}) => (
+  <Text bold={isSelected} color={isSelected ? 'yellow' : undefined}>
+    {label}
+  </Text>
+);
+
 const ProviderStep: React.FC<ProviderStepProps> = ({ onSelect, onCancel }) => {
-  const theme = themeManager.getTheme();
   const { isFocused } = useFocus({ id: 'provider-step' });
 
   useInput(
@@ -48,12 +69,12 @@ const ProviderStep: React.FC<ProviderStepProps> = ({ onSelect, onCancel }) => {
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box marginBottom={1}>
-        <Text bold color={theme.colors.info}>
-          📡 Step 1: 选择 API 提供商
+        <Text bold color="blue">
+          📡 Step 2: 选择 API 提供商
         </Text>
       </Box>
       <Box marginBottom={1}>
-        <Text color={theme.colors.text.secondary}>
+        <Text>
           根据您使用的 LLM 服务选择对应的 API 类型
         </Text>
       </Box>
@@ -68,6 +89,8 @@ const ProviderStep: React.FC<ProviderStepProps> = ({ onSelect, onCancel }) => {
             { label: '🤖 Anthropic Claude API - Claude 官方 API', value: 'anthropic' },
           ]}
           onSelect={(item) => onSelect(item.value as ProviderType)}
+          indicatorComponent={SelectIndicator}
+          itemComponent={SelectItem}
         />
       </Box>
     </Box>
@@ -90,6 +113,7 @@ interface TextInputStepProps {
   previousValue?: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
+  onCancel: () => void;
 }
 
 const TextInputStep: React.FC<TextInputStepProps> = ({
@@ -105,44 +129,51 @@ const TextInputStep: React.FC<TextInputStepProps> = ({
   previousValue,
   onChange,
   onSubmit,
+  onCancel,
 }) => {
-  const theme = themeManager.getTheme();
-
-  // TextInput 步骤不使用 useFocus，让 TextInput 自己处理键盘输入
-  // 这样 Ctrl+V 粘贴等功能才能正常工作
+  // TextInput 步骤需要监听 Esc 键，但不能使用 useFocus（会干扰粘贴功能）
+  // 所以使用 useInput 但始终保持 isActive: true
+  useInput(
+    (_input, key) => {
+      if (key.escape) {
+        onCancel();
+      }
+    },
+    { isActive: true }
+  );
 
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box marginBottom={1}>
-        <Text bold color={theme.colors.info}>
+        <Text bold color="blue">
           {icon} Step {stepNumber}: {title}
         </Text>
       </Box>
       <Box marginBottom={1}>
-        <Text color={theme.colors.text.secondary}>{description}</Text>
+        <Text>{description}</Text>
       </Box>
       {previousValue && (
         <Box marginBottom={1}>
-          <Text color={theme.colors.success}>✓ {previousValue}</Text>
+          <Text color="green">✓ {previousValue}</Text>
         </Box>
       )}
       {hint && (
         <Box marginBottom={1}>
-          <Text color={theme.colors.text.muted}>{hint}</Text>
+          <Text dimColor>{hint}</Text>
         </Box>
       )}
       {examples && examples.length > 0 && (
         <>
           <Box marginBottom={1}>
-            <Text color={theme.colors.text.muted}>常见示例：</Text>
+            <Text dimColor>常见示例：</Text>
           </Box>
           <Box marginBottom={1} paddingLeft={2}>
-            <Text color={theme.colors.text.muted}>{examples.join('\n')}</Text>
+            <Text dimColor>{examples.join('\n')}</Text>
           </Box>
         </>
       )}
       <Box>
-        <Text color={theme.colors.primary}>▶ </Text>
+        <Text bold color="cyan">▶ </Text>
         <TextInput
           value={value}
           onChange={onChange}
@@ -173,7 +204,6 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
   onBack,
   onCancel,
 }) => {
-  const theme = themeManager.getTheme();
   const { isFocused } = useFocus({ id: 'confirm-step' });
 
   useInput(
@@ -194,19 +224,26 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box marginBottom={1}>
-        <Text bold color={theme.colors.success}>
-          ✅ Step 5: 确认配置
+        <Text bold color="blue">
+          ✅ Step 6: 确认配置
         </Text>
       </Box>
 
       <Box marginBottom={1}>
-        <Text color={theme.colors.text.secondary}>请确认以下配置信息：</Text>
+        <Text>请确认以下配置信息：</Text>
       </Box>
 
       <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
         <Box marginBottom={1}>
-          <Text color={theme.colors.text.muted}>Provider: </Text>
-          <Text bold color={theme.colors.info}>
+          <Text dimColor>名称: </Text>
+          <Text bold color="cyan">
+            {config.name}
+          </Text>
+        </Box>
+
+        <Box marginBottom={1}>
+          <Text dimColor>Provider: </Text>
+          <Text bold color="cyan">
             {config.provider === 'openai-compatible'
               ? '⚡ OpenAI Compatible'
               : '🤖 Anthropic'}
@@ -214,23 +251,23 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
         </Box>
 
         <Box marginBottom={1}>
-          <Text color={theme.colors.text.muted}>Base URL: </Text>
-          <Text bold color={theme.colors.success}>
+          <Text dimColor>Base URL: </Text>
+          <Text bold color="blue">
             {config.baseUrl}
           </Text>
         </Box>
 
         <Box marginBottom={1}>
-          <Text color={theme.colors.text.muted}>API Key: </Text>
-          <Text bold color={theme.colors.warning}>
+          <Text dimColor>API Key: </Text>
+          <Text bold color="yellow">
             {config.apiKey?.slice(0, 8)}
             {'*'.repeat(Math.min(32, (config.apiKey?.length || 0) - 8))}
           </Text>
         </Box>
 
         <Box>
-          <Text color={theme.colors.text.muted}>Model: </Text>
-          <Text bold color={theme.colors.info}>
+          <Text dimColor>Model: </Text>
+          <Text bold color="cyan">
             {config.model}
           </Text>
         </Box>
@@ -238,13 +275,13 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
 
       {!isSaving && (
         <Box marginTop={1}>
-          <Text color={theme.colors.primary}>
+          <Text>
             确认保存配置？ [
-            <Text bold color={theme.colors.success}>
+            <Text bold color="green">
               Y
             </Text>
             /
-            <Text bold color={theme.colors.error}>
+            <Text bold color="red">
               n
             </Text>
             ]
@@ -254,7 +291,7 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
 
       {isSaving && (
         <Box>
-          <Text color={theme.colors.warning}>
+          <Text color="yellow">
             ⏳ 正在保存配置到 ~/.blade/config.json...
           </Text>
         </Box>
@@ -263,11 +300,15 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
   );
 };
 
-export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }) => {
-  const theme = themeManager.getTheme();
+export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
+  mode,
+  onComplete,
+  onCancel,
+}) => {
+  const { configManager } = useSession();
 
   // 当前步骤
-  const [currentStep, setCurrentStep] = useState<SetupStep>('provider');
+  const [currentStep, setCurrentStep] = useState<WizardStep>('name');
 
   // 配置数据
   const [config, setConfig] = useState<Partial<SetupConfig>>({});
@@ -277,7 +318,27 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 焦点管理：SetupWizard 不需要自己有焦点，只负责管理子步骤的焦点
+  // 使用智能 Ctrl+C 处理（没有任务，所以会直接退出）
+  const handleCtrlC = useCtrlCHandler(false);
+
+  // 全局键盘处理 - 在向导中始终监听
+  useInput(
+    (input, key) => {
+      // Ctrl+C 或 Cmd+C: 智能退出
+      if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
+        if (mode === 'setup') {
+          // setup 模式：先调用 handleCtrlC 退出
+          handleCtrlC();
+        } else {
+          // add 模式：关闭模态框
+          onCancel();
+        }
+      }
+    },
+    { isActive: true }
+  );
+
+  // 焦点管理：ModelConfigWizard 不需要自己有焦点，只负责管理子步骤的焦点
   const { focus } = useFocusManager();
 
   // 根据当前步骤切换焦点
@@ -287,12 +348,23 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
     } else if (currentStep === 'confirm') {
       focus('confirm-step');
     }
-    // baseUrl、apiKey、model 步骤不调用 focus()，让 TextInput 自然获得键盘控制权
+    // name、baseUrl、apiKey、model 步骤不调用 focus()，让 TextInput 自然获得键盘控制权
   }, [currentStep, focus]);
 
   // ========================================
   // 步骤处理函数
   // ========================================
+
+  const handleNameSubmit = () => {
+    if (!inputValue.trim()) {
+      setError('配置名称不能为空');
+      return;
+    }
+    setConfig({ ...config, name: inputValue });
+    setInputValue('');
+    setError(null);
+    setCurrentStep('provider');
+  };
 
   const handleProviderSelect = (provider: ProviderType) => {
     setConfig({ ...config, provider });
@@ -348,21 +420,24 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
     setError(null);
 
     try {
-      const configManager = ConfigManager.getInstance();
-
-      // 保存配置到 ~/.blade/config.json
-      const savedConfig = {
+      const setupConfig: SetupConfig = {
+        name: config.name!,
         provider: config.provider!,
         baseUrl: config.baseUrl!,
         apiKey: config.apiKey!,
         model: config.model!,
       };
-      await configManager.saveUserConfig(savedConfig);
 
-      // 完成回调，传递配置数据（避免重复读取文件）
-      onComplete(savedConfig);
+      if (mode === 'setup') {
+        // setup 模式：由父组件（BladeInterface）负责创建模型
+        onComplete(setupConfig);
+      } else {
+        // add 模式：直接在这里创建模型，然后通知父组件关闭
+        await configManager.addModel(setupConfig);
+        onComplete(setupConfig);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存配置失败');
+      setError(err instanceof Error ? err.message : '配置失败');
       setIsSaving(false);
     }
   };
@@ -372,6 +447,10 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
     setInputValue('');
 
     switch (currentStep) {
+      case 'provider':
+        setInputValue(config.name || '');
+        setCurrentStep('name');
+        break;
       case 'baseUrl':
         setCurrentStep('provider');
         break;
@@ -395,49 +474,96 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
 
   // 计算进度
   const stepNumber =
-    currentStep === 'provider'
+    currentStep === 'name'
       ? 1
-      : currentStep === 'baseUrl'
+      : currentStep === 'provider'
         ? 2
-        : currentStep === 'apiKey'
+        : currentStep === 'baseUrl'
           ? 3
-          : currentStep === 'model'
+          : currentStep === 'apiKey'
             ? 4
-            : 5;
+            : currentStep === 'model'
+              ? 5
+              : 6;
 
-  const progress = Math.floor(((stepNumber - 1) / 4) * 40);
+  const progress = Math.floor(((stepNumber - 1) / 5) * 40);
+
+  // mode='setup': 全屏显示（带欢迎标题和进度条）
+  // mode='add': 模态框显示（带边框和简洁标题）
+  const containerProps =
+    mode === 'setup'
+      ? { flexDirection: 'column' as const, padding: 1 }
+      : {
+          flexDirection: 'column' as const,
+          borderStyle: 'round' as const,
+          borderColor: 'blue',
+          padding: 1,
+        };
 
   return (
-    <Box flexDirection="column" padding={1}>
-      {/* 欢迎标题 */}
-      <Box marginBottom={1}>
-        <Text bold color={theme.colors.primary}>
-          🚀 欢迎使用 Blade Code
-        </Text>
-      </Box>
+    <Box {...containerProps}>
+      {/* 标题 - 根据模式显示不同内容 */}
+      {mode === 'setup' ? (
+        <>
+          <Box marginBottom={1}>
+            <Text bold color="blue">
+              🚀 欢迎使用 Blade Code
+            </Text>
+          </Box>
 
-      <Box marginBottom={1}>
-        <Text color={theme.colors.text.secondary}>
-          AI 驱动的代码助手 - 让我们开始配置您的助手
-        </Text>
-      </Box>
+          <Box marginBottom={1}>
+            <Text>
+              AI 驱动的代码助手 - 让我们开始配置您的助手
+            </Text>
+          </Box>
 
-      {/* 进度条 */}
-      <Box marginBottom={1}>
-        <Text color={theme.colors.success}>{'█'.repeat(progress)}</Text>
-        <Text color={theme.colors.text.muted}>{'░'.repeat(40 - progress)}</Text>
-        <Text> </Text>
-        <Text bold color={theme.colors.info}>
-          {stepNumber}/5
-        </Text>
-      </Box>
+          {/* 进度条 */}
+          <Box marginBottom={1}>
+            <Text bold color="blue">{'█'.repeat(progress)}</Text>
+            <Text dimColor>{'░'.repeat(40 - progress)}</Text>
+            <Text> </Text>
+            <Text bold color="cyan">
+              {stepNumber}/6
+            </Text>
+          </Box>
 
-      {/* 分隔线 */}
-      <Box marginBottom={1}>
-        <Text color={theme.colors.text.muted}>
-          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        </Text>
-      </Box>
+          {/* 分隔线 */}
+          <Box marginBottom={1}>
+            <Text dimColor>
+              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            </Text>
+          </Box>
+        </>
+      ) : (
+        <>
+          {/* 添加模型模式：简洁标题 */}
+          <Box justifyContent="center" marginBottom={1}>
+            <Text bold color="blue">
+              添加新模型配置
+            </Text>
+          </Box>
+
+          {/* 进度指示 */}
+          <Box marginBottom={1}>
+            <Text>步骤: {stepNumber}/6</Text>
+          </Box>
+        </>
+      )}
+
+      {/* Name 输入 */}
+      {currentStep === 'name' && (
+        <TextInputStep
+          stepNumber={1}
+          icon="📝"
+          title="配置名称"
+          description="给这个模型配置起一个易于识别的名称"
+          value={inputValue}
+          placeholder="例如: 千问工作账号"
+          onChange={setInputValue}
+          onSubmit={handleNameSubmit}
+          onCancel={onCancel}
+        />
+      )}
 
       {/* Provider 选择 */}
       {currentStep === 'provider' && (
@@ -447,7 +573,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
       {/* Base URL 输入 */}
       {currentStep === 'baseUrl' && (
         <TextInputStep
-          stepNumber={2}
+          stepNumber={3}
           icon="🌐"
           title="配置 Base URL"
           description="输入您的 API 端点地址（完整的 URL 包含协议）"
@@ -461,13 +587,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
           placeholder="https://api.example.com/v1"
           onChange={setInputValue}
           onSubmit={handleBaseUrlSubmit}
+          onCancel={onCancel}
         />
       )}
 
       {/* API Key 输入 */}
       {currentStep === 'apiKey' && (
         <TextInputStep
-          stepNumber={3}
+          stepNumber={4}
           icon="🔑"
           title="输入 API Key"
           description="您的 API 密钥将被安全存储在 ~/.blade/config.json (权限 600)"
@@ -480,13 +607,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
           mask="*"
           onChange={setInputValue}
           onSubmit={handleApiKeySubmit}
+          onCancel={onCancel}
         />
       )}
 
       {/* Model 输入 */}
       {currentStep === 'model' && (
         <TextInputStep
-          stepNumber={4}
+          stepNumber={5}
           icon="🤖"
           title="选择模型"
           description="输入您想使用的模型名称（请参考您的 API 提供商文档）"
@@ -501,6 +629,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
           placeholder="例如: gpt-5"
           onChange={setInputValue}
           onSubmit={handleModelSubmit}
+          onCancel={onCancel}
         />
       )}
 
@@ -518,20 +647,20 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
       {/* 错误信息 */}
       {error && (
         <Box marginTop={1} borderStyle="round" borderColor="red" paddingX={1}>
-          <Text color={theme.colors.error}>❌ {error}</Text>
+          <Text color="red">❌ {error}</Text>
         </Box>
       )}
 
       {/* 底部提示 */}
       <Box marginTop={1}>
-        <Text color={theme.colors.text.muted}>
+        <Text dimColor>
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         </Text>
       </Box>
 
       {!isSaving && currentStep === 'provider' && (
         <Box marginTop={1}>
-          <Text color={theme.colors.text.muted}>
+          <Text dimColor>
             💡 使用 <Text bold>↑/↓</Text> 键选择，<Text bold>Enter</Text> 确认，
             <Text bold>Esc</Text> 取消
           </Text>
@@ -539,20 +668,20 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onCancel }
       )}
       {!isSaving && currentStep !== 'confirm' && currentStep !== 'provider' && (
         <Box marginTop={1}>
-          <Text color={theme.colors.text.muted}>
+          <Text dimColor>
             💡 输入完成后按 <Text bold>Enter</Text>，<Text bold>Ctrl+C</Text> 退出
           </Text>
         </Box>
       )}
       {!isSaving && currentStep === 'confirm' && (
         <Box marginTop={1}>
-          <Text color={theme.colors.text.muted}>
+          <Text dimColor>
             💡 按{' '}
-            <Text bold color={theme.colors.success}>
+            <Text bold color="green">
               Y
             </Text>{' '}
             保存，
-            <Text bold color={theme.colors.error}>
+            <Text bold color="red">
               N
             </Text>{' '}
             返回修改，

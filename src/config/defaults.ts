@@ -9,13 +9,11 @@ export const DEFAULT_CONFIG: BladeConfig = {
   // 基础配置 (config.json)
   // =====================================
 
-  // 认证
-  provider: 'openai-compatible',
-  apiKey: '',
-  baseUrl: 'https://apis.iflow.cn/v1',
+  // 多模型配置
+  currentModelId: '',
+  models: [],
 
-  // 模型
-  model: 'qwen3-coder-plus',
+  // 全局默认参数
   temperature: 0.0,
   maxTokens: 200000, // 200k - 主流 Agent 模型的标准窗口大小
   stream: true,

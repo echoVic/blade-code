@@ -234,6 +234,18 @@ export const useCommandHandler = (
             return { success: true };
           }
 
+          // 检查是否需要显示模型选择器
+          if (slashResult.message === 'show_model_selector') {
+            appDispatch(appActions.showModelSelector());
+            return { success: true };
+          }
+
+          // 检查是否需要显示模型添加向导
+          if (slashResult.message === 'show_model_add_wizard') {
+            appDispatch(appActions.showModelAddWizard());
+            return { success: true };
+          }
+
           if (slashResult.message === 'show_permissions_manager') {
             appDispatch(appActions.showPermissionsManager());
             return { success: true };

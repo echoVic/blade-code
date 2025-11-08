@@ -8,12 +8,14 @@ import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 import type { GlobalOptions } from '../cli/types.js';
+import { logger } from '../logging/Logger.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import {
   BladeConfig,
   HookConfig,
   McpProjectsConfig,
   McpServerConfig,
+  ModelConfig,
   PermissionConfig,
   PermissionMode,
   ProjectConfig,
@@ -323,10 +325,8 @@ export class ConfigManager {
 
       // 4. 写入文件（仅保存基础配置字段，不保存 settings）
       const configToSave: Partial<BladeConfig> = {};
-      if (newConfig.provider !== undefined) configToSave.provider = newConfig.provider;
-      if (newConfig.apiKey !== undefined) configToSave.apiKey = newConfig.apiKey;
-      if (newConfig.baseUrl !== undefined) configToSave.baseUrl = newConfig.baseUrl;
-      if (newConfig.model !== undefined) configToSave.model = newConfig.model;
+      if (newConfig.currentModelId !== undefined) configToSave.currentModelId = newConfig.currentModelId;
+      if (newConfig.models !== undefined) configToSave.models = newConfig.models;
       if (newConfig.temperature !== undefined)
         configToSave.temperature = newConfig.temperature;
       if (newConfig.maxTokens !== undefined)
@@ -355,10 +355,11 @@ export class ConfigManager {
 
       // 添加日志验证内存配置已更新
       if (this.config.debug) {
+        const currentModel = this.getCurrentModel();
         console.log('[ConfigManager] Memory config updated:', {
-          hasApiKey: !!this.config.apiKey,
-          provider: this.config.provider,
-          model: this.config.model,
+          currentModelId: this.config.currentModelId,
+          currentModelName: currentModel.name,
+          totalModels: this.config.models.length,
         });
       }
 
@@ -664,25 +665,128 @@ export class ConfigManager {
     await this.saveUserConfig(updates);
   }
 
+  // ========================================
+  // 模型配置管理
+  // ========================================
+
   /**
-   * 获取 API Key
+   * 获取当前激活的模型配置
    */
-  getApiKey(): string {
-    return this.getConfig().apiKey;
+  getCurrentModel(): ModelConfig {
+    const config = this.getConfig();
+
+    if (config.models.length === 0) {
+      throw new Error('❌ 没有可用的模型配置，请使用 /model add 添加模型');
+    }
+
+    const model = config.models.find((m) => m.id === config.currentModelId);
+    if (!model) {
+      logger.warn('当前模型 ID 无效，自动切换到第一个模型');
+      return config.models[0];
+    }
+
+    return model;
   }
 
   /**
-   * 获取 Base URL
+   * 获取所有模型配置
    */
-  getBaseURL(): string {
-    return this.getConfig().baseUrl;
+  getAllModels(): ModelConfig[] {
+    const config = this.getConfig();
+    return config.models;
   }
 
   /**
-   * 获取模型名称
+   * 切换模型（通过 ID）
    */
-  getModel(): string {
-    return this.getConfig().model;
+  async switchModel(modelId: string): Promise<void> {
+    const config = this.getConfig();
+
+    const model = config.models.find((m) => m.id === modelId);
+    if (!model) {
+      throw new Error(`❌ 模型配置不存在: ${modelId}`);
+    }
+
+    config.currentModelId = modelId;
+    await this.saveUserConfig(config);
+
+    logger.info(`✅ 已切换到模型: ${model.name} (${model.model})`);
+  }
+
+  /**
+   * 添加模型配置
+   */
+  async addModel(modelData: Omit<ModelConfig, 'id'>): Promise<ModelConfig> {
+    const config = this.getConfig();
+    const { nanoid } = await import('nanoid');
+
+    const newModel: ModelConfig = {
+      id: nanoid(),
+      ...modelData,
+    };
+
+    config.models.push(newModel);
+
+    // 如果是第一个模型，自动设为当前模型
+    if (config.models.length === 1) {
+      config.currentModelId = newModel.id;
+    }
+
+    await this.saveUserConfig(config);
+    logger.info(`✅ 已添加模型配置: ${newModel.name}`);
+
+    return newModel;
+  }
+
+  /**
+   * 删除模型配置
+   */
+  async removeModel(modelId: string): Promise<void> {
+    const config = this.getConfig();
+
+    if (config.models.length === 1) {
+      throw new Error('❌ 不能删除唯一的模型配置');
+    }
+
+    const index = config.models.findIndex((m) => m.id === modelId);
+    if (index === -1) {
+      throw new Error(`❌ 模型配置不存在`);
+    }
+
+    const name = config.models[index].name;
+    config.models.splice(index, 1);
+
+    // 如果删除的是当前模型，自动切换到第一个
+    if (config.currentModelId === modelId) {
+      config.currentModelId = config.models[0].id;
+      logger.info(`已自动切换到: ${config.models[0].name}`);
+    }
+
+    await this.saveUserConfig(config);
+    logger.info(`✅ 已删除模型配置: ${name}`);
+  }
+
+  /**
+   * 更新模型配置
+   */
+  async updateModel(
+    modelId: string,
+    updates: Partial<Omit<ModelConfig, 'id'>>
+  ): Promise<void> {
+    const config = this.getConfig();
+
+    const index = config.models.findIndex((m) => m.id === modelId);
+    if (index === -1) {
+      throw new Error(`❌ 模型配置不存在`);
+    }
+
+    config.models[index] = {
+      ...config.models[index],
+      ...updates,
+    };
+
+    await this.saveUserConfig(config);
+    logger.info(`✅ 已更新模型配置: ${config.models[index].name}`);
   }
 
   /**
@@ -719,35 +823,42 @@ export class ConfigManager {
   public validateConfig(config: BladeConfig): void {
     const errors: string[] = [];
 
-    if (!config.apiKey) {
-      errors.push('缺少 API 密钥');
+    if (!config.models || config.models.length === 0) {
+      errors.push('没有可用的模型配置');
     }
-    if (!config.baseUrl) {
-      errors.push('缺少 API 基础 URL');
-    }
-    if (!config.model) {
-      errors.push('缺少模型名称');
+
+    if (config.models && config.models.length > 0) {
+      if (!config.currentModelId) {
+        errors.push('未设置当前模型 ID');
+      } else {
+        const currentModel = config.models.find((m) => m.id === config.currentModelId);
+        if (!currentModel) {
+          errors.push('当前模型 ID 无效');
+        }
+      }
     }
 
     if (errors.length > 0) {
       throw new Error(
         `配置验证失败:\n${errors.map((e) => `  - ${e}`).join('\n')}\n\n` +
           `请通过以下方式之一提供配置:\n` +
-          `  1. 配置文件: ~/.blade/config.json 或 .blade/config.json\n` +
-          `  2. 首次启动设置向导: 直接运行 blade，系统会自动引导配置\n` +
-          `  3. 配置命令: blade config\n\n` +
-          `配置文件示例:\n` +
+          `  1. 首次启动: 运行 blade，系统会自动引导配置\n` +
+          `  2. 添加模型: blade 后输入 /model add\n` +
+          `  3. 初始化向导: 输入 /init\n\n` +
+          `配置文件示例 (~/.blade/config.json):\n` +
           `{\n` +
-          `  "provider": "openai-compatible",\n` +
-          `  "apiKey": "your-api-key",\n` +
-          `  "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",\n` +
-          `  "model": "qwen-max"\n` +
-          `}\n\n` +
-          `或使用环境变量插值:\n` +
-          `{\n` +
-          `  "apiKey": "\${BLADE_API_KEY}",\n` +
-          `  "baseUrl": "\${BLADE_BASE_URL:-https://apis.iflow.cn/v1}"\n` +
-          `}`
+          `  "currentModelId": "model-id-123",\n` +
+          `  "models": [\n` +
+          `    {\n` +
+          `      "id": "model-id-123",\n` +
+          `      "name": "默认模型",\n` +
+          `      "provider": "openai-compatible",\n` +
+          `      "apiKey": "your-api-key",\n` +
+          `      "baseUrl": "https://api.example.com/v1",\n` +
+          `      "model": "model-name"\n` +
+          `    }\n` +
+          `  ]\n` +
+          `}\n`
       );
     }
   }
@@ -879,9 +990,7 @@ export function mergeRuntimeConfig(
   const result: RuntimeConfig = { ...baseConfig };
 
   // 1. 模型配置 (CLI 优先)
-  if (cliOptions.model !== undefined) {
-    result.model = cliOptions.model;
-  }
+  // 注意：现在模型通过 models 数组管理，不再使用单一的 model 字段
   if (cliOptions.fallbackModel !== undefined) {
     result.fallbackModel = cliOptions.fallbackModel;
   }

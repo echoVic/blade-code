@@ -9,8 +9,9 @@ export enum FocusId {
   SESSION_SELECTOR = 'session-selector',
   CONFIRMATION_PROMPT = 'confirmation-prompt',
   THEME_SELECTOR = 'theme-selector',
+  MODEL_SELECTOR = 'model-selector',
+  MODEL_CONFIG_WIZARD = 'model-config-wizard', // 统一的模型配置向导（支持 setup 和 add 模式）
   PERMISSIONS_MANAGER = 'permissions-manager',
-  SETUP_WIZARD = 'setup-wizard',
 }
 
 /**

@@ -29,6 +29,7 @@ interface MessageAreaProps {
  */
 export const MessageArea: React.FC<MessageAreaProps> = React.memo(
   ({ sessionState, terminalWidth, todos = [], showTodoPanel = false }) => {
+
     // 分离已完成的消息和正在流式传输的消息
     const { completedMessages, streamingMessage } = useMemo(() => {
       const messages = sessionState.messages;
@@ -73,7 +74,7 @@ export const MessageArea: React.FC<MessageAreaProps> = React.memo(
     const staticItems = useMemo(() => {
       const items: ReactNode[] = [];
 
-      // 1. Header 作为第一个子项（永远在顶部）
+      // 1. Header 作为第一个子项
       items.push(<Header key="header" />);
 
       // 2. 已完成的消息

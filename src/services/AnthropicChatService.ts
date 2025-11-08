@@ -40,6 +40,14 @@ export class AnthropicChatService implements IChatService {
   ): AsyncGenerator<StreamChunk, void, unknown> {
     throw new Error('AnthropicChatService.streamChat() not implemented');
   }
+
+  getConfig(): ChatConfig {
+    return { ...this.config };
+  }
+
+  updateConfig(newConfig: Partial<ChatConfig>): void {
+    this.config = { ...this.config, ...newConfig };
+  }
 }
 
 /*
