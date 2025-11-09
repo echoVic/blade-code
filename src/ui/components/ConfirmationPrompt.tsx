@@ -1,4 +1,4 @@
-import { Box, Text, useInput, useStdout } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import SelectInput, { type ItemProps as SelectItemProps } from 'ink-select-input';
 import React, { useMemo } from 'react';
 import type {
@@ -7,6 +7,7 @@ import type {
 } from '../../tools/types/ExecutionTypes.js';
 import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 import { MessageRenderer } from './MessageRenderer.js';
 
 const ConfirmationItem = ({ label, isSelected }: SelectItemProps) => (
@@ -29,9 +30,8 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
   details,
   onResponse,
 }) => {
-  // 获取终端宽度（用于 MessageRenderer）
-  const { stdout } = useStdout();
-  const terminalWidth = stdout.columns || 80;
+  // 使用 useTerminalWidth hook 获取终端宽度
+  const terminalWidth = useTerminalWidth();
 
   // 使用 FocusContext 管理焦点
   const { state: focusState } = useFocusContext();

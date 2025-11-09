@@ -3,9 +3,10 @@
  * 显示加载状态、幽默短语、计时器和循环进度
  */
 
-import { Box, Text, useStdout } from 'ink';
+import { Box, Text } from 'ink';
 import React, { useEffect, useState } from 'react';
 import { useLoadingIndicator } from '../hooks/useLoadingIndicator.js';
+import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 import { themeManager } from '../themes/ThemeManager.js';
 
 interface LoadingIndicatorProps {
@@ -46,11 +47,10 @@ function formatElapsedTime(seconds: number): string {
 export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
   ({ visible, message }) => {
     const [spinnerFrame, setSpinnerFrame] = useState(0);
-    const { stdout } = useStdout();
     const theme = themeManager.getTheme();
 
-    // 获取终端宽度
-    const terminalWidth = stdout.columns || 80;
+    // 使用 useTerminalWidth hook 获取终端宽度
+    const terminalWidth = useTerminalWidth();
     const isWideScreen = terminalWidth >= RESPONSIVE_BREAKPOINT;
 
     // 使用新的 hook 获取短语和计时器

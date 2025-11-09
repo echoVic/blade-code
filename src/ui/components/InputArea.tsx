@@ -2,14 +2,15 @@ import { useMemoizedFn } from 'ahooks';
 import { Box, Text } from 'ink';
 import React from 'react';
 import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
-import { useSession } from '../contexts/SessionContext.js';
 import { saveImageToTemp } from '../utils/imageHandler.js';
 import { CustomTextInput } from './CustomTextInput.js';
 
 interface InputAreaProps {
   input: string;
+  cursorPosition: number;
   isProcessing: boolean;
   onChange: (value: string) => void;
+  onChangeCursorPosition: (position: number) => void;
 }
 
 /**
@@ -17,13 +18,16 @@ interface InputAreaProps {
  * 使用 CustomTextInput 组件处理光标、编辑、粘贴和图片
  * 注意：加载动画已移至 LoadingIndicator 组件，显示在输入框上方
  */
-export const InputArea: React.FC<InputAreaProps> = ({ input, isProcessing, onChange }) => {
+export const InputArea: React.FC<InputAreaProps> = React.memo(({
+  input,
+  cursorPosition,
+  isProcessing,
+  onChange,
+  onChangeCursorPosition,
+}) => {
   // 使用焦点上下文来控制是否聚焦
   const { state: focusState } = useFocusContext();
   const isFocused = focusState.currentFocus === FocusId.MAIN_INPUT;
-
-  // 使用会话上下文获取光标偏移量
-  const { state: sessionState, dispatch } = useSession();
 
   // 处理中时，禁用输入框（移除焦点和光标）
   const isEnabled = !isProcessing && isFocused;
@@ -52,7 +56,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ input, isProcessing, onCha
   const handleImagePaste = useMemoizedFn(async (
     base64: string,
     mediaType: string,
-    filename?: string
+    filename?: string,
   ): Promise<{ prompt?: string }> => {
     try {
       // 保存图片到临时目录
@@ -101,7 +105,6 @@ export const InputArea: React.FC<InputAreaProps> = ({ input, isProcessing, onCha
     }
   });
 
-
   return (
     <Box
       flexDirection="row"
@@ -115,9 +118,9 @@ export const InputArea: React.FC<InputAreaProps> = ({ input, isProcessing, onCha
       </Text>
       <CustomTextInput
         value={input}
+        cursorPosition={cursorPosition}
         onChange={onChange}
-        cursorPosition={sessionState.cursorPosition}
-        onChangeCursorPosition={(position) => dispatch({ type: 'SET_CURSOR_POSITION', payload: position })}
+        onChangeCursorPosition={onChangeCursorPosition}
         onPaste={handlePaste}
         onImagePaste={handleImagePaste}
         placeholder=" 输入命令..."
@@ -126,4 +129,4 @@ export const InputArea: React.FC<InputAreaProps> = ({ input, isProcessing, onCha
       />
     </Box>
   );
-};
+});

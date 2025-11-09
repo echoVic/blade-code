@@ -116,7 +116,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   return (
     <Box flexDirection="column" marginTop={1} marginBottom={1}>
       {/* 分隔符 */}
-      <Text color={theme.colors.muted}>{'─'.repeat(Math.min(60, terminalWidth))}</Text>
+      <Text color={theme.colors.muted}>{'─'.repeat(Math.max(0, Math.min(60, terminalWidth)))}</Text>
 
       {/* diff 统计信息 */}
       {needsCollapse && (
@@ -127,7 +127,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
 
       {/* 分隔符（仅在有统计信息时显示） */}
       {needsCollapse && (
-        <Text color={theme.colors.muted}>{'─'.repeat(Math.min(60, terminalWidth))}</Text>
+        <Text color={theme.colors.muted}>{'─'.repeat(Math.max(0, Math.min(60, terminalWidth)))}</Text>
       )}
 
       {/* 渲染 diff 内容 */}
@@ -163,7 +163,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
         }
 
         // 截断过长的行（保留空间给行号和前缀）
-        const maxContentWidth = terminalWidth - lineNumWidth - 2;
+        const maxContentWidth = Math.max(0, terminalWidth - lineNumWidth - 2);
         let content = line.content;
         if (content.length > maxContentWidth) {
           content = content.substring(0, maxContentWidth - 3) + '...';
@@ -188,7 +188,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
       )}
 
       {/* 分隔符 */}
-      <Text color={theme.colors.muted}>{'─'.repeat(Math.min(60, terminalWidth))}</Text>
+      <Text color={theme.colors.muted}>{'─'.repeat(Math.max(0, Math.min(60, terminalWidth)))}</Text>
     </Box>
   );
 };
