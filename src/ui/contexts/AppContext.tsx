@@ -4,6 +4,7 @@ import React, {
   ReactNode,
   useContext,
   useEffect,
+  useMemo,
   useReducer,
 } from 'react';
 import type { RuntimeConfig } from '../../config/types.js';
@@ -217,8 +218,13 @@ export const AppProvider: React.FC<{
     dispatch(AppActions.setInitializationStatus('ready'));
   }, [initialConfig]);
 
+  const value = useMemo(
+    () => ({ state, dispatch, actions }),
+    [state, dispatch, actions]
+  );
+
   return (
-    <AppContext.Provider value={{ state, dispatch, actions }}>
+    <AppContext.Provider value={value}>
       {children}
     </AppContext.Provider>
   );

@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useState } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 
 /**
  * 焦点 ID 枚举
@@ -70,8 +70,13 @@ export const FocusProvider: React.FC<{ children: React.ReactNode }> = ({
     }));
   }, []);
 
+  const value = useMemo<FocusContextType>(
+    () => ({ state, setFocus, restorePreviousFocus }),
+    [state, setFocus, restorePreviousFocus]
+  );
+
   return (
-    <FocusContext.Provider value={{ state, setFocus, restorePreviousFocus }}>
+    <FocusContext.Provider value={value}>
       {children}
     </FocusContext.Provider>
   );

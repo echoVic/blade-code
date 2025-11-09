@@ -396,7 +396,7 @@ const Heading: React.FC<{
  */
 const HorizontalRule: React.FC<{ terminalWidth: number }> = ({ terminalWidth }) => {
   const theme = themeManager.getTheme();
-  const lineWidth = Math.min(terminalWidth - 4, 80);
+  const lineWidth = Math.max(0, Math.min(terminalWidth - 4, 80));
   return (
     <Text dimColor color={theme.colors.text.muted}>
       {'─'.repeat(lineWidth)}

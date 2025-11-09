@@ -1,7 +1,6 @@
 import { useMemoizedFn } from 'ahooks';
-import { Box, useApp, useStdout } from 'ink';
-import { debounce } from 'lodash-es';
-import React, { useEffect, useRef, useState } from 'react';
+import { Box, useApp } from 'ink';
+import React, { useEffect, useRef } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { PermissionMode, type SetupConfig } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
@@ -53,7 +52,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   }
 
   // ==================== State & Refs ====================
-  const [terminalWidth, setTerminalWidth] = useState(80);
   const hasProcessedResumeRef = useRef(false);
   const hasSentInitialMessage = useRef(false);
   const readyAnnouncementSent = useRef(false);
@@ -64,7 +62,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const { state: sessionState, addAssistantMessage, restoreSession } = useSession();
   const { todos, showTodoPanel } = useTodos();
   const { setFocus } = useFocusContext();
-  const { stdout } = useStdout();
   const { exit } = useApp();
 
   // ==================== Custom Hooks ====================
@@ -95,7 +92,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   // ==================== Input Buffer ====================
   // 使用 useInputBuffer 创建稳定的输入状态，避免 resize 时重建
-  // 参考 Gemini-cli 的实现，buffer 使用 ref 存储状态，不受组件重渲染影响
   const inputBuffer = useInputBuffer('', 0);
 
   // ==================== Memoized Handlers ====================
@@ -242,22 +238,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     hasProcessedResumeRef.current = true;
     handleResume();
   }, [otherProps.resume, handleResume]);
-
-  // 获取终端宽度
-  const updateTerminalWidth = useMemoizedFn(
-    debounce(() => {
-      setTerminalWidth(stdout.columns || 80);
-    }, 200)
-  );
-
-  useEffect(() => {
-    updateTerminalWidth();
-    stdout.on('resize', updateTerminalWidth);
-
-    return () => {
-      stdout.off('resize', updateTerminalWidth);
-    };
-  }, [stdout, exit, updateTerminalWidth]);
 
   // ==================== Memoized Methods ====================
   const handleResponse = useMemoizedFn(async (response: ConfirmationResponse) => {
@@ -504,7 +484,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           {/* MessageArea 内部直接引入 Header，作为 Static 的第一个子项 */}
           <MessageArea
             sessionState={sessionState}
-            terminalWidth={terminalWidth}
             todos={todos}
             showTodoPanel={showTodoPanel}
           />
@@ -517,7 +496,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
           <InputArea
             input={inputBuffer.value}
+            cursorPosition={inputBuffer.cursorPosition}
             onChange={inputBuffer.setValue}
+            onChangeCursorPosition={inputBuffer.setCursorPosition}
             isProcessing={sessionState.isThinking || !readyForChat}
           />
 

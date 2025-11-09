@@ -2,13 +2,13 @@ import { Box, Static } from 'ink';
 import React, { ReactNode, useMemo } from 'react';
 import type { TodoItem } from '../../tools/builtin/todo/types.js';
 import type { SessionMessage, SessionState } from '../contexts/SessionContext.js';
+import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 import { Header } from './Header.js';
 import { MessageRenderer } from './MessageRenderer.js';
 import { TodoPanel } from './TodoPanel.js';
 
 interface MessageAreaProps {
   sessionState: SessionState;
-  terminalWidth: number;
   todos?: TodoItem[];
   showTodoPanel?: boolean;
 }
@@ -28,7 +28,9 @@ interface MessageAreaProps {
  * - 只在有活动 TODO（pending/in_progress）时显示 TodoPanel
  */
 export const MessageArea: React.FC<MessageAreaProps> = React.memo(
-  ({ sessionState, terminalWidth, todos = [], showTodoPanel = false }) => {
+  ({ sessionState, todos = [], showTodoPanel = false }) => {
+    // 使用 useTerminalWidth hook 获取终端宽度
+    const terminalWidth = useTerminalWidth();
 
     // 分离已完成的消息和正在流式传输的消息
     const { completedMessages, streamingMessage } = useMemo(() => {

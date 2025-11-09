@@ -33,17 +33,20 @@ export const useMainInput = (
   const { state: focusState } = useFocusContext();
   const isFocused = focusState.currentFocus === FocusId.MAIN_INPUT;
 
-  // 从 buffer 读取输入值
+  // 从 buffer 读取输入值和光标位置
   const input = buffer.value;
   const setInput = buffer.setValue;
+  const cursorPosition = buffer.cursorPosition;
+
+  // 只需要 dispatch 用于清屏等全局操作,不需要 state
+  const { dispatch } = useSession();
 
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
-  const { state: sessionState, dispatch } = useSession();
 
   // @ 文件自动补全（使用真实光标位置）
-  const atCompletion = useAtCompletion(input, sessionState.cursorPosition, {
+  const atCompletion = useAtCompletion(input, cursorPosition, {
     cwd: process.cwd(),
     maxSuggestions: 10,
   });
@@ -196,11 +199,11 @@ export const useMainInput = (
         if (atCompletion.hasQuery && atCompletion.suggestions.includes(selectedCommand)) {
           const { newInput, newCursorPos } = applySuggestion(input, atCompletion, selectedCommand);
           setInput(newInput);
-          dispatch({ type: 'SET_CURSOR_POSITION', payload: newCursorPos });
+          buffer.setCursorPosition(newCursorPos);
         } else {
           const newInput = selectedCommand + ' ';
           setInput(newInput);
-          dispatch({ type: 'SET_CURSOR_POSITION', payload: newInput.length });
+          buffer.setCursorPosition(newInput.length);
         }
         setShowSuggestions(false);
         setSuggestions([]);
@@ -213,11 +216,11 @@ export const useMainInput = (
           if (atCompletion.hasQuery && atCompletion.suggestions.includes(selectedCommand)) {
             const { newInput, newCursorPos } = applySuggestion(input, atCompletion, selectedCommand);
             setInput(newInput);
-            dispatch({ type: 'SET_CURSOR_POSITION', payload: newCursorPos });
+            buffer.setCursorPosition(newCursorPos);
           } else {
             const newInput = selectedCommand + ' ';
             setInput(newInput);
-            dispatch({ type: 'SET_CURSOR_POSITION', payload: newInput.length });
+            buffer.setCursorPosition(newInput.length);
           }
           setShowSuggestions(false);
           setSuggestions([]);
@@ -235,7 +238,7 @@ export const useMainInput = (
           const prevCommand = onPreviousCommand();
           if (prevCommand !== '') {
             setInput(prevCommand);
-            dispatch({ type: 'SET_CURSOR_POSITION', payload: prevCommand.length });
+            buffer.setCursorPosition(prevCommand.length);
           }
         }
         return;
@@ -248,7 +251,7 @@ export const useMainInput = (
           const nextCommand = onNextCommand();
           if (nextCommand !== '') {
             setInput(nextCommand);
-            dispatch({ type: 'SET_CURSOR_POSITION', payload: nextCommand.length });
+            buffer.setCursorPosition(nextCommand.length);
           }
         }
         return;

@@ -4,6 +4,7 @@ import React, {
   ReactNode,
   useCallback,
   useContext,
+  useMemo,
   useReducer,
 } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
@@ -46,8 +47,6 @@ export interface SessionState {
   sessionId: string; // 全局唯一会话 ID
   messages: SessionMessage[];
   isThinking: boolean;
-  input: string;
-  cursorPosition: number; // 光标位置（字符数）
   currentCommand: string | null;
   error: string | null;
   isActive: boolean;
@@ -58,8 +57,6 @@ export interface SessionState {
  */
 export type SessionAction =
   | { type: 'ADD_MESSAGE'; payload: SessionMessage }
-  | { type: 'SET_INPUT'; payload: string }
-  | { type: 'SET_CURSOR_POSITION'; payload: number }
   | { type: 'SET_THINKING'; payload: boolean }
   | { type: 'SET_COMMAND'; payload: string | null }
   | { type: 'SET_ERROR'; payload: string | null }
@@ -93,8 +90,6 @@ const initialState: SessionState = {
   sessionId: nanoid(),
   messages: [],
   isThinking: false,
-  input: '',
-  cursorPosition: 0,
   currentCommand: null,
   error: null,
   isActive: true,
@@ -109,17 +104,6 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
         messages: [...state.messages, action.payload],
         error: null, // 清除错误当有新消息时
       };
-
-    case 'SET_INPUT':
-      return {
-        ...state,
-        input: action.payload,
-        // 输入改变时,光标默认移动到末尾
-        cursorPosition: action.payload.length,
-      };
-
-    case 'SET_CURSOR_POSITION':
-      return { ...state, cursorPosition: action.payload };
 
     case 'SET_THINKING':
       return { ...state, isThinking: action.payload };
@@ -215,17 +199,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     []
   );
 
-  const value: SessionContextType = {
-    state,
-    dispatch,
-    addUserMessage,
-    addAssistantMessage,
-    addToolMessage,
-    clearMessages,
-    resetSession,
-    restoreSession,
-    configManager,
-  };
+  const value = useMemo<SessionContextType>(
+    () => ({
+      state,
+      dispatch,
+      addUserMessage,
+      addAssistantMessage,
+      addToolMessage,
+      clearMessages,
+      resetSession,
+      restoreSession,
+      configManager,
+    }),
+    [
+      state,
+      dispatch,
+      addUserMessage,
+      addAssistantMessage,
+      addToolMessage,
+      clearMessages,
+      resetSession,
+      restoreSession,
+      configManager,
+    ]
+  );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
