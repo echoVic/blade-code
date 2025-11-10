@@ -1,4 +1,5 @@
-import { useCallback, useState } from 'react';
+import { useMemoizedFn } from 'ahooks';
+import { useState } from 'react';
 
 /**
  * 输入缓冲区接口
@@ -35,26 +36,29 @@ export function useInputBuffer(
     cursorPosition: initialCursorPosition
   });
 
-  // 设置值（保持光标位置）
-  const setValue = useCallback((newValue: string) => {
+  // 设置值（尽量保持光标位置，但不会自动调整）
+  // 注意：光标位置应该由调用方通过 setCursorPosition 明确设置
+  const setValue = useMemoizedFn((newValue: string) => {
     setState(prev => ({
       value: newValue,
-      cursorPosition: Math.min(prev.cursorPosition, newValue.length)
+      // 不自动调整光标位置，保持原值
+      // 如果需要调整，调用方应该显式调用 setCursorPosition
+      cursorPosition: prev.cursorPosition
     }));
-  }, []);
+  });
 
   // 光标位置设置（带边界检查）
-  const setCursorPosition = useCallback((position: number) => {
+  const setCursorPosition = useMemoizedFn((position: number) => {
     setState(prev => ({
       ...prev,
       cursorPosition: Math.max(0, Math.min(position, prev.value.length))
     }));
-  }, []);
+  });
 
   // 清空
-  const clear = useCallback(() => {
+  const clear = useMemoizedFn(() => {
     setState({ value: '', cursorPosition: 0 });
-  }, []);
+  });
 
   // 直接返回对象
   // 使用单一state对象后，每次状态变化只触发一次渲染

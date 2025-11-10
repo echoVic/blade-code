@@ -1,5 +1,6 @@
+import { useMemoizedFn } from 'ahooks';
 import { useApp } from 'ink';
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 /**
  * 智能 Ctrl+C 处理 Hook
@@ -33,7 +34,7 @@ export const useCtrlCHandler = (
   /**
    * 处理 Ctrl+C 按键事件
    */
-  const handleCtrlC = useCallback(() => {
+  const handleCtrlC = useMemoizedFn(() => {
     if (isProcessing) {
       // 有任务在执行
       if (!hasAbortedRef.current) {
@@ -51,7 +52,7 @@ export const useCtrlCHandler = (
       // 没有任务在执行：直接退出应用
       exit();
     }
-  }, [isProcessing, onAbort, exit]);
+  });
 
   /**
    * 当任务停止时，重置中止标志

@@ -4,9 +4,10 @@
  * 提供 @ 文件提及的自动补全功能
  */
 
+import { useMemoizedFn } from 'ahooks';
 import Fuse from 'fuse.js';
 import { glob } from 'glob';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   DEFAULT_EXCLUDE_DIRS,
   DEFAULT_EXCLUDE_FILE_PATTERNS,
@@ -340,32 +341,32 @@ export function useAtCompletionWithNavigation(
   /**
    * 向上导航
    */
-  const navigateUp = useCallback(() => {
+  const navigateUp = useMemoizedFn(() => {
     setSelectedIndex((prev) => {
       const newIndex = prev - 1;
       return newIndex < 0 ? completion.suggestions.length - 1 : newIndex;
     });
-  }, [completion.suggestions.length]);
+  });
 
   /**
    * 向下导航
    */
-  const navigateDown = useCallback(() => {
+  const navigateDown = useMemoizedFn(() => {
     setSelectedIndex((prev) => {
       const newIndex = prev + 1;
       return newIndex >= completion.suggestions.length ? 0 : newIndex;
     });
-  }, [completion.suggestions.length]);
+  });
 
   /**
    * 选择当前建议
    */
-  const selectCurrent = useCallback((): string | null => {
+  const selectCurrent = useMemoizedFn((): string | null => {
     if (selectedIndex < completion.suggestions.length) {
       return completion.suggestions[selectedIndex];
     }
     return null;
-  }, [completion.suggestions, selectedIndex]);
+  });
 
   return {
     ...completion,
