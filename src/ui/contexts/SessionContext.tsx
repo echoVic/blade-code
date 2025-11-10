@@ -1,8 +1,8 @@
+import { useMemoizedFn } from 'ahooks';
 import { nanoid } from 'nanoid';
 import React, {
   createContext,
   ReactNode,
-  useCallback,
   useContext,
   useMemo,
   useReducer,
@@ -145,7 +145,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(sessionReducer, initialState);
   const configManager = ConfigManager.getInstance();
 
-  const addUserMessage = useCallback((content: string) => {
+  const addUserMessage = useMemoizedFn((content: string) => {
     logger.debug('[DIAG] addUserMessage called:', {
       contentLength: content.length,
       contentPreview: content.substring(0, 50) + (content.length > 50 ? '...' : ''),
@@ -158,9 +158,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
     dispatch({ type: 'ADD_MESSAGE', payload: message });
     logger.debug('[DIAG] User message dispatched:', { messageId: message.id });
-  }, []);
+  });
 
-  const addAssistantMessage = useCallback((content: string) => {
+  const addAssistantMessage = useMemoizedFn((content: string) => {
     const message: SessionMessage = {
       id: `assistant-${Date.now()}-${Math.random()}`,
       role: 'assistant',
@@ -168,9 +168,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       timestamp: Date.now(),
     };
     dispatch({ type: 'ADD_MESSAGE', payload: message });
-  }, []);
+  });
 
-  const addToolMessage = useCallback(
+  const addToolMessage = useMemoizedFn(
     (content: string, metadata?: ToolMessageMetadata) => {
       const message: SessionMessage = {
         id: `tool-${Date.now()}-${Math.random()}`,
@@ -180,23 +180,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         metadata,
       };
       dispatch({ type: 'ADD_MESSAGE', payload: message });
-    },
-    []
+    }
   );
 
-  const clearMessages = useCallback(() => {
+  const clearMessages = useMemoizedFn(() => {
     dispatch({ type: 'CLEAR_MESSAGES' });
-  }, []);
+  });
 
-  const resetSession = useCallback(() => {
+  const resetSession = useMemoizedFn(() => {
     dispatch({ type: 'RESET_SESSION' });
-  }, []);
+  });
 
-  const restoreSession = useCallback(
+  const restoreSession = useMemoizedFn(
     (sessionId: string, messages: SessionMessage[]) => {
       dispatch({ type: 'RESTORE_SESSION', payload: { sessionId, messages } });
-    },
-    []
+    }
   );
 
   const value = useMemo<SessionContextType>(

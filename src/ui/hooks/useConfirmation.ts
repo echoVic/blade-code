@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useMemoizedFn } from 'ahooks';
+import { useMemo, useState } from 'react';
 import type {
   ConfirmationDetails,
   ConfirmationHandler,
@@ -28,7 +29,7 @@ export const useConfirmation = () => {
   /**
    * 显示确认对话框
    */
-  const showConfirmation = useCallback(
+  const showConfirmation = useMemoizedFn(
     (details: ConfirmationDetails): Promise<ConfirmationResponse> => {
       return new Promise((resolve) => {
         setConfirmationState({
@@ -37,14 +38,13 @@ export const useConfirmation = () => {
           resolver: resolve,
         });
       });
-    },
-    []
+    }
   );
 
   /**
    * 处理用户响应
    */
-  const handleResponse = useCallback(
+  const handleResponse = useMemoizedFn(
     (response: ConfirmationResponse) => {
       if (confirmationState.resolver) {
         confirmationState.resolver(response);
@@ -56,8 +56,7 @@ export const useConfirmation = () => {
         details: null,
         resolver: null,
       });
-    },
-    [confirmationState.resolver]
+    }
   );
 
   /**

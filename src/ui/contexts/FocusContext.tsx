@@ -1,4 +1,5 @@
-import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { useMemoizedFn } from 'ahooks';
+import React, { createContext, useContext, useMemo, useState } from 'react';
 
 /**
  * 焦点 ID 枚举
@@ -52,23 +53,23 @@ export const FocusProvider: React.FC<{ children: React.ReactNode }> = ({
    * 设置焦点
    * @param id 目标组件的焦点 ID
    */
-  const setFocus = useCallback((id: FocusId) => {
+  const setFocus = useMemoizedFn((id: FocusId) => {
     setState((prev) => ({
       currentFocus: id,
       previousFocus: prev.currentFocus,
     }));
-  }, []);
+  });
 
   /**
    * 恢复到上一个焦点
    * 如果没有上一个焦点，则回到主输入框
    */
-  const restorePreviousFocus = useCallback(() => {
+  const restorePreviousFocus = useMemoizedFn(() => {
     setState((prev) => ({
       currentFocus: prev.previousFocus || FocusId.MAIN_INPUT,
       previousFocus: null,
     }));
-  }, []);
+  });
 
   const value = useMemo<FocusContextType>(
     () => ({ state, setFocus, restorePreviousFocus }),

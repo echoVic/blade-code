@@ -10,9 +10,10 @@
  * - Delete 正向删除
  */
 
+import { useMemoizedFn } from 'ahooks';
 import chalk from 'chalk';
 import { type Key, Text, useInput } from 'ink';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { PASTE_CONFIG } from '../constants.js';
 import { isImagePath, processImageFromPath } from '../utils/imagePaste.js';
 
@@ -122,7 +123,7 @@ export function CustomTextInput({
   /**
    * 处理待处理的粘贴 chunks
    */
-  const processPendingChunks = useCallback(() => {
+  const processPendingChunks = useMemoizedFn(() => {
     const currentState = pasteStateRef.current;
     if (currentState.timeoutId) {
       clearTimeout(currentState.timeoutId);
@@ -203,7 +204,7 @@ export function CustomTextInput({
     }, PASTE_CONFIG.TIMEOUT_MS);
 
     pasteStateRef.current.timeoutId = timeoutId;
-  }, [originalValue, cursorPosition, onChange, onChangeCursorPosition, onPaste, onImagePaste]);
+  });
 
   /**
    * 键盘输入处理
@@ -358,10 +359,12 @@ export function CustomTextInput({
       nextCursorPosition = nextValue.length;
     }
 
-    // 更新状态
-    onChangeCursorPosition(nextCursorPosition);
+    // 更新状态（先更新值，再更新光标位置，避免闪烁）
     if (nextValue !== originalValue) {
       onChange(nextValue);
+    }
+    if (nextCursorPosition !== cursorPosition) {
+      onChangeCursorPosition(nextCursorPosition);
     }
   }, { isActive: focus });
 
@@ -377,16 +380,27 @@ export function CustomTextInput({
         ? chalk.inverse(placeholder[0]) + chalk.grey(placeholder.slice(1))
         : chalk.inverse(' ');
 
-    renderedValue = originalValue.length > 0 ? '' : chalk.inverse(' ');
+    // 空输入时显示光标
+    if (originalValue.length === 0) {
+      renderedValue = chalk.inverse(' ');
+    } else {
+      // 有内容时，逐字符渲染
+      renderedValue = '';
 
-    let i = 0;
-    for (const char of originalValue) {
-      renderedValue += i === cursorPosition ? chalk.inverse(char) : char;
-      i++;
-    }
+      // 渲染所有字符，光标在中间时反转对应字符
+      for (let i = 0; i < originalValue.length; i++) {
+        if (i === cursorPosition && cursorPosition < originalValue.length) {
+          // 光标在字符位置时（非末尾），反转该字符
+          renderedValue += chalk.inverse(originalValue[i]);
+        } else {
+          renderedValue += originalValue[i];
+        }
+      }
 
-    if (originalValue.length > 0 && cursorPosition === originalValue.length) {
-      renderedValue += chalk.inverse(' ');
+      // 光标在末尾时，追加反转的空格
+      if (cursorPosition >= originalValue.length) {
+        renderedValue += chalk.inverse(' ');
+      }
     }
   }
 
