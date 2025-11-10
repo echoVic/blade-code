@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.15] - 2025-11-10
+
+### 🔧 其他更改
+
+- 更新 ink 依赖至 6.4.0 并同步 pnpm-lock (22405f7)
+
+
 ## [0.0.14] - 2025-11-05
 
 
