@@ -271,6 +271,16 @@ export const useCommandHandler = (
             };
           }
 
+          const slashMessage = slashResult.message;
+          if (
+            slashResult.success &&
+            typeof slashMessage === 'string' &&
+            slashMessage.trim() !== '' &&
+            slashMessage !== 'trigger_analysis'
+          ) {
+            addAssistantMessage(slashMessage);
+          }
+
           // /init 命令总是会触发 AI 分析
           if (
             slashResult.success &&
