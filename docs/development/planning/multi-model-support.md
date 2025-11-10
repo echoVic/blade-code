@@ -305,14 +305,12 @@ const modelCommand: SlashCommand = {
 
 子命令：
   (无参数)        显示模型选择器（交互式切换）
-  list           列出所有模型配置
   current        显示当前模型详情
   add            添加新模型配置（交互式向导）
   remove <名称>  删除指定模型配置（按名称匹配）
 
 示例：
   /model              # 显示模型选择器
-  /model list         # 列出所有模型
   /model add          # 添加新模型
   /model remove 千问  # 删除名称包含"千问"的模型
   `,
@@ -574,7 +572,6 @@ if (slashResult.message === 'show_model_add_wizard') {
 
 测试场景：
 - [ ] 完整流程：添加模型 → 切换模型 → Agent 使用正确配置
-- [ ] `/model list` 命令输出正确
 - [ ] `/model current` 显示当前模型
 - [ ] `/model remove` 删除指定模型
 
@@ -695,27 +692,6 @@ $ /model
 # Enter 切换，显示确认
 ✅ 已切换到模型: DeepSeek 个人 (deepseek-chat)
 ```
-
-### 场景 5: 查看所有模型
-
-```bash
-$ /model list
-
-📋 可用模型配置：
-
-● 千问工作账号
-   Provider: openai-compatible
-   Model: qwen-max
-   Base URL: https://dashscope.aliyuncs.com/compatible-mode/v1
-
-○ DeepSeek 个人
-   Provider: openai-compatible
-   Model: deepseek-chat
-   Base URL: https://api.deepseek.com/v1
-   描述: 个人账号，用于测试
-```
-
----
 
 ## 🚀 未来扩展
 

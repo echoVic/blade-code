@@ -2,7 +2,7 @@ import { useMemoizedFn } from 'ahooks';
 import { Box, useApp } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
-import { PermissionMode, type SetupConfig } from '../../config/types.js';
+import { PermissionMode, type SetupConfig, type ModelConfig } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { SessionService } from '../../services/SessionService.js';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
@@ -309,6 +309,15 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   });
 
+  const handleModelEditRequest = useMemoizedFn((model: ModelConfig) => {
+    appDispatch(appActions.showModelEditWizard(model));
+  });
+
+  const handleModelEditComplete = useMemoizedFn((updatedConfig: SetupConfig) => {
+    addAssistantMessage(`✅ 已更新模型配置: ${updatedConfig.name}`);
+    closeModal();
+  });
+
   // ==================== Effects ====================
   // 焦点管理：根据不同状态切换焦点
   useEffect(() => {
@@ -330,8 +339,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     } else if (appState.activeModal === 'modelSelector') {
       // 显示模型选择器时，焦点转移到选择器
       setFocus(FocusId.MODEL_SELECTOR);
-    } else if (appState.activeModal === 'modelAddWizard') {
-      // ModelConfigWizard (add 模式) 显示时，焦点转移到向导
+    } else if (
+      appState.activeModal === 'modelAddWizard' ||
+      appState.activeModal === 'modelEditWizard'
+    ) {
+      // ModelConfigWizard (add/edit 模式) 显示时，焦点转移到向导
       setFocus(FocusId.MODEL_CONFIG_WIZARD);
     } else if (appState.activeModal === 'permissionsManager') {
       // 显示权限管理器时，焦点转移到管理器
@@ -453,33 +465,50 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     });
   }
 
+  const inlineModelSelectorVisible = appState.activeModal === 'modelSelector';
+  const editingModel = appState.modelEditorTarget;
+  const inlineModelWizardMode =
+    appState.activeModal === 'modelAddWizard'
+      ? 'add'
+      : appState.activeModal === 'modelEditWizard' && editingModel
+        ? 'edit'
+        : null;
+  const inlineModelUiVisible =
+    inlineModelSelectorVisible || Boolean(inlineModelWizardMode);
+
+  const editingInitialConfig = editingModel
+    ? {
+        name: editingModel.name,
+        provider: editingModel.provider,
+        baseUrl: editingModel.baseUrl,
+        apiKey: editingModel.apiKey,
+        model: editingModel.model,
+      }
+    : undefined;
+
+  const blockingModal =
+    confirmationState.isVisible && confirmationState.details ? (
+      <ConfirmationPrompt
+        details={confirmationState.details}
+        onResponse={handleResponse}
+      />
+    ) : appState.activeModal === 'themeSelector' ? (
+      <ThemeSelector />
+    ) : appState.activeModal === 'permissionsManager' ? (
+      <PermissionsManager onClose={closeModal} />
+    ) : appState.activeModal === 'sessionSelector' ? (
+      <SessionSelector
+        sessions={appState.sessionSelectorData}
+        onSelect={handleSessionSelect}
+        onCancel={handleSessionCancel}
+      />
+    ) : null;
+
+  const isInputDisabled = sessionState.isThinking || !readyForChat || inlineModelUiVisible;
+
   return (
     <Box flexDirection="column" width="100%" height="100%">
-      {/* 确认对话框覆盖层 */}
-      {confirmationState.isVisible && confirmationState.details ? (
-        <ConfirmationPrompt
-          details={confirmationState.details}
-          onResponse={handleResponse}
-        />
-      ) : appState.activeModal === 'themeSelector' ? (
-        <ThemeSelector />
-      ) : appState.activeModal === 'modelSelector' ? (
-        <ModelSelector onClose={closeModal} />
-      ) : appState.activeModal === 'modelAddWizard' ? (
-        <ModelConfigWizard
-          mode="add"
-          onComplete={closeModal}
-          onCancel={closeModal}
-        />
-      ) : appState.activeModal === 'permissionsManager' ? (
-        <PermissionsManager onClose={closeModal} />
-      ) : appState.activeModal === 'sessionSelector' ? (
-        <SessionSelector
-          sessions={appState.sessionSelectorData} // 从 AppContext 传递会话数据
-          onSelect={handleSessionSelect}
-          onCancel={handleSessionCancel}
-        />
-      ) : (
+      {blockingModal ?? (
         <>
           {/* MessageArea 内部直接引入 Header，作为 Static 的第一个子项 */}
           <MessageArea
@@ -499,14 +528,36 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             cursorPosition={inputBuffer.cursorPosition}
             onChange={inputBuffer.setValue}
             onChangeCursorPosition={inputBuffer.setCursorPosition}
-            isProcessing={sessionState.isThinking || !readyForChat}
+            isProcessing={isInputDisabled}
           />
+
+          {inlineModelSelectorVisible && (
+            <Box marginTop={1} paddingX={2}>
+              <ModelSelector onClose={closeModal} onEdit={handleModelEditRequest} />
+            </Box>
+          )}
+
+          {inlineModelWizardMode && (
+            <Box marginTop={1} paddingX={2}>
+              <ModelConfigWizard
+                mode={inlineModelWizardMode}
+                modelId={editingModel?.id}
+                initialConfig={inlineModelWizardMode === 'edit' ? editingInitialConfig : undefined}
+                onComplete={
+                  inlineModelWizardMode === 'edit'
+                    ? handleModelEditComplete
+                    : closeModal
+                }
+                onCancel={closeModal}
+              />
+            </Box>
+          )}
 
           {/* 命令建议列表 - 显示在输入框下方 */}
           <CommandSuggestions
             suggestions={suggestions}
             selectedIndex={selectedSuggestionIndex}
-            visible={showSuggestions}
+            visible={showSuggestions && !inlineModelUiVisible}
           />
           <ChatStatusBar
             hasApiKey={readyForChat}

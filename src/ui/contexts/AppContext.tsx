@@ -7,7 +7,7 @@ import React, {
   useMemo,
   useReducer,
 } from 'react';
-import type { RuntimeConfig } from '../../config/types.js';
+import type { ModelConfig, RuntimeConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
 import type { TodoItem } from '../../tools/builtin/todo/types.js';
 
@@ -28,7 +28,8 @@ export type ActiveModal =
   | 'todoPanel'
   | 'shortcuts'
   | 'modelSelector'
-  | 'modelAddWizard';
+  | 'modelAddWizard'
+  | 'modelEditWizard';
 
 // 应用状态类型定义
 export interface AppState {
@@ -37,6 +38,7 @@ export interface AppState {
   initializationError: string | null; // 初始化错误信息
   activeModal: ActiveModal; // 当前活跃的模态框
   sessionSelectorData: SessionMetadata[] | undefined; // 会话选择器数据
+  modelEditorTarget: ModelConfig | null; // 正在编辑的模型
   todos: TodoItem[]; // 任务列表
 }
 
@@ -47,6 +49,7 @@ type AppAction =
   | { type: 'SET_INITIALIZATION_ERROR'; payload: string | null }
   | { type: 'SET_ACTIVE_MODAL'; payload: ActiveModal }
   | { type: 'SHOW_SESSION_SELECTOR'; payload?: SessionMetadata[] }
+  | { type: 'SHOW_MODEL_EDIT_WIZARD'; payload: ModelConfig }
   | { type: 'CLOSE_MODAL' }
   | { type: 'SET_TODOS'; payload: TodoItem[] }
   | { type: 'UPDATE_TODO'; payload: TodoItem };
@@ -58,6 +61,7 @@ const defaultState: AppState = {
   initializationError: null,
   activeModal: 'none',
   sessionSelectorData: undefined,
+  modelEditorTarget: null,
   todos: [],
 };
 
@@ -83,11 +87,19 @@ function appReducer(state: AppState, action: AppAction): AppState {
         sessionSelectorData: action.payload || undefined,
       };
 
+    case 'SHOW_MODEL_EDIT_WIZARD':
+      return {
+        ...state,
+        activeModal: 'modelEditWizard',
+        modelEditorTarget: action.payload,
+      };
+
     case 'CLOSE_MODAL':
       return {
         ...state,
         activeModal: 'none',
         sessionSelectorData: undefined,
+        modelEditorTarget: null,
       };
 
     case 'SET_TODOS':
@@ -163,6 +175,11 @@ export const AppActions = {
   showModelAddWizard: () => ({
     type: 'SET_ACTIVE_MODAL' as const,
     payload: 'modelAddWizard' as ActiveModal,
+  }),
+
+  showModelEditWizard: (model: ModelConfig) => ({
+    type: 'SHOW_MODEL_EDIT_WIZARD' as const,
+    payload: model,
   }),
 
   closeModal: () => ({

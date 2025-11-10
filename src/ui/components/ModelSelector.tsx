@@ -6,15 +6,17 @@
  * - 操作：Enter 切换、D 删除、ESC 取消、Ctrl+C 退出
  */
 
-import { Box, Text, useFocus, useInput } from 'ink';
+import { useMemoizedFn, useMount } from 'ahooks';
+import { Box, Text, useFocus, useFocusManager, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import type { ModelConfig } from '../../config/types.js';
 import { useSession } from '../contexts/SessionContext.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 interface ModelSelectorProps {
   onClose: () => void;
+  onEdit?: (model: ModelConfig) => void;
 }
 
 // 自定义 SelectInput 组件 - 高对比度样式
@@ -24,15 +26,19 @@ const Indicator: React.FC<{ isSelected?: boolean }> = ({ isSelected }) => (
   </Box>
 );
 
-const Item: React.FC<{ isSelected?: boolean; label: string }> = ({ isSelected, label }) => (
+const Item: React.FC<{ isSelected?: boolean; label: string }> = ({
+  isSelected,
+  label,
+}) => (
   <Text bold={isSelected} color={isSelected ? 'yellow' : undefined}>
     {label}
   </Text>
 );
 
-export const ModelSelector = memo(({ onClose }: ModelSelectorProps) => {
+export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
   const { configManager } = useSession();
   const { isFocused } = useFocus({ id: 'model-selector' });
+  const focusManager = useFocusManager();
 
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [currentModelId, setCurrentModelId] = useState('');
@@ -49,13 +55,18 @@ export const ModelSelector = memo(({ onClose }: ModelSelectorProps) => {
     return Math.max(20, terminalWidth - 8);
   });
 
+  useMount(() => {
+    focusManager?.focus('model-selector');
+  });
+
   // 初始化
   useEffect(() => {
     const allModels = configManager.getAllModels();
     const config = configManager.getConfig();
+
     setModels(allModels);
     setCurrentModelId(config.currentModelId);
-    setSelectedId(config.currentModelId);
+    setSelectedId(allModels[0]?.id || '');
   }, [configManager]);
 
   // 全局键盘处理 - 始终监听
@@ -80,12 +91,18 @@ export const ModelSelector = memo(({ onClose }: ModelSelectorProps) => {
       // D: 删除模型
       if (input === 'd' || input === 'D') {
         handleDelete();
+        return;
+      }
+
+      // E: 编辑模型
+      if ((input === 'e' || input === 'E') && onEdit) {
+        handleEdit();
       }
     },
     { isActive: true }
   );
 
-  const handleSelect = async (item: { value: string }) => {
+  const handleSelect = useMemoizedFn(async (item: { value: string }) => {
     if (isProcessing) return;
 
     const modelId = item.value;
@@ -103,9 +120,9 @@ export const ModelSelector = memo(({ onClose }: ModelSelectorProps) => {
       setError((err as Error).message);
       setIsProcessing(false);
     }
-  };
+  });
 
-  const handleDelete = async () => {
+  const handleDelete = useMemoizedFn(async () => {
     if (isProcessing || selectedId === currentModelId) return;
 
     setIsProcessing(true);
@@ -124,85 +141,134 @@ export const ModelSelector = memo(({ onClose }: ModelSelectorProps) => {
     } finally {
       setIsProcessing(false);
     }
-  };
+  });
 
-  const selectedModel = models.find((m) => m.id === selectedId);
+  const handleEdit = useMemoizedFn(() => {
+    if (isProcessing || !onEdit) return;
+    const target = models.find((m) => m.id === selectedId);
+    if (!target) return;
+    onEdit(target);
+  });
+
+  const handleHighlight = useMemoizedFn((item: { value: string }) => {
+    setSelectedId(item.value);
+  });
+
+  const selectedModel = useMemo(() => {
+    return models.find((m) => m.id === selectedId);
+  }, [models, selectedId]);
+
   const items = models.map((model) => ({
     label: model.name + (model.id === currentModelId ? ' (当前)' : ''),
     value: model.id,
   }));
+  const isCurrentSelection = selectedId === currentModelId;
+  const shortcutHint = isProcessing
+    ? '⏳ 处理中...'
+    : isCurrentSelection
+      ? 'Enter=关闭 • E=编辑 • Esc=取消'
+      : 'Enter=切换 • D=删除 • E=编辑 • Esc=取消';
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="blue" padding={1}>
-      {/* 标题 */}
-      <Box justifyContent="center" marginBottom={1}>
-        <Text bold color="blue">
-          选择模型配置
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor="gray"
+      padding={1}
+      width="100%"
+    >
+      <Box flexDirection="row" justifyContent="space-between" marginBottom={1}>
+        <Text bold color="cyan">
+          模型管理
         </Text>
+        <Text dimColor>{shortcutHint} • Ctrl+C=退出</Text>
       </Box>
 
-      {/* 模型列表 */}
-      <Box flexDirection="column" marginBottom={1}>
-        <SelectInput
-          items={items}
-          onSelect={handleSelect}
-          onHighlight={(item) => setSelectedId(item.value)}
-          indicatorComponent={Indicator}
-          itemComponent={Item}
-        />
-      </Box>
-
-      {/* 分隔线 */}
-      <Box marginBottom={1}>
-        <Text dimColor>{'─'.repeat(separatorLength)}</Text>
-      </Box>
-
-      {/* 详情 */}
-      {selectedModel && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text>
-            <Text dimColor>名称: </Text>
-            <Text bold color="cyan">
-              {selectedModel.name}
-            </Text>
-          </Text>
-          <Text>
-            <Text dimColor>Provider: </Text>
-            <Text bold color="cyan">
-              {selectedModel.provider}
-            </Text>
-          </Text>
-          <Text>
-            <Text dimColor>Model: </Text>
-            <Text bold color="cyan">
-              {selectedModel.model}
-            </Text>
-          </Text>
-          <Text>
-            <Text dimColor>Base URL: </Text>
-            <Text bold color="blue">
-              {selectedModel.baseUrl}
-            </Text>
-          </Text>
+      <Box flexDirection="row">
+        <Box
+          flexDirection="column"
+          flexGrow={2}
+          marginRight={2}
+          borderStyle="single"
+          borderColor="gray"
+          padding={1}
+        >
+          <Text dimColor>已配置模型 ({models.length})</Text>
+          <Box marginTop={1}>
+            <SelectInput
+              items={items}
+              onSelect={handleSelect}
+              onHighlight={handleHighlight}
+              indicatorComponent={Indicator}
+              itemComponent={Item}
+            />
+          </Box>
         </Box>
-      )}
 
-      {/* 错误提示 */}
+        <Box
+          flexDirection="column"
+          flexGrow={3}
+          borderStyle="single"
+          borderColor="gray"
+          padding={1}
+        >
+          <Text dimColor>模型详情</Text>
+          <Box marginY={1}>
+            <Text color={isCurrentSelection ? 'green' : 'yellow'}>
+              {isCurrentSelection ? '● 当前使用' : '● 可切换'}
+            </Text>
+          </Box>
+          {selectedModel ? (
+            <Box flexDirection="column">
+              <Text>
+                <Text dimColor>名称: </Text>
+                <Text bold color="cyan">
+                  {selectedModel.name}
+                </Text>
+              </Text>
+              <Text>
+                <Text dimColor>Provider: </Text>
+                <Text bold>{selectedModel.provider}</Text>
+              </Text>
+              <Text>
+                <Text dimColor>Model: </Text>
+                <Text bold>{selectedModel.model}</Text>
+              </Text>
+              <Text>
+                <Text dimColor>Base URL: </Text>
+                <Text color="blueBright">{selectedModel.baseUrl}</Text>
+              </Text>
+              {selectedModel.temperature !== undefined && (
+                <Text>
+                  <Text dimColor>Temperature: </Text>
+                  <Text>{selectedModel.temperature}</Text>
+                </Text>
+              )}
+              {selectedModel.maxTokens !== undefined && (
+                <Text>
+                  <Text dimColor>Max Tokens: </Text>
+                  <Text>{selectedModel.maxTokens}</Text>
+                </Text>
+              )}
+            </Box>
+          ) : (
+            <Text dimColor>请选择一个模型查看详情</Text>
+          )}
+        </Box>
+      </Box>
+
       {error && (
-        <Box marginBottom={1}>
+        <Box marginTop={1}>
           <Text color="red">❌ {error}</Text>
         </Box>
       )}
 
-      {/* 底部提示 */}
+      <Box justifyContent="center" marginTop={1}>
+        <Text dimColor>{'─'.repeat(separatorLength)}</Text>
+      </Box>
+
       <Box justifyContent="center">
-        <Text dimColor>
-          {isProcessing
-            ? '⏳ 处理中...'
-            : selectedId === currentModelId
-              ? '💡 Enter=关闭 | Esc=取消 | Ctrl+C=退出'
-              : '💡 Enter=切换 | D=删除 | Esc=取消 | Ctrl+C=退出'}
-        </Text>
+        <Text dimColor>提示：D=删除 • E=编辑 • ↑↓=移动 • Enter/ESC=确认</Text>
       </Box>
     </Box>
   );

@@ -23,7 +23,9 @@ import { useSession } from '../contexts/SessionContext.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 interface ModelConfigWizardProps {
-  mode: 'setup' | 'add'; // setup=首次初始化(全屏), add=添加新模型(模态框)
+  mode: 'setup' | 'add' | 'edit'; // edit=编辑已有模型
+  initialConfig?: SetupConfig; // 编辑模式下的初始配置
+  modelId?: string; // 编辑模式下的目标模型 ID
   onComplete: (config: SetupConfig) => void; // 设置完成回调，传递配置数据
   onCancel: () => void; // 取消回调
 }
@@ -36,6 +38,7 @@ type WizardStep = 'name' | 'provider' | 'baseUrl' | 'apiKey' | 'model' | 'confir
 interface ProviderStepProps {
   onSelect: (provider: ProviderType) => void;
   onCancel: () => void;
+  initialProvider?: ProviderType;
 }
 
 // 自定义 SelectInput 组件 - 高对比度样式
@@ -54,7 +57,11 @@ const SelectItem: React.FC<{ isSelected?: boolean; label: string }> = ({
   </Text>
 );
 
-const ProviderStep: React.FC<ProviderStepProps> = ({ onSelect, onCancel }) => {
+const ProviderStep: React.FC<ProviderStepProps> = ({
+  onSelect,
+  onCancel,
+  initialProvider,
+}) => {
   const { isFocused } = useFocus({ id: 'provider-step' });
 
   useInput(
@@ -65,6 +72,18 @@ const ProviderStep: React.FC<ProviderStepProps> = ({ onSelect, onCancel }) => {
     },
     { isActive: isFocused }
   );
+
+  const items = [
+    {
+      label: '⚡ OpenAI Compatible - 兼容 OpenAI API 的服务 (千问/豆包/DeepSeek等)',
+      value: 'openai-compatible',
+    },
+    { label: '🤖 Anthropic Claude API - Claude 官方 API', value: 'anthropic' },
+  ];
+
+  const initialIndex = initialProvider
+    ? Math.max(0, items.findIndex((item) => item.value === initialProvider))
+    : 0;
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -80,17 +99,11 @@ const ProviderStep: React.FC<ProviderStepProps> = ({ onSelect, onCancel }) => {
       </Box>
       <Box marginBottom={1}>
         <SelectInput
-          items={[
-            {
-              label:
-                '⚡ OpenAI Compatible - 兼容 OpenAI API 的服务 (千问/豆包/DeepSeek等)',
-              value: 'openai-compatible',
-            },
-            { label: '🤖 Anthropic Claude API - Claude 官方 API', value: 'anthropic' },
-          ]}
+          items={items}
           onSelect={(item) => onSelect(item.value as ProviderType)}
           indicatorComponent={SelectIndicator}
           itemComponent={SelectItem}
+          initialIndex={initialIndex}
         />
       </Box>
     </Box>
@@ -190,6 +203,7 @@ const TextInputStep: React.FC<TextInputStepProps> = ({
 // 步骤组件：确认配置
 // ========================================
 interface ConfirmStepProps {
+  mode: 'setup' | 'add' | 'edit';
   config: SetupConfig;
   isSaving: boolean;
   onConfirm: () => void;
@@ -198,6 +212,7 @@ interface ConfirmStepProps {
 }
 
 const ConfirmStep: React.FC<ConfirmStepProps> = ({
+  mode,
   config,
   isSaving,
   onConfirm,
@@ -224,13 +239,17 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box marginBottom={1}>
-        <Text bold color="blue">
-          ✅ Step 6: 确认配置
+        <Text bold color={mode === 'edit' ? 'yellow' : 'blue'}>
+          {mode === 'edit' ? '💾 确认修改' : '✅ Step 6: 确认配置'}
         </Text>
       </Box>
 
       <Box marginBottom={1}>
-        <Text>请确认以下配置信息：</Text>
+        <Text>
+          {mode === 'edit'
+            ? '请确认修改内容，保存后将立即生效。'
+            : '请确认以下配置信息：'}
+        </Text>
       </Box>
 
       <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
@@ -276,15 +295,8 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
       {!isSaving && (
         <Box marginTop={1}>
           <Text>
-            确认保存配置？ [
-            <Text bold color="green">
-              Y
-            </Text>
-            /
-            <Text bold color="red">
-              n
-            </Text>
-            ]
+            {mode === 'edit' ? '保存修改？ ' : '确认保存配置？ '}[
+            <Text bold color="green">Y</Text>/<Text bold color="red">n</Text>]
           </Text>
         </Box>
       )}
@@ -302,19 +314,26 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
 
 export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   mode,
+  initialConfig,
+  modelId,
   onComplete,
   onCancel,
 }) => {
   const { configManager } = useSession();
+  const isEditMode = mode === 'edit';
 
   // 当前步骤
   const [currentStep, setCurrentStep] = useState<WizardStep>('name');
 
   // 配置数据
-  const [config, setConfig] = useState<Partial<SetupConfig>>({});
+  const [config, setConfig] = useState<Partial<SetupConfig>>(() =>
+    isEditMode && initialConfig ? { ...initialConfig } : {}
+  );
 
   // 输入状态
-  const [inputValue, setInputValue] = useState('');
+  const [inputValue, setInputValue] = useState(
+    isEditMode && initialConfig ? initialConfig.name : ''
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -368,6 +387,10 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
 
   const handleProviderSelect = (provider: ProviderType) => {
     setConfig({ ...config, provider });
+    const nextBaseUrl = isEditMode
+      ? config.baseUrl ?? initialConfig?.baseUrl ?? ''
+      : '';
+    setInputValue(nextBaseUrl);
     setCurrentStep('baseUrl');
   };
 
@@ -386,7 +409,10 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
     }
 
     setConfig({ ...config, baseUrl: inputValue });
-    setInputValue('');
+    const nextApiKey = isEditMode
+      ? config.apiKey ?? initialConfig?.apiKey ?? ''
+      : '';
+    setInputValue(nextApiKey);
     setError(null);
     setCurrentStep('apiKey');
   };
@@ -398,7 +424,10 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
     }
 
     setConfig({ ...config, apiKey: inputValue });
-    setInputValue('');
+    const nextModel = isEditMode
+      ? config.model ?? initialConfig?.model ?? ''
+      : '';
+    setInputValue(nextModel);
     setError(null);
     setCurrentStep('model');
   };
@@ -431,9 +460,15 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
       if (mode === 'setup') {
         // setup 模式：由父组件（BladeInterface）负责创建模型
         onComplete(setupConfig);
-      } else {
+      } else if (mode === 'add') {
         // add 模式：直接在这里创建模型，然后通知父组件关闭
         await configManager.addModel(setupConfig);
+        onComplete(setupConfig);
+      } else {
+        if (!modelId) {
+          throw new Error('未提供模型 ID，无法编辑');
+        }
+        await configManager.updateModel(modelId, setupConfig);
         onComplete(setupConfig);
       }
     } catch (err) {
@@ -493,12 +528,19 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   const containerProps =
     mode === 'setup'
       ? { flexDirection: 'column' as const, padding: 1 }
-      : {
-          flexDirection: 'column' as const,
-          borderStyle: 'round' as const,
-          borderColor: 'blue',
-          padding: 1,
-        };
+      : mode === 'add'
+        ? {
+            flexDirection: 'column' as const,
+            borderStyle: 'round' as const,
+            borderColor: 'blue',
+            padding: 1,
+          }
+        : {
+            flexDirection: 'column' as const,
+            borderStyle: 'round' as const,
+            borderColor: 'yellow',
+            padding: 1,
+          };
 
   return (
     <Box {...containerProps}>
@@ -534,7 +576,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
             </Text>
           </Box>
         </>
-      ) : (
+      ) : mode === 'add' ? (
         <>
           {/* 添加模型模式：简洁标题 */}
           <Box justifyContent="center" marginBottom={1}>
@@ -544,6 +586,17 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
           </Box>
 
           {/* 进度指示 */}
+          <Box marginBottom={1}>
+            <Text>步骤: {stepNumber}/6</Text>
+          </Box>
+        </>
+      ) : (
+        <>
+          <Box justifyContent="center" marginBottom={1}>
+            <Text bold color="yellow">
+              编辑模型配置
+            </Text>
+          </Box>
           <Box marginBottom={1}>
             <Text>步骤: {stepNumber}/6</Text>
           </Box>
@@ -567,7 +620,11 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
 
       {/* Provider 选择 */}
       {currentStep === 'provider' && (
-        <ProviderStep onSelect={handleProviderSelect} onCancel={onCancel} />
+        <ProviderStep
+          onSelect={handleProviderSelect}
+          onCancel={onCancel}
+          initialProvider={config.provider as ProviderType | undefined}
+        />
       )}
 
       {/* Base URL 输入 */}
@@ -636,6 +693,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
       {/* 确认配置 */}
       {currentStep === 'confirm' && (
         <ConfirmStep
+          mode={mode}
           config={config as SetupConfig}
           isSaving={isSaving}
           onConfirm={handleConfirm}

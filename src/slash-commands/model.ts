@@ -13,13 +13,11 @@ const modelCommand: SlashCommand = {
 
 子命令：
   (无参数)        显示模型选择器（交互式切换）
-  list           列出所有模型配置（当前模型会高亮显示）
   add            添加新模型配置（交互式向导）
   remove <名称>  删除指定模型配置（按名称匹配）
 
 示例：
   /model              # 显示模型选择器
-  /model list         # 列出所有模型（● 标记当前模型）
   /model add          # 添加新模型
   /model remove 千问  # 删除名称包含"千问"的模型
   `,
@@ -55,31 +53,6 @@ const modelCommand: SlashCommand = {
     }
 
     switch (subcommand) {
-      case 'list': {
-        const models = context.configManager.getAllModels();
-        if (models.length === 0) {
-          return {
-            success: false,
-            message: '❌ 没有可用的模型配置\n\n使用 /model add 添加模型',
-          };
-        }
-
-        const currentId = context.configManager.getConfig().currentModelId;
-
-        let output = '\n📋 可用模型配置：\n\n';
-        for (const model of models) {
-          const isCurrent = model.id === currentId;
-          const marker = isCurrent ? '● ' : '○ ';
-          output += `${marker}${model.name}\n`;
-          output += `   Provider: ${model.provider}\n`;
-          output += `   Model: ${model.model}\n`;
-          output += `   Base URL: ${model.baseUrl}\n`;
-          output += '\n';
-        }
-
-        return { success: true, message: output };
-      }
-
       case 'add': {
         return {
           success: true,
@@ -123,7 +96,7 @@ const modelCommand: SlashCommand = {
       default:
         return {
           success: false,
-          message: `❌ 未知的子命令: ${subcommand}\n使用 /model 查看帮助`,
+          message: `❌ 未知的子命令: ${subcommand}\n使用 /model 查看可用操作`,
         };
     }
   },
