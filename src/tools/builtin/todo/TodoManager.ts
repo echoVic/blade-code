@@ -14,7 +14,7 @@ export class TodoManager {
   private loaded = false;
 
   private constructor(sessionId: string, configDir: string) {
-    this.filePath = path.join(configDir, 'todos', `${sessionId}.json`);
+    this.filePath = path.join(configDir, 'todos', `${sessionId}-agent-${sessionId}.json`);
   }
 
   /**

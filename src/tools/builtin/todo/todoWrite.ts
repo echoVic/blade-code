@@ -50,7 +50,7 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
         'content 是任务描述（如 "实现用户登录功能"）',
         'activeForm 是进行时描述（如 "实现用户登录功能中"）',
         '优先级默认为 medium，高优先级任务会优先显示',
-        '任务会持久化到 ~/.blade/todos/{sessionId}.json',
+        '任务会持久化到 ~/.blade/todos/{sessionId}-agent-{sessionId}.json (兼容 Claude Code)',
         '每个会话的 TODO 列表是独立的',
       ],
 
@@ -132,7 +132,8 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
       const { updateOutput } = context;
 
       try {
-        const manager = TodoManager.getInstance(sessionId, configDir);
+        const targetSessionId = context.sessionId || sessionId;
+        const manager = TodoManager.getInstance(targetSessionId, configDir);
 
         updateOutput?.('更新 TODO 列表...');
 

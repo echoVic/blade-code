@@ -68,7 +68,8 @@ export function createTodoReadTool(opts: { sessionId: string; configDir: string 
       const { filter } = params;
 
       try {
-        const manager = TodoManager.getInstance(sessionId, configDir);
+        const targetSessionId = context.sessionId || sessionId;
+        const manager = TodoManager.getInstance(targetSessionId, configDir);
 
         let todos = manager.getTodos();
 
