@@ -72,7 +72,8 @@ export const readTool = createTool({
   // 执行函数
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const { file_path, offset, limit, encoding = 'utf8' } = params;
-    const { signal, updateOutput, sessionId } = context;
+    const { updateOutput, sessionId } = context;
+    const signal = context.signal ?? new AbortController().signal;
 
     try {
       updateOutput?.('开始读取文件...');

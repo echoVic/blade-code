@@ -97,7 +97,8 @@ export const shellTool = createTool({
       env = {},
       capture_stderr = true,
     } = params;
-    const { signal, updateOutput } = context;
+    const { updateOutput } = context;
+    const signal = context.signal ?? new AbortController().signal;
 
     try {
       // 🔧 智能解析: 如果 command 包含空格且没有提供 args,自动拆分

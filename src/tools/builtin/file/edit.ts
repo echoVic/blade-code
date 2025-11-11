@@ -94,7 +94,8 @@ export const editTool = createTool({
   // 执行函数
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const { file_path, old_string, new_string, replace_all } = params;
-    const { signal, updateOutput, sessionId, messageId } = context;
+    const { updateOutput, sessionId, messageId } = context;
+    const signal = context.signal ?? new AbortController().signal;
 
     try {
       updateOutput?.('开始读取文件...');

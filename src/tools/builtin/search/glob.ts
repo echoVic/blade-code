@@ -96,7 +96,8 @@ export const globTool = createTool({
       include_directories,
       case_sensitive,
     } = params;
-    const { signal, updateOutput } = context;
+    const { updateOutput } = context;
+    const signal = context.signal ?? new AbortController().signal;
 
     try {
       updateOutput?.(`开始在 ${path} 中搜索模式 "${pattern}"...`);

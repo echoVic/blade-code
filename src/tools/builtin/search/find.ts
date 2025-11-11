@@ -331,7 +331,8 @@ export const findTool = createTool({
       max_results = 100,
       exclude_patterns = [],
     } = params;
-    const { signal, updateOutput } = context;
+    const { updateOutput } = context;
+    const signal = context.signal ?? new AbortController().signal;
 
     updateOutput?.(`开始在 ${path} 中查找文件...`);
 

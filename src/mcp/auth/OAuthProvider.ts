@@ -3,15 +3,12 @@
  * 实现基础的 OAuth 2.0 授权码流程 + PKCE
  */
 
-import * as http from 'http';
 import * as crypto from 'crypto';
+import * as http from 'http';
+import { spawn } from 'child_process';
 import { URL } from 'url';
-import type {
-  OAuthConfig,
-  OAuthToken,
-  OAuthTokenResponse,
-} from './types.js';
 import { OAuthTokenStorage } from './OAuthTokenStorage.js';
+import type { OAuthConfig, OAuthToken, OAuthTokenResponse } from './types.js';
 
 const REDIRECT_PORT = 7777;
 const REDIRECT_PATH = '/oauth/callback';
@@ -58,10 +55,7 @@ export class OAuthProvider {
   /**
    * 构建授权 URL
    */
-  private buildAuthorizationUrl(
-    config: OAuthConfig,
-    pkceParams: PKCEParams
-  ): string {
+  private buildAuthorizationUrl(config: OAuthConfig, pkceParams: PKCEParams): string {
     const redirectUri =
       config.redirectUri || `http://localhost:${REDIRECT_PORT}${REDIRECT_PATH}`;
 
@@ -89,9 +83,7 @@ export class OAuthProvider {
   /**
    * 启动本地回调服务器
    */
-  private async startCallbackServer(
-    expectedState: string
-  ): Promise<string> {
+  private async startCallbackServer(expectedState: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const server = http.createServer((req, res) => {
         try {
@@ -163,10 +155,13 @@ export class OAuthProvider {
       });
 
       // 5 分钟超时
-      setTimeout(() => {
-        server.close();
-        reject(new Error('OAuth callback timeout'));
-      }, 5 * 60 * 1000);
+      setTimeout(
+        () => {
+          server.close();
+          reject(new Error('OAuth callback timeout'));
+        },
+        5 * 60 * 1000
+      );
     });
   }
 
@@ -251,10 +246,7 @@ export class OAuthProvider {
   /**
    * 执行完整的 OAuth 授权流程
    */
-  async authenticate(
-    serverName: string,
-    config: OAuthConfig
-  ): Promise<OAuthToken> {
+  async authenticate(serverName: string, config: OAuthConfig): Promise<OAuthToken> {
     // 验证配置
     if (!config.clientId || !config.authorizationUrl || !config.tokenUrl) {
       throw new Error('Missing required OAuth configuration');
@@ -267,7 +259,9 @@ export class OAuthProvider {
     const authUrl = this.buildAuthorizationUrl(config, pkceParams);
 
     console.log('\n[OAuth] Opening browser for authentication...');
-    console.log('\nIf the browser does not open automatically, copy and paste this URL:');
+    console.log(
+      '\nIf the browser does not open automatically, copy and paste this URL:'
+    );
     console.log(authUrl);
     console.log('');
 
@@ -276,8 +270,7 @@ export class OAuthProvider {
 
     // 尝试打开浏览器
     try {
-      const { default: open } = await import('open');
-      await open(authUrl);
+      await this.openAuthorizationUrl(authUrl);
     } catch (error) {
       console.warn('[OAuth] Failed to open browser automatically:', error);
     }
@@ -320,12 +313,40 @@ export class OAuthProvider {
   }
 
   /**
+   * 打开系统浏览器
+   */
+  private async openAuthorizationUrl(authUrl: string): Promise<void> {
+    const { command, args } = this.getBrowserCommand(authUrl);
+
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(command, args, { stdio: 'ignore' });
+      child.once('error', reject);
+      child.once('close', (code) => {
+        if (code === 0 || code === null) {
+          resolve();
+        } else {
+          reject(new Error(`Failed to open browser (exit code ${code})`));
+        }
+      });
+    });
+  }
+
+  private getBrowserCommand(url: string): { command: string; args: string[] } {
+    if (process.platform === 'darwin') {
+      return { command: 'open', args: [url] };
+    }
+
+    if (process.platform === 'win32') {
+      return { command: 'cmd', args: ['/c', 'start', '', url] };
+    }
+
+    return { command: 'xdg-open', args: [url] };
+  }
+
+  /**
    * 获取有效令牌（自动刷新）
    */
-  async getValidToken(
-    serverName: string,
-    config: OAuthConfig
-  ): Promise<string | null> {
+  async getValidToken(serverName: string, config: OAuthConfig): Promise<string | null> {
     const credentials = await this.tokenStorage.getCredentials(serverName);
 
     if (!credentials) {
