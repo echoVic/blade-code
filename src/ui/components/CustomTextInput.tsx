@@ -17,6 +17,16 @@ import React, { useEffect, useRef } from 'react';
 import { PASTE_CONFIG } from '../constants.js';
 import { isImagePath, processImageFromPath } from '../utils/imagePaste.js';
 
+const CRLF_REGEX = /\r\n/g;
+const CR_REGEX = /\r/g;
+
+function normalizeInputText(text: string): string {
+  if (!text.includes('\r')) {
+    return text;
+  }
+  return text.replace(CRLF_REGEX, '\n').replace(CR_REGEX, '\n');
+}
+
 /**
  * 禁用的按键类型（Key 对象的布尔属性）
  */
@@ -135,7 +145,7 @@ export function CustomTextInput({
 
       if (chunks.length === 0) return;
 
-      const mergedInput = chunks.join('');
+      const mergedInput = normalizeInputText(chunks.join(''));
 
       // 重置状态
       pasteStateRef.current = {
@@ -157,8 +167,9 @@ export function CustomTextInput({
               imageResult.filename,
             );
             if (result?.prompt) {
+              const sanitizedPrompt = normalizeInputText(result.prompt);
               const { newValue, newCursorPosition } = insertTextAtCursor(
-                result.prompt,
+                sanitizedPrompt,
                 originalValue,
                 cursorPosition,
               );
@@ -182,8 +193,9 @@ export function CustomTextInput({
       if (isPastePattern && onPaste) {
         const result = await onPaste(mergedInput);
         if (result?.prompt) {
+          const sanitizedPrompt = normalizeInputText(result.prompt);
           const { newValue, newCursorPosition } = insertTextAtCursor(
-            result.prompt,
+            sanitizedPrompt,
             originalValue,
             cursorPosition,
           );
@@ -195,7 +207,7 @@ export function CustomTextInput({
 
       // 3. 直接插入文本
       const { newValue, newCursorPosition } = insertTextAtCursor(
-        mergedInput.replace(/\r$/, ''),
+        mergedInput,
         originalValue,
         cursorPosition,
       );
@@ -210,13 +222,14 @@ export function CustomTextInput({
    * 键盘输入处理
    * 基于 ink-text-input 并扩展功能
    */
-  useInput((input, key) => {
+  useInput((rawInput, key) => {
+    const input = normalizeInputText(rawInput);
     // 检查是否是被禁用的按键
     const isDisabledKey = disabledKeys.some((disabledKey) => key[disabledKey]);
 
     // 跳过被禁用的按键和 Ctrl+C（由外部处理）
     // 空输入时的 ? 键也跳过（用于切换快捷键帮助）
-    if (isDisabledKey || (key.ctrl && input === 'c') || (key.shift && key.tab) ||
+    if (isDisabledKey || (key.ctrl && rawInput === 'c') || (key.shift && key.tab) ||
         (input === '?' && originalValue === '')) {
       return;
     }
@@ -295,7 +308,11 @@ export function CustomTextInput({
     }
     // === 扩展：Shift+Enter（多行输入） ===
     else if (input === '\n' && (key.shift || key.meta)) {
-      const { newValue, newCursorPosition } = insertTextAtCursor(input, originalValue, cursorPosition);
+      const { newValue, newCursorPosition } = insertTextAtCursor(
+        input,
+        originalValue,
+        cursorPosition,
+      );
       onChange(newValue);
       onChangeCursorPosition(newCursorPosition);
       return;
