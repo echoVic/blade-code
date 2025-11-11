@@ -2,3 +2,4 @@
 
 export { apiCallTool } from './apiCall.js';
 export { webFetchTool } from './webFetch.js';
+export { webSearchTool } from './webSearch.js';

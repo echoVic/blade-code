@@ -14,13 +14,19 @@ import { exitPlanModeTool } from './plan/index.js';
 // 搜索工具 - 新版本（基于 Zod）
 import { findTool, globTool, grepTool } from './search/index.js';
 // Shell 命令工具 - 新版本（基于 Zod）
-import { bashTool, scriptTool, shellTool } from './shell/index.js';
+import {
+  bashOutputTool,
+  bashTool,
+  killShellTool,
+  scriptTool,
+  shellTool,
+} from './shell/index.js';
 // 任务管理工具 - 新版本（基于 Zod）
 import { taskTool } from './task/index.js';
 // Todo工具 - 新版本（基于 Zod）
 import { createTodoReadTool, createTodoWriteTool } from './todo/index.js';
 // 网络工具 - 新版本（基于 Zod）
-import { apiCallTool, webFetchTool } from './web/index.js';
+import { apiCallTool, webFetchTool, webSearchTool } from './web/index.js';
 
 /**
  * 获取MCP协议工具
@@ -62,9 +68,12 @@ export async function getBuiltinTools(opts?: {
     bashTool,
     shellTool,
     scriptTool,
+    bashOutputTool,
+    killShellTool,
 
     // 网络工具
     webFetchTool,
+    webSearchTool,
     apiCallTool,
 
     // 任务管理工具

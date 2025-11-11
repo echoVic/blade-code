@@ -128,7 +128,8 @@ export const apiCallTool = createTool({
       timeout = 30000,
       parse_response = true,
     } = params;
-    const { signal, updateOutput } = context;
+    const { updateOutput } = context;
+    const signal = context.signal ?? new AbortController().signal;
 
     try {
       // 构建最终URL

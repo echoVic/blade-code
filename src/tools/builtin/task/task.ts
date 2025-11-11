@@ -232,7 +232,8 @@ export const taskTool = createTool({
       timeout = 300000, // 5分钟默认超时
       run_in_background = false,
     } = params;
-    const { signal, updateOutput } = context;
+    const { updateOutput } = context;
+    const signal = context.signal ?? new AbortController().signal;
 
     try {
       const taskManager = TaskManager.getInstance();

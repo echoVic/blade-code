@@ -5,6 +5,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { BackgroundShellManager } from './BackgroundShellManager.js';
 
 /**
  * Bash 会话上下文 (用于环境变量和工作目录复用)
@@ -133,7 +134,8 @@ export const bashTool = createTool({
       env,
       run_in_background = false,
     } = params;
-    const { signal, updateOutput } = context;
+    const { updateOutput } = context;
+    const signal = context.signal ?? new AbortController().signal;
 
     try {
       const sessionManager = BashSessionManager.getInstance();
@@ -219,17 +221,14 @@ function executeInBackground(
   sessionId: string,
   sessionContext: BashSessionContext
 ): ToolResult {
-  const bashProcess = spawn('bash', ['-c', command], {
+  const manager = BackgroundShellManager.getInstance();
+  const backgroundProcess = manager.startBackgroundProcess({
+    command,
+    sessionId,
     cwd: sessionContext.cwd || process.cwd(),
-    env: { ...process.env, ...sessionContext.env },
-    detached: true,
-    stdio: 'ignore',
+    env: sessionContext.env,
   });
 
-  // 分离进程,让它在后台独立运行
-  bashProcess.unref();
-
-  // 生成 summary 用于流式显示
   const cmdPreview = command.length > 30 ? `${command.substring(0, 30)}...` : command;
   const summary = `后台启动命令: ${cmdPreview}`;
 
@@ -237,16 +236,19 @@ function executeInBackground(
     session_id: sessionId,
     command,
     background: true,
-    pid: bashProcess.pid,
+    pid: backgroundProcess.pid,
+    bash_id: backgroundProcess.id,
+    shell_id: backgroundProcess.id,
     message: '命令已在后台启动',
-    summary, // 🆕 流式显示摘要
+    summary,
   };
 
   const displayMessage =
     `✅ 命令已在后台启动\n` +
     `🔑 会话 ID: ${sessionId}\n` +
-    `🆔 进程 ID: ${bashProcess.pid}\n` +
-    `⚠️ 后台进程需要手动终止`;
+    `🆔 进程 ID: ${backgroundProcess.pid}\n` +
+    `💡 Bash ID: ${backgroundProcess.id}\n` +
+    `⚠️ 使用 BashOutput/KillShell 管理后台进程`;
 
   return {
     success: true,
@@ -254,7 +256,9 @@ function executeInBackground(
       session_id: sessionId,
       command,
       background: true,
-      pid: bashProcess.pid,
+      pid: backgroundProcess.pid,
+      bash_id: backgroundProcess.id,
+      shell_id: backgroundProcess.id,
     },
     displayContent: displayMessage,
     metadata,

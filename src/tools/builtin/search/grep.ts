@@ -145,7 +145,8 @@ export const grepTool = createTool({
       head_limit,
       multiline,
     } = params;
-    const { signal, updateOutput } = context;
+    const { updateOutput } = context;
+    const signal = context.signal ?? new AbortController().signal;
 
     try {
       updateOutput?.(`使用 ripgrep 搜索模式 "${pattern}"...`);

@@ -119,7 +119,8 @@ export const scriptTool = createTool({
       timeout = 60000,
       env = {},
     } = params;
-    const { signal, updateOutput } = context;
+    const { updateOutput } = context;
+    const signal = context.signal ?? new AbortController().signal;
 
     try {
       // 验证脚本文件存在

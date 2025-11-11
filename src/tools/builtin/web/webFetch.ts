@@ -14,6 +14,9 @@ interface WebResponse {
   body: string;
   url: string;
   redirected?: boolean;
+  redirect_count?: number;
+  redirect_chain?: string[];
+  content_type?: string;
   response_time: number;
 }
 
@@ -116,7 +119,8 @@ export const webFetchTool = createTool({
       max_redirects = 5,
       return_headers = false,
     } = params;
-    const { signal, updateOutput } = context;
+    const { updateOutput } = context;
+    const signal = context.signal ?? new AbortController().signal;
 
     try {
       updateOutput?.(`发送 ${method} 请求到: ${url}`);
@@ -146,8 +150,12 @@ export const webFetchTool = createTool({
         method,
         status: response.status,
         response_time: responseTime,
-        content_length: response.body.length,
+        content_length: Buffer.byteLength(response.body || '', 'utf8'),
         redirected: response.redirected || false,
+        redirect_count: response.redirect_count ?? 0,
+        final_url: response.url,
+        content_type: response.content_type,
+        redirect_chain: response.redirect_chain,
       };
 
       // HTTP错误状态码处理
@@ -242,7 +250,7 @@ async function performRequest(options: {
   timeout: number;
   follow_redirects: boolean;
   max_redirects: number;
-  signal: AbortSignal;
+  signal?: AbortSignal;
 }): Promise<WebResponse> {
   const {
     url,
@@ -255,60 +263,90 @@ async function performRequest(options: {
     signal,
   } = options;
 
-  // 使用fetch API(Node.js 18+内置支持)
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  const normalizedHeaders: Record<string, string> = {
+    'User-Agent': 'Blade-AI/1.0',
+    ...headers,
+  };
 
-  // 合并中止信号
-  signal.addEventListener('abort', () => controller.abort());
+  let currentUrl = url;
+  let currentMethod = method;
+  let currentBody = body;
+  let redirects = 0;
+  const redirectChain: string[] = [];
 
-  try {
-    const requestHeaders: Record<string, string> = {
-      'User-Agent': 'Blade-AI/1.0',
-      ...headers,
-    };
-
-    const fetchOptions: RequestInit = {
-      method,
-      headers: requestHeaders,
-      signal: controller.signal,
-      redirect: follow_redirects ? 'follow' : 'manual',
-    };
-
-    if (body && method !== 'GET' && method !== 'HEAD') {
-      fetchOptions.body = body;
-      if (!requestHeaders['Content-Type']) {
-        requestHeaders['Content-Type'] = 'application/json';
-      }
+  while (true) {
+    const requestHeaders = { ...normalizedHeaders };
+    if (
+      currentBody &&
+      currentMethod !== 'GET' &&
+      currentMethod !== 'HEAD' &&
+      !hasHeader(requestHeaders, 'content-type')
+    ) {
+      requestHeaders['Content-Type'] = 'application/json';
     }
 
-    const response = await fetch(url, fetchOptions);
-    clearTimeout(timeoutId);
+    const response = await fetchWithTimeout(
+      currentUrl,
+      {
+        method: currentMethod,
+        headers: requestHeaders,
+        body:
+          currentBody && currentMethod !== 'GET' && currentMethod !== 'HEAD'
+            ? currentBody
+            : undefined,
+        redirect: 'manual',
+      },
+      timeout,
+      signal
+    );
+
+    const location = response.headers.get('location');
+    const isRedirectStatus = response.status >= 300 && response.status < 400;
+    const shouldFollow =
+      follow_redirects && isRedirectStatus && location && redirects < max_redirects;
+
+    if (isRedirectStatus && follow_redirects && !location) {
+      throw new Error(`收到状态码 ${response.status} 但响应缺少 Location 头`);
+    }
+
+    if (isRedirectStatus && follow_redirects && redirects >= max_redirects) {
+      throw new Error(`超过最大重定向次数 (${max_redirects})`);
+    }
+
+    if (shouldFollow && location) {
+      redirects++;
+      const nextUrl = resolveRedirectUrl(location, currentUrl);
+      redirectChain.push(`${response.status} → ${nextUrl}`);
+
+      if (
+        response.status === 303 ||
+        ((response.status === 301 || response.status === 302) &&
+          currentMethod !== 'GET' &&
+          currentMethod !== 'HEAD')
+      ) {
+        currentMethod = 'GET';
+        currentBody = undefined;
+      }
+
+      currentUrl = nextUrl;
+      continue;
+    }
 
     const responseBody = await response.text();
-    const responseHeaders: Record<string, string> = {};
-
-    response.headers.forEach((value, key) => {
-      responseHeaders[key] = value;
-    });
+    const responseHeaders = headersToObject(response.headers);
 
     return {
       status: response.status,
       status_text: response.statusText,
       headers: responseHeaders,
       body: responseBody,
-      url: response.url,
-      redirected: response.redirected,
+      url: response.url || currentUrl,
+      redirected: redirects > 0,
+      redirect_count: redirects,
+      redirect_chain: redirectChain,
+      content_type: responseHeaders['content-type'],
       response_time: 0, // 将在外部设置
     };
-  } catch (error: any) {
-    clearTimeout(timeoutId);
-
-    if (error.name === 'AbortError') {
-      throw new Error('请求被中止或超时');
-    }
-
-    throw new Error(`网络请求失败: ${error.message}`);
   }
 }
 
@@ -323,6 +361,9 @@ function formatDisplayMessage(
     status: number;
     response_time: number;
     content_length: number;
+    final_url?: string;
+    redirect_count?: number;
+    content_type?: string;
   },
   isError: boolean
 ): string {
@@ -332,20 +373,121 @@ function formatDisplayMessage(
     ? `❌ ${method} ${url} - ${status} ${response.status_text}`
     : `✅ ${method} ${url} - ${status} ${response.status_text}`;
   message += `\n响应时间: ${response_time}ms`;
-  message += `\n内容长度: ${content_length} 字符`;
+  message += `\n内容长度: ${content_length} 字节`;
 
-  if (response.redirected) {
-    message += `\n最终URL: ${response.url}`;
+  if (metadata.content_type) {
+    message += `\nContent-Type: ${metadata.content_type}`;
   }
 
-  // 显示部分响应内容
-  if (response.body && response.body.length > 0) {
-    const preview =
-      response.body.length > 500
-        ? response.body.substring(0, 500) + '...'
-        : response.body;
+  if (response.redirected && metadata.final_url && metadata.final_url !== url) {
+    message += `\n最终URL: ${metadata.final_url}`;
+    if (metadata.redirect_count) {
+      message += `\n重定向次数: ${metadata.redirect_count}`;
+    }
+  }
+
+  const preview = buildBodyPreview(response.body, response.content_type);
+  if (preview) {
     message += `\n响应内容:\n${preview}`;
   }
 
   return message;
+}
+
+function buildBodyPreview(body: string, contentType?: string): string {
+  if (!body) {
+    return '(空响应)';
+  }
+
+  if (shouldTreatAsBinary(contentType, body)) {
+    return '[binary content omitted]';
+  }
+
+  const trimmed = body.trim();
+  if (!trimmed) {
+    return '(仅包含空白字符)';
+  }
+
+  return trimmed.length > 800 ? `${trimmed.slice(0, 800)}...` : trimmed;
+}
+
+function shouldTreatAsBinary(contentType?: string, body?: string): boolean {
+  if (contentType) {
+    const lowered = contentType.toLowerCase();
+    const binaryMimePrefixes = [
+      'image/',
+      'audio/',
+      'video/',
+      'application/pdf',
+      'application/zip',
+      'application/octet-stream',
+    ];
+    if (binaryMimePrefixes.some((prefix) => lowered.startsWith(prefix))) {
+      return true;
+    }
+  }
+
+  if (!body) {
+    return false;
+  }
+
+  let nonPrintable = 0;
+  const sampleLength = Math.min(body.length, 200);
+  for (let i = 0; i < sampleLength; i++) {
+    const code = body.charCodeAt(i);
+    if (code === 9 || code === 10 || code === 13) {
+      continue;
+    }
+    if (code < 32 || code > 126) {
+      nonPrintable++;
+    }
+  }
+
+  return nonPrintable / (sampleLength || 1) > 0.3;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeout: number,
+  externalSignal?: AbortSignal
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  const abortListener = () => controller.abort();
+  externalSignal?.addEventListener('abort', abortListener);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      error.message = '请求被中止或超时';
+      throw error;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', abortListener);
+  }
+}
+
+function resolveRedirectUrl(location: string, baseUrl: string): string {
+  try {
+    return new URL(location, baseUrl).toString();
+  } catch {
+    return location;
+  }
+}
+
+function headersToObject(headers: Headers): Record<string, string> {
+  const result: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    result[key.toLowerCase()] = value;
+  });
+  return result;
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const lowered = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === lowered);
 }
