@@ -171,43 +171,70 @@ export const taskTool = createTool({
 
   // 工具描述
   description: {
-    short: '创建和管理Agent执行任务，支持同步和异步执行模式',
-    long: `提供 Agent 任务调度功能。可以创建子任务让 Agent 自主执行，支持前台同步执行和后台异步执行两种模式。适合复杂的多步骤任务。`,
+    short: '启动独立的子Agent自主执行复杂的多步骤任务',
+    long: `
+启动专门的子Agent来自主处理复杂任务。子Agent是独立的执行进程，拥有自己的工具访问权限和执行上下文。
+
+**适用场景：**
+- 需要多轮对话和工具调用才能完成的复杂任务
+- 需要大量代码搜索、探索和分析的任务
+- 需要独立执行上下文的后台任务
+- 将大任务委托给专门的子Agent处理
+
+**⚠️ 重要提醒：这不是TODO清单管理工具！**
+- 如需可视化跟踪任务进度清单 → 使用 TodoWrite 工具
+- 如需委托子Agent独立执行工作 → 使用 Task 工具
+
+**何时不使用此工具：**
+- 不要用于管理TODO任务清单（使用 TodoWrite）
+- 不要用于简单的文件读取（使用 Read）
+- 不要用于单个文件的代码搜索（使用 Grep）
+- 不要用于已知路径的文件查找（使用 Glob）
+- 不要用于简单的单步操作
+    `.trim(),
     usageNotes: [
-      'description 参数是必需的',
+      '⚠️ 此工具用于启动子Agent，不是TODO清单管理！管理TODO请使用TodoWrite工具',
+      'description 参数是必需的，应简短描述任务（3-5个词）',
+      'prompt 参数应包含完整详细的任务指令和期望输出格式',
       '可通过 subagent_type 指定特定类型的子 Agent',
-      'prompt 可提供更详细的任务指令',
-      'context 用于传递任务上下文数据',
+      '每个子Agent都是独立进程，消耗独立的资源和token',
+      '子Agent无法访问父Agent的对话历史，需要在prompt中提供完整上下文',
+      'context 用于传递结构化的任务上下文数据',
       'timeout 默认 5 分钟，最长 30 分钟',
-      'run_in_background=true 时任务在后台执行',
-      '后台任务需要使用 task_status 工具查看进度',
+      'run_in_background=true 时任务在后台执行，立即返回task_id',
+      '后台任务需要使用 task_status 工具查看进度和结果',
     ],
     examples: [
       {
-        description: '创建简单任务',
+        description: '启动子Agent分析项目依赖',
         params: {
-          description: '分析项目依赖并生成报告',
+          description: '分析项目依赖',
+          prompt:
+            '分析项目中的所有依赖包，检查是否有过时或存在安全漏洞的包，生成详细报告包括：1) 过时包列表 2) 安全漏洞 3) 建议的更新方案',
         },
       },
       {
-        description: '指定子代理类型',
+        description: '指定子代理类型执行优化',
         params: {
-          description: '优化数据库查询性能',
+          description: '优化数据库查询',
           subagent_type: 'database-optimizer',
+          prompt: '分析所有数据库查询语句，找出性能瓶颈，并提供优化建议',
         },
       },
       {
-        description: '后台执行长时间任务',
+        description: '后台执行长时间测试任务',
         params: {
-          description: '运行完整的测试套件',
+          description: '运行完整测试套件',
+          prompt: '运行项目中的所有单元测试和集成测试，收集测试覆盖率，生成详细报告',
           run_in_background: true,
           timeout: 600000,
         },
       },
       {
-        description: '带上下文的任务',
+        description: '带上下文的数据处理任务',
         params: {
           description: '处理用户数据',
+          prompt: '根据context中的user_id和action，执行相应的数据导出操作',
           context: {
             user_id: '12345',
             action: 'export',
@@ -216,10 +243,13 @@ export const taskTool = createTool({
       },
     ],
     important: [
-      '任务创建需要用户确认',
-      '子 Agent 会消耗系统资源',
-      '后台任务需要手动查看状态',
-      '任务超时会自动中止',
+      '⚠️ 这不是TODO清单工具！管理任务清单请使用 TodoWrite',
+      '任务创建需要用户确认（消耗额外资源）',
+      '子 Agent 会消耗独立的系统资源和API token',
+      '子Agent是无状态的，无法访问父Agent的对话历史',
+      '后台任务需要手动使用 task_status 工具查看状态',
+      '任务超时会自动中止，建议合理设置timeout',
+      'prompt 应该详细完整，包含所有必要的上下文信息',
     ],
   },
 

@@ -183,13 +183,17 @@ export const editTool = createTool({
       const matchResult = smartMatch(content, old_string);
 
       if (!matchResult.matched) {
+        // 🔥 生成富文本错误信息,帮助 LLM 快速恢复
+        const errorDetails = generateRichErrorMessage(content, old_string, file_path);
+
         return {
           success: false,
-          llmContent: `在文件中未找到要替换的字符串: "${old_string}"`,
-          displayContent: `❌ 在文件中未找到要替换的字符串: "${old_string.substring(0, 50)}${old_string.length > 50 ? '...' : ''}"`,
+          llmContent: errorDetails.llmContent,
+          displayContent: errorDetails.displayContent,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '未找到匹配内容',
+            details: errorDetails.metadata,
           },
         };
       }
@@ -482,4 +486,241 @@ function formatDisplayMessage(
   }
 
   return message;
+}
+
+/**
+ * 生成富文本错误信息
+ * 当 Edit 工具匹配失败时,提供详细的上下文和恢复建议
+ */
+function generateRichErrorMessage(
+  fileContent: string,
+  searchString: string,
+  filePath: string
+): {
+  llmContent: string;
+  displayContent: string;
+  metadata: Record<string, any>;
+} {
+  const lines = fileContent.split('\n');
+  const totalLines = lines.length;
+
+  // 1. 计算搜索字符串的预期位置(基于模糊匹配)
+  const fuzzyMatches = findFuzzyMatches(fileContent, searchString, 3);
+
+  // 2. 提取文件摘录(显示前后各10行)
+  let excerptStartLine = 0;
+  let excerptEndLine = Math.min(20, totalLines);
+
+  // 如果找到模糊匹配,以最佳匹配为中心
+  if (fuzzyMatches.length > 0) {
+    const bestMatch = fuzzyMatches[0];
+    excerptStartLine = Math.max(0, bestMatch.lineNumber - 10);
+    excerptEndLine = Math.min(totalLines, bestMatch.lineNumber + 10);
+  }
+
+  const excerptLines = lines.slice(excerptStartLine, excerptEndLine);
+  const excerpt = excerptLines
+    .map((line, idx) => {
+      const lineNum = excerptStartLine + idx + 1;
+      return `    ${lineNum.toString().padStart(4)}: ${line}`;
+    })
+    .join('\n');
+
+  // 3. 生成 LLM 可读的错误信息
+  let llmContent = `String not found in file.
+
+File: ${filePath}
+Total lines: ${totalLines}
+
+`;
+
+  // 显示搜索字符串(截断长文本)
+  const searchPreview =
+    searchString.length > 300
+      ? searchString.substring(0, 300) + '\n... (truncated)'
+      : searchString;
+
+  llmContent += `You tried to match:\n${searchPreview}\n\n`;
+
+  // 显示文件摘录
+  if (fuzzyMatches.length > 0) {
+    llmContent += `File content around possible matches (lines ${excerptStartLine + 1}-${excerptEndLine}):\n${excerpt}\n\n`;
+  } else {
+    llmContent += `File content preview (lines ${excerptStartLine + 1}-${excerptEndLine}):\n${excerpt}\n\n`;
+  }
+
+  // 显示模糊匹配建议
+  if (fuzzyMatches.length > 0) {
+    llmContent += `Possible similar matches found:\n`;
+    fuzzyMatches.forEach((match, idx) => {
+      const preview =
+        match.text.length > 100 ? match.text.substring(0, 100) + '...' : match.text;
+      llmContent += `  ${idx + 1}. Line ${match.lineNumber} (similarity: ${Math.round(match.similarity * 100)}%)\n     ${preview.replace(/\n/g, '\\n')}\n`;
+    });
+    llmContent += '\n';
+  }
+
+  // 提供恢复建议
+  llmContent += `Recovery suggestions:
+1. Use the Read tool to verify the current file content
+2. Check for typos, whitespace differences, or quote mismatches
+3. Provide more surrounding context to make the match unique
+4. If the code structure is different than expected, consider using the Write tool instead
+
+Common issues:
+- Line breaks: Ensure \\n characters match exactly
+- Indentation: Spaces vs tabs mismatch
+- Smart quotes: " " vs " (use straight quotes)
+- Outdated mental model: File may have changed since you last read it`;
+
+  // 4. 生成用户可读的显示信息
+  let displayContent = `❌ Edit 失败: 未找到匹配的字符串
+
+文件: ${filePath}
+搜索字符串长度: ${searchString.length} 字符
+`;
+
+  if (fuzzyMatches.length > 0) {
+    displayContent += `\n💡 找到 ${fuzzyMatches.length} 个相似匹配项:\n`;
+    fuzzyMatches.forEach((match, idx) => {
+      displayContent += `  ${idx + 1}. 第 ${match.lineNumber} 行 (相似度: ${Math.round(match.similarity * 100)}%)\n`;
+    });
+  } else {
+    displayContent += '\n⚠️ 未找到相似的匹配项\n';
+  }
+
+  displayContent += `\n📄 文件内容摘录 (${excerptStartLine + 1}-${excerptEndLine} 行):\n${excerpt}\n`;
+  displayContent += `\n🔧 建议:\n`;
+  displayContent += `  1. 使用 Read 工具重新读取文件\n`;
+  displayContent += `  2. 检查空格、换行符、引号是否完全匹配\n`;
+  displayContent += `  3. 提供更多上下文代码确保唯一性`;
+
+  return {
+    llmContent,
+    displayContent,
+    metadata: {
+      searchStringLength: searchString.length,
+      fuzzyMatches: fuzzyMatches.map((m) => ({
+        line: m.lineNumber,
+        similarity: m.similarity,
+        preview: m.text.substring(0, 100),
+      })),
+      excerptRange: [excerptStartLine + 1, excerptEndLine],
+      totalLines,
+    },
+  };
+}
+
+/**
+ * 查找模糊匹配项
+ * 使用 Levenshtein 距离计算相似度
+ */
+function findFuzzyMatches(
+  fileContent: string,
+  searchString: string,
+  maxResults: number = 3
+): Array<{ text: string; lineNumber: number; similarity: number }> {
+  const lines = fileContent.split('\n');
+  const searchLines = searchString.split('\n');
+
+  // 如果搜索字符串是单行,按行匹配
+  if (searchLines.length === 1) {
+    const matches = lines
+      .map((line, idx) => ({
+        text: line,
+        lineNumber: idx + 1,
+        similarity: calculateSimilarity(searchString.trim(), line.trim()),
+      }))
+      .filter((m) => m.similarity > 0.5) // 相似度阈值
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, maxResults);
+
+    return matches;
+  }
+
+  // 如果搜索字符串是多行,按窗口匹配
+  const windowSize = searchLines.length;
+  const matches: Array<{ text: string; lineNumber: number; similarity: number }> = [];
+
+  for (let i = 0; i <= lines.length - windowSize; i++) {
+    const window = lines.slice(i, i + windowSize).join('\n');
+    const similarity = calculateSimilarity(searchString, window);
+
+    if (similarity > 0.5) {
+      matches.push({
+        text: window,
+        lineNumber: i + 1,
+        similarity,
+      });
+    }
+  }
+
+  return matches.sort((a, b) => b.similarity - a.similarity).slice(0, maxResults);
+}
+
+/**
+ * 计算两个字符串的相似度(简化版 Levenshtein)
+ * 返回 0-1 之间的值,1 表示完全相同
+ */
+function calculateSimilarity(str1: string, str2: string): number {
+  // 标准化:移除多余空格,统一引号
+  const normalize = (s: string) =>
+    s
+      .trim()
+      .replace(/\s+/g, ' ')
+      .replace(/[""]/g, '"')
+      .replace(/['']/g, "'");
+
+  const s1 = normalize(str1);
+  const s2 = normalize(str2);
+
+  if (s1 === s2) return 1.0;
+
+  // 计算 Levenshtein 距离
+  const len1 = s1.length;
+  const len2 = s2.length;
+
+  if (len1 === 0) return len2 === 0 ? 1.0 : 0.0;
+  if (len2 === 0) return 0.0;
+
+  // 使用简化算法:只计算前 200 个字符(性能优化)
+  const maxLen = 200;
+  const substr1 = s1.substring(0, maxLen);
+  const substr2 = s2.substring(0, maxLen);
+
+  const distance = levenshteinDistance(substr1, substr2);
+  const maxLength = Math.max(substr1.length, substr2.length);
+
+  return 1 - distance / maxLength;
+}
+
+/**
+ * Levenshtein 距离算法
+ */
+function levenshteinDistance(str1: string, str2: string): number {
+  const len1 = str1.length;
+  const len2 = str2.length;
+
+  // 创建距离矩阵
+  const matrix: number[][] = Array(len1 + 1)
+    .fill(null)
+    .map(() => Array(len2 + 1).fill(0));
+
+  // 初始化第一行和第一列
+  for (let i = 0; i <= len1; i++) matrix[i][0] = i;
+  for (let j = 0; j <= len2; j++) matrix[0][j] = j;
+
+  // 填充矩阵
+  for (let i = 1; i <= len1; i++) {
+    for (let j = 1; j <= len2; j++) {
+      const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1, // 删除
+        matrix[i][j - 1] + 1, // 插入
+        matrix[i - 1][j - 1] + cost // 替换
+      );
+    }
+  }
+
+  return matrix[len1][len2];
 }

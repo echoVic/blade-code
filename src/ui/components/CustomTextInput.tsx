@@ -245,28 +245,28 @@ export function CustomTextInput({
     } else if (key.rightArrow) {
       nextCursorPosition++;
     }
-    // === 扩展：Backspace 处理（区分 backspace 和 delete） ===
-    else if (key.backspace) {
-      if (cursorPosition > 0) {
-        nextValue =
-          originalValue.slice(0, cursorPosition - 1) +
-          originalValue.slice(cursorPosition, originalValue.length);
-        nextCursorPosition--;
-      }
-    }
-    // === 扩展：Delete 处理（正向删除 + 键盘映射 workaround） ===
-    else if (key.delete) {
-      // WORKAROUND: 某些键盘布局下 Backspace 键会被识别为 Delete
-      if (cursorPosition >= originalValue.length && originalValue.length > 0) {
-        // 光标在末尾，当作 backspace 处理
-        nextValue = originalValue.slice(0, cursorPosition - 1);
-        nextCursorPosition--;
-      } else if (cursorPosition < originalValue.length) {
-        // 正常 delete：删除光标位置的字符
-        nextValue =
-          originalValue.slice(0, cursorPosition) +
-          originalValue.slice(cursorPosition + 1, originalValue.length);
-        // 光标位置不变
+    // === 扩展：Backspace/Delete 处理 ===
+    else if (key.backspace || key.delete) {
+      // WORKAROUND: 某些键盘/终端配置下，Backspace 键会被识别为 delete
+      // 通过 rawInput 为空来判断是 Backspace（向后删除）还是真正的 Delete（向前删除）
+      const isBackspace = rawInput === '';
+
+      if (isBackspace) {
+        // Backspace：删除光标前面的字符
+        if (cursorPosition > 0) {
+          nextValue =
+            originalValue.slice(0, cursorPosition - 1) +
+            originalValue.slice(cursorPosition, originalValue.length);
+          nextCursorPosition--;
+        }
+      } else {
+        // Delete：删除光标位置的字符（向前删除）
+        if (cursorPosition < originalValue.length) {
+          nextValue =
+            originalValue.slice(0, cursorPosition) +
+            originalValue.slice(cursorPosition + 1, originalValue.length);
+          // 光标位置不变
+        }
       }
     }
     // === 扩展：Ctrl+A - 移到开头 ===
