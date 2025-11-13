@@ -1,7 +1,7 @@
 import * as crypto from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { getBladeStorageRoot } from '../../../context/utils/pathEscape.js';
+import { getBladeStorageRoot } from '../../../context/storage/pathUtils.js';
 
 /**
  * 快照元数据

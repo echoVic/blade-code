@@ -1,5 +1,5 @@
-import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const readdirMock = vi.fn();
@@ -7,7 +7,7 @@ const readFileMock = vi.fn();
 
 const pathEscapeModulePath = path.resolve(
   path.dirname(fileURLToPath(new URL(import.meta.url))),
-  '../../../src/context/utils/pathEscape.js'
+  '../../../src/context/storage/pathUtils.js'
 );
 
 beforeEach(() => {
@@ -96,26 +96,37 @@ describe('SessionService with mocked filesystem', () => {
 
   it('loadSession 应转换 JSONL 为消息列表', async () => {
     readdirMock.mockResolvedValue([]);
-    readFileMock.mockResolvedValue([
-      JSON.stringify({ type: 'user', message: { role: 'user', content: 'Hi' } }),
-      JSON.stringify({
-        type: 'tool_result',
-        toolResult: { id: 'tool-1', output: { status: 'ok' } },
-      }),
-    ].join('\n'));
+    readFileMock.mockResolvedValue(
+      [
+        JSON.stringify({ type: 'user', message: { role: 'user', content: 'Hi' } }),
+        JSON.stringify({
+          type: 'tool_result',
+          toolResult: { id: 'tool-1', output: { status: 'ok' } },
+        }),
+      ].join('\n')
+    );
 
     const { SessionService } = await import('../../../src/services/SessionService.js');
     const originalResolver = (SessionService as any).getSessionFilePath;
-    (SessionService as any).getSessionFilePath = () => '/project/demo/sessions/session-x.jsonl';
+    (SessionService as any).getSessionFilePath = () =>
+      '/project/demo/sessions/session-x.jsonl';
 
     const messages = await SessionService.loadSession('session-x', '/project/demo');
 
     (SessionService as any).getSessionFilePath = originalResolver;
 
-    expect(readFileMock).toHaveBeenCalledWith('/project/demo/sessions/session-x.jsonl', 'utf-8');
+    expect(readFileMock).toHaveBeenCalledWith(
+      '/project/demo/sessions/session-x.jsonl',
+      'utf-8'
+    );
     expect(messages).toEqual([
       { role: 'user', content: 'Hi' },
-      { role: 'tool', content: '{"status":"ok"}', tool_call_id: 'tool-1', name: undefined },
+      {
+        role: 'tool',
+        content: '{"status":"ok"}',
+        tool_call_id: 'tool-1',
+        name: undefined,
+      },
     ]);
   });
 

@@ -5,11 +5,11 @@
 
 import { readdir, readFile } from 'node:fs/promises';
 import * as path from 'node:path';
-import type { BladeJSONLEntry } from '../context/types.js';
 import {
   getBladeStorageRoot,
   unescapeProjectPath,
-} from '../context/utils/pathEscape.js';
+} from '../context/storage/pathUtils.js';
+import type { BladeJSONLEntry } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { Message } from './ChatServiceInterface.js';
 
@@ -278,7 +278,7 @@ export class SessionService {
    * 获取会话文件路径
    */
   private static getSessionFilePath(projectPath: string, sessionId: string): string {
-    const { getSessionFilePath } = require('../context/utils/pathEscape.js');
+    const { getSessionFilePath } = require('../context/storage/pathUtils.js');
     return getSessionFilePath(projectPath, sessionId);
   }
 }
