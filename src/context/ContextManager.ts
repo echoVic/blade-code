@@ -5,6 +5,7 @@ import { ContextFilter } from './processors/ContextFilter.js';
 import { CacheStore } from './storage/CacheStore.js';
 import { MemoryStore } from './storage/MemoryStore.js';
 import { PersistentStore } from './storage/PersistentStore.js';
+import { getBladeStorageRoot } from './storage/pathUtils.js';
 import {
   CompressedContext,
   ContextData,
@@ -15,7 +16,6 @@ import {
   ToolCall,
   WorkspaceContext,
 } from './types.js';
-import { getBladeStorageRoot } from './utils/pathEscape.js';
 
 /**
  * 上下文管理器 - 统一管理所有上下文相关操作

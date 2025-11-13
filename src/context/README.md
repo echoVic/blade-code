@@ -18,11 +18,11 @@
 ### 基本使用
 
 ```typescript
-import { createContextManager } from './context/index.js';
+import { ContextManager } from './context/index.js';
 
 // 创建上下文管理器
 // 默认存储在 ~/.blade/ 目录，按项目隔离
-const contextManager = createContextManager({
+const contextManager = new ContextManager({
   storage: {
     maxMemorySize: 1000,
     persistentPath: '~/.blade', // 可选，默认就是 ~/.blade
@@ -201,39 +201,24 @@ const debug = presets.debug;
 ### 自定义配置
 
 ```typescript
-import { createDefaultConfig } from './context/index.js';
+import { ContextManager } from './context/index.js';
 
-const config = createDefaultConfig();
-config.storage.maxMemorySize = 2000;
-config.compressionThreshold = 8000;
-
-const manager = new ContextManager(config);
-```
-
-## 工具函数
-
-### 格式化上下文
-
-```typescript
-import { formatContextForPrompt } from './context/index.js';
-
-const promptText = formatContextForPrompt(context, compressed, {
-  includeSystemInfo: true,
-  includeToolHistory: true,
-  includeWorkspaceInfo: false,
-  maxRecentMessages: 15
+const manager = new ContextManager({
+  storage: {
+    maxMemorySize: 2000,
+    persistentPath: './context-data',
+    cacheSize: 200,
+    compressionEnabled: true,
+  },
+  defaultFilter: {
+    maxTokens: 6000,
+    maxMessages: 60,
+    timeWindow: 48 * 60 * 60 * 1000,
+    includeTools: true,
+    includeWorkspace: true,
+  },
+  compressionThreshold: 8000,
 });
-```
-
-### 数据验证
-
-```typescript
-import { validateContextData, estimateContextSize } from './context/index.js';
-
-if (validateContextData(data)) {
-  const size = estimateContextSize(data);
-  console.log(`数据包含 ${size.messageCount} 条消息，预计 ${size.totalTokens} tokens`);
-}
 ```
 
 ## 最佳实践

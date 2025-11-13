@@ -13,6 +13,3 @@ export { MemoryStore } from './storage/MemoryStore.js';
 export { PersistentStore } from './storage/PersistentStore.js';
 // 核心类型导出
 export * from './types.js';
-
-// 工具函数
-export { createContextManager, formatContextForPrompt } from './utils.js';

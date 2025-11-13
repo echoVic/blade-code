@@ -12,7 +12,7 @@ import {
   getProjectStoragePath,
   getSessionFilePath,
   listProjectDirectories,
-} from '../utils/pathEscape.js';
+} from './pathUtils.js';
 import { JSONLStore } from './JSONLStore.js';
 
 /**

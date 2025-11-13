@@ -2,18 +2,21 @@ import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 const { mockBladeRootState } = vi.hoisted(() => ({
   mockBladeRootState: { bladeRoot: '' },
 }));
 
-vi.mock('../../src/context/utils/pathEscape.js', async () => {
-  const actual = await vi.importActual<typeof import('../../src/context/utils/pathEscape.js')>(
-    '../../src/context/utils/pathEscape.js'
-  );
+vi.mock('../../src/context/storage/pathUtils.js', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../src/context/storage/pathUtils.js')
+  >('../../src/context/storage/pathUtils.js');
   return {
     ...actual,
     getBladeStorageRoot: vi.fn(() =>
-      mockBladeRootState.bladeRoot ? mockBladeRootState.bladeRoot : actual.getBladeStorageRoot()
+      mockBladeRootState.bladeRoot
+        ? mockBladeRootState.bladeRoot
+        : actual.getBladeStorageRoot()
     ),
   };
 });
