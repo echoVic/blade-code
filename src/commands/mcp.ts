@@ -17,11 +17,19 @@ function showMcpHelp(): void {
   console.log('管理 MCP 服务器\n');
   console.log('Commands:');
   console.log('  blade mcp add <name> <commandOrUrl> [args...]  添加 MCP 服务器');
-  console.log('  blade mcp remove <name>                         删除 MCP 服务器 [aliases: rm]');
-  console.log('  blade mcp list                                  列出所有 MCP 服务器并检查健康状态 [aliases: ls]');
+  console.log(
+    '  blade mcp remove <name>                         删除 MCP 服务器 [aliases: rm]'
+  );
+  console.log(
+    '  blade mcp list                                  列出所有 MCP 服务器并检查健康状态 [aliases: ls]'
+  );
   console.log('  blade mcp get <name>                            获取服务器详情');
-  console.log('  blade mcp add-json <name> <json>                从 JSON 字符串添加服务器');
-  console.log('  blade mcp reset-project-choices                 重置项目级 .mcp.json 确认记录\n');
+  console.log(
+    '  blade mcp add-json <name> <json>                从 JSON 字符串添加服务器'
+  );
+  console.log(
+    '  blade mcp reset-project-choices                 重置项目级 .mcp.json 确认记录\n'
+  );
   console.log('Options:');
   console.log('  -h, --help     显示帮助信息                     [boolean]\n');
   console.log('Examples:');
@@ -34,20 +42,26 @@ function showMcpHelp(): void {
 
 // 工具函数：解析环境变量数组
 function parseEnvArray(envArray: string[]): Record<string, string> {
-  return envArray.reduce((acc, item) => {
-    const [key, ...valueParts] = item.split('=');
-    acc[key] = valueParts.join('=');
-    return acc;
-  }, {} as Record<string, string>);
+  return envArray.reduce(
+    (acc, item) => {
+      const [key, ...valueParts] = item.split('=');
+      acc[key] = valueParts.join('=');
+      return acc;
+    },
+    {} as Record<string, string>
+  );
 }
 
 // 工具函数：解析 HTTP 头数组
 function parseHeaderArray(headerArray: string[]): Record<string, string> {
-  return headerArray.reduce((acc, item) => {
-    const [key, ...valueParts] = item.split(':');
-    acc[key.trim()] = valueParts.join(':').trim();
-    return acc;
-  }, {} as Record<string, string>);
+  return headerArray.reduce(
+    (acc, item) => {
+      const [key, ...valueParts] = item.split(':');
+      acc[key.trim()] = valueParts.join(':').trim();
+      return acc;
+    },
+    {} as Record<string, string>
+  );
 }
 
 // MCP Add 子命令
@@ -126,8 +140,12 @@ const mcpAddCommand: CommandModule = {
         console.log('  blade mcp add <name> <command> [args...]');
         console.log('  blade mcp add <name> -- <command> [args...]');
         console.log('\n示例:');
-        console.log('  blade mcp add github npx -y @modelcontextprotocol/server-github');
-        console.log('  blade mcp add github -- npx -y @modelcontextprotocol/server-github');
+        console.log(
+          '  blade mcp add github npx -y @modelcontextprotocol/server-github'
+        );
+        console.log(
+          '  blade mcp add github -- npx -y @modelcontextprotocol/server-github'
+        );
         process.exit(1);
       }
 
@@ -245,12 +263,17 @@ const mcpListCommand: CommandModule = {
       for (const { name, config, serverInfo, error } of results) {
         const status = serverInfo?.status || McpConnectionStatus.DISCONNECTED;
         const statusSymbol = status === McpConnectionStatus.CONNECTED ? '✓' : '✗';
-        const statusText = status === McpConnectionStatus.CONNECTED ? 'Connected' : 'Failed';
+        const statusText =
+          status === McpConnectionStatus.CONNECTED ? 'Connected' : 'Failed';
 
-        console.log(`${name}: ${config.type === 'stdio' ? config.command : config.url} - ${statusSymbol} ${statusText}`);
+        console.log(
+          `${name}: ${config.type === 'stdio' ? config.command : config.url} - ${statusSymbol} ${statusText}`
+        );
 
         if (error && status !== McpConnectionStatus.CONNECTED) {
-          console.log(`  错误: ${error instanceof Error ? error.message : String(error)}`);
+          console.log(
+            `  错误: ${error instanceof Error ? error.message : String(error)}`
+          );
         }
       }
 
@@ -260,7 +283,7 @@ const mcpListCommand: CommandModule = {
       for (const { name } of results) {
         try {
           await mcpRegistry.unregisterServer(name);
-        } catch (error) {
+        } catch (_error) {
           // 忽略断开连接时的错误
         }
       }
@@ -397,7 +420,15 @@ export const mcpCommands: CommandModule = {
   },
   handler: (argv: any) => {
     // 检查是否有子命令
-    const subcommands = ['add', 'remove', 'list', 'ls', 'get', 'add-json', 'reset-project-choices'];
+    const subcommands = [
+      'add',
+      'remove',
+      'list',
+      'ls',
+      'get',
+      'add-json',
+      'reset-project-choices',
+    ];
     const hasSubcommand = argv._.some((arg: string) => subcommands.includes(arg));
 
     // 如果没有子命令或者显式请求帮助，显示帮助信息

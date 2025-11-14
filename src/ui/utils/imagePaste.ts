@@ -9,7 +9,7 @@
 
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { basename, extname, isAbsolute } from 'node:path';
+import { basename, isAbsolute } from 'node:path';
 
 /**
  * 根据平台返回剪贴板错误提示信息
@@ -38,12 +38,7 @@ export function detectImageType(base64Data: string): string {
     if (buffer.length < 4) return 'image/png';
 
     // PNG 文件头: 137, 80, 78, 71
-    if (
-      buffer[0] === 137 &&
-      buffer[1] === 80 &&
-      buffer[2] === 78 &&
-      buffer[3] === 71
-    ) {
+    if (buffer[0] === 137 && buffer[1] === 80 && buffer[2] === 78 && buffer[3] === 71) {
       return 'image/png';
     }
 
@@ -58,12 +53,7 @@ export function detectImageType(base64Data: string): string {
     }
 
     // WebP 文件头: RIFF...WEBP
-    if (
-      buffer[0] === 82 &&
-      buffer[1] === 73 &&
-      buffer[2] === 70 &&
-      buffer[3] === 70
-    ) {
+    if (buffer[0] === 82 && buffer[1] === 73 && buffer[2] === 70 && buffer[3] === 70) {
       if (
         buffer.length >= 12 &&
         buffer[8] === 87 &&
@@ -79,15 +69,6 @@ export function detectImageType(base64Data: string): string {
   } catch {
     return 'image/png';
   }
-}
-
-/**
- * 旧版 API - 返回格式字符串而非 MIME 类型
- * @deprecated 使用 detectImageType 替代
- */
-export function detectImageFormat(base64Image: string): string {
-  const mediaType = detectImageType(base64Image);
-  return mediaType.replace('image/', '');
 }
 
 /**
@@ -108,8 +89,7 @@ function getPlatformCommands() {
       checkImage: "osascript -e 'the clipboard as «class PNGf»'",
       saveImage: (path: string) =>
         `osascript -e 'set png_data to (the clipboard as «class PNGf»)' -e 'set fp to open for access POSIX file "${path}" with write permission' -e 'write png_data to fp' -e 'close access fp'`,
-      getPath:
-        "osascript -e 'get POSIX path of (the clipboard as «class furl»)'",
+      getPath: "osascript -e 'get POSIX path of (the clipboard as «class furl»)'",
       deleteFile: (path: string) => `rm -f "${path}"`,
     },
     linux: {
@@ -121,8 +101,7 @@ function getPlatformCommands() {
       deleteFile: (path: string) => `rm -f "${path}"`,
     },
     win32: {
-      checkImage:
-        'powershell -Command "(Get-Clipboard -Format Image) -ne $null"',
+      checkImage: 'powershell -Command "(Get-Clipboard -Format Image) -ne $null"',
       saveImage: (path: string) =>
         `powershell -Command "$img = Get-Clipboard -Format Image; if ($img) { $img.Save('${path.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Png) }"`,
       getPath: 'powershell -Command "Get-Clipboard"',
@@ -132,8 +111,7 @@ function getPlatformCommands() {
 
   return {
     commands:
-      commandMapping[platform as keyof typeof commandMapping] ||
-      commandMapping.linux,
+      commandMapping[platform as keyof typeof commandMapping] || commandMapping.linux,
     screenshotPath:
       tempPathMapping[platform as keyof typeof tempPathMapping] ||
       tempPathMapping.linux,
@@ -272,7 +250,7 @@ export async function getImageFromClipboard(): Promise<{
     execSync(commands.deleteFile(screenshotPath), { stdio: 'ignore' });
 
     return { base64: base64Data, mediaType };
-  } catch (error) {
+  } catch (_error) {
     // 清理可能存在的临时文件
     try {
       execSync(commands.deleteFile(screenshotPath), { stdio: 'ignore' });
@@ -280,73 +258,6 @@ export async function getImageFromClipboard(): Promise<{
       // 忽略清理错误
     }
 
-    return null;
-  }
-}
-
-/**
- * 旧版 API - 仅返回 base64（仅支持 macOS）
- * @deprecated 使用 getImageFromClipboard 替代
- */
-export function getImageFromClipboardLegacy(): string | null {
-  // 非 darwin 平台返回 null
-  if (process.platform !== 'darwin') {
-    return null;
-  }
-
-  const tempPath = `/tmp/blade_cli_screenshot_${Date.now()}.png`;
-
-  try {
-    // 1. 首先检查剪贴板是否有图片数据
-    const checkResult = execSync(
-      `osascript -e 'try
-      the clipboard as «class PNGf»
-      return "hasImage"
-    on error
-      return "noImage"
-    end try'`,
-      { encoding: 'utf8' },
-    ).trim();
-
-    if (checkResult !== 'hasImage') {
-      return null;
-    }
-
-    // 2. 提取图片数据（带错误处理）
-    execSync(
-      `osascript -e 'try
-      set png_data to (the clipboard as «class PNGf»)
-      set fp to open for access POSIX file "${tempPath}" with write permission
-      write png_data to fp
-      close access fp
-    on error e
-      return "error: " & e as string
-    end try'`,
-      { stdio: 'ignore' },
-    );
-
-    // 3. 验证文件是否成功创建
-    if (!existsSync(tempPath)) {
-      return null;
-    }
-
-    // 读取图片并转换为 base64
-    const imageBuffer = readFileSync(tempPath);
-    const base64Image = imageBuffer.toString('base64');
-
-    // 清理临时文件
-    execSync(`rm -f "${tempPath}"`, { stdio: 'ignore' });
-
-    return base64Image;
-  } catch (error) {
-    // 清理可能存在的临时文件
-    try {
-      execSync(`rm -f "${tempPath}"`, { stdio: 'ignore' });
-    } catch {
-      // 忽略清理错误
-    }
-
-    console.error('Image paste error:', error);
     return null;
   }
 }

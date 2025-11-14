@@ -11,7 +11,7 @@ import {
   loadConfiguration,
   validateOutput,
   validatePermissions,
-} from './cli/middleware/index.js';
+} from './cli/middleware.js';
 // 导入命令处理器
 import { configCommands } from './commands/config.js';
 import { doctorCommands } from './commands/doctor.js';
