@@ -1,324 +1,245 @@
-import { randomUUID } from 'crypto';
+/**
+ * Task Tool - Subagent 调度工具
+ *
+ * 设计哲学（参考 Claude Code 官方）：
+ * 1. Markdown + YAML frontmatter 配置 subagent
+ * 2. 模型决策 - 让模型自己决定用哪个 subagent
+ * 3. 自动匹配 - 根据任务描述自动选择最合适的 subagent
+ * 4. 工具隔离 - 每个 subagent 可限制工具访问
+ */
+
 import { z } from 'zod';
 import type { Agent } from '../../../agent/Agent.js';
 import type { ChatContext } from '../../../agent/types.js';
+import { SubagentRegistry } from '../../../agents/registry.js';
+import { SubagentExecutor } from '../../../agents/executor.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 
-/**
- * 任务状态
- */
-export enum TaskStatus {
-  PENDING = 'pending',
-  RUNNING = 'running',
-  COMPLETED = 'completed',
-  FAILED = 'failed',
-  CANCELLED = 'cancelled',
-}
-
-/**
- * 任务结果
- */
-export interface TaskResult {
-  task_id: string;
-  status: TaskStatus;
-  description: string;
-  subagent_type?: string;
-  created_at: string;
-  started_at?: string;
-  completed_at?: string;
-  duration?: number;
-  result?: any;
-  error?: string;
-  background: boolean;
-}
-
-/**
- * 任务管理器
- */
-export class TaskManager {
-  private static instance: TaskManager;
-  private tasks: Map<string, TaskResult> = new Map();
-
-  static getInstance(): TaskManager {
-    if (!TaskManager.instance) {
-      TaskManager.instance = new TaskManager();
-    }
-    return TaskManager.instance;
-  }
-
-  createTask(params: {
-    description: string;
-    subagent_type?: string;
-    run_in_background?: boolean;
-  }): TaskResult {
-    const taskId = randomUUID();
-    const task: TaskResult = {
-      task_id: taskId,
-      status: TaskStatus.PENDING,
-      description: params.description,
-      subagent_type: params.subagent_type,
-      created_at: new Date().toISOString(),
-      background: params.run_in_background || false,
-    };
-
-    this.tasks.set(taskId, task);
-    return task;
-  }
-
-  getTask(taskId: string): TaskResult | undefined {
-    return this.tasks.get(taskId);
-  }
-
-  getAllTasks(): TaskResult[] {
-    return Array.from(this.tasks.values()).sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-  }
-
-  updateTaskStatus(
-    taskId: string,
-    status: TaskStatus,
-    data?: Partial<TaskResult>
-  ): void {
-    const task = this.tasks.get(taskId);
-    if (task) {
-      task.status = status;
-
-      if (status === TaskStatus.RUNNING && !task.started_at) {
-        task.started_at = new Date().toISOString();
-      }
-
-      if (
-        (status === TaskStatus.COMPLETED || status === TaskStatus.FAILED) &&
-        !task.completed_at
-      ) {
-        task.completed_at = new Date().toISOString();
-        if (task.started_at) {
-          task.duration =
-            new Date(task.completed_at).getTime() - new Date(task.started_at).getTime();
-        }
-      }
-
-      if (data) {
-        Object.assign(task, data);
-      }
-    }
-  }
-
-  cancelTask(taskId: string): boolean {
-    const task = this.tasks.get(taskId);
-    if (task && task.status === TaskStatus.PENDING) {
-      this.updateTaskStatus(taskId, TaskStatus.CANCELLED);
-      return true;
-    }
-    return false;
-  }
-
-  cleanupCompletedTasks(olderThanHours: number = 24): number {
-    const cutoffTime = new Date(Date.now() - olderThanHours * 60 * 60 * 1000);
-    let cleaned = 0;
-
-    for (const [taskId, task] of this.tasks.entries()) {
-      if (task.completed_at && new Date(task.completed_at) < cutoffTime) {
-        if (task.status === TaskStatus.COMPLETED || task.status === TaskStatus.FAILED) {
-          this.tasks.delete(taskId);
-          cleaned++;
-        }
-      }
-    }
-
-    return cleaned;
-  }
-}
-
-// Agent 工厂函数
-let agentFactory: (() => Promise<Agent>) | undefined;
+// Agent 工厂函数（支持传入自定义系统提示词和工具限制）
+let agentFactory:
+  | ((systemPrompt?: string, allowedTools?: string[]) => Promise<Agent>)
+  | undefined;
 
 /**
  * 设置 Agent 工厂函数
+ * @param factory 工厂函数，接受可选的 systemPrompt 和 allowedTools 参数
  */
-export function setTaskToolAgentFactory(factory: () => Promise<Agent>): void {
+export function setTaskToolAgentFactory(
+  factory: (systemPrompt?: string, allowedTools?: string[]) => Promise<Agent>
+): void {
   agentFactory = factory;
 }
 
 /**
- * TaskTool - Agent 任务调度工具
- * 使用新的 Zod 验证设计
+ * TaskTool - 简洁的子 Agent 任务调度
+ *
+ * 核心设计：
+ * - 移除 subagent_type：让模型根据任务自己决定策略
+ * - 移除固定的系统提示词：动态生成适应任务的提示
+ * - 移除复杂的配置：只保留最基本的参数
  */
 export const taskTool = createTool({
   name: 'Task',
   displayName: 'Agent任务调度',
   kind: ToolKind.Execute,
-  isReadOnly: true, // 🆕 显式标记为只读（启动子 Agent 不修改系统状态）
+  isReadOnly: true,
 
-  // Zod Schema 定义
+  // Zod Schema 定义 - 极简设计 + 工具隔离
   schema: z.object({
-    description: z.string().min(1).describe('任务描述'),
-    subagent_type: z.string().optional().describe('指定子代理类型(可选)'),
-    prompt: z.string().optional().describe('任务提示词(可选)'),
-    context: z.record(z.any()).optional().describe('任务上下文数据(可选)'),
-    timeout: z
-      .number()
-      .int()
-      .min(5000)
-      .max(1800000)
-      .default(300000)
-      .describe('任务超时时间(毫秒,默认5分钟)'),
-    run_in_background: z.boolean().default(false).describe('是否在后台执行任务'),
+    description: z.string().min(3).max(100).describe('任务简短描述（3-10个词）'),
+    prompt: z.string().min(10).describe('详细的任务指令和期望输出'),
+    model: z
+      .enum(['haiku', 'sonnet', 'opus'])
+      .optional()
+      .describe('使用的模型（可选，默认 sonnet）'),
+    tools: z
+      .array(z.string())
+      .optional()
+      .describe(
+        '允许使用的工具列表（可选，默认允许所有工具）。示例：["Read", "Grep", "Glob"] 只允许只读工具'
+      ),
   }),
 
-  // 工具描述
+  // 工具描述 - 简洁清晰 + 自动委托提示
   description: {
-    short: '启动独立的子Agent自主执行复杂的多步骤任务',
+    short: '启动独立的 AI 助手自主执行复杂的多步骤任务',
     long: `
-启动专门的子Agent来自主处理复杂任务。子Agent是独立的执行进程，拥有自己的工具访问权限和执行上下文。
+启动独立的 AI 助手来处理复杂任务。助手会自动选择合适的工具和策略来完成任务。
+
+**🔥 自动委托提示（Use PROACTIVELY）：**
+当遇到以下场景时，**强烈建议**主动使用此工具：
+- 需要**深入分析代码结构**或架构设计
+- 需要**搜索大量文件**或执行复杂的代码搜索
+- 需要**生成文档、报告或总结**
+- 需要**多步骤推理**或执行复杂的工作流
+- 任务可以**独立完成**，不需要与用户频繁交互
 
 **适用场景：**
-- 需要多轮对话和工具调用才能完成的复杂任务
-- 需要大量代码搜索、探索和分析的任务
-- 需要独立执行上下文的后台任务
-- 将大任务委托给专门的子Agent处理
+- 代码分析：分析项目依赖、检查代码质量、查找潜在问题
+- 文件搜索：查找测试文件、配置文件、特定模式的代码
+- 文档生成：生成 API 文档、README、技术报告
+- 重构建议：分析代码并提供重构方案
+- 问题诊断：调查 bug、分析日志、查找错误原因
 
-**⚠️ 重要提醒：这不是TODO清单管理工具！**
-- 如需可视化跟踪任务进度清单 → 使用 TodoWrite 工具
-- 如需委托子Agent独立执行工作 → 使用 Task 工具
+**助手的能力：**
+- 自动选择和使用工具（Read、Write、Grep、Glob、Bash、WebSearch 等）
+- 自主决定执行策略和步骤
+- 独立的执行上下文（不共享父 Agent 的对话历史）
+- 可限制工具访问（通过 tools 参数提升安全性）
 
-**何时不使用此工具：**
-- 不要用于管理TODO任务清单（使用 TodoWrite）
-- 不要用于简单的文件读取（使用 Read）
-- 不要用于单个文件的代码搜索（使用 Grep）
-- 不要用于已知路径的文件查找（使用 Glob）
-- 不要用于简单的单步操作
+**⚠️ 重要：**
+- 这不是 TODO 清单管理工具（使用 TodoWrite 管理任务清单）
+- prompt 应该包含完整的上下文和详细的期望输出
+- 助手会消耗独立的 API token
+- 对于敏感操作，可通过 tools 参数限制工具使用（如只允许只读工具）
     `.trim(),
     usageNotes: [
-      '⚠️ 此工具用于启动子Agent，不是TODO清单管理！管理TODO请使用TodoWrite工具',
-      'description 参数是必需的，应简短描述任务（3-5个词）',
-      'prompt 参数应包含完整详细的任务指令和期望输出格式',
-      '可通过 subagent_type 指定特定类型的子 Agent',
-      '每个子Agent都是独立进程，消耗独立的资源和token',
-      '子Agent无法访问父Agent的对话历史，需要在prompt中提供完整上下文',
-      'context 用于传递结构化的任务上下文数据',
-      'timeout 默认 5 分钟，最长 30 分钟',
-      'run_in_background=true 时任务在后台执行，立即返回task_id',
-      '后台任务需要使用 task_status 工具查看进度和结果',
+      'description 应简短（3-10个词），如"分析项目依赖"',
+      'prompt 应详细完整，包含任务目标、期望输出格式',
+      '助手无法访问父 Agent 的对话历史，需在 prompt 中提供完整上下文',
+      '助手会自动选择合适的工具，无需指定（除非使用 tools 参数限制）',
+      'model 参数可选：haiku（快速）、sonnet（平衡）、opus（高质量）',
+      'tools 参数可选：限制可用工具列表，提升安全性（如：["Read", "Grep", "Glob"]）',
     ],
     examples: [
       {
-        description: '启动子Agent分析项目依赖',
+        description: '分析项目依赖（完全权限）',
         params: {
           description: '分析项目依赖',
           prompt:
-            '分析项目中的所有依赖包，检查是否有过时或存在安全漏洞的包，生成详细报告包括：1) 过时包列表 2) 安全漏洞 3) 建议的更新方案',
+            '分析项目中的所有依赖包（package.json），检查：1) 过时的包 2) 存在安全漏洞的包 3) 建议的更新方案。以 Markdown 表格格式输出。',
         },
       },
       {
-        description: '指定子代理类型执行优化',
+        description: '查找测试文件（只读权限）',
         params: {
-          description: '优化数据库查询',
-          subagent_type: 'database-optimizer',
-          prompt: '分析所有数据库查询语句，找出性能瓶颈，并提供优化建议',
+          description: '查找测试文件',
+          prompt:
+            '查找项目中所有的测试文件（.test.ts, .spec.ts），列出文件路径和每个测试文件的主要测试内容。',
+          tools: ['Read', 'Grep', 'Glob'], // 只允许只读工具
         },
       },
       {
-        description: '后台执行长时间测试任务',
+        description: '生成 API 文档（高质量模型）',
         params: {
-          description: '运行完整测试套件',
-          prompt: '运行项目中的所有单元测试和集成测试，收集测试覆盖率，生成详细报告',
-          run_in_background: true,
-          timeout: 600000,
-        },
-      },
-      {
-        description: '带上下文的数据处理任务',
-        params: {
-          description: '处理用户数据',
-          prompt: '根据context中的user_id和action，执行相应的数据导出操作',
-          context: {
-            user_id: '12345',
-            action: 'export',
-          },
+          description: '生成 API 文档',
+          prompt:
+            '分析 src/api/ 目录下的所有 API 路由，生成完整的 API 文档，包括：路由、请求参数、响应格式、示例。',
+          model: 'opus',
+          tools: ['Read', 'Grep', 'Glob', 'Write'], // 允许读取和写入，但不允许执行命令
         },
       },
     ],
     important: [
-      '⚠️ 这不是TODO清单工具！管理任务清单请使用 TodoWrite',
-      '任务创建需要用户确认（消耗额外资源）',
-      '子 Agent 会消耗独立的系统资源和API token',
-      '子Agent是无状态的，无法访问父Agent的对话历史',
-      '后台任务需要手动使用 task_status 工具查看状态',
-      '任务超时会自动中止，建议合理设置timeout',
-      'prompt 应该详细完整，包含所有必要的上下文信息',
+      '⚠️ 这不是 TODO 清单工具！管理任务清单请使用 TodoWrite',
+      '🔥 当需要深入分析、大量搜索、生成文档时，主动使用此工具（PROACTIVELY）',
+      '助手会消耗独立的 API token',
+      '助手无法访问父 Agent 的对话历史',
+      'prompt 应该详细完整，包含所有必要的上下文',
+      '🔒 对于敏感操作，使用 tools 参数限制工具访问（安全最佳实践）',
     ],
   },
 
   // 执行函数
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
-    const {
-      description,
-      prompt,
-      context: taskContext,
-      timeout = 300000, // 5分钟默认超时
-      run_in_background = false,
-    } = params;
+    const { description, prompt, model = 'sonnet', tools } = params;
     const { updateOutput } = context;
     const signal = context.signal ?? new AbortController().signal;
 
     try {
-      const taskManager = TaskManager.getInstance();
-
-      updateOutput?.(`创建任务: ${description}`);
-
-      // 创建任务
-      const task = taskManager.createTask(params);
-
-      if (run_in_background) {
-        // 后台任务：立即返回任务ID
-        scheduleBackgroundTask(task, {
-          prompt,
-          context: taskContext,
-          timeout,
-          signal,
-          executionContext: context, // ✅ 传递 ExecutionContext
-        });
-
-        const metadata = {
-          task_id: task.task_id,
-          background: true,
-          created_at: task.created_at,
+      // 检查是否配置了 agentFactory
+      if (!agentFactory) {
+        return {
+          success: false,
+          llmContent: '任务工具未初始化：缺少 Agent 工厂函数',
+          displayContent:
+            '❌ 任务工具未初始化\n\n请联系系统管理员配置 Agent 工厂函数',
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: 'Agent factory not configured',
+          },
         };
+      }
 
-        const displayMessage =
-          `✅ 任务已创建并在后台执行\n` +
-          `任务ID: ${task.task_id}\n` +
-          `描述: ${description}\n` +
-          `使用 task_status 工具查看进度`;
+      updateOutput?.(`🚀 启动子 Agent: ${description}`);
+
+      // 动态生成系统提示词（根据任务内容和工具限制）
+      const dynamicSystemPrompt = buildDynamicSystemPrompt(prompt, model, tools);
+
+      // 创建子 Agent（传入动态系统提示词和工具限制）
+      const subAgent = await agentFactory(dynamicSystemPrompt, tools);
+
+      // 构建子 Agent 的上下文
+      const subContext: ChatContext = {
+        messages: [], // 子 Agent 从空消息列表开始
+        userId: context.userId || 'subagent',
+        sessionId: `subagent_${Date.now()}`,
+        workspaceRoot: context.workspaceRoot || process.cwd(),
+        signal,
+        confirmationHandler: context.confirmationHandler,
+      };
+
+      updateOutput?.(`⚙️  执行任务中...`);
+
+      // 执行子 Agent 循环
+      const startTime = Date.now();
+      const result = await subAgent.runAgenticLoop(prompt, subContext, {
+        maxTurns: 20, // 限制最大回合数
+        signal,
+      });
+      const duration = Date.now() - startTime;
+
+      if (result.success) {
+        // 任务成功完成
+        const finalMessage = result.finalMessage ?? '';
+        const outputPreview =
+          typeof finalMessage === 'string'
+            ? finalMessage.length > 1000
+              ? finalMessage.slice(0, 1000) + '...(截断)'
+              : finalMessage
+            : JSON.stringify(finalMessage, null, 2);
 
         return {
           success: true,
-          llmContent: {
-            task_id: task.task_id,
-            status: task.status,
-            background: true,
-            description: task.description,
+          llmContent: result.finalMessage ?? outputPreview,
+          displayContent:
+            `✅ 子 Agent 任务完成\n\n` +
+            `任务: ${description}\n` +
+            `模型: ${model}\n` +
+            `耗时: ${duration}ms\n` +
+            `回合数: ${result.metadata?.toolCallsCount || 0}\n\n` +
+            `结果:\n${outputPreview}`,
+          metadata: {
+            description,
+            model,
+            duration,
+            turns: result.metadata?.toolCallsCount || 0,
           },
-          displayContent: displayMessage,
-          metadata,
         };
       } else {
-        // 前台任务：等待完成
-        return await executeTaskSync(task, {
-          prompt,
-          context: taskContext,
-          timeout,
-          signal,
-          updateOutput,
-          executionContext: context, // ✅ 传递 ExecutionContext
-        });
+        // 任务失败
+        const errorMessage = result.error?.message || '未知错误';
+
+        return {
+          success: false,
+          llmContent: `任务执行失败: ${errorMessage}`,
+          displayContent:
+            `⚠️ 子 Agent 任务失败\n\n` +
+            `任务: ${description}\n` +
+            `耗时: ${duration}ms\n` +
+            `错误: ${errorMessage}`,
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: errorMessage,
+            details: result.error,
+          },
+        };
       }
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
+    } catch (error) {
+      const err = error as Error;
+      if (err.name === 'AbortError') {
         return {
           success: false,
           llmContent: '任务执行被中止',
@@ -332,247 +253,112 @@ export const taskTool = createTool({
 
       return {
         success: false,
-        llmContent: `任务创建失败: ${error.message}`,
-        displayContent: `❌ 任务创建失败: ${error.message}`,
+        llmContent: `任务执行失败: ${err.message}`,
+        displayContent: `❌ 任务执行失败\n\n${err.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
-          message: error.message,
+          message: err.message,
           details: error,
         },
       };
     }
   },
 
-  version: '2.0.0',
+  version: '3.0.0',
   category: '任务工具',
-  tags: ['task', 'agent', 'schedule', 'workflow'],
+  tags: ['task', 'agent', 'delegation', 'workflow'],
 
-  /**
-   * 提取签名内容：返回任务描述和提示组合
-   */
-  extractSignatureContent: (params) => `${params.description} | ${params.prompt}`,
-
-  /**
-   * 抽象权限规则：Task 工具禁用自动生成规则
-   * 返回空字符串表示不自动添加权限规则
-   */
+  extractSignatureContent: (params) => params.description,
   abstractPermissionRule: () => '',
 });
 
 /**
- * 后台任务调度
+ * 动态生成系统提示词
+ *
+ * 根据任务内容自动生成适应性的系统提示词，而不是使用固定模板
  */
-function scheduleBackgroundTask(
-  task: TaskResult,
-  options: {
-    prompt?: string;
-    context?: Record<string, any>;
-    timeout: number;
-    signal: AbortSignal;
-    executionContext?: ExecutionContext; // ✅ 添加执行上下文参数
+function buildDynamicSystemPrompt(
+  taskPrompt: string,
+  model: string,
+  allowedTools?: string[]
+): string {
+  // 基础提示词
+  let basePrompt = `你是一个专业的 AI 助手，负责自主完成以下任务：
+
+${taskPrompt}
+
+## 执行指南
+
+`;
+
+  // 工具限制说明
+  if (allowedTools && allowedTools.length > 0) {
+    basePrompt += `⚠️ **工具访问限制**：出于安全考虑，你只能使用以下工具：${allowedTools.join(', ')}
+
+`;
+  } else {
+    basePrompt += `你可以使用所有可用的工具来完成任务。`;
   }
-): void {
-  const taskManager = TaskManager.getInstance();
 
-  // 异步执行任务
-  setTimeout(async () => {
-    try {
-      taskManager.updateTaskStatus(task.task_id, TaskStatus.RUNNING);
+  basePrompt += `根据任务需求自主决定：
+- 使用哪些工具
+- 执行的步骤和顺序
+- 输出的格式和结构
 
-      // 模拟任务执行（实际应该调用相应的Agent）
-      const result = await simulateTaskExecution(task, options);
+## 可用工具
 
-      taskManager.updateTaskStatus(task.task_id, TaskStatus.COMPLETED, {
-        result,
-      });
-    } catch (error: any) {
-      taskManager.updateTaskStatus(task.task_id, TaskStatus.FAILED, {
-        error: error.message,
-      });
-    }
-  }, 0);
-}
+`;
 
-/**
- * 同步执行任务
- */
-async function executeTaskSync(
-  task: TaskResult,
-  options: {
-    prompt?: string;
-    context?: Record<string, any>;
-    timeout: number;
-    signal: AbortSignal;
-    updateOutput?: (output: string) => void;
-    executionContext?: ExecutionContext; // ✅ 添加执行上下文参数
-  }
-): Promise<ToolResult> {
-  const taskManager = TaskManager.getInstance();
+  // 根据工具限制列出可用工具
+  const allTools = {
+    Read: '读取文件内容',
+    Write: '创建或覆盖文件',
+    Edit: '编辑文件（字符串替换）',
+    Grep: '搜索文件内容（支持正则）',
+    Glob: '查找文件（支持通配符）',
+    Bash: '执行 Shell 命令',
+    WebSearch: '网络搜索',
+    WebFetch: '获取网页内容',
+  };
 
-  try {
-    options.updateOutput?.(`开始执行任务: ${task.description}`);
-    taskManager.updateTaskStatus(task.task_id, TaskStatus.RUNNING);
-
-    const result = await simulateTaskExecution(task, options);
-
-    taskManager.updateTaskStatus(task.task_id, TaskStatus.COMPLETED, {
-      result,
-    });
-
-    const completedTask = taskManager.getTask(task.task_id)!;
-
-    const metadata = {
-      task_id: task.task_id,
-      duration: completedTask.duration,
-      completed_at: completedTask.completed_at,
-    };
-
-    const displayMessage = formatDisplayMessage(completedTask);
-
-    return {
-      success: true,
-      llmContent: completedTask,
-      displayContent: displayMessage,
-      metadata,
-    };
-  } catch (error: any) {
-    taskManager.updateTaskStatus(task.task_id, TaskStatus.FAILED, {
-      error: error.message,
-    });
-
-    const failedTask = taskManager.getTask(task.task_id)!;
-
-    return {
-      success: false,
-      llmContent: `任务执行失败: ${error.message}`,
-      displayContent: `❌ 任务执行失败: ${error.message}`,
-      error: {
-        type: ToolErrorType.EXECUTION_ERROR,
-        message: error.message,
-        details: {
-          task_id: task.task_id,
-          error: error.message,
-          failed_at: failedTask.completed_at,
-        },
-      },
-    };
-  }
-}
-
-/**
- * TODO 模拟任务执行
- */
-async function simulateTaskExecution(
-  task: TaskResult,
-  options: {
-    prompt?: string;
-    context?: Record<string, any>;
-    timeout: number;
-    signal: AbortSignal;
-    executionContext?: ExecutionContext; // 添加执行上下文参数
-  }
-): Promise<any> {
-  // 尝试使用真实的子 Agent
-  if (agentFactory) {
-    console.log('🚀 使用真实子 Agent 执行任务...');
-    try {
-      // 创建子 Agent
-      const subAgent = await agentFactory();
-
-      // 构建完整的 ChatContext，传递 confirmationHandler
-      const subContext: ChatContext = {
-        messages: [], // 子任务从空消息列表开始
-        userId: (options.context?.userId as string) || 'subagent',
-        sessionId: (options.context?.sessionId as string) || `subagent_${Date.now()}`,
-        workspaceRoot: (options.context?.workspaceRoot as string) || process.cwd(),
-        signal: options.signal,
-        confirmationHandler: options.executionContext?.confirmationHandler,
-      };
-
-      // 调用 runAgenticLoop
-      const result = await subAgent.runAgenticLoop(
-        options.prompt || task.description,
-        subContext,
-        {
-          maxTurns: 10, // 子任务限制为 10 轮
-          signal: options.signal,
-        }
-      );
-
-      if (result.success) {
-        return {
-          task_description: task.description,
-          subagent_type: task.subagent_type || 'general',
-          execution_result: result.finalMessage,
-          metadata: result.metadata,
-          timestamp: new Date().toISOString(),
-        };
-      } else {
-        throw new Error(result.error?.message || '子任务执行失败');
+  if (allowedTools && allowedTools.length > 0) {
+    // 只列出允许的工具
+    for (const tool of allowedTools) {
+      if (allTools[tool as keyof typeof allTools]) {
+        basePrompt += `- **${tool}**: ${allTools[tool as keyof typeof allTools]}\n`;
       }
-    } catch (error) {
-      console.error('子 Agent 执行失败:', error);
-      throw error;
+    }
+  } else {
+    // 列出所有工具
+    for (const [tool, desc] of Object.entries(allTools)) {
+      basePrompt += `- **${tool}**: ${desc}\n`;
     }
   }
 
-  // 降级：使用模拟逻辑
-  console.log('⚠️ 未配置 agentFactory，使用模拟逻辑');
-  return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      reject(new Error('任务执行超时'));
-    }, options.timeout);
+  basePrompt += `
+## 执行原则
 
-    const abortHandler = () => {
-      clearTimeout(timeoutId);
-      reject(new Error('任务被用户中止'));
-    };
+1. **系统性思考**: 分析任务，制定计划，逐步执行
+2. **高效工具使用**: 优先使用专门工具，避免重复操作
+3. **完整输出**: 确保返回的结果完整、清晰、有用
+4. **错误处理**: 遇到错误时尝试替代方案
+`;
 
-    options.signal.addEventListener('abort', abortHandler);
-
-    // 模拟任务处理时间
-    setTimeout(
-      () => {
-        clearTimeout(timeoutId);
-        options.signal.removeEventListener('abort', abortHandler);
-
-        resolve({
-          task_description: task.description,
-          subagent_type: task.subagent_type || 'general',
-          execution_result: `任务 "${task.description}" 已成功完成(模拟)`,
-          context: options.context,
-          timestamp: new Date().toISOString(),
-        });
-      },
-      Math.random() * 2000 + 1000
-    ); // 1-3秒随机延迟
-  });
-}
-
-/**
- * 格式化显示消息
- */
-function formatDisplayMessage(task: TaskResult): string {
-  let message = `✅ 任务执行完成: ${task.description}`;
-  message += `\n任务ID: ${task.task_id}`;
-  message += `\n状态: ${task.status}`;
-
-  if (task.duration) {
-    message += `\n执行时间: ${task.duration}ms`;
+  if (allowedTools && allowedTools.length > 0) {
+    basePrompt += `5. **严格遵守工具限制**: 不要尝试使用未授权的工具\n`;
   }
 
-  if (task.result) {
-    const resultPreview =
-      typeof task.result === 'object'
-        ? JSON.stringify(task.result, null, 2)
-        : String(task.result);
+  basePrompt += `
+当任务完成时，直接返回最终结果。`;
 
-    if (resultPreview.length > 500) {
-      message += `\n执行结果:\n${resultPreview.substring(0, 500)}...(已截断)`;
-    } else {
-      message += `\n执行结果:\n${resultPreview}`;
-    }
+  // 根据模型添加特定提示（可选）
+  if (model === 'haiku') {
+    return basePrompt + '\n\n**注意**: 优先考虑速度和效率，快速完成任务。';
+  } else if (model === 'opus') {
+    return (
+      basePrompt + '\n\n**注意**: 追求高质量输出，深入分析，提供详细的结果和建议。'
+    );
   }
 
-  return message;
+  return basePrompt;
 }
