@@ -1,4 +1,3 @@
-// 新的基于 Zod 的工具定义
+// 简洁的 Task 工具导出
 
-export type { TaskResult } from './task.js';
-export { setTaskToolAgentFactory, TaskManager, TaskStatus, taskTool } from './task.js';
+export { setTaskToolAgentFactory, taskTool } from './task.js';

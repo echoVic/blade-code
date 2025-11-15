@@ -56,7 +56,8 @@
       "Bash(pnpm install:*)",
       "Bash(timeout 10 node:*)",
       "Bash(gtimeout 10 node:*)",
-      "Bash(timeout 5 node:*)"
+      "Bash(timeout 5 node:*)",
+      "Bash(git stash:*)"
     ],
     "deny": [],
     "ask": [],

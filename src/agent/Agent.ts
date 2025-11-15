@@ -1084,6 +1084,13 @@ export class Agent extends EventEmitter {
   }
 
   /**
+   * 获取工具注册表（用于子 Agent 工具隔离）
+   */
+  public getToolRegistry(): ToolRegistry {
+    return this.executionPipeline.getRegistry();
+  }
+
+  /**
    * 获取工具统计信息
    */
   public getToolStats() {
