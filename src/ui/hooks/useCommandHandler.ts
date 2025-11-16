@@ -1,18 +1,22 @@
 import { useMemoizedFn } from 'ahooks';
-import { useEffect, useRef, useState } from 'react';
-import { Agent } from '../../agent/Agent.js';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
-import type { SessionMetadata } from '../../services/SessionService.js';
 import {
-	executeSlashCommand,
-	isSlashCommand,
-	type SlashCommandContext,
+  executeSlashCommand,
+  isSlashCommand,
+  type SlashCommandContext,
 } from '../../slash-commands/index.js';
+import { UIActionMapper } from '../../slash-commands/UIActionMapper.js';
 import type { TodoItem } from '../../tools/builtin/todo/types.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import { useAppState, usePermissionMode } from '../contexts/AppContext.js';
 import { useSession } from '../contexts/SessionContext.js';
+import {
+  formatToolCallSummary,
+  shouldShowToolDetail,
+} from '../utils/toolFormatters.js';
+import { useAgent } from './useAgent.js';
 
 // 创建 UI Hook 专用 Logger
 const logger = createLogger(LogCategory.UI);
@@ -22,88 +26,6 @@ export interface CommandResult {
   output?: string;
   error?: string;
   metadata?: Record<string, unknown>;
-}
-
-/**
- * 格式化工具调用摘要（用于流式显示）
- */
-function formatToolCallSummary(
-  toolName: string,
-  params: Record<string, unknown>
-): string {
-  switch (toolName) {
-    case 'Write':
-      return `Write(${params.file_path || 'file'})`;
-    case 'Edit':
-      return `Edit(${params.file_path || 'file'})`;
-    case 'Read':
-      return `Read(${params.file_path || 'file'})`;
-    case 'Bash': {
-      const cmd = params.command as string;
-      return `Bash(${cmd ? cmd.substring(0, 50) : 'command'}${cmd && cmd.length > 50 ? '...' : ''})`;
-    }
-    case 'Glob':
-      return `Glob(${params.pattern || '*'})`;
-    case 'Grep': {
-      const pattern = params.pattern as string;
-      const path = params.path as string;
-      if (path) {
-        return `Grep("${pattern}" in ${path})`;
-      }
-      return `Grep("${pattern}")`;
-    }
-    case 'WebFetch': {
-      const url = params.url as string;
-      if (url) {
-        try {
-          const urlObj = new URL(url);
-          return `WebFetch(${urlObj.hostname})`;
-        } catch {
-          return `WebFetch(${url.substring(0, 30)}${url.length > 30 ? '...' : ''})`;
-        }
-      }
-      return 'WebFetch(url)';
-    }
-    case 'WebSearch':
-      return `WebSearch("${params.query || 'query'}")`;
-    case 'TodoWrite':
-      return `TodoWrite(${(params.todos as unknown[])?.length || 0} items)`;
-    case 'UndoEdit':
-      return `UndoEdit(${params.file_path || 'file'})`;
-    default:
-      return `${toolName}()`;
-  }
-}
-
-/**
- * 判断是否显示工具详细内容
- */
-function shouldShowToolDetail(toolName: string, result: any): boolean {
-  if (!result?.displayContent) return false;
-
-  switch (toolName) {
-    case 'Write':
-      // 小文件显示预览（小于 10KB）
-      return (result.metadata?.file_size || 0) < 10000;
-
-    case 'Edit':
-      // 总是显示 diff 片段
-      return true;
-
-    case 'Bash':
-      // 短输出显示（小于 1000 字符）
-      return (result.metadata?.stdout_length || 0) < 1000;
-
-    case 'Read':
-    case 'TodoWrite':
-    case 'TodoRead':
-      // 不显示详细内容
-      return false;
-
-    default:
-      // 其他工具默认不显示
-      return false;
-  }
 }
 
 /**
@@ -127,18 +49,32 @@ export const useCommandHandler = (
   } = useSession();
   const { dispatch: appDispatch, actions: appActions } = useAppState();
   const permissionMode = usePermissionMode();
-	const abortControllerRef = useRef<AbortController | undefined>(undefined);
-	const agentRef = useRef<Agent | undefined>(undefined);
-	const abortMessageSentRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | undefined>(undefined);
+  const abortMessageSentRef = useRef(false);
 
-	// 清理函数
+  // 创建 UI Action 映射器（用于 slash 命令结果映射）
+  const actionMapper = useMemo(() => new UIActionMapper(appActions), [appActions]);
+
+  // 使用 Agent 管理 Hook
+  const { agentRef, createAgent, cleanupAgent } = useAgent(
+    {
+      systemPrompt: replaceSystemPrompt,
+      appendSystemPrompt: appendSystemPrompt,
+      maxTurns: maxTurns,
+    },
+    {
+      onTodoUpdate: (todos: TodoItem[]) => {
+        appDispatch(appActions.setTodos(todos));
+      },
+    }
+  );
+
+  // 清理函数
   useEffect(() => {
     return () => {
-      if (agentRef.current) {
-        agentRef.current.removeAllListeners();
-      }
+      cleanupAgent();
     };
-  }, []);
+  }, [cleanupAgent]);
 
   // 停止任务
   const handleAbort = useMemoizedFn(() => {
@@ -182,29 +118,6 @@ export const useCommandHandler = (
     // 清理工作由 executeCommand 的 finally 块负责
   });
 
-  // 创建并初始化 Agent（共享逻辑）
-  const createAndSetupAgent = useMemoizedFn(async (): Promise<Agent> => {
-    // 清理旧的 Agent 事件监听器
-    if (agentRef.current) {
-      agentRef.current.removeAllListeners();
-    }
-
-    // 创建新 Agent
-    const agent = await Agent.create({
-      systemPrompt: replaceSystemPrompt,
-      appendSystemPrompt: appendSystemPrompt,
-      maxTurns: maxTurns, // 传递 CLI 参数
-    });
-    agentRef.current = agent;
-
-    // 设置事件监听器
-    agent.on('todoUpdate', ({ todos }: { todos: TodoItem[] }) => {
-      appDispatch(appActions.setTodos(todos));
-    });
-
-    return agent;
-  });
-
   // 处理命令提交
   const handleCommandSubmit = useMemoizedFn(
     async (command: string): Promise<CommandResult> => {
@@ -228,49 +141,16 @@ export const useCommandHandler = (
 
           const slashResult = await executeSlashCommand(command, slashContext);
 
-          // 检查是否需要显示主题选择器
-          if (slashResult.message === 'show_theme_selector') {
-            appDispatch(appActions.showThemeSelector());
-            return { success: true };
-          }
-
-          // 检查是否需要显示模型选择器
-          if (slashResult.message === 'show_model_selector') {
-            appDispatch(appActions.showModelSelector());
-            return { success: true };
-          }
-
-          // 检查是否需要显示模型添加向导
-          if (slashResult.message === 'show_model_add_wizard') {
-            appDispatch(appActions.showModelAddWizard());
-            return { success: true };
-          }
-
-          if (slashResult.message === 'show_permissions_manager') {
-            appDispatch(appActions.showPermissionsManager());
-            return { success: true };
-          }
-
-          // 检查是否需要显示 agents 管理器
-          if (slashResult.message === 'show_agents_manager') {
-            appDispatch(appActions.showAgentsManager());
-            return { success: true };
-          }
-
-          // 检查是否需要显示 agent 创建向导
-          if (slashResult.message === 'show_agent_creation_wizard') {
-            appDispatch(appActions.showAgentCreationWizard());
-            return { success: true };
-          }
-
-          // 检查是否需要显示会话选择器
-          if (slashResult.message === 'show_session_selector') {
-            // 传递会话数据到 AppContext
-            const sessions = slashResult.data?.sessions as
-              | SessionMetadata[]
-              | undefined;
-            appDispatch(appActions.showSessionSelector(sessions));
-            return { success: true };
+          // 使用 UIActionMapper 映射命令结果到 UI Action
+          if (slashResult.message) {
+            const uiAction = actionMapper.mapToAction(
+              slashResult.message,
+              slashResult.data
+            );
+            if (uiAction) {
+              appDispatch(uiAction);
+              return { success: true };
+            }
           }
 
           if (!slashResult.success && slashResult.error) {
@@ -283,129 +163,14 @@ export const useCommandHandler = (
             };
           }
 
+          // 显示命令返回的消息
           const slashMessage = slashResult.message;
           if (
             slashResult.success &&
             typeof slashMessage === 'string' &&
-            slashMessage.trim() !== '' &&
-            slashMessage !== 'trigger_analysis'
+            slashMessage.trim() !== ''
           ) {
             addAssistantMessage(slashMessage);
-          }
-
-          // /init 命令总是会触发 AI 分析
-          if (
-            slashResult.success &&
-            slashResult.message === 'trigger_analysis' &&
-            slashResult.data
-          ) {
-            const { analysisPrompt } = slashResult.data;
-
-            // 创建并设置 Agent
-            const agent = await createAndSetupAgent();
-
-            // 确保 AbortController 存在（应该在 executeCommand 中已创建）
-            if (!abortControllerRef.current) {
-              throw new Error(
-                '[handleCommandSubmit] AbortController should exist at this point'
-              );
-            }
-
-            const chatContext = {
-              messages: sessionState.messages.map((msg) => ({
-                role: msg.role as 'user' | 'assistant' | 'system',
-                content: msg.content,
-              })),
-              userId: 'cli-user',
-              sessionId: sessionState.sessionId,
-              workspaceRoot: process.cwd(),
-              signal: abortControllerRef.current.signal,
-              confirmationHandler,
-              permissionMode: permissionMode,
-            };
-
-            const loopOptions = {
-              // 🆕 LLM 输出内容
-              onContent: (content: string) => {
-                if (content.trim()) {
-                  addAssistantMessage(content);
-                }
-              },
-              // 🆕 工具调用开始
-              onToolStart: (toolCall: any) => {
-                // 跳过 TodoWrite/TodoRead 的显示
-                if (
-                  toolCall.function.name === 'TodoWrite' ||
-                  toolCall.function.name === 'TodoRead'
-                ) {
-                  return;
-                }
-
-                try {
-                  const params = JSON.parse(toolCall.function.arguments);
-                  const summary = formatToolCallSummary(toolCall.function.name, params);
-                  addToolMessage(summary, {
-                    toolName: toolCall.function.name,
-                    phase: 'start',
-                    summary,
-                    params,
-                  });
-                } catch (error) {
-                  logger.error('[useCommandHandler] onToolStart error:', error);
-                }
-              },
-              // 🆕 工具执行完成（显示摘要 + 可选的详细内容）
-              onToolResult: async (toolCall: any, result: any) => {
-                if (!result?.metadata?.summary) {
-                  return;
-                }
-
-                const detail = shouldShowToolDetail(toolCall.function.name, result)
-                  ? result.displayContent
-                  : undefined;
-
-                addToolMessage(result.metadata.summary, {
-                  toolName: toolCall.function.name,
-                  phase: 'complete',
-                  summary: result.metadata.summary,
-                  detail,
-                });
-              },
-            };
-
-            try {
-              const aiOutput = await agent.chat(
-                analysisPrompt,
-                chatContext,
-                loopOptions
-              );
-
-              // 如果返回空字符串，可能是用户中止
-              // 注意：handleAbort 已经乐观显示了"任务已停止"消息
-              if (!aiOutput || aiOutput.trim() === '') {
-                return {
-                  success: true,
-                  output: '任务已停止',
-                  metadata: slashResult.data,
-                };
-              }
-
-              // 注意：LLM 的输出已经通过 onThinking 回调添加到消息历史了，不需要再次添加
-
-              return {
-                success: true,
-                output: aiOutput,
-                metadata: slashResult.data,
-              };
-            } catch (aiError) {
-              const aiErrorMessage =
-                aiError instanceof Error ? aiError.message : '未知错误';
-              addAssistantMessage(`❌ AI 分析失败: ${aiErrorMessage}`);
-              return {
-                success: false,
-                error: `AI 分析失败: ${aiErrorMessage}`,
-              };
-            }
           }
 
           return {
@@ -417,7 +182,7 @@ export const useCommandHandler = (
         }
 
         // 创建并设置 Agent
-        const agent = await createAndSetupAgent();
+        const agent = await createAgent();
 
         // 确保 AbortController 存在（应该在 executeCommand 中已创建）
         if (!abortControllerRef.current) {

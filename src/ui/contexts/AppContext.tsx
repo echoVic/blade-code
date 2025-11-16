@@ -45,7 +45,7 @@ export interface AppState {
 }
 
 // Action类型
-type AppAction =
+export type AppAction =
   | { type: 'SET_CONFIG'; payload: RuntimeConfig }
   | { type: 'SET_INITIALIZATION_STATUS'; payload: InitializationStatus }
   | { type: 'SET_INITIALIZATION_ERROR'; payload: string | null }
@@ -207,7 +207,6 @@ export const AppActions = {
     type: 'UPDATE_TODO' as const,
     payload: todo,
   }),
-
 };
 
 type AppActions = typeof AppActions;
@@ -252,11 +251,7 @@ export const AppProvider: React.FC<{
     [state, dispatch, actions]
   );
 
-  return (
-    <AppContext.Provider value={value}>
-      {children}
-    </AppContext.Provider>
-  );
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
 // Hook

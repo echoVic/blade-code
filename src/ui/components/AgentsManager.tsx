@@ -59,7 +59,7 @@ export function AgentsManager({
 
   // 加载所有已配置的 agents (依赖 refreshKey 重新计算)
   const allAgents = useMemo(() => {
-    return subagenctRegistry.getAllSubagents();
+    return subagentRegistry.getAllSubagents();
   }, [refreshKey]);
 
   // 主菜单选项
@@ -195,7 +195,7 @@ export function AgentsManager({
           <Text color="gray"> (找到 {allAgents.length} 个)</Text>
         </Box>
 
-        {allAgents.map((agent) => (
+        {allAgents.map((agent: SubagentConfig) => (
           <Box key={agent.name} flexDirection="column" paddingLeft={2}>
             <Box>
               <Text>
@@ -247,7 +247,7 @@ export function AgentsManager({
       );
     }
 
-    const agentItems = allAgents.map((agent) => ({
+    const agentItems = allAgents.map((agent: SubagentConfig) => ({
       key: agent.name, // 显式指定 key 避免 React 警告
       label: `${agent.name} - ${agent.description}`,
       value: agent,

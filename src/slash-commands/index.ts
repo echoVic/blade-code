@@ -131,7 +131,8 @@ export function getCommandSuggestions(partialCommand: string): string[] {
  * 获取模糊匹配的命令建议
  */
 export function getFuzzyCommandSuggestions(input: string): CommandSuggestion[] {
-  const query = input.startsWith('/') ? input.slice(1) : input;
+  // 移除前导斜杠，并 trim 掉空格（用户可能输入 "/init " 然后按 Tab）
+  const query = (input.startsWith('/') ? input.slice(1) : input).trim();
 
   if (!query) {
     // 如果没有输入，返回所有命令
@@ -148,15 +149,24 @@ export function getFuzzyCommandSuggestions(input: string): CommandSuggestion[] {
     // 检查命令名称匹配
     const nameScore = calculateMatchScore(query, cmd.name);
 
-    // 检查描述匹配
-    const descScore = calculateMatchScore(query, cmd.description) * 0.5;
-
     // 检查别名匹配
     let aliasScore = 0;
     if (cmd.aliases) {
       aliasScore = Math.max(
         ...cmd.aliases.map((alias) => calculateMatchScore(query, alias))
       );
+    }
+
+    // 策略：优先考虑命令名和别名的匹配
+    // 1. 如果有前缀匹配（≥80），只使用前缀匹配的命令
+    // 2. 如果只有包含匹配（60），允许描述参与
+    // 3. 如果只有模糊匹配（40），允许描述参与，但降低权重
+    const bestNameOrAliasScore = Math.max(nameScore, aliasScore);
+
+    let descScore = 0;
+    if (bestNameOrAliasScore < 80) {
+      // 只有在没有强匹配时才检查描述
+      descScore = calculateMatchScore(query, cmd.description) * 0.3;
     }
 
     const finalScore = Math.max(nameScore, descScore, aliasScore);
@@ -171,7 +181,14 @@ export function getFuzzyCommandSuggestions(input: string): CommandSuggestion[] {
   });
 
   // 按匹配分数排序
-  return suggestions.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
+  const sorted = suggestions.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
+
+  // 如果最高分是前缀匹配（≥80），过滤掉所有低分建议
+  if (sorted.length > 0 && (sorted[0].matchScore || 0) >= 80) {
+    return sorted.filter((s) => (s.matchScore || 0) >= 80);
+  }
+
+  return sorted;
 }
 
 export type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
