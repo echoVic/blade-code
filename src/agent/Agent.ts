@@ -24,16 +24,16 @@ import { createLogger, LogCategory } from '../logging/Logger.js';
 import { loadProjectMcpConfig } from '../mcp/loadProjectMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import {
-  createPlanModeReminder,
-  PLAN_MODE_SYSTEM_PROMPT,
-  PromptBuilder,
+	createPlanModeReminder,
+	PLAN_MODE_SYSTEM_PROMPT,
+	PromptBuilder,
 } from '../prompts/index.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
 import type { Attachment } from '../prompts/processors/types.js';
 import {
-  createChatService,
-  type IChatService,
-  type Message,
+	createChatService,
+	type IChatService,
+	type Message,
 } from '../services/ChatServiceInterface.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
@@ -42,16 +42,17 @@ import type { Tool, ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import {
-  type LoopDetectionConfig,
-  LoopDetectionService,
+	type LoopDetectionConfig,
+	LoopDetectionService,
 } from './LoopDetectionService.js';
+import { subagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
-  AgentOptions,
-  AgentResponse,
-  AgentTask,
-  ChatContext,
-  LoopOptions,
-  LoopResult,
+	AgentOptions,
+	AgentResponse,
+	AgentTask,
+	ChatContext,
+	LoopOptions,
+	LoopResult,
 } from './types.js';
 
 // 创建 Agent 专用 Logger
@@ -138,6 +139,12 @@ export class Agent extends EventEmitter {
     // 将 options 作为运行时参数传递
     const agent = new Agent(config, options);
     await agent.initialize();
+
+    // 7. 应用工具白名单（如果指定）
+    if (options.toolWhitelist && options.toolWhitelist.length > 0) {
+      agent.applyToolWhitelist(options.toolWhitelist);
+    }
+
     return agent;
   }
 
@@ -158,7 +165,10 @@ export class Agent extends EventEmitter {
       // 2. 注册内置工具
       await this.registerBuiltinTools();
 
-      // 3. 初始化核心组件
+      // 3. 加载 subagent 配置
+      await this.loadSubagents();
+
+      // 4. 初始化核心组件
       // 获取当前模型配置
       const configManager = ConfigManager.getInstance();
       const modelConfig = configManager.getCurrentModel();
@@ -487,6 +497,7 @@ export class Agent extends EventEmitter {
 
       let turnsCount = 0;
       const allToolResults: ToolResult[] = [];
+      let totalTokens = 0; // 累计 token 使用量
 
       while (turnsCount < maxTurns) {
         // === 1. 检查中断信号 ===
@@ -560,6 +571,11 @@ export class Agent extends EventEmitter {
         // 3. 直接调用 ChatService（OpenAI SDK 已内置重试机制）
         const turnResult = await this.chatService.chat(messages, tools, options?.signal);
 
+        // 累加 token 使用量
+        if (turnResult.usage?.totalTokens) {
+          totalTokens += turnResult.usage.totalTokens;
+        }
+
         // 检查 abort 信号（LLM 调用后）
         if (options?.signal?.aborted) {
           return {
@@ -614,6 +630,7 @@ export class Agent extends EventEmitter {
               turnsCount,
               toolCallsCount: allToolResults.length,
               duration: Date.now() - startTime,
+              tokensUsed: totalTokens,
             },
           };
         }
@@ -1084,6 +1101,32 @@ export class Agent extends EventEmitter {
   }
 
   /**
+   * 获取工具注册表（用于子 Agent 工具隔离）
+   */
+  public getToolRegistry(): ToolRegistry {
+    return this.executionPipeline.getRegistry();
+  }
+
+  /**
+   * 应用工具白名单（仅保留指定工具）
+   */
+  public applyToolWhitelist(whitelist: string[]): void {
+    const registry = this.executionPipeline.getRegistry();
+    const allTools = registry.getAll();
+
+    // 过滤掉不在白名单中的工具
+    const toolsToRemove = allTools.filter((tool) => !whitelist.includes(tool.name));
+
+    for (const tool of toolsToRemove) {
+      registry.unregister(tool.name);
+    }
+
+    logger.debug(
+      `🔒 Applied tool whitelist: ${whitelist.join(', ')} (removed ${toolsToRemove.length} tools)`
+    );
+  }
+
+  /**
    * 获取工具统计信息
    */
   public getToolStats() {
@@ -1295,22 +1338,6 @@ export class Agent extends EventEmitter {
       });
       logger.debug(`📦 Registering ${builtinTools.length} builtin tools...`);
 
-      // 为 TaskTool 注入 agentFactory（支持子任务递归）
-      const taskTool = builtinTools.find((t) => t.name === 'task');
-      if (
-        taskTool &&
-        'setAgentFactory' in taskTool &&
-        typeof taskTool.setAgentFactory === 'function'
-      ) {
-        logger.debug('🔧 Injecting agentFactory into TaskTool...');
-        taskTool.setAgentFactory(async () => {
-          // 创建新的子 Agent 实例（使用默认 pipeline）
-          const subAgent = new Agent(this.config, {});
-          await subAgent.initialize();
-          return subAgent;
-        });
-      }
-
       this.executionPipeline.getRegistry().registerAll(builtinTools);
 
       const registeredCount = this.executionPipeline.getRegistry().getAll().length;
@@ -1383,6 +1410,29 @@ export class Agent extends EventEmitter {
       }
     } catch (error) {
       logger.warn('Failed to register MCP tools:', error);
+      // 不抛出错误，允许 Agent 继续初始化
+    }
+  }
+
+  /**
+   * 加载 subagent 配置
+   */
+  private async loadSubagents(): Promise<void> {
+    // 如果已经加载过，跳过（全局单例，只需加载一次）
+    if (subagentRegistry.getAllNames().length > 0) {
+      logger.debug(`📦 Subagents already loaded: ${subagentRegistry.getAllNames().join(', ')}`);
+      return;
+    }
+
+    try {
+      const loadedCount = subagentRegistry.loadFromStandardLocations();
+      if (loadedCount > 0) {
+        logger.debug(`✅ Loaded ${loadedCount} subagents: ${subagentRegistry.getAllNames().join(', ')}`);
+      } else {
+        logger.debug('📦 No subagents configured');
+      }
+    } catch (error) {
+      logger.warn('Failed to load subagents:', error);
       // 不抛出错误，允许 Agent 继续初始化
     }
   }

@@ -5,9 +5,9 @@ import { ConfigManager } from '../../config/ConfigManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
 import {
-  executeSlashCommand,
-  isSlashCommand,
-  type SlashCommandContext,
+	executeSlashCommand,
+	isSlashCommand,
+	type SlashCommandContext,
 } from '../../slash-commands/index.js';
 import type { TodoItem } from '../../tools/builtin/todo/types.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
@@ -127,11 +127,11 @@ export const useCommandHandler = (
   } = useSession();
   const { dispatch: appDispatch, actions: appActions } = useAppState();
   const permissionMode = usePermissionMode();
-  const abortControllerRef = useRef<AbortController | undefined>(undefined);
-  const agentRef = useRef<Agent | undefined>(undefined);
-  const abortMessageSentRef = useRef(false);
+	const abortControllerRef = useRef<AbortController | undefined>(undefined);
+	const agentRef = useRef<Agent | undefined>(undefined);
+	const abortMessageSentRef = useRef(false);
 
-  // 清理函数
+	// 清理函数
   useEffect(() => {
     return () => {
       if (agentRef.current) {
@@ -248,6 +248,18 @@ export const useCommandHandler = (
 
           if (slashResult.message === 'show_permissions_manager') {
             appDispatch(appActions.showPermissionsManager());
+            return { success: true };
+          }
+
+          // 检查是否需要显示 agents 管理器
+          if (slashResult.message === 'show_agents_manager') {
+            appDispatch(appActions.showAgentsManager());
+            return { success: true };
+          }
+
+          // 检查是否需要显示 agent 创建向导
+          if (slashResult.message === 'show_agent_creation_wizard') {
+            appDispatch(appActions.showAgentCreationWizard());
             return { success: true };
           }
 

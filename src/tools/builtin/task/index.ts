@@ -1,4 +1,3 @@
-// 新的基于 Zod 的工具定义
+// Subagent Task 工具导出
 
-export type { TaskResult } from './task.js';
-export { setTaskToolAgentFactory, TaskManager, TaskStatus, taskTool } from './task.js';
+export { taskTool } from './task.js';
