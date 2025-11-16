@@ -29,7 +29,9 @@ export type ActiveModal =
   | 'shortcuts'
   | 'modelSelector'
   | 'modelAddWizard'
-  | 'modelEditWizard';
+  | 'modelEditWizard'
+  | 'agentsManager'
+  | 'agentCreationWizard';
 
 // 应用状态类型定义
 export interface AppState {
@@ -180,6 +182,16 @@ export const AppActions = {
   showModelEditWizard: (model: ModelConfig) => ({
     type: 'SHOW_MODEL_EDIT_WIZARD' as const,
     payload: model,
+  }),
+
+  showAgentsManager: () => ({
+    type: 'SET_ACTIVE_MODAL' as const,
+    payload: 'agentsManager' as ActiveModal,
+  }),
+
+  showAgentCreationWizard: () => ({
+    type: 'SET_ACTIVE_MODAL' as const,
+    payload: 'agentCreationWizard' as ActiveModal,
   }),
 
   closeModal: () => ({

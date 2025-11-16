@@ -2,6 +2,7 @@
  * 内置的 slash commands
  */
 
+import { agentsCommand } from './agents.js';
 import compactCommand from './compact.js';
 import mcpCommand from './mcp.js';
 import permissionsCommand from './permissions.js';
@@ -23,6 +24,7 @@ const helpCommand: SlashCommand = {
     const helpText = `🔧 **可用的 Slash Commands:**
 
 **/init** - 分析当前项目并生成 BLADE.md 配置文件
+**/agents** - 管理 subagent 配置（创建、编辑、删除）
 **/mcp** - 显示 MCP 服务器状态和可用工具
 **/help** - 显示此帮助信息
 **/clear** - 清除屏幕内容
@@ -318,4 +320,5 @@ export const builtinCommands = {
   resume: resumeCommand,
   compact: compactCommand,
   mcp: mcpCommand,
+  agents: agentsCommand,
 };

@@ -57,7 +57,9 @@
       "Bash(timeout 10 node:*)",
       "Bash(gtimeout 10 node:*)",
       "Bash(timeout 5 node:*)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(gtimeout 5 npm run start:*)",
+      "Bash(timeout 5 npm run start:*)"
     ],
     "deny": [],
     "ask": [],

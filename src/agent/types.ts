@@ -33,16 +33,17 @@ export interface ChatContext {
  * Agent 的配置来自 ConfigManager.getConfig() (BladeConfig)
  */
 export interface AgentOptions {
-  // 运行时参数
-  systemPrompt?: string; // 完全替换系统提示
-  appendSystemPrompt?: string; // 追加系统提示
-  permissions?: Partial<PermissionConfig>; // 运行时覆盖权限
-  permissionMode?: PermissionMode;
-  maxTurns?: number; // 最大对话轮次 (-1=无限制, 0=禁用对话, N>0=限制轮次)
+	// 运行时参数
+	systemPrompt?: string; // 完全替换系统提示
+	appendSystemPrompt?: string; // 追加系统提示
+	permissions?: Partial<PermissionConfig>; // 运行时覆盖权限
+	permissionMode?: PermissionMode;
+	maxTurns?: number; // 最大对话轮次 (-1=无限制, 0=禁用对话, N>0=限制轮次)
+	toolWhitelist?: string[]; // 工具白名单（仅允许指定工具）
 
-  // MCP 配置
-  mcpConfig?: string[]; // CLI 参数：MCP 配置文件路径或 JSON 字符串数组
-  strictMcpConfig?: boolean; // CLI 参数：严格模式，仅使用 --mcp-config 指定的配置
+	// MCP 配置
+	mcpConfig?: string[]; // CLI 参数：MCP 配置文件路径或 JSON 字符串数组
+	strictMcpConfig?: boolean; // CLI 参数：严格模式，仅使用 --mcp-config 指定的配置
 }
 
 export interface AgentTask {
@@ -136,27 +137,28 @@ export interface LoopOptions {
 }
 
 export interface LoopResult {
-  success: boolean;
-  finalMessage?: string;
-  error?: {
-    type:
-      | 'canceled'
-      | 'max_turns_exceeded'
-      | 'api_error'
-      | 'loop_detected'
-      | 'aborted'
-      | 'chat_disabled';
-    message: string;
-    details?: any;
-  };
-  metadata?: {
-    turnsCount: number;
-    toolCallsCount: number;
-    duration: number;
-    configuredMaxTurns?: number;
-    actualMaxTurns?: number;
-    hitSafetyLimit?: boolean;
-    shouldExitLoop?: boolean; // ExitPlanMode 设置此标记以退出循环
-    targetMode?: string; // Plan 模式批准后的目标权限模式（default/auto_edit）
-  };
+	success: boolean;
+	finalMessage?: string;
+	error?: {
+		type:
+			| 'canceled'
+			| 'max_turns_exceeded'
+			| 'api_error'
+			| 'loop_detected'
+			| 'aborted'
+			| 'chat_disabled';
+		message: string;
+		details?: any;
+	};
+	metadata?: {
+		turnsCount: number;
+		toolCallsCount: number;
+		duration: number;
+		tokensUsed?: number; // Token 使用量
+		configuredMaxTurns?: number;
+		actualMaxTurns?: number;
+		hitSafetyLimit?: boolean;
+		shouldExitLoop?: boolean; // ExitPlanMode 设置此标记以退出循环
+		targetMode?: string; // Plan 模式批准后的目标权限模式（default/auto_edit）
+	};
 }
