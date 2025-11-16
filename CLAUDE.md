@@ -192,6 +192,59 @@ Blade 提供完整的 Markdown 渲染支持，包含以下组件：
 - 用户文档：[docs/public/guides/markdown-support.md](docs/public/guides/markdown-support.md)
 - 开发者文档：[docs/development/implementation/markdown-renderer.md](docs/development/implementation/markdown-renderer.md)
 
+## Slash Commands
+
+Blade 提供内置的斜杠命令系统，用于执行特定的系统操作。所有 slash 命令实现位于 [src/slash-commands/](src/slash-commands/)。
+
+### 核心命令
+
+- **/init** ([src/slash-commands/init.ts](src/slash-commands/init.ts)): 分析项目并生成 BLADE.md 配置文件
+  - **工作原理**: 使用 `Agent.create()` + `agent.chat()` 动态分析项目
+  - **新文件生成**: 读取 package.json → 探索项目结构 → 分析架构 → 生成 BLADE.md
+  - **已有文件分析**: 读取现有 BLADE.md → 检查 package.json 变化 → 探索代码库 → 提供改进建议
+  - **重要**: 使用 `agent.chat()` 而非 `chatWithSystem()`，以启用工具调用（Read/Glob/Grep）
+
+- **/help** ([src/slash-commands/builtinCommands.ts](src/slash-commands/builtinCommands.ts)): 显示所有可用命令
+- **/clear**: 清除对话历史和屏幕内容
+- **/agents** ([src/slash-commands/agents.ts](src/slash-commands/agents.ts)): 管理 subagent 配置（创建、编辑、删除）
+- **/mcp**: 显示 MCP 服务器状态和可用工具
+- **/resume**: 恢复历史会话
+- **/compact**: 手动压缩上下文，生成总结并节省 token
+- **/permissions**: 管理本地权限规则
+- **/version**: 显示版本信息
+- **/config**: 打开配置面板
+
+### 命令架构
+
+**自包含设计**：
+- ✅ Slash 命令在其 handler 内部直接执行所有逻辑
+- ✅ 需要 Agent 时，直接调用 `Agent.create()` 创建实例
+- ✅ 不依赖 UI Hook 的特殊处理（移除了 `trigger_analysis` 模式）
+- ✅ 简化了代码流程，降低耦合
+
+**自动补全系统** ([src/slash-commands/index.ts](src/slash-commands/index.ts)):
+- **模糊匹配**：支持命令名、别名、描述的模糊搜索
+- **智能过滤**：
+  - 前缀匹配（≥80 分）优先，过滤掉低分建议
+  - 描述匹配权重降低（0.3），避免干扰
+  - 输入自动 trim，处理 `/init ` 带空格的情况
+- **评分系统**：
+  - 完全匹配：100 分
+  - 前缀匹配：80 分
+  - 包含匹配：60 分
+  - 模糊匹配：40 分
+
+**命令注册** ([src/slash-commands/index.ts](src/slash-commands/index.ts)):
+```typescript
+const slashCommands: SlashCommandRegistry = {
+  ...builtinCommands,
+  init: initCommand,
+  theme: themeCommand,
+  permissions: permissionsCommand,
+  model: modelCommand,
+};
+```
+
 ## Build & Development Commands
 
 ### Quick Commands
