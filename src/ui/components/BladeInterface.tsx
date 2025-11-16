@@ -2,7 +2,11 @@ import { useMemoizedFn } from 'ahooks';
 import { Box, useApp } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
-import { PermissionMode, type SetupConfig, type ModelConfig } from '../../config/types.js';
+import {
+  PermissionMode,
+  type ModelConfig,
+  type SetupConfig,
+} from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { SessionService } from '../../services/SessionService.js';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
@@ -15,6 +19,8 @@ import { useCommandHistory } from '../hooks/useCommandHistory.js';
 import { useConfirmation } from '../hooks/useConfirmation.js';
 import { useInputBuffer } from '../hooks/useInputBuffer.js';
 import { useMainInput } from '../hooks/useMainInput.js';
+import { AgentCreationWizard } from './AgentCreationWizard.js';
+import { AgentsManager } from './AgentsManager.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
 import { CommandSuggestions } from './CommandSuggestions.js';
 import { ConfirmationPrompt } from './ConfirmationPrompt.js';
@@ -172,19 +178,18 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   });
 
-  const { showSuggestions, suggestions, selectedSuggestionIndex } =
-    useMainInput(
-      inputBuffer,
-      executeCommand,
-      getPreviousCommand,
-      getNextCommand,
-      addToHistory,
-      handleAbort,
-      sessionState.isThinking,
-      handlePermissionModeToggle,
-      handleToggleShortcuts,
-      appState.activeModal === 'shortcuts'
-    );
+  const { showSuggestions, suggestions, selectedSuggestionIndex } = useMainInput(
+    inputBuffer,
+    executeCommand,
+    getPreviousCommand,
+    getNextCommand,
+    addToHistory,
+    handleAbort,
+    sessionState.isThinking,
+    handlePermissionModeToggle,
+    handleToggleShortcuts,
+    appState.activeModal === 'shortcuts'
+  );
 
   // 当有输入内容时，自动关闭快捷键帮助
   useEffect(() => {
@@ -348,6 +353,12 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     } else if (appState.activeModal === 'permissionsManager') {
       // 显示权限管理器时，焦点转移到管理器
       setFocus(FocusId.PERMISSIONS_MANAGER);
+    } else if (appState.activeModal === 'agentsManager') {
+      // 显示 agents 管理器时，焦点转移到管理器
+      setFocus(FocusId.AGENTS_MANAGER);
+    } else if (appState.activeModal === 'agentCreationWizard') {
+      // 显示 agent 创建向导时，焦点转移到向导
+      setFocus(FocusId.AGENT_CREATION_WIZARD);
     } else if (appState.activeModal === 'shortcuts') {
       // 显示快捷键帮助时，焦点保持在主输入框（帮助面板可以通过 ? 或 Esc 关闭）
       setFocus(FocusId.MAIN_INPUT);
@@ -476,6 +487,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const inlineModelUiVisible =
     inlineModelSelectorVisible || Boolean(inlineModelWizardMode);
 
+  const agentsManagerVisible = appState.activeModal === 'agentsManager';
+  const agentCreationWizardVisible = appState.activeModal === 'agentCreationWizard';
+
   const editingInitialConfig = editingModel
     ? {
         name: editingModel.name,
@@ -504,7 +518,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       />
     ) : null;
 
-  const isInputDisabled = sessionState.isThinking || !readyForChat || inlineModelUiVisible;
+  const isInputDisabled =
+    sessionState.isThinking || !readyForChat || inlineModelUiVisible;
 
   return (
     <Box flexDirection="column" width="100%" height="100%">
@@ -542,12 +557,29 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
               <ModelConfigWizard
                 mode={inlineModelWizardMode}
                 modelId={editingModel?.id}
-                initialConfig={inlineModelWizardMode === 'edit' ? editingInitialConfig : undefined}
+                initialConfig={
+                  inlineModelWizardMode === 'edit' ? editingInitialConfig : undefined
+                }
                 onComplete={
                   inlineModelWizardMode === 'edit'
                     ? handleModelEditComplete
                     : closeModal
                 }
+                onCancel={closeModal}
+              />
+            </Box>
+          )}
+
+          {agentsManagerVisible && (
+            <Box marginTop={1} paddingX={2}>
+              <AgentsManager onComplete={closeModal} onCancel={closeModal} />
+            </Box>
+          )}
+
+          {agentCreationWizardVisible && (
+            <Box marginTop={1} paddingX={2}>
+              <AgentCreationWizard
+                onComplete={closeModal}
                 onCancel={closeModal}
               />
             </Box>

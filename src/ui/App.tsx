@@ -1,5 +1,6 @@
 import { useMemoizedFn } from 'ahooks';
 import React, { useEffect, useState } from 'react';
+import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
 import type { GlobalOptions } from '../cli/types.js';
 import { ConfigManager, mergeRuntimeConfig } from '../config/ConfigManager.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
@@ -54,6 +55,19 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
         themeManager.setTheme(savedTheme);
         if (props.debug) {
           console.log(`✓ 已加载主题: ${savedTheme}`);
+        }
+      }
+
+      // 5. 预加载 subagents 配置（确保 AgentsManager 可以立即使用）
+      try {
+        const loadedCount = subagentRegistry.loadFromStandardLocations();
+        if (props.debug && loadedCount > 0) {
+          console.log(`✓ 已加载 ${loadedCount} 个 subagents: ${subagentRegistry.getAllNames().join(', ')}`);
+        }
+      } catch (error) {
+        // 静默失败，不影响应用启动
+        if (props.debug) {
+          console.warn('⚠️ Subagents 加载失败:', formatErrorMessage(error));
         }
       }
 

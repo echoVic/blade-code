@@ -13,6 +13,8 @@ export enum FocusId {
   MODEL_SELECTOR = 'model-selector',
   MODEL_CONFIG_WIZARD = 'model-config-wizard', // 统一的模型配置向导（支持 setup 和 add 模式）
   PERMISSIONS_MANAGER = 'permissions-manager',
+  AGENTS_MANAGER = 'agents-manager',
+  AGENT_CREATION_WIZARD = 'agent-creation-wizard',
 }
 
 /**
