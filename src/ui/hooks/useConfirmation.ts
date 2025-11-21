@@ -44,20 +44,18 @@ export const useConfirmation = () => {
   /**
    * 处理用户响应
    */
-  const handleResponse = useMemoizedFn(
-    (response: ConfirmationResponse) => {
-      if (confirmationState.resolver) {
-        confirmationState.resolver(response);
-      }
-
-      // 重置状态
-      setConfirmationState({
-        isVisible: false,
-        details: null,
-        resolver: null,
-      });
+  const handleResponse = useMemoizedFn((response: ConfirmationResponse) => {
+    if (confirmationState.resolver) {
+      confirmationState.resolver(response);
     }
-  );
+
+    // 重置状态
+    setConfirmationState({
+      isVisible: false,
+      details: null,
+      resolver: null,
+    });
+  });
 
   /**
    * 创建 ConfirmationHandler 实例

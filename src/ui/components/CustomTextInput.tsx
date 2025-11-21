@@ -52,7 +52,7 @@ export interface CustomTextInputProps {
   onImagePaste?: (
     base64: string,
     mediaType: string,
-    filename?: string,
+    filename?: string
   ) => Promise<{ prompt?: string }> | void;
   /** 占位符 */
   placeholder?: string;
@@ -79,7 +79,7 @@ interface PasteState {
 function insertTextAtCursor(
   text: string,
   originalValue: string,
-  cursorPosition: number,
+  cursorPosition: number
 ): { newValue: string; newCursorPosition: number } {
   const safeOffset = Math.max(0, Math.min(cursorPosition, originalValue.length));
   const beforeCursor = originalValue.slice(0, safeOffset);
@@ -164,14 +164,14 @@ export function CustomTextInput({
             const result = await onImagePaste(
               imageResult.base64,
               imageResult.mediaType,
-              imageResult.filename,
+              imageResult.filename
             );
             if (result?.prompt) {
               const sanitizedPrompt = normalizeInputText(result.prompt);
               const { newValue, newCursorPosition } = insertTextAtCursor(
                 sanitizedPrompt,
                 originalValue,
-                cursorPosition,
+                cursorPosition
               );
               onChange(newValue);
               onChangeCursorPosition(newCursorPosition);
@@ -186,9 +186,12 @@ export function CustomTextInput({
       // 2. 判断是否应该触发 onPaste
       const hasMultipleLines = mergedInput.includes('\n');
       const isMediumSizeMultiChunk =
-        totalLength > PASTE_CONFIG.MEDIUM_SIZE_MULTI_CHUNK_THRESHOLD && chunks.length > 3;
+        totalLength > PASTE_CONFIG.MEDIUM_SIZE_MULTI_CHUNK_THRESHOLD &&
+        chunks.length > 3;
       const isPastePattern =
-        totalLength > PASTE_CONFIG.LARGE_INPUT_THRESHOLD || hasMultipleLines || isMediumSizeMultiChunk;
+        totalLength > PASTE_CONFIG.LARGE_INPUT_THRESHOLD ||
+        hasMultipleLines ||
+        isMediumSizeMultiChunk;
 
       if (isPastePattern && onPaste) {
         const result = await onPaste(mergedInput);
@@ -197,7 +200,7 @@ export function CustomTextInput({
           const { newValue, newCursorPosition } = insertTextAtCursor(
             sanitizedPrompt,
             originalValue,
-            cursorPosition,
+            cursorPosition
           );
           onChange(newValue);
           onChangeCursorPosition(newCursorPosition);
@@ -209,7 +212,7 @@ export function CustomTextInput({
       const { newValue, newCursorPosition } = insertTextAtCursor(
         mergedInput,
         originalValue,
-        cursorPosition,
+        cursorPosition
       );
       onChange(newValue);
       onChangeCursorPosition(newCursorPosition);
@@ -222,168 +225,177 @@ export function CustomTextInput({
    * 键盘输入处理
    * 基于 ink-text-input 并扩展功能
    */
-  useInput((rawInput, key) => {
-    const input = normalizeInputText(rawInput);
-    // 检查是否是被禁用的按键
-    const isDisabledKey = disabledKeys.some((disabledKey) => key[disabledKey]);
+  useInput(
+    (rawInput, key) => {
+      const input = normalizeInputText(rawInput);
+      // 检查是否是被禁用的按键
+      const isDisabledKey = disabledKeys.some((disabledKey) => key[disabledKey]);
 
-    // 跳过被禁用的按键和 Ctrl+C（由外部处理）
-    // 空输入时的 ? 键也跳过（用于切换快捷键帮助）
-    if (isDisabledKey || (key.ctrl && rawInput === 'c') || (key.shift && key.tab) ||
-        (input === '?' && originalValue === '')) {
-      return;
-    }
-
-    const currentTime = Date.now();
-    const currentState = pasteStateRef.current;
-    let nextCursorPosition = cursorPosition;
-    let nextValue = originalValue;
-
-    // === ink-text-input 原有的左右箭头处理 ===
-    if (key.leftArrow) {
-      nextCursorPosition--;
-    } else if (key.rightArrow) {
-      nextCursorPosition++;
-    }
-    // === 扩展：Backspace/Delete 处理 ===
-    else if (key.backspace || key.delete) {
-      // WORKAROUND: 某些键盘/终端配置下，Backspace 键会被识别为 delete
-      // 通过 rawInput 为空来判断是 Backspace（向后删除）还是真正的 Delete（向前删除）
-      const isBackspace = rawInput === '';
-
-      if (isBackspace) {
-        // Backspace：删除光标前面的字符
-        if (cursorPosition > 0) {
-          nextValue =
-            originalValue.slice(0, cursorPosition - 1) +
-            originalValue.slice(cursorPosition, originalValue.length);
-          nextCursorPosition--;
-        }
-      } else {
-        // Delete：删除光标位置的字符（向前删除）
-        if (cursorPosition < originalValue.length) {
-          nextValue =
-            originalValue.slice(0, cursorPosition) +
-            originalValue.slice(cursorPosition + 1, originalValue.length);
-          // 光标位置不变
-        }
-      }
-    }
-    // === 扩展：Ctrl+A - 移到开头 ===
-    else if (key.ctrl && input === 'a') {
-      nextCursorPosition = 0;
-    }
-    // === 扩展：Ctrl+E - 移到末尾 ===
-    else if (key.ctrl && input === 'e') {
-      nextCursorPosition = originalValue.length;
-    }
-    // === 扩展：Ctrl+K - 删除到行尾 ===
-    else if (key.ctrl && input === 'k') {
-      nextValue = originalValue.slice(0, cursorPosition);
-    }
-    // === 扩展：Ctrl+U - 删除到行首 ===
-    else if (key.ctrl && input === 'u') {
-      nextValue = originalValue.slice(cursorPosition);
-      nextCursorPosition = 0;
-    }
-    // === 扩展：Ctrl+W - 删除前一个单词 ===
-    else if (key.ctrl && input === 'w') {
-      const beforeCursor = originalValue.slice(0, cursorPosition);
-      const match = beforeCursor.match(/\s*\S+\s*$/);
-      if (match) {
-        const deleteCount = match[0].length;
-        nextValue =
-          originalValue.slice(0, cursorPosition - deleteCount) +
-          originalValue.slice(cursorPosition);
-        nextCursorPosition -= deleteCount;
-      }
-    }
-    // === 扩展：Home 键 ===
-    else if (key.pageUp) {
-      nextCursorPosition = 0;
-    }
-    // === 扩展：End 键 ===
-    else if (key.pageDown) {
-      nextCursorPosition = originalValue.length;
-    }
-    // === 扩展：Shift+Enter（多行输入） ===
-    else if (input === '\n' && (key.shift || key.meta)) {
-      const { newValue, newCursorPosition } = insertTextAtCursor(
-        input,
-        originalValue,
-        cursorPosition,
-      );
-      onChange(newValue);
-      onChangeCursorPosition(newCursorPosition);
-      return;
-    }
-    // === 扩展：粘贴检测逻辑 ===
-    else if (!key.ctrl && !key.meta) {
-      // 初始化时间
-      if (!currentState.firstInputTime) {
-        currentState.firstInputTime = currentTime;
-      }
-      currentState.lastInputTime = currentTime;
-
-      const timeSinceFirst = currentTime - (currentState.firstInputTime || currentTime);
-
-      // 粘贴检测条件
-      const isLargeInput = input.length > PASTE_CONFIG.LARGE_INPUT_THRESHOLD;
-      const hasMultipleNewlines = input.includes('\n') && input.length > 1;
-      const isRapidSequence =
-        timeSinceFirst < PASTE_CONFIG.RAPID_INPUT_THRESHOLD_MS && currentState.chunks.length > 0;
-      const isNewRapidInput =
-        timeSinceFirst < PASTE_CONFIG.RAPID_INPUT_THRESHOLD_MS && input.length > 10;
-      const isAlreadyCollecting = currentState.timeoutId !== null;
-
-      const isPasteCandidate =
-        onPaste &&
-        (isLargeInput ||
-          hasMultipleNewlines ||
-          isRapidSequence ||
-          isNewRapidInput ||
-          isAlreadyCollecting);
-
-      if (isPasteCandidate) {
-        // 添加到 chunks 进行合并
-        currentState.chunks.push(input);
-        currentState.totalLength += input.length;
-        processPendingChunks();
+      // 跳过被禁用的按键和 Ctrl+C（由外部处理）
+      // 空输入时的 ? 键也跳过（用于切换快捷键帮助）
+      if (
+        isDisabledKey ||
+        (key.ctrl && rawInput === 'c') ||
+        (key.shift && key.tab) ||
+        (input === '?' && originalValue === '')
+      ) {
         return;
       }
 
-      // 重置单字符输入状态
-      if (input.length === 1 && !currentState.timeoutId) {
-        currentState.chunks = [];
-        currentState.firstInputTime = null;
-        currentState.lastInputTime = null;
-        currentState.totalLength = 0;
+      const currentTime = Date.now();
+      const currentState = pasteStateRef.current;
+      let nextCursorPosition = cursorPosition;
+      let nextValue = originalValue;
+
+      // === ink-text-input 原有的左右箭头处理 ===
+      if (key.leftArrow) {
+        nextCursorPosition--;
+      } else if (key.rightArrow) {
+        nextCursorPosition++;
+      }
+      // === 扩展：Backspace/Delete 处理 ===
+      else if (key.backspace || key.delete) {
+        // WORKAROUND: 某些键盘/终端配置下，Backspace 键会被识别为 delete
+        // 通过 rawInput 为空来判断是 Backspace（向后删除）还是真正的 Delete（向前删除）
+        const isBackspace = rawInput === '';
+
+        if (isBackspace) {
+          // Backspace：删除光标前面的字符
+          if (cursorPosition > 0) {
+            nextValue =
+              originalValue.slice(0, cursorPosition - 1) +
+              originalValue.slice(cursorPosition, originalValue.length);
+            nextCursorPosition--;
+          }
+        } else {
+          // Delete：删除光标位置的字符（向前删除）
+          if (cursorPosition < originalValue.length) {
+            nextValue =
+              originalValue.slice(0, cursorPosition) +
+              originalValue.slice(cursorPosition + 1, originalValue.length);
+            // 光标位置不变
+          }
+        }
+      }
+      // === 扩展：Ctrl+A - 移到开头 ===
+      else if (key.ctrl && input === 'a') {
+        nextCursorPosition = 0;
+      }
+      // === 扩展：Ctrl+E - 移到末尾 ===
+      else if (key.ctrl && input === 'e') {
+        nextCursorPosition = originalValue.length;
+      }
+      // === 扩展：Ctrl+K - 删除到行尾 ===
+      else if (key.ctrl && input === 'k') {
+        nextValue = originalValue.slice(0, cursorPosition);
+      }
+      // === 扩展：Ctrl+U - 删除到行首 ===
+      else if (key.ctrl && input === 'u') {
+        nextValue = originalValue.slice(cursorPosition);
+        nextCursorPosition = 0;
+      }
+      // === 扩展：Ctrl+W - 删除前一个单词 ===
+      else if (key.ctrl && input === 'w') {
+        const beforeCursor = originalValue.slice(0, cursorPosition);
+        const match = beforeCursor.match(/\s*\S+\s*$/);
+        if (match) {
+          const deleteCount = match[0].length;
+          nextValue =
+            originalValue.slice(0, cursorPosition - deleteCount) +
+            originalValue.slice(cursorPosition);
+          nextCursorPosition -= deleteCount;
+        }
+      }
+      // === 扩展：Home 键 ===
+      else if (key.pageUp) {
+        nextCursorPosition = 0;
+      }
+      // === 扩展：End 键 ===
+      else if (key.pageDown) {
+        nextCursorPosition = originalValue.length;
+      }
+      // === 扩展：Shift+Enter（多行输入） ===
+      else if (input === '\n' && (key.shift || key.meta)) {
+        const { newValue, newCursorPosition } = insertTextAtCursor(
+          input,
+          originalValue,
+          cursorPosition
+        );
+        onChange(newValue);
+        onChangeCursorPosition(newCursorPosition);
+        return;
+      }
+      // === 扩展：粘贴检测逻辑 ===
+      else if (!key.ctrl && !key.meta) {
+        // 初始化时间
+        if (!currentState.firstInputTime) {
+          currentState.firstInputTime = currentTime;
+        }
+        currentState.lastInputTime = currentTime;
+
+        const timeSinceFirst =
+          currentTime - (currentState.firstInputTime || currentTime);
+
+        // 粘贴检测条件
+        const isLargeInput = input.length > PASTE_CONFIG.LARGE_INPUT_THRESHOLD;
+        const hasMultipleNewlines = input.includes('\n') && input.length > 1;
+        const isRapidSequence =
+          timeSinceFirst < PASTE_CONFIG.RAPID_INPUT_THRESHOLD_MS &&
+          currentState.chunks.length > 0;
+        const isNewRapidInput =
+          timeSinceFirst < PASTE_CONFIG.RAPID_INPUT_THRESHOLD_MS && input.length > 10;
+        const isAlreadyCollecting = currentState.timeoutId !== null;
+
+        const isPasteCandidate =
+          onPaste &&
+          (isLargeInput ||
+            hasMultipleNewlines ||
+            isRapidSequence ||
+            isNewRapidInput ||
+            isAlreadyCollecting);
+
+        if (isPasteCandidate) {
+          // 添加到 chunks 进行合并
+          currentState.chunks.push(input);
+          currentState.totalLength += input.length;
+          processPendingChunks();
+          return;
+        }
+
+        // 重置单字符输入状态
+        if (input.length === 1 && !currentState.timeoutId) {
+          currentState.chunks = [];
+          currentState.firstInputTime = null;
+          currentState.lastInputTime = null;
+          currentState.totalLength = 0;
+        }
+
+        // === ink-text-input 原有的普通输入处理 ===
+        nextValue =
+          originalValue.slice(0, cursorPosition) +
+          input +
+          originalValue.slice(cursorPosition, originalValue.length);
+        nextCursorPosition += input.length;
       }
 
-      // === ink-text-input 原有的普通输入处理 ===
-      nextValue =
-        originalValue.slice(0, cursorPosition) +
-        input +
-        originalValue.slice(cursorPosition, originalValue.length);
-      nextCursorPosition += input.length;
-    }
+      // === ink-text-input 原有的边界检查 ===
+      if (nextCursorPosition < 0) {
+        nextCursorPosition = 0;
+      }
+      if (nextCursorPosition > nextValue.length) {
+        nextCursorPosition = nextValue.length;
+      }
 
-    // === ink-text-input 原有的边界检查 ===
-    if (nextCursorPosition < 0) {
-      nextCursorPosition = 0;
-    }
-    if (nextCursorPosition > nextValue.length) {
-      nextCursorPosition = nextValue.length;
-    }
-
-    // 更新状态（先更新值，再更新光标位置，避免闪烁）
-    if (nextValue !== originalValue) {
-      onChange(nextValue);
-    }
-    if (nextCursorPosition !== cursorPosition) {
-      onChangeCursorPosition(nextCursorPosition);
-    }
-  }, { isActive: focus });
+      // 更新状态（先更新值，再更新光标位置，避免闪烁）
+      if (nextValue !== originalValue) {
+        onChange(nextValue);
+      }
+      if (nextCursorPosition !== cursorPosition) {
+        onChangeCursorPosition(nextCursorPosition);
+      }
+    },
+    { isActive: focus }
+  );
 
   // === ink-text-input 原有的渲染逻辑 ===
   const showCursor = focus;

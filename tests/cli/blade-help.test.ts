@@ -8,7 +8,9 @@ const CLI_ENTRY = path.resolve('dist', 'blade.js');
 describe('Blade CLI 基本行为', () => {
   it('执行 --help 应该成功并输出帮助信息', () => {
     if (!existsSync(CLI_ENTRY)) {
-      console.warn('[cli] dist/blade.js 不存在，跳过 CLI 测试（请先运行 npm run build）');
+      console.warn(
+        '[cli] dist/blade.js 不存在，跳过 CLI 测试（请先运行 npm run build）'
+      );
       return;
     }
 

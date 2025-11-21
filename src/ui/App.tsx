@@ -62,7 +62,9 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
       try {
         const loadedCount = subagentRegistry.loadFromStandardLocations();
         if (props.debug && loadedCount > 0) {
-          console.log(`✓ 已加载 ${loadedCount} 个 subagents: ${subagentRegistry.getAllNames().join(', ')}`);
+          console.log(
+            `✓ 已加载 ${loadedCount} 个 subagents: ${subagentRegistry.getAllNames().join(', ')}`
+          );
         }
       } catch (error) {
         // 静默失败，不影响应用启动

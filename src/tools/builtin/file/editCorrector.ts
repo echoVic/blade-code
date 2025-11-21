@@ -11,11 +11,11 @@
  * 匹配策略枚举
  */
 export enum MatchStrategy {
-  EXACT = 'exact',                   // 精确匹配
+  EXACT = 'exact', // 精确匹配
   NORMALIZE_QUOTES = 'normalize_quotes', // 引号标准化匹配
-  UNESCAPE = 'unescape',             // 反转义匹配
-  FLEXIBLE = 'flexible',             // 弹性缩进匹配
-  FAILED = 'failed',                 // 所有策略都失败
+  UNESCAPE = 'unescape', // 反转义匹配
+  FLEXIBLE = 'flexible', // 弹性缩进匹配
+  FAILED = 'failed', // 所有策略都失败
 }
 
 /**
@@ -48,31 +48,28 @@ export function unescapeString(input: string): string {
   //   - \n: 真实的换行符
   // g: 全局标志，替换所有匹配
 
-  return input.replace(
-    /\\+(n|t|r|'|"|`|\\|\n)/g,
-    (match, capturedChar) => {
-      switch (capturedChar) {
-        case 'n':
-          return '\n'; // 换行符
-        case 't':
-          return '\t'; // 制表符
-        case 'r':
-          return '\r'; // 回车符
-        case "'":
-          return "'"; // 单引号
-        case '"':
-          return '"'; // 双引号
-        case '`':
-          return '`'; // 反引号
-        case '\\':
-          return '\\'; // 反斜杠
-        case '\n':
-          return '\n'; // 真实换行符
-        default:
-          return match; // 保持原样
-      }
+  return input.replace(/\\+(n|t|r|'|"|`|\\|\n)/g, (match, capturedChar) => {
+    switch (capturedChar) {
+      case 'n':
+        return '\n'; // 换行符
+      case 't':
+        return '\t'; // 制表符
+      case 'r':
+        return '\r'; // 回车符
+      case "'":
+        return "'"; // 单引号
+      case '"':
+        return '"'; // 双引号
+      case '`':
+        return '`'; // 反引号
+      case '\\':
+        return '\\'; // 反斜杠
+      case '\n':
+        return '\n'; // 真实换行符
+      default:
+        return match; // 保持原样
     }
-  );
+  });
 }
 
 /**
@@ -88,10 +85,7 @@ export function unescapeString(input: string): string {
  * const search = '    function foo() {\n      return 1;\n    }';
  * flexibleMatch(content, search) // → '  function foo() {\n    return 1;\n  }'
  */
-export function flexibleMatch(
-  content: string,
-  searchString: string
-): string | null {
+export function flexibleMatch(content: string, searchString: string): string | null {
   const searchLines = searchString.split('\n');
 
   // 如果只有一行，无法使用弹性匹配
@@ -110,7 +104,7 @@ export function flexibleMatch(
   const searchIndent = indentMatch[1];
 
   // 2. 去除搜索字符串的缩进
-  const deindentedSearchLines = searchLines.map(line => {
+  const deindentedSearchLines = searchLines.map((line) => {
     if (line.startsWith(searchIndent)) {
       return line.slice(searchIndent.length);
     }
@@ -130,7 +124,7 @@ export function flexibleMatch(
     const snippet = contentLines.slice(i, i + searchLines.length);
 
     // 去除文件片段的缩进
-    const deindentedSnippet = snippet.map(line => {
+    const deindentedSnippet = snippet.map((line) => {
       if (line.startsWith(fileIndent)) {
         return line.slice(fileIndent.length);
       }

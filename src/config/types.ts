@@ -223,7 +223,7 @@ export interface McpProjectsConfig {
  * 注意：这是用于创建第一个模型配置的数据
  */
 export interface SetupConfig {
-  name: string;        // 模型配置名称
+  name: string; // 模型配置名称
   provider: ProviderType;
   baseUrl: string;
   apiKey: string;

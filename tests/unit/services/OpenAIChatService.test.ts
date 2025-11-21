@@ -189,8 +189,8 @@ describe('OpenAIChatService', () => {
     const error = new Error('network failure');
     mockOpenAI.createSpy.mockRejectedValue(error);
 
-    await expect(
-      service.chat([{ role: 'user', content: 'hi' }])
-    ).rejects.toThrow('network failure');
+    await expect(service.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(
+      'network failure'
+    );
   });
 });

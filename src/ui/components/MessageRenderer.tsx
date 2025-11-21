@@ -555,10 +555,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
     }
 
     // 使用 useMemo 缓存 Markdown 解析结果（仅在 content 变化时重新解析）
-    const blocks = React.useMemo(
-      () => parseMarkdown(content),
-      [content]
-    );
+    const blocks = React.useMemo(() => parseMarkdown(content), [content]);
 
     return (
       <Box flexDirection="column" marginBottom={1}>

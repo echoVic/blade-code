@@ -100,12 +100,18 @@ export const bashOutputTool = createTool({
       exit_code: snapshot.exitCode,
       signal: snapshot.signal,
       started_at: new Date(snapshot.startedAt).toISOString(),
-      finished_at: snapshot.endedAt ? new Date(snapshot.endedAt).toISOString() : undefined,
+      finished_at: snapshot.endedAt
+        ? new Date(snapshot.endedAt).toISOString()
+        : undefined,
       stdout: stdoutLines,
       stderr: stderrLines,
     };
 
-    const displayContent = formatDisplay(snapshot, stdoutLines.length, stderrLines.length);
+    const displayContent = formatDisplay(
+      snapshot,
+      stdoutLines.length,
+      stderrLines.length
+    );
 
     return {
       success: true,

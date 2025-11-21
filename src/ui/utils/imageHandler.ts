@@ -32,7 +32,7 @@ export interface ImageHandleResult {
 export function saveImageToTemp(
   base64: string,
   mediaType: string,
-  originalFilename?: string,
+  originalFilename?: string
 ): ImageHandleResult {
   // 获取文件扩展名
   const extension = getExtensionFromMediaType(mediaType);
@@ -40,7 +40,8 @@ export function saveImageToTemp(
   // 生成唯一文件名
   const timestamp = Date.now();
   const uniqueId = nanoid(8);
-  const filename = originalFilename || `blade_image_${timestamp}_${uniqueId}.${extension}`;
+  const filename =
+    originalFilename || `blade_image_${timestamp}_${uniqueId}.${extension}`;
 
   // 临时目录路径
   const tempDir = tmpdir();

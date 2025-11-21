@@ -33,25 +33,25 @@ export function useInputBuffer(
   // 使用单一状态对象，避免多次setState导致重复渲染
   const [state, setState] = useState({
     value: initialValue,
-    cursorPosition: initialCursorPosition
+    cursorPosition: initialCursorPosition,
   });
 
   // 设置值（尽量保持光标位置，但不会自动调整）
   // 注意：光标位置应该由调用方通过 setCursorPosition 明确设置
   const setValue = useMemoizedFn((newValue: string) => {
-    setState(prev => ({
+    setState((prev) => ({
       value: newValue,
       // 不自动调整光标位置，保持原值
       // 如果需要调整，调用方应该显式调用 setCursorPosition
-      cursorPosition: prev.cursorPosition
+      cursorPosition: prev.cursorPosition,
     }));
   });
 
   // 光标位置设置（带边界检查）
   const setCursorPosition = useMemoizedFn((position: number) => {
-    setState(prev => ({
+    setState((prev) => ({
       ...prev,
-      cursorPosition: Math.max(0, Math.min(position, prev.value.length))
+      cursorPosition: Math.max(0, Math.min(position, prev.value.length)),
     }));
   });
 

@@ -10,12 +10,14 @@ vi.mock('fs', () => ({
   constants: { R_OK: 4, W_OK: 2 },
 }));
 
-const setupDoctorCommand = async (options: {
-  configInitSucceeds?: boolean;
-  nodeVersion?: string;
-  fsAccessSucceeds?: boolean;
-  inkAvailable?: boolean;
-} = {}) => {
+const setupDoctorCommand = async (
+  options: {
+    configInitSucceeds?: boolean;
+    nodeVersion?: string;
+    fsAccessSucceeds?: boolean;
+    inkAvailable?: boolean;
+  } = {}
+) => {
   const {
     configInitSucceeds = true,
     nodeVersion = 'v20.0.0',
@@ -50,12 +52,18 @@ const setupDoctorCommand = async (options: {
   if (inkAvailable) {
     vi.doMock('ink', () => ({}), { virtual: true });
   } else {
-    vi.doMock('ink', () => {
-      throw new Error('missing');
-    }, { virtual: true });
+    vi.doMock(
+      'ink',
+      () => {
+        throw new Error('missing');
+      },
+      { virtual: true }
+    );
   }
 
-  const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+  const exitSpy = vi
+    .spyOn(process, 'exit')
+    .mockImplementation(() => undefined as never);
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   const versionSpy = vi.spyOn(process, 'version', 'get').mockReturnValue(nodeVersion);
@@ -96,9 +104,13 @@ describe('commands/doctor', () => {
 
     await doctorCommands.handler({} as any);
 
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('❌ Configuration: FAILED'));
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('❌ Configuration: FAILED')
+    );
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('⚠️  Node.js version'));
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('❌ File system permissions'));
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('❌ File system permissions')
+    );
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('❌ Dependencies'));
     expect(exitSpy).toHaveBeenCalledWith(1);
   });

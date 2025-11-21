@@ -5,7 +5,9 @@ describe('commands/install', () => {
     vi.resetModules();
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation(() => undefined as never);
 
     const { installCommands } = await import('../../../src/commands/install.js');
     await installCommands.handler({ target: 'latest', force: true } as any);
@@ -19,7 +21,9 @@ describe('commands/install', () => {
 
   it('handler 遇到异常时应记录错误并退出', async () => {
     vi.resetModules();
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation(() => undefined as never);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const logSpy = vi.spyOn(console, 'log').mockImplementation((message?: string) => {
       if (typeof message === 'string' && message.includes('Installing')) {

@@ -8,7 +8,9 @@ const CLI_ENTRY = path.resolve('dist', 'blade.js');
 describe('Blade CLI 版本信息', () => {
   it('--version 应该输出语义化版本号', () => {
     if (!existsSync(CLI_ENTRY)) {
-      console.warn('[cli] dist/blade.js 不存在，跳过版本测试（请先执行 npm run build）');
+      console.warn(
+        '[cli] dist/blade.js 不存在，跳过版本测试（请先执行 npm run build）'
+      );
       return;
     }
 

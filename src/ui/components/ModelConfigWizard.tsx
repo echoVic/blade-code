@@ -82,7 +82,10 @@ const ProviderStep: React.FC<ProviderStepProps> = ({
   ];
 
   const initialIndex = initialProvider
-    ? Math.max(0, items.findIndex((item) => item.value === initialProvider))
+    ? Math.max(
+        0,
+        items.findIndex((item) => item.value === initialProvider)
+      )
     : 0;
 
   return (
@@ -93,9 +96,7 @@ const ProviderStep: React.FC<ProviderStepProps> = ({
         </Text>
       </Box>
       <Box marginBottom={1}>
-        <Text>
-          根据您使用的 LLM 服务选择对应的 API 类型
-        </Text>
+        <Text>根据您使用的 LLM 服务选择对应的 API 类型</Text>
       </Box>
       <Box marginBottom={1}>
         <SelectInput
@@ -186,7 +187,9 @@ const TextInputStep: React.FC<TextInputStepProps> = ({
         </>
       )}
       <Box>
-        <Text bold color="cyan">▶ </Text>
+        <Text bold color="cyan">
+          ▶{' '}
+        </Text>
         <TextInput
           value={value}
           onChange={onChange}
@@ -296,16 +299,21 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
         <Box marginTop={1}>
           <Text>
             {mode === 'edit' ? '保存修改？ ' : '确认保存配置？ '}[
-            <Text bold color="green">Y</Text>/<Text bold color="red">n</Text>]
+            <Text bold color="green">
+              Y
+            </Text>
+            /
+            <Text bold color="red">
+              n
+            </Text>
+            ]
           </Text>
         </Box>
       )}
 
       {isSaving && (
         <Box>
-          <Text color="yellow">
-            ⏳ 正在保存配置到 ~/.blade/config.json...
-          </Text>
+          <Text color="yellow">⏳ 正在保存配置到 ~/.blade/config.json...</Text>
         </Box>
       )}
     </Box>
@@ -388,7 +396,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   const handleProviderSelect = (provider: ProviderType) => {
     setConfig({ ...config, provider });
     const nextBaseUrl = isEditMode
-      ? config.baseUrl ?? initialConfig?.baseUrl ?? ''
+      ? (config.baseUrl ?? initialConfig?.baseUrl ?? '')
       : '';
     setInputValue(nextBaseUrl);
     setCurrentStep('baseUrl');
@@ -409,9 +417,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
     }
 
     setConfig({ ...config, baseUrl: inputValue });
-    const nextApiKey = isEditMode
-      ? config.apiKey ?? initialConfig?.apiKey ?? ''
-      : '';
+    const nextApiKey = isEditMode ? (config.apiKey ?? initialConfig?.apiKey ?? '') : '';
     setInputValue(nextApiKey);
     setError(null);
     setCurrentStep('apiKey');
@@ -424,9 +430,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
     }
 
     setConfig({ ...config, apiKey: inputValue });
-    const nextModel = isEditMode
-      ? config.model ?? initialConfig?.model ?? ''
-      : '';
+    const nextModel = isEditMode ? (config.model ?? initialConfig?.model ?? '') : '';
     setInputValue(nextModel);
     setError(null);
     setCurrentStep('model');
@@ -554,14 +558,14 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
           </Box>
 
           <Box marginBottom={1}>
-            <Text>
-              AI 驱动的代码助手 - 让我们开始配置您的助手
-            </Text>
+            <Text>AI 驱动的代码助手 - 让我们开始配置您的助手</Text>
           </Box>
 
           {/* 进度条 */}
           <Box marginBottom={1}>
-            <Text bold color="blue">{'█'.repeat(progress)}</Text>
+            <Text bold color="blue">
+              {'█'.repeat(progress)}
+            </Text>
             <Text dimColor>{'░'.repeat(40 - progress)}</Text>
             <Text> </Text>
             <Text bold color="cyan">
@@ -571,9 +575,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
 
           {/* 分隔线 */}
           <Box marginBottom={1}>
-            <Text dimColor>
-              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            </Text>
+            <Text dimColor>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</Text>
           </Box>
         </>
       ) : mode === 'add' ? (
@@ -711,9 +713,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
 
       {/* 底部提示 */}
       <Box marginTop={1}>
-        <Text dimColor>
-          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        </Text>
+        <Text dimColor>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</Text>
       </Box>
 
       {!isSaving && currentStep === 'provider' && (

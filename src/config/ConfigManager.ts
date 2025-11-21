@@ -325,7 +325,8 @@ export class ConfigManager {
 
       // 4. 写入文件（仅保存基础配置字段，不保存 settings）
       const configToSave: Partial<BladeConfig> = {};
-      if (newConfig.currentModelId !== undefined) configToSave.currentModelId = newConfig.currentModelId;
+      if (newConfig.currentModelId !== undefined)
+        configToSave.currentModelId = newConfig.currentModelId;
       if (newConfig.models !== undefined) configToSave.models = newConfig.models;
       if (newConfig.temperature !== undefined)
         configToSave.temperature = newConfig.temperature;

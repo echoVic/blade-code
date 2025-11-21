@@ -24,16 +24,16 @@ import { createLogger, LogCategory } from '../logging/Logger.js';
 import { loadProjectMcpConfig } from '../mcp/loadProjectMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import {
-	createPlanModeReminder,
-	PLAN_MODE_SYSTEM_PROMPT,
-	PromptBuilder,
+  createPlanModeReminder,
+  PLAN_MODE_SYSTEM_PROMPT,
+  PromptBuilder,
 } from '../prompts/index.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
 import type { Attachment } from '../prompts/processors/types.js';
 import {
-	createChatService,
-	type IChatService,
-	type Message,
+  createChatService,
+  type IChatService,
+  type Message,
 } from '../services/ChatServiceInterface.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
@@ -42,17 +42,17 @@ import type { Tool, ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import {
-	type LoopDetectionConfig,
-	LoopDetectionService,
+  type LoopDetectionConfig,
+  LoopDetectionService,
 } from './LoopDetectionService.js';
 import { subagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
-	AgentOptions,
-	AgentResponse,
-	AgentTask,
-	ChatContext,
-	LoopOptions,
-	LoopResult,
+  AgentOptions,
+  AgentResponse,
+  AgentTask,
+  ChatContext,
+  LoopOptions,
+  LoopResult,
 } from './types.js';
 
 // 创建 Agent 专用 Logger
@@ -444,12 +444,15 @@ export class Agent extends EventEmitter {
       let lastMessageUuid: string | null = null; // 追踪上一条消息的 UUID,用于建立消息链
       try {
         const contextMgr = this.executionEngine?.getContextManager();
-        if (contextMgr && context.sessionId) {
+        // 🔧 修复：过滤空用户消息（与助手消息保持一致）
+        if (contextMgr && context.sessionId && message.trim() !== '') {
           lastMessageUuid = await contextMgr.saveMessage(
             context.sessionId,
             'user',
             message
           );
+        } else if (message.trim() === '') {
+          logger.debug('[Agent] 跳过保存空用户消息');
         }
       } catch (error) {
         logger.warn('[Agent] 保存用户消息失败:', error);
@@ -517,8 +520,41 @@ export class Agent extends EventEmitter {
         }
 
         // === 2. 每轮循环前检查并压缩上下文 ===
+        // 📊 记录压缩前的状态，用于判断是否需要重建 messages
+        const preCompactLength = context.messages.length;
+
         // 传递实际要发送给 LLM 的 messages 数组（包含 system prompt）
-        await this.checkAndCompactInLoop(messages, context, turnsCount);
+        // checkAndCompactInLoop 返回是否发生了压缩
+        const didCompact = await this.checkAndCompactInLoop(
+          messages,
+          context,
+          turnsCount
+        );
+
+        // 🔧 关键修复：如果发生了压缩，必须重建 messages 数组
+        // 即使长度相同但内容不同的压缩场景也能正确处理
+        if (didCompact) {
+          logger.debug(
+            `[Agent] [轮次 ${turnsCount}] 检测到压缩发生，重建 messages 数组 (${preCompactLength} → ${context.messages.length} 条历史消息)`
+          );
+
+          // 找到 messages 中非历史部分的起始位置
+          // messages 结构: [system?, ...context.messages(旧), user当前消息?, assistant?, tool?...]
+          const systemMsgCount = needsSystemPrompt && systemPrompt ? 1 : 0;
+          const historyEndIdx = systemMsgCount + preCompactLength;
+
+          // 保留非历史部分（当前轮次新增的消息）
+          const systemMessages = messages.slice(0, systemMsgCount);
+          const newMessages = messages.slice(historyEndIdx); // 当前轮次新增的 user/assistant/tool
+
+          // 重建：system + 压缩后的历史 + 当前轮次新增
+          messages.length = 0; // 清空原数组
+          messages.push(...systemMessages, ...context.messages, ...newMessages);
+
+          logger.debug(
+            `[Agent] [轮次 ${turnsCount}] messages 重建完成: ${systemMessages.length} system + ${context.messages.length} 历史 + ${newMessages.length} 新增 = ${messages.length} 总计`
+          );
+        }
 
         // === 3. 轮次计数 ===
         turnsCount++;
@@ -569,7 +605,11 @@ export class Agent extends EventEmitter {
         logger.debug('================================\n');
 
         // 3. 直接调用 ChatService（OpenAI SDK 已内置重试机制）
-        const turnResult = await this.chatService.chat(messages, tools, options?.signal);
+        const turnResult = await this.chatService.chat(
+          messages,
+          tools,
+          options?.signal
+        );
 
         // 累加 token 使用量
         if (turnResult.usage?.totalTokens) {
@@ -612,12 +652,17 @@ export class Agent extends EventEmitter {
           try {
             const contextMgr = this.executionEngine?.getContextManager();
             if (contextMgr && context.sessionId && turnResult.content) {
-              lastMessageUuid = await contextMgr.saveMessage(
-                context.sessionId,
-                'assistant',
-                turnResult.content,
-                lastMessageUuid // 链接到上一条消息
-              );
+              // 🆕 跳过空内容或纯空格的消息
+              if (turnResult.content.trim() !== '') {
+                lastMessageUuid = await contextMgr.saveMessage(
+                  context.sessionId,
+                  'assistant',
+                  turnResult.content,
+                  lastMessageUuid // 链接到上一条消息
+                );
+              } else {
+                logger.debug('[Agent] 跳过保存空响应（任务完成时）');
+              }
             }
           } catch (error) {
             logger.warn('[Agent] 保存助手消息失败:', error);
@@ -646,13 +691,18 @@ export class Agent extends EventEmitter {
         try {
           const contextMgr = this.executionEngine?.getContextManager();
           if (contextMgr && context.sessionId && turnResult.content) {
-            // 保存助手消息（包含工具调用意图）
-            lastMessageUuid = await contextMgr.saveMessage(
-              context.sessionId,
-              'assistant',
-              turnResult.content,
-              lastMessageUuid // 链接到上一条消息
-            );
+            // 🆕 跳过空内容或纯空格的消息
+            if (turnResult.content.trim() !== '') {
+              // 保存助手消息（包含工具调用意图）
+              lastMessageUuid = await contextMgr.saveMessage(
+                context.sessionId,
+                'assistant',
+                turnResult.content,
+                lastMessageUuid // 链接到上一条消息
+              );
+            } else {
+              logger.debug('[Agent] 跳过保存空响应（工具调用时）');
+            }
           }
         } catch (error) {
           logger.warn('[Agent] 保存助手工具调用消息失败:', error);
@@ -707,7 +757,9 @@ export class Agent extends EventEmitter {
             // 使用 ExecutionPipeline 执行工具（自动走完6阶段流程）
             const signalToUse = options?.signal;
             if (!signalToUse) {
-              logger.error('[Agent] Missing signal in tool execution, this should not happen');
+              logger.error(
+                '[Agent] Missing signal in tool execution, this should not happen'
+              );
             }
 
             // 调试日志：追踪传递给 ExecutionPipeline 的 confirmationHandler
@@ -983,7 +1035,10 @@ export class Agent extends EventEmitter {
       };
     } catch (error) {
       // 检查是否是用户主动中止
-      if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted'))) {
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' || error.message.includes('aborted'))
+      ) {
         return {
           success: false,
           error: {
@@ -1224,12 +1279,14 @@ export class Agent extends EventEmitter {
   /**
    * 在 Agent 循环中检查并执行压缩
    * 使用实际发送给 LLM 的 messages 进行 token 计算
+   *
+   * @returns 是否发生了压缩
    */
   private async checkAndCompactInLoop(
     messages: Message[],
     context: ChatContext,
     currentTurn: number
-  ): Promise<void> {
+  ): Promise<boolean> {
     const chatConfig = this.chatService.getConfig();
     const modelName = chatConfig.model;
     const maxTokens = chatConfig.maxTokens ?? this.config.maxTokens;
@@ -1248,7 +1305,7 @@ export class Agent extends EventEmitter {
 
     // 检查是否需要压缩（使用实际发送给 LLM 的 messages）
     if (!TokenCounter.shouldCompact(messages, modelName, maxTokens)) {
-      return; // 不需要压缩
+      return false; // 不需要压缩
     }
 
     const compactLogPrefix =
@@ -1319,10 +1376,14 @@ export class Agent extends EventEmitter {
         logger.warn(`[Agent] [轮次 ${currentTurn}] 保存压缩数据失败:`, saveError);
         // 不阻塞流程
       }
+
+      // 返回 true 表示发生了压缩
+      return true;
     } catch (error) {
       logger.error(`[Agent] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
       this.emit('compactionFailed', { turn: currentTurn, error });
-      // 不阻塞对话，继续执行
+      // 压缩失败，返回 false
+      return false;
     }
   }
 
@@ -1420,14 +1481,18 @@ export class Agent extends EventEmitter {
   private async loadSubagents(): Promise<void> {
     // 如果已经加载过，跳过（全局单例，只需加载一次）
     if (subagentRegistry.getAllNames().length > 0) {
-      logger.debug(`📦 Subagents already loaded: ${subagentRegistry.getAllNames().join(', ')}`);
+      logger.debug(
+        `📦 Subagents already loaded: ${subagentRegistry.getAllNames().join(', ')}`
+      );
       return;
     }
 
     try {
       const loadedCount = subagentRegistry.loadFromStandardLocations();
       if (loadedCount > 0) {
-        logger.debug(`✅ Loaded ${loadedCount} subagents: ${subagentRegistry.getAllNames().join(', ')}`);
+        logger.debug(
+          `✅ Loaded ${loadedCount} subagents: ${subagentRegistry.getAllNames().join(', ')}`
+        );
       } else {
         logger.debug('📦 No subagents configured');
       }

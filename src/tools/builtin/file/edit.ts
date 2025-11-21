@@ -459,7 +459,10 @@ function smartMatch(content: string, searchString: string): MatchResult {
   const quoteIndex = normalizedContent.indexOf(normalizedSearch);
   if (quoteIndex !== -1) {
     // 返回原文件中的实际字符串（保持格式）
-    const actualString = content.substring(quoteIndex, quoteIndex + searchString.length);
+    const actualString = content.substring(
+      quoteIndex,
+      quoteIndex + searchString.length
+    );
     return { matched: actualString, strategy: MatchStrategy.NORMALIZE_QUOTES };
   }
 

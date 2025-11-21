@@ -78,11 +78,7 @@ export const FocusProvider: React.FC<{ children: React.ReactNode }> = ({
     [state, setFocus, restorePreviousFocus]
   );
 
-  return (
-    <FocusContext.Provider value={value}>
-      {children}
-    </FocusContext.Provider>
-  );
+  return <FocusContext.Provider value={value}>{children}</FocusContext.Provider>;
 };
 
 /**

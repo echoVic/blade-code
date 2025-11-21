@@ -19,10 +19,4 @@ export const PASTE_CONFIG = {
 /**
  * 图片扩展名列表
  */
-export const IMAGE_EXTENSIONS = new Set([
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.webp',
-]);
+export const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);

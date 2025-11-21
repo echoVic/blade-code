@@ -56,9 +56,7 @@ describe('utils/environment', () => {
       throw new Error('unexpected command');
     });
 
-    const { getEnvironmentContext } = await import(
-      '../../../src/utils/environment.js'
-    );
+    const { getEnvironmentContext } = await import('../../../src/utils/environment.js');
     const context = getEnvironmentContext();
 
     expect(context).toContain('## Working Directory');
@@ -80,9 +78,7 @@ describe('utils/environment', () => {
       throw new Error('unsupported command');
     });
 
-    const { getDirectoryStructure } = await import(
-      '../../../src/utils/environment.js'
-    );
+    const { getDirectoryStructure } = await import('../../../src/utils/environment.js');
 
     const tree = getDirectoryStructure(tempDir, 2);
     expect(tree).toContain('.');
@@ -97,9 +93,7 @@ describe('utils/environment', () => {
       throw new Error('command failed');
     });
 
-    const { getDirectoryStructure } = await import(
-      '../../../src/utils/environment.js'
-    );
+    const { getDirectoryStructure } = await import('../../../src/utils/environment.js');
 
     expect(getDirectoryStructure('/missing')).toBe('.');
   });

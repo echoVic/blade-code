@@ -39,7 +39,10 @@ describe('todo tools persistence', () => {
       await invocation.execute(createAbortSignal());
 
       const stored = JSON.parse(
-        await fs.readFile(path.join(configDir, 'todos', 'session-a-agent-session-a.json'), 'utf-8')
+        await fs.readFile(
+          path.join(configDir, 'todos', 'session-a-agent-session-a.json'),
+          'utf-8'
+        )
       ) as TodoItem[];
 
       expect(stored).toHaveLength(1);
@@ -47,7 +50,7 @@ describe('todo tools persistence', () => {
       expect(stored[0].status).toBe('in_progress');
       expect(stored[0].priority).toBe('high');
       expect(stored[0].activeForm).toBe('implementing feature A');
-      
+
       // 验证自动生成的字段
       expect(stored[0].id).toBeDefined();
       expect(typeof stored[0].id).toBe('string');
@@ -92,10 +95,16 @@ describe('todo tools persistence', () => {
       await todoForSession2.execute(createAbortSignal());
 
       const session1Data = JSON.parse(
-        await fs.readFile(path.join(configDir, 'todos', 'session-1-agent-session-1.json'), 'utf-8')
+        await fs.readFile(
+          path.join(configDir, 'todos', 'session-1-agent-session-1.json'),
+          'utf-8'
+        )
       ) as TodoItem[];
       const session2Data = JSON.parse(
-        await fs.readFile(path.join(configDir, 'todos', 'session-2-agent-session-2.json'), 'utf-8')
+        await fs.readFile(
+          path.join(configDir, 'todos', 'session-2-agent-session-2.json'),
+          'utf-8'
+        )
       ) as TodoItem[];
 
       expect(session1Data).toHaveLength(1);
@@ -106,7 +115,7 @@ describe('todo tools persistence', () => {
       expect(session2Data[0].priority).toBe('low');
       expect(session1Data[0].status).toBe('pending');
       expect(session2Data[0].status).toBe('pending');
-      
+
       // 验证自动生成的字段
       expect(session1Data[0].id).toBeDefined();
       expect(session2Data[0].id).toBeDefined();
@@ -150,12 +159,12 @@ describe('todo tools persistence', () => {
           'utf-8'
         )
       ) as TodoItem[];
-      
+
       expect(stored).toHaveLength(1);
       expect(stored[0].content).toBe('default task');
       expect(stored[0].status).toBe('completed');
       expect(stored[0].priority).toBe('medium');
-      
+
       // 验证自动生成的字段
       expect(stored[0].id).toBeDefined();
       expect(stored[0].createdAt).toBeDefined();

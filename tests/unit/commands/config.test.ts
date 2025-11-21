@@ -58,20 +58,27 @@ describe('commands/config', () => {
     await setCommand.handler({ key: 'ui.theme', value: 'dark', global: false } as any);
 
     expect(mockConfigManager.initialize).toHaveBeenCalled();
-    expect(mockConfigManager.updateConfig).toHaveBeenCalledWith({ ui: { theme: 'dark' } });
+    expect(mockConfigManager.updateConfig).toHaveBeenCalledWith({
+      ui: { theme: 'dark' },
+    });
     expect(logSpy).toHaveBeenCalledWith('✅ Set ui.theme = dark');
   });
 
   it('config get 应打印配置值并处理缺失键', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation(() => undefined as never);
     const { configCommands } = await import('../../../src/commands/config.js');
 
     const { yargs, getCommand } = createYargsStub();
     configCommands.builder(yargs as any);
     const getCommandHandler = getCommand('get <key>');
 
-    mockConfigManager.getConfig.mockReturnValue({ theme: 'dark', nested: { value: 1 } });
+    mockConfigManager.getConfig.mockReturnValue({
+      theme: 'dark',
+      nested: { value: 1 },
+    });
     await getCommandHandler.handler({ key: 'nested.value' } as any);
     expect(logSpy).toHaveBeenCalledWith('🔍 nested.value: 1');
 
@@ -97,7 +104,9 @@ describe('commands/config', () => {
   });
 
   it('config reset 未确认时应退出，确认后成功执行', async () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation(() => undefined as never);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { configCommands } = await import('../../../src/commands/config.js');

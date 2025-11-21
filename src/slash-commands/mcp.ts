@@ -318,29 +318,33 @@ async function showAllTools(addAssistantMessage: (msg: string) => void): Promise
   const configuredServers = await configManager.getMcpServers();
 
   if (Object.keys(configuredServers).length === 0) {
-    addAssistantMessage('🔧 **可用的 MCP 工具**\n\n⚠️ 暂无配置的 MCP 服务器\n\n💡 使用 `blade mcp add` 命令添加 MCP 服务器');
+    addAssistantMessage(
+      '🔧 **可用的 MCP 工具**\n\n⚠️ 暂无配置的 MCP 服务器\n\n💡 使用 `blade mcp add` 命令添加 MCP 服务器'
+    );
     return;
   }
 
   addAssistantMessage('🔍 正在检查 MCP 服务器并获取工具列表...');
 
   // 尝试连接所有配置的服务器
-  const checkPromises = Object.entries(configuredServers).map(async ([name, config]) => {
-    try {
-      let serverInfo = mcpRegistry.getServerStatus(name);
+  const checkPromises = Object.entries(configuredServers).map(
+    async ([name, config]) => {
+      try {
+        let serverInfo = mcpRegistry.getServerStatus(name);
 
-      if (!serverInfo) {
-        await mcpRegistry.registerServer(name, config);
-        serverInfo = mcpRegistry.getServerStatus(name);
-      } else if (serverInfo.status === McpConnectionStatus.DISCONNECTED) {
-        await mcpRegistry.connectServer(name);
+        if (!serverInfo) {
+          await mcpRegistry.registerServer(name, config);
+          serverInfo = mcpRegistry.getServerStatus(name);
+        } else if (serverInfo.status === McpConnectionStatus.DISCONNECTED) {
+          await mcpRegistry.connectServer(name);
+        }
+
+        return { name, config, serverInfo: mcpRegistry.getServerStatus(name) };
+      } catch (error) {
+        return { name, config, serverInfo: null, error };
       }
-
-      return { name, config, serverInfo: mcpRegistry.getServerStatus(name) };
-    } catch (error) {
-      return { name, config, serverInfo: null, error };
     }
-  });
+  );
 
   await Promise.all(checkPromises);
 

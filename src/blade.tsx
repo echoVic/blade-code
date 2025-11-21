@@ -90,7 +90,8 @@ export async function main() {
         // 启动 UI 模式
         // 从 argv._ 中获取额外的参数作为 initialMessage
         const nonOptionArgs = (argv._ as string[]).slice(1); // 跳过命令名
-        const initialMessage = nonOptionArgs.length > 0 ? nonOptionArgs.join(' ') : undefined;
+        const initialMessage =
+          nonOptionArgs.length > 0 ? nonOptionArgs.join(' ') : undefined;
 
         // 启动 React UI - 传递所有选项
         const appProps: any = {

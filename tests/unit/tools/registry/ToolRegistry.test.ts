@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
-import { ToolKind, type Tool, type ToolResult } from '../../../../src/tools/types/ToolTypes.js';
+import {
+  ToolKind,
+  type Tool,
+  type ToolResult,
+} from '../../../../src/tools/types/ToolTypes.js';
 
 function createMockTool(
   name: string,
@@ -27,14 +31,16 @@ function createMockTool(
     version: overrides.version ?? '1.0.0',
     category: overrides.category ?? 'test-category',
     tags: overrides.tags ?? ['test', name],
-    getFunctionDeclaration: overrides.getFunctionDeclaration ?? (() => ({
-      name,
-      description: `${name} function`,
-      parameters: {
-        type: 'object',
-        properties: {},
-      },
-    })),
+    getFunctionDeclaration:
+      overrides.getFunctionDeclaration ??
+      (() => ({
+        name,
+        description: `${name} function`,
+        parameters: {
+          type: 'object',
+          properties: {},
+        },
+      })),
     getMetadata: overrides.getMetadata ?? (() => ({ name })),
     build:
       overrides.build ??
@@ -60,7 +66,10 @@ describe('ToolRegistry', () => {
   });
 
   it('注册内置工具后应可查询、分类和打标签', () => {
-    const tool = createMockTool('alpha', { category: 'filesystem', tags: ['fs', 'read'] });
+    const tool = createMockTool('alpha', {
+      category: 'filesystem',
+      tags: ['fs', 'read'],
+    });
     const eventSpy = vi.fn();
     registry.on('toolRegistered', eventSpy);
 
@@ -89,7 +98,9 @@ describe('ToolRegistry', () => {
     const duplicate = createMockTool('first');
 
     registry.register(first);
-    expect(() => registry.registerAll([duplicate])).toThrow(/批量注册失败: first: 工具 'first' 已注册/);
+    expect(() => registry.registerAll([duplicate])).toThrow(
+      /批量注册失败: first: 工具 'first' 已注册/
+    );
   });
 
   it('可以注销内置工具并更新索引', () => {
@@ -154,8 +165,12 @@ describe('ToolRegistry', () => {
 
   it('统计信息应区分内置与 MCP 工具', () => {
     registry.register(createMockTool('builtin-one', { category: 'alpha' }));
-    registry.register(createMockTool('builtin-two', { category: 'beta', tags: ['beta-tag'] }));
-    registry.registerMcpTool(createMockTool('mcp__srv__tool', { category: 'alpha', tags: ['beta-tag'] }));
+    registry.register(
+      createMockTool('builtin-two', { category: 'beta', tags: ['beta-tag'] })
+    );
+    registry.registerMcpTool(
+      createMockTool('mcp__srv__tool', { category: 'alpha', tags: ['beta-tag'] })
+    );
 
     const stats = registry.getStats();
     expect(stats.totalTools).toBe(3);

@@ -116,7 +116,9 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   return (
     <Box flexDirection="column" marginTop={1} marginBottom={1}>
       {/* 分隔符 */}
-      <Text color={theme.colors.muted}>{'─'.repeat(Math.max(0, Math.min(60, terminalWidth)))}</Text>
+      <Text color={theme.colors.muted}>
+        {'─'.repeat(Math.max(0, Math.min(60, terminalWidth)))}
+      </Text>
 
       {/* diff 统计信息 */}
       {needsCollapse && (
@@ -127,7 +129,9 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
 
       {/* 分隔符（仅在有统计信息时显示） */}
       {needsCollapse && (
-        <Text color={theme.colors.muted}>{'─'.repeat(Math.max(0, Math.min(60, terminalWidth)))}</Text>
+        <Text color={theme.colors.muted}>
+          {'─'.repeat(Math.max(0, Math.min(60, terminalWidth)))}
+        </Text>
       )}
 
       {/* 渲染 diff 内容 */}
@@ -182,13 +186,15 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
       {needsCollapse && (
         <Box marginTop={1}>
           <Text color={theme.colors.warning} dimColor>
-            ⚠️  已隐藏剩余 {hiddenLines} 行 diff（总共 {totalLines} 行）
+            ⚠️ 已隐藏剩余 {hiddenLines} 行 diff（总共 {totalLines} 行）
           </Text>
         </Box>
       )}
 
       {/* 分隔符 */}
-      <Text color={theme.colors.muted}>{'─'.repeat(Math.max(0, Math.min(60, terminalWidth)))}</Text>
+      <Text color={theme.colors.muted}>
+        {'─'.repeat(Math.max(0, Math.min(60, terminalWidth)))}
+      </Text>
     </Box>
   );
 };
