@@ -87,6 +87,14 @@ export const killShellTool = createTool({
   category: '命令工具',
   tags: ['bash', 'shell', 'terminate'],
 
-  extractSignatureContent: (params) => `shell:${params.shell_id}`,
-  abstractPermissionRule: () => 'shell:kill',
+  /**
+   * 提取签名内容：返回 shell ID
+   * 用于显示和权限签名构建
+   */
+  extractSignatureContent: (params) => params.shell_id,
+
+  /**
+   * 抽象权限规则：返回通配符格式
+   */
+  abstractPermissionRule: () => '*',
 });

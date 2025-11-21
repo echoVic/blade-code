@@ -43,14 +43,6 @@ IMPORTANT: 仅在任务需要编写代码时使用此工具。
   async execute(params, context): Promise<ToolResult> {
     const { plan } = params;
 
-    // 调试日志：追踪 ExitPlanModeTool 接收到的 confirmationHandler
-    console.log('[ExitPlanModeTool] Execute with context:', {
-      hasHandler: !!context.confirmationHandler,
-      hasMethod: !!context.confirmationHandler?.requestConfirmation,
-      methodType: typeof context.confirmationHandler?.requestConfirmation,
-      contextKeys: Object.keys(context),
-    });
-
     // 触发 UI 确认流程
     if (context.confirmationHandler) {
       try {
