@@ -28,7 +28,7 @@ export const ShortcutsHelp: React.FC = () => {
     <Box flexDirection="column" padding={2} borderStyle="round" borderColor="cyan">
       <Box marginBottom={1}>
         <Text bold color="cyan">
-          ⌨️  快捷键帮助
+          ⌨️ 快捷键帮助
         </Text>
       </Box>
 

@@ -44,10 +44,7 @@ export const webSearchTool = createTool({
   kind: ToolKind.Network,
 
   schema: z.object({
-    query: z
-      .string()
-      .min(2, '搜索关键词至少需要2个字符')
-      .describe('搜索关键词'),
+    query: z.string().min(2, '搜索关键词至少需要2个字符').describe('搜索关键词'),
     allowed_domains: z
       .array(z.string().min(1))
       .optional()
@@ -132,7 +129,11 @@ export const webSearchTool = createTool({
       }
 
       const combinedResults = transformDuckDuckGoResponse(payload);
-      const filteredResults = applyDomainFilters(combinedResults, allowedDomains, blockedDomains);
+      const filteredResults = applyDomainFilters(
+        combinedResults,
+        allowedDomains,
+        blockedDomains
+      );
       const limitedResults = filteredResults.slice(0, MAX_RESULTS);
 
       const resultPayload: WebSearchPayload = {
@@ -165,7 +166,11 @@ export const webSearchTool = createTool({
       return {
         success: true,
         llmContent: resultPayload,
-        displayContent: formatDisplayResults(query, limitedResults, filteredResults.length),
+        displayContent: formatDisplayResults(
+          query,
+          limitedResults,
+          filteredResults.length
+        ),
         metadata,
       };
     } catch (error: any) {
@@ -345,11 +350,17 @@ function applyDomainFilters(
       return false;
     }
 
-    if (blockedDomains.length > 0 && blockedDomains.some((domain) => matchesDomain(hostname, domain))) {
+    if (
+      blockedDomains.length > 0 &&
+      blockedDomains.some((domain) => matchesDomain(hostname, domain))
+    ) {
       return false;
     }
 
-    if (allowedDomains.length > 0 && !allowedDomains.some((domain) => matchesDomain(hostname, domain))) {
+    if (
+      allowedDomains.length > 0 &&
+      !allowedDomains.some((domain) => matchesDomain(hostname, domain))
+    ) {
       return false;
     }
 
@@ -357,7 +368,11 @@ function applyDomainFilters(
   });
 }
 
-function formatDisplayResults(query: string, results: WebSearchResult[], total: number): string {
+function formatDisplayResults(
+  query: string,
+  results: WebSearchResult[],
+  total: number
+): string {
   const header = `🔎 WebSearch("${query}") - 返回 ${results.length}/${total} 条结果`;
   const lines = results.map(
     (result, index) =>

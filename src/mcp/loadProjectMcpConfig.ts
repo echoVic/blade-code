@@ -221,7 +221,9 @@ async function loadMcpConfigFromSource(
       } catch (fileError) {
         if (!silent) {
           console.error(`❌ 加载配置文件失败: ${filePath}`);
-          console.error(`   错误: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
+          console.error(
+            `   错误: ${fileError instanceof Error ? fileError.message : String(fileError)}`
+          );
         }
         return 0;
       }

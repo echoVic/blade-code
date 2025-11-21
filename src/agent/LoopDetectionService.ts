@@ -95,6 +95,20 @@ export class LoopDetectionService {
       }
     }
 
+    // === 层2.5: 空响应循环检测 ===
+    const silentLoop = this.detectSilentLoop(messages);
+    if (silentLoop) {
+      // 🔧 修复：空响应循环是严重故障，直接停止（不递增 warningCount）
+      // 连续 5 次空响应说明模型已失效，继续运行只会浪费 token
+      return {
+        detected: true,
+        type: 'content',
+        reason: 'LLM 连续返回 5 次以上空响应，模型可能失效',
+        warningCount: this.maxWarnings + 1, // 直接设置为超过阈值
+        shouldStop: true, // 立即停止
+      };
+    }
+
     // === 层3: LLM 智能检测 ===
     if (
       this.config.enableLlmDetection !== false &&
@@ -184,6 +198,19 @@ export class LoopDetectionService {
     // 动态相似度阈值
     const uniqueHashes = new Set(hashes);
     return uniqueHashes.size < hashes.length * similarityRatio;
+  }
+
+  /**
+   * 检测连续空响应（LLM 陷入沉默循环）
+   */
+  private detectSilentLoop(messages: Message[]): boolean {
+    const recent = messages.slice(-10);
+    const emptyCount = recent.filter(
+      (m) => m.role === 'assistant' && (!m.content || m.content.trim() === '')
+    ).length;
+
+    // 连续 5 次以上空响应 → 异常
+    return emptyCount >= 5;
   }
 
   /**

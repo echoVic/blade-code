@@ -60,7 +60,7 @@ export function SuggestionDropdown({
               ▶ {item.path}
             </Text>
           ) : (
-            <Text color="gray">  {item.path}</Text>
+            <Text color="gray"> {item.path}</Text>
           )}
         </Box>
       ))}
@@ -104,7 +104,5 @@ export function SimpleSuggestionList({
     selected: index === selectedIndex,
   }));
 
-  return (
-    <SuggestionDropdown items={items} visible={true} maxVisible={maxVisible} />
-  );
+  return <SuggestionDropdown items={items} visible={true} maxVisible={maxVisible} />;
 }

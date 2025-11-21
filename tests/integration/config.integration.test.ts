@@ -77,11 +77,10 @@ describe('ConfigManager 集成', () => {
       { encoding: 'utf-8', flag: 'w+' }
     );
     mkdirSync(path.dirname(projectConfigPath), { recursive: true });
-    writeFileSync(
-      projectConfigPath,
-      JSON.stringify({ model: 'project-model' }),
-      { encoding: 'utf-8', flag: 'w+' }
-    );
+    writeFileSync(projectConfigPath, JSON.stringify({ model: 'project-model' }), {
+      encoding: 'utf-8',
+      flag: 'w+',
+    });
 
     const manager = ConfigManager.getInstance();
     const config = await manager.initialize();

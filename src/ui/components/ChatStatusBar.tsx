@@ -76,7 +76,7 @@ export const ChatStatusBar: React.FC<ChatStatusBarProps> = React.memo(
                   );
                 })}
                 {rowIndex === shortcutRows.length - 1 && (
-                  <Text color="cyan">  ? 关闭</Text>
+                  <Text color="cyan"> ? 关闭</Text>
                 )}
               </Box>
             ))}

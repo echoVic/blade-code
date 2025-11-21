@@ -98,7 +98,10 @@ export class FileAccessTracker {
 
       logger.debug(`记录文件${operation === 'edit' ? '编辑' : '写入'}: ${filePath}`);
     } catch (error) {
-      logger.warn(`记录文件${operation === 'edit' ? '编辑' : '写入'}失败: ${filePath}`, error);
+      logger.warn(
+        `记录文件${operation === 'edit' ? '编辑' : '写入'}失败: ${filePath}`,
+        error
+      );
     }
   }
 

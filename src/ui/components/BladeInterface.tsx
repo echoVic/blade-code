@@ -578,10 +578,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
           {agentCreationWizardVisible && (
             <Box marginTop={1} paddingX={2}>
-              <AgentCreationWizard
-                onComplete={closeModal}
-                onCancel={closeModal}
-              />
+              <AgentCreationWizard onComplete={closeModal} onCancel={closeModal} />
             </Box>
           )}
 

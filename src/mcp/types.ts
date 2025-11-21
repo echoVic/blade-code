@@ -38,4 +38,3 @@ export interface McpToolCallResponse {
   }>;
   isError?: boolean;
 }
-

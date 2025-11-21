@@ -139,8 +139,7 @@ export class TokenEstimator {
 
       case 'tail':
         // 保留尾部
-        truncatedContent =
-          truncationMessage + text.slice(text.length - maxChars);
+        truncatedContent = truncationMessage + text.slice(text.length - maxChars);
         break;
 
       case 'middle':
@@ -172,10 +171,7 @@ export class TokenEstimator {
    * @param options - 截断选项
    * @returns 截断结果
    */
-  static truncateByLines(
-    text: string,
-    options: TruncateOptions
-  ): TruncateResult {
+  static truncateByLines(text: string, options: TruncateOptions): TruncateResult {
     const charsPerToken = options.charsPerToken ?? this.DEFAULT_CHARS_PER_TOKEN;
     const strategy = options.strategy ?? 'tail';
     const truncationMessage =
@@ -278,10 +274,7 @@ export class TokenEstimator {
    * @param options - 估算选项
    * @returns 总 Token 数
    */
-  static estimateBatch(
-    texts: string[],
-    options: TokenEstimateOptions = {}
-  ): number {
+  static estimateBatch(texts: string[], options: TokenEstimateOptions = {}): number {
     return texts.reduce((total, text) => total + this.estimate(text, options), 0);
   }
 

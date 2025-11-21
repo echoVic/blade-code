@@ -233,7 +233,18 @@ export class PermissionStage implements PipelineStage {
       return checkResult;
     }
 
-    // 3. YOLO 模式：批准所有工具（在检查规则之后）
+    // 3. PLAN 模式：严格拒绝非只读工具（最高优先级，不可绕过）
+    if (this.permissionMode === PermissionMode.PLAN) {
+      if (!isReadOnlyKind(toolKind)) {
+        return {
+          result: PermissionResult.DENY,
+          matchedRule: 'mode:plan',
+          reason: 'Plan 模式: 禁止执行修改操作，仅允许只读工具（Read/Glob/Grep/WebFetch/WebSearch/Task）',
+        };
+      }
+    }
+
+    // 4. YOLO 模式：批准所有工具（在检查规则之后）
     if (this.permissionMode === PermissionMode.YOLO) {
       return {
         result: PermissionResult.ALLOW,
@@ -242,7 +253,7 @@ export class PermissionStage implements PipelineStage {
       };
     }
 
-    // 4. 只读工具：所有模式下都自动批准（Read/Search/Network/Think/Memory）
+    // 5. 只读工具：所有模式下都自动批准（Read/Search/Network/Think/Memory）
     // 使用 isReadOnlyKind 统一判断，避免遗漏
     if (isReadOnlyKind(toolKind)) {
       const kindName = toolKind === ToolKind.Memory ? 'memory' : 'readonly';
@@ -445,10 +456,10 @@ export class ConfirmationStage implements PipelineStage {
       }
 
       case 'Bash':
-      case 'Shell': {
-        const command = params.command as string;
-        return command ? `**命令:**\n\`\`\`bash\n${command}\n\`\`\`` : undefined;
-      }
+      case 'Shell':
+        // Bash 命令已在标题中显示（通过 extractSignatureContent）
+        // 不需要在"操作详情"中重复显示
+        return undefined;
 
       default:
         return undefined;
@@ -481,7 +492,9 @@ export class ConfirmationStage implements PipelineStage {
           `💡 建议使用 Read 工具代替 ${mainCommand} 命令（性能更好，支持大文件分页）`
         );
       } else if (mainCommand === 'grep' || mainCommand === 'rg') {
-        risks.push('💡 建议使用 Grep 工具代替 grep/rg 命令（支持更强大的过滤和上下文）');
+        risks.push(
+          '💡 建议使用 Grep 工具代替 grep/rg 命令（支持更强大的过滤和上下文）'
+        );
       } else if (mainCommand === 'find') {
         risks.push('💡 建议使用 Glob 工具代替 find 命令（更快，支持 glob 模式）');
       } else if (mainCommand === 'sed' || mainCommand === 'awk') {

@@ -3,10 +3,7 @@ import type { Tool } from '../tools/types/index.js';
 import type { McpServerConfig } from '../config/types.js';
 import { createMcpTool } from './createMcpTool.js';
 import { McpClient } from './McpClient.js';
-import {
-  McpConnectionStatus,
-  type McpToolDefinition,
-} from './types.js';
+import { McpConnectionStatus, type McpToolDefinition } from './types.js';
 
 /**
  * MCP服务器信息
@@ -251,7 +248,11 @@ export class McpRegistry extends EventEmitter {
   /**
    * 设置客户端事件处理器
    */
-  private setupClientEventHandlers(client: McpClient, serverInfo: McpServerInfo, name: string): void {
+  private setupClientEventHandlers(
+    client: McpClient,
+    serverInfo: McpServerInfo,
+    name: string
+  ): void {
     client.on('connected', (server) => {
       serverInfo.status = McpConnectionStatus.CONNECTED;
       serverInfo.connectedAt = new Date();

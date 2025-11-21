@@ -12,7 +12,7 @@ export function createMcpTool(
   mcpClient: McpClient,
   serverName: string,
   toolDef: McpToolDefinition,
-  customName?: string  // 可选的自定义工具名（用于冲突处理）
+  customName?: string // 可选的自定义工具名（用于冲突处理）
 ) {
   // 1. JSON Schema → Zod Schema 转换（带错误处理）
   let zodSchema: z.ZodSchema;

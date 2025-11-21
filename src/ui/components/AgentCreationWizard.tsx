@@ -267,7 +267,9 @@ export function AgentCreationWizard({
 
       // 验证 name 格式（kebab-case）
       if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(parsed.name)) {
-        throw new Error('Invalid name format. Must be kebab-case (lowercase, numbers, hyphens only)');
+        throw new Error(
+          'Invalid name format. Must be kebab-case (lowercase, numbers, hyphens only)'
+        );
       }
 
       // 将生成的配置应用到 config 状态
@@ -470,9 +472,7 @@ export function AgentCreationWizard({
           <Text dimColor>根据你的描述："{aiPrompt}"</Text>
         </Box>
         <Box marginBottom={1}>
-          <Text color="gray">
-            正在调用 LLM 生成 agent 配置，请稍候...
-          </Text>
+          <Text color="gray">正在调用 LLM 生成 agent 配置，请稍候...</Text>
         </Box>
       </Box>
     );

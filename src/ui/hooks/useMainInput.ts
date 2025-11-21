@@ -140,20 +140,34 @@ export const useMainInput = (
       // 跳过基本编辑键和普通字符输入，交给 CustomTextInput 处理
       // 但是 ? 键（当输入框为空时）要保留，用于切换快捷键帮助
       const shouldSkip =
-        key.backspace || key.delete || key.leftArrow || key.rightArrow ||
-        key.pageUp || key.pageDown ||
+        key.backspace ||
+        key.delete ||
+        key.leftArrow ||
+        key.rightArrow ||
+        key.pageUp ||
+        key.pageDown ||
         // 跳过普通字符输入（没有任何修饰键，且不是特殊键）
         // 但是排除空输入框时的 ? 键
-        ((!key.ctrl && !key.meta && !key.escape && !key.tab && !key.upArrow && !key.downArrow && !key.return) &&
-         !(inputKey === '?' && !input));
+        (!key.ctrl &&
+          !key.meta &&
+          !key.escape &&
+          !key.tab &&
+          !key.upArrow &&
+          !key.downArrow &&
+          !key.return &&
+          !(inputKey === '?' && !input));
 
       if (shouldSkip) {
         return;
       }
 
       // Ctrl+C / Ctrl+D - 停止任务或退出
-      if ((key.ctrl && inputKey === 'c') || (key.meta && inputKey === 'c') ||
-          (key.ctrl && inputKey === 'd') || (key.meta && inputKey === 'd')) {
+      if (
+        (key.ctrl && inputKey === 'c') ||
+        (key.meta && inputKey === 'c') ||
+        (key.ctrl && inputKey === 'd') ||
+        (key.meta && inputKey === 'd')
+      ) {
         handleCtrlC();
         return;
       }
@@ -196,8 +210,15 @@ export const useMainInput = (
       // Tab - 选中建议
       if (key.tab && showSuggestions && suggestions.length > 0) {
         const selectedCommand = suggestions[selectedSuggestionIndex].command;
-        if (atCompletion.hasQuery && atCompletion.suggestions.includes(selectedCommand)) {
-          const { newInput, newCursorPos } = applySuggestion(input, atCompletion, selectedCommand);
+        if (
+          atCompletion.hasQuery &&
+          atCompletion.suggestions.includes(selectedCommand)
+        ) {
+          const { newInput, newCursorPos } = applySuggestion(
+            input,
+            atCompletion,
+            selectedCommand
+          );
           setInput(newInput);
           buffer.setCursorPosition(newCursorPos);
         } else {
@@ -213,8 +234,15 @@ export const useMainInput = (
       if (key.return) {
         if (showSuggestions && suggestions.length > 0) {
           const selectedCommand = suggestions[selectedSuggestionIndex].command;
-          if (atCompletion.hasQuery && atCompletion.suggestions.includes(selectedCommand)) {
-            const { newInput, newCursorPos } = applySuggestion(input, atCompletion, selectedCommand);
+          if (
+            atCompletion.hasQuery &&
+            atCompletion.suggestions.includes(selectedCommand)
+          ) {
+            const { newInput, newCursorPos } = applySuggestion(
+              input,
+              atCompletion,
+              selectedCommand
+            );
             setInput(newInput);
             buffer.setCursorPosition(newCursorPos);
           } else {

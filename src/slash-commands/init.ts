@@ -57,15 +57,12 @@ const initCommand: SlashCommand = {
 Focus on practical, actionable improvements that make the file more useful for future AI assistants.`;
 
         // 使用 chat 方法让 Agent 可以调用工具
-        const result = await agent.chat(
-          analysisPrompt,
-          {
-            messages: [],
-            userId: 'cli-user',
-            sessionId: context.sessionId || 'init-session',
-            workspaceRoot: cwd,
-          }
-        );
+        const result = await agent.chat(analysisPrompt, {
+          messages: [],
+          userId: 'cli-user',
+          sessionId: context.sessionId || 'init-session',
+          workspaceRoot: cwd,
+        });
 
         addAssistantMessage(result);
 
@@ -116,15 +113,12 @@ Focus on practical, actionable improvements that make the file more useful for f
 After analysis, write the complete BLADE.md content to ${blademdPath}.`;
 
       // 使用 chat 方法让 Agent 可以调用工具
-      const generatedContent = await agent.chat(
-        analysisPrompt,
-        {
-          messages: [],
-          userId: 'cli-user',
-          sessionId: context.sessionId || 'init-session',
-          workspaceRoot: cwd,
-        }
-      );
+      const generatedContent = await agent.chat(analysisPrompt, {
+        messages: [],
+        userId: 'cli-user',
+        sessionId: context.sessionId || 'init-session',
+        workspaceRoot: cwd,
+      });
 
       // 写入生成的内容
       await fs.writeFile(blademdPath, generatedContent, 'utf-8');
