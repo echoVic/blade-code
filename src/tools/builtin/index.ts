@@ -12,7 +12,7 @@ import { editTool, readTool, undoEditTool, writeTool } from './file/index.js';
 // Plan 工具
 import { exitPlanModeTool } from './plan/index.js';
 // 搜索工具 - 新版本（基于 Zod）
-import { findTool, globTool, grepTool } from './search/index.js';
+import { globTool, grepTool } from './search/index.js';
 // Shell 命令工具 - 新版本（基于 Zod）
 import {
   bashOutputTool,
@@ -62,7 +62,6 @@ export async function getBuiltinTools(opts?: {
     // 搜索工具
     globTool,
     grepTool,
-    findTool,
 
     // Shell 命令工具
     bashTool,

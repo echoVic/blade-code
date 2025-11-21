@@ -8,50 +8,13 @@ import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { BackgroundShellManager } from './BackgroundShellManager.js';
 
 /**
- * Bash 会话上下文 (用于环境变量和工作目录复用)
- */
-interface BashSessionContext {
-  cwd?: string;
-  env?: Record<string, string>;
-}
-
-/**
- * Bash 会话管理器 - 仅存储上下文信息,不维护持久进程
- */
-class BashSessionManager {
-  private static instance: BashSessionManager;
-  private sessionContexts: Map<string, BashSessionContext> = new Map();
-
-  static getInstance(): BashSessionManager {
-    if (!BashSessionManager.instance) {
-      BashSessionManager.instance = new BashSessionManager();
-    }
-    return BashSessionManager.instance;
-  }
-
-  getOrCreateContext(
-    sessionId: string,
-    cwd?: string,
-    env?: Record<string, string>
-  ): BashSessionContext {
-    if (!this.sessionContexts.has(sessionId)) {
-      this.sessionContexts.set(sessionId, { cwd, env });
-    }
-    return this.sessionContexts.get(sessionId)!;
-  }
-
-  closeSession(sessionId: string): boolean {
-    return this.sessionContexts.delete(sessionId);
-  }
-
-  getAllSessions(): string[] {
-    return Array.from(this.sessionContexts.keys());
-  }
-}
-
-/**
- * BashTool - Shell 命令执行工具
- * 采用业界标准做法:非交互式执行 + 进程事件监听
+ * Bash Tool - Shell 命令执行工具
+ *
+ * 设计理念：
+ * - 每次命令独立执行（非持久会话）
+ * - 工作目录通过 cwd 参数临时设置，或通过 `cd && command` 命令链持久改变
+ * - 环境变量通过 env 参数临时设置，或通过 `export` 命令持久改变
+ * - 后台进程使用唯一 ID 管理
  */
 export const bashTool = createTool({
   name: 'Bash',
@@ -63,12 +26,11 @@ export const bashTool = createTool({
     command: ToolSchemas.command({
       description: '要执行的 bash 命令',
     }),
-    session_id: z
+    timeout: ToolSchemas.timeout(1000, 300000, 30000),
+    cwd: z
       .string()
       .optional()
-      .describe('会话 ID(可选,用于复用环境变量和工作目录)'),
-    timeout: ToolSchemas.timeout(1000, 300000, 30000),
-    cwd: z.string().optional().describe('工作目录(可选)'),
+      .describe('工作目录(可选,仅对当前命令生效。持久改变请使用 cd 命令)'),
     env: ToolSchemas.environment(),
     run_in_background: z
       .boolean()
@@ -78,13 +40,14 @@ export const bashTool = createTool({
 
   // 工具描述
   description: {
-    short: '执行 bash 命令,支持环境变量和工作目录复用',
-    long: `使用非交互式 bash 执行命令。支持通过 session_id 复用环境变量和工作目录。每个命令独立执行,通过进程事件可靠地检测完成状态。`,
+    short: '执行 bash 命令,支持环境变量和工作目录设置',
+    long: `使用非交互式 bash 执行命令。每个命令独立执行,通过进程事件可靠地检测完成状态。工作目录和环境变量可通过参数临时设置,或通过 cd/export 命令持久改变。`,
     usageNotes: [
       'IMPORTANT: 此工具用于终端操作(git, npm, docker 等)',
       'DO NOT 用于文件操作(读、写、编辑、搜索) - 应使用专用工具',
       'command 参数是必需的',
-      '可通过 session_id 复用环境变量和工作目录',
+      '使用 cd 命令改变工作目录,使用 export 设置环境变量(持久生效)',
+      'cwd 和 env 参数仅对当前命令生效(临时覆盖)',
       'timeout 默认 30 秒,最长 5 分钟',
       'run_in_background 用于长时间运行的命令',
       '文件路径包含空格时必须用双引号括起来',
@@ -96,10 +59,16 @@ export const bashTool = createTool({
         params: { command: 'ls -la' },
       },
       {
-        description: '在特定目录执行命令',
+        description: '临时改变工作目录(仅本次命令)',
         params: {
           command: 'npm install',
           cwd: '/path/to/project',
+        },
+      },
+      {
+        description: '持久改变工作目录',
+        params: {
+          command: 'cd /path/to/project && npm install',
         },
       },
       {
@@ -107,13 +76,6 @@ export const bashTool = createTool({
         params: {
           command: 'npm run dev',
           run_in_background: true,
-        },
-      },
-      {
-        description: '复用会话上下文',
-        params: {
-          command: 'git status',
-          session_id: 'my-session',
         },
       },
     ],
@@ -126,41 +88,17 @@ export const bashTool = createTool({
 
   // 执行函数
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
-    const {
-      command,
-      session_id,
-      timeout = 30000,
-      cwd,
-      env,
-      run_in_background = false,
-    } = params;
+    const { command, timeout = 30000, cwd, env, run_in_background = false } = params;
     const { updateOutput } = context;
     const signal = context.signal ?? new AbortController().signal;
 
     try {
-      const sessionManager = BashSessionManager.getInstance();
-      const actualSessionId = session_id || randomUUID();
-
-      // 获取或创建会话上下文
-      const sessionContext = sessionManager.getOrCreateContext(
-        actualSessionId,
-        cwd,
-        env
-      );
-
       updateOutput?.(`执行 Bash 命令: ${command}`);
 
       if (run_in_background) {
-        return executeInBackground(command, actualSessionId, sessionContext);
+        return executeInBackground(command, cwd, env);
       } else {
-        return executeWithTimeout(
-          command,
-          actualSessionId,
-          sessionContext,
-          timeout,
-          signal,
-          updateOutput
-        );
+        return executeWithTimeout(command, cwd, env, timeout, signal, updateOutput);
       }
     } catch (error: unknown) {
       const err = error as Error;
@@ -194,13 +132,11 @@ export const bashTool = createTool({
   tags: ['bash', 'shell', 'non-interactive', 'event-driven'],
 
   /**
-   * 提取签名内容：使用 mainCommand:fullCommand 格式
-   * 这样可以与 abstractPermissionRule 生成的规则格式匹配
+   * 提取签名内容：返回完整命令
+   * 用于显示和权限签名构建
    */
   extractSignatureContent: (params) => {
-    const command = params.command.trim();
-    const mainCommand = command.split(/\s+/)[0];
-    return `${mainCommand}:${command}`;
+    return params.command.trim();
   },
 
   /**
@@ -218,22 +154,21 @@ export const bashTool = createTool({
  */
 function executeInBackground(
   command: string,
-  sessionId: string,
-  sessionContext: BashSessionContext
+  cwd?: string,
+  env?: Record<string, string>
 ): ToolResult {
   const manager = BackgroundShellManager.getInstance();
   const backgroundProcess = manager.startBackgroundProcess({
     command,
-    sessionId,
-    cwd: sessionContext.cwd || process.cwd(),
-    env: sessionContext.env,
+    sessionId: randomUUID(), // 每个后台进程使用唯一 ID
+    cwd: cwd || process.cwd(),
+    env,
   });
 
   const cmdPreview = command.length > 30 ? `${command.substring(0, 30)}...` : command;
   const summary = `后台启动命令: ${cmdPreview}`;
 
   const metadata = {
-    session_id: sessionId,
     command,
     background: true,
     pid: backgroundProcess.pid,
@@ -245,7 +180,6 @@ function executeInBackground(
 
   const displayMessage =
     `✅ 命令已在后台启动\n` +
-    `🔑 会话 ID: ${sessionId}\n` +
     `🆔 进程 ID: ${backgroundProcess.pid}\n` +
     `💡 Bash ID: ${backgroundProcess.id}\n` +
     `⚠️ 使用 BashOutput/KillShell 管理后台进程`;
@@ -253,7 +187,6 @@ function executeInBackground(
   return {
     success: true,
     llmContent: {
-      session_id: sessionId,
       command,
       background: true,
       pid: backgroundProcess.pid,
@@ -270,8 +203,8 @@ function executeInBackground(
  */
 async function executeWithTimeout(
   command: string,
-  sessionId: string,
-  sessionContext: BashSessionContext,
+  cwd: string | undefined,
+  env: Record<string, string> | undefined,
   timeout: number,
   signal: AbortSignal,
   updateOutput?: (output: string) => void
@@ -284,8 +217,8 @@ async function executeWithTimeout(
 
     // 创建进程
     const bashProcess = spawn('bash', ['-c', command], {
-      cwd: sessionContext.cwd || process.cwd(),
-      env: { ...process.env, ...sessionContext.env, BLADE_CLI: '1' },
+      cwd: cwd || process.cwd(),
+      env: { ...process.env, ...env, BLADE_CLI: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -348,7 +281,6 @@ async function executeWithTimeout(
             message: '命令执行超时',
           },
           metadata: {
-            session_id: sessionId,
             command,
             timeout: true,
             stdout,
@@ -370,7 +302,6 @@ async function executeWithTimeout(
             message: '操作被中止',
           },
           metadata: {
-            session_id: sessionId,
             command,
             aborted: true,
             stdout,
@@ -391,7 +322,6 @@ async function executeWithTimeout(
           : `执行命令完成 (退出码 ${code}, ${executionTime}ms): ${cmdPreview}`;
 
       const metadata = {
-        session_id: sessionId,
         command,
         execution_time: executionTime,
         exit_code: code,
@@ -405,7 +335,6 @@ async function executeWithTimeout(
       const displayMessage = formatDisplayMessage({
         stdout,
         stderr,
-        session_id: sessionId,
         command,
         execution_time: executionTime,
         exit_code: code,
@@ -418,7 +347,6 @@ async function executeWithTimeout(
         llmContent: {
           stdout: stdout.trim(),
           stderr: stderr.trim(),
-          session_id: sessionId,
           execution_time: executionTime,
           exit_code: code,
           signal: sig,
@@ -458,17 +386,14 @@ async function executeWithTimeout(
 function formatDisplayMessage(result: {
   stdout: string;
   stderr: string;
-  session_id: string;
   command: string;
   execution_time: number;
   exit_code: number | null;
   signal: NodeJS.Signals | null;
 }): string {
-  const { stdout, stderr, session_id, command, execution_time, exit_code, signal } =
-    result;
+  const { stdout, stderr, command, execution_time, exit_code, signal } = result;
 
   let message = `✅ Bash 命令执行完成: ${command}`;
-  message += `\n🔑 会话 ID: ${session_id}`;
   message += `\n⏱️ 执行时间: ${execution_time}ms`;
   message += `\n📊 退出码: ${exit_code ?? 'N/A'}`;
 
@@ -486,6 +411,3 @@ function formatDisplayMessage(result: {
 
   return message;
 }
-
-// 导出会话管理器供其他工具使用
-export { BashSessionManager };

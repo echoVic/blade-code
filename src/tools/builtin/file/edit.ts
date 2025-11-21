@@ -50,8 +50,9 @@ export const editTool = createTool({
       'You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.',
       'When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.',
       'ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.',
-      '**The edit will FAIL if old_string is not unique in the file.** Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.',
+      '**The edit will FAIL if old_string is not unique in the file.** To minimize retries: Include 3-5 lines of surrounding context including function/class names. Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.',
       'Use replace_all for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.',
+      '**Auto-retry is normal**: If the edit fails due to multiple matches, the system expects you to automatically retry with more context. This typically resolves in 1-2 attempts.',
     ],
     examples: [
       {
@@ -205,15 +206,15 @@ export const editTool = createTool({
         console.log(`[SmartEdit] 使用策略: ${matchResult.strategy}`);
       }
 
-      // 使用实际匹配的字符串查找所有位置
-      const matches = findMatches(content, old_string);
+      // 使用实际匹配的字符串查找所有位置（传入已匹配的字符串，避免重复 smartMatch）
+      const matches = findMatchesWithActual(content, actualString);
 
       // 🔴 对齐 Claude Code 官方：多重匹配时直接失败
       if (matches.length > 1 && !replace_all) {
-        // 计算每个匹配项的行号
+        // 计算每个匹配项的行号和上下文预览
         const lines = content.split('\n');
         let currentPos = 0;
-        const matchLocations: { line: number; column: number }[] = [];
+        const matchLocations: { line: number; column: number; context: string }[] = [];
 
         for (let lineNum = 0; lineNum < lines.length; lineNum++) {
           const line = lines[lineNum];
@@ -223,9 +224,19 @@ export const editTool = createTool({
           // matches 是索引数组
           for (const matchIndex of matches) {
             if (matchIndex >= lineStart && matchIndex < lineEnd) {
+              // 获取周围1行作为上下文预览
+              const contextStart = Math.max(0, lineNum - 1);
+              const contextEnd = Math.min(lines.length - 1, lineNum + 1);
+              const contextLines = lines.slice(contextStart, contextEnd + 1);
+              const contextPreview = contextLines
+                .map((l) => l.trim())
+                .join(' ')
+                .slice(0, 80); // 限制长度
+
               matchLocations.push({
                 line: lineNum + 1,
                 column: matchIndex - lineStart + 1,
+                context: contextPreview,
               });
             }
           }
@@ -233,20 +244,57 @@ export const editTool = createTool({
           currentPos = lineEnd + 1; // +1 for newline character
         }
 
-        // 生成位置列表
-        const locationsList = matchLocations
-          .map((loc) => `行 ${loc.line}:${loc.column}`)
-          .join(', ');
+        // LLM 友好的错误消息（引导性、鼓励重试）
+        const llmMessage = [
+          `⚠️  EDIT PAUSED: old_string matches ${matches.length} locations (must be unique).`,
+          ``,
+          `**Matches found at:**`,
+          ...matchLocations.map((loc, idx) => `  ${idx + 1}. Line ${loc.line}`),
+          ``,
+          `**Action Required:** Add 3-5 lines of surrounding context to make old_string unique.`,
+          ``,
+          `**Tips for quick success:**`,
+          `• Include the function/class name that wraps the target code`,
+          `• Add 2-3 lines before and after the target`,
+          `• Include unique comments or variable names nearby`,
+          `• Or use replace_all=true to change all ${matches.length} occurrences`,
+          ``,
+          `🤖 **Auto-retry expected** - This usually resolves in 1-2 attempts.`,
+        ].join('\n');
+
+        // 用户友好的显示消息（清晰、鼓励性）
+        const displayMessage = [
+          `⚠️  编辑暂停：需要更精确的定位`,
+          ``,
+          `在文件中找到 ${matches.length} 处相似代码：`,
+          ...matchLocations.map(
+            (loc, idx) => `  • 第 ${loc.line} 行 (匹配 ${idx + 1}/${matches.length})`
+          ),
+          ``,
+          `AI 正在自动调整，添加更多上下文以精确定位...`,
+          `通常需要 1-2 次尝试即可成功`,
+          ``,
+          `💡 如果多次失败，可能需要：`,
+          `   • 包含函数/类名等独特标识符`,
+          `   • 添加目标代码前后 3-5 行完整上下文`,
+          `   • 或使用 replace_all=true 同时替换所有 ${matches.length} 处匹配`,
+        ].join('\n');
 
         // 直接失败（对齐 Claude Code 官方行为）
         return {
           success: false,
-          llmContent: `The edit will FAIL if old_string is not unique in the file. Found ${matches.length} matches at: ${locationsList}. Either provide a larger string with more surrounding context to make it unique or use replace_all=true.`,
-          displayContent: `❌ 编辑失败：old_string 不唯一\n\n找到 ${matches.length} 个匹配项:\n${locationsList}\n\n💡 解决方案:\n1. 提供更多周围代码以确保唯一性\n2. 或使用 replace_all=true 替换所有匹配项`,
+          llmContent: llmMessage,
+          displayContent: displayMessage,
           error: {
             type: ToolErrorType.VALIDATION_ERROR,
             message: 'old_string is not unique',
-            details: { matches: matchLocations, count: matches.length },
+            details: {
+              matches: matchLocations.map((loc) => ({
+                line: loc.line,
+                column: loc.column,
+              })),
+              count: matches.length,
+            },
           },
         };
       } else {
@@ -432,7 +480,13 @@ function smartMatch(content: string, searchString: string): MatchResult {
 }
 
 /**
- * 查找所有匹配项的位置
+ * 查找所有匹配项的位置（非重叠匹配）
+ * 与实际替换方式保持一致：split/join 或 substring 都是非重叠的
+ *
+ * 示例：
+ * - content = 'aaaa', searchString = 'aa'
+ * - 重叠匹配会找到 3 个：位置 0, 1, 2
+ * - 非重叠匹配只找到 2 个：位置 0, 2（与 split/join 一致）
  */
 function findMatches(content: string, searchString: string): number[] {
   // 先尝试智能匹配
@@ -441,15 +495,28 @@ function findMatches(content: string, searchString: string): number[] {
     return []; // 未找到匹配
   }
 
-  const actualString = matchResult.matched;
+  return findMatchesWithActual(content, matchResult.matched);
+}
 
-  // 使用实际匹配的字符串查找所有位置
+/**
+ * 使用已知的匹配字符串查找所有位置（避免重复 smartMatch）
+ * 内部辅助函数，用于优化性能
+ */
+function findMatchesWithActual(content: string, actualString: string): number[] {
+  // 防御性检查：空字符串会导致死循环
+  if (actualString.length === 0) {
+    return [];
+  }
+
+  // 使用非重叠匹配：每次找到后跳过整个匹配长度
+  // 这与 split/join 和 substring 替换方式一致
   const matches: number[] = [];
   let index = content.indexOf(actualString);
 
   while (index !== -1) {
     matches.push(index);
-    index = content.indexOf(actualString, index + 1);
+    // 跳过整个匹配长度，避免重叠（对齐实际替换行为）
+    index = content.indexOf(actualString, index + actualString.length);
   }
 
   return matches;
@@ -663,13 +730,15 @@ function findFuzzyMatches(
  * 返回 0-1 之间的值,1 表示完全相同
  */
 function calculateSimilarity(str1: string, str2: string): number {
-  // 标准化:移除多余空格,统一引号
+  // 标准化:移除多余空格,统一引号（包括智能引号）
   const normalize = (s: string) =>
     s
       .trim()
       .replace(/\s+/g, ' ')
-      .replace(/[""]/g, '"')
-      .replace(/['']/g, "'");
+      // 统一智能双引号 (\u201c \u201d) 和直引号 (") → "
+      .replace(/[\u201c\u201d"]/g, '"')
+      // 统一智能单引号 (\u2018 \u2019) 和直引号 (') → '
+      .replace(/[\u2018\u2019']/g, "'");
 
   const s1 = normalize(str1);
   const s2 = normalize(str2);

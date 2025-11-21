@@ -39,9 +39,62 @@ export const DEFAULT_CONFIG: BladeConfig = {
 
   // 权限
   permissions: {
-    allow: [],
+    allow: [
+      // 🔍 安全的系统信息命令（无需确认）
+      'Bash(pwd)',
+      'Bash(which *)',
+      'Bash(whoami)',
+      'Bash(hostname)',
+      'Bash(uname *)',
+      'Bash(date)',
+      'Bash(echo *)',
+
+      // 📁 目录列表（推荐使用 Glob 工具，但允许 ls 作为降级）
+      'Bash(ls *)',
+      'Bash(tree *)',
+
+      // 🔀 Git 只读命令（无需确认）
+      'Bash(git status)',
+      'Bash(git log *)',
+      'Bash(git diff *)',
+      'Bash(git branch *)',
+      'Bash(git show *)',
+      'Bash(git remote *)',
+
+      // 📦 包管理器只读命令（无需确认）
+      'Bash(npm list *)',
+      'Bash(npm view *)',
+      'Bash(npm outdated *)',
+      'Bash(pnpm list *)',
+      'Bash(yarn list *)',
+      'Bash(pip list *)',
+      'Bash(pip show *)',
+
+      // ⚠️ 注意：以下命令已从 allow 列表移除，因为有专用工具：
+      // - cat/head/tail → 使用 Read 工具
+      // - grep → 使用 Grep 工具
+      // - find → 使用 Glob 工具
+      // LLM 调用这些命令时会触发权限确认，提示使用专用工具
+
+      // 🏗️ 常见的构建/测试命令（默认需要确认）
+      // 用户可以在本地配置中添加到 allow 列表以信任特定项目
+      // 'Bash(npm install *)',
+      // 'Bash(npm test *)',
+      // 'Bash(npm run build *)',
+      // 'Bash(npm run lint *)',
+    ],
     ask: [],
-    deny: ['Read(./.env)', 'Read(./.env.*)'],
+    deny: [
+      // 🔒 敏感文件读取
+      'Read(./.env)',
+      'Read(./.env.*)',
+
+      // ⚠️ 危险命令（明确拒绝）
+      'Bash(rm -rf /)',
+      'Bash(rm -rf /*)',
+      'Bash(sudo *)',
+      'Bash(chmod 777 *)',
+    ],
   },
   permissionMode: PermissionMode.DEFAULT,
 

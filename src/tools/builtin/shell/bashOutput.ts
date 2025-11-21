@@ -55,6 +55,27 @@ export const bashOutputTool = createTool({
 
   async execute(params, _context: ExecutionContext): Promise<ToolResult> {
     const manager = BackgroundShellManager.getInstance();
+
+    // 🔴 关键修复：先校验正则表达式,再消费输出
+    // 避免正则非法时已经清空缓冲区,导致数据丢失
+    let regex: RegExp | undefined;
+    if (params.filter) {
+      try {
+        regex = new RegExp(params.filter);
+      } catch (error: unknown) {
+        return {
+          success: false,
+          llmContent: `无效的正则表达式: ${params.filter}\n\n💡 输出未被消费,可重新尝试`,
+          displayContent: `❌ 无效的正则表达式: ${params.filter}\n\n💡 输出未被消费,可重新尝试`,
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: (error as Error).message,
+          },
+        };
+      }
+    }
+
+    // 校验通过后,再消费输出
     const snapshot = manager.consumeOutput(params.bash_id);
 
     if (!snapshot) {
@@ -67,23 +88,6 @@ export const bashOutputTool = createTool({
           message: 'Bash 会话不存在或已清理',
         },
       };
-    }
-
-    let regex: RegExp | undefined;
-    if (params.filter) {
-      try {
-        regex = new RegExp(params.filter);
-      } catch (error: unknown) {
-        return {
-          success: false,
-          llmContent: `无效的正则表达式: ${params.filter}`,
-          displayContent: `❌ 无效的正则表达式: ${params.filter}`,
-          error: {
-            type: ToolErrorType.VALIDATION_ERROR,
-            message: (error as Error).message,
-          },
-        };
-      }
     }
 
     const { stdoutLines, stderrLines } = applyFilter(snapshot, regex);
@@ -115,17 +119,31 @@ export const bashOutputTool = createTool({
   category: '命令工具',
   tags: ['bash', 'shell', 'monitor'],
 
-  extractSignatureContent: (params) => `bash:${params.bash_id}`,
-  abstractPermissionRule: () => 'bash:output',
+  /**
+   * 提取签名内容：返回 bash ID
+   * 用于显示和权限签名构建
+   */
+  extractSignatureContent: (params) => params.bash_id,
+
+  /**
+   * 抽象权限规则：返回通配符格式(只读工具通常自动批准)
+   */
+  abstractPermissionRule: () => '*',
 });
 
 function applyFilter(snapshot: ShellOutputSnapshot, regex?: RegExp) {
-  const stdoutLines = splitLines(snapshot.stdout).filter((line) =>
-    regex ? regex.test(line) : true
-  );
-  const stderrLines = splitLines(snapshot.stderr).filter((line) =>
-    regex ? regex.test(line) : true
-  );
+  // 🔴 关键修复：重置 lastIndex 防止全局标志污染
+  // 如果正则包含 g 或 y 标志，多次 test() 会推进 lastIndex，导致后续行被跳过
+  const stdoutLines = splitLines(snapshot.stdout).filter((line) => {
+    if (!regex) return true;
+    regex.lastIndex = 0; // 每次测试前重置
+    return regex.test(line);
+  });
+  const stderrLines = splitLines(snapshot.stderr).filter((line) => {
+    if (!regex) return true;
+    regex.lastIndex = 0; // 每次测试前重置
+    return regex.test(line);
+  });
 
   return {
     stdoutLines,
