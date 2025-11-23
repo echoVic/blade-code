@@ -19,42 +19,59 @@ const initCommand: SlashCommand = {
     try {
       const { cwd, addAssistantMessage } = context;
 
-      // 检查是否已存在 BLADE.md
+      // 检查是否已存在有效的 BLADE.md（非空文件）
       const blademdPath = path.join(cwd, 'BLADE.md');
-      const exists = await fs
-        .access(blademdPath)
-        .then(() => true)
-        .catch(() => false);
+      let exists = false;
+      let isEmpty = false;
 
-      if (exists) {
+      try {
+        const stat = await fs.stat(blademdPath);
+        exists = stat.isFile();
+
+        if (exists) {
+          const content = await fs.readFile(blademdPath, 'utf-8');
+          // 只有完全空白的文件才视为无效，任何有内容的文件都应保留并分析
+          isEmpty = content.trim().length === 0;
+        }
+      } catch {
+        // 文件不存在
+        exists = false;
+      }
+
+      if (exists && !isEmpty) {
         addAssistantMessage('⚠️ BLADE.md 已存在。');
         addAssistantMessage('💡 正在分析现有文件并提供改进建议...');
 
         // 创建 Agent 并分析现有文件
         const agent = await Agent.create();
-        const analysisPrompt = `Please analyze the existing BLADE.md file and suggest improvements.
+        const analysisPrompt = `Please analyze the existing BLADE.md file and provide improvement suggestions.
+
+**Important**:
+- After each step, briefly describe what you found before proceeding
+- DO NOT create new files or modify the existing BLADE.md
+- Return only your analysis and suggestions as TEXT
 
 **Step-by-step process:**
 
-1. Read the current BLADE.md file at ${blademdPath}
+1. Read the current BLADE.md file at ${blademdPath} and summarize its current structure
 
-2. Read package.json to check for:
-   - New scripts or commands not documented
+2. Read package.json and note:
+   - Any new scripts or commands not documented
    - New dependencies that might need explanation
-   - Changed project structure
+   - Changes in project structure
 
-3. Explore the codebase to identify:
+3. Explore the codebase (use Glob/Grep instead of find/grep commands) to identify:
    - Missing architectural information
    - Undocumented patterns or conventions
    - Important files or directories not mentioned
 
-4. Provide feedback:
-   - What's good about the current BLADE.md
-   - What's missing or outdated
-   - Suggested improvements (with specific examples)
-   - If significant changes needed, provide an updated version
+4. Provide comprehensive feedback in Chinese:
+   - 当前 BLADE.md 的优点
+   - 缺失或过时的内容
+   - 具体的改进建议（附带示例）
+   - 如果需要重大修改，提供完整的改进版本内容
 
-Focus on practical, actionable improvements that make the file more useful for future AI assistants.`;
+**Final output**: Return your analysis and suggestions as plain text. Do NOT use Write tool.`;
 
         // 使用 chat 方法让 Agent 可以调用工具
         const result = await agent.chat(analysisPrompt, {
@@ -72,45 +89,48 @@ Focus on practical, actionable improvements that make the file more useful for f
         };
       }
 
-      // 创建空文件并显示进度
-      await fs.writeFile(blademdPath, '', 'utf-8');
-      addAssistantMessage('✅ 已创建空的 BLADE.md 文件');
+      // 显示适当的提示消息
+      if (isEmpty) {
+        addAssistantMessage('⚠️ 检测到空的 BLADE.md 文件，将重新生成...');
+      }
       addAssistantMessage('🔍 正在分析项目结构...');
 
       // 创建 Agent 并生成内容
       const agent = await Agent.create();
-      const analysisPrompt = `Please analyze this codebase and create a BLADE.md file.
+      const analysisPrompt = `Please analyze this codebase and generate BLADE.md content.
+
+**Important**: After each step, briefly describe what you found before proceeding.
 
 **Step-by-step process:**
 
-1. First, read package.json to understand:
+1. Read package.json and summarize:
    - Project name and type
-   - Dependencies and frameworks
+   - Key dependencies and frameworks
    - Available scripts (build, test, lint, etc.)
 
-2. Explore the project structure:
-   - Find the main entry point
-   - Identify key directories (src, tests, config, etc.)
-   - Look for common patterns (React components, API routes, etc.)
+2. Explore the project structure and note:
+   - Main entry point
+   - Key directories (src, tests, config, etc.)
+   - Common patterns (React components, API routes, etc.)
 
-3. Analyze the architecture:
-   - How is the code organized?
-   - What are the main modules/components?
-   - How do different parts interact?
+3. Analyze the architecture and identify:
+   - How the code is organized
+   - Main modules/components
+   - How different parts interact
 
-4. Generate BLADE.md with:
+4. Generate the final BLADE.md content with:
    - Project overview (type, languages, frameworks)
    - Essential commands (from package.json scripts)
    - Architecture overview (structure, patterns, relationships)
    - Development guidelines (testing, building, deploying)
 
 **Format requirements:**
-- Start with: "# BLADE.md\\n\\n你是一个专门帮助 [项目类型] 开发者的助手。"
+- Start with: "# BLADE.md\\n\\nalways respond in Chinese\\n\\n你是一个专门帮助 [项目类型] 开发者的助手。"
 - Include actual working commands
 - Focus on non-obvious insights
 - Be concise but comprehensive
 
-After analysis, write the complete BLADE.md content to ${blademdPath}.`;
+**Final output**: Return ONLY the complete BLADE.md content (markdown format), ready to be written to the file.`;
 
       // 使用 chat 方法让 Agent 可以调用工具
       const generatedContent = await agent.chat(analysisPrompt, {
@@ -120,9 +140,15 @@ After analysis, write the complete BLADE.md content to ${blademdPath}.`;
         workspaceRoot: cwd,
       });
 
+      // 验证生成内容的有效性（至少应该有基本的标题和内容）
+      if (!generatedContent || generatedContent.trim().length === 0) {
+        throw new Error('Agent 未能生成有效的 BLADE.md 内容');
+      }
+
       // 写入生成的内容
+      addAssistantMessage('✨ 正在写入 BLADE.md...');
       await fs.writeFile(blademdPath, generatedContent, 'utf-8');
-      addAssistantMessage('✅ 已生成 BLADE.md 文件');
+      addAssistantMessage('✅ 已成功生成 BLADE.md 文件');
 
       return {
         success: true,
