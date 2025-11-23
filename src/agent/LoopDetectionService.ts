@@ -202,15 +202,47 @@ export class LoopDetectionService {
 
   /**
    * 检测连续空响应（LLM 陷入沉默循环）
+   *
+   * 关键改进：
+   * 1. 区分"完全空响应"和"仅工具调用响应"
+   *    - 仅工具调用（无 content 但有 tool_calls）是正常的探索行为
+   *    - 既无 content 也无 tool_calls 才是真正的异常
+   * 2. 只统计 assistant 消息，用户消息不影响计数
+   *    - 修复：之前在遇到用户消息时重置计数，导致永远无法累积
    */
   private detectSilentLoop(messages: Message[]): boolean {
-    const recent = messages.slice(-10);
-    const emptyCount = recent.filter(
-      (m) => m.role === 'assistant' && (!m.content || m.content.trim() === '')
-    ).length;
+    // 只提取最近的 assistant 消息
+    const recentAssistantMessages = messages
+      .slice(-20) // 扩大窗口到最近 20 条消息
+      .filter((m) => m.role === 'assistant')
+      .slice(-10); // 取最近 10 条 assistant 消息
 
-    // 连续 5 次以上空响应 → 异常
-    return emptyCount >= 5;
+    if (recentAssistantMessages.length < 5) {
+      return false; // 消息不足，无法判断
+    }
+
+    // 统计连续的真正空响应（既无 content 也无 tool_calls）
+    let consecutiveEmpty = 0;
+
+    for (const msg of recentAssistantMessages.reverse()) {
+      const hasContent = msg.content && msg.content.trim() !== '';
+      const hasToolCalls = msg.tool_calls && msg.tool_calls.length > 0;
+
+      if (hasContent || hasToolCalls) {
+        // 有内容或工具调用，重置计数
+        consecutiveEmpty = 0;
+      } else {
+        // 真正的空响应
+        consecutiveEmpty++;
+      }
+
+      // 连续 5 次真正的空响应 → 异常
+      if (consecutiveEmpty >= 5) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
