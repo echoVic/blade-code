@@ -98,8 +98,17 @@ export const DEFAULT_CONFIG: BladeConfig = {
   },
   permissionMode: PermissionMode.DEFAULT,
 
-  // Hooks
-  hooks: {},
+  // Hooks (默认禁用)
+  hooks: {
+    enabled: false,
+    defaultTimeout: 60,
+    timeoutBehavior: 'ignore',
+    failureBehavior: 'ignore',
+    maxConcurrentHooks: 5,
+    PreToolUse: [],
+    PostToolUse: [],
+    Stop: [],
+  },
 
   // 环境变量
   env: {},

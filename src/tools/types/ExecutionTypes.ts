@@ -68,6 +68,9 @@ export interface ToolExecutionInternalState {
   needsConfirmation?: boolean;
   confirmationReason?: string;
   permissionSignature?: string;
+
+  // HookStage 设置
+  hookToolUseId?: string; // 用于关联 PreToolUse 和 PostToolUse 事件
 }
 
 /**

@@ -39,6 +39,13 @@ export enum PermissionMode {
 }
 
 /**
+ * Hooks 配置
+ * 导入自 hooks 模块
+ */
+import type { HookConfig as HookConfigType } from '../hooks/types/HookTypes.js';
+export type HookConfig = HookConfigType;
+
+/**
  * 单个模型配置
  */
 export interface ModelConfig {
@@ -115,14 +122,6 @@ export interface PermissionConfig {
   allow: string[];
   ask: string[];
   deny: string[];
-}
-
-/**
- * Hooks 配置
- */
-export interface HookConfig {
-  PreToolUse?: Record<string, string>;
-  PostToolUse?: Record<string, string>;
 }
 
 /**

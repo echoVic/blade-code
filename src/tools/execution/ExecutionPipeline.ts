@@ -18,9 +18,12 @@ import {
   FormattingStage,
   PermissionStage,
 } from './PipelineStages.js';
+import { HookStage } from '../../hooks/HookStage.js';
+import { PostToolUseHookStage } from '../../hooks/PostToolUseHookStage.js';
 
 /**
- * 5阶段执行管道
+ * 7阶段执行管道
+ * Discovery → Permission → Hook(Pre) → Confirmation → Execution → PostHook → Formatting
  */
 export class ExecutionPipeline extends EventEmitter {
   private stages: PipelineStage[];
@@ -44,7 +47,7 @@ export class ExecutionPipeline extends EventEmitter {
     };
     const permissionMode = config.permissionMode ?? PermissionMode.DEFAULT;
 
-    // 初始化5个执行阶段
+    // 初始化7个执行阶段
     const permissionStage = new PermissionStage(
       permissionConfig,
       this.sessionApprovals,
@@ -54,11 +57,13 @@ export class ExecutionPipeline extends EventEmitter {
     this.stages = [
       new DiscoveryStage(this.registry), // 工具发现
       permissionStage, // 权限检查（含 Zod 验证和默认值处理）
+      new HookStage(), // Hook 检查（PreToolUse hooks）
       new ConfirmationStage(
         this.sessionApprovals,
         permissionStage.getPermissionChecker()
       ), // 用户确认
       new ExecutionStage(), // 实际执行
+      new PostToolUseHookStage(), // PostToolUse hooks
       new FormattingStage(), // 结果格式化
     ];
   }

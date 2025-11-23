@@ -5,6 +5,7 @@ import type { GlobalOptions } from '../cli/types.js';
 import { ConfigManager, mergeRuntimeConfig } from '../config/ConfigManager.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import type { RuntimeConfig } from '../config/types.js';
+import { HookManager } from '../hooks/HookManager.js';
 import { Logger } from '../logging/Logger.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
@@ -70,6 +71,20 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
         // 静默失败，不影响应用启动
         if (props.debug) {
           console.warn('⚠️ Subagents 加载失败:', formatErrorMessage(error));
+        }
+      }
+
+      // 6. 初始化 HookManager
+      try {
+        const hookManager = HookManager.getInstance();
+        hookManager.loadConfig(mergedConfig.hooks || {});
+        if (props.debug && mergedConfig.hooks?.enabled) {
+          console.log('✓ Hooks 系统已启用');
+        }
+      } catch (error) {
+        // 静默失败，不影响应用启动
+        if (props.debug) {
+          console.warn('⚠️ Hooks 初始化失败:', formatErrorMessage(error));
         }
       }
 
