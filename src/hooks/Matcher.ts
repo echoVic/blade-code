@@ -5,7 +5,7 @@
  */
 
 import picomatch from 'picomatch';
-import type { MatcherConfig, MatchContext } from './types/HookTypes.js';
+import type { MatchContext, MatcherConfig } from './types/HookTypes.js';
 
 /**
  * Hook Matcher

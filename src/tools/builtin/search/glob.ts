@@ -1,11 +1,24 @@
-import { promises as fs } from 'fs';
-import { join, relative, resolve } from 'path';
+import type { Entry } from 'fast-glob';
+import fg from 'fast-glob';
+import type { Stats } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import { Readable } from 'node:stream';
+import { join, resolve } from 'path';
 import { z } from 'zod';
 import { FileFilter } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
+
+/**
+ * 创建标准的 AbortError
+ */
+function createAbortError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
+}
 
 /**
  * 文件匹配结果
@@ -105,7 +118,7 @@ export const globTool = createTool({
       // 验证搜索路径存在
       const searchPath = resolve(path);
       try {
-        const stats = await fs.stat(searchPath);
+        const stats = await stat(searchPath);
         if (!stats.isDirectory()) {
           return {
             success: false,
@@ -134,15 +147,18 @@ export const globTool = createTool({
 
       signal.throwIfAborted();
 
-      // 创建文件过滤器
-      const fileFilter = new FileFilter({
+      // 创建文件过滤器（会读取并解析 .gitignore 一次）
+      const fileFilter = await FileFilter.create({
         cwd: searchPath,
         useGitignore: true,
         useDefaults: true,
+        gitignoreScanMode: 'recursive',
+        customScanIgnore: [],
+        cacheTTL: 30000,
       });
 
-      // 执行 glob 搜索
-      const matches = await performGlobSearch(
+      // 执行 glob 搜索（复用 FileFilter 已解析的模式）
+      const { matches, wasTruncated } = await performGlobSearch(
         searchPath,
         pattern,
         {
@@ -155,28 +171,36 @@ export const globTool = createTool({
       );
 
       const sortedMatches = sortMatches(matches);
-      const limitedMatches = sortedMatches.slice(0, max_results);
 
       const metadata: Record<string, any> = {
         search_path: searchPath,
         pattern,
-        total_matches: matches.length,
-        returned_matches: limitedMatches.length,
+        // 注意：total_matches 和 returned_matches 都是返回的条数（截断后）
+        // 如果 truncated=true，实际总数未知，只知道"至少"这么多
+        total_matches: matches.length, // 返回的匹配数（可能被截断）
+        returned_matches: matches.length, // 实际返回的条数
         max_results,
         include_directories,
         case_sensitive,
-        truncated: matches.length > max_results,
+        truncated: wasTruncated, // 是否因达到 max_results 而截断
       };
 
       const displayMessage = formatDisplayMessage(metadata);
 
       // 为 LLM 生成更友好的文本格式
-      const llmFriendlyText =
-        limitedMatches.length > 0
-          ? `Found ${limitedMatches.length} file(s) matching "${pattern}":\n\n` +
-            limitedMatches.map((m) => `- ${m.relative_path}`).join('\n') +
-            '\n\nUse the relative_path values above for Read/Edit operations.'
-          : `No files found matching "${pattern}"`;
+      let llmFriendlyText: string;
+      if (sortedMatches.length > 0) {
+        const countPrefix = wasTruncated
+          ? `Found at least ${sortedMatches.length} file(s) matching "${pattern}" (truncated)`
+          : `Found ${sortedMatches.length} file(s) matching "${pattern}"`;
+
+        llmFriendlyText =
+          `${countPrefix}:\n\n` +
+          sortedMatches.map((m) => `- ${m.relative_path}`).join('\n') +
+          '\n\nUse the relative_path values above for Read/Edit operations.';
+      } else {
+        llmFriendlyText = `No files found matching "${pattern}"`;
+      }
 
       return {
         success: true,
@@ -184,7 +208,7 @@ export const globTool = createTool({
         displayContent: displayMessage,
         metadata: {
           ...metadata,
-          matches: limitedMatches, // 保留原始数据在 metadata 中
+          matches: sortedMatches, // 保留原始数据在 metadata 中
         },
       };
     } catch (error: any) {
@@ -241,131 +265,141 @@ async function performGlobSearch(
     signal: AbortSignal;
   },
   fileFilter: FileFilter
-): Promise<FileMatch[]> {
+): Promise<{ matches: FileMatch[]; wasTruncated: boolean }> {
+  // 复用 FileFilter 已解析的 ignore 模式（避免重复读取 .gitignore）
+  // negates 由 FileFilter 在二次过滤时使用
+  const ignore = fileFilter.getIgnorePatterns();
+
   const matches: FileMatch[] = [];
-  const globRegex = createGlobRegex(pattern, options.caseSensitive);
+  let wasTruncated = false;
 
-  await walkDirectory(searchPath, searchPath, globRegex, matches, options, fileFilter);
-
-  return matches;
-}
-
-/**
- * 递归遍历目录
- */
-async function walkDirectory(
-  currentPath: string,
-  basePath: string,
-  globRegex: RegExp,
-  matches: FileMatch[],
-  options: {
-    maxResults: number;
-    includeDirectories: boolean;
-    caseSensitive: boolean;
-    signal: AbortSignal;
-  },
-  fileFilter: FileFilter
-): Promise<void> {
-  if (matches.length >= options.maxResults) {
-    return;
-  }
-
-  options.signal.throwIfAborted();
-
-  try {
-    const entries = await fs.readdir(currentPath, { withFileTypes: true });
-
-    for (const entry of entries) {
-      if (matches.length >= options.maxResults) {
-        break;
+  return await new Promise<{ matches: FileMatch[]; wasTruncated: boolean }>(
+    (resolvePromise, rejectPromise) => {
+      // 提前检查：如果 signal 已经 aborted，直接 reject
+      if (options.signal.aborted) {
+        rejectPromise(createAbortError('文件搜索被用户中止'));
+        return;
       }
 
-      options.signal.throwIfAborted();
+      const stream = fg.stream(pattern, {
+        cwd: searchPath,
+        dot: true,
+        followSymbolicLinks: false,
+        unique: true,
+        caseSensitiveMatch: options.caseSensitive,
+        objectMode: true,
+        stats: true,
+        onlyFiles: !options.includeDirectories,
+        ignore,
+      }) as unknown as Readable;
 
-      const fullPath = join(currentPath, entry.name);
-      const relativePath = relative(basePath, fullPath);
+      let ended = false;
+      let abortHandler: (() => void) | null = null; // 声明在前，定义在后
 
-      if (entry.isDirectory() && fileFilter.shouldIgnoreDirectory(entry.name)) {
-        continue;
-      }
+      // 移除 abort 监听器的辅助函数
+      const removeAbortListener = () => {
+        if (abortHandler) {
+          if (options.signal.removeEventListener) {
+            options.signal.removeEventListener('abort', abortHandler);
+          } else if ('onabort' in options.signal) {
+            (options.signal as unknown as { onabort: null }).onabort = null;
+          }
+          abortHandler = null; // 避免重复清理
+        }
+      };
 
-      if (entry.isFile() && fileFilter.shouldIgnore(relativePath)) {
-        continue;
-      }
+      const abortAndClose = () => {
+        if (!ended) {
+          ended = true;
+          wasTruncated = true; // 标记因达到 maxResults 而截断
+          stream.destroy();
+          removeAbortListener(); // 清理监听器
+          resolvePromise({ matches, wasTruncated });
+        }
+      };
 
-      // 检查是否匹配模式
-      const isMatch = globRegex.test(relativePath) || globRegex.test(entry.name);
-
-      if (entry.isDirectory()) {
-        // 如果包含目录且匹配，添加到结果
-        if (options.includeDirectories && isMatch) {
-          matches.push({
-            path: fullPath,
-            relative_path: relativePath,
-            is_directory: true,
-          });
+      const onData = (entry: Entry) => {
+        // 检查用户中止 - 抛出错误而非返回部分结果
+        if (options.signal.aborted) {
+          if (!ended) {
+            ended = true;
+            stream.destroy(createAbortError('文件搜索被用户中止'));
+          }
+          return;
         }
 
-        // 递归搜索子目录
-        await walkDirectory(
-          fullPath,
-          basePath,
-          globRegex,
-          matches,
-          options,
-          fileFilter
-        );
-      } else if (entry.isFile() && isMatch) {
-        // 获取文件信息
-        try {
-          const stats = await fs.stat(fullPath);
-          matches.push({
-            path: fullPath,
-            relative_path: relativePath,
-            is_directory: false,
-            size: stats.size,
-            modified: stats.mtime.toISOString(),
-          });
-        } catch {
-          // 如果无法获取文件信息，仍添加基本信息
-          matches.push({
-            path: fullPath,
-            relative_path: relativePath,
-            is_directory: false,
-          });
+        // 检查是否达到最大结果数 - 正常返回部分结果
+        if (matches.length >= options.maxResults) {
+          abortAndClose();
+          return;
         }
+
+        const rel = entry.path.replace(/\\/g, '/');
+        const abs = join(searchPath, rel);
+
+        // 二次过滤，支持 .gitignore 的 negation 语义（如 !src/important.js）
+        // FileFilter 内部使用 collectIgnoreGlobs 返回的 negates
+        if (fileFilter.shouldIgnore(rel)) return;
+
+        const isDir = entry.stats ? (entry.stats as Stats).isDirectory() : false;
+        if (isDir && fileFilter.shouldIgnoreDirectory(rel)) return;
+
+        const size =
+          entry.stats && (entry.stats as Stats).isFile()
+            ? (entry.stats as Stats).size
+            : undefined;
+        const modified = entry.stats
+          ? (entry.stats as Stats).mtime.toISOString()
+          : undefined;
+
+        matches.push({
+          path: abs,
+          relative_path: rel,
+          is_directory: isDir,
+          size,
+          modified,
+        });
+
+        if (matches.length >= options.maxResults) {
+          abortAndClose();
+        }
+      };
+
+      stream.on('data', onData);
+
+      // 处理中止信号 - 主动监听 abort 事件
+      abortHandler = () => {
+        if (!ended) {
+          ended = true;
+          removeAbortListener(); // 清理监听器（虽然 abort 只触发一次，但保持一致性）
+          stream.destroy(createAbortError('文件搜索被用户中止'));
+        }
+      };
+
+      // 兼容不同版本的 AbortSignal API
+      if (options.signal.addEventListener) {
+        options.signal.addEventListener('abort', abortHandler);
+      } else if ('onabort' in options.signal) {
+        (options.signal as unknown as { onabort: () => void }).onabort = abortHandler;
       }
+
+      stream.once('error', (err) => {
+        if (!ended) {
+          ended = true;
+          removeAbortListener();
+          rejectPromise(err);
+        }
+      });
+
+      stream.once('end', () => {
+        if (!ended) {
+          ended = true;
+          removeAbortListener();
+          resolvePromise({ matches, wasTruncated });
+        }
+      });
     }
-  } catch (error: any) {
-    // 忽略无权限访问的目录
-    if (error.code !== 'EACCES' && error.code !== 'EPERM') {
-      throw error;
-    }
-  }
-}
-
-/**
- * 将 glob 模式转换为正则表达式
- */
-function createGlobRegex(pattern: string, caseSensitive: boolean): RegExp {
-  // 将 glob 模式转换为正则表达式
-  let regexPattern = pattern
-    .replace(/\./g, '\\.') // 转义点号
-    .replace(/\*\*/g, '___DOUBLESTAR___') // 临时替换 **
-    .replace(/\*/g, '[^/]*') // * 匹配除/外的任意字符
-    .replace(/\?/g, '[^/]') // ? 匹配除/外的单个字符
-    .replace(/___DOUBLESTAR___/g, '.*'); // ** 匹配任意字符包括/
-
-  // 如果模式不以/开头或结尾，允许部分匹配
-  if (!pattern.startsWith('/')) {
-    regexPattern = '(^|/)' + regexPattern;
-  }
-  if (!pattern.endsWith('/') && !pattern.includes('.')) {
-    regexPattern = regexPattern + '($|/|\\.)';
-  }
-
-  const flags = caseSensitive ? '' : 'i';
-  return new RegExp(regexPattern, flags);
+  );
 }
 
 /**
@@ -394,10 +428,15 @@ function sortMatches(matches: FileMatch[]): FileMatch[] {
 function formatDisplayMessage(metadata: Record<string, any>): string {
   const { search_path, pattern, total_matches, returned_matches, truncated } = metadata;
 
-  let message = `✅ 在 ${search_path} 中找到 ${total_matches} 个匹配 "${pattern}" 的文件`;
+  let message: string;
 
   if (truncated) {
+    // 截断时使用"至少 N 个"避免误导
+    message = `✅ 在 ${search_path} 中找到至少 ${total_matches} 个匹配 "${pattern}" 的文件（已截断）`;
     message += `\n📋 显示前 ${returned_matches} 个结果`;
+  } else {
+    // 未截断时显示准确数量
+    message = `✅ 在 ${search_path} 中找到 ${total_matches} 个匹配 "${pattern}" 的文件`;
   }
 
   return message;

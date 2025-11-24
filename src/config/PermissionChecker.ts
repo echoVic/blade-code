@@ -357,7 +357,7 @@ export class PermissionChecker {
     const parts = this.smartSplit(params, ',');
 
     for (const part of parts) {
-      const colonIndex = part.indexOf(':');
+      const colonIndex = this.findTopLevelDelimiter(part, ':');
       if (colonIndex > 0) {
         const key = part.slice(0, colonIndex).trim();
         const value = part.slice(colonIndex + 1).trim();
@@ -377,22 +377,50 @@ export class PermissionChecker {
     let braceDepth = 0;
     let parenDepth = 0;
     let bracketDepth = 0;
+    let inQuote = false;
+    let quoteChar = '';
+    let isEscaping = false;
 
     for (let i = 0; i < str.length; i++) {
       const char = str[i];
 
-      if (char === '{') braceDepth++;
-      else if (char === '}') braceDepth--;
-      else if (char === '(') parenDepth++;
-      else if (char === ')') parenDepth--;
-      else if (char === '[') bracketDepth++;
-      else if (char === ']') bracketDepth--;
+      if (isEscaping) {
+        current += char;
+        isEscaping = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        current += char;
+        isEscaping = true;
+        continue;
+      }
+
+      if (!inQuote && char === '{') braceDepth++;
+      else if (!inQuote && char === '}') braceDepth--;
+      else if (!inQuote && char === '(') parenDepth++;
+      else if (!inQuote && char === ')') parenDepth--;
+      else if (!inQuote && char === '[') bracketDepth++;
+      else if (!inQuote && char === ']') bracketDepth--;
+
+      if ((char === '"' || char === "'") && !inQuote) {
+        inQuote = true;
+        quoteChar = char;
+        current += char;
+        continue;
+      } else if (inQuote && char === quoteChar) {
+        inQuote = false;
+        quoteChar = '';
+        current += char;
+        continue;
+      }
 
       if (
         char === delimiter &&
         braceDepth === 0 &&
         parenDepth === 0 &&
-        bracketDepth === 0
+        bracketDepth === 0 &&
+        !inQuote
       ) {
         result.push(current.trim());
         current = '';
@@ -406,6 +434,58 @@ export class PermissionChecker {
     }
 
     return result;
+  }
+
+  private findTopLevelDelimiter(str: string, delimiter: string): number {
+    let braceDepth = 0;
+    let parenDepth = 0;
+    let bracketDepth = 0;
+    let inQuote = false;
+    let quoteChar = '';
+    let isEscaping = false;
+
+    for (let i = 0; i < str.length; i++) {
+      const char = str[i];
+
+      if (isEscaping) {
+        isEscaping = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        isEscaping = true;
+        continue;
+      }
+
+      if (!inQuote && char === '{') braceDepth++;
+      else if (!inQuote && char === '}') braceDepth--;
+      else if (!inQuote && char === '(') parenDepth++;
+      else if (!inQuote && char === ')') parenDepth--;
+      else if (!inQuote && char === '[') bracketDepth++;
+      else if (!inQuote && char === ']') bracketDepth--;
+
+      if ((char === '"' || char === "'") && !inQuote) {
+        inQuote = true;
+        quoteChar = char;
+        continue;
+      } else if (inQuote && char === quoteChar) {
+        inQuote = false;
+        quoteChar = '';
+        continue;
+      }
+
+      if (
+        char === delimiter &&
+        braceDepth === 0 &&
+        parenDepth === 0 &&
+        bracketDepth === 0 &&
+        !inQuote
+      ) {
+        return i;
+      }
+    }
+
+    return -1;
   }
 
   /**

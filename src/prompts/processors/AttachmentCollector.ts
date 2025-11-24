@@ -4,8 +4,8 @@
  * 负责从用户消息中提取 @ 提及，读取文件内容，并转换为附件对象
  */
 
+import fg from 'fast-glob';
 import * as fs from 'fs/promises';
-import { glob } from 'glob';
 import * as path from 'path';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { PathSecurity } from '../../utils/pathSecurity.js';
@@ -231,10 +231,12 @@ export class AttachmentCollector {
     relativePath: string
   ): Promise<Attachment> {
     // 递归查找所有文件
-    const files = await glob('**/*', {
+    const files = (await fg('**/*', {
       cwd: absolutePath,
-      nodir: true,
       dot: false,
+      followSymbolicLinks: false,
+      onlyFiles: true,
+      unique: true,
       ignore: [
         'node_modules/**',
         '.git/**',
@@ -244,7 +246,7 @@ export class AttachmentCollector {
         '.cache/**',
         'coverage/**',
       ],
-    });
+    })) as string[];
 
     if (files.length === 0) {
       return {

@@ -5,8 +5,8 @@
  */
 
 import { useMemoizedFn } from 'ahooks';
+import fg from 'fast-glob';
 import Fuse from 'fuse.js';
-import { glob } from 'glob';
 import { useEffect, useMemo, useState } from 'react';
 import {
   DEFAULT_EXCLUDE_DIRS,
@@ -14,7 +14,12 @@ import {
 } from '../../utils/filePatterns.js';
 
 // 全局文件列表缓存，避免重复加载
-let globalFileCache: { cwd: string; files: string[]; timestamp: number } | null = null;
+let globalFileCache: {
+  cwd: string;
+  ignoreKey: string;
+  files: string[];
+  timestamp: number;
+} | null = null;
 const FILE_CACHE_TTL = 5000; // 5 秒缓存
 
 /**
@@ -180,6 +185,7 @@ export function useAtCompletion(
     if (
       globalFileCache &&
       globalFileCache.cwd === cwd &&
+      globalFileCache.ignoreKey === ignorePatternsKey &&
       now - globalFileCache.timestamp < FILE_CACHE_TTL
     ) {
       // 使用缓存
@@ -193,19 +199,23 @@ export function useAtCompletion(
     const loadFiles = async () => {
       setLoading(true);
       try {
-        const foundFiles = await glob('**/*', {
+        const foundFiles = (await fg('**/*', {
           cwd,
-          nodir: true,
           dot: false,
+          followSymbolicLinks: false,
+          onlyFiles: true,
+          unique: true,
           ignore: ignorePatterns,
-        });
+        })) as string[];
+        const normalized = foundFiles.map((f) => f.replace(/\\/g, '/'));
 
         if (!cancelled) {
-          setFiles(foundFiles);
+          setFiles(normalized);
           // 更新全局缓存
           globalFileCache = {
             cwd,
-            files: foundFiles,
+            ignoreKey: ignorePatternsKey,
+            files: normalized,
             timestamp: now,
           };
         }
