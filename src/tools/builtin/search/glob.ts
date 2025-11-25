@@ -12,7 +12,7 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
- * 创建标准的 AbortError
+ * Create a standard AbortError
  */
 function createAbortError(message: string): Error {
   const error = new Error(message);
@@ -21,7 +21,7 @@ function createAbortError(message: string): Error {
 }
 
 /**
- * 文件匹配结果
+ * File match result
  */
 interface FileMatch {
   path: string;
@@ -32,60 +32,60 @@ interface FileMatch {
 }
 
 /**
- * GlobTool - 文件模式匹配工具
- * 使用新的 Zod 验证设计
+ * GlobTool - File pattern matcher
+ * Uses the newer Zod validation design
  */
 export const globTool = createTool({
   name: 'Glob',
-  displayName: '文件模式匹配',
+  displayName: 'File Pattern Match',
   kind: ToolKind.Search,
 
   // Zod Schema 定义
   schema: z.object({
     pattern: ToolSchemas.glob({
-      description: 'Glob 模式字符串（支持 *, ?, ** 通配符）',
+      description: 'Glob pattern string (supports *, ?, ** wildcards)',
     }),
-    path: z.string().optional().describe('搜索路径（可选，默认当前工作目录）'),
+    path: z.string().optional().describe('Search path (optional, defaults to cwd)'),
     max_results: ToolSchemas.positiveInt({
-      description: '最大返回结果数',
+      description: 'Maximum number of results',
     })
-      .max(1000, '最多返回 1000 个结果')
+      .max(1000, 'At most 1000 results can be returned')
       .default(100),
-    include_directories: z.boolean().default(false).describe('是否在结果中包含目录'),
-    case_sensitive: z.boolean().default(false).describe('是否区分大小写'),
+    include_directories: z.boolean().default(false).describe('Include directories in results'),
+    case_sensitive: z.boolean().default(false).describe('Case sensitive matching'),
   }),
 
   // 工具描述
   description: {
-    short: '使用 glob 模式搜索文件和目录，支持通配符匹配',
-    long: `提供快速的文件模式匹配功能，支持标准 glob 通配符。自动排除 .git、node_modules 等常见目录。`,
+    short: 'Search files/directories using glob patterns with wildcard support',
+    long: `Fast glob-based search with standard wildcards; automatically ignores common directories like .git and node_modules.`,
     usageNotes: [
-      '支持通配符：* 匹配任意字符（不含/），** 匹配任意字符（含/），? 匹配单个字符',
-      'pattern 示例：*.js, **/*.ts, src/**/*.tsx',
-      '默认搜索当前工作目录，可通过 path 参数指定搜索路径',
-      '自动排除 .git, node_modules, dist, build 等目录',
-      '结果按修改时间排序（最新的在前）',
-      'max_results 默认 100，最多 1000',
-      '默认不包含目录，只返回文件',
+      'Wildcards: * matches any chars except /, ** matches across directories, ? matches a single char',
+      'Pattern examples: *.js, **/*.ts, src/**/*.tsx',
+      'Defaults to searching cwd; override with path param',
+      'Auto-excludes .git, node_modules, dist, build, etc.',
+      'Results sorted by modified time (newest first)',
+      'max_results defaults to 100, max 1000',
+      'Directories excluded unless include_directories=true',
     ],
     examples: [
       {
-        description: '搜索所有 JavaScript 文件',
+        description: 'Find all JavaScript files',
         params: { pattern: '*.js' },
       },
       {
-        description: '搜索所有 TypeScript 文件（递归）',
+        description: 'Find all TypeScript files (recursive)',
         params: { pattern: '**/*.ts' },
       },
       {
-        description: '在特定目录中搜索',
+        description: 'Search within a specific directory',
         params: {
           pattern: '*.json',
           path: '/path/to/search',
         },
       },
       {
-        description: '搜索并包含目录',
+        description: 'Search and include directories',
         params: {
           pattern: 'src/**',
           include_directories: true,
@@ -93,10 +93,10 @@ export const globTool = createTool({
       },
     ],
     important: [
-      'Glob 匹配区分大小写（除非设置 case_sensitive: false）',
-      '** 通配符可以匹配多级目录',
-      '搜索大型目录树时建议设置 max_results 限制',
-      '自动遵循 .gitignore 规则',
+      'Glob matching is case-sensitive unless case_sensitive=false',
+      '** wildcard matches across directory levels',
+      'Set max_results when searching large trees',
+      'Automatically honors .gitignore rules',
     ],
   },
 
@@ -113,7 +113,7 @@ export const globTool = createTool({
     const signal = context.signal ?? new AbortController().signal;
 
     try {
-      updateOutput?.(`开始在 ${path} 中搜索模式 "${pattern}"...`);
+      updateOutput?.(`Searching in ${path} for pattern "${pattern}"...`);
 
       // 验证搜索路径存在
       const searchPath = resolve(path);
@@ -122,7 +122,7 @@ export const globTool = createTool({
         if (!stats.isDirectory()) {
           return {
             success: false,
-            llmContent: `搜索路径必须是目录: ${searchPath}`,
+            llmContent: `Search path must be a directory: ${searchPath}`,
             displayContent: `❌ 搜索路径必须是目录: ${searchPath}`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
@@ -134,7 +134,7 @@ export const globTool = createTool({
         if (error.code === 'ENOENT') {
           return {
             success: false,
-            llmContent: `搜索路径不存在: ${searchPath}`,
+            llmContent: `Search path does not exist: ${searchPath}`,
             displayContent: `❌ 搜索路径不存在: ${searchPath}`,
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
@@ -215,7 +215,7 @@ export const globTool = createTool({
       if (error.name === 'AbortError') {
         return {
           success: false,
-          llmContent: '文件搜索被中止',
+          llmContent: 'File search aborted',
           displayContent: '⚠️ 文件搜索被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
@@ -226,7 +226,7 @@ export const globTool = createTool({
 
       return {
         success: false,
-        llmContent: `搜索失败: ${error.message}`,
+        llmContent: `Search failed: ${error.message}`,
         displayContent: `❌ 搜索失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

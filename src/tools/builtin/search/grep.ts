@@ -30,68 +30,74 @@ export const grepTool = createTool({
   // Zod Schema 定义
   schema: z.object({
     pattern: ToolSchemas.pattern({
-      description: '要搜索的正则表达式模式',
+      description: 'Regex pattern to search for',
     }),
-    path: z.string().optional().describe('搜索路径（可选，默认当前工作目录）'),
+    path: z
+      .string()
+      .optional()
+      .describe('Search path (optional, defaults to current working directory)'),
     glob: ToolSchemas.glob().optional(),
     type: z
       .string()
       .optional()
-      .describe('文件类型过滤（如 js, py, rust, go, java 等）'),
+      .describe('File type filter (e.g., js, py, rust, go, java)'),
     output_mode: z
       .enum(['content', 'files_with_matches', 'count'])
       .default('files_with_matches')
       .describe(
-        '输出模式：content 显示匹配行，files_with_matches 显示文件路径，count 显示匹配计数'
+        'Output mode: content shows matching lines; files_with_matches shows file paths; count shows match counts'
       ),
-    case_insensitive: z.boolean().default(false).describe('是否忽略大小写（-i）'),
+    case_insensitive: z.boolean().default(false).describe('Case insensitive (-i)'),
     line_numbers: z
       .boolean()
       .default(false)
-      .describe('是否显示行号（仅 content 模式有效）'),
+      .describe('Show line numbers (content mode only)'),
     context_before: ToolSchemas.nonNegativeInt()
       .optional()
-      .describe('显示匹配行之前的行数（仅 content 模式，-B）'),
+      .describe('Number of lines to show before each match (content mode, -B)'),
     context_after: ToolSchemas.nonNegativeInt()
       .optional()
-      .describe('显示匹配行之后的行数（仅 content 模式，-A）'),
+      .describe('Number of lines to show after each match (content mode, -A)'),
     context: ToolSchemas.nonNegativeInt()
       .optional()
-      .describe('显示匹配行前后的行数（仅 content 模式，-C）'),
+      .describe(
+        'Number of context lines before and after each match (content mode, -C)'
+      ),
     head_limit: ToolSchemas.positiveInt()
       .optional()
-      .describe('限制输出的最大行数/文件数/计数条目数'),
+      .describe('Limit the maximum number of output lines/files/count entries'),
     multiline: z
       .boolean()
       .default(false)
-      .describe('启用多行模式，允许 . 匹配换行符（-U）'),
+      .describe('Enable multiline mode where . matches newlines (-U)'),
   }),
 
   // 工具描述
   description: {
-    short: '基于 ripgrep 的强大文本内容搜索工具，支持正则表达式和多种输出格式',
-    long: `使用 ripgrep (rg) 进行快速的文本搜索。支持正则表达式、文件类型过滤、上下文显示等高级功能。`,
+    short:
+      'Ripgrep-based powerful text search tool supporting regex and multiple output formats',
+    long: `Perform fast text search using ripgrep (rg). Supports regex, file-type filters, context display, and other advanced features.`,
     usageNotes: [
-      'ALWAYS 使用 Grep 进行内容搜索，NEVER 使用 grep 或 rg 作为 Bash 命令',
-      'pattern 使用 ripgrep 语法（不是标准 grep）',
-      '支持三种输出模式：content（匹配行）、files_with_matches（文件路径）、count（计数）',
-      '默认输出模式是 files_with_matches',
-      'content 模式支持 -A/-B/-C 显示上下文行',
-      'content 模式支持 -n 显示行号',
-      '自动排除 .git、node_modules、dist 等目录',
-      'head_limit 可以限制结果数量',
-      'multiline 模式允许跨行匹配',
+      'ALWAYS use the Grep tool for content search; NEVER invoke grep or rg as a Bash command',
+      'pattern uses ripgrep syntax (not standard grep)',
+      'Supports three output modes: content (matching lines), files_with_matches (file paths), count (match counts)',
+      'Default output mode is files_with_matches',
+      'content mode supports -A/-B/-C to show context lines',
+      'content mode supports -n to show line numbers',
+      'Automatically excludes .git, node_modules, dist, etc.',
+      'head_limit can cap the number of results',
+      'multiline enables cross-line matching',
     ],
     examples: [
       {
-        description: '搜索包含特定文本的文件',
+        description: 'Search files containing specific text',
         params: {
           pattern: 'TODO',
           output_mode: 'files_with_matches',
         },
       },
       {
-        description: '搜索并显示匹配行（带行号）',
+        description: 'Search and display matching lines (with line numbers)',
         params: {
           pattern: 'function\\s+\\w+',
           output_mode: 'content',
@@ -99,7 +105,7 @@ export const grepTool = createTool({
         },
       },
       {
-        description: '搜索并显示上下文',
+        description: 'Search and display context',
         params: {
           pattern: 'error',
           output_mode: 'content',
@@ -107,14 +113,14 @@ export const grepTool = createTool({
         },
       },
       {
-        description: '只搜索 TypeScript 文件',
+        description: 'Search only TypeScript files',
         params: {
           pattern: 'interface',
           type: 'ts',
         },
       },
       {
-        description: '使用 glob 过滤文件',
+        description: 'Filter files using glob',
         params: {
           pattern: 'import',
           glob: '*.{ts,tsx}',
@@ -122,10 +128,10 @@ export const grepTool = createTool({
       },
     ],
     important: [
-      'pattern 使用 ripgrep 语法，字面量大括号需要转义（如 interface\\{\\}）',
-      'multiline 模式会影响性能，仅在需要跨行匹配时使用',
-      'head_limit 适用于所有输出模式',
-      '如果 ripgrep 未安装，工具会返回错误',
+      'pattern uses ripgrep syntax; literal braces must be escaped (e.g., interface\\{\\})',
+      'multiline mode impacts performance; use only when cross-line matching is needed',
+      'head_limit applies to all output modes',
+      'If ripgrep is not installed, the tool will return an error',
     ],
   },
 
@@ -188,7 +194,7 @@ export const grepTool = createTool({
       if (result.exitCode !== 0 && result.stderr) {
         return {
           success: false,
-          llmContent: `ripgrep 执行失败: ${result.stderr}`,
+          llmContent: `ripgrep execution failed: ${result.stderr}`,
           displayContent: `❌ ripgrep 执行失败: ${result.stderr}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
@@ -209,7 +215,7 @@ export const grepTool = createTool({
       if (error.name === 'AbortError') {
         return {
           success: false,
-          llmContent: '搜索被中止',
+          llmContent: 'Search aborted',
           displayContent: '⚠️ 搜索被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
@@ -220,7 +226,7 @@ export const grepTool = createTool({
 
       return {
         success: false,
-        llmContent: `搜索失败: ${error.message}`,
+        llmContent: `Search failed: ${error.message}`,
         displayContent: `❌ 搜索失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

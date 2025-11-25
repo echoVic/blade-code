@@ -4,8 +4,8 @@ import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
 
 /**
- * ExitPlanMode 工具
- * 在 Plan 模式下呈现完整方案并请求用户确认
+ * ExitPlanMode tool
+ * Presents the full plan in Plan mode and requests user approval
  */
 export const exitPlanModeTool = createTool({
   name: 'ExitPlanMode',
@@ -13,30 +13,30 @@ export const exitPlanModeTool = createTool({
   kind: ToolKind.Think, // 自动推断为只读
 
   schema: z.object({
-    plan: z.string().min(50).describe('完整的实现方案（Markdown 格式，至少50字符）'),
+    plan: z.string().min(50).describe('Complete implementation plan (Markdown, at least 50 chars)'),
   }),
 
   description: {
-    short: '呈现完整实现方案并请求用户确认退出 Plan 模式',
-    long: `在 Plan 模式下完成方案制定后调用此工具。
+    short: 'Present the full implementation plan and request approval to exit Plan mode',
+    long: `Call this tool after drafting the implementation plan in Plan mode.
 
-IMPORTANT: 仅在任务需要编写代码时使用此工具。
-- 如果是调研任务（搜索、理解代码库），不要调用此工具，直接回答即可
-- 如果是实现任务（添加功能、修复 Bug），必须调用此工具提交方案`,
+IMPORTANT: Use only when the task requires writing code.
+- For research tasks (searching, understanding codebase), do not call this tool; just answer directly.
+- For implementation tasks (new features, bug fixes), you must call this tool to submit the plan.`,
     usageNotes: [
-      '✅ 实现任务示例：「帮我实现 vim 的 yank 模式」→ 调用此工具',
-      '❌ 调研任务示例：「搜索并理解 vim 模式的实现」→ 不要调用此工具',
-      '方案必须使用 Markdown 格式',
-      '必须包含完整的实现步骤',
-      '调用后会暂停，等待用户确认',
-      '用户批准后退出 Plan 模式，拒绝后保持 Plan 模式',
+      '✅ Implementation task: “implement vim yank mode” → call this tool',
+      '❌ Research task: “investigate how vim modes are implemented” → do NOT call this tool',
+      'Plan must be in Markdown format',
+      'Plan must include complete implementation steps',
+      'Execution pauses awaiting user confirmation after calling',
+      'Approved → exit Plan mode; rejected → stay in Plan mode',
     ],
     important: [
-      '⚠️ 仅在需要写代码的任务中使用',
-      '⚠️ 调研任务直接回答，不要调用此工具',
-      '⚠️ 方案必须详细且可执行',
-      '⚠️ 包含所有文件修改和创建',
-      '⚠️ 说明潜在风险和测试策略',
+      '⚠️ Use only for coding tasks',
+      '⚠️ Do not use for pure research tasks',
+      '⚠️ Plan must be detailed and executable',
+      '⚠️ Include all file modifications/creations',
+      '⚠️ Note potential risks and testing strategy',
     ],
   },
 
@@ -55,7 +55,8 @@ IMPORTANT: 仅在任务需要编写代码时使用此工具。
         if (response.approved) {
           return {
             success: true,
-            llmContent: '✅ 用户已批准方案。Plan 模式已退出，现在可以执行代码修改。',
+            llmContent:
+              '✅ Plan approved by user. Plan mode exited; you can proceed to code changes.',
             displayContent: '✅ 方案已批准，退出 Plan 模式',
             metadata: {
               approved: true,
@@ -68,11 +69,11 @@ IMPORTANT: 仅在任务需要编写代码时使用此工具。
           return {
             success: false,
             llmContent:
-              '❌ 用户拒绝了方案。请根据用户反馈修改方案。\n\n' +
-              '提示：\n' +
-              '- 询问用户具体需要改进的部分\n' +
-              '- 使用 Read/Grep 等工具继续调研\n' +
-              '- 完善方案后再次调用 ExitPlanMode',
+              '❌ Plan rejected by user. Please revise based on their feedback.\n\n' +
+              'Tips:\n' +
+              '- Ask which parts need improvement\n' +
+              '- Use Read/Grep tools for further investigation\n' +
+              '- Refine the plan and call ExitPlanMode again',
             displayContent: '❌ 方案被拒绝，保持 Plan 模式',
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
@@ -89,11 +90,11 @@ IMPORTANT: 仅在任务需要编写代码时使用此工具。
       } catch (error) {
         return {
           success: false,
-          llmContent: `确认流程出错: ${error instanceof Error ? error.message : '未知错误'}`,
+          llmContent: `Confirmation flow error: ${error instanceof Error ? error.message : 'Unknown error'}`,
           displayContent: '❌ 确认失败',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: '确认流程出错',
+          message: 'Confirmation flow error',
           },
         };
       }

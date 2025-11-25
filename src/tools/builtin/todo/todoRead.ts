@@ -6,14 +6,14 @@ import { TodoManager } from './TodoManager.js';
 import type { TodoItem, TodoStats } from './types.js';
 
 /**
- * 创建 TodoRead 工具
+ * Create TodoRead tool
  */
 export function createTodoReadTool(opts: { sessionId: string; configDir: string }) {
   const { sessionId, configDir } = opts;
 
   return createTool({
     name: 'TodoRead',
-    displayName: 'TODO任务读取',
+    displayName: 'Todo Read',
     kind: ToolKind.Read,
 
     schema: z.object({
@@ -21,42 +21,42 @@ export function createTodoReadTool(opts: { sessionId: string; configDir: string 
         .enum(['all', 'pending', 'in_progress', 'completed'])
         .default('all')
         .describe(
-          '过滤条件：all(全部)、pending(待执行)、in_progress(执行中)、completed(已完成)'
+          'Filter: all, pending, in_progress, completed'
         ),
     }),
 
     description: {
-      short: '读取当前会话的TODO任务列表',
+      short: 'Read the TODO list for the current session',
       long: `
-获取当前会话的 TODO 列表，支持按状态过滤。
+Retrieve TODO items for the current session with optional status filtering.
 
-任务列表会按照以下规则自动排序：
-1. 按状态：已完成 < 执行中 < 待执行
-2. 按优先级：高优先级 < 中优先级 < 低优先级
+Tasks are automatically sorted:
+1. By status: completed < in_progress < pending
+2. By priority: high < medium < low
 
-这样可以确保正在执行和待执行的高优先级任务始终显示在顶部。
+This keeps high-priority in-progress and pending tasks at the top.
       `.trim(),
 
       usageNotes: [
-        '默认返回所有任务（filter=all）',
-        '可以通过 filter 参数过滤特定状态的任务',
-        '任务列表已自动排序，无需手动排序',
-        '如果没有任务，返回空列表',
+        'Defaults to returning all tasks (filter=all)',
+        'Use filter to limit tasks by status',
+        'Tasks are pre-sorted; no manual sorting needed',
+        'Returns an empty list if no tasks exist',
       ],
 
       examples: [
         {
-          description: '读取所有任务',
+          description: 'Read all tasks',
           params: {},
         },
         {
-          description: '只读取待执行的任务',
+          description: 'Read pending tasks only',
           params: {
             filter: 'pending',
           },
         },
         {
-          description: '只读取已完成的任务',
+          description: 'Read completed tasks only',
           params: {
             filter: 'completed',
           },
@@ -93,7 +93,7 @@ export function createTodoReadTool(opts: { sessionId: string; configDir: string 
       } catch (error: any) {
         return {
           success: false,
-          llmContent: `读取失败: ${error.message}`,
+          llmContent: `Read failed: ${error.message}`,
           displayContent: `❌ 读取 TODO 列表失败: ${error.message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,

@@ -8,31 +8,31 @@ import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 
 /**
- * ReadTool - 文件读取工具
- * 使用新的 Zod 验证设计
+ * ReadTool - File read tool
+ * Uses the newer Zod validation design
  */
 export const readTool = createTool({
   name: 'Read',
-  displayName: '文件读取',
+  displayName: 'File Read',
   kind: ToolKind.Read,
 
   // Zod Schema 定义
   schema: z.object({
     file_path: ToolSchemas.filePath({
-      description: '要读取的文件路径（必须是绝对路径）',
+      description: 'File path to read (must be absolute)',
     }),
     offset: ToolSchemas.lineNumber({
-      description: '开始读取的行号（从0开始，仅对文本文件有效）',
+      description: 'Starting line number (0-based, text files only)',
     }).optional(),
     limit: ToolSchemas.lineLimit({
-      description: '读取的行数（仅对文本文件有效）',
+      description: 'Number of lines to read (text files only)',
     }).optional(),
     encoding: ToolSchemas.encoding(),
   }),
 
   // 工具描述
   description: {
-    short: '读取本地文件系统中的文件',
+    short: 'Read files from the local filesystem',
     long: `Reads a file from the local filesystem. You can access any file directly by using this tool. Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.`,
     usageNotes: [
       'The file_path parameter must be an absolute path, not a relative path',
@@ -49,23 +49,23 @@ export const readTool = createTool({
     ],
     examples: [
       {
-        description: '读取整个文件（推荐）',
+        description: 'Read the entire file (recommended)',
         params: { file_path: '/path/to/file.ts' },
       },
       {
-        description: '读取文件的前 100 行',
+        description: 'Read the first 100 lines',
         params: { file_path: '/path/to/file.txt', limit: 100 },
       },
       {
-        description: '从第 50 行开始读取 100 行（大文件场景）',
+        description: 'Read 100 lines starting at line 50 (large file)',
         params: { file_path: '/path/to/large-file.log', offset: 50, limit: 100 },
       },
     ],
     important: [
-      'file_path 必须是绝对路径',
-      '推荐读取整个文件（不提供 offset 和 limit）',
-      '只对超大文件使用 offset 和 limit 参数',
-      '行号从 1 开始（cat -n 格式）',
+      'file_path must be absolute',
+      'Prefer reading the entire file (omit offset and limit)',
+      'Use offset/limit only for very large files',
+      'Line numbers start at 1 (cat -n format)',
     ],
   },
 
@@ -76,7 +76,7 @@ export const readTool = createTool({
     const signal = context.signal ?? new AbortController().signal;
 
     try {
-      updateOutput?.('开始读取文件...');
+      updateOutput?.('Starting file read...');
 
       // 检查文件是否存在
       try {
@@ -84,11 +84,11 @@ export const readTool = createTool({
       } catch (_error) {
         return {
           success: false,
-          llmContent: `文件不存在: ${file_path}`,
+          llmContent: `File not found: ${file_path}`,
           displayContent: `❌ 文件不存在: ${file_path}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: `文件不存在: ${file_path}`,
+            message: `File not found: ${file_path}`,
           },
         };
       }
@@ -108,11 +108,11 @@ export const readTool = createTool({
       if (stats.isDirectory()) {
         return {
           success: false,
-          llmContent: `无法读取目录: ${file_path}`,
+          llmContent: `Cannot read a directory: ${file_path}`,
           displayContent: `❌ 无法读取目录: ${file_path}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: `目标是目录而非文件`,
+            message: 'Target is a directory, not a file',
           },
         };
       }
@@ -200,18 +200,18 @@ export const readTool = createTool({
       if (error.name === 'AbortError') {
         return {
           success: false,
-          llmContent: '文件读取被中止',
+          llmContent: 'File read aborted',
           displayContent: '⚠️ 文件读取被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: '操作被中止',
+            message: 'Operation aborted',
           },
         };
       }
 
       return {
         success: false,
-        llmContent: `读取文件失败: ${error.message}`,
+        llmContent: `File read failed: ${error.message}`,
         displayContent: `❌ 读取文件失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

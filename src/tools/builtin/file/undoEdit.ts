@@ -7,14 +7,14 @@ import { createTool } from '../../core/createTool.js';
 import { SnapshotManager } from './SnapshotManager.js';
 
 /**
- * UndoEdit 工具参数 Schema
- */
+ * UndoEdit tool params schema
+*/
 const undoEditParamsSchema = z.object({
-  file_path: z.string().describe('要回滚的文件绝对路径'),
+  file_path: z.string().describe('Absolute path of the file to roll back'),
   message_id: z
     .string()
     .optional()
-    .describe('要回滚到的消息 ID（可选，如果未提供则列出历史版本）'),
+    .describe('Message ID to restore to (optional; list snapshots if omitted)'),
 });
 
 type UndoEditParams = z.infer<typeof undoEditParamsSchema>;
@@ -32,11 +32,11 @@ async function executeUndoEdit(
   if (!sessionId) {
     return {
       success: false,
-      llmContent: '错误：缺少 sessionId，无法执行回滚操作',
+      llmContent: 'Error: Missing sessionId; cannot perform rollback',
       displayContent: '❌ 错误：缺少会话 ID',
       error: {
         type: ToolErrorType.VALIDATION_ERROR,
-        message: '缺少 sessionId',
+        message: 'Missing sessionId',
       },
     };
   }
@@ -52,7 +52,7 @@ async function executeUndoEdit(
       if (snapshots.length === 0) {
         return {
           success: true,
-          llmContent: `文件 ${file_path} 没有可用的历史版本`,
+          llmContent: `File ${file_path} has no available snapshots`,
           displayContent: `📂 文件: ${file_path}\n❌ 没有可用的历史版本`,
         };
       }
@@ -109,11 +109,11 @@ async function executeUndoEdit(
     } catch {
       return {
         success: false,
-        llmContent: `错误：文件不存在: ${file_path}`,
+        llmContent: `Error: File not found: ${file_path}`,
         displayContent: `❌ 错误：文件不存在\n📂 路径: ${file_path}`,
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
-          message: `文件不存在: ${file_path}`,
+          message: `File not found: ${file_path}`,
         },
       };
     }
@@ -128,11 +128,11 @@ async function executeUndoEdit(
     if (!targetSnapshot) {
       return {
         success: false,
-        llmContent: `错误：未找到消息 ID 为 "${message_id}" 的快照`,
+        llmContent: `Error: No snapshot found for message ID "${message_id}"`,
         displayContent: `❌ 错误：未找到快照\n📂 文件: ${file_path}\n🔍 消息 ID: ${message_id}`,
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
-          message: `未找到消息 ID 为 "${message_id}" 的快照`,
+          message: `No snapshot found for message ID "${message_id}"`,
         },
       };
     }
@@ -169,7 +169,7 @@ async function executeUndoEdit(
   } catch (error: any) {
     return {
       success: false,
-      llmContent: `回滚失败: ${error.message}`,
+      llmContent: `Rollback failed: ${error.message}`,
       displayContent: `❌ 回滚失败\n📂 文件: ${file_path}\n⚠️ 错误: ${error.message}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
@@ -180,37 +180,37 @@ async function executeUndoEdit(
 }
 
 /**
- * UndoEdit 工具
- */
+ * UndoEdit tool
+*/
 export const undoEditTool = createTool({
   name: 'UndoEdit',
-  displayName: '文件回滚',
+  displayName: 'File Rollback',
   kind: ToolKind.Edit,
   strict: true,
   isConcurrencySafe: false, // 文件操作不支持并发
   schema: undoEditParamsSchema,
   description: {
-    short: '回滚文件到历史版本',
-    long: `将文件恢复到之前的编辑版本。支持两种模式：
-1. 列出历史版本：不提供 message_id，列出所有可用的历史版本
-2. 回滚到指定版本：提供 message_id，恢复文件到该版本的状态`,
+    short: 'Restore a file to a previous snapshot',
+    long: `Revert a file to an earlier edited version. Two modes:
+1. List snapshots: omit message_id to list available versions
+2. Restore snapshot: provide message_id to restore that version`,
     usageNotes: [
-      '需要提供文件的绝对路径',
-      '如果不提供 message_id，将列出该文件的所有历史版本',
-      '提供 message_id 将恢复文件到该消息对应的版本',
-      '回滚操作会覆盖当前文件内容，请谨慎使用',
-      '历史版本存储在 ~/.blade/file-history/{sessionId}/ 目录',
-      '每个文件默认保留最近 10 个快照',
+      'Requires an absolute file path',
+      'Omitting message_id lists all snapshots for the file',
+      'Providing message_id restores that snapshot',
+      'Rollback overwrites current file content—use carefully',
+      'Snapshots stored in ~/.blade/file-history/{sessionId}/',
+      'Each file keeps the latest 10 snapshots by default',
     ],
     examples: [
       {
-        description: '列出文件的所有历史版本',
+        description: 'List all snapshots for a file',
         params: {
           file_path: '/path/to/file.ts',
         },
       },
       {
-        description: '回滚文件到特定消息的版本',
+        description: 'Restore file to a specific message snapshot',
         params: {
           file_path: '/path/to/file.ts',
           message_id: 'msg_abc123',
@@ -218,9 +218,9 @@ export const undoEditTool = createTool({
       },
     ],
     important: [
-      '回滚操作不可逆，会覆盖当前文件内容',
-      '建议先列出历史版本，确认 message_id 后再执行回滚',
-      '只能回滚当前会话中编辑过的文件',
+      'Rollback is irreversible and overwrites the current file',
+      'List snapshots first to confirm message_id before restoring',
+      'Only files edited in the current session can be restored',
     ],
   },
   execute: executeUndoEdit,

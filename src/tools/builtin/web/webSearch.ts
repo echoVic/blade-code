@@ -40,47 +40,47 @@ const MAX_RESULTS = 8;
 
 export const webSearchTool = createTool({
   name: 'WebSearch',
-  displayName: '网络搜索',
+  displayName: 'Web Search',
   kind: ToolKind.Network,
 
   schema: z.object({
-    query: z.string().min(2, '搜索关键词至少需要2个字符').describe('搜索关键词'),
+    query: z.string().min(2, 'Search query must be at least 2 characters').describe('Search query'),
     allowed_domains: z
       .array(z.string().min(1))
       .optional()
-      .describe('只返回这些域名下的结果(可选)'),
+      .describe('Return results only from these domains (optional)'),
     blocked_domains: z
       .array(z.string().min(1))
       .optional()
-      .describe('排除这些域名下的结果(可选)'),
+      .describe('Exclude results from these domains (optional)'),
   }),
 
   description: {
-    short: '执行实时网络搜索，返回结构化的搜索结果列表',
-    long: `使用 DuckDuckGo 即时搜索 API 获取最新网页信息。结果包含标题、简介、URL 以及来源域名，可选地根据域名白名单或黑名单过滤。`,
+    short: 'Perform real-time web search and return structured results',
+    long: `Use the DuckDuckGo Instant Answer API to fetch fresh web content. Results include title, snippet, URL, and source domain; optional allowlist/denylist filters apply.`,
     usageNotes: [
-      'Use this tool when需要最新信息或超出模型知识截止日期的数据',
-      'Domain filtering is supported via allowed_domains 和 blocked_domains',
-      'Web search is only available in the US地区 (使用 kl=us-en 区域参数)',
-      'Searches are performed automatically within a single API call，返回结构化结果块',
-      'Account for "Today\'s date" in <env> when组织查询关键字，例如请求 2025 年信息时确保查询包含 2025',
+      'Use this tool when you need fresh information beyond the model cutoff date',
+      'Domain filtering is supported via allowed_domains and blocked_domains',
+      'Search runs with kl=us-en locale',
+      'Single API call returns structured result blocks',
+      'Consider <env>"Today\'s date" when crafting queries (e.g., include the target year like 2025)',
     ],
     examples: [
       {
-        description: '搜索最新 TypeScript 版本',
+        description: 'Search for the latest TypeScript version',
         params: {
           query: 'latest TypeScript release',
         },
       },
       {
-        description: '只查看官方博客上的模型更新',
+        description: 'Only look at model updates on the official blog',
         params: {
           query: 'Claude model roadmap',
           allowed_domains: ['anthropic.com'],
         },
       },
       {
-        description: '排除维基百科结果',
+        description: 'Exclude Wikipedia results',
         params: {
           query: 'Rust ownership guide',
           blocked_domains: ['wikipedia.org'],
@@ -88,9 +88,9 @@ export const webSearchTool = createTool({
       },
     ],
     important: [
-      '搜索结果来自公开网络，请自行验证权威性',
-      'Blocked/allowed 列表使用域名匹配（支持子域）',
-      '网络访问需要获得用户许可',
+      'Results come from the public web; verify credibility yourself',
+      'Blocked/allowed lists match by domain (subdomains supported)',
+      'Network access requires user permission',
     ],
   },
 
@@ -101,7 +101,7 @@ export const webSearchTool = createTool({
     const { updateOutput } = context;
     const signal = context.signal ?? new AbortController().signal;
 
-    updateOutput?.(`🔎 正在搜索: "${query}"`);
+    updateOutput?.(`🔎 Searching: "${query}"`);
 
     try {
       const response = await fetchWithTimeout(
@@ -117,7 +117,7 @@ export const webSearchTool = createTool({
       );
 
       if (!response.ok) {
-        throw new Error(`搜索请求失败，状态码 ${response.status}`);
+        throw new Error(`Search request failed with status ${response.status}`);
       }
 
       const rawText = await response.text();
@@ -125,7 +125,7 @@ export const webSearchTool = createTool({
       try {
         payload = JSON.parse(rawText) as DuckDuckGoResponse;
       } catch {
-        throw new Error('无法解析搜索结果 JSON');
+        throw new Error('Failed to parse search result JSON');
       }
 
       const combinedResults = transformDuckDuckGoResponse(payload);
@@ -176,7 +176,7 @@ export const webSearchTool = createTool({
     } catch (error: any) {
       return {
         success: false,
-        llmContent: `WebSearch 调用失败: ${error.message}`,
+        llmContent: `WebSearch call failed: ${error.message}`,
         displayContent: `❌ WebSearch 调用失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

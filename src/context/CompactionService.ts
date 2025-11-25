@@ -375,7 +375,7 @@ Please provide your summary following the structure specified above, with both <
     const summaryMessageId = nanoid();
     const summaryMessage = this.createSummaryMessage(
       summaryMessageId,
-      `[自动压缩失败，使用降级策略]\n\n由于压缩过程中出现错误，已自动保留最近 ${retainCount} 条消息（约 30%）。\n\n错误信息：${errorMsg}\n\n对话可以继续进行，但建议稍后手动使用 /compact 命令重新尝试压缩。`
+      `[Automatic compaction failed; using fallback]\n\nAn error occurred during compaction. Retained the latest ${retainCount} messages (~30%).\n\nError: ${errorMsg}\n\nThe conversation can continue, but consider retrying compaction later with /compact.`
     );
 
     const compactedMessages = [summaryMessage, ...retainedMessages];

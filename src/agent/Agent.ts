@@ -911,7 +911,7 @@ export class Agent extends EventEmitter {
               role: 'tool',
               tool_call_id: toolCall.id,
               name: toolCall.function.name,
-              content: `执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
+              content: `Execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
             });
           }
         }
@@ -944,7 +944,7 @@ export class Agent extends EventEmitter {
 
         if (loopDetected?.detected) {
           // 渐进式策略: 先警告,多次后才停止
-          const warningMsg = `⚠️ 检测到循环 (${loopDetected.warningCount}/${this.loopDetector['maxWarnings']}): ${loopDetected.reason}\n请尝试不同的方法。`;
+          const warningMsg = `⚠️ Loop detected (${loopDetected.warningCount}/${this.loopDetector['maxWarnings']}): ${loopDetected.reason}\nPlease try a different approach.`;
 
           if (loopDetected.shouldStop) {
             // 超过最大警告次数,停止任务

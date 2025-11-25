@@ -31,7 +31,7 @@ export class DiscoveryStage implements PipelineStage {
     const tool = this.registry.get(execution.toolName);
 
     if (!tool) {
-      execution.abort(`工具 "${execution.toolName}" 未找到`);
+      execution.abort(`Tool "${execution.toolName}" not found`);
       return;
     }
 
@@ -72,7 +72,7 @@ export class PermissionStage implements PipelineStage {
   async process(execution: ToolExecution): Promise<void> {
     const tool = execution._internal.tool;
     if (!tool) {
-      execution.abort('工具发现阶段失败，无法进行权限检查');
+      execution.abort('Discovery stage failed; cannot perform permission check');
       return;
     }
 
@@ -102,7 +102,7 @@ export class PermissionStage implements PipelineStage {
         case PermissionResult.DENY:
           execution.abort(
             checkResult.reason ||
-              `工具调用 "${tool.name}" 被权限规则拒绝: ${checkResult.matchedRule}`
+              `Tool invocation "${tool.name}" was denied by permission rules: ${checkResult.matchedRule}`
           );
           return;
 
@@ -111,13 +111,13 @@ export class PermissionStage implements PipelineStage {
             checkResult = {
               result: PermissionResult.ALLOW,
               matchedRule: 'remembered:session',
-              reason: '用户已在本项目会话中允许此操作',
+              reason: 'User already allowed this operation in this session',
             };
           } else {
             // 标记需要用户确认
             execution._internal.needsConfirmation = true;
             execution._internal.confirmationReason =
-              checkResult.reason || '需要用户确认';
+              checkResult.reason || 'User confirmation required';
           }
           break;
 
@@ -152,7 +152,7 @@ export class PermissionStage implements PipelineStage {
         });
 
         if (dangerousPaths.length > 0) {
-          execution.abort(`访问危险系统路径被拒绝: ${dangerousPaths.join(', ')}`);
+          execution.abort(`Access to dangerous system paths denied: ${dangerousPaths.join(', ')}`);
           return;
         }
 
@@ -179,7 +179,7 @@ export class PermissionStage implements PipelineStage {
             checkResult.result !== PermissionResult.ALLOW
           ) {
             execution.abort(
-              `访问高度敏感文件被拒绝:\n${warnings.join('\n')}\n\n如需访问，请在权限配置中明确添加 allow 规则。`
+              `Access to highly sensitive files denied:\n${warnings.join('\n')}\n\nIf access is required, add an explicit allow rule in permissions.`
             );
             return;
           }
@@ -190,7 +190,7 @@ export class PermissionStage implements PipelineStage {
             sensitiveFiles.length > 0
           ) {
             // 即使被 allow 规则允许，也需要特别提示
-            execution._internal.confirmationReason = `检测到敏感文件访问:\n${warnings.join('\n')}\n\n请确认是否继续？`;
+            execution._internal.confirmationReason = `Sensitive file access detected:\n${warnings.join('\n')}\n\nConfirm to proceed?`;
             execution._internal.needsConfirmation = true;
           }
         }
@@ -200,7 +200,7 @@ export class PermissionStage implements PipelineStage {
       execution._internal.invocation = invocation;
       execution._internal.permissionCheckResult = checkResult;
     } catch (error) {
-      execution.abort(`权限检查出错: ${(error as Error).message}`);
+      execution.abort(`Permission check failed: ${(error as Error).message}`);
     }
   }
 
@@ -239,7 +239,7 @@ export class PermissionStage implements PipelineStage {
         return {
           result: PermissionResult.DENY,
           matchedRule: 'mode:plan',
-          reason: 'Plan 模式: 禁止执行修改操作，仅允许只读工具（Read/Glob/Grep/WebFetch/WebSearch/Task）',
+          reason: 'Plan mode: modification tools are blocked; only read-only tools are allowed (Read/Glob/Grep/WebFetch/WebSearch/Task)',
         };
       }
     }
@@ -249,7 +249,7 @@ export class PermissionStage implements PipelineStage {
       return {
         result: PermissionResult.ALLOW,
         matchedRule: 'mode:yolo',
-        reason: 'YOLO 模式: 自动批准所有工具调用',
+        reason: 'YOLO mode: automatically approve all tool invocations',
       };
     }
 
@@ -260,7 +260,7 @@ export class PermissionStage implements PipelineStage {
       return {
         result: PermissionResult.ALLOW,
         matchedRule: `mode:${this.permissionMode}:${kindName}`,
-        reason: '只读工具无需确认',
+        reason: 'Read-only tools do not require confirmation',
       };
     }
 
@@ -272,7 +272,7 @@ export class PermissionStage implements PipelineStage {
       return {
         result: PermissionResult.ALLOW,
         matchedRule: 'mode:autoEdit:edit',
-        reason: 'AUTO_EDIT 模式: 自动批准编辑类工具',
+        reason: 'AUTO_EDIT mode: automatically approve edit tools',
       };
     }
 
@@ -309,7 +309,7 @@ export class ConfirmationStage implements PipelineStage {
     } = execution._internal;
 
     if (!tool || !invocation) {
-      execution.abort('前置阶段失败，无法进行用户确认');
+      execution.abort('Pre-confirmation stage failed; cannot request user approval');
       return;
     }
 
@@ -351,7 +351,7 @@ export class ConfirmationStage implements PipelineStage {
           await confirmationHandler.requestConfirmation(confirmationDetails);
 
         if (!response.approved) {
-          execution.abort(`用户拒绝执行: ${response.reason || '无原因'}`);
+          execution.abort(`User rejected execution: ${response.reason || 'No reason provided'}`);
           return;
         }
 
@@ -372,10 +372,10 @@ export class ConfirmationStage implements PipelineStage {
         }
       } else {
         // 如果没有提供 confirmationHandler,则自动通过确认（用于非交互式环境）
-        logger.warn('⚠️ 无 ConfirmationHandler,自动批准工具执行（仅用于非交互式环境）');
+        logger.warn('⚠️ No ConfirmationHandler; auto-approving tool execution (non-interactive environment only)');
       }
     } catch (error) {
-      execution.abort(`用户确认出错: ${(error as Error).message}`);
+      execution.abort(`User confirmation failed: ${(error as Error).message}`);
     }
   }
 
@@ -398,8 +398,8 @@ export class ConfirmationStage implements PipelineStage {
       this.permissionChecker.replaceConfig(updatedConfig);
     } catch (error) {
       logger.warn(
-        `无法保存权限规则 "${signature}": ${
-          error instanceof Error ? error.message : '未知错误'
+        `Failed to persist permission rule "${signature}": ${
+          error instanceof Error ? error.message : 'Unknown error'
         }`
       );
     }
@@ -534,7 +534,7 @@ export class ExecutionStage implements PipelineStage {
     const invocation = execution._internal.invocation;
 
     if (!invocation) {
-      execution.abort('前置阶段失败，无法执行工具');
+      execution.abort('Pre-execution stage failed; cannot run tool');
       return;
     }
 
@@ -548,7 +548,7 @@ export class ExecutionStage implements PipelineStage {
 
       execution.setResult(result);
     } catch (error) {
-      execution.abort(`工具执行失败: ${(error as Error).message}`);
+      execution.abort(`Tool execution failed: ${(error as Error).message}`);
     }
   }
 }
@@ -566,7 +566,7 @@ export class FormattingStage implements PipelineStage {
 
       // 确保结果格式正确
       if (!result.llmContent) {
-        result.llmContent = result.displayContent || '执行完成';
+        result.llmContent = 'Execution completed';
       }
 
       if (!result.displayContent) {
@@ -584,7 +584,7 @@ export class FormattingStage implements PipelineStage {
 
       execution.setResult(result);
     } catch (error) {
-      execution.abort(`结果格式化出错: ${(error as Error).message}`);
+      execution.abort(`Result formatting failed: ${(error as Error).message}`);
     }
   }
 }

@@ -6,22 +6,22 @@ import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { generateDiffSnippetWithMatch } from './diffUtils.js';
+import {
+  flexibleMatch,
+  type MatchResult,
+  MatchStrategy,
+  unescapeString,
+} from './editCorrector.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 import { SnapshotManager } from './SnapshotManager.js';
-import {
-  unescapeString,
-  flexibleMatch,
-  MatchStrategy,
-  type MatchResult,
-} from './editCorrector.js';
 
 /**
- * EditTool - 文件编辑工具
- * 使用新的 Zod 验证设计
+ * EditTool - File edit tool
+ * Uses the newer Zod validation design
  */
 export const editTool = createTool({
   name: 'Edit',
-  displayName: '文件编辑',
+  displayName: 'File Edit',
   kind: ToolKind.Edit,
   strict: true, // 启用 OpenAI Structured Outputs
   isConcurrencySafe: false, // 文件编辑不支持并发
@@ -29,22 +29,22 @@ export const editTool = createTool({
   // Zod Schema 定义
   schema: z.object({
     file_path: ToolSchemas.filePath({
-      description: '要编辑的文件路径（必须是绝对路径）',
+      description: 'Absolute path of the file to edit',
     }),
     old_string: z
       .string()
-      .min(1, '要替换的字符串不能为空')
-      .describe('要替换的字符串内容'),
-    new_string: z.string().describe('新的字符串内容（可以为空字符串）'),
+      .min(1, 'old_string cannot be empty')
+      .describe('String to replace'),
+    new_string: z.string().describe('Replacement string (can be empty)'),
     replace_all: z
       .boolean()
       .default(false)
-      .describe('是否替换所有匹配项（默认只替换第一个）'),
+      .describe('Replace all matches (default: first only)'),
   }),
 
   // 工具描述
   description: {
-    short: '在文件中进行精确的字符串替换',
+    short: 'Perform precise string replacements within a file',
     long: `Performs exact string replacements in files. Supports replacing a single occurrence or all occurrences with the replace_all parameter.`,
     usageNotes: [
       'You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.',
@@ -56,7 +56,7 @@ export const editTool = createTool({
     ],
     examples: [
       {
-        description: '替换唯一的字符串',
+        description: 'Replace a unique string',
         params: {
           file_path: '/path/to/file.ts',
           old_string:
@@ -66,7 +66,7 @@ export const editTool = createTool({
         },
       },
       {
-        description: '使用 replace_all 重命名变量',
+        description: 'Rename a variable using replace_all',
         params: {
           file_path: '/path/to/file.ts',
           old_string: 'oldVariableName',
@@ -75,7 +75,7 @@ export const editTool = createTool({
         },
       },
       {
-        description: '删除内容（new_string 为空）',
+        description: 'Delete content (empty new_string)',
         params: {
           file_path: '/path/to/file.ts',
           old_string: '// TODO: remove this\n',
@@ -84,11 +84,11 @@ export const editTool = createTool({
       },
     ],
     important: [
-      '**必须先使用 Read 工具读取文件**，否则编辑会失败',
-      '**如果 old_string 不唯一，编辑会失败**。请提供更多上下文或使用 replace_all',
-      '从 Read 工具输出复制内容时，确保保留精确的缩进（忽略行号前缀）',
-      '替换多行内容时，old_string 必须包含完整的换行符',
-      'new_string 和 old_string 不能相同',
+      '**You MUST Read the file first**, otherwise the edit will fail',
+      '**If old_string is not unique, the edit will fail**—add more context or use replace_all',
+      'When copying from Read output, preserve exact indentation (ignore line number prefixes)',
+      'For multi-line replacements, old_string must include full newlines',
+      'new_string and old_string must differ',
     ],
   },
 
@@ -99,7 +99,7 @@ export const editTool = createTool({
     const signal = context.signal ?? new AbortController().signal;
 
     try {
-      updateOutput?.('开始读取文件...');
+      updateOutput?.('Starting to read file...');
 
       // 读取文件内容
       let content: string;
@@ -109,7 +109,7 @@ export const editTool = createTool({
         if (error.code === 'ENOENT') {
           return {
             success: false,
-            llmContent: `文件不存在: ${file_path}`,
+            llmContent: `File not found: ${file_path}`,
             displayContent: `❌ 文件不存在: ${file_path}`,
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
@@ -171,7 +171,7 @@ export const editTool = createTool({
       if (old_string === new_string) {
         return {
           success: false,
-          llmContent: '新字符串与旧字符串相同，无需进行替换',
+          llmContent: 'New string is identical; no replacement needed',
           displayContent: '⚠️ 新字符串与旧字符串相同，无需进行替换',
           error: {
             type: ToolErrorType.VALIDATION_ERROR,
@@ -383,7 +383,7 @@ export const editTool = createTool({
       if (error.name === 'AbortError') {
         return {
           success: false,
-          llmContent: '文件编辑被中止',
+          llmContent: 'File edit aborted',
           displayContent: '⚠️ 文件编辑被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
@@ -394,7 +394,7 @@ export const editTool = createTool({
 
       return {
         success: false,
-        llmContent: `编辑文件失败: ${error.message}`,
+        llmContent: `File edit failed: ${error.message}`,
         displayContent: `❌ 编辑文件失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
@@ -491,7 +491,7 @@ function smartMatch(content: string, searchString: string): MatchResult {
  * - 重叠匹配会找到 3 个：位置 0, 1, 2
  * - 非重叠匹配只找到 2 个：位置 0, 2（与 split/join 一致）
  */
-function findMatches(content: string, searchString: string): number[] {
+function _findMatches(content: string, searchString: string): number[] {
   // 先尝试智能匹配
   const matchResult = smartMatch(content, searchString);
   if (!matchResult.matched) {

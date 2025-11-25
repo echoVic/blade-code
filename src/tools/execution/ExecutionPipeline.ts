@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
 import type { PermissionConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
+import { HookStage } from '../../hooks/HookStage.js';
+import { PostToolUseHookStage } from '../../hooks/PostToolUseHookStage.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import { ToolExecution as ToolExecutionImpl } from '../types/ExecutionTypes.js';
 import type {
@@ -18,8 +20,6 @@ import {
   FormattingStage,
   PermissionStage,
 } from './PipelineStages.js';
-import { HookStage } from '../../hooks/HookStage.js';
-import { PostToolUseHookStage } from '../../hooks/PostToolUseHookStage.js';
 
 /**
  * 7阶段执行管道
@@ -169,7 +169,7 @@ export class ExecutionPipeline extends EventEmitter {
     } catch (error) {
       const errorResult: ToolResult = {
         success: false,
-        llmContent: `工具执行失败: ${(error as Error).message}`,
+        llmContent: `Tool execution failed: ${(error as Error).message}`,
         displayContent: `错误: ${(error as Error).message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

@@ -49,11 +49,11 @@ export function createTool<TSchema extends z.ZodSchema>(
       }
 
       if (config.description.usageNotes && config.description.usageNotes.length > 0) {
-        fullDescription += `\n\n使用说明:\n${config.description.usageNotes.map((note) => `- ${note}`).join('\n')}`;
+        fullDescription += `\n\nUsage Notes:\n${config.description.usageNotes.map((note) => `- ${note}`).join('\n')}`;
       }
 
       if (config.description.important && config.description.important.length > 0) {
-        fullDescription += `\n\n重要提示:\n${config.description.important.map((note) => `⚠️ ${note}`).join('\n')}`;
+        fullDescription += `\n\nImportant:\n${config.description.important.map((note) => `⚠️ ${note}`).join('\n')}`;
       }
 
       return {
