@@ -5,7 +5,7 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
- * API响应结果
+ * API response shape
  */
 interface ApiResponse {
   status: number;
@@ -18,64 +18,64 @@ interface ApiResponse {
 }
 
 /**
- * ApiCallTool - API 调用工具
- * 使用新的 Zod 验证设计
+ * ApiCallTool - API caller
+ * Uses the newer Zod validation design
  */
 export const apiCallTool = createTool({
   name: 'ApiCall',
-  displayName: 'API调用',
+  displayName: 'API Call',
   kind: ToolKind.Network,
 
   // Zod Schema 定义
   schema: z.object({
-    url: z.string().url().describe('API端点URL'),
+    url: z.string().url().describe('API endpoint URL'),
     method: z
       .enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
       .default('GET')
-      .describe('HTTP方法'),
-    headers: z.record(z.string()).optional().describe('自定义请求头(可选)'),
-    query_params: z.record(z.string()).optional().describe('查询参数(可选)'),
-    body: z.any().optional().describe('请求体数据(可选,支持JSON对象或字符串)'),
+      .describe('HTTP method'),
+    headers: z.record(z.string()).optional().describe('Custom headers (optional)'),
+    query_params: z.record(z.string()).optional().describe('Query parameters (optional)'),
+    body: z.any().optional().describe('Request body (optional; JSON object or string)'),
     auth: z
       .object({
-        type: z.enum(['bearer', 'basic', 'api_key']).describe('认证类型'),
-        token: z.string().optional().describe('Bearer token(用于bearer认证)'),
-        username: z.string().optional().describe('用户名(用于basic认证)'),
-        password: z.string().optional().describe('密码(用于basic认证)'),
-        api_key: z.string().optional().describe('API密钥(用于api_key认证)'),
+        type: z.enum(['bearer', 'basic', 'api_key']).describe('Auth type'),
+        token: z.string().optional().describe('Bearer token (for bearer auth)'),
+        username: z.string().optional().describe('Username (for basic auth)'),
+        password: z.string().optional().describe('Password (for basic auth)'),
+        api_key: z.string().optional().describe('API key (for api_key auth)'),
         api_key_header: z
           .string()
           .default('X-API-Key')
-          .describe('API密钥头部名称(可选)'),
+          .describe('Header name for API key (optional)'),
       })
       .optional()
-      .describe('认证信息(可选)'),
+      .describe('Authentication info (optional)'),
     timeout: ToolSchemas.timeout(1000, 120000, 30000),
-    parse_response: z.boolean().default(true).describe('是否尝试解析JSON响应'),
+    parse_response: z.boolean().default(true).describe('Attempt to parse JSON response'),
   }),
 
   // 工具描述
   description: {
-    short: '调用RESTful API，支持多种HTTP方法和认证方式',
-    long: `提供完整的 RESTful API 调用功能。支持多种认证方式(Bearer Token、Basic Auth、API Key)，可自动解析 JSON 响应，支持查询参数和请求体配置。`,
+    short: 'Call RESTful APIs with multiple HTTP methods and auth options',
+    long: `Full REST API calling support with Bearer, Basic, or API Key auth. Automatically parses JSON responses and supports query params and request bodies.`,
     usageNotes: [
-      'url 参数是必需的，必须是有效的 URL',
-      'method 默认为 GET',
-      '支持三种认证方式: bearer, basic, api_key',
-      'query_params 会自动拼接到 URL',
-      'body 支持 JSON 对象或字符串',
-      'parse_response 默认启用，自动解析 JSON 响应',
-      'timeout 默认 30 秒，最长 2 分钟',
+      'url is required and must be valid',
+      'method defaults to GET',
+      'Auth types supported: bearer, basic, api_key',
+      'query_params are appended to the URL automatically',
+      'body accepts JSON objects or strings',
+      'parse_response defaults to true to auto-parse JSON',
+      'timeout defaults to 30s, max 2 minutes',
     ],
     examples: [
       {
-        description: '简单 GET 请求',
+        description: 'Simple GET request',
         params: {
           url: 'https://api.example.com/users',
         },
       },
       {
-        description: 'POST 请求带认证',
+        description: 'POST request with auth',
         params: {
           url: 'https://api.example.com/data',
           method: 'POST',
@@ -87,7 +87,7 @@ export const apiCallTool = createTool({
         },
       },
       {
-        description: '带查询参数的请求',
+        description: 'Request with query params',
         params: {
           url: 'https://api.example.com/search',
           query_params: {
@@ -97,7 +97,7 @@ export const apiCallTool = createTool({
         },
       },
       {
-        description: 'API Key 认证',
+        description: 'API Key auth',
         params: {
           url: 'https://api.example.com/secure',
           auth: {
@@ -109,10 +109,10 @@ export const apiCallTool = createTool({
       },
     ],
     important: [
-      'API调用需要用户确认',
-      'HTTP 4xx/5xx 状态码会返回错误',
-      '认证信息会被安全处理',
-      '支持自动 JSON 解析',
+      'API calls require user approval',
+      'HTTP 4xx/5xx responses are treated as errors',
+      'Auth data is handled securely',
+      'Automatic JSON parsing supported',
     ],
   },
 
@@ -134,7 +134,7 @@ export const apiCallTool = createTool({
     try {
       // 构建最终URL
       const finalUrl = buildUrl(url, query_params);
-      updateOutput?.(`调用API: ${method} ${finalUrl}`);
+      updateOutput?.(`Calling API: ${method} ${finalUrl}`);
 
       const startTime = Date.now();
       const response = await performApiCall({
@@ -176,7 +176,7 @@ export const apiCallTool = createTool({
       if (response.status >= 400) {
         return {
           success: false,
-          llmContent: `API调用失败 ${response.status}: ${response.status_text}`,
+          llmContent: `API call failed ${response.status}: ${response.status_text}`,
           displayContent: formatDisplayMessage(response, metadata, true),
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
@@ -200,7 +200,7 @@ export const apiCallTool = createTool({
       if (error.name === 'AbortError') {
         return {
           success: false,
-          llmContent: 'API请求被中止',
+          llmContent: 'API request aborted',
           displayContent: '⚠️ API请求被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
@@ -211,7 +211,7 @@ export const apiCallTool = createTool({
 
       return {
         success: false,
-        llmContent: `API请求失败: ${error.message}`,
+        llmContent: `API request failed: ${error.message}`,
         displayContent: `❌ API请求失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

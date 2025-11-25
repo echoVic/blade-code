@@ -8,7 +8,7 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
- * 脚本解释器映射
+ * Script interpreter map
  */
 const INTERPRETER_MAP: Record<string, string> = {
   '.js': 'node',
@@ -27,7 +27,7 @@ const INTERPRETER_MAP: Record<string, string> = {
 };
 
 /**
- * 脚本执行结果
+ * Script execution result
  */
 interface ScriptResult {
   stdout: string;
@@ -37,64 +37,64 @@ interface ScriptResult {
 }
 
 /**
- * ScriptTool - 脚本执行工具
- * 使用新的 Zod 验证设计
+ * ScriptTool - Script executor
+ * Uses the newer Zod validation design
  */
 export const scriptTool = createTool({
   name: 'Script',
-  displayName: '脚本执行',
+  displayName: 'Script Runner',
   kind: ToolKind.Execute,
 
   // Zod Schema 定义
   schema: z.object({
     script_path: ToolSchemas.filePath({
-      description: '脚本文件路径',
+      description: 'Path to the script file',
     }),
-    args: z.array(z.string().min(1)).optional().describe('脚本参数列表(可选)'),
+    args: z.array(z.string().min(1)).optional().describe('Script arguments (optional)'),
     interpreter: z
       .string()
       .optional()
-      .describe('指定解释器(可选,默认根据文件扩展名自动检测)'),
-    cwd: z.string().optional().describe('执行目录(可选,默认当前目录)'),
+      .describe('Interpreter to use (optional; auto-detected from extension)'),
+    cwd: z.string().optional().describe('Working directory (optional, defaults to cwd)'),
     timeout: ToolSchemas.timeout(1000, 600000, 60000),
     env: ToolSchemas.environment(),
   }),
 
   // 工具描述
   description: {
-    short: '执行各种脚本文件，支持多种编程语言和解释器',
-    long: `自动检测脚本文件类型并使用合适的解释器执行。支持 JavaScript、Python、Ruby、PHP、Perl、Shell 等多种脚本语言。`,
+    short: 'Execute scripts with multiple languages and interpreters',
+    long: `Auto-detects script type and runs it with the appropriate interpreter. Supports JavaScript, Python, Ruby, PHP, Perl, Shell, and more.`,
     usageNotes: [
-      'script_path 参数是必需的',
-      '支持的脚本类型: .js, .ts, .py, .rb, .php, .pl, .sh, .bash, .zsh, .fish, .ps1, .bat, .cmd',
-      '可通过 interpreter 参数指定自定义解释器',
-      '自动检测脚本中的危险操作并提示用户确认',
-      'timeout 默认 60 秒，最长 10 分钟',
-      '脚本执行前会检查文件是否存在',
+      'script_path is required',
+      'Supported extensions: .js, .ts, .py, .rb, .php, .pl, .sh, .bash, .zsh, .fish, .ps1, .bat, .cmd',
+      'Override interpreter via the interpreter parameter',
+      'Dangerous operations may require user confirmation',
+      'timeout defaults to 60s, max 10 minutes',
+      'File existence is checked before execution',
     ],
     examples: [
       {
-        description: '执行 Node.js 脚本',
+        description: 'Run a Node.js script',
         params: {
           script_path: './scripts/build.js',
         },
       },
       {
-        description: '执行 Python 脚本并传参',
+        description: 'Run a Python script with arguments',
         params: {
           script_path: './scripts/process.py',
           args: ['--input', 'data.json'],
         },
       },
       {
-        description: '指定解释器执行',
+        description: 'Use a specific interpreter',
         params: {
           script_path: './script.sh',
           interpreter: 'zsh',
         },
       },
       {
-        description: '在特定目录执行脚本',
+        description: 'Run a script in a specific directory',
         params: {
           script_path: './test.sh',
           cwd: '/path/to/project',
@@ -102,10 +102,10 @@ export const scriptTool = createTool({
       },
     ],
     important: [
-      '脚本包含危险操作时需要用户确认',
-      '脚本文件必须存在且可访问',
-      '根据扩展名自动选择解释器',
-      '支持外部网络访问和文件系统操作的脚本',
+      'Dangerous scripts require user confirmation',
+      'Script file must exist and be accessible',
+      'Interpreter is auto-selected based on extension',
+      'Scripts may access network and filesystem as permitted',
     ],
   },
 
@@ -127,15 +127,15 @@ export const scriptTool = createTool({
       try {
         await fs.access(script_path);
       } catch (_error) {
-        return {
-          success: false,
-          llmContent: `脚本文件不存在: ${script_path}`,
-          displayContent: `❌ 脚本文件不存在: ${script_path}`,
-          error: {
-            type: ToolErrorType.VALIDATION_ERROR,
-            message: '脚本文件不存在',
-          },
-        };
+          return {
+            success: false,
+            llmContent: `Script file not found: ${script_path}`,
+            displayContent: `❌ 脚本文件不存在: ${script_path}`,
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'Script file not found',
+            },
+          };
       }
 
       // 确定解释器
@@ -143,13 +143,13 @@ export const scriptTool = createTool({
       if (!finalInterpreter) {
         return {
           success: false,
-          llmContent: `无法确定脚本解释器: ${script_path}`,
-          displayContent: `❌ 无法确定脚本解释器: ${script_path}`,
-          error: {
-            type: ToolErrorType.VALIDATION_ERROR,
-            message: '无法确定脚本解释器',
-          },
-        };
+          llmContent: `Cannot determine script interpreter: ${script_path}`,
+            displayContent: `❌ 无法确定脚本解释器: ${script_path}`,
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'Cannot determine script interpreter',
+            },
+          };
       }
 
       updateOutput?.(`使用 ${finalInterpreter} 执行脚本: ${script_path}`);
@@ -188,11 +188,11 @@ export const scriptTool = createTool({
       if (result.exit_code !== 0) {
         return {
           success: false,
-          llmContent: `脚本执行失败 (退出码: ${result.exit_code})${result.stderr ? `\n错误输出: ${result.stderr}` : ''}`,
+          llmContent: `Script execution failed (exit code: ${result.exit_code})${result.stderr ? `\nStderr: ${result.stderr}` : ''}`,
           displayContent: formatDisplayMessage(result, metadata),
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: `脚本执行失败 (退出码: ${result.exit_code})`,
+            message: `Script execution failed (exit code: ${result.exit_code})`,
             details: result,
           },
           metadata,
@@ -209,18 +209,18 @@ export const scriptTool = createTool({
       if (error.name === 'AbortError') {
         return {
           success: false,
-          llmContent: '脚本执行被中止',
+          llmContent: 'Script execution aborted',
           displayContent: '⚠️ 脚本执行被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: '操作被中止',
+            message: 'Operation aborted',
           },
         };
       }
 
       return {
         success: false,
-        llmContent: `脚本执行失败: ${error.message}`,
+        llmContent: `Script execution failed: ${error.message}`,
         displayContent: `❌ 脚本执行失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

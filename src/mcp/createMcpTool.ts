@@ -37,10 +37,10 @@ export function createMcpTool(
     kind: ToolKind.External,
     schema: zodSchema,
     description: {
-      short: toolDef.description || `MCP工具: ${toolDef.name}`,
-      important: [`来自 MCP 服务器: ${serverName}`, '执行外部工具，需要用户确认'],
+      short: toolDef.description || `MCP Tool: ${toolDef.name}`,
+      important: [`From MCP server: ${serverName}`, 'Executes external tools; user confirmation required'],
     },
-    category: 'MCP工具',
+    category: 'MCP tool',
     tags: ['mcp', 'external', serverName],
 
     async execute(params, context) {
@@ -58,10 +58,10 @@ export function createMcpTool(
               displayContent += item.text;
             } else if (item.type === 'image') {
               displayContent += `[图片: ${item.mimeType || 'unknown'}]\n`;
-              llmContent += `[图片: ${item.mimeType || 'unknown'}]\n`;
+              llmContent += `[image: ${item.mimeType || 'unknown'}]\n`;
             } else if (item.type === 'resource') {
               displayContent += `[资源: ${item.mimeType || 'unknown'}]\n`;
-              llmContent += `[资源: ${item.mimeType || 'unknown'}]\n`;
+              llmContent += `[resource: ${item.mimeType || 'unknown'}]\n`;
             }
           }
         }
@@ -69,18 +69,18 @@ export function createMcpTool(
         if (result.isError) {
           return {
             success: false,
-            llmContent: llmContent || 'MCP工具执行失败',
+            llmContent: llmContent || 'MCP tool execution failed',
             displayContent: `❌ ${displayContent || 'MCP工具执行失败'}`,
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
-              message: llmContent || 'MCP工具执行失败',
+              message: llmContent || 'MCP tool execution failed',
             },
           };
         }
 
         return {
           success: true,
-          llmContent: llmContent || '执行成功',
+          llmContent: llmContent || 'Execution succeeded',
           displayContent: `✅ MCP工具 ${toolDef.name} 执行成功\n${displayContent}`,
           metadata: {
             serverName,
@@ -91,7 +91,7 @@ export function createMcpTool(
       } catch (error) {
         return {
           success: false,
-          llmContent: `MCP工具执行失败: ${(error as Error).message}`,
+          llmContent: `MCP tool execution failed: ${(error as Error).message}`,
           displayContent: `❌ ${(error as Error).message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,

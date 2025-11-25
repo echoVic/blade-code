@@ -8,7 +8,7 @@ import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { BackgroundShellManager } from './BackgroundShellManager.js';
 
 /**
- * Bash Tool - Shell 命令执行工具
+ * Bash Tool - Shell command executor
  *
  * 设计理念：
  * - 每次命令独立执行（非持久会话）
@@ -18,61 +18,64 @@ import { BackgroundShellManager } from './BackgroundShellManager.js';
  */
 export const bashTool = createTool({
   name: 'Bash',
-  displayName: 'Bash 命令执行',
+  displayName: 'Bash Command',
   kind: ToolKind.Execute,
 
   // Zod Schema 定义
   schema: z.object({
     command: ToolSchemas.command({
-      description: '要执行的 bash 命令',
+      description: 'Bash command to execute',
     }),
     timeout: ToolSchemas.timeout(1000, 300000, 30000),
     cwd: z
       .string()
       .optional()
-      .describe('工作目录(可选,仅对当前命令生效。持久改变请使用 cd 命令)'),
+      .describe(
+        'Working directory (optional; applies only to this command). To persist, use cd'
+      ),
     env: ToolSchemas.environment(),
     run_in_background: z
       .boolean()
       .default(false)
-      .describe('是否在后台运行(适合长时间执行的命令)'),
+      .describe('Run in background (suitable for long-running commands)'),
   }),
 
   // 工具描述
   description: {
-    short: '执行 bash 命令,支持环境变量和工作目录设置',
-    long: `使用非交互式 bash 执行命令。每个命令独立执行,通过进程事件可靠地检测完成状态。工作目录和环境变量可通过参数临时设置,或通过 cd/export 命令持久改变。`,
+    short:
+      'Execute bash commands; supports environment variables and working directory',
+    long: `Execute commands using non-interactive bash. Each command runs independently with completion detected via process events. Working directory and environment variables can be set temporarily via parameters or persistently via cd/export.`,
     usageNotes: [
-      'IMPORTANT: 此工具用于终端操作(git, npm, docker 等)',
-      'DO NOT 用于文件操作(读、写、编辑、搜索) - 应使用专用工具',
-      'command 参数是必需的',
-      '使用 cd 命令改变工作目录,使用 export 设置环境变量(持久生效)',
-      'cwd 和 env 参数仅对当前命令生效(临时覆盖)',
-      'timeout 默认 30 秒,最长 5 分钟',
-      'run_in_background 用于长时间运行的命令',
-      '文件路径包含空格时必须用双引号括起来',
-      'NEVER 使用 -i 标志(不支持交互式输入)',
+      'IMPORTANT: Use this tool for terminal operations (git, npm, docker, etc.)',
+      'DO NOT use for file operations (read, write, edit, search) — use dedicated tools',
+      'The command parameter is required',
+      'Use cd to change working directory; use export to set environment variables (persistent)',
+      'cwd and env parameters apply only to this command (temporary override)',
+      'timeout defaults to 30 seconds, max 5 minutes',
+      'run_in_background is for long-running commands',
+      'Wrap file paths containing spaces in double quotes',
+      'NEVER use the -i flag (no interactive input)',
     ],
     examples: [
       {
-        description: '执行简单命令',
+        description: 'Run a simple command',
         params: { command: 'ls -la' },
       },
       {
-        description: '临时改变工作目录(仅本次命令)',
+        description: 'Temporarily change working directory (this command only)',
         params: {
           command: 'npm install',
           cwd: '/path/to/project',
         },
       },
       {
-        description: '持久改变工作目录',
+        description: 'Persistently change working directory',
         params: {
           command: 'cd /path/to/project && npm install',
         },
       },
       {
-        description: '在后台运行长时间命令',
+        description: 'Run a long-running command in background',
         params: {
           command: 'npm run dev',
           run_in_background: true,
@@ -80,9 +83,9 @@ export const bashTool = createTool({
       },
     ],
     important: [
-      '危险命令(rm -rf, sudo 等)需要用户确认',
-      '后台命令需要手动终止',
-      'NEVER 使用 find, grep, cat, sed 等命令 - 应使用专用工具',
+      'Dangerous commands (rm -rf, sudo, etc.) require user confirmation',
+      'Background commands require manual termination',
+      'NEVER use find, grep, cat, sed, etc. — use dedicated tools',
     ],
   },
 
@@ -93,7 +96,7 @@ export const bashTool = createTool({
     const signal = context.signal ?? new AbortController().signal;
 
     try {
-      updateOutput?.(`执行 Bash 命令: ${command}`);
+      updateOutput?.(`Executing Bash command: ${command}`);
 
       if (run_in_background) {
         return executeInBackground(command, cwd, env);
@@ -105,18 +108,18 @@ export const bashTool = createTool({
       if (err.name === 'AbortError') {
         return {
           success: false,
-          llmContent: '命令执行被中止',
+          llmContent: 'Command execution aborted',
           displayContent: '⚠️ 命令执行被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: '操作被中止',
+            message: 'Operation aborted',
           },
         };
       }
 
       return {
         success: false,
-        llmContent: `命令执行失败: ${err.message}`,
+        llmContent: `Command execution failed: ${err.message}`,
         displayContent: `❌ 命令执行失败: ${err.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
@@ -274,7 +277,7 @@ async function executeWithTimeout(
       if (timedOut) {
         resolve({
           success: false,
-          llmContent: `命令执行超时 (${timeout}ms)`,
+          llmContent: `Command execution timed out (${timeout}ms)`,
           displayContent: `⏱️ 命令执行超时 (${timeout}ms)\n输出: ${stdout}\n错误: ${stderr}`,
           error: {
             type: ToolErrorType.TIMEOUT_ERROR,
@@ -295,7 +298,7 @@ async function executeWithTimeout(
       if (signal.aborted) {
         resolve({
           success: false,
-          llmContent: '命令执行被用户中止',
+          llmContent: 'Command execution aborted by user',
           displayContent: `⚠️ 命令执行被用户中止\n输出: ${stdout}\n错误: ${stderr}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
@@ -368,7 +371,7 @@ async function executeWithTimeout(
 
       resolve({
         success: false,
-        llmContent: `命令执行失败: ${error.message}`,
+        llmContent: `Command execution failed: ${error.message}`,
         displayContent: `❌ 命令执行失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

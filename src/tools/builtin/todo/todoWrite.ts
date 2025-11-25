@@ -7,204 +7,196 @@ import type { TodoItem, TodoStats } from './types.js';
 import { TodoItemSchema } from './types.js';
 
 /**
- * 创建 TodoWrite 工具
+ * Create TodoWrite tool
  */
 export function createTodoWriteTool(opts: { sessionId: string; configDir: string }) {
   const { sessionId, configDir } = opts;
 
   return createTool({
     name: 'TodoWrite',
-    displayName: 'TODO任务写入',
+    displayName: 'Todo Write',
     kind: ToolKind.Memory,
 
     schema: z.object({
-      todos: z.array(TodoItemSchema).min(1, '至少需要一个任务'),
+      todos: z.array(TodoItemSchema).min(1, 'At least one task is required'),
     }),
 
     description: {
-      short: '创建和管理结构化的TODO任务清单，跟踪复杂任务的执行进度',
+      short: 'Create and manage structured TODO lists to track complex work',
       long: `
-为当前编码会话创建和管理结构化的任务清单。帮助跟踪进度、组织复杂任务，并向用户展示工作的完整性。
-也帮助用户理解任务进度和整体请求的完成情况。
+Create and manage structured TODO lists for the current coding session. Helps track progress, organize complex tasks, and show completeness to the user.
 
-**⚠️ 重要提醒：这不是子Agent调度工具！**
-- 如需委托子Agent独立执行工作 → 使用 Task 工具
-- 如需可视化跟踪任务进度清单 → 使用 TodoWrite 工具
+**⚠️ Important: This is NOT the subagent scheduler!**
+- To delegate work to a subagent → use the Task tool
+- To visually track task progress → use the TodoWrite tool
 
-**何时使用此工具（主动使用）：**
+**When to use (proactively):**
+1. Complex multi-step tasks (3+ distinct steps)
+2. Non-trivial tasks requiring planning or multiple actions
+3. User explicitly requests a TODO list
+4. User provides multiple tasks (numbered or comma-separated)
+5. Upon receiving new instructions, capture them as TODO items immediately
+6. When starting work, mark one task as in_progress (ideally only one at a time)
+7. After completing a task, mark it completed and add any follow-up tasks discovered
 
-1. **复杂多步骤任务** - 任务需要 3 个或更多不同的步骤或操作
-2. **非平凡的复杂任务** - 需要仔细规划或多个操作的任务
-3. **用户明确请求** - 用户直接要求使用待办列表
-4. **用户提供多个任务** - 用户提供待办事项列表（编号或逗号分隔）
-5. **收到新指令后** - 立即将用户需求捕获为待办事项
-6. **开始工作时** - 在开始工作前标记为 in_progress（理想情况下同时只有一个）
-7. **完成任务后** - 标记为 completed，并添加实现过程中发现的新后续任务
+**When NOT to use:**
+1. A single simple task
+2. Trivial tasks where tracking adds no value
+3. Tasks doable in fewer than 3 simple steps
+4. Tasks that are purely conversational or informational
 
-**何时不使用此工具：**
+**Note:** If there is only one trivial task, do not use this tool—just do it.
 
-1. 只有单个简单直接的任务
-2. 任务是琐碎的，跟踪它没有组织价值
-3. 任务可以在少于 3 个简单步骤内完成
-4. 任务纯粹是对话性或信息性的
+**Task statuses:**
+- pending: not started
+- in_progress: currently being worked on (limit one at a time)
+- completed: finished successfully
 
-**注意：** 如果只有一个琐碎任务要做，不应使用此工具。在这种情况下，最好直接完成任务。
+**Task description format:**
+- content: imperative description of what to do (e.g., "Run tests", "Build project")
+- activeForm: present-continuous form shown while active (e.g., "Running tests", "Building project")
 
-**任务状态：**
-- pending: 尚未开始的任务
-- in_progress: 当前正在执行的任务（同时限制为一个）
-- completed: 已成功完成的任务
+**Priorities:**
+- high: urgent/important (P0)
+- medium: normal (P1, default)
+- low: lower priority (P2)
 
-**任务描述格式要求：**
-- content: 命令式形式描述需要做什么（如 "运行测试"、"构建项目"）
-- activeForm: 现在进行时形式，执行期间显示（如 "运行测试中"、"构建项目中"）
+**Task management rules:**
+- Update task status in real time
+- Mark tasks as completed immediately (no batch updates)
+- Exactly one task should be in_progress at any time
+- Finish the current task before starting a new one
+- Remove tasks that are no longer relevant
 
-**优先级：**
-- high: 高优先级（P0）- 紧急重要任务
-- medium: 中优先级（P1，默认）- 正常任务
-- low: 低优先级（P2）- 可延后任务
+**Completion requirements:**
+- Only mark completed when fully done
+- If blocked/error/unfinished, keep in_progress
+- When blocked, create a new task describing what is needed
+- Never mark completed when: tests failing, implementation incomplete, unresolved errors, missing files/deps
 
-**任务管理规则：**
-- 实时更新任务状态
-- 完成后立即标记（不要批量完成）
-- 任何时候恰好一个任务为 in_progress（不多不少）
-- 在开始新任务前完成当前任务
-- 删除不再相关的任务
+**Best practices:**
+- Break complex tasks into 3-8 concrete, actionable subtasks
+- Write clear, descriptive task names
+- TODOs persist at ~/.blade/todos/{sessionId}-agent-{sessionId}.json
+- Each session has its own TODO list
 
-**任务完成要求：**
-- 仅在完全完成任务时才标记为 completed
-- 如果遇到错误、阻塞或无法完成，保持 in_progress
-- 被阻塞时，创建新任务描述需要解决的问题
-- 以下情况永远不要标记为 completed：
-  - 测试失败
-  - 实现不完整
-  - 遇到未解决的错误
-  - 找不到必要的文件或依赖项
-
-**最佳实践：**
-- 将复杂任务分解为 3-8 个具体可操作的子任务
-- 创建具体、可操作的任务项
-- 使用清晰、描述性的任务名称
-- 任务会自动持久化到 ~/.blade/todos/{sessionId}-agent-{sessionId}.json
-- 每个会话的 TODO 列表是独立的
-
-**拿不准时，就使用此工具。** 主动的任务管理展示了细心，并确保成功完成所有要求。
+**When in doubt, use this tool.** Proactive task management shows diligence and keeps work on track.
       `.trim(),
 
       usageNotes: [
-        '⚠️ 这是TODO清单管理工具！启动子Agent请使用 Task 工具',
-        '⚠️ todos 参数必须是数组对象，不要序列化为 JSON 字符串',
-        '同时只能有一个任务处于 in_progress 状态',
-        '任务完成后立即标记为 completed，不要批量处理',
-        'content 是命令式任务描述（如 "实现用户登录功能"）',
-        'activeForm 是现在进行时描述（如 "实现用户登录功能中"）',
-        '优先级默认为 medium，高优先级任务会优先显示',
-        '主动使用此工具跟踪复杂任务（3+ 步骤）',
-        '不要用于单个琐碎任务',
-        '任务会持久化，支持跨会话恢复',
+        '⚠️ This is the TODO list tool; launch subagents with the Task tool',
+        '⚠️ todos must be an array of objects, not a JSON string',
+        'Only one task may be in_progress at a time',
+        'Mark tasks completed immediately—no batching',
+        'content is an imperative task description (e.g., "Implement user login")',
+        'activeForm is the present-progress description (e.g., "Implementing user login")',
+        'Priority defaults to medium; high-priority tasks surface first',
+        'Use proactively for complex tasks (3+ steps)',
+        'Do not use for a single trivial task',
+        'Tasks persist and can be restored across sessions',
       ],
 
       examples: [
         {
-          description: '添加暗色模式功能（用户请求测试和构建）',
+          description: 'Add dark mode feature (user requested tests and build)',
           params: {
             todos: [
               {
-                content: '在设置页面创建暗色模式切换组件',
+                content: 'Create dark mode toggle on settings page',
                 status: 'in_progress',
-                activeForm: '在设置页面创建暗色模式切换组件中',
+                activeForm: 'Creating dark mode toggle on settings page',
                 priority: 'high',
               },
               {
-                content: '添加暗色模式状态管理（context/store）',
+                content: 'Add dark mode state management (context/store)',
                 status: 'pending',
-                activeForm: '添加暗色模式状态管理中',
+                activeForm: 'Adding dark mode state management',
                 priority: 'high',
               },
               {
-                content: '实现暗色主题的 CSS-in-JS 样式',
+                content: 'Implement dark theme CSS-in-JS styles',
                 status: 'pending',
-                activeForm: '实现暗色主题的 CSS-in-JS 样式中',
+                activeForm: 'Implementing dark theme styles',
                 priority: 'high',
               },
               {
-                content: '更新现有组件以支持主题切换',
+                content: 'Update existing components to support theme switching',
                 status: 'pending',
-                activeForm: '更新现有组件以支持主题切换中',
+                activeForm: 'Updating components to support theme switching',
                 priority: 'medium',
               },
               {
-                content: '运行测试和构建流程，解决任何失败或错误',
+                content: 'Run tests/builds and fix any failures or errors',
                 status: 'pending',
-                activeForm: '运行测试和构建流程中',
+                activeForm: 'Running tests/builds',
                 priority: 'medium',
               },
             ],
           },
         },
         {
-          description: '重命名函数跨项目（找到 15 处，8 个文件）',
+          description: 'Rename a function across the project (15 hits, 8 files)',
           params: {
             todos: [
               {
-                content: '搜索所有 getCwd 出现位置',
+                content: 'Find all getCwd occurrences',
                 status: 'completed',
-                activeForm: '搜索 getCwd 出现位置中',
+                activeForm: 'Searching for getCwd occurrences',
                 priority: 'high',
               },
               {
-                content: '更新 src/utils/path.ts 中的函数定义',
+                content: 'Update function definition in src/utils/path.ts',
                 status: 'in_progress',
-                activeForm: '更新 src/utils/path.ts 中',
+                activeForm: 'Updating src/utils/path.ts',
                 priority: 'high',
               },
               {
-                content: '更新 src/commands/*.ts 中的 5 处调用',
+                content: 'Update 5 call sites in src/commands/*.ts',
                 status: 'pending',
-                activeForm: '更新 src/commands 中的调用',
+                activeForm: 'Updating call sites in src/commands',
                 priority: 'high',
               },
               {
-                content: '更新测试文件中的引用',
+                content: 'Update references in test files',
                 status: 'pending',
-                activeForm: '更新测试文件中',
+                activeForm: 'Updating test files',
                 priority: 'medium',
               },
               {
-                content: '运行测试确保没有遗漏',
+                content: 'Run tests to ensure nothing was missed',
                 status: 'pending',
-                activeForm: '运行测试确保没有遗漏中',
+                activeForm: 'Running tests to ensure nothing was missed',
                 priority: 'medium',
               },
             ],
           },
         },
         {
-          description: '电商网站功能实现（用户提供多个功能）',
+          description: 'Implement e-commerce features (user provided multiple asks)',
           params: {
             todos: [
               {
-                content: '实现用户注册功能（数据库模型、API、前端表单）',
+                content: 'Implement user registration (DB model, API, frontend form)',
                 status: 'in_progress',
-                activeForm: '实现用户注册功能中',
+                activeForm: 'Implementing user registration',
                 priority: 'high',
               },
               {
-                content: '实现产品目录功能',
+                content: 'Implement product catalog feature',
                 status: 'pending',
-                activeForm: '实现产品目录功能中',
+                activeForm: 'Implementing product catalog',
                 priority: 'high',
               },
               {
-                content: '实现购物车功能',
+                content: 'Implement shopping cart',
                 status: 'pending',
-                activeForm: '实现购物车功能中',
+                activeForm: 'Implementing shopping cart',
                 priority: 'high',
               },
               {
-                content: '实现结账流程',
+                content: 'Implement checkout flow',
                 status: 'pending',
-                activeForm: '实现结账流程中',
+                activeForm: 'Implementing checkout flow',
                 priority: 'high',
               },
             ],
@@ -213,14 +205,14 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
       ],
 
       important: [
-        '⚠️ 这是TODO清单工具！启动子Agent请使用 Task 工具',
-        '同时只能有一个 in_progress 任务',
-        '任务完成后立即标记，保持列表最新',
-        '遇到错误时保持任务为 in_progress，添加新任务说明问题',
-        '仅在完全完成时才标记 completed（测试通过、无错误）',
-        '任务描述要具体、可操作，避免模糊描述',
-        '主动使用此工具跟踪 3+ 步骤的复杂任务',
-        '必须同时提供 content（命令式）和 activeForm（进行时）',
+        '⚠️ This is the TODO list tool—use Task to launch subagents',
+        'Only one in_progress task at a time',
+        'Mark tasks immediately on completion to keep the list current',
+        'If blocked, keep task in_progress and add a new task describing the blocker',
+        'Mark completed only when fully done (tests pass, no errors)',
+        'Task descriptions must be specific and actionable',
+        'Use proactively for complex tasks (3+ steps)',
+        'Provide both content (imperative) and activeForm (progressive)',
       ],
     },
 
@@ -232,7 +224,7 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
         const targetSessionId = context.sessionId || sessionId;
         const manager = TodoManager.getInstance(targetSessionId, configDir);
 
-        updateOutput?.('更新 TODO 列表...');
+        updateOutput?.('Updating TODO list...');
 
         await manager.updateTodos(todos);
 
@@ -241,7 +233,7 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
 
         const displayContent = formatTodoList(sortedTodos, stats);
 
-        updateOutput?.(`✅ TODO 列表已更新 (${stats.completed}/${stats.total} 完成)`);
+        updateOutput?.(`✅ TODO list updated (${stats.completed}/${stats.total} completed)`);
 
         return {
           success: true,
@@ -255,7 +247,7 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
       } catch (error: any) {
         return {
           success: false,
-          llmContent: `更新失败: ${error.message}`,
+          llmContent: `Update failed: ${error.message}`,
           displayContent: `❌ 更新 TODO 列表失败: ${error.message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
@@ -267,7 +259,7 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
     },
 
     version: '1.0.0',
-    category: 'TODO工具',
+    category: 'TODO tools',
     tags: ['todo', 'task', 'management', 'planning'],
 
     /**

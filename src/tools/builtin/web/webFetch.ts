@@ -5,7 +5,7 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
- * Web响应结果
+ * Web response result shape
  */
 interface WebResponse {
   status: number;
@@ -21,57 +21,57 @@ interface WebResponse {
 }
 
 /**
- * WebFetchTool - Web 内容获取工具
- * 使用新的 Zod 验证设计
+ * WebFetchTool - Web content fetcher
+ * Uses the newer Zod validation design
  */
 export const webFetchTool = createTool({
   name: 'WebFetch',
-  displayName: '网页内容获取',
+  displayName: 'Web Fetch',
   kind: ToolKind.Network,
 
   // Zod Schema 定义
   schema: z.object({
-    url: z.string().url().describe('要请求的URL地址'),
+    url: z.string().url().describe('URL to request'),
     method: z
       .enum(['GET', 'POST', 'PUT', 'DELETE', 'HEAD'])
       .default('GET')
-      .describe('HTTP方法'),
-    headers: z.record(z.string()).optional().describe('请求头(可选)'),
-    body: z.string().optional().describe('请求体内容(可选)'),
+      .describe('HTTP method'),
+    headers: z.record(z.string()).optional().describe('Request headers (optional)'),
+    body: z.string().optional().describe('Request body (optional)'),
     timeout: ToolSchemas.timeout(1000, 120000, 30000),
-    follow_redirects: z.boolean().default(true).describe('是否跟随重定向'),
+    follow_redirects: z.boolean().default(true).describe('Follow redirects'),
     max_redirects: z
       .number()
       .int()
       .min(0)
       .max(10)
       .default(5)
-      .describe('最大重定向次数'),
-    return_headers: z.boolean().default(false).describe('是否返回响应头信息'),
+      .describe('Maximum redirect hops'),
+    return_headers: z.boolean().default(false).describe('Return response headers'),
   }),
 
   // 工具描述
   description: {
-    short: '发送HTTP请求获取网页或API内容，支持多种HTTP方法和自定义请求头',
-    long: `提供灵活的 HTTP 请求功能。支持 GET、POST、PUT、DELETE、HEAD 等方法，可自定义请求头和请求体。支持重定向控制和超时配置。`,
+    short: 'Send HTTP requests to fetch web or API content with method/header control',
+    long: `Flexible HTTP client supporting GET/POST/PUT/DELETE/HEAD with configurable headers, body, redirects, and timeouts.`,
     usageNotes: [
-      'url 参数是必需的，必须是有效的 URL',
-      'method 默认为 GET',
-      '支持自定义请求头(headers)',
-      '可配置请求体(body)，适用于 POST/PUT 请求',
-      'timeout 默认 30 秒，最长 2 分钟',
-      'follow_redirects 默认启用，最多 5 次重定向',
-      'return_headers 可控制是否返回响应头',
+      'url is required and must be a valid URL',
+      'method defaults to GET',
+      'Supports custom headers',
+      'Body is optional; use for POST/PUT requests',
+      'timeout defaults to 30s, max 2 minutes',
+      'follow_redirects on by default, up to 5 redirects',
+      'return_headers toggles whether headers are returned',
     ],
     examples: [
       {
-        description: '简单 GET 请求',
+        description: 'Simple GET request',
         params: {
           url: 'https://api.example.com/data',
         },
       },
       {
-        description: 'POST 请求带 JSON 数据',
+        description: 'POST request with JSON payload',
         params: {
           url: 'https://api.example.com/create',
           method: 'POST',
@@ -82,7 +82,7 @@ export const webFetchTool = createTool({
         },
       },
       {
-        description: '自定义请求头',
+        description: 'Custom headers',
         params: {
           url: 'https://api.example.com/secure',
           headers: {
@@ -92,7 +92,7 @@ export const webFetchTool = createTool({
         },
       },
       {
-        description: '禁用重定向',
+        description: 'Disable redirects',
         params: {
           url: 'https://example.com',
           follow_redirects: false,
@@ -100,10 +100,10 @@ export const webFetchTool = createTool({
       },
     ],
     important: [
-      '外部网络请求需要用户确认',
-      'HTTP 4xx/5xx 状态码会返回错误',
-      '超时会中止请求',
-      '支持 HTTPS',
+      'External network requests require user approval',
+      'HTTP 4xx/5xx responses are treated as errors',
+      'Timeouts will abort the request',
+      'HTTPS supported',
     ],
   },
 
@@ -162,11 +162,11 @@ export const webFetchTool = createTool({
       if (response.status >= 400) {
         return {
           success: false,
-          llmContent: `HTTP错误 ${response.status}: ${response.status_text}`,
+          llmContent: `HTTP error ${response.status}: ${response.status_text}`,
           displayContent: formatDisplayMessage(response, metadata, true),
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: `HTTP错误 ${response.status}: ${response.status_text}`,
+            message: `HTTP error ${response.status}: ${response.status_text}`,
             details: {
               ...metadata,
               response_body: response.body,
@@ -186,7 +186,7 @@ export const webFetchTool = createTool({
       if (error.name === 'AbortError') {
         return {
           success: false,
-          llmContent: '请求被中止',
+          llmContent: 'Request aborted',
           displayContent: '⚠️ 请求被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
@@ -197,7 +197,7 @@ export const webFetchTool = createTool({
 
       return {
         success: false,
-        llmContent: `网络请求失败: ${error.message}`,
+        llmContent: `Network request failed: ${error.message}`,
         displayContent: `❌ 网络请求失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

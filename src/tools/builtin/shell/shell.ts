@@ -6,7 +6,7 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
 /**
- * 命令执行结果
+ * Command execution result
  */
 interface CommandResult {
   stdout: string;
@@ -17,47 +17,47 @@ interface CommandResult {
 }
 
 /**
- * ShellTool - Shell 命令执行工具
- * 使用新的 Zod 验证设计
+ * ShellTool - Shell command executor
+ * Uses the newer Zod validation design
  */
 export const shellTool = createTool({
   name: 'Shell',
-  displayName: 'Shell命令执行',
+  displayName: 'Shell Command',
   kind: ToolKind.Execute,
 
   // Zod Schema 定义
   schema: z.object({
     command: ToolSchemas.command({
-      description: '要执行的命令',
+      description: 'Command to run',
     }),
-    args: z.array(z.string().min(1)).optional().describe('命令参数列表(可选)'),
-    cwd: z.string().optional().describe('执行目录(可选,默认当前目录)'),
+    args: z.array(z.string().min(1)).optional().describe('Command arguments (optional)'),
+    cwd: z.string().optional().describe('Working directory (optional, defaults to cwd)'),
     timeout: ToolSchemas.timeout(1000, 300000, 30000),
     env: ToolSchemas.environment(),
-    capture_stderr: z.boolean().default(true).describe('是否捕获错误输出'),
+    capture_stderr: z.boolean().default(true).describe('Capture stderr'),
   }),
 
   // 工具描述
   description: {
-    short: '执行单次shell命令并返回执行结果，支持超时控制和环境变量',
-    long: `提供单次命令执行功能。适合执行独立的系统命令，每次调用都是新的进程。支持参数列表、工作目录、环境变量等配置。`,
+    short: 'Run a one-off shell command with timeout and env control',
+    long: `Execute standalone system commands; each call is a new process. Supports args, working directory, environment, and timeout configuration.`,
     usageNotes: [
-      'IMPORTANT: 此工具用于终端操作(git, npm, docker等)',
-      'DO NOT 用于文件操作(读、写、编辑、搜索) - 应使用专用工具',
-      'command 参数是必需的',
-      '支持通过 args 传递命令参数',
-      '如果 command 包含空格且未提供 args，会自动拆分',
-      'timeout 默认 30 秒，最长 5 分钟',
-      '文件路径包含空格时必须用双引号括起来',
-      'NEVER 使用 -i 标志(不支持交互式输入)',
+      'IMPORTANT: Use for terminal ops (git, npm, docker, etc.)',
+      'DO NOT use for file operations—use dedicated tools',
+      'command is required',
+      'Args can be passed via args array',
+      'If command includes spaces and args not provided, it will auto-split',
+      'timeout defaults to 30s, max 5 minutes',
+      'Wrap paths with spaces in double quotes',
+      'NEVER use -i (no interactive input)',
     ],
     examples: [
       {
-        description: '执行简单命令',
+        description: 'Run a simple command',
         params: { command: 'ls', args: ['-la'] },
       },
       {
-        description: '在特定目录执行命令',
+        description: 'Run in a specific directory',
         params: {
           command: 'npm',
           args: ['install'],
@@ -65,7 +65,7 @@ export const shellTool = createTool({
         },
       },
       {
-        description: '带环境变量执行',
+        description: 'Run with environment variables',
         params: {
           command: 'node',
           args: ['script.js'],
@@ -73,17 +73,17 @@ export const shellTool = createTool({
         },
       },
       {
-        description: '自动拆分命令',
+        description: 'Auto-split command',
         params: {
           command: 'git status',
         },
       },
     ],
     important: [
-      '危险命令(rm, sudo等)需要用户确认',
-      '每次调用都是独立的进程',
-      '命令执行完成后进程自动退出',
-      'NEVER 使用 find, grep, cat, sed 等命令 - 应使用专用工具',
+      'Dangerous commands (rm, sudo, etc.) need user approval',
+      'Each call is an isolated process',
+      'Process exits when command finishes',
+      'NEVER use find/grep/cat/sed—use dedicated tools instead',
     ],
   },
 
@@ -107,13 +107,13 @@ export const shellTool = createTool({
         command = parts[0];
         args = parts.slice(1);
         console.log(
-          `[ShellTool] 自动解析命令: "${params.command}" -> command="${command}", args=${JSON.stringify(args)}`
+          `[ShellTool] Auto-parsed command: "${params.command}" -> command="${command}", args=${JSON.stringify(args)}`
         );
       }
 
       const fullCommand =
         args && args.length > 0 ? `${command} ${args.join(' ')}` : command;
-      updateOutput?.(`执行命令: ${fullCommand}`);
+      updateOutput?.(`Executing command: ${fullCommand}`);
 
       signal.throwIfAborted();
 
@@ -155,11 +155,11 @@ export const shellTool = createTool({
       if (result.exit_code !== 0) {
         return {
           success: false,
-          llmContent: `命令执行失败 (退出码: ${result.exit_code})${result.stderr ? `\n错误输出: ${result.stderr}` : ''}`,
+          llmContent: `Command execution failed (exit code: ${result.exit_code})${result.stderr ? `\nStderr: ${result.stderr}` : ''}`,
           displayContent: formatDisplayMessage(result, metadata),
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: `命令执行失败 (退出码: ${result.exit_code})`,
+            message: `Command execution failed (exit code: ${result.exit_code})`,
             details: result,
           },
           metadata,
@@ -176,18 +176,18 @@ export const shellTool = createTool({
       if (error.name === 'AbortError') {
         return {
           success: false,
-          llmContent: '命令执行被中止',
+          llmContent: 'Command execution aborted',
           displayContent: '⚠️ 命令执行被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: '操作被中止',
+            message: 'Operation aborted',
           },
         };
       }
 
       return {
         success: false,
-        llmContent: `命令执行失败: ${error.message}`,
+        llmContent: `Command execution failed: ${error.message}`,
         displayContent: `❌ 命令执行失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

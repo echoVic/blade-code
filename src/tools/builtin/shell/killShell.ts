@@ -10,28 +10,28 @@ export const killShellTool = createTool({
   kind: ToolKind.Execute,
 
   schema: z.object({
-    shell_id: z.string().min(1).describe('需要终止的后台 Shell ID'),
+    shell_id: z.string().min(1).describe('Background Shell ID to terminate'),
   }),
 
   description: {
-    short: '终止正在运行的后台 bash 命令',
-    long: `向指定的后台 shell 进程发送 SIGTERM 信号，并在必要时可用于停止长时间运行的命令。`,
+    short: 'Terminate a running background bash command',
+    long: `Send a SIGTERM signal to the specified background shell process; useful for stopping long-running commands when needed.`,
     usageNotes: [
       'Use this tool when you need to terminate a long-running shell',
-      'Shell IDs can be found using the /bashes command 或 Bash 工具输出',
-      '如果进程已退出，会返回 alreadyExited=true',
+      'Shell IDs can be found using the /bashes command or Bash tool output',
+      'If the process has already exited, alreadyExited=true is returned',
     ],
     examples: [
       {
-        description: '终止后台 npm 构建',
+        description: 'Terminate a background npm build',
         params: {
           shell_id: 'bash_123456',
         },
       },
     ],
     important: [
-      '仅终止当前 Blade 会话创建的后台进程',
-      '终止后可以使用 BashOutput 查看最后的输出',
+      'Only terminates background processes created in the current Blade session',
+      'After termination, use BashOutput to inspect the final output',
     ],
   },
 
@@ -42,7 +42,7 @@ export const killShellTool = createTool({
     if (!result) {
       return {
         success: false,
-        llmContent: `未找到 Shell: ${params.shell_id}`,
+        llmContent: `Shell not found: ${params.shell_id}`,
         displayContent: `❌ 未找到 Shell: ${params.shell_id}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
@@ -54,7 +54,7 @@ export const killShellTool = createTool({
     if (!result.success && !result.alreadyExited) {
       return {
         success: false,
-        llmContent: `终止 Shell 失败: ${params.shell_id}`,
+        llmContent: `Failed to terminate Shell: ${params.shell_id}`,
         displayContent: `❌ 无法终止 Shell (${params.shell_id})`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

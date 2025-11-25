@@ -230,7 +230,7 @@ export class ExecutionEngine {
    * 执行LLM步骤
    */
   private async executeLlmStep(step: ExecutionStep, task: AgentTask): Promise<any> {
-    const context = `步骤: ${step.description}\n任务: ${task.prompt}`;
+    const context = `Step: ${step.description}\nTask: ${task.prompt}`;
     const chatResponse = await this.chatService.chat([
       { role: 'user', content: context },
     ]);
@@ -243,7 +243,7 @@ export class ExecutionEngine {
    */
   private async executeToolStep(step: ExecutionStep, _task: AgentTask): Promise<any> {
     // 这里可以集成工具执行逻辑
-    return { content: `工具步骤执行完成: ${step.description}`, stepId: step.id };
+    return { content: `Tool step completed: ${step.description}`, stepId: step.id };
   }
 
   /**

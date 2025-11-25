@@ -10,12 +10,12 @@ import { FileAccessTracker } from './FileAccessTracker.js';
 import { SnapshotManager } from './SnapshotManager.js';
 
 /**
- * WriteTool - 文件写入工具
- * 使用新的 Zod 验证设计
+ * WriteTool - File writer
+ * Uses the newer Zod validation design
  */
 export const writeTool = createTool({
   name: 'Write',
-  displayName: '文件写入',
+  displayName: 'File Write',
   kind: ToolKind.Edit,
   strict: true, // 启用 OpenAI Structured Outputs
   isConcurrencySafe: false, // 文件写入不支持并发
@@ -23,19 +23,19 @@ export const writeTool = createTool({
   // Zod Schema 定义
   schema: z.object({
     file_path: ToolSchemas.filePath({
-      description: '要写入的文件路径（必须是绝对路径）',
+      description: 'Absolute file path to write',
     }),
-    content: z.string().describe('要写入的文件内容'),
+    content: z.string().describe('Content to write'),
     encoding: ToolSchemas.encoding(),
     create_directories: z
       .boolean()
       .default(true)
-      .describe('是否自动创建不存在的父目录'),
+      .describe('Automatically create missing parent directories'),
   }),
 
   // 工具描述（对齐 Claude Code 官方）
   description: {
-    short: '将内容写入到本地文件系统',
+    short: 'Write content to the local filesystem',
     long: `Writes a file to the local filesystem. Can create new files or overwrite existing files. Automatically creates snapshots before overwriting.`,
     usageNotes: [
       'This tool will overwrite the existing file if there is one at the provided path.',
@@ -48,14 +48,14 @@ export const writeTool = createTool({
     ],
     examples: [
       {
-        description: '创建新的文本文件',
+        description: 'Create a new text file',
         params: {
           file_path: '/path/to/new-file.ts',
           content: 'export const hello = "world";',
         },
       },
       {
-        description: '写入 base64 编码的二进制文件',
+        description: 'Write a base64-encoded binary file',
         params: {
           file_path: '/path/to/image.png',
           content: 'iVBORw0KGgoAAAANSUhEUgA...',
@@ -63,7 +63,7 @@ export const writeTool = createTool({
         },
       },
       {
-        description: '覆盖现有文件（必须先 Read）',
+        description: 'Overwrite an existing file (must Read first)',
         params: {
           file_path: '/path/to/existing-file.txt',
           content: 'New content',
@@ -71,10 +71,10 @@ export const writeTool = createTool({
       },
     ],
     important: [
-      '**如果文件已存在，必须先使用 Read 工具读取**，否则写入会失败',
-      '**优先使用 Edit 工具修改现有文件**，Write 仅用于创建新文件或整体覆盖',
-      '不要主动创建文档文件（*.md），除非用户明确要求',
-      '覆盖前会自动创建快照，可通过 UndoEdit 工具回滚',
+      '**If the file exists, you MUST Read it first** or the write will fail',
+      '**Prefer the Edit tool for existing files**; Write is for new files or full overwrites',
+      'Do not create documentation files (*.md) unless explicitly requested',
+      'Snapshots are taken before overwrite; use UndoEdit to revert',
     ],
   },
 
@@ -244,7 +244,7 @@ export const writeTool = createTool({
       if (error.name === 'AbortError') {
         return {
           success: false,
-          llmContent: '文件写入被中止',
+          llmContent: 'File write aborted',
           displayContent: '⚠️ 文件写入被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
@@ -255,7 +255,7 @@ export const writeTool = createTool({
 
       return {
         success: false,
-        llmContent: `写入文件失败: ${error.message}`,
+        llmContent: `File write failed: ${error.message}`,
         displayContent: `❌ 写入文件失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,

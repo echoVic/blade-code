@@ -39,7 +39,7 @@ function getAvailableSubagentTypes(): [string, ...string[]] {
  */
 export const taskTool = createTool({
   name: 'Task',
-  displayName: 'Subagent调度',
+  displayName: 'Subagent Scheduler',
   kind: ToolKind.Execute,
   isReadOnly: true,
 
@@ -47,9 +47,13 @@ export const taskTool = createTool({
   schema: z.object({
     subagent_type: z
       .enum(getAvailableSubagentTypes())
-      .describe('要使用的 subagent 类型（如 "Explore", "Plan"）'),
-    description: z.string().min(3).max(100).describe('任务简短描述（3-5个词）'),
-    prompt: z.string().min(10).describe('详细的任务指令'),
+      .describe('Subagent type to use (e.g., "Explore", "Plan")'),
+    description: z
+      .string()
+      .min(3)
+      .max(100)
+      .describe('Short task description (3-5 words)'),
+    prompt: z.string().min(10).describe('Detailed task instructions'),
   }),
 
   // 工具描述
@@ -177,7 +181,7 @@ ${subagentRegistry.getDescriptionsForPrompt()}
       } else {
         return {
           success: false,
-          llmContent: `Subagent 执行失败: ${result.error}`,
+          llmContent: `Subagent execution failed: ${result.error}`,
           displayContent:
             `⚠️ Subagent 任务失败\n\n` +
             `类型: ${subagent_type}\n` +
@@ -186,7 +190,7 @@ ${subagentRegistry.getDescriptionsForPrompt()}
             `错误: ${result.error}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: result.error || '未知错误',
+            message: result.error || 'Unknown error',
           },
         };
       }
@@ -194,7 +198,7 @@ ${subagentRegistry.getDescriptionsForPrompt()}
       const err = error as Error;
       return {
         success: false,
-        llmContent: `Subagent 执行异常: ${err.message}`,
+        llmContent: `Subagent execution error: ${err.message}`,
         displayContent: `❌ Subagent 执行异常\n\n${err.message}\n\n${err.stack || ''}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
