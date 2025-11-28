@@ -38,7 +38,7 @@ import {
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
-import type { Tool, ToolResult } from '../tools/types/index.js';
+import { type Tool, type ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import {
@@ -312,13 +312,14 @@ export class Agent extends EventEmitter {
           permissionMode: result.metadata.targetMode,
         };
 
-        // 重新执行原始请求（使用新模式）
-        return this.runLoop(message, newContext, loopOptions).then((newResult) => {
-          if (!newResult.success) {
-            throw new Error(newResult.error?.message || '执行失败');
+        return this.runLoop(enhancedMessage, newContext, loopOptions).then(
+          (newResult) => {
+            if (!newResult.success) {
+              throw new Error(newResult.error?.message || '执行失败');
+            }
+            return newResult.finalMessage || '';
           }
-          return newResult.finalMessage || '';
-        });
+        );
       }
 
       return result.finalMessage || '';

@@ -3,8 +3,8 @@ import { Box, useApp } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import {
-  PermissionMode,
   type ModelConfig,
+  PermissionMode,
   type SetupConfig,
 } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
