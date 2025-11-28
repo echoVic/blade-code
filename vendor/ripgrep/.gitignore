@@ -1,0 +1,12 @@
+# 忽略所有平台的二进制文件（这些文件很大，不应该提交到 git）
+# 用户可以通过运行 npm run vendor:ripgrep 来下载它们
+
+darwin-arm64/
+darwin-x64/
+linux-arm64/
+linux-x64/
+win32-x64/
+
+# 但保留 README.md
+!README.md
+!.gitignore

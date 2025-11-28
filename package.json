@@ -10,6 +10,7 @@
   "files": [
     "dist",
     "bin",
+    "vendor",
     "config.env.example",
     "README.md"
   ],
@@ -44,6 +45,8 @@
     "check:full": "npm run type-check && npm run lint && npm run format:check && npm run test:ci",
     "security:audit": "pnpm audit",
     "security:test": "bash scripts/run-security-tests.sh",
+    "vendor:ripgrep": "node scripts/download-ripgrep.js",
+    "vendor:ripgrep:clean": "rm -rf vendor/ripgrep/darwin-* vendor/ripgrep/linux-* vendor/ripgrep/win32-*",
     "release": "node scripts/release.js",
     "release:dry": "node scripts/release.js --dry-run",
     "release:major": "node scripts/release.js --major",
@@ -102,6 +105,9 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2",
     "vitest": "^3.0.0"
+  },
+  "optionalDependencies": {
+    "@vscode/ripgrep": "^1.17.0"
   },
   "dependencies": {
     "@inkjs/ui": "^2.0.0",

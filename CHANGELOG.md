@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 
 
+## [Unreleased]
+
+### ♻️ 代码重构
+
+- **Grep 工具重大重构 (v3.0.0)**: 实现四级智能降级策略
+  - 优先使用系统 ripgrep > vendor ripgrep > @vscode/ripgrep
+  - 降级策略: ripgrep → git grep → system grep → JavaScript fallback
+  - 将 @vscode/ripgrep 改为可选依赖，减少包体积
+  - 使用 picomatch 替代自制 glob 匹配实现
+  - 添加 vendor ripgrep 支持（可选，~40-50MB）
+  - 新增下载脚本: `npm run vendor:ripgrep`
+  - 完整文档: `docs/development/implementation/grep-tool.md`
+
+### 📚 文档
+
+- 整合 Grep 工具相关文档到统一位置
+- 新增完整的 Grep 工具实现文档
+- 添加 vendor ripgrep 设置指南
+
+
 ## [0.0.15] - 2025-11-10
 
 ### 🔧 其他更改

@@ -43,35 +43,64 @@ export const bashTool = createTool({
   // 工具描述
   description: {
     short:
-      'Execute bash commands; supports environment variables and working directory',
-    long: `Execute commands using non-interactive bash. Each command runs independently with completion detected via process events. Working directory and environment variables can be set temporarily via parameters or persistently via cd/export.`,
+      'Execute bash commands in a persistent shell session with optional timeout',
+    long: `Executes bash commands with proper handling and security measures.
+
+IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.
+
+Before executing commands:
+
+1. Directory Verification:
+   - If the command will create new directories or files, first use 'ls' to verify the parent directory exists and is the correct location
+   - For example, before running "mkdir foo/bar", first use 'ls foo' to check that "foo" exists and is the intended parent directory
+
+2. Command Execution:
+   - Always quote file paths that contain spaces with double quotes (e.g., cd "path with spaces/file.txt")
+   - Examples of proper quoting:
+     * cd "/Users/name/My Documents" (correct)
+     * cd /Users/name/My Documents (incorrect - will fail)
+     * python "/path/with spaces/script.py" (correct)
+     * python /path/with spaces/script.py (incorrect - will fail)`,
     usageNotes: [
-      'IMPORTANT: Use this tool for terminal operations (git, npm, docker, etc.)',
-      'DO NOT use for file operations (read, write, edit, search) — use dedicated tools',
-      'The command parameter is required',
-      'Use cd to change working directory; use export to set environment variables (persistent)',
-      'cwd and env parameters apply only to this command (temporary override)',
-      'timeout defaults to 30 seconds, max 5 minutes',
-      'run_in_background is for long-running commands',
-      'Wrap file paths containing spaces in double quotes',
-      'NEVER use the -i flag (no interactive input)',
+      'The command argument is required',
+      'You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). If not specified, commands will timeout after 30000ms (30 seconds)',
+      'It is very helpful if you write a clear, concise description of what this command does in 5-10 words',
+      'If the output exceeds 30000 characters, output will be truncated before being returned to you',
+      'You can use the run_in_background parameter to run the command in the background, which allows you to continue working while the command runs. You can monitor the output using the BashOutput tool. You do not need to use "&" at the end of the command when using this parameter',
+      'Avoid using Bash with the find, grep, cat, head, tail, sed, awk, or echo commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:',
+      '  - File search: Use Glob (NOT find or ls)',
+      '  - Content search: Use Grep (NOT grep or rg)',
+      '  - Read files: Use Read (NOT cat/head/tail)',
+      '  - Edit files: Use Edit (NOT sed/awk)',
+      '  - Write files: Use Write (NOT echo >/cat <<EOF)',
+      '  - Communication: Output text directly (NOT echo/printf)',
+      'When issuing multiple commands:',
+      '  - If the commands are independent and can run in parallel, make multiple Bash tool calls in a single message. For example, if you need to run "git status" and "git diff", send a single message with two Bash tool calls in parallel',
+      '  - If the commands depend on each other and must run sequentially, use a single Bash call with "&&" to chain them together (e.g., git add . && git commit -m "message" && git push). For instance, if one operation must complete before another starts (like mkdir before cp, Write before Bash for git operations, or git add before git commit), run these operations sequentially instead',
+      '  - Use ";" only when you need to run commands sequentially but don\'t care if earlier commands fail',
+      '  - DO NOT use newlines to separate commands (newlines are ok in quoted strings)',
+      'Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of cd. You may use cd if the User explicitly requests it',
+      '  Good example: pytest /foo/bar/tests',
+      '  Bad example: cd /foo/bar && pytest tests',
     ],
     examples: [
       {
         description: 'Run a simple command',
-        params: { command: 'ls -la' },
+        params: { command: 'ls -la', description: 'List files in current directory' },
       },
       {
         description: 'Temporarily change working directory (this command only)',
         params: {
           command: 'npm install',
           cwd: '/path/to/project',
+          description: 'Install package dependencies',
         },
       },
       {
         description: 'Persistently change working directory',
         params: {
           command: 'cd /path/to/project && npm install',
+          description: 'Change directory and install dependencies',
         },
       },
       {
@@ -79,13 +108,44 @@ export const bashTool = createTool({
         params: {
           command: 'npm run dev',
           run_in_background: true,
+          description: 'Start development server in background',
         },
+      },
+      {
+        description: 'Run multiple independent commands in parallel',
+        params: { command: 'git status', description: 'Show working tree status' },
       },
     ],
     important: [
-      'Dangerous commands (rm -rf, sudo, etc.) require user confirmation',
-      'Background commands require manual termination',
-      'NEVER use find, grep, cat, sed, etc. — use dedicated tools',
+      'Committing changes with git:',
+      '  - Only create commits when requested by the user. If unclear, ask first',
+      '  - Git Safety Protocol:',
+      '    * NEVER update the git config',
+      '    * NEVER run destructive/irreversible git commands (like push --force, hard reset, etc) unless the user explicitly requests them',
+      '    * NEVER skip hooks (--no-verify, --no-gpg-sign, etc) unless the user explicitly requests it',
+      '    * NEVER run force push to main/master, warn the user if they request it',
+      '    * Avoid git commit --amend. ONLY use --amend when either (1) user explicitly requested amend OR (2) adding edits from pre-commit hook',
+      '    * Before amending: ALWAYS check authorship (git log -1 --format="%an %ae")',
+      '    * NEVER commit changes unless the user explicitly asks you to',
+      '  - When creating commits:',
+      '    1. Run git status, git diff, and git log in parallel to understand changes',
+      '    2. Analyze staged changes and draft a concise commit message (1-2 sentences) focusing on "why" rather than "what"',
+      '    3. Add relevant untracked files, create the commit, and run git status to verify',
+      '    4. Always pass commit message via HEREDOC format',
+      '  - DO NOT push to remote repository unless explicitly requested',
+      '  - NEVER use git commands with the -i flag (no interactive input supported)',
+      '  - If no changes to commit, do not create an empty commit',
+      'Creating pull requests:',
+      '  - Use the gh command for ALL GitHub-related tasks',
+      '  - When creating a PR:',
+      '    1. Run git status, git diff, and git log in parallel to understand branch changes',
+      '    2. Analyze all commits (not just the latest) and draft a PR summary',
+      '    3. Create new branch if needed, push with -u flag, and create PR using gh pr create with HEREDOC body format',
+      '  - Return the PR URL when done',
+      'Other important notes:',
+      '  - Dangerous commands (rm -rf, sudo, etc.) require user confirmation',
+      '  - Background commands require manual termination using KillShell',
+      '  - NEVER use find, grep, cat, sed, etc. — use dedicated tools instead',
     ],
   },
 
