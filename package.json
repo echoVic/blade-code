@@ -10,7 +10,7 @@
   "files": [
     "dist",
     "bin",
-    "vendor",
+    "vendor/ripgrep/**",
     "config.env.example",
     "README.md"
   ],

@@ -302,14 +302,25 @@ export class Agent extends EventEmitter {
 
       // 🆕 检查是否需要切换模式并重新执行（Plan 模式批准后）
       if (result.metadata?.targetMode && context.permissionMode === 'plan') {
+        const targetMode = result.metadata.targetMode as 'default' | 'auto_edit';
         logger.debug(
-          `🔄 Plan 模式已批准，切换到 ${result.metadata.targetMode} 模式并重新执行`
+          `🔄 Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`
         );
+
+        // ✅ 持久化模式切换到配置文件
+        const configManager = ConfigManager.getInstance();
+        const newPermissionMode =
+          targetMode === 'auto_edit'
+            ? PermissionMode.AUTO_EDIT
+            : PermissionMode.DEFAULT;
+
+        await configManager.setPermissionMode(newPermissionMode);
+        logger.debug(`✅ 权限模式已持久化: ${newPermissionMode}`);
 
         // 创建新的 context，使用批准的目标模式
         const newContext: ChatContext = {
           ...context,
-          permissionMode: result.metadata.targetMode,
+          permissionMode: targetMode,
         };
 
         return this.runLoop(enhancedMessage, newContext, loopOptions).then(
@@ -605,9 +616,17 @@ export class Agent extends EventEmitter {
         logger.debug('可用工具数量:', tools.length);
         logger.debug('================================\n');
 
-        // 3. 直接调用 ChatService（OpenAI SDK 已内置重试机制）
+        // 3. 过滤孤儿 tool 消息（防止 API 400 错误）
+        const filteredMessages = this.filterOrphanToolMessages(messages);
+        if (filteredMessages.length < messages.length) {
+          logger.debug(
+            `🔧 过滤掉 ${messages.length - filteredMessages.length} 条孤儿 tool 消息`
+          );
+        }
+
+        // 4. 直接调用 ChatService（OpenAI SDK 已内置重试机制）
         const turnResult = await this.chatService.chat(
-          messages,
+          filteredMessages,
           tools,
           options?.signal
         );
@@ -1095,6 +1114,39 @@ export class Agent extends EventEmitter {
 
     // 调用重构后的 runLoop
     return await this.runLoop(message, chatContext, options);
+  }
+
+  /**
+   * 过滤孤儿 tool 消息
+   *
+   * 孤儿 tool 消息是指 tool_call_id 对应的 assistant 消息不存在的 tool 消息。
+   * 这种情况通常发生在上下文压缩后，导致 OpenAI API 返回 400 错误。
+   *
+   * @param messages - 原始消息列表
+   * @returns 过滤后的消息列表
+   */
+  private filterOrphanToolMessages(messages: Message[]): Message[] {
+    // 收集所有可用的 tool_call ID
+    const availableToolCallIds = new Set<string>();
+    for (const msg of messages) {
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          availableToolCallIds.add(tc.id);
+        }
+      }
+    }
+
+    // 过滤掉孤儿 tool 消息
+    return messages.filter((msg) => {
+      if (msg.role === 'tool') {
+        // 缺失 tool_call_id 的 tool 消息直接丢弃（否则会触发 API 400）
+        if (!msg.tool_call_id) {
+          return false;
+        }
+        return availableToolCallIds.has(msg.tool_call_id);
+      }
+      return true; // 保留其他所有消息
+    });
   }
 
   /**

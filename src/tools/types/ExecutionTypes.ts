@@ -23,6 +23,7 @@ export interface ConfirmationResponse {
   reason?: string;
   scope?: PermissionApprovalScope;
   targetMode?: 'default' | 'auto_edit'; // 🆕 Plan 模式退出后的目标权限模式
+  feedback?: string; // 🆕 用户拒绝时的反馈意见（用于 Plan 模式调整）
 }
 
 /**

@@ -120,8 +120,17 @@ interface SearchResult {
 function getRipgrepPath(): string | null {
   // 1. 尝试系统安装的 ripgrep
   try {
-    const systemRg = execSync('which rg 2>/dev/null || where rg 2>nul');
-    if (systemRg) return systemRg.trim();
+    const cmd =
+      process.platform === 'win32'
+        ? 'where rg'
+        : 'command -v rg 2>/dev/null || which rg 2>/dev/null';
+    const out = execSync(cmd, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+    })
+      .split(/\r?\n/)[0]
+      .trim();
+    if (out) return out;
   } catch {}
 
   // 2. 尝试内置的 vendor ripgrep

@@ -246,17 +246,15 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   // ==================== Memoized Methods ====================
   const handleResponse = useMemoizedFn(async (response: ConfirmationResponse) => {
-    if (confirmationState.details?.type === 'exitPlanMode' && response.approved) {
-      // 批准方案后，根据用户选择切换权限模式
-      const targetMode =
-        response.targetMode === 'auto_edit'
-          ? PermissionMode.AUTO_EDIT
-          : PermissionMode.DEFAULT;
+    // ✅ 移除 UI 层的模式切换逻辑 - Agent 层已经负责持久化配置
+    // Plan 模式退出后，Agent 会自动更新配置并重新执行
+    // UI 只需要传递 response.targetMode 给 Agent，由 Agent 统一处理
 
-      const configManager = ConfigManager.getInstance();
-      try {
-        await configManager.setPermissionMode(targetMode);
-        // Update AppContext config to reflect the change
+    // 如果是 Plan 模式批准，等待 Agent 完成配置更新后同步到 UI
+    if (confirmationState.details?.type === 'exitPlanMode' && response.approved) {
+      // 延迟更新 UI 配置，等待 Agent 完成持久化
+      setTimeout(() => {
+        const configManager = ConfigManager.getInstance();
         const updatedConfig = configManager.getConfig();
         appDispatch(
           appActions.setConfig({
@@ -264,14 +262,12 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             permissionMode: updatedConfig.permissionMode,
           })
         );
-
-        const modeName =
-          targetMode === PermissionMode.AUTO_EDIT ? 'Auto-Edit' : 'Default';
-        logger.debug(`[BladeInterface] Plan 模式已退出，切换到 ${modeName} 模式`);
-      } catch (error) {
-        logger.error('[BladeInterface] 退出 Plan 模式失败:', error);
-      }
+        logger.debug(
+          `[BladeInterface] UI 配置已同步: ${updatedConfig.permissionMode}`
+        );
+      }, 100);
     }
+
     handleResponseRaw(response);
   });
 

@@ -66,24 +66,21 @@ IMPORTANT: Use only when the task requires writing code.
             },
           };
         } else {
+          // 🔧 修复：拒绝方案后应该退出循环，返回到用户输入界面，让用户补充信息
           return {
-            success: false,
+            success: true, // ✅ 拒绝不是错误，是正常的用户交互
             llmContent:
-              '❌ Plan rejected by user. Please revise based on their feedback.\n\n' +
-              'Tips:\n' +
-              '- Ask which parts need improvement\n' +
-              '- Use Read/Grep tools for further investigation\n' +
-              '- Refine the plan and call ExitPlanMode again',
-            displayContent: '❌ 方案被拒绝，保持 Plan 模式',
-            error: {
-              type: ToolErrorType.VALIDATION_ERROR,
-              message: '用户拒绝了方案',
-              code: 'PLAN_REJECTED',
-            },
+              '⚠️ Plan rejected by user. Awaiting user feedback.\n\n' +
+              (response.feedback || 'No specific feedback provided.') +
+              '\n\nThe agent has stopped and control is returned to the user. ' +
+              'The user can now provide additional information or clarification.',
+            displayContent: '⚠️ 方案被拒绝，等待用户补充信息',
             metadata: {
               approved: false,
               planLength: plan.length,
-              shouldExitLoop: true, // 🆕 拒绝方案也应该退出循环，避免无限重试
+              shouldExitLoop: true, // ✅ 退出循环，返回到用户输入界面
+              feedback: response.feedback, // 保存用户反馈
+              awaitingUserInput: true, // 🆕 标记正在等待用户输入
             },
           };
         }

@@ -33,15 +33,6 @@ interface GrepMatch {
 }
 
 /**
- * 统一的搜索结果结构
- */
-interface SearchResult {
-  matches: GrepMatch[];
-  stderr?: string;
-  exitCode: number;
-}
-
-/**
  * 获取平台特定的 ripgrep 路径
  */
 function getPlatformRipgrepPath(): string | null {
@@ -71,7 +62,10 @@ function getPlatformRipgrepPath(): string | null {
 
   // 尝试从模块安装目录查找（用于 npm 包）
   try {
-    const moduleDir = new URL('../../../../vendor/ripgrep/' + relativePath, import.meta.url).pathname;
+    const moduleDir = new URL(
+      '../../../../vendor/ripgrep/' + relativePath,
+      import.meta.url
+    ).pathname;
     if (existsSync(moduleDir)) {
       return moduleDir;
     }
@@ -92,12 +86,18 @@ function getPlatformRipgrepPath(): string | null {
 function getRipgrepPath(): string | null {
   // 策略 1: 尝试使用系统安装的 ripgrep
   try {
-    const systemRg = execSync('which rg 2>/dev/null || where rg 2>nul', {
+    const cmd =
+      process.platform === 'win32'
+        ? 'where rg'
+        : 'command -v rg 2>/dev/null || which rg 2>/dev/null';
+    const out = execSync(cmd, {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'ignore'],
-    }).trim();
-    if (systemRg) {
-      return systemRg;
+    })
+      .split(/\r?\n/)[0]
+      .trim();
+    if (out) {
+      return out;
     }
   } catch {
     // 系统 rg 不可用，继续尝试其他策略
@@ -366,10 +366,7 @@ async function executeFallbackGrep(
   signal: AbortSignal
 ): Promise<{ matches: GrepMatch[]; totalFiles: number }> {
   const matches: GrepMatch[] = [];
-  const regex = new RegExp(
-    pattern,
-    options.caseInsensitive ? 'gi' : 'g'
-  );
+  const regex = new RegExp(pattern, options.caseInsensitive ? 'gi' : 'g');
 
   // 获取所有文件
   const files = await getAllFiles(path, signal);
@@ -403,7 +400,7 @@ async function executeFallbackGrep(
       });
 
       processedFiles++;
-    } catch (error) {
+    } catch (_error) {
       // 忽略无法读取的文件
       continue;
     }
@@ -438,7 +435,7 @@ async function getAllFiles(dir: string, signal: AbortSignal): Promise<string[]> 
           files.push(fullPath);
         }
       }
-    } catch (error) {
+    } catch (_error) {
       // 忽略无法访问的目录
     }
   }
@@ -632,7 +629,8 @@ function parseContentLine(line: string): GrepMatch | null {
  * 格式化显示消息
  */
 function formatDisplayMessage(metadata: Record<string, any>): string {
-  const { search_pattern, search_path, output_mode, total_matches, strategy } = metadata;
+  const { search_pattern, search_path, output_mode, total_matches, strategy } =
+    metadata;
 
   let message = `✅ 在 ${search_path} 中搜索 "${search_pattern}"`;
 
@@ -672,15 +670,21 @@ export const grepTool = createTool({
     path: z
       .string()
       .optional()
-      .describe('File or directory to search in (rg PATH). Defaults to current working directory'),
+      .describe(
+        'File or directory to search in (rg PATH). Defaults to current working directory'
+      ),
     glob: z
       .string()
       .optional()
-      .describe('Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}") - maps to rg --glob'),
+      .describe(
+        'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}") - maps to rg --glob'
+      ),
     type: z
       .string()
       .optional()
-      .describe('File type to search (rg --type). Common types: js, py, rust, go, java, etc. More efficient than include for standard file types'),
+      .describe(
+        'File type to search (rg --type). Common types: js, py, rust, go, java, etc. More efficient than include for standard file types'
+      ),
     output_mode: z
       .enum(['content', 'files_with_matches', 'count'])
       .default('files_with_matches')
@@ -691,13 +695,19 @@ export const grepTool = createTool({
     '-n': z
       .boolean()
       .default(true)
-      .describe('Show line numbers in output (rg -n). Requires output_mode: "content", ignored otherwise. Defaults to true'),
+      .describe(
+        'Show line numbers in output (rg -n). Requires output_mode: "content", ignored otherwise. Defaults to true'
+      ),
     '-B': ToolSchemas.nonNegativeInt()
       .optional()
-      .describe('Number of lines to show before each match (rg -B). Requires output_mode: "content", ignored otherwise'),
+      .describe(
+        'Number of lines to show before each match (rg -B). Requires output_mode: "content", ignored otherwise'
+      ),
     '-A': ToolSchemas.nonNegativeInt()
       .optional()
-      .describe('Number of lines to show after each match (rg -A). Requires output_mode: "content", ignored otherwise'),
+      .describe(
+        'Number of lines to show after each match (rg -A). Requires output_mode: "content", ignored otherwise'
+      ),
     '-C': ToolSchemas.nonNegativeInt()
       .optional()
       .describe(
@@ -705,14 +715,20 @@ export const grepTool = createTool({
       ),
     head_limit: ToolSchemas.positiveInt()
       .optional()
-      .describe('Limit output to first N lines/entries, equivalent to "| head -N". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults based on "cap" experiment value: 0 (unlimited), 20, or 100'),
+      .describe(
+        'Limit output to first N lines/entries, equivalent to "| head -N". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults based on "cap" experiment value: 0 (unlimited), 20, or 100'
+      ),
     offset: ToolSchemas.nonNegativeInt()
       .optional()
-      .describe('Skip first N lines/entries before applying head_limit, equivalent to "| tail -n +N | head -N". Works across all output modes. Defaults to 0'),
+      .describe(
+        'Skip first N lines/entries before applying head_limit, equivalent to "| tail -n +N | head -N". Works across all output modes. Defaults to 0'
+      ),
     multiline: z
       .boolean()
       .default(false)
-      .describe('Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false'),
+      .describe(
+        'Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false'
+      ),
   }),
 
   // 工具描述
@@ -858,7 +874,7 @@ Fallback Strategies:
 
           result = await executeRipgrep(args, output_mode, signal, updateOutput);
           strategy = SearchStrategy.RIPGREP;
-        } catch (error: any) {
+        } catch (_error: any) {
           updateOutput?.(`⚠️ ripgrep 失败，尝试降级策略...`);
           result = null;
         }
@@ -880,7 +896,7 @@ Fallback Strategies:
             signal
           );
           strategy = SearchStrategy.GIT_GREP;
-        } catch (error: any) {
+        } catch (_error: any) {
           updateOutput?.(`⚠️ git grep 失败，继续尝试其他策略...`);
           result = null;
         }
@@ -901,7 +917,7 @@ Fallback Strategies:
             signal
           );
           strategy = SearchStrategy.SYSTEM_GREP;
-        } catch (error: any) {
+        } catch (_error: any) {
           updateOutput?.(`⚠️ 系统 grep 失败，使用纯 JavaScript 实现...`);
           result = null;
         }

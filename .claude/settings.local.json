@@ -62,7 +62,8 @@
       "Bash(timeout 5 npm run start:*)",
       "Bash(timeout 60 node:*)",
       "Bash(gtimeout 60 node:*)",
-      "Bash(pnpm approve-builds:*)"
+      "Bash(pnpm approve-builds:*)",
+      "Bash(git reset:*)"
     ],
     "deny": [],
     "ask": [],

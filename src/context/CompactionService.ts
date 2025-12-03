@@ -96,10 +96,30 @@ export class CompactionService {
       const summary = await this.generateSummary(messages, fileContents, options);
       console.log('[CompactionService] 生成总结，长度:', summary.length);
 
-      // 3. 计算保留范围
+      // 3. 计算保留范围并过滤孤儿 tool 消息
       const retainCount = Math.ceil(messages.length * this.RETAIN_PERCENT);
-      const retainedMessages = messages.slice(-retainCount);
+      const candidateMessages = messages.slice(-retainCount);
+
+      // 收集保留消息中所有 tool_call 的 ID
+      const availableToolCallIds = new Set<string>();
+      for (const msg of candidateMessages) {
+        if (msg.role === 'assistant' && msg.tool_calls) {
+          for (const tc of msg.tool_calls) {
+            availableToolCallIds.add(tc.id);
+          }
+        }
+      }
+
+      // 过滤掉孤儿 tool 消息（tool_call_id 对应的 assistant 消息已被压缩）
+      const retainedMessages = candidateMessages.filter((msg) => {
+        if (msg.role === 'tool' && msg.tool_call_id) {
+          return availableToolCallIds.has(msg.tool_call_id);
+        }
+        return true; // 保留其他所有消息
+      });
+
       console.log('[CompactionService] 保留消息数:', retainCount);
+      console.log('[CompactionService] 过滤后保留消息数:', retainedMessages.length);
 
       // 4. 创建压缩消息
       const boundaryMessageId = nanoid();
@@ -362,7 +382,25 @@ Please provide your summary following the structure specified above, with both <
     error: unknown
   ): CompactionResult {
     const retainCount = Math.ceil(messages.length * this.FALLBACK_RETAIN_PERCENT);
-    const retainedMessages = messages.slice(-retainCount);
+    const candidateMessages = messages.slice(-retainCount);
+
+    // 收集保留消息中所有 tool_call 的 ID
+    const availableToolCallIds = new Set<string>();
+    for (const msg of candidateMessages) {
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          availableToolCallIds.add(tc.id);
+        }
+      }
+    }
+
+    // 过滤掉孤儿 tool 消息
+    const retainedMessages = candidateMessages.filter((msg) => {
+      if (msg.role === 'tool' && msg.tool_call_id) {
+        return availableToolCallIds.has(msg.tool_call_id);
+      }
+      return true;
+    });
 
     const boundaryMessageId = nanoid();
     const boundaryMessage = this.createBoundaryMessage(
