@@ -13,26 +13,16 @@ export const killShellTool = createTool({
     shell_id: z.string().min(1).describe('Background Shell ID to terminate'),
   }),
 
+  // 工具描述（对齐 Claude Code 官方）
   description: {
-    short: 'Terminate a running background bash command',
-    long: `Send a SIGTERM signal to the specified background shell process; useful for stopping long-running commands when needed.`,
-    usageNotes: [
-      'Use this tool when you need to terminate a long-running shell',
-      'Shell IDs can be found using the /bashes command or Bash tool output',
-      'If the process has already exited, alreadyExited=true is returned',
-    ],
-    examples: [
-      {
-        description: 'Terminate a background npm build',
-        params: {
-          shell_id: 'bash_123456',
-        },
-      },
-    ],
-    important: [
-      'Only terminates background processes created in the current Blade session',
-      'After termination, use BashOutput to inspect the final output',
-    ],
+    short: 'Kills a running background bash shell by its ID',
+    long: `
+- Kills a running background bash shell by its ID
+- Takes a shell_id parameter identifying the shell to kill
+- Returns a success or failure status
+- Use this tool when you need to terminate a long-running shell
+- Shell IDs can be found using the /tasks command
+`,
   },
 
   async execute(params, _context: ExecutionContext): Promise<ToolResult> {

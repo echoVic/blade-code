@@ -1,5 +1,4 @@
-// 新的基于 Zod 的工具定义
+// Web 工具模块
 
-export { apiCallTool } from './apiCall.js';
 export { webFetchTool } from './webFetch.js';
 export { webSearchTool } from './webSearch.js';

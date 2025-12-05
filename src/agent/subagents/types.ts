@@ -50,6 +50,9 @@ export interface SubagentContext {
 
   /** 父 Agent 的消息 ID（可选） */
   parentMessageId?: string;
+
+  /** 父 Agent 的权限模式（继承给子 Agent） */
+  permissionMode?: string;
 }
 
 /**

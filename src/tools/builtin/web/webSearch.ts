@@ -41,7 +41,7 @@ const MAX_RESULTS = 8;
 export const webSearchTool = createTool({
   name: 'WebSearch',
   displayName: 'Web Search',
-  kind: ToolKind.Network,
+  kind: ToolKind.ReadOnly,
 
   schema: z.object({
     query: z.string().min(2, 'Search query must be at least 2 characters').describe('Search query'),
@@ -55,43 +55,35 @@ export const webSearchTool = createTool({
       .describe('Exclude results from these domains (optional)'),
   }),
 
+  // 工具描述
   description: {
-    short: 'Perform real-time web search and return structured results',
-    long: `Use the DuckDuckGo Instant Answer API to fetch fresh web content. Results include title, snippet, URL, and source domain; optional allowlist/denylist filters apply.`,
-    usageNotes: [
-      'Use this tool when you need fresh information beyond the model cutoff date',
-      'Domain filtering is supported via allowed_domains and blocked_domains',
-      'Search runs with kl=us-en locale',
-      'Single API call returns structured result blocks',
-      'Consider <env>"Today\'s date" when crafting queries (e.g., include the target year like 2025)',
-    ],
-    examples: [
-      {
-        description: 'Search for the latest TypeScript version',
-        params: {
-          query: 'latest TypeScript release',
-        },
-      },
-      {
-        description: 'Only look at model updates on the official blog',
-        params: {
-          query: 'Claude model roadmap',
-          allowed_domains: ['anthropic.com'],
-        },
-      },
-      {
-        description: 'Exclude Wikipedia results',
-        params: {
-          query: 'Rust ownership guide',
-          blocked_domains: ['wikipedia.org'],
-        },
-      },
-    ],
-    important: [
-      'Results come from the public web; verify credibility yourself',
-      'Blocked/allowed lists match by domain (subdomains supported)',
-      'Network access requires user permission',
-    ],
+    short: 'Search the web and use the results to inform responses',
+    long: `
+- Search the web and use the results to inform responses
+- Provides up-to-date information for current events and recent data
+- Returns search result information formatted as search result blocks, including links as markdown hyperlinks
+- Use this tool for accessing information beyond the model's knowledge cutoff
+- Searches are performed automatically within a single API call
+
+CRITICAL REQUIREMENT - You MUST follow this:
+  - After answering the user's question, you MUST include a "Sources:" section at the end of your response
+  - In the Sources section, list all relevant URLs from the search results as markdown hyperlinks: [Title](URL)
+  - This is MANDATORY - never skip including sources in your response
+  - Example format:
+
+    [Your answer here]
+
+    Sources:
+    - [Source Title 1](https://example.com/1)
+    - [Source Title 2](https://example.com/2)
+
+Usage notes:
+  - Domain filtering is supported to include or block specific websites
+
+IMPORTANT - Use the correct year in search queries:
+  - You MUST use the current year when searching for recent information, documentation, or current events.
+  - Example: If the user asks for "latest React docs", search for "React documentation 2025", NOT "React documentation 2024"
+`,
   },
 
   async execute(params, context: ExecutionContext): Promise<ToolResult> {

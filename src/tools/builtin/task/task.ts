@@ -40,7 +40,7 @@ function getAvailableSubagentTypes(): [string, ...string[]] {
 export const taskTool = createTool({
   name: 'Task',
   displayName: 'Subagent Scheduler',
-  kind: ToolKind.Execute,
+  kind: ToolKind.ReadOnly, // Plan 模式下允许：子 Agent 的工具使用受各自模式限制
   isReadOnly: true,
 
   // Zod Schema 定义
@@ -122,12 +122,18 @@ ${subagentRegistry.getDescriptionsForPrompt()}
 
     try {
       // 1. 获取 subagent 配置
+      // 诊断日志：检查 subagentRegistry 状态
+      const registeredNames = subagentRegistry.getAllNames();
+      console.log(
+        `[Task] subagentRegistry 状态: registered=${registeredNames.length}, names=[${registeredNames.join(', ')}], looking for="${subagent_type}"`
+      );
+
       const subagentConfig = subagentRegistry.getSubagent(subagent_type);
       if (!subagentConfig) {
         return {
           success: false,
-          llmContent: `Unknown subagent type: ${subagent_type}`,
-          displayContent: `❌ 未知的 subagent 类型: ${subagent_type}\n\n可用类型: ${subagentRegistry.getAllNames().join(', ')}`,
+          llmContent: `Unknown subagent type: ${subagent_type}. Available types: ${registeredNames.join(', ') || 'none'}`,
+          displayContent: `❌ 未知的 subagent 类型: ${subagent_type}\n\n可用类型: ${registeredNames.join(', ') || '无'}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: `Unknown subagent type: ${subagent_type}`,
@@ -144,6 +150,7 @@ ${subagentRegistry.getDescriptionsForPrompt()}
       const subagentContext: SubagentContext = {
         prompt,
         parentSessionId: context.sessionId,
+        permissionMode: context.permissionMode, // 继承父 Agent 的权限模式
       };
 
       updateOutput?.(`⚙️  执行任务中...`);

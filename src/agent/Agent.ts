@@ -371,6 +371,9 @@ export class Agent extends EventEmitter {
     // Plan 模式差异 3: 跳过内容循环检测
     const skipContentDetection = true;
 
+    // Plan 模式差异 4: 配置 Plan 模式循环检测
+    this.loopDetector.setPlanModeConfig(this.config.planMode);
+
     // 调用通用循环，传入 Plan 模式专用配置
     return this.executeLoop(
       messageWithReminder,
@@ -950,6 +953,37 @@ export class Agent extends EventEmitter {
               duration: Date.now() - startTime,
             },
           };
+        }
+
+        // === Plan 模式专用：检测连续无文本输出的循环 ===
+        if (context.permissionMode === 'plan') {
+          const hasTextOutput = !!(turnResult.content && turnResult.content.trim() !== '');
+          const planLoopResult = this.loopDetector.detectPlanModeToolOnlyLoop(hasTextOutput);
+
+          if (!hasTextOutput) {
+            logger.debug(
+              `[Plan Mode] 连续无文本输出: ${planLoopResult.consecutiveCount}/${this.config.planMode.toolOnlyThreshold}`
+            );
+          }
+
+          if (planLoopResult.shouldWarn && planLoopResult.warningMessage) {
+            logger.warn(
+              `[Plan Mode] 检测到工具循环 - 连续 ${planLoopResult.consecutiveCount} 轮无文本输出，注入警告`
+            );
+
+            // 使用 assistant 角色输出过渡语与详细警告（统一 assistant 角色）
+            messages.push({
+              role: 'assistant',
+              content:
+                'Let me pause and summarize my findings so far before continuing with more research.',
+            });
+
+            // 作为 system-reminder 注入详细警告
+            messages.push({
+              role: 'assistant',
+              content: planLoopResult.warningMessage,
+            });
+          }
         }
 
         // 7. 循环检测 - 检测是否陷入死循环

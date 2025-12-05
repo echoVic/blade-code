@@ -1,32 +1,29 @@
 /**
  * 内置工具模块
- * 第二、三阶段完整实现：文件操作、搜索、命令执行、网络、任务管理工具
  */
 
 import { McpRegistry } from '@/mcp/McpRegistry.js';
 import * as os from 'os';
 import * as path from 'path';
 import type { Tool } from '../types/index.js';
-// 文件操作工具 - 新版本（基于 Zod）
-import { editTool, readTool, undoEditTool, writeTool } from './file/index.js';
+// 文件操作工具
+import { editTool, readTool, writeTool } from './file/index.js';
+// Notebook 工具
+import { notebookEditTool } from './notebook/index.js';
 // Plan 工具
-import { exitPlanModeTool } from './plan/index.js';
-// 搜索工具 - 新版本（基于 Zod）
+import { enterPlanModeTool, exitPlanModeTool } from './plan/index.js';
+// 搜索工具
 import { globTool, grepTool } from './search/index.js';
-// Shell 命令工具 - 新版本（基于 Zod）
-import {
-  bashOutputTool,
-  bashTool,
-  killShellTool,
-  scriptTool,
-  shellTool,
-} from './shell/index.js';
-// 任务管理工具 - 新版本（基于 Zod）
+// Shell 命令工具
+import { bashOutputTool, bashTool, killShellTool } from './shell/index.js';
+// System 工具
+import { skillTool, slashCommandTool } from './system/index.js';
+// 任务管理工具
 import { taskTool } from './task/index.js';
-// Todo工具 - 新版本（基于 Zod）
-import { createTodoReadTool, createTodoWriteTool } from './todo/index.js';
-// 网络工具 - 新版本（基于 Zod）
-import { apiCallTool, webFetchTool, webSearchTool } from './web/index.js';
+// Todo 工具
+import { createTodoWriteTool } from './todo/index.js';
+// 网络工具
+import { webFetchTool, webSearchTool } from './web/index.js';
 
 /**
  * 获取MCP协议工具
@@ -43,7 +40,6 @@ export async function getMcpTools(): Promise<Tool[]> {
 
 /**
  * 获取所有内置工具
- * 完整的第二、三、四阶段工具集合（含MCP协议工具）
  */
 export async function getBuiltinTools(opts?: {
   sessionId?: string;
@@ -53,40 +49,41 @@ export async function getBuiltinTools(opts?: {
   const configDir = opts?.configDir || path.join(os.homedir(), '.blade');
 
   const builtinTools = [
-    // 文件操作工具
+    // 文件操作工具: Read, Edit, Write, NotebookEdit
     readTool,
     editTool,
     writeTool,
-    undoEditTool,
+    notebookEditTool,
 
-    // 搜索工具
+    // 搜索工具: Glob, Grep
     globTool,
     grepTool,
 
-    // Shell 命令工具
+    // Shell 工具: Bash, BashOutput, KillShell
     bashTool,
-    shellTool,
-    scriptTool,
     bashOutputTool,
     killShellTool,
 
-    // 网络工具
+    // 网络工具: WebFetch, WebSearch
     webFetchTool,
     webSearchTool,
-    apiCallTool,
 
-    // 任务管理工具
+    // 任务管理: Task
     taskTool,
 
-    // Todo工具
+    // Todo: TodoWrite
     createTodoWriteTool({ sessionId, configDir }),
-    createTodoReadTool({ sessionId, configDir }),
 
-    // 🆕 Plan 工具
+    // Plan 模式: EnterPlanMode, ExitPlanMode
+    enterPlanModeTool,
     exitPlanModeTool,
+
+    // System: Skill, SlashCommand
+    skillTool,
+    slashCommandTool,
   ] as Tool[];
 
-  // 添加MCP协议工具
+  // 添加 MCP 协议工具
   const mcpTools = await getMcpTools();
 
   return [...builtinTools, ...mcpTools];

@@ -58,7 +58,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
       // 快捷键处理
       const lowerInput = input.toLowerCase();
       if (isPlanModeExit) {
-        // Plan 模式: Y/S/N
+        // ExitPlanMode: Y/S/N (选择执行模式)
         if (lowerInput === 'y') {
           onResponse({ approved: true, targetMode: 'auto_edit' });
           return;
@@ -69,6 +69,16 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
         }
         if (lowerInput === 'n') {
           onResponse({ approved: false, reason: '方案需要改进' });
+          return;
+        }
+      } else if (isPlanModeEnter) {
+        // EnterPlanMode: Y/N (简单确认)
+        if (lowerInput === 'y') {
+          onResponse({ approved: true });
+          return;
+        }
+        if (lowerInput === 'n') {
+          onResponse({ approved: false, reason: '用户拒绝进入 Plan 模式' });
           return;
         }
       } else {
@@ -91,6 +101,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
   );
 
   const isPlanModeExit = details.type === 'exitPlanMode';
+  const isPlanModeEnter = details.type === 'enterPlanMode';
 
   const options = useMemo<
     Array<{ label: string; key: string; value: ConfirmationResponse }>
@@ -115,6 +126,21 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
       ];
     }
 
+    if (isPlanModeEnter) {
+      return [
+        {
+          key: 'approve',
+          label: '[Y] Yes, enter Plan mode',
+          value: { approved: true },
+        },
+        {
+          key: 'reject',
+          label: '[N] No, proceed directly',
+          value: { approved: false, reason: '用户拒绝进入 Plan 模式' },
+        },
+      ];
+    }
+
     return [
       {
         key: 'approve-once',
@@ -132,18 +158,31 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
         value: { approved: false, reason: '用户拒绝' },
       },
     ];
-  }, [isPlanModeExit]);
+  }, [isPlanModeExit, isPlanModeEnter]);
+
+  // Determine title and color based on confirmation type
+  const getHeaderStyle = () => {
+    if (isPlanModeExit) {
+      return { color: 'cyan' as const, title: '🔵 Plan Mode - Review Implementation Plan' };
+    }
+    if (isPlanModeEnter) {
+      return { color: 'magenta' as const, title: '🟣 Enter Plan Mode?' };
+    }
+    return { color: 'yellow' as const, title: '🔔 Confirmation Required' };
+  };
+
+  const headerStyle = getHeaderStyle();
 
   return (
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor={isFocused ? 'yellow' : 'gray'}
+      borderColor={isFocused ? headerStyle.color : 'gray'}
       padding={1}
     >
       <Box marginBottom={1}>
-        <Text bold color={isPlanModeExit ? 'cyan' : 'yellow'}>
-          {isPlanModeExit ? '🔵 Plan 模式 - 方案审查' : '🔔 需要用户确认'}
+        <Text bold color={headerStyle.color}>
+          {headerStyle.title}
         </Text>
       </Box>
 
@@ -162,11 +201,15 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
           flexDirection="column"
           marginBottom={1}
           borderStyle="single"
-          borderColor={isPlanModeExit ? 'cyan' : 'blue'}
+          borderColor={headerStyle.color}
           padding={1}
         >
-          <Text bold color={isPlanModeExit ? 'cyan' : 'blue'}>
-            {isPlanModeExit ? '📋 实现方案:' : '📄 操作详情:'}
+          <Text bold color={headerStyle.color}>
+            {isPlanModeExit
+              ? '📋 Implementation Plan:'
+              : isPlanModeEnter
+                ? '📝 Details:'
+                : '📄 Operation Details:'}
           </Text>
           <Box marginTop={1}>
             <MessageRenderer

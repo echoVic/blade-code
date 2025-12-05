@@ -14,7 +14,7 @@ import { z } from 'zod';
 export const myTool = createTool({
   name: 'my_tool',
   displayName: '我的工具',
-  kind: ToolKind.Other,
+  kind: ToolKind.ReadOnly,
 
   schema: z.object({
     input: z.string().describe('输入参数'),

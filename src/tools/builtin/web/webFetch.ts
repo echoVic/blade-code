@@ -27,7 +27,7 @@ interface WebResponse {
 export const webFetchTool = createTool({
   name: 'WebFetch',
   displayName: 'Web Fetch',
-  kind: ToolKind.Network,
+  kind: ToolKind.ReadOnly,
 
   // Zod Schema 定义
   schema: z.object({
@@ -50,61 +50,27 @@ export const webFetchTool = createTool({
     return_headers: z.boolean().default(false).describe('Return response headers'),
   }),
 
-  // 工具描述
+  // 工具描述（对齐 Claude Code 官方）
   description: {
-    short: 'Send HTTP requests to fetch web or API content with method/header control',
-    long: `Flexible HTTP client supporting GET/POST/PUT/DELETE/HEAD with configurable headers, body, redirects, and timeouts.`,
-    usageNotes: [
-      'url is required and must be a valid URL',
-      'method defaults to GET',
-      'Supports custom headers',
-      'Body is optional; use for POST/PUT requests',
-      'timeout defaults to 30s, max 2 minutes',
-      'follow_redirects on by default, up to 5 redirects',
-      'return_headers toggles whether headers are returned',
-    ],
-    examples: [
-      {
-        description: 'Simple GET request',
-        params: {
-          url: 'https://api.example.com/data',
-        },
-      },
-      {
-        description: 'POST request with JSON payload',
-        params: {
-          url: 'https://api.example.com/create',
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: '{"name":"test"}',
-        },
-      },
-      {
-        description: 'Custom headers',
-        params: {
-          url: 'https://api.example.com/secure',
-          headers: {
-            Authorization: 'Bearer token123',
-            Accept: 'application/json',
-          },
-        },
-      },
-      {
-        description: 'Disable redirects',
-        params: {
-          url: 'https://example.com',
-          follow_redirects: false,
-        },
-      },
-    ],
-    important: [
-      'External network requests require user approval',
-      'HTTP 4xx/5xx responses are treated as errors',
-      'Timeouts will abort the request',
-      'HTTPS supported',
-    ],
+    short: 'Fetches content from a specified URL and processes it using an AI model',
+    long: `
+- Fetches content from a specified URL and processes it using an AI model
+- Takes a URL and a prompt as input
+- Fetches the URL content, converts HTML to markdown
+- Processes the content with the prompt using a small, fast model
+- Returns the model's response about the content
+- Use this tool when you need to retrieve and analyze web content
+
+Usage notes:
+  - IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions. All MCP-provided tools start with "mcp__".
+  - The URL must be a fully-formed valid URL
+  - HTTP URLs will be automatically upgraded to HTTPS
+  - The prompt should describe what information you want to extract from the page
+  - This tool is read-only and does not modify any files
+  - Results may be summarized if the content is very large
+  - Includes a self-cleaning 15-minute cache for faster responses when repeatedly accessing the same URL
+  - When a URL redirects to a different host, the tool will inform you and provide the redirect URL in a special format. You should then make a new WebFetch request with the redirect URL to fetch the content.
+`,
   },
 
   // 执行函数

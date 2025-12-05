@@ -4,6 +4,7 @@
 
 import { createHash } from 'crypto';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
+import type { PlanModeConfig } from '../config/types.js';
 import type { IChatService, Message } from '../services/ChatServiceInterface.js';
 
 export interface LoopDetectionConfig {
@@ -22,6 +23,18 @@ export interface LoopDetectionResult {
   type?: 'tool_call' | 'content' | 'llm';
   warningCount?: number; // 已发出的警告次数
   shouldStop?: boolean; // 是否应该停止任务
+}
+
+/**
+ * Plan 模式循环检测结果
+ */
+export interface PlanModeLoopResult {
+  /** 是否应该注入警告 */
+  shouldWarn: boolean;
+  /** 警告消息（已替换占位符） */
+  warningMessage?: string;
+  /** 连续无文本输出的轮次数 */
+  consecutiveCount: number;
 }
 
 /**
@@ -45,6 +58,10 @@ export class LoopDetectionService {
   // 警告计数器
   private warningCount = 0;
   private maxWarnings: number;
+
+  // === Plan 模式专用状态 ===
+  private consecutiveToolOnlyTurns = 0;
+  private planModeConfig?: PlanModeConfig;
 
   constructor(
     private config: LoopDetectionConfig,
@@ -343,6 +360,77 @@ ${this.formatMessagesForDetection(messages.slice(-10))}
       .join('\n');
   }
 
+  // ========================================
+  // Plan 模式专用检测方法
+  // ========================================
+
+  /**
+   * 设置 Plan 模式配置
+   * 应在进入 Plan 模式时调用
+   */
+  setPlanModeConfig(config: PlanModeConfig): void {
+    this.planModeConfig = config;
+    this.consecutiveToolOnlyTurns = 0;
+  }
+
+  /**
+   * 检测 Plan 模式下的工具循环（连续无文本输出）
+   *
+   * @param hasTextOutput - 当前轮次是否有文本输出
+   * @returns 检测结果，包含是否需要警告和警告消息
+   */
+  detectPlanModeToolOnlyLoop(hasTextOutput: boolean): PlanModeLoopResult {
+    // 未配置 Plan 模式时，跳过检测
+    if (!this.planModeConfig) {
+      return {
+        shouldWarn: false,
+        consecutiveCount: 0,
+      };
+    }
+
+    if (hasTextOutput) {
+      // 有文本输出，重置计数器
+      this.consecutiveToolOnlyTurns = 0;
+      return {
+        shouldWarn: false,
+        consecutiveCount: 0,
+      };
+    }
+
+    // 无文本输出，增加计数器
+    this.consecutiveToolOnlyTurns++;
+
+    // 检查是否达到阈值
+    if (this.consecutiveToolOnlyTurns >= this.planModeConfig.toolOnlyThreshold) {
+      const warningMessage = this.planModeConfig.warningMessage.replace(
+        '{count}',
+        String(this.consecutiveToolOnlyTurns)
+      );
+
+      // 重置计数器，给 LLM 机会改正
+      const count = this.consecutiveToolOnlyTurns;
+      this.consecutiveToolOnlyTurns = 0;
+
+      return {
+        shouldWarn: true,
+        warningMessage,
+        consecutiveCount: count,
+      };
+    }
+
+    return {
+      shouldWarn: false,
+      consecutiveCount: this.consecutiveToolOnlyTurns,
+    };
+  }
+
+  /**
+   * 获取当前连续无文本输出的轮次数
+   */
+  getConsecutiveToolOnlyTurns(): number {
+    return this.consecutiveToolOnlyTurns;
+  }
+
   /**
    * 重置检测状态
    */
@@ -350,6 +438,17 @@ ${this.formatMessagesForDetection(messages.slice(-10))}
     this.toolCallHistory = [];
     this.contentHistory = [];
     this.turnsInCurrentPrompt = 0;
-    this.warningCount = 0; // 重置警告计数
+    this.warningCount = 0;
+    // Plan 模式状态重置
+    this.consecutiveToolOnlyTurns = 0;
+  }
+
+  /**
+   * 重置 Plan 模式状态
+   * 在退出 Plan 模式时调用
+   */
+  resetPlanMode(): void {
+    this.consecutiveToolOnlyTurns = 0;
+    this.planModeConfig = undefined;
   }
 }

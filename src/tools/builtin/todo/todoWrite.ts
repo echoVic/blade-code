@@ -15,205 +15,77 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
   return createTool({
     name: 'TodoWrite',
     displayName: 'Todo Write',
-    kind: ToolKind.Memory,
+    kind: ToolKind.ReadOnly,
 
     schema: z.object({
       todos: z.array(TodoItemSchema).min(1, 'At least one task is required'),
     }),
 
+    // 工具描述（对齐 Claude Code 官方）
     description: {
-      short: 'Create and manage structured TODO lists to track complex work',
-      long: `
-Create and manage structured TODO lists for the current coding session. Helps track progress, organize complex tasks, and show completeness to the user.
+      short: 'Use this tool to create and manage a structured task list for your current coding session',
+      long: `Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
+It also helps the user understand the progress of the task and overall progress of their requests.
 
-**⚠️ Important: This is NOT the subagent scheduler!**
-- To delegate work to a subagent → use the Task tool
-- To visually track task progress → use the TodoWrite tool
+## When to Use This Tool
+Use this tool proactively in these scenarios:
 
-**When to use (proactively):**
-1. Complex multi-step tasks (3+ distinct steps)
-2. Non-trivial tasks requiring planning or multiple actions
-3. User explicitly requests a TODO list
-4. User provides multiple tasks (numbered or comma-separated)
-5. Upon receiving new instructions, capture them as TODO items immediately
-6. When starting work, mark one task as in_progress (ideally only one at a time)
-7. After completing a task, mark it completed and add any follow-up tasks discovered
+1. Complex multi-step tasks - When a task requires 3 or more distinct steps or actions
+2. Non-trivial and complex tasks - Tasks that require careful planning or multiple operations
+3. User explicitly requests todo list - When the user directly asks you to use the todo list
+4. User provides multiple tasks - When users provide a list of things to be done (numbered or comma-separated)
+5. After receiving new instructions - Immediately capture user requirements as todos
+6. When you start working on a task - Mark it as in_progress BEFORE beginning work. Ideally you should only have one todo as in_progress at a time
+7. After completing a task - Mark it as completed and add any new follow-up tasks discovered during implementation
 
-**When NOT to use:**
-1. A single simple task
-2. Trivial tasks where tracking adds no value
-3. Tasks doable in fewer than 3 simple steps
-4. Tasks that are purely conversational or informational
+## When NOT to Use This Tool
 
-**Note:** If there is only one trivial task, do not use this tool—just do it.
+Skip using this tool when:
+1. There is only a single, straightforward task
+2. The task is trivial and tracking it provides no organizational benefit
+3. The task can be completed in less than 3 trivial steps
+4. The task is purely conversational or informational
 
-**Task statuses:**
-- pending: not started
-- in_progress: currently being worked on (limit one at a time)
-- completed: finished successfully
+NOTE that you should not use this tool if there is only one trivial task to do. In this case you are better off just doing the task directly.
 
-**Task description format:**
-- content: imperative description of what to do (e.g., "Run tests", "Build project")
-- activeForm: present-continuous form shown while active (e.g., "Running tests", "Building project")
+## Task States and Management
 
-**Priorities:**
-- high: urgent/important (P0)
-- medium: normal (P1, default)
-- low: lower priority (P2)
+1. **Task States**: Use these states to track progress:
+   - pending: Task not yet started
+   - in_progress: Currently working on (limit to ONE task at a time)
+   - completed: Task finished successfully
 
-**Task management rules:**
-- Update task status in real time
-- Mark tasks as completed immediately (no batch updates)
-- Exactly one task should be in_progress at any time
-- Finish the current task before starting a new one
-- Remove tasks that are no longer relevant
+   **IMPORTANT**: Task descriptions must have two forms:
+   - content: The imperative form describing what needs to be done (e.g., "Run tests", "Build the project")
+   - activeForm: The present continuous form shown during execution (e.g., "Running tests", "Building the project")
 
-**Completion requirements:**
-- Only mark completed when fully done
-- If blocked/error/unfinished, keep in_progress
-- When blocked, create a new task describing what is needed
-- Never mark completed when: tests failing, implementation incomplete, unresolved errors, missing files/deps
+2. **Task Management**:
+   - Update task status in real-time as you work
+   - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
+   - Exactly ONE task must be in_progress at any time (not less, not more)
+   - Complete current tasks before starting new ones
+   - Remove tasks that are no longer relevant from the list entirely
 
-**Best practices:**
-- Break complex tasks into 3-8 concrete, actionable subtasks
-- Write clear, descriptive task names
-- TODOs persist at ~/.blade/todos/{sessionId}-agent-{sessionId}.json
-- Each session has its own TODO list
+3. **Task Completion Requirements**:
+   - ONLY mark a task as completed when you have FULLY accomplished it
+   - If you encounter errors, blockers, or cannot finish, keep the task as in_progress
+   - When blocked, create a new task describing what needs to be resolved
+   - Never mark a task as completed if:
+     - Tests are failing
+     - Implementation is partial
+     - You encountered unresolved errors
+     - You couldn't find necessary files or dependencies
 
-**When in doubt, use this tool.** Proactive task management shows diligence and keeps work on track.
-      `.trim(),
+4. **Task Breakdown**:
+   - Create specific, actionable items
+   - Break complex tasks into smaller, manageable steps
+   - Use clear, descriptive task names
+   - Always provide both forms:
+     - content: "Fix authentication bug"
+     - activeForm: "Fixing authentication bug"
 
-      usageNotes: [
-        '⚠️ This is the TODO list tool; launch subagents with the Task tool',
-        '⚠️ todos must be an array of objects, not a JSON string',
-        'Only one task may be in_progress at a time',
-        'Mark tasks completed immediately—no batching',
-        'content is an imperative task description (e.g., "Implement user login")',
-        'activeForm is the present-progress description (e.g., "Implementing user login")',
-        'Priority defaults to medium; high-priority tasks surface first',
-        'Use proactively for complex tasks (3+ steps)',
-        'Do not use for a single trivial task',
-        'Tasks persist and can be restored across sessions',
-      ],
-
-      examples: [
-        {
-          description: 'Add dark mode feature (user requested tests and build)',
-          params: {
-            todos: [
-              {
-                content: 'Create dark mode toggle on settings page',
-                status: 'in_progress',
-                activeForm: 'Creating dark mode toggle on settings page',
-                priority: 'high',
-              },
-              {
-                content: 'Add dark mode state management (context/store)',
-                status: 'pending',
-                activeForm: 'Adding dark mode state management',
-                priority: 'high',
-              },
-              {
-                content: 'Implement dark theme CSS-in-JS styles',
-                status: 'pending',
-                activeForm: 'Implementing dark theme styles',
-                priority: 'high',
-              },
-              {
-                content: 'Update existing components to support theme switching',
-                status: 'pending',
-                activeForm: 'Updating components to support theme switching',
-                priority: 'medium',
-              },
-              {
-                content: 'Run tests/builds and fix any failures or errors',
-                status: 'pending',
-                activeForm: 'Running tests/builds',
-                priority: 'medium',
-              },
-            ],
-          },
-        },
-        {
-          description: 'Rename a function across the project (15 hits, 8 files)',
-          params: {
-            todos: [
-              {
-                content: 'Find all getCwd occurrences',
-                status: 'completed',
-                activeForm: 'Searching for getCwd occurrences',
-                priority: 'high',
-              },
-              {
-                content: 'Update function definition in src/utils/path.ts',
-                status: 'in_progress',
-                activeForm: 'Updating src/utils/path.ts',
-                priority: 'high',
-              },
-              {
-                content: 'Update 5 call sites in src/commands/*.ts',
-                status: 'pending',
-                activeForm: 'Updating call sites in src/commands',
-                priority: 'high',
-              },
-              {
-                content: 'Update references in test files',
-                status: 'pending',
-                activeForm: 'Updating test files',
-                priority: 'medium',
-              },
-              {
-                content: 'Run tests to ensure nothing was missed',
-                status: 'pending',
-                activeForm: 'Running tests to ensure nothing was missed',
-                priority: 'medium',
-              },
-            ],
-          },
-        },
-        {
-          description: 'Implement e-commerce features (user provided multiple asks)',
-          params: {
-            todos: [
-              {
-                content: 'Implement user registration (DB model, API, frontend form)',
-                status: 'in_progress',
-                activeForm: 'Implementing user registration',
-                priority: 'high',
-              },
-              {
-                content: 'Implement product catalog feature',
-                status: 'pending',
-                activeForm: 'Implementing product catalog',
-                priority: 'high',
-              },
-              {
-                content: 'Implement shopping cart',
-                status: 'pending',
-                activeForm: 'Implementing shopping cart',
-                priority: 'high',
-              },
-              {
-                content: 'Implement checkout flow',
-                status: 'pending',
-                activeForm: 'Implementing checkout flow',
-                priority: 'high',
-              },
-            ],
-          },
-        },
-      ],
-
-      important: [
-        '⚠️ This is the TODO list tool—use Task to launch subagents',
-        'Only one in_progress task at a time',
-        'Mark tasks immediately on completion to keep the list current',
-        'If blocked, keep task in_progress and add a new task describing the blocker',
-        'Mark completed only when fully done (tests pass, no errors)',
-        'Task descriptions must be specific and actionable',
-        'Use proactively for complex tasks (3+ steps)',
-        'Provide both content (imperative) and activeForm (progressive)',
-      ],
+When in doubt, use this tool. Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully.
+`,
     },
 
     async execute(params, context: ExecutionContext): Promise<ToolResult> {

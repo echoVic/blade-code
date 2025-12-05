@@ -1,6 +1,5 @@
-// 新的基于 Zod 的工具定义
+// 文件操作工具模块
 
 export { editTool } from './edit.js';
 export { readTool } from './read.js';
-export { undoEditTool } from './undoEdit.js';
 export { writeTool } from './write.js';

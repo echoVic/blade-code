@@ -38,7 +38,7 @@ interface FileMatch {
 export const globTool = createTool({
   name: 'Glob',
   displayName: 'File Pattern Match',
-  kind: ToolKind.Search,
+  kind: ToolKind.ReadOnly,
 
   // Zod Schema 定义
   schema: z.object({
@@ -55,48 +55,14 @@ export const globTool = createTool({
     case_sensitive: z.boolean().default(false).describe('Case sensitive matching'),
   }),
 
-  // 工具描述
+  // 工具描述（对齐 Claude Code 官方）
   description: {
-    short: 'Search files/directories using glob patterns with wildcard support',
-    long: `Fast glob-based search with standard wildcards; automatically ignores common directories like .git and node_modules.`,
+    short: 'Fast file pattern matching tool that works with any codebase size',
+    long: `Fast file pattern matching tool that works with any codebase size. Supports glob patterns like "**/*.js" or "src/**/*.ts". Returns matching file paths sorted by modification time.`,
     usageNotes: [
-      'Wildcards: * matches any chars except /, ** matches across directories, ? matches a single char',
-      'Pattern examples: *.js, **/*.ts, src/**/*.tsx',
-      'Defaults to searching cwd; override with path param',
-      'Auto-excludes .git, node_modules, dist, build, etc.',
-      'Results sorted by modified time (newest first)',
-      'max_results defaults to 100, max 1000',
-      'Directories excluded unless include_directories=true',
-    ],
-    examples: [
-      {
-        description: 'Find all JavaScript files',
-        params: { pattern: '*.js' },
-      },
-      {
-        description: 'Find all TypeScript files (recursive)',
-        params: { pattern: '**/*.ts' },
-      },
-      {
-        description: 'Search within a specific directory',
-        params: {
-          pattern: '*.json',
-          path: '/path/to/search',
-        },
-      },
-      {
-        description: 'Search and include directories',
-        params: {
-          pattern: 'src/**',
-          include_directories: true,
-        },
-      },
-    ],
-    important: [
-      'Glob matching is case-sensitive unless case_sensitive=false',
-      '** wildcard matches across directory levels',
-      'Set max_results when searching large trees',
-      'Automatically honors .gitignore rules',
+      'Use this tool when you need to find files by name patterns',
+      'When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead',
+      'You can call multiple tools in a single response. It is always better to speculatively perform multiple searches in parallel if they are potentially useful.',
     ],
   },
 

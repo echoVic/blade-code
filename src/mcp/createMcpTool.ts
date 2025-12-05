@@ -34,7 +34,7 @@ export function createMcpTool(
   return createTool({
     name: toolName,
     displayName: `${serverName}: ${toolDef.name}`,
-    kind: ToolKind.External,
+    kind: ToolKind.Execute, // MCP 外部工具视为 Execute 类型
     schema: zodSchema,
     description: {
       short: toolDef.description || `MCP Tool: ${toolDef.name}`,

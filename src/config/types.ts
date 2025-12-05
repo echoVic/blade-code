@@ -12,22 +12,22 @@ export type ProviderType = 'openai-compatible' | 'anthropic';
  * 权限模式枚举
  *
  * ## DEFAULT 模式（默认）
- * - ✅ 自动批准: Read, Search (只读操作，安全)
- * - ❌ 需要确认: Edit, Write, Bash, Delete, Move 等
+ * - ✅ 自动批准: ReadOnly 工具（Read/Glob/Grep/WebFetch/WebSearch/BashOutput/TodoWrite/Plan）
+ * - ❌ 需要确认: Write 工具（Edit/Write/NotebookEdit）、Execute 工具（Bash/Task/Skill/SlashCommand）
  *
  * ## AUTO_EDIT 模式
- * - ✅ 自动批准: Read, Search, Edit
- * - ❌ 需要确认: Write, Bash, Delete, Move 等
+ * - ✅ 自动批准: ReadOnly + Write 工具
+ * - ❌ 需要确认: Execute 工具（Bash/Task/Skill/SlashCommand）
  * - 适用场景：频繁修改代码的开发任务
  *
  * ## YOLO 模式（危险）
- * - ✅ 自动批准: 所有工具
+ * - ✅ 自动批准: 所有工具（ReadOnly + Write + Execute）
  * - ⚠️  警告：完全信任 AI，跳过所有确认
  * - 适用场景：高度可控的环境或演示场景
  *
  * ## PLAN 模式
- * - ✅ 自动批准: Read, Search, Network, Think, Memory（只读工具）
- * - ❌ 拦截所有修改: Edit, Write, Bash, Delete, Move 等
+ * - ✅ 自动批准: ReadOnly 工具（只读操作，无副作用）
+ * - ❌ 拦截所有修改: Write 和 Execute 工具
  * - 🔵 特殊工具: ExitPlanMode（用于提交方案）
  * - 适用场景：调研阶段，生成实现方案，用户批准后退出 Plan 模式
  */
@@ -113,6 +113,9 @@ export interface BladeConfig {
 
   // Agentic Loop 配置
   maxTurns: number; // -1 = 无限制, 0 = 完全禁用对话, N > 0 = 限制轮次
+
+  // Plan 模式配置
+  planMode: PlanModeConfig;
 }
 
 /**
@@ -122,6 +125,25 @@ export interface PermissionConfig {
   allow: string[];
   ask: string[];
   deny: string[];
+}
+
+/**
+ * Plan 模式配置
+ * 用于控制 Plan 模式下的循环检测行为
+ */
+export interface PlanModeConfig {
+  /**
+   * 连续无文本输出的轮次阈值
+   * 超过此阈值将注入警告提示
+   * @default 5
+   */
+  toolOnlyThreshold: number;
+
+  /**
+   * 警告消息模板
+   * 支持占位符: {count} - 连续轮次数
+   */
+  warningMessage: string;
 }
 
 /**

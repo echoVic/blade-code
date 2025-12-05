@@ -10,46 +10,70 @@ import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
 export const exitPlanModeTool = createTool({
   name: 'ExitPlanMode',
   displayName: 'Exit Plan Mode',
-  kind: ToolKind.Think, // 自动推断为只读
+  kind: ToolKind.ReadOnly,
 
-  schema: z.object({
-    plan: z.string().min(50).describe('Complete implementation plan (Markdown, at least 50 chars)'),
-  }),
+  schema: z.object({}),
 
+  // 工具描述
   description: {
-    short: 'Present the full implementation plan and request approval to exit Plan mode',
-    long: `Call this tool after drafting the implementation plan in Plan mode.
+    short: 'Use this tool when you are in plan mode and have finished writing your plan and are ready for user approval',
+    long: `Use this tool when you are in plan mode and have finished writing your plan to the plan file and are ready for user approval.
 
-IMPORTANT: Use only when the task requires writing code.
-- For research tasks (searching, understanding codebase), do not call this tool; just answer directly.
-- For implementation tasks (new features, bug fixes), you must call this tool to submit the plan.`,
-    usageNotes: [
-      '✅ Implementation task: “implement vim yank mode” → call this tool',
-      '❌ Research task: “investigate how vim modes are implemented” → do NOT call this tool',
-      'Plan must be in Markdown format',
-      'Plan must include complete implementation steps',
-      'Execution pauses awaiting user confirmation after calling',
-      'Approved → exit Plan mode; rejected → stay in Plan mode',
-    ],
-    important: [
-      '⚠️ Use only for coding tasks',
-      '⚠️ Do not use for pure research tasks',
-      '⚠️ Plan must be detailed and executable',
-      '⚠️ Include all file modifications/creations',
-      '⚠️ Note potential risks and testing strategy',
-    ],
+## 🚨 PREREQUISITES (MUST be satisfied before calling)
+
+1. ✅ You have written your plan to the plan file (path in system-reminder)
+2. ✅ You have OUTPUT TEXT to explain your plan to the user (not just tool calls)
+3. ✅ The plan includes: summary, implementation steps, affected files, testing method
+
+**DO NOT call this tool if**:
+- ❌ You only called tools (Glob/Grep/Read) without outputting any text summary
+- ❌ You haven't written anything to the plan file
+- ❌ The plan file is empty or incomplete
+
+## How This Tool Works
+- You should have already written your plan to the plan file specified in the plan mode system message
+- This tool does NOT take the plan content as a parameter - it will read the plan from the file you wrote
+- This tool simply signals that you're done planning and ready for the user to review and approve
+- The user will see the contents of your plan file when they review it
+
+## When to Use This Tool
+IMPORTANT: Only use this tool when the task requires planning the implementation steps of a task that requires writing code. For research tasks where you're gathering information, searching files, reading files or in general trying to understand the codebase - do NOT use this tool.
+
+## Handling Ambiguity in Plans
+Before using this tool, ensure your plan is clear and unambiguous. If there are multiple valid approaches or unclear requirements:
+1. Use the AskUserQuestion tool to clarify with the user
+2. Ask about specific implementation choices (e.g., architectural patterns, which library to use)
+3. Clarify any assumptions that could affect the implementation
+4. Edit your plan file to incorporate user feedback
+5. Only proceed with ExitPlanMode after resolving ambiguities and updating the plan file
+
+## Examples
+
+1. Initial task: "Search for and understand the implementation of vim mode in the codebase" - Do not use the exit plan mode tool because you are not planning the implementation steps of a task.
+2. Initial task: "Help me implement yank mode for vim" - Use the exit plan mode tool after you have finished planning the implementation steps of the task.
+3. Initial task: "Add a new feature to handle user authentication" - If unsure about auth method (OAuth, JWT, etc.), use AskUserQuestion first, then use exit plan mode tool after clarifying the approach.
+`,
   },
 
-  async execute(params, context): Promise<ToolResult> {
-    const { plan } = params;
+  async execute(_params, context): Promise<ToolResult> {
+    // 注意：官方 Claude Code 的 ExitPlanMode 不接收 plan 参数
+    // 计划内容应该已经在对话中呈现给用户，此工具只是发出"准备好审核"的信号
 
     // 触发 UI 确认流程
     if (context.confirmationHandler) {
       try {
         const response = await context.confirmationHandler.requestConfirmation({
           type: 'exitPlanMode',
-          message: '请审查以下实现方案',
-          details: plan,
+          message:
+            'The assistant has finished planning and is ready for your review.\n\n' +
+            '⚠️ Before approving, please verify:\n' +
+            '1. The assistant has written a detailed plan to the plan file\n' +
+            '2. The plan includes implementation steps, affected files, and testing methods\n' +
+            '3. You have seen text explanations from the assistant (not just tool calls)\n\n' +
+            'If the assistant only made tool calls without presenting a plan summary,\n' +
+            'please reject and ask for a proper plan.',
+          details:
+            'After approval, the assistant will exit Plan mode and begin implementation.',
         });
 
         if (response.approved) {
@@ -57,18 +81,17 @@ IMPORTANT: Use only when the task requires writing code.
             success: true,
             llmContent:
               '✅ Plan approved by user. Plan mode exited; you can proceed to code changes.',
-            displayContent: '✅ 方案已批准，退出 Plan 模式',
+            displayContent: '✅ Plan approved, exiting Plan mode',
             metadata: {
               approved: true,
-              planLength: plan.length,
-              shouldExitLoop: true, // 🆕 标记应该退出循环
-              targetMode: response.targetMode, // 🆕 目标权限模式（default/auto_edit）
+              shouldExitLoop: true,
+              targetMode: response.targetMode, // 目标权限模式（default/auto_edit）
             },
           };
         } else {
-          // 🔧 修复：拒绝方案后应该退出循环，返回到用户输入界面，让用户补充信息
+          // 拒绝方案后退出循环，返回到用户输入界面
           return {
-            success: true, // ✅ 拒绝不是错误，是正常的用户交互
+            success: true, // 拒绝不是错误，是正常的用户交互
             llmContent:
               '⚠️ Plan rejected by user. Awaiting user feedback.\n\n' +
               (response.feedback || 'No specific feedback provided.') +
@@ -77,10 +100,9 @@ IMPORTANT: Use only when the task requires writing code.
             displayContent: '⚠️ 方案被拒绝，等待用户补充信息',
             metadata: {
               approved: false,
-              planLength: plan.length,
-              shouldExitLoop: true, // ✅ 退出循环，返回到用户输入界面
-              feedback: response.feedback, // 保存用户反馈
-              awaitingUserInput: true, // 🆕 标记正在等待用户输入
+              shouldExitLoop: true,
+              feedback: response.feedback,
+              awaitingUserInput: true,
             },
           };
         }
@@ -88,21 +110,23 @@ IMPORTANT: Use only when the task requires writing code.
         return {
           success: false,
           llmContent: `Confirmation flow error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          displayContent: '❌ 确认失败',
+          displayContent: '❌ Confirmation failed',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-          message: 'Confirmation flow error',
+            message: 'Confirmation flow error',
           },
         };
       }
     }
 
-    // 降级：如果没有确认处理器，直接返回方案
+    // 降级：如果没有确认处理器，直接返回成功
     return {
       success: true,
-      llmContent: plan,
-      displayContent: '方案已呈现（无交互式确认）',
-      metadata: { approved: null, planLength: plan.length },
+      llmContent:
+        '✅ Plan mode exit requested. No interactive confirmation available.\n' +
+        'Proceeding with implementation.',
+      displayContent: 'Plan mode exit (non-interactive)',
+      metadata: { approved: null },
     };
   },
 });

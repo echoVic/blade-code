@@ -2,7 +2,29 @@
  * Blade 默认配置
  */
 
-import { BladeConfig, PermissionMode } from './types.js';
+import { BladeConfig, PermissionMode, PlanModeConfig } from './types.js';
+
+/**
+ * Plan 模式默认警告消息
+ * 使用 {count} 占位符表示连续轮次数
+ */
+export const DEFAULT_PLAN_MODE_WARNING_MESSAGE = `<system-reminder>⚠️ Warning: You have called {count} tools consecutively without outputting any text to the user.
+
+In Plan mode, you MUST output text summaries between tool calls:
+- After Phase 1 exploration: Output exploration summary (100+ words)
+- After Phase 2 design: Output design evaluation
+- After Phase 3 review: Output review summary with any questions
+- After Phase 4: Output confirmation before calling ExitPlanMode
+
+Please STOP and summarize your current findings before continuing.</system-reminder>`;
+
+/**
+ * Plan 模式默认配置
+ */
+export const DEFAULT_PLAN_MODE_CONFIG: PlanModeConfig = {
+  toolOnlyThreshold: 5,
+  warningMessage: DEFAULT_PLAN_MODE_WARNING_MESSAGE,
+};
 
 export const DEFAULT_CONFIG: BladeConfig = {
   // =====================================
@@ -118,4 +140,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
 
   // Agentic Loop 配置
   maxTurns: -1, // 默认无限制（受安全上限 100 保护）
+
+  // Plan 模式配置
+  planMode: DEFAULT_PLAN_MODE_CONFIG,
 };

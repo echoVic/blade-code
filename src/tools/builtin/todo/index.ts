@@ -4,7 +4,6 @@
  */
 
 export { TodoManager } from './TodoManager.js';
-export { createTodoReadTool } from './todoRead.js';
 export { createTodoWriteTool } from './todoWrite.js';
 export type {
   TodoItem,

@@ -1,8 +1,6 @@
-// 新的基于 Zod 的工具定义
+// Shell 工具模块
 
 export { BackgroundShellManager } from './BackgroundShellManager.js';
 export { bashTool } from './bash.js';
 export { bashOutputTool } from './bashOutput.js';
 export { killShellTool } from './killShell.js';
-export { scriptTool } from './script.js';
-export { shellTool } from './shell.js';

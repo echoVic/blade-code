@@ -208,14 +208,15 @@ export class PermissionStage implements PipelineStage {
    * 应用权限模式覆盖规则
    *
    * 权限模式行为：
-   * - DEFAULT: Read/Search/Memory 自动批准，其他需要确认
-   * - AUTO_EDIT: Read/Search/Memory/Edit 自动批准，其他需要确认
+   * - DEFAULT: ReadOnly 工具（Read/Glob/Grep/WebFetch/WebSearch/BashOutput/TodoWrite/Plan）自动批准，其他需要确认
+   * - AUTO_EDIT: ReadOnly + Write 工具自动批准，其他需要确认
    * - YOLO: 所有工具自动批准
+   * - PLAN: 仅 ReadOnly 工具允许，其他全部拒绝
    *
-   * Memory 工具（如 TodoWrite）在所有模式下都自动批准，因为它们：
-   * - 仅操作内存状态，不直接修改文件系统
-   * - 用户可见且可撤销
-   * - 安全且低风险
+   * ReadOnly 工具（包括 TodoWrite）在所有模式下都自动批准，因为它们：
+   * - 无副作用（仅读取或操作内存状态）
+   * - 不直接修改文件系统
+   * - 用户可见且安全
    *
    * 优先级：DENY 规则 > ALLOW 规则 > 模式规则 > ASK
    */
@@ -253,26 +254,24 @@ export class PermissionStage implements PipelineStage {
       };
     }
 
-    // 5. 只读工具：所有模式下都自动批准（Read/Search/Network/Think/Memory）
-    // 使用 isReadOnlyKind 统一判断，避免遗漏
+    // 5. 只读工具：所有模式下都自动批准
     if (isReadOnlyKind(toolKind)) {
-      const kindName = toolKind === ToolKind.Memory ? 'memory' : 'readonly';
       return {
         result: PermissionResult.ALLOW,
-        matchedRule: `mode:${this.permissionMode}:${kindName}`,
+        matchedRule: `mode:${this.permissionMode}:readonly`,
         reason: 'Read-only tools do not require confirmation',
       };
     }
 
-    // 6. AUTO_EDIT 模式：额外批准 Edit 工具
+    // 6. AUTO_EDIT 模式：额外批准 Write 工具
     if (
       this.permissionMode === PermissionMode.AUTO_EDIT &&
-      toolKind === ToolKind.Edit
+      toolKind === ToolKind.Write
     ) {
       return {
         result: PermissionResult.ALLOW,
-        matchedRule: 'mode:autoEdit:edit',
-        reason: 'AUTO_EDIT mode: automatically approve edit tools',
+        matchedRule: 'mode:autoEdit:write',
+        reason: 'AUTO_EDIT mode: automatically approve write tools',
       };
     }
 

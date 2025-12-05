@@ -16,7 +16,7 @@ import { SnapshotManager } from './SnapshotManager.js';
 export const writeTool = createTool({
   name: 'Write',
   displayName: 'File Write',
-  kind: ToolKind.Edit,
+  kind: ToolKind.Write,
   strict: true, // 启用 OpenAI Structured Outputs
   isConcurrencySafe: false, // 文件写入不支持并发
 
@@ -35,46 +35,14 @@ export const writeTool = createTool({
 
   // 工具描述（对齐 Claude Code 官方）
   description: {
-    short: 'Write content to the local filesystem',
-    long: `Writes a file to the local filesystem. Can create new files or overwrite existing files. Automatically creates snapshots before overwriting.`,
+    short: 'Writes a file to the local filesystem',
+    long: `Writes a file to the local filesystem.`,
     usageNotes: [
       'This tool will overwrite the existing file if there is one at the provided path.',
       "If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.",
       'ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.',
       'NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.',
-      'Supports multiple encodings: utf8 (default), base64, binary',
-      "Automatically creates parent directories if they don't exist",
-      'Creates snapshots before overwriting (stored in ~/.blade/file-history/{sessionId}/)',
-    ],
-    examples: [
-      {
-        description: 'Create a new text file',
-        params: {
-          file_path: '/path/to/new-file.ts',
-          content: 'export const hello = "world";',
-        },
-      },
-      {
-        description: 'Write a base64-encoded binary file',
-        params: {
-          file_path: '/path/to/image.png',
-          content: 'iVBORw0KGgoAAAANSUhEUgA...',
-          encoding: 'base64',
-        },
-      },
-      {
-        description: 'Overwrite an existing file (must Read first)',
-        params: {
-          file_path: '/path/to/existing-file.txt',
-          content: 'New content',
-        },
-      },
-    ],
-    important: [
-      '**If the file exists, you MUST Read it first** or the write will fail',
-      '**Prefer the Edit tool for existing files**; Write is for new files or full overwrites',
-      'Do not create documentation files (*.md) unless explicitly requested',
-      'Snapshots are taken before overwrite; use UndoEdit to revert',
+      'Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.',
     ],
   },
 

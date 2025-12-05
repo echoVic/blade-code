@@ -660,7 +660,7 @@ function formatDisplayMessage(metadata: Record<string, any>): string {
 export const grepTool = createTool({
   name: 'Grep',
   displayName: '内容搜索',
-  kind: ToolKind.Search,
+  kind: ToolKind.ReadOnly,
 
   // Zod Schema 定义
   schema: z.object({
@@ -731,96 +731,20 @@ export const grepTool = createTool({
       ),
   }),
 
-  // 工具描述
+  // 工具描述（对齐 Claude Code 官方）
   description: {
-    short: 'A powerful search tool with multi-level fallback strategies',
-    long: `Perform fast text search with automatic fallback strategies. Prioritizes ripgrep, then gracefully degrades to git grep, system grep, and pure JavaScript implementation.
+    short: 'A powerful search tool built on ripgrep',
+    long: `A powerful search tool built on ripgrep
 
-Usage:
-  - ALWAYS use Grep for search tasks. NEVER invoke grep or rg as a Bash command. The Grep tool has been optimized for correct permissions and access.
-  - Supports full regex syntax (e.g., "log.*Error", "function\\\\s+\\\\w+")
+  Usage:
+  - ALWAYS use Grep for search tasks. NEVER invoke \`grep\` or \`rg\` as a Bash command. The Grep tool has been optimized for correct permissions and access.
+  - Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
   - Filter files with glob parameter (e.g., "*.js", "**/*.tsx") or type parameter (e.g., "js", "py", "rust")
   - Output modes: "content" shows matching lines, "files_with_matches" shows only file paths (default), "count" shows match counts
   - Use Task tool for open-ended searches requiring multiple rounds
-  - Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping (use interface\\\\{\\\\} to find interface{} in Go code)
-  - Multiline matching: By default patterns match within single lines only. For cross-line patterns like struct \\\\{[\\\\s\\\\S]*?field, use multiline: true
-
-Fallback Strategies:
-  1. ripgrep (fastest, system > vendor bundled > @vscode/ripgrep)
-  2. git grep (in git repositories)
-  3. system grep (cross-platform)
-  4. Pure JavaScript (always works, slower)`,
-    usageNotes: [
-      'The pattern parameter is required',
-      'Default output mode is files_with_matches',
-      'content mode supports -A/-B/-C to show context lines',
-      'content mode supports -n to show line numbers (defaults to true)',
-      'Automatically excludes .git, node_modules, dist, etc.',
-      'head_limit can cap the number of results across all output modes',
-      'offset parameter allows skipping first N results (works with head_limit)',
-      'multiline enables cross-line matching (performance impact)',
-      '-i flag enables case insensitive search',
-      'type parameter is more efficient than glob for standard file types',
-      'Automatically falls back to alternative search methods if primary fails',
-    ],
-    examples: [
-      {
-        description: 'Search files containing specific text',
-        params: {
-          pattern: 'TODO',
-          output_mode: 'files_with_matches',
-        },
-      },
-      {
-        description: 'Search and display matching lines (with line numbers)',
-        params: {
-          pattern: 'function\\\\s+\\\\w+',
-          output_mode: 'content',
-          '-n': true,
-        },
-      },
-      {
-        description: 'Search and display context',
-        params: {
-          pattern: 'error',
-          output_mode: 'content',
-          '-C': 3,
-        },
-      },
-      {
-        description: 'Case insensitive search in TypeScript files',
-        params: {
-          pattern: 'interface',
-          type: 'ts',
-          '-i': true,
-        },
-      },
-      {
-        description: 'Filter files using glob with result limit',
-        params: {
-          pattern: 'import',
-          glob: '*.{ts,tsx}',
-          head_limit: 20,
-        },
-      },
-      {
-        description: 'Multiline pattern search',
-        params: {
-          pattern: 'struct \\\\{[\\\\s\\\\S]*?field',
-          multiline: true,
-          output_mode: 'content',
-        },
-      },
-    ],
-    important: [
-      'Pattern uses ripgrep syntax; literal braces must be escaped (e.g., interface\\\\{\\\\})',
-      'Multiline mode impacts performance; use only when cross-line matching is needed',
-      'head_limit and offset work across all output modes (content, files_with_matches, count)',
-      'Tool automatically selects best available search method',
-      '-n parameter only affects content mode output',
-      'Context parameters (-A/-B/-C) only work in content mode',
-      'Fallback strategies ensure search always works, even without ripgrep',
-    ],
+  - Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping (use \`interface\\{\\}\` to find \`interface{}\` in Go code)
+  - Multiline matching: By default patterns match within single lines only. For cross-line patterns like \`struct \\{[\\s\\S]*?field\`, use \`multiline: true\`
+`,
   },
 
   // 执行函数

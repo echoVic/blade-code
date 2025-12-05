@@ -48,6 +48,7 @@ export class SubagentExecutor {
         userId: 'subagent',
         sessionId: context.parentSessionId || `subagent_${Date.now()}`,
         workspaceRoot: process.cwd(),
+        permissionMode: context.permissionMode, // 继承父 Agent 的权限模式
       });
 
       if (loopResult.success) {

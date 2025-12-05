@@ -22,7 +22,7 @@ import { SnapshotManager } from './SnapshotManager.js';
 export const editTool = createTool({
   name: 'Edit',
   displayName: 'File Edit',
-  kind: ToolKind.Edit,
+  kind: ToolKind.Write,
   strict: true, // 启用 OpenAI Structured Outputs
   isConcurrencySafe: false, // 文件编辑不支持并发
 
@@ -42,53 +42,17 @@ export const editTool = createTool({
       .describe('Replace all matches (default: first only)'),
   }),
 
-  // 工具描述
+  // 工具描述（对齐 Claude Code 官方）
   description: {
-    short: 'Perform precise string replacements within a file',
-    long: `Performs exact string replacements in files. Supports replacing a single occurrence or all occurrences with the replace_all parameter.`,
+    short: 'Performs exact string replacements in files',
+    long: `Performs exact string replacements in files.`,
     usageNotes: [
       'You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.',
       'When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.',
       'ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.',
-      '**The edit will FAIL if old_string is not unique in the file.** To minimize retries: Include 3-5 lines of surrounding context including function/class names. Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.',
+      'Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.',
+      'The edit will FAIL if old_string is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.',
       'Use replace_all for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.',
-      '**Auto-retry is normal**: If the edit fails due to multiple matches, the system expects you to automatically retry with more context. This typically resolves in 1-2 attempts.',
-    ],
-    examples: [
-      {
-        description: 'Replace a unique string',
-        params: {
-          file_path: '/path/to/file.ts',
-          old_string:
-            'function calculateTotal(items: Item[]) {\n  return items.reduce((sum, item) => sum + item.price, 0);\n}',
-          new_string:
-            'function calculateTotal(items: Item[]) {\n  return items.reduce((sum, item) => sum + item.price * item.quantity, 0);\n}',
-        },
-      },
-      {
-        description: 'Rename a variable using replace_all',
-        params: {
-          file_path: '/path/to/file.ts',
-          old_string: 'oldVariableName',
-          new_string: 'newVariableName',
-          replace_all: true,
-        },
-      },
-      {
-        description: 'Delete content (empty new_string)',
-        params: {
-          file_path: '/path/to/file.ts',
-          old_string: '// TODO: remove this\n',
-          new_string: '',
-        },
-      },
-    ],
-    important: [
-      '**You MUST Read the file first**, otherwise the edit will fail',
-      '**If old_string is not unique, the edit will fail**—add more context or use replace_all',
-      'When copying from Read output, preserve exact indentation (ignore line number prefixes)',
-      'For multi-line replacements, old_string must include full newlines',
-      'new_string and old_string must differ',
     ],
   },
 

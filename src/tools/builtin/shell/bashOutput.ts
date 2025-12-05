@@ -10,8 +10,7 @@ import {
 export const bashOutputTool = createTool({
   name: 'BashOutput',
   displayName: '后台命令输出',
-  kind: ToolKind.Execute,
-  isReadOnly: true,
+  kind: ToolKind.ReadOnly,
 
   schema: z.object({
     bash_id: z.string().min(1).describe('Background bash session ID'),
@@ -23,36 +22,18 @@ export const bashOutputTool = createTool({
       ),
   }),
 
+  // 工具描述（对齐 Claude Code 官方）
   description: {
-    short: 'Fetch latest output from a background bash command',
-    long: `Retrieve incremental output of a running or finished background bash command; returns only new stdout/stderr since the last read.`,
-    usageNotes: [
-      'Always returns only new output since the last check',
-      'Supports optional regex filtering via the filter parameter',
-      'Lines that do not match the filter are discarded and cannot be read again',
-      'Returns stdout and stderr separately with process status attached',
-      'Shell IDs can be obtained from Bash tool return values or via the /bashes command',
-    ],
-    examples: [
-      {
-        description: 'View background command output',
-        params: {
-          bash_id: 'bash_123456',
-        },
-      },
-      {
-        description: 'View only lines containing ERROR',
-        params: {
-          bash_id: 'bash_123456',
-          filter: 'ERROR',
-        },
-      },
-    ],
-    important: [
-      'Use this tool when you need to monitor or check the output of a long-running shell',
-      'Regex must follow JavaScript syntax; invalid expressions will throw errors',
-      'If the background command has exited, status returns exited/killed/error',
-    ],
+    short: 'Retrieves output from a running or completed background bash shell',
+    long: `
+- Retrieves output from a running or completed background bash shell
+- Takes a shell_id parameter identifying the shell
+- Always returns only new output since the last check
+- Returns stdout and stderr output along with shell status
+- Supports optional regex filtering to show only lines matching a pattern
+- Use this tool when you need to monitor or check the output of a long-running shell
+- Shell IDs can be found using the /tasks command
+`,
   },
 
   async execute(params, _context: ExecutionContext): Promise<ToolResult> {

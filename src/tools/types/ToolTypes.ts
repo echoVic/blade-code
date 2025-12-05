@@ -2,20 +2,16 @@ import type { JSONSchema7 } from 'json-schema';
 import type { ExecutionContext } from './ExecutionTypes.js';
 
 /**
- * 工具类型枚举
+ * 工具类型枚举（简化为 3 种）
+ *
+ * - ReadOnly: 只读操作，无副作用（Read, Glob, Grep, WebFetch, WebSearch, BashOutput, TodoWrite, Plan 工具等）
+ * - Write: 文件写入操作（Edit, Write, NotebookEdit）
+ * - Execute: 命令执行，可能有副作用（Bash, KillShell, Task, Skill, SlashCommand）
  */
 export enum ToolKind {
-  Read = 'read',
-  Edit = 'edit',
-  Delete = 'delete',
-  Move = 'move',
-  Search = 'search',
+  ReadOnly = 'readonly',
+  Write = 'write',
   Execute = 'execute',
-  Network = 'network',
-  Think = 'think',
-  Memory = 'memory', // 内存操作工具（如 TODO 管理），安全且无需确认
-  External = 'external',
-  Other = 'other',
 }
 
 /**
@@ -210,13 +206,5 @@ export interface Tool<TParams = unknown> {
  * 根据 ToolKind 推断是否为只读工具
  */
 export function isReadOnlyKind(kind: ToolKind): boolean {
-  const READ_ONLY_KINDS = [
-    ToolKind.Read, // 文件读取
-    ToolKind.Search, // 搜索工具
-    ToolKind.Network, // 网络请求（仅 GET）
-    ToolKind.Think, // 思考工具
-    ToolKind.Memory, // TODO 管理（记录计划）
-  ];
-
-  return READ_ONLY_KINDS.includes(kind);
+  return kind === ToolKind.ReadOnly;
 }

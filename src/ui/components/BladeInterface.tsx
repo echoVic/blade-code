@@ -246,13 +246,30 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   // ==================== Memoized Methods ====================
   const handleResponse = useMemoizedFn(async (response: ConfirmationResponse) => {
-    // ✅ 移除 UI 层的模式切换逻辑 - Agent 层已经负责持久化配置
-    // Plan 模式退出后，Agent 会自动更新配置并重新执行
-    // UI 只需要传递 response.targetMode 给 Agent，由 Agent 统一处理
+    const confirmationType = confirmationState.details?.type;
 
-    // 如果是 Plan 模式批准，等待 Agent 完成配置更新后同步到 UI
-    if (confirmationState.details?.type === 'exitPlanMode' && response.approved) {
-      // 延迟更新 UI 配置，等待 Agent 完成持久化
+    // EnterPlanMode approved: Switch to Plan mode
+    if (confirmationType === 'enterPlanMode' && response.approved) {
+      const configManager = ConfigManager.getInstance();
+      try {
+        await configManager.setPermissionMode(PermissionMode.PLAN);
+        // Update UI state
+        const updatedConfig = configManager.getConfig();
+        appDispatch(
+          appActions.setConfig({
+            ...appState.config!,
+            permissionMode: updatedConfig.permissionMode,
+          })
+        );
+        logger.debug('[BladeInterface] Entered Plan mode');
+      } catch (error) {
+        logger.error('[BladeInterface] Failed to enter Plan mode:', error);
+      }
+    }
+
+    // ExitPlanMode approved: Agent layer handles mode switch, UI syncs state
+    if (confirmationType === 'exitPlanMode' && response.approved) {
+      // Delay UI config update to wait for Agent to persist
       setTimeout(() => {
         const configManager = ConfigManager.getInstance();
         const updatedConfig = configManager.getConfig();
@@ -263,7 +280,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           })
         );
         logger.debug(
-          `[BladeInterface] UI 配置已同步: ${updatedConfig.permissionMode}`
+          `[BladeInterface] UI config synced: ${updatedConfig.permissionMode}`
         );
       }, 100);
     }
