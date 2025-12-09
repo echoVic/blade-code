@@ -22,6 +22,8 @@ export interface CompactionOptions {
   apiKey?: string;
   /** Base URL（可选，默认使用环境变量） */
   baseURL?: string;
+  /** 真实的 preTokens（可选，来自 LLM usage，比估算更准确） */
+  actualPreTokens?: number;
 }
 
 /**
@@ -61,11 +63,6 @@ export class CompactionService {
   /** 降级时保留比例（30%） */
   private static readonly FALLBACK_RETAIN_PERCENT = 0.3;
 
-  /** 压缩模型优先级（优先使用便宜的模型） */
-  private static readonly COMPACTION_MODEL_PRIORITY = [
-    'qwen-plus', // 便宜且智能
-    'gpt-4o-mini', // OpenAI 备选
-  ];
 
   /**
    * 执行压缩
@@ -78,7 +75,13 @@ export class CompactionService {
     messages: Message[],
     options: CompactionOptions
   ): Promise<CompactionResult> {
-    const preTokens = TokenCounter.countTokens(messages, options.modelName);
+    // 优先使用传入的真实 preTokens（来自 LLM usage），否则使用估算
+    const preTokens =
+      options.actualPreTokens ?? TokenCounter.countTokens(messages, options.modelName);
+    const tokenSource = options.actualPreTokens
+      ? 'actual (from LLM usage)'
+      : 'estimated';
+    console.log(`[CompactionService] preTokens source: ${tokenSource}`);
 
     try {
       console.log('[CompactionService] 开始压缩，消息数:', messages.length);
@@ -176,18 +179,16 @@ export class CompactionService {
   ): Promise<string> {
     const prompt = this.buildCompactionPrompt(messages, fileContents);
 
-    // 选择压缩模型
-    const compactionModel = this.selectCompactionModel(options.modelName);
-    console.log('[CompactionService] 使用压缩模型:', compactionModel);
+    console.log('[CompactionService] 使用压缩模型:', options.modelName);
 
     // 创建 ChatService
     const chatService = createChatService({
       apiKey: options.apiKey || process.env.BLADE_API_KEY || '',
       baseUrl:
         options.baseURL || process.env.BLADE_BASE_URL || 'https://api.openai.com/v1',
-      model: compactionModel,
+      model: options.modelName,
       temperature: 0.3,
-      maxTokens: 8000,
+      maxOutputTokens: 8000, // 压缩输出限制
       timeout: 60000,
       provider: 'openai-compatible' as const,
     });
@@ -286,35 +287,6 @@ ${messagesText}
 ${fileContents.length > 0 ? `## Important Files\n\n${filesText}` : ''}
 
 Please provide your summary following the structure specified above, with both <analysis> and <summary> sections.`;
-  }
-
-  /**
-   * 选择压缩模型
-   *
-   * @param userModel - 用户配置的模型
-   * @returns 压缩使用的模型
-   */
-  private static selectCompactionModel(userModel: string): string {
-    // 优先使用配置的便宜模型
-    for (const model of this.COMPACTION_MODEL_PRIORITY) {
-      // 简单判断：如果用户模型包含该模型名，说明可用
-      if (userModel.includes(model)) {
-        return model;
-      }
-    }
-
-    // 如果都不匹配，检查是否是 qwen 系列
-    if (userModel.includes('qwen')) {
-      return 'qwen-plus'; // 默认使用 qwen-plus
-    }
-
-    // 如果是 gpt 系列，使用 gpt-4o-mini
-    if (userModel.includes('gpt')) {
-      return 'gpt-4o-mini';
-    }
-
-    // 否则使用用户配置的模型
-    return userModel;
   }
 
   /**

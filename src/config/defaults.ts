@@ -37,7 +37,8 @@ export const DEFAULT_CONFIG: BladeConfig = {
 
   // 全局默认参数
   temperature: 0.0,
-  maxTokens: 200000, // 200k - 主流 Agent 模型的标准窗口大小
+  maxTokens: 128000, // 128K - 主流大模型的标准上下文窗口
+  maxOutputTokens: 32768, // 32K - 主流大模型的输出 token 限制
   stream: true,
   topP: 0.9,
   topK: 50,

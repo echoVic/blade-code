@@ -112,7 +112,7 @@ export class OpenAIChatService implements IChatService {
       tools: openaiTools,
       tool_choice:
         openaiTools && openaiTools.length > 0 ? ('auto' as const) : undefined,
-      max_tokens: this.config.maxTokens ?? 32000,
+      max_tokens: this.config.maxOutputTokens ?? 8192,
       temperature: this.config.temperature ?? 0.0,
     };
 
@@ -285,7 +285,7 @@ export class OpenAIChatService implements IChatService {
       tools: openaiTools,
       tool_choice:
         openaiTools && openaiTools.length > 0 ? ('auto' as const) : ('none' as const),
-      max_tokens: this.config.maxTokens ?? 32000,
+      max_tokens: this.config.maxOutputTokens ?? 8192,
       temperature: this.config.temperature ?? 0.0,
       stream: true as const,
     };

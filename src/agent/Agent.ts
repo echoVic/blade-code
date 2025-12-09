@@ -19,7 +19,6 @@ import type { BladeConfig, PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
 import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
-import { TokenCounter } from '../context/TokenCounter.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { loadProjectMcpConfig } from '../mcp/loadProjectMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
@@ -182,7 +181,8 @@ export class Agent extends EventEmitter {
         model: modelConfig.model,
         baseUrl: modelConfig.baseUrl,
         temperature: modelConfig.temperature ?? this.config.temperature,
-        maxTokens: modelConfig.maxTokens ?? this.config.maxTokens,
+        maxTokens: modelConfig.maxTokens ?? this.config.maxTokens, // 上下文窗口（压缩判断）
+        maxOutputTokens: this.config.maxOutputTokens, // 输出限制（API max_tokens）
         timeout: this.config.timeout,
       });
 
@@ -516,6 +516,7 @@ export class Agent extends EventEmitter {
       let turnsCount = 0;
       const allToolResults: ToolResult[] = [];
       let totalTokens = 0; // 累计 token 使用量
+      let lastPromptTokens: number | undefined; // 上一轮 LLM 返回的真实 prompt tokens
 
       while (turnsCount < maxTurns) {
         // === 1. 检查中断信号 ===
@@ -540,10 +541,12 @@ export class Agent extends EventEmitter {
 
         // 传递实际要发送给 LLM 的 messages 数组（包含 system prompt）
         // checkAndCompactInLoop 返回是否发生了压缩
+        // 🆕 传入上一轮 LLM 返回的真实 prompt tokens（比估算更准确）
         const didCompact = await this.checkAndCompactInLoop(
           messages,
           context,
-          turnsCount
+          turnsCount,
+          lastPromptTokens // 首轮为 undefined，使用估算；后续轮次使用真实值
         );
 
         // 🔧 关键修复：如果发生了压缩，必须重建 messages 数组
@@ -634,9 +637,14 @@ export class Agent extends EventEmitter {
           options?.signal
         );
 
-        // 累加 token 使用量
-        if (turnResult.usage?.totalTokens) {
-          totalTokens += turnResult.usage.totalTokens;
+        // 累加 token 使用量，并保存真实的 prompt tokens 用于下一轮压缩检查
+        if (turnResult.usage) {
+          if (turnResult.usage.totalTokens) {
+            totalTokens += turnResult.usage.totalTokens;
+          }
+          // 保存真实的 prompt tokens，用于下一轮循环的压缩检查（比估算更准确）
+          lastPromptTokens = turnResult.usage.promptTokens;
+          logger.debug(`[Agent] LLM usage: prompt=${lastPromptTokens}, completion=${turnResult.usage.completionTokens}, total=${turnResult.usage.totalTokens}`);
         }
 
         // 检查 abort 信号（LLM 调用后）
@@ -906,9 +914,9 @@ export class Agent extends EventEmitter {
             }
 
             // 添加工具执行结果到消息历史
-            // 优先使用 displayContent（人类可读格式），避免空数组或复杂对象被选中
+            // 优先使用 llmContent（为 LLM 准备的详细内容），displayContent 仅用于终端显示
             let toolResultContent = result.success
-              ? result.displayContent || result.llmContent || ''
+              ? result.llmContent || result.displayContent || ''
               : result.error?.message || '执行失败';
 
             // 如果内容是对象，需要序列化为 JSON
@@ -971,17 +979,11 @@ export class Agent extends EventEmitter {
               `[Plan Mode] 检测到工具循环 - 连续 ${planLoopResult.consecutiveCount} 轮无文本输出，注入警告`
             );
 
-            // 使用 assistant 角色输出过渡语与详细警告（统一 assistant 角色）
+            // 将过渡语和警告合并为一条 assistant 消息
+            // 避免连续 assistant 消息导致某些模型（如 DeepSeek）返回空响应
             messages.push({
               role: 'assistant',
-              content:
-                'Let me pause and summarize my findings so far before continuing with more research.',
-            });
-
-            // 作为 system-reminder 注入详细警告
-            messages.push({
-              role: 'assistant',
-              content: planLoopResult.warningMessage,
+              content: `Let me pause and summarize my findings so far before continuing with more research.\n\n${planLoopResult.warningMessage}`,
             });
           }
         }
@@ -1365,33 +1367,40 @@ export class Agent extends EventEmitter {
 
   /**
    * 在 Agent 循环中检查并执行压缩
-   * 使用实际发送给 LLM 的 messages 进行 token 计算
+   * 仅使用 LLM 返回的真实 usage.promptTokens 进行判断（不再估算）
    *
+   * @param messages - 实际发送给 LLM 的消息数组
+   * @param context - 聊天上下文
+   * @param currentTurn - 当前轮次
+   * @param actualPromptTokens - LLM 返回的真实 prompt tokens（必须，来自上一轮响应）
    * @returns 是否发生了压缩
    */
   private async checkAndCompactInLoop(
     messages: Message[],
     context: ChatContext,
-    currentTurn: number
+    currentTurn: number,
+    actualPromptTokens?: number
   ): Promise<boolean> {
+    // 没有真实数据时跳过检查（第 1 轮没有历史 usage）
+    if (actualPromptTokens === undefined) {
+      logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`);
+      return false;
+    }
+
     const chatConfig = this.chatService.getConfig();
     const modelName = chatConfig.model;
     const maxTokens = chatConfig.maxTokens ?? this.config.maxTokens;
-
-    // 调试：打印配置和 token 计数（使用实际发送给 LLM 的 messages）
-    const currentTokens = TokenCounter.countTokens(messages, modelName);
     const threshold = Math.floor(maxTokens * 0.8);
-    const logPrefix =
-      currentTurn === 0 ? '[Agent] 压缩检查' : `[Agent] [轮次 ${currentTurn}] 压缩检查`;
-    logger.debug(`${logPrefix}:`, {
-      currentTokens,
+
+    logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩检查:`, {
+      promptTokens: actualPromptTokens,
       maxTokens,
       threshold,
-      shouldCompact: currentTokens >= threshold,
+      shouldCompact: actualPromptTokens >= threshold,
     });
 
-    // 检查是否需要压缩（使用实际发送给 LLM 的 messages）
-    if (!TokenCounter.shouldCompact(messages, modelName, maxTokens)) {
+    // 使用真实 prompt tokens 判断是否需要压缩
+    if (actualPromptTokens < threshold) {
       return false; // 不需要压缩
     }
 
@@ -1409,6 +1418,7 @@ export class Agent extends EventEmitter {
         maxTokens,
         apiKey: chatConfig.apiKey,
         baseURL: chatConfig.baseUrl,
+        actualPreTokens: actualPromptTokens, // 传入真实的 preTokens
       });
 
       if (result.success) {
