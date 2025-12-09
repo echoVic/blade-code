@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
+import { homedir } from 'node:os';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
@@ -12,29 +15,31 @@ export const exitPlanModeTool = createTool({
   displayName: 'Exit Plan Mode',
   kind: ToolKind.ReadOnly,
 
-  schema: z.object({}),
+  schema: z.object({
+    plan: z.string().describe('The complete implementation plan in markdown format'),
+  }),
 
   // 工具描述
   description: {
-    short: 'Use this tool when you are in plan mode and have finished writing your plan and are ready for user approval',
-    long: `Use this tool when you are in plan mode and have finished writing your plan to the plan file and are ready for user approval.
+    short: 'Use this tool when you are in plan mode and have finished creating your plan and are ready for user approval',
+    long: `Use this tool when you are in plan mode and have finished creating your implementation plan and are ready for user approval.
 
 ## 🚨 PREREQUISITES (MUST be satisfied before calling)
 
-1. ✅ You have written your plan to the plan file (path in system-reminder)
+1. ✅ You have created a complete implementation plan
 2. ✅ You have OUTPUT TEXT to explain your plan to the user (not just tool calls)
 3. ✅ The plan includes: summary, implementation steps, affected files, testing method
 
 **DO NOT call this tool if**:
 - ❌ You only called tools (Glob/Grep/Read) without outputting any text summary
-- ❌ You haven't written anything to the plan file
-- ❌ The plan file is empty or incomplete
+- ❌ You haven't created a complete plan
+- ❌ The plan is empty or incomplete
 
 ## How This Tool Works
-- You should have already written your plan to the plan file specified in the plan mode system message
-- This tool does NOT take the plan content as a parameter - it will read the plan from the file you wrote
-- This tool simply signals that you're done planning and ready for the user to review and approve
-- The user will see the contents of your plan file when they review it
+- Pass your complete implementation plan as the 'plan' parameter
+- The plan should be in markdown format with clear sections
+- This tool will present your plan to the user for review and approval
+- The user will see your plan and can approve or reject it
 
 ## When to Use This Tool
 IMPORTANT: Only use this tool when the task requires planning the implementation steps of a task that requires writing code. For research tasks where you're gathering information, searching files, reading files or in general trying to understand the codebase - do NOT use this tool.
@@ -55,9 +60,22 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
 `,
   },
 
-  async execute(_params, context): Promise<ToolResult> {
-    // 注意：官方 Claude Code 的 ExitPlanMode 不接收 plan 参数
-    // 计划内容应该已经在对话中呈现给用户，此工具只是发出"准备好审核"的信号
+  async execute(params, context): Promise<ToolResult> {
+    // 使用参数中的 plan 内容
+    const planContent = params.plan || '';
+
+    // 可选：将 plan 保存到文件以便后续查看
+    if (planContent && context.sessionId) {
+      try {
+        const planDir = path.join(homedir(), '.blade', 'plans');
+        await fs.mkdir(planDir, { recursive: true });
+        const planPath = path.join(planDir, `plan_${context.sessionId}.md`);
+        await fs.writeFile(planPath, planContent, 'utf-8');
+      } catch (error) {
+        // 保存失败不影响功能，只是记录日志
+        console.warn('Failed to save plan file:', error);
+      }
+    }
 
     // 触发 UI 确认流程
     if (context.confirmationHandler) {
@@ -74,6 +92,7 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
             'please reject and ask for a proper plan.',
           details:
             'After approval, the assistant will exit Plan mode and begin implementation.',
+          planContent: planContent || undefined, // 传递 plan 内容给 UI
         });
 
         if (response.approved) {

@@ -366,7 +366,7 @@ export class Agent extends EventEmitter {
     const systemPrompt = `${envContext}\n\n---\n\n${PLAN_MODE_SYSTEM_PROMPT}`;
 
     // Plan 模式差异 2: 在用户消息中注入 system-reminder
-    const messageWithReminder = createPlanModeReminder(message);
+    const messageWithReminder = createPlanModeReminder(message, context.sessionId);
 
     // Plan 模式差异 3: 跳过内容循环检测
     const skipContentDetection = true;

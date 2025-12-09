@@ -11,6 +11,7 @@ export interface ConfirmationDetails {
   details?: string; // 🆕 Plan 方案内容或其他详细信息
   risks?: string[];
   affectedFiles?: string[];
+  planContent?: string; // Plan 模式的完整计划内容（Markdown 格式）
 }
 
 /**

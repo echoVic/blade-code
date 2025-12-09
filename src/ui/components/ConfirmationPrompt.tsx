@@ -196,7 +196,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
         <Text>{details.message}</Text>
       </Box>
 
-      {details.details && (
+      {(details.planContent || details.details) && (
         <Box
           flexDirection="column"
           marginBottom={1}
@@ -213,7 +213,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
           </Text>
           <Box marginTop={1}>
             <MessageRenderer
-              content={details.details}
+              content={details.planContent || details.details || ''}
               role="assistant"
               terminalWidth={terminalWidth - 4}
             />
