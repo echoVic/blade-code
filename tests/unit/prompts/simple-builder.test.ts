@@ -1,150 +1,152 @@
-import { describe, expect, it } from 'vitest';
-import { DEFAULT_SYSTEM_PROMPT } from '../../../src/prompts/default';
-import { SystemPrompt } from '../../../src/prompts/SystemPrompt';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PermissionMode } from '../../../src/config/types';
+import { buildSystemPrompt } from '../../../src/prompts/builder';
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  PLAN_MODE_SYSTEM_PROMPT,
+} from '../../../src/prompts/default';
 
-describe('PromptBuilder (Simplified)', () => {
-  describe('基础功能测试', () => {
-    it('应该能创建包含默认提示的 SystemPrompt', () => {
-      const systemPrompt = new SystemPrompt();
+// Mock fs
+vi.mock('fs', async () => {
+  const actual = await vi.importActual('fs');
+  return {
+    ...actual,
+    promises: {
+      readFile: vi.fn(),
+      access: vi.fn(),
+    },
+  };
+});
 
-      const result = systemPrompt.build();
-      expect(result).toContain('Blade Code');
-      expect(result).toContain(
-        'professional command line intelligent coding assistant'
-      );
+// Mock environment
+vi.mock('../../../src/utils/environment.js', () => ({
+  getEnvironmentContext: vi.fn().mockReturnValue('Mock Environment Context'),
+}));
+
+describe('buildSystemPrompt', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('基础功能', () => {
+    it('应该返回默认提示词（不含环境上下文）', async () => {
+      const result = await buildSystemPrompt({ includeEnvironment: false });
+
+      expect(result.prompt).toBe(DEFAULT_SYSTEM_PROMPT);
+      expect(result.sources).toContainEqual({
+        name: 'default',
+        loaded: true,
+        length: DEFAULT_SYSTEM_PROMPT.length,
+      });
     });
 
-    it('应该能添加 CLI 提示', () => {
-      const cliPrompt = '这是 CLI 提示';
-      const systemPrompt = new SystemPrompt();
+    it('应该包含环境上下文（默认）', async () => {
+      const result = await buildSystemPrompt();
 
-      systemPrompt.addSource({
-        type: 'cli',
-        content: cliPrompt,
-        priority: 10,
+      expect(result.prompt).toContain('Mock Environment Context');
+      expect(result.prompt).toContain(DEFAULT_SYSTEM_PROMPT);
+      expect(result.sources).toContainEqual({
+        name: 'environment',
+        loaded: true,
+        length: expect.any(Number),
       });
-
-      const result = systemPrompt.build();
-      expect(result).toContain(DEFAULT_SYSTEM_PROMPT);
-      expect(result).toContain(cliPrompt);
     });
 
-    it('应该按优先级排序（CLI > 项目 > 用户 > 默认）', () => {
-      const cliPrompt = 'CLI提示';
-      const systemPrompt = new SystemPrompt();
+    it('应该使用分隔符连接各部分', async () => {
+      const result = await buildSystemPrompt();
 
-      // 手动添加不同优先级的源来测试排序
-      systemPrompt.addSource({
-        type: 'default',
-        content: '默认提示',
-        priority: 0,
-      });
-
-      systemPrompt.addSource({
-        type: 'file',
-        content: '用户提示',
-        priority: 5,
-        source: 'user',
-      });
-
-      systemPrompt.addSource({
-        type: 'file',
-        content: '项目提示',
-        priority: 7,
-        source: 'project',
-      });
-
-      systemPrompt.addSource({
-        type: 'cli',
-        content: cliPrompt,
-        priority: 10,
-      });
-
-      const result = systemPrompt.build();
-
-      // 检查优先级顺序
-      const cliIndex = result.indexOf('CLI提示');
-      const projectIndex = result.indexOf('项目提示');
-      const userIndex = result.indexOf('用户提示');
-      const defaultIndex = result.indexOf('默认提示');
-
-      expect(cliIndex).toBeLessThan(projectIndex);
-      expect(projectIndex).toBeLessThan(userIndex);
-      expect(userIndex).toBeLessThan(defaultIndex);
-    });
-
-    it('应该能处理空内容', () => {
-      const systemPrompt = new SystemPrompt();
-
-      systemPrompt.addSource({
-        type: 'cli',
-        content: '',
-        priority: 10,
-      });
-
-      const result = systemPrompt.build();
-      expect(result).toContain(DEFAULT_SYSTEM_PROMPT);
-    });
-
-    it('应该能合并多个源', () => {
-      const systemPrompt = new SystemPrompt();
-
-      systemPrompt.addSource({
-        type: 'cli',
-        content: '第一部分',
-        priority: 10,
-      });
-
-      systemPrompt.addSource({
-        type: 'file',
-        content: '第二部分',
-        priority: 5,
-        source: 'test',
-      });
-
-      const result = systemPrompt.build();
-      expect(result).toContain('第一部分');
-      expect(result).toContain('第二部分');
-      expect(result).toContain(DEFAULT_SYSTEM_PROMPT);
-
-      // 检查顺序
-      expect(result.indexOf('第一部分')).toBeLessThan(result.indexOf('第二部分'));
+      expect(result.prompt).toContain('\n\n---\n\n');
     });
   });
 
-  describe('错误处理', () => {
-    it('应该处理无效的优先级', () => {
-      const systemPrompt = new SystemPrompt();
-
-      systemPrompt.addSource({
-        type: 'cli',
-        content: '测试内容',
-        priority: -1,
+  describe('replaceDefault 选项', () => {
+    it('replaceDefault 应该替换默认提示词', async () => {
+      const customPrompt = 'Custom System Prompt';
+      const result = await buildSystemPrompt({
+        replaceDefault: customPrompt,
+        includeEnvironment: false,
       });
 
-      const result = systemPrompt.build();
-      expect(result).toContain('测试内容');
-      expect(result).toContain(DEFAULT_SYSTEM_PROMPT);
+      expect(result.prompt).toBe(customPrompt);
+      expect(result.prompt).not.toContain(DEFAULT_SYSTEM_PROMPT);
+      expect(result.sources).toContainEqual({
+        name: 'replace_default',
+        loaded: true,
+        length: customPrompt.length,
+      });
+    });
+  });
+
+  describe('append 选项', () => {
+    it('append 应该追加到末尾', async () => {
+      const appendContent = 'Appended Content';
+      const result = await buildSystemPrompt({
+        append: appendContent,
+        includeEnvironment: false,
+      });
+
+      expect(result.prompt).toContain(DEFAULT_SYSTEM_PROMPT);
+      expect(result.prompt).toContain(appendContent);
+      // append 应该在默认提示词之后
+      expect(result.prompt.indexOf(DEFAULT_SYSTEM_PROMPT)).toBeLessThan(
+        result.prompt.indexOf(appendContent)
+      );
     });
 
-    it('应该处理相同优先级的多个源', () => {
-      const systemPrompt = new SystemPrompt();
-
-      systemPrompt.addSource({
-        type: 'cli',
-        content: '第一个',
-        priority: 5,
+    it('应该忽略空的 append', async () => {
+      const result = await buildSystemPrompt({
+        append: '   ',
+        includeEnvironment: false,
       });
 
-      systemPrompt.addSource({
-        type: 'cli',
-        content: '第二个',
-        priority: 5,
+      expect(result.sources).not.toContainEqual(
+        expect.objectContaining({ name: 'append' })
+      );
+    });
+  });
+
+  describe('Plan 模式', () => {
+    it('Plan 模式应该使用 PLAN_MODE_SYSTEM_PROMPT', async () => {
+      const result = await buildSystemPrompt({
+        mode: PermissionMode.PLAN,
+        includeEnvironment: false,
       });
 
-      const result = systemPrompt.build();
-      expect(result).toContain('第一个');
-      expect(result).toContain('第二个');
+      expect(result.prompt).toBe(PLAN_MODE_SYSTEM_PROMPT);
+      expect(result.prompt).not.toContain(DEFAULT_SYSTEM_PROMPT);
+      expect(result.sources).toContainEqual({
+        name: 'plan_mode_prompt',
+        loaded: true,
+        length: PLAN_MODE_SYSTEM_PROMPT.length,
+      });
+    });
+
+    it('Plan 模式应该忽略 replaceDefault', async () => {
+      const result = await buildSystemPrompt({
+        mode: PermissionMode.PLAN,
+        replaceDefault: 'Should be ignored',
+        includeEnvironment: false,
+      });
+
+      expect(result.prompt).toBe(PLAN_MODE_SYSTEM_PROMPT);
+      expect(result.prompt).not.toContain('Should be ignored');
+    });
+  });
+
+  describe('构建顺序', () => {
+    it('顺序应该是: 环境 → 默认 → append', async () => {
+      const appendContent = 'APPEND_MARKER';
+      const result = await buildSystemPrompt({
+        append: appendContent,
+        includeEnvironment: true,
+      });
+
+      const envIndex = result.prompt.indexOf('Mock Environment Context');
+      const defaultIndex = result.prompt.indexOf('Blade Code');
+      const appendIndex = result.prompt.indexOf(appendContent);
+
+      expect(envIndex).toBeLessThan(defaultIndex);
+      expect(defaultIndex).toBeLessThan(appendIndex);
     });
   });
 });

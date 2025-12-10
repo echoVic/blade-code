@@ -3,8 +3,14 @@
  * 导出系统提示相关的核心功能
  */
 
-export { defaultPromptBuilder, PromptBuilder } from './builder.js';
-export type { PromptBuilderOptions } from './builder.js';
+export type {
+  BuildSystemPromptOptions,
+  BuildSystemPromptResult,
+} from './builder.js';
+// 统一入口
+export { buildSystemPrompt } from './builder.js';
+
+// 常量和工具函数
 export {
   createPlanModeReminder,
   DEFAULT_SYSTEM_PROMPT,
@@ -12,8 +18,3 @@ export {
   PLAN_MODE_SYSTEM_PROMPT,
   type SystemPromptConfig,
 } from './default.js';
-export { SystemPrompt } from './SystemPrompt.js';
-export type {
-  SystemPromptOptions,
-  SystemPromptSource,
-} from './SystemPrompt.js';

@@ -196,8 +196,17 @@ nvm use 20
 # 使用打印模式减少UI开销
 blade --print "问题"
 
-# 限制上下文长度
-blade --max-tokens 1000 "问题"
+# 控制上下文与输出长度（通过配置）
+# 在 ~/.blade/config.json 或 .blade/config.json 中设置：
+{
+  "maxContextTokens": 128000,
+  "maxOutputTokens": 32768
+}
+
+# 或使用 /compact 命令手动压缩上下文
+blade "/compact"
+
+> 说明：CLI 不提供 `--max-tokens` 参数；请使用配置字段或上下文压缩命令控制长度。
 
 # 清理缓存
 rm -rf ~/.blade/cache
@@ -272,6 +281,16 @@ blade --append-system-prompt "你是专家" "请解答"
 blade
 # 然后输入自定义提示
 ```
+
+### Q: 文档里提到的 SystemPrompt 类是否还存在？
+
+**A:** 已统一为函数式入口 `buildSystemPrompt`（位于 `src/prompts/builder.ts`）。
+
+- 运行时覆盖：使用 CLI 参数 `--system-prompt`（完全替换）或 `--append-system-prompt`（追加）。
+- 程序化构建：调用 `buildSystemPrompt({ projectPath, replaceDefault, append, mode })`，返回 `{ prompt, sources }`。
+- Plan 模式：使用 `PLAN_MODE_SYSTEM_PROMPT`，并通过 `createPlanModeReminder` 为每轮用户消息注入提醒。
+
+> 迁移建议：如曾依赖“SystemPrompt 类”，直接改为调用 `buildSystemPrompt`，不再需要实例化或维护类状态。
 
 ## 📞 获取帮助
 

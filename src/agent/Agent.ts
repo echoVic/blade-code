@@ -23,9 +23,8 @@ import { createLogger, LogCategory } from '../logging/Logger.js';
 import { loadProjectMcpConfig } from '../mcp/loadProjectMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import {
+  buildSystemPrompt,
   createPlanModeReminder,
-  PLAN_MODE_SYSTEM_PROMPT,
-  PromptBuilder,
 } from '../prompts/index.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
 import type { Attachment } from '../prompts/processors/types.js';
@@ -69,7 +68,6 @@ export class Agent extends EventEmitter {
   // 核心组件
   private chatService!: IChatService;
   private executionEngine!: ExecutionEngine;
-  private promptBuilder!: PromptBuilder;
   private loopDetector!: LoopDetectionService;
   private attachmentCollector?: AttachmentCollector;
 
@@ -359,9 +357,12 @@ export class Agent extends EventEmitter {
   ): Promise<LoopResult> {
     logger.debug('🔵 Processing Plan mode message...');
 
-    // Plan 模式差异 1: 使用独立的系统提示词
-    const envContext = getEnvironmentContext();
-    const systemPrompt = `${envContext}\n\n---\n\n${PLAN_MODE_SYSTEM_PROMPT}`;
+    // Plan 模式差异 1: 使用统一入口构建 Plan 模式系统提示词
+    const { prompt: systemPrompt } = await buildSystemPrompt({
+      projectPath: process.cwd(),
+      mode: PermissionMode.PLAN, // Plan 模式会使用 PLAN_MODE_SYSTEM_PROMPT
+      includeEnvironment: true,
+    });
 
     // Plan 模式差异 2: 在用户消息中注入 system-reminder
     const messageWithReminder = createPlanModeReminder(message);
@@ -373,6 +374,7 @@ export class Agent extends EventEmitter {
     this.loopDetector.setPlanModeConfig(this.config.planMode);
 
     // 调用通用循环，传入 Plan 模式专用配置
+    // 注意：不再传递 isPlanMode 参数，executeLoop 会从 context.permissionMode 读取
     return this.executeLoop(
       messageWithReminder,
       context,
@@ -392,7 +394,8 @@ export class Agent extends EventEmitter {
   ): Promise<LoopResult> {
     logger.debug('💬 Processing enhanced chat message...');
 
-    // 普通模式使用标准系统提示词
+    // 普通模式：环境上下文 + 已初始化的系统提示词
+    // 注意：this.systemPrompt 在 initializeSystemPrompt 中已构建（不含环境上下文）
     const envContext = getEnvironmentContext();
     const systemPrompt = this.systemPrompt
       ? `${envContext}\n\n---\n\n${this.systemPrompt}`
@@ -416,7 +419,7 @@ export class Agent extends EventEmitter {
    * 持续执行 LLM → 工具 → 结果注入 直到任务完成或达到限制
    *
    * @param message - 用户消息（可能已被 Plan 模式注入 system-reminder）
-   * @param context - 聊天上下文
+   * @param context - 聊天上下文（包含 permissionMode，用于决定工具暴露策略）
    * @param options - 循环选项
    * @param systemPrompt - 系统提示词（Plan 模式和普通模式使用不同的提示词）
    * @param skipContentDetection - 是否跳过内容循环检测（Plan 模式为 true）
@@ -436,7 +439,18 @@ export class Agent extends EventEmitter {
 
     try {
       // 1. 获取可用工具定义
-      const tools = this.executionPipeline.getRegistry().getFunctionDeclarations();
+      // 根据 permissionMode 决定工具暴露策略（单一信息源：ToolRegistry.getFunctionDeclarationsByMode）
+      const registry = this.executionPipeline.getRegistry();
+      const permissionMode = context.permissionMode as PermissionMode | undefined;
+      const tools = registry.getFunctionDeclarationsByMode(permissionMode);
+      const isPlanMode = permissionMode === PermissionMode.PLAN;
+
+      if (isPlanMode) {
+        const readOnlyTools = registry.getReadOnlyTools();
+        logger.debug(
+          `🔒 Plan mode: 使用只读工具 (${readOnlyTools.length} 个): ${readOnlyTools.map(t => t.name).join(', ')}`
+        );
+      }
 
       // 2. 构建消息历史
       const needsSystemPrompt =
@@ -513,7 +527,7 @@ export class Agent extends EventEmitter {
 
       let turnsCount = 0;
       const allToolResults: ToolResult[] = [];
-      let totalTokens = 0; // 累计 token 使用量
+      let totalTokens = 0; //- 累计 token 使用量
       let lastPromptTokens: number | undefined; // 上一轮 LLM 返回的真实 prompt tokens
 
       while (turnsCount < maxTurns) {
@@ -1331,29 +1345,30 @@ export class Agent extends EventEmitter {
 
   /**
    * 初始化系统提示
+   * 使用 buildSystemPrompt 统一入口构建（不含环境上下文，环境上下文在 executeLoop 中根据模式添加）
    */
   private async initializeSystemPrompt(): Promise<void> {
     try {
-      this.promptBuilder = new PromptBuilder({
-        workingDirectory: process.cwd(),
-        config: {
-          enabled: true,
-          allowOverride: true,
-        },
-      });
-
-      // 从运行时选项中获取系统提示
+      // 从运行时选项中获取系统提示配置
       const replacePrompt = this.runtimeOptions.systemPrompt; // 完全替换模式
       const appendPrompt = this.runtimeOptions.appendSystemPrompt; // 追加模式
 
-      // 构建最终的系统提示
-      this.systemPrompt = await this.promptBuilder.buildString(
-        appendPrompt,
-        replacePrompt
-      );
+      // 使用新的统一入口构建系统提示
+      // 注意：不包含环境上下文，因为 executeLoop 会根据模式（Plan/Normal）单独添加
+      const result = await buildSystemPrompt({
+        projectPath: process.cwd(),
+        replaceDefault: replacePrompt,
+        append: appendPrompt,
+        includeEnvironment: false, // 环境上下文在 executeLoop 中添加
+      });
+
+      this.systemPrompt = result.prompt;
 
       if (this.systemPrompt) {
         this.log('系统提示已加载');
+        logger.debug(
+          `[SystemPrompt] 加载来源: ${result.sources.filter((s) => s.loaded).map((s) => s.name).join(', ')}`
+        );
       }
     } catch (error) {
       this.error('初始化系统提示失败', error);

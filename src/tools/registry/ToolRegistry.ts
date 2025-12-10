@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { PermissionMode } from '../../config/types.js';
 import type { FunctionDeclaration, Tool } from '../types/index.js';
 
 /**
@@ -161,6 +162,47 @@ export class ToolRegistry extends EventEmitter {
    */
   getFunctionDeclarations(): FunctionDeclaration[] {
     return this.getAll().map((tool) => tool.getFunctionDeclaration());
+  }
+
+  /**
+   * 获取只读工具的函数声明（用于 Plan 模式）
+   * Plan 模式下只允许使用只读工具：Read, Glob, Grep, WebFetch, WebSearch, Task, EnterPlanMode, ExitPlanMode, TodoWrite
+   */
+  getReadOnlyFunctionDeclarations(): FunctionDeclaration[] {
+    return this.getAll()
+      .filter((tool) => tool.isReadOnly)
+      .map((tool) => tool.getFunctionDeclaration());
+  }
+
+  /**
+   * 根据权限模式获取函数声明（单一信息源）
+   *
+   * 工具暴露策略：
+   * - PLAN 模式：仅暴露只读工具（防止 LLM 尝试调用被拒工具）
+   * - DEFAULT/AUTO_EDIT/YOLO 模式：暴露全量工具（执行阶段由 PermissionStage 控制）
+   *
+   * 这确保了工具暴露策略和执行阶段权限检查使用相同的模式值，
+   * 避免了 LLM 看到工具但执行被拒的循环问题。
+   *
+   * @param mode - 权限模式
+   * @returns 对应模式下可用的函数声明列表
+   */
+  getFunctionDeclarationsByMode(mode?: PermissionMode): FunctionDeclaration[] {
+    // Plan 模式：仅暴露只读工具
+    if (mode === PermissionMode.PLAN) {
+      return this.getReadOnlyFunctionDeclarations();
+    }
+
+    // 其他模式（default/autoEdit/yolo）：暴露全量工具
+    // 执行阶段由 PermissionStage 根据 permissionMode 进行细粒度控制
+    return this.getFunctionDeclarations();
+  }
+
+  /**
+   * 获取只读工具
+   */
+  getReadOnlyTools(): Tool[] {
+    return this.getAll().filter((tool) => tool.isReadOnly);
   }
 
   /**
