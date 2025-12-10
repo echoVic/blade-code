@@ -271,18 +271,24 @@ export class LoopDetectionService {
       return false; // 无 ChatService 则跳过
     }
 
-    const LOOP_DETECTION_PROMPT = `你是AI循环诊断专家。分析以下对话历史，判断AI是否陷入无效状态:
+    const LOOP_DETECTION_PROMPT = `You are an AI loop detection expert. Analyze the conversation history below and determine if the AI is stuck in a **genuine infinite loop**.
 
-无效状态特征:
-- 重复操作: 相同工具/响应重复多次
-- 认知循环: 无法决定下一步，表达困惑
+## What IS a genuine loop (answer YES)
+- Repeatedly attempting the same FAILED operation (e.g., same tool call failing 3+ times)
+- Explicitly expressing confusion (e.g., "I'm not sure...", "I'm stuck...")
+- Repeatedly asking the same question without progress
 
-关键: 区分真正的死循环 vs 正常的渐进式进展
+## What is NOT a loop (answer NO)
+- Transitional/filler text (e.g., "OK, I'll continue", "Let me proceed") - this is just unnecessary but harmless politeness
+- Executing tasks sequentially (even if outputs look similar, but processing different steps)
+- Any response immediately after receiving a loop warning (give the AI a chance to correct)
+- Updating Todo progress before moving to the next task
 
-最近对话历史:
+Recent conversation history:
 ${this.formatMessagesForDetection(messages.slice(-10))}
 
-回答 "YES" (陷入循环) 或 "NO" (正常进展)`;
+Answer "YES" ONLY if you are **certain** this is a genuine infinite loop.
+When in doubt, answer "NO" to give the AI more chances.`;
 
     try {
       const response = await this.chatService.chat([

@@ -195,7 +195,7 @@ export class Agent extends EventEmitter {
         enableDynamicThreshold: true, // 启用动态阈值调整
         enableLlmDetection: true, // 启用LLM智能检测
         whitelistedTools: [], // 白名单工具（如监控工具）
-        maxWarnings: 2, // 最大警告次数（默认2次）
+        maxWarnings: 3, // 最大警告次数（从2提高到3，给模型更多机会改正）
       };
       this.loopDetector = new LoopDetectionService(loopConfig, this.chatService);
 
@@ -1017,7 +1017,13 @@ export class Agent extends EventEmitter {
 
         if (loopDetected?.detected) {
           // 渐进式策略: 先警告,多次后才停止
-          const warningMsg = `⚠️ Loop detected (${loopDetected.warningCount}/${this.loopDetector['maxWarnings']}): ${loopDetected.reason}\nPlease try a different approach.`;
+          // 关键改进：给出具体指示，而不是让模型解释自己
+          const warningMsg = `⚠️ Loop detected (${loopDetected.warningCount}/${this.loopDetector['maxWarnings']}): ${loopDetected.reason}
+
+IMPORTANT: Do NOT explain or justify yourself. Instead:
+1. If you were about to call a tool, call it NOW
+2. If you need to do something different, do it NOW
+3. No filler text - action only`;
 
           if (loopDetected.shouldStop) {
             // 超过最大警告次数,停止任务
