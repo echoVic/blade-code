@@ -52,12 +52,17 @@ Blade 采用双配置文件系统，参考 Claude Code 的设计理念：
 {
   "model": "qwen3-coder-plus",
   "temperature": 0.0,
-  "maxTokens": 32000,
+  "maxContextTokens": 128000,
+  "maxOutputTokens": 32768,
   "stream": true,
   "topP": 0.9,
   "topK": 50
 }
 ```
+
+#### Tokens 配置说明
+- `maxContextTokens`：上下文窗口大小，用于判断是否需要压缩和裁剪输入上下文，通常取模型支持的最大上下文窗口大小（默认 `128000`）。
+- `maxOutputTokens`：输出限制，传递给模型 API 的 `max_tokens` 参数，用于控制单次回答的最大长度（默认 `32768`）。
 
 ### UI
 ```json
@@ -198,6 +203,8 @@ Blade 采用双配置文件系统，参考 Claude Code 的设计理念：
 | `BLADE_BASE_URL` | `baseURL` | API 基础 URL |
 | `BLADE_MODEL` | `model` | 模型名称 |
 | `BLADE_TEMPERATURE` | `temperature` | 温度参数 |
+| `BLADE_MAX_CONTEXT_TOKENS` | `maxContextTokens` | 上下文窗口大小 |
+| `BLADE_MAX_OUTPUT_TOKENS` | `maxOutputTokens` | 输出 token 限制 |
 | `BLADE_THEME` | `theme` | UI 主题 |
 | `BLADE_LANGUAGE` | `language` | 界面语言 |
 | `BLADE_DEBUG` | `debug` | 调试模式 |

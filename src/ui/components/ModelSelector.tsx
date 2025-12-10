@@ -244,10 +244,10 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
                   <Text>{selectedModel.temperature}</Text>
                 </Text>
               )}
-              {selectedModel.maxTokens !== undefined && (
+              {selectedModel.maxContextTokens !== undefined && (
                 <Text>
-                  <Text dimColor>Max Tokens: </Text>
-                  <Text>{selectedModel.maxTokens}</Text>
+                  <Text dimColor>Context Window: </Text>
+                  <Text>{selectedModel.maxContextTokens}</Text>
                 </Text>
               )}
             </Box>

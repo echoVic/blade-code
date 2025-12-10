@@ -47,7 +47,7 @@ async function compactCommandHandler(
 
     // 显示压缩前信息
     const preTokens = TokenCounter.countTokens(messages, currentModel.model);
-    const tokenLimit = currentModel.maxTokens ?? config.maxTokens;
+    const tokenLimit = currentModel.maxContextTokens ?? config.maxContextTokens;
     const usagePercent = ((preTokens / tokenLimit) * 100).toFixed(1);
 
     addAssistantMessage(`📊 **当前上下文统计**`);
@@ -75,7 +75,7 @@ async function compactCommandHandler(
     const result = await CompactionService.compact(messages, {
       trigger: 'manual',
       modelName: currentModel.model,
-      maxTokens: tokenLimit,
+      maxContextTokens: tokenLimit,
       apiKey: currentModel.apiKey,
       baseURL: currentModel.baseUrl,
     });

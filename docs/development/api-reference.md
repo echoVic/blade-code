@@ -68,7 +68,8 @@ const config: BladeUnifiedConfig = {
     baseUrl: 'https://api.example.com',
     model: 'qwen3-coder',
     timeout: 30000,
-    maxTokens: 2048
+    maxContextTokens: 128000,
+    maxOutputTokens: 32768
   },
   ui: {
     theme: 'dark',
@@ -215,7 +216,8 @@ interface BladeUnifiedConfig {
     model: string;
     searchApiKey?: string;
     timeout?: number;
-    maxTokens?: number;
+    maxContextTokens?: number; // 上下文窗口大小（用于压缩判断）
+    maxOutputTokens?: number;  // 输出 token 限制（传给 API 的 max_tokens）
     temperature?: number;
     stream?: boolean;
   };

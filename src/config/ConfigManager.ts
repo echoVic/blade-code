@@ -330,8 +330,10 @@ export class ConfigManager {
       if (newConfig.models !== undefined) configToSave.models = newConfig.models;
       if (newConfig.temperature !== undefined)
         configToSave.temperature = newConfig.temperature;
-      if (newConfig.maxTokens !== undefined)
-        configToSave.maxTokens = newConfig.maxTokens;
+      if (newConfig.maxContextTokens !== undefined)
+        configToSave.maxContextTokens = newConfig.maxContextTokens;
+      if (newConfig.maxOutputTokens !== undefined)
+        configToSave.maxOutputTokens = newConfig.maxOutputTokens;
       if (newConfig.timeout !== undefined) configToSave.timeout = newConfig.timeout;
       if (newConfig.theme !== undefined) configToSave.theme = newConfig.theme;
       if (newConfig.language !== undefined) configToSave.language = newConfig.language;
