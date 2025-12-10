@@ -1,137 +1,161 @@
 /**
- * 系统提示构建器
- * 提供便捷的 API 来构建和管理系统提示
+ * 系统提示构建器 - 统一入口
+ *
+ * ## 构建顺序（固定）
+ * 1. 默认提示（DEFAULT_SYSTEM_PROMPT）或 replaceDefault
+ * 2. 项目配置（BLADE.md）- 始终加载，不受 replaceDefault 影响
+ * 3. 追加内容（append）
+ * 4. 模式特定提示（Plan 模式等）
+ *
+ * ## 规则
+ * - replaceDefault 仅替换默认提示，不影响 BLADE.md 和 append
+ * - Plan 模式使用独立的 system prompt，但仍遵循上述顺序
+ * - 各部分用 `\n\n---\n\n` 分隔
  */
 
+import { promises as fs } from 'fs';
 import path from 'path';
-import type { SystemPromptConfig } from './default.js';
-import { SystemPrompt, type SystemPromptOptions } from './SystemPrompt.js';
+import { PermissionMode } from '../config/types.js';
+import { getEnvironmentContext } from '../utils/environment.js';
+import { DEFAULT_SYSTEM_PROMPT, PLAN_MODE_SYSTEM_PROMPT } from './default.js';
 
 /**
- * 提示构建器选项
+ * 提示词构建选项
  */
-export interface PromptBuilderOptions {
-  workingDirectory?: string;
-  config?: Partial<SystemPromptConfig>;
+export interface BuildSystemPromptOptions {
+  /**
+   * 项目路径，用于查找 BLADE.md
+   */
+  projectPath?: string;
+
+  /**
+   * 替换默认提示（仅替换 DEFAULT_SYSTEM_PROMPT，不影响 BLADE.md）
+   */
+  replaceDefault?: string;
+
+  /**
+   * 追加到提示词末尾
+   */
+  append?: string;
+
+  /**
+   * 权限模式（Plan 模式会使用独立的 system prompt）
+   */
+  mode?: PermissionMode;
+
+  /**
+   * 是否包含环境上下文（默认 true）
+   */
+  includeEnvironment?: boolean;
 }
 
 /**
- * 系统提示构建器
+ * 提示词构建结果
  */
-export class PromptBuilder {
-  private options: PromptBuilderOptions;
-
-  constructor(options: PromptBuilderOptions = {}) {
-    this.options = {
-      workingDirectory: process.cwd(),
-      ...options,
-    };
-  }
+export interface BuildSystemPromptResult {
+  /**
+   * 最终的系统提示词
+   */
+  prompt: string;
 
   /**
-   * 构建系统提示
+   * 各部分来源（用于调试）
    */
-  async build(cliPrompt?: string, replacePrompt?: string): Promise<SystemPrompt> {
-    const systemPromptOptions: SystemPromptOptions = {
-      replacePrompt, // 完全替换模式
-      cliPrompt, // 追加模式
-      config: this.options.config,
-    };
-
-    // 设置项目配置路径
-    if (this.options.workingDirectory) {
-      systemPromptOptions.projectPath = this.options.workingDirectory;
-    }
-
-    return SystemPrompt.fromSources(systemPromptOptions);
-  }
-
-  /**
-   * 快速构建系统提示字符串
-   */
-  async buildString(cliPrompt?: string, replacePrompt?: string): Promise<string> {
-    const systemPrompt = await this.build(cliPrompt, replacePrompt);
-    return systemPrompt.build();
-  }
-
-  /**
-   * 获取项目配置文件路径
-   */
-  getProjectConfigPath(): string {
-    return path.join(this.options.workingDirectory || process.cwd(), 'BLADE.md');
-  }
-
-  /**
-   * 检查是否存在项目配置
-   */
-  async hasProjectConfig(): Promise<boolean> {
-    try {
-      const fs = await import('fs/promises');
-      await fs.access(this.getProjectConfigPath());
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * 创建示例 BLADE.md 文件
-   */
-  async createExampleConfig(): Promise<string> {
-    const exampleContent = this.getExampleConfigContent();
-    const filePath = this.getProjectConfigPath();
-
-    const fs = await import('fs/promises');
-    const dir = path.dirname(filePath);
-
-    // 确保目录存在
-    await fs.mkdir(dir, { recursive: true });
-
-    // 写入示例配置
-    await fs.writeFile(filePath, exampleContent, 'utf-8');
-
-    return filePath;
-  }
-
-  /**
-   * 获取示例配置内容
-   */
-  private getExampleConfigContent(): string {
-    return `# Blade Code 项目配置
-
-这个文件定义了 Blade Code 在当前项目中的行为和个性。
-
-## 项目背景
-请描述这个项目的主要目的、技术栈和特殊要求。
-
-## AI 助手行为指导
-- 专注于本项目的技术栈和架构
-- 遵循项目的代码规范和最佳实践
-- 提供符合项目上下文的建议
-
-## 示例自定义提示
-\`\`\`
-你是这个 TypeScript 项目的专家助手。请特别关注：
-1. 类型安全和 TypeScript 最佳实践
-2. 模块化架构和代码组织
-3. 测试覆盖率和代码质量
-4. 性能优化和安全考虑
-
-在回答时请考虑项目的现有架构和约定。
-\`\`\`
-
-## 使用方法
-1. 编辑此文件来自定义 AI 助手的行为
-2. 删除示例内容，添加你的项目特定指导
-3. Blade Code 会自动加载这些配置
-
----
-此文件由 \`blade /init\` 命令创建。
-`;
-  }
+  sources: Array<{
+    name: string;
+    loaded: boolean;
+    length?: number;
+  }>;
 }
 
 /**
- * 默认构建器实例
+ * 构建系统提示词（统一入口）
+ *
+ * 构建顺序：环境上下文 → 默认/replaceDefault → BLADE.md → append → 模式特定
+ *
+ * @example
+ * // 普通模式
+ * const { prompt } = await buildSystemPrompt({ projectPath: process.cwd() });
+ *
+ * // Plan 模式
+ * const { prompt } = await buildSystemPrompt({ mode: PermissionMode.PLAN });
+ *
+ * // 替换默认，保留 BLADE.md
+ * const { prompt } = await buildSystemPrompt({
+ *   replaceDefault: 'Custom prompt',
+ *   projectPath: '/my/project'
+ * });
  */
-export const defaultPromptBuilder = new PromptBuilder();
+export async function buildSystemPrompt(
+  options: BuildSystemPromptOptions = {}
+): Promise<BuildSystemPromptResult> {
+  const {
+    projectPath,
+    replaceDefault,
+    append,
+    mode,
+    includeEnvironment = true,
+  } = options;
+
+  const parts: string[] = [];
+  const sources: BuildSystemPromptResult['sources'] = [];
+
+  // 1. 环境上下文（始终在最前面）
+  if (includeEnvironment) {
+    const envContext = getEnvironmentContext();
+    if (envContext) {
+      parts.push(envContext);
+      sources.push({ name: 'environment', loaded: true, length: envContext.length });
+    }
+  }
+
+  // 2. 默认提示或替换内容
+  // Plan 模式使用独立的 system prompt
+  const isPlanMode = mode === PermissionMode.PLAN;
+  const basePrompt = isPlanMode
+    ? PLAN_MODE_SYSTEM_PROMPT
+    : (replaceDefault ?? DEFAULT_SYSTEM_PROMPT);
+
+  parts.push(basePrompt);
+  sources.push({
+    name: isPlanMode ? 'plan_mode_prompt' : replaceDefault ? 'replace_default' : 'default',
+    loaded: true,
+    length: basePrompt.length,
+  });
+
+  // 3. 项目配置（BLADE.md）- 始终加载，不受 replaceDefault 影响
+  if (projectPath) {
+    const bladeContent = await loadBladeConfig(projectPath);
+    if (bladeContent) {
+      parts.push(bladeContent);
+      sources.push({ name: 'blade_md', loaded: true, length: bladeContent.length });
+    } else {
+      sources.push({ name: 'blade_md', loaded: false });
+    }
+  }
+
+  // 4. 追加内容
+  if (append?.trim()) {
+    parts.push(append.trim());
+    sources.push({ name: 'append', loaded: true, length: append.trim().length });
+  }
+
+  // 组合各部分
+  const prompt = parts.join('\n\n---\n\n');
+
+  return { prompt, sources };
+}
+
+/**
+ * 加载项目 BLADE.md 配置
+ */
+async function loadBladeConfig(projectPath: string): Promise<string | null> {
+  const bladePath = path.join(projectPath, 'BLADE.md');
+  try {
+    const content = await fs.readFile(bladePath, 'utf-8');
+    return content.trim() || null;
+  } catch {
+    return null;
+  }
+}
+

@@ -13,8 +13,15 @@ All notable changes to this project will be documented in this file.
   - 将 @vscode/ripgrep 改为可选依赖，减少包体积
   - 使用 picomatch 替代自制 glob 匹配实现
   - 添加 vendor ripgrep 支持（可选，~40-50MB）
-  - 新增下载脚本: `npm run vendor:ripgrep`
-  - 完整文档: `docs/development/implementation/grep-tool.md`
+- 新增下载脚本: `npm run vendor:ripgrep`
+- 完整文档: `docs/development/implementation/grep-tool.md`
+
+### 🧹 移除过时组件
+
+- 删除 `SystemPrompt` 类，统一改为函数式入口 `buildSystemPrompt`（`src/prompts/builder.ts`）。
+  - 运行时覆盖：`--system-prompt` 完全替换，`--append-system-prompt` 追加。
+  - Plan 模式提示：使用 `PLAN_MODE_SYSTEM_PROMPT`，并通过 `createPlanModeReminder` 注入提醒。
+  - 影响范围：旧文档与测试已同步移除类引用，使用统一入口与配置字段。
 
 ### 📚 文档
 
@@ -168,4 +175,3 @@ All notable changes to this project will be documented in this file.
 ### 🔧 其他更改
 
 - 临时禁用发布前的代码质量检查和测试 (e46031a)
-

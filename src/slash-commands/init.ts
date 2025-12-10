@@ -148,11 +148,10 @@ const initCommand: SlashCommand = {
       // 写入生成的内容
       addAssistantMessage('✨ 正在写入 BLADE.md...');
       await fs.writeFile(blademdPath, generatedContent, 'utf-8');
-      addAssistantMessage('✅ 已成功生成 BLADE.md 文件');
 
       return {
         success: true,
-        message: '✅ 初始化完成',
+        message: '✅ 已成功生成 BLADE.md 文件',
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误';

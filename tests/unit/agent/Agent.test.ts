@@ -109,9 +109,11 @@ vi.mock('../../../src/config/ConfigManager.js', () => ({
 }));
 
 vi.mock('../../../src/prompts/index.js', () => ({
-  PromptBuilder: vi.fn().mockImplementation(() => ({
-    buildSystemPrompt: vi.fn().mockReturnValue('Mock system prompt'),
-  })),
+  buildSystemPrompt: vi.fn().mockResolvedValue({
+    prompt: 'Mock system prompt',
+    sources: [{ name: 'default', loaded: true }],
+  }),
+  createPlanModeReminder: vi.fn((msg) => msg),
 }));
 
 vi.mock('../../../src/agent/LoopDetectionService.js', () => ({

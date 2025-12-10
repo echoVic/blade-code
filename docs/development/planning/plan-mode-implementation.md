@@ -361,7 +361,7 @@ Use Markdown format for clarity.
 **修改位置 1**：文件顶部导入
 
 ```typescript
-import { PromptBuilder, PLAN_MODE_SYSTEM_PROMPT } from '../prompts/index.js';
+import { buildSystemPrompt, createPlanModeReminder } from '../prompts/index.js';
 ```
 
 **修改位置 2**：runLoop 方法（第 271-283 行）
