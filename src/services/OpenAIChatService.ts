@@ -24,7 +24,7 @@ export class OpenAIChatService implements IChatService {
       model: config.model,
       baseUrl: config.baseUrl,
       temperature: config.temperature,
-      maxTokens: config.maxTokens,
+      maxContextTokens: config.maxContextTokens,
       timeout: config.timeout,
       hasApiKey: !!config.apiKey,
     });
@@ -45,7 +45,7 @@ export class OpenAIChatService implements IChatService {
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseUrl, // OpenAI SDK 使用 baseURL
-      timeout: config.timeout ?? 90000, // 90秒超时，参考主流 CLI agent 标准
+      timeout: config.timeout ?? 180000, // 180秒超时（长上下文场景需要更长时间）
       maxRetries: 3,
     });
 
@@ -112,7 +112,7 @@ export class OpenAIChatService implements IChatService {
       tools: openaiTools,
       tool_choice:
         openaiTools && openaiTools.length > 0 ? ('auto' as const) : undefined,
-      max_tokens: this.config.maxOutputTokens ?? 8192,
+      max_tokens: this.config.maxOutputTokens ?? 32768,
       temperature: this.config.temperature ?? 0.0,
     };
 
@@ -285,7 +285,7 @@ export class OpenAIChatService implements IChatService {
       tools: openaiTools,
       tool_choice:
         openaiTools && openaiTools.length > 0 ? ('auto' as const) : ('none' as const),
-      max_tokens: this.config.maxOutputTokens ?? 8192,
+      max_tokens: this.config.maxOutputTokens ?? 32768,
       temperature: this.config.temperature ?? 0.0,
       stream: true as const,
     };
@@ -376,7 +376,7 @@ export class OpenAIChatService implements IChatService {
       model: newConfig.model,
       baseUrl: newConfig.baseUrl,
       temperature: newConfig.temperature,
-      maxTokens: newConfig.maxTokens,
+      maxContextTokens: newConfig.maxContextTokens,
       timeout: newConfig.timeout,
       hasApiKey: !!newConfig.apiKey,
     });
@@ -387,7 +387,7 @@ export class OpenAIChatService implements IChatService {
     this.client = new OpenAI({
       apiKey: this.config.apiKey,
       baseURL: this.config.baseUrl, // OpenAI SDK 使用 baseURL
-      timeout: this.config.timeout ?? 90000, // 90秒超时，参考主流 CLI agent 标准
+      timeout: this.config.timeout ?? 180000, // 180秒超时（长上下文场景需要更长时间）
       maxRetries: 2, // 2次重试，平衡稳定性和响应速度
     });
 
@@ -396,7 +396,7 @@ export class OpenAIChatService implements IChatService {
       modelChanged: oldConfig.model !== this.config.model,
       baseUrlChanged: oldConfig.baseUrl !== this.config.baseUrl,
       temperatureChanged: oldConfig.temperature !== this.config.temperature,
-      maxTokensChanged: oldConfig.maxTokens !== this.config.maxTokens,
+      maxContextTokensChanged: oldConfig.maxContextTokens !== this.config.maxContextTokens,
       timeoutChanged: oldConfig.timeout !== this.config.timeout,
       apiKeyChanged: oldConfig.apiKey !== this.config.apiKey,
     });

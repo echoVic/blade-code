@@ -37,12 +37,12 @@ export const DEFAULT_CONFIG: BladeConfig = {
 
   // 全局默认参数
   temperature: 0.0,
-  maxTokens: 128000, // 128K - 主流大模型的标准上下文窗口
+  maxContextTokens: 128000, // 128K - 主流大模型的标准上下文窗口
   maxOutputTokens: 32768, // 32K - 主流大模型的输出 token 限制
   stream: true,
   topP: 0.9,
   topK: 50,
-  timeout: 30000, // 30秒超时
+  timeout: 180000, // 180秒超时（长上下文 agentic 场景需要更长时间）
 
   // UI
   theme: 'GitHub',

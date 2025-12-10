@@ -194,7 +194,7 @@ private static async buildConfig(options: AgentOptions): Promise<AgentConfig> {
       baseUrl,
       model,
       temperature,
-      maxTokens,
+      maxContextTokens,
     },
     systemPrompt: options.systemPrompt,
     permissions: globalConfig?.permissions || DEFAULT_CONFIG.permissions, // ← 新增

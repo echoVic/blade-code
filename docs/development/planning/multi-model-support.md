@@ -37,7 +37,7 @@ export interface ModelConfig {
 
   // 可选：模型特定参数
   temperature?: number;
-  maxTokens?: number;
+  maxContextTokens?: number;
   topP?: number;
   topK?: number;
 
@@ -58,7 +58,8 @@ export interface BladeConfig {
 
   // === 保留全局参数（作为未设置时的默认值） ===
   temperature: number;
-  maxTokens: number;
+  maxContextTokens: number;
+  maxOutputTokens: number;
   topP: number;
   topK: number;
   stream: boolean;
@@ -86,7 +87,8 @@ export const defaultConfig: BladeConfig = {
 
   // 全局默认参数
   temperature: 0.7,
-  maxTokens: 4096,
+  maxContextTokens: 128000,
+  maxOutputTokens: 32768,
   topP: 1.0,
   topK: 0,
   stream: true,
@@ -267,7 +269,7 @@ public static async create(config: RuntimeConfig): Promise<Agent> {
     baseUrl: modelConfig.baseUrl,
     model: modelConfig.model,
     temperature: modelConfig.temperature ?? config.temperature,
-    maxTokens: modelConfig.maxTokens ?? config.maxTokens,
+    maxContextTokens: modelConfig.maxContextTokens ?? config.maxContextTokens,
     topP: modelConfig.topP ?? config.topP,
     topK: modelConfig.topK ?? config.topK,
     stream: config.stream,

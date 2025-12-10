@@ -337,7 +337,7 @@ this.chatService = createChatService({
   model: this.config.model,
   baseUrl: this.config.baseUrl,
   temperature: this.config.temperature,
-  maxTokens: this.config.maxTokens,
+  maxContextTokens: this.config.maxContextTokens,
   timeout: this.config.timeout,
   provider: this.config.provider, // 新增
 });
@@ -488,7 +488,7 @@ const handleSetupCancel = () => {
 ```typescript
 export type ChatConfig = Pick<
   BladeConfig,
-  'apiKey' | 'model' | 'baseUrl' | 'temperature' | 'maxTokens' | 'timeout' | 'provider'  // 新增 provider
+  'apiKey' | 'model' | 'baseUrl' | 'temperature' | 'maxContextTokens' | 'timeout' | 'provider'  // 新增 provider
 >;
 ```
 

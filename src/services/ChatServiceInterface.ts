@@ -31,7 +31,7 @@ export interface ChatConfig {
   baseUrl: string;
   model: string;
   temperature?: number;
-  maxTokens?: number; // 上下文窗口大小（用于压缩判断）
+  maxContextTokens?: number; // 上下文窗口大小（用于压缩判断）
   maxOutputTokens?: number; // 输出 token 限制（传给 API 的 max_tokens）
   timeout?: number;
 }

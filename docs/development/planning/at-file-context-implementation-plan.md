@@ -146,7 +146,7 @@ private async processAtMentions(message: string): Promise<string> {
   const attachments = await this.attachmentCollector.collect(message, {
     cwd: process.cwd(),
     maxFileSize: 1024 * 1024,  // 1MB
-    maxTokens: 32000,          // 32k tokens
+  maxContextTokens: 128000,          // 128k tokens（上下文窗口大小）
   });
 
   return this.appendAttachments(message, attachments);
@@ -409,7 +409,7 @@ export class AttachmentCollector {
     this.options = {
       maxFileSize: 1024 * 1024,  // 1MB
       maxLines: 2000,
-      maxTokens: 32000,
+  maxContextTokens: 128000,
       ...options,
     };
   }
@@ -638,7 +638,7 @@ export class Agent extends EventEmitter {
       cwd: process.cwd(),
       maxFileSize: 1024 * 1024,  // 1MB
       maxLines: 2000,
-      maxTokens: 32000,
+  maxContextTokens: 128000,
     });
 
     logger.info('AttachmentCollector initialized');
@@ -1022,7 +1022,7 @@ src/ui/components/InputArea.tsx # 集成自动补全（Phase 3）
     "enabled": true,
     "maxFileSize": 1048576,      // 1MB
     "maxLines": 2000,
-    "maxTokens": 32000,
+  "maxContextTokens": 128000,
     "cacheTimeout": 60000,       // 60 秒
     "ignorePatterns": [
       "node_modules/**",

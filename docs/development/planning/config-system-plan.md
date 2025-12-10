@@ -76,7 +76,8 @@ export interface BladeConfig {
   // 模型
   model: string;
   temperature: number;
-  maxTokens: number;
+  maxContextTokens: number; // 上下文窗口大小
+  maxOutputTokens: number;  // 输出 token 限制
   stream: boolean;
   topP: number;
   topK: number;
@@ -149,7 +150,8 @@ export const DEFAULT_CONFIG: BladeConfig = {
   baseURL: 'https://apis.iflow.cn/v1',
   model: 'qwen3-coder-plus',
   temperature: 0.0,
-  maxTokens: 32000,
+  maxContextTokens: 128000,
+  maxOutputTokens: 32768,
   stream: true,
   topP: 0.9,
   topK: 50,
@@ -193,7 +195,8 @@ export const DEFAULT_CONFIG: BladeConfig = {
   "baseURL": "https://apis.iflow.cn/v1",
   "model": "qwen3-coder-plus",
   "temperature": 0.0,
-  "maxTokens": 32000,
+  "maxContextTokens": 128000,
+  "maxOutputTokens": 32768,
   "stream": true,
   "topP": 0.9,
   "topK": 50,
@@ -423,10 +426,11 @@ export class ConfigManager {
     if (process.env.BLADE_API_SECRET) result.apiSecret = process.env.BLADE_API_SECRET;
     if (process.env.BLADE_BASE_URL) result.baseURL = process.env.BLADE_BASE_URL;
     
-    // 模型
-    if (process.env.BLADE_MODEL) result.model = process.env.BLADE_MODEL;
-    if (process.env.BLADE_TEMPERATURE) result.temperature = parseFloat(process.env.BLADE_TEMPERATURE);
-    if (process.env.BLADE_MAX_TOKENS) result.maxTokens = parseInt(process.env.BLADE_MAX_TOKENS);
+  // 模型
+  if (process.env.BLADE_MODEL) result.model = process.env.BLADE_MODEL;
+  if (process.env.BLADE_TEMPERATURE) result.temperature = parseFloat(process.env.BLADE_TEMPERATURE);
+  if (process.env.BLADE_MAX_CONTEXT_TOKENS) result.maxContextTokens = parseInt(process.env.BLADE_MAX_CONTEXT_TOKENS);
+  if (process.env.BLADE_MAX_OUTPUT_TOKENS) result.maxOutputTokens = parseInt(process.env.BLADE_MAX_OUTPUT_TOKENS);
     
     // UI
     if (process.env.BLADE_THEME) result.theme = process.env.BLADE_THEME;
@@ -871,7 +875,8 @@ export BLADE_DEBUG="1"
 | BLADE_BASE_URL | baseURL | API 基础 URL |
 | BLADE_MODEL | modelName | 模型名称 |
 | BLADE_TEMPERATURE | temperature | 温度参数 |
-| BLADE_MAX_TOKENS | maxTokens | 最大 token 数 |
+| BLADE_MAX_CONTEXT_TOKENS | maxContextTokens | 上下文窗口大小 |
+| BLADE_MAX_OUTPUT_TOKENS | maxOutputTokens | 输出 token 限制 |
 | BLADE_THEME | theme | UI 主题 |
 | BLADE_LANGUAGE | language | 界面语言 |
 | BLADE_DEBUG | debug | 调试模式 |

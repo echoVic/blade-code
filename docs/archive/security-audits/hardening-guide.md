@@ -514,7 +514,7 @@ export class LLMManager {
       model: config.model,
       messages: config.messages,
       temperature: config.temperature || 0.3,
-      max_tokens: config.maxTokens || 32000,
+      max_tokens: config.maxOutputTokens || 32768,
       stream: config.stream || false,
     };
 

@@ -81,7 +81,7 @@ export class AnthropicChatService implements IChatService {
     // 3. 发送请求
     const response = await this.client.messages.create({
       model: this.config.model,
-      max_tokens: this.config.maxTokens,
+      max_tokens: this.config.maxOutputTokens ?? 32768,
       system: systemMessage?.content,
       messages: anthropicMessages,
       temperature: this.config.temperature,

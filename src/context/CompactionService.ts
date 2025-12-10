@@ -16,8 +16,8 @@ export interface CompactionOptions {
   trigger: 'auto' | 'manual';
   /** 模型名称 */
   modelName: string;
-  /** Token 限制（从 config.maxTokens 传入） */
-  maxTokens: number;
+  /** 上下文窗口大小（从 config.maxContextTokens 传入） */
+  maxContextTokens: number;
   /** API Key（可选，默认使用环境变量） */
   apiKey?: string;
   /** Base URL（可选，默认使用环境变量） */

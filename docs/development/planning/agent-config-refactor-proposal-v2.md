@@ -101,7 +101,8 @@ export class ConfigManager {
       baseUrl: options.baseUrl ?? baseConfig.baseURL,
       model: options.model ?? baseConfig.model,
       temperature: options.temperature ?? baseConfig.temperature ?? 0.0,
-      maxTokens: options.maxTokens ?? baseConfig.maxTokens ?? 32000,
+      maxContextTokens: options.maxContextTokens ?? baseConfig.maxContextTokens ?? 128000,
+      maxOutputTokens: options.maxOutputTokens ?? baseConfig.maxOutputTokens ?? 32768,
 
       // Agent 配置
       systemPrompt: options.systemPrompt,
@@ -171,7 +172,8 @@ export interface AgentOptions {
   baseUrl?: string;
   model?: string;
   temperature?: number;
-  maxTokens?: number;
+  maxContextTokens?: number;
+  maxOutputTokens?: number;
 
   // Agent 特有配置
   systemPrompt?: string;
@@ -192,7 +194,8 @@ export interface AgentConfig {
   baseUrl: string;
   model: string;
   temperature: number;
-  maxTokens: number;
+  maxContextTokens: number;
+  maxOutputTokens: number;
 
   // Agent 配置
   systemPrompt?: string;

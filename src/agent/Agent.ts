@@ -181,7 +181,7 @@ export class Agent extends EventEmitter {
         model: modelConfig.model,
         baseUrl: modelConfig.baseUrl,
         temperature: modelConfig.temperature ?? this.config.temperature,
-        maxTokens: modelConfig.maxTokens ?? this.config.maxTokens, // 上下文窗口（压缩判断）
+        maxContextTokens: modelConfig.maxContextTokens ?? this.config.maxContextTokens, // 上下文窗口（压缩判断）
         maxOutputTokens: this.config.maxOutputTokens, // 输出限制（API max_tokens）
         timeout: this.config.timeout,
       });
@@ -303,9 +303,7 @@ export class Agent extends EventEmitter {
       // 🆕 检查是否需要切换模式并重新执行（Plan 模式批准后）
       if (result.metadata?.targetMode && context.permissionMode === 'plan') {
         const targetMode = result.metadata.targetMode as 'default' | 'auto_edit';
-        logger.debug(
-          `🔄 Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`
-        );
+        logger.debug(`🔄 Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
 
         // ✅ 持久化模式切换到配置文件
         const configManager = ConfigManager.getInstance();
@@ -366,7 +364,7 @@ export class Agent extends EventEmitter {
     const systemPrompt = `${envContext}\n\n---\n\n${PLAN_MODE_SYSTEM_PROMPT}`;
 
     // Plan 模式差异 2: 在用户消息中注入 system-reminder
-    const messageWithReminder = createPlanModeReminder(message, context.sessionId);
+    const messageWithReminder = createPlanModeReminder(message);
 
     // Plan 模式差异 3: 跳过内容循环检测
     const skipContentDetection = true;
@@ -644,7 +642,9 @@ export class Agent extends EventEmitter {
           }
           // 保存真实的 prompt tokens，用于下一轮循环的压缩检查（比估算更准确）
           lastPromptTokens = turnResult.usage.promptTokens;
-          logger.debug(`[Agent] LLM usage: prompt=${lastPromptTokens}, completion=${turnResult.usage.completionTokens}, total=${turnResult.usage.totalTokens}`);
+          logger.debug(
+            `[Agent] LLM usage: prompt=${lastPromptTokens}, completion=${turnResult.usage.completionTokens}, total=${turnResult.usage.totalTokens}`
+          );
         }
 
         // 检查 abort 信号（LLM 调用后）
@@ -965,8 +965,11 @@ export class Agent extends EventEmitter {
 
         // === Plan 模式专用：检测连续无文本输出的循环 ===
         if (context.permissionMode === 'plan') {
-          const hasTextOutput = !!(turnResult.content && turnResult.content.trim() !== '');
-          const planLoopResult = this.loopDetector.detectPlanModeToolOnlyLoop(hasTextOutput);
+          const hasTextOutput = !!(
+            turnResult.content && turnResult.content.trim() !== ''
+          );
+          const planLoopResult =
+            this.loopDetector.detectPlanModeToolOnlyLoop(hasTextOutput);
 
           if (!hasTextOutput) {
             logger.debug(
@@ -1389,12 +1392,20 @@ export class Agent extends EventEmitter {
 
     const chatConfig = this.chatService.getConfig();
     const modelName = chatConfig.model;
-    const maxTokens = chatConfig.maxTokens ?? this.config.maxTokens;
-    const threshold = Math.floor(maxTokens * 0.8);
+    const maxContextTokens =
+      chatConfig.maxContextTokens ?? this.config.maxContextTokens;
+    const maxOutputTokens = chatConfig.maxOutputTokens ?? this.config.maxOutputTokens;
+
+    // 计算可用于输入的空间：上下文窗口 - 预留给输出的空间
+    const availableForInput = maxContextTokens - maxOutputTokens;
+    // 当输入占用 80% 可用空间时触发压缩
+    const threshold = Math.floor(availableForInput * 0.8);
 
     logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩检查:`, {
       promptTokens: actualPromptTokens,
-      maxTokens,
+      maxContextTokens,
+      maxOutputTokens,
+      availableForInput,
       threshold,
       shouldCompact: actualPromptTokens >= threshold,
     });
@@ -1415,7 +1426,7 @@ export class Agent extends EventEmitter {
       const result = await CompactionService.compact(context.messages, {
         trigger: 'auto',
         modelName,
-        maxTokens,
+        maxContextTokens,
         apiKey: chatConfig.apiKey,
         baseURL: chatConfig.baseUrl,
         actualPreTokens: actualPromptTokens, // 传入真实的 preTokens
