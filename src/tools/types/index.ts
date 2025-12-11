@@ -4,7 +4,5 @@
 
 // 执行相关类型
 export * from './ExecutionTypes.js';
-// 安全相关类型
-export * from './SecurityTypes.js';
 // 基础工具类型
 export * from './ToolTypes.js';

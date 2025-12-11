@@ -409,6 +409,16 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   }, [initializationError, initializationStatus, addAssistantMessage]);
 
+  // Memoized function to send initial message via executeCommand
+  const sendInitialMessage = useMemoizedFn(async (message: string) => {
+    try {
+      await executeCommand(message);
+    } catch (error) {
+      const fallback = error instanceof Error ? error.message : '无法发送初始消息';
+      addAssistantMessage(`❌ 初始消息发送失败：${fallback}`);
+    }
+  });
+
   useEffect(() => {
     const message = otherProps.initialMessage?.trim();
     if (!message || hasSentInitialMessage.current || !readyForChat || requiresSetup) {
@@ -417,15 +427,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
     hasSentInitialMessage.current = true;
     addToHistory(message);
-
-    (async () => {
-      try {
-        await executeCommand(message);
-      } catch (error) {
-        const fallback = error instanceof Error ? error.message : '无法发送初始消息';
-        addAssistantMessage(`❌ 初始消息发送失败：${fallback}`);
-      }
-    })();
+    sendInitialMessage(message);
   }, [
     otherProps.initialMessage,
     readyForChat,
@@ -433,6 +435,27 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     executeCommand,
     addToHistory,
   ]);
+
+  // Memoized function to apply permission mode changes from CLI
+  const applyPermissionMode = useMemoizedFn(async (mode: PermissionMode) => {
+    try {
+      const configManager = ConfigManager.getInstance();
+      await configManager.setPermissionMode(mode);
+      // Update AppContext config to reflect the change
+      const updatedConfig = configManager.getConfig();
+      appDispatch(
+        appActions.setConfig({
+          ...appState.config!,
+          permissionMode: updatedConfig.permissionMode,
+        })
+      );
+    } catch (error) {
+      logger.error(
+        '❌ 权限模式初始化失败:',
+        error instanceof Error ? error.message : error
+      );
+    }
+  });
 
   useEffect(() => {
     const targetMode = otherProps.permissionMode as PermissionMode | undefined;
@@ -443,26 +466,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     if (!targetMode || targetMode === permissionMode) {
       return;
     }
-
-    (async () => {
-      try {
-        const configManager = ConfigManager.getInstance();
-        await configManager.setPermissionMode(targetMode);
-        // Update AppContext config to reflect the change
-        const updatedConfig = configManager.getConfig();
-        appDispatch(
-          appActions.setConfig({
-            ...appState.config!,
-            permissionMode: updatedConfig.permissionMode,
-          })
-        );
-      } catch (error) {
-        logger.error(
-          '❌ 权限模式初始化失败:',
-          error instanceof Error ? error.message : error
-        );
-      }
-    })();
+    applyPermissionMode(targetMode);
   }, [otherProps.permissionMode, permissionMode]);
 
   // 初始化中 - 不渲染任何内容，避免闪烁

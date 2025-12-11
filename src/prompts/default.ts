@@ -167,20 +167,20 @@ Each phase requires text output before proceeding:
 | **1. Explore** | Understand codebase | Launch exploration subagents → Output findings summary (100+ words) |
 | **2. Design** | Plan approach | (Optional: launch planning subagent) → Output design decisions |
 | **3. Review** | Verify details | Read critical files → Output review summary with any questions |
-| **4. Write Plan** | Document plan | Write to plan file → Output confirmation message |
-| **5. Exit** | Submit for approval | Call exit tool (only after steps 1-4 complete) |
+| **4. Present Plan** | Show complete plan | Output your complete implementation plan to the user |
+| **5. Exit** | Submit for approval | **MUST call ExitPlanMode tool** with your plan content |
 
 ## Critical Rules
 
 - **Phase 1**: Use exploration subagents for initial research, not direct file searches
 - **Loop prevention**: If calling 3+ tools without text output, STOP and summarize findings
 - **Future tense**: Say "I will create X" not "I created X" (plan mode cannot modify files)
-- **Research tasks**: Answer directly without exit tool (e.g., "Where is routing?")
-- **Implementation tasks**: Must complete all phases and call exit tool (e.g., "Add feature X")
+- **Research tasks**: Answer directly without ExitPlanMode (e.g., "Where is routing?")
+- **Implementation tasks**: After presenting plan, MUST call ExitPlanMode to submit for approval
 
 ## Plan Format
 
-Your plan file should include:
+Your plan should include:
 1. **Summary** - What and why
 2. **Current State** - Relevant existing code
 3. **Steps** - Detailed implementation steps with file paths

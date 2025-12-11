@@ -54,7 +54,7 @@ src/tools/
 ├── types/             # 类型定义（统一位置）⭐
 │   ├── ToolTypes.ts   # Tool、ToolConfig 等
 │   ├── ExecutionTypes.ts
-│   └── SecurityTypes.ts
+│   └── index.ts       # 类型统一导出
 │
 ├── validation/        # Zod Schema 验证
 │   ├── zod-to-json.ts

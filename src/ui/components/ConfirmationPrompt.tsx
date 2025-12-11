@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from 'ink';
 import SelectInput, { type ItemProps as SelectItemProps } from 'ink-select-input';
 import React, { useMemo } from 'react';
+import { PermissionMode } from '../../config/types.js';
 import type {
   ConfirmationDetails,
   ConfirmationResponse,
@@ -60,11 +61,11 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
       if (isPlanModeExit) {
         // ExitPlanMode: Y/S/N (选择执行模式)
         if (lowerInput === 'y') {
-          onResponse({ approved: true, targetMode: 'auto_edit' });
+          onResponse({ approved: true, targetMode: PermissionMode.AUTO_EDIT });
           return;
         }
         if (lowerInput === 's') {
-          onResponse({ approved: true, targetMode: 'default' });
+          onResponse({ approved: true, targetMode: PermissionMode.DEFAULT });
           return;
         }
         if (lowerInput === 'n') {
@@ -111,12 +112,12 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
         {
           key: 'approve-auto',
           label: '[Y] Yes, execute with auto-edit mode',
-          value: { approved: true, targetMode: 'auto_edit' },
+          value: { approved: true, targetMode: PermissionMode.AUTO_EDIT },
         },
         {
           key: 'approve-default',
           label: '[S] Yes, execute with default mode (ask for each operation)',
-          value: { approved: true, targetMode: 'default' },
+          value: { approved: true, targetMode: PermissionMode.DEFAULT },
         },
         {
           key: 'reject',
@@ -163,7 +164,10 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
   // Determine title and color based on confirmation type
   const getHeaderStyle = () => {
     if (isPlanModeExit) {
-      return { color: 'cyan' as const, title: '🔵 Plan Mode - Review Implementation Plan' };
+      return {
+        color: 'cyan' as const,
+        title: '🔵 Plan Mode - Review Implementation Plan',
+      };
     }
     if (isPlanModeEnter) {
       return { color: 'magenta' as const, title: '🟣 Enter Plan Mode?' };

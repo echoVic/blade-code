@@ -25,7 +25,7 @@ export interface ChatContext {
   workspaceRoot: string;
   signal?: AbortSignal;
   confirmationHandler?: ConfirmationHandler; // 会话级别的确认处理器
-  permissionMode?: string; // 传递当前权限模式（用于 Plan 模式判断）
+  permissionMode?: PermissionMode; // 当前权限模式（用于 Plan 模式判断）
 }
 
 /**
@@ -159,6 +159,7 @@ export interface LoopResult {
     actualMaxTurns?: number;
     hitSafetyLimit?: boolean;
     shouldExitLoop?: boolean; // ExitPlanMode 设置此标记以退出循环
-    targetMode?: string; // Plan 模式批准后的目标权限模式（default/auto_edit）
+    targetMode?: PermissionMode; // Plan 模式批准后的目标权限模式
+    planContent?: string; // Plan 模式批准后的方案内容
   };
 }
