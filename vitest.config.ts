@@ -49,7 +49,7 @@ export default defineConfig({
           include: ['tests/unit/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/setup.ts'],
           typecheck: {
-            tsconfig: './tsconfig.test.json',
+            tsconfig: './tsconfig.json',
           },
           testTimeout: 15000,
           hookTimeout: 15000,
