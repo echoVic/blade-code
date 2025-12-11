@@ -31,9 +31,8 @@ src/tools/
 │   └── index.ts                # 类型统一导出
 │
 ├── validation/                  # 验证系统
-│   ├── zod-schemas.ts          # Zod Schema 工具函数
-│   ├── zod-to-json.ts          # Zod → JSON Schema 转换
-│   ├── error-formatter.ts      # 错误格式化
+│   ├── zodToJson.ts            # Zod → JSON Schema 转换
+│   ├── errorFormatter.ts       # 错误格式化
 │   └── index.ts                # 验证导出
 │
 ├── registry/                    # 工具注册系统
@@ -151,7 +150,7 @@ import { z } from 'zod';
 export const helloTool = createTool({
   name: 'hello',
   displayName: 'Hello World',
-  kind: ToolKind.Other,
+  kind: ToolKind.ReadOnly,
 
   schema: z.object({
     name: z.string().describe('要打招呼的名字'),

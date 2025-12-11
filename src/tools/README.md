@@ -54,11 +54,11 @@ src/tools/
 ├── types/             # 类型定义（统一位置）⭐
 │   ├── ToolTypes.ts   # Tool、ToolConfig 等
 │   ├── ExecutionTypes.ts
-│   └── index.ts       # 类型统一导出
+│   └── index.ts       # 类型统一导出（已移除 SecurityTypes）
 │
 ├── validation/        # Zod Schema 验证
-│   ├── zod-to-json.ts
-│   └── error-formatter.ts
+│   ├── zodToJson.ts
+│   └── errorFormatter.ts
 │
 ├── registry/          # 工具注册系统
 │   ├── ToolRegistry.ts
