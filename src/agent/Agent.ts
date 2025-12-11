@@ -300,18 +300,14 @@ export class Agent extends EventEmitter {
 
       // 🆕 检查是否需要切换模式并重新执行（Plan 模式批准后）
       if (result.metadata?.targetMode && context.permissionMode === 'plan') {
-        const targetMode = result.metadata.targetMode as 'default' | 'auto_edit';
+        const targetMode = result.metadata.targetMode as PermissionMode;
+        const planContent = result.metadata.planContent as string | undefined;
         logger.debug(`🔄 Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
 
         // ✅ 持久化模式切换到配置文件
         const configManager = ConfigManager.getInstance();
-        const newPermissionMode =
-          targetMode === 'auto_edit'
-            ? PermissionMode.AUTO_EDIT
-            : PermissionMode.DEFAULT;
-
-        await configManager.setPermissionMode(newPermissionMode);
-        logger.debug(`✅ 权限模式已持久化: ${newPermissionMode}`);
+        await configManager.setPermissionMode(targetMode);
+        logger.debug(`✅ 权限模式已持久化: ${targetMode}`);
 
         // 创建新的 context，使用批准的目标模式
         const newContext: ChatContext = {
@@ -319,7 +315,20 @@ export class Agent extends EventEmitter {
           permissionMode: targetMode,
         };
 
-        return this.runLoop(enhancedMessage, newContext, loopOptions).then(
+        // 🆕 将 plan 内容注入到消息中，确保 AI 按照 plan 执行
+        let messageWithPlan = enhancedMessage;
+        if (planContent) {
+          messageWithPlan = `${enhancedMessage}
+
+<approved-plan>
+${planContent}
+</approved-plan>
+
+IMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
+          logger.debug(`📋 已将 plan 内容注入到消息中 (${planContent.length} 字符)`);
+        }
+
+        return this.runLoop(messageWithPlan, newContext, loopOptions).then(
           (newResult) => {
             if (!newResult.success) {
               throw new Error(newResult.error?.message || '执行失败');

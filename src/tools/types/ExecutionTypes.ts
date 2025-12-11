@@ -1,3 +1,4 @@
+import { PermissionMode } from '../../config/types.js';
 import type { ToolResult } from './ToolTypes.js';
 import { ToolErrorType } from './ToolTypes.js';
 
@@ -23,7 +24,7 @@ export interface ConfirmationResponse {
   approved: boolean;
   reason?: string;
   scope?: PermissionApprovalScope;
-  targetMode?: 'default' | 'auto_edit'; // 🆕 Plan 模式退出后的目标权限模式
+  targetMode?: PermissionMode; // Plan 模式退出后的目标权限模式
   feedback?: string; // 🆕 用户拒绝时的反馈意见（用于 Plan 模式调整）
 }
 
@@ -54,7 +55,7 @@ export interface ExecutionContext {
   confirmationHandler?: ConfirmationHandler; // 用于处理需要用户确认的工具调用
 
   // 权限模式（用于 Plan 模式判断）
-  permissionMode?: string;
+  permissionMode?: PermissionMode;
 }
 
 /**

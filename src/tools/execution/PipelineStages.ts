@@ -50,7 +50,9 @@ export class PermissionStage implements PipelineStage {
   readonly name = 'permission';
   private permissionChecker: PermissionChecker;
   private readonly sessionApprovals: Set<string>;
-  private readonly permissionMode: PermissionMode;
+  // 🔧 重命名为 defaultPermissionMode，作为回退值
+  // 实际权限检查时优先使用 execution.context.permissionMode（动态值）
+  private readonly defaultPermissionMode: PermissionMode;
 
   constructor(
     permissionConfig: PermissionConfig,
@@ -59,7 +61,7 @@ export class PermissionStage implements PipelineStage {
   ) {
     this.permissionChecker = new PermissionChecker(permissionConfig);
     this.sessionApprovals = sessionApprovals;
-    this.permissionMode = permissionMode;
+    this.defaultPermissionMode = permissionMode;
   }
 
   /**
@@ -95,7 +97,11 @@ export class PermissionStage implements PipelineStage {
 
       // 使用 PermissionChecker 进行权限检查
       let checkResult = this.permissionChecker.check(descriptor);
-      checkResult = this.applyModeOverrides(tool.kind, checkResult);
+      // 从 execution.context 动态读取 permissionMode（现在是强类型 PermissionMode）
+      // 这样 Shift+Tab 切换模式或 approve 后切换模式都能正确生效
+      const currentPermissionMode =
+        execution.context.permissionMode || this.defaultPermissionMode;
+      checkResult = this.applyModeOverrides(tool.kind, checkResult, currentPermissionMode);
 
       // 根据检查结果采取行动
       switch (checkResult.result) {
@@ -219,10 +225,13 @@ export class PermissionStage implements PipelineStage {
    * - 用户可见且安全
    *
    * 优先级：DENY 规则 > ALLOW 规则 > 模式规则 > ASK
+   *
+   * @param permissionMode - 当前权限模式（从 execution.context 动态读取）
    */
   private applyModeOverrides(
     toolKind: ToolKind,
-    checkResult: PermissionCheckResult
+    checkResult: PermissionCheckResult,
+    permissionMode: PermissionMode
   ): PermissionCheckResult {
     // 1. 如果已被 deny 规则拒绝，不覆盖（最高优先级）
     if (checkResult.result === PermissionResult.DENY) {
@@ -235,7 +244,7 @@ export class PermissionStage implements PipelineStage {
     }
 
     // 3. PLAN 模式：严格拒绝非只读工具（最高优先级，不可绕过）
-    if (this.permissionMode === PermissionMode.PLAN) {
+    if (permissionMode === PermissionMode.PLAN) {
       if (!isReadOnlyKind(toolKind)) {
         return {
           result: PermissionResult.DENY,
@@ -246,7 +255,7 @@ export class PermissionStage implements PipelineStage {
     }
 
     // 4. YOLO 模式：批准所有工具（在检查规则之后）
-    if (this.permissionMode === PermissionMode.YOLO) {
+    if (permissionMode === PermissionMode.YOLO) {
       return {
         result: PermissionResult.ALLOW,
         matchedRule: 'mode:yolo',
@@ -258,14 +267,14 @@ export class PermissionStage implements PipelineStage {
     if (isReadOnlyKind(toolKind)) {
       return {
         result: PermissionResult.ALLOW,
-        matchedRule: `mode:${this.permissionMode}:readonly`,
+        matchedRule: `mode:${permissionMode}:readonly`,
         reason: 'Read-only tools do not require confirmation',
       };
     }
 
     // 6. AUTO_EDIT 模式：额外批准 Write 工具
     if (
-      this.permissionMode === PermissionMode.AUTO_EDIT &&
+      permissionMode === PermissionMode.AUTO_EDIT &&
       toolKind === ToolKind.Write
     ) {
       return {

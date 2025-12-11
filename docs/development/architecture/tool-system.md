@@ -28,7 +28,6 @@ src/tools/
 ├── types/                       # 类型定义（统一位置） ⭐
 │   ├── ToolTypes.ts            # 工具类型（Tool、ToolConfig、ToolDescription）
 │   ├── ExecutionTypes.ts       # 执行上下文类型
-│   ├── SecurityTypes.ts        # 安全相关类型（ValidationError等）
 │   └── index.ts                # 类型统一导出
 │
 ├── validation/                  # 验证系统
@@ -239,7 +238,6 @@ const declarations = registry.getFunctionDeclarations();
 |------|------|----------|
 | `ToolTypes.ts` | 核心工具类型 | `Tool`, `ToolConfig`, `ToolDescription`, `ToolKind`, `ToolResult`, `FunctionDeclaration` |
 | `ExecutionTypes.ts` | 执行上下文类型 | `ExecutionContext` |
-| `SecurityTypes.ts` | 安全相关类型 | `ValidationError`, `ValidationResult`, `PermissionResult` |
 | **`@types/json-schema`** | **JSON Schema 标准类型** | **`JSONSchema7`**, **`JSONSchema7Definition`** |
 
 ### 类型导入示例

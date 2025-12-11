@@ -104,7 +104,8 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
             metadata: {
               approved: true,
               shouldExitLoop: true,
-              targetMode: response.targetMode, // 目标权限模式（default/auto_edit）
+              targetMode: response.targetMode, // 目标权限模式 PermissionMode.DEFAULT/AUTO_EDIT
+              planContent: planContent, // 传递 plan 内容给 Agent
             },
           };
         } else {

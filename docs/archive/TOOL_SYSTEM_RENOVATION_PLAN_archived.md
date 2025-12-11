@@ -63,7 +63,6 @@ packages/core/src/tools/
 ├── types/                       # 类型定义
 │   ├── ToolTypes.ts            # 工具基础类型
 │   ├── ExecutionTypes.ts       # 执行相关类型
-│   ├── SecurityTypes.ts        # 安全相关类型
 │   └── McpTypes.ts             # MCP相关类型
 ├── base/                        # 基础抽象类
 │   ├── BaseTool.ts             # 工具基类

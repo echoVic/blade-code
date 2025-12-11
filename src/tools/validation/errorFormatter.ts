@@ -23,7 +23,7 @@ export class ToolValidationError extends Error {
  * 将 Zod 错误代码翻译为中文消息
  */
 function translateZodIssue(issue: ZodIssue): string {
-  const { code, path } = issue;
+  const { code } = issue;
   const received = (issue as any).received;
 
   switch (code) {
