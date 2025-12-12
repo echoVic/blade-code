@@ -22,10 +22,7 @@ import { ContextManager } from '../context/ContextManager.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { loadProjectMcpConfig } from '../mcp/loadProjectMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
-import {
-  buildSystemPrompt,
-  createPlanModeReminder,
-} from '../prompts/index.js';
+import { buildSystemPrompt, createPlanModeReminder } from '../prompts/index.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
 import type { Attachment } from '../prompts/processors/types.js';
 import {
@@ -33,6 +30,15 @@ import {
   type IChatService,
   type Message,
 } from '../services/ChatServiceInterface.js';
+import {
+  appActions,
+  configActions,
+  ensureStoreInitialized,
+  getAllModels,
+  getConfig,
+  getCurrentModel,
+  getMcpServers,
+} from '../store/vanilla.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
@@ -106,17 +112,15 @@ export class Agent extends EventEmitter {
 
   /**
    * 快速创建并初始化 Agent 实例（静态工厂方法）
-   * 使用 ConfigManager 单例获取配置
+   * 使用 Store 获取配置
    */
   static async create(options: AgentOptions = {}): Promise<Agent> {
-    // 1. 获取 ConfigManager 单例
-    const configManager = ConfigManager.getInstance();
+    // 0. 确保 store 已初始化（防御性检查）
+    await ensureStoreInitialized();
 
-    // 2. 确保已初始化（幂等操作）
-    await configManager.initialize();
-
-    // 3. 检查是否有可用的模型配置
-    if (configManager.getAllModels().length === 0) {
+    // 1. 检查是否有可用的模型配置
+    const models = getAllModels();
+    if (models.length === 0) {
       throw new Error(
         '❌ 没有可用的模型配置\n\n' +
           '请先使用以下命令添加模型：\n' +
@@ -126,18 +130,22 @@ export class Agent extends EventEmitter {
       );
     }
 
-    // 4. 获取 BladeConfig（不需要转换）
-    const config = configManager.getConfig();
+    // 2. 获取 BladeConfig（从 Store）
+    const config = getConfig();
+    if (!config) {
+      throw new Error('❌ 配置未初始化，请确保应用已正确启动');
+    }
 
-    // 5. 验证配置
+    // 3. 验证配置
+    const configManager = ConfigManager.getInstance();
     configManager.validateConfig(config);
 
-    // 6. 创建并初始化 Agent
+    // 4. 创建并初始化 Agent
     // 将 options 作为运行时参数传递
     const agent = new Agent(config, options);
     await agent.initialize();
 
-    // 7. 应用工具白名单（如果指定）
+    // 5. 应用工具白名单（如果指定）
     if (options.toolWhitelist && options.toolWhitelist.length > 0) {
       agent.applyToolWhitelist(options.toolWhitelist);
     }
@@ -166,9 +174,11 @@ export class Agent extends EventEmitter {
       await this.loadSubagents();
 
       // 4. 初始化核心组件
-      // 获取当前模型配置
-      const configManager = ConfigManager.getInstance();
-      const modelConfig = configManager.getCurrentModel();
+      // 获取当前模型配置（从 Store）
+      const modelConfig = getCurrentModel();
+      if (!modelConfig) {
+        throw new Error('❌ 当前模型配置未找到');
+      }
 
       this.log(`🚀 使用模型: ${modelConfig.name} (${modelConfig.model})`);
 
@@ -304,9 +314,8 @@ export class Agent extends EventEmitter {
         const planContent = result.metadata.planContent as string | undefined;
         logger.debug(`🔄 Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
 
-        // ✅ 持久化模式切换到配置文件
-        const configManager = ConfigManager.getInstance();
-        await configManager.setPermissionMode(targetMode);
+        // ✅ 使用 configActions 自动同步内存 + 持久化
+        await configActions().setPermissionMode(targetMode, { immediate: true });
         logger.debug(`✅ 权限模式已持久化: ${targetMode}`);
 
         // 创建新的 context，使用批准的目标模式
@@ -457,7 +466,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       if (isPlanMode) {
         const readOnlyTools = registry.getReadOnlyTools();
         logger.debug(
-          `🔒 Plan mode: 使用只读工具 (${readOnlyTools.length} 个): ${readOnlyTools.map(t => t.name).join(', ')}`
+          `🔒 Plan mode: 使用只读工具 (${readOnlyTools.length} 个): ${readOnlyTools.map((t) => t.name).join(', ')}`
         );
       }
 
@@ -921,7 +930,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
               logger.warn('[Agent] 保存工具结果失败:', error);
             }
 
-            // 如果是 TODO 工具,触发 TODO 更新事件
+            // 如果是 TODO 工具,直接更新 store
             if (
               (toolCall.function.name === 'TodoWrite' ||
                 toolCall.function.name === 'TodoRead') &&
@@ -932,8 +941,11 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
                 typeof result.llmContent === 'object' ? result.llmContent : {};
               const todos = Array.isArray(content)
                 ? content
-                : (content as Record<string, unknown>).todos || [];
-              this.emit('todoUpdate', { todos });
+                : ((content as Record<string, unknown>).todos as unknown[]) || [];
+              // 直接更新 store，不再通过事件发射器
+              appActions().setTodos(
+                todos as import('../tools/builtin/todo/types.js').TodoItem[]
+              );
             }
 
             // 添加工具执行结果到消息历史
@@ -1382,7 +1394,10 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
       if (this.systemPrompt) {
         this.log('系统提示已加载');
         logger.debug(
-          `[SystemPrompt] 加载来源: ${result.sources.filter((s) => s.loaded).map((s) => s.name).join(', ')}`
+          `[SystemPrompt] 加载来源: ${result.sources
+            .filter((s) => s.loaded)
+            .map((s) => s.name)
+            .join(', ')}`
         );
       }
     } catch (error) {
@@ -1575,9 +1590,8 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
         logger.debug(`✅ Loaded ${loadedFromMcpJson} servers from .mcp.json`);
       }
 
-      // 2. 获取所有 MCP 服务器配置
-      const configManager = ConfigManager.getInstance();
-      const mcpServers = await configManager.getMcpServers();
+      // 2. 获取所有 MCP 服务器配置（从 Store - 统一数据源）
+      const mcpServers = getMcpServers();
 
       if (Object.keys(mcpServers).length === 0) {
         logger.debug('📦 No MCP servers configured');

@@ -5,10 +5,12 @@
  */
 
 import { promises as fs } from 'fs';
+import { merge } from 'lodash-es';
+import { nanoid } from 'nanoid';
 import os from 'os';
 import path from 'path';
 import type { GlobalOptions } from '../cli/types.js';
-import { logger } from '../logging/Logger.js';
+import { createLogger, LogCategory } from '../logging/Logger.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import {
   BladeConfig,
@@ -21,6 +23,8 @@ import {
   ProjectConfig,
   RuntimeConfig,
 } from './types.js';
+
+const logger = createLogger(LogCategory.CONFIG);
 
 export class ConfigManager {
   private static instance: ConfigManager | null = null;
@@ -150,15 +154,16 @@ export class ConfigManager {
   }
 
   /**
-   * 合并 settings 配置
+   * 合并 settings 配置（使用 lodash-es merge 实现真正的深度合并）
    * - permissions 数组追加去重
-   * - hooks, env 对象覆盖
+   * - hooks, env 对象深度合并
    * - 其他字段直接覆盖
    */
   private mergeSettings(
     base: Partial<BladeConfig>,
     override: Partial<BladeConfig>
   ): Partial<BladeConfig> {
+    // 使用深拷贝避免修改原对象
     const result: Partial<BladeConfig> = JSON.parse(JSON.stringify(base));
 
     // 合并 permissions (数组追加去重)
@@ -190,14 +195,14 @@ export class ConfigManager {
       }
     }
 
-    // 合并 hooks (对象覆盖)
+    // 合并 hooks (对象深度合并，使用 lodash merge)
     if (override.hooks) {
-      result.hooks = { ...result.hooks, ...override.hooks };
+      result.hooks = merge({}, result.hooks, override.hooks);
     }
 
-    // 合并 env (对象覆盖)
+    // 合并 env (对象深度合并，使用 lodash merge)
     if (override.env) {
-      result.env = { ...result.env, ...override.env };
+      result.env = merge({}, result.env, override.env);
     }
 
     // 其他字段直接覆盖
@@ -721,7 +726,6 @@ export class ConfigManager {
    */
   async addModel(modelData: Omit<ModelConfig, 'id'>): Promise<ModelConfig> {
     const config = this.getConfig();
-    const { nanoid } = await import('nanoid');
 
     const newModel: ModelConfig = {
       id: nanoid(),

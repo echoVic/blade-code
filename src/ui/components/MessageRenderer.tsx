@@ -12,7 +12,7 @@
 
 import { Box, Text } from 'ink';
 import React from 'react';
-import type { MessageRole } from '../contexts/SessionContext.js';
+import type { MessageRole } from '../../store/types.js';
 import { themeManager } from '../themes/ThemeManager.js';
 import { CodeHighlighter } from './CodeHighlighter.js';
 import { DiffRenderer } from './DiffRenderer.js';

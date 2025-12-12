@@ -4,10 +4,10 @@
  */
 
 import type { CommandModule } from 'yargs';
-import { ConfigManager } from '../config/ConfigManager.js';
 import type { McpServerConfig } from '../config/types.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { McpConnectionStatus } from '../mcp/types.js';
+import { configActions, getMcpServers } from '../store/vanilla.js';
 
 /**
  * 显示 MCP 命令的帮助信息
@@ -122,7 +122,6 @@ const mcpAddCommand: CommandModule = {
   },
   handler: async (argv: any) => {
     try {
-      const configManager = ConfigManager.getInstance();
       let { name, commandOrUrl, args, transport, env, header, timeout } = argv;
 
       // 处理 -- 分隔符的情况
@@ -168,7 +167,7 @@ const mcpAddCommand: CommandModule = {
         config.timeout = timeout;
       }
 
-      await configManager.addMcpServer(name, config);
+      await configActions().addMcpServer(name, config);
       console.log(`✅ MCP 服务器 "${name}" 已添加到当前项目`);
       console.log(`   项目路径: ${process.cwd()}`);
     } catch (error) {
@@ -196,15 +195,14 @@ const mcpRemoveCommand: CommandModule = {
   },
   handler: async (argv: any) => {
     try {
-      const configManager = ConfigManager.getInstance();
-      const servers = await configManager.getMcpServers();
+      const servers = getMcpServers();
 
       if (!servers[argv.name]) {
         console.error(`❌ 服务器 "${argv.name}" 不存在`);
         process.exit(1);
       }
 
-      await configManager.removeMcpServer(argv.name);
+      await configActions().removeMcpServer(argv.name);
       console.log(`✅ MCP 服务器 "${argv.name}" 已删除`);
     } catch (error) {
       console.error(
@@ -222,8 +220,7 @@ const mcpListCommand: CommandModule = {
   aliases: ['ls'],
   handler: async () => {
     try {
-      const configManager = ConfigManager.getInstance();
-      const servers = await configManager.getMcpServers();
+      const servers = getMcpServers();
 
       console.log(`\n当前项目: ${process.cwd()}\n`);
 
@@ -314,8 +311,7 @@ const mcpGetCommand: CommandModule = {
   },
   handler: async (argv: any) => {
     try {
-      const configManager = ConfigManager.getInstance();
-      const servers = await configManager.getMcpServers();
+      const servers = getMcpServers();
       const config = servers[argv.name];
 
       if (!config) {
@@ -359,15 +355,13 @@ const mcpAddJsonCommand: CommandModule = {
   },
   handler: async (argv: any) => {
     try {
-      const configManager = ConfigManager.getInstance();
-
       const serverConfig = JSON.parse(argv.json) as McpServerConfig;
 
       if (!serverConfig.type) {
         throw new Error('配置必须包含 "type" 字段');
       }
 
-      await configManager.addMcpServer(argv.name, serverConfig);
+      await configActions().addMcpServer(argv.name, serverConfig);
       console.log(`✅ MCP 服务器 "${argv.name}" 已添加`);
       console.log(`   项目路径: ${process.cwd()}`);
     } catch (error) {
@@ -385,8 +379,7 @@ const mcpResetProjectChoicesCommand: CommandModule = {
   describe: '重置项目级 .mcp.json 确认记录',
   handler: async () => {
     try {
-      const configManager = ConfigManager.getInstance();
-      await configManager.resetProjectChoices();
+      await configActions().resetProjectChoices();
       console.log(`✅ 已重置当前项目的 .mcp.json 确认记录`);
       console.log(`   项目路径: ${process.cwd()}`);
     } catch (error) {

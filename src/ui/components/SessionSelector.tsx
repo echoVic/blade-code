@@ -7,7 +7,8 @@ import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import React, { useEffect, useMemo, useState } from 'react';
 import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
-import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
+import { useCurrentFocus } from '../../store/selectors/index.js';
+import { FocusId } from '../../store/types.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 interface SessionSelectorProps {
@@ -75,9 +76,9 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   const [loadedSessions, setLoadedSessions] = useState<SessionMetadata[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // 使用 FocusContext 管理焦点
-  const { state: focusState } = useFocusContext();
-  const isFocused = focusState.currentFocus === FocusId.SESSION_SELECTOR;
+  // 使用 Zustand store 管理焦点
+  const currentFocus = useCurrentFocus();
+  const isFocused = currentFocus === FocusId.SESSION_SELECTOR;
 
   // 使用智能 Ctrl+C 处理（没有任务，所以直接退出）
   const handleCtrlC = useCtrlCHandler(false);

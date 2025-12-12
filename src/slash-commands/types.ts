@@ -3,7 +3,6 @@
  */
 
 import type { ConfigManager } from '../config/ConfigManager.js';
-import type { SessionMessage } from '../ui/contexts/SessionContext.js';
 
 export interface SlashCommandResult {
   success: boolean;
@@ -12,16 +11,18 @@ export interface SlashCommandResult {
   data?: any;
 }
 
+/**
+ * Slash Command 上下文
+ *
+ * 注意：UI 状态操作（addUserMessage, addAssistantMessage 等）
+ * 已迁移到 vanilla store，slash command 应直接使用：
+ *
+ * import { sessionActions } from '../store/vanilla.js';
+ * sessionActions().addAssistantMessage('...');
+ */
 export interface SlashCommandContext {
   cwd: string;
-  addUserMessage: (message: string) => void;
-  addAssistantMessage: (message: string) => void;
   configManager?: ConfigManager;
-  // 会话恢复相关
-  restoreSession?: (sessionId: string, messages: SessionMessage[]) => void;
-  sessionId?: string;
-  // 当前会话消息列表（用于 /compact 等需要访问历史的命令）
-  messages?: SessionMessage[];
 }
 
 export interface SlashCommand {

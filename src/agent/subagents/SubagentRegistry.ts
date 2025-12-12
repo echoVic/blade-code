@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'yaml';
+import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { SubagentConfig, SubagentFrontmatter } from './types.js';
+
+const logger = createLogger(LogCategory.AGENT);
 
 /**
  * Subagent 注册表
@@ -87,7 +90,7 @@ export class SubagentRegistry {
         const config = this.parseConfigFile(filePath);
         this.register(config);
       } catch (error) {
-        console.warn(`Failed to load subagent config from ${filePath}:`, error);
+        logger.warn(`Failed to load subagent config from ${filePath}:`, error);
       }
     }
   }

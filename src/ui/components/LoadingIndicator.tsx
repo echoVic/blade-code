@@ -1,16 +1,19 @@
 /**
  * LoadingIndicator 组件
  * 显示加载状态、幽默短语、计时器和循环进度
+ *
+ * 状态管理：
+ * - 使用 Zustand selectors 内部获取状态，消除 Props Drilling
  */
 
 import { Box, Text } from 'ink';
 import React, { useEffect, useState } from 'react';
+import { useIsReady, useIsThinking } from '../../store/selectors/index.js';
 import { useLoadingIndicator } from '../hooks/useLoadingIndicator.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 import { themeManager } from '../themes/ThemeManager.js';
 
 interface LoadingIndicatorProps {
-  visible: boolean;
   message?: string; // 自定义消息（向后兼容，优先级低于短语）
 }
 
@@ -45,7 +48,12 @@ function formatElapsedTime(seconds: number): string {
  * 独立的加载动画，显示幽默短语、计时器和循环进度
  */
 export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
-  ({ visible, message }) => {
+  ({ message }) => {
+    // 使用 Zustand selectors 获取状态
+    const isThinking = useIsThinking();
+    const isReady = useIsReady();
+    const visible = isThinking || !isReady;
+
     const [spinnerFrame, setSpinnerFrame] = useState(0);
     const theme = themeManager.getTheme();
 
@@ -125,12 +133,6 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
           </Box>
         )}
       </Box>
-    );
-  },
-  (prevProps, nextProps) => {
-    // 精确比较，只在必要时重渲染
-    return (
-      prevProps.visible === nextProps.visible && prevProps.message === nextProps.message
     );
   }
 );

@@ -18,8 +18,8 @@ import { Box, Text, useFocus, useFocusManager, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
 import React, { useEffect, useState } from 'react';
+import { ConfigManager } from '../../config/ConfigManager.js';
 import type { ProviderType, SetupConfig } from '../../config/types.js';
-import { useSession } from '../contexts/SessionContext.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 interface ModelConfigWizardProps {
@@ -327,7 +327,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   onComplete,
   onCancel,
 }) => {
-  const { configManager } = useSession();
+  const configManager = ConfigManager.getInstance();
   const isEditMode = mode === 'edit';
 
   // 当前步骤

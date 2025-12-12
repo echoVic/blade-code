@@ -5,7 +5,10 @@
 import { createHash } from 'crypto';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { PlanModeConfig } from '../config/types.js';
+import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { IChatService, Message } from '../services/ChatServiceInterface.js';
+
+const logger = createLogger(LogCategory.LOOP);
 
 export interface LoopDetectionConfig {
   toolCallThreshold: number; // 工具调用重复次数阈值 (默认5)
@@ -297,7 +300,7 @@ When in doubt, answer "NO" to give the AI more chances.`;
 
       return response.content.toLowerCase().includes('yes');
     } catch (error) {
-      console.warn('LLM 循环检测失败:', error);
+      logger.warn('LLM 循环检测失败:', error);
       return false; // 检测失败不影响主流程
     }
   }

@@ -1,3 +1,9 @@
+import { createLogger, LogCategory } from '../logging/Logger.js';
+import { ConfigManager } from '../config/ConfigManager.js';
+import { getState } from '../store/vanilla.js';
+
+const logger = createLogger(LogCategory.GENERAL);
+
 /**
  * Yargs 中间件
  * 处理全局逻辑，如权限验证、配置加载等
@@ -37,14 +43,39 @@ export const validatePermissions: MiddlewareFunction = (argv) => {
 /**
  * 配置加载中间件
  */
-export const loadConfiguration: MiddlewareFunction = (argv) => {
-  // 处理设置源
-  if (typeof argv.settingSources === 'string') {
-    const sources = argv.settingSources.split(',').map((s) => s.trim());
-    console.log(`Loading configuration from: ${sources.join(', ')}`);
+export const loadConfiguration: MiddlewareFunction = async (argv) => {
+  // 1. 初始化 Zustand Store（CLI 路径）
+  try {
+    const configManager = ConfigManager.getInstance();
+    await configManager.initialize();
+    const config = configManager.getConfig();
+
+    // 设置到 store（让 CLI 子命令和 Agent 都能访问）
+    getState().config.actions.setConfig(config);
+
+    if (argv.debug) {
+      logger.info('[CLI] Store 已初始化');
+    }
+  } catch (error) {
+    // 静默失败，不影响 CLI 命令执行
+    // Agent.create() 会再次尝试初始化
+    if (argv.debug) {
+      logger.warn(
+        '[CLI] Store 初始化失败（将在需要时重试）:',
+        error instanceof Error ? error.message : error
+      );
+    }
   }
 
-  // 验证会话选项
+  // 2. 处理设置源
+  if (typeof argv.settingSources === 'string') {
+    const sources = argv.settingSources.split(',').map((s) => s.trim());
+    if (argv.debug) {
+      logger.info(`Loading configuration from: ${sources.join(', ')}`);
+    }
+  }
+
+  // 3. 验证会话选项
   if (argv.continue && argv.resume) {
     throw new Error('Cannot use both --continue and --resume flags simultaneously');
   }
@@ -61,7 +92,7 @@ export const validateOutput: MiddlewareFunction = (argv) => {
 
   // 验证输入格式
   if (argv.inputFormat === 'stream-json' && argv.print) {
-    console.warn(
+    logger.warn(
       '⚠️  Warning: stream-json input format may not work as expected with --print'
     );
   }

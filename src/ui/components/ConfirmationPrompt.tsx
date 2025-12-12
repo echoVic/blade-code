@@ -6,7 +6,8 @@ import type {
   ConfirmationDetails,
   ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
-import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
+import { useCurrentFocus } from '../../store/selectors/index.js';
+import { FocusId } from '../../store/types.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 import { MessageRenderer } from './MessageRenderer.js';
@@ -34,9 +35,9 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
   // 使用 useTerminalWidth hook 获取终端宽度
   const terminalWidth = useTerminalWidth();
 
-  // 使用 FocusContext 管理焦点
-  const { state: focusState } = useFocusContext();
-  const isFocused = focusState.currentFocus === FocusId.CONFIRMATION_PROMPT;
+  // 使用 Zustand store 管理焦点
+  const currentFocus = useCurrentFocus();
+  const isFocused = currentFocus === FocusId.CONFIRMATION_PROMPT;
 
   // 使用智能 Ctrl+C 处理（没有任务，所以直接退出）
   const handleCtrlC = useCtrlCHandler(false);

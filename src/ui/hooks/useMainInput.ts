@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getFuzzyCommandSuggestions } from '../../slash-commands/index.js';
 import type { CommandSuggestion } from '../../slash-commands/types.js';
-import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
-import { useSession } from '../contexts/SessionContext.js';
+import { useCurrentFocus, useSessionActions } from '../../store/selectors/index.js';
+import { FocusId } from '../../store/types.js';
 import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
 import { useCtrlCHandler } from './useCtrlCHandler.js';
 import type { InputBuffer } from './useInputBuffer.js';
@@ -29,17 +29,17 @@ export const useMainInput = (
   onToggleShortcuts?: () => void,
   isShortcutsModalOpen?: boolean
 ) => {
-  // 使用 FocusContext 管理焦点
-  const { state: focusState } = useFocusContext();
-  const isFocused = focusState.currentFocus === FocusId.MAIN_INPUT;
+  // 使用 Zustand store 管理焦点
+  const currentFocus = useCurrentFocus();
+  const isFocused = currentFocus === FocusId.MAIN_INPUT;
 
   // 从 buffer 读取输入值和光标位置
   const input = buffer.value;
   const setInput = buffer.setValue;
   const cursorPosition = buffer.cursorPosition;
 
-  // 只需要 dispatch 用于清屏等全局操作,不需要 state
-  const { dispatch } = useSession();
+  // 使用 Zustand store 的 session actions
+  const sessionActions = useSessionActions();
 
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
@@ -96,8 +96,8 @@ export const useMainInput = (
 
   // 处理清屏
   const handleClear = useMemoizedFn(() => {
-    dispatch({ type: 'CLEAR_MESSAGES' });
-    dispatch({ type: 'SET_ERROR', payload: null });
+    sessionActions.clearMessages();
+    sessionActions.setError(null);
   });
 
   // 处理提交
