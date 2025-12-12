@@ -3,7 +3,14 @@
  */
 
 import { CompactionService } from '../context/CompactionService.js';
+import { ContextManager } from '../context/ContextManager.js';
 import { TokenCounter } from '../context/TokenCounter.js';
+import {
+  getConfig,
+  getCurrentModel,
+  getState,
+  sessionActions,
+} from '../store/vanilla.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 /**
@@ -12,24 +19,26 @@ import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './ty
  */
 async function compactCommandHandler(
   _args: string[],
-  context: SlashCommandContext
+  _context: SlashCommandContext
 ): Promise<SlashCommandResult> {
-  const { addAssistantMessage, configManager } = context;
+  const addAssistantMessage = sessionActions().addAssistantMessage;
 
   try {
-    // 获取配置
-    if (!configManager) {
+    // 从 Store 获取配置
+    const config = getConfig();
+    const currentModel = getCurrentModel();
+
+    if (!config || !currentModel) {
       return {
         success: false,
-        error: '配置管理器未初始化',
+        error: '配置未初始化',
       };
     }
 
-    const config = configManager.getConfig();
-    const currentModel = configManager.getCurrentModel();
-
-    // 获取会话消息
-    const sessionMessages = context.messages;
+    // 从 store 获取会话消息和 sessionId
+    const sessionState = getState().session;
+    const sessionMessages = sessionState.messages;
+    const sessionId = sessionState.sessionId;
 
     if (!sessionMessages || sessionMessages.length === 0) {
       addAssistantMessage('⚠️ 当前会话没有消息，无需压缩');
@@ -83,13 +92,12 @@ async function compactCommandHandler(
     if (result.success) {
       // 保存压缩数据到 JSONL
       try {
-        if (context.sessionId) {
-          const { ContextManager } = await import('../context/ContextManager.js');
+        if (sessionId) {
           // ContextManager 会自动使用 PersistentStore，它会从 cwd 推导项目路径
           // 这里不需要传参数，使用默认配置即可
           const contextMgr = new ContextManager();
           await contextMgr.saveCompaction(
-            context.sessionId,
+            sessionId,
             result.summary,
             {
               trigger: 'manual',

@@ -63,7 +63,9 @@
       "Bash(timeout 60 node:*)",
       "Bash(gtimeout 60 node:*)",
       "Bash(pnpm approve-builds:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(cloc:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": [],

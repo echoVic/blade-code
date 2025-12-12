@@ -19,7 +19,10 @@ import { installCommands } from './commands/install.js';
 import { mcpCommands } from './commands/mcp.js';
 import { handlePrintMode } from './commands/print.js';
 import { updateCommands } from './commands/update.js';
+import { createLogger, LogCategory } from './logging/Logger.js';
 import { AppWrapper as BladeApp } from './ui/App.js';
+
+const logger = createLogger(LogCategory.GENERAL);
 
 export async function main() {
   // 首先检查是否是 print 模式
@@ -62,18 +65,18 @@ export async function main() {
     // 错误处理
     .fail((msg, err, yargs) => {
       if (err) {
-        console.error('💥 An error occurred:');
-        console.error(err.message);
+        logger.error('💥 An error occurred:');
+        logger.error(err.message);
         // 总是显示堆栈信息（用于调试）
-        console.error('\nStack trace:');
-        console.error(err.stack);
+        logger.error('\nStack trace:');
+        logger.error(err.stack);
         process.exit(1);
       }
 
       if (msg) {
-        console.error('❌ Invalid arguments:');
-        console.error(msg);
-        console.error('\n💡 Did you mean:');
+        logger.error('❌ Invalid arguments:');
+        logger.error(msg);
+        logger.error('\n💡 Did you mean:');
         yargs.showHelp();
         process.exit(1);
       }
@@ -127,7 +130,7 @@ export async function main() {
   try {
     await cli.parse();
   } catch (error) {
-    console.error('Parse error:', error);
+    logger.error('Parse error:', error);
     process.exit(1);
   }
 }

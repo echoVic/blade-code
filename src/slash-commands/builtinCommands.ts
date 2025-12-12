@@ -2,6 +2,7 @@
  * 内置的 slash commands
  */
 
+import { sessionActions } from '../store/vanilla.js';
 import { agentsCommand } from './agents.js';
 import compactCommand from './compact.js';
 import mcpCommand from './mcp.js';
@@ -16,11 +17,9 @@ const helpCommand: SlashCommand = {
   usage: '/help',
   aliases: ['h'],
   async handler(
-    args: string[],
-    context: SlashCommandContext
+    _args: string[],
+    _context: SlashCommandContext
   ): Promise<SlashCommandResult> {
-    const { addAssistantMessage } = context;
-
     const helpText = `🔧 **可用的 Slash Commands:**
 
 **/init** - 分析当前项目并生成 BLADE.md 配置文件
@@ -40,7 +39,7 @@ const helpCommand: SlashCommand = {
 - 按 Ctrl+C 退出程序
 - 按 Ctrl+L 快速清屏`;
 
-    addAssistantMessage(helpText);
+    sessionActions().addAssistantMessage(helpText);
 
     return {
       success: true,
@@ -56,8 +55,8 @@ const clearCommand: SlashCommand = {
   usage: '/clear',
   aliases: ['cls'],
   async handler(
-    args: string[],
-    context: SlashCommandContext
+    _args: string[],
+    _context: SlashCommandContext
   ): Promise<SlashCommandResult> {
     // 这个命令会在 useCommandHandler 中特殊处理
     return {
@@ -74,11 +73,9 @@ const versionCommand: SlashCommand = {
   usage: '/version',
   aliases: ['v'],
   async handler(
-    args: string[],
-    context: SlashCommandContext
+    _args: string[],
+    _context: SlashCommandContext
   ): Promise<SlashCommandResult> {
-    const { addAssistantMessage } = context;
-
     // 从 package.json 读取版本信息
     try {
       const packageJson = require('../../../package.json');
@@ -97,14 +94,14 @@ const versionCommand: SlashCommand = {
 - 📝 自定义系统提示
 - 🎯 多工具集成支持`;
 
-      addAssistantMessage(versionInfo);
+      sessionActions().addAssistantMessage(versionInfo);
 
       return {
         success: true,
         message: '版本信息已显示',
       };
     } catch (_error) {
-      addAssistantMessage('🗡️ **Blade Code**\n\n版本信息获取失败');
+      sessionActions().addAssistantMessage('🗡️ **Blade Code**\n\n版本信息获取失败');
       return {
         success: true,
         message: '版本信息已显示',
@@ -119,10 +116,10 @@ const statusCommand: SlashCommand = {
   fullDescription: '显示当前项目配置状态和环境信息',
   usage: '/status',
   async handler(
-    args: string[],
+    _args: string[],
     context: SlashCommandContext
   ): Promise<SlashCommandResult> {
-    const { addAssistantMessage, cwd } = context;
+    const { cwd } = context;
     const path = require('path');
     const fs = require('fs').promises;
 
@@ -170,7 +167,7 @@ const statusCommand: SlashCommand = {
 
 ${!hasBlademd ? '\n💡 **建议:** 运行 `/init` 命令来创建项目配置文件' : ''}`;
 
-      addAssistantMessage(statusText);
+      sessionActions().addAssistantMessage(statusText);
 
       return {
         success: true,
@@ -192,8 +189,8 @@ const exitCommand: SlashCommand = {
   usage: '/exit',
   aliases: ['quit', 'q'],
   async handler(
-    args: string[],
-    context: SlashCommandContext
+    _args: string[],
+    _context: SlashCommandContext
   ): Promise<SlashCommandResult> {
     return {
       success: true,
@@ -208,11 +205,9 @@ const configCommand: SlashCommand = {
   fullDescription: '打开配置面板，管理 Blade Code 设置',
   usage: '/config [theme]',
   async handler(
-    args: string[],
-    context: SlashCommandContext
+    _args: string[],
+    _context: SlashCommandContext
   ): Promise<SlashCommandResult> {
-    const { addAssistantMessage } = context;
-
     const configText = `⚙️ **配置面板**
 
 **当前配置:**
@@ -227,7 +222,7 @@ const configCommand: SlashCommand = {
 
 💡 **提示:** 配置更改会在下次启动时生效`;
 
-    addAssistantMessage(configText);
+    sessionActions().addAssistantMessage(configText);
 
     return {
       success: true,
@@ -242,11 +237,9 @@ const contextCommand: SlashCommand = {
   fullDescription: '可视化显示当前上下文使用情况',
   usage: '/context',
   async handler(
-    args: string[],
-    context: SlashCommandContext
+    _args: string[],
+    _context: SlashCommandContext
   ): Promise<SlashCommandResult> {
-    const { addAssistantMessage } = context;
-
     const contextText = `📊 **上下文使用情况**
 
 **当前会话:**
@@ -261,7 +254,7 @@ const contextCommand: SlashCommand = {
 
 🟢 正常 🟡 中等 🔴 高负载`;
 
-    addAssistantMessage(contextText);
+    sessionActions().addAssistantMessage(contextText);
 
     return {
       success: true,
@@ -276,11 +269,9 @@ const costCommand: SlashCommand = {
   fullDescription: '显示当前会话的成本和持续时间',
   usage: '/cost',
   async handler(
-    args: string[],
-    context: SlashCommandContext
+    _args: string[],
+    _context: SlashCommandContext
   ): Promise<SlashCommandResult> {
-    const { addAssistantMessage } = context;
-
     const costText = `💰 **会话成本统计**
 
 **时间统计:**
@@ -298,7 +289,7 @@ const costCommand: SlashCommand = {
 
 💡 **提示:** 成本基于当前 AI 模型定价估算`;
 
-    addAssistantMessage(costText);
+    sessionActions().addAssistantMessage(costText);
 
     return {
       success: true,

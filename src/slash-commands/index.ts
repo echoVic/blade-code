@@ -2,6 +2,7 @@
  * Slash Commands 注册和处理中心
  */
 
+import Fuse from 'fuse.js';
 import { builtinCommands } from './builtinCommands.js';
 import initCommand from './init.js';
 import modelCommand from './model.js';
@@ -91,30 +92,7 @@ export function registerSlashCommand(command: SlashCommand): void {
 }
 
 /**
- * 计算字符串匹配分数
- */
-function calculateMatchScore(input: string, target: string): number {
-  const lowerInput = input.toLowerCase();
-  const lowerTarget = target.toLowerCase();
-
-  if (lowerTarget === lowerInput) return 100; // 完全匹配
-  if (lowerTarget.startsWith(lowerInput)) return 80; // 前缀匹配
-  if (lowerTarget.includes(lowerInput)) return 60; // 包含匹配
-
-  // 模糊匹配：检查是否包含输入的所有字符（按顺序）
-  let inputIndex = 0;
-  for (let i = 0; i < lowerTarget.length && inputIndex < lowerInput.length; i++) {
-    if (lowerTarget[i] === lowerInput[inputIndex]) {
-      inputIndex++;
-    }
-  }
-
-  if (inputIndex === lowerInput.length) return 40; // 模糊匹配
-  return 0; // 无匹配
-}
-
-/**
- * 获取命令补全建议
+ * 获取命令补全建议（简单前缀匹配）
  */
 export function getCommandSuggestions(partialCommand: string): string[] {
   const prefix = partialCommand.startsWith('/')
@@ -128,67 +106,60 @@ export function getCommandSuggestions(partialCommand: string): string[] {
 }
 
 /**
- * 获取模糊匹配的命令建议
+ * 获取模糊匹配的命令建议（使用 fuse.js）
  */
 export function getFuzzyCommandSuggestions(input: string): CommandSuggestion[] {
   // 移除前导斜杠，并 trim 掉空格（用户可能输入 "/init " 然后按 Tab）
   const query = (input.startsWith('/') ? input.slice(1) : input).trim();
 
+  // 准备搜索数据：将命令转换为可搜索的对象
+  const searchableCommands = Object.values(slashCommands).map((cmd) => ({
+    name: cmd.name,
+    description: cmd.description,
+    aliases: cmd.aliases || [],
+    command: cmd,
+  }));
+
   if (!query) {
     // 如果没有输入，返回所有命令
-    return Object.values(slashCommands).map((cmd) => ({
-      command: `/${cmd.name}`,
-      description: cmd.description,
+    return searchableCommands.map((item) => ({
+      command: `/${item.name}`,
+      description: item.description,
       matchScore: 50,
     }));
   }
 
-  const suggestions: CommandSuggestion[] = [];
-
-  Object.values(slashCommands).forEach((cmd) => {
-    // 检查命令名称匹配
-    const nameScore = calculateMatchScore(query, cmd.name);
-
-    // 检查别名匹配
-    let aliasScore = 0;
-    if (cmd.aliases) {
-      aliasScore = Math.max(
-        ...cmd.aliases.map((alias) => calculateMatchScore(query, alias))
-      );
-    }
-
-    // 策略：优先考虑命令名和别名的匹配
-    // 1. 如果有前缀匹配（≥80），只使用前缀匹配的命令
-    // 2. 如果只有包含匹配（60），允许描述参与
-    // 3. 如果只有模糊匹配（40），允许描述参与，但降低权重
-    const bestNameOrAliasScore = Math.max(nameScore, aliasScore);
-
-    let descScore = 0;
-    if (bestNameOrAliasScore < 80) {
-      // 只有在没有强匹配时才检查描述
-      descScore = calculateMatchScore(query, cmd.description) * 0.3;
-    }
-
-    const finalScore = Math.max(nameScore, descScore, aliasScore);
-
-    if (finalScore > 0) {
-      suggestions.push({
-        command: `/${cmd.name}`,
-        description: cmd.description,
-        matchScore: finalScore,
-      });
-    }
+  // 配置 Fuse.js
+  const fuse = new Fuse(searchableCommands, {
+    keys: [
+      { name: 'name', weight: 3 }, // 命令名权重最高
+      { name: 'aliases', weight: 2.5 }, // 别名权重次之
+      { name: 'description', weight: 0.5 }, // 描述权重最低
+    ],
+    threshold: 0.4, // 匹配阈值（0 = 完全匹配，1 = 匹配任何东西）
+    includeScore: true,
+    ignoreLocation: true, // 忽略位置，只关注匹配度
+    minMatchCharLength: 1,
   });
 
-  // 按匹配分数排序
-  const sorted = suggestions.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
+  // 执行搜索
+  const results = fuse.search(query);
 
-  // 如果最高分是前缀匹配（≥80），过滤掉所有低分建议
-  if (sorted.length > 0 && (sorted[0].matchScore || 0) >= 80) {
-    return sorted.filter((s) => (s.matchScore || 0) >= 80);
-  }
+  // 转换为 CommandSuggestion 格式
+  // Fuse.js 的 score 越低越好（0 = 完美匹配），我们需要反转为 0-100 的分数
+  const suggestions: CommandSuggestion[] = results.map((result) => {
+    const score = result.score ?? 1;
+    const matchScore = Math.round((1 - score) * 100); // 转换为 0-100 分数
 
-  return sorted;
+    return {
+      command: `/${result.item.name}`,
+      description: result.item.description,
+      matchScore,
+    };
+  });
+
+  // 过滤掉分数太低的结果（< 40 分）
+  return suggestions.filter((s) => (s.matchScore || 0) >= 40);
 }
 
 export type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';

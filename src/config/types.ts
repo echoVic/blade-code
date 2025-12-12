@@ -94,6 +94,9 @@ export interface BladeConfig {
 
   // MCP
   mcpEnabled: boolean;
+  mcpServers: Record<string, McpServerConfig>; // MCP 服务器配置（项目级）
+  enabledMcpjsonServers: string[]; // .mcp.json 中已批准的服务器名（项目级）
+  disabledMcpjsonServers: string[]; // .mcp.json 中已拒绝的服务器名（项目级）
 
   // =====================================
   // 行为配置 (来自 settings.json)

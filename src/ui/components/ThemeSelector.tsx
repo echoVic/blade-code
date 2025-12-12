@@ -6,9 +6,9 @@ import { useMemoizedFn } from 'ahooks';
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import React, { useState } from 'react';
-import { ConfigManager } from '../../config/ConfigManager.js';
-import { useAppState } from '../contexts/AppContext.js';
-import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
+import { useAppActions, useCurrentFocus } from '../../store/selectors/index.js';
+import { FocusId } from '../../store/types.js';
+import { configActions } from '../../store/vanilla.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 import { themes } from '../themes/index.js';
 import { themeManager } from '../themes/ThemeManager.js';
@@ -138,7 +138,7 @@ const ColorInfo: React.FC<{ theme: Theme }> = ({ theme }) => {
  * 主题选择器组件
  */
 export const ThemeSelector: React.FC = () => {
-  const { dispatch, actions } = useAppState();
+  const appActions = useAppActions();
   const currentThemeName = themeManager.getCurrentThemeName();
 
   // 找到当前主题在列表中的索引，默认高亮当前主题
@@ -159,19 +159,14 @@ export const ThemeSelector: React.FC = () => {
       // 切换主题
       themeManager.setTheme(item.value);
 
-      // 保存到配置
-      const configManager = ConfigManager.getInstance();
-      await configManager.initialize();
-
-      await configManager.updateConfig({
-        theme: item.value,
-      });
+      // 使用 configActions 自动同步内存 + 持久化
+      await configActions().setTheme(item.value);
 
       // 不显示成功通知（用户反馈：这个提示不需要显示）
       // 主题切换效果是立即可见的，无需额外通知
 
       // 关闭选择器
-      dispatch(actions.closeModal());
+      appActions.closeModal();
     } catch (error) {
       // 输出错误到控制台
       console.error('❌ 主题切换失败:', error instanceof Error ? error.message : error);
@@ -188,9 +183,9 @@ export const ThemeSelector: React.FC = () => {
     }
   };
 
-  // 使用 FocusContext 管理焦点
-  const { state: focusState } = useFocusContext();
-  const isFocused = focusState.currentFocus === FocusId.THEME_SELECTOR;
+  // 使用 Zustand store 管理焦点
+  const currentFocus = useCurrentFocus();
+  const isFocused = currentFocus === FocusId.THEME_SELECTOR;
 
   // 使用智能 Ctrl+C 处理（没有任务，所以直接退出）
   const handleCtrlC = useCtrlCHandler(false);
@@ -206,7 +201,7 @@ export const ThemeSelector: React.FC = () => {
 
       // Esc: 关闭主题选择器
       if (key.escape && !isProcessing) {
-        dispatch(actions.closeModal());
+        appActions.closeModal();
       }
     },
     { isActive: isFocused }

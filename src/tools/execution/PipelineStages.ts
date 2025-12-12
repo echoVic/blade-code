@@ -1,4 +1,3 @@
-import { ConfigManager } from '../../config/ConfigManager.js';
 import {
   PermissionChecker,
   type PermissionCheckResult,
@@ -8,6 +7,7 @@ import {
 import type { PermissionConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { configActions, getConfig } from '../../store/vanilla.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
 import { isReadOnlyKind, ToolKind } from '../types/index.js';
@@ -392,18 +392,21 @@ export class ConfirmationStage implements PipelineStage {
     descriptor: ToolInvocationDescriptor
   ): Promise<void> {
     try {
-      const configManager = ConfigManager.getInstance();
-
       // 使用 PermissionChecker.abstractPattern 生成模式规则（而非精确签名）
       const pattern = PermissionChecker.abstractPattern(descriptor);
 
       logger.debug(`保存权限规则: "${pattern}"`);
-      await configManager.appendLocalPermissionAllowRule(pattern);
+      // 使用 configActions 自动同步内存 + 持久化
+      await configActions().appendLocalPermissionAllowRule(pattern, {
+        immediate: true,
+      });
 
-      // 重要：重新加载配置，使新规则立即生效（避免重复确认）
-      const updatedConfig = configManager.getPermissions();
-      logger.debug(`同步权限配置到 PermissionChecker:`, updatedConfig);
-      this.permissionChecker.replaceConfig(updatedConfig);
+      // 重要：从 store 读取最新配置，使新规则立即生效（避免重复确认）
+      const currentConfig = getConfig();
+      if (currentConfig?.permissions) {
+        logger.debug(`同步权限配置到 PermissionChecker:`, currentConfig.permissions);
+        this.permissionChecker.replaceConfig(currentConfig.permissions);
+      }
     } catch (error) {
       logger.warn(
         `Failed to persist permission rule "${signature}": ${

@@ -6,6 +6,7 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { Agent } from '../agent/Agent.js';
+import { getState, sessionActions } from '../store/vanilla.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 const initCommand: SlashCommand = {
@@ -13,11 +14,15 @@ const initCommand: SlashCommand = {
   description: '分析当前项目并生成 BLADE.md 配置文件',
   usage: '/init',
   async handler(
-    args: string[],
+    _args: string[],
     context: SlashCommandContext
   ): Promise<SlashCommandResult> {
     try {
-      const { cwd, addAssistantMessage } = context;
+      const { cwd } = context;
+      const addMessage = sessionActions().addAssistantMessage;
+
+      // 从 store 获取 sessionId
+      const sessionId = getState().session.sessionId;
 
       // 检查是否已存在有效的 BLADE.md（非空文件）
       const blademdPath = path.join(cwd, 'BLADE.md');
@@ -39,8 +44,8 @@ const initCommand: SlashCommand = {
       }
 
       if (exists && !isEmpty) {
-        addAssistantMessage('⚠️ BLADE.md 已存在。');
-        addAssistantMessage('💡 正在分析现有文件并提供改进建议...');
+        addMessage('⚠️ BLADE.md 已存在。');
+        addMessage('💡 正在分析现有文件并提供改进建议...');
 
         // 创建 Agent 并分析现有文件
         const agent = await Agent.create();
@@ -77,11 +82,11 @@ const initCommand: SlashCommand = {
         const result = await agent.chat(analysisPrompt, {
           messages: [],
           userId: 'cli-user',
-          sessionId: context.sessionId || 'init-session',
+          sessionId: sessionId || 'init-session',
           workspaceRoot: cwd,
         });
 
-        addAssistantMessage(result);
+        addMessage(result);
 
         return {
           success: true,
@@ -91,9 +96,9 @@ const initCommand: SlashCommand = {
 
       // 显示适当的提示消息
       if (isEmpty) {
-        addAssistantMessage('⚠️ 检测到空的 BLADE.md 文件，将重新生成...');
+        addMessage('⚠️ 检测到空的 BLADE.md 文件，将重新生成...');
       }
-      addAssistantMessage('🔍 正在分析项目结构...');
+      addMessage('🔍 正在分析项目结构...');
 
       // 创建 Agent 并生成内容
       const agent = await Agent.create();
@@ -136,7 +141,7 @@ const initCommand: SlashCommand = {
       const generatedContent = await agent.chat(analysisPrompt, {
         messages: [],
         userId: 'cli-user',
-        sessionId: context.sessionId || 'init-session',
+        sessionId: sessionId || 'init-session',
         workspaceRoot: cwd,
       });
 
@@ -146,7 +151,7 @@ const initCommand: SlashCommand = {
       }
 
       // 写入生成的内容
-      addAssistantMessage('✨ 正在写入 BLADE.md...');
+      addMessage('✨ 正在写入 BLADE.md...');
       await fs.writeFile(blademdPath, generatedContent, 'utf-8');
 
       return {

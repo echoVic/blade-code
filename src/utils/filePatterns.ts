@@ -1,4 +1,5 @@
 import fg from 'fast-glob';
+import { LRUCache } from 'lru-cache';
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -76,7 +77,13 @@ function _parseGitignore(filePath: string): {
 }
 
 type Rule = { type: 'ignore' | 'negate'; pattern: string };
-const RULES_CACHE = new Map<string, { rules: Rule[]; timestamp: number }>();
+
+// 使用 LRU 缓存，支持 TTL 和大小限制
+const RULES_CACHE = new LRUCache<string, Rule[]>({
+  max: 100, // 最多缓存 100 个目录的规则
+  ttl: 30000, // 默认 TTL 30 秒
+  updateAgeOnGet: true, // 访问时更新 TTL
+});
 
 async function collectGitignoreRulesOrderedAsync(
   cwd: string,
@@ -87,11 +94,11 @@ async function collectGitignoreRulesOrderedAsync(
     ...(opts?.scanIgnore ?? []),
   ];
   const cacheKey = `${cwd}|${scanIgnore.join(',')}`;
-  const now = Date.now();
+
+  // 检查缓存
   const cached = RULES_CACHE.get(cacheKey);
-  const ttl = opts?.cacheTTL ?? 30000;
-  if (cached && now - cached.timestamp < ttl) {
-    return cached.rules;
+  if (cached) {
+    return cached;
   }
 
   const files = await fg('**/.gitignore', {
@@ -149,7 +156,10 @@ async function collectGitignoreRulesOrderedAsync(
       }
     }
   }
-  RULES_CACHE.set(cacheKey, { rules, timestamp: now });
+
+  // 缓存规则（如果提供了自定义 TTL，使用它）
+  const ttl = opts?.cacheTTL ?? 30000;
+  RULES_CACHE.set(cacheKey, rules, { ttl });
   return rules;
 }
 

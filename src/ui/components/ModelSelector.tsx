@@ -9,9 +9,13 @@
 import { useMemoizedFn, useMount } from 'ahooks';
 import { Box, Text, useFocus, useFocusManager, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import type { ModelConfig } from '../../config/types.js';
-import { useSession } from '../contexts/SessionContext.js';
+import {
+  useAllModels,
+  useCurrentModelId,
+} from '../../store/selectors/index.js';
+import { configActions } from '../../store/vanilla.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 interface ModelSelectorProps {
@@ -36,12 +40,13 @@ const Item: React.FC<{ isSelected?: boolean; label: string }> = ({
 );
 
 export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
-  const { configManager } = useSession();
+  // 从 Store 获取模型配置
+  const models = useAllModels();
+  const currentModelId = useCurrentModelId() ?? '';
+
   const { isFocused } = useFocus({ id: 'model-selector' });
   const focusManager = useFocusManager();
 
-  const [models, setModels] = useState<ModelConfig[]>([]);
-  const [currentModelId, setCurrentModelId] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,17 +62,11 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
 
   useMount(() => {
     focusManager?.focus('model-selector');
+    // 初始化选中第一个模型
+    if (models.length > 0) {
+      setSelectedId(models[0].id);
+    }
   });
-
-  // 初始化
-  useEffect(() => {
-    const allModels = configManager.getAllModels();
-    const config = configManager.getConfig();
-
-    setModels(allModels);
-    setCurrentModelId(config.currentModelId);
-    setSelectedId(allModels[0]?.id || '');
-  }, [configManager]);
 
   // 全局键盘处理 - 始终监听
   useInput(
@@ -114,7 +113,7 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
     setIsProcessing(true);
     setError(null);
     try {
-      await configManager.switchModel(modelId);
+      await configActions().setCurrentModel(modelId);
       onClose();
     } catch (err) {
       setError((err as Error).message);
@@ -128,12 +127,11 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
     setIsProcessing(true);
     setError(null);
     try {
-      await configManager.removeModel(selectedId);
-      const newModels = configManager.getAllModels();
-      setModels(newModels);
+      await configActions().removeModel(selectedId);
+      // models 会自动更新（从 Store）
 
       // 如果没有模型了，关闭选择器
-      if (newModels.length === 0) {
+      if (models.length <= 1) {
         onClose();
       }
     } catch (err) {
