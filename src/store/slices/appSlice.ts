@@ -31,6 +31,7 @@ const initialAppState: AppState = {
   sessionSelectorData: undefined,
   modelEditorTarget: null,
   todos: [],
+  awaitingSecondCtrlC: false,
 };
 
 /**
@@ -125,6 +126,15 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
           ...state.app,
           todos: state.app.todos.map((t) => (t.id === todo.id ? todo : t)),
         },
+      }));
+    },
+
+    /**
+     * 设置是否等待第二次 Ctrl+C 退出
+     */
+    setAwaitingSecondCtrlC: (awaiting: boolean) => {
+      set((state) => ({
+        app: { ...state.app, awaitingSecondCtrlC: awaiting },
       }));
     },
   },

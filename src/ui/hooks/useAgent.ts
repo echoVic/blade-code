@@ -30,11 +30,6 @@ export function useAgent(options: AgentOptions) {
    * 创建并设置 Agent 实例
    */
   const createAgent = useMemoizedFn(async (): Promise<Agent> => {
-    // 清理旧的 Agent 事件监听器
-    if (agentRef.current) {
-      agentRef.current.removeAllListeners();
-    }
-
     // 创建新 Agent
     const agent = await Agent.create({
       systemPrompt: options.systemPrompt,
@@ -54,7 +49,6 @@ export function useAgent(options: AgentOptions) {
    */
   const cleanupAgent = useMemoizedFn(() => {
     if (agentRef.current) {
-      agentRef.current.removeAllListeners();
       agentRef.current = undefined;
     }
   });

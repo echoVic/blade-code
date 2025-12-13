@@ -1,5 +1,5 @@
+import { ConfigManager } from '../config/index.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import { ConfigManager } from '../config/ConfigManager.js';
 import { getState } from '../store/vanilla.js';
 
 const logger = createLogger(LogCategory.GENERAL);
@@ -47,8 +47,7 @@ export const loadConfiguration: MiddlewareFunction = async (argv) => {
   // 1. 初始化 Zustand Store（CLI 路径）
   try {
     const configManager = ConfigManager.getInstance();
-    await configManager.initialize();
-    const config = configManager.getConfig();
+    const config = await configManager.initialize();
 
     // 设置到 store（让 CLI 子命令和 Agent 都能访问）
     getState().config.actions.setConfig(config);
@@ -57,14 +56,19 @@ export const loadConfiguration: MiddlewareFunction = async (argv) => {
       logger.info('[CLI] Store 已初始化');
     }
   } catch (error) {
-    // 静默失败，不影响 CLI 命令执行
-    // Agent.create() 会再次尝试初始化
-    if (argv.debug) {
-      logger.warn(
-        '[CLI] Store 初始化失败（将在需要时重试）:',
-        error instanceof Error ? error.message : error
-      );
-    }
+    // ⚠️ 严重错误：配置加载失败会导致后续所有依赖 Store 的操作失败
+    // 不能静默吞掉，必须明确报错并退出
+    logger.error(
+      '[CLI] ❌ 配置初始化失败，无法继续执行命令',
+      error instanceof Error ? error.message : error
+    );
+    console.error('\n❌ 配置初始化失败\n');
+    console.error('原因:', error instanceof Error ? error.message : '未知错误');
+    console.error('\n请检查：');
+    console.error('  1. 配置文件格式是否正确 (~/.blade/config.json)');
+    console.error('  2. 是否需要运行 blade 进行首次配置');
+    console.error('  3. 配置文件权限是否正确\n');
+    process.exit(1);
   }
 
   // 2. 处理设置源

@@ -6,9 +6,11 @@ import TextInput from 'ink-text-input';
 import os from 'os';
 import path from 'path';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { getConfigService } from '../../config/index.js';
 import type { PermissionConfig } from '../../config/types.js';
 import { useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
+import { configActions } from '../../store/vanilla.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 type RuleSource = 'local' | 'project' | 'global';
@@ -226,33 +228,48 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({ onClose 
       tab: Exclude<TabKey, 'info'>,
       mutator: (permissions: PermissionConfig) => PermissionConfig
     ) => {
-      let settingsRaw: any = {};
-      let currentPermissions: PermissionConfig = { ...defaultPermissions };
-
       try {
-        const content = await fs.readFile(localSettingsPath, 'utf-8');
-        settingsRaw = JSON.parse(content);
-        currentPermissions = normalizePermissions(settingsRaw);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-          throw error;
+
+        // 读取当前本地 settings 文件
+        const localSettingsPath = path.join(
+          process.cwd(),
+          '.blade',
+          'settings.local.json'
+        );
+        let currentPermissions: PermissionConfig = {
+          allow: [],
+          ask: [],
+          deny: [],
+        };
+
+        try {
+          const content = await fs.readFile(localSettingsPath, 'utf-8');
+          const settingsRaw = JSON.parse(content);
+          const perms = settingsRaw.permissions || {};
+          currentPermissions = {
+            allow: Array.isArray(perms.allow) ? perms.allow : [],
+            ask: Array.isArray(perms.ask) ? perms.ask : [],
+            deny: Array.isArray(perms.deny) ? perms.deny : [],
+          };
+        } catch (_error) {
+          // 文件不存在，使用默认空规则
         }
-        settingsRaw = {};
+
+        // 应用修改
+        const updated = mutator(currentPermissions);
+
+        // 通过 configActions 保存（现在 permissions 使用 'replace' 策略）
+        await configActions().updateConfig(
+          { permissions: updated },
+          { scope: 'local', immediate: true }
+        );
+
+        // 重新加载显示
+        await loadPermissions();
+      } catch (error) {
+        console.error('[PermissionsManager] 修改权限规则失败:', error);
+        throw error;
       }
-
-      const updated = mutator(currentPermissions);
-      settingsRaw.permissions = {
-        allow: updated.allow,
-        ask: updated.ask,
-        deny: updated.deny,
-      };
-
-      await fs.writeFile(localSettingsPath, JSON.stringify(settingsRaw, null, 2), {
-        encoding: 'utf-8',
-        mode: 0o600,
-      });
-
-      await loadPermissions();
     }
   );
 

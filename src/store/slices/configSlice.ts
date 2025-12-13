@@ -47,12 +47,10 @@ export const createConfigSlice: StateCreator<BladeStore, [], [], ConfigSlice> = 
     updateConfig: (partial: Partial<RuntimeConfig>) => {
       set((state) => {
         if (!state.config.config) {
-          // 配置未初始化时，记录错误并返回（不抛异常避免中断流程）
-          console.error(
-            '[ConfigSlice] updateConfig called but config is null. Partial update:',
-            partial
+          // 配置未初始化时，抛出错误
+          throw new Error(
+            `[ConfigSlice] Config not initialized. Cannot update: ${JSON.stringify(partial)}`
           );
-          return state; // 返回原状态，不修改
         }
 
         return {

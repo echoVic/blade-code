@@ -1,6 +1,5 @@
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useRef } from 'react';
-import { ConfigManager } from '../../config/ConfigManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
 import {
@@ -17,6 +16,7 @@ import {
   useSessionActions,
   useSessionId,
 } from '../../store/selectors/index.js';
+import { ensureStoreInitialized } from '../../store/vanilla.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import {
   formatToolCallSummary,
@@ -100,7 +100,7 @@ export const useCommandHandler = (
 
   // 使用 Agent 管理 Hook
   // Agent 现在直接通过 vanilla store 更新 todos，不需要回调
-  const { agentRef, createAgent, cleanupAgent } = useAgent({
+  const { createAgent, cleanupAgent } = useAgent({
     systemPrompt: replaceSystemPrompt,
     appendSystemPrompt: appendSystemPrompt,
     maxTurns: maxTurns,
@@ -126,11 +126,6 @@ export const useCommandHandler = (
       abortMessageSentRef.current = true;
     }
 
-    // 清理 Agent 监听器
-    if (agentRef.current) {
-      agentRef.current.removeAllListeners();
-    }
-
     // 使用 store 的 abort action（会同时重置 isProcessing 和 isThinking）
     commandActions.abort();
     appActions.setTodos([]);
@@ -144,13 +139,14 @@ export const useCommandHandler = (
 
         // 检查是否为 slash command
         if (isSlashCommand(command)) {
-          const configManager = ConfigManager.getInstance();
-          await configManager.initialize();
+          // ⚠️ 关键：确保 Store 已初始化（防御性检查）
+          // slash commands 依赖 Store 状态，必须在执行前确保初始化
+          // 这里是统一防御点，避免竞态或未来非 UI 场景踩坑
+          await ensureStoreInitialized();
 
           // 简化的 context - slash commands 从 vanilla store 获取状态
           const slashContext: SlashCommandContext = {
             cwd: process.cwd(),
-            configManager,
           };
 
           const slashResult = await executeSlashCommand(command, slashContext);

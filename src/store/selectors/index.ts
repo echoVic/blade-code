@@ -9,8 +9,13 @@
  */
 
 import { useShallow } from 'zustand/react/shallow';
+import type { ModelConfig } from '../../config/types.js';
 import { useBladeStore } from '../index.js';
 import { type ActiveModal, type FocusId, PermissionMode } from '../types.js';
+
+// ==================== 常量空引用（避免不必要的重渲染）====================
+
+const EMPTY_MODELS: ModelConfig[] = [];
 
 // ==================== Session 选择器 ====================
 
@@ -118,6 +123,12 @@ export const useSessionSelectorData = () =>
   useBladeStore((state) => state.app.sessionSelectorData);
 
 /**
+ * 获取是否等待第二次 Ctrl+C
+ */
+export const useAwaitingSecondCtrlC = () =>
+  useBladeStore((state) => state.app.awaitingSecondCtrlC);
+
+/**
  * 获取 App Actions
  */
 export const useAppActions = () => useBladeStore((state) => state.app.actions);
@@ -188,9 +199,10 @@ export const usePermissionMode = () =>
 
 /**
  * 派生选择器：所有模型配置
+ * 使用常量空数组避免不必要的重渲染
  */
 export const useAllModels = () =>
-  useBladeStore((state) => state.config.config?.models ?? []);
+  useBladeStore((state) => state.config.config?.models ?? EMPTY_MODELS);
 
 /**
  * 派生选择器：当前模型配置

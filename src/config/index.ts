@@ -5,6 +5,8 @@
 
 // 配置管理器
 export { ConfigManager, mergeRuntimeConfig } from './ConfigManager.js';
+// 配置持久化服务
+export { getConfigService, type SaveOptions } from './ConfigService.js';
 // 默认配置
 export { DEFAULT_CONFIG } from './defaults.js';
 // 权限检查器
@@ -15,13 +17,13 @@ export {
   type ToolInvocationDescriptor,
 } from './PermissionChecker.js';
 // 类型定义
+export { PermissionMode } from './types.js';
 export type {
   BladeConfig,
   HookConfig,
   McpProjectsConfig,
   McpServerConfig,
   PermissionConfig,
-  PermissionMode,
   ProjectConfig,
   RuntimeConfig,
 } from './types.js';

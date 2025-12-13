@@ -14,14 +14,13 @@
 import { nanoid } from 'nanoid';
 import { devtools, subscribeWithSelector } from 'zustand/middleware';
 import { createStore } from 'zustand/vanilla';
-import { ConfigManager } from '../config/ConfigManager.js';
+import { ConfigManager, getConfigService, type SaveOptions } from '../config/index.js';
 import type {
   BladeConfig,
   McpServerConfig,
   ModelConfig,
   PermissionMode,
 } from '../config/types.js';
-import { getConfigService, type SaveOptions } from '../services/ConfigService.js';
 import type { TodoItem } from '../tools/builtin/todo/types.js';
 import {
   createAppSlice,
@@ -171,36 +170,58 @@ export const getConfig = () => getState().config.config;
 /**
  * 确保 store 已初始化（用于防御性编程）
  *
- * 在 CLI/headless 环境中，store 可能未初始化。
- * 此函数会尝试加载配置并初始化 store。
+ * 特性：
+ * - 幂等：已初始化直接返回（性能无负担）
+ * - 并发安全：同一时刻只初始化一次（共享 Promise）
+ * - 失败重试：下次调用会重新尝试
+ *
+ * 使用场景：
+ * - Slash commands 执行前
+ * - CLI 子命令执行前
+ * - 任何依赖 Store 的代码路径
  *
  * @throws {Error} 如果初始化失败
  */
+let initializationPromise: Promise<void> | null = null;
+
 export async function ensureStoreInitialized(): Promise<void> {
+  // 1. 快速路径：已初始化直接返回
   const config = getConfig();
   if (config !== null) {
-    // store 已初始化
     return;
   }
 
-  // 尝试初始化
-  try {
-    const configManager = ConfigManager.getInstance();
-    await configManager.initialize();
-    const loadedConfig = configManager.getConfig();
-
-    // 设置到 store
-    getState().config.actions.setConfig(loadedConfig);
-  } catch (error) {
-    throw new Error(
-      `❌ Store 未初始化且无法自动初始化\n\n` +
-        `原因: ${error instanceof Error ? error.message : '未知错误'}\n\n` +
-        `请确保：\n` +
-        `1. CLI 中间件已正确设置\n` +
-        `2. 配置文件格式正确\n` +
-        `3. 应用已正确启动`
-    );
+  // 2. 并发保护：如果正在初始化，等待共享 Promise
+  if (initializationPromise) {
+    return initializationPromise;
   }
+
+  // 3. 开始初始化（保存 Promise 供并发调用使用）
+  initializationPromise = (async () => {
+    try {
+      const configManager = ConfigManager.getInstance();
+      const loadedConfig = await configManager.initialize();
+
+      // 设置到 store
+      getState().config.actions.setConfig(loadedConfig);
+    } catch (error) {
+      // 初始化失败：清除共享 Promise，允许下次重试
+      initializationPromise = null;
+      throw new Error(
+        `❌ Store 未初始化且无法自动初始化\n\n` +
+          `原因: ${error instanceof Error ? error.message : '未知错误'}\n\n` +
+          `请确保：\n` +
+          `1. 配置文件格式正确 (~/.blade/config.json)\n` +
+          `2. 运行 blade 进行首次配置\n` +
+          `3. 配置文件权限正确`
+      );
+    } finally {
+      // 成功后清除 Promise，避免内存泄漏
+      initializationPromise = null;
+    }
+  })();
+
+  return initializationPromise;
 }
 
 /**
@@ -316,15 +337,29 @@ export const configActions = () => ({
    * 批量更新配置
    * @param updates 要更新的配置项
    * @param options 保存选项
+   * @throws {Error} 如果持久化失败（自动回滚内存状态）
    */
   updateConfig: async (
     updates: Partial<BladeConfig>,
     options: SaveOptions = {}
   ): Promise<void> => {
-    // 1. 同步更新内存
+    const config = getConfig();
+    if (!config) throw new Error('Config not initialized');
+
+    // 1. 保存快照（用于回滚）
+    const snapshot = { ...config };
+
+    // 2. 同步更新内存
     getState().config.actions.updateConfig(updates);
-    // 2. 异步持久化（仅持久化可持久化字段）
-    await getConfigService().save(updates, options);
+
+    // 3. 异步持久化
+    try {
+      await getConfigService().save(updates, options);
+    } catch (error) {
+      // 4. 持久化失败时回滚内存状态
+      getState().config.actions.setConfig(snapshot);
+      throw error;
+    }
   },
 
   /**
@@ -396,7 +431,7 @@ export const configActions = () => ({
     const config = getConfig();
     if (!config) throw new Error('Config not initialized');
 
-    const model = config.models.find((m) => m.id === modelId);
+    const model = config.models.find((m: ModelConfig) => m.id === modelId);
     if (!model) {
       throw new Error(`Model not found: ${modelId}`);
     }
@@ -420,7 +455,8 @@ export const configActions = () => ({
     if (!config) throw new Error('Config not initialized');
 
     // 如果没有 id，自动生成
-    const model: ModelConfig = 'id' in modelData ? modelData : { id: nanoid(), ...modelData };
+    const model: ModelConfig =
+      'id' in modelData ? modelData : { id: nanoid(), ...modelData };
 
     const newModels = [...config.models, model];
 
@@ -447,7 +483,7 @@ export const configActions = () => ({
     const config = getConfig();
     if (!config) throw new Error('Config not initialized');
 
-    const index = config.models.findIndex((m) => m.id === modelId);
+    const index = config.models.findIndex((m: ModelConfig) => m.id === modelId);
     if (index === -1) {
       throw new Error(`Model not found: ${modelId}`);
     }
@@ -473,7 +509,7 @@ export const configActions = () => ({
       throw new Error('Cannot remove the only model');
     }
 
-    const newModels = config.models.filter((m) => m.id !== modelId);
+    const newModels = config.models.filter((m: ModelConfig) => m.id !== modelId);
     const updates: Partial<BladeConfig> = { models: newModels };
 
     // 如果删除的是当前模型，切换到第一个
@@ -498,7 +534,9 @@ export const configActions = () => ({
   ): Promise<void> => {
     // 1. 从 Store 获取当前的 mcpServers
     const config = getConfig();
-    const currentServers = config?.mcpServers ?? {};
+    if (!config) throw new Error('Config not initialized');
+
+    const currentServers = config.mcpServers ?? {};
 
     // 2. 添加新服务器
     const updatedServers = {
@@ -522,7 +560,9 @@ export const configActions = () => ({
   removeMcpServer: async (name: string, options: SaveOptions = {}): Promise<void> => {
     // 1. 从 Store 获取当前的 mcpServers
     const config = getConfig();
-    const currentServers = config?.mcpServers ?? {};
+    if (!config) throw new Error('Config not initialized');
+
+    const currentServers = config.mcpServers ?? {};
 
     // 2. 删除服务器
     const updatedServers = { ...currentServers };
@@ -542,6 +582,9 @@ export const configActions = () => ({
    * 重置项目级 .mcp.json 确认记录
    */
   resetProjectChoices: async (options: SaveOptions = {}): Promise<void> => {
+    const config = getConfig();
+    if (!config) throw new Error('Config not initialized');
+
     const updates = {
       enabledMcpjsonServers: [],
       disabledMcpjsonServers: [],

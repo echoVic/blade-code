@@ -2,8 +2,6 @@
  * Slash Command 类型定义
  */
 
-import type { ConfigManager } from '../config/ConfigManager.js';
-
 export interface SlashCommandResult {
   success: boolean;
   message?: string;
@@ -14,15 +12,17 @@ export interface SlashCommandResult {
 /**
  * Slash Command 上下文
  *
- * 注意：UI 状态操作（addUserMessage, addAssistantMessage 等）
- * 已迁移到 vanilla store，slash command 应直接使用：
+ * 注意：
+ * - UI 状态操作（addUserMessage, addAssistantMessage 等）已迁移到 vanilla store
+ * - 配置管理已迁移到 Store + configActions()
  *
- * import { sessionActions } from '../store/vanilla.js';
- * sessionActions().addAssistantMessage('...');
+ * Slash command 应直接使用：
+ *   import { sessionActions, configActions } from '../store/vanilla.js';
+ *   sessionActions().addAssistantMessage('...');
+ *   configActions().updateConfig({ ... });
  */
 export interface SlashCommandContext {
   cwd: string;
-  configManager?: ConfigManager;
 }
 
 export interface SlashCommand {
