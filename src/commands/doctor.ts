@@ -4,7 +4,7 @@
 
 import type { CommandModule } from 'yargs';
 import type { DoctorOptions } from '../cli/types.js';
-import { ConfigManager } from '../config/ConfigManager.js';
+import { ConfigManager } from '../config/index.js';
 
 export const doctorCommands: CommandModule<{}, DoctorOptions> = {
   command: 'doctor',

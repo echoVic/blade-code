@@ -3,10 +3,9 @@
  * 显示 MCP 服务器状态和可用工具
  */
 
-import { ConfigManager } from '../config/ConfigManager.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { McpConnectionStatus } from '../mcp/types.js';
-import { sessionActions } from '../store/vanilla.js';
+import { getMcpServers, sessionActions } from '../store/vanilla.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 /**
@@ -40,9 +39,8 @@ async function showServersOverview(): Promise<void> {
   const addAssistantMessage = sessionActions().addAssistantMessage;
   const mcpRegistry = McpRegistry.getInstance();
 
-  // 从 ConfigManager 读取配置
-  const configManager = ConfigManager.getInstance();
-  const configuredServers = await configManager.getMcpServers();
+  // 从 Store 读取配置
+  const configuredServers = getMcpServers();
 
   if (Object.keys(configuredServers).length === 0) {
     addAssistantMessage(
@@ -144,9 +142,8 @@ async function showServerDetails(serverName: string): Promise<void> {
   const addAssistantMessage = sessionActions().addAssistantMessage;
   const mcpRegistry = McpRegistry.getInstance();
 
-  // 从配置中查找
-  const configManager = ConfigManager.getInstance();
-  const servers = await configManager.getMcpServers();
+  // 从 Store 读取配置
+  const servers = getMcpServers();
   const config = servers[serverName];
 
   if (!config) {
@@ -307,9 +304,8 @@ async function showAllTools(): Promise<void> {
   const addAssistantMessage = sessionActions().addAssistantMessage;
   const mcpRegistry = McpRegistry.getInstance();
 
-  // 从 ConfigManager 读取配置
-  const configManager = ConfigManager.getInstance();
-  const configuredServers = await configManager.getMcpServers();
+  // 从 Store 读取配置
+  const configuredServers = getMcpServers();
 
   if (Object.keys(configuredServers).length === 0) {
     addAssistantMessage(

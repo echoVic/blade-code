@@ -1,35 +1,31 @@
 /**
- * Blade 配置管理器
- * 实现双配置文件系统 (config.json + settings.json)
- * 单例模式：全局唯一实例，避免重复加载配置
+ * Blade 配置加载器（Bootstrap/Loader）
+ *
+ * 职责：
+ * - 从多个配置文件加载配置（config.json + settings.json）
+ * - 合并配置（优先级：local > project > global）
+ * - 解析环境变量插值（$VAR, ${VAR:-default}）
+ * - 验证配置完整性
+ * - 返回完整的 BladeConfig 供 Store 使用
+ *
+ * ⚠️ 注意：
+ * - 运行时配置管理由 Store（vanilla.ts）负责
+ * - 配置持久化由 ConfigService 负责
+ * - ConfigManager 只在启动时调用一次：ConfigManager.initialize() → Store.setConfig()
+ *
+ * 单例模式：避免重复加载配置文件
  */
 
 import { promises as fs } from 'fs';
 import { merge } from 'lodash-es';
-import { nanoid } from 'nanoid';
 import os from 'os';
 import path from 'path';
 import type { GlobalOptions } from '../cli/types.js';
-import { createLogger, LogCategory } from '../logging/Logger.js';
 import { DEFAULT_CONFIG } from './defaults.js';
-import {
-  BladeConfig,
-  HookConfig,
-  McpProjectsConfig,
-  McpServerConfig,
-  ModelConfig,
-  PermissionConfig,
-  PermissionMode,
-  ProjectConfig,
-  RuntimeConfig,
-} from './types.js';
-
-const logger = createLogger(LogCategory.CONFIG);
+import { BladeConfig, PermissionMode, RuntimeConfig } from './types.js';
 
 export class ConfigManager {
   private static instance: ConfigManager | null = null;
-  private config: BladeConfig | null = null;
-  private configLoaded = false;
 
   /**
    * 私有构造函数，防止外部直接实例化
@@ -54,13 +50,17 @@ export class ConfigManager {
   }
 
   /**
-   * 初始化配置系统
+   * 初始化配置系统（Bootstrap/Loader）
+   *
+   * 职责：
+   * - 从多文件加载配置（config.json + settings.json）
+   * - 合并配置（优先级处理）
+   * - 解析环境变量插值
+   * - 返回完整的 BladeConfig
+   *
+   * 注意：不保存状态，调用方需要将结果灌进 Store
    */
   async initialize(): Promise<BladeConfig> {
-    if (this.configLoaded && this.config) {
-      return this.config;
-    }
-
     try {
       // 1. 加载基础配置 (config.json)
       const baseConfig = await this.loadConfigFiles();
@@ -69,30 +69,26 @@ export class ConfigManager {
       const settingsConfig = await this.loadSettingsFiles();
 
       // 3. 合并为统一配置
-      this.config = {
+      const config: BladeConfig = {
         ...DEFAULT_CONFIG,
         ...baseConfig,
         ...settingsConfig,
       };
 
       // 4. 解析环境变量插值
-      this.resolveEnvInterpolation(this.config);
+      this.resolveEnvInterpolation(config);
 
       // 5. 确保 Git 忽略 settings.local.json
-      await this.ensureGitIgnore();
+      await this.ensureGitIgnore(config.debug);
 
-      this.configLoaded = true;
-
-      if (this.config.debug) {
+      if (config.debug) {
         console.log('[ConfigManager] Configuration loaded successfully');
       }
 
-      return this.config;
+      return config;
     } catch (error) {
       console.error('[ConfigManager] Failed to initialize:', error);
-      this.config = DEFAULT_CONFIG;
-      this.configLoaded = true;
-      return this.config;
+      return DEFAULT_CONFIG;
     }
   }
 
@@ -156,7 +152,7 @@ export class ConfigManager {
   /**
    * 合并 settings 配置（使用 lodash-es merge 实现真正的深度合并）
    * - permissions 数组追加去重
-   * - hooks, env 对象深度合并
+   * - hooks, env, planMode 对象深度合并
    * - 其他字段直接覆盖
    */
   private mergeSettings(
@@ -205,12 +201,29 @@ export class ConfigManager {
       result.env = merge({}, result.env, override.env);
     }
 
-    // 其他字段直接覆盖
+    // 合并 planMode (对象深度合并，使用 lodash merge)
+    if (override.planMode) {
+      result.planMode = merge({}, result.planMode, override.planMode);
+    }
+
+    // 其他字段直接覆盖（replace 策略）
     if (override.disableAllHooks !== undefined) {
       result.disableAllHooks = override.disableAllHooks;
     }
     if (override.permissionMode !== undefined) {
       result.permissionMode = override.permissionMode;
+    }
+    if (override.maxTurns !== undefined) {
+      result.maxTurns = override.maxTurns;
+    }
+    if (override.mcpServers !== undefined) {
+      result.mcpServers = override.mcpServers;
+    }
+    if (override.enabledMcpjsonServers !== undefined) {
+      result.enabledMcpjsonServers = override.enabledMcpjsonServers;
+    }
+    if (override.disabledMcpjsonServers !== undefined) {
+      result.disabledMcpjsonServers = override.disabledMcpjsonServers;
     }
 
     return result;
@@ -243,7 +256,7 @@ export class ConfigManager {
   /**
    * 确保 .gitignore 包含 settings.local.json
    */
-  private async ensureGitIgnore(): Promise<void> {
+  private async ensureGitIgnore(debug?: boolean | string): Promise<void> {
     const gitignorePath = path.join(process.cwd(), '.gitignore');
     const pattern = '.blade/settings.local.json';
 
@@ -259,7 +272,7 @@ export class ConfigManager {
           content.trim() + '\n\n# Blade local settings\n' + pattern + '\n';
         await fs.writeFile(gitignorePath, newContent, 'utf-8');
 
-        if (this.config?.debug) {
+        if (debug) {
           console.log('[ConfigManager] Added .blade/settings.local.json to .gitignore');
         }
       }
@@ -293,535 +306,6 @@ export class ConfigManager {
     } catch {
       return false;
     }
-  }
-
-  /**
-   * 获取配置
-   */
-  getConfig(): BladeConfig {
-    if (!this.config) {
-      throw new Error('Config not initialized. Call initialize() first.');
-    }
-    return this.config;
-  }
-
-  /**
-   * 保存配置到用户配置文件
-   * 路径: ~/.blade/config.json
-   *
-   * @param updates 要保存的配置项（部分更新）
-   */
-  async saveUserConfig(updates: Partial<BladeConfig>): Promise<void> {
-    const userConfigPath = path.join(os.homedir(), '.blade', 'config.json');
-
-    try {
-      // 1. 确保目录存在
-      await fs.mkdir(path.dirname(userConfigPath), { recursive: true });
-
-      // 2. 读取现有配置（如果存在）
-      let existingConfig: Partial<BladeConfig> = {};
-      if (await this.fileExists(userConfigPath)) {
-        const content = await fs.readFile(userConfigPath, 'utf-8');
-        existingConfig = JSON.parse(content);
-      }
-
-      // 3. 合并配置
-      const newConfig = { ...existingConfig, ...updates };
-
-      // 4. 写入文件（仅保存基础配置字段，不保存 settings）
-      const configToSave: Partial<BladeConfig> = {};
-      if (newConfig.currentModelId !== undefined)
-        configToSave.currentModelId = newConfig.currentModelId;
-      if (newConfig.models !== undefined) configToSave.models = newConfig.models;
-      if (newConfig.temperature !== undefined)
-        configToSave.temperature = newConfig.temperature;
-      if (newConfig.maxContextTokens !== undefined)
-        configToSave.maxContextTokens = newConfig.maxContextTokens;
-      if (newConfig.maxOutputTokens !== undefined)
-        configToSave.maxOutputTokens = newConfig.maxOutputTokens;
-      if (newConfig.timeout !== undefined) configToSave.timeout = newConfig.timeout;
-      if (newConfig.theme !== undefined) configToSave.theme = newConfig.theme;
-      if (newConfig.language !== undefined) configToSave.language = newConfig.language;
-      if (newConfig.debug !== undefined) configToSave.debug = newConfig.debug;
-      if (newConfig.telemetry !== undefined)
-        configToSave.telemetry = newConfig.telemetry;
-
-      await fs.writeFile(
-        userConfigPath,
-        JSON.stringify(configToSave, null, 2),
-        { mode: 0o600, encoding: 'utf-8' } // 仅用户可读写
-      );
-
-      // 5. 更新内存配置
-      if (this.config) {
-        this.config = { ...this.config, ...updates };
-      } else {
-        // 首次配置（理论上不会发生，但作为保护）
-        this.config = { ...DEFAULT_CONFIG, ...updates };
-        this.configLoaded = true;
-      }
-
-      // 添加日志验证内存配置已更新
-      if (this.config.debug) {
-        const currentModel = this.getCurrentModel();
-        console.log('[ConfigManager] Memory config updated:', {
-          currentModelId: this.config.currentModelId,
-          currentModelName: currentModel.name,
-          totalModels: this.config.models.length,
-        });
-      }
-
-      if (this.config.debug) {
-        console.log(`[ConfigManager] Configuration saved to ${userConfigPath}`);
-      }
-    } catch (error) {
-      console.error('[ConfigManager] Failed to save config:', error);
-      throw new Error(
-        `保存配置失败: ${error instanceof Error ? error.message : '未知错误'}`
-      );
-    }
-  }
-
-  /**
-   * 将权限规则追加到用户 settings.json 的 allow 列表
-   */
-  async appendPermissionAllowRule(rule: string): Promise<void> {
-    const userSettingsPath = path.join(os.homedir(), '.blade', 'settings.json');
-
-    try {
-      await fs.mkdir(path.dirname(userSettingsPath), { recursive: true });
-
-      const existingSettings = (await this.loadJsonFile(userSettingsPath)) ?? {};
-      const permissions = existingSettings.permissions ?? {
-        allow: [],
-        ask: [],
-        deny: [],
-      };
-
-      permissions.allow = Array.isArray(permissions.allow) ? permissions.allow : [];
-      permissions.ask = Array.isArray(permissions.ask) ? permissions.ask : [];
-      permissions.deny = Array.isArray(permissions.deny) ? permissions.deny : [];
-
-      const beforeSize = permissions.allow.length;
-      if (!permissions.allow.includes(rule)) {
-        permissions.allow = [...permissions.allow, rule];
-      }
-
-      if (permissions.allow.length !== beforeSize) {
-        existingSettings.permissions = permissions;
-        await fs.writeFile(
-          userSettingsPath,
-          JSON.stringify(existingSettings, null, 2),
-          { mode: 0o600, encoding: 'utf-8' }
-        );
-      }
-
-      if (this.config) {
-        if (!this.config.permissions.allow.includes(rule)) {
-          this.config.permissions.allow = [...this.config.permissions.allow, rule];
-        }
-      }
-    } catch (error) {
-      console.error('[ConfigManager] Failed to append permission rule:', error);
-      throw new Error(
-        `保存权限规则失败: ${error instanceof Error ? error.message : '未知错误'}`
-      );
-    }
-  }
-
-  /**
-   * 将权限规则追加到项目本地 settings.local.json 的 allow 列表
-   * 增强功能：
-   * 1. 去重：检查规则是否已存在
-   * 2. 清理：移除被新规则覆盖的旧规则
-   */
-  async appendLocalPermissionAllowRule(rule: string): Promise<void> {
-    const localSettingsPath = path.join(process.cwd(), '.blade', 'settings.local.json');
-
-    try {
-      await fs.mkdir(path.dirname(localSettingsPath), { recursive: true });
-
-      const existingSettings = (await this.loadJsonFile(localSettingsPath)) ?? {};
-      const permissions = existingSettings.permissions ?? {
-        allow: [],
-        ask: [],
-        deny: [],
-      };
-
-      permissions.allow = Array.isArray(permissions.allow) ? permissions.allow : [];
-      permissions.ask = Array.isArray(permissions.ask) ? permissions.ask : [];
-      permissions.deny = Array.isArray(permissions.deny) ? permissions.deny : [];
-
-      // 检查新规则是否已存在
-      if (permissions.allow.includes(rule)) {
-        return; // 规则已存在，无需重复添加
-      }
-
-      // 移除被新规则覆盖的旧规则
-      const originalCount = permissions.allow.length;
-      permissions.allow = permissions.allow.filter((oldRule: string) => {
-        return !this.isRuleCoveredBy(oldRule, rule);
-      });
-
-      const removedCount = originalCount - permissions.allow.length;
-      if (removedCount > 0 && this.config?.debug) {
-        console.log(
-          `[ConfigManager] 新规则 "${rule}" 覆盖了 ${removedCount} 条旧规则，已自动清理`
-        );
-      }
-
-      // 添加新规则
-      permissions.allow.push(rule);
-      existingSettings.permissions = permissions;
-
-      await fs.writeFile(localSettingsPath, JSON.stringify(existingSettings, null, 2), {
-        mode: 0o600,
-        encoding: 'utf-8',
-      });
-
-      // 更新内存配置
-      if (this.config) {
-        this.config.permissions.allow = [...permissions.allow];
-      }
-    } catch (error) {
-      console.error('[ConfigManager] Failed to append local permission rule:', error);
-      throw new Error(
-        `保存本地权限规则失败: ${error instanceof Error ? error.message : '未知错误'}`
-      );
-    }
-  }
-
-  /**
-   * 判断 rule1 是否被 rule2 覆盖
-   * 使用 PermissionChecker 的匹配逻辑来判断
-   * @param rule1 旧规则
-   * @param rule2 新规则
-   */
-  private isRuleCoveredBy(rule1: string, rule2: string): boolean {
-    try {
-      // 动态导入 PermissionChecker
-      const { PermissionChecker } = require('./PermissionChecker.js');
-
-      // 创建只包含新规则的 checker
-      const checker = new PermissionChecker({
-        allow: [rule2],
-        ask: [],
-        deny: [],
-      });
-
-      // 从 rule1 解析出工具名和参数
-      const toolName = this.extractToolNameFromRule(rule1);
-      if (!toolName) return false;
-
-      const params = this.extractParamsFromRule(rule1);
-
-      // 构造描述符
-      const descriptor = {
-        toolName,
-        params,
-        affectedPaths: [],
-      };
-
-      // 检查 rule1 是否匹配 rule2
-      const checkResult = checker.check(descriptor);
-      return checkResult.result === 'allow';
-    } catch (error) {
-      // 解析失败，保守处理：不删除
-      console.warn(
-        `[ConfigManager] 无法判断规则覆盖关系: ${error instanceof Error ? error.message : '未知错误'}`
-      );
-      return false;
-    }
-  }
-
-  /**
-   * 从规则字符串中提取工具名
-   */
-  private extractToolNameFromRule(rule: string): string | null {
-    const match = rule.match(/^([A-Za-z0-9_]+)(\(|$)/);
-    return match ? match[1] : null;
-  }
-
-  /**
-   * 从规则字符串中提取参数
-   */
-  private extractParamsFromRule(rule: string): Record<string, unknown> {
-    const match = rule.match(/\((.*)\)$/);
-    if (!match) return {};
-
-    const paramString = match[1];
-    const params: Record<string, unknown> = {};
-
-    // 简单解析参数（key:value 格式）
-    const parts = this.smartSplitParams(paramString);
-    for (const part of parts) {
-      const colonIndex = part.indexOf(':');
-      if (colonIndex > 0) {
-        const key = part.slice(0, colonIndex).trim();
-        const value = part.slice(colonIndex + 1).trim();
-        params[key] = value;
-      }
-    }
-
-    return params;
-  }
-
-  /**
-   * 智能分割参数字符串（处理嵌套括号）
-   */
-  private smartSplitParams(str: string): string[] {
-    const result: string[] = [];
-    let current = '';
-    let braceDepth = 0;
-    let parenDepth = 0;
-
-    for (let i = 0; i < str.length; i++) {
-      const char = str[i];
-
-      if (char === '{') braceDepth++;
-      else if (char === '}') braceDepth--;
-      else if (char === '(') parenDepth++;
-      else if (char === ')') parenDepth--;
-
-      if (char === ',' && braceDepth === 0 && parenDepth === 0) {
-        result.push(current.trim());
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-
-    if (current) {
-      result.push(current.trim());
-    }
-
-    return result;
-  }
-
-  /**
-   * 设置权限模式
-   * @param mode 目标权限模式
-   * @param options.persist 是否持久化到配置文件 (默认仅更新内存)
-   * @param options.scope 持久化范围 (local | project | global)，默认 local
-   */
-  async setPermissionMode(
-    mode: PermissionMode,
-    options: { persist?: boolean; scope?: 'local' | 'project' | 'global' } = {}
-  ): Promise<void> {
-    if (!this.configLoaded || !this.config) {
-      await this.initialize();
-    }
-
-    if (!this.config) {
-      throw new Error('Config not initialized');
-    }
-
-    this.config.permissionMode = mode;
-
-    if (!options.persist) {
-      return;
-    }
-
-    try {
-      const scope = options.scope ?? 'local';
-      const targetPath = this.resolveSettingsPath(scope);
-      await this.writePermissionModeToSettings(targetPath, mode);
-    } catch (error) {
-      console.warn(
-        `[ConfigManager] Failed to persist permission mode (${mode}):`,
-        error
-      );
-      throw error;
-    }
-  }
-
-  private resolveSettingsPath(scope: 'local' | 'project' | 'global'): string {
-    switch (scope) {
-      case 'local':
-        return path.join(process.cwd(), '.blade', 'settings.local.json');
-      case 'project':
-        return path.join(process.cwd(), '.blade', 'settings.json');
-      case 'global':
-        return path.join(os.homedir(), '.blade', 'settings.json');
-      default:
-        return path.join(process.cwd(), '.blade', 'settings.local.json');
-    }
-  }
-
-  private async writePermissionModeToSettings(
-    filePath: string,
-    mode: PermissionMode
-  ): Promise<void> {
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    const existingSettings = (await this.loadJsonFile(filePath)) ?? {};
-    existingSettings.permissionMode = mode;
-    await fs.writeFile(filePath, JSON.stringify(existingSettings, null, 2), {
-      mode: 0o600,
-      encoding: 'utf-8',
-    });
-  }
-
-  /**
-   * 更新配置（持久化到文件）
-   */
-  async updateConfig(updates: Partial<BladeConfig>): Promise<void> {
-    if (!this.config) {
-      throw new Error('Config not initialized');
-    }
-
-    // 持久化到文件
-    await this.saveUserConfig(updates);
-  }
-
-  // ========================================
-  // 模型配置管理
-  // ========================================
-
-  /**
-   * 获取当前激活的模型配置
-   */
-  getCurrentModel(): ModelConfig {
-    const config = this.getConfig();
-
-    if (config.models.length === 0) {
-      throw new Error('❌ 没有可用的模型配置，请使用 /model add 添加模型');
-    }
-
-    const model = config.models.find((m) => m.id === config.currentModelId);
-    if (!model) {
-      logger.warn('当前模型 ID 无效，自动切换到第一个模型');
-      return config.models[0];
-    }
-
-    return model;
-  }
-
-  /**
-   * 获取所有模型配置
-   */
-  getAllModels(): ModelConfig[] {
-    const config = this.getConfig();
-    return config.models;
-  }
-
-  /**
-   * 切换模型（通过 ID）
-   */
-  async switchModel(modelId: string): Promise<void> {
-    const config = this.getConfig();
-
-    const model = config.models.find((m) => m.id === modelId);
-    if (!model) {
-      throw new Error(`❌ 模型配置不存在: ${modelId}`);
-    }
-
-    config.currentModelId = modelId;
-    await this.saveUserConfig(config);
-
-    logger.info(`✅ 已切换到模型: ${model.name} (${model.model})`);
-  }
-
-  /**
-   * 添加模型配置
-   */
-  async addModel(modelData: Omit<ModelConfig, 'id'>): Promise<ModelConfig> {
-    const config = this.getConfig();
-
-    const newModel: ModelConfig = {
-      id: nanoid(),
-      ...modelData,
-    };
-
-    config.models.push(newModel);
-
-    // 如果是第一个模型，自动设为当前模型
-    if (config.models.length === 1) {
-      config.currentModelId = newModel.id;
-    }
-
-    await this.saveUserConfig(config);
-    logger.info(`✅ 已添加模型配置: ${newModel.name}`);
-
-    return newModel;
-  }
-
-  /**
-   * 删除模型配置
-   */
-  async removeModel(modelId: string): Promise<void> {
-    const config = this.getConfig();
-
-    if (config.models.length === 1) {
-      throw new Error('❌ 不能删除唯一的模型配置');
-    }
-
-    const index = config.models.findIndex((m) => m.id === modelId);
-    if (index === -1) {
-      throw new Error(`❌ 模型配置不存在`);
-    }
-
-    const name = config.models[index].name;
-    config.models.splice(index, 1);
-
-    // 如果删除的是当前模型，自动切换到第一个
-    if (config.currentModelId === modelId) {
-      config.currentModelId = config.models[0].id;
-      logger.info(`已自动切换到: ${config.models[0].name}`);
-    }
-
-    await this.saveUserConfig(config);
-    logger.info(`✅ 已删除模型配置: ${name}`);
-  }
-
-  /**
-   * 更新模型配置
-   */
-  async updateModel(
-    modelId: string,
-    updates: Partial<Omit<ModelConfig, 'id'>>
-  ): Promise<void> {
-    const config = this.getConfig();
-
-    const index = config.models.findIndex((m) => m.id === modelId);
-    if (index === -1) {
-      throw new Error(`❌ 模型配置不存在`);
-    }
-
-    config.models[index] = {
-      ...config.models[index],
-      ...updates,
-    };
-
-    await this.saveUserConfig(config);
-    logger.info(`✅ 已更新模型配置: ${config.models[index].name}`);
-  }
-
-  /**
-   * 获取主题
-   */
-  getTheme(): string {
-    return this.getConfig().theme;
-  }
-
-  /**
-   * 获取权限配置
-   */
-  getPermissions(): PermissionConfig {
-    return this.getConfig().permissions;
-  }
-
-  /**
-   * 获取 Hooks 配置
-   */
-  getHooks(): HookConfig {
-    return this.getConfig().hooks;
-  }
-
-  /**
-   * 是否处于调试模式
-   */
-  isDebug(): boolean {
-    return Boolean(this.getConfig().debug);
   }
 
   /**
@@ -868,116 +352,6 @@ export class ConfigManager {
           `}\n`
       );
     }
-  }
-
-  // =========================================
-  // MCP 项目配置管理（新增）
-  // =========================================
-
-  /**
-   * 获取用户配置文件路径
-   */
-  private getUserConfigPath(): string {
-    return path.join(os.homedir(), '.blade', 'config.json');
-  }
-
-  /**
-   * 获取当前项目路径
-   */
-  private getCurrentProjectPath(): string {
-    return process.cwd();
-  }
-
-  /**
-   * 加载用户配置（按项目组织）
-   */
-  private async loadUserConfigByProject(): Promise<McpProjectsConfig> {
-    const userConfigPath = this.getUserConfigPath();
-
-    try {
-      if (await this.fileExists(userConfigPath)) {
-        const content = await fs.readFile(userConfigPath, 'utf-8');
-        return JSON.parse(content) as McpProjectsConfig;
-      }
-    } catch (error) {
-      console.warn(`[ConfigManager] Failed to load user config:`, error);
-    }
-
-    return {};
-  }
-
-  /**
-   * 保存用户配置（按项目组织）
-   */
-  private async saveUserConfigByProject(config: McpProjectsConfig): Promise<void> {
-    const userConfigPath = this.getUserConfigPath();
-    const dir = path.dirname(userConfigPath);
-
-    if (!(await this.fileExists(dir))) {
-      await fs.mkdir(dir, { recursive: true });
-    }
-
-    await fs.writeFile(userConfigPath, JSON.stringify(config, null, 2), 'utf-8');
-  }
-
-  /**
-   * 获取当前项目的配置
-   */
-  async getProjectConfig(): Promise<ProjectConfig> {
-    const projectPath = this.getCurrentProjectPath();
-    const userConfig = await this.loadUserConfigByProject();
-    return userConfig[projectPath] || {};
-  }
-
-  /**
-   * 更新当前项目的配置
-   */
-  async updateProjectConfig(updates: Partial<ProjectConfig>): Promise<void> {
-    const projectPath = this.getCurrentProjectPath();
-    const userConfig = await this.loadUserConfigByProject();
-
-    userConfig[projectPath] = {
-      ...userConfig[projectPath],
-      ...updates,
-    };
-
-    await this.saveUserConfigByProject(userConfig);
-  }
-
-  /**
-   * 获取当前项目的 MCP 服务器配置
-   */
-  async getMcpServers(): Promise<Record<string, McpServerConfig>> {
-    const projectConfig = await this.getProjectConfig();
-    return projectConfig.mcpServers || {};
-  }
-
-  /**
-   * 添加 MCP 服务器到当前项目
-   */
-  async addMcpServer(name: string, config: McpServerConfig): Promise<void> {
-    const servers = await this.getMcpServers();
-    servers[name] = config;
-    await this.updateProjectConfig({ mcpServers: servers });
-  }
-
-  /**
-   * 删除 MCP 服务器
-   */
-  async removeMcpServer(name: string): Promise<void> {
-    const servers = await this.getMcpServers();
-    delete servers[name];
-    await this.updateProjectConfig({ mcpServers: servers });
-  }
-
-  /**
-   * 重置项目级 .mcp.json 确认记录
-   */
-  async resetProjectChoices(): Promise<void> {
-    await this.updateProjectConfig({
-      enabledMcpjsonServers: [],
-      disabledMcpjsonServers: [],
-    });
   }
 }
 

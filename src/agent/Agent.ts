@@ -10,13 +10,15 @@
  * 负责：LLM 交互、工具执行、循环检测
  */
 
-import { EventEmitter } from 'events';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import * as os from 'os';
 import * as path from 'path';
-import { ConfigManager } from '../config/ConfigManager.js';
-import type { BladeConfig, PermissionConfig } from '../config/types.js';
-import { PermissionMode } from '../config/types.js';
+import {
+  type BladeConfig,
+  ConfigManager,
+  type PermissionConfig,
+  PermissionMode,
+} from '../config/index.js';
 import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
@@ -62,7 +64,7 @@ import type {
 // 创建 Agent 专用 Logger
 const logger = createLogger(LogCategory.AGENT);
 
-export class Agent extends EventEmitter {
+export class Agent {
   private config: BladeConfig;
   private runtimeOptions: AgentOptions;
   private isInitialized = false;
@@ -82,7 +84,6 @@ export class Agent extends EventEmitter {
     runtimeOptions: AgentOptions = {},
     executionPipeline?: ExecutionPipeline
   ) {
-    super();
     this.config = config;
     this.runtimeOptions = runtimeOptions;
     this.executionPipeline = executionPipeline || this.createDefaultPipeline();
@@ -221,7 +222,6 @@ export class Agent extends EventEmitter {
       this.log(
         `Agent初始化完成，已加载 ${this.executionPipeline.getRegistry().getAll().length} 个工具`
       );
-      this.emit('initialized');
     } catch (error) {
       this.error('Agent初始化失败', error);
       throw error;
@@ -237,7 +237,6 @@ export class Agent extends EventEmitter {
     }
 
     this.activeTask = task;
-    this.emit('taskStarted', task);
 
     try {
       this.log(`开始执行任务: ${task.id}`);
@@ -257,13 +256,11 @@ export class Agent extends EventEmitter {
       }
 
       this.activeTask = undefined;
-      this.emit('taskCompleted', task, response);
       this.log(`任务执行完成: ${task.id}`);
 
       return response;
     } catch (error) {
       this.activeTask = undefined;
-      this.emit('taskFailed', task, error);
       this.error(`任务执行失败: ${task.id}`, error);
       throw error;
     }
@@ -299,9 +296,8 @@ export class Agent extends EventEmitter {
           : await this.runLoop(enhancedMessage, context, loopOptions);
 
       if (!result.success) {
-        // 如果是用户中止，触发事件并返回空字符串（不抛出异常）
+        // 如果是用户中止，返回空字符串（不抛出异常）
         if (result.error?.type === 'aborted') {
-          this.emit('taskAborted', result.metadata);
           return ''; // 返回空字符串，让调用方自行处理
         }
         // 其他错误则抛出异常
@@ -625,7 +621,6 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         }
 
         // 触发轮次开始事件 (供 UI 显示进度)
-        this.emit('loopTurnStart', { turn: turnsCount, maxTurns });
         options?.onTurnStart?.({ turn: turnsCount, maxTurns });
 
         // 🔍 调试：打印发送给 LLM 的消息
@@ -776,12 +771,6 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           if (toolCall.type !== 'function') continue;
 
           try {
-            // 触发工具执行开始事件
-            this.emit('toolExecutionStart', {
-              tool: toolCall.function.name,
-              turn: turnsCount,
-            });
-
             // 🆕 触发工具开始回调（流式显示）
             if (options?.onToolStart) {
               options.onToolStart(toolCall);
@@ -883,13 +872,6 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
                 },
               };
             }
-
-            // 触发工具执行完成事件
-            this.emit('toolExecutionComplete', {
-              tool: toolCall.function.name,
-              success: result.success,
-              turn: turnsCount,
-            });
 
             // 调用 onToolResult 回调（如果提供）
             // 用于显示工具执行的完成摘要和详细内容
@@ -1340,7 +1322,6 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
     this.log('销毁Agent...');
 
     try {
-      this.removeAllListeners();
       this.isInitialized = false;
       this.log('Agent已销毁');
     } catch (error) {
@@ -1465,7 +1446,6 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
         ? '[Agent] 触发自动压缩'
         : `[Agent] [轮次 ${currentTurn}] 触发循环内自动压缩`;
     logger.debug(compactLogPrefix);
-    this.emit('compactionStart', { turn: currentTurn });
 
     try {
       const result = await CompactionService.compact(context.messages, {
@@ -1481,27 +1461,12 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
         // 使用压缩后的消息列表
         context.messages = result.compactedMessages;
 
-        // 触发完成事件（带轮次信息）
-        this.emit('compactionComplete', {
-          turn: currentTurn,
-          preTokens: result.preTokens,
-          postTokens: result.postTokens,
-          filesIncluded: result.filesIncluded,
-        });
-
         logger.debug(
           `[Agent] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} → ${result.postTokens} tokens (-${((1 - result.postTokens / result.preTokens) * 100).toFixed(1)}%)`
         );
       } else {
         // 降级策略执行成功，但使用了截断
         context.messages = result.compactedMessages;
-
-        this.emit('compactionFallback', {
-          turn: currentTurn,
-          preTokens: result.preTokens,
-          postTokens: result.postTokens,
-          error: result.error,
-        });
 
         logger.warn(
           `[Agent] [轮次 ${currentTurn}] 压缩使用降级策略: ${result.preTokens} → ${result.postTokens} tokens`
@@ -1534,7 +1499,6 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
       return true;
     } catch (error) {
       logger.error(`[Agent] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
-      this.emit('compactionFailed', { turn: currentTurn, error });
       // 压缩失败，返回 false
       return false;
     }
@@ -1563,7 +1527,6 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
           .map((t) => t.name)
           .join(', ')}`
       );
-      this.emit('toolsRegistered', builtinTools);
 
       // 注册 MCP 工具
       await this.registerMcpTools();

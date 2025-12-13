@@ -118,7 +118,7 @@ export const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
   permissions: {
     target: 'settings',
     defaultScope: 'local',
-    mergeStrategy: 'append-dedupe', // 追加 + 去重
+    mergeStrategy: 'replace', // 完全替换（允许删除规则）
     persistable: true,
   },
   hooks: {
@@ -326,7 +326,7 @@ export const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
 
 /**
  * 可持久化的字段集合
- * 与 ConfigManager.saveUserConfig 的行为对齐
+ * 从 FIELD_ROUTING_TABLE 中提取 persistable: true 的字段
  */
 export const PERSISTABLE_FIELDS = new Set(
   Object.entries(FIELD_ROUTING_TABLE)
@@ -492,15 +492,35 @@ export class ConfigService {
   }
 
   /**
-   * 追加权限规则（使用 append-dedupe 策略）
+   * 追加权限规则（手动实现 append-dedupe 策略）
+   * 默认 scope 为 'local'，与 FIELD_ROUTING_TABLE.permissions.defaultScope 一致
+   *
+   * ⚠️ 并发安全：整个 Read-Modify-Write 在 per-file mutex 保护下执行
    */
   async appendPermissionRule(rule: string, options: SaveOptions = {}): Promise<void> {
-    const scope = options.scope ?? 'global';
+    const scope = options.scope ?? 'local';
     const filePath = this.resolveFilePath('settings', scope);
 
-    // 直接读取-修改-写入（不使用通用 save 流程）
-    await this.flushTarget(filePath, {
-      permissions: { allow: [rule] },
+    // 使用 flushTargetWithModifier 确保 Read-Modify-Write 原子性
+    await this.flushTargetWithModifier(filePath, (existingConfig) => {
+      const existingPermissions = (existingConfig.permissions as PermissionConfig) ?? {
+        allow: [],
+        ask: [],
+        deny: [],
+      };
+
+      // 追加并去重
+      const updatedPermissions: PermissionConfig = {
+        allow: this.dedupeArray([...(existingPermissions.allow || []), rule]),
+        ask: existingPermissions.ask || [],
+        deny: existingPermissions.deny || [],
+      };
+
+      // 返回完整配置（保留其他字段）
+      return {
+        ...existingConfig,
+        permissions: updatedPermissions,
+      };
     });
   }
 
@@ -590,9 +610,12 @@ export class ConfigService {
    * 调度防抖保存
    */
   private scheduleSave(filePath: string, updates: Record<string, unknown>): void {
-    // 合并待处理更新
+    // 获取现有的待处理更新
     const existing = this.pendingUpdates.get(filePath) ?? {};
-    this.pendingUpdates.set(filePath, { ...existing, ...updates });
+
+    // 按字段合并策略合并（避免深层字段被覆盖）
+    const merged = this.mergePendingUpdates(existing, updates);
+    this.pendingUpdates.set(filePath, merged);
 
     // 取消已有定时器
     const existingTimer = this.timers.get(filePath);
@@ -629,6 +652,41 @@ export class ConfigService {
   }
 
   /**
+   * 合并待处理更新（按字段合并策略）
+   *
+   * 用于防抖场景：300ms 内多次 save 调用需要正确合并，避免深层字段被覆盖
+   */
+  private mergePendingUpdates(
+    existing: Record<string, unknown>,
+    updates: Record<string, unknown>
+  ): Record<string, unknown> {
+    const result = { ...existing };
+
+    for (const [key, value] of Object.entries(updates)) {
+      const routing = FIELD_ROUTING_TABLE[key];
+      if (!routing) {
+        // 未知字段直接替换
+        result[key] = value;
+        continue;
+      }
+
+      switch (routing.mergeStrategy) {
+        case 'replace':
+          result[key] = value;
+          break;
+        case 'append-dedupe':
+          this.applyAppendDedupe(result, key, value);
+          break;
+        case 'deep-merge':
+          this.applyDeepMerge(result, key, value);
+          break;
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * 刷新目标文件（带 Per-file Mutex）
    */
   private async flushTarget(
@@ -645,6 +703,47 @@ export class ConfigService {
     // 使用 Mutex 确保串行执行
     await mutex.runExclusive(async () => {
       await this.performWrite(filePath, updates);
+    });
+  }
+
+  /**
+   * 使用修改函数刷新目标文件（确保 Read-Modify-Write 原子性）
+   * 用于需要基于当前内容进行复杂修改的场景（如追加权限规则）
+   *
+   * @param filePath - 目标文件路径
+   * @param modifier - 修改函数，接收当前配置，返回更新后的完整配置
+   */
+  private async flushTargetWithModifier(
+    filePath: string,
+    modifier: (existingConfig: Record<string, unknown>) => Record<string, unknown>
+  ): Promise<void> {
+    // 获取或创建该文件的 Mutex
+    let mutex = this.fileLocks.get(filePath);
+    if (!mutex) {
+      mutex = new Mutex();
+      this.fileLocks.set(filePath, mutex);
+    }
+
+    // 使用 Mutex 确保串行执行
+    await mutex.runExclusive(async () => {
+      // 1. 确保目录存在
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+
+      // 2. 读取当前磁盘内容（Read）
+      let existingConfig: Record<string, unknown> = {};
+      try {
+        const content = await fs.readFile(filePath, 'utf-8');
+        existingConfig = JSON.parse(content);
+      } catch {
+        // 文件不存在或格式错误，使用空对象
+        existingConfig = {};
+      }
+
+      // 3. 应用修改函数（Modify）
+      const updatedConfig = modifier(existingConfig);
+
+      // 4. 原子写入（Write）
+      await this.atomicWrite(filePath, updatedConfig);
     });
   }
 

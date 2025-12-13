@@ -139,6 +139,7 @@ export interface AppState {
   sessionSelectorData: SessionMetadata[] | undefined;
   modelEditorTarget: ModelConfig | null;
   todos: TodoItem[];
+  awaitingSecondCtrlC: boolean; // 是否等待第二次 Ctrl+C 退出
 }
 
 /**
@@ -153,6 +154,7 @@ export interface AppActions {
   closeModal: () => void;
   setTodos: (todos: TodoItem[]) => void;
   updateTodo: (todo: TodoItem) => void;
+  setAwaitingSecondCtrlC: (awaiting: boolean) => void;
 }
 
 /**

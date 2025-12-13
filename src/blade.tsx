@@ -13,16 +13,25 @@ import {
   validatePermissions,
 } from './cli/middleware.js';
 // 导入命令处理器
-import { configCommands } from './commands/config.js';
 import { doctorCommands } from './commands/doctor.js';
 import { installCommands } from './commands/install.js';
 import { mcpCommands } from './commands/mcp.js';
 import { handlePrintMode } from './commands/print.js';
 import { updateCommands } from './commands/update.js';
-import { createLogger, LogCategory } from './logging/Logger.js';
+import { getConfigService } from './config/index.js';
+import { Logger } from './logging/Logger.js';
 import { AppWrapper as BladeApp } from './ui/App.js';
 
-const logger = createLogger(LogCategory.GENERAL);
+// ⚠️ 关键：在创建任何 logger 之前，先解析 --debug 参数并设置全局配置
+// 这样可以确保所有 logger（包括 middleware、commands 中的）都能正确输出到终端
+const rawArgs = hideBin(process.argv);
+const debugIndex = rawArgs.indexOf('--debug');
+if (debugIndex !== -1) {
+  // --debug 可能带参数（分类过滤）或不带（启用全部）
+  const nextArg = rawArgs[debugIndex + 1];
+  const debugValue = nextArg && !nextArg.startsWith('-') ? nextArg : true;
+  Logger.setGlobalDebug(debugValue);
+}
 
 export async function main() {
   // 首先检查是否是 print 模式
@@ -48,7 +57,6 @@ export async function main() {
     .middleware([validatePermissions, loadConfiguration, validateOutput])
 
     // 注册命令
-    .command(configCommands)
     .command(mcpCommands)
     .command(doctorCommands)
     .command(updateCommands)
@@ -65,18 +73,19 @@ export async function main() {
     // 错误处理
     .fail((msg, err, yargs) => {
       if (err) {
-        logger.error('💥 An error occurred:');
-        logger.error(err.message);
+        // CLI 错误输出直接使用 console.error（总是可见，不依赖 debug 模式）
+        console.error('💥 An error occurred:');
+        console.error(err.message);
         // 总是显示堆栈信息（用于调试）
-        logger.error('\nStack trace:');
-        logger.error(err.stack);
+        console.error('\nStack trace:');
+        console.error(err.stack);
         process.exit(1);
       }
 
       if (msg) {
-        logger.error('❌ Invalid arguments:');
-        logger.error(msg);
-        logger.error('\n💡 Did you mean:');
+        console.error('❌ Invalid arguments:');
+        console.error(msg);
+        console.error('\n💡 Did you mean:');
         yargs.showHelp();
         process.exit(1);
       }
@@ -110,19 +119,10 @@ export async function main() {
         delete appProps.$0;
         delete appProps.message;
 
-        const { unmount } = render(React.createElement(BladeApp, appProps), {
+        render(React.createElement(BladeApp, appProps), {
           patchConsole: true,
-          exitOnCtrlC: false,
+          exitOnCtrlC: false, // 由 useCtrlCHandler 处理（支持智能双击退出）
         });
-
-        // 处理退出信号
-        const cleanup = () => {
-          unmount();
-          process.exit(0);
-        };
-
-        process.on('SIGINT', cleanup);
-        process.on('SIGTERM', cleanup);
       }
     );
 
@@ -130,7 +130,7 @@ export async function main() {
   try {
     await cli.parse();
   } catch (error) {
-    logger.error('Parse error:', error);
+    console.error('❌ Parse error:', error);
     process.exit(1);
   }
 }

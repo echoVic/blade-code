@@ -30,7 +30,7 @@ export interface ChatContext {
 
 /**
  * Agent 创建选项 - 仅包含运行时参数
- * Agent 的配置来自 ConfigManager.getConfig() (BladeConfig)
+ * Agent 的配置来自 Store (通过 getConfig() 获取 BladeConfig)
  */
 export interface AgentOptions {
   // 运行时参数

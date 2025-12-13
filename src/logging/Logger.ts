@@ -7,6 +7,10 @@
  * 3. 支持分类日志（agent, ui, tool, service 等）
  * 4. 提供多级别日志（debug, info, warn, error）
  * 5. 使用 Logger.setGlobalDebug() 设置配置（避免循环依赖）
+ *
+ * 双路输出架构：
+ * - 文件：Pino file transport（JSON 格式，始终记录）
+ * - 终端：手动 console.error 输出（应用分类过滤）
  */
 
 import { promises as fs } from 'node:fs';
@@ -60,43 +64,23 @@ async function ensureLogDirectory(): Promise<string> {
 
 /**
  * 创建 Pino 日志实例（单例）
+ * 注意：只用于文件日志，终端输出由 Logger.log() 手动控制
  */
 let pinoInstance: PinoLogger | null = null;
-async function getPinoInstance(debugEnabled: boolean): Promise<PinoLogger> {
+async function getPinoInstance(): Promise<PinoLogger> {
   if (pinoInstance) {
     return pinoInstance;
   }
 
   const logFilePath = await ensureLogDirectory();
 
-  // 配置 pino 传输（同时输出到终端和文件）
-  const targets: pino.TransportTargetOptions[] = [
-    // 文件传输：始终记录 JSON 格式日志
-    {
-      target: 'pino/file',
-      options: { destination: logFilePath },
-      level: 'debug',
-    },
-  ];
-
-  // 终端传输：仅在 debug 模式启用，使用 pino-pretty
-  if (debugEnabled) {
-    targets.push({
-      target: 'pino-pretty',
-      options: {
-        colorize: true,
-        translateTime: 'HH:MM:ss',
-        ignore: 'pid,hostname',
-        messageFormat: '[{category}] {msg}',
-      },
-      level: 'debug',
-    });
-  }
-
+  // 只配置文件传输（始终记录 JSON 格式日志）
+  // 终端输出由 Logger.log() 手动控制（应用分类过滤）
   pinoInstance = pino({
     level: 'debug',
     transport: {
-      targets,
+      target: 'pino/file',
+      options: { destination: logFilePath },
     },
   });
 
@@ -146,7 +130,7 @@ export class Logger {
    */
   private async initPino(): Promise<void> {
     try {
-      const basePino = await getPinoInstance(this.enabled);
+      const basePino = await getPinoInstance();
       // 创建 child logger 用于分类
       this.pinoLogger = basePino.child({ category: this.category });
     } catch (error) {
@@ -282,25 +266,29 @@ export class Logger {
   }
 
   /**
-   * 内部日志输出方法（使用 Pino）
+   * 内部日志输出方法（双路输出）
+   * - 文件：始终通过 Pino 写入
+   * - 终端：应用 shouldLogToConsole 过滤（支持分类过滤）
    */
   private log(level: LogLevel, ...args: unknown[]): void {
-    // 如果 pino 未初始化，回退到 console（仅在极端情况）
-    if (!this.pinoLogger) {
-      if (this.shouldLogToConsole(level)) {
-        const prefix = `[${this.category}] [${LogLevel[level]}]`;
-        console.log(prefix, ...args);
-      }
-      return;
+    const message = args
+      .map((arg) => (typeof arg === 'object' ? JSON.stringify(arg) : String(arg)))
+      .join(' ');
+
+    // 1. 始终写入文件（通过 Pino）
+    if (this.pinoLogger) {
+      const pinoLevel = PINO_LEVELS[level];
+      this.pinoLogger[pinoLevel as 'debug' | 'info' | 'warn' | 'error'](message);
     }
 
-    // 使用 Pino 记录日志（始终写入文件）
-    const pinoLevel = PINO_LEVELS[level];
-    const message = args.map((arg) => (typeof arg === 'object' ? JSON.stringify(arg) : String(arg))).join(' ');
+    // 2. 根据过滤规则决定是否输出到终端
+    if (this.shouldLogToConsole(level)) {
+      const levelName = LogLevel[level];
+      const prefix = `[${this.category}] [${levelName}]`;
 
-    // Pino 会根据配置的 transport 决定是否输出到终端
-    // 文件日志始终记录
-    this.pinoLogger[pinoLevel as 'debug' | 'info' | 'warn' | 'error'](message);
+      // 使用 console.error 确保输出到 stderr（不被 Ink patchConsole 拦截）
+      console.error(prefix, ...args);
+    }
   }
 
   /**

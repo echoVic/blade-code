@@ -192,6 +192,149 @@ Blade 提供完整的 Markdown 渲染支持，包含以下组件：
 - 用户文档：[docs/public/guides/markdown-support.md](docs/public/guides/markdown-support.md)
 - 开发者文档：[docs/development/implementation/markdown-renderer.md](docs/development/implementation/markdown-renderer.md)
 
+## State Management Architecture
+
+### Zustand Store 设计
+
+Blade 使用 **Zustand** 作为全局状态管理库，采用 **单一数据源 (SSOT)** 架构：
+
+**核心原则**：
+- **Store 是唯一读取源** - 所有组件和服务从 Store 读取状态
+- **vanilla.ts actions 是唯一写入入口** - 自动同步内存 + 持久化
+- **ConfigManager 仅用于 Bootstrap** - 初始化时加载配置文件
+- **ConfigService 负责持久化** - 运行时写入配置文件
+
+**架构图**：
+```
+Bootstrap (启动时):
+  ConfigManager.initialize() → 返回 BladeConfig → Store.setConfig()
+
+Runtime (运行时):
+  UI/Agent → vanilla.ts actions → Store (内存SSOT)
+                ↓
+           ConfigService (持久化到 config.json/settings.json)
+```
+
+### 状态管理最佳实践
+
+**✅ 推荐：从 Store 读取**
+```typescript
+import { getConfig, getCurrentModel } from '../store/vanilla.js';
+
+const config = getConfig();          // 读取完整配置
+const model = getCurrentModel();     // 读取当前模型
+```
+
+**✅ 推荐：通过 actions 写入**
+```typescript
+import { configActions } from '../store/vanilla.js';
+
+// 自动同步内存 + 持久化
+await configActions().addModel({...});
+await configActions().setPermissionMode('yolo');
+```
+
+**❌ 避免：直接调用 ConfigManager**
+```typescript
+// ❌ 错误：绕过 Store，导致数据不一致
+const configManager = ConfigManager.getInstance();
+await configManager.addModel({...});  // Store 未更新！
+```
+
+**React 组件订阅**：
+```typescript
+// ✅ 使用选择器（精准订阅）
+import { useCurrentModel, usePermissionMode } from '../store/selectors/index.js';
+
+const model = useCurrentModel();
+const mode = usePermissionMode();
+
+// ✅ 组合选择器使用 useShallow 优化
+import { useShallow } from 'zustand/react/shallow';
+
+const { field1, field2 } = useBladeStore(
+  useShallow((state) => ({
+    field1: state.slice.field1,
+    field2: state.slice.field2,
+  }))
+);
+```
+
+### Store 初始化规则
+
+**⚠️ 关键规则**：任何调用 `configActions()` 或读取 `getConfig()` 的代码前，必须确保 Store 已初始化。
+
+**统一防御点（推荐）**：
+```typescript
+import { ensureStoreInitialized } from '../store/vanilla.js';
+
+// 在执行任何依赖 Store 的逻辑前
+await ensureStoreInitialized();
+```
+
+**`ensureStoreInitialized()` 特性**：
+- ✅ **幂等**：已初始化直接返回（性能无负担）
+- ✅ **并发安全**：同一时刻只初始化一次（共享 Promise）
+- ✅ **失败重试**：初始化失败后，下次调用会重新尝试
+- ✅ **明确报错**：初始化失败抛出详细错误信息
+
+**已添加防御的路径**：
+| 路径 | 防御点 | 说明 |
+|------|--------|------|
+| CLI 命令 | `middleware.ts` | 初始化失败会退出并报错 |
+| Slash Commands | `useCommandHandler.ts` | 执行前统一调用 `ensureStoreInitialized()` |
+| Agent 创建 | `Agent.create()` | 内置防御性检查 |
+| Config Actions | 各方法内部 | 检查 `if (!config) throw` |
+
+**⚠️ 竞态风险**：
+- UI 初始化过程中用户立即输入命令
+- 多个 slash command 并发执行
+- 非 UI 场景（测试/脚本/print mode）复用
+
+**✅ 推荐模式**：
+```typescript
+// Slash command 执行前
+if (isSlashCommand(command)) {
+  await ensureStoreInitialized(); // 统一防御点
+  const result = await executeSlashCommand(command, context);
+}
+
+// CLI 子命令执行前
+export const myCommand: CommandModule = {
+  handler: async (argv) => {
+    await ensureStoreInitialized(); // 防御性检查
+    const config = getConfig();
+    // ... 使用 config
+  }
+};
+```
+
+**❌ 避免模式**：
+```typescript
+// ❌ 错误：假设已初始化
+const config = getConfig();
+if (!config) {
+  // 太迟了，某些路径可能已经踩坑
+}
+
+// ❌ 错误：静默吞掉初始化失败
+try {
+  await ensureStoreInitialized();
+} catch (error) {
+  console.warn('初始化失败，继续执行'); // 危险！
+}
+```
+
+### Store 初始化机制
+
+三层初始化防护：
+
+1. **UI 路径**：`App.tsx` → useEffect 初始化 Store
+2. **CLI 路径**：`middleware.ts` → loadConfiguration 初始化 Store
+3. **防御路径**：`Agent.create()` → ensureStoreInitialized() 兜底
+
+详见：[Store 与 Config 架构统一文档](docs/development/implementation/store-config-unification.md)
+
 ## Slash Commands
 
 Blade 提供内置的斜杠命令系统，用于执行特定的系统操作。所有 slash 命令实现位于 [src/slash-commands/](src/slash-commands/)。

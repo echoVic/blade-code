@@ -2,9 +2,12 @@ import { useMemoizedFn } from 'ahooks';
 import React, { useEffect, useState } from 'react';
 import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
 import type { GlobalOptions } from '../cli/types.js';
-import { ConfigManager, mergeRuntimeConfig } from '../config/ConfigManager.js';
-import { DEFAULT_CONFIG } from '../config/defaults.js';
-import type { RuntimeConfig } from '../config/types.js';
+import {
+  ConfigManager,
+  DEFAULT_CONFIG,
+  mergeRuntimeConfig,
+  type RuntimeConfig,
+} from '../config/index.js';
 import { HookManager } from '../hooks/HookManager.js';
 import { Logger } from '../logging/Logger.js';
 import { appActions, getState } from '../store/vanilla.js';
@@ -66,8 +69,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
     try {
       // 1. 加载配置文件
       const configManager = ConfigManager.getInstance();
-      await configManager.initialize();
-      const baseConfig = configManager.getConfig();
+      const baseConfig = await configManager.initialize();
 
       // 2. 合并 CLI 参数生成 RuntimeConfig
       const mergedConfig = mergeRuntimeConfig(baseConfig, props);

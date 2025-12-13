@@ -3,6 +3,7 @@ import React from 'react';
 import { PermissionMode } from '../../config/types.js';
 import {
   useActiveModal,
+  useAwaitingSecondCtrlC,
   useIsReady,
   useIsThinking,
   usePermissionMode,
@@ -22,6 +23,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const permissionMode = usePermissionMode();
   const activeModal = useActiveModal();
   const showShortcuts = activeModal === 'shortcuts';
+  const awaitingSecondCtrlC = useAwaitingSecondCtrlC();
 
   // 渲染模式提示（仅非 DEFAULT 模式显示）
   const renderModeIndicator = () => {
@@ -100,6 +102,8 @@ export const ChatStatusBar: React.FC = React.memo(() => {
         <Text color="red">⚠ API 密钥未配置</Text>
       ) : isProcessing ? (
         <Text color="yellow">Processing...</Text>
+      ) : awaitingSecondCtrlC ? (
+        <Text color="yellow">再按一次 Ctrl+C 退出</Text>
       ) : (
         <Text color="green">Ready</Text>
       )}
