@@ -10,7 +10,6 @@
  * 负责：LLM 交互、工具执行、循环检测
  */
 
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import * as os from 'os';
 import * as path from 'path';
 import {
@@ -47,10 +46,6 @@ import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import { type Tool, type ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
-import {
-  type LoopDetectionConfig,
-  LoopDetectionService,
-} from './LoopDetectionService.js';
 import { subagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
   AgentOptions,
@@ -76,7 +71,6 @@ export class Agent {
   // 核心组件
   private chatService!: IChatService;
   private executionEngine!: ExecutionEngine;
-  private loopDetector!: LoopDetectionService;
   private attachmentCollector?: AttachmentCollector;
 
   constructor(
@@ -198,19 +192,7 @@ export class Agent {
       // 4. 初始化执行引擎
       this.executionEngine = new ExecutionEngine(this.chatService);
 
-      // 5. 初始化循环检测服务
-      const loopConfig: LoopDetectionConfig = {
-        toolCallThreshold: 5, // 工具调用重复5次触发
-        contentRepeatThreshold: 10, // 内容重复10次触发
-        llmCheckInterval: 30, // 每30轮进行LLM检测
-        enableDynamicThreshold: true, // 启用动态阈值调整
-        enableLlmDetection: true, // 启用LLM智能检测
-        whitelistedTools: [], // 白名单工具（如监控工具）
-        maxWarnings: 3, // 最大警告次数（从2提高到3，给模型更多机会改正）
-      };
-      this.loopDetector = new LoopDetectionService(loopConfig, this.chatService);
-
-      // 6. 初始化附件收集器（@ 文件提及）
+      // 5. 初始化附件收集器（@ 文件提及）
       this.attachmentCollector = new AttachmentCollector({
         cwd: process.cwd(),
         maxFileSize: 1024 * 1024, // 1MB
@@ -310,9 +292,9 @@ export class Agent {
         const planContent = result.metadata.planContent as string | undefined;
         logger.debug(`🔄 Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
 
-        // ✅ 使用 configActions 自动同步内存 + 持久化
-        await configActions().setPermissionMode(targetMode, { immediate: true });
-        logger.debug(`✅ 权限模式已持久化: ${targetMode}`);
+        // 更新内存中的权限模式（运行时状态，不持久化）
+        await configActions().setPermissionMode(targetMode);
+        logger.debug(`✅ 权限模式已更新: ${targetMode}`);
 
         // 创建新的 context，使用批准的目标模式
         const newContext: ChatContext = {
@@ -381,21 +363,9 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
     // Plan 模式差异 2: 在用户消息中注入 system-reminder
     const messageWithReminder = createPlanModeReminder(message);
 
-    // Plan 模式差异 3: 跳过内容循环检测
-    const skipContentDetection = true;
-
-    // Plan 模式差异 4: 配置 Plan 模式循环检测
-    this.loopDetector.setPlanModeConfig(this.config.planMode);
-
     // 调用通用循环，传入 Plan 模式专用配置
     // 注意：不再传递 isPlanMode 参数，executeLoop 会从 context.permissionMode 读取
-    return this.executeLoop(
-      messageWithReminder,
-      context,
-      options,
-      systemPrompt,
-      skipContentDetection
-    );
+    return this.executeLoop(messageWithReminder, context, options, systemPrompt);
   }
 
   /**
@@ -415,17 +385,8 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       ? `${envContext}\n\n---\n\n${this.systemPrompt}`
       : envContext;
 
-    // 普通模式不跳过内容循环检测
-    const skipContentDetection = false;
-
     // 调用通用循环
-    return this.executeLoop(
-      message,
-      context,
-      options,
-      systemPrompt,
-      skipContentDetection
-    );
+    return this.executeLoop(message, context, options, systemPrompt);
   }
 
   /**
@@ -436,14 +397,12 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
    * @param context - 聊天上下文（包含 permissionMode，用于决定工具暴露策略）
    * @param options - 循环选项
    * @param systemPrompt - 系统提示词（Plan 模式和普通模式使用不同的提示词）
-   * @param skipContentDetection - 是否跳过内容循环检测（Plan 模式为 true）
    */
   private async executeLoop(
     message: string,
     context: ChatContext,
     options?: LoopOptions,
-    systemPrompt?: string,
-    skipContentDetection = false
+    systemPrompt?: string
   ): Promise<LoopResult> {
     if (!this.isInitialized) {
       throw new Error('Agent未初始化');
@@ -544,7 +503,9 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       let totalTokens = 0; //- 累计 token 使用量
       let lastPromptTokens: number | undefined; // 上一轮 LLM 返回的真实 prompt tokens
 
-      while (turnsCount < maxTurns) {
+      // 无限循环，达到轮次上限时自动压缩并重置计数器继续
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
         // === 1. 检查中断信号 ===
         if (options?.signal?.aborted) {
           return {
@@ -704,6 +665,42 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
         // 4. 检查是否需要工具调用（任务完成条件）
         if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
+          // === 检测"意图未完成"模式 ===
+          // 某些模型（如 qwen）会说"让我来..."但不实际调用工具
+          const INCOMPLETE_INTENT_PATTERNS = [
+            /：\s*$/, // 中文冒号结尾
+            /:\s*$/, // 英文冒号结尾
+            /\.\.\.\s*$/, // 省略号结尾
+            /让我(先|来|开始|查看|检查|修复)/, // 中文意图词
+            /Let me (first|start|check|look|fix)/i, // 英文意图词
+          ];
+
+          const content = turnResult.content || '';
+          const isIncompleteIntent = INCOMPLETE_INTENT_PATTERNS.some((p) =>
+            p.test(content)
+          );
+
+          // 统计最近的重试消息数量（避免无限循环）
+          const RETRY_PROMPT = '请执行你提到的操作，不要只是描述。';
+          const recentRetries = messages
+            .slice(-10)
+            .filter((m) => m.role === 'user' && m.content === RETRY_PROMPT).length;
+
+          if (isIncompleteIntent && recentRetries < 2) {
+            logger.debug(
+              `⚠️ 检测到意图未完成（重试 ${recentRetries + 1}/2）: "${content.slice(-50)}"`
+            );
+
+            // 追加提示消息，要求 LLM 执行操作
+            messages.push({
+              role: 'user',
+              content: RETRY_PROMPT,
+            });
+
+            // 继续循环，不返回
+            continue;
+          }
+
           logger.debug('✅ 任务完成 - LLM 未请求工具调用');
 
           // === 保存助手最终响应到 JSONL ===
@@ -914,8 +911,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
             // 如果是 TODO 工具,直接更新 store
             if (
-              (toolCall.function.name === 'TodoWrite' ||
-                toolCall.function.name === 'TodoRead') &&
+              toolCall.function.name === 'TodoWrite' &&
               result.success &&
               result.llmContent
             ) {
@@ -980,141 +976,97 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           };
         }
 
-        // === Plan 模式专用：检测连续无文本输出的循环 ===
-        if (context.permissionMode === 'plan') {
-          const hasTextOutput = !!(
-            turnResult.content && turnResult.content.trim() !== ''
+        // === 7. 检查轮次上限并自动压缩 ===
+        // 达到轮次上限时，自动压缩上下文并重置计数器继续对话
+        if (turnsCount >= maxTurns) {
+          const isHitSafetyLimit =
+            configuredMaxTurns === -1 || configuredMaxTurns > SAFETY_LIMIT;
+          const actualLimit = isHitSafetyLimit ? SAFETY_LIMIT : configuredMaxTurns;
+
+          logger.warn(
+            `⚠️ 达到${isHitSafetyLimit ? '安全上限' : '最大轮次限制'} ${actualLimit}，自动压缩上下文...`
           );
-          const planLoopResult =
-            this.loopDetector.detectPlanModeToolOnlyLoop(hasTextOutput);
 
-          if (!hasTextOutput) {
-            logger.debug(
-              `[Plan Mode] 连续无文本输出: ${planLoopResult.consecutiveCount}/${this.config.planMode.toolOnlyThreshold}`
-            );
-          }
-
-          if (planLoopResult.shouldWarn && planLoopResult.warningMessage) {
-            logger.warn(
-              `[Plan Mode] 检测到工具循环 - 连续 ${planLoopResult.consecutiveCount} 轮无文本输出，注入警告`
-            );
-
-            // 将过渡语和警告合并为一条 assistant 消息
-            // 避免连续 assistant 消息导致某些模型（如 DeepSeek）返回空响应
-            messages.push({
-              role: 'assistant',
-              content: `Let me pause and summarize my findings so far before continuing with more research.\n\n${planLoopResult.warningMessage}`,
+          // 调用 CompactionService 进行压缩
+          try {
+            const chatConfig = this.chatService.getConfig();
+            const compactResult = await CompactionService.compact(context.messages, {
+              trigger: 'auto',
+              modelName: chatConfig.model,
+              maxContextTokens: chatConfig.maxContextTokens ?? this.config.maxContextTokens,
+              apiKey: chatConfig.apiKey,
+              baseURL: chatConfig.baseUrl,
+              actualPreTokens: lastPromptTokens,
             });
-          }
-        }
 
-        // 7. 循环检测 - 检测是否陷入死循环
-        const loopDetected = await this.loopDetector.detect(
-          turnResult.toolCalls.filter(
-            (tc: ChatCompletionMessageToolCall) => tc.type === 'function'
-          ),
-          turnsCount,
-          messages,
-          skipContentDetection // 使用传入的参数
-        );
+            // 更新 context.messages 为压缩后的消息
+            context.messages = compactResult.compactedMessages;
 
-        if (loopDetected?.detected) {
-          // 渐进式策略: 先警告,多次后才停止
-          // 关键改进：给出具体指示，而不是让模型解释自己
-          const warningMsg = `⚠️ Loop detected (${loopDetected.warningCount}/${this.loopDetector['maxWarnings']}): ${loopDetected.reason}
+            // 重建 messages 数组
+            const systemMsg = messages.find((m) => m.role === 'system');
+            messages.length = 0;
+            if (systemMsg) {
+              messages.push(systemMsg);
+            }
+            messages.push(...context.messages);
 
-IMPORTANT: Do NOT explain or justify yourself. Instead:
-1. If you were about to call a tool, call it NOW
-2. If you need to do something different, do it NOW
-3. No filler text - action only`;
-
-          if (loopDetected.shouldStop) {
-            // 超过最大警告次数,停止任务
-            logger.warn(`🔴 ${warningMsg}\n任务已停止。`);
-            return {
-              success: false,
-              error: {
-                type: 'loop_detected',
-                message: `检测到循环: ${loopDetected.reason}`,
-              },
-              metadata: {
-                turnsCount,
-                toolCallsCount: allToolResults.length,
-                duration: Date.now() - startTime,
-              },
-            };
-          } else {
-            // 注入警告消息,让 LLM 有机会自我修正
-            logger.warn(`⚠️ ${warningMsg}`);
-            messages.push({
+            // 添加继续执行的指令，确保 LLM 不会因为摘要而停止
+            const continueMessage: Message = {
               role: 'user',
-              content: warningMsg,
-            });
-            continue; // 跳过工具执行,让 LLM 重新思考
-          }
-        }
+              content:
+                'This session is being continued from a previous conversation that ran out of context. ' +
+                'The conversation is summarized above.\n\n' +
+                'Please continue the conversation from where we left it off without asking the user any further questions. ' +
+                'Continue with the last task that you were asked to work on.',
+            };
+            messages.push(continueMessage);
+            context.messages.push(continueMessage);
 
-        // 8. 历史压缩 - 可配置（默认开启）
-        if (
-          options?.autoCompact !== false &&
-          turnsCount % 10 === 0 &&
-          messages.length > 100
-        ) {
-          logger.debug(`🗜️ 历史消息过长 (${messages.length}条)，进行压缩...`);
-          // 保留系统提示 + 最近80条消息
-          const systemMsg = messages.find((m) => m.role === 'system');
-          const recentMessages = messages.slice(-80);
-          messages.length = 0;
-          if (systemMsg && !recentMessages.some((m) => m.role === 'system')) {
-            messages.push(systemMsg);
+            // 保存压缩数据到 JSONL
+            try {
+              const contextMgr = this.executionEngine?.getContextManager();
+              if (contextMgr && context.sessionId) {
+                await contextMgr.saveCompaction(
+                  context.sessionId,
+                  compactResult.summary,
+                  {
+                    trigger: 'auto',
+                    preTokens: compactResult.preTokens,
+                    postTokens: compactResult.postTokens,
+                    filesIncluded: compactResult.filesIncluded,
+                  },
+                  null
+                );
+              }
+            } catch (saveError) {
+              logger.warn('[Agent] 保存压缩数据失败:', saveError);
+            }
+
+            // 重置轮次计数
+            turnsCount = 0;
+            logger.info(
+              `✅ 上下文已压缩 (${compactResult.preTokens} → ${compactResult.postTokens} tokens)，重置轮次计数，继续对话`
+            );
+          } catch (compactError) {
+            // 压缩失败时的降级处理：简单截断消息
+            logger.error('[Agent] 压缩失败，使用降级策略:', compactError);
+
+            const systemMsg = messages.find((m) => m.role === 'system');
+            const recentMessages = messages.slice(-80);
+            messages.length = 0;
+            if (systemMsg && !recentMessages.some((m) => m.role === 'system')) {
+              messages.push(systemMsg);
+            }
+            messages.push(...recentMessages);
+            context.messages = messages.filter((m) => m.role !== 'system');
+
+            turnsCount = 0;
+            logger.warn(`⚠️ 降级压缩完成，保留 ${messages.length} 条消息，继续对话`);
           }
-          messages.push(...recentMessages);
-          logger.debug(`🗜️ 压缩后保留 ${messages.length} 条消息`);
         }
 
         // 继续下一轮循环...
       }
-
-      // 8. 达到最大轮次限制
-      const isHitSafetyLimit =
-        configuredMaxTurns === -1 || configuredMaxTurns > SAFETY_LIMIT;
-      const actualLimit = isHitSafetyLimit ? SAFETY_LIMIT : configuredMaxTurns;
-
-      logger.warn(
-        `⚠️ 达到${isHitSafetyLimit ? '安全上限' : '最大轮次限制'} ${actualLimit}`
-      );
-
-      let helpMessage = `已达到${isHitSafetyLimit ? '安全上限' : '最大处理轮次'} ${actualLimit}。\n\n`;
-
-      if (isHitSafetyLimit) {
-        helpMessage += `💡 这是为了防止无限循环的硬编码安全限制。\n`;
-        helpMessage += `   当前配置: maxTurns=${configuredMaxTurns}\n\n`;
-      }
-
-      helpMessage += `📝 如需调整限制，请使用以下方式：\n`;
-      helpMessage += `  • CLI 参数: blade --max-turns 200\n`;
-      helpMessage += `  • 配置文件: ~/.blade/config.json 中设置 "maxTurns": 200\n`;
-      helpMessage += `  • 环境变量: export BLADE_MAX_TURNS=200\n\n`;
-      helpMessage += `⚠️  提示:\n`;
-      helpMessage += `  • -1 = 无限制（受安全上限 ${SAFETY_LIMIT} 保护）\n`;
-      helpMessage += `  •  0 = 完全禁用对话功能\n`;
-      helpMessage += `  •  N > 0 = 限制为 N 轮（最多 ${SAFETY_LIMIT} 轮）`;
-
-      return {
-        success: false,
-        error: {
-          type: 'max_turns_exceeded',
-          message: helpMessage,
-        },
-        metadata: {
-          turnsCount,
-          toolCallsCount: allToolResults.length,
-          duration: Date.now() - startTime,
-          configuredMaxTurns,
-          actualMaxTurns: actualLimit,
-          hitSafetyLimit: isHitSafetyLimit,
-        },
-      };
     } catch (error) {
       // 检查是否是用户主动中止
       if (

@@ -220,27 +220,6 @@ class SecurityManager {
 - ⚠️ 风险评估系统
 - 🔒 敏感数据加密
 
-## 📊 遥测系统
-
-### Telemetry SDK
-指标收集和错误跟踪系统。
-
-```typescript
-// src/telemetry/TelemetrySDK.ts
-class TelemetrySDK {
-  trackEvent(event: string, properties?: any): void
-  trackError(error: Error, context?: any): void
-  trackMetric(name: string, value: number): void
-  setUser(userId: string): void
-}
-```
-
-**收集指标：**
-- 📈 使用统计数据
-- 🐛 错误和异常
-- ⚡ 性能指标
-- 👤 用户行为分析
-
 ## 🚨 错误处理
 
 ### Error System

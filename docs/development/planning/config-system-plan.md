@@ -90,7 +90,6 @@ export interface BladeConfig {
   
   // 核心
   debug: boolean;
-  telemetry: boolean;
   autoUpdate: boolean;
   workingDirectory: string;
   
@@ -205,7 +204,6 @@ export const DEFAULT_CONFIG: BladeConfig = {
   "fontSize": 14,
   "showStatusBar": true,
   "debug": false,
-  "telemetry": true,
   "autoUpdate": true,
   "logLevel": "info",
   "logFormat": "text",

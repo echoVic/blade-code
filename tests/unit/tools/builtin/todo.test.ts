@@ -2,10 +2,7 @@ import * as fs from 'fs/promises';
 import { tmpdir } from 'os';
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';
-import {
-  createTodoReadTool,
-  createTodoWriteTool,
-} from '../../../../src/tools/builtin/todo/index';
+import { createTodoWriteTool } from '../../../../src/tools/builtin/todo/index';
 import type { TodoItem } from '../../../../src/tools/builtin/todo/types';
 
 async function createTempConfigDir(): Promise<string> {
@@ -128,17 +125,13 @@ describe('todo tools persistence', () => {
     }
   });
 
-  it('falls back to the default session id when none is provided', async () => {
+  it('returns current todos in response after write', async () => {
     const configDir = await createTempConfigDir();
     try {
-      // 创建todos目录，确保目录存在
-      const todosDir = path.join(configDir, 'todos');
-      await fs.mkdir(todosDir, { recursive: true });
       const writeTool = createTodoWriteTool({
         sessionId: 'default-session',
         configDir,
       });
-      const readTool = createTodoReadTool({ sessionId: 'default-session', configDir });
 
       const writeInvocation = writeTool.build({
         todos: [
@@ -151,8 +144,15 @@ describe('todo tools persistence', () => {
         ],
       });
 
-      await writeInvocation.execute(createAbortSignal());
+      const writeResult = await writeInvocation.execute(createAbortSignal());
 
+      // TodoWrite 返回值包含当前任务列表（无需 TodoRead）
+      const llmContent = writeResult.llmContent as { todos: TodoItem[] };
+      expect(llmContent.todos).toHaveLength(1);
+      expect(llmContent.todos[0].content).toBe('default task');
+      expect(llmContent.todos[0].status).toBe('completed');
+
+      // 验证持久化
       const stored = JSON.parse(
         await fs.readFile(
           path.join(configDir, 'todos', 'default-session-agent-default-session.json'),
@@ -169,14 +169,6 @@ describe('todo tools persistence', () => {
       expect(stored[0].id).toBeDefined();
       expect(stored[0].createdAt).toBeDefined();
       expect(stored[0].completedAt).toBeDefined(); // 因为状态是completed
-
-      const readInvocation = readTool.build({ filter: 'all' });
-      const readResult = await readInvocation.execute(createAbortSignal());
-      const llmContent = readResult.llmContent as { todos: TodoItem[] };
-
-      expect(llmContent.todos).toHaveLength(1);
-      expect(llmContent.todos[0].content).toBe('default task');
-      expect(llmContent.todos[0].status).toBe('completed');
     } finally {
       await cleanupTempDir(configDir);
     }

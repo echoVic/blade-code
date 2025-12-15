@@ -231,7 +231,3 @@ class TestConfigManager {
 
 // 创建全局配置实例
 export const testConfig = new TestConfigManager();
-
-// 导出配置类型和默认配置
-export { defaultConfig };
-export type { TestConfig };

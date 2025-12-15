@@ -1,12 +1,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  FileFilter,
-  getExcludePatterns,
   DEFAULT_EXCLUDE_DIRS,
   DEFAULT_EXCLUDE_FILE_PATTERNS,
+  FileFilter,
+  getExcludePatterns,
 } from '../../../src/utils/filePatterns.js';
 
 describe('utils/filePatterns', () => {

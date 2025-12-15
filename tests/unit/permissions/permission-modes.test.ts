@@ -36,16 +36,16 @@ function applyModeOverrides(
     };
   }
 
-  // 4. Read/Search 工具：所有模式下都自动批准
-  if (toolKind === ToolKind.Read || toolKind === ToolKind.Search) {
+  // 4. ReadOnly 工具：所有模式下都自动批准
+  if (toolKind === ToolKind.ReadOnly) {
     return {
       result: PermissionResult.ALLOW,
       reason: '只读工具无需确认',
     };
   }
 
-  // 5. AUTO_EDIT 模式：额外批准 Edit 工具
-  if (permissionMode === PermissionMode.AUTO_EDIT && toolKind === ToolKind.Edit) {
+  // 5. AUTO_EDIT 模式：额外批准 Write 工具
+  if (permissionMode === PermissionMode.AUTO_EDIT && toolKind === ToolKind.Write) {
     return {
       result: PermissionResult.ALLOW,
       reason: 'AUTO_EDIT 模式: 自动批准编辑类工具',
@@ -60,9 +60,9 @@ describe('权限模式行为', () => {
   describe('DEFAULT 模式', () => {
     const mode = PermissionMode.DEFAULT;
 
-    it('应该自动批准 Read 工具', () => {
+    it('应该自动批准 ReadOnly 工具', () => {
       const result = applyModeOverrides(
-        ToolKind.Read,
+        ToolKind.ReadOnly,
         { result: PermissionResult.ASK },
         mode
       );
@@ -70,19 +70,9 @@ describe('权限模式行为', () => {
       expect(result.reason).toBe('只读工具无需确认');
     });
 
-    it('应该自动批准 Search 工具', () => {
+    it('应该要求确认 Write 工具', () => {
       const result = applyModeOverrides(
-        ToolKind.Search,
-        { result: PermissionResult.ASK },
-        mode
-      );
-      expect(result.result).toBe(PermissionResult.ALLOW);
-      expect(result.reason).toBe('只读工具无需确认');
-    });
-
-    it('应该要求确认 Edit 工具', () => {
-      const result = applyModeOverrides(
-        ToolKind.Edit,
+        ToolKind.Write,
         { result: PermissionResult.ASK },
         mode
       );
@@ -98,18 +88,9 @@ describe('权限模式行为', () => {
       expect(result.result).toBe(PermissionResult.ASK);
     });
 
-    it('应该要求确认 Delete 工具', () => {
+    it('应该尊重 DENY 规则（即使是 ReadOnly 工具）', () => {
       const result = applyModeOverrides(
-        ToolKind.Delete,
-        { result: PermissionResult.ASK },
-        mode
-      );
-      expect(result.result).toBe(PermissionResult.ASK);
-    });
-
-    it('应该尊重 DENY 规则（即使是 Read 工具）', () => {
-      const result = applyModeOverrides(
-        ToolKind.Read,
+        ToolKind.ReadOnly,
         { result: PermissionResult.DENY },
         mode
       );
@@ -129,27 +110,18 @@ describe('权限模式行为', () => {
   describe('AUTO_EDIT 模式', () => {
     const mode = PermissionMode.AUTO_EDIT;
 
-    it('应该自动批准 Read 工具', () => {
+    it('应该自动批准 ReadOnly 工具', () => {
       const result = applyModeOverrides(
-        ToolKind.Read,
+        ToolKind.ReadOnly,
         { result: PermissionResult.ASK },
         mode
       );
       expect(result.result).toBe(PermissionResult.ALLOW);
     });
 
-    it('应该自动批准 Search 工具', () => {
+    it('应该自动批准 Write 工具', () => {
       const result = applyModeOverrides(
-        ToolKind.Search,
-        { result: PermissionResult.ASK },
-        mode
-      );
-      expect(result.result).toBe(PermissionResult.ALLOW);
-    });
-
-    it('应该自动批准 Edit 工具', () => {
-      const result = applyModeOverrides(
-        ToolKind.Edit,
+        ToolKind.Write,
         { result: PermissionResult.ASK },
         mode
       );
@@ -166,27 +138,9 @@ describe('权限模式行为', () => {
       expect(result.result).toBe(PermissionResult.ASK);
     });
 
-    it('应该要求确认 Delete 工具', () => {
+    it('应该尊重 DENY 规则（即使是 Write 工具）', () => {
       const result = applyModeOverrides(
-        ToolKind.Delete,
-        { result: PermissionResult.ASK },
-        mode
-      );
-      expect(result.result).toBe(PermissionResult.ASK);
-    });
-
-    it('应该要求确认 Move 工具', () => {
-      const result = applyModeOverrides(
-        ToolKind.Move,
-        { result: PermissionResult.ASK },
-        mode
-      );
-      expect(result.result).toBe(PermissionResult.ASK);
-    });
-
-    it('应该尊重 DENY 规则（即使是 Edit 工具）', () => {
-      const result = applyModeOverrides(
-        ToolKind.Edit,
+        ToolKind.Write,
         { result: PermissionResult.DENY },
         mode
       );
@@ -197,9 +151,9 @@ describe('权限模式行为', () => {
   describe('YOLO 模式', () => {
     const mode = PermissionMode.YOLO;
 
-    it('应该自动批准 Read 工具', () => {
+    it('应该自动批准 ReadOnly 工具', () => {
       const result = applyModeOverrides(
-        ToolKind.Read,
+        ToolKind.ReadOnly,
         { result: PermissionResult.ASK },
         mode
       );
@@ -207,9 +161,9 @@ describe('权限模式行为', () => {
       expect(result.reason).toBe('YOLO 模式: 自动批准所有工具调用');
     });
 
-    it('应该自动批准 Edit 工具', () => {
+    it('应该自动批准 Write 工具', () => {
       const result = applyModeOverrides(
-        ToolKind.Edit,
+        ToolKind.Write,
         { result: PermissionResult.ASK },
         mode
       );
@@ -219,33 +173,6 @@ describe('权限模式行为', () => {
     it('应该自动批准 Execute 工具（Bash）', () => {
       const result = applyModeOverrides(
         ToolKind.Execute,
-        { result: PermissionResult.ASK },
-        mode
-      );
-      expect(result.result).toBe(PermissionResult.ALLOW);
-    });
-
-    it('应该自动批准 Delete 工具', () => {
-      const result = applyModeOverrides(
-        ToolKind.Delete,
-        { result: PermissionResult.ASK },
-        mode
-      );
-      expect(result.result).toBe(PermissionResult.ALLOW);
-    });
-
-    it('应该自动批准 Move 工具', () => {
-      const result = applyModeOverrides(
-        ToolKind.Move,
-        { result: PermissionResult.ASK },
-        mode
-      );
-      expect(result.result).toBe(PermissionResult.ALLOW);
-    });
-
-    it('应该自动批准 Network 工具', () => {
-      const result = applyModeOverrides(
-        ToolKind.Network,
         { result: PermissionResult.ASK },
         mode
       );
@@ -305,17 +232,17 @@ describe('权限模式行为', () => {
     });
 
     it('模式规则应该优先于默认的 ASK 行为', () => {
-      // DEFAULT 模式下，Read 工具自动批准
+      // DEFAULT 模式下，ReadOnly 工具自动批准
       const result1 = applyModeOverrides(
-        ToolKind.Read,
+        ToolKind.ReadOnly,
         { result: PermissionResult.ASK },
         PermissionMode.DEFAULT
       );
       expect(result1.result).toBe(PermissionResult.ALLOW);
 
-      // AUTO_EDIT 模式下，Edit 工具自动批准
+      // AUTO_EDIT 模式下，Write 工具自动批准
       const result2 = applyModeOverrides(
-        ToolKind.Edit,
+        ToolKind.Write,
         { result: PermissionResult.ASK },
         PermissionMode.AUTO_EDIT
       );
@@ -324,66 +251,40 @@ describe('权限模式行为', () => {
   });
 
   describe('边界情况', () => {
-    it('应该正确处理 Other 类型工具', () => {
-      // DEFAULT 模式下，Other 类型需要确认
+    it('应该正确处理 Execute 类型工具', () => {
+      // DEFAULT 模式下，Execute 类型需要确认
       const result1 = applyModeOverrides(
-        ToolKind.Other,
+        ToolKind.Execute,
         { result: PermissionResult.ASK },
         PermissionMode.DEFAULT
       );
       expect(result1.result).toBe(PermissionResult.ASK);
 
-      // YOLO 模式下，Other 类型自动批准
+      // YOLO 模式下，Execute 类型自动批准
       const result2 = applyModeOverrides(
-        ToolKind.Other,
+        ToolKind.Execute,
         { result: PermissionResult.ASK },
         PermissionMode.YOLO
       );
       expect(result2.result).toBe(PermissionResult.ALLOW);
     });
 
-    it('应该正确处理 Think 类型工具', () => {
-      // Think 工具在所有模式下都需要遵循权限检查
+    it('应该正确处理 Write 类型工具', () => {
+      // DEFAULT 模式下，Write 类型需要确认
       const result1 = applyModeOverrides(
-        ToolKind.Think,
+        ToolKind.Write,
         { result: PermissionResult.ASK },
         PermissionMode.DEFAULT
       );
       expect(result1.result).toBe(PermissionResult.ASK);
 
-      // YOLO 模式下自动批准
+      // AUTO_EDIT 模式下，Write 类型自动批准
       const result2 = applyModeOverrides(
-        ToolKind.Think,
-        { result: PermissionResult.ASK },
-        PermissionMode.YOLO
-      );
-      expect(result2.result).toBe(PermissionResult.ALLOW);
-    });
-
-    it('应该正确处理 Network 类型工具', () => {
-      // DEFAULT 模式下，Network 需要确认
-      const result1 = applyModeOverrides(
-        ToolKind.Network,
-        { result: PermissionResult.ASK },
-        PermissionMode.DEFAULT
-      );
-      expect(result1.result).toBe(PermissionResult.ASK);
-
-      // AUTO_EDIT 模式下，Network 仍需确认
-      const result2 = applyModeOverrides(
-        ToolKind.Network,
+        ToolKind.Write,
         { result: PermissionResult.ASK },
         PermissionMode.AUTO_EDIT
       );
-      expect(result2.result).toBe(PermissionResult.ASK);
-
-      // YOLO 模式下自动批准
-      const result3 = applyModeOverrides(
-        ToolKind.Network,
-        { result: PermissionResult.ASK },
-        PermissionMode.YOLO
-      );
-      expect(result3.result).toBe(PermissionResult.ALLOW);
+      expect(result2.result).toBe(PermissionResult.ALLOW);
     });
   });
 });

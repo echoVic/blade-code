@@ -272,25 +272,19 @@ export const isThinking = () => getState().session.isThinking;
  * 2. 异步持久化到磁盘（ConfigService）
  *
  * @example
- * await configActions().setPermissionMode(PermissionMode.YOLO, { immediate: true });
+ * await configActions().setPermissionMode(PermissionMode.YOLO);
  */
 export const configActions = () => ({
   // ===== 基础配置 API =====
 
   /**
-   * 设置权限模式
+   * 设置权限模式（仅更新内存，不持久化）
+   * permissionMode 是运行时状态，每次启动重新设置
    * @param mode 权限模式
-   * @param options.scope 持久化范围（默认 'local'）
-   * @param options.immediate 是否立即持久化（默认使用防抖）
    */
-  setPermissionMode: async (
-    mode: PermissionMode,
-    options: SaveOptions = {}
-  ): Promise<void> => {
-    // 1. 同步更新内存
+  setPermissionMode: async (mode: PermissionMode): Promise<void> => {
+    // 仅更新内存，不持久化
     getState().config.actions.updateConfig({ permissionMode: mode });
-    // 2. 异步持久化
-    await getConfigService().save({ permissionMode: mode }, options);
   },
 
   /**

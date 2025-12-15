@@ -101,19 +101,13 @@ export const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace',
     persistable: true,
   },
-  telemetry: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
 
   // ===== settings.json 字段（行为配置）=====
   permissionMode: {
     target: 'settings',
-    defaultScope: 'local', // 项目特定，不影响其他项目
+    defaultScope: 'local',
     mergeStrategy: 'replace',
-    persistable: true,
+    persistable: false, // 运行时状态，不持久化
   },
   permissions: {
     target: 'settings',
@@ -143,12 +137,6 @@ export const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     target: 'settings',
     defaultScope: 'local',
     mergeStrategy: 'replace',
-    persistable: true,
-  },
-  planMode: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'deep-merge',
     persistable: true,
   },
   mcpServers: {
@@ -197,12 +185,6 @@ export const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     persistable: false,
   },
   mcpEnabled: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  telemetryEndpoint: {
     target: 'config',
     defaultScope: 'global',
     mergeStrategy: 'replace',
@@ -338,7 +320,7 @@ export const PERSISTABLE_FIELDS = new Set(
  * 不可持久化的字段集合（包含两类）
  *
  * 1. **BladeConfig 永久字段但选择不持久化**:
- *    - stream, topP, topK, fontSize, mcpEnabled, telemetryEndpoint
+ *    - stream, topP, topK, fontSize, mcpEnabled
  *    - 在类型定义中，但不写入文件（用户不希望或不需要持久化）
  *
  * 2. **CLI 运行时临时参数**:

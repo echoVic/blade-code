@@ -89,8 +89,6 @@ export interface BladeConfig {
   // 核心
   // debug 支持 boolean 或字符串过滤器（如 "agent,ui" 或 "!chat,!loop"）
   debug: string | boolean;
-  telemetry: boolean;
-  telemetryEndpoint?: string; // 遥测数据上报端点
 
   // MCP
   mcpEnabled: boolean;
@@ -117,9 +115,6 @@ export interface BladeConfig {
 
   // Agentic Loop 配置
   maxTurns: number; // -1 = 无限制, 0 = 完全禁用对话, N > 0 = 限制轮次
-
-  // Plan 模式配置
-  planMode: PlanModeConfig;
 }
 
 /**
@@ -129,25 +124,6 @@ export interface PermissionConfig {
   allow: string[];
   ask: string[];
   deny: string[];
-}
-
-/**
- * Plan 模式配置
- * 用于控制 Plan 模式下的循环检测行为
- */
-export interface PlanModeConfig {
-  /**
-   * 连续无文本输出的轮次阈值
-   * 超过此阈值将注入警告提示
-   * @default 5
-   */
-  toolOnlyThreshold: number;
-
-  /**
-   * 警告消息模板
-   * 支持占位符: {count} - 连续轮次数
-   */
-  warningMessage: string;
 }
 
 /**

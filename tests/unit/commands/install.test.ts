@@ -3,8 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 describe('commands/install', () => {
   it('handler 应在成功时输出安装流程', async () => {
     vi.resetModules();
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {
+      /* 模拟实现 */
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {
+      /* 模拟实现 */
+    });
     const exitSpy = vi
       .spyOn(process, 'exit')
       .mockImplementation(() => undefined as never);
@@ -24,7 +28,9 @@ describe('commands/install', () => {
     const exitSpy = vi
       .spyOn(process, 'exit')
       .mockImplementation(() => undefined as never);
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {
+      /* 模拟实现 */
+    });
     const logSpy = vi.spyOn(console, 'log').mockImplementation((message?: string) => {
       if (typeof message === 'string' && message.includes('Installing')) {
         return;

@@ -250,10 +250,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     // EnterPlanMode approved: Switch to Plan mode
     if (confirmationType === 'enterPlanMode' && response.approved) {
       try {
-        // 使用 configActions 自动同步内存 + 持久化
-        await configActions().setPermissionMode(PermissionMode.PLAN, {
-          immediate: true,
-        });
+        // 更新内存中的权限模式（运行时状态，不持久化）
+        await configActions().setPermissionMode(PermissionMode.PLAN);
         logger.debug('[BladeInterface] Entered Plan mode');
       } catch (error) {
         logger.error('[BladeInterface] Failed to enter Plan mode:', error);

@@ -219,11 +219,8 @@ export const useCommandHandler = (
           },
           // 工具调用开始
           onToolStart: (toolCall: any) => {
-            // 跳过 TodoWrite/TodoRead 的显示
-            if (
-              toolCall.function.name === 'TodoWrite' ||
-              toolCall.function.name === 'TodoRead'
-            ) {
+            // 跳过 TodoWrite 的显示（任务列表由侧边栏显示）
+            if (toolCall.function.name === 'TodoWrite') {
               return;
             }
 
