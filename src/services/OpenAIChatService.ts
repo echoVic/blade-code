@@ -1,10 +1,10 @@
-import { createLogger, LogCategory } from '@/logging/Logger.js';
 import OpenAI from 'openai';
 import type {
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
   ChatCompletionTool,
 } from 'openai/resources/chat';
+import { createLogger, LogCategory } from '../logging/Logger.js';
 import type {
   ChatConfig,
   ChatResponse,
@@ -396,7 +396,8 @@ export class OpenAIChatService implements IChatService {
       modelChanged: oldConfig.model !== this.config.model,
       baseUrlChanged: oldConfig.baseUrl !== this.config.baseUrl,
       temperatureChanged: oldConfig.temperature !== this.config.temperature,
-      maxContextTokensChanged: oldConfig.maxContextTokens !== this.config.maxContextTokens,
+      maxContextTokensChanged:
+        oldConfig.maxContextTokens !== this.config.maxContextTokens,
       timeoutChanged: oldConfig.timeout !== this.config.timeout,
       apiKeyChanged: oldConfig.apiKey !== this.config.apiKey,
     });

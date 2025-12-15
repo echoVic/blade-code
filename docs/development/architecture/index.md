@@ -216,13 +216,6 @@ await configActions().appendPermissionAllowRule('rm -rf *');
 - OAuth 认证和令牌管理
 - 服务器发现和连接管理
 
-### 遥测服务
-
-**主要功能**:
-- 使用数据收集和分析
-- 性能指标监控
-- 错误追踪和报告
-- 日志收集和管理
 
 ## 扩展性设计
 

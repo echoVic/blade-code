@@ -78,7 +78,6 @@ Blade 采用双配置文件系统，参考 Claude Code 的设计理念：
 ```json
 {
   "debug": false,
-  "telemetry": true,
   "autoUpdate": true,
   "workingDirectory": "."
 }

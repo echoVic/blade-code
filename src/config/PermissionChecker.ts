@@ -218,7 +218,7 @@ export class PermissionChecker {
 
     // 工具名使用 glob 匹配
     if (ruleToolName.includes('*')) {
-      if (!picomatch.isMatch(sigToolName, ruleToolName, { dot: true })) {
+      if (!picomatch.isMatch(sigToolName, ruleToolName, { dot: true, bash: true })) {
         return null;
       }
     } else if (sigToolName !== ruleToolName) {
@@ -248,7 +248,7 @@ export class PermissionChecker {
       }
 
       // 尝试完整签名的 glob 匹配
-      if (picomatch.isMatch(signature, rule, { dot: true })) {
+      if (picomatch.isMatch(signature, rule, { dot: true, bash: true })) {
         return rule.includes('**') ? 'glob' : 'wildcard';
       }
     }
@@ -295,12 +295,13 @@ export class PermissionChecker {
       }
 
       // Glob 模式匹配
+      // 使用 bash: true 让 * 匹配包括 / 在内的所有字符
       if (
         ruleParams.includes('*') ||
         ruleParams.includes('{') ||
         ruleParams.includes('?')
       ) {
-        return picomatch.isMatch(sigParams, ruleParams, { dot: true });
+        return picomatch.isMatch(sigParams, ruleParams, { dot: true, bash: true });
       }
 
       // 精确匹配
@@ -328,11 +329,10 @@ export class PermissionChecker {
         }
 
         // 否则使用 picomatch 进行 glob 匹配
-        // 注意：picomatch 的 * 不匹配 /，但我们需要它匹配空格等字符
+        // 使用 bash: true 让 * 匹配包括 / 和空格在内的所有字符
         const isMatch = picomatch.isMatch(sigValue, ruleValue, {
           dot: true,
-          nobrace: false,
-          noglobstar: false,
+          bash: true,
         });
         if (!isMatch) {
           return false;

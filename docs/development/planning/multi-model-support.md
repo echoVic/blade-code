@@ -70,7 +70,6 @@ export interface BladeConfig {
   language: string;
   fontSize: number;
   debug: string | boolean;
-  telemetry: boolean;
   // ...
 }
 ```

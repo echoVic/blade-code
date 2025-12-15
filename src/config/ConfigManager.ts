@@ -152,7 +152,7 @@ export class ConfigManager {
   /**
    * 合并 settings 配置（使用 lodash-es merge 实现真正的深度合并）
    * - permissions 数组追加去重
-   * - hooks, env, planMode 对象深度合并
+   * - hooks, env 对象深度合并
    * - 其他字段直接覆盖
    */
   private mergeSettings(
@@ -199,11 +199,6 @@ export class ConfigManager {
     // 合并 env (对象深度合并，使用 lodash merge)
     if (override.env) {
       result.env = merge({}, result.env, override.env);
-    }
-
-    // 合并 planMode (对象深度合并，使用 lodash merge)
-    if (override.planMode) {
-      result.planMode = merge({}, result.planMode, override.planMode);
     }
 
     // 其他字段直接覆盖（replace 策略）

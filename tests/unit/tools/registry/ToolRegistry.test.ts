@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
+import type { ExecutionContext } from '../../../../src/tools/types/ExecutionTypes.js';
 import {
-  ToolKind,
   type Tool,
+  ToolKind,
   type ToolResult,
 } from '../../../../src/tools/types/ToolTypes.js';
 
@@ -12,18 +13,16 @@ function createMockTool(
 ): Tool & {
   executeSpy: ReturnType<typeof vi.fn>;
 } {
-  const executeSpy = vi.fn<Parameters<Tool['execute']>, Promise<ToolResult>>(
-    async (_params: unknown) => ({
-      success: true,
-      llmContent: `${name} executed`,
-      displayContent: `${name} executed`,
-    })
-  );
+  const executeSpy = vi.fn(async (_params: unknown, _context?: ExecutionContext) => ({
+    success: true,
+    llmContent: `${name} executed`,
+    displayContent: `${name} executed`,
+  }));
 
   const tool: Tool & { executeSpy: ReturnType<typeof vi.fn> } = {
     name,
     displayName: overrides.displayName ?? `Display ${name}`,
-    kind: overrides.kind ?? ToolKind.Read,
+    kind: overrides.kind ?? ToolKind.ReadOnly,
     isReadOnly: overrides.isReadOnly ?? true,
     isConcurrencySafe: overrides.isConcurrencySafe ?? true,
     strict: overrides.strict ?? false,
@@ -44,14 +43,20 @@ function createMockTool(
     getMetadata: overrides.getMetadata ?? (() => ({ name })),
     build:
       overrides.build ??
-      vi.fn((params: unknown) => ({
-        toolName: name,
-        params,
-        getDescription: () => `${name} invocation`,
-        getAffectedPaths: () => [],
-        execute: executeSpy,
-      })),
-    execute: overrides.execute ?? executeSpy,
+      ((params: unknown) => {
+        const invocation = {
+          toolName: name,
+          params,
+          getDescription: () => `${name} invocation`,
+          getAffectedPaths: () => [],
+          execute: (signal: AbortSignal, updateOutput?: (output: string) => void) =>
+            executeSpy(params, { signal, updateOutput }),
+        };
+        return invocation;
+      }),
+    execute:
+      overrides.execute ??
+      ((params: unknown, signal?: AbortSignal) => executeSpy(params, { signal })),
     executeSpy,
   };
 

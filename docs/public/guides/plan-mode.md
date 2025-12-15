@@ -19,7 +19,7 @@ Plan 模式通过两层保护确保安全：
 
 - **文件操作**：Read、Glob、Grep、Find
 - **网络请求**：WebFetch、WebSearch
-- **计划管理**：TodoWrite、TodoRead
+- **计划管理**：TodoWrite（读写合一）
 - **任务编排**：Task（启动子 Agent）
 - **退出工具**：ExitPlanMode
 
@@ -255,6 +255,16 @@ A: 终端会自动滚动显示长方案。您可以向上滚动查看完整内�
 ### Q: Plan 模式支持子 Agent 吗？
 
 A: 是的。`Task` 工具在 Plan 模式下可用，子 Agent 也会继承 Plan 模式状态，确保整个任务树都是只读的。
+
+### Q: 为什么只有 TodoWrite，而没有 TodoRead？
+
+A: 当前的 TODO 系统采用「写入即同步」的设计，只保留 TodoWrite 一个工具：
+
+1. TodoWrite 每次调用都会返回当前完整的任务列表和统计信息，相当于隐式的“读 + 写”。
+2. 减少工具数量可以降低 LLM 的心智负担，也与 Claude Code 的官方设计保持一致（只有 TodoWrite）。
+3. 工具调用结果会自动作为对话上下文的一部分保留，LLM 可以直接从最近的 TodoWrite 结果中读取任务状态，无需额外的 TodoRead 调用。
+
+因此，如果只是想查看任务列表，不需要再调用新工具，直接参考最近一次 TodoWrite 的输出即可。
 
 ## 参考资源
 

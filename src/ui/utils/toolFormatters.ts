@@ -75,7 +75,6 @@ export function shouldShowToolDetail(toolName: string, result: any): boolean {
 
     case 'Read':
     case 'TodoWrite':
-    case 'TodoRead':
       // 不显示详细内容
       return false;
 
