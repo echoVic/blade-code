@@ -3,6 +3,39 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.16] - 2025-12-16
+
+### ✨ 新功能
+
+- add /git slash command with AI-powered git operations (72526f1)
+- 重构状态管理为 Zustand 实现单一数据源架构 (b52d9f2)
+- 重构工具系统并添加Plan模式支持 (b9b3bc7)
+- 优化孤儿 tool 消息过滤逻辑并添加测试 (cb98b66)
+- 将代码中的中文提示信息翻译为英文 (b07f430)
+- 添加Subagents系统及相关文档 (6bd6cc9)
+- 实现子代理系统及任务工具改进 (b5b8fc1)
+- 添加后台命令管理和网络搜索功能 (8d436cb)
+
+### 📝 文档更新
+
+- 全面更新文档内容以匹配当前实现 (9fbd18e)
+
+### 💄 代码格式
+
+- 统一代码格式化和修复缩进问题 (0f11b8a)
+
+### ♻️ 代码重构
+
+- 移除遥测系统及相关代码 (ecc83b3)
+- 迁移状态管理至 Zustand 并重构相关组件 (d4b1c30)
+- 清理测试配置和工具文档 (58096e1)
+- 清理未使用的代码和优化模块结构 (dbca510)
+
+### 🔧 其他更改
+
+- update pnpm setup in CI workflow (073bf7d)
+
+
 ## [Unreleased]
 
 ### ♻️ 代码重构
