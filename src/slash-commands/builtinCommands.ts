@@ -23,6 +23,7 @@ const helpCommand: SlashCommand = {
     const helpText = `🔧 **可用的 Slash Commands:**
 
 **/init** - 分析当前项目并生成 BLADE.md 配置文件
+**/git** - Git 仓库查询和 AI 辅助 (status/log/diff/review/commit)
 **/agents** - 管理 subagent 配置（创建、编辑、删除）
 **/mcp** - 显示 MCP 服务器状态和可用工具
 **/help** - 显示此帮助信息
