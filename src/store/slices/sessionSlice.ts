@@ -15,8 +15,19 @@ import type {
   SessionMessage,
   SessionSlice,
   SessionState,
+  TokenUsage,
   ToolMessageMetadata,
 } from '../types.js';
+
+/**
+ * 初始 Token 使用量
+ */
+const initialTokenUsage: TokenUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  maxContextTokens: 200000, // 默认值，会被 Agent 更新
+};
 
 /**
  * 初始会话状态
@@ -25,9 +36,11 @@ const initialSessionState: SessionState = {
   sessionId: nanoid(),
   messages: [],
   isThinking: false,
+  isCompacting: false,
   currentCommand: null,
   error: null,
   isActive: true,
+  tokenUsage: { ...initialTokenUsage },
 };
 
 /**
@@ -105,6 +118,15 @@ export const createSessionSlice: StateCreator<
     },
 
     /**
+     * 设置压缩状态
+     */
+    setCompacting: (isCompacting: boolean) => {
+      set((state) => ({
+        session: { ...state.session, isCompacting },
+      }));
+    },
+
+    /**
      * 设置当前命令
      */
     setCommand: (command: string | null) => {
@@ -156,6 +178,33 @@ export const createSessionSlice: StateCreator<
           messages,
           error: null,
           isActive: true,
+        },
+      }));
+    },
+
+    /**
+     * 更新 Token 使用量
+     */
+    updateTokenUsage: (usage: Partial<TokenUsage>) => {
+      set((state) => ({
+        session: {
+          ...state.session,
+          tokenUsage: {
+            ...state.session.tokenUsage,
+            ...usage,
+          },
+        },
+      }));
+    },
+
+    /**
+     * 重置 Token 使用量
+     */
+    resetTokenUsage: () => {
+      set((state) => ({
+        session: {
+          ...state.session,
+          tokenUsage: { ...initialTokenUsage },
         },
       }));
     },

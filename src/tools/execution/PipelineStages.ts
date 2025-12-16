@@ -224,7 +224,7 @@ export class PermissionStage implements PipelineStage {
    * - 不直接修改文件系统
    * - 用户可见且安全
    *
-   * 优先级：DENY 规则 > ALLOW 规则 > 模式规则 > ASK
+   * 优先级：YOLO 模式 > PLAN 模式 > DENY 规则 > ALLOW 规则 > 模式规则 > ASK
    *
    * @param permissionMode - 当前权限模式（从 execution.context 动态读取）
    */
@@ -233,17 +233,16 @@ export class PermissionStage implements PipelineStage {
     checkResult: PermissionCheckResult,
     permissionMode: PermissionMode
   ): PermissionCheckResult {
-    // 1. 如果已被 deny 规则拒绝，不覆盖（最高优先级）
-    if (checkResult.result === PermissionResult.DENY) {
-      return checkResult;
+    // 1. YOLO 模式：完全放开，批准所有工具（最高优先级）
+    if (permissionMode === PermissionMode.YOLO) {
+      return {
+        result: PermissionResult.ALLOW,
+        matchedRule: 'mode:yolo',
+        reason: 'YOLO mode: automatically approve all tool invocations',
+      };
     }
 
-    // 2. 如果已被 allow 规则批准，不覆盖
-    if (checkResult.result === PermissionResult.ALLOW) {
-      return checkResult;
-    }
-
-    // 3. PLAN 模式：严格拒绝非只读工具（最高优先级，不可绕过）
+    // 2. PLAN 模式：严格拒绝非只读工具
     if (permissionMode === PermissionMode.PLAN) {
       if (!isReadOnlyKind(toolKind)) {
         return {
@@ -254,13 +253,14 @@ export class PermissionStage implements PipelineStage {
       }
     }
 
-    // 4. YOLO 模式：批准所有工具（在检查规则之后）
-    if (permissionMode === PermissionMode.YOLO) {
-      return {
-        result: PermissionResult.ALLOW,
-        matchedRule: 'mode:yolo',
-        reason: 'YOLO mode: automatically approve all tool invocations',
-      };
+    // 3. 如果已被 deny 规则拒绝，不覆盖
+    if (checkResult.result === PermissionResult.DENY) {
+      return checkResult;
+    }
+
+    // 4. 如果已被 allow 规则批准，不覆盖
+    if (checkResult.result === PermissionResult.ALLOW) {
+      return checkResult;
     }
 
     // 5. 只读工具：所有模式下都自动批准

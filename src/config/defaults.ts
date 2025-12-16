@@ -86,7 +86,26 @@ export const DEFAULT_CONFIG: BladeConfig = {
       // 'Bash(npm run build *)',
       // 'Bash(npm run lint *)',
     ],
-    ask: [],
+    ask: [
+      // ⚠️ 高风险命令（需要用户确认）
+
+      // 🌐 网络下载工具（可能下载并执行恶意代码）
+      'Bash(curl *)',
+      'Bash(wget *)',
+      'Bash(aria2c *)',
+      'Bash(axel *)',
+
+      // 🗑️ 危险删除操作
+      'Bash(rm -rf *)',
+      'Bash(rm -r *)',
+      'Bash(rm --recursive *)',
+
+      // 🔌 网络连接工具
+      'Bash(nc *)',
+      'Bash(netcat *)',
+      'Bash(telnet *)',
+      'Bash(ncat *)',
+    ],
     deny: [
       // 🔒 敏感文件读取
       'Read(./.env)',
@@ -97,6 +116,30 @@ export const DEFAULT_CONFIG: BladeConfig = {
       'Bash(rm -rf /*)',
       'Bash(sudo *)',
       'Bash(chmod 777 *)',
+
+      // 🐚 Shell 嵌套（可绕过安全检测）
+      'Bash(bash *)',
+      'Bash(sh *)',
+      'Bash(zsh *)',
+      'Bash(fish *)',
+      'Bash(dash *)',
+
+      // 💉 代码注入风险
+      'Bash(eval *)',
+      'Bash(source *)',
+
+      // 💽 危险系统操作
+      'Bash(mkfs *)',
+      'Bash(fdisk *)',
+      'Bash(dd *)',
+      'Bash(format *)',
+      'Bash(parted *)',
+
+      // 🌐 浏览器（可打开恶意链接）
+      'Bash(open http*)',
+      'Bash(open https*)',
+      'Bash(xdg-open http*)',
+      'Bash(xdg-open https*)',
     ],
   },
   permissionMode: PermissionMode.DEFAULT,

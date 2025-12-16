@@ -43,15 +43,27 @@ export interface SessionMessage {
 }
 
 /**
+ * Token 使用量统计
+ */
+export interface TokenUsage {
+  inputTokens: number; // 当前 prompt tokens
+  outputTokens: number; // 当前 completion tokens
+  totalTokens: number; // 累计总 tokens
+  maxContextTokens: number; // 上下文窗口大小
+}
+
+/**
  * 会话状态
  */
 export interface SessionState {
   sessionId: string;
   messages: SessionMessage[];
   isThinking: boolean; // 临时状态 - 不持久化
+  isCompacting: boolean; // 是否正在压缩上下文
   currentCommand: string | null;
   error: string | null;
   isActive: boolean;
+  tokenUsage: TokenUsage; // Token 使用量统计
 }
 
 /**
@@ -63,11 +75,14 @@ export interface SessionActions {
   addAssistantMessage: (content: string) => void;
   addToolMessage: (content: string, metadata?: ToolMessageMetadata) => void;
   setThinking: (isThinking: boolean) => void;
+  setCompacting: (isCompacting: boolean) => void;
   setCommand: (command: string | null) => void;
   setError: (error: string | null) => void;
   clearMessages: () => void;
   resetSession: () => void;
   restoreSession: (sessionId: string, messages: SessionMessage[]) => void;
+  updateTokenUsage: (usage: Partial<TokenUsage>) => void;
+  resetTokenUsage: () => void;
 }
 
 /**
