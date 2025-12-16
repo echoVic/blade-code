@@ -1,33 +1,57 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-// 暂时跳过这些导入，因为相关文件不存在
-const BaseComponent = {};
-const LoggerComponent = function LoggerComponent(name: string) {
+
+// 模拟 LoggerComponent
+const LoggerComponent = function (this: any, name: string) {
   this.name = name;
-  this.setLogLevel = function (level: string) {};
-  this.debug = function (message: string, metadata?: any) {};
-  this.info = function (message: string, metadata?: any) {};
-  this.warn = function (message: string, metadata?: any) {};
-  this.error = function (message: string, error?: Error, metadata?: any) {};
-  this.fatal = function (message: string, error?: Error, metadata?: any) {};
+  this.setLogLevel = function (level: string) {
+    /* 模拟实现 */
+  };
+  this.debug = function (message: string, metadata?: any) {
+    /* 模拟实现 */
+  };
+  this.info = function (message: string, metadata?: any) {
+    /* 模拟实现 */
+  };
+  this.warn = function (message: string, metadata?: any) {
+    /* 模拟实现 */
+  };
+  this.error = function (message: string, error?: Error, metadata?: any) {
+    /* 模拟实现 */
+  };
+  this.fatal = function (message: string, error?: Error, metadata?: any) {
+    /* 模拟实现 */
+  };
   this.init = function () {
     return Promise.resolve();
   };
   this.destroy = function () {
     return Promise.resolve();
   };
-  this.setContext = function (context: any) {};
-  this.clearContext = function () {};
-  this.getLogger = function () {};
-  this.getLoggerManager = function () {};
+  this.setContext = function (context: any) {
+    /* 模拟实现 */
+  };
+  this.clearContext = function () {
+    /* 模拟实现 */
+  };
+  this.getLogger = function () {
+    /* 模拟实现 */
+  };
+  this.getLoggerManager = function () {
+    /* 模拟实现 */
+  };
   this.isFallbackMode = function () {
     return false;
   };
-  this.addTransport = function (transport: any) {};
-  this.addMiddleware = function (middleware: any) {};
-};
+  this.addTransport = function (transport: any) {
+    /* 模拟实现 */
+  };
+  this.addMiddleware = function (middleware: any) {
+    /* 模拟实现 */
+  };
+} as any as { new (name: string): any };
 
 describe('LoggerComponent 集成测试', () => {
-  let loggerComponent: LoggerComponent;
+  let loggerComponent: any;
 
   beforeEach(() => {
     loggerComponent = new LoggerComponent('test-logger');
@@ -74,9 +98,15 @@ describe('LoggerComponent 集成测试', () => {
   describe('日志记录功能', () => {
     beforeEach(() => {
       // 拦截console.log以避免测试输出混乱
-      vi.spyOn(console, 'log').mockImplementation(() => {});
-      vi.spyOn(console, 'warn').mockImplementation(() => {});
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(console, 'log').mockImplementation(() => {
+        /* 模拟实现 */
+      });
+      vi.spyOn(console, 'warn').mockImplementation(() => {
+        /* 模拟实现 */
+      });
+      vi.spyOn(console, 'error').mockImplementation(() => {
+        /* 模拟实现 */
+      });
     });
 
     afterEach(() => {
@@ -128,7 +158,9 @@ describe('LoggerComponent 集成测试', () => {
 
   describe('日志级别过滤', () => {
     beforeEach(() => {
-      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'log').mockImplementation(() => {
+        /* 模拟实现 */
+      });
     });
 
     afterEach(() => {
@@ -196,13 +228,13 @@ describe('LoggerComponent 集成测试', () => {
 
   describe('扩展功能', () => {
     test('获取新日志器实例', () => {
-      const logger = loggerComponent.getLogger();
+      const _logger = loggerComponent.getLogger();
       // 暂时跳过检查，因为相关类不存在
-      // expect(logger).toBeDefined();
+      // expect(_logger).toBeDefined();
 
-      const manager = loggerComponent.getLoggerManager();
+      const _manager = loggerComponent.getLoggerManager();
       // 暂时跳过检查，因为相关类不存在
-      // expect(manager).toBeDefined();
+      // expect(_manager).toBeDefined();
     });
 
     test('检查回退模式', () => {

@@ -1,14 +1,22 @@
 /**
- * 统一日志服务
+ * 统一日志服务（基于 Pino）
  *
  * 设计原则：
- * 1. 只在 debug 模式下输出日志
- * 2. 支持分类日志（agent, ui, tool, service 等）
- * 3. 提供多级别日志（debug, info, warn, error）
- * 4. 与 ConfigManager 集成，自动获取 debug 配置
+ * 1. 只在 debug 模式下输出终端日志
+ * 2. 始终将日志写入文件 (~/.blade/logs/blade.log)
+ * 3. 支持分类日志（agent, ui, tool, service 等）
+ * 4. 提供多级别日志（debug, info, warn, error）
+ * 5. 使用 Logger.setGlobalDebug() 设置配置（避免循环依赖）
+ *
+ * 双路输出架构：
+ * - 文件：Pino file transport（JSON 格式，始终记录）
+ * - 终端：手动 console.error 输出（应用分类过滤）
  */
 
-import { ConfigManager } from '../config/ConfigManager.js';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import pino, { type Logger as PinoLogger } from 'pino';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -37,6 +45,68 @@ export interface LoggerOptions {
   category?: LogCategory; // 日志分类
 }
 
+// Pino 日志级别映射
+const PINO_LEVELS: Record<LogLevel, string> = {
+  [LogLevel.DEBUG]: 'debug',
+  [LogLevel.INFO]: 'info',
+  [LogLevel.WARN]: 'warn',
+  [LogLevel.ERROR]: 'error',
+};
+
+/**
+ * 获取或创建日志文件路径
+ */
+async function ensureLogDirectory(): Promise<string> {
+  const logDir = path.join(os.homedir(), '.blade', 'logs');
+  await fs.mkdir(logDir, { recursive: true });
+  return path.join(logDir, 'blade.log');
+}
+
+/**
+ * 创建 Pino 日志实例（单例）
+ * 注意：只用于文件日志，终端输出由 Logger.log() 手动控制
+ */
+let pinoInstance: PinoLogger | null = null;
+let pinoInitPromise: Promise<PinoLogger> | null = null;
+
+async function getPinoInstance(): Promise<PinoLogger> {
+  // 已有实例直接返回
+  if (pinoInstance) {
+    return pinoInstance;
+  }
+
+  // 使用 Promise 缓存防止并发初始化
+  if (pinoInitPromise) {
+    return pinoInitPromise;
+  }
+
+  pinoInitPromise = (async () => {
+    const logFilePath = await ensureLogDirectory();
+
+    // 只配置文件传输（始终记录 JSON 格式日志）
+    // 终端输出由 Logger.log() 手动控制（应用分类过滤）
+    pinoInstance = pino({
+      level: 'debug',
+      transport: {
+        target: 'pino/file',
+        options: { destination: logFilePath },
+      },
+    });
+
+    return pinoInstance;
+  })();
+
+  return pinoInitPromise;
+}
+
+/**
+ * 重置 Pino 实例（用于测试或动态切换配置）
+ */
+export function resetPinoInstance(): void {
+  pinoInstance = null;
+  pinoInitPromise = null;
+}
+
 /**
  * Logger 类 - 统一日志管理
  */
@@ -48,19 +118,37 @@ export class Logger {
   private enabled: boolean;
   private minLevel: LogLevel;
   private category: LogCategory;
+  private pinoLogger: PinoLogger | null = null;
 
   constructor(options: LoggerOptions = {}) {
-    // 优先级：options.enabled > globalDebugConfig > ConfigManager
+    // 优先级：options.enabled > globalDebugConfig > 默认禁用
     if (options.enabled !== undefined) {
       this.enabled = options.enabled;
     } else if (Logger.globalDebugConfig !== null) {
       this.enabled = Boolean(Logger.globalDebugConfig);
     } else {
-      this.enabled = this.getDebugFromConfig();
+      // 默认禁用，必须通过 Logger.setGlobalDebug() 显式启用
+      this.enabled = false;
     }
 
     this.minLevel = options.minLevel ?? LogLevel.DEBUG;
     this.category = options.category ?? LogCategory.GENERAL;
+
+    // 异步初始化 pino
+    this.initPino();
+  }
+
+  /**
+   * 异步初始化 Pino 实例
+   */
+  private async initPino(): Promise<void> {
+    try {
+      const basePino = await getPinoInstance();
+      // 创建 child logger 用于分类
+      this.pinoLogger = basePino.child({ category: this.category });
+    } catch (error) {
+      console.error('[Logger] Failed to initialize pino:', error);
+    }
   }
 
   /**
@@ -71,6 +159,8 @@ export class Logger {
    */
   public static setGlobalDebug(config: string | boolean): void {
     Logger.globalDebugConfig = config;
+    // 重置 pino 实例以应用新配置
+    resetPinoInstance();
   }
 
   /**
@@ -78,20 +168,7 @@ export class Logger {
    */
   public static clearGlobalDebug(): void {
     Logger.globalDebugConfig = null;
-  }
-
-  /**
-   * 从 ConfigManager 获取 debug 配置
-   */
-  private getDebugFromConfig(): boolean {
-    try {
-      const configManager = ConfigManager.getInstance();
-      const config = configManager.getConfig();
-      return Boolean(config.debug);
-    } catch {
-      // ConfigManager 未初始化时，默认禁用日志
-      return false;
-    }
+    resetPinoInstance();
   }
 
   /**
@@ -99,14 +176,6 @@ export class Logger {
    */
   public setEnabled(enabled: boolean): void {
     this.enabled = enabled;
-  }
-
-  /**
-   * 格式化日志前缀
-   */
-  private formatPrefix(level: LogLevel): string {
-    const levelStr = LogLevel[level];
-    return `[${this.category}] [${levelStr}]`;
   }
 
   /**
@@ -181,12 +250,11 @@ export class Logger {
   }
 
   /**
-   * 检查当前是否应该输出日志
+   * 检查当前是否应该输出日志到终端
    *
-   * 注意：debug 配置在 AppWrapper 初始化时就通过 Logger.setGlobalDebug() 设置了
-   * 之后不会再动态变化，所以只需要检查全局配置即可
+   * 注意：文件日志始终记录，此方法仅影响终端输出
    */
-  private shouldLog(level: LogLevel): boolean {
+  private shouldLogToConsole(level: LogLevel): boolean {
     // 检查全局 debug 配置（由 AppWrapper 在初始化时设置）
     if (Logger.globalDebugConfig !== null) {
       // 解析 debug 配置和过滤器
@@ -207,31 +275,32 @@ export class Logger {
     }
 
     // 如果全局配置未设置，回退到实例级别的 enabled
-    // （这种情况仅在 AppWrapper 初始化之前可能发生）
     return this.enabled && level >= this.minLevel;
   }
 
   /**
-   * 内部日志输出方法
+   * 内部日志输出方法（双路输出）
+   * - 文件：始终通过 Pino 写入
+   * - 终端：应用 shouldLogToConsole 过滤（支持分类过滤）
    */
   private log(level: LogLevel, ...args: unknown[]): void {
-    if (!this.shouldLog(level)) {
-      return;
+    const message = args
+      .map((arg) => (typeof arg === 'object' ? JSON.stringify(arg) : String(arg)))
+      .join(' ');
+
+    // 1. 始终写入文件（通过 Pino）
+    if (this.pinoLogger) {
+      const pinoLevel = PINO_LEVELS[level];
+      this.pinoLogger[pinoLevel as 'debug' | 'info' | 'warn' | 'error'](message);
     }
 
-    const prefix = this.formatPrefix(level);
+    // 2. 根据过滤规则决定是否输出到终端
+    if (this.shouldLogToConsole(level)) {
+      const levelName = LogLevel[level];
+      const prefix = `[${this.category}] [${levelName}]`;
 
-    switch (level) {
-      case LogLevel.DEBUG:
-      case LogLevel.INFO:
-        console.log(prefix, ...args);
-        break;
-      case LogLevel.WARN:
-        console.warn(prefix, ...args);
-        break;
-      case LogLevel.ERROR:
-        console.error(prefix, ...args);
-        break;
+      // 使用 console.error 确保输出到 stderr（不被 Ink patchConsole 拦截）
+      console.error(prefix, ...args);
     }
   }
 

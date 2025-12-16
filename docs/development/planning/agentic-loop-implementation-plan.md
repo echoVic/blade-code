@@ -1,5 +1,16 @@
 # Blade Agentic Loop 融合实现方案
 
+> ⚠️ **实现状态说明（2025 重构后）**
+>
+> 本文档为最初的 Agentic Loop 设计/规划文档，其中提到的
+> `LoopDetectionService` 三层检测机制在当前实现中已被移除。
+> 目前实际实现采用的是：
+> - 配置项 `maxTurns` + 硬性上限 `SAFETY_LIMIT = 100` 控制轮次
+> - 结合上下文压缩和模型 token 使用情况的保护策略
+>
+> 设计思路仍具参考价值，但具体代码请以 `src/agent/Agent.ts`
+> 中的 `executeLoop()` 及相关注释为准。
+
 > 综合 Claude Code、Gemini CLI、Neovate Code、Codex 四个工具的最佳实践
 
 ---

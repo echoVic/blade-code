@@ -2,6 +2,8 @@
  * Subagent 系统类型定义
  */
 
+import { PermissionMode } from '../../config/types.js';
+
 /**
  * Subagent 背景颜色
  */
@@ -52,7 +54,7 @@ export interface SubagentContext {
   parentMessageId?: string;
 
   /** 父 Agent 的权限模式（继承给子 Agent） */
-  permissionMode?: string;
+  permissionMode?: PermissionMode;
 }
 
 /**

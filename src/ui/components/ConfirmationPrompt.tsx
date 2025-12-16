@@ -1,11 +1,13 @@
 import { Box, Text, useInput } from 'ink';
 import SelectInput, { type ItemProps as SelectItemProps } from 'ink-select-input';
 import React, { useMemo } from 'react';
+import { PermissionMode } from '../../config/types.js';
 import type {
   ConfirmationDetails,
   ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
-import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
+import { useCurrentFocus } from '../../store/selectors/index.js';
+import { FocusId } from '../../store/types.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 import { MessageRenderer } from './MessageRenderer.js';
@@ -33,9 +35,9 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
   // 使用 useTerminalWidth hook 获取终端宽度
   const terminalWidth = useTerminalWidth();
 
-  // 使用 FocusContext 管理焦点
-  const { state: focusState } = useFocusContext();
-  const isFocused = focusState.currentFocus === FocusId.CONFIRMATION_PROMPT;
+  // 使用 Zustand store 管理焦点
+  const currentFocus = useCurrentFocus();
+  const isFocused = currentFocus === FocusId.CONFIRMATION_PROMPT;
 
   // 使用智能 Ctrl+C 处理（没有任务，所以直接退出）
   const handleCtrlC = useCtrlCHandler(false);
@@ -60,11 +62,11 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
       if (isPlanModeExit) {
         // ExitPlanMode: Y/S/N (选择执行模式)
         if (lowerInput === 'y') {
-          onResponse({ approved: true, targetMode: 'auto_edit' });
+          onResponse({ approved: true, targetMode: PermissionMode.AUTO_EDIT });
           return;
         }
         if (lowerInput === 's') {
-          onResponse({ approved: true, targetMode: 'default' });
+          onResponse({ approved: true, targetMode: PermissionMode.DEFAULT });
           return;
         }
         if (lowerInput === 'n') {
@@ -111,12 +113,12 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
         {
           key: 'approve-auto',
           label: '[Y] Yes, execute with auto-edit mode',
-          value: { approved: true, targetMode: 'auto_edit' },
+          value: { approved: true, targetMode: PermissionMode.AUTO_EDIT },
         },
         {
           key: 'approve-default',
           label: '[S] Yes, execute with default mode (ask for each operation)',
-          value: { approved: true, targetMode: 'default' },
+          value: { approved: true, targetMode: PermissionMode.DEFAULT },
         },
         {
           key: 'reject',
@@ -163,7 +165,10 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
   // Determine title and color based on confirmation type
   const getHeaderStyle = () => {
     if (isPlanModeExit) {
-      return { color: 'cyan' as const, title: '🔵 Plan Mode - Review Implementation Plan' };
+      return {
+        color: 'cyan' as const,
+        title: '🔵 Plan Mode - Review Implementation Plan',
+      };
     }
     if (isPlanModeEnter) {
       return { color: 'magenta' as const, title: '🟣 Enter Plan Mode?' };

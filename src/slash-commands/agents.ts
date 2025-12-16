@@ -5,6 +5,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
+import { sessionActions } from '../store/vanilla.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 export const agentsCommand: SlashCommand = {
@@ -18,9 +19,10 @@ export const agentsCommand: SlashCommand = {
 
   async handler(
     args: string[],
-    context: SlashCommandContext
+    _context: SlashCommandContext
   ): Promise<SlashCommandResult> {
     const subcommand = args[0];
+    const addMessage = sessionActions().addAssistantMessage;
 
     // 无参数 - 显示 agents 管理对话框
     if (!subcommand) {
@@ -33,7 +35,6 @@ export const agentsCommand: SlashCommand = {
 
     // list 子命令 - 显示文本列表
     if (subcommand === 'list') {
-      const { addAssistantMessage } = context;
       const allAgents = subagentRegistry
         .getAllNames()
         .map((name) => subagentRegistry.getSubagent(name))
@@ -48,7 +49,7 @@ export const agentsCommand: SlashCommand = {
           '- 用户级: `~/.blade/agents/`\n\n' +
           '💡 使用 `/agents` 打开管理对话框';
 
-        addAssistantMessage(message);
+        addMessage(message);
         return { success: true, message: 'No agents found' };
       }
 
@@ -97,13 +98,12 @@ export const agentsCommand: SlashCommand = {
 
       message += '\n💡 使用 `/agents` 打开管理对话框';
 
-      addAssistantMessage(message);
+      addMessage(message);
       return { success: true, message: `Listed ${allAgents.length} agents` };
     }
 
     // Help 子命令
     if (subcommand === 'help') {
-      const { addAssistantMessage } = context;
       const message =
         '📋 **Agents 管理帮助**\n\n' +
         '**可用子命令:**\n' +
@@ -139,7 +139,7 @@ export const agentsCommand: SlashCommand = {
         '- 省略 `tools` 字段 = 继承所有工具\n\n' +
         '💡 **提示:** 创建文件后,重启 Blade 使配置生效';
 
-      addAssistantMessage(message);
+      addMessage(message);
       return { success: true, message: 'Help displayed' };
     }
 
@@ -153,11 +153,10 @@ export const agentsCommand: SlashCommand = {
     }
 
     // 未知子命令
-    const { addAssistantMessage } = context;
     const message =
       `❌ 未知子命令: \`${subcommand}\`\n\n` + '使用 `/agents help` 查看可用命令';
 
-    addAssistantMessage(message);
+    addMessage(message);
     return { success: false, error: `Unknown subcommand: ${subcommand}` };
   },
 };

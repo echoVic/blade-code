@@ -1,7 +1,8 @@
 import { useMemoizedFn } from 'ahooks';
 import { Box, Text } from 'ink';
 import React from 'react';
-import { FocusId, useFocusContext } from '../contexts/FocusContext.js';
+import { useCurrentFocus } from '../../store/selectors/index.js';
+import { FocusId } from '../../store/types.js';
 import { saveImageToTemp } from '../utils/imageHandler.js';
 import { CustomTextInput } from './CustomTextInput.js';
 
@@ -20,9 +21,9 @@ interface InputAreaProps {
  */
 export const InputArea: React.FC<InputAreaProps> = React.memo(
   ({ input, cursorPosition, isProcessing, onChange, onChangeCursorPosition }) => {
-    // 使用焦点上下文来控制是否聚焦
-    const { state: focusState } = useFocusContext();
-    const isFocused = focusState.currentFocus === FocusId.MAIN_INPUT;
+    // 使用 Zustand store 管理焦点
+    const currentFocus = useCurrentFocus();
+    const isFocused = currentFocus === FocusId.MAIN_INPUT;
 
     // 处理中时，禁用输入框（移除焦点和光标）
     const isEnabled = !isProcessing && isFocused;

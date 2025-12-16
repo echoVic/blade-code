@@ -37,7 +37,9 @@ const setupDoctorCommand = async (
   }
 
   const configManager = {
-    initialize: vi.fn(async () => {}),
+    initialize: vi.fn(async () => {
+      /* 模拟实现 */
+    }),
   };
   if (!configInitSucceeds) {
     configManager.initialize.mockRejectedValue(new Error('config failed'));
@@ -50,22 +52,22 @@ const setupDoctorCommand = async (
   }));
 
   if (inkAvailable) {
-    vi.doMock('ink', () => ({}), { virtual: true });
+    vi.doMock('ink', () => ({}));
   } else {
-    vi.doMock(
-      'ink',
-      () => {
-        throw new Error('missing');
-      },
-      { virtual: true }
-    );
+    vi.doMock('ink', () => {
+      throw new Error('missing');
+    });
   }
 
   const exitSpy = vi
     .spyOn(process, 'exit')
     .mockImplementation(() => undefined as never);
-  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {
+    /* 模拟实现 */
+  });
+  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {
+    /* 模拟实现 */
+  });
   const versionSpy = vi.spyOn(process, 'version', 'get').mockReturnValue(nodeVersion);
 
   const { doctorCommands } = await import('../../../src/commands/doctor.js');

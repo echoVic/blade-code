@@ -52,7 +52,7 @@ packages/
 
 **主要组件**:
 - **REPL 界面**: 基于 React 和 Ink 构建的会话式终端界面
-- **会话管理**: 使用 React Context 管理会话状态
+- **会话管理**: 使用 Zustand 管理全局状态，实现单一数据源
 - **配置服务**: 通过 @blade-ai/core 包加载和管理配置
 - **流程编排**: 命令解析、执行编排和结果展示
 
@@ -102,26 +102,60 @@ Agent = LLMs + System Prompt + Context + Tools
 - **实用工具**: 时间戳、UUID、Base64 等 (6个)
 - **智能工具**: 代码审查、文档生成、智能提交等 (3个)
 
-### 3. 上下文管理系统
+### 3. 状态管理系统
+
+Blade 使用 Zustand 实现了高效、可扩展的状态管理系统，提供单一数据源和统一的状态操作入口。
 
 **核心功能**:
-- **对话记忆**: 多会话管理和历史记录
-- **上下文压缩**: 智能上下文大小控制
-- **持久化存储**: 会话状态的磁盘存储
-- **处理器链**: 上下文过滤和处理管道
+- **单一数据源**: 使用 Zustand 实现统一的内存状态管理
+- **React 集成**: 提供 `useBladeStore` Hook 供 React 组件订阅
+- **非 React 支持**: 提供 `vanillaStore` 供 Agent 和服务层使用
+- **持久化同步**: 自动将配置变更同步到磁盘
+- **防御性初始化**: 确保状态在任何环境下都可用
+
+**详细文档**:
+请参考 [状态管理系统](./state-management.md) 文档了解完整实现细节、API 参考和最佳实践。
+
 
 ### 4. 配置管理系统
 
-**多层次配置**:
-- **环境变量**: 最高优先级配置
-- **配置文件**: 用户和项目级配置
-- **命令行参数**: 运行时配置覆盖
-- **默认值**: 内置默认配置
+**架构特点**:
+- **统一数据源**: 配置存储在 Zustand Store 中，确保内存状态与持久化数据一致性
+- **分层配置加载**: 环境变量 > 配置文件 > 命令行参数 > 默认值
+- **自动持久化**: 通过 `configActions()` 自动同步配置变更到磁盘
+- **范围控制**: 支持全局配置和项目级配置
 
-**配置验证**:
-- **类型安全**: 完整的 TypeScript 类型定义
-- **运行时验证**: 配置值的有效性检查
-- **迁移支持**: 配置版本升级和兼容性
+**核心组件**:
+- **ConfigStore**: Zustand Store 中的配置切片
+- **ConfigService**: 封装配置持久化逻辑
+- **ConfigManager**: 底层配置加载和合并机制
+- **PermissionChecker**: 权限规则验证和检查
+
+**配置操作**:
+```typescript
+// 读取配置
+import { getCurrentModel, getAllModels } from '../store/vanilla.js';
+
+const currentModel = getCurrentModel();
+const allModels = getAllModels();
+
+// 写入配置（自动同步）
+import { configActions } from '../store/vanilla.js';
+
+// 更新全局配置
+await configActions().updateConfig({ temperature: 0.7 });
+
+// 添加模型
+await configActions().addModel({
+  id: 'gpt-4',
+  name: 'GPT-4',
+  apiKey: 'sk-...',
+  provider: 'openai'
+});
+
+// 管理权限规则
+await configActions().appendPermissionAllowRule('rm -rf *');
+```
 
 ### 5. 安全架构
 
@@ -182,13 +216,6 @@ Agent = LLMs + System Prompt + Context + Tools
 - OAuth 认证和令牌管理
 - 服务器发现和连接管理
 
-### 遥测服务
-
-**主要功能**:
-- 使用数据收集和分析
-- 性能指标监控
-- 错误追踪和报告
-- 日志收集和管理
 
 ## 扩展性设计
 

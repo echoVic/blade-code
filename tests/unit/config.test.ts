@@ -47,66 +47,42 @@ describe('配置系统', () => {
 
     it('应该使用默认配置', () => {
       expect(DEFAULT_CONFIG).toBeDefined();
-      expect(DEFAULT_CONFIG.apiKey).toBe('');
       expect(DEFAULT_CONFIG.theme).toBe('GitHub');
-      expect(DEFAULT_CONFIG.provider).toBe('openai-compatible');
-      expect(DEFAULT_CONFIG.model).toBe('qwen3-coder-plus');
+      expect(DEFAULT_CONFIG.currentModelId).toBe('');
+      expect(DEFAULT_CONFIG.models).toEqual([]);
     });
 
     it('应该能够初始化配置', async () => {
       const config = await configManager.initialize();
 
       expect(config).toBeDefined();
-      expect(config.apiKey).toBe('');
       expect(config.theme).toBe('GitHub');
-      expect(config.provider).toBe('openai-compatible');
+      expect(config.currentModelId).toBe('');
+      expect(config.models).toEqual([]);
     });
 
     it('应该能够获取配置', async () => {
-      await configManager.initialize();
-      const config = configManager.getConfig();
+      const config = await configManager.initialize();
 
       expect(config).toBeDefined();
-      expect(config?.apiKey).toBe('');
-      expect(config?.theme).toBe('GitHub');
-    });
-
-    it('应该能够更新配置', async () => {
-      await configManager.initialize();
-
-      const newConfig = {
-        theme: 'dark',
-        debug: true,
-      };
-
-      await expect(configManager.updateConfig(newConfig)).resolves.not.toThrow();
-      const updatedConfig = configManager.getConfig();
-
-      // 验证配置已更新
-      expect(updatedConfig?.theme).toBe('dark');
-      expect(updatedConfig?.debug).toBe(true);
+      expect(config.theme).toBe('GitHub');
+      expect(config.currentModelId).toBe('');
+      expect(config.models).toEqual([]);
     });
 
     it('应该能够重置配置', async () => {
-      await configManager.initialize();
+      const config = await configManager.initialize();
 
-      // 更新配置
-      await configManager.updateConfig({
-        theme: 'dark',
-      });
-
-      // 验证配置已更新
-      const updatedConfig = configManager.getConfig();
-      expect(updatedConfig?.theme).toBe('dark');
+      // 验证初始配置
+      expect(config.theme).toBe('GitHub');
 
       // 重置配置
       ConfigManager.resetInstance();
       configManager = ConfigManager.getInstance();
-      await configManager.initialize();
-      const resetConfig = configManager.getConfig();
+      const resetConfig = await configManager.initialize();
 
       // 验证配置已重置为默认值
-      expect(resetConfig?.theme).toBe('GitHub');
+      expect(resetConfig.theme).toBe('GitHub');
     });
   });
 
@@ -114,9 +90,17 @@ describe('配置系统', () => {
     it('应该验证有效的配置', async () => {
       const config = {
         ...DEFAULT_CONFIG,
-        apiKey: 'test-key',
-        model: 'gpt-4',
-        baseUrl: 'https://api.test.com',
+        models: [
+          {
+            id: 'test-model',
+            name: 'Test Model',
+            provider: 'openai-compatible' as const,
+            apiKey: 'test-key',
+            baseUrl: 'https://api.test.com',
+            model: 'gpt-4',
+          },
+        ],
+        currentModelId: 'test-model',
       };
 
       expect(() => {
@@ -127,12 +111,14 @@ describe('配置系统', () => {
     it('应该检测无效的配置', async () => {
       const invalidConfig = {
         ...DEFAULT_CONFIG,
-        // 缺少必需字段
+        models: [], // 没有模型配置
+        currentModelId: '', // 不能为 undefined，使用空字符串
       };
 
+      // 验证当前实现会拒绝空模型列表
       expect(() => {
         configManager.validateConfig(invalidConfig);
-      }).toThrow();
+      }).toThrow(); // 配置验证应该抛出错误
     });
   });
 

@@ -1,68 +1,73 @@
 import { useMemoizedFn } from 'ahooks';
-import { useApp } from 'ink';
 import { useEffect, useRef } from 'react';
+import { appActions } from '../../store/vanilla.js';
 
 /**
  * 智能 Ctrl+C 处理 Hook
  *
- * 实现双击退出逻辑：
- * - 如果当前有任务在执行：第一次按下 Ctrl+C 停止任务，第二次按下退出应用
- * - 如果当前没有任务执行：第一次按下 Ctrl+C 直接退出应用
- *
- * @param isProcessing 是否正在执行任务
- * @param onAbort 停止任务的回调函数（可选）
- * @returns Ctrl+C 处理函数
- *
- * @example
- * // 在组件中使用
- * const handleCtrlC = useCtrlCHandler(isProcessing, handleAbort);
- *
- * useInput((input, key) => {
- *   if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
- *     handleCtrlC();
- *     return;
- *   }
- * }, { isActive: isFocused });
+ * 双击退出逻辑：第一次显示提示，第二次退出应用
  */
 export const useCtrlCHandler = (
   isProcessing: boolean,
   onAbort?: () => void
 ): (() => void) => {
-  const { exit } = useApp();
   const hasAbortedRef = useRef(false);
+  const hintTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  /**
-   * 处理 Ctrl+C 按键事件
-   */
+  // 启动 3 秒自动清除定时器
+  const startHintTimer = useMemoizedFn(() => {
+    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    hintTimerRef.current = setTimeout(() => {
+      appActions().setAwaitingSecondCtrlC(false);
+      hasAbortedRef.current = false;
+      hintTimerRef.current = null;
+    }, 3000);
+  });
+
+  // 退出应用
+  // 使用 setTimeout 延迟 100ms，让 Ink 有时间完成终端清理
+  const doExit = () => {
+    setTimeout(() => {
+      process.exit(0);
+    }, 100);
+  };
+
   const handleCtrlC = useMemoizedFn(() => {
-    if (isProcessing) {
-      // 有任务在执行
-      if (!hasAbortedRef.current) {
-        // 第一次按下：停止任务
-        hasAbortedRef.current = true;
-        if (onAbort) {
-          onAbort();
-        }
-        console.log('任务已停止。再按一次 Ctrl+C 退出应用。');
-      } else {
-        // 第二次按下：退出应用
-        exit();
-      }
+    if (!hasAbortedRef.current) {
+      // 第一次按下
+      hasAbortedRef.current = true;
+      if (isProcessing && onAbort) onAbort();
+      appActions().setAwaitingSecondCtrlC(true);
+      startHintTimer();
     } else {
-      // 没有任务在执行：直接退出应用
-      exit();
+      // 第二次按下：退出
+      if (hintTimerRef.current) {
+        clearTimeout(hintTimerRef.current);
+        hintTimerRef.current = null;
+      }
+      appActions().setAwaitingSecondCtrlC(false);
+      doExit();
     }
   });
 
-  /**
-   * 当任务停止时，重置中止标志
-   * 这样下一次有任务时，又需要双击才能退出
-   */
+  // 任务开始时重置状态
   useEffect(() => {
-    if (!isProcessing) {
+    if (isProcessing) {
+      appActions().setAwaitingSecondCtrlC(false);
       hasAbortedRef.current = false;
+      if (hintTimerRef.current) {
+        clearTimeout(hintTimerRef.current);
+        hintTimerRef.current = null;
+      }
     }
   }, [isProcessing]);
+
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    };
+  }, []);
 
   return handleCtrlC;
 };

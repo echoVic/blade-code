@@ -28,13 +28,11 @@ src/tools/
 ├── types/                       # 类型定义（统一位置） ⭐
 │   ├── ToolTypes.ts            # 工具类型（Tool、ToolConfig、ToolDescription）
 │   ├── ExecutionTypes.ts       # 执行上下文类型
-│   ├── SecurityTypes.ts        # 安全相关类型（ValidationError等）
 │   └── index.ts                # 类型统一导出
 │
 ├── validation/                  # 验证系统
-│   ├── zod-schemas.ts          # Zod Schema 工具函数
-│   ├── zod-to-json.ts          # Zod → JSON Schema 转换
-│   ├── error-formatter.ts      # 错误格式化
+│   ├── zodToJson.ts            # Zod → JSON Schema 转换
+│   ├── errorFormatter.ts       # 错误格式化
 │   └── index.ts                # 验证导出
 │
 ├── registry/                    # 工具注册系统
@@ -152,7 +150,7 @@ import { z } from 'zod';
 export const helloTool = createTool({
   name: 'hello',
   displayName: 'Hello World',
-  kind: ToolKind.Other,
+  kind: ToolKind.ReadOnly,
 
   schema: z.object({
     name: z.string().describe('要打招呼的名字'),
@@ -239,7 +237,6 @@ const declarations = registry.getFunctionDeclarations();
 |------|------|----------|
 | `ToolTypes.ts` | 核心工具类型 | `Tool`, `ToolConfig`, `ToolDescription`, `ToolKind`, `ToolResult`, `FunctionDeclaration` |
 | `ExecutionTypes.ts` | 执行上下文类型 | `ExecutionContext` |
-| `SecurityTypes.ts` | 安全相关类型 | `ValidationError`, `ValidationResult`, `PermissionResult` |
 | **`@types/json-schema`** | **JSON Schema 标准类型** | **`JSONSchema7`**, **`JSONSchema7Definition`** |
 
 ### 类型导入示例

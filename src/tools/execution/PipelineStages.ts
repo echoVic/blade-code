@@ -1,4 +1,3 @@
-import { ConfigManager } from '../../config/ConfigManager.js';
 import {
   PermissionChecker,
   type PermissionCheckResult,
@@ -8,6 +7,7 @@ import {
 import type { PermissionConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { configActions, getConfig } from '../../store/vanilla.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
 import { isReadOnlyKind, ToolKind } from '../types/index.js';
@@ -50,7 +50,9 @@ export class PermissionStage implements PipelineStage {
   readonly name = 'permission';
   private permissionChecker: PermissionChecker;
   private readonly sessionApprovals: Set<string>;
-  private readonly permissionMode: PermissionMode;
+  // 🔧 重命名为 defaultPermissionMode，作为回退值
+  // 实际权限检查时优先使用 execution.context.permissionMode（动态值）
+  private readonly defaultPermissionMode: PermissionMode;
 
   constructor(
     permissionConfig: PermissionConfig,
@@ -59,7 +61,7 @@ export class PermissionStage implements PipelineStage {
   ) {
     this.permissionChecker = new PermissionChecker(permissionConfig);
     this.sessionApprovals = sessionApprovals;
-    this.permissionMode = permissionMode;
+    this.defaultPermissionMode = permissionMode;
   }
 
   /**
@@ -95,7 +97,11 @@ export class PermissionStage implements PipelineStage {
 
       // 使用 PermissionChecker 进行权限检查
       let checkResult = this.permissionChecker.check(descriptor);
-      checkResult = this.applyModeOverrides(tool.kind, checkResult);
+      // 从 execution.context 动态读取 permissionMode（现在是强类型 PermissionMode）
+      // 这样 Shift+Tab 切换模式或 approve 后切换模式都能正确生效
+      const currentPermissionMode =
+        execution.context.permissionMode || this.defaultPermissionMode;
+      checkResult = this.applyModeOverrides(tool.kind, checkResult, currentPermissionMode);
 
       // 根据检查结果采取行动
       switch (checkResult.result) {
@@ -218,24 +224,26 @@ export class PermissionStage implements PipelineStage {
    * - 不直接修改文件系统
    * - 用户可见且安全
    *
-   * 优先级：DENY 规则 > ALLOW 规则 > 模式规则 > ASK
+   * 优先级：YOLO 模式 > PLAN 模式 > DENY 规则 > ALLOW 规则 > 模式规则 > ASK
+   *
+   * @param permissionMode - 当前权限模式（从 execution.context 动态读取）
    */
   private applyModeOverrides(
     toolKind: ToolKind,
-    checkResult: PermissionCheckResult
+    checkResult: PermissionCheckResult,
+    permissionMode: PermissionMode
   ): PermissionCheckResult {
-    // 1. 如果已被 deny 规则拒绝，不覆盖（最高优先级）
-    if (checkResult.result === PermissionResult.DENY) {
-      return checkResult;
+    // 1. YOLO 模式：完全放开，批准所有工具（最高优先级）
+    if (permissionMode === PermissionMode.YOLO) {
+      return {
+        result: PermissionResult.ALLOW,
+        matchedRule: 'mode:yolo',
+        reason: 'YOLO mode: automatically approve all tool invocations',
+      };
     }
 
-    // 2. 如果已被 allow 规则批准，不覆盖
-    if (checkResult.result === PermissionResult.ALLOW) {
-      return checkResult;
-    }
-
-    // 3. PLAN 模式：严格拒绝非只读工具（最高优先级，不可绕过）
-    if (this.permissionMode === PermissionMode.PLAN) {
+    // 2. PLAN 模式：严格拒绝非只读工具
+    if (permissionMode === PermissionMode.PLAN) {
       if (!isReadOnlyKind(toolKind)) {
         return {
           result: PermissionResult.DENY,
@@ -245,27 +253,28 @@ export class PermissionStage implements PipelineStage {
       }
     }
 
-    // 4. YOLO 模式：批准所有工具（在检查规则之后）
-    if (this.permissionMode === PermissionMode.YOLO) {
-      return {
-        result: PermissionResult.ALLOW,
-        matchedRule: 'mode:yolo',
-        reason: 'YOLO mode: automatically approve all tool invocations',
-      };
+    // 3. 如果已被 deny 规则拒绝，不覆盖
+    if (checkResult.result === PermissionResult.DENY) {
+      return checkResult;
+    }
+
+    // 4. 如果已被 allow 规则批准，不覆盖
+    if (checkResult.result === PermissionResult.ALLOW) {
+      return checkResult;
     }
 
     // 5. 只读工具：所有模式下都自动批准
     if (isReadOnlyKind(toolKind)) {
       return {
         result: PermissionResult.ALLOW,
-        matchedRule: `mode:${this.permissionMode}:readonly`,
+        matchedRule: `mode:${permissionMode}:readonly`,
         reason: 'Read-only tools do not require confirmation',
       };
     }
 
     // 6. AUTO_EDIT 模式：额外批准 Write 工具
     if (
-      this.permissionMode === PermissionMode.AUTO_EDIT &&
+      permissionMode === PermissionMode.AUTO_EDIT &&
       toolKind === ToolKind.Write
     ) {
       return {
@@ -383,18 +392,21 @@ export class ConfirmationStage implements PipelineStage {
     descriptor: ToolInvocationDescriptor
   ): Promise<void> {
     try {
-      const configManager = ConfigManager.getInstance();
-
       // 使用 PermissionChecker.abstractPattern 生成模式规则（而非精确签名）
       const pattern = PermissionChecker.abstractPattern(descriptor);
 
       logger.debug(`保存权限规则: "${pattern}"`);
-      await configManager.appendLocalPermissionAllowRule(pattern);
+      // 使用 configActions 自动同步内存 + 持久化
+      await configActions().appendLocalPermissionAllowRule(pattern, {
+        immediate: true,
+      });
 
-      // 重要：重新加载配置，使新规则立即生效（避免重复确认）
-      const updatedConfig = configManager.getPermissions();
-      logger.debug(`同步权限配置到 PermissionChecker:`, updatedConfig);
-      this.permissionChecker.replaceConfig(updatedConfig);
+      // 重要：从 store 读取最新配置，使新规则立即生效（避免重复确认）
+      const currentConfig = getConfig();
+      if (currentConfig?.permissions) {
+        logger.debug(`同步权限配置到 PermissionChecker:`, currentConfig.permissions);
+        this.permissionChecker.replaceConfig(currentConfig.permissions);
+      }
     } catch (error) {
       logger.warn(
         `Failed to persist permission rule "${signature}": ${

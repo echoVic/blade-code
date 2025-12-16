@@ -448,7 +448,11 @@ describe('PermissionChecker', () => {
 
       const dangerousOps = [
         { toolName: 'Delete', params: { file_path: 'important.txt' } },
-        { toolName: 'Bash', params: { command: 'rm -rf /' } },
+        {
+          toolName: 'Bash',
+          params: { command: 'rm -rf /' },
+          tool: mockBashTool,
+        },
         { toolName: 'Write', params: { file_path: 'package.json' } },
       ];
 

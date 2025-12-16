@@ -4,6 +4,43 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../../src/agent/Agent.js';
+import { PermissionMode } from '../../../src/config/types.js';
+
+// Mock getCurrentModel function to return a mock model
+vi.mock('../../../src/config/models.js', () => ({
+  getCurrentModel: vi.fn().mockReturnValue({
+    id: 'mock-model',
+    name: 'Mock Model',
+    provider: 'openai-compatible',
+    apiKey: 'test-key',
+    baseUrl: 'https://mock.api',
+    model: 'mock-model',
+  }),
+  setCurrentModel: vi.fn(),
+  addModel: vi.fn(),
+  removeModel: vi.fn(),
+  listModels: vi.fn().mockReturnValue([
+    {
+      id: 'mock-model',
+      name: 'Mock Model',
+      provider: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'https://mock.api',
+      model: 'mock-model',
+    },
+  ]),
+  validateModelConfig: vi.fn().mockReturnValue({ isValid: true, errors: [] }),
+  getAvailableModels: vi.fn().mockReturnValue([
+    {
+      id: 'mock-model',
+      name: 'Mock Model',
+      provider: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'https://mock.api',
+      model: 'mock-model',
+    },
+  ]),
+}));
 
 // Mock ChatService
 vi.mock('../../../src/services/ChatServiceInterface.js', () => ({
@@ -23,6 +60,95 @@ vi.mock('../../../src/services/ChatService.js', () => ({
       toolCalls: undefined,
     }),
   })),
+}));
+
+// Mock store/vanilla.js functions
+vi.mock('../../../src/store/vanilla.js', () => ({
+  ensureStoreInitialized: vi.fn().mockResolvedValue(undefined),
+  getConfig: vi.fn().mockReturnValue({
+    permissionMode: 'DEFAULT',
+    maxTurns: -1,
+    temperature: 0.7,
+    maxContextTokens: 128000,
+    maxOutputTokens: 4096,
+    timeout: 30000,
+    models: [
+      {
+        id: 'mock-model',
+        name: 'Mock Model',
+        provider: 'openai-compatible',
+        apiKey: 'test-key',
+        baseUrl: 'https://mock.api',
+        model: 'mock-model',
+      },
+    ],
+    currentModelId: 'mock-model',
+  }),
+  getCurrentModel: vi.fn().mockReturnValue({
+    id: 'mock-model',
+    name: 'Mock Model',
+    provider: 'openai-compatible',
+    apiKey: 'test-key',
+    baseUrl: 'https://mock.api',
+    model: 'mock-model',
+  }),
+  getAllModels: vi.fn().mockReturnValue([
+    {
+      id: 'mock-model',
+      name: 'Mock Model',
+      provider: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'https://mock.api',
+      model: 'mock-model',
+    },
+  ]),
+  getMcpServers: vi.fn().mockReturnValue({}),
+  configActions: vi.fn().mockReturnValue({
+    setPermissionMode: vi.fn().mockResolvedValue(undefined),
+  }),
+  sessionActions: vi.fn().mockReturnValue({
+    addAssistantMessage: vi.fn(),
+  }),
+  appActions: vi.fn().mockReturnValue({
+    setTodos: vi.fn(),
+  }),
+  getState: vi.fn().mockReturnValue({
+    config: {
+      config: {
+        permissionMode: 'DEFAULT',
+        maxTurns: -1,
+        temperature: 0.7,
+        maxContextTokens: 128000,
+        maxOutputTokens: 4096,
+        timeout: 30000,
+        models: [
+          {
+            id: 'mock-model',
+            name: 'Mock Model',
+            provider: 'openai-compatible',
+            apiKey: 'test-key',
+            baseUrl: 'https://mock.api',
+            model: 'mock-model',
+          },
+        ],
+        currentModelId: 'mock-model',
+      },
+      actions: {
+        updateConfig: vi.fn(),
+        setConfig: vi.fn(),
+      },
+    },
+    session: {
+      actions: {
+        addAssistantMessage: vi.fn(),
+      },
+    },
+    app: {
+      actions: {
+        setTodos: vi.fn(),
+      },
+    },
+  }),
 }));
 
 // Mock ExecutionEngine
@@ -104,7 +230,45 @@ vi.mock('../../../src/tools/registry/ToolRegistry.js', () => ({
 // Mock other dependencies
 vi.mock('../../../src/config/ConfigManager.js', () => ({
   ConfigManager: vi.fn().mockImplementation(() => ({
-    getConfig: vi.fn().mockReturnValue({}),
+    getConfig: vi.fn().mockReturnValue({
+      permissionMode: 'DEFAULT',
+      maxTurns: -1,
+      temperature: 0.7,
+      maxContextTokens: 128000,
+      maxOutputTokens: 4096,
+      timeout: 30000,
+      models: [
+        {
+          id: 'mock-model',
+          name: 'Mock Model',
+          provider: 'openai-compatible',
+          apiKey: 'test-key',
+          baseUrl: 'https://mock.api',
+          model: 'mock-model',
+        },
+      ],
+      currentModelId: 'mock-model',
+    }),
+    initialize: vi.fn().mockResolvedValue({
+      permissionMode: 'DEFAULT',
+      maxTurns: -1,
+      temperature: 0.7,
+      maxContextTokens: 128000,
+      maxOutputTokens: 4096,
+      timeout: 30000,
+      models: [
+        {
+          id: 'mock-model',
+          name: 'Mock Model',
+          provider: 'openai-compatible',
+          apiKey: 'test-key',
+          baseUrl: 'https://mock.api',
+          model: 'mock-model',
+        },
+      ],
+      currentModelId: 'mock-model',
+    }),
+    validateConfig: vi.fn().mockReturnValue({ isValid: true, errors: [] }),
   })),
 }));
 
@@ -158,50 +322,43 @@ describe('Agent', () => {
 
     // 创建新的 Agent 实例
     agent = new Agent({
-      // 认证
-      provider: 'openai-compatible',
-      apiKey: 'test-key',
-      baseUrl: 'https://mock.api',
-
-      // 模型
-      model: 'mock-model',
+      // BladeConfig 的必需字段
+      currentModelId: 'mock-model',
+      models: [
+        {
+          id: 'mock-model',
+          name: 'Mock Model',
+          provider: 'openai-compatible' as const,
+          apiKey: 'test-key',
+          baseUrl: 'https://mock.api',
+          model: 'mock-model',
+        },
+      ],
       temperature: 0.7,
-      maxTokens: 2048,
+      maxContextTokens: 8000,
+      maxOutputTokens: 4000,
       stream: true,
       topP: 0.9,
       topK: 50,
       timeout: 30000,
-
-      // UI
       theme: 'GitHub',
       language: 'zh-CN',
       fontSize: 14,
-      showStatusBar: true,
-
-      // 核心
       debug: false,
-      telemetry: false,
-      autoUpdate: true,
-      workingDirectory: process.cwd(),
-
-      // 日志
-      logLevel: 'info',
-      logFormat: 'text',
-
-      // MCP
       mcpEnabled: false,
-
-      // 行为配置
+      mcpServers: {},
+      enabledMcpjsonServers: [],
+      disabledMcpjsonServers: [],
       permissions: {
         allow: [],
         ask: [],
         deny: [],
       },
+      permissionMode: PermissionMode.DEFAULT,
       hooks: {},
       env: {},
       disableAllHooks: false,
-      cleanupPeriodDays: 30,
-      includeCoAuthoredBy: true,
+      maxTurns: 10,
     });
   });
 
@@ -340,52 +497,51 @@ describe('Agent', () => {
         throw new Error('Init Error');
       });
 
-      const failingAgent = new Agent({
-        // 认证
-        provider: 'openai-compatible',
-        apiKey: 'test-key',
-        baseUrl: 'https://mock.api',
-
-        // 模型
-        model: 'mock-model',
-        temperature: 0.7,
-        maxTokens: 2048,
-        stream: true,
-        topP: 0.9,
-        topK: 50,
-        timeout: 30000,
-
-        // UI
-        theme: 'GitHub',
-        language: 'zh-CN',
-        fontSize: 14,
-        showStatusBar: true,
-
-        // 核心
-        debug: false,
-        telemetry: false,
-        autoUpdate: true,
-        workingDirectory: process.cwd(),
-
-        // 日志
-        logLevel: 'info',
-        logFormat: 'text',
-
-        // MCP
-        mcpEnabled: false,
-
-        // 行为配置
-        permissions: {
-          allow: [],
-          ask: [],
-          deny: [],
+      const failingAgent = new Agent(
+        {
+          // BladeConfig 的必需字段
+          currentModelId: 'mock-model',
+          models: [
+            {
+              id: 'mock-model',
+              name: 'Mock Model',
+              provider: 'openai-compatible',
+              apiKey: 'test-key',
+              baseUrl: 'https://mock.api',
+              model: 'mock-model',
+            },
+          ],
+          temperature: 0.7,
+          maxContextTokens: 8000,
+          maxOutputTokens: 4000,
+          stream: true,
+          topP: 0.9,
+          topK: 50,
+          timeout: 30000,
+          theme: 'GitHub',
+          language: 'zh-CN',
+          fontSize: 14,
+          debug: false,
+          mcpEnabled: false,
+          mcpServers: {},
+          enabledMcpjsonServers: [],
+          disabledMcpjsonServers: [],
+          permissions: {
+            allow: [],
+            ask: [],
+            deny: [],
+          },
+          permissionMode: PermissionMode.DEFAULT,
+          hooks: {},
+          env: {},
+          disableAllHooks: false,
+          maxTurns: 10,
         },
-        hooks: {},
-        env: {},
-        disableAllHooks: false,
-        cleanupPeriodDays: 30,
-        includeCoAuthoredBy: true,
-      });
+        {
+          // AgentOptions
+          permissionMode: PermissionMode.DEFAULT,
+        }
+      );
 
       await expect(failingAgent.initialize()).rejects.toThrow('Init Error');
 

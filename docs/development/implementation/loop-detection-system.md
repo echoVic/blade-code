@@ -22,6 +22,17 @@
 
 ## 概述
 
+> ⚠️ **状态说明（2025 重构后）**
+>
+> 当前核心 Agent 实现中已移除 `LoopDetectionService`，循环安全策略改为：
+> - 使用配置项 `maxTurns` 控制最大轮次（`-1` 表示无限制）
+> - 叠加硬性安全上限 `SAFETY_LIMIT = 100` 防止无限循环
+> - 在每轮调用前后结合上下文压缩和 token 使用情况做保护
+>
+> 本文档保留为历史设计参考，阅读时请以最新实现为准：
+> - Agent 主循环：`src/agent/Agent.ts` 中的 `executeLoop()` 实现
+> - Agentic Loop 配置：`DEFAULT_CONFIG.maxTurns` 及相关说明（`src/config/defaults.ts`、`CLAUDE.md`）
+
 循环检测系统是 Blade Agent 的核心安全机制,用于检测并阻止 LLM Agent 陷入重复、无效的执行循环。
 
 **核心特性:**

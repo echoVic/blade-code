@@ -78,7 +78,6 @@ Blade 采用双配置文件系统，参考 Claude Code 的设计理念：
 ```json
 {
   "debug": false,
-  "telemetry": true,
   "autoUpdate": true,
   "workingDirectory": "."
 }
@@ -348,6 +347,60 @@ blade
 
 ## 核心实现
 
+### 架构概述
+
+Blade 配置系统采用 **Store 作为单一数据源** 的架构，确保内存状态与持久化数据的一致性：
+
+```
+┌─────────────────────────────────────────────────┐
+│  统一写入入口                                     │
+│  ┌──────────────┐     ┌──────────────┐          │
+│  │      UI      │     │    Agent     │          │
+│  └──────┬───────┘     └──────┬───────┘          │
+│         │                    │                   │
+│         ▼                    ▼                   │
+│    configActions()  ← 唯一写入入口                │
+│         │                                        │
+│         ├─→ 1. 更新 Store（内存单一数据源）        │
+│         └─→ 2. 调用 ConfigService（持久化）      │
+│                      │                           │
+│                      ▼                           │
+│                ConfigManager                     │
+│                └─┬────────────────┬─┘           │
+│                  │                │              │
+│                  ▼                ▼              │
+│             写入 config.json     写入 settings.json│
+└─────────────────────────────────────────────────┘
+```
+
+### Store（单一数据源）
+
+Store 是 Blade 配置系统的核心，位于 [src/store/vanilla.ts](../src/store/vanilla.ts)，提供：
+
+1. **内存单一数据源** - 所有读取操作从 Store 获取最新数据
+2. **统一写入入口** - 通过 `configActions()` 自动同步内存和持久化
+3. **防御性初始化** - 确保 Store 在任何环境下都可用
+4. **类型安全** - 完整的 TypeScript 类型定义
+
+主要 API：
+
+```typescript
+// 读取配置
+import { getConfig, getCurrentModel, getPermissions } from '../store/vanilla.js';
+
+const config = getConfig();
+const currentModel = getCurrentModel();
+const permissions = getPermissions();
+
+// 写入配置
+import { configActions } from '../store/vanilla.js';
+
+// 自动同步：内存 + 持久化
+await configActions().updateConfig({ theme: 'dark' });
+await configActions().addModel(modelData);
+await configActions().updatePermissions(newPermissions);
+```
+
 ### ConfigManager
 
 配置管理器位于 [src/config/ConfigManager.ts](../src/config/ConfigManager.ts)，负责：
@@ -355,8 +408,18 @@ blade
 1. **多层级配置加载** - 按优先级加载和合并配置
 2. **环境变量插值** - 支持 `$VAR` 和 `${VAR:-default}` 语法
 3. **配置验证** - 验证配置格式和必需字段
-4. **动态更新** - 运行时更新配置
+4. **持久化实现** - 将配置写入文件系统
 5. **配置追踪** - 追踪配置项的来源
+
+> **注意**：ConfigManager 现在主要作为底层持久化实现，应用代码应通过 Store 的 `configActions()` 进行配置操作。
+
+### ConfigService
+
+配置服务位于 [src/config/ConfigService.ts](../src/config/ConfigService.ts)，提供：
+
+1. **统一持久化接口** - 封装对 ConfigManager 的调用
+2. **范围控制** - 支持全局配置和项目配置
+3. **批量更新** - 优化多次配置变更的性能
 
 ### PermissionChecker
 
@@ -369,6 +432,7 @@ class PermissionChecker {
   isDenied(descriptor: ToolInvocationDescriptor): boolean
   needsConfirmation(descriptor: ToolInvocationDescriptor): boolean
   updateConfig(config: Partial<PermissionConfig>): void
+  replaceConfig(config: PermissionConfig): void
 }
 ```
 

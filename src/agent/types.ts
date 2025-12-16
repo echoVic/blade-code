@@ -25,12 +25,12 @@ export interface ChatContext {
   workspaceRoot: string;
   signal?: AbortSignal;
   confirmationHandler?: ConfirmationHandler; // 会话级别的确认处理器
-  permissionMode?: string; // 传递当前权限模式（用于 Plan 模式判断）
+  permissionMode?: PermissionMode; // 当前权限模式（用于 Plan 模式判断）
 }
 
 /**
  * Agent 创建选项 - 仅包含运行时参数
- * Agent 的配置来自 ConfigManager.getConfig() (BladeConfig)
+ * Agent 的配置来自 Store (通过 getConfig() 获取 BladeConfig)
  */
 export interface AgentOptions {
   // 运行时参数
@@ -134,6 +134,17 @@ export interface LoopOptions {
   onContent?: (content: string) => void; // 完整的 LLM 输出内容
   onThinking?: (content: string) => void; // LLM 推理过程(深度推理模型)
   onToolStart?: (toolCall: ChatCompletionMessageToolCall) => void; // 工具调用开始
+
+  // Token 使用量回调
+  onTokenUsage?: (usage: {
+    inputTokens: number; // 当前轮 prompt tokens
+    outputTokens: number; // 当前轮 completion tokens
+    totalTokens: number; // 累计总 tokens
+    maxContextTokens: number; // 上下文窗口大小
+  }) => void;
+
+  // 压缩状态回调
+  onCompacting?: (isCompacting: boolean) => void;
 }
 
 export interface LoopResult {
@@ -159,6 +170,7 @@ export interface LoopResult {
     actualMaxTurns?: number;
     hitSafetyLimit?: boolean;
     shouldExitLoop?: boolean; // ExitPlanMode 设置此标记以退出循环
-    targetMode?: string; // Plan 模式批准后的目标权限模式（default/auto_edit）
+    targetMode?: PermissionMode; // Plan 模式批准后的目标权限模式
+    planContent?: string; // Plan 模式批准后的方案内容
   };
 }
