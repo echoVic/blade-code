@@ -17,10 +17,14 @@
 
 ## 💻 实现细节
 
+- **[Store 与 Config 架构统一](implementation/store-config-unification.md)** 🆕 - 消除双轨数据源的重构总结
 - **[错误处理](implementation/error-handling.md)** - 错误处理机制
 - **[日志系统](implementation/logging-system.md)** - 日志系统实现
 - **[Markdown 渲染器](implementation/markdown-renderer.md)** ⭐ - 完整 Markdown 渲染系统
 - **[流式工具执行显示](implementation/streaming-tool-execution-display.md)** ⭐ - Claude Code 风格的工具执行流
+- **[循环检测系统](implementation/loop-detection-system.md)** - 三层循环检测机制
+- **[Subagents 系统](implementation/subagents-system.md)** - 子 Agent 架构
+- **[MCP 支持](implementation/mcp-support.md)** - Model Context Protocol 实现
 
 ## 📋 技术方案
 

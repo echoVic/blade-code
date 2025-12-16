@@ -19,7 +19,7 @@ export interface MockFunctionOptions {
 }
 
 // 重新导出 vi.Mock 作为 Mock 类型
-export type Mock<T = any> = ReturnType<typeof vi.fn>;
+export type Mock<_T = any> = ReturnType<typeof vi.fn>;
 
 // 测试工具类
 export class TestTools {
@@ -91,7 +91,7 @@ export class TestTools {
         if (validator(result)) {
           return result;
         }
-      } catch (error) {
+      } catch (_error) {
         // 忽略错误，继续等待
       }
       await new Promise((resolve) => setTimeout(resolve, interval));

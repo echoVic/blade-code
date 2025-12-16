@@ -10,22 +10,20 @@
  * 负责：LLM 交互、工具执行、循环检测
  */
 
-import { EventEmitter } from 'events';
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import * as os from 'os';
 import * as path from 'path';
-import { ConfigManager } from '../config/ConfigManager.js';
-import type { BladeConfig, PermissionConfig } from '../config/types.js';
-import { PermissionMode } from '../config/types.js';
+import {
+  type BladeConfig,
+  ConfigManager,
+  type PermissionConfig,
+  PermissionMode,
+} from '../config/index.js';
 import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { loadProjectMcpConfig } from '../mcp/loadProjectMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
-import {
-  buildSystemPrompt,
-  createPlanModeReminder,
-} from '../prompts/index.js';
+import { buildSystemPrompt, createPlanModeReminder } from '../prompts/index.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
 import type { Attachment } from '../prompts/processors/types.js';
 import {
@@ -33,16 +31,21 @@ import {
   type IChatService,
   type Message,
 } from '../services/ChatServiceInterface.js';
+import {
+  appActions,
+  configActions,
+  ensureStoreInitialized,
+  getAllModels,
+  getConfig,
+  getCurrentModel,
+  getMcpServers,
+} from '../store/vanilla.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import { type Tool, type ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
-import {
-  type LoopDetectionConfig,
-  LoopDetectionService,
-} from './LoopDetectionService.js';
 import { subagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
   AgentOptions,
@@ -56,7 +59,7 @@ import type {
 // 创建 Agent 专用 Logger
 const logger = createLogger(LogCategory.AGENT);
 
-export class Agent extends EventEmitter {
+export class Agent {
   private config: BladeConfig;
   private runtimeOptions: AgentOptions;
   private isInitialized = false;
@@ -68,7 +71,6 @@ export class Agent extends EventEmitter {
   // 核心组件
   private chatService!: IChatService;
   private executionEngine!: ExecutionEngine;
-  private loopDetector!: LoopDetectionService;
   private attachmentCollector?: AttachmentCollector;
 
   constructor(
@@ -76,7 +78,6 @@ export class Agent extends EventEmitter {
     runtimeOptions: AgentOptions = {},
     executionPipeline?: ExecutionPipeline
   ) {
-    super();
     this.config = config;
     this.runtimeOptions = runtimeOptions;
     this.executionPipeline = executionPipeline || this.createDefaultPipeline();
@@ -106,17 +107,15 @@ export class Agent extends EventEmitter {
 
   /**
    * 快速创建并初始化 Agent 实例（静态工厂方法）
-   * 使用 ConfigManager 单例获取配置
+   * 使用 Store 获取配置
    */
   static async create(options: AgentOptions = {}): Promise<Agent> {
-    // 1. 获取 ConfigManager 单例
-    const configManager = ConfigManager.getInstance();
+    // 0. 确保 store 已初始化（防御性检查）
+    await ensureStoreInitialized();
 
-    // 2. 确保已初始化（幂等操作）
-    await configManager.initialize();
-
-    // 3. 检查是否有可用的模型配置
-    if (configManager.getAllModels().length === 0) {
+    // 1. 检查是否有可用的模型配置
+    const models = getAllModels();
+    if (models.length === 0) {
       throw new Error(
         '❌ 没有可用的模型配置\n\n' +
           '请先使用以下命令添加模型：\n' +
@@ -126,18 +125,22 @@ export class Agent extends EventEmitter {
       );
     }
 
-    // 4. 获取 BladeConfig（不需要转换）
-    const config = configManager.getConfig();
+    // 2. 获取 BladeConfig（从 Store）
+    const config = getConfig();
+    if (!config) {
+      throw new Error('❌ 配置未初始化，请确保应用已正确启动');
+    }
 
-    // 5. 验证配置
+    // 3. 验证配置
+    const configManager = ConfigManager.getInstance();
     configManager.validateConfig(config);
 
-    // 6. 创建并初始化 Agent
+    // 4. 创建并初始化 Agent
     // 将 options 作为运行时参数传递
     const agent = new Agent(config, options);
     await agent.initialize();
 
-    // 7. 应用工具白名单（如果指定）
+    // 5. 应用工具白名单（如果指定）
     if (options.toolWhitelist && options.toolWhitelist.length > 0) {
       agent.applyToolWhitelist(options.toolWhitelist);
     }
@@ -166,9 +169,11 @@ export class Agent extends EventEmitter {
       await this.loadSubagents();
 
       // 4. 初始化核心组件
-      // 获取当前模型配置
-      const configManager = ConfigManager.getInstance();
-      const modelConfig = configManager.getCurrentModel();
+      // 获取当前模型配置（从 Store）
+      const modelConfig = getCurrentModel();
+      if (!modelConfig) {
+        throw new Error('❌ 当前模型配置未找到');
+      }
 
       this.log(`🚀 使用模型: ${modelConfig.name} (${modelConfig.model})`);
 
@@ -187,19 +192,7 @@ export class Agent extends EventEmitter {
       // 4. 初始化执行引擎
       this.executionEngine = new ExecutionEngine(this.chatService);
 
-      // 5. 初始化循环检测服务
-      const loopConfig: LoopDetectionConfig = {
-        toolCallThreshold: 5, // 工具调用重复5次触发
-        contentRepeatThreshold: 10, // 内容重复10次触发
-        llmCheckInterval: 30, // 每30轮进行LLM检测
-        enableDynamicThreshold: true, // 启用动态阈值调整
-        enableLlmDetection: true, // 启用LLM智能检测
-        whitelistedTools: [], // 白名单工具（如监控工具）
-        maxWarnings: 3, // 最大警告次数（从2提高到3，给模型更多机会改正）
-      };
-      this.loopDetector = new LoopDetectionService(loopConfig, this.chatService);
-
-      // 6. 初始化附件收集器（@ 文件提及）
+      // 5. 初始化附件收集器（@ 文件提及）
       this.attachmentCollector = new AttachmentCollector({
         cwd: process.cwd(),
         maxFileSize: 1024 * 1024, // 1MB
@@ -211,7 +204,6 @@ export class Agent extends EventEmitter {
       this.log(
         `Agent初始化完成，已加载 ${this.executionPipeline.getRegistry().getAll().length} 个工具`
       );
-      this.emit('initialized');
     } catch (error) {
       this.error('Agent初始化失败', error);
       throw error;
@@ -227,7 +219,6 @@ export class Agent extends EventEmitter {
     }
 
     this.activeTask = task;
-    this.emit('taskStarted', task);
 
     try {
       this.log(`开始执行任务: ${task.id}`);
@@ -247,13 +238,11 @@ export class Agent extends EventEmitter {
       }
 
       this.activeTask = undefined;
-      this.emit('taskCompleted', task, response);
       this.log(`任务执行完成: ${task.id}`);
 
       return response;
     } catch (error) {
       this.activeTask = undefined;
-      this.emit('taskFailed', task, error);
       this.error(`任务执行失败: ${task.id}`, error);
       throw error;
     }
@@ -289,9 +278,8 @@ export class Agent extends EventEmitter {
           : await this.runLoop(enhancedMessage, context, loopOptions);
 
       if (!result.success) {
-        // 如果是用户中止，触发事件并返回空字符串（不抛出异常）
+        // 如果是用户中止，返回空字符串（不抛出异常）
         if (result.error?.type === 'aborted') {
-          this.emit('taskAborted', result.metadata);
           return ''; // 返回空字符串，让调用方自行处理
         }
         // 其他错误则抛出异常
@@ -300,18 +288,13 @@ export class Agent extends EventEmitter {
 
       // 🆕 检查是否需要切换模式并重新执行（Plan 模式批准后）
       if (result.metadata?.targetMode && context.permissionMode === 'plan') {
-        const targetMode = result.metadata.targetMode as 'default' | 'auto_edit';
+        const targetMode = result.metadata.targetMode as PermissionMode;
+        const planContent = result.metadata.planContent as string | undefined;
         logger.debug(`🔄 Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
 
-        // ✅ 持久化模式切换到配置文件
-        const configManager = ConfigManager.getInstance();
-        const newPermissionMode =
-          targetMode === 'auto_edit'
-            ? PermissionMode.AUTO_EDIT
-            : PermissionMode.DEFAULT;
-
-        await configManager.setPermissionMode(newPermissionMode);
-        logger.debug(`✅ 权限模式已持久化: ${newPermissionMode}`);
+        // 更新内存中的权限模式（运行时状态，不持久化）
+        await configActions().setPermissionMode(targetMode);
+        logger.debug(`✅ 权限模式已更新: ${targetMode}`);
 
         // 创建新的 context，使用批准的目标模式
         const newContext: ChatContext = {
@@ -319,7 +302,20 @@ export class Agent extends EventEmitter {
           permissionMode: targetMode,
         };
 
-        return this.runLoop(enhancedMessage, newContext, loopOptions).then(
+        // 🆕 将 plan 内容注入到消息中，确保 AI 按照 plan 执行
+        let messageWithPlan = enhancedMessage;
+        if (planContent) {
+          messageWithPlan = `${enhancedMessage}
+
+<approved-plan>
+${planContent}
+</approved-plan>
+
+IMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
+          logger.debug(`📋 已将 plan 内容注入到消息中 (${planContent.length} 字符)`);
+        }
+
+        return this.runLoop(messageWithPlan, newContext, loopOptions).then(
           (newResult) => {
             if (!newResult.success) {
               throw new Error(newResult.error?.message || '执行失败');
@@ -367,21 +363,9 @@ export class Agent extends EventEmitter {
     // Plan 模式差异 2: 在用户消息中注入 system-reminder
     const messageWithReminder = createPlanModeReminder(message);
 
-    // Plan 模式差异 3: 跳过内容循环检测
-    const skipContentDetection = true;
-
-    // Plan 模式差异 4: 配置 Plan 模式循环检测
-    this.loopDetector.setPlanModeConfig(this.config.planMode);
-
     // 调用通用循环，传入 Plan 模式专用配置
     // 注意：不再传递 isPlanMode 参数，executeLoop 会从 context.permissionMode 读取
-    return this.executeLoop(
-      messageWithReminder,
-      context,
-      options,
-      systemPrompt,
-      skipContentDetection
-    );
+    return this.executeLoop(messageWithReminder, context, options, systemPrompt);
   }
 
   /**
@@ -401,17 +385,8 @@ export class Agent extends EventEmitter {
       ? `${envContext}\n\n---\n\n${this.systemPrompt}`
       : envContext;
 
-    // 普通模式不跳过内容循环检测
-    const skipContentDetection = false;
-
     // 调用通用循环
-    return this.executeLoop(
-      message,
-      context,
-      options,
-      systemPrompt,
-      skipContentDetection
-    );
+    return this.executeLoop(message, context, options, systemPrompt);
   }
 
   /**
@@ -422,14 +397,12 @@ export class Agent extends EventEmitter {
    * @param context - 聊天上下文（包含 permissionMode，用于决定工具暴露策略）
    * @param options - 循环选项
    * @param systemPrompt - 系统提示词（Plan 模式和普通模式使用不同的提示词）
-   * @param skipContentDetection - 是否跳过内容循环检测（Plan 模式为 true）
    */
   private async executeLoop(
     message: string,
     context: ChatContext,
     options?: LoopOptions,
-    systemPrompt?: string,
-    skipContentDetection = false
+    systemPrompt?: string
   ): Promise<LoopResult> {
     if (!this.isInitialized) {
       throw new Error('Agent未初始化');
@@ -448,7 +421,7 @@ export class Agent extends EventEmitter {
       if (isPlanMode) {
         const readOnlyTools = registry.getReadOnlyTools();
         logger.debug(
-          `🔒 Plan mode: 使用只读工具 (${readOnlyTools.length} 个): ${readOnlyTools.map(t => t.name).join(', ')}`
+          `🔒 Plan mode: 使用只读工具 (${readOnlyTools.length} 个): ${readOnlyTools.map((t) => t.name).join(', ')}`
         );
       }
 
@@ -530,7 +503,9 @@ export class Agent extends EventEmitter {
       let totalTokens = 0; //- 累计 token 使用量
       let lastPromptTokens: number | undefined; // 上一轮 LLM 返回的真实 prompt tokens
 
-      while (turnsCount < maxTurns) {
+      // 无限循环，达到轮次上限时自动压缩并重置计数器继续
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
         // === 1. 检查中断信号 ===
         if (options?.signal?.aborted) {
           return {
@@ -558,7 +533,8 @@ export class Agent extends EventEmitter {
           messages,
           context,
           turnsCount,
-          lastPromptTokens // 首轮为 undefined，使用估算；后续轮次使用真实值
+          lastPromptTokens, // 首轮为 undefined，使用估算；后续轮次使用真实值
+          options?.onCompacting
         );
 
         // 🔧 关键修复：如果发生了压缩，必须重建 messages 数组
@@ -607,7 +583,6 @@ export class Agent extends EventEmitter {
         }
 
         // 触发轮次开始事件 (供 UI 显示进度)
-        this.emit('loopTurnStart', { turn: turnsCount, maxTurns });
         options?.onTurnStart?.({ turn: turnsCount, maxTurns });
 
         // 🔍 调试：打印发送给 LLM 的消息
@@ -659,6 +634,16 @@ export class Agent extends EventEmitter {
           logger.debug(
             `[Agent] LLM usage: prompt=${lastPromptTokens}, completion=${turnResult.usage.completionTokens}, total=${turnResult.usage.totalTokens}`
           );
+
+          // 通知 UI 更新 token 使用量
+          if (options?.onTokenUsage) {
+            options.onTokenUsage({
+              inputTokens: turnResult.usage.promptTokens ?? 0,
+              outputTokens: turnResult.usage.completionTokens ?? 0,
+              totalTokens,
+              maxContextTokens: this.config.maxContextTokens,
+            });
+          }
         }
 
         // 检查 abort 信号（LLM 调用后）
@@ -691,6 +676,42 @@ export class Agent extends EventEmitter {
 
         // 4. 检查是否需要工具调用（任务完成条件）
         if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
+          // === 检测"意图未完成"模式 ===
+          // 某些模型（如 qwen）会说"让我来..."但不实际调用工具
+          const INCOMPLETE_INTENT_PATTERNS = [
+            /：\s*$/, // 中文冒号结尾
+            /:\s*$/, // 英文冒号结尾
+            /\.\.\.\s*$/, // 省略号结尾
+            /让我(先|来|开始|查看|检查|修复)/, // 中文意图词
+            /Let me (first|start|check|look|fix)/i, // 英文意图词
+          ];
+
+          const content = turnResult.content || '';
+          const isIncompleteIntent = INCOMPLETE_INTENT_PATTERNS.some((p) =>
+            p.test(content)
+          );
+
+          // 统计最近的重试消息数量（避免无限循环）
+          const RETRY_PROMPT = '请执行你提到的操作，不要只是描述。';
+          const recentRetries = messages
+            .slice(-10)
+            .filter((m) => m.role === 'user' && m.content === RETRY_PROMPT).length;
+
+          if (isIncompleteIntent && recentRetries < 2) {
+            logger.debug(
+              `⚠️ 检测到意图未完成（重试 ${recentRetries + 1}/2）: "${content.slice(-50)}"`
+            );
+
+            // 追加提示消息，要求 LLM 执行操作
+            messages.push({
+              role: 'user',
+              content: RETRY_PROMPT,
+            });
+
+            // 继续循环，不返回
+            continue;
+          }
+
           logger.debug('✅ 任务完成 - LLM 未请求工具调用');
 
           // === 保存助手最终响应到 JSONL ===
@@ -758,12 +779,6 @@ export class Agent extends EventEmitter {
           if (toolCall.type !== 'function') continue;
 
           try {
-            // 触发工具执行开始事件
-            this.emit('toolExecutionStart', {
-              tool: toolCall.function.name,
-              turn: turnsCount,
-            });
-
             // 🆕 触发工具开始回调（流式显示）
             if (options?.onToolStart) {
               options.onToolStart(toolCall);
@@ -866,13 +881,6 @@ export class Agent extends EventEmitter {
               };
             }
 
-            // 触发工具执行完成事件
-            this.emit('toolExecutionComplete', {
-              tool: toolCall.function.name,
-              success: result.success,
-              turn: turnsCount,
-            });
-
             // 调用 onToolResult 回调（如果提供）
             // 用于显示工具执行的完成摘要和详细内容
             if (options?.onToolResult) {
@@ -912,10 +920,9 @@ export class Agent extends EventEmitter {
               logger.warn('[Agent] 保存工具结果失败:', error);
             }
 
-            // 如果是 TODO 工具,触发 TODO 更新事件
+            // 如果是 TODO 工具,直接更新 store
             if (
-              (toolCall.function.name === 'TodoWrite' ||
-                toolCall.function.name === 'TodoRead') &&
+              toolCall.function.name === 'TodoWrite' &&
               result.success &&
               result.llmContent
             ) {
@@ -923,8 +930,11 @@ export class Agent extends EventEmitter {
                 typeof result.llmContent === 'object' ? result.llmContent : {};
               const todos = Array.isArray(content)
                 ? content
-                : (content as Record<string, unknown>).todos || [];
-              this.emit('todoUpdate', { todos });
+                : ((content as Record<string, unknown>).todos as unknown[]) || [];
+              // 直接更新 store，不再通过事件发射器
+              appActions().setTodos(
+                todos as import('../tools/builtin/todo/types.js').TodoItem[]
+              );
             }
 
             // 添加工具执行结果到消息历史
@@ -977,141 +987,97 @@ export class Agent extends EventEmitter {
           };
         }
 
-        // === Plan 模式专用：检测连续无文本输出的循环 ===
-        if (context.permissionMode === 'plan') {
-          const hasTextOutput = !!(
-            turnResult.content && turnResult.content.trim() !== ''
+        // === 7. 检查轮次上限并自动压缩 ===
+        // 达到轮次上限时，自动压缩上下文并重置计数器继续对话
+        if (turnsCount >= maxTurns) {
+          const isHitSafetyLimit =
+            configuredMaxTurns === -1 || configuredMaxTurns > SAFETY_LIMIT;
+          const actualLimit = isHitSafetyLimit ? SAFETY_LIMIT : configuredMaxTurns;
+
+          logger.warn(
+            `⚠️ 达到${isHitSafetyLimit ? '安全上限' : '最大轮次限制'} ${actualLimit}，自动压缩上下文...`
           );
-          const planLoopResult =
-            this.loopDetector.detectPlanModeToolOnlyLoop(hasTextOutput);
 
-          if (!hasTextOutput) {
-            logger.debug(
-              `[Plan Mode] 连续无文本输出: ${planLoopResult.consecutiveCount}/${this.config.planMode.toolOnlyThreshold}`
-            );
-          }
-
-          if (planLoopResult.shouldWarn && planLoopResult.warningMessage) {
-            logger.warn(
-              `[Plan Mode] 检测到工具循环 - 连续 ${planLoopResult.consecutiveCount} 轮无文本输出，注入警告`
-            );
-
-            // 将过渡语和警告合并为一条 assistant 消息
-            // 避免连续 assistant 消息导致某些模型（如 DeepSeek）返回空响应
-            messages.push({
-              role: 'assistant',
-              content: `Let me pause and summarize my findings so far before continuing with more research.\n\n${planLoopResult.warningMessage}`,
+          // 调用 CompactionService 进行压缩
+          try {
+            const chatConfig = this.chatService.getConfig();
+            const compactResult = await CompactionService.compact(context.messages, {
+              trigger: 'auto',
+              modelName: chatConfig.model,
+              maxContextTokens: chatConfig.maxContextTokens ?? this.config.maxContextTokens,
+              apiKey: chatConfig.apiKey,
+              baseURL: chatConfig.baseUrl,
+              actualPreTokens: lastPromptTokens,
             });
-          }
-        }
 
-        // 7. 循环检测 - 检测是否陷入死循环
-        const loopDetected = await this.loopDetector.detect(
-          turnResult.toolCalls.filter(
-            (tc: ChatCompletionMessageToolCall) => tc.type === 'function'
-          ),
-          turnsCount,
-          messages,
-          skipContentDetection // 使用传入的参数
-        );
+            // 更新 context.messages 为压缩后的消息
+            context.messages = compactResult.compactedMessages;
 
-        if (loopDetected?.detected) {
-          // 渐进式策略: 先警告,多次后才停止
-          // 关键改进：给出具体指示，而不是让模型解释自己
-          const warningMsg = `⚠️ Loop detected (${loopDetected.warningCount}/${this.loopDetector['maxWarnings']}): ${loopDetected.reason}
+            // 重建 messages 数组
+            const systemMsg = messages.find((m) => m.role === 'system');
+            messages.length = 0;
+            if (systemMsg) {
+              messages.push(systemMsg);
+            }
+            messages.push(...context.messages);
 
-IMPORTANT: Do NOT explain or justify yourself. Instead:
-1. If you were about to call a tool, call it NOW
-2. If you need to do something different, do it NOW
-3. No filler text - action only`;
-
-          if (loopDetected.shouldStop) {
-            // 超过最大警告次数,停止任务
-            logger.warn(`🔴 ${warningMsg}\n任务已停止。`);
-            return {
-              success: false,
-              error: {
-                type: 'loop_detected',
-                message: `检测到循环: ${loopDetected.reason}`,
-              },
-              metadata: {
-                turnsCount,
-                toolCallsCount: allToolResults.length,
-                duration: Date.now() - startTime,
-              },
-            };
-          } else {
-            // 注入警告消息,让 LLM 有机会自我修正
-            logger.warn(`⚠️ ${warningMsg}`);
-            messages.push({
+            // 添加继续执行的指令，确保 LLM 不会因为摘要而停止
+            const continueMessage: Message = {
               role: 'user',
-              content: warningMsg,
-            });
-            continue; // 跳过工具执行,让 LLM 重新思考
-          }
-        }
+              content:
+                'This session is being continued from a previous conversation that ran out of context. ' +
+                'The conversation is summarized above.\n\n' +
+                'Please continue the conversation from where we left it off without asking the user any further questions. ' +
+                'Continue with the last task that you were asked to work on.',
+            };
+            messages.push(continueMessage);
+            context.messages.push(continueMessage);
 
-        // 8. 历史压缩 - 可配置（默认开启）
-        if (
-          options?.autoCompact !== false &&
-          turnsCount % 10 === 0 &&
-          messages.length > 100
-        ) {
-          logger.debug(`🗜️ 历史消息过长 (${messages.length}条)，进行压缩...`);
-          // 保留系统提示 + 最近80条消息
-          const systemMsg = messages.find((m) => m.role === 'system');
-          const recentMessages = messages.slice(-80);
-          messages.length = 0;
-          if (systemMsg && !recentMessages.some((m) => m.role === 'system')) {
-            messages.push(systemMsg);
+            // 保存压缩数据到 JSONL
+            try {
+              const contextMgr = this.executionEngine?.getContextManager();
+              if (contextMgr && context.sessionId) {
+                await contextMgr.saveCompaction(
+                  context.sessionId,
+                  compactResult.summary,
+                  {
+                    trigger: 'auto',
+                    preTokens: compactResult.preTokens,
+                    postTokens: compactResult.postTokens,
+                    filesIncluded: compactResult.filesIncluded,
+                  },
+                  null
+                );
+              }
+            } catch (saveError) {
+              logger.warn('[Agent] 保存压缩数据失败:', saveError);
+            }
+
+            // 重置轮次计数
+            turnsCount = 0;
+            logger.info(
+              `✅ 上下文已压缩 (${compactResult.preTokens} → ${compactResult.postTokens} tokens)，重置轮次计数，继续对话`
+            );
+          } catch (compactError) {
+            // 压缩失败时的降级处理：简单截断消息
+            logger.error('[Agent] 压缩失败，使用降级策略:', compactError);
+
+            const systemMsg = messages.find((m) => m.role === 'system');
+            const recentMessages = messages.slice(-80);
+            messages.length = 0;
+            if (systemMsg && !recentMessages.some((m) => m.role === 'system')) {
+              messages.push(systemMsg);
+            }
+            messages.push(...recentMessages);
+            context.messages = messages.filter((m) => m.role !== 'system');
+
+            turnsCount = 0;
+            logger.warn(`⚠️ 降级压缩完成，保留 ${messages.length} 条消息，继续对话`);
           }
-          messages.push(...recentMessages);
-          logger.debug(`🗜️ 压缩后保留 ${messages.length} 条消息`);
         }
 
         // 继续下一轮循环...
       }
-
-      // 8. 达到最大轮次限制
-      const isHitSafetyLimit =
-        configuredMaxTurns === -1 || configuredMaxTurns > SAFETY_LIMIT;
-      const actualLimit = isHitSafetyLimit ? SAFETY_LIMIT : configuredMaxTurns;
-
-      logger.warn(
-        `⚠️ 达到${isHitSafetyLimit ? '安全上限' : '最大轮次限制'} ${actualLimit}`
-      );
-
-      let helpMessage = `已达到${isHitSafetyLimit ? '安全上限' : '最大处理轮次'} ${actualLimit}。\n\n`;
-
-      if (isHitSafetyLimit) {
-        helpMessage += `💡 这是为了防止无限循环的硬编码安全限制。\n`;
-        helpMessage += `   当前配置: maxTurns=${configuredMaxTurns}\n\n`;
-      }
-
-      helpMessage += `📝 如需调整限制，请使用以下方式：\n`;
-      helpMessage += `  • CLI 参数: blade --max-turns 200\n`;
-      helpMessage += `  • 配置文件: ~/.blade/config.json 中设置 "maxTurns": 200\n`;
-      helpMessage += `  • 环境变量: export BLADE_MAX_TURNS=200\n\n`;
-      helpMessage += `⚠️  提示:\n`;
-      helpMessage += `  • -1 = 无限制（受安全上限 ${SAFETY_LIMIT} 保护）\n`;
-      helpMessage += `  •  0 = 完全禁用对话功能\n`;
-      helpMessage += `  •  N > 0 = 限制为 N 轮（最多 ${SAFETY_LIMIT} 轮）`;
-
-      return {
-        success: false,
-        error: {
-          type: 'max_turns_exceeded',
-          message: helpMessage,
-        },
-        metadata: {
-          turnsCount,
-          toolCallsCount: allToolResults.length,
-          duration: Date.now() - startTime,
-          configuredMaxTurns,
-          actualMaxTurns: actualLimit,
-          hitSafetyLimit: isHitSafetyLimit,
-        },
-      };
     } catch (error) {
       // 检查是否是用户主动中止
       if (
@@ -1319,7 +1285,6 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
     this.log('销毁Agent...');
 
     try {
-      this.removeAllListeners();
       this.isInitialized = false;
       this.log('Agent已销毁');
     } catch (error) {
@@ -1373,7 +1338,10 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
       if (this.systemPrompt) {
         this.log('系统提示已加载');
         logger.debug(
-          `[SystemPrompt] 加载来源: ${result.sources.filter((s) => s.loaded).map((s) => s.name).join(', ')}`
+          `[SystemPrompt] 加载来源: ${result.sources
+            .filter((s) => s.loaded)
+            .map((s) => s.name)
+            .join(', ')}`
         );
       }
     } catch (error) {
@@ -1397,13 +1365,15 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
    * @param context - 聊天上下文
    * @param currentTurn - 当前轮次
    * @param actualPromptTokens - LLM 返回的真实 prompt tokens（必须，来自上一轮响应）
+   * @param onCompacting - 压缩状态回调
    * @returns 是否发生了压缩
    */
   private async checkAndCompactInLoop(
     messages: Message[],
     context: ChatContext,
     currentTurn: number,
-    actualPromptTokens?: number
+    actualPromptTokens?: number,
+    onCompacting?: (isCompacting: boolean) => void
   ): Promise<boolean> {
     // 没有真实数据时跳过检查（第 1 轮没有历史 usage）
     if (actualPromptTokens === undefined) {
@@ -1441,7 +1411,9 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
         ? '[Agent] 触发自动压缩'
         : `[Agent] [轮次 ${currentTurn}] 触发循环内自动压缩`;
     logger.debug(compactLogPrefix);
-    this.emit('compactionStart', { turn: currentTurn });
+
+    // 通知 UI 开始压缩
+    onCompacting?.(true);
 
     try {
       const result = await CompactionService.compact(context.messages, {
@@ -1457,27 +1429,12 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
         // 使用压缩后的消息列表
         context.messages = result.compactedMessages;
 
-        // 触发完成事件（带轮次信息）
-        this.emit('compactionComplete', {
-          turn: currentTurn,
-          preTokens: result.preTokens,
-          postTokens: result.postTokens,
-          filesIncluded: result.filesIncluded,
-        });
-
         logger.debug(
           `[Agent] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} → ${result.postTokens} tokens (-${((1 - result.postTokens / result.preTokens) * 100).toFixed(1)}%)`
         );
       } else {
         // 降级策略执行成功，但使用了截断
         context.messages = result.compactedMessages;
-
-        this.emit('compactionFallback', {
-          turn: currentTurn,
-          preTokens: result.preTokens,
-          postTokens: result.postTokens,
-          error: result.error,
-        });
 
         logger.warn(
           `[Agent] [轮次 ${currentTurn}] 压缩使用降级策略: ${result.preTokens} → ${result.postTokens} tokens`
@@ -1506,11 +1463,16 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
         // 不阻塞流程
       }
 
+      // 通知 UI 压缩完成
+      onCompacting?.(false);
+
       // 返回 true 表示发生了压缩
       return true;
     } catch (error) {
+      // 通知 UI 压缩完成（即使失败）
+      onCompacting?.(false);
+
       logger.error(`[Agent] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
-      this.emit('compactionFailed', { turn: currentTurn, error });
       // 压缩失败，返回 false
       return false;
     }
@@ -1539,7 +1501,6 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
           .map((t) => t.name)
           .join(', ')}`
       );
-      this.emit('toolsRegistered', builtinTools);
 
       // 注册 MCP 工具
       await this.registerMcpTools();
@@ -1566,9 +1527,8 @@ IMPORTANT: Do NOT explain or justify yourself. Instead:
         logger.debug(`✅ Loaded ${loadedFromMcpJson} servers from .mcp.json`);
       }
 
-      // 2. 获取所有 MCP 服务器配置
-      const configManager = ConfigManager.getInstance();
-      const mcpServers = await configManager.getMcpServers();
+      // 2. 获取所有 MCP 服务器配置（从 Store - 统一数据源）
+      const mcpServers = getMcpServers();
 
       if (Object.keys(mcpServers).length === 0) {
         logger.debug('📦 No MCP servers configured');

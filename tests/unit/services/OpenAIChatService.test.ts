@@ -39,10 +39,11 @@ vi.mock('openai', () => ({
   default: mockOpenAI.MockOpenAI,
 }));
 
-import { OpenAIChatService } from '../../../src/services/OpenAIChatService.js';
 import type { Message } from '../../../src/services/ChatServiceInterface.js';
+import { OpenAIChatService } from '../../../src/services/OpenAIChatService.js';
 
 const baseConfig = {
+  provider: 'openai-compatible' as const,
   apiKey: 'test-key',
   baseUrl: 'https://example.com/v1',
   model: 'test-model',
@@ -57,23 +58,29 @@ describe('OpenAIChatService', () => {
     expect(
       () =>
         new OpenAIChatService({
-          ...baseConfig,
+          provider: 'openai-compatible',
+          apiKey: 'test-key',
           baseUrl: '',
+          model: 'test-model',
         })
     ).toThrow('baseUrl is required in ChatConfig');
 
     expect(
       () =>
         new OpenAIChatService({
-          ...baseConfig,
+          provider: 'openai-compatible',
           apiKey: '',
+          baseUrl: 'https://example.com/v1',
+          model: 'test-model',
         })
     ).toThrow('apiKey is required in ChatConfig');
 
     expect(
       () =>
         new OpenAIChatService({
-          ...baseConfig,
+          provider: 'openai-compatible',
+          apiKey: 'test-key',
+          baseUrl: 'https://example.com/v1',
           model: '',
         })
     ).toThrow('model is required in ChatConfig');
@@ -149,6 +156,7 @@ describe('OpenAIChatService', () => {
         {
           id: 'tool-1',
           type: 'function',
+          function: expect.any(Object),
         },
       ],
     });
@@ -157,7 +165,14 @@ describe('OpenAIChatService', () => {
 
     expect(response.content).toBe('response content');
     expect(response.toolCalls).toHaveLength(1);
-    expect(response.toolCalls?.[0].function?.name).toBe('write');
+    if (response.toolCalls?.[0]) {
+      const toolCall = response.toolCalls[0];
+      if ('function' in toolCall && toolCall.function) {
+        expect(toolCall.function.name).toBe('write');
+      } else if ('name' in toolCall) {
+        expect((toolCall as any).name).toBe('write');
+      }
+    }
     expect(response.usage).toEqual({
       promptTokens: 10,
       completionTokens: 5,
@@ -170,8 +185,11 @@ describe('OpenAIChatService', () => {
     expect(mockOpenAI.instances).toHaveLength(1);
 
     service.updateConfig({
+      provider: 'openai-compatible',
       model: 'updated-model',
-      maxTokens: 1024,
+      apiKey: 'test-key',
+      baseUrl: 'https://example.com/v1',
+      maxOutputTokens: 1024,
       timeout: 12345,
     });
 

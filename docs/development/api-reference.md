@@ -11,7 +11,7 @@
 ├── mcp/            # MCP 协议支持
 ├── services/       # 核心业务服务
 ├── tools/          # 工具系统
-├── telemetry/      # 遥测系统
+├── telemetry/      # 遥测系统（历史目录，当前实现中已移除）
 ├── types/          # 共享类型定义
 └── utils/          # 通用工具函数
 ```
@@ -251,13 +251,9 @@ interface BladeUnifiedConfig {
     }>;
   };
   
-  // 遥测配置
-  telemetry?: {
-    enabled?: boolean;
-    target?: 'local' | 'remote';
-    otlpEndpoint?: string;
-    logPrompts?: boolean;
-  };
+  // 遥测配置（已废弃）
+  // 早期版本中曾提供可配置的遥测开关和远程端点，当前实现中已移除内置遥测逻辑，
+  // 如果需要埋点统计，推荐在宿主应用层自行集成。
   
   // 使用配置
   usage: {

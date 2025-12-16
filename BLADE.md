@@ -20,7 +20,7 @@ always respond in Chinese
 ### 1. Agent 系统 (`src/agent/`)
 - **Agent.ts**: 核心 Agent 类，无状态设计，负责 LLM 交互和工具执行
 - **ExecutionEngine.ts**: 执行引擎，处理工具调用循环
-- **LoopDetectionService.ts**: 循环检测，防止无限循环
+- **Agent.ts**: Agentic Loop 主循环，使用 `maxTurns` + 硬性轮次上限 `SAFETY_LIMIT = 100` 防止无限循环（旧版 LoopDetectionService 已移除）
 - **subagents/**: 子 Agent 注册表，支持任务分解
 
 ### 2. Hook 系统 (`src/hooks/`)

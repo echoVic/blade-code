@@ -160,32 +160,6 @@ describe('ConfigManager', () => {
     expect(config).toBeDefined();
   });
 
-  it('should update config and save to file', async () => {
-    (fs.readFile as Mock).mockImplementation((filePath: string) => {
-      if (filePath.includes('package.json')) {
-        return Promise.resolve(
-          JSON.stringify({
-            version: '1.0.0',
-          })
-        );
-      }
-      throw new Error('File not found');
-    });
-
-    (fs.writeFile as Mock).mockResolvedValue(undefined);
-    (fs.mkdir as Mock).mockResolvedValue(undefined);
-
-    await configManager.initialize();
-
-    await expect(
-      configManager.updateConfig({
-        theme: 'dark',
-      })
-    ).resolves.not.toThrow();
-
-    expect(fs.writeFile).toHaveBeenCalled();
-  });
-
   it('should reset config to defaults', async () => {
     (fs.readFile as Mock).mockImplementation((filePath: string) => {
       if (filePath.includes('package.json')) {
@@ -206,7 +180,7 @@ describe('ConfigManager', () => {
     expect(config).toBeDefined();
   });
 
-  it('should work with config', async () => {
+  it('should return config from initialize()', async () => {
     (fs.readFile as Mock).mockImplementation((filePath: string) => {
       if (filePath.includes('package.json')) {
         return Promise.resolve(
@@ -218,9 +192,9 @@ describe('ConfigManager', () => {
       throw new Error('File not found');
     });
 
-    await configManager.initialize();
-    const config = configManager.getConfig();
+    const config = await configManager.initialize();
 
     expect(config).toBeDefined();
+    expect(config.models).toBeDefined();
   });
 });

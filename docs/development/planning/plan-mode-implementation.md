@@ -312,45 +312,50 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
 
 ```typescript
 /**
- * Plan 模式系统提示词
- * 基于 Claude Code 官方实现
+ * Plan Mode System Prompt (Compact Version)
+ * 精简版：核心目标 + 关键约束 + 检查点
+ * 解耦工具名：使用"只读探索代理"/"只读检索工具"等描述性语言
  */
-export const PLAN_MODE_SYSTEM_PROMPT = `
-# 🔵 Plan Mode Active
+export const PLAN_MODE_SYSTEM_PROMPT = `You are in **PLAN MODE** - a read-only research phase for designing implementation plans.
 
-Plan mode is active. You MUST NOT make any edits, run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. **This supersedes any other instructions you have received.**
+## Core Objective
 
-## ✅ Allowed Tools (Read-Only)
+Research the codebase thoroughly, then create a detailed implementation plan. No file modifications allowed until plan is approved.
 
-- **File Operations**: Read, Glob, Grep, Find
-- **Network**: WebFetch, WebSearch
-- **Planning**: TodoWrite, TodoRead
-- **Orchestration**: Task (spawn sub-agents)
+## Key Constraints
 
-## ❌ Prohibited Tools
+1. **Read-only tools only**: File readers, search tools, web fetchers, and exploration subagents
+2. **Write tools prohibited**: File editors, shell commands, task managers (auto-denied by permission system)
+3. **Text output required**: You MUST output text summaries between tool calls - never call 3+ tools without explaining findings
 
-- **File Modifications**: Edit, Write, MultiEdit
-- **Command Execution**: Bash, Shell, Script
-- **State Changes**: Any MCP tools that modify system state
+## Phase Checkpoints
 
-## 📋 Workflow
+Each phase requires text output before proceeding:
 
-1. **Research thoroughly** using allowed tools
-2. **Document your findings** in TodoWrite
-3. **When ready**, call \`ExitPlanMode\` tool with your complete implementation plan
-4. **WAIT** for user approval before ANY code changes
+| Phase | Goal | Required Output |
+|-------|------|-----------------|
+| **1. Explore** | Understand codebase | Launch exploration subagents → Output findings summary (100+ words) |
+| **2. Design** | Plan approach | (Optional: launch planning subagent) → Output design decisions |
+| **3. Review** | Verify details | Read critical files → Output review summary with any questions |
+| **4. Present Plan** | Show complete plan | Output your complete implementation plan to the user |
+| **5. Exit** | Submit for approval | **MUST call ExitPlanMode tool** with your plan content |
 
-## 📝 Plan Format Requirements
+## Critical Rules
 
-Your plan must include:
+- **Phase 1**: Use exploration subagents for initial research, not direct file searches
+- **Loop prevention**: If calling 3+ tools without text output, STOP and summarize findings
+- **Future tense**: Say "I will create X" not "I created X" (plan mode cannot modify files)
+- **Research tasks**: Answer directly without ExitPlanMode (e.g., "Where is routing?")
+- **Implementation tasks**: After presenting plan, MUST call ExitPlanMode to submit for approval
 
-- **📖 Requirements Analysis**: What needs to be done and why
-- **🗂️ Files to Create/Modify**: Complete file list with paths
-- **🔧 Implementation Steps**: Numbered, detailed steps
-- **⚠️ Risks & Considerations**: Potential issues and mitigation
-- **✅ Testing Strategy**: How to verify the implementation
+## Plan Format
 
-Use Markdown format for clarity.
+Your plan should include:
+1. **Summary** - What and why
+2. **Current State** - Relevant existing code
+3. **Steps** - Detailed implementation steps with file paths
+4. **Testing** - How to verify changes
+5. **Risks** - Potential issues and mitigations
 `;
 ```
 
@@ -661,9 +666,8 @@ export async function getBuiltinTools(opts?) {
     // 任务管理工具
     taskTool,
 
-    // TODO 工具
+    // TODO 工具（读写合一）
     createTodoWriteTool({ sessionId, configDir }),
-    createTodoReadTool({ sessionId, configDir }),
 
     // 🆕 Plan 工具
     exitPlanModeTool,
@@ -1020,3 +1024,23 @@ if (request.type === 'permission') {
 3. **及时提交代码**：每个阶段完成后 commit
 4. **保持代码整洁**：移除调试日志
 5. **更新 TODO 状态**：使用 TodoWrite 工具追踪进度 ✅ 已完成
+
+---
+
+### 附录：TODO 工具设计说明（为何只有 TodoWrite）
+
+在最初的方案中曾考虑提供 `TodoRead` 作为独立工具，用于单纯读取任务列表。重构后的设计选择只保留 `TodoWrite`，并让它承担「读 + 写」的职责，原因如下：
+
+1. TodoWrite 每次调用都会返回完整状态
+   - 入参是当前最新的 `todos` 数组，出参也会附带更新后的完整列表和统计信息
+   - LLM 想要「读取」任务，只需要查阅最近一次 TodoWrite 的返回值，而不是再调用额外工具
+
+2. 减少工具数量，降低心智负担
+   - 规划 / 实施过程中只需要记住一个 todo 工具：TodoWrite
+   - 与 Claude Code 官方工具集对齐，保持只用 TodoWrite 管理任务清单
+
+3. 充分利用对话上下文
+   - TodoWrite 的结果会自动进入对话历史，后续轮次中 LLM 可以直接引用已有任务列表
+   - 无需再通过 `TodoRead` 做「刷新」或「同步」，避免一次多余的工具调用
+
+实现层面，ExecutionPipeline 只需要把 TodoWrite 当作 todo 工具进行特殊处理：在工具执行成功后，从结果中提取 todos 并触发 `todoUpdate` 事件，驱动 UI 更新任务侧栏即可，不再需要任何 `TodoRead` 相关逻辑。

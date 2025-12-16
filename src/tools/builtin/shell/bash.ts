@@ -203,12 +203,53 @@ Before executing commands:
   },
 
   /**
-   * 抽象权限规则：提取主命令并添加通配符
+   * 抽象权限规则：智能提取命令模式
+   *
+   * 设计目标：保留命令的"意图"部分，对变化的参数部分使用通配符
+   *
+   * 策略：
+   * 1. 对于 `cmd run/exec/test xxx args` 类型：保留前3个词 + 通配符
+   *    例如: `bun run test:unit foo.ts` → `bun run test:unit *`
+   * 2. 对于其他带参数的命令：保留前2个词 + 通配符
+   *    例如: `node script.js arg` → `node script.js *`
+   * 3. 对于无额外参数的命令：精确匹配
+   *    例如: `npm run build` → `npm run build`
+   *    例如: `git status` → `git status`
+   * 4. 单词命令：直接使用工具名前缀匹配
+   *    例如: `ls` → `` (空字符串，使用工具名前缀匹配 Bash)
+   *
+   * 注意：使用空格而非冒号，避免被 parseParamPairs 误解析为键值对
    */
   abstractPermissionRule: (params) => {
     const command = params.command.trim();
-    const mainCommand = command.split(/\s+/)[0];
-    return `${mainCommand}:*`;
+    const parts = command.split(/\s+/);
+
+    if (parts.length === 1) {
+      // 单词命令: ls → ls
+      return parts[0];
+    }
+
+    // 检查是否是 run/exec/test 子命令模式
+    const runLikeSubcommands = ['run', 'exec', 'test', 'start', 'build', 'dev'];
+    if (runLikeSubcommands.includes(parts[1])) {
+      if (parts.length === 2) {
+        // npm run → npm run
+        return `${parts[0]} ${parts[1]}`;
+      }
+      // bun test foo.ts → bun test *
+      // bun run build → bun run build (但 npm run build:dev → npm run build:dev 也可接受)
+      // 统一使用通配符，更宽松
+      return `${parts[0]} ${parts[1]} *`;
+    }
+
+    if (parts.length === 2) {
+      // git status → git status
+      return `${parts[0]} ${parts[1]}`;
+    }
+
+    // 有额外参数的命令：保留前2个词 + 通配符
+    // node script.js arg → node script.js *
+    return `${parts[0]} ${parts[1]} *`;
   },
 });
 

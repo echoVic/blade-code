@@ -124,7 +124,7 @@ src/
 ├── security/       # 安全管理
 ├── services/       # 核心服务
 ├── slash-commands/ # 斜杠命令
-├── telemetry/      # 遥测系统
+├── telemetry/      # 遥测系统（历史目录，当前实现中已不再使用）
 ├── tools/          # 工具系统
 ├── ui/             # 用户界面
 ├── utils/          # 工具函数

@@ -2,16 +2,17 @@ import { useMemoizedFn } from 'ahooks';
 import React, { useEffect, useState } from 'react';
 import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
 import type { GlobalOptions } from '../cli/types.js';
-import { ConfigManager, mergeRuntimeConfig } from '../config/ConfigManager.js';
-import { DEFAULT_CONFIG } from '../config/defaults.js';
-import type { RuntimeConfig } from '../config/types.js';
+import {
+  ConfigManager,
+  DEFAULT_CONFIG,
+  mergeRuntimeConfig,
+  type RuntimeConfig,
+} from '../config/index.js';
 import { HookManager } from '../hooks/HookManager.js';
 import { Logger } from '../logging/Logger.js';
+import { appActions, getState } from '../store/vanilla.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
-import { AppProvider } from './contexts/AppContext.js';
-import { FocusProvider } from './contexts/FocusContext.js';
-import { SessionProvider } from './contexts/SessionContext.js';
 import { themeManager } from './themes/ThemeManager.js';
 import { formatErrorMessage } from './utils/security.js';
 
@@ -25,32 +26,65 @@ export interface AppProps extends GlobalOptions {
   resume?: string; // 恢复会话：sessionId 或 true (交互式选择)
 }
 
-// ResumeHandler 已移除，所有会话恢复逻辑现在在 BladeInterface 中处理
+/**
+ * 初始化 Zustand store 状态
+ * 检查配置并设置初始化状态
+ */
+function initializeStoreState(config: RuntimeConfig): void {
+  // 设置配置（使用 config slice）
+  getState().config.actions.setConfig(config);
 
-// 包装器组件 - 提供会话上下文和错误边界
+  // 检查是否有模型配置
+  if (!config.models || config.models.length === 0) {
+    if (config.debug) {
+      console.log('[Debug] 未检测到模型配置，进入设置向导');
+    }
+    appActions().setInitializationStatus('needsSetup');
+    return;
+  }
+
+  if (config.debug) {
+    console.log('[Debug] 模型配置检查通过，准备就绪');
+  }
+  appActions().setInitializationStatus('ready');
+}
+
+/**
+ * App 包装器组件
+ *
+ * 负责：
+ * 1. 加载配置文件
+ * 2. 合并 CLI 参数
+ * 3. 初始化 Zustand store 状态
+ * 4. 加载主题
+ * 5. 预加载 subagents
+ * 6. 初始化 Hooks 系统
+ *
+ * 注意：不再需要 Context Providers，状态由 Zustand store 管理
+ */
 export const AppWrapper: React.FC<AppProps> = (props) => {
-  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
 
   const initialize = useMemoizedFn(async () => {
     try {
       // 1. 加载配置文件
       const configManager = ConfigManager.getInstance();
-      await configManager.initialize();
-      const baseConfig = configManager.getConfig();
+      const baseConfig = await configManager.initialize();
 
       // 2. 合并 CLI 参数生成 RuntimeConfig
       const mergedConfig = mergeRuntimeConfig(baseConfig, props);
-      setRuntimeConfig(mergedConfig);
 
-      // 3. 设置全局 Logger 配置（让所有新创建的 Logger 都使用 CLI debug 配置）
+      // 3. 初始化 Zustand store 状态
+      initializeStoreState(mergedConfig);
+
+      // 4. 设置全局 Logger 配置（让所有新创建的 Logger 都使用 CLI debug 配置）
       if (mergedConfig.debug) {
         Logger.setGlobalDebug(mergedConfig.debug);
         console.error('[Debug] 全局 Logger 已启用 debug 模式');
         console.error('[Debug] 运行时配置:', mergedConfig);
       }
 
-      // 4. 加载主题
+      // 5. 加载主题
       const savedTheme = mergedConfig.theme;
       if (savedTheme && themeManager.hasTheme(savedTheme)) {
         themeManager.setTheme(savedTheme);
@@ -59,7 +93,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
         }
       }
 
-      // 5. 预加载 subagents 配置（确保 AgentsManager 可以立即使用）
+      // 6. 预加载 subagents 配置（确保 AgentsManager 可以立即使用）
       try {
         const loadedCount = subagentRegistry.loadFromStandardLocations();
         if (props.debug && loadedCount > 0) {
@@ -74,7 +108,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
         }
       }
 
-      // 6. 初始化 HookManager
+      // 7. 初始化 HookManager
       try {
         const hookManager = HookManager.getInstance();
         hookManager.loadConfig(mergedConfig.hooks || {});
@@ -94,9 +128,12 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
       if (props.debug) {
         console.warn('⚠️ 配置初始化失败，使用默认配置:', formatErrorMessage(error));
       }
+
       // 即使失败也设置为已初始化，使用默认配置 + CLI 参数
       const fallbackConfig = mergeRuntimeConfig(DEFAULT_CONFIG, props);
-      setRuntimeConfig(fallbackConfig);
+
+      // 初始化 Zustand store 状态（fallback）
+      initializeStoreState(fallbackConfig);
 
       // 设置全局 Logger 配置（fallback 情况）
       if (fallbackConfig.debug) {
@@ -113,20 +150,14 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
     initialize();
   }, []); // 只在组件挂载时执行一次
 
-  // 等待配置初始化完成
-  if (!isInitialized || !runtimeConfig) {
+  // 等待初始化完成
+  if (!isInitialized) {
     return null; // 或者显示一个加载指示器
   }
 
   return (
     <ErrorBoundary>
-      <FocusProvider>
-        <AppProvider initialConfig={runtimeConfig}>
-          <SessionProvider>
-            <BladeInterface {...props} />
-          </SessionProvider>
-        </AppProvider>
-      </FocusProvider>
+      <BladeInterface {...props} />
     </ErrorBoundary>
   );
 };

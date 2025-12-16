@@ -4,6 +4,7 @@
  */
 
 import { SessionService } from '../services/SessionService.js';
+import { sessionActions } from '../store/vanilla.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 const resumeCommand: SlashCommand = {
@@ -17,9 +18,10 @@ const resumeCommand: SlashCommand = {
   examples: ['/resume - 打开会话选择器', '/resume abc123xyz - 直接恢复指定的会话'],
   async handler(
     args: string[],
-    context: SlashCommandContext
+    _context: SlashCommandContext
   ): Promise<SlashCommandResult> {
-    const { addAssistantMessage, restoreSession } = context;
+    const addAssistantMessage = sessionActions().addAssistantMessage;
+    const restoreSession = sessionActions().restoreSession;
 
     // 情况 1: 提供了 sessionId,直接恢复
     if (args.length > 0) {
@@ -37,41 +39,32 @@ const resumeCommand: SlashCommand = {
           };
         }
 
-        // 调用 restoreSession 恢复会话
-        if (restoreSession) {
-          // 转换为 SessionMessage 格式
-          const sessionMessages = messages
-            .filter((msg) => msg.role !== 'tool')
-            .map((msg, index) => ({
-              id: `restored-${Date.now()}-${index}`,
-              role: msg.role as 'user' | 'assistant' | 'system',
-              content:
-                typeof msg.content === 'string'
-                  ? msg.content
-                  : JSON.stringify(msg.content),
-              timestamp: Date.now() - (messages.length - index) * 1000,
-            }));
+        // 转换为 SessionMessage 格式并恢复会话
+        const sessionMessages = messages
+          .filter((msg) => msg.role !== 'tool')
+          .map((msg, index) => ({
+            id: `restored-${Date.now()}-${index}`,
+            role: msg.role as 'user' | 'assistant' | 'system',
+            content:
+              typeof msg.content === 'string'
+                ? msg.content
+                : JSON.stringify(msg.content),
+            timestamp: Date.now() - (messages.length - index) * 1000,
+          }));
 
-          restoreSession(sessionId, sessionMessages);
+        restoreSession(sessionId, sessionMessages);
 
-          addAssistantMessage(
-            `✅ 已恢复会话 \`${sessionId}\`\n\n共 ${sessionMessages.length} 条消息已加载，可以继续对话`
-          );
+        addAssistantMessage(
+          `✅ 已恢复会话 \`${sessionId}\`\n\n共 ${sessionMessages.length} 条消息已加载，可以继续对话`
+        );
 
-          return {
-            success: true,
-            message: 'session_restored',
-            data: {
-              sessionId,
-              messageCount: sessionMessages.length,
-            },
-          };
-        }
-
-        addAssistantMessage('❌ 无法恢复会话: restoreSession 函数不可用');
         return {
-          success: false,
-          error: 'restoreSession 不可用',
+          success: true,
+          message: 'session_restored',
+          data: {
+            sessionId,
+            messageCount: sessionMessages.length,
+          },
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : '未知错误';

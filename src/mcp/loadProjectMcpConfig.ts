@@ -6,8 +6,8 @@
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
-import { ConfigManager } from '../config/ConfigManager.js';
 import type { McpServerConfig } from '../config/types.js';
+import { configActions, getConfig } from '../store/vanilla.js';
 
 /**
  * 加载选项
@@ -101,8 +101,11 @@ export async function loadProjectMcpConfig(
       return totalLoaded;
     }
 
-    const configManager = ConfigManager.getInstance();
-    const projectConfig = await configManager.getProjectConfig();
+    const projectConfig = getConfig();
+    if (!projectConfig) {
+      console.warn('⚠️  配置未初始化');
+      return totalLoaded;
+    }
 
     const enabledServers = projectConfig.enabledMcpjsonServers || [];
     const disabledServers = projectConfig.disabledMcpjsonServers || [];
@@ -121,7 +124,7 @@ export async function loadProjectMcpConfig(
 
       // 已批准的直接加载
       if (enabledServers.includes(serverName)) {
-        await configManager.addMcpServer(serverName, serverConfig as McpServerConfig);
+        await configActions().addMcpServer(serverName, serverConfig as McpServerConfig);
         loadedCount++;
         if (!silent) {
           console.log(`✅ 加载服务器: ${serverName}`);
@@ -145,7 +148,7 @@ export async function loadProjectMcpConfig(
       );
 
       if (approved) {
-        await configManager.addMcpServer(serverName, serverConfig as McpServerConfig);
+        await configActions().addMcpServer(serverName, serverConfig as McpServerConfig);
         serversToEnable.push(serverName);
         loadedCount++;
         if (!silent) {
@@ -161,7 +164,7 @@ export async function loadProjectMcpConfig(
 
     // 保存确认记录
     if (interactive) {
-      await configManager.updateProjectConfig({
+      await configActions().updateConfig({
         enabledMcpjsonServers: serversToEnable,
         disabledMcpjsonServers: disabledServers,
       });
@@ -202,7 +205,7 @@ async function loadMcpConfigFromSource(
       try {
         const parsed = JSON.parse(configSource);
         mcpServers = parsed.mcpServers || parsed;
-      } catch (jsonError) {
+      } catch (_jsonError) {
         if (!silent) {
           console.error(`❌ 解析 JSON 字符串失败: ${configSource.slice(0, 50)}...`);
         }
@@ -238,14 +241,13 @@ async function loadMcpConfigFromSource(
     }
 
     // 加载所有服务器
-    const configManager = ConfigManager.getInstance();
     let loadedCount = 0;
 
     for (const [serverName, serverConfig] of Object.entries(mcpServers)) {
       try {
         // CLI 参数来源的配置直接加载，不需要用户确认
         if (sourceType === 'cli-param') {
-          await configManager.addMcpServer(serverName, serverConfig);
+          await configActions().addMcpServer(serverName, serverConfig);
           loadedCount++;
           if (!silent) {
             console.log(`  ✅ ${serverName}`);
@@ -257,7 +259,7 @@ async function loadMcpConfigFromSource(
             : false;
 
           if (approved) {
-            await configManager.addMcpServer(serverName, serverConfig);
+            await configActions().addMcpServer(serverName, serverConfig);
             loadedCount++;
             if (!silent) {
               console.log(`  ✅ ${serverName}`);

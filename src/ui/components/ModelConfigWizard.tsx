@@ -19,7 +19,7 @@ import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
 import React, { useEffect, useState } from 'react';
 import type { ProviderType, SetupConfig } from '../../config/types.js';
-import { useSession } from '../contexts/SessionContext.js';
+import { configActions } from '../../store/vanilla.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 interface ModelConfigWizardProps {
@@ -327,7 +327,6 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   onComplete,
   onCancel,
 }) => {
-  const { configManager } = useSession();
   const isEditMode = mode === 'edit';
 
   // 当前步骤
@@ -466,13 +465,13 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
         onComplete(setupConfig);
       } else if (mode === 'add') {
         // add 模式：直接在这里创建模型，然后通知父组件关闭
-        await configManager.addModel(setupConfig);
+        await configActions().addModel(setupConfig);
         onComplete(setupConfig);
       } else {
         if (!modelId) {
           throw new Error('未提供模型 ID，无法编辑');
         }
-        await configManager.updateModel(modelId, setupConfig);
+        await configActions().updateModel(modelId, setupConfig);
         onComplete(setupConfig);
       }
     } catch (err) {

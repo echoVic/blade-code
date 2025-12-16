@@ -1,17 +1,23 @@
 import { useMemoizedFn } from 'ahooks';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ConfigManager } from '../../config/ConfigManager.js';
+import { useEffect, useRef } from 'react';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import type { SessionMetadata } from '../../services/SessionService.js';
 import {
   executeSlashCommand,
   isSlashCommand,
   type SlashCommandContext,
 } from '../../slash-commands/index.js';
-import { UIActionMapper } from '../../slash-commands/UIActionMapper.js';
-import type { TodoItem } from '../../tools/builtin/todo/types.js';
+import {
+  useAppActions,
+  useCommandActions,
+  useIsProcessing,
+  useMessages,
+  usePermissionMode,
+  useSessionActions,
+  useSessionId,
+} from '../../store/selectors/index.js';
+import { ensureStoreInitialized } from '../../store/vanilla.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
-import { useAppState, usePermissionMode } from '../contexts/AppContext.js';
-import { useSession } from '../contexts/SessionContext.js';
 import {
   formatToolCallSummary,
   shouldShowToolDetail,
@@ -20,6 +26,44 @@ import { useAgent } from './useAgent.js';
 
 // 创建 UI Hook 专用 Logger
 const logger = createLogger(LogCategory.UI);
+
+/**
+ * 处理 slash 命令返回的 UI 消息
+ * 直接调用 appActions 而非使用 ActionMapper
+ */
+function handleSlashMessage(
+  message: string,
+  data: unknown,
+  appActions: ReturnType<typeof useAppActions>
+): boolean {
+  switch (message) {
+    case 'show_theme_selector':
+      appActions.setActiveModal('themeSelector');
+      return true;
+    case 'show_model_selector':
+      appActions.setActiveModal('modelSelector');
+      return true;
+    case 'show_model_add_wizard':
+      appActions.setActiveModal('modelAddWizard');
+      return true;
+    case 'show_permissions_manager':
+      appActions.setActiveModal('permissionsManager');
+      return true;
+    case 'show_agents_manager':
+      appActions.setActiveModal('agentsManager');
+      return true;
+    case 'show_agent_creation_wizard':
+      appActions.setActiveModal('agentCreationWizard');
+      return true;
+    case 'show_session_selector': {
+      const sessions = (data as { sessions?: SessionMetadata[] } | undefined)?.sessions;
+      appActions.showSessionSelector(sessions);
+      return true;
+    }
+    default:
+      return false;
+  }
+}
 
 export interface CommandResult {
   success: boolean;
@@ -31,6 +75,8 @@ export interface CommandResult {
 /**
  * 命令处理 Hook
  * 负责命令的执行和状态管理
+ *
+ * 已迁移到 Zustand Store
  */
 export const useCommandHandler = (
   replaceSystemPrompt?: string, // --system-prompt (完全替换)
@@ -38,36 +84,27 @@ export const useCommandHandler = (
   confirmationHandler?: ConfirmationHandler,
   maxTurns?: number // --max-turns (最大对话轮次)
 ) => {
-  const [isProcessing, setIsProcessing] = useState(false);
-  const {
-    dispatch,
-    state: sessionState,
-    restoreSession,
-    addToolMessage,
-    addAssistantMessage,
-    addUserMessage,
-  } = useSession();
-  const { dispatch: appDispatch, actions: appActions } = useAppState();
+  // ==================== Store 选择器 ====================
+  const isProcessing = useIsProcessing();
+  const messages = useMessages();
+  const sessionId = useSessionId();
   const permissionMode = usePermissionMode();
-  const abortControllerRef = useRef<AbortController | undefined>(undefined);
+
+  // ==================== Store Actions ====================
+  const sessionActions = useSessionActions();
+  const appActions = useAppActions();
+  const commandActions = useCommandActions();
+
+  // ==================== Local Refs ====================
   const abortMessageSentRef = useRef(false);
 
-  // 创建 UI Action 映射器（用于 slash 命令结果映射）
-  const actionMapper = useMemo(() => new UIActionMapper(appActions), [appActions]);
-
   // 使用 Agent 管理 Hook
-  const { agentRef, createAgent, cleanupAgent } = useAgent(
-    {
-      systemPrompt: replaceSystemPrompt,
-      appendSystemPrompt: appendSystemPrompt,
-      maxTurns: maxTurns,
-    },
-    {
-      onTodoUpdate: (todos: TodoItem[]) => {
-        appDispatch(appActions.setTodos(todos));
-      },
-    }
-  );
+  // Agent 现在直接通过 vanilla store 更新 todos，不需要回调
+  const { createAgent, cleanupAgent } = useAgent({
+    systemPrompt: replaceSystemPrompt,
+    appendSystemPrompt: appendSystemPrompt,
+    maxTurns: maxTurns,
+  });
 
   // 清理函数
   useEffect(() => {
@@ -85,76 +122,49 @@ export const useCommandHandler = (
 
     // 乐观更新：立即显示"任务已停止"消息（防止重复）
     if (!abortMessageSentRef.current) {
-      addAssistantMessage('✋ 任务已停止');
+      sessionActions.addAssistantMessage('✋ 任务已停止');
       abortMessageSentRef.current = true;
     }
 
-    // 防御性检查：确保 Controller 存在
-    if (!abortControllerRef.current) {
-      logger.error('[handleAbort] AbortController不存在，这不应该发生');
-      // 直接重置状态
-      setIsProcessing(false);
-      dispatch({ type: 'SET_THINKING', payload: false });
-      return;
-    }
-
-    // 发送 abort signal
-    if (!abortControllerRef.current.signal.aborted) {
-      abortControllerRef.current.abort();
-    }
-
-    // 清理 Agent 监听器
-    if (agentRef.current) {
-      agentRef.current.removeAllListeners();
-    }
-
-    // 立即重置状态，允许用户提交新命令
-    setIsProcessing(false);
-    dispatch({ type: 'SET_THINKING', payload: false });
-    appDispatch({ type: 'SET_TODOS', payload: [] });
-
-    // 注意：不要清理 abortControllerRef.current
-    // 因为 handleCommandSubmit 可能还在执行中，需要读取 signal
-    // 清理工作由 executeCommand 的 finally 块负责
+    // 使用 store 的 abort action（会同时重置 isProcessing 和 isThinking）
+    commandActions.abort();
+    appActions.setTodos([]);
   });
 
   // 处理命令提交
   const handleCommandSubmit = useMemoizedFn(
     async (command: string): Promise<CommandResult> => {
       try {
-        addUserMessage(command);
+        sessionActions.addUserMessage(command);
 
         // 检查是否为 slash command
         if (isSlashCommand(command)) {
-          const configManager = ConfigManager.getInstance();
-          await configManager.initialize();
+          // ⚠️ 关键：确保 Store 已初始化（防御性检查）
+          // slash commands 依赖 Store 状态，必须在执行前确保初始化
+          // 这里是统一防御点，避免竞态或未来非 UI 场景踩坑
+          await ensureStoreInitialized();
 
+          // 简化的 context - slash commands 从 vanilla store 获取状态
           const slashContext: SlashCommandContext = {
             cwd: process.cwd(),
-            addUserMessage,
-            addAssistantMessage,
-            configManager,
-            restoreSession, // 传递 restoreSession 函数
-            sessionId: sessionState.sessionId, // 传递当前 sessionId
-            messages: sessionState.messages, // 传递会话消息（用于 /compact 等命令）
           };
 
           const slashResult = await executeSlashCommand(command, slashContext);
 
-          // 使用 UIActionMapper 映射命令结果到 UI Action
+          // 直接处理 slash 命令的 UI 消息
           if (slashResult.message) {
-            const uiAction = actionMapper.mapToAction(
+            const handled = handleSlashMessage(
               slashResult.message,
-              slashResult.data
+              slashResult.data,
+              appActions
             );
-            if (uiAction) {
-              appDispatch(uiAction);
+            if (handled) {
               return { success: true };
             }
           }
 
           if (!slashResult.success && slashResult.error) {
-            addAssistantMessage(`❌ ${slashResult.error}`);
+            sessionActions.addAssistantMessage(`❌ ${slashResult.error}`);
             return {
               success: slashResult.success,
               output: slashResult.message,
@@ -170,7 +180,7 @@ export const useCommandHandler = (
             typeof slashMessage === 'string' &&
             slashMessage.trim() !== ''
           ) {
-            addAssistantMessage(slashMessage);
+            sessionActions.addAssistantMessage(slashMessage);
           }
 
           return {
@@ -184,47 +194,40 @@ export const useCommandHandler = (
         // 创建并设置 Agent
         const agent = await createAgent();
 
-        // 确保 AbortController 存在（应该在 executeCommand 中已创建）
-        if (!abortControllerRef.current) {
-          throw new Error(
-            '[handleCommandSubmit] AbortController should exist at this point'
-          );
-        }
+        // 从 store 获取 AbortController
+        const abortController = commandActions.createAbortController();
 
         const chatContext = {
-          messages: sessionState.messages.map((msg) => ({
+          messages: messages.map((msg) => ({
             role: msg.role as 'user' | 'assistant' | 'system',
             content: msg.content,
           })),
           userId: 'cli-user',
-          sessionId: sessionState.sessionId,
+          sessionId: sessionId,
           workspaceRoot: process.cwd(),
-          signal: abortControllerRef.current.signal,
+          signal: abortController.signal,
           confirmationHandler,
           permissionMode: permissionMode,
         };
 
         const loopOptions = {
-          // 🆕 LLM 输出内容
+          // LLM 输出内容
           onContent: (content: string) => {
             if (content.trim()) {
-              addAssistantMessage(content);
+              sessionActions.addAssistantMessage(content);
             }
           },
-          // 🆕 工具调用开始
+          // 工具调用开始
           onToolStart: (toolCall: any) => {
-            // 跳过 TodoWrite/TodoRead 的显示
-            if (
-              toolCall.function.name === 'TodoWrite' ||
-              toolCall.function.name === 'TodoRead'
-            ) {
+            // 跳过 TodoWrite 的显示（任务列表由侧边栏显示）
+            if (toolCall.function.name === 'TodoWrite') {
               return;
             }
 
             try {
               const params = JSON.parse(toolCall.function.arguments);
               const summary = formatToolCallSummary(toolCall.function.name, params);
-              addToolMessage(summary, {
+              sessionActions.addToolMessage(summary, {
                 toolName: toolCall.function.name,
                 phase: 'start',
                 summary,
@@ -234,7 +237,7 @@ export const useCommandHandler = (
               logger.error('[useCommandHandler] onToolStart error:', error);
             }
           },
-          // 🆕 工具执行完成（显示摘要 + 可选的详细内容）
+          // 工具执行完成（显示摘要 + 可选的详细内容）
           onToolResult: async (toolCall: any, result: any) => {
             if (!result?.metadata?.summary) {
               return;
@@ -244,19 +247,31 @@ export const useCommandHandler = (
               ? result.displayContent
               : undefined;
 
-            addToolMessage(result.metadata.summary, {
+            sessionActions.addToolMessage(result.metadata.summary, {
               toolName: toolCall.function.name,
               phase: 'complete',
               summary: result.metadata.summary,
               detail,
             });
           },
+          // Token 使用量更新
+          onTokenUsage: (usage: {
+            inputTokens: number;
+            outputTokens: number;
+            totalTokens: number;
+            maxContextTokens: number;
+          }) => {
+            sessionActions.updateTokenUsage(usage);
+          },
+          // 压缩状态更新
+          onCompacting: (isCompacting: boolean) => {
+            sessionActions.setCompacting(isCompacting);
+          },
         };
 
         const output = await agent.chat(command, chatContext, loopOptions);
 
         // 如果返回空字符串，可能是用户中止
-        // 注意：handleAbort 已经乐观显示了"任务已停止"消息
         if (!output || output.trim() === '') {
           return {
             success: true,
@@ -264,13 +279,11 @@ export const useCommandHandler = (
           };
         }
 
-        // 注意：LLM 的输出已经通过 onThinking 回调添加到消息历史了，不需要再次添加
-
         return { success: true, output };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : '未知错误';
         const errorResult = { success: false, error: errorMessage };
-        addAssistantMessage(`❌ ${errorMessage}`);
+        sessionActions.addAssistantMessage(`❌ ${errorMessage}`);
         return errorResult;
       }
     }
@@ -286,55 +299,46 @@ export const useCommandHandler = (
       return;
     }
 
-    if (command.trim() && !isProcessing) {
-      const trimmedCommand = command.trim();
+    const trimmedCommand = command.trim();
 
-      // 清空上一轮对话的 todos
-      appDispatch({ type: 'SET_TODOS', payload: [] });
+    // 清空上一轮对话的 todos
+    appActions.setTodos([]);
 
-      // 重置中止提示标记，准备新的执行循环
-      abortMessageSentRef.current = false;
+    // 重置中止提示标记，准备新的执行循环
+    abortMessageSentRef.current = false;
 
-      // 立即创建 AbortController（在 setIsProcessing 之前）
-      const taskController = new AbortController();
-      abortControllerRef.current = taskController;
+    // 设置处理状态
+    commandActions.setProcessing(true);
+    sessionActions.setThinking(true);
 
-      setIsProcessing(true);
-      dispatch({ type: 'SET_THINKING', payload: true });
+    try {
+      const result = await handleCommandSubmit(trimmedCommand);
 
-      try {
-        const result = await handleCommandSubmit(trimmedCommand);
-
-        if (!result.success && result.error) {
-          dispatch({ type: 'SET_ERROR', payload: result.error });
-        }
-      } catch (error) {
-        // handleAbort 已经乐观显示了"任务已停止"消息
-        if (
-          error instanceof Error &&
-          (error.name === 'AbortError' || error.message.includes('aborted'))
-        ) {
-          // AbortError 静默处理，不显示错误
-        } else {
-          const errorMessage = error instanceof Error ? error.message : '未知错误';
-          dispatch({ type: 'SET_ERROR', payload: `执行失败: ${errorMessage}` });
-        }
-      } finally {
-        // 只清理自己的 AbortController（防止清理新任务的）
-        if (abortControllerRef.current === taskController) {
-          abortControllerRef.current = undefined;
-
-          // 重置状态（只有当前任务才重置）
-          setIsProcessing(false);
-          dispatch({ type: 'SET_THINKING', payload: false });
-        }
-        // 如果 abortControllerRef 已经被新任务覆盖，旧任务静默退出
+      if (!result.success && result.error) {
+        sessionActions.setError(result.error);
       }
+    } catch (error) {
+      // AbortError 静默处理
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' || error.message.includes('aborted'))
+      ) {
+        // AbortError 静默处理，不显示错误
+      } else {
+        const errorMessage = error instanceof Error ? error.message : '未知错误';
+        sessionActions.setError(`执行失败: ${errorMessage}`);
+      }
+    } finally {
+      // 重置状态
+      commandActions.setProcessing(false);
+      sessionActions.setThinking(false);
+      commandActions.clearAbortController();
     }
   });
 
   return {
     executeCommand,
     handleAbort,
+    isProcessing, // 暴露以供外部组件使用
   };
 };

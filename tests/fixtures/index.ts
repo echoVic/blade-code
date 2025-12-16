@@ -43,9 +43,9 @@ export class TestDataFactory {
   }
 
   static createFactory<T>(schema: DataSchema<T>): DataFactory<T> {
-    return {
+    const factory = {
       create: (overrides?: Partial<T>): T => {
-        const base = { ...schema.defaults };
+        let base = { ...schema.defaults };
 
         // 应用变体
         if (schema.variations) {
@@ -53,30 +53,32 @@ export class TestDataFactory {
           if (variantKeys.length > 0) {
             const randomVariant =
               variantKeys[Math.floor(Math.random() * variantKeys.length)];
-            Object.assign(base, schema.variations[randomVariant]);
+            base = { ...base, ...schema.variations[randomVariant] };
           }
         }
 
         // 应用序列
         if (schema.sequences) {
           Object.entries(schema.sequences).forEach(([key, fn]) => {
-            const sequenceIndex = this.getSequence(key);
-            Object.assign(base, fn(sequenceIndex));
+            const sequenceIndex = TestDataFactory.getSequence(key);
+            base = { ...base, ...fn(sequenceIndex) };
           });
         }
 
         // 应用覆盖
         if (overrides) {
-          Object.assign(base, overrides);
+          base = { ...base, ...overrides };
         }
 
         return base;
       },
 
       createMany: (count: number, overrides?: Partial<T>): T[] => {
-        return Array.from({ length: count }, () => this.create(overrides));
+        return Array.from({ length: count }, () => factory.create(overrides));
       },
     };
+
+    return factory;
   }
 }
 
@@ -161,7 +163,7 @@ export class BladeDataFactory {
     },
     sequences: {
       email: (index) => ({
-        email: `user${index + 1}@example.com`,
+        email: () => `user${index + 1}@example.com`,
       }),
     },
   });
@@ -257,7 +259,7 @@ export class BladeDataFactory {
     },
     sequences: {
       hash: (index) => ({
-        hash: `a1b2c3d4e5f6${index.toString(16).padStart(8, '0')}`,
+        hash: () => `a1b2c3d4e5f6${index.toString(16).padStart(8, '0')}`,
       }),
     },
   });
@@ -320,6 +322,11 @@ export class BladeDataFactory {
       metadata: {
         userId: 'test-user',
         sessionId: 'test-session',
+        error: undefined as string | undefined,
+        stack: undefined as string | undefined,
+        debug: undefined as boolean | undefined,
+        verbose: undefined as boolean | undefined,
+        warning: undefined as string | undefined,
       },
       tags: ['test'],
       context: {},
@@ -329,23 +336,39 @@ export class BladeDataFactory {
         level: 'error',
         message: 'Test error message',
         metadata: {
+          userId: 'test-user',
+          sessionId: 'test-session',
           error: 'Test error',
           stack: 'Error: Test error\n    at test.js:1:1',
+          debug: undefined,
+          verbose: undefined,
+          warning: undefined,
         },
       },
       debug: {
         level: 'debug',
         message: 'Test debug message',
         metadata: {
+          userId: 'test-user',
+          sessionId: 'test-session',
           debug: true,
           verbose: true,
+          error: undefined,
+          stack: undefined,
+          warning: undefined,
         },
       },
       warn: {
         level: 'warn',
         message: 'Test warning message',
         metadata: {
+          userId: 'test-user',
+          sessionId: 'test-session',
           warning: 'Test warning',
+          error: undefined,
+          stack: undefined,
+          debug: undefined,
+          verbose: undefined,
         },
       },
     },
@@ -359,67 +382,87 @@ export class BladeDataFactory {
   // 配置相关数据
   static Config = TestDataFactory.createFactory({
     defaults: {
-      id: () => `config-${TestDataFactory.getSequence('config')}`,
-      name: 'Test Configuration',
-      version: '1.0.0',
-      data: {
-        agent: {
+      // BladeConfig 的必需字段
+      currentModelId: 'test-model-1',
+      models: [
+        {
+          id: 'test-model-1',
+          name: 'Test Model',
+          provider: 'openai-compatible' as const,
+          apiKey: 'test-key',
+          baseUrl: 'https://api.test.com',
           model: 'gpt-4',
-          maxTokens: 4000,
-          temperature: 0.7,
         },
-        workspace: {
-          path: '/test/workspace',
-          showHiddenFiles: false,
-        },
-        theme: {
-          name: 'default',
-          colors: {
-            primary: '#007acc',
-            secondary: '#6c757d',
-          },
-        },
-        experimental: {
-          enableBeta: false,
-          enableAlpha: false,
-        },
+      ],
+      temperature: 0.7,
+      maxContextTokens: 8000,
+      maxOutputTokens: 4000,
+      stream: true,
+      topP: 1,
+      topK: 0,
+      timeout: 30000,
+      theme: 'default',
+      language: 'en',
+      fontSize: 14,
+      debug: false,
+      mcpEnabled: false,
+      mcpServers: {},
+      enabledMcpjsonServers: [],
+      disabledMcpjsonServers: [],
+      permissions: {
+        allow: [],
+        ask: [],
+        deny: [],
       },
-      createdAt: new Date().toISOString(),
-      updatedAt: () => new Date().toISOString(),
+      permissionMode: 'default',
+      hooks: {},
+      env: {},
+      disableAllHooks: false,
+      maxTurns: 10,
     },
     variations: {
       production: {
-        name: 'Production Configuration',
-        data: {
-          agent: {
+        currentModelId: 'prod-model-1',
+        models: [
+          {
+            id: 'prod-model-1',
+            name: 'Production Model',
+            provider: 'openai-compatible' as const,
+            apiKey: 'prod-key',
+            baseUrl: 'https://api.prod.com',
             model: 'gpt-4-turbo',
-            maxTokens: 8000,
-            temperature: 0.5,
           },
-          experimental: {
-            enableBeta: false,
-            enableAlpha: false,
-          },
-        },
+        ],
+        temperature: 0.5,
       },
       development: {
-        name: 'Development Configuration',
-        data: {
-          agent: {
+        currentModelId: 'dev-model-1',
+        models: [
+          {
+            id: 'dev-model-1',
+            name: 'Development Model',
+            provider: 'openai-compatible' as const,
+            apiKey: 'dev-key',
+            baseUrl: 'https://api.dev.com',
             model: 'gpt-3.5-turbo',
-            maxTokens: 2000,
-            temperature: 0.9,
           },
-          experimental: {
-            enableBeta: true,
-            enableAlpha: true,
-          },
-        },
+        ],
+        temperature: 0.9,
       },
     },
     sequences: {
       name: (index) => ({
-        name: `Test Configuration ${index + 1}`,
+        currentModelId: `test-model-${index + 1}`,
+        models: [
+          {
+            id: `test-model-${index + 1}`,
+            name: `Test Model ${index + 1}`,
+            provider: 'openai-compatible' as const,
+            apiKey: 'test-key',
+            baseUrl: 'https://api.test.com',
+            model: 'gpt-4',
+          },
+        ],
       }),
     },
   });
@@ -441,7 +484,6 @@ export class FixtureManager {
       return this.fixtures.get(name)!;
     }
 
-    const filePath = `${this.basePath}/${name}.json`;
     try {
       const { readFileSync } = await import('fs');
       const { join } = await import('path');
@@ -525,7 +567,7 @@ export class TestDataSet {
   static agentData = {
     basic: BladeDataFactory.Agent.create(),
     premium: BladeDataFactory.Agent.create({ model: 'gpt-4-turbo', maxTokens: 8000 }),
-    basic: BladeDataFactory.Agent.create({ model: 'gpt-3.5-turbo', maxTokens: 2000 }),
+    basic2: BladeDataFactory.Agent.create({ model: 'gpt-3.5-turbo', maxTokens: 2000 }),
   };
 
   static userData = {
@@ -569,8 +611,8 @@ export class TestDataSet {
   };
 
   static configData = {
-    production: BladeDataFactory.Config.create({ name: 'Production Configuration' }),
-    development: BladeDataFactory.Config.create({ name: 'Development Configuration' }),
+    production: BladeDataFactory.Config.create(),
+    development: BladeDataFactory.Config.create(),
   };
 
   // 批量生成数据
@@ -663,12 +705,3 @@ export class TestDataValidator {
     );
   }
 }
-
-// 导出所有工具
-export {
-  TestDataFactory,
-  BladeDataFactory,
-  FixtureManager,
-  TestDataSet,
-  TestDataValidator,
-};

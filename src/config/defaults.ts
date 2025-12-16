@@ -2,29 +2,7 @@
  * Blade 默认配置
  */
 
-import { BladeConfig, PermissionMode, PlanModeConfig } from './types.js';
-
-/**
- * Plan 模式默认警告消息
- * 使用 {count} 占位符表示连续轮次数
- */
-export const DEFAULT_PLAN_MODE_WARNING_MESSAGE = `<system-reminder>⚠️ Warning: You have called {count} tools consecutively without outputting any text to the user.
-
-In Plan mode, you MUST output text summaries between tool calls:
-- After Phase 1 exploration: Output exploration summary (100+ words)
-- After Phase 2 design: Output design evaluation
-- After Phase 3 review: Output review summary with any questions
-- After Phase 4: Output confirmation before calling ExitPlanMode
-
-Please STOP and summarize your current findings before continuing.</system-reminder>`;
-
-/**
- * Plan 模式默认配置
- */
-export const DEFAULT_PLAN_MODE_CONFIG: PlanModeConfig = {
-  toolOnlyThreshold: 5,
-  warningMessage: DEFAULT_PLAN_MODE_WARNING_MESSAGE,
-};
+import { BladeConfig, PermissionMode } from './types.js';
 
 export const DEFAULT_CONFIG: BladeConfig = {
   // =====================================
@@ -51,10 +29,12 @@ export const DEFAULT_CONFIG: BladeConfig = {
 
   // 核心
   debug: false,
-  telemetry: true,
 
   // MCP
   mcpEnabled: false,
+  mcpServers: {}, // 空对象表示没有配置 MCP 服务器
+  enabledMcpjsonServers: [], // 空数组表示没有批准的 .mcp.json 服务器
+  disabledMcpjsonServers: [], // 空数组表示没有拒绝的 .mcp.json 服务器
 
   // =====================================
   // 行为配置 (settings.json)
@@ -106,7 +86,26 @@ export const DEFAULT_CONFIG: BladeConfig = {
       // 'Bash(npm run build *)',
       // 'Bash(npm run lint *)',
     ],
-    ask: [],
+    ask: [
+      // ⚠️ 高风险命令（需要用户确认）
+
+      // 🌐 网络下载工具（可能下载并执行恶意代码）
+      'Bash(curl *)',
+      'Bash(wget *)',
+      'Bash(aria2c *)',
+      'Bash(axel *)',
+
+      // 🗑️ 危险删除操作
+      'Bash(rm -rf *)',
+      'Bash(rm -r *)',
+      'Bash(rm --recursive *)',
+
+      // 🔌 网络连接工具
+      'Bash(nc *)',
+      'Bash(netcat *)',
+      'Bash(telnet *)',
+      'Bash(ncat *)',
+    ],
     deny: [
       // 🔒 敏感文件读取
       'Read(./.env)',
@@ -117,6 +116,30 @@ export const DEFAULT_CONFIG: BladeConfig = {
       'Bash(rm -rf /*)',
       'Bash(sudo *)',
       'Bash(chmod 777 *)',
+
+      // 🐚 Shell 嵌套（可绕过安全检测）
+      'Bash(bash *)',
+      'Bash(sh *)',
+      'Bash(zsh *)',
+      'Bash(fish *)',
+      'Bash(dash *)',
+
+      // 💉 代码注入风险
+      'Bash(eval *)',
+      'Bash(source *)',
+
+      // 💽 危险系统操作
+      'Bash(mkfs *)',
+      'Bash(fdisk *)',
+      'Bash(dd *)',
+      'Bash(format *)',
+      'Bash(parted *)',
+
+      // 🌐 浏览器（可打开恶意链接）
+      'Bash(open http*)',
+      'Bash(open https*)',
+      'Bash(xdg-open http*)',
+      'Bash(xdg-open https*)',
     ],
   },
   permissionMode: PermissionMode.DEFAULT,
@@ -141,7 +164,4 @@ export const DEFAULT_CONFIG: BladeConfig = {
 
   // Agentic Loop 配置
   maxTurns: -1, // 默认无限制（受安全上限 100 保护）
-
-  // Plan 模式配置
-  planMode: DEFAULT_PLAN_MODE_CONFIG,
 };

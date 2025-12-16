@@ -2,6 +2,7 @@
  * /model 命令 - 管理和切换模型配置
  */
 
+import { configActions, getAllModels } from '../store/vanilla.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 const modelCommand: SlashCommand = {
@@ -26,18 +27,11 @@ const modelCommand: SlashCommand = {
     args: string[],
     context: SlashCommandContext
   ): Promise<SlashCommandResult> {
-    if (!context.configManager) {
-      return {
-        success: false,
-        error: '❌ ConfigManager 未初始化',
-      };
-    }
-
     const subcommand = args[0];
 
     // 无参数：显示模型选择器
     if (!subcommand) {
-      const models = context.configManager.getAllModels();
+      const models = getAllModels();
       if (models.length === 0) {
         return {
           success: false,
@@ -70,7 +64,7 @@ const modelCommand: SlashCommand = {
           };
         }
 
-        const models = context.configManager.getAllModels();
+        const models = getAllModels();
         const matchedModel = models.find((m) =>
           m.name.toLowerCase().includes(nameQuery.toLowerCase())
         );
@@ -83,7 +77,7 @@ const modelCommand: SlashCommand = {
         }
 
         try {
-          await context.configManager.removeModel(matchedModel.id);
+          await configActions().removeModel(matchedModel.id);
           return {
             success: true,
             message: `✅ 已删除模型配置: ${matchedModel.name}`,

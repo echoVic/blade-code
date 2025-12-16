@@ -1,5 +1,17 @@
 # 🏗️ 方案 B: 深度重构 - ExecutionPipeline 集成完整实施计划
 
+> ⚠️ **实现状态说明（2025 重构后）**
+>
+> 本文档描述的 ExecutionPipeline 集成方案中，部分细节（尤其是与
+> `LoopDetectionService` 深度集成的部分）已在当前实现中废弃或调整。
+> 当前版本不再在 Agent 主循环中使用 `LoopDetectionService`，而是：
+> - 在 `src/agent/Agent.ts` 的 `executeLoop()` 中使用 `maxTurns`
+>   + 硬性上限 `SAFETY_LIMIT = 100` 控制循环
+> - 结合上下文压缩与 token 使用情况做安全保护
+>
+> 本文档仍然有助于理解整体 ExecutionPipeline 架构，但关于循环检测
+> 的细节请以最新实现和 `loop-detection-system` 文档顶部的状态说明为准。
+
 ## 📊 主流 CLI Agent 用户确认模式调研总结
 
 ### 1. **Claude Code** (规则 + Auto-Accept)
@@ -373,7 +385,7 @@ for (const toolCall of turnResult.toolCalls) {
 
 // 新增辅助方法
 private isTodoTool(toolName: string): boolean {
-  return toolName === 'TodoWrite' || toolName === 'TodoRead';
+	return toolName === 'TodoWrite';
 }
 
 private extractTodos(result: ToolResult): any {
@@ -918,14 +930,14 @@ pipeline.on('permissionSaved', async (data) => {
 ```
 
 ### 3. **TODO 工具特殊处理**
-TodoWrite/TodoRead 应该默认在 allow 列表,否则频繁确认会很烦人:
+TodoWrite 应该默认在 allow 列表, 否则频繁确认会很烦人。当前实现只保留 TodoWrite 一个工具，它已经同时承担「读 + 写」职责:
 
 ```typescript
 // src/config/defaults.ts
 permissions: {
-  allow: ['TodoRead(*)', 'TodoWrite(*)'],
-  ask: [],
-  deny: ['Read(./.env)', 'Read(./.env.*)'],
+	allow: ['TodoWrite(*)'],
+	ask: [],
+	deny: ['Read(./.env)', 'Read(./.env.*)'],
 }
 ```
 
