@@ -533,7 +533,8 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           messages,
           context,
           turnsCount,
-          lastPromptTokens // 首轮为 undefined，使用估算；后续轮次使用真实值
+          lastPromptTokens, // 首轮为 undefined，使用估算；后续轮次使用真实值
+          options?.onCompacting
         );
 
         // 🔧 关键修复：如果发生了压缩，必须重建 messages 数组
@@ -633,6 +634,16 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           logger.debug(
             `[Agent] LLM usage: prompt=${lastPromptTokens}, completion=${turnResult.usage.completionTokens}, total=${turnResult.usage.totalTokens}`
           );
+
+          // 通知 UI 更新 token 使用量
+          if (options?.onTokenUsage) {
+            options.onTokenUsage({
+              inputTokens: turnResult.usage.promptTokens ?? 0,
+              outputTokens: turnResult.usage.completionTokens ?? 0,
+              totalTokens,
+              maxContextTokens: this.config.maxContextTokens,
+            });
+          }
         }
 
         // 检查 abort 信号（LLM 调用后）
@@ -1354,13 +1365,15 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
    * @param context - 聊天上下文
    * @param currentTurn - 当前轮次
    * @param actualPromptTokens - LLM 返回的真实 prompt tokens（必须，来自上一轮响应）
+   * @param onCompacting - 压缩状态回调
    * @returns 是否发生了压缩
    */
   private async checkAndCompactInLoop(
     messages: Message[],
     context: ChatContext,
     currentTurn: number,
-    actualPromptTokens?: number
+    actualPromptTokens?: number,
+    onCompacting?: (isCompacting: boolean) => void
   ): Promise<boolean> {
     // 没有真实数据时跳过检查（第 1 轮没有历史 usage）
     if (actualPromptTokens === undefined) {
@@ -1398,6 +1411,9 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         ? '[Agent] 触发自动压缩'
         : `[Agent] [轮次 ${currentTurn}] 触发循环内自动压缩`;
     logger.debug(compactLogPrefix);
+
+    // 通知 UI 开始压缩
+    onCompacting?.(true);
 
     try {
       const result = await CompactionService.compact(context.messages, {
@@ -1447,9 +1463,15 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         // 不阻塞流程
       }
 
+      // 通知 UI 压缩完成
+      onCompacting?.(false);
+
       // 返回 true 表示发生了压缩
       return true;
     } catch (error) {
+      // 通知 UI 压缩完成（即使失败）
+      onCompacting?.(false);
+
       logger.error(`[Agent] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
       // 压缩失败，返回 false
       return false;

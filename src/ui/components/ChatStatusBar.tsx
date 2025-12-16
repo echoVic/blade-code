@@ -4,10 +4,14 @@ import { PermissionMode } from '../../config/types.js';
 import {
   useActiveModal,
   useAwaitingSecondCtrlC,
+  useContextRemaining,
+  useCurrentModel,
+  useIsCompacting,
   useIsReady,
   useIsThinking,
   usePermissionMode,
 } from '../../store/selectors/index.js';
+import { useGitBranch } from '../hooks/useGitBranch.js';
 
 /**
  * 聊天状态栏组件
@@ -24,7 +28,10 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const activeModal = useActiveModal();
   const showShortcuts = activeModal === 'shortcuts';
   const awaitingSecondCtrlC = useAwaitingSecondCtrlC();
-
+  const { branch } = useGitBranch();
+  const currentModel = useCurrentModel();
+  const contextRemaining = useContextRemaining();
+  const isCompacting = useIsCompacting();
   // 渲染模式提示（仅非 DEFAULT 模式显示）
   const renderModeIndicator = () => {
     if (permissionMode === PermissionMode.DEFAULT) {
@@ -93,20 +100,54 @@ export const ChatStatusBar: React.FC = React.memo(() => {
         </Box>
       ) : (
         <Box flexDirection="row" gap={1}>
+          {branch && (
+            <>
+              <Text color="#87CEEB"> {branch}</Text>
+              <Text color="gray">·</Text>
+            </>
+          )}
           {modeIndicator}
           {hasModeIndicator && <Text color="gray">·</Text>}
           <Text color="gray">? for shortcuts</Text>
         </Box>
       )}
-      {!hasApiKey ? (
-        <Text color="red">⚠ API 密钥未配置</Text>
-      ) : isProcessing ? (
-        <Text color="yellow">Processing...</Text>
-      ) : awaitingSecondCtrlC ? (
-        <Text color="yellow">再按一次 Ctrl+C 退出</Text>
-      ) : (
-        <Text color="green">Ready</Text>
-      )}
+      <Box flexDirection="row" gap={1}>
+        {!hasApiKey ? (
+          <Text color="red">⚠ API 密钥未配置</Text>
+        ) : (
+          <>
+            {currentModel && <Text color="gray">{currentModel.model}</Text>}
+            <Text color="gray">·</Text>
+            {isCompacting ? (
+              <Text color="yellow">压缩中...</Text>
+            ) : (
+              <Text
+                color={
+                  contextRemaining < 20
+                    ? 'red'
+                    : contextRemaining < 50
+                      ? 'yellow'
+                      : 'gray'
+                }
+              >
+                {contextRemaining}%
+              </Text>
+            )}
+            {isProcessing && (
+              <>
+                <Text color="gray">·</Text>
+                <Text color="yellow">Processing...</Text>
+              </>
+            )}
+            {awaitingSecondCtrlC && (
+              <>
+                <Text color="gray">·</Text>
+                <Text color="yellow">再按一次 Ctrl+C 退出</Text>
+              </>
+            )}
+          </>
+        )}
+      </Box>
     </Box>
   );
 });

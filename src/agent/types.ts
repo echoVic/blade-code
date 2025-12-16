@@ -134,6 +134,17 @@ export interface LoopOptions {
   onContent?: (content: string) => void; // 完整的 LLM 输出内容
   onThinking?: (content: string) => void; // LLM 推理过程(深度推理模型)
   onToolStart?: (toolCall: ChatCompletionMessageToolCall) => void; // 工具调用开始
+
+  // Token 使用量回调
+  onTokenUsage?: (usage: {
+    inputTokens: number; // 当前轮 prompt tokens
+    outputTokens: number; // 当前轮 completion tokens
+    totalTokens: number; // 累计总 tokens
+    maxContextTokens: number; // 上下文窗口大小
+  }) => void;
+
+  // 压缩状态回调
+  onCompacting?: (isCompacting: boolean) => void;
 }
 
 export interface LoopResult {

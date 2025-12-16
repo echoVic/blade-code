@@ -254,6 +254,19 @@ export const useCommandHandler = (
               detail,
             });
           },
+          // Token 使用量更新
+          onTokenUsage: (usage: {
+            inputTokens: number;
+            outputTokens: number;
+            totalTokens: number;
+            maxContextTokens: number;
+          }) => {
+            sessionActions.updateTokenUsage(usage);
+          },
+          // 压缩状态更新
+          onCompacting: (isCompacting: boolean) => {
+            sessionActions.setCompacting(isCompacting);
+          },
         };
 
         const output = await agent.chat(command, chatContext, loopOptions);

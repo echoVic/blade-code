@@ -35,6 +35,11 @@ export const useMessages = () => useBladeStore((state) => state.session.messages
 export const useIsThinking = () => useBladeStore((state) => state.session.isThinking);
 
 /**
+ * 获取压缩状态
+ */
+export const useIsCompacting = () => useBladeStore((state) => state.session.isCompacting);
+
+/**
  * 获取当前命令
  */
 export const useCurrentCommand = () =>
@@ -54,6 +59,22 @@ export const useIsActive = () => useBladeStore((state) => state.session.isActive
  * 获取 Session Actions
  */
 export const useSessionActions = () => useBladeStore((state) => state.session.actions);
+
+/**
+ * 获取 Token 使用量
+ */
+export const useTokenUsage = () => useBladeStore((state) => state.session.tokenUsage);
+
+/**
+ * 派生选择器：Context 剩余百分比
+ */
+export const useContextRemaining = () =>
+  useBladeStore((state) => {
+    const { inputTokens, maxContextTokens } = state.session.tokenUsage;
+    if (maxContextTokens <= 0) return 100;
+    const remaining = Math.max(0, 100 - (inputTokens / maxContextTokens) * 100);
+    return Math.round(remaining);
+  });
 
 /**
  * 派生选择器：最后一条消息
