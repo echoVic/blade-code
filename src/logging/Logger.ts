@@ -67,24 +67,36 @@ async function ensureLogDirectory(): Promise<string> {
  * 注意：只用于文件日志，终端输出由 Logger.log() 手动控制
  */
 let pinoInstance: PinoLogger | null = null;
+let pinoInitPromise: Promise<PinoLogger> | null = null;
+
 async function getPinoInstance(): Promise<PinoLogger> {
+  // 已有实例直接返回
   if (pinoInstance) {
     return pinoInstance;
   }
 
-  const logFilePath = await ensureLogDirectory();
+  // 使用 Promise 缓存防止并发初始化
+  if (pinoInitPromise) {
+    return pinoInitPromise;
+  }
 
-  // 只配置文件传输（始终记录 JSON 格式日志）
-  // 终端输出由 Logger.log() 手动控制（应用分类过滤）
-  pinoInstance = pino({
-    level: 'debug',
-    transport: {
-      target: 'pino/file',
-      options: { destination: logFilePath },
-    },
-  });
+  pinoInitPromise = (async () => {
+    const logFilePath = await ensureLogDirectory();
 
-  return pinoInstance;
+    // 只配置文件传输（始终记录 JSON 格式日志）
+    // 终端输出由 Logger.log() 手动控制（应用分类过滤）
+    pinoInstance = pino({
+      level: 'debug',
+      transport: {
+        target: 'pino/file',
+        options: { destination: logFilePath },
+      },
+    });
+
+    return pinoInstance;
+  })();
+
+  return pinoInitPromise;
 }
 
 /**
@@ -92,6 +104,7 @@ async function getPinoInstance(): Promise<PinoLogger> {
  */
 export function resetPinoInstance(): void {
   pinoInstance = null;
+  pinoInitPromise = null;
 }
 
 /**

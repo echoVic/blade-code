@@ -4,6 +4,7 @@
 
 import Fuse from 'fuse.js';
 import { builtinCommands } from './builtinCommands.js';
+import gitCommand from './git.js';
 import initCommand from './init.js';
 import modelCommand from './model.js';
 import permissionsCommand from './permissions.js';
@@ -23,6 +24,7 @@ const slashCommands: SlashCommandRegistry = {
   theme: themeCommand,
   permissions: permissionsCommand,
   model: modelCommand,
+  git: gitCommand,
 };
 
 /**
@@ -49,6 +51,23 @@ export function parseSlashCommand(input: string): { command: string; args: strin
 }
 
 /**
+ * 根据名称或别名查找命令
+ */
+function findCommand(name: string): SlashCommand | undefined {
+  // 先按名称查找
+  if (slashCommands[name]) {
+    return slashCommands[name];
+  }
+  // 再按别名查找
+  for (const cmd of Object.values(slashCommands)) {
+    if (cmd.aliases?.includes(name)) {
+      return cmd;
+    }
+  }
+  return undefined;
+}
+
+/**
  * 执行 slash command
  */
 export async function executeSlashCommand(
@@ -58,8 +77,8 @@ export async function executeSlashCommand(
   try {
     const { command, args } = parseSlashCommand(input);
 
-    // 查找命令
-    const slashCommand = slashCommands[command];
+    // 查找命令（支持别名）
+    const slashCommand = findCommand(command);
     if (!slashCommand) {
       return {
         success: false,

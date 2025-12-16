@@ -1,6 +1,5 @@
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useRef } from 'react';
-import { getConfigService } from '../../config/index.js';
 import { appActions } from '../../store/vanilla.js';
 
 /**
@@ -25,18 +24,12 @@ export const useCtrlCHandler = (
     }, 3000);
   });
 
-  // 强制退出（SIGKILL 绕过 Ink 事件循环）
-  const forceExit = () => {
-    try {
-      getConfigService()
-        .flush()
-        .catch(() => {
-          // 忽略刷新错误
-        });
-    } catch {
-      // 忽略
-    }
-    process.kill(process.pid, 'SIGKILL');
+  // 退出应用
+  // 使用 setTimeout 延迟 100ms，让 Ink 有时间完成终端清理
+  const doExit = () => {
+    setTimeout(() => {
+      process.exit(0);
+    }, 100);
   };
 
   const handleCtrlC = useMemoizedFn(() => {
@@ -53,7 +46,7 @@ export const useCtrlCHandler = (
         hintTimerRef.current = null;
       }
       appActions().setAwaitingSecondCtrlC(false);
-      forceExit();
+      doExit();
     }
   });
 

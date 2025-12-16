@@ -71,11 +71,18 @@ export const useMainInput = (
   // 更新建议列表（支持斜杠命令和 @ 文件提及）
   useEffect(() => {
     if (input.startsWith('/')) {
-      // 斜杠命令建议
-      const newSuggestions = getFuzzyCommandSuggestions(input);
-      setSuggestions(newSuggestions);
-      setShowSuggestions(newSuggestions.length > 0);
-      setSelectedSuggestionIndex(0);
+      // 斜杠命令建议：只在输入不包含空格时显示（空格表示已有子命令）
+      const hasSubcommand = input.includes(' ');
+      if (hasSubcommand) {
+        // 已有子命令，不显示建议
+        setShowSuggestions(false);
+        setSuggestions([]);
+      } else {
+        const newSuggestions = getFuzzyCommandSuggestions(input);
+        setSuggestions(newSuggestions);
+        setShowSuggestions(newSuggestions.length > 0);
+        setSelectedSuggestionIndex(0);
+      }
     } else if (atCompletion.hasQuery && atCompletion.suggestions.length > 0) {
       // @ 文件建议（转换为 CommandSuggestion 格式）
       const fileSuggestions: CommandSuggestion[] = atCompletion.suggestions.map(

@@ -102,7 +102,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
         <Box flexDirection="row" gap={1}>
           {branch && (
             <>
-              <Text color="#87CEEB"> {branch}</Text>
+              <Text color="gray"> {branch}</Text>
               <Text color="gray">·</Text>
             </>
           )}
