@@ -160,7 +160,7 @@ Blade 会按顺序读取所有文件，并将它们的内容一起发送给 AI�
 #### 结合 Plan 模式
 
 ```bash
-blade --plan
+blade --permission-mode plan
 
 用户: 基于 @README.md 的说明，制定一个实现计划
 ```
@@ -281,7 +281,3 @@ export const config = {
 - [配置系统](../configuration/config-system.md) - 了解 Blade 配置
 - [权限控制](../configuration/permissions.md) - 了解文件访问权限
 - [CLI 命令](../reference/cli-commands.md) - 命令行参考
-
----
-
-最后更新: 2025-11-03

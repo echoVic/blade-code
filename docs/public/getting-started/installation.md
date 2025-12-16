@@ -2,200 +2,102 @@
 
 ## 🚀 安装方式
 
-### 方式1：零安装试用（推荐新手）
+### 1）零安装试用
 
 ```bash
-# 无需安装，直接试用
 npx blade-code "你好，介绍一下自己"
-
-# 启动交互式界面
-npx blade-code
-
-# 使用特定选项
-npx blade-code --print "解释什么是TypeScript"
+npx blade-code --print "解释什么是 TypeScript"
 ```
 
-### 方式2：全局安装（推荐日常使用）
+### 2）全局安装（推荐）
 
 ```bash
-# 使用 npm 全局安装
-npm install -g blade-code
+npm install -g blade-code   # 或 pnpm add -g / yarn global add
 
-# 使用 yarn 全局安装
-yarn global add blade-code
-
-# 使用 pnpm 全局安装
-pnpm add -g blade-code
-
-# 然后就可以使用了
-blade "你好"
-
-# 或者启动交互式界面
-blade
+blade            # 进入交互式界面
+blade --print "你好"  # 打印模式
 ```
 
-### 方式3：项目本地安装
+### 3）项目本地安装
 
 ```bash
-# 在项目中安装
-npm install blade-code
-# 或
-yarn add blade-code
-# 或
-pnpm add blade-code
-
-# 使用 npx 运行
+npm install blade-code   # 或 pnpm/yarn 对等命令
 npx blade "帮我分析代码"
+```
 
-# 或添加到 package.json 脚本
+## 🔐 配置模型与密钥
+
+首次运行 `blade` 如未检测到模型配置，会自动弹出模型配置向导（`ModelConfigWizard`），依次填写：
+1. 配置名称
+2. Provider（`openai-compatible` / `anthropic`）
+3. Base URL
+4. API Key（隐藏输入）
+5. 模型名称
+
+向导完成后会写入 `~/.blade/config.json`，后续可在 UI 内随时输入 `/model add` 新增或编辑。
+
+也可手动写配置文件（示例）：
+
+```json
 {
-  "scripts": {
-    "blade": "blade"
-  }
+  "currentModelId": "qwen",
+  "models": [
+    {
+      "id": "qwen",
+      "name": "Qwen",
+      "provider": "openai-compatible",
+      "apiKey": "${QWEN_API_KEY}",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-max"
+    }
+  ]
 }
 ```
 
-## 🔐 API 密钥配置
+推荐把密钥放在环境变量中，再用 `${VAR}` 插值。支持用户级 `~/.blade/config.json` 与项目级 `.blade/config.json`。
 
-安装后需要配置 API 密钥才能使用。首次运行 `blade` 时，如果未检测到有效密钥，会自动启动交互式设置向导，按照提示填写 Provider、Base URL、API Key 和模型即可。
-
-### 获取 API 密钥
-
-- **千问（推荐）**: [https://dashscope.console.aliyun.com/apiKey](https://dashscope.console.aliyun.com/apiKey)
-- **火山引擎**: [https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey)
-
-### 配置方式
-
-#### 方式1：环境变量（推荐）
+## ✅ 验证
 
 ```bash
-# 配置千问 API 密钥
-export QWEN_API_KEY="your-qwen-api-key"
-
-# 配置火山引擎 API 密钥
-export VOLCENGINE_API_KEY="your-volcengine-api-key"
-
-# 永久配置（添加到 ~/.bashrc 或 ~/.zshrc）
-echo 'export QWEN_API_KEY="your-qwen-api-key"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-#### 方式2：配置向导（首次启动自动出现）
-
-```bash
-blade
-# 按照终端中的步骤依次选择 Provider、输入 Base URL、API Key、模型
-```
-
-#### 方式3：配置文件
-
-```bash
-# 用户级配置
-mkdir -p ~/.blade
-vim ~/.blade/config.json
-
-# 项目级配置
-mkdir -p .blade
-vim .blade/config.json
-```
-
-#### 方式4：配置命令
-
-```bash
-# 使用交互式配置命令
-blade config
-```
-
-## ✅ 验证安装
-
-```bash
-# 检查版本
 blade --version
-
-# 显示帮助信息
 blade --help
-
-# 快速测试（需要先配置 API 密钥）
-blade "请告诉我现在几点了？"
-
-# 启动交互式模式
-blade
+blade --print "测试一下"
 ```
 
 ## 🔧 系统要求
 
-### 最低要求
-- **Node.js**: 18.0 或更高版本
-- **操作系统**: Windows 10+, macOS 10.15+, Linux (Ubuntu 20.04+)
-- **内存**: 至少 512MB 可用内存
+- Node.js ≥ 18（推荐 20+）
+- 现代终端，UTF-8/彩色输出支持
+- macOS / Linux / Windows 10+
 
-### 推荐配置
-- **Node.js**: 20.0 或更高版本
-- **内存**: 1GB 或更多可用内存
-- **终端**: 支持 UTF-8 和颜色显示的现代终端
+## 🐛 常见问题
 
-## 🐛 常见安装问题
-
-### 问题1：权限错误
-
+### 权限错误（EACCES）
 ```bash
-# 错误信息：EACCES: permission denied
-# 解决方案：使用 sudo 或配置 npm 前缀
 sudo npm install -g blade-code
-
-# 或者配置 npm 全局目录
+# 或
 mkdir ~/.npm-global
 npm config set prefix '~/.npm-global'
 export PATH=~/.npm-global/bin:$PATH
 ```
 
-### 问题2：Node.js 版本过低
-
+### Node.js 版本过低
 ```bash
-# 使用 nvm 升级 Node.js
-nvm install 20
-nvm use 20
-
-# 或使用 n 工具
-npm install -g n
-n latest
+nvm install 20 && nvm use 20
+# 或
+npm install -g n && n latest
 ```
 
-### 问题3：网络连接问题
-
+### 网络慢 / 安装失败
 ```bash
-# 使用国内镜像源
 npm install -g blade-code --registry=https://registry.npmmirror.com
-
-# 或配置 npm 镜像
-npm config set registry https://registry.npmmirror.com
 ```
 
-### 问题4：API 密钥配置问题
-
+### 配置/密钥问题
 ```bash
-# 检查环境变量
-echo $QWEN_API_KEY
-
-# 检查配置文件
 cat ~/.blade/config.json
-# 如有项目级配置：
 cat .blade/config.json
-
-# 测试 API 连接
-blade --debug "测试连接"
-```
-
-## 📱 IDE 集成
-
-Blade Code 支持多种 IDE 集成：
-
-```bash
-# 检查 IDE 支持
-blade doctor
-
-# 安装 IDE 扩展（自动检测）
-blade ide install
+echo $QWEN_API_KEY
 ```
 
 支持的 IDE：

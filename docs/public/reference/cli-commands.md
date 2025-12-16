@@ -1,99 +1,81 @@
 # 📋 Blade CLI 命令参考
 
-Blade 的命令行分为 **默认交互式入口** 和若干 **辅助子命令**。本页基于当前源码实现（`src/blade.tsx`、`src/commands/*`、`src/cli/config.ts`）整理，确保与实际行为一致。
+本文基于当前源码（`src/blade.tsx`、`src/commands/*`、`src/cli/config.ts`）梳理，确保与实际行为一致。
 
-## 🎯 默认命令：`blade [message..]`
+## 🎯 默认入口 `blade [message…]`
 
 ```bash
 # 打开交互式界面
 blade
 
-# 带首条消息启动，消息会在 UI 就绪后自动发送
+# UI 就绪后自动发送首条消息
 blade "帮我创建一个 README"
-
-# 指定模型、权限模式等选项
-blade --model qwen-max --permission-mode autoEdit "修复 lint 错误"
 ```
 
-- 无子命令时会进入 Ink 构建的交互式界面（`BladeInterface`）。
-- 首次运行且未设置 API Key 时，自动进入设置向导（`SetupWizard`），填写 provider / base URL / API Key / 模型后即可继续。
-- 传入的 `message` 参数会在 UI 初始化完成后自动注入输入框并执行，无需手动回车。
+- 无子命令时启动 Ink 界面。若未配置模型，会自动进入「模型配置向导」（`ModelConfigWizard`）。
+- 传入的 `message` 会在 UI 初始化后直接提交，无需手动回车。
 
-### 常用选项（节选）
-| 选项 | 说明 |
-|------|------|
-| `--debug [filters]` | 打印调试日志，支持类别过滤（如 `--debug api,hooks` 或 `--debug "!statsig,!file"`） |
-| `--print` / `-p` | 启用打印模式（见下文） |
-| `--output-format <text\|json\|stream-json>` | 配合 `--print` 指定输出格式 |
-| `--system-prompt <string>` | 替换默认系统提示词 |
-| `--append-system-prompt <string>` | 在默认系统提示词后追加内容 |
-| `--model <name>` / `--fallback-model <name>` | 控制当前会话模型及回退模型 |
-| `--permission-mode <default\|autoEdit\|yolo\|plan>` | 调整权限模式（也可用 `--yolo` 快捷开启全自动批准） |
-| `--allowed-tools ...` / `--disallowed-tools ...` | 临时显式允许/拒绝工具 |
-| `--session-id <id>` | 固定会话 ID，便于多轮对话 |
-| `--continue` / `--resume <id>` | 继续最近一次或指定会话，`--fork-session` 可在恢复时复制为新 ID |
-| `--mcp-config <path|json>` / `--strict-mcp-config` | 加载 MCP 服务器配置 |
-| `--ide` | 启动时尝试连接 IDE 集成 |
+常用参数（当前实现已接入的部分）：
 
-> 完整选项定义见 `src/cli/config.ts` 中的 `globalOptions`。
+| 参数 | 作用 |
+| --- | --- |
+| `--debug [filters]` | 打开调试日志，支持类别过滤（如 `--debug agent,ui` 或 `--debug "!chat,!loop"`）。 |
+| `--permission-mode <default\|autoEdit\|yolo\|plan>` / `--yolo` | 启动时设置权限模式（也会写入配置）。 |
+| `--resume [id]` | 恢复历史会话：`--resume` 交互选择，`--resume <id>` 直接加载。 |
+| `--max-turns <n>` | 控制单次会话的最大轮次（0 = 禁用对话，-1 = 不限，上限 100）。 |
+| `--system-prompt` / `--append-system-prompt` | 替换或追加系统提示词（传入 Agent）。 |
 
-## 🖨️ 打印模式 `--print`
+> 其他 CLI 选项（如 `--allowed-tools`、`--session-id`、`--ide` 等）虽在参数表中，但当前代码尚未消费它们。
+
+## 🖨️ 打印模式 `-p / --print`
+
+走 `src/commands/print.ts` 分支，不启动 UI：
 
 ```bash
-# 单次问答并直接输出文本
 blade --print "解释什么是 TypeScript"
-
-# 以 JSON 输出（适合脚本消费）
-blade --print --output-format json "列出项目依赖"
-
-# 从标准输入读取
-echo "请总结这段文字" | blade --print
+echo "请总结这段文字" | blade -p --output-format json
 ```
 
-设置 `--print`（或 `-p`）后，CLI 会走 `print` 分支而非交互式 UI，其行为定义在 `src/commands/print.ts`：
-
-1. 创建最小化 `Agent` 实例。
-2. 读取命令行参数或标准输入。
-3. 根据 `--output-format` 输出纯文本、JSON 或流式 JSON。
-
-适合脚本、CI、编辑器集成等场景。
-
-## 🧭 会话与输入体验
-
-- 历史记录：在 UI 中使用 `↑/↓` 导航历史指令，`/` 开头可触发 Slash 命令建议（由 `useKeyboardInput` 管理）。
-- 快捷键：`Ctrl+C / Ctrl+D` 退出，`Ctrl+L` 清屏，`Esc` 停止正在执行的任务或退出建议模式，`Shift+Tab` 在 `default ↔ autoEdit` 模式间切换。
-- 入场提示：当初始化成功时，UI 会自动发送“Blade Code 助手已就绪”提示，初始化失败会显示具体错误（详见 `BladeInterface` 中的状态处理）。
+- 支持 `--output-format text|json|stream-json`（默认 text）。
+- 会创建最小化 Agent，读取命令行消息或 stdin，再直接输出结果。
 
 ## 🛠️ 子命令
 
-| 子命令 | 源码位置 | 作用与示例 |
-|--------|----------|------------|
-| `blade config <set|get|list|reset>` | `src/commands/config.ts` | 管理配置：`blade config list`、`blade config set theme dark` |
-| `blade doctor` | `src/commands/doctor.ts` | 运行环境健康检查（配置、Node 版本、文件权限、依赖） |
-| `blade install [stable\|latest]` | `src/commands/install.ts` | 安装或更新 Blade 原生构建（当前为占位实现） |
-| `blade update` | `src/commands/update.ts` | 检查更新版本 |
-| `blade mcp <list|add|remove|start|stop>` | `src/commands/mcp.ts` | 管理 MCP 服务器，可通过 JSON/文件注册并启动/停止 |
+| 子命令 | 说明 | 备注 |
+| --- | --- | --- |
+| `blade doctor` | 环境自检：配置加载、Node 版本、当前目录读写权限、依赖可用性。 | 成功返回 0，否则返回 1。 |
+| `blade install [stable\|latest] [--force]` | 占位实现，模拟下载/安装输出。 | 目前仅打印流程，不做实际安装。 |
+| `blade update` | 读取本地 `package.json` 版本并提示已是最新。 | 仅本地检查，无联网。 |
+| `blade mcp ...` | 管理 MCP 服务器。见下表。 | |
 
-所有子命令均基于 Yargs，自动提供 `--help` 查看详细参数。
+`mcp` 子命令（`src/commands/mcp.ts`）：
 
-## 🔁 典型使用场景
+| 命令 | 用法 | 说明 |
+| --- | --- | --- |
+| `mcp list` / `mcp ls` | `blade mcp list` | 列出 `.blade/config.json` 中的服务器并尝试连接，完成后自动断开。 |
+| `mcp add <name> <cmdOrUrl> [args…]` | `blade mcp add github -- npx -y @modelcontextprotocol/server-github` | 支持 `--transport stdio|http|sse`、`--env KEY=VAL`、`--header "K: V"`、`--timeout <ms>`。 |
+| `mcp remove <name>` / `rm` | `blade mcp remove github` | 从项目配置移除服务器。 |
+| `mcp get <name>` | `blade mcp get github` | 打印单个服务器配置 JSON。 |
+| `mcp add-json <name> '<json>'` | `blade mcp add-json api '{"type":"http","url":"..."}'` | 直接传入 JSON 串。 |
+| `mcp reset-project-choices` | `blade mcp reset-project-choices` | 清除项目级 `.mcp.json` 的批准/拒绝记录。 |
+
+## 🧭 交互界面要点
+
+- `/` 开头触发 Slash 命令补全，`@` 开头触发文件路径补全（自动读取并注入上下文，见「@ 文件提及」章节）。
+- 快捷键：`Ctrl+C / Ctrl+D` 终止任务或退出；`Ctrl+L` 清屏；`Esc` 关闭建议/中断执行；`Shift+Tab` 在 `default → autoEdit → plan` 间循环。
+- 没有模型配置时自动进入模型向导；若解析配置失败会在对话区显示错误。
+
+## 🔁 示例
 
 ```bash
-# 进入交互界面并使用自动发送首条消息
-blade "帮我把 src/ui 目录梳理成 README"
-
-# 调整权限行为后继续对话
-blade --permission-mode autoEdit --continue
-
-# 快速打印总结（非交互式）
+# 打印模式（脚本集成）
 git diff | blade --print --append-system-prompt "请给出代码审查建议"
 
-# 查看当前配置
-blade config list
+# 启用 Plan 模式启动 UI
+blade --permission-mode plan
 
-# 连接并管理 MCP 服务器
-blade mcp add local-server ./mcp/local.json
-blade mcp start local-server
+# 恢复历史会话并继续对话
+blade --resume 2024-12-foo-session
 ```
 
-了解更多高级功能（工具系统、MCP 协议等），请继续阅读其他章节。
+更多用法见其他章节（工具列表、Slash 命令、Plan 模式等）。***

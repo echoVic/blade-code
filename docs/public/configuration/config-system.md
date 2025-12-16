@@ -1,259 +1,122 @@
 # Blade 配置系统
 
-Blade 采用双配置文件系统，参考 Claude Code 的设计理念：
+Blade 使用双文件配置体系：`config.json`（基础配置）和 `settings.json` / `settings.local.json`（行为配置）。加载顺序和字段均来自当前实现的 `ConfigManager` / `defaults.ts`。
 
-- **config.json** - 基础配置（API、模型、UI 等）
-- **settings.json** - 行为配置（权限、Hooks、环境变量等）
+## 文件位置与优先级
 
-> 首次运行 `blade` 时，如果未检测到 `apiKey`，会自动启动终端设置向导（`SetupWizard`）引导填写 provider、Base URL、API Key、模型，并立即保存到用户配置。
-
-## 配置文件位置
-
-### 用户级配置
 ```
-~/.blade/
-├── config.json       # 用户基础配置
-└── settings.json     # 用户行为配置
-```
+~/.blade/            # 用户级
+  ├─ config.json
+  └─ settings.json
 
-### 项目级配置
-```
-<project>/.blade/
-├── config.json              # 项目基础配置
-├── settings.json            # 项目行为配置（提交到 git）
-└── settings.local.json      # 本地配置（不提交,自动忽略）
+<project>/.blade/    # 项目级
+  ├─ config.json
+  ├─ settings.json
+  └─ settings.local.json   # 个人覆盖，自动加入 .gitignore
 ```
 
-## 配置优先级
+优先级（高 → 低）：环境变量插值 > settings.local.json > 项目 settings.json > 用户 settings.json > 项目 config.json > 用户 config.json > 默认值。
 
-### config.json (2层)
-```
-环境变量 > 项目配置 > 用户配置 > 默认配置
-```
+## config.json（基础配置）
 
-### settings.json (3层)
-```
-本地配置 > 项目配置 > 用户配置 > 默认配置
-```
-
-## config.json 配置项
-
-### 认证
-```json
-{
-  "apiKey": "$BLADE_API_KEY",
-  "apiSecret": "optional-secret",
-  "baseURL": "https://apis.iflow.cn/v1"
-}
-```
-
-### 模型
-```json
-{
-  "model": "qwen3-coder-plus",
-  "temperature": 0.0,
-  "maxContextTokens": 128000,
-  "maxOutputTokens": 32768,
-  "stream": true,
-  "topP": 0.9,
-  "topK": 50
-}
-```
-
-#### Tokens 配置说明
-- `maxContextTokens`：上下文窗口大小，用于判断是否需要压缩和裁剪输入上下文，通常取模型支持的最大上下文窗口大小（默认 `128000`）。
-- `maxOutputTokens`：输出限制，传递给模型 API 的 `max_tokens` 参数，用于控制单次回答的最大长度（默认 `32768`）。
-
-### UI
-```json
-{
-  "theme": "GitHub",
-  "language": "zh-CN",
-  "fontSize": 14,
-  "showStatusBar": true
-}
-```
-
-### 核心
-```json
-{
-  "debug": false,
-  "autoUpdate": true,
-  "workingDirectory": "."
-}
-```
-
-### 日志
-```json
-{
-  "logLevel": "info",
-  "logFormat": "text"
-}
-```
-
-## settings.json 配置项
-
-### 权限控制
-
-权限系统通过 `PermissionChecker` 类实现，支持三级权限控制：
+**模型与连接**
 
 ```json
 {
-  "permissions": {
-    "allow": [
-      "Read(file_path:**/*.ts)",
-      "Read(file_path:**/*.js)",
-      "Grep",
-      "Glob"
-    ],
-    "ask": [
-      "Write",
-      "Edit",
-      "Bash(command:npm *)",
-      "Bash(command:git *)"
-    ],
-    "deny": [
-      "Read(file_path:.env)",
-      "Read(file_path:**/.env*)",
-      "Read(file_path:**/*.{key,secret})",
-      "Bash(command:rm -rf *)",
-      "Bash(command:sudo *)"
-    ]
-  }
-}
-```
-
-**权限规则说明：**
-- `allow` - 自动允许的工具调用（无需用户确认）
-- `ask` - 需要用户确认的调用（默认行为）
-- `deny` - 拒绝的调用（最高优先级）
-
-**优先级：** `deny` > `allow` > `ask` > 默认(ask)
-
-**匹配模式：**
-1. **精确匹配**: `Bash(command:git status)` - 完全匹配
-2. **工具名匹配**: `Read` - 匹配该工具的所有调用
-3. **通配符匹配**: `Read(file_path:*.env)` - `*` 匹配任意字符（不包括 `/`）
-4. **Glob 模式**: `Read(file_path:**/.env)` - `**` 匹配任意层级目录
-5. **大括号扩展**: `Read(file_path:**/*.{env,key,secret})` - 匹配多个扩展名
-6. **全局通配**: `*` 或 `**` - 匹配所有工具
-
-**实现细节：**
-- 工具调用签名格式: `ToolName(param1:value1, param2:value2)`
-- 使用 `minimatch` 库进行 glob 模式匹配
-- 支持嵌套括号和花括号的智能解析
-- 参数值支持 glob 模式匹配
-
-### Hooks
-
-在工具执行前后自动运行命令：
-
-```json
-{
-  "hooks": {
-    "PreToolUse": {
-      "Bash": "echo '[Blade] Executing: {command}' >> .blade/command.log"
-    },
-    "PostToolUse": {
-      "Write": "npx prettier --write {file_path}",
-      "Edit": "npx prettier --write {file_path}"
+  "currentModelId": "qwen-main",
+  "models": [
+    {
+      "id": "qwen-main",
+      "name": "Qwen",
+      "provider": "openai-compatible",
+      "apiKey": "${QWEN_API_KEY}",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-max",
+      "temperature": 0,
+      "maxContextTokens": 128000,
+      "topP": 0.9,
+      "topK": 50
     }
-  }
+  ]
 }
 ```
 
-**变量替换：**
-- `{file_path}` - 文件路径
-- `{command}` - 命令内容
-- `{pattern}` - 匹配模式
+**通用参数**
 
-### 环境变量
+| 字段 | 说明 | 默认值 |
+| --- | --- | --- |
+| `temperature` | 默认采样温度 | `0.0` |
+| `maxContextTokens` | 上下文窗口（用于压缩判断） | `128000` |
+| `maxOutputTokens` | 单次回复输出上限 | `32768` |
+| `stream` | 是否请求流式输出 | `true` |
+| `topP` / `topK` | 采样参数 | `0.9` / `50` |
+| `timeout` | LLM 请求超时（ms） | `180000` |
+| `theme` / `language` / `fontSize` | UI 主题/语言/字号 | `GitHub` / `zh-CN` / `14` |
+| `debug` | `false` / `true` / `"agent,ui"` 形式的过滤字符串 | `false` |
+| `mcpEnabled` | 是否启用 MCP | `false` |
+| `mcpServers` | MCP 服务器配置字典 | `{}` |
+| `enabledMcpjsonServers` / `disabledMcpjsonServers` | `.mcp.json` 的批准/拒绝记录 | `[]` |
 
-为每个会话注入环境变量：
+> `fallbackModel`、`allowedTools` 等字段仅存在于运行时类型中，当前代码未消费这些字段。
+
+## settings.json / settings.local.json（行为配置）
+
+| 字段 | 说明 | 默认值（见 `defaults.ts`） |
+| --- | --- | --- |
+| `permissions` | `allow/ask/deny` 规则数组 | 预置了常见只读 Bash 命令白名单与危险命令黑名单 |
+| `permissionMode` | `default` / `autoEdit` / `yolo` / `plan` | `default` |
+| `hooks` | Hook 配置（启用、超时、Pre/Post 列表等） | 全部关闭 |
+| `env` | 注入到会话的环境变量 | `{}` |
+| `disableAllHooks` | 全局禁用 Hooks | `false` |
+| `maxTurns` | 最大对话轮次（0 禁用，-1 不限，上限 100） | `-1` |
+
+`settings.local.json` 用于个人偏好或临时授权，`ConfigManager` 会自动把它写入 `.gitignore`。
+
+## 环境变量插值
+
+所有字符串字段支持 `$VAR` / `${VAR}` / `${VAR:-default}` 插值，解析发生在加载阶段。例如：
 
 ```json
 {
-  "env": {
-    "NODE_ENV": "development",
-    "NPM_CONFIG_LOGLEVEL": "warn",
-    "BLADE_DEBUG": "1"
-  }
+  "apiKey": "${QWEN_API_KEY}",
+  "baseUrl": "${BLADE_BASE_URL:-https://apis.iflow.cn/v1}"
 }
 ```
 
-### 其他配置
+## 典型文件示例
 
+**用户配置：`~/.blade/config.json`**
 ```json
 {
-  "disableAllHooks": false,
-  "cleanupPeriodDays": 30,
-  "includeCoAuthoredBy": true,
-  "apiKeyHelper": "~/.blade/scripts/get-token.sh"
-}
-```
-
-## 环境变量
-
-### 支持的环境变量
-
-| 环境变量 | 配置字段 | 说明 |
-|---------|---------|------|
-| `BLADE_API_KEY` | `apiKey` | API 密钥 |
-| `BLADE_BASE_URL` | `baseURL` | API 基础 URL |
-| `BLADE_MODEL` | `model` | 模型名称 |
-| `BLADE_TEMPERATURE` | `temperature` | 温度参数 |
-| `BLADE_MAX_CONTEXT_TOKENS` | `maxContextTokens` | 上下文窗口大小 |
-| `BLADE_MAX_OUTPUT_TOKENS` | `maxOutputTokens` | 输出 token 限制 |
-| `BLADE_THEME` | `theme` | UI 主题 |
-| `BLADE_LANGUAGE` | `language` | 界面语言 |
-| `BLADE_DEBUG` | `debug` | 调试模式 |
-
-### 环境变量插值
-
-在配置文件中引用环境变量：
-
-```json
-{
-  "apiKey": "$BLADE_API_KEY",
-  "baseURL": "${BLADE_BASE_URL}",
-  "model": "${BLADE_MODEL:-qwen3-coder-plus}"
-}
-```
-
-**语法：**
-- `$VAR` - 引用环境变量
-- `${VAR}` - 引用环境变量
-- `${VAR:-default}` - 带默认值的引用
-
-## 使用示例
-
-### 1. 用户配置 (~/.blade/config.json)
-
-```json
-{
-  "apiKey": "$BLADE_API_KEY",
-  "baseURL": "https://apis.iflow.cn/v1",
-  "model": "qwen3-coder-plus",
+  "currentModelId": "qwen",
+  "models": [
+    {
+      "id": "qwen",
+      "name": "Qwen",
+      "provider": "openai-compatible",
+      "apiKey": "${QWEN_API_KEY}",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-max"
+    }
+  ],
   "theme": "GitHub",
   "language": "zh-CN",
   "debug": false
 }
 ```
 
-### 2. 项目配置 (.blade/settings.json)
-
-团队共享的配置，提交到 git：
-
+**项目共享配置：`.blade/settings.json`**
 ```json
 {
   "permissions": {
     "allow": [
-      "Bash(npm run:*)",
-      "Bash(npx:*)"
+      "Bash(git status*)",
+      "Bash(ls *)",
+      "Read(file_path:**/*.ts)"
     ],
     "deny": [
-      "Read(./.env.production)",
-      "Write(./dist/**)"
+      "Read(file_path:**/.env*)",
+      "Bash(rm -rf *)"
     ]
   },
   "hooks": {
@@ -267,209 +130,24 @@ Blade 采用双配置文件系统，参考 Claude Code 的设计理念：
 }
 ```
 
-### 3. 本地配置 (.blade/settings.local.json)
-
-个人实验配置，不提交：
-
+**个人覆盖：`.blade/settings.local.json`**
 ```json
 {
   "permissions": {
-    "allow": [
-      "Bash(rm:*)"
-    ]
+    "allow": ["Bash(npm run build*)"]
   },
-  "env": {
-    "BLADE_DEBUG": "1"
-  }
+  "permissionMode": "autoEdit"
 }
 ```
 
-## 配置方式
+## 配置入口
 
-### 1. 手动编辑文件（主要方式）
+- **首次启动**：若未检测到模型，UI 会自动进入模型配置向导；也可在任何时候输入 `/model add` 打开向导。
+- **手工编辑**：直接修改上述文件即可，保存后下次启动生效。
+- **自动写入**：在权限确认弹窗中选择“会话内记住”会把抽象后的规则写入 `.blade/settings.local.json`。
 
-```bash
-# 编辑用户配置
-vim ~/.blade/config.json
-vim ~/.blade/settings.json
+## 实现要点
 
-# 编辑项目配置
-vim .blade/config.json
-vim .blade/settings.json
-
-# 编辑本地配置
-vim .blade/settings.local.json
-```
-
-### 2. REPL 交互式界面
-
-```bash
-blade
-
-> /config              # 打开配置界面
-> /config show         # 显示当前配置
-> /config trace apiKey # 显示配置来源
-```
-
-## 配置职责划分
-
-| 配置类型 | config.json | settings.json |
-|---------|------------|--------------|
-| API 密钥 | ✅ | ❌ |
-| 模型选择 | ✅ | ❌ |
-| UI 主题 | ✅ | ❌ |
-| 权限控制 | ❌ | ✅ |
-| Hooks | ❌ | ✅ |
-| 环境变量 | ❌ | ✅ |
-| 层级数量 | 2层 | 3层 |
-
-## 最佳实践
-
-### 1. 安全性
-- 不要在配置文件中硬编码 API Key，使用环境变量
-- 敏感配置使用 `.local.json` 避免提交到 git
-- 使用权限系统限制敏感文件访问
-
-### 2. 团队协作
-- `.blade/settings.json` 提交到 git 共享团队配置
-- `.blade/settings.local.json` 用于个人覆盖
-- 使用 `env` 统一团队环境变量
-
-### 3. 配置组织
-- config.json 保持简洁，只配置必要项
-- settings.json 按功能分组（permissions / hooks / env）
-- 使用注释（JSON5）说明复杂配置
-
-### 4. 权限配置
-- deny 规则优先级最高
-- 从严格到宽松逐步放开权限
-- 生产环境使用更严格的权限
-
-## 核心实现
-
-### 架构概述
-
-Blade 配置系统采用 **Store 作为单一数据源** 的架构，确保内存状态与持久化数据的一致性：
-
-```
-┌─────────────────────────────────────────────────┐
-│  统一写入入口                                     │
-│  ┌──────────────┐     ┌──────────────┐          │
-│  │      UI      │     │    Agent     │          │
-│  └──────┬───────┘     └──────┬───────┘          │
-│         │                    │                   │
-│         ▼                    ▼                   │
-│    configActions()  ← 唯一写入入口                │
-│         │                                        │
-│         ├─→ 1. 更新 Store（内存单一数据源）        │
-│         └─→ 2. 调用 ConfigService（持久化）      │
-│                      │                           │
-│                      ▼                           │
-│                ConfigManager                     │
-│                └─┬────────────────┬─┘           │
-│                  │                │              │
-│                  ▼                ▼              │
-│             写入 config.json     写入 settings.json│
-└─────────────────────────────────────────────────┘
-```
-
-### Store（单一数据源）
-
-Store 是 Blade 配置系统的核心，位于 [src/store/vanilla.ts](../src/store/vanilla.ts)，提供：
-
-1. **内存单一数据源** - 所有读取操作从 Store 获取最新数据
-2. **统一写入入口** - 通过 `configActions()` 自动同步内存和持久化
-3. **防御性初始化** - 确保 Store 在任何环境下都可用
-4. **类型安全** - 完整的 TypeScript 类型定义
-
-主要 API：
-
-```typescript
-// 读取配置
-import { getConfig, getCurrentModel, getPermissions } from '../store/vanilla.js';
-
-const config = getConfig();
-const currentModel = getCurrentModel();
-const permissions = getPermissions();
-
-// 写入配置
-import { configActions } from '../store/vanilla.js';
-
-// 自动同步：内存 + 持久化
-await configActions().updateConfig({ theme: 'dark' });
-await configActions().addModel(modelData);
-await configActions().updatePermissions(newPermissions);
-```
-
-### ConfigManager
-
-配置管理器位于 [src/config/ConfigManager.ts](../src/config/ConfigManager.ts)，负责：
-
-1. **多层级配置加载** - 按优先级加载和合并配置
-2. **环境变量插值** - 支持 `$VAR` 和 `${VAR:-default}` 语法
-3. **配置验证** - 验证配置格式和必需字段
-4. **持久化实现** - 将配置写入文件系统
-5. **配置追踪** - 追踪配置项的来源
-
-> **注意**：ConfigManager 现在主要作为底层持久化实现，应用代码应通过 Store 的 `configActions()` 进行配置操作。
-
-### ConfigService
-
-配置服务位于 [src/config/ConfigService.ts](../src/config/ConfigService.ts)，提供：
-
-1. **统一持久化接口** - 封装对 ConfigManager 的调用
-2. **范围控制** - 支持全局配置和项目配置
-3. **批量更新** - 优化多次配置变更的性能
-
-### PermissionChecker
-
-权限检查器位于 [src/config/PermissionChecker.ts](../src/config/PermissionChecker.ts)，提供：
-
-```typescript
-class PermissionChecker {
-  check(descriptor: ToolInvocationDescriptor): PermissionCheckResult
-  isAllowed(descriptor: ToolInvocationDescriptor): boolean
-  isDenied(descriptor: ToolInvocationDescriptor): boolean
-  needsConfirmation(descriptor: ToolInvocationDescriptor): boolean
-  updateConfig(config: Partial<PermissionConfig>): void
-  replaceConfig(config: PermissionConfig): void
-}
-```
-
-### ExecutionPipeline 集成
-
-权限检查集成在 6 阶段执行管道中：
-
-```
-Discovery → Validation → Permission → Confirmation → Execution → Formatting
-                            ↑            ↑
-                         检查权限      需要确认时请求用户
-```
-
-详见 [执行管道文档](../../architecture/execution-pipeline.md)
-
-## FAQ
-
-### Q: 配置文件不存在怎么办？
-A: 系统会使用默认配置，不影响运行。
-
-### Q: 如何知道配置加载顺序？
-A: 使用 `/config trace <key>` 查看配置来源链。
-
-### Q: settings.local.json 会被 git 追踪吗？
-A: 不会，系统会自动添加到 `.gitignore`。
-
-### Q: 如何重置配置？
-A: 删除对应的配置文件，系统会使用默认配置。
-
-### Q: 支持 JSON5 或 YAML 吗？
-A: 目前只支持标准 JSON 格式。
-
-### Q: 如何调试权限规则？
-A: 查看执行日志或使用 `--debug` 模式查看权限检查详情。
-
-## 相关文档
-
-- [权限系统指南](./permissions-guide.md) - 详细的权限配置指南
-- [执行管道架构](../../architecture/execution-pipeline.md) - 了解工具执行流程
-- [用户确认流程](../../architecture/confirmation-flow.md) - 了解用户确认机制
+- 加载与合并：`src/config/ConfigManager.ts`（包含环境变量插值与 gitignore 处理）。
+- 写入与同步：`configActions()` 统一入口，持久化到文件并同步 Zustand Store。
+- 校验：`ConfigManager.validateConfig` 会在 Agent 创建前校验模型配置是否存在。

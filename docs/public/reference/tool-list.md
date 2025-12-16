@@ -1,110 +1,56 @@
-# 🧰 Blade 工具系统
+# 🧰 工具列表（当前实现）
 
-Blade 提供强大而灵活的工具系统，支持文件操作、搜索、Shell 命令、网络请求等多种功能。
+内置工具由 `src/tools/builtin/index.ts` 注册，并在运行时附加已连接的 MCP 工具。工具类型划分依赖 `ToolKind`（ReadOnly / Write / Execute），影响权限模式的判定。
 
-## 📚 架构文档
+## 文件与编辑
 
-- **[工具系统架构](../architecture/tool-system.md)** - 完整的架构设计文档 ⭐
-- **[工具使用指南](./TOOL_USAGE_GUIDE.md)** - 开发者使用指南
-- **[源码 README](../../src/tools/README.md)** - 源码目录说明
+| 名称 | 类型 | 主要参数 | 说明 |
+| --- | --- | --- | --- |
+| `Read` | ReadOnly | `file_path`（绝对路径，可选 `offset/limit/encoding`） | 读取文本/图片/PDF/ipynb，默认最多 2000 行，返回带行号内容。 |
+| `Write` | Write | `file_path`、`content`、`encoding`、`mode`、`mkdirs` | 写入或创建文件，支持备份/权限检查/目录自动创建。 |
+| `Edit` | Write | `file_path`、`old_string`、`new_string`、`pattern`、`max_replacements` | 按字符串或正则替换，支持回滚、预览与并发文件锁。 |
+| `NotebookEdit` | Write | `file_path`、`content` | 针对 `.ipynb` 的写入，保持 JSON 结构。 |
 
-## 🔧 工具分类
+## 搜索
 
-### 文件操作工具（4个）
+| 名称 | 类型 | 参数 | 说明 |
+| --- | --- | --- | --- |
+| `Glob` | ReadOnly | `pattern`、`cwd`、`ignore`、`limit` | 使用 fast-glob 查找文件，内置忽略常见目录。 |
+| `Grep` | ReadOnly | `pattern`、`path`、`glob`、`context` 等 | 基于 ripgrep，支持多文件内容搜索、上下文行、大小写/正则开关。 |
 
-| 工具 | 说明 | 主要功能 |
-|------|------|----------|
-| `read` | 读取文件 | 支持文本、图片、PDF等多种格式 |
-| `write` | 写入文件 | 支持编码、备份、目录创建 |
-| `edit` | 编辑文件 | 字符串替换、正则匹配 |
-| `multi_edit` | 批量编辑 | 一次执行多个编辑操作 |
+## Shell 与执行
 
-### 搜索工具（3个）
+| 名称 | 类型 | 参数 | 说明 |
+| --- | --- | --- | --- |
+| `Bash` | Execute | `command`、`cwd`、`env`、`background`、`timeout` | 执行命令，可后台运行并返回 `bash_id`（后台会话 ID），包含风险提示。 |
+| `BashOutput` | ReadOnly | `bash_id`、`filter`(正则，可选) | 读取后台命令的最新输出。 |
+| `KillShell` | Execute | `shell_id`、`signal` | 终止后台命令（使用 Bash 返回的后台 ID）。 |
+| `Skill` | Execute | `skill_name`、`input` | 预留的“技能”入口，当前用于系统提示中的占位行为。 |
+| `SlashCommand` | Execute | `command` | 在主对话中执行 Slash 命令（供系统调用，用户通常无需直接使用）。 |
 
-| 工具 | 说明 | 主要功能 |
-|------|------|----------|
-| `glob` | 文件模式匹配 | 使用 glob 模式查找文件 |
-| `grep` | 内容搜索 | 在文件中搜索文本内容 |
-| `find` | 文件查找 | 根据条件查找文件（名称、大小、时间等） |
+## 网络
 
-### Shell 命令工具（5个）
+| 名称 | 类型 | 参数 | 说明 |
+| --- | --- | --- | --- |
+| `WebFetch` | ReadOnly | `url`、`method`、`headers`、`body`、`trim` | 获取网页/接口内容，自动裁剪文本并提示编码。 |
+| `WebSearch` | ReadOnly | `query`、`site`、`language`、`region` | DuckDuckGo 搜索，返回结果摘要。 |
 
-| 工具 | 说明 | 主要功能 |
-|------|------|----------|
-| `bash` | Bash 命令 | 执行 Bash 命令，支持后台运行 |
-| `shell` | 通用 Shell | 执行 Shell 命令，自动处理环境 |
-| `script` | 脚本执行 | 执行脚本文件（支持多种解释器） |
-| `bash_output` | 后台输出 | 读取后台 Bash 命令的最新输出，支持正则过滤 |
-| `kill_shell` | 终止后台命令 | 根据 Shell ID 终止正在运行的后台进程 |
+## 任务与计划
 
-### 网络工具（3个）
+| 名称 | 类型 | 说明 |
+| --- | --- | --- |
+| `Task` | ReadOnly | 启动子 Agent（使用 `.blade/agents` / `~/.blade/agents` 中的配置），`subagent_type` 决定工具集。 |
+| `TodoWrite` | ReadOnly | 管理会话内 TODO（持久化到 `<configDir>/todos/<session>-agent-<session>.json`，默认 `~/.blade/todos`），返回完整列表。 |
+| `EnterPlanMode` / `ExitPlanMode` | ReadOnly | 进入/退出 Plan 模式并触发用户确认。 |
 
-| 工具 | 说明 | 主要功能 |
-|------|------|----------|
-| `web_fetch` | 网页抓取 | 获取网页内容，支持Markdown转换 |
-| `api_call` | API 调用 | RESTful API 请求，支持认证 |
-| `web_search` | 网络搜索 | DuckDuckGo 搜索，支持域名过滤 |
+## MCP 工具
 
-### 任务管理工具（1个）
+通过 `blade mcp add ...` 注册的服务器会在运行时加载，其工具会按原始名称加入工具列表。连接状态取决于 MCP 注册表的健康检查。
 
-| 工具 | 说明 | 主要功能 |
-|------|------|----------|
-| `task` | 任务代理 | 启动子Agent处理复杂任务 |
+## 权限与模式提示
 
-## 🔌 MCP 协议支持
+- ReadOnly 工具在 `default` / `autoEdit` / `plan` 模式下自动允许（Plan 模式拒绝所有非只读工具）。
+- Write 工具仅在 `autoEdit` / `yolo` 自动通过，其余模式需要确认。
+- Execute 工具需确认，`yolo` 模式直接放行。
 
-Blade 支持通过 **Model Context Protocol (MCP)** 扩展外部工具。MCP 工具会自动转换为标准 Tool 接口。
-
-**详细文档**: [MCP 协议支持](../protocols/mcp-support.md)
-
-## 🚀 快速开始
-
-### 创建自定义工具
-
-```typescript
-import { createTool } from '@/tools/core';
-import { ToolKind } from '@/tools/types';
-import { z } from 'zod';
-
-export const myTool = createTool({
-  name: 'my_tool',
-  displayName: '我的工具',
-  kind: ToolKind.Other,
-
-  schema: z.object({
-    input: z.string().describe('输入参数'),
-  }),
-
-  description: {
-    short: '工具简短描述',
-  },
-
-  async execute(params, context) {
-    return {
-      success: true,
-      llmContent: `处理结果: ${params.input}`,
-      displayContent: `✅ 操作成功`,
-    };
-  }
-});
-```
-
-## ✨ 核心特性
-
-### 统一接口
-
-所有工具（内置/MCP/自定义）使用相同的 `Tool` 接口。
-
-### 类型安全
-
-基于 Zod Schema 的端到端类型推断。
-
-### 简洁 API
-
-无需复杂继承，直接调用 `createTool`。
-
-## 📖 更多资源
-
-- **[智能工具](./smart-tools.md)** - LLM 驱动的高级工具
-- **[Git 工具](./git-tools.md)** - Git 集成工具
-- **[源码实现](../../src/tools/)** - 工具系统源代码
+详见「权限系统」章节。

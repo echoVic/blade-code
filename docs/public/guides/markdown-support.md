@@ -134,8 +134,8 @@ console.log(greeting);
    - 使用 npm: `npm install -g blade-code`
    - 使用 pnpm: `pnpm add -g blade-code`
 2. 第二步：配置 API Key
-   - 运行 `blade mcp setup`
-   - 输入您的 **API Key**
+   - 运行 `blade`，跟随模型配置向导
+   - 将密钥写入环境变量后在向导中引用
 3. 第三步：开始使用
 ```
 

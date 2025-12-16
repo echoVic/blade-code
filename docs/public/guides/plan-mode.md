@@ -15,21 +15,17 @@ Plan 模式通过两层保护确保安全：
 
 ### 允许的工具
 
-在 Plan 模式下，只允许使用以下只读工具：
+Plan 模式仅允许 `ReadOnly` 工具：
 
-- **文件操作**：Read、Glob、Grep、Find
-- **网络请求**：WebFetch、WebSearch
-- **计划管理**：TodoWrite（读写合一）
-- **任务编排**：Task（启动子 Agent）
-- **退出工具**：ExitPlanMode
+- 文件/搜索：Read、Glob、Grep
+- 网络：WebFetch、WebSearch
+- 运行时信息：BashOutput（读取后台命令输出）
+- 计划与任务：TodoWrite、Task（子 Agent）、EnterPlanMode、ExitPlanMode
 
 ### 禁止的工具
 
-以下工具在 Plan 模式下不可用：
-
-- **文件修改**：Edit、Write、MultiEdit
-- **命令执行**：Bash、Shell、Script
-- **状态变更**：任何修改系统状态的 MCP 工具
+- 写操作：Edit、Write、NotebookEdit 以及任何 MCP 写工具
+- 执行类：Bash、KillShell、Skill、SlashCommand（Execute 类工具）
 
 ## 如何使用
 
