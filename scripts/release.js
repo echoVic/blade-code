@@ -420,14 +420,8 @@ function publishToNpm() {
   console.log(chalk.yellow('📦 发布到 npm...'));
   
   try {
-    // 检查是否已登录 npm
-    exec('npm whoami', { allowInDryRun: true });
-    
     // 构建发布命令
-    let publishCmd = 'npm publish';
-    if (config.publish?.npmConfig?.access) {
-      publishCmd += ` --access ${config.publish.npmConfig.access}`;
-    }
+    let publishCmd = 'npm publish --access public';
     if (config.publish?.npmConfig?.registry) {
       publishCmd += ` --registry ${config.publish.npmConfig.registry}`;
     }
@@ -438,7 +432,12 @@ function publishToNpm() {
     console.log(chalk.green('✅ 已发布到 npm'));
   } catch (error) {
     console.log(chalk.red('❌ 发布失败'));
-    throw error;
+    // 如果发布失败，提示用户手动登录后重试
+    console.log(chalk.yellow('💡 请手动登录 npm 后重试:'));
+    console.log(chalk.yellow('   npm login --registry https://registry.npmjs.org/'));
+    console.log(chalk.yellow('   npm publish --access public --registry https://registry.npmjs.org/'));
+    
+    // 不抛出错误，让后续的git推送仍能执行
   }
 }
 
