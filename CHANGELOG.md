@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.18] - 2025-12-17
+
+### 📝 文档更新
+
+- 简化README文档结构并更新内容 (796aae7)
+
+
 ## [0.0.17] - 2025-12-16
 
 ### ✨ 新功能
