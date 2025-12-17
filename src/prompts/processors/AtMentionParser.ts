@@ -26,6 +26,11 @@ export class AtMentionParser {
   private static readonly LINE_RANGE_PATTERN = /#L(\d+)(?:-(\d+))?$/;
 
   /**
+   * Glob 通配符模式：检测 *, ?, [ 等字符
+   */
+  private static readonly GLOB_PATTERN = /[*?[\]]/;
+
+  /**
    * 从用户输入中提取所有 @ 提及
    *
    * @param input - 用户输入的消息
@@ -56,12 +61,16 @@ export class AtMentionParser {
         path = path.replace(this.LINE_RANGE_PATTERN, '');
       }
 
+      // 检测是否为 glob 模式
+      const isGlob = this.GLOB_PATTERN.test(path);
+
       mentions.push({
         raw,
         path: path.trim(),
         lineRange,
         startIndex: match.index,
         endIndex: match.index + raw.length,
+        isGlob,
       });
     }
 

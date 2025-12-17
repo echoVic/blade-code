@@ -93,6 +93,12 @@ export class AttachmentCollector {
    * 处理单个 @ 提及
    */
   private async processOne(mention: AtMention): Promise<Attachment> {
+    // Glob 模式处理
+    if (mention.isGlob) {
+      logger.debug(`Processing glob pattern: ${mention.path}`);
+      return await this.processGlob(mention.path);
+    }
+
     // 安全验证
     const absolutePath = await PathSecurity.validatePath(
       mention.path,
@@ -104,10 +110,10 @@ export class AttachmentCollector {
 
     const stats = await fs.stat(realPath);
 
-    // 目录处理
+    // 目录处理 - 展示树结构
     if (stats.isDirectory()) {
       logger.debug(`Processing directory: ${mention.path}`);
-      return await this.readDirectory(realPath, mention.path);
+      return await this.renderDirectoryTree(realPath, mention.path);
     }
 
     // 文件处理
@@ -224,9 +230,9 @@ export class AttachmentCollector {
   }
 
   /**
-   * 读取目录内容
+   * 渲染目录树结构（不读取文件内容，仅展示结构）
    */
-  private async readDirectory(
+  private async renderDirectoryTree(
     absolutePath: string,
     relativePath: string
   ): Promise<Attachment> {
@@ -258,44 +264,191 @@ export class AttachmentCollector {
 
     logger.debug(`Found ${files.length} files in directory: ${relativePath}`);
 
-    // 限制文件数量
-    const maxFiles = 50;
-    const limitedFiles = files.slice(0, maxFiles);
+    // 构建树形结构
+    const tree = this.buildFileTree(files);
+    const treeContent = this.printTree(tree, relativePath);
 
-    // 读取所有文件（并行）
-    const fileContents = await Promise.allSettled(
-      limitedFiles.map(async (file) => {
-        const filePath = path.join(absolutePath, file);
-        try {
-          const content = await fs.readFile(filePath, 'utf-8');
-          // 限制每个文件的长度
-          const truncated =
-            content.length > 10000 ? content.slice(0, 10000) + '\n...' : content;
-          return `--- ${file} ---\n${truncated}\n`;
-        } catch (error) {
-          return `--- ${file} ---\n[Error reading file: ${error instanceof Error ? error.message : 'unknown error'}]\n`;
-        }
-      })
-    );
-
-    // 合并所有文件内容
-    const contentParts = fileContents.map((result) =>
-      result.status === 'fulfilled' ? result.value : '[Error]'
-    );
-
-    const content = contentParts.join('\n');
+    // 限制显示的文件数
+    const maxFiles = 500;
     const suffix =
       files.length > maxFiles
-        ? `\n\n[... ${files.length - maxFiles} more files omitted ...]`
+        ? `\n\n[... and ${files.length - maxFiles} more files]`
         : '';
 
     return {
       type: 'directory',
       path: relativePath,
-      content: content + suffix,
+      content: treeContent + suffix,
       metadata: {
         lines: files.length,
         truncated: files.length > maxFiles,
+      },
+    };
+  }
+
+  /**
+   * 构建文件树结构
+   */
+  private buildFileTree(files: string[]): Map<string, any> {
+    const tree = new Map<string, any>();
+
+    for (const file of files) {
+      const parts = file.split('/');
+      let current = tree;
+
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        const isFile = i === parts.length - 1;
+
+        if (!current.has(part)) {
+          current.set(part, isFile ? null : new Map<string, any>());
+        }
+
+        if (!isFile) {
+          current = current.get(part);
+        }
+      }
+    }
+
+    return tree;
+  }
+
+  /**
+   * 打印树形结构为 ASCII 格式
+   */
+  private printTree(
+    tree: Map<string, any>,
+    rootPath: string,
+    prefix: string = '',
+    isLast: boolean = true
+  ): string {
+    const lines: string[] = [];
+
+    // 根目录
+    if (prefix === '') {
+      lines.push(`${rootPath}/`);
+    }
+
+    // 按名称排序，目录优先
+    const entries = Array.from(tree.entries()).sort((a, b) => {
+      const aIsDir = a[1] instanceof Map;
+      const bIsDir = b[1] instanceof Map;
+      if (aIsDir !== bIsDir) return bIsDir ? 1 : -1;
+      return a[0].localeCompare(b[0]);
+    });
+
+    entries.forEach(([name, value], index) => {
+      const isLastEntry = index === entries.length - 1;
+      const connector = isLastEntry ? '└── ' : '├── ';
+      const isDir = value instanceof Map;
+
+      lines.push(`${prefix}${connector}${name}${isDir ? '/' : ''}`);
+
+      if (isDir && value.size > 0) {
+        const newPrefix = prefix + (isLastEntry ? '    ' : '│   ');
+        lines.push(this.printTree(value, '', newPrefix, isLastEntry));
+      }
+    });
+
+    return lines.filter((l) => l).join('\n');
+  }
+
+  /**
+   * 处理 Glob 模式
+   */
+  private async processGlob(pattern: string): Promise<Attachment> {
+    // 使用 fast-glob 展开模式
+    const files = (await fg(pattern, {
+      cwd: this.options.cwd,
+      dot: false,
+      followSymbolicLinks: false,
+      onlyFiles: true,
+      unique: true,
+      ignore: [
+        'node_modules/**',
+        '.git/**',
+        'dist/**',
+        'build/**',
+        '.next/**',
+        '.cache/**',
+        'coverage/**',
+      ],
+    })) as string[];
+
+    if (files.length === 0) {
+      return {
+        type: 'error',
+        path: pattern,
+        content: '',
+        error: `No files matched pattern: ${pattern}`,
+      };
+    }
+
+    logger.debug(`Glob pattern "${pattern}" matched ${files.length} files`);
+
+    // 限制最大文件数
+    const maxFiles = 30;
+    const limitedFiles = files.slice(0, maxFiles);
+
+    // 读取所有匹配的文件
+    const fileContents = await Promise.allSettled(
+      limitedFiles.map(async (file) => {
+        const absolutePath = path.join(this.options.cwd, file);
+        try {
+          const content = await fs.readFile(absolutePath, 'utf-8');
+          const lines = content.split('\n');
+
+          // 限制每个文件的行数
+          const maxLinesPerFile = 200;
+          let truncatedContent = content;
+          let truncated = false;
+
+          if (lines.length > maxLinesPerFile) {
+            truncatedContent = lines.slice(0, maxLinesPerFile).join('\n');
+            truncatedContent += `\n\n[... truncated ${lines.length - maxLinesPerFile} lines ...]`;
+            truncated = true;
+          }
+
+          return {
+            path: file,
+            content: truncatedContent,
+            lines: lines.length,
+            truncated,
+          };
+        } catch (error) {
+          return {
+            path: file,
+            content: `[Error: ${error instanceof Error ? error.message : 'unknown error'}]`,
+            lines: 0,
+            truncated: false,
+          };
+        }
+      })
+    );
+
+    // 组装结果
+    const results = fileContents
+      .map((result) => (result.status === 'fulfilled' ? result.value : null))
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    // 格式化为多文件附件
+    const contentParts = results.map(
+      (r) => `--- ${r.path} (${r.lines} lines${r.truncated ? ', truncated' : ''}) ---\n${r.content}`
+    );
+
+    const content = contentParts.join('\n\n');
+    const suffix =
+      files.length > maxFiles
+        ? `\n\n[... and ${files.length - maxFiles} more files matched]`
+        : '';
+
+    return {
+      type: 'file',
+      path: pattern,
+      content: content + suffix,
+      metadata: {
+        lines: results.reduce((sum, r) => sum + r.lines, 0),
+        truncated: files.length > maxFiles || results.some((r) => r.truncated),
       },
     };
   }

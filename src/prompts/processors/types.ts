@@ -24,6 +24,8 @@ export interface AtMention {
   startIndex: number;
   /** 在输入中的结束位置 */
   endIndex: number;
+  /** 是否为 glob 模式（包含 *, ?, [ 等通配符） */
+  isGlob?: boolean;
 }
 
 /**

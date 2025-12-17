@@ -258,9 +258,8 @@ export function useAtCompletion(
     if (fuzzyMatch) {
       const fuse = new Fuse(files, {
         threshold: 0.4,
-        distance: 100,
+        ignoreLocation: true, // 支持路径任意位置匹配（长路径中的文件名也能被搜到）
         minMatchCharLength: 1,
-        keys: ['$'] as any, // 搜索整个字符串
       });
 
       const results = fuse.search(query);
