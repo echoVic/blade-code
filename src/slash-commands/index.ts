@@ -5,6 +5,7 @@
 import Fuse from 'fuse.js';
 import { builtinCommands } from './builtinCommands.js';
 import gitCommand from './git.js';
+import ideCommand from './ide.js';
 import initCommand from './init.js';
 import modelCommand from './model.js';
 import permissionsCommand from './permissions.js';
@@ -25,6 +26,7 @@ const slashCommands: SlashCommandRegistry = {
   permissions: permissionsCommand,
   model: modelCommand,
   git: gitCommand,
+  ide: ideCommand,
 };
 
 /**
