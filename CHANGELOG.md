@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.21] - 2025-12-17
+
+### 🔧 其他更改
+
+- add project documentation and build script (a0b903d)
+
+
 ## [0.0.20] - 2025-12-17
 
 
