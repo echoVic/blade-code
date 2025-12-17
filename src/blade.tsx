@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Blade Code CLI
  */
