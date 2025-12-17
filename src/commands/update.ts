@@ -2,8 +2,10 @@
  * Update 命令 - Yargs 版本
  */
 
+import { execSync } from 'child_process';
 import type { CommandModule } from 'yargs';
 import type { UpdateOptions } from '../cli/types.js';
+import { checkVersion } from '../services/VersionChecker.js';
 
 export const updateCommands: CommandModule<{}, UpdateOptions> = {
   command: 'update',
@@ -12,23 +14,38 @@ export const updateCommands: CommandModule<{}, UpdateOptions> = {
     console.log('🔍 Checking for updates...');
 
     try {
-      // 读取当前版本
-      const fs = await import('fs/promises');
-      const path = await import('path');
-      const packageJsonPath = path.join(process.cwd(), 'package.json');
-      const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
-      const currentVersion = packageJson.version;
+      const result = await checkVersion(true); // 强制检查，忽略缓存
 
-      console.log(`📦 Current version: ${currentVersion}`);
+      console.log(`📦 Current version: ${result.currentVersion}`);
 
-      // 模拟检查更新（实际项目中应该检查 npm registry 或 GitHub releases）
-      console.log('✅ You are running the latest version of Blade');
+      if (result.error) {
+        console.log(`⚠️  ${result.error}`);
+        return;
+      }
 
-      // 实际实现时可以添加：
-      // 1. 检查 npm registry 的最新版本
-      // 2. 比较版本号
-      // 3. 如果有更新，提示用户或自动更新
-      // 4. 显示更新日志
+      if (result.latestVersion) {
+        console.log(`📦 Latest version:  ${result.latestVersion}`);
+      }
+
+      if (result.hasUpdate && result.latestVersion) {
+        console.log('');
+        console.log(
+          `\x1b[33m⚠️  Update available: ${result.currentVersion} → ${result.latestVersion}\x1b[0m`
+        );
+        console.log('');
+        console.log('🚀 Updating...');
+        try {
+          execSync('npm install -g blade-code@latest', { stdio: 'inherit' });
+          console.log('');
+          console.log('✅ Update complete!');
+        } catch (_errrr) {
+          console.error('❌ Update failed. Please run manually:');
+          console.error('   npm install -g blade-code@latest');
+          process.exit(1);
+        }
+      } else {
+        console.log('✅ You are running the latest version of Blade');
+      }
     } catch (error) {
       console.error(
         `❌ Failed to check for updates: ${error instanceof Error ? error.message : '未知错误'}`

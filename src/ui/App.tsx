@@ -10,6 +10,7 @@ import {
 } from '../config/index.js';
 import { HookManager } from '../hooks/HookManager.js';
 import { Logger } from '../logging/Logger.js';
+import { checkVersionOnStartup } from '../services/VersionChecker.js';
 import { appActions, getState } from '../store/vanilla.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
@@ -121,6 +122,15 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
           console.warn('⚠️ Hooks 初始化失败:', formatErrorMessage(error));
         }
       }
+
+      // 8. 后台检查版本更新（不阻塞启动）
+      checkVersionOnStartup().then((updateMessage) => {
+        if (updateMessage) {
+          console.log('');
+          console.log(updateMessage);
+          console.log('');
+        }
+      });
 
       setIsInitialized(true);
     } catch (error) {
