@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.22] - 2025-12-18
+
+
 ## [0.0.21] - 2025-12-17
 
 ### 🔧 其他更改
