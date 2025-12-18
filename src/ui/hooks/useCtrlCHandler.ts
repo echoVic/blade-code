@@ -1,11 +1,13 @@
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useRef } from 'react';
+import { getGracefulShutdown } from '../../services/GracefulShutdown.js';
 import { appActions } from '../../store/vanilla.js';
 
 /**
  * 智能 Ctrl+C 处理 Hook
  *
  * 双击退出逻辑：第一次显示提示，第二次退出应用
+ * 退出时通过 GracefulShutdown 执行资源清理
  */
 export const useCtrlCHandler = (
   isProcessing: boolean,
@@ -25,11 +27,9 @@ export const useCtrlCHandler = (
   });
 
   // 退出应用
-  // 使用 setTimeout 延迟 100ms，让 Ink 有时间完成终端清理
+  // 通过 GracefulShutdown 执行资源清理后退出
   const doExit = () => {
-    setTimeout(() => {
-      process.exit(0);
-    }, 100);
+    getGracefulShutdown().shutdown('SIGINT', 0);
   };
 
   const handleCtrlC = useMemoizedFn(() => {

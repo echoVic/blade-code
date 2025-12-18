@@ -10,8 +10,11 @@ import {
 } from '../config/index.js';
 import { HookManager } from '../hooks/HookManager.js';
 import { Logger } from '../logging/Logger.js';
+import { McpRegistry } from '../mcp/McpRegistry.js';
+import { registerCleanup } from '../services/GracefulShutdown.js';
 import { checkVersionOnStartup } from '../services/VersionChecker.js';
 import { appActions, getState } from '../store/vanilla.js';
+import { BackgroundShellManager } from '../tools/builtin/shell/BackgroundShellManager.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { themeManager } from './themes/ThemeManager.js';
@@ -130,6 +133,18 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
           console.log(updateMessage);
           console.log('');
         }
+      });
+
+      // 9. 注册退出清理函数
+      registerCleanup(async () => {
+        // 终止所有后台 shell 进程
+        BackgroundShellManager.getInstance().killAll();
+
+        // 断开所有 MCP 服务器连接
+        await McpRegistry.getInstance().disconnectAll();
+
+        // 清理 Hooks
+        HookManager.getInstance().cleanup();
       });
 
       setIsInitialized(true);

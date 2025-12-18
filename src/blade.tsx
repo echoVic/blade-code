@@ -21,6 +21,7 @@ import { handlePrintMode } from './commands/print.js';
 import { updateCommands } from './commands/update.js';
 import { getConfigService } from './config/index.js';
 import { Logger } from './logging/Logger.js';
+import { initializeGracefulShutdown } from './services/GracefulShutdown.js';
 import { AppWrapper as BladeApp } from './ui/App.js';
 
 // ⚠️ 关键：在创建任何 logger 之前，先解析 --debug 参数并设置全局配置
@@ -35,6 +36,9 @@ if (debugIndex !== -1) {
 }
 
 export async function main() {
+  // 初始化优雅退出处理器（捕获 uncaughtException/unhandledRejection/SIGTERM）
+  initializeGracefulShutdown();
+
   // 首先检查是否是 print 模式
   if (await handlePrintMode()) {
     return;
