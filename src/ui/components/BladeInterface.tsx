@@ -503,8 +503,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       />
     ) : null;
 
-  const isInputDisabled = isThinking || !readyForChat || inlineModelUiVisible;
-
   return (
     <Box flexDirection="column" width="100%" height="100%">
       {blockingModal ?? (
@@ -520,7 +518,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             cursorPosition={inputBuffer.cursorPosition}
             onChange={inputBuffer.setValue}
             onChangeCursorPosition={inputBuffer.setCursorPosition}
-            isProcessing={isInputDisabled}
           />
 
           {inlineModelSelectorVisible && (

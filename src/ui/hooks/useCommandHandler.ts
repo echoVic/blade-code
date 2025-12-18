@@ -1,4 +1,5 @@
 import { useMemoizedFn } from 'ahooks';
+import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { useEffect, useRef } from 'react';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
@@ -18,6 +19,7 @@ import {
 } from '../../store/selectors/index.js';
 import { ensureStoreInitialized } from '../../store/vanilla.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
+import type { ToolResult } from '../../tools/types/index.js';
 import {
   formatToolCallSummary,
   shouldShowToolDetail,
@@ -60,6 +62,9 @@ function handleSlashMessage(
       appActions.showSessionSelector(sessions);
       return true;
     }
+    case 'exit_application':
+      process.exit(0);
+      return true;
     default:
       return false;
   }
@@ -218,7 +223,8 @@ export const useCommandHandler = (
             }
           },
           // 工具调用开始
-          onToolStart: (toolCall: any) => {
+          onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
+            if (toolCall.type !== 'function') return;
             // 跳过 TodoWrite 的显示（任务列表由侧边栏显示）
             if (toolCall.function.name === 'TodoWrite') {
               return;
@@ -238,7 +244,11 @@ export const useCommandHandler = (
             }
           },
           // 工具执行完成（显示摘要 + 可选的详细内容）
-          onToolResult: async (toolCall: any, result: any) => {
+          onToolResult: async (
+            toolCall: ChatCompletionMessageToolCall,
+            result: ToolResult
+          ) => {
+            if (toolCall.type !== 'function') return;
             if (!result?.metadata?.summary) {
               return;
             }
@@ -295,11 +305,13 @@ export const useCommandHandler = (
       return;
     }
 
+    const trimmedCommand = command.trim();
+
+    // 如果正在处理，静默加入队列（执行时再显示用户消息）
     if (isProcessing) {
+      commandActions.enqueueCommand(trimmedCommand);
       return;
     }
-
-    const trimmedCommand = command.trim();
 
     // 清空上一轮对话的 todos
     appActions.setTodos([]);
@@ -333,6 +345,13 @@ export const useCommandHandler = (
       commandActions.setProcessing(false);
       sessionActions.setThinking(false);
       commandActions.clearAbortController();
+
+      // 处理队列中的下一个命令
+      const nextCommand = commandActions.dequeueCommand();
+      if (nextCommand) {
+        // 稍微延迟以让 UI 更新
+        setTimeout(() => executeCommand(nextCommand), 100);
+      }
     }
   });
 

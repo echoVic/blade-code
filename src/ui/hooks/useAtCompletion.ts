@@ -203,7 +203,8 @@ export function useAtCompletion(
           cwd,
           dot: false,
           followSymbolicLinks: false,
-          onlyFiles: true,
+          onlyFiles: false,
+          markDirectories: true,
           unique: true,
           ignore: ignorePatterns,
         })) as string[];

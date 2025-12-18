@@ -227,6 +227,7 @@ export interface FocusSlice extends FocusState {
 export interface CommandState {
   isProcessing: boolean; // 临时状态 - 不持久化
   abortController: AbortController | null; // 不持久化
+  pendingCommands: string[]; // 待处理命令队列 - 不持久化
 }
 
 /**
@@ -237,6 +238,9 @@ export interface CommandActions {
   createAbortController: () => AbortController;
   clearAbortController: () => void;
   abort: () => void;
+  enqueueCommand: (command: string) => void;
+  dequeueCommand: () => string | undefined;
+  clearQueue: () => void;
 }
 
 /**

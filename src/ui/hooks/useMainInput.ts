@@ -84,11 +84,11 @@ export const useMainInput = (
         setSelectedSuggestionIndex(0);
       }
     } else if (atCompletion.hasQuery && atCompletion.suggestions.length > 0) {
-      // @ 文件建议（转换为 CommandSuggestion 格式）
+      // @ 文件/目录建议（转换为 CommandSuggestion 格式）
       const fileSuggestions: CommandSuggestion[] = atCompletion.suggestions.map(
-        (file) => ({
-          command: file,
-          description: `File: ${file}`,
+        (path) => ({
+          command: path,
+          description: path.endsWith('/') ? `Directory: ${path}` : `File: ${path}`,
           matchScore: 1,
         })
       );

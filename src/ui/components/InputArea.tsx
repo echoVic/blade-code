@@ -9,7 +9,6 @@ import { CustomTextInput } from './CustomTextInput.js';
 interface InputAreaProps {
   input: string;
   cursorPosition: number;
-  isProcessing: boolean;
   onChange: (value: string) => void;
   onChangeCursorPosition: (position: number) => void;
 }
@@ -20,13 +19,10 @@ interface InputAreaProps {
  * 注意：加载动画已移至 LoadingIndicator 组件，显示在输入框上方
  */
 export const InputArea: React.FC<InputAreaProps> = React.memo(
-  ({ input, cursorPosition, isProcessing, onChange, onChangeCursorPosition }) => {
+  ({ input, cursorPosition, onChange, onChangeCursorPosition }) => {
     // 使用 Zustand store 管理焦点
     const currentFocus = useCurrentFocus();
     const isFocused = currentFocus === FocusId.MAIN_INPUT;
-
-    // 处理中时，禁用输入框（移除焦点和光标）
-    const isEnabled = !isProcessing && isFocused;
 
     // 文本粘贴回调 - 处理大段文本粘贴
     const handlePaste = useMemoizedFn((text: string): { prompt?: string } => {
@@ -122,7 +118,7 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
           onPaste={handlePaste}
           onImagePaste={handleImagePaste}
           placeholder=" 输入命令..."
-          focus={isEnabled}
+          focus={isFocused}
           disabledKeys={['upArrow', 'downArrow', 'tab', 'return', 'escape']}
         />
       </Box>

@@ -3,6 +3,7 @@ import React, { ReactNode, useMemo } from 'react';
 import {
   useIsThinking,
   useMessages,
+  usePendingCommands,
   useShowTodoPanel,
   useTodos,
 } from '../../store/selectors/index.js';
@@ -35,6 +36,7 @@ export const MessageArea: React.FC = React.memo(() => {
   const isThinking = useIsThinking();
   const todos = useTodos();
   const showTodoPanel = useShowTodoPanel();
+  const pendingCommands = usePendingCommands();
 
   // 使用 useTerminalWidth hook 获取终端宽度
   const terminalWidth = useTerminalWidth();
@@ -107,6 +109,17 @@ export const MessageArea: React.FC = React.memo(() => {
             <TodoPanel todos={todos} visible={true} compact={false} />
           </Box>
         )}
+
+        {/* 待处理命令队列（显示在最底部，作为下一轮对话的开始） */}
+        {pendingCommands.map((cmd, index) => (
+          <Box key={`pending-${index}`} flexDirection="column">
+            <MessageRenderer
+              content={cmd}
+              role="user"
+              terminalWidth={terminalWidth}
+            />
+          </Box>
+        ))}
       </Box>
     </Box>
   );

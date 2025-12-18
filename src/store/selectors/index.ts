@@ -293,6 +293,12 @@ export const useAbortController = () =>
 export const useCommandActions = () => useBladeStore((state) => state.command.actions);
 
 /**
+ * 获取待处理命令队列
+ */
+export const usePendingCommands = () =>
+  useBladeStore((state) => state.command.pendingCommands);
+
+/**
  * 派生选择器：是否可以中止
  */
 export const useCanAbort = () =>

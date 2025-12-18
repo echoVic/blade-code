@@ -4,9 +4,12 @@
  */
 
 import { promises as fs } from 'fs';
+import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import * as path from 'path';
 import { Agent } from '../agent/Agent.js';
 import { getState, sessionActions } from '../store/vanilla.js';
+import type { ToolResult } from '../tools/types/index.js';
+import { formatToolCallSummary } from '../ui/utils/toolFormatters.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 const initCommand: SlashCommand = {
@@ -20,6 +23,7 @@ const initCommand: SlashCommand = {
     try {
       const { cwd } = context;
       const addMessage = sessionActions().addAssistantMessage;
+      const addToolMessage = sessionActions().addToolMessage;
 
       // 从 store 获取 sessionId
       const sessionId = getState().session.sessionId;
@@ -79,12 +83,42 @@ const initCommand: SlashCommand = {
 **Final output**: Return your analysis and suggestions as plain text. Do NOT use Write tool.`;
 
         // 使用 chat 方法让 Agent 可以调用工具
-        const result = await agent.chat(analysisPrompt, {
-          messages: [],
-          userId: 'cli-user',
-          sessionId: sessionId || 'init-session',
-          workspaceRoot: cwd,
-        });
+        const result = await agent.chat(
+          analysisPrompt,
+          {
+            messages: [],
+            userId: 'cli-user',
+            sessionId: sessionId || 'init-session',
+            workspaceRoot: cwd,
+          },
+          {
+            onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
+              if (toolCall.type !== 'function') return;
+              try {
+                const params = JSON.parse(toolCall.function.arguments);
+                const summary = formatToolCallSummary(toolCall.function.name, params);
+                addToolMessage(summary, {
+                  toolName: toolCall.function.name,
+                  phase: 'start',
+                  summary,
+                  params,
+                });
+              } catch {
+                // 静默处理解析错误
+              }
+            },
+            onToolResult: async (toolCall: ChatCompletionMessageToolCall, result: ToolResult) => {
+              if (toolCall.type !== 'function') return;
+              if (result?.metadata?.summary) {
+                addToolMessage(result.metadata.summary, {
+                  toolName: toolCall.function.name,
+                  phase: 'complete',
+                  summary: result.metadata.summary,
+                });
+              }
+            },
+          }
+        );
 
         addMessage(result);
 
@@ -138,12 +172,42 @@ const initCommand: SlashCommand = {
 **Final output**: Return ONLY the complete BLADE.md content (markdown format), ready to be written to the file.`;
 
       // 使用 chat 方法让 Agent 可以调用工具
-      const generatedContent = await agent.chat(analysisPrompt, {
-        messages: [],
-        userId: 'cli-user',
-        sessionId: sessionId || 'init-session',
-        workspaceRoot: cwd,
-      });
+      const generatedContent = await agent.chat(
+        analysisPrompt,
+        {
+          messages: [],
+          userId: 'cli-user',
+          sessionId: sessionId || 'init-session',
+          workspaceRoot: cwd,
+        },
+        {
+          onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
+            if (toolCall.type !== 'function') return;
+            try {
+              const params = JSON.parse(toolCall.function.arguments);
+              const summary = formatToolCallSummary(toolCall.function.name, params);
+              addToolMessage(summary, {
+                toolName: toolCall.function.name,
+                phase: 'start',
+                summary,
+                params,
+              });
+            } catch {
+              // 静默处理解析错误
+            }
+          },
+          onToolResult: async (toolCall: ChatCompletionMessageToolCall, result: ToolResult) => {
+            if (toolCall.type !== 'function') return;
+            if (result?.metadata?.summary) {
+              addToolMessage(result.metadata.summary, {
+                toolName: toolCall.function.name,
+                phase: 'complete',
+                summary: result.metadata.summary,
+              });
+            }
+          },
+        }
+      );
 
       // 验证生成内容的有效性（至少应该有基本的标题和内容）
       if (!generatedContent || generatedContent.trim().length === 0) {
