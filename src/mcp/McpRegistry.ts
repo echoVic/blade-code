@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
-import type { Tool } from '../tools/types/index.js';
 import type { McpServerConfig } from '../config/types.js';
+import type { Tool } from '../tools/types/index.js';
 import { createMcpTool } from './createMcpTool.js';
 import { McpClient } from './McpClient.js';
 import { McpConnectionStatus, type McpToolDefinition } from './types.js';
@@ -139,7 +139,7 @@ export class McpRegistry extends EventEmitter {
     const nameConflicts = new Map<string, number>();
 
     // 第一遍：检测冲突
-    for (const [serverName, serverInfo] of this.servers) {
+    for (const [_serverName, serverInfo] of this.servers) {
       if (serverInfo.status === McpConnectionStatus.CONNECTED) {
         for (const mcpTool of serverInfo.tools) {
           const count = nameConflicts.get(mcpTool.name) || 0;
@@ -347,5 +347,26 @@ export class McpRegistry extends EventEmitter {
       totalTools,
       isDiscovering: this.isDiscovering,
     };
+  }
+
+  /**
+   * 断开所有 MCP 服务器连接
+   * 在应用退出时调用
+   */
+  async disconnectAll(): Promise<void> {
+    const disconnectPromises: Promise<void>[] = [];
+
+    for (const [name, serverInfo] of this.servers) {
+      if (serverInfo.status === McpConnectionStatus.CONNECTED) {
+        disconnectPromises.push(
+          serverInfo.client.disconnect().catch((error) => {
+            console.warn(`断开 MCP 服务器 "${name}" 时出错:`, error);
+          })
+        );
+      }
+    }
+
+    await Promise.allSettled(disconnectPromises);
+    this.servers.clear();
   }
 }

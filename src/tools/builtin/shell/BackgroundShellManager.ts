@@ -199,4 +199,24 @@ export class BackgroundShellManager {
       signal: processInfo.signal,
     };
   }
+
+  /**
+   * 终止所有后台进程
+   * 在应用退出时调用
+   */
+  killAll(): void {
+    for (const [_shellId, processInfo] of this.processes) {
+      if (processInfo.status === 'running' && processInfo.process) {
+        try {
+          processInfo.process.kill('SIGTERM');
+          processInfo.status = 'killed';
+          processInfo.endTime = Date.now();
+          processInfo.process = undefined;
+        } catch {
+          // 忽略终止失败（进程可能已退出）
+        }
+      }
+    }
+    this.processes.clear();
+  }
 }
