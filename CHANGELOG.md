@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.24] - 2025-12-19
+
+
 ## [0.0.23] - 2025-12-18
 
 
