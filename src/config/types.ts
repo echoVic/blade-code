@@ -61,6 +61,10 @@ export interface ModelConfig {
   maxContextTokens?: number; // 上下文窗口大小
   topP?: number;
   topK?: number;
+
+  // Thinking 模型配置（如 DeepSeek R1）
+  supportsThinking?: boolean; // 手动覆盖自动检测结果
+  thinkingBudget?: number; // 思考 token 预算（可选）
 }
 
 export interface BladeConfig {

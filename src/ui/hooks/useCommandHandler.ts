@@ -216,10 +216,19 @@ export const useCommandHandler = (
         };
 
         const loopOptions = {
+          // LLM 推理内容（Thinking 模型如 DeepSeek R1）
+          onThinking: (content: string) => {
+            // 设置 thinking 内容（流式显示）
+            sessionActions.setCurrentThinkingContent(content);
+          },
           // LLM 输出内容
           onContent: (content: string) => {
+            // 获取当前 thinking 内容，保存到消息中
+            // 注意：这里需要在 addAssistantMessage 之前获取，因为 addMessage 会清空 currentThinkingContent
             if (content.trim()) {
               sessionActions.addAssistantMessage(content);
+              // 清空流式 thinking 内容（已保存到消息中）
+              sessionActions.setCurrentThinkingContent(null);
             }
           },
           // 工具调用开始
@@ -345,6 +354,8 @@ export const useCommandHandler = (
       commandActions.setProcessing(false);
       sessionActions.setThinking(false);
       commandActions.clearAbortController();
+      // 清理 thinking 内容（防止遗留）
+      sessionActions.setCurrentThinkingContent(null);
 
       // 处理队列中的下一个命令
       const nextCommand = commandActions.dequeueCommand();
