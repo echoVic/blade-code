@@ -669,6 +669,11 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         logger.debug('当前权限模式:', context.permissionMode);
         logger.debug('================================\n');
 
+        // 🆕 如果 LLM 返回了 thinking 内容（DeepSeek R1 等），通知 UI
+        if (turnResult.reasoningContent && options?.onThinking) {
+          options.onThinking(turnResult.reasoningContent);
+        }
+
         // 🆕 如果 LLM 返回了 content，立即显示
         if (turnResult.content && turnResult.content.trim() && options?.onContent) {
           options.onContent(turnResult.content);

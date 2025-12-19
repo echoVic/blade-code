@@ -10,7 +10,9 @@ import {
   useIsReady,
   useIsThinking,
   usePermissionMode,
+  useThinkingModeEnabled,
 } from '../../store/selectors/index.js';
+import { isThinkingModel } from '../../utils/modelDetection.js';
 import { useGitBranch } from '../hooks/useGitBranch.js';
 
 /**
@@ -32,6 +34,10 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const currentModel = useCurrentModel();
   const contextRemaining = useContextRemaining();
   const isCompacting = useIsCompacting();
+  const thinkingModeEnabled = useThinkingModeEnabled();
+
+  // 检查当前模型是否支持 thinking
+  const supportsThinking = currentModel ? isThinkingModel(currentModel) : false;
   // 渲染模式提示（仅非 DEFAULT 模式显示）
   const renderModeIndicator = () => {
     if (permissionMode === PermissionMode.DEFAULT) {
@@ -116,6 +122,17 @@ export const ChatStatusBar: React.FC = React.memo(() => {
           <Text color="red">⚠ API 密钥未配置</Text>
         ) : (
           <>
+            {/* Thinking 模式指示器（仅当模型支持时显示） */}
+            {supportsThinking && (
+              <>
+                {thinkingModeEnabled ? (
+                  <Text color="cyan">Thinking on</Text>
+                ) : (
+                  <Text color="gray">Tab:Thinking</Text>
+                )}
+                <Text color="gray">·</Text>
+              </>
+            )}
             {currentModel && <Text color="gray">{currentModel.model}</Text>}
             <Text color="gray">·</Text>
             {isCompacting ? (

@@ -193,13 +193,26 @@ export class OpenAIChatService implements IChatService {
         (tc): tc is ChatCompletionMessageToolCall => tc.type === 'function'
       );
 
+      // 提取 reasoning_content（DeepSeek R1 等 thinking 模型的扩展字段）
+      const extendedMessage = choice.message as typeof choice.message & {
+        reasoning_content?: string;
+      };
+      const reasoningContent = extendedMessage.reasoning_content || undefined;
+
+      // 提取 reasoning_tokens（thinking 模型的扩展 usage 字段）
+      const extendedUsage = completion.usage as typeof completion.usage & {
+        reasoning_tokens?: number;
+      };
+
       const response = {
         content: choice.message.content || '',
+        reasoningContent,
         toolCalls: toolCalls,
         usage: {
           promptTokens: completion.usage?.prompt_tokens || 0,
           completionTokens: completion.usage?.completion_tokens || 0,
           totalTokens: completion.usage?.total_tokens || 0,
+          reasoningTokens: extendedUsage?.reasoning_tokens,
         },
       };
 
@@ -309,6 +322,7 @@ export class OpenAIChatService implements IChatService {
 
       let chunkCount = 0;
       let totalContent = '';
+      let totalReasoningContent = '';
       let toolCallsReceived = false;
 
       for await (const chunk of stream) {
@@ -326,8 +340,17 @@ export class OpenAIChatService implements IChatService {
           continue;
         }
 
+        // 提取 reasoning_content（DeepSeek R1 等 thinking 模型的扩展字段）
+        const extendedDelta = delta as typeof delta & {
+          reasoning_content?: string;
+        };
+
         if (delta.content) {
           totalContent += delta.content;
+        }
+
+        if (extendedDelta.reasoning_content) {
+          totalReasoningContent += extendedDelta.reasoning_content;
         }
 
         if (delta.tool_calls && !toolCallsReceived) {
@@ -341,6 +364,7 @@ export class OpenAIChatService implements IChatService {
           _logger.debug('📊 [ChatService] Stream summary:', {
             totalChunks: chunkCount,
             totalContentLength: totalContent.length,
+            totalReasoningContentLength: totalReasoningContent.length,
             hadToolCalls: toolCallsReceived,
             duration: Date.now() - startTime + 'ms',
           });
@@ -348,6 +372,7 @@ export class OpenAIChatService implements IChatService {
 
         yield {
           content: delta.content || undefined,
+          reasoningContent: extendedDelta.reasoning_content || undefined,
           toolCalls: delta.tool_calls,
           finishReason: finishReason || undefined,
         };

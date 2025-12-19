@@ -41,11 +41,13 @@ export interface ChatConfig {
  */
 export interface ChatResponse {
   content: string;
+  reasoningContent?: string; // Thinking 模型的推理过程（如 DeepSeek R1）
   toolCalls?: ChatCompletionMessageToolCall[];
   usage?: {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    reasoningTokens?: number; // Thinking 模型消耗的推理 tokens
   };
 }
 
@@ -54,6 +56,7 @@ export interface ChatResponse {
  */
 export interface StreamChunk {
   content?: string;
+  reasoningContent?: string; // Thinking 模型的推理过程片段
   // biome-ignore lint/suspicious/noExplicitAny: 不同 provider 的 tool call 类型不同
   toolCalls?: any[];
   finishReason?: string;

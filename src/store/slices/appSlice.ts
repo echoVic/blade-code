@@ -32,6 +32,7 @@ const initialAppState: AppState = {
   modelEditorTarget: null,
   todos: [],
   awaitingSecondCtrlC: false,
+  thinkingModeEnabled: false, // Thinking 模式默认关闭
 };
 
 /**
@@ -135,6 +136,26 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
     setAwaitingSecondCtrlC: (awaiting: boolean) => {
       set((state) => ({
         app: { ...state.app, awaitingSecondCtrlC: awaiting },
+      }));
+    },
+
+    // ==================== Thinking 模式相关 actions ====================
+
+    /**
+     * 设置 Thinking 模式开关状态
+     */
+    setThinkingModeEnabled: (enabled: boolean) => {
+      set((state) => ({
+        app: { ...state.app, thinkingModeEnabled: enabled },
+      }));
+    },
+
+    /**
+     * 切换 Thinking 模式开关
+     */
+    toggleThinkingMode: () => {
+      set((state) => ({
+        app: { ...state.app, thinkingModeEnabled: !state.app.thinkingModeEnabled },
       }));
     },
   },
