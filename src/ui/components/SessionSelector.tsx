@@ -68,6 +68,9 @@ const Item: React.FC<any> = ({ isSelected, label }) => (
 /**
  * 会话选择器组件
  */
+// 每页显示的会话数量
+const PAGE_SIZE = 20;
+
 export const SessionSelector: React.FC<SessionSelectorProps> = ({
   sessions: propSessions,
   onSelect,
@@ -75,6 +78,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
 }) => {
   const [loadedSessions, setLoadedSessions] = useState<SessionMetadata[]>([]);
   const [loading, setLoading] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
 
   // 使用 Zustand store 管理焦点
   const currentFocus = useCurrentFocus();
@@ -95,6 +99,23 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
       // Esc: 调用 onCancel 关闭选择器
       if (key.escape && onCancel) {
         onCancel();
+        return;
+      }
+
+      // 翻页：左箭头或 h 键 - 上一页
+      if (key.leftArrow || input === 'h' || input === 'H') {
+        if (currentPage > 0) {
+          setCurrentPage((prev) => prev - 1);
+        }
+        return;
+      }
+
+      // 翻页：右箭头或 l 键 - 下一页
+      if (key.rightArrow || input === 'l' || input === 'L') {
+        if (currentPage < totalPages - 1) {
+          setCurrentPage((prev) => prev + 1);
+        }
+        return;
       }
     },
     { isActive: isFocused } // 只在有焦点时激活
@@ -140,6 +161,30 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
     });
   }, [sessions]);
 
+  // 分页计算
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(items.length / PAGE_SIZE)),
+    [items.length]
+  );
+
+  const paginatedItems = useMemo(() => {
+    const start = currentPage * PAGE_SIZE;
+    return items.slice(start, start + PAGE_SIZE);
+  }, [items, currentPage]);
+
+  const displayRange = useMemo(
+    () => ({
+      start: currentPage * PAGE_SIZE + 1,
+      end: Math.min((currentPage + 1) * PAGE_SIZE, items.length),
+    }),
+    [currentPage, items.length]
+  );
+
+  // 会话变化时重置页码
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [sessions.length]);
+
   const handleSelect = (item: { label: string; value: string }) => {
     onSelect(item.value);
   };
@@ -169,19 +214,36 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
         📂 选择要恢复的会话:
       </Text>
       <Text dimColor>
-        {'\n'}(↑↓ 选择 | Enter 确认 | Esc 取消 | Ctrl+C 退出){'\n'}
+        {'\n'}(←→ 翻页 | ↑↓ 选择 | Enter 确认 | Esc 取消){'\n'}
       </Text>
 
       <SelectInput
-        items={items}
+        items={paginatedItems}
         onSelect={handleSelect}
         indicatorComponent={Indicator}
         itemComponent={Item}
       />
 
-      <Text dimColor>
-        {'\n'}共 {sessions.length} 个历史会话
-      </Text>
+      {/* 分页状态栏 */}
+      <Box marginTop={1} flexDirection="column">
+        <Text dimColor>
+          第 {currentPage + 1}/{totalPages} 页 · 共 {sessions.length} 个会话 · 显示{' '}
+          {displayRange.start}-{displayRange.end}
+        </Text>
+
+        {/* 翻页导航提示（仅在有多页时显示） */}
+        {totalPages > 1 && (
+          <Box marginTop={1}>
+            <Text color={currentPage > 0 ? 'cyan' : 'gray'}>
+              {currentPage > 0 ? '◀ ← 上一页' : '        '}
+            </Text>
+            <Text> </Text>
+            <Text color={currentPage < totalPages - 1 ? 'cyan' : 'gray'}>
+              {currentPage < totalPages - 1 ? '下一页 → ▶' : ''}
+            </Text>
+          </Box>
+        )}
+      </Box>
     </Box>
   );
 };
