@@ -9,6 +9,7 @@ interface PrintOptions {
   model?: string;
   appendSystemPrompt?: string;
   systemPrompt?: string;
+  maxTurns?: number;
   _?: (string | number)[];
 }
 
@@ -52,6 +53,11 @@ export function printCommand(yargs: Argv) {
         .option('system-prompt', {
           describe: 'Replace the default system prompt',
           type: 'string',
+        })
+        .option('max-turns', {
+          alias: ['maxTurns'],
+          describe: 'Maximum conversation turns (-1: unlimited, N>0: limit to N turns)',
+          type: 'number',
         });
     },
     async (argv: PrintOptions) => {
@@ -64,6 +70,7 @@ export function printCommand(yargs: Argv) {
         const agent = await Agent.create({
           systemPrompt: argv.systemPrompt,
           appendSystemPrompt: argv.appendSystemPrompt,
+          maxTurns: argv.maxTurns,
         });
 
         let input = '';

@@ -6,7 +6,7 @@ import { ToolErrorType } from './ToolTypes.js';
  * 确认详情
  */
 export interface ConfirmationDetails {
-  type?: 'permission' | 'enterPlanMode' | 'exitPlanMode'; // 确认类型
+  type?: 'permission' | 'enterPlanMode' | 'exitPlanMode' | 'maxTurnsExceeded'; // 确认类型
   title?: string;
   message: string;
   details?: string; // 🆕 Plan 方案内容或其他详细信息

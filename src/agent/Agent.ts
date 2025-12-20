@@ -460,7 +460,8 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       }
 
       // === Agentic Loop: 循环调用直到任务完成 ===
-      const SAFETY_LIMIT = 100; // 硬编码安全上限，防止无限循环
+      const SAFETY_LIMIT = 100; // 安全上限（100 轮后询问用户）
+      const isYoloMode = context.permissionMode === PermissionMode.YOLO; // YOLO 模式不限制
       // 优先级: runtimeOptions (CLI参数) > options (chat调用参数) > config (配置文件) > 默认值(-1)
       const configuredMaxTurns =
         this.runtimeOptions.maxTurns ?? options?.maxTurns ?? this.config.maxTurns ?? -1;
@@ -485,7 +486,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         };
       }
 
-      // 应用安全上限：-1 表示无限制，但仍受安全上限保护
+      // 应用安全上限：-1 表示无限制，但仍受 SAFETY_LIMIT 保护（YOLO 模式除外）
       const maxTurns =
         configuredMaxTurns === -1
           ? SAFETY_LIMIT
@@ -494,7 +495,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       // 调试日志
       if (this.config.debug) {
         logger.debug(
-          `[MaxTurns] 配置值: ${configuredMaxTurns}, 实际限制: ${maxTurns}, 安全上限: ${SAFETY_LIMIT}`
+          `[MaxTurns] runtimeOptions: ${this.runtimeOptions.maxTurns}, options: ${options?.maxTurns}, config: ${this.config.maxTurns}, 最终: ${configuredMaxTurns} → ${maxTurns}, YOLO: ${isYoloMode}`
         );
       }
 
@@ -503,7 +504,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       let totalTokens = 0; //- 累计 token 使用量
       let lastPromptTokens: number | undefined; // 上一轮 LLM 返回的真实 prompt tokens
 
-      // 无限循环，达到轮次上限时自动压缩并重置计数器继续
+      // Agentic Loop: 循环调用直到任务完成
       // eslint-disable-next-line no-constant-condition
       while (true) {
         // === 1. 检查中断信号 ===
@@ -991,94 +992,123 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           };
         }
 
-        // === 7. 检查轮次上限并自动压缩 ===
-        // 达到轮次上限时，自动压缩上下文并重置计数器继续对话
-        if (turnsCount >= maxTurns) {
-          const isHitSafetyLimit =
-            configuredMaxTurns === -1 || configuredMaxTurns > SAFETY_LIMIT;
-          const actualLimit = isHitSafetyLimit ? SAFETY_LIMIT : configuredMaxTurns;
+        // === 7. 检查轮次上限（非 YOLO 模式） ===
+        if (turnsCount >= maxTurns && !isYoloMode) {
+          logger.info(`⚠️ 达到轮次上限 ${maxTurns} 轮，等待用户确认...`);
 
-          logger.warn(
-            `⚠️ 达到${isHitSafetyLimit ? '安全上限' : '最大轮次限制'} ${actualLimit}，自动压缩上下文...`
-          );
+          if (options?.onTurnLimitReached) {
+            // 交互模式：询问用户
+            const response = await options.onTurnLimitReached({ turnsCount });
 
-          // 调用 CompactionService 进行压缩
-          try {
-            const chatConfig = this.chatService.getConfig();
-            const compactResult = await CompactionService.compact(context.messages, {
-              trigger: 'auto',
-              modelName: chatConfig.model,
-              maxContextTokens:
-                chatConfig.maxContextTokens ?? this.config.maxContextTokens,
-              apiKey: chatConfig.apiKey,
-              baseURL: chatConfig.baseUrl,
-              actualPreTokens: lastPromptTokens,
-            });
+            if (response?.continue) {
+              // 用户选择继续，先压缩上下文
+              logger.info('✅ 用户选择继续，压缩上下文...');
 
-            // 更新 context.messages 为压缩后的消息
-            context.messages = compactResult.compactedMessages;
+              try {
+                const chatConfig = this.chatService.getConfig();
+                const compactResult = await CompactionService.compact(context.messages, {
+                  trigger: 'auto',
+                  modelName: chatConfig.model,
+                  maxContextTokens:
+                    chatConfig.maxContextTokens ?? this.config.maxContextTokens,
+                  apiKey: chatConfig.apiKey,
+                  baseURL: chatConfig.baseUrl,
+                  actualPreTokens: lastPromptTokens,
+                });
 
-            // 重建 messages 数组
-            const systemMsg = messages.find((m) => m.role === 'system');
-            messages.length = 0;
-            if (systemMsg) {
-              messages.push(systemMsg);
-            }
-            messages.push(...context.messages);
+                // 更新 context.messages 为压缩后的消息
+                context.messages = compactResult.compactedMessages;
 
-            // 添加继续执行的指令，确保 LLM 不会因为摘要而停止
-            const continueMessage: Message = {
-              role: 'user',
-              content:
-                'This session is being continued from a previous conversation that ran out of context. ' +
-                'The conversation is summarized above.\n\n' +
-                'Please continue the conversation from where we left it off without asking the user any further questions. ' +
-                'Continue with the last task that you were asked to work on.',
-            };
-            messages.push(continueMessage);
-            context.messages.push(continueMessage);
+                // 重建 messages 数组
+                const systemMsg = messages.find((m) => m.role === 'system');
+                messages.length = 0;
+                if (systemMsg) {
+                  messages.push(systemMsg);
+                }
+                messages.push(...context.messages);
 
-            // 保存压缩数据到 JSONL
-            try {
-              const contextMgr = this.executionEngine?.getContextManager();
-              if (contextMgr && context.sessionId) {
-                await contextMgr.saveCompaction(
-                  context.sessionId,
-                  compactResult.summary,
-                  {
-                    trigger: 'auto',
-                    preTokens: compactResult.preTokens,
-                    postTokens: compactResult.postTokens,
-                    filesIncluded: compactResult.filesIncluded,
-                  },
-                  null
+                // 添加继续执行的指令
+                const continueMessage: Message = {
+                  role: 'user',
+                  content:
+                    'This session is being continued from a previous conversation. ' +
+                    'The conversation is summarized above.\n\n' +
+                    'Please continue the conversation from where we left it off without asking the user any further questions. ' +
+                    'Continue with the last task that you were asked to work on.',
+                };
+                messages.push(continueMessage);
+                context.messages.push(continueMessage);
+
+                // 保存压缩数据到 JSONL
+                try {
+                  const contextMgr = this.executionEngine?.getContextManager();
+                  if (contextMgr && context.sessionId) {
+                    await contextMgr.saveCompaction(
+                      context.sessionId,
+                      compactResult.summary,
+                      {
+                        trigger: 'auto',
+                        preTokens: compactResult.preTokens,
+                        postTokens: compactResult.postTokens,
+                        filesIncluded: compactResult.filesIncluded,
+                      },
+                      null
+                    );
+                  }
+                } catch (saveError) {
+                  logger.warn('[Agent] 保存压缩数据失败:', saveError);
+                }
+
+                logger.info(
+                  `✅ 上下文已压缩 (${compactResult.preTokens} → ${compactResult.postTokens} tokens)，重置轮次计数`
                 );
+              } catch (compactError) {
+                // 压缩失败时的降级处理
+                logger.error('[Agent] 压缩失败，使用降级策略:', compactError);
+
+                const systemMsg = messages.find((m) => m.role === 'system');
+                const recentMessages = messages.slice(-80);
+                messages.length = 0;
+                if (systemMsg && !recentMessages.some((m) => m.role === 'system')) {
+                  messages.push(systemMsg);
+                }
+                messages.push(...recentMessages);
+                context.messages = messages.filter((m) => m.role !== 'system');
+
+                logger.warn(`⚠️ 降级压缩完成，保留 ${messages.length} 条消息`);
               }
-            } catch (saveError) {
-              logger.warn('[Agent] 保存压缩数据失败:', saveError);
+
+              turnsCount = 0;
+              continue; // 继续循环
             }
 
-            // 重置轮次计数
-            turnsCount = 0;
-            logger.info(
-              `✅ 上下文已压缩 (${compactResult.preTokens} → ${compactResult.postTokens} tokens)，重置轮次计数，继续对话`
-            );
-          } catch (compactError) {
-            // 压缩失败时的降级处理：简单截断消息
-            logger.error('[Agent] 压缩失败，使用降级策略:', compactError);
-
-            const systemMsg = messages.find((m) => m.role === 'system');
-            const recentMessages = messages.slice(-80);
-            messages.length = 0;
-            if (systemMsg && !recentMessages.some((m) => m.role === 'system')) {
-              messages.push(systemMsg);
-            }
-            messages.push(...recentMessages);
-            context.messages = messages.filter((m) => m.role !== 'system');
-
-            turnsCount = 0;
-            logger.warn(`⚠️ 降级压缩完成，保留 ${messages.length} 条消息，继续对话`);
+            // 用户选择停止
+            return {
+              success: true,
+              finalMessage: response?.reason || '已达到对话轮次上限，用户选择停止',
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+              },
+            };
           }
+
+          // 非交互模式：直接停止
+          return {
+            success: false,
+            error: {
+              type: 'max_turns_exceeded',
+              message: `已达到轮次上限 (${maxTurns} 轮)。使用 --permission-mode yolo 跳过此限制。`,
+            },
+            metadata: {
+              turnsCount,
+              toolCallsCount: allToolResults.length,
+              duration: Date.now() - startTime,
+              tokensUsed: totalTokens,
+            },
+          };
         }
 
         // 继续下一轮循环...

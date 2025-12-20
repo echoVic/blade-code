@@ -64,6 +64,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     logger.debug('[Debug] BladeInterface props:', {
       permissionMode: otherProps.permissionMode,
       yolo: otherProps.yolo,
+      maxTurns: otherProps.maxTurns,
     });
   }
 

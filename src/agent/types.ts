@@ -145,6 +145,19 @@ export interface LoopOptions {
 
   // 压缩状态回调
   onCompacting?: (isCompacting: boolean) => void;
+
+  // 轮次限制回调（100 轮后询问用户是否继续）
+  onTurnLimitReached?: (data: {
+    turnsCount: number;
+  }) => Promise<TurnLimitResponse>;
+}
+
+/**
+ * 轮次限制响应
+ */
+export interface TurnLimitResponse {
+  continue: boolean;
+  reason?: string;
 }
 
 export interface LoopResult {

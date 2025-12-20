@@ -42,6 +42,11 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
   // 使用智能 Ctrl+C 处理（没有任务，所以直接退出）
   const handleCtrlC = useCtrlCHandler(false);
 
+  // 确认类型判断
+  const isPlanModeExit = details.type === 'exitPlanMode';
+  const isPlanModeEnter = details.type === 'enterPlanMode';
+  const isMaxTurnsExceeded = details.type === 'maxTurnsExceeded';
+
   // 处理键盘输入
   useInput(
     (input, key) => {
@@ -59,6 +64,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
 
       // 快捷键处理
       const lowerInput = input.toLowerCase();
+
       if (isPlanModeExit) {
         // ExitPlanMode: Y/S/N (选择执行模式)
         if (lowerInput === 'y') {
@@ -83,6 +89,16 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
           onResponse({ approved: false, reason: '用户拒绝进入 Plan 模式' });
           return;
         }
+      } else if (isMaxTurnsExceeded) {
+        // MaxTurnsExceeded: Y/N (继续或停止)
+        if (lowerInput === 'y') {
+          onResponse({ approved: true });
+          return;
+        }
+        if (lowerInput === 'n') {
+          onResponse({ approved: false, reason: '用户选择停止' });
+          return;
+        }
       } else {
         // 普通确认: Y/S/N
         if (lowerInput === 'y') {
@@ -101,9 +117,6 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
     },
     { isActive: isFocused }
   );
-
-  const isPlanModeExit = details.type === 'exitPlanMode';
-  const isPlanModeEnter = details.type === 'enterPlanMode';
 
   const options = useMemo<
     Array<{ label: string; key: string; value: ConfirmationResponse }>
@@ -143,6 +156,21 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
       ];
     }
 
+    if (isMaxTurnsExceeded) {
+      return [
+        {
+          key: 'continue',
+          label: '[Y] Yes, continue',
+          value: { approved: true },
+        },
+        {
+          key: 'stop',
+          label: '[N] No, stop here',
+          value: { approved: false, reason: '用户选择停止' },
+        },
+      ];
+    }
+
     return [
       {
         key: 'approve-once',
@@ -160,7 +188,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
         value: { approved: false, reason: '用户拒绝' },
       },
     ];
-  }, [isPlanModeExit, isPlanModeEnter]);
+  }, [isPlanModeExit, isPlanModeEnter, isMaxTurnsExceeded]);
 
   // Determine title and color based on confirmation type
   const getHeaderStyle = () => {
@@ -172,6 +200,9 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
     }
     if (isPlanModeEnter) {
       return { color: 'magenta' as const, title: '🟣 Enter Plan Mode?' };
+    }
+    if (isMaxTurnsExceeded) {
+      return { color: 'yellow' as const, title: '⚡ Max Turns Exceeded' };
     }
     return { color: 'yellow' as const, title: '🔔 Confirmation Required' };
   };
