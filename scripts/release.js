@@ -270,8 +270,9 @@ function generateChangelog(newVersion) {
       let categorized = false;
       for (const [key, label] of Object.entries(categories)) {
         if (key === 'other') continue;
-        if (message.match(new RegExp(`^${key}:`, 'i'))) {
-          changes[key].push(`- ${message.replace(new RegExp(`^${key}:\\s*`, 'i'), '')} (${hash})`);
+        // 支持 feat: 和 feat(scope): 两种格式
+        if (message.match(new RegExp(`^${key}(\\(.+\\))?:`, 'i'))) {
+          changes[key].push(`- ${message.replace(new RegExp(`^${key}(\\(.+\\))?:\\s*`, 'i'), '')} (${hash})`);
           categorized = true;
           break;
         }
