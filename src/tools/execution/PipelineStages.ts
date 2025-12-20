@@ -359,7 +359,10 @@ export class ConfirmationStage implements PipelineStage {
           await confirmationHandler.requestConfirmation(confirmationDetails);
 
         if (!response.approved) {
-          execution.abort(`User rejected execution: ${response.reason || 'No reason provided'}`);
+          execution.abort(
+            `User rejected execution: ${response.reason || 'No reason provided'}`,
+            { shouldExitLoop: true }
+          );
           return;
         }
 

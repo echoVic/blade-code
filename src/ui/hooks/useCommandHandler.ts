@@ -290,11 +290,12 @@ export const useCommandHandler = (
 
         const output = await agent.chat(command, chatContext, loopOptions);
 
-        // 如果返回空字符串，可能是用户中止
+        // 如果返回空字符串，可能是用户取消
         if (!output || output.trim() === '') {
+          sessionActions.addAssistantMessage('⏹ 已取消');
           return {
             success: true,
-            output: '任务已停止',
+            output: '已取消',
           };
         }
 

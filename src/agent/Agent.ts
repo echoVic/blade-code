@@ -185,7 +185,7 @@ export class Agent {
         baseUrl: modelConfig.baseUrl,
         temperature: modelConfig.temperature ?? this.config.temperature,
         maxContextTokens: modelConfig.maxContextTokens ?? this.config.maxContextTokens, // 上下文窗口（压缩判断）
-        maxOutputTokens: this.config.maxOutputTokens, // 输出限制（API max_tokens）
+        maxOutputTokens: modelConfig.maxOutputTokens ?? this.config.maxOutputTokens, // 输出限制（API max_tokens）
         timeout: this.config.timeout,
       });
 
@@ -278,8 +278,8 @@ export class Agent {
           : await this.runLoop(enhancedMessage, context, loopOptions);
 
       if (!result.success) {
-        // 如果是用户中止，返回空字符串（不抛出异常）
-        if (result.error?.type === 'aborted') {
+        // 如果是用户中止或用户拒绝，返回空字符串（不抛出异常）
+        if (result.error?.type === 'aborted' || result.metadata?.shouldExitLoop) {
           return ''; // 返回空字符串，让调用方自行处理
         }
         // 其他错误则抛出异常
@@ -530,7 +530,6 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         // checkAndCompactInLoop 返回是否发生了压缩
         // 🆕 传入上一轮 LLM 返回的真实 prompt tokens（比估算更准确）
         const didCompact = await this.checkAndCompactInLoop(
-          messages,
           context,
           turnsCount,
           lastPromptTokens, // 首轮为 undefined，使用估算；后续轮次使用真实值
@@ -863,7 +862,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
             }
             logger.debug('==================================\n');
 
-            // 🆕 检查是否应该退出循环（ExitPlanMode 返回时设置此标记）
+            // 🆕 检查是否应该退出循环（ExitPlanMode 或用户拒绝时设置此标记）
             if (result.metadata?.shouldExitLoop) {
               logger.debug('🚪 检测到退出循环标记，结束 Agent 循环');
 
@@ -1366,7 +1365,6 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
    * 在 Agent 循环中检查并执行压缩
    * 仅使用 LLM 返回的真实 usage.promptTokens 进行判断（不再估算）
    *
-   * @param messages - 实际发送给 LLM 的消息数组
    * @param context - 聊天上下文
    * @param currentTurn - 当前轮次
    * @param actualPromptTokens - LLM 返回的真实 prompt tokens（必须，来自上一轮响应）
@@ -1374,7 +1372,6 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
    * @returns 是否发生了压缩
    */
   private async checkAndCompactInLoop(
-    messages: Message[],
     context: ChatContext,
     currentTurn: number,
     actualPromptTokens?: number,

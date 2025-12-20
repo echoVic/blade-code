@@ -59,6 +59,7 @@ export interface ModelConfig {
   // 可选：模型特定参数
   temperature?: number;
   maxContextTokens?: number; // 上下文窗口大小
+  maxOutputTokens?: number; // 输出 token 限制
   topP?: number;
   topK?: number;
 
