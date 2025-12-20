@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.25] - 2025-12-20
+
+### ✨ 新功能
+
+- 增强模型配置和版本自动升级功能 (0323f54)
+- add thinking block UI and model detection, enhance chat features (afb11a3)
+
+### 🐛 问题修复
+
+- 支持带scope的提交消息格式 (a8ad572)
+
+### 🔧 其他更改
+
+- 添加 CHANGELOG.md 到打包文件列表 (91db333)
+
+
 ## [0.0.24] - 2025-12-19
 
 
