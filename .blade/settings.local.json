@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "TestTool"
+      "TestTool",
+      "Bash(git status)",
+      "Bash(git diff *)"
     ],
     "ask": [],
     "deny": []

@@ -96,7 +96,7 @@ export class ToolExecution {
     return this.aborted || (this.context.signal?.aborted ?? false);
   }
 
-  abort(reason?: string): void {
+  abort(reason?: string, options?: { shouldExitLoop?: boolean }): void {
     this.aborted = true;
     this.result = {
       success: false,
@@ -106,6 +106,7 @@ export class ToolExecution {
         type: ToolErrorType.EXECUTION_ERROR,
         message: reason || 'Execution aborted',
       },
+      metadata: options?.shouldExitLoop ? { shouldExitLoop: true } : undefined,
     };
   }
 

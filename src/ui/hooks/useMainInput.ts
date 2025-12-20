@@ -4,7 +4,13 @@ import { useEffect, useRef, useState } from 'react';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getFuzzyCommandSuggestions } from '../../slash-commands/index.js';
 import type { CommandSuggestion } from '../../slash-commands/types.js';
-import { useCurrentFocus, useSessionActions } from '../../store/selectors/index.js';
+import {
+  useAppActions,
+  useCurrentFocus,
+  useCurrentModel,
+  useSessionActions,
+} from '../../store/selectors/index.js';
+import { isThinkingModel } from '../../utils/modelDetection.js';
 import { FocusId } from '../../store/types.js';
 import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
 import { useCtrlCHandler } from './useCtrlCHandler.js';
@@ -40,6 +46,13 @@ export const useMainInput = (
 
   // 使用 Zustand store 的 session actions
   const sessionActions = useSessionActions();
+
+  // 使用 Zustand store 的 app actions (for thinking mode toggle)
+  const appActions = useAppActions();
+
+  // 获取当前模型配置（用于检测是否支持 thinking）
+  const currentModel = useCurrentModel();
+  const supportsThinking = currentModel ? isThinkingModel(currentModel) : false;
 
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
@@ -183,6 +196,11 @@ export const useMainInput = (
         handleClear();
         return;
       }
+      // Ctrl+T - 切换 thinking 内容展开/折叠
+      if ((key.ctrl && inputKey === 't') || (key.meta && inputKey === 't')) {
+        sessionActions.toggleThinkingExpanded();
+        return;
+      }
       // Esc - 关闭快捷键帮助 > 停止任务 > 隐藏建议 > 双击清空输入
       if (key.escape) {
         if (isShortcutsModalOpen) {
@@ -214,27 +232,34 @@ export const useMainInput = (
         onTogglePermissionMode?.();
         return;
       }
-      // Tab - 选中建议
-      if (key.tab && showSuggestions && suggestions.length > 0) {
-        const selectedCommand = suggestions[selectedSuggestionIndex].command;
-        if (
-          atCompletion.hasQuery &&
-          atCompletion.suggestions.includes(selectedCommand)
-        ) {
-          const { newInput, newCursorPos } = applySuggestion(
-            input,
-            atCompletion,
-            selectedCommand
-          );
-          setInput(newInput);
-          buffer.setCursorPosition(newCursorPos);
-        } else {
-          const newInput = selectedCommand + ' ';
-          setInput(newInput);
-          buffer.setCursorPosition(newInput.length);
+      // Tab - 选中建议（有建议时），或切换 thinking 模式（无建议时，且模型支持）
+      if (key.tab) {
+        if (showSuggestions && suggestions.length > 0) {
+          // 有建议时：选中建议
+          const selectedCommand = suggestions[selectedSuggestionIndex].command;
+          if (
+            atCompletion.hasQuery &&
+            atCompletion.suggestions.includes(selectedCommand)
+          ) {
+            const { newInput, newCursorPos } = applySuggestion(
+              input,
+              atCompletion,
+              selectedCommand
+            );
+            setInput(newInput);
+            buffer.setCursorPosition(newCursorPos);
+          } else {
+            const newInput = selectedCommand + ' ';
+            setInput(newInput);
+            buffer.setCursorPosition(newInput.length);
+          }
+          setShowSuggestions(false);
+          setSuggestions([]);
+        } else if (supportsThinking) {
+          // 无建议时：仅当模型支持 thinking 时才切换 thinking 模式
+          appActions.toggleThinkingMode();
         }
-        setShowSuggestions(false);
-        setSuggestions([]);
+        // 如果模型不支持 thinking，Tab 键无效果（静默忽略）
         return;
       }
       // Enter - 选中建议或提交命令

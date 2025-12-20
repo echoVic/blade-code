@@ -18,8 +18,8 @@ const CACHE_DIR = path.join(
 );
 const CACHE_FILE = path.join(CACHE_DIR, 'version-cache.json');
 
-// 缓存有效期：24 小时
-const CACHE_TTL = 24 * 60 * 60 * 1000;
+// 缓存有效期：1 小时
+const CACHE_TTL = 1 * 60 * 60 * 1000;
 
 // npm registry URL
 const NPM_REGISTRY_URL = `https://registry.npmmirror.com/${PACKAGE_NAME}/latest`;
@@ -224,13 +224,58 @@ export function formatUpdateMessage(result: VersionCheckResult): string | null {
 }
 
 /**
- * 启动时版本检查（后台执行，不阻塞）
- *
- * @returns Promise<string | null> 更新提示消息，如果没有更新则返回 null
+ * 执行自动升级（后台进程，不阻塞主进程）
+ * @returns 升级提示消息
  */
-export async function checkVersionOnStartup(): Promise<string | null> {
+async function performUpgrade(
+  currentVersion: string,
+  latestVersion: string
+): Promise<string> {
+  const { spawn } = await import('child_process');
+
+  try {
+    const updateCommand = `npm install -g blade-code@${latestVersion} --registry https://registry.npmjs.org`;
+
+    // 使用 spawn + detached + unref 在后台运行升级
+    // 这样主进程退出后，升级进程会继续运行完成安装
+    const updateProcess = spawn(updateCommand, {
+      stdio: 'ignore',
+      shell: true,
+      detached: true,
+    });
+    updateProcess.unref();
+
+    return `⬆️ 正在后台升级 ${currentVersion} → ${latestVersion}，下次启动生效`;
+  } catch {
+    return (
+      `\x1b[33m⚠️  Update available: ${currentVersion} → ${latestVersion}\x1b[0m\n` +
+      `   Run \x1b[36mnpm install -g ${PACKAGE_NAME}@latest\x1b[0m to update`
+    );
+  }
+}
+
+/**
+ * 启动时版本检查并自动升级
+ *
+ * @param autoUpgrade - 是否自动升级（默认 true）
+ * @returns Promise<string | null> 提示消息，如果没有更新则返回 null
+ */
+export async function checkVersionOnStartup(
+  autoUpgrade = true
+): Promise<string | null> {
   try {
     const result = await checkVersion();
+
+    if (!result.hasUpdate || !result.latestVersion) {
+      return null;
+    }
+
+    // 自动升级
+    if (autoUpgrade) {
+      return await performUpgrade(result.currentVersion, result.latestVersion);
+    }
+
+    // 仅显示提示
     return formatUpdateMessage(result);
   } catch {
     return null;

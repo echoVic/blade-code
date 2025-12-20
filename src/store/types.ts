@@ -40,6 +40,7 @@ export interface SessionMessage {
   content: string;
   timestamp: number;
   metadata?: Record<string, unknown> | ToolMessageMetadata;
+  thinkingContent?: string; // Thinking 模型的推理过程内容
 }
 
 /**
@@ -64,6 +65,8 @@ export interface SessionState {
   error: string | null;
   isActive: boolean;
   tokenUsage: TokenUsage; // Token 使用量统计
+  currentThinkingContent: string | null; // 当前正在接收的 thinking 内容（流式）
+  thinkingExpanded: boolean; // thinking 内容是否展开显示
 }
 
 /**
@@ -72,7 +75,7 @@ export interface SessionState {
 export interface SessionActions {
   addMessage: (message: SessionMessage) => void;
   addUserMessage: (content: string) => void;
-  addAssistantMessage: (content: string) => void;
+  addAssistantMessage: (content: string, thinkingContent?: string) => void;
   addToolMessage: (content: string, metadata?: ToolMessageMetadata) => void;
   setThinking: (isThinking: boolean) => void;
   setCompacting: (isCompacting: boolean) => void;
@@ -83,6 +86,11 @@ export interface SessionActions {
   restoreSession: (sessionId: string, messages: SessionMessage[]) => void;
   updateTokenUsage: (usage: Partial<TokenUsage>) => void;
   resetTokenUsage: () => void;
+  // Thinking 相关 actions
+  setCurrentThinkingContent: (content: string | null) => void;
+  appendThinkingContent: (delta: string) => void;
+  setThinkingExpanded: (expanded: boolean) => void;
+  toggleThinkingExpanded: () => void;
 }
 
 /**
@@ -155,6 +163,7 @@ export interface AppState {
   modelEditorTarget: ModelConfig | null;
   todos: TodoItem[];
   awaitingSecondCtrlC: boolean; // 是否等待第二次 Ctrl+C 退出
+  thinkingModeEnabled: boolean; // Thinking 模式是否启用（Tab 切换）
 }
 
 /**
@@ -170,6 +179,9 @@ export interface AppActions {
   setTodos: (todos: TodoItem[]) => void;
   updateTodo: (todo: TodoItem) => void;
   setAwaitingSecondCtrlC: (awaiting: boolean) => void;
+  // Thinking 模式相关
+  setThinkingModeEnabled: (enabled: boolean) => void;
+  toggleThinkingMode: () => void;
 }
 
 /**
