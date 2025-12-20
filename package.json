@@ -1,6 +1,6 @@
 {
   "name": "blade-code",
-  "version": "0.0.28",
+  "version": "0.0.29",
   "private": false,
   "description": "🗡️ Blade Code - 智能代码助手命令行工具",
   "type": "module",

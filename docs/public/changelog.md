@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.29] - 2025-12-20
+
+### ✨ 新功能
+
+- 添加 pre-commit 命令用于 AI 生成 commit message (318bbde)
+- enhance WebSearch tool with multi-provider fallback (caf98e7)
+
+
 ## [0.0.28] - 2025-12-20
 
 ### ✨ 新功能
