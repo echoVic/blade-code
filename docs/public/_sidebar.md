@@ -22,6 +22,8 @@
 
 * [常见问题](faq.md)
 
+* [更新日志](changelog.md)
+
 * 其他
   * [开发者文档](../development/README.md)
   * [贡献指南](../contributing/README.md)

@@ -1,7 +1,7 @@
 /**
  * 版本检查服务
  *
- * 启动时检查 npm registry 获取最新版本，提示用户更新
+ * 启动时检查 npm registry 获取最新版本，提供交互式更新选项
  */
 
 import * as fs from 'fs/promises';
@@ -10,6 +10,9 @@ import { fileURLToPath } from 'url';
 
 // 包名
 const PACKAGE_NAME = 'blade-code';
+
+// Changelog URL (via jsDelivr CDN, supports UTF-8)
+const CHANGELOG_URL = 'https://cdn.jsdelivr.net/npm/blade-code@latest/CHANGELOG.md';
 
 // 缓存文件路径
 const CACHE_DIR = path.join(
@@ -22,17 +25,20 @@ const CACHE_FILE = path.join(CACHE_DIR, 'version-cache.json');
 const CACHE_TTL = 1 * 60 * 60 * 1000;
 
 // npm registry URL
-const NPM_REGISTRY_URL = `https://registry.npmmirror.com/${PACKAGE_NAME}/latest`;
+const NPM_REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
 
 interface VersionCache {
   latestVersion: string;
   checkedAt: number;
+  skipUntilVersion?: string; // 跳过直到此版本
 }
 
-interface VersionCheckResult {
+export interface VersionCheckResult {
   currentVersion: string;
   latestVersion: string | null;
   hasUpdate: boolean;
+  shouldPrompt: boolean; // 是否应该显示提示（考虑 skip 设置）
+  releaseNotesUrl: string;
   error?: string;
 }
 
@@ -88,7 +94,8 @@ async function readCache(): Promise<VersionCache | null> {
     if (Date.now() - cache.checkedAt < CACHE_TTL) {
       return cache;
     }
-    return null;
+    // 保留 skipUntilVersion 但标记版本缓存过期
+    return { ...cache, checkedAt: 0 };
   } catch {
     return null;
   }
@@ -161,6 +168,7 @@ function compareVersions(a: string, b: string): number {
  */
 export async function checkVersion(forceCheck = false): Promise<VersionCheckResult> {
   const currentVersion = await getCurrentVersion();
+  const releaseNotesUrl = CHANGELOG_URL;
 
   // 如果无法获取当前版本，跳过检查
   if (currentVersion === 'unknown') {
@@ -168,115 +176,142 @@ export async function checkVersion(forceCheck = false): Promise<VersionCheckResu
       currentVersion,
       latestVersion: null,
       hasUpdate: false,
+      shouldPrompt: false,
+      releaseNotesUrl,
       error: 'Unable to determine current version',
     };
   }
 
-  // 尝试从缓存读取
-  if (!forceCheck) {
-    const cache = await readCache();
-    if (cache) {
-      return {
-        currentVersion,
-        latestVersion: cache.latestVersion,
-        hasUpdate: compareVersions(cache.latestVersion, currentVersion) > 0,
-      };
+  // 读取缓存
+  const cache = await readCache();
+  const skipUntilVersion = cache?.skipUntilVersion;
+
+  // 尝试从缓存读取版本
+  let latestVersion: string | null = null;
+  if (!forceCheck && cache && cache.checkedAt > 0) {
+    latestVersion = cache.latestVersion;
+  } else {
+    // 从 npm 获取最新版本
+    latestVersion = await fetchLatestVersion();
+
+    if (latestVersion) {
+      // 更新缓存（保留 skipUntilVersion）
+      await writeCache({
+        latestVersion,
+        checkedAt: Date.now(),
+        skipUntilVersion,
+      });
     }
   }
 
-  // 从 npm 获取最新版本
-  const latestVersion = await fetchLatestVersion();
-
-  if (latestVersion) {
-    // 更新缓存
-    await writeCache({
-      latestVersion,
-      checkedAt: Date.now(),
-    });
-
+  if (!latestVersion) {
     return {
       currentVersion,
-      latestVersion,
-      hasUpdate: compareVersions(latestVersion, currentVersion) > 0,
+      latestVersion: null,
+      hasUpdate: false,
+      shouldPrompt: false,
+      releaseNotesUrl,
+      error: 'Unable to check for updates',
     };
+  }
+
+  const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+
+  // 检查是否应该跳过此版本的提示
+  let shouldPrompt = hasUpdate;
+  if (hasUpdate && skipUntilVersion) {
+    // 如果 latestVersion > skipUntilVersion，说明有新版本，应该显示提示
+    // 如果 latestVersion <= skipUntilVersion，说明用户选择跳过，不显示提示
+    shouldPrompt = compareVersions(latestVersion, skipUntilVersion) > 0;
   }
 
   return {
     currentVersion,
-    latestVersion: null,
-    hasUpdate: false,
-    error: 'Unable to check for updates',
+    latestVersion,
+    hasUpdate,
+    shouldPrompt,
+    releaseNotesUrl,
   };
 }
 
 /**
- * 格式化版本更新提示消息
+ * 设置跳过直到下一版本
  */
-export function formatUpdateMessage(result: VersionCheckResult): string | null {
-  if (!result.hasUpdate || !result.latestVersion) {
-    return null;
-  }
-
-  return (
-    `\x1b[33m⚠️  Update available: ${result.currentVersion} → ${result.latestVersion}\x1b[0m\n` +
-    `   Run \x1b[36mnpm install -g ${PACKAGE_NAME}@latest\x1b[0m to update`
-  );
+export async function setSkipUntilVersion(version: string): Promise<void> {
+  const cache = await readCache();
+  await writeCache({
+    latestVersion: cache?.latestVersion || version,
+    checkedAt: cache?.checkedAt || Date.now(),
+    skipUntilVersion: version,
+  });
 }
 
 /**
- * 执行自动升级（后台进程，不阻塞主进程）
- * @returns 升级提示消息
+ * 清除跳过设置
  */
-async function performUpgrade(
-  currentVersion: string,
-  latestVersion: string
-): Promise<string> {
+export async function clearSkipVersion(): Promise<void> {
+  const cache = await readCache();
+  if (cache) {
+    await writeCache({
+      latestVersion: cache.latestVersion,
+      checkedAt: cache.checkedAt,
+      // 不设置 skipUntilVersion
+    });
+  }
+}
+
+/**
+ * 执行升级
+ * @returns 升级命令
+ */
+export function getUpgradeCommand(): string {
+  return `npm install -g ${PACKAGE_NAME}@latest`;
+}
+
+/**
+ * 执行升级（返回 Promise）
+ */
+export async function performUpgrade(): Promise<{ success: boolean; message: string }> {
   const { spawn } = await import('child_process');
 
-  try {
-    const updateCommand = `npm install -g blade-code@${latestVersion} --registry https://registry.npmjs.org`;
+  return new Promise((resolve) => {
+    const command = getUpgradeCommand();
 
-    // 使用 spawn + detached + unref 在后台运行升级
-    // 这样主进程退出后，升级进程会继续运行完成安装
-    const updateProcess = spawn(updateCommand, {
-      stdio: 'ignore',
+    const child = spawn(command, {
+      stdio: 'inherit',
       shell: true,
-      detached: true,
     });
-    updateProcess.unref();
 
-    return `⬆️ 正在后台升级 ${currentVersion} → ${latestVersion}，下次启动生效`;
-  } catch {
-    return (
-      `\x1b[33m⚠️  Update available: ${currentVersion} → ${latestVersion}\x1b[0m\n` +
-      `   Run \x1b[36mnpm install -g ${PACKAGE_NAME}@latest\x1b[0m to update`
-    );
-  }
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve({
+          success: true,
+          message: '✅ 升级成功！请重新启动 blade。',
+        });
+      } else {
+        resolve({
+          success: false,
+          message: `❌ 升级失败 (exit code: ${code})`,
+        });
+      }
+    });
+
+    child.on('error', (error) => {
+      resolve({
+        success: false,
+        message: `❌ 升级失败: ${error.message}`,
+      });
+    });
+  });
 }
 
 /**
- * 启动时版本检查并自动升级
- *
- * @param autoUpgrade - 是否自动升级（默认 true）
- * @returns Promise<string | null> 提示消息，如果没有更新则返回 null
+ * 启动时版本检查（简化版，仅返回检查结果）
  */
-export async function checkVersionOnStartup(
-  autoUpgrade = true
-): Promise<string | null> {
+export async function checkVersionOnStartup(): Promise<VersionCheckResult | null> {
   try {
     const result = await checkVersion();
-
-    if (!result.hasUpdate || !result.latestVersion) {
-      return null;
-    }
-
-    // 自动升级
-    if (autoUpgrade) {
-      return await performUpgrade(result.currentVersion, result.latestVersion);
-    }
-
-    // 仅显示提示
-    return formatUpdateMessage(result);
+    return result.shouldPrompt ? result : null;
   } catch {
     return null;
   }

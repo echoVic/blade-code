@@ -321,7 +321,12 @@ function generateChangelog(newVersion) {
     
     writeFileSync(changelogPath, changelogLines.join('\n'));
     console.log(chalk.green('✅ Changelog 已更新'));
-    
+
+    // 同步到 docs/public/changelog.md (用于 GitHub Pages)
+    const docsChangelogPath = join(rootDir, 'docs/public/changelog.md');
+    writeFileSync(docsChangelogPath, changelogLines.join('\n'));
+    console.log(chalk.green('✅ Docs changelog 已同步'));
+
   } catch (error) {
     console.log(chalk.yellow('⚠️  无法生成 changelog:', error.message));
   }
