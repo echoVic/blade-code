@@ -342,3 +342,23 @@ export const useIsModal = (modal: ActiveModal) =>
  */
 export const useIsBusy = () =>
   useBladeStore((state) => state.session.isThinking || state.command.isProcessing);
+
+// ==================== Thinking 模式选择器 ====================
+
+/**
+ * 获取 Thinking 模式是否启用
+ */
+export const useThinkingModeEnabled = () =>
+  useBladeStore((state) => state.app.thinkingModeEnabled);
+
+/**
+ * 获取当前 Thinking 内容（流式接收中）
+ */
+export const useCurrentThinkingContent = () =>
+  useBladeStore((state) => state.session.currentThinkingContent);
+
+/**
+ * 获取 Thinking 内容是否展开
+ */
+export const useThinkingExpanded = () =>
+  useBladeStore((state) => state.session.thinkingExpanded);

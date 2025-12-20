@@ -464,8 +464,9 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
         // setup 模式：由父组件（BladeInterface）负责创建模型
         onComplete(setupConfig);
       } else if (mode === 'add') {
-        // add 模式：直接在这里创建模型，然后通知父组件关闭
-        await configActions().addModel(setupConfig);
+        // add 模式：直接在这里创建模型，然后自动切换到新模型
+        const newModel = await configActions().addModel(setupConfig);
+        await configActions().setCurrentModel(newModel.id);
         onComplete(setupConfig);
       } else {
         if (!modelId) {

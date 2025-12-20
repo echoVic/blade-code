@@ -41,6 +41,8 @@ const initialSessionState: SessionState = {
   error: null,
   isActive: true,
   tokenUsage: { ...initialTokenUsage },
+  currentThinkingContent: null,
+  thinkingExpanded: false,
 };
 
 /**
@@ -83,13 +85,16 @@ export const createSessionSlice: StateCreator<
 
     /**
      * 添加助手消息
+     * @param content 消息内容
+     * @param thinkingContent 可选的 thinking 内容（如 DeepSeek R1 的推理过程）
      */
-    addAssistantMessage: (content: string) => {
+    addAssistantMessage: (content: string, thinkingContent?: string) => {
       const message: SessionMessage = {
         id: `assistant-${Date.now()}-${Math.random()}`,
         role: 'assistant',
         content,
         timestamp: Date.now(),
+        thinkingContent,
       };
       get().session.actions.addMessage(message);
     },
@@ -208,5 +213,51 @@ export const createSessionSlice: StateCreator<
         },
       }));
     },
+
+    // ==================== Thinking 相关 actions ====================
+
+    /**
+     * 设置当前 thinking 内容（用于流式接收）
+     */
+    setCurrentThinkingContent: (content: string | null) => {
+      set((state) => ({
+        session: { ...state.session, currentThinkingContent: content },
+      }));
+    },
+
+    /**
+     * 追加 thinking 内容（用于流式接收增量）
+     */
+    appendThinkingContent: (delta: string) => {
+      set((state) => ({
+        session: {
+          ...state.session,
+          currentThinkingContent:
+            (state.session.currentThinkingContent || '') + delta,
+        },
+      }));
+    },
+
+    /**
+     * 设置 thinking 内容是否展开
+     */
+    setThinkingExpanded: (expanded: boolean) => {
+      set((state) => ({
+        session: { ...state.session, thinkingExpanded: expanded },
+      }));
+    },
+
+    /**
+     * 切换 thinking 内容展开/折叠状态
+     */
+    toggleThinkingExpanded: () => {
+      set((state) => ({
+        session: {
+          ...state.session,
+          thinkingExpanded: !state.session.thinkingExpanded,
+        },
+      }));
+    },
+
   },
 });

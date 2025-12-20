@@ -169,7 +169,7 @@ export interface LoopResult {
     configuredMaxTurns?: number;
     actualMaxTurns?: number;
     hitSafetyLimit?: boolean;
-    shouldExitLoop?: boolean; // ExitPlanMode 设置此标记以退出循环
+    shouldExitLoop?: boolean; // ExitPlanMode 或用户拒绝时设置此标记以退出循环
     targetMode?: PermissionMode; // Plan 模式批准后的目标权限模式
     planContent?: string; // Plan 模式批准后的方案内容
   };

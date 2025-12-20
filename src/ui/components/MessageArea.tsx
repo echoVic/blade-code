@@ -1,16 +1,19 @@
 import { Box, Static } from 'ink';
 import React, { ReactNode, useMemo } from 'react';
 import {
+  useCurrentThinkingContent,
   useIsThinking,
   useMessages,
   usePendingCommands,
   useShowTodoPanel,
+  useThinkingExpanded,
   useTodos,
 } from '../../store/selectors/index.js';
 import type { SessionMessage } from '../../store/types.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 import { Header } from './Header.js';
 import { MessageRenderer } from './MessageRenderer.js';
+import { ThinkingBlock } from './ThinkingBlock.js';
 import { TodoPanel } from './TodoPanel.js';
 
 /**
@@ -37,6 +40,8 @@ export const MessageArea: React.FC = React.memo(() => {
   const todos = useTodos();
   const showTodoPanel = useShowTodoPanel();
   const pendingCommands = usePendingCommands();
+  const currentThinkingContent = useCurrentThinkingContent();
+  const thinkingExpanded = useThinkingExpanded();
 
   // 使用 useTerminalWidth hook 获取终端宽度
   const terminalWidth = useTerminalWidth();
@@ -98,6 +103,17 @@ export const MessageArea: React.FC = React.memo(() => {
       <Box flexDirection="column" flexGrow={1}>
         {/* 静态区域：Header + 已完成的消息永不重新渲染 */}
         <Static items={staticItems}>{(item) => item}</Static>
+
+        {/* 流式接收的 Thinking 内容（在消息之前显示） */}
+        {currentThinkingContent && (
+          <Box marginBottom={1}>
+            <ThinkingBlock
+              content={currentThinkingContent}
+              isStreaming={isThinking}
+              isExpanded={thinkingExpanded}
+            />
+          </Box>
+        )}
 
         {/* 动态区域：只有流式传输的消息会重新渲染 */}
         {streamingMessage &&

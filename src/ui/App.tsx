@@ -126,11 +126,11 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
         }
       }
 
-      // 8. 后台检查版本更新（不阻塞启动）
-      checkVersionOnStartup().then((updateMessage) => {
-        if (updateMessage) {
+      // 8. 后台检查版本更新并自动升级（不阻塞启动）
+      checkVersionOnStartup().then((message) => {
+        if (message) {
           console.log('');
-          console.log(updateMessage);
+          console.log(message);
           console.log('');
         }
       });

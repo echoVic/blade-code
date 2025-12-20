@@ -310,6 +310,13 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     appActions.showModelEditWizard(model);
   });
 
+  const handleModelAddComplete = useMemoizedFn((addedConfig: SetupConfig) => {
+    sessionActions.addAssistantMessage(
+      `✅ 已添加模型配置: ${addedConfig.name}，并已切换到该模型`
+    );
+    closeModal();
+  });
+
   const handleModelEditComplete = useMemoizedFn((updatedConfig: SetupConfig) => {
     sessionActions.addAssistantMessage(`✅ 已更新模型配置: ${updatedConfig.name}`);
     closeModal();
@@ -537,7 +544,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
                 onComplete={
                   inlineModelWizardMode === 'edit'
                     ? handleModelEditComplete
-                    : closeModal
+                    : handleModelAddComplete
                 }
                 onCancel={closeModal}
               />
