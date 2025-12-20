@@ -160,7 +160,8 @@ export type ActiveModal =
   | 'modelAddWizard'
   | 'modelEditWizard'
   | 'agentsManager'
-  | 'agentCreationWizard';
+  | 'agentCreationWizard'
+  | 'skillsManager';
 
 /**
  * 应用状态（纯 UI 状态）

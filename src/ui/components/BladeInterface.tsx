@@ -32,6 +32,7 @@ import { useMainInput } from '../hooks/useMainInput.js';
 import { useRefreshStatic } from '../hooks/useRefreshStatic.js';
 import { AgentCreationWizard } from './AgentCreationWizard.js';
 import { AgentsManager } from './AgentsManager.js';
+import { SkillsManager } from './SkillsManager.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
 import { CommandSuggestions } from './CommandSuggestions.js';
 import { ConfirmationPrompt } from './ConfirmationPrompt.js';
@@ -500,6 +501,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   const agentsManagerVisible = activeModal === 'agentsManager';
   const agentCreationWizardVisible = activeModal === 'agentCreationWizard';
+  const skillsManagerVisible = activeModal === 'skillsManager';
 
   const editingInitialConfig = editingModel
     ? {
@@ -581,6 +583,12 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           {agentCreationWizardVisible && (
             <Box marginTop={1} paddingX={2}>
               <AgentCreationWizard onComplete={closeModal} onCancel={closeModal} />
+            </Box>
+          )}
+
+          {skillsManagerVisible && (
+            <Box marginTop={1} paddingX={2}>
+              <SkillsManager onComplete={closeModal} onCancel={closeModal} />
             </Box>
           )}
 
