@@ -21,9 +21,9 @@ import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './ty
 const gitCommand: SlashCommand = {
   name: 'git',
   description: 'Git 仓库查询和 AI 辅助',
-  usage: '/git [status|log|diff|review|commit]',
+  usage: '/git [status|log|diff|review|commit|pre-commit]',
   aliases: ['g'],
-  examples: ['/git', '/git status', '/git log 10', '/git review', '/git commit'],
+  examples: ['/git', '/git status', '/git log 10', '/git review', '/git commit', '/git pre-commit'],
 
   async handler(
     args: string[],
@@ -57,6 +57,9 @@ const gitCommand: SlashCommand = {
         case 'commit':
         case 'c':
           return handleCommit(cwd);
+        case 'pre-commit':
+        case 'pc':
+          return handlePreCommit(cwd);
         default:
           // 默认显示状态概览
           return handleStatus(cwd);
@@ -184,6 +187,60 @@ ${diff || '(无差异)'}
 }
 
 /**
+ * AI 生成 Commit Message（不提交）
+ */
+async function handlePreCommit(cwd: string): Promise<SlashCommandResult> {
+  const addMessage = sessionActions().addAssistantMessage;
+
+  // 检查是否有改动
+  if (!(await hasUncommittedChanges(cwd))) {
+    addMessage('📭 没有未提交的改动');
+    return { success: true };
+  }
+
+  // 暂存所有改动
+  addMessage('📦 暂存所有改动...');
+  await stageAll(cwd);
+
+  // 获取 diff
+  const fileList = await getStagedFileList(cwd);
+  const diff = await getStagedDiff(cwd);
+
+  if (!fileList) {
+    addMessage('📭 没有需要提交的改动');
+    return { success: true };
+  }
+
+  addMessage('🤖 正在生成 commit message...');
+
+  // 获取最近的提交信息作为风格参考
+  const recentCommits = await getRecentCommitMessages(cwd, 5);
+
+  // 调用 Agent 生成 commit message
+  const agent = await Agent.create();
+  const sessionId = getState().session.sessionId;
+
+  const commitPrompt = generateCommitPrompt(fileList, diff, recentCommits);
+
+  const commitMessage = await agent.chat(commitPrompt, {
+    messages: [],
+    userId: 'cli-user',
+    sessionId: sessionId || 'git-pre-commit',
+    workspaceRoot: cwd,
+  });
+
+  // 清理 commit message（移除可能的代码块标记）
+  const cleanMessage = commitMessage
+    .replace(/^```\w*\n?/, '')
+    .replace(/\n?```$/, '')
+    .trim();
+
+  addMessage(`**生成的 Commit Message：**\n\`\`\`\n${cleanMessage}\n\`\`\`\n\n💡 使用以下命令提交：\n\`\`\`bash\ngit commit -m "${cleanMessage.split('\n')[0]}"\n\`\`\``);
+
+  return { success: true };
+}
+
+/**
  * AI 生成 Commit Message 并提交
  */
 async function handleCommit(cwd: string): Promise<SlashCommandResult> {
@@ -217,30 +274,7 @@ async function handleCommit(cwd: string): Promise<SlashCommandResult> {
   const agent = await Agent.create();
   const sessionId = getState().session.sessionId;
 
-  const commitPrompt = `请根据以下 Git 改动生成一条简洁的 commit message。
-
-**暂存文件：**
-${fileList}
-
-**Diff 内容：**
-\`\`\`diff
-${diff || '(无差异)'}
-\`\`\`
-
-**最近的提交风格参考：**
-${recentCommits || '(无历史提交)'}
-
-要求：
-1. 使用英文，遵循 Conventional Commits 格式（如 feat:, fix:, docs:, refactor:, chore: 等）
-2. 第一行不超过 50 字符，简明扼要描述改动
-3. 如有必要，可添加空行后的详细说明
-4. 只输出 commit message 内容，不要其他解释
-
-示例格式：
-feat: add user authentication module
-
-- Add login/logout functionality
-- Implement JWT token handling`;
+  const commitPrompt = generateCommitPrompt(fileList, diff, recentCommits);
 
   const commitMessage = await agent.chat(commitPrompt, {
     messages: [],
@@ -268,6 +302,45 @@ feat: add user authentication module
   }
 
   return { success: true };
+}
+
+/**
+ * 生成 commit message 的 prompt
+ * 强调参考历史提交风格
+ */
+function generateCommitPrompt(
+  fileList: string,
+  diff: string | null,
+  recentCommits: string | null
+): string {
+  const hasHistory = recentCommits && recentCommits.trim().length > 0;
+
+  return `请根据以下 Git 改动生成一条 commit message。
+
+**暂存文件：**
+${fileList}
+
+**Diff 内容：**
+\`\`\`diff
+${diff || '(无差异)'}
+\`\`\`
+
+${
+  hasHistory
+    ? `**历史提交风格参考（请严格模仿此风格）：**
+\`\`\`
+${recentCommits}
+\`\`\`
+
+⚠️ 重要：请仔细分析上述历史提交的风格特征（语言、前缀、格式、长度等），生成的 commit message 必须与历史风格保持一致。`
+    : `**无历史提交参考，请使用 Conventional Commits 格式。**`
+}
+
+要求：
+1. ${hasHistory ? '严格模仿历史提交的语言和格式风格' : '使用英文，遵循 Conventional Commits 格式（feat:, fix:, docs:, refactor:, chore: 等）'}
+2. 第一行简明扼要，不超过 72 字符
+3. 如有必要，可添加空行后的详细说明
+4. 只输出 commit message 内容，不要其他解释或代码块标记`;
 }
 
 export default gitCommand;

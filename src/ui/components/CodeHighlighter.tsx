@@ -136,7 +136,8 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
 
   const totalLines = lines.length + hiddenLinesCount;
   const lineNumberWidth = String(totalLines).length + 1;
-  const maxCodeWidth = Math.max(20, terminalWidth - lineNumberWidth - 6); // 预留边框、padding 和间距
+  // 不再截断代码行，让终端自然换行显示完整内容
+  // const maxCodeWidth = Math.max(20, terminalWidth - lineNumberWidth - 6);
 
   return (
     <Box
@@ -183,7 +184,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
               {line.trim() === '' ? (
                 <Text> </Text>
               ) : (
-                highlightLine(line, language, theme.colors.syntax, maxCodeWidth)
+                highlightLine(line, language, theme.colors.syntax)
               )}
             </Box>
           </Box>
