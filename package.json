@@ -12,7 +12,8 @@
     "bin",
     "vendor/ripgrep/**",
     "config.env.example",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "dev": "bun --watch src/blade.tsx",
