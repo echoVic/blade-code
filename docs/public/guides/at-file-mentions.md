@@ -88,7 +88,7 @@ Blade 会递归读取目录下的所有文件（排除 `node_modules` 等）。
 
 ### 路径解析规则
 
-1. **相对路径**: 相对于项目根目录解析
+1. **相对路径**: 相对于当前工作目录（CWD）解析
    ```
    @src/agent.ts  → /project/src/agent.ts
    ```
@@ -109,7 +109,7 @@ Blade 会递归读取目录下的所有文件（排除 `node_modules` 等）。
 为了保护你的系统安全，以下路径被禁止访问：
 
 - `.git/` - Git 仓库目录
-- `.claude/` - Blade 配置目录
+- `.blade/` - Blade 配置目录
 - `node_modules/` - 依赖包目录
 - `.env`, `.env.local` 等 - 环境变量文件
 

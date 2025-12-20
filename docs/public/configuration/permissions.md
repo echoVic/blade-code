@@ -44,6 +44,7 @@
 
 - 当规则判定为 `ask` 时，`ConfirmationStage` 会调用 UI 的确认弹窗。
 - 选择“会话内记住”会把抽象后的规则写入 `.blade/settings.local.json`，立即刷新内存配置，后续同类操作不再弹窗。
+- **轮次上限确认**：当 LLM 响应轮次达到阈值（默认 100 轮）时，也会触发确认弹窗。用户选择“继续”可重置计数器，选择“停止”则终止任务。
 - 抽象逻辑由各工具的 `abstractPermissionRule` 提供，例如：
   - Bash：提取主命令，记为 `Bash(command:npm *)` 等；
   - Edit/Write：基于 `file_path` 生成 `Edit(file_path:**/*.ts)`；

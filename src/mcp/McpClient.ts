@@ -41,7 +41,7 @@ export interface ClassifiedError {
 }
 
 /**
- * 错误分类函数（参考 neovate-code 实现）
+ * 错误分类函数
  */
 function classifyError(error: unknown): ClassifiedError {
   if (!(error instanceof Error)) {

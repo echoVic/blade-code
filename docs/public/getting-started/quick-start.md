@@ -61,3 +61,4 @@ blade "帮我梳理 src/ui 目录"
 写入、命令执行等会根据权限规则弹出确认。可通过权限模式切换：
 - `Shift+Tab` 在 `default → autoEdit → plan` 循环
 - `--permission-mode yolo` 启动时直接全自动批准（需自担风险）
+- **轮次上限**：长时间任务达到阈值（默认 100 轮）时会暂停并询问，防止意外消耗过多 Token。

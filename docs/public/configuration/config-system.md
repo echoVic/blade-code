@@ -68,7 +68,7 @@ Blade 使用双文件配置体系：`config.json`（基础配置）和 `settings
 | `hooks` | Hook 配置（启用、超时、Pre/Post 列表等） | 全部关闭 |
 | `env` | 注入到会话的环境变量 | `{}` |
 | `disableAllHooks` | 全局禁用 Hooks | `false` |
-| `maxTurns` | 最大对话轮次（0 禁用，-1 不限，上限 100） | `-1` |
+| `maxTurns` | 触发询问的轮次阈值（0 禁用，-1 为默认值，受安全上限 100 保护） | `-1` |
 
 `settings.local.json` 用于个人偏好或临时授权，`ConfigManager` 会自动把它写入 `.gitignore`。
 
