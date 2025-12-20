@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.28] - 2025-12-20
+
+### ✨ 新功能
+
+- 添加对话轮次限制功能 (fd1879f)
+- 重构 MCP 配置管理并支持全局配置 (8fd56ba)
+- 添加交互式版本更新提示组件 (5fe01b0)
+
+
 ## [0.0.25] - 2025-12-20
 
 ### ✨ 新功能
