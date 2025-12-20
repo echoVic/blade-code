@@ -71,7 +71,10 @@
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:deepwiki.com)",
       "Bash(timeout 3 npm run start:*)",
-      "Bash(gtimeout 3 npm run start:*)"
+      "Bash(gtimeout 3 npm run start:*)",
+      "WebFetch(domain:leehanchung.github.io)",
+      "WebFetch(domain:simonwillison.net)",
+      "WebFetch(domain:scottspence.com)"
     ],
     "deny": [],
     "ask": [],

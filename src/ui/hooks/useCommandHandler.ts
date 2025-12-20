@@ -57,6 +57,9 @@ function handleSlashMessage(
     case 'show_agents_manager':
       appActions.setActiveModal('agentsManager');
       return true;
+    case 'show_skills_manager':
+      appActions.setActiveModal('skillsManager');
+      return true;
     case 'show_agent_creation_wizard':
       appActions.setActiveModal('agentCreationWizard');
       return true;

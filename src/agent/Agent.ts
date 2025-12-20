@@ -58,9 +58,20 @@ import type {
   LoopResult,
   UserMessageContent,
 } from './types.js';
+import { discoverSkills, injectSkillsMetadata } from '../skills/index.js';
 
 // 创建 Agent 专用 Logger
 const logger = createLogger(LogCategory.AGENT);
+
+/**
+ * Skill 执行上下文
+ * 用于跟踪当前活动的 Skill 及其工具限制
+ */
+interface SkillExecutionContext {
+  skillName: string;
+  allowedTools?: string[];
+  basePath: string;
+}
 
 export class Agent {
   private config: BladeConfig;
@@ -75,6 +86,9 @@ export class Agent {
   private chatService!: IChatService;
   private executionEngine!: ExecutionEngine;
   private attachmentCollector?: AttachmentCollector;
+
+  // Skill 执行上下文（用于 allowed-tools 限制）
+  private activeSkillContext?: SkillExecutionContext;
 
   constructor(
     config: BladeConfig,
@@ -171,7 +185,10 @@ export class Agent {
       // 3. 加载 subagent 配置
       await this.loadSubagents();
 
-      // 4. 初始化核心组件
+      // 4. 发现并注册 Skills
+      await this.discoverSkills();
+
+      // 5. 初始化核心组件
       // 获取当前模型配置（从 Store）
       const modelConfig = getCurrentModel();
       if (!modelConfig) {
@@ -468,7 +485,11 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       // 根据 permissionMode 决定工具暴露策略（单一信息源：ToolRegistry.getFunctionDeclarationsByMode）
       const registry = this.executionPipeline.getRegistry();
       const permissionMode = context.permissionMode as PermissionMode | undefined;
-      const tools = registry.getFunctionDeclarationsByMode(permissionMode);
+      let rawTools = registry.getFunctionDeclarationsByMode(permissionMode);
+      // 注入 Skills 元数据到 Skill 工具的 <available_skills> 占位符
+      rawTools = injectSkillsMetadata(rawTools);
+      // 应用 Skill 的 allowed-tools 限制（如果有活动的 Skill）
+      const tools = this.applySkillToolRestrictions(rawTools);
       const isPlanMode = permissionMode === PermissionMode.PLAN;
 
       if (isPlanMode) {
@@ -1026,6 +1047,24 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
               appActions().setTodos(
                 todos as import('../tools/builtin/todo/types.js').TodoItem[]
               );
+            }
+
+            // 如果是 Skill 工具，设置执行上下文（用于 allowed-tools 限制）
+            if (toolCall.function.name === 'Skill' && result.success && result.metadata) {
+              const metadata = result.metadata as Record<string, unknown>;
+              if (metadata.skillName) {
+                this.activeSkillContext = {
+                  skillName: metadata.skillName as string,
+                  allowedTools: metadata.allowedTools as string[] | undefined,
+                  basePath: (metadata.basePath as string) || '',
+                };
+                logger.debug(
+                  `🎯 Skill "${this.activeSkillContext.skillName}" activated` +
+                    (this.activeSkillContext.allowedTools
+                      ? ` with allowed tools: ${this.activeSkillContext.allowedTools.join(', ')}`
+                      : '')
+                );
+              }
             }
 
             // 添加工具执行结果到消息历史
@@ -1674,6 +1713,92 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
   }
 
   /**
+   * 发现并注册 Skills
+   * Skills 是动态 Prompt 扩展机制，允许 AI 根据用户请求自动调用专业能力
+   */
+  private async discoverSkills(): Promise<void> {
+    try {
+      const result = await discoverSkills({
+        cwd: process.cwd(),
+      });
+
+      if (result.skills.length > 0) {
+        logger.debug(
+          `✅ Discovered ${result.skills.length} skills: ${result.skills.map((s) => s.name).join(', ')}`
+        );
+      } else {
+        logger.debug('📦 No skills configured');
+      }
+
+      // 记录发现过程中的错误（不阻塞初始化）
+      for (const error of result.errors) {
+        logger.warn(`⚠️  Skill loading error at ${error.path}: ${error.error}`);
+      }
+    } catch (error) {
+      logger.warn('Failed to discover skills:', error);
+      // 不抛出错误，允许 Agent 继续初始化
+    }
+  }
+
+  /**
+   * 应用 Skill 的 allowed-tools 限制
+   * 如果有活动的 Skill 且定义了 allowed-tools，则过滤可用工具列表
+   *
+   * @param tools - 原始工具列表
+   * @returns 过滤后的工具列表
+   */
+  private applySkillToolRestrictions(
+    tools: import('../tools/types/index.js').FunctionDeclaration[]
+  ): import('../tools/types/index.js').FunctionDeclaration[] {
+    // 如果没有活动的 Skill，或者 Skill 没有定义 allowed-tools，返回原始工具列表
+    if (!this.activeSkillContext?.allowedTools) {
+      return tools;
+    }
+
+    const allowedTools = this.activeSkillContext.allowedTools;
+    logger.debug(
+      `🔒 Applying Skill tool restrictions: ${allowedTools.join(', ')}`
+    );
+
+    // 过滤工具列表，只保留 allowed-tools 中指定的工具
+    const filteredTools = tools.filter((tool) => {
+      // 检查工具名称是否在 allowed-tools 列表中
+      // 支持精确匹配和通配符模式（如 Bash(git:*)）
+      return allowedTools.some((allowed) => {
+        // 精确匹配
+        if (allowed === tool.name) {
+          return true;
+        }
+
+        // 通配符匹配：Bash(git:*) 匹配 Bash
+        const match = allowed.match(/^(\w+)\(.*\)$/);
+        if (match && match[1] === tool.name) {
+          return true;
+        }
+
+        return false;
+      });
+    });
+
+    logger.debug(
+      `🔒 Filtered tools: ${filteredTools.map((t) => t.name).join(', ')} (${filteredTools.length}/${tools.length})`
+    );
+
+    return filteredTools;
+  }
+
+  /**
+   * 清除 Skill 执行上下文
+   * 当 Skill 执行完成或需要重置时调用
+   */
+  public clearSkillContext(): void {
+    if (this.activeSkillContext) {
+      logger.debug(`🎯 Skill "${this.activeSkillContext.skillName}" deactivated`);
+      this.activeSkillContext = undefined;
+    }
+  }
+
+  /**
    * 处理 @ 文件提及（支持纯文本和多模态消息）
    * 从用户消息中提取 @ 提及，读取文件内容，并追加到消息
    *
@@ -1781,7 +1906,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
   }
 
   /**
-   * 处理 @ 文件提及（纯文本版本）
+   * 处理 @ 文件提及
    * 从用户消息中提取 @ 提及，读取文件内容，并追加到消息
    *
    * @param message - 原始用户消息

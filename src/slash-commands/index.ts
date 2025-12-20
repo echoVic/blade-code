@@ -9,6 +9,7 @@ import ideCommand from './ide.js';
 import initCommand from './init.js';
 import modelCommand from './model.js';
 import permissionsCommand from './permissions.js';
+import skillsCommand from './skills.js';
 import themeCommand from './theme.js';
 import type {
   CommandSuggestion,
@@ -27,6 +28,7 @@ const slashCommands: SlashCommandRegistry = {
   model: modelCommand,
   git: gitCommand,
   ide: ideCommand,
+  skills: skillsCommand,
 };
 
 /**

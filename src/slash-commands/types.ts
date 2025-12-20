@@ -13,7 +13,8 @@ export type SlashCommandAction =
   | 'show_agents_manager'
   | 'show_agent_creation_wizard'
   | 'show_theme_selector'
-  | 'show_permissions_editor';
+  | 'show_permissions_editor'
+  | 'show_skills_manager';
 
 /**
  * Slash command 返回的结构化数据
