@@ -12,7 +12,6 @@ import {
   setSkipUntilVersion,
   type VersionCheckResult,
 } from '../../services/VersionChecker.js';
-import { themeManager } from '../themes/ThemeManager.js';
 
 interface UpdatePromptProps {
   versionInfo: VersionCheckResult;
@@ -49,7 +48,6 @@ export const UpdatePrompt: React.FC<UpdatePromptProps> = ({
   versionInfo,
   onComplete,
 }) => {
-  const theme = themeManager.getTheme();
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateResult, setUpdateResult] = useState<string | null>(null);
@@ -117,26 +115,27 @@ export const UpdatePrompt: React.FC<UpdatePromptProps> = ({
   if (isUpdating) {
     return (
       <Box flexDirection="column" marginY={1}>
-        <Text color={theme.colors.info}>Updating...</Text>
+        <Text color="cyan">Updating...</Text>
       </Box>
     );
   }
 
+  // 使用固定颜色，适配暗色和亮色终端
   return (
     <Box flexDirection="column" marginY={1}>
       {/* 标题 */}
-      <Text color={theme.colors.warning} bold>
+      <Text color="yellow" bold>
         {'✨ Update available! '}
-        <Text color={theme.colors.muted}>
+        <Text color="gray">
           {versionInfo.currentVersion} {'→'} {versionInfo.latestVersion}
         </Text>
       </Text>
 
       {/* Release notes 链接 */}
       <Box marginTop={1}>
-        <Text color={theme.colors.muted}>
+        <Text color="gray">
           Release notes:{' '}
-          <Text color={theme.colors.info} underline>
+          <Text color="cyan" underline>
             {versionInfo.releaseNotesUrl}
           </Text>
         </Text>
@@ -151,15 +150,11 @@ export const UpdatePrompt: React.FC<UpdatePromptProps> = ({
 
           return (
             <Box key={choice.key}>
-              <Text
-                color={isSelected ? theme.colors.primary : theme.colors.text.primary}
-              >
+              <Text color={isSelected ? 'cyan' : undefined}>
                 {prefix}
                 {number}
                 {choice.label}
-                {choice.description && (
-                  <Text color={theme.colors.muted}> ({choice.description})</Text>
-                )}
+                {choice.description && <Text color="gray"> ({choice.description})</Text>}
               </Text>
             </Box>
           );
@@ -168,7 +163,7 @@ export const UpdatePrompt: React.FC<UpdatePromptProps> = ({
 
       {/* 操作提示 */}
       <Box marginTop={1}>
-        <Text color={theme.colors.muted}>Press enter to continue</Text>
+        <Text color="gray">Press enter to continue</Text>
       </Box>
     </Box>
   );

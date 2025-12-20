@@ -33,8 +33,6 @@ export const DEFAULT_CONFIG: BladeConfig = {
   // MCP
   mcpEnabled: false,
   mcpServers: {}, // 空对象表示没有配置 MCP 服务器
-  enabledMcpjsonServers: [], // 空数组表示没有批准的 .mcp.json 服务器
-  disabledMcpjsonServers: [], // 空数组表示没有拒绝的 .mcp.json 服务器
 
   // =====================================
   // 行为配置 (settings.json)

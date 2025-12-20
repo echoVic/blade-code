@@ -3,6 +3,8 @@
  * 支持: add, remove, list, get, add-json, reset-project-choices
  */
 
+import os from 'os';
+import path from 'path';
 import type { CommandModule } from 'yargs';
 import type { McpServerConfig } from '../config/types.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
@@ -25,10 +27,7 @@ function showMcpHelp(): void {
   );
   console.log('  blade mcp get <name>                            获取服务器详情');
   console.log(
-    '  blade mcp add-json <name> <json>                从 JSON 字符串添加服务器'
-  );
-  console.log(
-    '  blade mcp reset-project-choices                 重置项目级 .mcp.json 确认记录\n'
+    '  blade mcp add-json <name> <json>                从 JSON 字符串添加服务器\n'
   );
   console.log('Options:');
   console.log('  -h, --help     显示帮助信息                     [boolean]\n');
@@ -105,6 +104,12 @@ const mcpAddCommand: CommandModule = {
         type: 'number',
         describe: '超时时间（毫秒）',
       })
+      .option('global', {
+        alias: 'g',
+        type: 'boolean',
+        default: false,
+        describe: '存储到全局配置（~/.blade/config.json）',
+      })
       .example([
         [
           '$0 mcp add github -- npx -y @modelcontextprotocol/server-github',
@@ -123,6 +128,7 @@ const mcpAddCommand: CommandModule = {
   handler: async (argv: any) => {
     try {
       let { name, commandOrUrl, args, transport, env, header, timeout } = argv;
+      const isGlobal = argv.global === true;
 
       // 处理 -- 分隔符的情况
       // 当使用 `blade mcp add name -- command args` 时，yargs 会把 -- 后的内容放到 argv['--'] 中
@@ -167,9 +173,16 @@ const mcpAddCommand: CommandModule = {
         config.timeout = timeout;
       }
 
-      await configActions().addMcpServer(name, config);
-      console.log(`✅ MCP 服务器 "${name}" 已添加到当前项目`);
-      console.log(`   项目路径: ${process.cwd()}`);
+      // 根据 --global 选项决定存储位置
+      await configActions().addMcpServer(name, config, {
+        scope: isGlobal ? 'global' : 'project',
+      });
+
+      const configPath = isGlobal
+        ? path.join(os.homedir(), '.blade', 'config.json')
+        : path.join(process.cwd(), '.blade', 'config.json');
+      console.log(`✅ MCP 服务器 "${name}" 已添加`);
+      console.log(`   配置文件: ${configPath}`);
     } catch (error) {
       console.error(
         `❌ 添加失败: ${error instanceof Error ? error.message : '未知错误'}`
@@ -191,18 +204,27 @@ const mcpRemoveCommand: CommandModule = {
         describe: '服务器名称',
         demandOption: true,
       })
+      .option('global', {
+        alias: 'g',
+        type: 'boolean',
+        default: false,
+        describe: '从全局配置删除（~/.blade/config.json）',
+      })
       .example([['$0 mcp remove github', 'Remove the specified MCP server']]);
   },
   handler: async (argv: any) => {
     try {
       const servers = getMcpServers();
+      const isGlobal = argv.global === true;
 
       if (!servers[argv.name]) {
         console.error(`❌ 服务器 "${argv.name}" 不存在`);
         process.exit(1);
       }
 
-      await configActions().removeMcpServer(argv.name);
+      await configActions().removeMcpServer(argv.name, {
+        scope: isGlobal ? 'global' : 'project',
+      });
       console.log(`✅ MCP 服务器 "${argv.name}" 已删除`);
     } catch (error) {
       console.error(
@@ -222,7 +244,7 @@ const mcpListCommand: CommandModule = {
     try {
       const servers = getMcpServers();
 
-      console.log(`\n当前项目: ${process.cwd()}\n`);
+      console.log('');
 
       if (Object.keys(servers).length === 0) {
         console.log('暂无配置的 MCP 服务器');
@@ -346,6 +368,12 @@ const mcpAddJsonCommand: CommandModule = {
         describe: 'JSON 配置字符串',
         demandOption: true,
       })
+      .option('global', {
+        alias: 'g',
+        type: 'boolean',
+        default: false,
+        describe: '存储到全局配置（~/.blade/config.json）',
+      })
       .example([
         [
           '$0 mcp add-json my-server \'{"type":"stdio","command":"npx","args":["-y","@example/server"]}\'',
@@ -356,35 +384,24 @@ const mcpAddJsonCommand: CommandModule = {
   handler: async (argv: any) => {
     try {
       const serverConfig = JSON.parse(argv.json) as McpServerConfig;
+      const isGlobal = argv.global === true;
 
       if (!serverConfig.type) {
         throw new Error('配置必须包含 "type" 字段');
       }
 
-      await configActions().addMcpServer(argv.name, serverConfig);
+      await configActions().addMcpServer(argv.name, serverConfig, {
+        scope: isGlobal ? 'global' : 'project',
+      });
+
+      const configPath = isGlobal
+        ? path.join(os.homedir(), '.blade', 'config.json')
+        : path.join(process.cwd(), '.blade', 'config.json');
       console.log(`✅ MCP 服务器 "${argv.name}" 已添加`);
-      console.log(`   项目路径: ${process.cwd()}`);
+      console.log(`   配置文件: ${configPath}`);
     } catch (error) {
       console.error(
         `❌ 添加失败: ${error instanceof Error ? error.message : '未知错误'}`
-      );
-      process.exit(1);
-    }
-  },
-};
-
-// MCP Reset-Project-Choices 子命令
-const mcpResetProjectChoicesCommand: CommandModule = {
-  command: 'reset-project-choices',
-  describe: '重置项目级 .mcp.json 确认记录',
-  handler: async () => {
-    try {
-      await configActions().resetProjectChoices();
-      console.log(`✅ 已重置当前项目的 .mcp.json 确认记录`);
-      console.log(`   项目路径: ${process.cwd()}`);
-    } catch (error) {
-      console.error(
-        `❌ 重置失败: ${error instanceof Error ? error.message : '未知错误'}`
       );
       process.exit(1);
     }
@@ -402,7 +419,6 @@ export const mcpCommands: CommandModule = {
       .command(mcpListCommand)
       .command(mcpGetCommand)
       .command(mcpAddJsonCommand)
-      .command(mcpResetProjectChoicesCommand)
       .demandCommand(0) // 允许不传子命令
       .help(false) // 禁用自动帮助，我们自己处理
       .option('help', {
@@ -413,15 +429,7 @@ export const mcpCommands: CommandModule = {
   },
   handler: (argv: any) => {
     // 检查是否有子命令
-    const subcommands = [
-      'add',
-      'remove',
-      'list',
-      'ls',
-      'get',
-      'add-json',
-      'reset-project-choices',
-    ];
+    const subcommands = ['add', 'remove', 'list', 'ls', 'get', 'add-json'];
     const hasSubcommand = argv._.some((arg: string) => subcommands.includes(arg));
 
     // 如果没有子命令或者显式请求帮助，显示帮助信息

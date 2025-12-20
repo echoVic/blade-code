@@ -6,63 +6,56 @@
 
 ## 核心架构
 
-### 配置结构（单一用户级配置）
+### 配置结构
 
-**~/.blade/config.json**（按项目路径组织）:
+MCP 服务器配置存储在 `config.json` 中（不是 `settings.json`）。
+
+**项目级配置（默认）** - `.blade/config.json`:
 ```json
 {
-  "/absolute/path/to/project1": {
-    "mcpServers": {
-      "server-name": {
-        "type": "stdio",
-        "command": "npx",
-        "args": ["-y", "@example/mcp-server"],
-        "env": {}
-      }
-    },
-    "enabledMcpjsonServers": [],
-    "disabledMcpjsonServers": []
-  },
-  "/absolute/path/to/project2": {
-    "mcpServers": { ... }
+  "mcpServers": {
+    "project-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@example/mcp-server"],
+      "env": {}
+    }
   }
 }
 ```
 
-### 项目级配置 .mcp.json（可选，团队共享）
-
+**全局配置（-g/--global）** - `~/.blade/config.json`:
 ```json
 {
   "mcpServers": {
-    "team-api": {
+    "global-server": {
       "type": "http",
-      "url": "http://internal-api.company.com/mcp",
+      "url": "http://localhost:3000/mcp",
       "headers": {}
     }
   }
 }
 ```
 
+### 加载顺序与合并策略
+
+1. 加载全局配置 `~/.blade/config.json`
+2. 加载项目配置 `.blade/config.json`
+3. **合并 mcpServers**：项目服务器补充/覆盖全局服务器
+
+```
+全局: { serverA: {...}, serverB: {...} }
+项目: { serverB: {...新配置}, serverC: {...} }
+结果: { serverA: {...}, serverB: {...新配置}, serverC: {...} }
+```
+
 ## 实施阶段
 
-### Phase 1: 配置管理器重构（2天）
+### Phase 1: 配置管理器重构（已完成）
 
 #### 1.1 类型定义 (`src/config/types.ts`)
 
 ```typescript
-// 用户配置（按项目路径组织）
-export interface BladeUserConfig {
-  [projectPath: string]: ProjectConfig;
-}
-
-export interface ProjectConfig {
-  mcpServers?: Record<string, McpServerConfig>;
-  enabledMcpjsonServers?: string[];   // .mcp.json 中已批准的服务器
-  disabledMcpjsonServers?: string[];  // .mcp.json 中已拒绝的服务器
-  allowedTools?: string[];
-  mcpContextUris?: string[];
-}
-
 export interface McpServerConfig {
   type: 'stdio' | 'sse' | 'http';
 
@@ -80,83 +73,29 @@ export interface McpServerConfig {
 }
 ```
 
-#### 1.2 配置管理器 (`src/config/ConfigManager.ts`)
+#### 1.2 配置管理 (`src/store/vanilla.ts`)
 
-需要添加的方法：
+MCP 配置通过 Store actions 管理，存储在全局 `~/.blade/settings.json`：
 
 ```typescript
-export class ConfigManager {
-  private userConfigPath = path.join(os.homedir(), '.blade', 'config.json');
-  private currentProjectPath: string;
+// 通过 Store actions 管理 MCP 配置
+import { configActions, getMcpServers } from '../store/vanilla.js';
 
-  constructor() {
-    this.currentProjectPath = process.cwd();
-  }
+// 获取所有 MCP 服务器
+const servers = getMcpServers();
 
-  // 加载用户配置
-  private loadUserConfig(): BladeUserConfig {
-    if (!fs.existsSync(this.userConfigPath)) {
-      return {};
-    }
-    return JSON.parse(fs.readFileSync(this.userConfigPath, 'utf-8'));
-  }
+// 添加 MCP 服务器
+await configActions().addMcpServer('server-name', {
+  type: 'stdio',
+  command: 'npx',
+  args: ['-y', '@example/server'],
+});
 
-  // 保存用户配置
-  private async saveUserConfig(config: BladeUserConfig): Promise<void> {
-    const dir = path.dirname(this.userConfigPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    await fs.promises.writeFile(
-      this.userConfigPath,
-      JSON.stringify(config, null, 2),
-      'utf-8'
-    );
-  }
-
-  // 获取当前项目配置
-  getProjectConfig(): ProjectConfig {
-    const userConfig = this.loadUserConfig();
-    return userConfig[this.currentProjectPath] || {};
-  }
-
-  // 更新当前项目配置
-  async updateProjectConfig(updates: Partial<ProjectConfig>): Promise<void> {
-    const userConfig = this.loadUserConfig();
-    userConfig[this.currentProjectPath] = {
-      ...userConfig[this.currentProjectPath],
-      ...updates
-    };
-    await this.saveUserConfig(userConfig);
-  }
-
-  // MCP 服务器管理
-  getMcpServers(): Record<string, McpServerConfig> {
-    return this.getProjectConfig().mcpServers || {};
-  }
-
-  async addMcpServer(name: string, config: McpServerConfig): Promise<void> {
-    const servers = this.getMcpServers();
-    servers[name] = config;
-    await this.updateProjectConfig({ mcpServers: servers });
-  }
-
-  async removeMcpServer(name: string): Promise<void> {
-    const servers = this.getMcpServers();
-    delete servers[name];
-    await this.updateProjectConfig({ mcpServers: servers });
-  }
-
-  async resetProjectChoices(): Promise<void> {
-    await this.updateProjectConfig({
-      enabledMcpjsonServers: [],
-      disabledMcpjsonServers: []
-    });
-  }
-}
+// 删除 MCP 服务器
+await configActions().removeMcpServer('server-name');
 ```
 
-### Phase 2: CLI 命令实现（2-3天）
+### Phase 2: CLI 命令实现（已完成）
 
 #### 2.1 命令集
 
@@ -166,16 +105,17 @@ blade mcp add <name> <commandOrUrl> [args...]
   --env KEY=value (可多次使用)
   --header "Key: Value" (可多次使用)
   --timeout <ms>
+  -g, --global  存储到全局配置（默认: 项目配置）
 
 blade mcp remove <name>
+  -g, --global  从全局配置删除（默认: 项目配置）
 
 blade mcp list
 
 blade mcp get <name>
 
 blade mcp add-json <name> <json>
-
-blade mcp reset-project-choices
+  -g, --global  存储到全局配置（默认: 项目配置）
 ```
 
 #### 2.2 实现 (`src/commands/mcp.ts`)
@@ -361,66 +301,51 @@ function parseHeaderArray(headerArray: string[]): Record<string, string> {
 }
 ```
 
-### Phase 3: .mcp.json 支持（2天）
+### Phase 3: CLI 参数支持（已完成）
 
-#### 3.1 加载项目配置 (`src/mcp/loadProjectMcpConfig.ts`)
+#### 3.1 加载 CLI 配置 (`src/mcp/loadMcpConfig.ts`)
+
+支持通过 `--mcp-config` CLI 参数加载 MCP 配置：
 
 ```typescript
-import * as fs from 'fs';
-import * as path from 'path';
-import inquirer from 'inquirer';
-import { ConfigManager } from '../config/ConfigManager.js';
+import fs from 'fs/promises';
+import path from 'path';
 import type { McpServerConfig } from '../config/types.js';
+import { getMcpServers, getState } from '../store/vanilla.js';
 
-export async function loadProjectMcpConfig(): Promise<void> {
-  const mcpJsonPath = path.join(process.cwd(), '.mcp.json');
+/**
+ * 从 CLI --mcp-config 参数加载 MCP 配置
+ * 支持：
+ * - JSON 文件路径: "./mcp-config.json"
+ * - JSON 字符串 (单个服务器): '{"name": "xxx", "type": "stdio", ...}'
+ * - JSON 字符串 (多个服务器): '{"server1": {...}, "server2": {...}}'
+ */
+export async function loadMcpConfigFromCli(mcpConfigs: string[]): Promise<void> {
+  for (const configArg of mcpConfigs) {
+    let configData: Record<string, McpServerConfig>;
 
-  if (!fs.existsSync(mcpJsonPath)) {
-    return;
-  }
-
-  const mcpJsonConfig = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf-8'));
-  const configManager = ConfigManager.getInstance();
-  const projectConfig = configManager.getProjectConfig();
-
-  const enabledServers = projectConfig.enabledMcpjsonServers || [];
-  const disabledServers = projectConfig.disabledMcpjsonServers || [];
-
-  for (const [serverName, serverConfig] of Object.entries(mcpJsonConfig.mcpServers || {})) {
-    // 已拒绝的跳过
-    if (disabledServers.includes(serverName)) {
-      continue;
-    }
-
-    // 已批准的直接加载
-    if (enabledServers.includes(serverName)) {
-      await configManager.addMcpServer(serverName, serverConfig as McpServerConfig);
-      continue;
-    }
-
-    // 未确认的询问用户
-    const { approve } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'approve',
-        message: `.mcp.json 中发现服务器 "${serverName}"，是否启用？`,
-        default: false
+    if (configArg.trim().startsWith('{')) {
+      // JSON 字符串
+      const parsed = JSON.parse(configArg);
+      if (parsed.name && parsed.type) {
+        const { name, ...serverConfig } = parsed;
+        configData = { [name]: serverConfig };
+      } else {
+        configData = parsed;
       }
-    ]);
-
-    if (approve) {
-      await configManager.addMcpServer(serverName, serverConfig as McpServerConfig);
-      enabledServers.push(serverName);
     } else {
-      disabledServers.push(serverName);
+      // 文件路径
+      const filePath = path.resolve(process.cwd(), configArg);
+      const content = await fs.readFile(filePath, 'utf-8');
+      const parsed = JSON.parse(content);
+      configData = parsed.mcpServers || parsed;
     }
-  }
 
-  // 保存确认记录
-  await configManager.updateProjectConfig({
-    enabledMcpjsonServers: enabledServers,
-    disabledMcpjsonServers: disabledServers
-  });
+    // 临时注入到 Store（不持久化）
+    const currentServers = getMcpServers();
+    const updatedServers = { ...currentServers, ...configData };
+    getState().config.actions.updateConfig({ mcpServers: updatedServers });
+  }
 }
 ```
 
@@ -709,7 +634,7 @@ blade mcp add-json my-server '{"type":"stdio","command":"npx","args":["-y","@exa
 ### 管理服务器
 
 ```bash
-# 列出当前项目的服务器
+# 列出所有 MCP 服务器
 blade mcp list
 
 # 获取服务器详情
@@ -717,9 +642,16 @@ blade mcp get github
 
 # 删除服务器
 blade mcp remove github
+```
 
-# 重置 .mcp.json 确认记录
-blade mcp reset-project-choices
+### 使用 CLI 参数加载临时配置
+
+```bash
+# 从 JSON 文件加载
+blade --mcp-config ./my-mcp-servers.json
+
+# 从 JSON 字符串加载
+blade --mcp-config '{"name":"temp","type":"stdio","command":"npx","args":["-y","@example/server"]}'
 ```
 
 ## 文件结构
@@ -727,23 +659,25 @@ blade mcp reset-project-choices
 ```
 src/
 ├── commands/
-│   └── mcp.ts                    # 新增：CLI 命令
+│   └── mcp.ts                    # CLI 命令
 ├── config/
-│   ├── ConfigManager.ts          # 修改：添加项目配置管理
-│   └── types.ts                  # 修改：新增类型定义
+│   ├── ConfigService.ts          # 配置持久化服务
+│   └── types.ts                  # 类型定义
+├── store/
+│   └── vanilla.ts                # Store actions (MCP 配置管理)
 ├── mcp/
-│   ├── McpClient.ts              # 修改：使用传输抽象
-│   ├── McpRegistry.ts            # 修改：工具冲突处理
-│   ├── createMcpTool.ts          # 已有：保持不变
-│   ├── types.ts                  # 已有：保持不变
-│   ├── loadProjectMcpConfig.ts   # 新增：.mcp.json 加载
-│   └── transports/               # 新增：传输层
+│   ├── McpClient.ts              # MCP 客户端
+│   ├── McpRegistry.ts            # 服务器注册中心
+│   ├── createMcpTool.ts          # 工具转换器
+│   ├── loadMcpConfig.ts          # CLI 参数配置加载
+│   ├── types.ts                  # MCP 类型定义
+│   └── transports/               # 传输层
 │       ├── types.ts
 │       ├── StdioTransport.ts
 │       ├── SSETransport.ts
 │       └── HttpTransport.ts
 └── agent/
-    └── Agent.ts                  # 修改：集成 MCP 加载
+    └── Agent.ts                  # Agent 集成 MCP 加载
 ```
 
 ## 预计工作量
@@ -757,12 +691,55 @@ src/
 
 ## 关键设计决策
 
-1. ✅ **单一配置文件**：`~/.blade/config.json`，按项目路径组织
-2. ✅ **项目隔离**：每个项目独立的 MCP 配置
-3. ✅ **三种传输**：stdio/sse/http 完整支持
-4. ✅ **工具冲突处理**：仅在冲突时添加服务器名前缀
-5. ✅ **.mcp.json 支持**：团队共享配置，需用户确认
-6. ✅ **Claude Code 兼容**：配置结构完全匹配
+1. ✅ **项目级配置优先**：默认存储在 `.blade/config.json`，使用 `-g` 存储到全局
+2. ✅ **三种传输**：stdio/sse/http 完整支持
+3. ✅ **工具冲突处理**：仅在冲突时添加服务器名前缀
+4. ✅ **CLI 参数支持**：`--mcp-config` 临时加载配置（不持久化）
+5. ✅ **Store 统一管理**：MCP 配置通过 Zustand Store 管理
+
+## 架构图
+
+```mermaid
+graph TB
+    subgraph "配置层"
+        PC[.blade/config.json<br/>项目配置（默认）]
+        GC[~/.blade/config.json<br/>全局配置（-g）]
+        CLI[--mcp-config<br/>CLI 参数]
+    end
+
+    subgraph "管理层"
+        Store[Zustand Store<br/>状态管理]
+        LMC[loadMcpConfig<br/>CLI 配置加载器]
+        MR[McpRegistry<br/>注册中心]
+    end
+
+    subgraph "客户端层"
+        MCL[McpClient<br/>MCP 客户端]
+        HM[HealthMonitor<br/>健康监控]
+    end
+
+    subgraph "工具层"
+        CMT[createMcpTool<br/>工具转换器]
+        TR[ToolRegistry<br/>工具注册中心]
+    end
+
+    subgraph "外部"
+        SERVERS[MCP Servers<br/>外部服务器]
+    end
+
+    PC --> Store
+    GC --> Store
+    CLI --> LMC
+    LMC --> Store
+
+    Store --> MR
+    MR --> MCL
+    MCL --> HM
+    MCL --> SERVERS
+
+    MR --> CMT
+    CMT --> TR
+```
 
 ## 参考资源
 

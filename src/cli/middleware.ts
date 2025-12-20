@@ -42,24 +42,21 @@ export const validatePermissions: MiddlewareFunction = (argv) => {
 
 /**
  * 配置加载中间件
+ * 所有命令（包括 UI 模式）都会执行，负责初始化 ConfigManager 和 Store
  */
 export const loadConfiguration: MiddlewareFunction = async (argv) => {
-  // 1. 初始化 Zustand Store（CLI 路径）
+  // 1. 初始化 ConfigManager 和 Store（所有命令共用）
   try {
     const configManager = ConfigManager.getInstance();
     const config = await configManager.initialize();
-
-    // 设置到 store（让 CLI 子命令和 Agent 都能访问）
     getState().config.actions.setConfig(config);
 
     if (argv.debug) {
-      logger.info('[CLI] Store 已初始化');
+      logger.info('[CLI] 配置已加载到 Store');
     }
   } catch (error) {
-    // ⚠️ 严重错误：配置加载失败会导致后续所有依赖 Store 的操作失败
-    // 不能静默吞掉，必须明确报错并退出
     logger.error(
-      '[CLI] ❌ 配置初始化失败，无法继续执行命令',
+      '[CLI] ❌ 配置初始化失败',
       error instanceof Error ? error.message : error
     );
     console.error('\n❌ 配置初始化失败\n');
@@ -71,15 +68,7 @@ export const loadConfiguration: MiddlewareFunction = async (argv) => {
     process.exit(1);
   }
 
-  // 2. 处理设置源
-  if (typeof argv.settingSources === 'string') {
-    const sources = argv.settingSources.split(',').map((s) => s.trim());
-    if (argv.debug) {
-      logger.info(`Loading configuration from: ${sources.join(', ')}`);
-    }
-  }
-
-  // 3. 验证会话选项
+  // 2. 验证会话选项
   if (argv.continue && argv.resume) {
     throw new Error('Cannot use both --continue and --resume flags simultaneously');
   }

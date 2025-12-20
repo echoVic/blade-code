@@ -140,20 +140,8 @@ export const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     persistable: true,
   },
   mcpServers: {
-    target: 'settings',
-    defaultScope: 'project', // MCP 服务器配置存储在项目配置中
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  enabledMcpjsonServers: {
-    target: 'settings',
-    defaultScope: 'project', // 项目级 .mcp.json 确认记录
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  disabledMcpjsonServers: {
-    target: 'settings',
-    defaultScope: 'project', // 项目级 .mcp.json 确认记录
+    target: 'config',
+    defaultScope: 'project', // MCP 服务器配置默认存储在项目配置中
     mergeStrategy: 'replace',
     persistable: true,
   },

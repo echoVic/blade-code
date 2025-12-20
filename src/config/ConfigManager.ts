@@ -95,6 +95,7 @@ export class ConfigManager {
   /**
    * 加载 config.json 文件 (2层优先级)
    * 优先级: 项目配置 > 用户配置 > 默认配置
+   * 注意: mcpServers 字段使用合并策略（项目配置补充/覆盖全局配置）
    */
   private async loadConfigFiles(): Promise<Partial<BladeConfig>> {
     const userConfigPath = path.join(os.homedir(), '.blade', 'config.json');
@@ -111,7 +112,18 @@ export class ConfigManager {
     // 2. 加载项目配置
     const projectConfig = await this.loadJsonFile(projectConfigPath);
     if (projectConfig) {
+      // mcpServers 使用合并策略：项目服务器补充/覆盖全局服务器
+      const mergedMcpServers = {
+        ...(config.mcpServers || {}),
+        ...(projectConfig.mcpServers || {}),
+      };
+
       config = { ...config, ...projectConfig };
+
+      // 如果有任何 MCP 服务器，设置合并后的结果
+      if (Object.keys(mergedMcpServers).length > 0) {
+        config.mcpServers = mergedMcpServers;
+      }
     }
 
     return config;
@@ -201,6 +213,14 @@ export class ConfigManager {
       result.env = merge({}, result.env, override.env);
     }
 
+    // 合并 mcpServers (对象合并，同名服务器覆盖)
+    if (override.mcpServers) {
+      result.mcpServers = {
+        ...(result.mcpServers || {}),
+        ...override.mcpServers,
+      };
+    }
+
     // 其他字段直接覆盖（replace 策略）
     if (override.disableAllHooks !== undefined) {
       result.disableAllHooks = override.disableAllHooks;
@@ -210,15 +230,6 @@ export class ConfigManager {
     }
     if (override.maxTurns !== undefined) {
       result.maxTurns = override.maxTurns;
-    }
-    if (override.mcpServers !== undefined) {
-      result.mcpServers = override.mcpServers;
-    }
-    if (override.enabledMcpjsonServers !== undefined) {
-      result.enabledMcpjsonServers = override.enabledMcpjsonServers;
-    }
-    if (override.disabledMcpjsonServers !== undefined) {
-      result.disabledMcpjsonServers = override.disabledMcpjsonServers;
     }
 
     return result;

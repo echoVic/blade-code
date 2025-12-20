@@ -6,6 +6,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import semver from 'semver';
 import { fileURLToPath } from 'url';
 
 // 包名
@@ -141,24 +142,6 @@ async function fetchLatestVersion(): Promise<string | null> {
   }
 }
 
-/**
- * 比较版本号
- * 返回: 1 如果 a > b, -1 如果 a < b, 0 如果相等
- */
-function compareVersions(a: string, b: string): number {
-  const partsA = a.split('.').map(Number);
-  const partsB = b.split('.').map(Number);
-
-  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
-    const numA = partsA[i] || 0;
-    const numB = partsB[i] || 0;
-
-    if (numA > numB) return 1;
-    if (numA < numB) return -1;
-  }
-
-  return 0;
-}
 
 /**
  * 检查版本更新
@@ -215,14 +198,14 @@ export async function checkVersion(forceCheck = false): Promise<VersionCheckResu
     };
   }
 
-  const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+  const hasUpdate = semver.gt(latestVersion, currentVersion);
 
   // 检查是否应该跳过此版本的提示
   let shouldPrompt = hasUpdate;
   if (hasUpdate && skipUntilVersion) {
     // 如果 latestVersion > skipUntilVersion，说明有新版本，应该显示提示
     // 如果 latestVersion <= skipUntilVersion，说明用户选择跳过，不显示提示
-    shouldPrompt = compareVersions(latestVersion, skipUntilVersion) > 0;
+    shouldPrompt = semver.gt(latestVersion, skipUntilVersion);
   }
 
   return {

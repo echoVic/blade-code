@@ -19,9 +19,9 @@ import { installCommands } from './commands/install.js';
 import { mcpCommands } from './commands/mcp.js';
 import { handlePrintMode } from './commands/print.js';
 import { updateCommands } from './commands/update.js';
-import { getConfigService } from './config/index.js';
 import { Logger } from './logging/Logger.js';
 import { initializeGracefulShutdown } from './services/GracefulShutdown.js';
+import { checkVersionOnStartup } from './services/VersionChecker.js';
 import { AppWrapper as BladeApp } from './ui/App.js';
 
 // ⚠️ 关键：在创建任何 logger 之前，先解析 --debug 参数并设置全局配置
@@ -38,6 +38,10 @@ if (debugIndex !== -1) {
 export async function main() {
   // 初始化优雅退出处理器（捕获 uncaughtException/unhandledRejection/SIGTERM）
   initializeGracefulShutdown();
+
+  // ⚡ 尽早启动版本检查（不 await，与后续初始化并行）
+  // 版本检查不依赖任何配置状态，可以立即开始网络请求
+  const versionCheckPromise = checkVersionOnStartup();
 
   // 首先检查是否是 print 模式
   if (await handlePrintMode()) {
@@ -117,6 +121,8 @@ export async function main() {
           // 确保某些字段是正确的类型
           debug: argv.debug,
           print: Boolean(argv.print),
+          // 传递版本检查 Promise（已在 main() 开头启动）
+          versionCheckPromise,
         };
 
         // 移除内部字段

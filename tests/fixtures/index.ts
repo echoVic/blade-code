@@ -407,8 +407,6 @@ export class BladeDataFactory {
       debug: false,
       mcpEnabled: false,
       mcpServers: {},
-      enabledMcpjsonServers: [],
-      disabledMcpjsonServers: [],
       permissions: {
         allow: [],
         ask: [],

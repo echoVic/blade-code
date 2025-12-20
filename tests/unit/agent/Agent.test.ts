@@ -347,8 +347,6 @@ describe('Agent', () => {
       debug: false,
       mcpEnabled: false,
       mcpServers: {},
-      enabledMcpjsonServers: [],
-      disabledMcpjsonServers: [],
       permissions: {
         allow: [],
         ask: [],
@@ -524,8 +522,6 @@ describe('Agent', () => {
           debug: false,
           mcpEnabled: false,
           mcpServers: {},
-          enabledMcpjsonServers: [],
-          disabledMcpjsonServers: [],
           permissions: {
             allow: [],
             ask: [],

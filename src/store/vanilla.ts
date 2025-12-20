@@ -519,7 +519,7 @@ export const configActions = () => ({
 
   /**
    * 添加 MCP 服务器
-   * 注意：MCP 服务器配置存储在项目配置中
+   * 默认存储在项目配置中（.blade/config.json），使用 scope: 'global' 存储到全局配置
    */
   addMcpServer: async (
     name: string,
@@ -541,7 +541,7 @@ export const configActions = () => ({
     // 3. 更新 Store
     getState().config.actions.updateConfig({ mcpServers: updatedServers });
 
-    // 4. 持久化到项目配置
+    // 4. 持久化（默认项目级，可通过 options.scope 覆盖）
     await getConfigService().save(
       { mcpServers: updatedServers },
       { scope: 'project', ...options }
@@ -550,6 +550,7 @@ export const configActions = () => ({
 
   /**
    * 删除 MCP 服务器
+   * 默认从项目配置删除，使用 scope: 'global' 从全局配置删除
    */
   removeMcpServer: async (name: string, options: SaveOptions = {}): Promise<void> => {
     // 1. 从 Store 获取当前的 mcpServers
@@ -565,29 +566,11 @@ export const configActions = () => ({
     // 3. 更新 Store
     getState().config.actions.updateConfig({ mcpServers: updatedServers });
 
-    // 4. 持久化到项目配置
+    // 4. 持久化（默认项目级，可通过 options.scope 覆盖）
     await getConfigService().save(
       { mcpServers: updatedServers },
       { scope: 'project', ...options }
     );
   },
 
-  /**
-   * 重置项目级 .mcp.json 确认记录
-   */
-  resetProjectChoices: async (options: SaveOptions = {}): Promise<void> => {
-    const config = getConfig();
-    if (!config) throw new Error('Config not initialized');
-
-    const updates = {
-      enabledMcpjsonServers: [],
-      disabledMcpjsonServers: [],
-    };
-
-    // 更新 Store
-    getState().config.actions.updateConfig(updates);
-
-    // 持久化到项目配置
-    await getConfigService().save(updates, { scope: 'project', ...options });
-  },
 });

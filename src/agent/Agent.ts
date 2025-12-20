@@ -21,7 +21,7 @@ import {
 import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import { loadProjectMcpConfig } from '../mcp/loadProjectMcpConfig.js';
+import { loadMcpConfigFromCli } from '../mcp/loadMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { buildSystemPrompt, createPlanModeReminder } from '../prompts/index.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
@@ -1008,7 +1008,8 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
             const compactResult = await CompactionService.compact(context.messages, {
               trigger: 'auto',
               modelName: chatConfig.model,
-              maxContextTokens: chatConfig.maxContextTokens ?? this.config.maxContextTokens,
+              maxContextTokens:
+                chatConfig.maxContextTokens ?? this.config.maxContextTokens,
               apiKey: chatConfig.apiKey,
               baseURL: chatConfig.baseUrl,
               actualPreTokens: lastPromptTokens,
@@ -1517,16 +1518,9 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
    */
   private async registerMcpTools(): Promise<void> {
     try {
-      // 1. 加载 MCP 配置（支持 CLI 参数 --mcp-config 和 --strict-mcp-config）
-      const loadedFromMcpJson = await loadProjectMcpConfig({
-        interactive: false, // Agent 初始化时不启用交互
-        silent: true, // 静默模式
-        mcpConfig: this.runtimeOptions.mcpConfig, // 从 CLI 参数传入
-        strictMcpConfig: this.runtimeOptions.strictMcpConfig, // 从 CLI 参数传入
-      });
-
-      if (loadedFromMcpJson > 0) {
-        logger.debug(`✅ Loaded ${loadedFromMcpJson} servers from .mcp.json`);
+      // 1. 处理 --mcp-config CLI 参数（从外部模块加载）
+      if (this.runtimeOptions.mcpConfig && this.runtimeOptions.mcpConfig.length > 0) {
+        await loadMcpConfigFromCli(this.runtimeOptions.mcpConfig);
       }
 
       // 2. 获取所有 MCP 服务器配置（从 Store - 统一数据源）
