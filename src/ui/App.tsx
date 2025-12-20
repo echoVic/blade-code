@@ -12,11 +12,15 @@ import { HookManager } from '../hooks/HookManager.js';
 import { Logger } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { registerCleanup } from '../services/GracefulShutdown.js';
-import { checkVersionOnStartup } from '../services/VersionChecker.js';
+import {
+  checkVersionOnStartup,
+  type VersionCheckResult,
+} from '../services/VersionChecker.js';
 import { appActions, getState } from '../store/vanilla.js';
 import { BackgroundShellManager } from '../tools/builtin/shell/BackgroundShellManager.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
+import { UpdatePrompt } from './components/UpdatePrompt.js';
 import { themeManager } from './themes/ThemeManager.js';
 import { formatErrorMessage } from './utils/security.js';
 
@@ -68,6 +72,8 @@ function initializeStoreState(config: RuntimeConfig): void {
  */
 export const AppWrapper: React.FC<AppProps> = (props) => {
   const [isInitialized, setIsInitialized] = useState(false);
+  const [versionInfo, setVersionInfo] = useState<VersionCheckResult | null>(null);
+  const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
 
   const initialize = useMemoizedFn(async () => {
     try {
@@ -126,14 +132,12 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
         }
       }
 
-      // 8. 后台检查版本更新并自动升级（不阻塞启动）
-      checkVersionOnStartup().then((message) => {
-        if (message) {
-          console.log('');
-          console.log(message);
-          console.log('');
-        }
-      });
+      // 8. 检查版本更新（等待完成后再显示界面）
+      const versionResult = await checkVersionOnStartup();
+      if (versionResult) {
+        setVersionInfo(versionResult);
+        setShowUpdatePrompt(true);
+      }
 
       // 9. 注册退出清理函数
       registerCleanup(async () => {
@@ -178,6 +182,18 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
   // 等待初始化完成
   if (!isInitialized) {
     return null; // 或者显示一个加载指示器
+  }
+
+  // 显示版本更新提示
+  if (showUpdatePrompt && versionInfo) {
+    return (
+      <ErrorBoundary>
+        <UpdatePrompt
+          versionInfo={versionInfo}
+          onComplete={() => setShowUpdatePrompt(false)}
+        />
+      </ErrorBoundary>
+    );
   }
 
   return (
