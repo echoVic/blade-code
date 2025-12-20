@@ -22,7 +22,7 @@ blade "帮我创建一个 README"
 | `--debug [filters]` | 打开调试日志，支持类别过滤（如 `--debug agent,ui` 或 `--debug "!chat,!loop"`）。 |
 | `--permission-mode <default\|autoEdit\|yolo\|plan>` / `--yolo` | 启动时设置权限模式（也会写入配置）。 |
 | `--resume [id]` | 恢复历史会话：`--resume` 交互选择，`--resume <id>` 直接加载。 |
-| `--max-turns <n>` | 控制单次会话的最大轮次（0 = 禁用对话，-1 = 不限，上限 100）。 |
+| `--max-turns <n>` | 控制触发询问的轮次阈值（0 = 禁用对话，-1 = 默认，上限 100）。 |
 | `--system-prompt` / `--append-system-prompt` | 替换或追加系统提示词（传入 Agent）。 |
 
 > 其他 CLI 选项（如 `--allowed-tools`、`--session-id`、`--ide` 等）虽在参数表中，但当前代码尚未消费它们。

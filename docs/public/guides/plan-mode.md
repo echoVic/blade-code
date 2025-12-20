@@ -27,6 +27,8 @@ Plan 模式仅允许 `ReadOnly` 工具：
 - 写操作：Edit、Write、NotebookEdit 以及任何 MCP 写工具
 - 执行类：Bash、KillShell、Skill、SlashCommand（Execute 类工具）
 
+> 注意：Plan 模式下如果达到轮次上限（100 轮），也会暂停并询问用户是否继续。
+
 ## 如何使用
 
 ### 激活 Plan 模式
