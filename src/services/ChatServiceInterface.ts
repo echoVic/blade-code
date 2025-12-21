@@ -6,6 +6,7 @@
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { ProviderType } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+import { GptOpenaiPlatformChatService } from './GptOpenaiPlatformChatService.js';
 import { OpenAIChatService } from './OpenAIChatService.js';
 
 const logger = createLogger(LogCategory.SERVICE);
@@ -34,6 +35,7 @@ export interface ChatConfig {
   maxContextTokens?: number; // 上下文窗口大小（用于压缩判断）
   maxOutputTokens?: number; // 输出 token 限制（传给 API 的 max_tokens）
   timeout?: number;
+  apiVersion?: string; // GPT OpenAI Platform 专用：API 版本（如 '2024-03-01-preview'）
 }
 
 /**
@@ -117,6 +119,9 @@ export function createChatService(config: ChatConfig): IChatService {
   switch (config.provider) {
     case 'openai-compatible':
       return new OpenAIChatService(config);
+
+    case 'custom-openai':
+      return new GptOpenaiPlatformChatService(config);
 
     case 'anthropic':
       // Anthropic 暂未实现，抛出友好错误

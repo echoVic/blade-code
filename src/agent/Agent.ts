@@ -609,17 +609,9 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         logger.debug('可用工具数量:', tools.length);
         logger.debug('================================\n');
 
-        // 3. 过滤孤儿 tool 消息（防止 API 400 错误）
-        const filteredMessages = this.filterOrphanToolMessages(messages);
-        if (filteredMessages.length < messages.length) {
-          logger.debug(
-            `🔧 过滤掉 ${messages.length - filteredMessages.length} 条孤儿 tool 消息`
-          );
-        }
-
-        // 4. 直接调用 ChatService（OpenAI SDK 已内置重试机制）
+        // 3. 直接调用 ChatService（各 provider 自行处理消息过滤）
         const turnResult = await this.chatService.chat(
-          filteredMessages,
+          messages,
           tools,
           options?.signal
         );
@@ -1174,39 +1166,6 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
     // 调用重构后的 runLoop
     return await this.runLoop(message, chatContext, options);
-  }
-
-  /**
-   * 过滤孤儿 tool 消息
-   *
-   * 孤儿 tool 消息是指 tool_call_id 对应的 assistant 消息不存在的 tool 消息。
-   * 这种情况通常发生在上下文压缩后，导致 OpenAI API 返回 400 错误。
-   *
-   * @param messages - 原始消息列表
-   * @returns 过滤后的消息列表
-   */
-  private filterOrphanToolMessages(messages: Message[]): Message[] {
-    // 收集所有可用的 tool_call ID
-    const availableToolCallIds = new Set<string>();
-    for (const msg of messages) {
-      if (msg.role === 'assistant' && msg.tool_calls) {
-        for (const tc of msg.tool_calls) {
-          availableToolCallIds.add(tc.id);
-        }
-      }
-    }
-
-    // 过滤掉孤儿 tool 消息
-    return messages.filter((msg) => {
-      if (msg.role === 'tool') {
-        // 缺失 tool_call_id 的 tool 消息直接丢弃（否则会触发 API 400）
-        if (!msg.tool_call_id) {
-          return false;
-        }
-        return availableToolCallIds.has(msg.tool_call_id);
-      }
-      return true; // 保留其他所有消息
-    });
   }
 
   /**

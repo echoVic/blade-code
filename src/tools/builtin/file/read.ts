@@ -1,6 +1,7 @@
-import { promises as fs } from 'fs';
 import { extname } from 'path';
 import { z } from 'zod';
+import { isAcpMode } from '../../../acp/AcpServiceContext.js';
+import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -79,9 +80,16 @@ export const readTool = createTool({
     try {
       updateOutput?.('Starting file read...');
 
-      // 检查文件是否存在
+      // 获取文件系统服务（ACP 或本地）
+      const fsService = getFileSystemService();
+      const useAcp = isAcpMode();
+
+      // 检查文件是否存在（统一使用 FileSystemService）
       try {
-        await fs.access(file_path);
+        const exists = await fsService.exists(file_path);
+        if (!exists) {
+          throw new Error('File not found');
+        }
       } catch (_error) {
         return {
           success: false,
@@ -103,10 +111,10 @@ export const readTool = createTool({
         await tracker.recordFileRead(file_path, sessionId);
       }
 
-      // 获取文件统计信息
-      const stats = await fs.stat(file_path);
+      // 获取文件统计信息（统一使用 FileSystemService）
+      const stats = await fsService.stat(file_path);
 
-      if (stats.isDirectory()) {
+      if (stats?.isDirectory) {
         return {
           success: false,
           llmContent: `Cannot read a directory: ${file_path}`,
@@ -126,21 +134,40 @@ export const readTool = createTool({
       let content: string;
       const metadata: Record<string, any> = {
         file_path,
-        file_size: stats.size,
+        file_size: stats?.size,
         file_type: ext,
-        last_modified: stats.mtime.toISOString(),
+        last_modified:
+          stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
         encoding: encoding,
+        acp_mode: useAcp,
       };
 
       // 处理二进制文件
       if (isBinaryFile && encoding === 'utf8') {
-        updateOutput?.('检测到二进制文件，使用 base64 编码...');
-        content = await fs.readFile(file_path, 'base64');
+        // ⚠️ ACP 模式下二进制读取会 fallback 到本地
+        if (useAcp) {
+          updateOutput?.('⚠️ 二进制文件通过本地读取（ACP 不支持）...');
+          metadata.acp_fallback = true;
+        } else {
+          updateOutput?.('检测到二进制文件，使用 base64 编码...');
+        }
+        const buffer = await fsService.readBinaryFile(file_path);
+        content = buffer.toString('base64');
         metadata.encoding = 'base64';
         metadata.is_binary = true;
+      } else if (isTextFile) {
+        // 文本文件：使用 FileSystemService 读取
+        if (useAcp) {
+          updateOutput?.('通过 IDE 读取文件...');
+        }
+        content = await fsService.readTextFile(file_path);
       } else {
-        // 读取文件内容
-        const buffer = await fs.readFile(file_path);
+        // 其他文件：使用二进制读取
+        // ⚠️ ACP 模式下会 fallback 到本地
+        if (useAcp) {
+          metadata.acp_fallback = true;
+        }
+        const buffer = await fsService.readBinaryFile(file_path);
 
         if (encoding === 'base64') {
           content = buffer.toString('base64');

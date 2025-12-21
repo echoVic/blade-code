@@ -57,6 +57,22 @@ const SelectItem: React.FC<{ isSelected?: boolean; label: string }> = ({
   </Text>
 );
 
+/**
+ * 获取 Provider 显示名称
+ */
+function getProviderDisplayName(provider: ProviderType): string {
+  switch (provider) {
+    case 'openai-compatible':
+      return '⚡ OpenAI Compatible';
+    case 'custom-openai':
+      return '🔷 GPT OpenAI Platform';
+    case 'anthropic':
+      return '🤖 Anthropic';
+    default:
+      return provider;
+  }
+}
+
 const ProviderStep: React.FC<ProviderStepProps> = ({
   onSelect,
   onCancel,
@@ -77,6 +93,10 @@ const ProviderStep: React.FC<ProviderStepProps> = ({
     {
       label: '⚡ OpenAI Compatible - 兼容 OpenAI API 的服务 (千问/豆包/DeepSeek等)',
       value: 'openai-compatible',
+    },
+    {
+      label: '🔷 GPT OpenAI Platform - Doubao GPT 平台 (内部)',
+      value: 'custom-openai',
     },
     { label: '🤖 Anthropic Claude API - Claude 官方 API', value: 'anthropic' },
   ];
@@ -266,9 +286,7 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
         <Box marginBottom={1}>
           <Text dimColor>Provider: </Text>
           <Text bold color="cyan">
-            {config.provider === 'openai-compatible'
-              ? '⚡ OpenAI Compatible'
-              : '🤖 Anthropic'}
+            {getProviderDisplayName(config.provider)}
           </Text>
         </Box>
 
