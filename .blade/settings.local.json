@@ -3,7 +3,9 @@
     "allow": [
       "TestTool",
       "Bash(git status)",
-      "Bash(git diff *)"
+      "Bash(git diff *)",
+      "Bash(ls -l)",
+      "Write(**/*.md)"
     ],
     "ask": [],
     "deny": []

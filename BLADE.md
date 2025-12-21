@@ -29,12 +29,15 @@ always respond in Chinese
 - **HookExecutor.ts**: Hook 执行器
 - **Matcher.ts**: 匹配器，决定 Hook 是否触发
 - **SecureProcessExecutor.ts**: 安全进程执行器
+- **OutputParser.ts**: Hook 输出解析器，解析 Hook 命令的输出
+- **HookExecutionGuard.ts**: Hook 执行保护器，保证单次工具调用只触发一次 Hook
 
 ### 3. Context 管理 (`src/context/`)
 统一管理会话和上下文：
 - **ContextManager.ts**: 核心上下文管理器，支持内存/持久化存储
 - **CompactionService.ts**: 上下文压缩服务，防止 token 超限
 - **TokenCounter.ts**: Token 计数器
+- **FileAnalyzer.ts**: 文件分析服务，从对话中提取重点文件并读取内容
 
 ### 4. Tool 系统 (`src/tools/`)
 - **builtin/**: 内置工具（文件操作、Git、网络等）
@@ -42,25 +45,30 @@ always respond in Chinese
 - **execution/**: 工具执行管线
 - **validation/**: 工具参数验证
 - **MCP 集成**: 支持 Model Context Protocol 扩展
+- **FileLockManager.ts**: 文件锁管理器，防止对同一文件的并发编辑
 
 ### 5. 服务层 (`src/services/`)
 - **OpenAIChatService.ts**: OpenAI API 服务
 - **AnthropicChatService.ts**: Anthropic API 服务
+- **GptOpenaiPlatformChatService.ts**: 通用 OpenAI 平台兼容服务，支持自定义 API 端点
 - **SessionService.ts**: 会话管理服务
 
 ### 6. Slash 命令 (`src/slash-commands/`)
 - **builtinCommands.ts**: 内置命令（/compact, /init, /model 等）
+- **ide.ts**: IDE 集成命令（/ide, /ide status, /ide connect, /ide install, /ide disconnect）
 - **UIActionMapper.ts**: UI 动作映射器
 
 ### 7. MCP 集成 (`src/mcp/`)
 - **McpRegistry.ts**: MCP 注册表
 - **McpClient.ts**: MCP 客户端
 - **loadProjectMcpConfig.ts**: 项目 MCP 配置加载
+- **HealthMonitor.ts**: MCP 健康监控器，周期性检查连接状态并自动触发重连
 
 ### 8. UI 层 (`src/ui/`)
 - **App.tsx**: 主应用组件
 - **components/**: UI 组件（BladeInterface, LoadingIndicator 等）
 - **contexts/**: React Context（SessionContext, AppContext 等）
+- **utils/security.ts**: 安全工具函数，处理敏感信息的格式化和过滤
 
 ### 9. 配置系统 (`src/config/`)
 - **ConfigManager.ts**: 配置管理器
@@ -69,6 +77,12 @@ always respond in Chinese
 ### 10. CLI 层 (`src/cli/`, `src/commands/`)
 - **blade.tsx**: 入口文件
 - **commands/**: 命令实现（config, doctor, mcp, update 等）
+
+### 11. IDE 集成 (`src/ide/`)
+- **ideClient.ts**: IDE 客户端，处理与 IDE 的 WebSocket 通信
+- **ideContext.ts**: IDE 上下文，管理 IDE 相关信息和状态
+- **ideInstaller.ts**: IDE 安装器，检测和安装 VS Code 插件
+- **detectIde.ts**: IDE 检测器，检测当前运行环境
 
 ## 开发命令
 
@@ -104,8 +118,25 @@ bun run test:cli
 # 覆盖率测试
 bun run test:coverage
 
+# 分类覆盖率测试
+bun run test:unit:coverage
+bun run test:integration:coverage
+bun run test:cli:coverage
+
 # 监听模式
 bun run test:watch
+
+# 分类监听测试
+bun run test:unit:watch
+bun run test:integration:watch
+bun run test:cli:watch
+
+# 调试和详细测试
+bun run test:debug
+bun run test:verbose
+
+# 性能测试
+bun run test:performance
 
 # CI 模式（带覆盖率）
 bun run test:ci
@@ -223,6 +254,9 @@ Agent 实例不保存会话状态，所有状态通过 context 参数传入。�
 5. **性能**: 注意 token 使用，大文件操作需要流式处理
 6. **测试**: 新功能必须包含测试用例
 7. **文档**: 公共 API 需要 JSDoc 注释
+8. **并发安全**: 文件操作使用 FileLockManager 确保并发安全
+9. **安全过滤**: 敏感信息（如 API Key）在输出时会被自动过滤
+10. **健康监控**: MCP 连接支持健康监控和自动重连机制
 
 ## 项目结构
 ```
@@ -239,6 +273,7 @@ src/
 ├── prompts/        # 提示词管理
 ├── services/       # 服务层
 ├── slash-commands/ # Slash 命令
+├── store/          # 全局状态管理 (基于 Zustand)
 ├── tools/          # 工具系统
 ├── ui/             # UI 组件
 └── utils/          # 工具函数
