@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
+import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -160,6 +161,14 @@ Before executing commands:
 
       if (run_in_background) {
         return executeInBackground(command, cwd, env);
+      }
+
+      // 检查是否在 ACP 模式下运行
+      const useAcp = isAcpMode();
+      if (useAcp) {
+        // ACP 模式：通过 IDE 终端执行命令
+        updateOutput?.('通过 IDE 终端执行命令...');
+        return executeWithAcpTerminal(command, cwd, env, timeout, signal, updateOutput);
       } else {
         return executeWithTimeout(command, cwd, env, timeout, signal, updateOutput);
       }
@@ -300,6 +309,137 @@ function executeInBackground(
     displayContent: displayMessage,
     metadata,
   };
+}
+
+/**
+ * 使用 ACP 终端服务执行命令
+ * 通过 IDE 的终端执行命令，支持更好的 IDE 集成体验
+ */
+async function executeWithAcpTerminal(
+  command: string,
+  cwd: string | undefined,
+  env: Record<string, string> | undefined,
+  timeout: number,
+  signal: AbortSignal,
+  updateOutput?: (output: string) => void
+): Promise<ToolResult> {
+  const startTime = Date.now();
+
+  try {
+    const terminalService = getTerminalService();
+    const result = await terminalService.execute(command, {
+      cwd: cwd || process.cwd(),
+      env,
+      timeout,
+      signal,
+      onOutput: (output) => {
+        updateOutput?.(output);
+      },
+    });
+
+    const executionTime = Date.now() - startTime;
+
+    // 检查是否被中止（支持多种错误消息格式）
+    if (
+      signal.aborted ||
+      result.error === 'Command was aborted' ||
+      result.error === 'Command was terminated'
+    ) {
+      return {
+        success: false,
+        llmContent: 'Command execution aborted by user',
+        displayContent: `⚠️ 命令执行被用户中止\n输出: ${result.stdout}\n错误: ${result.stderr}`,
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: '操作被中止',
+        },
+        metadata: {
+          command,
+          aborted: true,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          execution_time: executionTime,
+        },
+      };
+    }
+
+    // 检查是否超时（支持多种错误消息格式）
+    if (result.error === 'Command timed out') {
+      return {
+        success: false,
+        llmContent: `Command execution timed out (${timeout}ms)`,
+        displayContent: `⏱️ 命令执行超时 (${timeout}ms)\n输出: ${result.stdout}\n错误: ${result.stderr}`,
+        error: {
+          type: ToolErrorType.TIMEOUT_ERROR,
+          message: '命令执行超时',
+        },
+        metadata: {
+          command,
+          timeout: true,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          execution_time: executionTime,
+        },
+      };
+    }
+
+    // 生成 summary 用于流式显示
+    const cmdPreview = command.length > 30 ? `${command.substring(0, 30)}...` : command;
+    const summary =
+      result.exitCode === 0
+        ? `执行命令成功 (${executionTime}ms): ${cmdPreview}`
+        : `执行命令完成 (退出码 ${result.exitCode}, ${executionTime}ms): ${cmdPreview}`;
+
+    const metadata = {
+      command,
+      execution_time: executionTime,
+      exit_code: result.exitCode,
+      stdout_length: result.stdout.length,
+      stderr_length: result.stderr.length,
+      has_stderr: result.stderr.length > 0,
+      acp_mode: true,
+      summary,
+    };
+
+    const displayMessage = formatDisplayMessage({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      command,
+      execution_time: executionTime,
+      exit_code: result.exitCode,
+      signal: null,
+    });
+
+    return {
+      success: result.success,
+      llmContent: {
+        stdout: result.stdout.trim(),
+        stderr: result.stderr.trim(),
+        execution_time: executionTime,
+        exit_code: result.exitCode,
+      },
+      displayContent: displayMessage,
+      metadata,
+    };
+  } catch (error: any) {
+    const executionTime = Date.now() - startTime;
+
+    return {
+      success: false,
+      llmContent: `Command execution failed: ${error.message}`,
+      displayContent: `❌ 命令执行失败: ${error.message}`,
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: error.message,
+        details: error,
+      },
+      metadata: {
+        command,
+        execution_time: executionTime,
+        error: error.message,
+      },
+    };
+  }
 }
 
 /**

@@ -1,12 +1,13 @@
 import { PermissionMode } from '../../config/types.js';
 import type { ToolResult } from './ToolTypes.js';
-import { ToolErrorType } from './ToolTypes.js';
+import { ToolErrorType, ToolKind } from './ToolTypes.js';
 
 /**
  * 确认详情
  */
 export interface ConfirmationDetails {
   type?: 'permission' | 'enterPlanMode' | 'exitPlanMode' | 'maxTurnsExceeded'; // 确认类型
+  kind?: ToolKind; // 工具类型（readonly, write, execute），用于 ACP 权限模式判断
   title?: string;
   message: string;
   details?: string; // 🆕 Plan 方案内容或其他详细信息

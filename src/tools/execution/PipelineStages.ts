@@ -336,6 +336,7 @@ export class ConfirmationStage implements PipelineStage {
       const confirmationDetails = {
         title: `权限确认: ${signature}`,
         message: confirmationReason || '此操作需要用户确认',
+        kind: tool.kind, // 工具类型，用于 ACP 权限模式判断
         details: this.generatePreviewForTool(tool.name, execution.params),
         risks: this.extractRisksFromPermissionCheck(
           tool,

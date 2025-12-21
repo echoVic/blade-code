@@ -114,6 +114,7 @@
     "@vscode/ripgrep": "^1.17.0"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.12.0",
     "@inkjs/ui": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.17.4",
     "ahooks": "^3.9.5",

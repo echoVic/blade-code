@@ -1,6 +1,7 @@
-import { promises as fs } from 'fs';
 import { extname } from 'path';
 import { z } from 'zod';
+import { isAcpMode } from '../../../acp/AcpServiceContext.js';
+import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -65,12 +66,19 @@ export const editTool = createTool({
     try {
       updateOutput?.('Starting to read file...');
 
-      // 读取文件内容
+      // 获取文件系统服务（ACP 或本地）
+      const fsService = getFileSystemService();
+      const useAcp = isAcpMode();
+
+      // 读取文件内容（统一使用 FileSystemService）
       let content: string;
       try {
-        content = await fs.readFile(file_path, 'utf8');
+        if (useAcp) {
+          updateOutput?.('通过 IDE 读取文件...');
+        }
+        content = await fsService.readTextFile(file_path);
       } catch (error: any) {
-        if (error.code === 'ENOENT') {
+        if (error.code === 'ENOENT' || error.message?.includes('not found')) {
           return {
             success: false,
             llmContent: `File not found: ${file_path}`,
@@ -285,8 +293,11 @@ export const editTool = createTool({
 
       signal.throwIfAborted();
 
-      // 写入文件
-      await fs.writeFile(file_path, newContent, 'utf8');
+      // 写入文件（统一使用 FileSystemService）
+      if (useAcp) {
+        updateOutput?.('通过 IDE 写入文件...');
+      }
+      await fsService.writeTextFile(file_path, newContent);
 
       // 🔴 更新文件访问记录（记录编辑操作）
       if (sessionId) {
@@ -294,8 +305,8 @@ export const editTool = createTool({
         await tracker.recordFileEdit(file_path, sessionId, 'edit');
       }
 
-      // 验证写入成功
-      const stats = await fs.stat(file_path);
+      // 验证写入成功（统一使用 FileSystemService）
+      const stats = await fsService.stat(file_path);
 
       // 生成差异片段（仅显示第一个替换的上下文）
       const diffSnippet = generateDiffSnippetWithMatch(
@@ -323,12 +334,17 @@ export const editTool = createTool({
         original_size: content.length,
         new_size: newContent.length,
         size_diff: newContent.length - content.length,
-        last_modified: stats.mtime.toISOString(),
+        last_modified:
+          stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
         snapshot_created: !!(sessionId && messageId), // 是否创建了快照
         session_id: sessionId,
         message_id: messageId,
         diff_snippet: diffSnippet, // 添加差异片段
         summary, // 🆕 流式显示摘要
+        // 🆕 ACP diff 支持：完整内容用于 IDE 显示差异
+        kind: 'edit',
+        oldContent: content,
+        newContent: newContent,
       };
 
       const displayMessage = formatDisplayMessage(metadata, diffSnippet);
