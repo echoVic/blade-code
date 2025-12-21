@@ -1,6 +1,7 @@
 import { Box, Static } from 'ink';
 import React, { ReactNode, useMemo } from 'react';
 import {
+  useClearCount,
   useCurrentThinkingContent,
   useIsThinking,
   useMessages,
@@ -42,6 +43,7 @@ export const MessageArea: React.FC = React.memo(() => {
   const pendingCommands = usePendingCommands();
   const currentThinkingContent = useCurrentThinkingContent();
   const thinkingExpanded = useThinkingExpanded();
+  const clearCount = useClearCount(); // 用于强制 Static 组件重新挂载
 
   // 使用 useTerminalWidth hook 获取终端宽度
   const terminalWidth = useTerminalWidth();
@@ -102,7 +104,10 @@ export const MessageArea: React.FC = React.memo(() => {
     <Box flexDirection="column" flexGrow={1} paddingX={2}>
       <Box flexDirection="column" flexGrow={1}>
         {/* 静态区域：Header + 已完成的消息永不重新渲染 */}
-        <Static items={staticItems}>{(item) => item}</Static>
+        {/* key={clearCount} 确保 /clear 时强制重新挂载，清除已冻结的内容 */}
+        <Static key={clearCount} items={staticItems}>
+          {(item) => item}
+        </Static>
 
         {/* 流式接收的 Thinking 内容（在消息之前显示） */}
         {currentThinkingContent && (
@@ -129,11 +134,7 @@ export const MessageArea: React.FC = React.memo(() => {
         {/* 待处理命令队列（显示在最底部，作为下一轮对话的开始） */}
         {pendingCommands.map((cmd, index) => (
           <Box key={`pending-${index}`} flexDirection="column">
-            <MessageRenderer
-              content={cmd}
-              role="user"
-              terminalWidth={terminalWidth}
-            />
+            <MessageRenderer content={cmd} role="user" terminalWidth={terminalWidth} />
           </Box>
         ))}
       </Box>

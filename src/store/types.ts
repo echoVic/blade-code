@@ -67,6 +67,7 @@ export interface SessionState {
   tokenUsage: TokenUsage; // Token 使用量统计
   currentThinkingContent: string | null; // 当前正在接收的 thinking 内容（流式）
   thinkingExpanded: boolean; // thinking 内容是否展开显示
+  clearCount: number; // 清屏计数器（用于强制 Static 组件重新挂载）
 }
 
 /**

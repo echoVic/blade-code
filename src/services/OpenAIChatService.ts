@@ -15,6 +15,36 @@ import type {
 
 const _logger = createLogger(LogCategory.CHAT);
 
+/**
+ * 过滤孤儿 tool 消息
+ *
+ * 孤儿 tool 消息是指 tool_call_id 对应的 assistant 消息不存在的 tool 消息。
+ * 这种情况通常发生在上下文压缩后，导致 OpenAI API 返回 400 错误。
+ */
+function filterOrphanToolMessages(messages: Message[]): Message[] {
+  // 收集所有可用的 tool_call ID
+  const availableToolCallIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        availableToolCallIds.add(tc.id);
+      }
+    }
+  }
+
+  // 过滤掉孤儿 tool 消息
+  return messages.filter((msg) => {
+    if (msg.role === 'tool') {
+      // 缺失 tool_call_id 的 tool 消息直接丢弃
+      if (!msg.tool_call_id) {
+        return false;
+      }
+      return availableToolCallIds.has(msg.tool_call_id);
+    }
+    return true;
+  });
+}
+
 export class OpenAIChatService implements IChatService {
   private client: OpenAI;
 
@@ -64,12 +94,21 @@ export class OpenAIChatService implements IChatService {
     const startTime = Date.now();
     _logger.debug('🚀 [ChatService] Starting chat request');
     _logger.debug('📝 [ChatService] Messages count:', messages.length);
+
+    // 过滤孤儿 tool 消息
+    const filteredMessages = filterOrphanToolMessages(messages);
+    if (filteredMessages.length < messages.length) {
+      _logger.debug(
+        `🔧 [ChatService] 过滤掉 ${messages.length - filteredMessages.length} 条孤儿 tool 消息`
+      );
+    }
+
     _logger.debug(
       '📝 [ChatService] Messages preview:',
-      messages.map((m) => ({ role: m.role, contentLength: m.content.length }))
+      filteredMessages.map((m) => ({ role: m.role, contentLength: m.content.length }))
     );
 
-    const openaiMessages: ChatCompletionMessageParam[] = messages.map((msg) => {
+    const openaiMessages: ChatCompletionMessageParam[] = filteredMessages.map((msg) => {
       if (msg.role === 'tool') {
         return {
           role: 'tool',
@@ -249,12 +288,21 @@ export class OpenAIChatService implements IChatService {
     const startTime = Date.now();
     _logger.debug('🚀 [ChatService] Starting chat stream request');
     _logger.debug('📝 [ChatService] Messages count:', messages.length);
+
+    // 过滤孤儿 tool 消息
+    const filteredMessages = filterOrphanToolMessages(messages);
+    if (filteredMessages.length < messages.length) {
+      _logger.debug(
+        `🔧 [ChatService] 过滤掉 ${messages.length - filteredMessages.length} 条孤儿 tool 消息`
+      );
+    }
+
     _logger.debug(
       '📝 [ChatService] Messages preview:',
-      messages.map((m) => ({ role: m.role, contentLength: m.content.length }))
+      filteredMessages.map((m) => ({ role: m.role, contentLength: m.content.length }))
     );
 
-    const openaiMessages: ChatCompletionMessageParam[] = messages.map((msg) => {
+    const openaiMessages: ChatCompletionMessageParam[] = filteredMessages.map((msg) => {
       if (msg.role === 'tool') {
         return {
           role: 'tool',

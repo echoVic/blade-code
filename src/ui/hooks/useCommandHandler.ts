@@ -36,7 +36,8 @@ const logger = createLogger(LogCategory.UI);
 function handleSlashMessage(
   message: string,
   data: unknown,
-  appActions: ReturnType<typeof useAppActions>
+  appActions: ReturnType<typeof useAppActions>,
+  sessionActions: ReturnType<typeof useSessionActions>
 ): boolean {
   switch (message) {
     case 'show_theme_selector':
@@ -62,6 +63,17 @@ function handleSlashMessage(
       appActions.showSessionSelector(sessions);
       return true;
     }
+    case 'clear_screen':
+      // 完整重置会话状态（参考 Claude Code 的 /clear 行为）
+      // 1. 清除消息历史
+      sessionActions.clearMessages();
+      // 2. 清除错误状态
+      sessionActions.setError(null);
+      // 3. 重置 token 使用量（让 context 回到 100%）
+      sessionActions.resetTokenUsage();
+      // 4. 清空 todos
+      appActions.setTodos([]);
+      return true;
     case 'exit_application':
       process.exit(0);
       return true;
@@ -140,9 +152,7 @@ export const useCommandHandler = (
   const handleCommandSubmit = useMemoizedFn(
     async (command: string): Promise<CommandResult> => {
       try {
-        sessionActions.addUserMessage(command);
-
-        // 检查是否为 slash command
+        // 检查是否为 slash command（先检查，避免 /clear 时显示用户消息）
         if (isSlashCommand(command)) {
           // ⚠️ 关键：确保 Store 已初始化（防御性检查）
           // slash commands 依赖 Store 状态，必须在执行前确保初始化
@@ -161,7 +171,8 @@ export const useCommandHandler = (
             const handled = handleSlashMessage(
               slashResult.message,
               slashResult.data,
-              appActions
+              appActions,
+              sessionActions
             );
             if (handled) {
               return { success: true };
@@ -195,6 +206,9 @@ export const useCommandHandler = (
             metadata: slashResult.data,
           };
         }
+
+        // 普通命令：添加用户消息
+        sessionActions.addUserMessage(command);
 
         // 创建并设置 Agent
         const agent = await createAgent();

@@ -43,6 +43,7 @@ const initialSessionState: SessionState = {
   tokenUsage: { ...initialTokenUsage },
   currentThinkingContent: null,
   thinkingExpanded: false,
+  clearCount: 0,
 };
 
 /**
@@ -151,10 +152,16 @@ export const createSessionSlice: StateCreator<
 
     /**
      * 清除消息
+     * 同时递增 clearCount 以强制 UI 的 Static 组件重新挂载
      */
     clearMessages: () => {
       set((state) => ({
-        session: { ...state.session, messages: [], error: null },
+        session: {
+          ...state.session,
+          messages: [],
+          error: null,
+          clearCount: state.session.clearCount + 1,
+        },
       }));
     },
 

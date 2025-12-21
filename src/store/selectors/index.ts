@@ -30,6 +30,11 @@ export const useSessionId = () => useBladeStore((state) => state.session.session
 export const useMessages = () => useBladeStore((state) => state.session.messages);
 
 /**
+ * 获取清屏计数器（用于强制 Static 组件重新挂载）
+ */
+export const useClearCount = () => useBladeStore((state) => state.session.clearCount);
+
+/**
  * 获取思考状态
  */
 export const useIsThinking = () => useBladeStore((state) => state.session.isThinking);
