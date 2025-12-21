@@ -44,6 +44,7 @@ const helpCommand: SlashCommand = {
 
     return {
       success: true,
+      content: helpText, // ACP 模式使用
       message: '帮助信息已显示',
     };
   },
@@ -99,12 +100,15 @@ const versionCommand: SlashCommand = {
 
       return {
         success: true,
+        content: versionInfo,
         message: '版本信息已显示',
       };
     } catch (_error) {
-      sessionActions().addAssistantMessage('🗡️ **Blade Code**\n\n版本信息获取失败');
+      const errorMsg = '🗡️ **Blade Code**\n\n版本信息获取失败';
+      sessionActions().addAssistantMessage(errorMsg);
       return {
         success: true,
+        content: errorMsg,
         message: '版本信息已显示',
       };
     }
@@ -172,6 +176,7 @@ ${!hasBlademd ? '\n💡 **建议:** 运行 `/init` 命令来创建项目配置�
 
       return {
         success: true,
+        content: statusText,
         message: '状态信息已显示',
       };
     } catch (error) {
@@ -227,6 +232,7 @@ const configCommand: SlashCommand = {
 
     return {
       success: true,
+      content: configText,
       message: '配置面板已显示',
     };
   },
@@ -259,6 +265,7 @@ const contextCommand: SlashCommand = {
 
     return {
       success: true,
+      content: contextText,
       message: '上下文信息已显示',
     };
   },
@@ -294,6 +301,7 @@ const costCommand: SlashCommand = {
 
     return {
       success: true,
+      content: costText,
       message: '成本信息已显示',
     };
   },

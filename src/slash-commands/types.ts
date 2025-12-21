@@ -4,7 +4,8 @@
 
 export interface SlashCommandResult {
   success: boolean;
-  message?: string;
+  message?: string; // 简短状态消息（如 "帮助信息已显示"）
+  content?: string; // 完整内容（用于 ACP 模式显示给用户）
   error?: string;
   data?: any;
 }

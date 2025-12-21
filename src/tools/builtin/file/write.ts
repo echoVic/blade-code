@@ -1,6 +1,8 @@
 import { promises as fs } from 'fs';
 import { dirname, extname } from 'path';
 import { z } from 'zod';
+import { isAcpMode } from '../../../acp/AcpServiceContext.js';
+import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -55,11 +57,15 @@ export const writeTool = createTool({
     try {
       updateOutput?.('开始写入文件...');
 
-      // 检查并创建目录
+      // 获取文件系统服务（ACP 或本地）
+      const fsService = getFileSystemService();
+      const useAcp = isAcpMode();
+
+      // 检查并创建目录（统一使用 FileSystemService）
       if (create_directories) {
         const dir = dirname(file_path);
         try {
-          await fs.mkdir(dir, { recursive: true });
+          await fsService.mkdir(dir, { recursive: true });
         } catch (error: any) {
           if (error.code !== 'EEXIST') {
             throw error;
@@ -69,22 +75,21 @@ export const writeTool = createTool({
 
       signal.throwIfAborted();
 
-      // 检查文件是否存在（用于后续验证和快照）
+      // 检查文件是否存在（统一使用 FileSystemService）
       let fileExists = false;
       let oldContent: string | null = null;
       try {
-        await fs.access(file_path);
-        fileExists = true;
+        fileExists = await fsService.exists(file_path);
         // 如果文件存在且是文本文件，读取旧内容用于生成 diff
-        if (encoding === 'utf8') {
+        if (fileExists && encoding === 'utf8') {
           try {
-            oldContent = await fs.readFile(file_path, 'utf8');
+            oldContent = await fsService.readTextFile(file_path);
           } catch (error) {
             console.warn('[WriteTool] 读取旧文件内容失败:', error);
           }
         }
       } catch {
-        // 文件不存在
+        // 检查失败，假设文件不存在
       }
 
       // Read-Before-Write 验证（对齐 Claude Code 官方：强制模式）
@@ -137,17 +142,41 @@ export const writeTool = createTool({
       signal.throwIfAborted();
 
       // 根据编码写入文件
-      let writeBuffer: Buffer;
-
-      if (encoding === 'base64') {
-        writeBuffer = Buffer.from(content, 'base64');
-      } else if (encoding === 'binary') {
-        writeBuffer = Buffer.from(content, 'binary');
+      if (encoding === 'utf8') {
+        // 文本文件：使用 FileSystemService 写入
+        if (useAcp) {
+          updateOutput?.('通过 IDE 写入文件...');
+        }
+        await fsService.writeTextFile(file_path, content);
       } else {
-        writeBuffer = Buffer.from(content, 'utf8');
-      }
+        // 二进制文件写入
+        // ⚠️ ACP 模式下不支持二进制写入，必须明确失败
+        // 否则会写到本地磁盘而非远端，造成数据丢失/错位
+        if (useAcp) {
+          return {
+            success: false,
+            llmContent: `Binary file writes are not supported in ACP mode. The IDE only supports text file operations. Please use encoding='utf8' for text files, or ask the user to write the file manually.`,
+            displayContent: `❌ ACP 模式不支持二进制文件写入\n\n当前通过 IDE 执行文件操作，但 IDE 仅支持文本文件。\n\n💡 建议：\n  • 如果是文本文件，使用 encoding='utf8'\n  • 如果必须写入二进制文件，请在本地终端执行`,
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'Binary writes not supported in ACP mode',
+            },
+          };
+        }
 
-      await fs.writeFile(file_path, writeBuffer);
+        // 本地模式：正常写入二进制
+        let writeBuffer: Buffer;
+
+        if (encoding === 'base64') {
+          writeBuffer = Buffer.from(content, 'base64');
+        } else if (encoding === 'binary') {
+          writeBuffer = Buffer.from(content, 'binary');
+        } else {
+          writeBuffer = Buffer.from(content, 'utf8');
+        }
+
+        await fs.writeFile(file_path, writeBuffer);
+      }
 
       // 🔴 更新文件访问记录（记录写入操作）
       if (sessionId) {
@@ -157,8 +186,8 @@ export const writeTool = createTool({
 
       signal.throwIfAborted();
 
-      // 验证写入是否成功
-      const stats = await fs.stat(file_path);
+      // 验证写入是否成功（统一使用 FileSystemService）
+      const stats = await fsService.stat(file_path);
 
       // 计算写入的行数（仅对文本文件）
       const lineCount = encoding === 'utf8' ? content.split('\n').length : 0;
@@ -177,18 +206,22 @@ export const writeTool = createTool({
       const metadata: Record<string, any> = {
         file_path,
         content_size: content.length,
-        file_size: stats.size,
+        file_size: stats?.size,
         encoding,
         created_directories: create_directories,
         snapshot_created: snapshotCreated, // 是否创建了快照
         session_id: sessionId,
         message_id: messageId,
-        last_modified: stats.mtime.toISOString(),
+        last_modified: stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
         has_diff: !!diffSnippet, // 是否生成了 diff
         summary:
           encoding === 'utf8'
             ? `写入 ${lineCount} 行到 ${fileName}`
-            : `写入 ${formatFileSize(stats.size)} 到 ${fileName}`,
+            : `写入 ${stats?.size ? formatFileSize(stats.size) : 'unknown'} 到 ${fileName}`,
+        // 🆕 ACP diff 支持：完整内容用于 IDE 显示差异
+        kind: 'edit',
+        oldContent: oldContent || '', // 新文件为空字符串
+        newContent: encoding === 'utf8' ? content : undefined, // 仅文本文件
       };
 
       const displayMessage = formatDisplayMessage(
@@ -202,8 +235,8 @@ export const writeTool = createTool({
         success: true,
         llmContent: {
           file_path,
-          size: stats.size,
-          modified: stats.mtime.toISOString(),
+          size: stats?.size,
+          modified: stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
         },
         displayContent: displayMessage,
         metadata,

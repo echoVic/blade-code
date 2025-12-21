@@ -163,6 +163,11 @@ export const globalOptions = {
     describe: 'Automatically connect to IDE on startup',
     group: 'Integration:',
   },
+  acp: {
+    type: 'boolean',
+    describe: 'Run in ACP (Agent Client Protocol) mode for IDE integration',
+    group: 'Integration:',
+  },
   'strict-mcp-config': {
     alias: ['strictMcpConfig'],
     type: 'boolean',
