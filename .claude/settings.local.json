@@ -65,7 +65,11 @@
       "Bash(pnpm approve-builds:*)",
       "Bash(git reset:*)",
       "Bash(cloc:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "WebFetch(domain:zed.dev)",
+      "WebFetch(domain:agentclientprotocol.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:deepwiki.com)"
     ],
     "deny": [],
     "ask": [],

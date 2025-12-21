@@ -48,6 +48,13 @@ export async function main() {
     return;
   }
 
+  // 检查是否是 ACP 模式
+  if (rawArgs.includes('--acp')) {
+    const { runAcpIntegration } = await import('./acp/index.js');
+    await runAcpIntegration();
+    return;
+  }
+
   const cli = yargs(hideBin(process.argv))
     .scriptName(cliConfig.scriptName)
     .usage(cliConfig.usage)

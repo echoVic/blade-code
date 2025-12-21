@@ -6,7 +6,7 @@
 /**
  * LLM API 提供商类型
  */
-export type ProviderType = 'openai-compatible' | 'anthropic';
+export type ProviderType = 'openai-compatible' | 'anthropic' | 'gpt-openai-platform';
 
 /**
  * 权限模式枚举
@@ -66,6 +66,9 @@ export interface ModelConfig {
   // Thinking 模型配置（如 DeepSeek R1）
   supportsThinking?: boolean; // 手动覆盖自动检测结果
   thinkingBudget?: number; // 思考 token 预算（可选）
+
+  // GPT OpenAI Platform 特有配置
+  apiVersion?: string; // API 版本（如 '2024-03-01-preview'）
 }
 
 export interface BladeConfig {
