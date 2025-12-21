@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.30] - 2025-12-21
+
+### ✨ 新功能
+
+- 添加 Agent Client Protocol 支持 (ab1b699)
+- 添加 GPT OpenAI Platform 支持及清屏功能 (f48aa42)
+
+
 ## [0.0.29] - 2025-12-20
 
 ### ✨ 新功能
