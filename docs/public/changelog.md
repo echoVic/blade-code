@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.32] - 2025-12-22
+
+### ✨ 新功能
+
+- 支持 thinking 模型的 reasoning 内容处理 (811c8aa)
+
+
 ## [0.0.31] - 2025-12-22
 
 ### ✨ 新功能
