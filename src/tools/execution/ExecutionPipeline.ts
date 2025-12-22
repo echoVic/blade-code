@@ -123,6 +123,12 @@ export class ExecutionPipeline extends EventEmitter {
       // 依次执行各个阶段
       // Plan 模式 只读工具通过权限阶段自动放行，非只读工具走权限确认流程
       for (const stage of this.stages) {
+        // 检查取消信号
+        if (execution.context.signal?.aborted) {
+          execution.abort('任务已被用户中止');
+          break;
+        }
+
         this.emit('stageStarted', {
           executionId,
           stageName: stage.name,

@@ -127,7 +127,7 @@ blade --yolo "自动批准所有操作"
 
 ### Slash 命令
 
-在交互模式中使用：`/init` `/help` `/clear` `/compact` `/agents` `/permissions` `/mcp` `/resume` `/config` `/theme` `/model`
+在交互模式中使用：`/init` `/help` `/clear` `/compact` `/context` `/agents` `/permissions` `/mcp` `/resume` `/theme` `/model`
 
 ---
 
@@ -147,6 +147,12 @@ blade --yolo "自动批准所有操作"
 git clone https://github.com/echoVic/blade-code.git
 cd blade-code && pnpm install && pnpm dev
 ```
+
+---
+
+## 💬 交流群
+
+添加小助手微信 **VIc-Forever**，备注「Blade」拉你进群。
 
 ---
 

@@ -5,8 +5,14 @@
 
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { McpConnectionStatus } from '../mcp/types.js';
-import { getMcpServers, sessionActions } from '../store/vanilla.js';
-import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
+import { getMcpServers } from '../store/vanilla.js';
+import {
+  getUI,
+  type SlashCommand,
+  type SlashCommandContext,
+  type SlashCommandResult,
+  type SlashCommandUI,
+} from './types.js';
 
 /**
  * 格式化时间差（例如：2.3s ago, 5m ago）
@@ -35,21 +41,20 @@ function formatTimeSince(date: Date): string {
 /**
  * 显示所有服务器概览
  */
-async function showServersOverview(): Promise<void> {
-  const addAssistantMessage = sessionActions().addAssistantMessage;
+async function showServersOverview(ui: SlashCommandUI): Promise<void> {
   const mcpRegistry = McpRegistry.getInstance();
 
   // 从 Store 读取配置
   const configuredServers = getMcpServers();
 
   if (Object.keys(configuredServers).length === 0) {
-    addAssistantMessage(
+    ui.sendMessage(
       '🔌 **MCP 服务器状态**\n\n⚠️ 暂无配置的 MCP 服务器\n\n💡 使用 `blade mcp add` 命令添加 MCP 服务器'
     );
     return;
   }
 
-  addAssistantMessage('🔍 正在检查 MCP 服务器状态...');
+  ui.sendMessage('🔍 正在检查 MCP 服务器状态...');
 
   // 尝试连接所有配置的服务器
   const checkPromises = Object.entries(configuredServers).map(
@@ -77,14 +82,13 @@ async function showServersOverview(): Promise<void> {
   await Promise.all(checkPromises);
 
   // 显示结果
-  showServersFromRegistry(mcpRegistry.getAllServers());
+  showServersFromRegistry(ui, mcpRegistry.getAllServers());
 }
 
 /**
  * 从 Registry 显示服务器（已连接的状态）
  */
-function showServersFromRegistry(servers: Map<string, any>): void {
-  const addAssistantMessage = sessionActions().addAssistantMessage;
+function showServersFromRegistry(ui: SlashCommandUI, servers: Map<string, any>): void {
   let output = '🔌 **MCP 服务器状态**\n\n';
   let connectedCount = 0;
   let disconnectedCount = 0;
@@ -132,14 +136,13 @@ function showServersFromRegistry(servers: Map<string, any>): void {
   output += '💡 使用 `/mcp <server-name>` 查看详细信息\n';
   output += '💡 使用 `/mcp tools` 查看所有工具';
 
-  addAssistantMessage(output);
+  ui.sendMessage(output);
 }
 
 /**
  * 显示特定服务器详情
  */
-async function showServerDetails(serverName: string): Promise<void> {
-  const addAssistantMessage = sessionActions().addAssistantMessage;
+async function showServerDetails(ui: SlashCommandUI, serverName: string): Promise<void> {
   const mcpRegistry = McpRegistry.getInstance();
 
   // 从 Store 读取配置
@@ -147,7 +150,7 @@ async function showServerDetails(serverName: string): Promise<void> {
   const config = servers[serverName];
 
   if (!config) {
-    addAssistantMessage(
+    ui.sendMessage(
       `❌ 服务器 "${serverName}" 不存在\n\n💡 使用 \`/mcp\` 查看所有可用服务器`
     );
     return;
@@ -158,26 +161,26 @@ async function showServerDetails(serverName: string): Promise<void> {
     let serverInfo = mcpRegistry.getServerStatus(serverName);
 
     if (!serverInfo) {
-      addAssistantMessage(`🔍 正在连接 ${serverName}...`);
+      ui.sendMessage(`🔍 正在连接 ${serverName}...`);
       await mcpRegistry.registerServer(serverName, config);
       serverInfo = mcpRegistry.getServerStatus(serverName);
     } else if (serverInfo.status === McpConnectionStatus.DISCONNECTED) {
-      addAssistantMessage(`🔍 正在重新连接 ${serverName}...`);
+      ui.sendMessage(`🔍 正在重新连接 ${serverName}...`);
       await mcpRegistry.connectServer(serverName);
       serverInfo = mcpRegistry.getServerStatus(serverName);
     }
 
     // 显示运行时状态
     if (serverInfo) {
-      showServerDetailsFromRegistry(serverName, serverInfo);
+      showServerDetailsFromRegistry(ui, serverName, serverInfo);
     } else {
       // 如果连接失败，显示配置详情
-      showServerDetailsFromConfig(serverName, config);
+      showServerDetailsFromConfig(ui, serverName, config);
     }
   } catch (error) {
     // 连接失败，显示配置详情和错误信息
-    showServerDetailsFromConfig(serverName, config);
-    addAssistantMessage(
+    showServerDetailsFromConfig(ui, serverName, config);
+    ui.sendMessage(
       `\n⚠️ 连接失败: ${error instanceof Error ? error.message : '未知错误'}`
     );
   }
@@ -187,10 +190,10 @@ async function showServerDetails(serverName: string): Promise<void> {
  * 从 Registry 显示服务器详情
  */
 function showServerDetailsFromRegistry(
+  ui: SlashCommandUI,
   serverName: string,
   serverInfo: any
 ): void {
-  const addAssistantMessage = sessionActions().addAssistantMessage;
   const { config, status, connectedAt, lastError, tools } = serverInfo;
   const statusSymbol = status === McpConnectionStatus.CONNECTED ? '✓' : '✗';
   const statusText =
@@ -255,14 +258,13 @@ function showServerDetailsFromRegistry(
     output += `  ${lastError.message}`;
   }
 
-  addAssistantMessage(output);
+  ui.sendMessage(output);
 }
 
 /**
  * 从配置显示服务器详情
  */
-function showServerDetailsFromConfig(serverName: string, config: any): void {
-  const addAssistantMessage = sessionActions().addAssistantMessage;
+function showServerDetailsFromConfig(ui: SlashCommandUI, serverName: string, config: any): void {
   let output = `📦 **${serverName}**\n\n`;
 
   // 连接状态
@@ -294,27 +296,26 @@ function showServerDetailsFromConfig(serverName: string, config: any): void {
 
   output += '\n💡 服务器将在 Agent 启动时自动连接';
 
-  addAssistantMessage(output);
+  ui.sendMessage(output);
 }
 
 /**
  * 显示所有可用工具
  */
-async function showAllTools(): Promise<void> {
-  const addAssistantMessage = sessionActions().addAssistantMessage;
+async function showAllTools(ui: SlashCommandUI): Promise<void> {
   const mcpRegistry = McpRegistry.getInstance();
 
   // 从 Store 读取配置
   const configuredServers = getMcpServers();
 
   if (Object.keys(configuredServers).length === 0) {
-    addAssistantMessage(
+    ui.sendMessage(
       '🔧 **可用的 MCP 工具**\n\n⚠️ 暂无配置的 MCP 服务器\n\n💡 使用 `blade mcp add` 命令添加 MCP 服务器'
     );
     return;
   }
 
-  addAssistantMessage('🔍 正在检查 MCP 服务器并获取工具列表...');
+  ui.sendMessage('🔍 正在检查 MCP 服务器并获取工具列表...');
 
   // 尝试连接所有配置的服务器
   const checkPromises = Object.entries(configuredServers).map(
@@ -379,7 +380,7 @@ async function showAllTools(): Promise<void> {
 
   output += `**总计:** ${totalTools} 个工具可用`;
 
-  addAssistantMessage(output);
+  ui.sendMessage(output);
 }
 
 const mcpCommand: SlashCommand = {
@@ -395,15 +396,17 @@ const mcpCommand: SlashCommand = {
   ],
   async handler(
     args: string[],
-    _context: SlashCommandContext
+    context: SlashCommandContext
   ): Promise<SlashCommandResult> {
+    const ui = getUI(context);
+
     try {
       // 调试信息：显示接收到的参数
       console.log('[MCP Command] Received args:', args);
 
       // 无参数：显示服务器概览
       if (args.length === 0) {
-        await showServersOverview();
+        await showServersOverview(ui);
         return {
           success: true,
           message: 'MCP 服务器概览已显示',
@@ -415,7 +418,7 @@ const mcpCommand: SlashCommand = {
 
       // /mcp tools - 显示所有工具
       if (subcommand === 'tools') {
-        await showAllTools();
+        await showAllTools(ui);
         return {
           success: true,
           message: 'MCP 工具列表已显示',
@@ -423,7 +426,7 @@ const mcpCommand: SlashCommand = {
       }
 
       // /mcp <server-name> - 显示服务器详情
-      await showServerDetails(subcommand);
+      await showServerDetails(ui, subcommand);
       return {
         success: true,
         message: `服务器 "${subcommand}" 详情已显示`,

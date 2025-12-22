@@ -159,9 +159,13 @@ export const useCommandHandler = (
           // 这里是统一防御点，避免竞态或未来非 UI 场景踩坑
           await ensureStoreInitialized();
 
+          // 创建 AbortController 用于取消 slash command
+          const abortController = commandActions.createAbortController();
+
           // 简化的 context - slash commands 从 vanilla store 获取状态
           const slashContext: SlashCommandContext = {
             cwd: process.cwd(),
+            signal: abortController.signal,
           };
 
           const slashResult = await executeSlashCommand(command, slashContext);

@@ -5,7 +5,7 @@
 
 import { SessionService } from '../services/SessionService.js';
 import { sessionActions } from '../store/vanilla.js';
-import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
+import { getUI, type SlashCommand, type SlashCommandContext, type SlashCommandResult } from './types.js';
 
 const resumeCommand: SlashCommand = {
   name: 'resume',
@@ -18,9 +18,9 @@ const resumeCommand: SlashCommand = {
   examples: ['/resume - 打开会话选择器', '/resume abc123xyz - 直接恢复指定的会话'],
   async handler(
     args: string[],
-    _context: SlashCommandContext
+    context: SlashCommandContext
   ): Promise<SlashCommandResult> {
-    const addAssistantMessage = sessionActions().addAssistantMessage;
+    const ui = getUI(context);
     const restoreSession = sessionActions().restoreSession;
 
     // 情况 1: 提供了 sessionId,直接恢复
@@ -32,7 +32,7 @@ const resumeCommand: SlashCommand = {
         const messages = await SessionService.loadSession(sessionId);
 
         if (messages.length === 0) {
-          addAssistantMessage(`❌ 会话 \`${sessionId}\` 为空或无法加载`);
+          ui.sendMessage(`❌ 会话 \`${sessionId}\` 为空或无法加载`);
           return {
             success: false,
             error: '会话为空',
@@ -54,7 +54,7 @@ const resumeCommand: SlashCommand = {
 
         restoreSession(sessionId, sessionMessages);
 
-        addAssistantMessage(
+        ui.sendMessage(
           `✅ 已恢复会话 \`${sessionId}\`\n\n共 ${sessionMessages.length} 条消息已加载，可以继续对话`
         );
 
@@ -68,7 +68,7 @@ const resumeCommand: SlashCommand = {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : '未知错误';
-        addAssistantMessage(`❌ 加载会话失败: ${errorMessage}`);
+        ui.sendMessage(`❌ 加载会话失败: ${errorMessage}`);
         return {
           success: false,
           error: `加载会话失败: ${errorMessage}`,
@@ -81,7 +81,7 @@ const resumeCommand: SlashCommand = {
       const sessions = await SessionService.listSessions();
 
       if (sessions.length === 0) {
-        addAssistantMessage(
+        ui.sendMessage(
           '📭 **没有找到历史会话**\n\n开始一次对话后,会话历史将自动保存到 `~/.blade/projects/`'
         );
         return {
@@ -100,7 +100,7 @@ const resumeCommand: SlashCommand = {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误';
-      addAssistantMessage(`❌ 获取会话列表失败: ${errorMessage}`);
+      ui.sendMessage(`❌ 获取会话列表失败: ${errorMessage}`);
       return {
         success: false,
         error: `获取会话列表失败: ${errorMessage}`,

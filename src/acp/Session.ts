@@ -110,9 +110,54 @@ export class AcpSession {
     try {
       logger.debug(`[AcpSession ${this.id}] Executing slash command: ${message}`);
 
-      // 创建 slash command 上下文
+      // 创建 slash command 上下文，包含 ACP 回调和取消信号
       const context = {
         cwd: this.cwd,
+        signal, // 传递取消信号
+        acp: {
+          // 发送文本消息给 IDE
+          sendMessage: (text: string) => {
+            this.sendUpdate({
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text },
+            });
+          },
+          // 发送工具调用开始通知
+          sendToolStart: (
+            toolName: string,
+            params: Record<string, unknown>,
+            toolKind?: 'readonly' | 'write' | 'execute'
+          ) => {
+            const toolCallId = `tool_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const acpKind = this.mapToolKind(toolKind);
+            this.sendUpdate({
+              sessionUpdate: 'tool_call',
+              toolCallId,
+              status: 'in_progress' as ToolCallStatus,
+              title: `${toolName}`,
+              content: [
+                {
+                  type: 'content',
+                  content: { type: 'text', text: JSON.stringify(params, null, 2) },
+                },
+              ],
+              kind: acpKind,
+            });
+          },
+          // 发送工具调用结果通知
+          sendToolResult: (
+            toolName: string,
+            result: { success: boolean; summary?: string }
+          ) => {
+            // 工具结果通过 sendMessage 显示即可
+            if (result.summary) {
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: result.summary },
+              });
+            }
+          },
+        },
       };
 
       // 执行 slash command
@@ -137,6 +182,8 @@ export class AcpSession {
 
       return { stopReason: result.success ? 'end_turn' : 'cancelled' };
     } catch (error) {
+      // 注意：abortHandler 在 try 块内定义，catch 无法直接访问
+      // 但由于 signal 是 WeakRef 的，GC 会自动清理
       logger.error(`[AcpSession ${this.id}] Slash command error:`, error);
       this.sendUpdate({
         sessionUpdate: 'agent_message_chunk',
@@ -223,7 +270,9 @@ export class AcpSession {
 
       // 2. 检查是否是 slash command
       if (isSlashCommand(message)) {
-        return this.handleSlashCommand(message, abortController.signal);
+        // 重要：使用 await 确保 finally 块在 handleSlashCommand 完成后才执行
+        // 否则 finally 会在返回 Promise 后立即执行，导致 pendingPrompt 被提前清空
+        return await this.handleSlashCommand(message, abortController.signal);
       }
 
       // 3. 构建 ChatContext
@@ -266,16 +315,18 @@ export class AcpSession {
         },
 
         // 工具调用开始
-        onToolStart: (toolCall) => {
+        onToolStart: (toolCall, toolKind) => {
           const toolName =
             'function' in toolCall ? toolCall.function.name : toolCall.type;
+          // 映射 Blade ToolKind 到 ACP ToolKind
+          const acpKind = this.mapToolKind(toolKind);
           this.sendUpdate({
             sessionUpdate: 'tool_call',
             toolCallId: toolCall.id,
             status: 'in_progress' as ToolCallStatus,
             title: `Executing ${toolName}`,
             content: [],
-            kind: 'execute' as ToolKind,
+            kind: acpKind,
           });
         },
 
@@ -360,10 +411,13 @@ export class AcpSession {
    * 取消当前操作
    */
   cancel(): void {
+    logger.info(`[AcpSession ${this.id}] Cancel requested`);
     if (this.pendingPrompt) {
       this.pendingPrompt.abort();
       this.pendingPrompt = null;
-      logger.debug(`[AcpSession ${this.id}] Cancelled`);
+      logger.info(`[AcpSession ${this.id}] Cancelled successfully`);
+    } else {
+      logger.warn(`[AcpSession ${this.id}] No pending prompt to cancel`);
     }
   }
 
@@ -379,7 +433,9 @@ export class AcpSession {
   async setMode(mode: string): Promise<void> {
     // 验证并设置模式
     const validModes: AcpModeId[] = ['default', 'auto-edit', 'yolo', 'plan'];
-    this.mode = validModes.includes(mode as AcpModeId) ? (mode as AcpModeId) : 'default';
+    this.mode = validModes.includes(mode as AcpModeId)
+      ? (mode as AcpModeId)
+      : 'default';
     logger.info(`[AcpSession ${this.id}] Mode set to: ${this.mode}`);
 
     // 发送模式更新通知给 IDE
@@ -548,7 +604,10 @@ export class AcpSession {
       logger.debug(
         `[AcpSession ${this.id}] Using cached approval for: ${permissionSignature}`
       );
-      return { approved: true, scope: 'session' };
+      // 注意：返回 'once' 而非 'session'，因为：
+      // 1. ACP 自己管理会话缓存（sessionApprovals）
+      // 2. 'session' 会触发 Blade 的持久化逻辑，与 ACP "仅本次会话" 语义不符
+      return { approved: true };
     }
 
     try {
@@ -619,10 +678,11 @@ export class AcpSession {
       // 处理 reject_always（可选：缓存拒绝，但目前不实现）
       // if (optionId === 'reject_always') { ... }
 
+      // 注意：始终返回 'once' 或不返回 scope
+      // ACP 的 "Always Allow" 仅在本次会话有效（内存缓存），不应触发 Blade 的持久化
       return {
         approved,
         reason: approved ? undefined : 'User denied the operation',
-        scope: optionId === 'allow_always' ? 'session' : 'once',
       };
     } catch (error) {
       logger.warn(`[AcpSession ${this.id}] Permission request failed:`, error);

@@ -133,7 +133,10 @@ export interface LoopOptions {
   onContentDelta?: (delta: string) => void; // 流式文本片段
   onContent?: (content: string) => void; // 完整的 LLM 输出内容
   onThinking?: (content: string) => void; // LLM 推理过程(深度推理模型)
-  onToolStart?: (toolCall: ChatCompletionMessageToolCall) => void; // 工具调用开始
+  onToolStart?: (
+    toolCall: ChatCompletionMessageToolCall,
+    toolKind?: 'readonly' | 'write' | 'execute'
+  ) => void; // 工具调用开始，toolKind 表示工具类型
 
   // Token 使用量回调
   onTokenUsage?: (usage: {

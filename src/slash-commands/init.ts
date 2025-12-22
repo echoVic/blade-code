@@ -7,10 +7,18 @@ import { promises as fs } from 'fs';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import * as path from 'path';
 import { Agent } from '../agent/Agent.js';
-import { getState, sessionActions } from '../store/vanilla.js';
+import { createLogger, LogCategory } from '../logging/Logger.js';
+import { getState } from '../store/vanilla.js';
 import type { ToolResult } from '../tools/types/index.js';
 import { formatToolCallSummary } from '../ui/utils/toolFormatters.js';
-import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
+import {
+  getUI,
+  type SlashCommand,
+  type SlashCommandContext,
+  type SlashCommandResult,
+} from './types.js';
+
+const logger = createLogger(LogCategory.AGENT);
 
 const initCommand: SlashCommand = {
   name: 'init',
@@ -21,9 +29,13 @@ const initCommand: SlashCommand = {
     context: SlashCommandContext
   ): Promise<SlashCommandResult> {
     try {
-      const { cwd } = context;
-      const addMessage = sessionActions().addAssistantMessage;
-      const addToolMessage = sessionActions().addToolMessage;
+      const { cwd, signal } = context;
+      const ui = getUI(context);
+
+      // 工具消息（带换行）
+      const sendToolMessage = (summary: string) => {
+        ui.sendMessage(`${summary}`);
+      };
 
       // 从 store 获取 sessionId
       const sessionId = getState().session.sessionId;
@@ -48,8 +60,8 @@ const initCommand: SlashCommand = {
       }
 
       if (exists && !isEmpty) {
-        addMessage('⚠️ BLADE.md 已存在。');
-        addMessage('💡 正在分析现有文件并提供改进建议...');
+        ui.sendMessage('⚠️ BLADE.md 已存在。');
+        ui.sendMessage('💡 正在分析现有文件并提供改进建议...');
 
         // 创建 Agent 并分析现有文件
         const agent = await Agent.create();
@@ -83,6 +95,7 @@ const initCommand: SlashCommand = {
 **Final output**: Return your analysis and suggestions as plain text. Do NOT use Write tool.`;
 
         // 使用 chat 方法让 Agent 可以调用工具
+        logger.info(`[/init] Starting agent.chat, signal.aborted: ${signal?.aborted}`);
         const result = await agent.chat(
           analysisPrompt,
           {
@@ -90,37 +103,48 @@ const initCommand: SlashCommand = {
             userId: 'cli-user',
             sessionId: sessionId || 'init-session',
             workspaceRoot: cwd,
+            signal,
           },
           {
             onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
               if (toolCall.type !== 'function') return;
+              // 检查是否已取消
+              if (signal?.aborted) {
+                logger.info('[/init] onToolStart: signal already aborted, skipping');
+                return;
+              }
               try {
                 const params = JSON.parse(toolCall.function.arguments);
                 const summary = formatToolCallSummary(toolCall.function.name, params);
-                addToolMessage(summary, {
-                  toolName: toolCall.function.name,
-                  phase: 'start',
-                  summary,
-                  params,
-                });
+                sendToolMessage(summary);
               } catch {
                 // 静默处理解析错误
               }
             },
-            onToolResult: async (toolCall: ChatCompletionMessageToolCall, result: ToolResult) => {
+            onToolResult: async (
+              toolCall: ChatCompletionMessageToolCall,
+              result: ToolResult
+            ) => {
               if (toolCall.type !== 'function') return;
+              // 检查是否已取消
+              if (signal?.aborted) {
+                logger.info('[/init] onToolResult: signal already aborted, skipping');
+                return;
+              }
               if (result?.metadata?.summary) {
-                addToolMessage(result.metadata.summary, {
-                  toolName: toolCall.function.name,
-                  phase: 'complete',
-                  summary: result.metadata.summary,
-                });
+                sendToolMessage(result.metadata.summary);
               }
             },
           }
         );
+        logger.info(`[/init] agent.chat completed, signal.aborted: ${signal?.aborted}`);
 
-        addMessage(result);
+        if (signal?.aborted) {
+          logger.info('[/init] Returning cancelled after agent.chat');
+          return { success: false, message: '操作已取消' };
+        }
+
+        ui.sendMessage(result);
 
         return {
           success: true,
@@ -130,9 +154,9 @@ const initCommand: SlashCommand = {
 
       // 显示适当的提示消息
       if (isEmpty) {
-        addMessage('⚠️ 检测到空的 BLADE.md 文件，将重新生成...');
+        ui.sendMessage('⚠️ 检测到空的 BLADE.md 文件，将重新生成...');
       }
-      addMessage('🔍 正在分析项目结构...');
+      ui.sendMessage('🔍 正在分析项目结构...');
 
       // 创建 Agent 并生成内容
       const agent = await Agent.create();
@@ -172,6 +196,7 @@ const initCommand: SlashCommand = {
 **Final output**: Return ONLY the complete BLADE.md content (markdown format), ready to be written to the file.`;
 
       // 使用 chat 方法让 Agent 可以调用工具
+      logger.info(`[/init] Starting agent.chat for new BLADE.md, signal.aborted: ${signal?.aborted}`);
       const generatedContent = await agent.chat(
         analysisPrompt,
         {
@@ -179,35 +204,44 @@ const initCommand: SlashCommand = {
           userId: 'cli-user',
           sessionId: sessionId || 'init-session',
           workspaceRoot: cwd,
+          signal,
         },
         {
           onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
             if (toolCall.type !== 'function') return;
+            if (signal?.aborted) {
+              logger.info('[/init] onToolStart: signal already aborted, skipping');
+              return;
+            }
             try {
               const params = JSON.parse(toolCall.function.arguments);
               const summary = formatToolCallSummary(toolCall.function.name, params);
-              addToolMessage(summary, {
-                toolName: toolCall.function.name,
-                phase: 'start',
-                summary,
-                params,
-              });
+              sendToolMessage(summary);
             } catch {
               // 静默处理解析错误
             }
           },
-          onToolResult: async (toolCall: ChatCompletionMessageToolCall, result: ToolResult) => {
+          onToolResult: async (
+            toolCall: ChatCompletionMessageToolCall,
+            result: ToolResult
+          ) => {
             if (toolCall.type !== 'function') return;
+            if (signal?.aborted) {
+              logger.info('[/init] onToolResult: signal already aborted, skipping');
+              return;
+            }
             if (result?.metadata?.summary) {
-              addToolMessage(result.metadata.summary, {
-                toolName: toolCall.function.name,
-                phase: 'complete',
-                summary: result.metadata.summary,
-              });
+              sendToolMessage(result.metadata.summary);
             }
           },
         }
       );
+      logger.info(`[/init] agent.chat completed for new BLADE.md, signal.aborted: ${signal?.aborted}`);
+
+      if (signal?.aborted) {
+        logger.info('[/init] Returning cancelled after agent.chat (new BLADE.md)');
+        return { success: false, message: '操作已取消' };
+      }
 
       // 验证生成内容的有效性（至少应该有基本的标题和内容）
       if (!generatedContent || generatedContent.trim().length === 0) {
@@ -215,7 +249,7 @@ const initCommand: SlashCommand = {
       }
 
       // 写入生成的内容
-      addMessage('✨ 正在写入 BLADE.md...');
+      ui.sendMessage('✨ 正在写入 BLADE.md...');
       await fs.writeFile(blademdPath, generatedContent, 'utf-8');
 
       return {

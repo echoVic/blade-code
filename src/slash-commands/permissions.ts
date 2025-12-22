@@ -10,9 +10,9 @@ async function permissionsCommandHandler(
 ): Promise<SlashCommandResult> {
   return {
     success: true,
-    message: 'show_permissions_manager',
+    message: 'show_permissions_editor',
     data: {
-      action: 'show_permissions_manager',
+      action: 'show_permissions_editor',
     },
   };
 }

@@ -2,13 +2,15 @@
  * 内置的 slash commands
  */
 
-import { sessionActions } from '../store/vanilla.js';
+import { TokenCounter } from '../context/TokenCounter.js';
+import { getConfig, getCurrentModel, getState, sessionActions } from '../store/vanilla.js';
+import { getVersion } from '../utils/packageInfo.js';
 import { agentsCommand } from './agents.js';
 import compactCommand from './compact.js';
 import mcpCommand from './mcp.js';
 import permissionsCommand from './permissions.js';
 import resumeCommand from './resume.js';
-import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
+import { getUI, type SlashCommand, type SlashCommandContext, type SlashCommandResult } from './types.js';
 
 const helpCommand: SlashCommand = {
   name: 'help',
@@ -18,8 +20,10 @@ const helpCommand: SlashCommand = {
   aliases: ['h'],
   async handler(
     _args: string[],
-    _context: SlashCommandContext
+    context: SlashCommandContext
   ): Promise<SlashCommandResult> {
+    const ui = getUI(context);
+
     const helpText = `🔧 **可用的 Slash Commands:**
 
 **/init** - 分析当前项目并生成 BLADE.md 配置文件
@@ -40,11 +44,10 @@ const helpCommand: SlashCommand = {
 - 按 Ctrl+C 退出程序
 - 按 Ctrl+L 快速清屏`;
 
-    sessionActions().addAssistantMessage(helpText);
+    ui.sendMessage(helpText);
 
     return {
       success: true,
-      content: helpText, // ACP 模式使用
       message: '帮助信息已显示',
     };
   },
@@ -76,14 +79,12 @@ const versionCommand: SlashCommand = {
   aliases: ['v'],
   async handler(
     _args: string[],
-    _context: SlashCommandContext
+    context: SlashCommandContext
   ): Promise<SlashCommandResult> {
-    // 从 package.json 读取版本信息
-    try {
-      const packageJson = require('../../../package.json');
-      const version = packageJson.version || '1.3.0';
+    const ui = getUI(context);
+    const version = getVersion();
 
-      const versionInfo = `🗡️ **Blade Code v${version}**
+    const versionInfo = `🗡️ **Blade Code v${version}**
 
 **构建信息:**
 - Node.js: ${process.version}
@@ -96,22 +97,12 @@ const versionCommand: SlashCommand = {
 - 📝 自定义系统提示
 - 🎯 多工具集成支持`;
 
-      sessionActions().addAssistantMessage(versionInfo);
+    ui.sendMessage(versionInfo);
 
-      return {
-        success: true,
-        content: versionInfo,
-        message: '版本信息已显示',
-      };
-    } catch (_error) {
-      const errorMsg = '🗡️ **Blade Code**\n\n版本信息获取失败';
-      sessionActions().addAssistantMessage(errorMsg);
-      return {
-        success: true,
-        content: errorMsg,
-        message: '版本信息已显示',
-      };
-    }
+    return {
+      success: true,
+      message: '版本信息已显示',
+    };
   },
 };
 
@@ -124,6 +115,7 @@ const statusCommand: SlashCommand = {
     _args: string[],
     context: SlashCommandContext
   ): Promise<SlashCommandResult> {
+    const ui = getUI(context);
     const { cwd } = context;
     const path = require('path');
     const fs = require('fs').promises;
@@ -172,11 +164,10 @@ const statusCommand: SlashCommand = {
 
 ${!hasBlademd ? '\n💡 **建议:** 运行 `/init` 命令来创建项目配置文件' : ''}`;
 
-      sessionActions().addAssistantMessage(statusText);
+      ui.sendMessage(statusText);
 
       return {
         success: true,
-        content: statusText,
         message: '状态信息已显示',
       };
     } catch (error) {
@@ -205,39 +196,6 @@ const exitCommand: SlashCommand = {
   },
 };
 
-const configCommand: SlashCommand = {
-  name: 'config',
-  description: 'Open config panel',
-  fullDescription: '打开配置面板，管理 Blade Code 设置',
-  usage: '/config [theme]',
-  async handler(
-    _args: string[],
-    _context: SlashCommandContext
-  ): Promise<SlashCommandResult> {
-    const configText = `⚙️ **配置面板**
-
-**当前配置:**
-- 主题: Default
-- 语言: 中文
-- 调试模式: 关闭
-
-**可用配置项:**
-- \`/config theme\` - 切换主题
-- \`/config lang\` - 切换语言
-- \`/config debug\` - 切换调试模式
-
-💡 **提示:** 配置更改会在下次启动时生效`;
-
-    sessionActions().addAssistantMessage(configText);
-
-    return {
-      success: true,
-      content: configText,
-      message: '配置面板已显示',
-    };
-  },
-};
-
 const contextCommand: SlashCommand = {
   name: 'context',
   description: 'Visualize current context usage as a colored grid',
@@ -245,64 +203,60 @@ const contextCommand: SlashCommand = {
   usage: '/context',
   async handler(
     _args: string[],
-    _context: SlashCommandContext
+    context: SlashCommandContext
   ): Promise<SlashCommandResult> {
+    const ui = getUI(context);
+
+    // 获取真实数据
+    const config = getConfig();
+    const currentModel = getCurrentModel();
+    const sessionState = getState().session;
+    const sessionMessages = sessionState.messages || [];
+
+    // 计算 token 数量
+    const messages = sessionMessages.map((msg) => ({
+      role: msg.role as 'user' | 'assistant' | 'system',
+      content: msg.content,
+    }));
+
+    const modelName = currentModel?.model || 'gpt-4';
+    const totalTokens = messages.length > 0 ? TokenCounter.countTokens(messages, modelName) : 0;
+    const maxTokens = currentModel?.maxContextTokens ?? config?.maxContextTokens ?? 128000;
+    const usagePercent = maxTokens > 0 ? ((totalTokens / maxTokens) * 100).toFixed(1) : '0';
+    const remainingPercent = (100 - parseFloat(usagePercent)).toFixed(1);
+
+    // 确定状态指示器
+    const usageNum = parseFloat(usagePercent);
+    let statusIndicator: string;
+    if (usageNum < 50) {
+      statusIndicator = '🟢 正常';
+    } else if (usageNum < 80) {
+      statusIndicator = '🟡 中等';
+    } else {
+      statusIndicator = '🔴 高负载';
+    }
+
     const contextText = `📊 **上下文使用情况**
 
 **当前会话:**
-- 消息数量: ${Math.floor(Math.random() * 20) + 5}
-- 使用令牌: ${Math.floor(Math.random() * 5000) + 1000}
-- 剩余容量: ${Math.floor(Math.random() * 50) + 30}%
+- 消息数量: ${sessionMessages.length}
+- Token 使用: ${totalTokens.toLocaleString()} / ${maxTokens.toLocaleString()}
+- 使用率: ${usagePercent}%
+- 剩余容量: ${remainingPercent}%
 
-**内存使用:**
-- 对话历史: ${Math.floor(Math.random() * 2000) + 500} tokens
-- 系统提示: ${Math.floor(Math.random() * 500) + 200} tokens
-- 项目上下文: ${Math.floor(Math.random() * 1000) + 300} tokens
+**模型信息:**
+- 模型: ${currentModel?.model || '未配置'}
+- 上下文窗口: ${maxTokens.toLocaleString()} tokens
 
-🟢 正常 🟡 中等 🔴 高负载`;
+**状态:** ${statusIndicator}
 
-    sessionActions().addAssistantMessage(contextText);
+💡 使用 \`/compact\` 可手动压缩上下文`;
+
+    ui.sendMessage(contextText);
 
     return {
       success: true,
-      content: contextText,
       message: '上下文信息已显示',
-    };
-  },
-};
-
-const costCommand: SlashCommand = {
-  name: 'cost',
-  description: 'Show the total cost and duration of the current session',
-  fullDescription: '显示当前会话的成本和持续时间',
-  usage: '/cost',
-  async handler(
-    _args: string[],
-    _context: SlashCommandContext
-  ): Promise<SlashCommandResult> {
-    const costText = `💰 **会话成本统计**
-
-**时间统计:**
-- 开始时间: ${new Date().toLocaleTimeString()}
-- 持续时间: ${Math.floor(Math.random() * 60) + 5} 分钟
-
-**使用统计:**
-- 输入令牌: ${Math.floor(Math.random() * 5000) + 1000}
-- 输出令牌: ${Math.floor(Math.random() * 3000) + 500}
-- 总计令牌: ${Math.floor(Math.random() * 8000) + 1500}
-
-**估算成本:**
-- 当前会话: $${(Math.random() * 0.5 + 0.1).toFixed(3)}
-- 今日总计: $${(Math.random() * 2 + 0.5).toFixed(3)}
-
-💡 **提示:** 成本基于当前 AI 模型定价估算`;
-
-    sessionActions().addAssistantMessage(costText);
-
-    return {
-      success: true,
-      content: costText,
-      message: '成本信息已显示',
     };
   },
 };
@@ -313,9 +267,7 @@ export const builtinCommands = {
   version: versionCommand,
   status: statusCommand,
   exit: exitCommand,
-  config: configCommand,
   context: contextCommand,
-  cost: costCommand,
   permissions: permissionsCommand,
   resume: resumeCommand,
   compact: compactCommand,
