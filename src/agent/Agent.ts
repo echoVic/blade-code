@@ -45,6 +45,7 @@ import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import { type Tool, type ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
+import { isThinkingModel } from '../utils/modelDetection.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import { subagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
@@ -177,6 +178,12 @@ export class Agent {
 
       this.log(`🚀 使用模型: ${modelConfig.name} (${modelConfig.model})`);
 
+      // 检测模型是否支持 thinking 模式
+      const supportsThinking = isThinkingModel(modelConfig);
+      if (supportsThinking) {
+        this.log(`🧠 检测到 Thinking 模型，启用 reasoning_content 支持`);
+      }
+
       // 使用工厂函数创建 ChatService（根据 provider 选择实现）
       this.chatService = createChatService({
         provider: modelConfig.provider,
@@ -187,6 +194,7 @@ export class Agent {
         maxContextTokens: modelConfig.maxContextTokens ?? this.config.maxContextTokens, // 上下文窗口（压缩判断）
         maxOutputTokens: modelConfig.maxOutputTokens ?? this.config.maxOutputTokens, // 输出限制（API max_tokens）
         timeout: this.config.timeout,
+        supportsThinking, // 传递 thinking 模式支持标志
       });
 
       // 4. 初始化执行引擎
@@ -743,10 +751,11 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           };
         }
 
-        // 5. 添加 LLM 的响应到消息历史（包含 tool_calls）
+        // 5. 添加 LLM 的响应到消息历史（包含 tool_calls 和 reasoningContent）
         messages.push({
           role: 'assistant',
           content: turnResult.content || '',
+          reasoningContent: turnResult.reasoningContent, // ✅ 保存 thinking 推理内容
           tool_calls: turnResult.toolCalls,
         });
 
@@ -777,7 +786,9 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
           // 在每个工具执行前检查取消信号
           if (options?.signal?.aborted) {
-            logger.info(`[Agent] Aborting before tool ${toolCall.function.name} due to signal.aborted=true`);
+            logger.info(
+              `[Agent] Aborting before tool ${toolCall.function.name} due to signal.aborted=true`
+            );
             return {
               success: false,
               error: {
@@ -796,8 +807,14 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
             // 🆕 触发工具开始回调（流式显示）
             if (options?.onToolStart) {
               // 获取工具定义以传递 kind
-              const toolDef = this.executionPipeline.getRegistry().get(toolCall.function.name);
-              const toolKind = toolDef?.kind as 'readonly' | 'write' | 'execute' | undefined;
+              const toolDef = this.executionPipeline
+                .getRegistry()
+                .get(toolCall.function.name);
+              const toolKind = toolDef?.kind as
+                | 'readonly'
+                | 'write'
+                | 'execute'
+                | undefined;
               options.onToolStart(toolCall, toolKind);
             }
 
@@ -1018,15 +1035,18 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
               try {
                 const chatConfig = this.chatService.getConfig();
-                const compactResult = await CompactionService.compact(context.messages, {
-                  trigger: 'auto',
-                  modelName: chatConfig.model,
-                  maxContextTokens:
-                    chatConfig.maxContextTokens ?? this.config.maxContextTokens,
-                  apiKey: chatConfig.apiKey,
-                  baseURL: chatConfig.baseUrl,
-                  actualPreTokens: lastPromptTokens,
-                });
+                const compactResult = await CompactionService.compact(
+                  context.messages,
+                  {
+                    trigger: 'auto',
+                    modelName: chatConfig.model,
+                    maxContextTokens:
+                      chatConfig.maxContextTokens ?? this.config.maxContextTokens,
+                    apiKey: chatConfig.apiKey,
+                    baseURL: chatConfig.baseUrl,
+                    actualPreTokens: lastPromptTokens,
+                  }
+                );
 
                 // 更新 context.messages 为压缩后的消息
                 context.messages = compactResult.compactedMessages;
