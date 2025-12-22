@@ -5,13 +5,8 @@
 import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { TokenCounter } from '../context/TokenCounter.js';
-import {
-  getConfig,
-  getCurrentModel,
-  getState,
-  sessionActions,
-} from '../store/vanilla.js';
-import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
+import { getConfig, getCurrentModel, getState } from '../store/vanilla.js';
+import { getUI, type SlashCommand, type SlashCommandContext, type SlashCommandResult } from './types.js';
 
 /**
  * Compact 命令处理函数
@@ -19,9 +14,9 @@ import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './ty
  */
 async function compactCommandHandler(
   _args: string[],
-  _context: SlashCommandContext
+  context: SlashCommandContext
 ): Promise<SlashCommandResult> {
-  const addAssistantMessage = sessionActions().addAssistantMessage;
+  const ui = getUI(context);
 
   try {
     // 从 Store 获取配置
@@ -41,7 +36,7 @@ async function compactCommandHandler(
     const sessionId = sessionState.sessionId;
 
     if (!sessionMessages || sessionMessages.length === 0) {
-      addAssistantMessage('⚠️ 当前会话没有消息，无需压缩');
+      ui.sendMessage('⚠️ 当前会话没有消息，无需压缩');
       return {
         success: false,
         error: '没有消息需要压缩',
@@ -59,26 +54,24 @@ async function compactCommandHandler(
     const tokenLimit = currentModel.maxContextTokens ?? config.maxContextTokens;
     const usagePercent = ((preTokens / tokenLimit) * 100).toFixed(1);
 
-    addAssistantMessage(`📊 **当前上下文统计**`);
-    addAssistantMessage(`  • 消息数量: ${messages.length}`);
-    addAssistantMessage(`  • Token 数量: ${preTokens.toLocaleString()}`);
-    addAssistantMessage(`  • Token 限制: ${tokenLimit.toLocaleString()}`);
-    addAssistantMessage(`  • 使用率: ${usagePercent}%`);
-    addAssistantMessage('');
+    ui.sendMessage(`📊 **当前上下文统计**
+  • 消息数量: ${messages.length}
+  • Token 数量: ${preTokens.toLocaleString()}
+  • Token 限制: ${tokenLimit.toLocaleString()}
+  • 使用率: ${usagePercent}%`);
 
     // 检查是否需要压缩
     if (preTokens < tokenLimit * 0.5) {
-      addAssistantMessage(
-        `💡 提示: 当前 token 使用率较低（${usagePercent}%），可以暂时不压缩。`
+      ui.sendMessage(
+        `💡 提示: 当前 token 使用率较低（${usagePercent}%），可以暂时不压缩。\n   系统会在达到 80% 时自动触发压缩。`
       );
-      addAssistantMessage('   系统会在达到 80% 时自动触发压缩。');
       return {
         success: true,
         message: '无需压缩',
       };
     }
 
-    addAssistantMessage('⏳ **正在压缩上下文...**');
+    ui.sendMessage('⏳ **正在压缩上下文...**');
 
     // 执行压缩
     const result = await CompactionService.compact(messages, {
@@ -115,26 +108,22 @@ async function compactCommandHandler(
       }
 
       // 显示成功信息
-      addAssistantMessage('');
-      addAssistantMessage('✅ **压缩完成！**');
-      addAssistantMessage('');
-      addAssistantMessage(`📉 **Token 变化**`);
-      addAssistantMessage(`  • 压缩前: ${result.preTokens.toLocaleString()} tokens`);
-      addAssistantMessage(`  • 压缩后: ${result.postTokens.toLocaleString()} tokens`);
-      addAssistantMessage(
-        `  • 压缩率: ${((1 - result.postTokens / result.preTokens) * 100).toFixed(1)}%`
-      );
+      let successMessage = `✅ **压缩完成！**
+
+📉 **Token 变化**
+  • 压缩前: ${result.preTokens.toLocaleString()} tokens
+  • 压缩后: ${result.postTokens.toLocaleString()} tokens
+  • 压缩率: ${((1 - result.postTokens / result.preTokens) * 100).toFixed(1)}%`;
 
       if (result.filesIncluded.length > 0) {
-        addAssistantMessage('');
-        addAssistantMessage(`📁 **包含文件** (${result.filesIncluded.length})`);
+        successMessage += `\n\n📁 **包含文件** (${result.filesIncluded.length})`;
         result.filesIncluded.forEach((file, i) => {
-          addAssistantMessage(`  ${i + 1}. ${file}`);
+          successMessage += `\n  ${i + 1}. ${file}`;
         });
       }
 
-      addAssistantMessage('');
-      addAssistantMessage('💡 对话历史已压缩，但完整记录仍保存在会话文件中。');
+      successMessage += '\n\n💡 对话历史已压缩，但完整记录仍保存在会话文件中。';
+      ui.sendMessage(successMessage);
 
       // 返回特殊消息，通知 UI 更新消息列表
       return {
@@ -151,15 +140,14 @@ async function compactCommandHandler(
       };
     } else {
       // 压缩失败，使用了降级策略
-      addAssistantMessage('');
-      addAssistantMessage('⚠️ **压缩使用降级策略**');
-      addAssistantMessage('');
-      addAssistantMessage(`📉 **Token 变化**`);
-      addAssistantMessage(`  • 压缩前: ${result.preTokens.toLocaleString()} tokens`);
-      addAssistantMessage(`  • 压缩后: ${result.postTokens.toLocaleString()} tokens`);
-      addAssistantMessage('');
-      addAssistantMessage('💡 由于压缩过程出现错误，已使用简单截断策略。');
-      addAssistantMessage(`   错误信息: ${result.error}`);
+      ui.sendMessage(`⚠️ **压缩使用降级策略**
+
+📉 **Token 变化**
+  • 压缩前: ${result.preTokens.toLocaleString()} tokens
+  • 压缩后: ${result.postTokens.toLocaleString()} tokens
+
+💡 由于压缩过程出现错误，已使用简单截断策略。
+   错误信息: ${result.error}`);
 
       return {
         success: false,
@@ -176,7 +164,7 @@ async function compactCommandHandler(
     }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    addAssistantMessage(`❌ **压缩失败**: ${errorMsg}`);
+    ui.sendMessage(`❌ **压缩失败**: ${errorMsg}`);
 
     return {
       success: false,

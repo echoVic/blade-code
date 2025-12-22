@@ -127,7 +127,7 @@ blade --yolo "Auto-approve all operations"
 
 ### Slash Commands
 
-Use in interactive mode: `/init` `/help` `/clear` `/compact` `/agents` `/permissions` `/mcp` `/resume` `/config` `/theme` `/model`
+Use in interactive mode: `/init` `/help` `/clear` `/compact` `/context` `/agents` `/permissions` `/mcp` `/resume` `/theme` `/model`
 
 ---
 
@@ -147,6 +147,12 @@ Contributions welcome! See [Contributing Guide](CONTRIBUTING.md).
 git clone https://github.com/echoVic/blade-code.git
 cd blade-code && pnpm install && pnpm dev
 ```
+
+---
+
+## 💬 Community
+
+Add WeChat **VIc-Forever** with note "Blade" to join the group.
 
 ---
 

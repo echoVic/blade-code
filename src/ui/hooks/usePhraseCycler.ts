@@ -255,7 +255,6 @@ export const INFORMATIVE_TIPS = [
   '↑↓ - 浏览输入历史记录',
   '双击 Esc - 快速清空输入框',
   'Ctrl+C - 强制终止程序',
-  'Ctrl+D - 优雅退出 Blade',
   'Ctrl+L - 清屏（保留历史）',
   'Ctrl+R - 反向搜索历史',
   'Ctrl+U - 清空当前行',

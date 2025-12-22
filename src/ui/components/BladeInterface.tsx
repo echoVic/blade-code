@@ -21,7 +21,7 @@ import {
   useSessionSelectorData,
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
-import { configActions } from '../../store/vanilla.js';
+import { configActions, getMessages } from '../../store/vanilla.js';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
 import type { AppProps } from '../App.js';
 import { useCommandHandler } from '../hooks/useCommandHandler.js';
@@ -370,9 +370,16 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       return;
     }
 
+    // 检查是否已有消息（恢复会话或已发送过欢迎消息）
+    const messages = getMessages();
+    if (messages.length > 0) {
+      readyAnnouncementSent.current = true;
+      return;
+    }
+
     readyAnnouncementSent.current = true;
     sessionActions.addAssistantMessage('请输入您的问题，我将为您提供帮助。');
-  }, [readyForChat, sessionActions.addAssistantMessage]);
+  }, [readyForChat]);
 
   useEffect(() => {
     if (!initializationError) {

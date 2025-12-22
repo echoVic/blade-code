@@ -169,9 +169,13 @@ export class BladeAgent implements AcpAgentInterface {
    * 取消当前操作
    */
   async cancel(params: acp.CancelNotification): Promise<void> {
+    logger.info(`[BladeAgent] Cancel notification received for session: ${params.sessionId}`);
     const session = this.sessions.get(params.sessionId);
     if (session) {
+      logger.info(`[BladeAgent] Found session, calling session.cancel()`);
       session.cancel();
+    } else {
+      logger.warn(`[BladeAgent] Session not found for cancel: ${params.sessionId}`);
     }
   }
 

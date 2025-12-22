@@ -1,5 +1,5 @@
 import { Box, Static } from 'ink';
-import React, { ReactNode, useMemo } from 'react';
+import React, { ReactNode, useEffect, useMemo } from 'react';
 import {
   useClearCount,
   useCurrentThinkingContent,
@@ -48,20 +48,32 @@ export const MessageArea: React.FC = React.memo(() => {
   // 使用 useTerminalWidth hook 获取终端宽度
   const terminalWidth = useTerminalWidth();
 
+  // 追踪已渲染到 Static 的消息数量（防止重复渲染）
+  const renderedCountRef = React.useRef(0);
+
+  // 当 clearCount 变化时（/clear 命令），重置渲染计数
+  useEffect(() => {
+    renderedCountRef.current = 0;
+  }, [clearCount]);
+
   // 分离已完成的消息和正在流式传输的消息
   const { completedMessages, streamingMessage } = useMemo(() => {
-    // 如果正在思考，最后一条消息视为流式传输中
-    if (isThinking && messages.length > 0) {
-      return {
-        completedMessages: messages.slice(0, -1),
-        streamingMessage: messages[messages.length - 1],
-      };
-    }
+    // Static 组件的特性：items 只能追加，不能减少
+    // 所以 completedMessages 只能增长，不能缩小
+    const safeCompletedCount = Math.max(
+      renderedCountRef.current,
+      isThinking && messages.length > 0 ? messages.length - 1 : messages.length
+    );
 
-    // 否则所有消息都是已完成的
+    // 更新已渲染数量
+    renderedCountRef.current = safeCompletedCount;
+
+    const completed = messages.slice(0, safeCompletedCount);
+    const streaming = safeCompletedCount < messages.length ? messages[safeCompletedCount] : null;
+
     return {
-      completedMessages: messages,
-      streamingMessage: null,
+      completedMessages: completed,
+      streamingMessage: streaming,
     };
   }, [messages, isThinking]);
 

@@ -775,10 +775,30 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         for (const toolCall of turnResult.toolCalls) {
           if (toolCall.type !== 'function') continue;
 
+          // 在每个工具执行前检查取消信号
+          if (options?.signal?.aborted) {
+            logger.info(`[Agent] Aborting before tool ${toolCall.function.name} due to signal.aborted=true`);
+            return {
+              success: false,
+              error: {
+                type: 'aborted',
+                message: '任务已被用户中止',
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+              },
+            };
+          }
+
           try {
             // 🆕 触发工具开始回调（流式显示）
             if (options?.onToolStart) {
-              options.onToolStart(toolCall);
+              // 获取工具定义以传递 kind
+              const toolDef = this.executionPipeline.getRegistry().get(toolCall.function.name);
+              const toolKind = toolDef?.kind as 'readonly' | 'write' | 'execute' | undefined;
+              options.onToolStart(toolCall, toolKind);
             }
 
             // 解析工具参数

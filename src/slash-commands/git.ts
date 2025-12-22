@@ -4,7 +4,7 @@
  */
 
 import { Agent } from '../agent/Agent.js';
-import { getState, sessionActions } from '../store/vanilla.js';
+import { getState } from '../store/vanilla.js';
 import {
   getGitStatus,
   getLlmGitStatus,
@@ -16,7 +16,7 @@ import {
   isGitRepository,
   stageAll,
 } from '../utils/git.js';
-import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
+import { getUI, type SlashCommand, type SlashCommandContext, type SlashCommandResult } from './types.js';
 
 const gitCommand: SlashCommand = {
   name: 'git',
@@ -44,25 +44,25 @@ const gitCommand: SlashCommand = {
       switch (subcommand) {
         case 'status':
         case 's':
-          return handleStatus(cwd);
+          return handleStatus(context);
         case 'log':
         case 'l':
-          return handleLog(cwd, args[1]);
+          return handleLog(context, args[1]);
         case 'diff':
         case 'd':
-          return handleDiff(cwd);
+          return handleDiff(context);
         case 'review':
         case 'r':
-          return handleReview(cwd);
+          return handleReview(context);
         case 'commit':
         case 'c':
-          return handleCommit(cwd);
+          return handleCommit(context);
         case 'pre-commit':
         case 'pc':
-          return handlePreCommit(cwd);
+          return handlePreCommit(context);
         default:
           // 默认显示状态概览
-          return handleStatus(cwd);
+          return handleStatus(context);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误';
@@ -77,17 +77,18 @@ const gitCommand: SlashCommand = {
 /**
  * 显示 Git 状态
  */
-async function handleStatus(cwd: string): Promise<SlashCommandResult> {
-  const status = await getGitStatus({ cwd });
+async function handleStatus(context: SlashCommandContext): Promise<SlashCommandResult> {
+  const ui = getUI(context);
+  const status = await getGitStatus({ cwd: context.cwd });
   if (!status) {
     return { success: false, error: '无法获取 Git 状态' };
   }
 
   const statusText = getLlmGitStatus(status);
   if (statusText) {
-    sessionActions().addAssistantMessage(`\`\`\`\n${statusText}\n\`\`\``);
+    ui.sendMessage(`\`\`\`\n${statusText}\n\`\`\``);
   } else {
-    sessionActions().addAssistantMessage('📭 无法获取 Git 状态信息');
+    ui.sendMessage('📭 无法获取 Git 状态信息');
   }
 
   return { success: true };
@@ -96,16 +97,15 @@ async function handleStatus(cwd: string): Promise<SlashCommandResult> {
 /**
  * 显示提交历史
  */
-async function handleLog(cwd: string, countArg?: string): Promise<SlashCommandResult> {
+async function handleLog(context: SlashCommandContext, countArg?: string): Promise<SlashCommandResult> {
+  const ui = getUI(context);
   const count = Math.min(Math.max(parseInt(countArg || '5', 10) || 5, 1), 50);
-  const log = await getRecentCommitMessages(cwd, count);
+  const log = await getRecentCommitMessages(context.cwd, count);
 
   if (!log) {
-    sessionActions().addAssistantMessage('📭 暂无提交记录');
+    ui.sendMessage('📭 暂无提交记录');
   } else {
-    sessionActions().addAssistantMessage(
-      `**最近 ${count} 条提交：**\n\`\`\`\n${log}\n\`\`\``
-    );
+    ui.sendMessage(`**最近 ${count} 条提交：**\n\`\`\`\n${log}\n\`\`\``);
   }
 
   return { success: true };
@@ -114,17 +114,19 @@ async function handleLog(cwd: string, countArg?: string): Promise<SlashCommandRe
 /**
  * 显示暂存区 diff
  */
-async function handleDiff(cwd: string): Promise<SlashCommandResult> {
+async function handleDiff(context: SlashCommandContext): Promise<SlashCommandResult> {
+  const ui = getUI(context);
+  const { cwd } = context;
   const fileList = await getStagedFileList(cwd);
 
   if (!fileList) {
-    sessionActions().addAssistantMessage('📭 暂存区为空，没有待提交的改动');
+    ui.sendMessage('📭 暂存区为空，没有待提交的改动');
     return { success: true };
   }
 
   const diff = await getStagedDiff(cwd);
   const message = `**暂存文件：**\n\`\`\`\n${fileList}\n\`\`\`\n\n**Diff：**\n\`\`\`diff\n${diff || '(无差异)'}\n\`\`\``;
-  sessionActions().addAssistantMessage(message);
+  ui.sendMessage(message);
 
   return { success: true };
 }
@@ -132,23 +134,24 @@ async function handleDiff(cwd: string): Promise<SlashCommandResult> {
 /**
  * AI Code Review
  */
-async function handleReview(cwd: string): Promise<SlashCommandResult> {
-  const addMessage = sessionActions().addAssistantMessage;
+async function handleReview(context: SlashCommandContext): Promise<SlashCommandResult> {
+  const ui = getUI(context);
+  const { cwd, signal } = context;
 
   // 检查是否有改动
   if (!(await hasUncommittedChanges(cwd))) {
-    addMessage('📭 没有未提交的改动，无需 Review');
+    ui.sendMessage('📭 没有未提交的改动，无需 Review');
     return { success: true };
   }
 
-  addMessage('🔍 正在分析代码改动...');
+  ui.sendMessage('🔍 正在分析代码改动...');
 
   // 获取 diff
   const fileList = await getStagedFileList(cwd);
   const diff = await getStagedDiff(cwd);
 
   if (!diff && !fileList) {
-    addMessage('💡 请先使用 `git add` 暂存要 Review 的文件');
+    ui.sendMessage('💡 请先使用 `git add` 暂存要 Review 的文件');
     return { success: true };
   }
 
@@ -179,9 +182,10 @@ ${diff || '(无差异)'}
     userId: 'cli-user',
     sessionId: sessionId || 'git-review',
     workspaceRoot: cwd,
+    signal,
   });
 
-  addMessage(result);
+  ui.sendMessage(result);
 
   return { success: true };
 }
@@ -189,17 +193,18 @@ ${diff || '(无差异)'}
 /**
  * AI 生成 Commit Message（不提交）
  */
-async function handlePreCommit(cwd: string): Promise<SlashCommandResult> {
-  const addMessage = sessionActions().addAssistantMessage;
+async function handlePreCommit(context: SlashCommandContext): Promise<SlashCommandResult> {
+  const ui = getUI(context);
+  const { cwd, signal } = context;
 
   // 检查是否有改动
   if (!(await hasUncommittedChanges(cwd))) {
-    addMessage('📭 没有未提交的改动');
+    ui.sendMessage('📭 没有未提交的改动');
     return { success: true };
   }
 
   // 暂存所有改动
-  addMessage('📦 暂存所有改动...');
+  ui.sendMessage('📦 暂存所有改动...');
   await stageAll(cwd);
 
   // 获取 diff
@@ -207,11 +212,11 @@ async function handlePreCommit(cwd: string): Promise<SlashCommandResult> {
   const diff = await getStagedDiff(cwd);
 
   if (!fileList) {
-    addMessage('📭 没有需要提交的改动');
+    ui.sendMessage('📭 没有需要提交的改动');
     return { success: true };
   }
 
-  addMessage('🤖 正在生成 commit message...');
+  ui.sendMessage('🤖 正在生成 commit message...');
 
   // 获取最近的提交信息作为风格参考
   const recentCommits = await getRecentCommitMessages(cwd, 5);
@@ -227,6 +232,7 @@ async function handlePreCommit(cwd: string): Promise<SlashCommandResult> {
     userId: 'cli-user',
     sessionId: sessionId || 'git-pre-commit',
     workspaceRoot: cwd,
+    signal,
   });
 
   // 清理 commit message（移除可能的代码块标记）
@@ -235,7 +241,7 @@ async function handlePreCommit(cwd: string): Promise<SlashCommandResult> {
     .replace(/\n?```$/, '')
     .trim();
 
-  addMessage(`**生成的 Commit Message：**\n\`\`\`\n${cleanMessage}\n\`\`\`\n\n💡 使用以下命令提交：\n\`\`\`bash\ngit commit -m "${cleanMessage.split('\n')[0]}"\n\`\`\``);
+  ui.sendMessage(`**生成的 Commit Message：**\n\`\`\`\n${cleanMessage}\n\`\`\`\n\n💡 使用以下命令提交：\n\`\`\`bash\ngit commit -m "${cleanMessage.split('\n')[0]}"\n\`\`\``);
 
   return { success: true };
 }
@@ -243,17 +249,18 @@ async function handlePreCommit(cwd: string): Promise<SlashCommandResult> {
 /**
  * AI 生成 Commit Message 并提交
  */
-async function handleCommit(cwd: string): Promise<SlashCommandResult> {
-  const addMessage = sessionActions().addAssistantMessage;
+async function handleCommit(context: SlashCommandContext): Promise<SlashCommandResult> {
+  const ui = getUI(context);
+  const { cwd, signal } = context;
 
   // 检查是否有改动
   if (!(await hasUncommittedChanges(cwd))) {
-    addMessage('📭 没有未提交的改动');
+    ui.sendMessage('📭 没有未提交的改动');
     return { success: true };
   }
 
   // 暂存所有改动
-  addMessage('📦 暂存所有改动...');
+  ui.sendMessage('📦 暂存所有改动...');
   await stageAll(cwd);
 
   // 获取 diff
@@ -261,11 +268,11 @@ async function handleCommit(cwd: string): Promise<SlashCommandResult> {
   const diff = await getStagedDiff(cwd);
 
   if (!fileList) {
-    addMessage('📭 没有需要提交的改动');
+    ui.sendMessage('📭 没有需要提交的改动');
     return { success: true };
   }
 
-  addMessage('🤖 正在生成 commit message...');
+  ui.sendMessage('🤖 正在生成 commit message...');
 
   // 获取最近的提交信息作为风格参考
   const recentCommits = await getRecentCommitMessages(cwd, 5);
@@ -281,6 +288,7 @@ async function handleCommit(cwd: string): Promise<SlashCommandResult> {
     userId: 'cli-user',
     sessionId: sessionId || 'git-commit',
     workspaceRoot: cwd,
+    signal,
   });
 
   // 清理 commit message（移除可能的代码块标记）
@@ -289,15 +297,15 @@ async function handleCommit(cwd: string): Promise<SlashCommandResult> {
     .replace(/\n?```$/, '')
     .trim();
 
-  addMessage(`**生成的 Commit Message：**\n\`\`\`\n${cleanMessage}\n\`\`\``);
+  ui.sendMessage(`**生成的 Commit Message：**\n\`\`\`\n${cleanMessage}\n\`\`\``);
 
   // 执行提交
   try {
     await gitCommit(cwd, cleanMessage);
-    addMessage('✅ 提交成功！');
+    ui.sendMessage('✅ 提交成功！');
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : '未知错误';
-    addMessage(`❌ 提交失败: ${errorMessage}`);
+    ui.sendMessage(`❌ 提交失败: ${errorMessage}`);
     return { success: false, error: errorMessage };
   }
 
