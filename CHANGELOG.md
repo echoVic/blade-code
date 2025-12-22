@@ -3,6 +3,39 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.31] - 2025-12-22
+
+### ✨ 新功能
+
+- 添加 Agent Client Protocol 支持 (ab1b699)
+- 添加 GPT OpenAI Platform 支持及清屏功能 (f48aa42)
+- 添加 pre-commit 命令用于 AI 生成 commit message (318bbde)
+- enhance WebSearch tool with multi-provider fallback (caf98e7)
+- 添加对话轮次限制功能 (fd1879f)
+- 重构 MCP 配置管理并支持全局配置 (8fd56ba)
+- 添加交互式版本更新提示组件 (5fe01b0)
+- 增强模型配置和版本自动升级功能 (0323f54)
+- add thinking block UI and model detection, enhance chat features (afb11a3)
+
+### 🐛 问题修复
+
+- 支持带scope的提交消息格式 (a8ad572)
+
+### ♻️ 代码重构
+
+- 统一使用 getUI 发送消息并支持取消信号 (24c401f)
+
+### 🔧 其他更改
+
+- release v0.0.30 (4d0b33d)
+- release v0.0.29 (41e0784)
+- release v0.0.28 (6be8a21)
+- release v0.0.27 (6bf8783)
+- release v0.0.26 (77a60d0)
+- release v0.0.25 (4742a4b)
+- 添加 CHANGELOG.md 到打包文件列表 (91db333)
+
+
 ## [0.0.30] - 2025-12-21
 
 ### ✨ 新功能
