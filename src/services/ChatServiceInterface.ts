@@ -17,6 +17,7 @@ const logger = createLogger(LogCategory.SERVICE);
 export type Message = {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
+  reasoningContent?: string; // Thinking 模型的推理过程（如 DeepSeek Reasoner）
   tool_call_id?: string; // tool 角色必需
   name?: string; // 工具名称
   tool_calls?: ChatCompletionMessageToolCall[]; // assistant 返回工具调用时需要
@@ -36,7 +37,16 @@ export interface ChatConfig {
   maxOutputTokens?: number; // 输出 token 限制（传给 API 的 max_tokens）
   timeout?: number;
   apiVersion?: string; // GPT OpenAI Platform 专用：API 版本（如 '2024-03-01-preview'）
+  supportsThinking?: boolean; // 是否支持 thinking 模式（DeepSeek Reasoner 等）
 }
+
+/**
+ * Thinking 模型的 reasoning 字段名
+ * 不同 API 代理使用不同的字段名：
+ * - DeepSeek 官方 API: reasoning_content
+ * - zenmux.ai 等代理: reasoning
+ */
+export type ReasoningFieldName = 'reasoning_content' | 'reasoning' | 'reasoningContent' | 'thinking_content';
 
 /**
  * 聊天响应

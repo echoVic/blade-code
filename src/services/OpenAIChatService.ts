@@ -10,10 +10,52 @@ import type {
   ChatResponse,
   IChatService,
   Message,
+  ReasoningFieldName,
   StreamChunk,
 } from './ChatServiceInterface.js';
 
 const _logger = createLogger(LogCategory.CHAT);
+
+/**
+ * 支持的 reasoning 字段名列表（按优先级排序）
+ * 不同 API 代理使用不同的字段名：
+ * - reasoning_content: DeepSeek 官方 API
+ * - reasoning: zenmux.ai 等代理
+ * - reasoningContent: 某些代理使用驼峰命名
+ * - thinking_content: 某些代理使用这个名称
+ */
+const REASONING_FIELD_NAMES: ReasoningFieldName[] = [
+  'reasoning_content',
+  'reasoning',
+  'reasoningContent',
+  'thinking_content',
+];
+
+/**
+ * 带 reasoning 字段的扩展消息类型
+ */
+type ExtendedMessageWithReasoning = {
+  reasoning_content?: string;
+  reasoning?: string;
+  reasoningContent?: string;
+  thinking_content?: string;
+};
+
+/**
+ * 从扩展消息中提取 reasoning 内容
+ * @returns { content, fieldName } 或 undefined
+ */
+function extractReasoningFromMessage(
+  message: ExtendedMessageWithReasoning
+): { content: string; fieldName: ReasoningFieldName } | undefined {
+  for (const fieldName of REASONING_FIELD_NAMES) {
+    const value = message[fieldName];
+    if (value) {
+      return { content: value, fieldName };
+    }
+  }
+  return undefined;
+}
 
 /**
  * 过滤孤儿 tool 消息
@@ -47,6 +89,90 @@ function filterOrphanToolMessages(messages: Message[]): Message[] {
 
 export class OpenAIChatService implements IChatService {
   private client: OpenAI;
+  // 自动检测到的 reasoning 字段名（API 代理可能使用不同的字段名）
+  private detectedReasoningFieldName: ReasoningFieldName | null = null;
+
+  /**
+   * 将内部 Message 转换为 OpenAI API 格式
+   * 统一处理 tool 消息、assistant 消息（含 tool_calls）、普通消息
+   */
+  private convertToOpenAIMessages(messages: Message[]): ChatCompletionMessageParam[] {
+    return messages.map((msg) => {
+      if (msg.role === 'tool') {
+        return {
+          role: 'tool',
+          content: msg.content,
+          tool_call_id: msg.tool_call_id!,
+        };
+      }
+
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        const baseMessage: any = {
+          role: 'assistant',
+          content: msg.content || null,
+          tool_calls: msg.tool_calls,
+        };
+
+        // 只有 thinking 模型才需要 reasoning 字段
+        // DeepSeek API 要求：包含 tool_calls 的 assistant 消息必须有 reasoning 字段
+        // 参考：https://api-docs.deepseek.com/guides/thinking_mode#tool-calls
+        if (this.config.supportsThinking) {
+          const reasoningValue =
+            'reasoningContent' in msg && msg.reasoningContent ? msg.reasoningContent : '';
+
+          if (this.detectedReasoningFieldName) {
+            // 已检测到字段名，使用检测到的字段名
+            baseMessage[this.detectedReasoningFieldName] = reasoningValue;
+          } else {
+            // 未检测到字段名，同时发送所有可能的字段名，避免死锁
+            // 这样无论代理接受哪个字段名都能正常工作
+            for (const fieldName of REASONING_FIELD_NAMES) {
+              baseMessage[fieldName] = reasoningValue;
+            }
+          }
+        }
+
+        return baseMessage;
+      }
+
+      return {
+        role: msg.role as 'user' | 'assistant' | 'system',
+        content: msg.content,
+      };
+    });
+  }
+
+  /**
+   * 将工具定义转换为 OpenAI API 格式
+   */
+  private convertToOpenAITools(
+    tools?: Array<{ name: string; description: string; parameters: any }>
+  ): ChatCompletionTool[] | undefined {
+    return tools?.map((tool) => ({
+      type: 'function' as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    }));
+  }
+
+  /**
+   * 从 API 响应中提取 reasoning 并更新检测到的字段名
+   */
+  private extractAndDetectReasoning(message: ExtendedMessageWithReasoning): string | undefined {
+    const result = extractReasoningFromMessage(message);
+    if (result) {
+      // 保存检测到的字段名（用于后续发送请求时使用相同的字段名）
+      if (!this.detectedReasoningFieldName) {
+        this.detectedReasoningFieldName = result.fieldName;
+        _logger.debug(`🧠 [ChatService] Detected reasoning field: ${result.fieldName}`);
+      }
+      return result.content;
+    }
+    return undefined;
+  }
 
   constructor(private config: ChatConfig) {
     _logger.debug('🚀 [ChatService] Initializing ChatService');
@@ -105,38 +231,15 @@ export class OpenAIChatService implements IChatService {
 
     _logger.debug(
       '📝 [ChatService] Messages preview:',
-      filteredMessages.map((m) => ({ role: m.role, contentLength: m.content.length }))
+      filteredMessages.map((m) => ({
+        role: m.role,
+        contentLength: m.content.length,
+      }))
     );
 
-    const openaiMessages: ChatCompletionMessageParam[] = filteredMessages.map((msg) => {
-      if (msg.role === 'tool') {
-        return {
-          role: 'tool',
-          content: msg.content,
-          tool_call_id: msg.tool_call_id!,
-        };
-      }
-      if (msg.role === 'assistant' && msg.tool_calls) {
-        return {
-          role: 'assistant',
-          content: msg.content || null,
-          tool_calls: msg.tool_calls,
-        };
-      }
-      return {
-        role: msg.role as 'user' | 'assistant' | 'system',
-        content: msg.content,
-      };
-    });
+    const openaiMessages = this.convertToOpenAIMessages(filteredMessages);
+    const openaiTools = this.convertToOpenAITools(tools);
 
-    const openaiTools: ChatCompletionTool[] | undefined = tools?.map((tool) => ({
-      type: 'function' as const,
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      },
-    }));
     _logger.debug('🔧 [ChatService] Tools count:', openaiTools?.length || 0);
     if (openaiTools && openaiTools.length > 0) {
       _logger.debug(
@@ -232,11 +335,18 @@ export class OpenAIChatService implements IChatService {
         (tc): tc is ChatCompletionMessageToolCall => tc.type === 'function'
       );
 
-      // 提取 reasoning_content（DeepSeek R1 等 thinking 模型的扩展字段）
-      const extendedMessage = choice.message as typeof choice.message & {
-        reasoning_content?: string;
-      };
-      const reasoningContent = extendedMessage.reasoning_content || undefined;
+      // 提取 reasoning（DeepSeek R1 等 thinking 模型的扩展字段）
+      const extendedMessage = choice.message as typeof choice.message & ExtendedMessageWithReasoning;
+      const reasoningContent = this.extractAndDetectReasoning(extendedMessage);
+
+      // 调试日志：检查 API 实际返回的字段
+      if (this.config.supportsThinking) {
+        _logger.debug('🧠 [ChatService] Thinking model response:', {
+          reasoningContentLength: reasoningContent?.length || 0,
+          detectedFieldName: this.detectedReasoningFieldName,
+          messageKeys: Object.keys(choice.message),
+        });
+      }
 
       // 提取 reasoning_tokens（thinking 模型的扩展 usage 字段）
       const extendedUsage = completion.usage as typeof completion.usage & {
@@ -299,38 +409,14 @@ export class OpenAIChatService implements IChatService {
 
     _logger.debug(
       '📝 [ChatService] Messages preview:',
-      filteredMessages.map((m) => ({ role: m.role, contentLength: m.content.length }))
+      filteredMessages.map((m) => ({
+        role: m.role,
+        contentLength: m.content.length,
+      }))
     );
 
-    const openaiMessages: ChatCompletionMessageParam[] = filteredMessages.map((msg) => {
-      if (msg.role === 'tool') {
-        return {
-          role: 'tool',
-          content: msg.content,
-          tool_call_id: msg.tool_call_id!,
-        };
-      }
-      if (msg.role === 'assistant' && msg.tool_calls) {
-        return {
-          role: 'assistant',
-          content: msg.content || null,
-          tool_calls: msg.tool_calls,
-        };
-      }
-      return {
-        role: msg.role as 'user' | 'assistant' | 'system',
-        content: msg.content,
-      };
-    });
-
-    const openaiTools: ChatCompletionTool[] | undefined = tools?.map((tool) => ({
-      type: 'function' as const,
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      },
-    }));
+    const openaiMessages = this.convertToOpenAIMessages(filteredMessages);
+    const openaiTools = this.convertToOpenAITools(tools);
 
     _logger.debug('🔧 [ChatService] Stream tools count:', openaiTools?.length || 0);
     if (openaiTools && openaiTools.length > 0) {
@@ -388,17 +474,16 @@ export class OpenAIChatService implements IChatService {
           continue;
         }
 
-        // 提取 reasoning_content（DeepSeek R1 等 thinking 模型的扩展字段）
-        const extendedDelta = delta as typeof delta & {
-          reasoning_content?: string;
-        };
+        // 提取 reasoning（DeepSeek R1 等 thinking 模型的扩展字段）
+        const extendedDelta = delta as typeof delta & ExtendedMessageWithReasoning;
+        const reasoningChunk = this.extractAndDetectReasoning(extendedDelta);
 
         if (delta.content) {
           totalContent += delta.content;
         }
 
-        if (extendedDelta.reasoning_content) {
-          totalReasoningContent += extendedDelta.reasoning_content;
+        if (reasoningChunk) {
+          totalReasoningContent += reasoningChunk;
         }
 
         if (delta.tool_calls && !toolCallsReceived) {
@@ -420,7 +505,7 @@ export class OpenAIChatService implements IChatService {
 
         yield {
           content: delta.content || undefined,
-          reasoningContent: extendedDelta.reasoning_content || undefined,
+          reasoningContent: reasoningChunk,
           toolCalls: delta.tool_calls,
           finishReason: finishReason || undefined,
         };
@@ -456,6 +541,12 @@ export class OpenAIChatService implements IChatService {
 
     const oldConfig = { ...this.config };
     this.config = { ...this.config, ...newConfig };
+
+    // 如果 baseUrl 变化，重置检测到的字段名（不同代理可能使用不同字段名）
+    if (oldConfig.baseUrl !== this.config.baseUrl) {
+      this.detectedReasoningFieldName = null;
+      _logger.debug('🔄 [ChatService] Reset detectedReasoningFieldName due to baseUrl change');
+    }
 
     this.client = new OpenAI({
       apiKey: this.config.apiKey,
