@@ -12,11 +12,35 @@ import { OpenAIChatService } from './OpenAIChatService.js';
 const logger = createLogger(LogCategory.SERVICE);
 
 /**
+ * 多模态内容部分 - 文本
+ */
+export interface TextContentPart {
+  type: 'text';
+  text: string;
+}
+
+/**
+ * 多模态内容部分 - 图片 (OpenAI Vision API 格式)
+ */
+export interface ImageContentPart {
+  type: 'image_url';
+  image_url: {
+    url: string; // data:image/png;base64,... 或 https://...
+  };
+}
+
+/**
+ * 多模态内容部分
+ */
+export type ContentPart = TextContentPart | ImageContentPart;
+
+/**
  * 消息类型
+ * content 支持纯文本或多模态内容（文本+图片）
  */
 export type Message = {
   role: 'user' | 'assistant' | 'system' | 'tool';
-  content: string;
+  content: string | ContentPart[];
   reasoningContent?: string; // Thinking 模型的推理过程（如 DeepSeek Reasoner）
   tool_call_id?: string; // tool 角色必需
   name?: string; // 工具名称

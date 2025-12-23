@@ -95,21 +95,31 @@ export class OpenAIChatService implements IChatService {
   /**
    * 将内部 Message 转换为 OpenAI API 格式
    * 统一处理 tool 消息、assistant 消息（含 tool_calls）、普通消息
+   * 支持多模态内容（文本 + 图片）
    */
   private convertToOpenAIMessages(messages: Message[]): ChatCompletionMessageParam[] {
     return messages.map((msg) => {
       if (msg.role === 'tool') {
+        // tool 消息的 content 始终是字符串
+        const toolContent = typeof msg.content === 'string'
+          ? msg.content
+          : msg.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
         return {
           role: 'tool',
-          content: msg.content,
+          content: toolContent,
           tool_call_id: msg.tool_call_id!,
         };
       }
 
       if (msg.role === 'assistant' && msg.tool_calls) {
+        // assistant 消息的 content 始终是字符串或 null
+        const assistantContent = typeof msg.content === 'string'
+          ? msg.content
+          : msg.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
+
         const baseMessage: any = {
           role: 'assistant',
-          content: msg.content || null,
+          content: assistantContent || null,
           tool_calls: msg.tool_calls,
         };
 
@@ -135,9 +145,31 @@ export class OpenAIChatService implements IChatService {
         return baseMessage;
       }
 
+      // 处理 user/system/assistant 消息
+      // user 消息可能包含多模态内容（文本 + 图片）
+      if (msg.role === 'user' && Array.isArray(msg.content)) {
+        // 多模态 user 消息：转换为 OpenAI Vision API 格式
+        return {
+          role: 'user',
+          content: msg.content.map((part) => {
+            if (part.type === 'text') {
+              return { type: 'text' as const, text: part.text };
+            }
+            // image_url 类型
+            return {
+              type: 'image_url' as const,
+              image_url: { url: part.image_url.url },
+            };
+          }),
+        };
+      }
+
+      // 普通文本消息
       return {
         role: msg.role as 'user' | 'assistant' | 'system',
-        content: msg.content,
+        content: typeof msg.content === 'string'
+          ? msg.content
+          : msg.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n'),
       };
     });
   }
@@ -233,7 +265,8 @@ export class OpenAIChatService implements IChatService {
       '📝 [ChatService] Messages preview:',
       filteredMessages.map((m) => ({
         role: m.role,
-        contentLength: m.content.length,
+        contentLength: typeof m.content === 'string' ? m.content.length : m.content.length,
+        isMultimodal: Array.isArray(m.content),
       }))
     );
 
@@ -411,7 +444,8 @@ export class OpenAIChatService implements IChatService {
       '📝 [ChatService] Messages preview:',
       filteredMessages.map((m) => ({
         role: m.role,
-        contentLength: m.content.length,
+        contentLength: typeof m.content === 'string' ? m.content.length : m.content.length,
+        isMultimodal: Array.isArray(m.content),
       }))
     );
 

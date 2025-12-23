@@ -219,6 +219,30 @@ export async function processImageFromPath(pasteContent: string): Promise<{
 }
 
 /**
+ * 跨平台获取剪贴板文本
+ *
+ * @returns 剪贴板文本，或 null
+ */
+export async function getTextFromClipboard(): Promise<string | null> {
+  const platform = process.platform;
+
+  const commands: Record<string, string> = {
+    darwin: 'pbpaste',
+    linux: 'xclip -selection clipboard -o || wl-paste',
+    win32: 'powershell -Command "Get-Clipboard"',
+  };
+
+  const command = commands[platform] || commands.linux;
+
+  try {
+    const text = execSync(command, { encoding: 'utf-8' });
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 增强的跨平台剪贴板图片获取
  *
  * @returns 图片的 base64 和 MIME 类型，或 null

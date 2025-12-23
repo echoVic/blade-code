@@ -393,7 +393,9 @@ Please provide your summary following the structure specified above, with both <
 
     return {
       success: false,
-      summary: summaryMessage.content,
+      summary: typeof summaryMessage.content === 'string'
+        ? summaryMessage.content
+        : summaryMessage.content.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n'),
       preTokens,
       postTokens,
       filesIncluded: [],

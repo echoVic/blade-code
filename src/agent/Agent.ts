@@ -27,6 +27,7 @@ import { buildSystemPrompt, createPlanModeReminder } from '../prompts/index.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
 import type { Attachment } from '../prompts/processors/types.js';
 import {
+  type ContentPart,
   createChatService,
   type IChatService,
   type Message,
@@ -55,6 +56,7 @@ import type {
   ChatContext,
   LoopOptions,
   LoopResult,
+  UserMessageContent,
 } from './types.js';
 
 // 创建 Agent 专用 Logger
@@ -258,9 +260,10 @@ export class Agent {
 
   /**
    * 简单聊天接口
+   * @param message - 用户消息内容（支持纯文本或多模态）
    */
   public async chat(
-    message: string,
+    message: UserMessageContent,
     context?: ChatContext,
     options?: LoopOptions
   ): Promise<string> {
@@ -269,7 +272,8 @@ export class Agent {
     }
 
     // ✨ 处理 @ 文件提及（在发送前预处理）
-    const enhancedMessage = await this.processAtMentions(message);
+    // 支持纯文本和多模态消息
+    const enhancedMessage = await this.processAtMentionsForContent(message);
 
     // 如果提供了 context，使用增强的工具调用流程
     if (context) {
@@ -311,15 +315,23 @@ export class Agent {
         };
 
         // 🆕 将 plan 内容注入到消息中，确保 AI 按照 plan 执行
-        let messageWithPlan = enhancedMessage;
+        let messageWithPlan: UserMessageContent = enhancedMessage;
         if (planContent) {
-          messageWithPlan = `${enhancedMessage}
+          const planSuffix = `
 
 <approved-plan>
 ${planContent}
 </approved-plan>
 
 IMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
+
+          // 处理多模态消息：将 plan 内容追加到文本部分
+          if (typeof enhancedMessage === 'string') {
+            messageWithPlan = enhancedMessage + planSuffix;
+          } else {
+            // 多模态消息：在最后添加一个文本部分
+            messageWithPlan = [...enhancedMessage, { type: 'text', text: planSuffix }];
+          }
           logger.debug(`📋 已将 plan 内容注入到消息中 (${planContent.length} 字符)`);
         }
 
@@ -336,11 +348,20 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       return result.finalMessage || '';
     }
 
-    // 否则使用原有的简单流程
+    // 否则使用原有的简单流程（仅支持纯文本消息）
+    // 多模态消息在简单流程中不支持，提取纯文本部分
+    const textPrompt =
+      typeof enhancedMessage === 'string'
+        ? enhancedMessage
+        : enhancedMessage
+            .filter((p) => p.type === 'text')
+            .map((p) => (p as { text: string }).text)
+            .join('\n');
+
     const task: AgentTask = {
       id: this.generateTaskId(),
       type: 'simple',
-      prompt: enhancedMessage,
+      prompt: textPrompt,
     };
 
     const response = await this.executeTask(task);
@@ -355,7 +376,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
    * Plan 模式入口 - 准备 Plan 专用配置后调用通用循环
    */
   private async runPlanLoop(
-    message: string,
+    message: UserMessageContent,
     context: ChatContext,
     options?: LoopOptions
   ): Promise<LoopResult> {
@@ -369,7 +390,31 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
     });
 
     // Plan 模式差异 2: 在用户消息中注入 system-reminder
-    const messageWithReminder = createPlanModeReminder(message);
+    // 处理多模态消息：提取文本部分添加 reminder
+    let messageWithReminder: UserMessageContent;
+    if (typeof message === 'string') {
+      messageWithReminder = createPlanModeReminder(message);
+    } else {
+      // 多模态消息：在第一个文本部分前添加 reminder，或创建新的文本部分
+      const textParts = message.filter((p) => p.type === 'text');
+      if (textParts.length > 0) {
+        const firstTextPart = textParts[0] as { type: 'text'; text: string };
+        messageWithReminder = message.map((p) =>
+          p === firstTextPart
+            ? {
+                type: 'text' as const,
+                text: createPlanModeReminder(firstTextPart.text),
+              }
+            : p
+        );
+      } else {
+        // 仅图片，添加空的 reminder
+        messageWithReminder = [
+          { type: 'text', text: createPlanModeReminder('') },
+          ...message,
+        ];
+      }
+    }
 
     // 调用通用循环，传入 Plan 模式专用配置
     // 注意：不再传递 isPlanMode 参数，executeLoop 会从 context.permissionMode 读取
@@ -380,7 +425,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
    * 普通模式入口 - 准备普通模式配置后调用通用循环
    */
   private async runLoop(
-    message: string,
+    message: UserMessageContent,
     context: ChatContext,
     options?: LoopOptions
   ): Promise<LoopResult> {
@@ -407,7 +452,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
    * @param systemPrompt - 系统提示词（Plan 模式和普通模式使用不同的提示词）
    */
   private async executeLoop(
-    message: string,
+    message: UserMessageContent,
     context: ChatContext,
     options?: LoopOptions,
     systemPrompt?: string
@@ -452,14 +497,22 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       let lastMessageUuid: string | null = null; // 追踪上一条消息的 UUID,用于建立消息链
       try {
         const contextMgr = this.executionEngine?.getContextManager();
+        // 提取纯文本内容用于保存（多模态消息只保存文本部分）
+        const textContent =
+          typeof message === 'string'
+            ? message
+            : message
+                .filter((p) => p.type === 'text')
+                .map((p) => (p as { text: string }).text)
+                .join('\n');
         // 🔧 修复：过滤空用户消息（与助手消息保持一致）
-        if (contextMgr && context.sessionId && message.trim() !== '') {
+        if (contextMgr && context.sessionId && textContent.trim() !== '') {
           lastMessageUuid = await contextMgr.saveMessage(
             context.sessionId,
             'user',
-            message
+            textContent
           );
-        } else if (message.trim() === '') {
+        } else if (textContent.trim() === '') {
           logger.debug('[Agent] 跳过保存空用户消息');
         }
       } catch (error) {
@@ -670,12 +723,14 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         logger.debug('================================\n');
 
         // 🆕 如果 LLM 返回了 thinking 内容（DeepSeek R1 等），通知 UI
-        if (turnResult.reasoningContent && options?.onThinking) {
+        // 注意：检查 abort 状态，避免取消后仍然触发回调
+        if (turnResult.reasoningContent && options?.onThinking && !options.signal?.aborted) {
           options.onThinking(turnResult.reasoningContent);
         }
 
         // 🆕 如果 LLM 返回了 content，立即显示
-        if (turnResult.content && turnResult.content.trim() && options?.onContent) {
+        // 注意：检查 abort 状态，避免取消后仍然触发回调
+        if (turnResult.content && turnResult.content.trim() && options?.onContent && !options.signal?.aborted) {
           options.onContent(turnResult.content);
         }
 
@@ -805,7 +860,8 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
           try {
             // 🆕 触发工具开始回调（流式显示）
-            if (options?.onToolStart) {
+            // 注意：检查 abort 状态，避免取消后仍然触发回调
+            if (options?.onToolStart && !options.signal?.aborted) {
               // 获取工具定义以传递 kind
               const toolDef = this.executionPipeline
                 .getRegistry()
@@ -917,7 +973,8 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
             // 调用 onToolResult 回调（如果提供）
             // 用于显示工具执行的完成摘要和详细内容
-            if (options?.onToolResult) {
+            // 注意：检查 abort 状态，避免取消后仍然触发回调
+            if (options?.onToolResult && !options.signal?.aborted) {
               logger.debug('[Agent] Calling onToolResult:', {
                 toolName: toolCall.function.name,
                 hasCallback: true,
@@ -1617,7 +1674,114 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
   }
 
   /**
-   * 处理 @ 文件提及
+   * 处理 @ 文件提及（支持纯文本和多模态消息）
+   * 从用户消息中提取 @ 提及，读取文件内容，并追加到消息
+   *
+   * @param content - 用户消息内容（纯文本或多模态）
+   * @returns 增强后的消息（包含文件内容）
+   */
+  private async processAtMentionsForContent(
+    content: UserMessageContent
+  ): Promise<UserMessageContent> {
+    if (!this.attachmentCollector) {
+      return content;
+    }
+
+    // 纯文本消息：直接处理
+    if (typeof content === 'string') {
+      return this.processAtMentions(content);
+    }
+
+    // 多模态消息：提取所有文本部分，合并后处理 @ 提及
+    const textParts: string[] = [];
+
+    for (const part of content) {
+      if (part.type === 'text') {
+        textParts.push(part.text);
+      }
+    }
+
+    // 没有文本部分，直接返回
+    if (textParts.length === 0) {
+      return content;
+    }
+
+    // 合并所有文本进行 @ 提及收集
+    const combinedText = textParts.join('\n');
+
+    try {
+      const attachments = await this.attachmentCollector.collect(combinedText);
+
+      if (attachments.length === 0) {
+        return content;
+      }
+
+      logger.debug(`✅ Processed ${attachments.length} @ file mentions in multimodal message`);
+
+      // 构建附件内容块
+      const attachmentText = this.buildAttachmentText(attachments);
+
+      if (!attachmentText) {
+        return content;
+      }
+
+      // 将附件内容作为新的文本 part 追加到末尾（保留原始图文顺序）
+      const result: ContentPart[] = [
+        ...content,
+        { type: 'text', text: attachmentText },
+      ];
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to process @ mentions in multimodal message:', error);
+      return content;
+    }
+  }
+
+  /**
+   * 构建附件文本块（供 processAtMentionsForContent 使用）
+   */
+  private buildAttachmentText(attachments: Attachment[]): string {
+    const contextBlocks: string[] = [];
+    const errors: string[] = [];
+
+    for (const att of attachments) {
+      if (att.type === 'file') {
+        const lineInfo = att.metadata?.lineRange
+          ? ` (lines ${att.metadata.lineRange.start}${att.metadata.lineRange.end ? `-${att.metadata.lineRange.end}` : ''})`
+          : '';
+
+        contextBlocks.push(
+          `<file path="${att.path}"${lineInfo ? ` range="${lineInfo}"` : ''}>`,
+          att.content,
+          '</file>'
+        );
+      } else if (att.type === 'directory') {
+        contextBlocks.push(`<directory path="${att.path}">`, att.content, '</directory>');
+      } else if (att.type === 'error') {
+        errors.push(`- @${att.path}: ${att.error}`);
+      }
+    }
+
+    let result = '';
+
+    if (contextBlocks.length > 0) {
+      result += '\n\n<system-reminder>\n';
+      result += 'The following files were mentioned with @ syntax:\n\n';
+      result += contextBlocks.join('\n');
+      result += '\n</system-reminder>';
+    }
+
+    if (errors.length > 0) {
+      result += '\n\n⚠️ Some files could not be loaded:\n';
+      result += errors.join('\n');
+    }
+
+    return result;
+  }
+
+  /**
+   * 处理 @ 文件提及（纯文本版本）
    * 从用户消息中提取 @ 提及，读取文件内容，并追加到消息
    *
    * @param message - 原始用户消息

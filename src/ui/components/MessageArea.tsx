@@ -146,7 +146,11 @@ export const MessageArea: React.FC = React.memo(() => {
         {/* 待处理命令队列（显示在最底部，作为下一轮对话的开始） */}
         {pendingCommands.map((cmd, index) => (
           <Box key={`pending-${index}`} flexDirection="column">
-            <MessageRenderer content={cmd} role="user" terminalWidth={terminalWidth} />
+            <MessageRenderer
+              content={cmd.displayText}
+              role="user"
+              terminalWidth={terminalWidth}
+            />
           </Box>
         ))}
       </Box>

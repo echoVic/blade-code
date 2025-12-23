@@ -15,7 +15,12 @@ import chalk from 'chalk';
 import { type Key, Text, useInput } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import { PASTE_CONFIG } from '../constants.js';
-import { isImagePath, processImageFromPath } from '../utils/imagePaste.js';
+import {
+  getImageFromClipboard,
+  getTextFromClipboard,
+  isImagePath,
+  processImageFromPath,
+} from '../utils/imagePaste.js';
 
 const CRLF_REGEX = /\r\n/g;
 const CR_REGEX = /\r/g;
@@ -114,6 +119,16 @@ export function CustomTextInput({
     totalLength: 0,
   });
 
+  // 存储最新的值和光标位置（用于异步回调中避免闭包陷阱）
+  const latestValueRef = useRef(originalValue);
+  const latestCursorRef = useRef(cursorPosition);
+
+  // 同步更新 ref
+  useEffect(() => {
+    latestValueRef.current = originalValue;
+    latestCursorRef.current = cursorPosition;
+  }, [originalValue, cursorPosition]);
+
   // 清理超时
   useEffect(() => {
     return () => {
@@ -156,6 +171,10 @@ export function CustomTextInput({
         totalLength: 0,
       };
 
+      // 使用 ref 获取最新值（避免闭包陷阱）
+      const currentValue = latestValueRef.current;
+      const currentCursor = latestCursorRef.current;
+
       // 1. 检测是否为图片路径
       if (onImagePaste && isImagePath(mergedInput)) {
         try {
@@ -170,8 +189,8 @@ export function CustomTextInput({
               const sanitizedPrompt = normalizeInputText(result.prompt);
               const { newValue, newCursorPosition } = insertTextAtCursor(
                 sanitizedPrompt,
-                originalValue,
-                cursorPosition
+                currentValue,
+                currentCursor
               );
               onChange(newValue);
               onChangeCursorPosition(newCursorPosition);
@@ -199,8 +218,8 @@ export function CustomTextInput({
           const sanitizedPrompt = normalizeInputText(result.prompt);
           const { newValue, newCursorPosition } = insertTextAtCursor(
             sanitizedPrompt,
-            originalValue,
-            cursorPosition
+            currentValue,
+            currentCursor
           );
           onChange(newValue);
           onChangeCursorPosition(newCursorPosition);
@@ -211,8 +230,8 @@ export function CustomTextInput({
       // 3. 直接插入文本
       const { newValue, newCursorPosition } = insertTextAtCursor(
         mergedInput,
-        originalValue,
-        cursorPosition
+        currentValue,
+        currentCursor
       );
       onChange(newValue);
       onChangeCursorPosition(newCursorPosition);
@@ -228,6 +247,7 @@ export function CustomTextInput({
   useInput(
     (rawInput, key) => {
       const input = normalizeInputText(rawInput);
+
       // 检查是否是被禁用的按键
       const isDisabledKey = disabledKeys.some((disabledKey) => key[disabledKey]);
 
@@ -305,6 +325,79 @@ export function CustomTextInput({
             originalValue.slice(cursorPosition);
           nextCursorPosition -= deleteCount;
         }
+      }
+      // === 扩展：Ctrl+V - 从剪贴板粘贴 ===
+      // macOS: Ctrl+V 仅粘贴图片（文本用 Cmd+V，通过终端 bracketed paste 处理）
+      // Linux/Windows: Ctrl+V 优先图片，其次文本
+      else if (key.ctrl && input === 'v') {
+        const isMac = process.platform === 'darwin';
+
+        (async () => {
+          // 1. 尝试读取图片
+          if (onImagePaste) {
+            const imageResult = await getImageFromClipboard();
+            if (imageResult) {
+              const result = await onImagePaste(
+                imageResult.base64,
+                imageResult.mediaType,
+                'clipboard.png'
+              );
+              if (result?.prompt) {
+                const sanitizedPrompt = normalizeInputText(result.prompt);
+                const { newValue, newCursorPosition } = insertTextAtCursor(
+                  sanitizedPrompt,
+                  latestValueRef.current,
+                  latestCursorRef.current
+                );
+                onChange(newValue);
+                onChangeCursorPosition(newCursorPosition);
+              }
+              return;
+            }
+          }
+
+          // 2. macOS 下 Ctrl+V 不处理文本（用户应使用 Cmd+V）
+          if (isMac) {
+            return;
+          }
+
+          // 3. Linux/Windows: 没有图片时读取文本
+          const textResult = await getTextFromClipboard();
+          if (textResult) {
+            const sanitizedText = normalizeInputText(textResult);
+
+            // 大段文本走 onPaste 流程（摘要/标记）
+            const hasMultipleLines = sanitizedText.includes('\n');
+            const isLargeText = sanitizedText.length > PASTE_CONFIG.LARGE_INPUT_THRESHOLD;
+
+            if ((hasMultipleLines || isLargeText) && onPaste) {
+              const result = await onPaste(sanitizedText);
+              if (result?.prompt) {
+                const sanitizedPrompt = normalizeInputText(result.prompt);
+                const { newValue, newCursorPosition } = insertTextAtCursor(
+                  sanitizedPrompt,
+                  latestValueRef.current,
+                  latestCursorRef.current
+                );
+                onChange(newValue);
+                onChangeCursorPosition(newCursorPosition);
+                return;
+              }
+            }
+
+            // 小段文本直接插入
+            const { newValue, newCursorPosition } = insertTextAtCursor(
+              sanitizedText,
+              latestValueRef.current,
+              latestCursorRef.current
+            );
+            onChange(newValue);
+            onChangeCursorPosition(newCursorPosition);
+          }
+        })().catch(() => {
+          // 读取剪贴板失败，静默处理
+        });
+        return;
       }
       // === 扩展：Home 键 ===
       else if (key.pageUp) {

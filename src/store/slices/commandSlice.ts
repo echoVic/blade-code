@@ -10,7 +10,7 @@
  */
 
 import type { StateCreator } from 'zustand';
-import type { BladeStore, CommandSlice, CommandState } from '../types.js';
+import type { BladeStore, CommandSlice, CommandState, PendingCommand } from '../types.js';
 
 /**
  * 初始命令状态
@@ -91,9 +91,9 @@ export const createCommandSlice: StateCreator<
     },
 
     /**
-     * 将命令加入待处理队列
+     * 将命令加入待处理队列（支持图片）
      */
-    enqueueCommand: (command: string) => {
+    enqueueCommand: (command: PendingCommand) => {
       set((state) => ({
         command: {
           ...state.command,
@@ -105,7 +105,7 @@ export const createCommandSlice: StateCreator<
     /**
      * 从队列取出下一个命令
      */
-    dequeueCommand: () => {
+    dequeueCommand: (): PendingCommand | undefined => {
       const { pendingCommands } = get().command;
       if (pendingCommands.length === 0) {
         return undefined;

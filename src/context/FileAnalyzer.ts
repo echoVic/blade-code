@@ -57,7 +57,11 @@ export class FileAnalyzer {
 
     messages.forEach((msg, index) => {
       // 从消息内容中提取文件路径
-      const contentFiles = this.extractFilePathsFromContent(msg.content || '');
+      // 处理多模态消息：提取纯文本内容
+      const textContent = typeof msg.content === 'string'
+        ? msg.content
+        : (msg.content || []).filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n');
+      const contentFiles = this.extractFilePathsFromContent(textContent);
       contentFiles.forEach((path) => {
         this.updateFileReference(fileMap, path, index, false);
       });

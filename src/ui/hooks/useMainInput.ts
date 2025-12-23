@@ -10,12 +10,12 @@ import {
   useCurrentModel,
   useSessionActions,
 } from '../../store/selectors/index.js';
-import { isThinkingModel } from '../../utils/modelDetection.js';
 import { FocusId } from '../../store/types.js';
+import { isThinkingModel } from '../../utils/modelDetection.js';
 import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
-import { useCtrlCHandler } from './useCtrlCHandler.js';
 import type { HistoryEntry, PasteMappings } from './useCommandHistory.js';
-import type { InputBuffer } from './useInputBuffer.js';
+import { useCtrlCHandler } from './useCtrlCHandler.js';
+import type { InputBuffer, ResolvedInput } from './useInputBuffer.js';
 
 // 创建 UI Hook 专用 Logger
 const logger = createLogger(LogCategory.UI);
@@ -26,7 +26,7 @@ const logger = createLogger(LogCategory.UI);
  */
 export const useMainInput = (
   buffer: InputBuffer,
-  onSubmit: (input: string) => void,
+  onSubmit: (resolved: ResolvedInput) => void,
   onPreviousCommand: () => HistoryEntry | null,
   onNextCommand: () => HistoryEntry | null,
   onAddToHistory: (display: string, pasteMappings?: PasteMappings) => void,
@@ -130,13 +130,13 @@ export const useMainInput = (
     const displayText = input.trim();
 
     if (displayText) {
-      // 将显示的摘要替换回原始粘贴内容
-      const commandToSubmit = buffer.resolveInput(displayText);
+      // 将显示的摘要替换回原始粘贴内容，并分离文本和图片
+      const resolved = buffer.resolveInput(displayText);
 
       logger.debug('[DIAG] Submitting command:', {
         displayText,
-        resolved: commandToSubmit !== displayText,
-        length: commandToSubmit.length,
+        textLength: resolved.text.length,
+        imageCount: resolved.images.length,
       });
 
       // 隐藏建议
@@ -151,7 +151,7 @@ export const useMainInput = (
       // 回放时恢复映射，提交时通过 resolveInput 展开
       onAddToHistory(displayText, currentMappings);
       buffer.clear(); // 使用 buffer.clear() 清空输入（同时清除粘贴映射）
-      onSubmit(commandToSubmit); // 发送完整内容
+      onSubmit(resolved); // 发送解析后的内容（文本 + 图片）
       logger.debug('[DIAG] Command submitted to onSubmit callback');
     } else {
       logger.debug('[DIAG] Empty command, not submitting');

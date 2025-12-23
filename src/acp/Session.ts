@@ -295,6 +295,7 @@ export class AcpSession {
       };
 
       // 3. 定义回调选项
+      // 注意：abort 检查已在 Agent 内部统一处理，回调不再需要重复检查
       const loopOptions: LoopOptions = {
         signal: abortController.signal,
 

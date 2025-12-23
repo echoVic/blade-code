@@ -235,12 +235,29 @@ export interface FocusSlice extends FocusState {
 // ==================== Command Types ====================
 
 /**
+ * 待处理命令（支持图片）
+ */
+export interface PendingCommand {
+  /** 显示文本（带图片占位符，用于 UI 显示） */
+  displayText: string;
+  /** 纯文本内容（不含图片占位符） */
+  text: string;
+  /** 图片列表 */
+  images: Array<{ id: number; base64: string; mimeType: string }>;
+  /** 交错的内容部分列表（保留顺序） */
+  parts: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image'; id: number; base64: string; mimeType: string }
+  >;
+}
+
+/**
  * 命令执行状态
  */
 export interface CommandState {
   isProcessing: boolean; // 临时状态 - 不持久化
   abortController: AbortController | null; // 不持久化
-  pendingCommands: string[]; // 待处理命令队列 - 不持久化
+  pendingCommands: PendingCommand[]; // 待处理命令队列 - 不持久化
 }
 
 /**
@@ -251,8 +268,8 @@ export interface CommandActions {
   createAbortController: () => AbortController;
   clearAbortController: () => void;
   abort: () => void;
-  enqueueCommand: (command: string) => void;
-  dequeueCommand: () => string | undefined;
+  enqueueCommand: (command: PendingCommand) => void;
+  dequeueCommand: () => PendingCommand | undefined;
   clearQueue: () => void;
 }
 

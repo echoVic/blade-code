@@ -1,10 +1,11 @@
 import { useMemoizedFn } from 'ahooks';
 import { useState } from 'react';
+import type { PasteContent } from './useInputBuffer.js';
 
 /**
- * 粘贴映射条目：标记 ID -> 原文
+ * 粘贴映射条目：标记 ID -> 内容（文本或图片）
  */
-export type PasteMappings = Map<number, string>;
+export type PasteMappings = Map<number, PasteContent>;
 
 /**
  * 历史记录条目
@@ -13,7 +14,7 @@ export type PasteMappings = Map<number, string>;
 export interface HistoryEntry {
   /** 显示文本（输入框中显示的内容，包含粘贴标记） */
   display: string;
-  /** 粘贴映射：标记 ID -> 原文（用于回放时恢复映射） */
+  /** 粘贴映射：标记 ID -> 内容（用于回放时恢复映射） */
   pasteMappings: PasteMappings;
 }
 

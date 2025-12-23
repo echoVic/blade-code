@@ -72,6 +72,8 @@ const initCommand: SlashCommand = {
 - DO NOT create new files or modify the existing BLADE.md
 - Return only your analysis and suggestions as TEXT
 
+**Context**: BLADE.md is given to AI coding agents. Length should match project complexity - simple projects ~20 lines, complex projects can be longer but every section must provide value.
+
 **Step-by-step process:**
 
 1. Read the current BLADE.md file at ${blademdPath} and summarize its current structure
@@ -81,12 +83,23 @@ const initCommand: SlashCommand = {
    - New dependencies that might need explanation
    - Changes in project structure
 
-3. Explore the codebase (use Glob/Grep instead of find/grep commands) to identify:
+3. Check for existing AI rule files and note any useful guidance:
+   - .cursorrules or .cursor/rules/
+   - .github/copilot-instructions.md
+
+4. Explore the codebase (use Glob/Grep tools) to identify:
    - Missing architectural information
    - Undocumented patterns or conventions
    - Important files or directories not mentioned
+   - Key modules, design patterns, state management, data flow
 
-4. Provide comprehensive feedback in Chinese:
+**Evaluate against these criteria**:
+- Has essential commands (build, test, lint, especially single test execution)?
+- Has architecture overview proportional to project complexity?
+- Does it include project-specific knowledge that saves agent time?
+- Does it avoid LOW-VALUE content (generic best practices, exhaustive file listings)?
+
+5. Provide comprehensive feedback in Chinese:
    - 当前 BLADE.md 的优点
    - 缺失或过时的内容
    - 具体的改进建议（附带示例）
@@ -106,13 +119,9 @@ const initCommand: SlashCommand = {
             signal,
           },
           {
+            // 注意：abort 检查已在 Agent 内部统一处理
             onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
               if (toolCall.type !== 'function') return;
-              // 检查是否已取消
-              if (signal?.aborted) {
-                logger.info('[/init] onToolStart: signal already aborted, skipping');
-                return;
-              }
               try {
                 const params = JSON.parse(toolCall.function.arguments);
                 const summary = formatToolCallSummary(toolCall.function.name, params);
@@ -126,11 +135,6 @@ const initCommand: SlashCommand = {
               result: ToolResult
             ) => {
               if (toolCall.type !== 'function') return;
-              // 检查是否已取消
-              if (signal?.aborted) {
-                logger.info('[/init] onToolResult: signal already aborted, skipping');
-                return;
-              }
               if (result?.metadata?.summary) {
                 sendToolMessage(result.metadata.summary);
               }
@@ -164,6 +168,8 @@ const initCommand: SlashCommand = {
 
 **Important**: After each step, briefly describe what you found before proceeding.
 
+**Context**: This file will be given to AI coding agents. Length should match project complexity - every section must provide value that saves agent time.
+
 **Step-by-step process:**
 
 1. Read package.json and summarize:
@@ -171,27 +177,39 @@ const initCommand: SlashCommand = {
    - Key dependencies and frameworks
    - Available scripts (build, test, lint, etc.)
 
-2. Explore the project structure and note:
+2. Check for existing AI rule files and incorporate useful guidance:
+   - .cursorrules or .cursor/rules/
+   - .github/copilot-instructions.md
+   - README.md (extract non-obvious insights only)
+
+3. Explore the project structure and note:
    - Main entry point
    - Key directories (src, tests, config, etc.)
    - Common patterns (React components, API routes, etc.)
 
-3. Analyze the architecture and identify:
+4. Analyze the architecture and identify:
    - How the code is organized
-   - Main modules/components
+   - Main modules/components and their responsibilities
+   - Key design patterns (state management, data flow, etc.)
    - How different parts interact
 
-4. Generate the final BLADE.md content with:
+5. Generate the final BLADE.md content with:
    - Project overview (type, languages, frameworks)
-   - Essential commands (from package.json scripts)
+   - Essential commands (from package.json scripts, especially single test execution)
    - Architecture overview (structure, patterns, relationships)
-   - Development guidelines (testing, building, deploying)
+   - Non-obvious conventions and gotchas
+   - Key file locations for common tasks
+
+**What to AVOID** (low-value content):
+- Generic best practices (error handling basics, security fundamentals)
+- Exhaustive file/directory listings without context
+- Information already obvious from README or file names
 
 **Format requirements:**
-- Start with: "# BLADE.md\\n\\nalways respond in Chinese\\n\\n你是一个专门帮助 [项目类型] 开发者的助手。"
+- Start with: "# BLADE.md\\n\\nalways respond in Chinese"
 - Include actual working commands
 - Focus on non-obvious insights
-- Be concise but comprehensive
+- Be concise but comprehensive for complex projects
 
 **Final output**: Return ONLY the complete BLADE.md content (markdown format), ready to be written to the file.`;
 
@@ -207,12 +225,9 @@ const initCommand: SlashCommand = {
           signal,
         },
         {
+          // 注意：abort 检查已在 Agent 内部统一处理
           onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
             if (toolCall.type !== 'function') return;
-            if (signal?.aborted) {
-              logger.info('[/init] onToolStart: signal already aborted, skipping');
-              return;
-            }
             try {
               const params = JSON.parse(toolCall.function.arguments);
               const summary = formatToolCallSummary(toolCall.function.name, params);
@@ -226,10 +241,6 @@ const initCommand: SlashCommand = {
             result: ToolResult
           ) => {
             if (toolCall.type !== 'function') return;
-            if (signal?.aborted) {
-              logger.info('[/init] onToolResult: signal already aborted, skipping');
-              return;
-            }
             if (result?.metadata?.summary) {
               sendToolMessage(result.metadata.summary);
             }

@@ -224,22 +224,51 @@ export class GptOpenaiPlatformChatService implements IChatService {
 
     const openaiMessages: ChatCompletionMessageParam[] = filteredMessages.map((msg) => {
       if (msg.role === 'tool') {
+        // tool 消息的 content 需要是字符串
+        const toolContent = typeof msg.content === 'string'
+          ? msg.content
+          : msg.content.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n');
         return {
           role: 'tool',
-          content: msg.content,
+          content: toolContent,
           tool_call_id: msg.tool_call_id!,
         };
       }
       if (msg.role === 'assistant' && msg.tool_calls) {
+        // assistant 消息的 content 需要是字符串或 null
+        const assistantContent = typeof msg.content === 'string'
+          ? msg.content
+          : msg.content?.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n');
         return {
           role: 'assistant',
-          content: msg.content || null,
+          content: assistantContent || null,
           tool_calls: msg.tool_calls,
         };
       }
+      // 处理 user/system/assistant 消息
+      // user 消息可能包含多模态内容（文本 + 图片）
+      if (msg.role === 'user' && Array.isArray(msg.content)) {
+        // 多模态 user 消息：转换为 OpenAI Vision API 格式
+        return {
+          role: 'user',
+          content: msg.content.map((part) => {
+            if (part.type === 'text') {
+              return { type: 'text' as const, text: part.text };
+            }
+            // image_url 类型
+            return {
+              type: 'image_url' as const,
+              image_url: { url: part.image_url.url },
+            };
+          }),
+        };
+      }
+      // 普通文本消息
       return {
         role: msg.role as 'user' | 'assistant' | 'system',
-        content: msg.content,
+        content: typeof msg.content === 'string'
+          ? msg.content
+          : msg.content.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n'),
       };
     });
 
@@ -392,22 +421,51 @@ export class GptOpenaiPlatformChatService implements IChatService {
 
     const openaiMessages: ChatCompletionMessageParam[] = filteredMessages.map((msg) => {
       if (msg.role === 'tool') {
+        // tool 消息的 content 需要是字符串
+        const toolContent = typeof msg.content === 'string'
+          ? msg.content
+          : msg.content.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n');
         return {
           role: 'tool',
-          content: msg.content,
+          content: toolContent,
           tool_call_id: msg.tool_call_id!,
         };
       }
       if (msg.role === 'assistant' && msg.tool_calls) {
+        // assistant 消息的 content 需要是字符串或 null
+        const assistantContent = typeof msg.content === 'string'
+          ? msg.content
+          : msg.content?.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n');
         return {
           role: 'assistant',
-          content: msg.content || null,
+          content: assistantContent || null,
           tool_calls: msg.tool_calls,
         };
       }
+      // 处理 user/system/assistant 消息
+      // user 消息可能包含多模态内容（文本 + 图片）
+      if (msg.role === 'user' && Array.isArray(msg.content)) {
+        // 多模态 user 消息：转换为 OpenAI Vision API 格式
+        return {
+          role: 'user',
+          content: msg.content.map((part) => {
+            if (part.type === 'text') {
+              return { type: 'text' as const, text: part.text };
+            }
+            // image_url 类型
+            return {
+              type: 'image_url' as const,
+              image_url: { url: part.image_url.url },
+            };
+          }),
+        };
+      }
+      // 普通文本消息
       return {
         role: msg.role as 'user' | 'assistant' | 'system',
-        content: msg.content,
+        content: typeof msg.content === 'string'
+          ? msg.content
+          : msg.content.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n'),
       };
     });
 

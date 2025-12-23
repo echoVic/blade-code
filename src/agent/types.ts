@@ -5,9 +5,15 @@
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
-import type { Message } from '../services/ChatServiceInterface.js';
+import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../tools/types/ToolTypes.js';
+
+/**
+ * 用户消息内容类型
+ * 支持纯文本或多模态内容（文本 + 图片）
+ */
+export type UserMessageContent = string | ContentPart[];
 
 /**
  * 聊天上下文接口

@@ -7,7 +7,6 @@ import {
   createPasteMarkerStart,
   getPasteMarkerEnd,
 } from '../hooks/useInputBuffer.js';
-import { saveImageToTemp } from '../utils/imageHandler.js';
 import { CustomTextInput } from './CustomTextInput.js';
 
 interface InputAreaProps {
@@ -15,8 +14,10 @@ interface InputAreaProps {
   cursorPosition: number;
   onChange: (value: string) => void;
   onChangeCursorPosition: (position: number) => void;
-  /** 添加粘贴映射，返回标记 ID */
+  /** 添加文本粘贴映射，返回标记 ID */
   onAddPasteMapping: (original: string) => number;
+  /** 添加图片粘贴映射，返回标记 ID */
+  onAddImagePasteMapping: (base64: string, mimeType: string) => number;
 }
 
 /**
@@ -25,7 +26,14 @@ interface InputAreaProps {
  * 注意：加载动画已移至 LoadingIndicator 组件，显示在输入框上方
  */
 export const InputArea: React.FC<InputAreaProps> = React.memo(
-  ({ input, cursorPosition, onChange, onChangeCursorPosition, onAddPasteMapping }) => {
+  ({
+    input,
+    cursorPosition,
+    onChange,
+    onChangeCursorPosition,
+    onAddPasteMapping,
+    onAddImagePasteMapping,
+  }) => {
     // 使用 Zustand store 管理焦点
     const currentFocus = useCurrentFocus();
     const isFocused = currentFocus === FocusId.MAIN_INPUT;
@@ -60,51 +68,22 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
     });
 
     // 图片粘贴回调 - 处理图片粘贴（路径或剪贴板）
+    // 使用粘贴标记系统存储图片数据，提交时构建多模态消息
     const handleImagePaste = useMemoizedFn(
       async (
         base64: string,
         mediaType: string,
-        filename?: string
+        _filename?: string
       ): Promise<{ prompt?: string }> => {
         try {
-          // 保存图片到临时目录
-          const result = saveImageToTemp(base64, mediaType, filename);
+          // 添加图片映射并获取标记 ID
+          const id = onAddImagePasteMapping(base64, mediaType);
 
-          // TODO: 未来需要实现图片处理逻辑
-          //
-          // 问题：当前的 @ 引用机制只支持文本文件
-          // AttachmentCollector.readFile() 会用 fs.readFile(path, 'utf-8')
-          // 读取图片会失败："Cannot read file as text. It may be a binary file."
-          //
-          // 解决方案（三选一）：
-          //
-          // 方案1：扩展 AttachmentCollector 支持图片
-          //   - 检测文件扩展名，如果是图片则读取为 base64
-          //   - 在 Message 中添加图片附件支持
-          //   - 修改 ChatService 将图片发送给 LLM
-          //   优点：符合 Blade 架构，图片作为附件发送
-          //   缺点：需要修改多个模块
-          //
-          // 方案2：直接将 base64 嵌入 prompt
-          //   - 返回 data URI 格式：`data:image/png;base64,${base64}`
-          //   - 但这会使 prompt 非常长，且不是所有 LLM 都支持
-          //   优点：简单直接
-          //   缺点：token 消耗大，兼容性问题
-          //
-          // 方案3：先上传到图床/对象存储，返回 URL
-          //   - 调用图床 API 上传图片
-          //   - 获取公网 URL
-          //   - 返回 URL 给 LLM
-          //   优点：不占用 prompt 空间
-          //   缺点：需要外部服务，有网络依赖
-          //
-          // 当前实现（临时方案）：
-          // 返回 @"文件路径"，但会失败，因为 @ 机制不支持二进制文件
-          // 这只是占位符，提醒用户图片已保存，需要手动处理
+          // 构建显示标记：␞PASTE:id:[Image #N]␟
+          // 提交时会识别图片类型，构建多模态消息
+          const displayText = `${createPasteMarkerStart(id)}[Image #${id}]${getPasteMarkerEnd()}`;
 
-          return {
-            prompt: `[Image saved to ${result.filePath}. Note: Image attachments not yet supported by @ mentions] `,
-          };
+          return { prompt: displayText };
         } catch (error) {
           console.error(`[Image Paste] Failed to process image:`, error);
           return {

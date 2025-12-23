@@ -403,7 +403,13 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   // Memoized function to send initial message via executeCommand
   const sendInitialMessage = useMemoizedFn(async (message: string) => {
     try {
-      await executeCommand(message);
+      // 初始消息只有纯文本，没有图片
+      await executeCommand({
+        displayText: message,
+        text: message,
+        images: [],
+        parts: [{ type: 'text', text: message }],
+      });
     } catch (error) {
       const fallback = error instanceof Error ? error.message : '无法发送初始消息';
       sessionActions.addAssistantMessage(`❌ 初始消息发送失败：${fallback}`);
@@ -534,6 +540,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             onChange={inputBuffer.setValue}
             onChangeCursorPosition={inputBuffer.setCursorPosition}
             onAddPasteMapping={inputBuffer.addPasteMapping}
+            onAddImagePasteMapping={inputBuffer.addImagePasteMapping}
           />
 
           {inlineModelSelectorVisible && (

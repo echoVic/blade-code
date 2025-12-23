@@ -2,6 +2,7 @@ import { useMemoizedFn } from 'ahooks';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { useEffect, useRef } from 'react';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
 import {
   executeSlashCommand,
@@ -25,6 +26,7 @@ import {
   shouldShowToolDetail,
 } from '../utils/toolFormatters.js';
 import { useAgent } from './useAgent.js';
+import type { ResolvedInput } from './useInputBuffer.js';
 
 // 创建 UI Hook 专用 Logger
 const logger = createLogger(LogCategory.UI);
@@ -90,6 +92,40 @@ export interface CommandResult {
 }
 
 /**
+ * 构建用户消息内容
+ * 如果包含图片，则返回多模态 ContentPart[]（保留文本和图片的相对顺序）
+ * 否则返回纯文本 string
+ */
+function buildUserMessageContent(resolved: ResolvedInput): string | ContentPart[] {
+  const { text, images, parts: resolvedParts } = resolved;
+
+  // 无图片时返回纯文本
+  if (images.length === 0) {
+    return text;
+  }
+
+  // 有图片时构建多模态内容，保留原始顺序
+  const parts: ContentPart[] = [];
+
+  for (const part of resolvedParts) {
+    if (part.type === 'text') {
+      // 文本部分（保留空白分隔符，用于图片间隔）
+      parts.push({ type: 'text', text: part.text });
+    } else {
+      // 图片部分
+      parts.push({
+        type: 'image_url',
+        image_url: {
+          url: `data:${part.mimeType};base64,${part.base64}`,
+        },
+      });
+    }
+  }
+
+  return parts;
+}
+
+/**
  * 命令处理 Hook
  * 负责命令的执行和状态管理
  *
@@ -150,9 +186,12 @@ export const useCommandHandler = (
 
   // 处理命令提交
   const handleCommandSubmit = useMemoizedFn(
-    async (command: string): Promise<CommandResult> => {
+    async (resolved: ResolvedInput): Promise<CommandResult> => {
+      const { text: command } = resolved;
+
       try {
         // 检查是否为 slash command（先检查，避免 /clear 时显示用户消息）
+        // 注意：slash command 不支持图片，仅使用文本部分
         if (isSlashCommand(command)) {
           // ⚠️ 关键：确保 Store 已初始化（防御性检查）
           // slash commands 依赖 Store 状态，必须在执行前确保初始化
@@ -211,8 +250,11 @@ export const useCommandHandler = (
           };
         }
 
-        // 普通命令：添加用户消息
-        sessionActions.addUserMessage(command);
+        // 普通命令：添加用户消息（UI 显示带图片占位符的文本）
+        sessionActions.addUserMessage(resolved.displayText);
+
+        // 构建用户消息内容（可能包含图片）
+        const userMessageContent = buildUserMessageContent(resolved);
 
         // 创建并设置 Agent
         const agent = await createAgent();
@@ -237,11 +279,13 @@ export const useCommandHandler = (
           // LLM 推理内容（Thinking 模型如 DeepSeek R1）
           onThinking: (content: string) => {
             // 设置 thinking 内容（流式显示）
+            // 注意：abort 检查已在 Agent 内部统一处理
             sessionActions.setCurrentThinkingContent(content);
           },
           // LLM 输出内容
           onContent: (content: string) => {
             // 获取当前 thinking 内容，保存到消息中
+            // 注意：abort 检查已在 Agent 内部统一处理
             // 注意：这里需要在 addAssistantMessage 之前获取，因为 addMessage 会清空 currentThinkingContent
             if (content.trim()) {
               sessionActions.addAssistantMessage(content);
@@ -251,6 +295,7 @@ export const useCommandHandler = (
           },
           // 工具调用开始
           onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
+            // 注意：abort 检查已在 Agent 内部统一处理
             if (toolCall.type !== 'function') return;
             // 跳过 TodoWrite 的显示（任务列表由侧边栏显示）
             if (toolCall.function.name === 'TodoWrite') {
@@ -275,6 +320,7 @@ export const useCommandHandler = (
             toolCall: ChatCompletionMessageToolCall,
             result: ToolResult
           ) => {
+            // 注意：abort 检查已在 Agent 内部统一处理
             if (toolCall.type !== 'function') return;
             if (!result?.metadata?.summary) {
               return;
@@ -311,10 +357,7 @@ export const useCommandHandler = (
                   type: 'maxTurnsExceeded',
                   title: '对话轮次上限',
                   message: `已进行 ${data.turnsCount} 轮对话。是否继续？`,
-                  risks: [
-                    '继续执行可能导致更长的等待时间',
-                    '可能产生更多的 API 费用',
-                  ],
+                  risks: ['继续执行可能导致更长的等待时间', '可能产生更多的 API 费用'],
                 });
                 return {
                   continue: response.approved,
@@ -324,7 +367,7 @@ export const useCommandHandler = (
             : undefined,
         };
 
-        const output = await agent.chat(command, chatContext, loopOptions);
+        const output = await agent.chat(userMessageContent, chatContext, loopOptions);
 
         // 如果返回空字符串，可能是用户取消或拒绝
         // 如果已经发送过 abort 消息，不再重复添加
@@ -346,24 +389,43 @@ export const useCommandHandler = (
         }
 
         const errorMessage = error instanceof Error ? error.message : '未知错误';
-        const errorResult = { success: false, error: errorMessage };
-        sessionActions.addAssistantMessage(`❌ ${errorMessage}`);
+
+        // 检测是否是图片/多模态不支持的错误
+        const isVisionNotSupportedError =
+          errorMessage.includes('can only concatenate str') ||
+          errorMessage.includes('image_url') ||
+          errorMessage.includes('multimodal') ||
+          errorMessage.includes('vision') ||
+          errorMessage.includes('does not support images');
+
+        let displayMessage = errorMessage;
+        if (isVisionNotSupportedError) {
+          displayMessage =
+            '当前模型不支持图片理解功能。请切换到支持视觉能力的模型（如 Claude 4.5、GPT-5.2、Gemini 3 Pro、Qwen3-VL-Plus 等）后重试。';
+        }
+
+        const errorResult = { success: false, error: displayMessage };
+        sessionActions.addAssistantMessage(`❌ ${displayMessage}`);
         return errorResult;
       }
     }
   );
 
   // 处理提交
-  const executeCommand = useMemoizedFn(async (command: string) => {
-    if (!command.trim()) {
+  const executeCommand = useMemoizedFn(async (resolved: ResolvedInput) => {
+    if (!resolved.text.trim() && resolved.images.length === 0) {
       return;
     }
 
-    const trimmedCommand = command.trim();
-
     // 如果正在处理，静默加入队列（执行时再显示用户消息）
+    // 队列支持完整的 ResolvedInput（包含图片）
     if (isProcessing) {
-      commandActions.enqueueCommand(trimmedCommand);
+      commandActions.enqueueCommand({
+        displayText: resolved.displayText,
+        text: resolved.text,
+        images: resolved.images,
+        parts: resolved.parts,
+      });
       return;
     }
 
@@ -377,7 +439,7 @@ export const useCommandHandler = (
     commandActions.setProcessing(true);
 
     try {
-      const result = await handleCommandSubmit(trimmedCommand);
+      const result = await handleCommandSubmit(resolved);
 
       // 只有非 abort 的错误才写入 session.error
       // abort 是正常中止，不应显示为错误
@@ -402,11 +464,20 @@ export const useCommandHandler = (
       // 清理 thinking 内容（防止遗留）
       sessionActions.setCurrentThinkingContent(null);
 
-      // 处理队列中的下一个命令
+      // 处理队列中的下一个命令（支持完整的 ResolvedInput）
       const nextCommand = commandActions.dequeueCommand();
       if (nextCommand) {
         // 稍微延迟以让 UI 更新
-        setTimeout(() => executeCommand(nextCommand), 100);
+        setTimeout(
+          () =>
+            executeCommand({
+              displayText: nextCommand.displayText,
+              text: nextCommand.text,
+              images: nextCommand.images,
+              parts: nextCommand.parts,
+            }),
+          100
+        );
       }
     }
   });
