@@ -327,6 +327,21 @@ function generateChangelog(newVersion) {
     writeFileSync(docsChangelogPath, changelogLines.join('\n'));
     console.log(chalk.green('✅ Docs changelog 已同步'));
 
+    // 同步到外部 blade-doc 仓库
+    // 优先尝试环境变量 BLADE_DOC_PATH，否则尝试默认相对路径
+    const bladeDocPathEnv = process.env.BLADE_DOC_PATH;
+    const defaultBladeDocPath = join(rootDir, '../blade-doc');
+    const bladeDocDir = bladeDocPathEnv || defaultBladeDocPath;
+    const bladeDocChangelogPath = join(bladeDocDir, 'changelog.md');
+
+    if (existsSync(bladeDocDir)) {
+      writeFileSync(bladeDocChangelogPath, changelogLines.join('\n'));
+      console.log(chalk.green(`✅ blade-doc changelog 已同步至: ${bladeDocChangelogPath}`));
+    } else {
+      console.log(chalk.gray(`⚠️ 未找到 blade-doc 仓库 (路径: ${bladeDocDir})，跳过同步`));
+      console.log(chalk.gray('💡 提示: 可通过 BLADE_DOC_PATH 环境变量指定路径'));
+    }
+
   } catch (error) {
     console.log(chalk.yellow('⚠️  无法生成 changelog:', error.message));
   }
