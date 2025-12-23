@@ -7,8 +7,8 @@ import {
   useContextRemaining,
   useCurrentModel,
   useIsCompacting,
+  useIsProcessing,
   useIsReady,
-  useIsThinking,
   usePermissionMode,
   useThinkingModeEnabled,
 } from '../../store/selectors/index.js';
@@ -25,7 +25,7 @@ import { useGitBranch } from '../hooks/useGitBranch.js';
 export const ChatStatusBar: React.FC = React.memo(() => {
   // 使用 Zustand selectors 获取状态
   const hasApiKey = useIsReady();
-  const isProcessing = useIsThinking();
+  const isProcessing = useIsProcessing();
   const permissionMode = usePermissionMode();
   const activeModal = useActiveModal();
   const showShortcuts = activeModal === 'shortcuts';

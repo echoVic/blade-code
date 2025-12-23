@@ -23,9 +23,9 @@ import { vanillaStore } from './vanilla.js';
  * const messages = useBladeStore((state) => state.session.messages);
  *
  * // 选择多个状态
- * const { sessionId, isThinking } = useBladeStore((state) => ({
+ * const { sessionId, isProcessing } = useBladeStore((state) => ({
  *   sessionId: state.session.sessionId,
- *   isThinking: state.session.isThinking,
+ *   isProcessing: state.command.isProcessing,
  * }));
  */
 export function useBladeStore<T>(selector: (state: BladeStore) => T): T {

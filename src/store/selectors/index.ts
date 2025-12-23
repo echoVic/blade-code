@@ -35,11 +35,6 @@ export const useMessages = () => useBladeStore((state) => state.session.messages
 export const useClearCount = () => useBladeStore((state) => state.session.clearCount);
 
 /**
- * 获取思考状态
- */
-export const useIsThinking = () => useBladeStore((state) => state.session.isThinking);
-
-/**
  * 获取压缩状态
  */
 export const useIsCompacting = () => useBladeStore((state) => state.session.isCompacting);
@@ -105,7 +100,7 @@ export const useSessionState = () =>
     useShallow((state) => ({
       sessionId: state.session.sessionId,
       messages: state.session.messages,
-      isThinking: state.session.isThinking,
+      isProcessing: state.command.isProcessing,
       currentCommand: state.session.currentCommand,
       error: state.session.error,
       isActive: state.session.isActive,
@@ -317,17 +312,17 @@ export const useCanAbort = () =>
  * 派生选择器：输入是否禁用
  *
  * 输入禁用条件：
- * - 正在思考 (isThinking)
+ * - 正在处理 (isProcessing)
  * - 未准备就绪
  * - 有活动模态框（除了 shortcuts）
  */
 export const useIsInputDisabled = () =>
   useBladeStore((state) => {
-    const isThinking = state.session.isThinking;
+    const isProcessing = state.command.isProcessing;
     const isReady = state.app.initializationStatus === 'ready';
     const hasModal =
       state.app.activeModal !== 'none' && state.app.activeModal !== 'shortcuts';
-    return isThinking || !isReady || hasModal;
+    return isProcessing || !isReady || hasModal;
   });
 
 /**
@@ -343,10 +338,10 @@ export const useIsModal = (modal: ActiveModal) =>
   useBladeStore((state) => state.app.activeModal === modal);
 
 /**
- * 派生选择器：是否正在执行任务（思考或处理）
+ * 派生选择器：是否正在执行任务
  */
 export const useIsBusy = () =>
-  useBladeStore((state) => state.session.isThinking || state.command.isProcessing);
+  useBladeStore((state) => state.command.isProcessing);
 
 // ==================== Thinking 模式选择器 ====================
 

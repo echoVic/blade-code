@@ -14,6 +14,7 @@ import { isThinkingModel } from '../../utils/modelDetection.js';
 import { FocusId } from '../../store/types.js';
 import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
 import { useCtrlCHandler } from './useCtrlCHandler.js';
+import type { HistoryEntry, PasteMappings } from './useCommandHistory.js';
 import type { InputBuffer } from './useInputBuffer.js';
 
 // 创建 UI Hook 专用 Logger
@@ -26,9 +27,9 @@ const logger = createLogger(LogCategory.UI);
 export const useMainInput = (
   buffer: InputBuffer,
   onSubmit: (input: string) => void,
-  onPreviousCommand: () => string,
-  onNextCommand: () => string,
-  onAddToHistory: (command: string) => void,
+  onPreviousCommand: () => HistoryEntry | null,
+  onNextCommand: () => HistoryEntry | null,
+  onAddToHistory: (display: string, pasteMappings?: PasteMappings) => void,
   onAbort?: () => void,
   isProcessing?: boolean,
   onTogglePermissionMode?: () => void,
@@ -126,17 +127,31 @@ export const useMainInput = (
 
     // 直接使用用户输入的内容，不使用建议
     // 如果用户想使用建议，应该先按 Tab 键选择，然后再按 Enter 提交
-    const commandToSubmit = input.trim();
+    const displayText = input.trim();
 
-    if (commandToSubmit) {
-      logger.debug('[DIAG] Submitting command:', commandToSubmit);
+    if (displayText) {
+      // 将显示的摘要替换回原始粘贴内容
+      const commandToSubmit = buffer.resolveInput(displayText);
+
+      logger.debug('[DIAG] Submitting command:', {
+        displayText,
+        resolved: commandToSubmit !== displayText,
+        length: commandToSubmit.length,
+      });
+
       // 隐藏建议
       setShowSuggestions(false);
       setSuggestions([]);
 
-      onAddToHistory(commandToSubmit);
-      buffer.clear(); // 使用 buffer.clear() 清空输入
-      onSubmit(commandToSubmit);
+      // 保存当前的粘贴映射到历史记录（在 clear 之前）
+      const currentMappings: PasteMappings =
+        buffer.pasteMap.size > 0 ? new Map(buffer.pasteMap) : new Map();
+
+      // 历史记录保存显示文本和粘贴映射
+      // 回放时恢复映射，提交时通过 resolveInput 展开
+      onAddToHistory(displayText, currentMappings);
+      buffer.clear(); // 使用 buffer.clear() 清空输入（同时清除粘贴映射）
+      onSubmit(commandToSubmit); // 发送完整内容
       logger.debug('[DIAG] Command submitted to onSubmit callback');
     } else {
       logger.debug('[DIAG] Empty command, not submitting');
@@ -295,10 +310,15 @@ export const useMainInput = (
           const maxIndex = suggestions.length - 1;
           setSelectedSuggestionIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
         } else {
-          const prevCommand = onPreviousCommand();
-          if (prevCommand !== '') {
-            setInput(prevCommand);
-            buffer.setCursorPosition(prevCommand.length);
+          const entry = onPreviousCommand();
+          if (entry) {
+            // 恢复粘贴映射（在设置输入之前，避免触发清理逻辑）
+            if (entry.pasteMappings.size > 0) {
+              buffer.restorePasteMappings(entry.pasteMappings);
+            }
+            // 显示历史文本
+            setInput(entry.display);
+            buffer.setCursorPosition(entry.display.length);
           }
         }
         return;
@@ -308,10 +328,15 @@ export const useMainInput = (
           const maxIndex = suggestions.length - 1;
           setSelectedSuggestionIndex((prev) => (prev < maxIndex ? prev + 1 : 0));
         } else {
-          const nextCommand = onNextCommand();
-          if (nextCommand !== '') {
-            setInput(nextCommand);
-            buffer.setCursorPosition(nextCommand.length);
+          const entry = onNextCommand();
+          if (entry) {
+            // 恢复粘贴映射（在设置输入之前，避免触发清理逻辑）
+            if (entry.pasteMappings.size > 0) {
+              buffer.restorePasteMappings(entry.pasteMappings);
+            }
+            // 显示历史文本
+            setInput(entry.display);
+            buffer.setCursorPosition(entry.display.length);
           }
         }
         return;

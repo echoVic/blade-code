@@ -8,7 +8,7 @@
 
 import { Box, Text } from 'ink';
 import React, { useEffect, useState } from 'react';
-import { useIsReady, useIsThinking } from '../../store/selectors/index.js';
+import { useIsProcessing, useIsReady } from '../../store/selectors/index.js';
 import { useLoadingIndicator } from '../hooks/useLoadingIndicator.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 import { themeManager } from '../themes/ThemeManager.js';
@@ -50,9 +50,9 @@ function formatElapsedTime(seconds: number): string {
 export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
   ({ message }) => {
     // 使用 Zustand selectors 获取状态
-    const isThinking = useIsThinking();
+    const isProcessing = useIsProcessing();
     const isReady = useIsReady();
-    const visible = isThinking || !isReady;
+    const visible = isProcessing || !isReady;
 
     const [spinnerFrame, setSpinnerFrame] = useState(0);
     const theme = themeManager.getTheme();
