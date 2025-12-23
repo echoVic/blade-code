@@ -80,7 +80,7 @@
   },
   "homepage": "https://github.com/echoVic/blade-code",
   "bugs": {
-    "url": "https://github.com/echoVic/blade-code/issues"
+    "url": "https://github.com/echoVic/blade-doc/issues"
   },
   "engines": {
     "node": ">=16.0.0"

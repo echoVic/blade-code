@@ -133,7 +133,7 @@ Use in interactive mode: `/init` `/help` `/clear` `/compact` `/context` `/agents
 
 ## 📖 Documentation
 
-- **[User Docs](docs/public/README.md)** - Installation, configuration, usage guides
+- **[User Docs](https://echovic.github.io/blade-doc/#/)** - Installation, configuration, usage guides
 - **[Developer Docs](docs/development/README.md)** - Architecture, implementation details
 - **[Contributing Guide](CONTRIBUTING.md)** - Open source contribution
 
@@ -153,6 +153,19 @@ cd blade-code && pnpm install && pnpm dev
 ## 💬 Community
 
 Add WeChat **VIc-Forever** with note "Blade" to join the group.
+
+---
+
+## 💬 Community
+
+Add assistant on WeChat **VIc-Forever**, remark "Blade" to join the group.
+
+---
+
+## 🔗 Related Resources
+
+- [NPM Package](https://www.npmjs.com/package/blade-code)
+- [Report Issues](https://github.com/echoVic/blade-doc/issues)
 
 ---
 

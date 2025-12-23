@@ -6,7 +6,7 @@
 
 ### 🐛 报告 Bug
 
-如果您发现了 bug，请在 [GitHub Issues](https://github.com/echoVic/blade-code/issues) 中提交报告，包含以下信息：
+如果您发现了 bug，请在 [GitHub Issues](https://github.com/echoVic/blade-doc/issues) 中提交报告，包含以下信息：
 
 - **环境信息**：操作系统、Node.js 版本、Blade 版本
 - **复现步骤**：详细的操作步骤

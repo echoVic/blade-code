@@ -133,7 +133,7 @@ blade --yolo "自动批准所有操作"
 
 ## 📖 文档
 
-- **[用户文档](docs/public/README.md)** - 安装、配置、使用指南
+- **[用户文档](https://echovic.github.io/blade-doc/#/)** - 安装、配置、使用指南
 - **[开发者文档](docs/development/README.md)** - 架构设计、技术实现
 - **[贡献指南](CONTRIBUTING.md)** - 参与开源贡献
 
@@ -153,6 +153,13 @@ cd blade-code && pnpm install && pnpm dev
 ## 💬 交流群
 
 添加小助手微信 **VIc-Forever**，备注「Blade」拉你进群。
+
+---
+
+## 🔗 相关资源
+
+- [NPM 包](https://www.npmjs.com/package/blade-code)
+- [问题反馈](https://github.com/echoVic/blade-doc/issues)
 
 ---
 
