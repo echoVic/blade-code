@@ -65,9 +65,11 @@ export const createCommandSlice: StateCreator<
     /**
      * 中止当前任务
      * - 发送 abort signal
-     * - 重置 isProcessing
-     * - 重置 isThinking (跨 slice)
+     * - 重置 isProcessing（乐观更新，立即响应用户）
      * - 清空待处理队列
+     *
+     * 采用乐观更新策略：立即重置状态让 UI 响应，
+     * 后续 LLM 返回的结果会被 abortMessageSentRef 机制过滤掉。
      */
     abort: () => {
       const { abortController } = get().command;
@@ -76,9 +78,6 @@ export const createCommandSlice: StateCreator<
       if (abortController && !abortController.signal.aborted) {
         abortController.abort();
       }
-
-      // 重置 session 的 isThinking 状态
-      get().session.actions.setThinking(false);
 
       // 重置 command 状态并清空队列
       set((state) => ({

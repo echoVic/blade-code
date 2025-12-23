@@ -3,7 +3,7 @@ import React, { ReactNode, useEffect, useMemo } from 'react';
 import {
   useClearCount,
   useCurrentThinkingContent,
-  useIsThinking,
+  useIsProcessing,
   useMessages,
   usePendingCommands,
   useShowTodoPanel,
@@ -37,7 +37,7 @@ import { TodoPanel } from './TodoPanel.js';
 export const MessageArea: React.FC = React.memo(() => {
   // 使用 Zustand selectors 获取状态
   const messages = useMessages();
-  const isThinking = useIsThinking();
+  const isProcessing = useIsProcessing();
   const todos = useTodos();
   const showTodoPanel = useShowTodoPanel();
   const pendingCommands = usePendingCommands();
@@ -62,7 +62,7 @@ export const MessageArea: React.FC = React.memo(() => {
     // 所以 completedMessages 只能增长，不能缩小
     const safeCompletedCount = Math.max(
       renderedCountRef.current,
-      isThinking && messages.length > 0 ? messages.length - 1 : messages.length
+      isProcessing && messages.length > 0 ? messages.length - 1 : messages.length
     );
 
     // 更新已渲染数量
@@ -75,7 +75,7 @@ export const MessageArea: React.FC = React.memo(() => {
       completedMessages: completed,
       streamingMessage: streaming,
     };
-  }, [messages, isThinking]);
+  }, [messages, isProcessing]);
 
   // 检测是否有活动的 TODO（进行中或待处理）
   const hasActiveTodos = useMemo(() => {
@@ -126,7 +126,7 @@ export const MessageArea: React.FC = React.memo(() => {
           <Box marginBottom={1}>
             <ThinkingBlock
               content={currentThinkingContent}
-              isStreaming={isThinking}
+              isStreaming={isProcessing}
               isExpanded={thinkingExpanded}
             />
           </Box>

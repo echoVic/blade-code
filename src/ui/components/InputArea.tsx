@@ -3,6 +3,10 @@ import { Box, Text } from 'ink';
 import React from 'react';
 import { useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
+import {
+  createPasteMarkerStart,
+  getPasteMarkerEnd,
+} from '../hooks/useInputBuffer.js';
 import { saveImageToTemp } from '../utils/imageHandler.js';
 import { CustomTextInput } from './CustomTextInput.js';
 
@@ -11,6 +15,8 @@ interface InputAreaProps {
   cursorPosition: number;
   onChange: (value: string) => void;
   onChangeCursorPosition: (position: number) => void;
+  /** 添加粘贴映射，返回标记 ID */
+  onAddPasteMapping: (original: string) => number;
 }
 
 /**
@@ -19,12 +25,13 @@ interface InputAreaProps {
  * 注意：加载动画已移至 LoadingIndicator 组件，显示在输入框上方
  */
 export const InputArea: React.FC<InputAreaProps> = React.memo(
-  ({ input, cursorPosition, onChange, onChangeCursorPosition }) => {
+  ({ input, cursorPosition, onChange, onChangeCursorPosition, onAddPasteMapping }) => {
     // 使用 Zustand store 管理焦点
     const currentFocus = useCurrentFocus();
     const isFocused = currentFocus === FocusId.MAIN_INPUT;
 
     // 文本粘贴回调 - 处理大段文本粘贴
+    // 显示摘要标记，但保存原文用于提交时替换
     const handlePaste = useMemoizedFn((text: string): { prompt?: string } => {
       const lineCount = text.split('\n').length;
       const charCount = text.length;
@@ -34,10 +41,18 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
       const SUMMARY_THRESHOLD_LINES = 10;
 
       if (charCount > SUMMARY_THRESHOLD_CHARS || lineCount > SUMMARY_THRESHOLD_LINES) {
-        // 生成摘要：显示前 30 个字符 + 统计信息
+        // 添加映射并获取标记 ID
+        const id = onAddPasteMapping(text);
+
+        // 生成摘要信息
         const preview = text.slice(0, 30).replace(/\n/g, ' ');
-        const summary = `[Pasted: ${charCount} chars, ${lineCount} lines] ${preview}...`;
-        return { prompt: summary };
+        const summary = `${charCount} chars, ${lineCount} lines: ${preview}...`;
+
+        // 构建完整标记：␞PASTE:id:摘要内容␟
+        // 整个标记会在提交时被替换为原文
+        const displayText = `${createPasteMarkerStart(id)}${summary}${getPasteMarkerEnd()}`;
+
+        return { prompt: displayText };
       }
 
       // 小文本直接插入，不做处理

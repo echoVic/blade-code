@@ -128,15 +128,6 @@ export const subscribeToProcessing = (callback: (isProcessing: boolean) => void)
 };
 
 /**
- * 订阅 Thinking 状态变化
- * @param callback 变化回调
- * @returns 取消订阅函数
- */
-export const subscribeToThinking = (callback: (isThinking: boolean) => void) => {
-  return subscribe((state) => state.session.isThinking, callback);
-};
-
-/**
  * 订阅消息变化
  * @param callback 变化回调
  * @returns 取消订阅函数
@@ -256,11 +247,6 @@ export const getMcpServers = () => getState().config.config?.mcpServers ?? {};
  * 检查是否正在处理
  */
 export const isProcessing = () => getState().command.isProcessing;
-
-/**
- * 检查是否正在思考
- */
-export const isThinking = () => getState().session.isThinking;
 
 // ==================== Config Actions（带持久化）====================
 

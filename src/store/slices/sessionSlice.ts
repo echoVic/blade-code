@@ -4,8 +4,9 @@
  * 职责：
  * - 会话 ID 管理
  * - 消息历史管理
- * - 思考状态 (isThinking)
  * - 错误状态
+ *
+ * 注意：isThinking 已合并到 commandSlice.isProcessing
  */
 
 import { nanoid } from 'nanoid';
@@ -35,7 +36,6 @@ const initialTokenUsage: TokenUsage = {
 const initialSessionState: SessionState = {
   sessionId: nanoid(),
   messages: [],
-  isThinking: false,
   isCompacting: false,
   currentCommand: null,
   error: null,
@@ -112,15 +112,6 @@ export const createSessionSlice: StateCreator<
         metadata,
       };
       get().session.actions.addMessage(message);
-    },
-
-    /**
-     * 设置思考状态
-     */
-    setThinking: (isThinking: boolean) => {
-      set((state) => ({
-        session: { ...state.session, isThinking },
-      }));
     },
 
     /**

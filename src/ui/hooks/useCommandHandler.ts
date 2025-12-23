@@ -143,7 +143,7 @@ export const useCommandHandler = (
       abortMessageSentRef.current = true;
     }
 
-    // 使用 store 的 abort action（会同时重置 isProcessing 和 isThinking）
+    // 触发 abort signal，立即重置状态（乐观更新）
     commandActions.abort();
     appActions.setTodos([]);
   });
@@ -326,9 +326,12 @@ export const useCommandHandler = (
 
         const output = await agent.chat(command, chatContext, loopOptions);
 
-        // 如果返回空字符串，可能是用户取消
+        // 如果返回空字符串，可能是用户取消或拒绝
+        // 如果已经发送过 abort 消息，不再重复添加
         if (!output || output.trim() === '') {
-          sessionActions.addAssistantMessage('⏹ 已取消');
+          if (!abortMessageSentRef.current) {
+            sessionActions.addAssistantMessage('⏹ 已取消');
+          }
           return {
             success: true,
             output: '已取消',
@@ -337,6 +340,11 @@ export const useCommandHandler = (
 
         return { success: true, output };
       } catch (error) {
+        // 如果是 abort 导致的错误，且已经发送过消息，不再重复
+        if (abortMessageSentRef.current) {
+          return { success: false, error: 'aborted' };
+        }
+
         const errorMessage = error instanceof Error ? error.message : '未知错误';
         const errorResult = { success: false, error: errorMessage };
         sessionActions.addAssistantMessage(`❌ ${errorMessage}`);
@@ -367,12 +375,13 @@ export const useCommandHandler = (
 
     // 设置处理状态
     commandActions.setProcessing(true);
-    sessionActions.setThinking(true);
 
     try {
       const result = await handleCommandSubmit(trimmedCommand);
 
-      if (!result.success && result.error) {
+      // 只有非 abort 的错误才写入 session.error
+      // abort 是正常中止，不应显示为错误
+      if (!result.success && result.error && result.error !== 'aborted') {
         sessionActions.setError(result.error);
       }
     } catch (error) {
@@ -389,7 +398,6 @@ export const useCommandHandler = (
     } finally {
       // 重置状态
       commandActions.setProcessing(false);
-      sessionActions.setThinking(false);
       commandActions.clearAbortController();
       // 清理 thinking 内容（防止遗留）
       sessionActions.setCurrentThinkingContent(null);

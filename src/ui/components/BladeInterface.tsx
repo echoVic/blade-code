@@ -14,7 +14,7 @@ import {
   useFocusActions,
   useInitializationError,
   useInitializationStatus,
-  useIsThinking,
+  useIsProcessing,
   useModelEditorTarget,
   usePermissionMode,
   useSessionActions,
@@ -92,8 +92,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   // 权限模式
   const permissionMode = usePermissionMode();
 
-  // 是否正在思考
-  const isThinking = useIsThinking();
+  // 是否正在处理
+  const isProcessing = useIsProcessing();
 
   const { exit } = useApp();
 
@@ -185,7 +185,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     getNextCommand,
     addToHistory,
     handleAbort,
-    isThinking,
+    isProcessing,
     handlePermissionModeToggle,
     handleToggleShortcuts,
     activeModal === 'shortcuts'
@@ -533,6 +533,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             cursorPosition={inputBuffer.cursorPosition}
             onChange={inputBuffer.setValue}
             onChangeCursorPosition={inputBuffer.setCursorPosition}
+            onAddPasteMapping={inputBuffer.addPasteMapping}
           />
 
           {inlineModelSelectorVisible && (

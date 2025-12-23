@@ -55,11 +55,12 @@ export interface TokenUsage {
 
 /**
  * 会话状态
+ *
+ * 注意：isThinking 已合并到 CommandState.isProcessing
  */
 export interface SessionState {
   sessionId: string;
   messages: SessionMessage[];
-  isThinking: boolean; // 临时状态 - 不持久化
   isCompacting: boolean; // 是否正在压缩上下文
   currentCommand: string | null;
   error: string | null;
@@ -78,7 +79,6 @@ export interface SessionActions {
   addUserMessage: (content: string) => void;
   addAssistantMessage: (content: string, thinkingContent?: string) => void;
   addToolMessage: (content: string, metadata?: ToolMessageMetadata) => void;
-  setThinking: (isThinking: boolean) => void;
   setCompacting: (isCompacting: boolean) => void;
   setCommand: (command: string | null) => void;
   setError: (error: string | null) => void;
