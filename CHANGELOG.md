@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.33] - 2025-12-23
+
+### ✨ 新功能
+
+- 添加历史消息折叠功能及快捷键支持 (5f34b2b)
+- 添加图片粘贴和多模态消息处理功能 (a0532a4)
+
+### ♻️ 代码重构
+
+- 合并 isThinking 状态到 isProcessing 并优化处理逻辑 (6e83764)
+
+
 ## [0.0.32] - 2025-12-22
 
 ### ✨ 新功能
