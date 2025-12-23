@@ -3,6 +3,8 @@ import React, { ReactNode, useEffect, useMemo } from 'react';
 import {
   useClearCount,
   useCurrentThinkingContent,
+  useExpandedMessageCount,
+  useHistoryExpanded,
   useIsProcessing,
   useMessages,
   usePendingCommands,
@@ -12,6 +14,7 @@ import {
 } from '../../store/selectors/index.js';
 import type { SessionMessage } from '../../store/types.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
+import { CollapsedHistorySummary } from './CollapsedHistorySummary.js';
 import { Header } from './Header.js';
 import { MessageRenderer } from './MessageRenderer.js';
 import { ThinkingBlock } from './ThinkingBlock.js';
@@ -44,6 +47,8 @@ export const MessageArea: React.FC = React.memo(() => {
   const currentThinkingContent = useCurrentThinkingContent();
   const thinkingExpanded = useThinkingExpanded();
   const clearCount = useClearCount(); // 用于强制 Static 组件重新挂载
+  const expandedMessageCount = useExpandedMessageCount(); // 保持展开的最近消息数
+  const historyExpanded = useHistoryExpanded(); // 是否展开所有历史消息
 
   // 使用 useTerminalWidth hook 获取终端宽度
   const terminalWidth = useTerminalWidth();
@@ -69,7 +74,8 @@ export const MessageArea: React.FC = React.memo(() => {
     renderedCountRef.current = safeCompletedCount;
 
     const completed = messages.slice(0, safeCompletedCount);
-    const streaming = safeCompletedCount < messages.length ? messages[safeCompletedCount] : null;
+    const streaming =
+      safeCompletedCount < messages.length ? messages[safeCompletedCount] : null;
 
     return {
       completedMessages: completed,
@@ -84,8 +90,17 @@ export const MessageArea: React.FC = React.memo(() => {
     );
   }, [todos]);
 
+  // 计算"最近消息"的起始索引（这些消息始终显示完整内容）
+  // 当 historyExpanded=true 时，显示所有消息；否则只显示最近 N 条
+  const recentMessageStartIndex = useMemo(() => {
+    if (historyExpanded) {
+      return 0; // 展开时显示所有消息
+    }
+    return Math.max(0, messages.length - expandedMessageCount);
+  }, [messages.length, expandedMessageCount, historyExpanded]);
+
   // 渲染单个消息（用于 Static 和 dynamic 区域）
-  const renderMessage = (msg: SessionMessage, _index: number, isPending = false) => (
+  const renderMessage = (msg: SessionMessage, isPending = false) => (
     <Box key={msg.id} flexDirection="column">
       <MessageRenderer
         content={msg.content}
@@ -97,27 +112,44 @@ export const MessageArea: React.FC = React.memo(() => {
     </Box>
   );
 
-  // 构建 Static items：Header + 已完成的消息
+  // 计算折叠的消息数量
+  const collapsedCount = useMemo(() => {
+    return Math.min(recentMessageStartIndex, completedMessages.length);
+  }, [recentMessageStartIndex, completedMessages.length]);
+
+  // 构建 Static items：Header + 折叠汇总 + 已完成的消息
   const staticItems = useMemo(() => {
     const items: ReactNode[] = [];
 
-    // 1. Header 作为第一个子项
+    // 1. Header 始终在最顶部
     items.push(<Header key="header" />);
 
-    // 2. 已完成的消息
+    // 2. 如果有折叠的消息，显示单行汇总
+    if (collapsedCount > 0) {
+      items.push(
+        <CollapsedHistorySummary
+          key="collapsed-summary"
+          collapsedCount={collapsedCount}
+        />
+      );
+    }
+
+    // 3. 只渲染需要显示的消息（从 recentMessageStartIndex 开始）
     completedMessages.forEach((msg, index) => {
-      items.push(renderMessage(msg, index));
+      if (index >= recentMessageStartIndex) {
+        items.push(renderMessage(msg));
+      }
     });
 
     return items;
-  }, [completedMessages, terminalWidth]);
+  }, [completedMessages, terminalWidth, recentMessageStartIndex, collapsedCount]);
 
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={2}>
       <Box flexDirection="column" flexGrow={1}>
-        {/* 静态区域：Header + 已完成的消息永不重新渲染 */}
-        {/* key={clearCount} 确保 /clear 时强制重新挂载，清除已冻结的内容 */}
-        <Static key={clearCount} items={staticItems}>
+        {/* 静态区域：Header + 折叠汇总 + 最近消息 */}
+        {/* key 包含 clearCount 和 historyExpanded，确保状态变化时强制重新挂载 */}
+        <Static key={`${clearCount}-${historyExpanded}`} items={staticItems}>
           {(item) => item}
         </Static>
 
@@ -133,8 +165,7 @@ export const MessageArea: React.FC = React.memo(() => {
         )}
 
         {/* 动态区域：只有流式传输的消息会重新渲染 */}
-        {streamingMessage &&
-          renderMessage(streamingMessage, completedMessages.length, true)}
+        {streamingMessage && renderMessage(streamingMessage, true)}
 
         {/* TodoPanel 独立显示（仅在有活动 TODO 时） */}
         {showTodoPanel && hasActiveTodos && (

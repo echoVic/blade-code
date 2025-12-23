@@ -216,6 +216,11 @@ export const useMainInput = (
         sessionActions.toggleThinkingExpanded();
         return;
       }
+      // Ctrl+O - 切换历史消息展开/折叠（与 Claude Code 一致）
+      if ((key.ctrl && inputKey === 'o') || (key.meta && inputKey === 'o')) {
+        sessionActions.toggleHistoryExpanded();
+        return;
+      }
       // Esc - 关闭快捷键帮助 > 停止任务 > 隐藏建议 > 双击清空输入
       if (key.escape) {
         if (isShortcutsModalOpen) {

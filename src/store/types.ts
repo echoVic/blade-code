@@ -69,6 +69,9 @@ export interface SessionState {
   currentThinkingContent: string | null; // 当前正在接收的 thinking 内容（流式）
   thinkingExpanded: boolean; // thinking 内容是否展开显示
   clearCount: number; // 清屏计数器（用于强制 Static 组件重新挂载）
+  // 历史消息折叠相关
+  historyExpanded: boolean; // 是否展开所有历史消息（默认 false，只显示最近 N 条）
+  expandedMessageCount: number; // 始终保持展开的最近消息数量（默认 20）
 }
 
 /**
@@ -92,6 +95,10 @@ export interface SessionActions {
   appendThinkingContent: (delta: string) => void;
   setThinkingExpanded: (expanded: boolean) => void;
   toggleThinkingExpanded: () => void;
+  // 历史消息折叠相关 actions
+  setHistoryExpanded: (expanded: boolean) => void;
+  toggleHistoryExpanded: () => void;
+  setExpandedMessageCount: (count: number) => void;
 }
 
 /**

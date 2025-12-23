@@ -44,17 +44,18 @@ const initialSessionState: SessionState = {
   currentThinkingContent: null,
   thinkingExpanded: false,
   clearCount: 0,
+  // 历史消息折叠相关
+  historyExpanded: false, // 默认折叠历史消息（只显示最近 N 条）
+  expandedMessageCount: 30, // 默认显示最近 30 条消息完整内容
 };
 
 /**
  * 创建 Session Slice
  */
-export const createSessionSlice: StateCreator<
-  BladeStore,
-  [],
-  [],
-  SessionSlice
-> = (set, get) => ({
+export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> = (
+  set,
+  get
+) => ({
   ...initialSessionState,
 
   actions: {
@@ -230,8 +231,7 @@ export const createSessionSlice: StateCreator<
       set((state) => ({
         session: {
           ...state.session,
-          currentThinkingContent:
-            (state.session.currentThinkingContent || '') + delta,
+          currentThinkingContent: (state.session.currentThinkingContent || '') + delta,
         },
       }));
     },
@@ -257,5 +257,36 @@ export const createSessionSlice: StateCreator<
       }));
     },
 
+    // ==================== 历史消息折叠相关 actions ====================
+
+    /**
+     * 设置历史消息是否全部展开
+     */
+    setHistoryExpanded: (expanded: boolean) => {
+      set((state) => ({
+        session: { ...state.session, historyExpanded: expanded },
+      }));
+    },
+
+    /**
+     * 切换历史消息展开/折叠状态
+     */
+    toggleHistoryExpanded: () => {
+      set((state) => ({
+        session: {
+          ...state.session,
+          historyExpanded: !state.session.historyExpanded,
+        },
+      }));
+    },
+
+    /**
+     * 设置保持展开的最近消息数量
+     */
+    setExpandedMessageCount: (count: number) => {
+      set((state) => ({
+        session: { ...state.session, expandedMessageCount: count },
+      }));
+    },
   },
 });

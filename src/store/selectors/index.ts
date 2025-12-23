@@ -37,7 +37,8 @@ export const useClearCount = () => useBladeStore((state) => state.session.clearC
 /**
  * 获取压缩状态
  */
-export const useIsCompacting = () => useBladeStore((state) => state.session.isCompacting);
+export const useIsCompacting = () =>
+  useBladeStore((state) => state.session.isCompacting);
 
 /**
  * 获取当前命令
@@ -340,8 +341,7 @@ export const useIsModal = (modal: ActiveModal) =>
 /**
  * 派生选择器：是否正在执行任务
  */
-export const useIsBusy = () =>
-  useBladeStore((state) => state.command.isProcessing);
+export const useIsBusy = () => useBladeStore((state) => state.command.isProcessing);
 
 // ==================== Thinking 模式选择器 ====================
 
@@ -362,3 +362,17 @@ export const useCurrentThinkingContent = () =>
  */
 export const useThinkingExpanded = () =>
   useBladeStore((state) => state.session.thinkingExpanded);
+
+// ==================== 历史消息折叠选择器 ====================
+
+/**
+ * 获取历史消息是否全部展开
+ */
+export const useHistoryExpanded = () =>
+  useBladeStore((state) => state.session.historyExpanded);
+
+/**
+ * 获取保持展开的最近消息数量
+ */
+export const useExpandedMessageCount = () =>
+  useBladeStore((state) => state.session.expandedMessageCount);
