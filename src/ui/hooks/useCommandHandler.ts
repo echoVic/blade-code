@@ -32,15 +32,29 @@ import type { ResolvedInput } from './useInputBuffer.js';
 const logger = createLogger(LogCategory.UI);
 
 /**
+ * invoke_skill action 的数据类型
+ */
+interface InvokeSkillData {
+  action: 'invoke_skill';
+  skillName: string;
+  skillArgs?: string;
+}
+
+/**
  * 处理 slash 命令返回的 UI 消息
  * 直接调用 appActions 而非使用 ActionMapper
+ *
+ * @returns 'handled' | 'invoke_skill' | false
+ * - 'handled': 消息已处理完成
+ * - 'invoke_skill': 需要调用 Skill（返回 data 供后续处理）
+ * - false: 未识别的消息类型
  */
 function handleSlashMessage(
   message: string,
   data: unknown,
   appActions: ReturnType<typeof useAppActions>,
   sessionActions: ReturnType<typeof useSessionActions>
-): boolean {
+): boolean | 'invoke_skill' {
   switch (message) {
     case 'show_theme_selector':
       appActions.setActiveModal('themeSelector');
@@ -79,12 +93,31 @@ function handleSlashMessage(
       // 4. 清空 todos
       appActions.setTodos([]);
       return true;
+    case 'compact_completed':
+    case 'compact_fallback': {
+      // 压缩完成后重置 token 使用量
+      // 因为压缩后的 token 数量已经大幅减少
+      sessionActions.resetTokenUsage();
+      return true;
+    }
     case 'exit_application':
       process.exit(0);
       return true;
     default:
       return false;
   }
+}
+
+/**
+ * 检查 data 是否为 invoke_skill action
+ */
+function isInvokeSkillAction(data: unknown): data is InvokeSkillData {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as InvokeSkillData).action === 'invoke_skill' &&
+    typeof (data as InvokeSkillData).skillName === 'string'
+  );
 }
 
 export interface CommandResult {
@@ -191,6 +224,7 @@ export const useCommandHandler = (
   const handleCommandSubmit = useMemoizedFn(
     async (resolved: ResolvedInput): Promise<CommandResult> => {
       const { text: command } = resolved;
+      let userMessageAlreadyAdded = false; // 标记用户消息是否已添加
 
       try {
         // 检查是否为 slash command（先检查，避免 /clear 时显示用户消息）
@@ -225,8 +259,54 @@ export const useCommandHandler = (
             }
           }
 
-          if (!slashResult.success && slashResult.error) {
-            sessionActions.addAssistantMessage(`❌ ${slashResult.error}`);
+          // 处理 invoke_skill action（User-invoked Skill）
+          // 用户输入 /skill-name args 时，转换为普通消息走 Agent 流程
+          let isSkillInvocation = false;
+          if (isInvokeSkillAction(slashResult.data)) {
+            const { skillName, skillArgs } = slashResult.data;
+
+            // 构建让 AI 调用 Skill 的提示
+            const skillPrompt = skillArgs
+              ? `Please use the "${skillName}" skill to help me with: ${skillArgs}`
+              : `Please use the "${skillName}" skill.`;
+
+            // 显示用户消息，然后跳出 slash command 分支，进入 Agent 流程
+            sessionActions.addUserMessage(skillPrompt);
+            userMessageAlreadyAdded = true; // 标记已添加
+            isSkillInvocation = true;
+
+            // 修改 resolved，让后续 Agent 流程使用 skillPrompt
+            resolved = {
+              displayText: skillPrompt,
+              text: skillPrompt,
+              images: [],
+              parts: [{ type: 'text', text: skillPrompt }],
+            };
+            // 不 return，跳出 if (isSlashCommand) 分支，进入普通消息处理
+          }
+
+          if (!isSkillInvocation) {
+            // 非 invoke_skill 的 slash command，正常处理
+            if (!slashResult.success && slashResult.error) {
+              sessionActions.addAssistantMessage(`❌ ${slashResult.error}`);
+              return {
+                success: slashResult.success,
+                output: slashResult.message,
+                error: slashResult.error,
+                metadata: slashResult.data,
+              };
+            }
+
+            // 显示命令返回的消息
+            const slashMessage = slashResult.message;
+            if (
+              slashResult.success &&
+              typeof slashMessage === 'string' &&
+              slashMessage.trim() !== ''
+            ) {
+              sessionActions.addAssistantMessage(slashMessage);
+            }
+
             return {
               success: slashResult.success,
               output: slashResult.message,
@@ -234,27 +314,13 @@ export const useCommandHandler = (
               metadata: slashResult.data,
             };
           }
-
-          // 显示命令返回的消息
-          const slashMessage = slashResult.message;
-          if (
-            slashResult.success &&
-            typeof slashMessage === 'string' &&
-            slashMessage.trim() !== ''
-          ) {
-            sessionActions.addAssistantMessage(slashMessage);
-          }
-
-          return {
-            success: slashResult.success,
-            output: slashResult.message,
-            error: slashResult.error,
-            metadata: slashResult.data,
-          };
         }
 
         // 普通命令：添加用户消息（UI 显示带图片占位符的文本）
-        sessionActions.addUserMessage(resolved.displayText);
+        // 注意：invoke_skill 的用户消息已在上面添加，这里跳过
+        if (!userMessageAlreadyAdded) {
+          sessionActions.addUserMessage(resolved.displayText);
+        }
 
         // 构建用户消息内容（可能包含图片）
         const userMessageContent = buildUserMessageContent(resolved);
@@ -352,6 +418,10 @@ export const useCommandHandler = (
           // 压缩状态更新
           onCompacting: (isCompacting: boolean) => {
             sessionActions.setCompacting(isCompacting);
+            // 压缩完成后重置 token 使用量
+            if (!isCompacting) {
+              sessionActions.resetTokenUsage();
+            }
           },
           // 轮次限制回调（达到 maxTurns 后询问用户是否继续）
           onTurnLimitReached: confirmationHandler

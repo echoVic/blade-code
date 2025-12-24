@@ -2,7 +2,7 @@
  * /skills 命令 - 查看所有可用的 Skills
  */
 
-import { discoverSkills } from '../skills/index.js';
+import { getSkillRegistry } from '../skills/index.js';
 import { sessionActions } from '../store/vanilla.js';
 import type { SlashCommand, SlashCommandResult } from './types.js';
 
@@ -14,10 +14,12 @@ const skillsCommand: SlashCommand = {
   category: 'system',
   examples: ['/skills'],
 
-  handler: async (_args, context): Promise<SlashCommandResult> => {
+  handler: async (_args, _context): Promise<SlashCommandResult> => {
     try {
-      // 确保 SkillRegistry 已初始化
-      await discoverSkills({ cwd: context.cwd });
+      // 刷新 SkillRegistry，重新扫描所有 skills 目录
+      // 这样新创建的 Skill 会被发现
+      const registry = getSkillRegistry();
+      await registry.refresh();
 
       // 显示 Skills 管理面板
       return {

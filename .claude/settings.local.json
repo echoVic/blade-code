@@ -74,7 +74,8 @@
       "Bash(gtimeout 3 npm run start:*)",
       "WebFetch(domain:leehanchung.github.io)",
       "WebFetch(domain:simonwillison.net)",
-      "WebFetch(domain:scottspence.com)"
+      "WebFetch(domain:scottspence.com)",
+      "WebFetch(domain:docs.anthropic.com)"
     ],
     "deny": [],
     "ask": [],

@@ -23,6 +23,7 @@ export function SkillsManager({ onCancel }: SkillsManagerProps) {
   const skills = registry.getAll();
 
   // 按来源分组
+  const builtinSkills = skills.filter((s) => s.source === 'builtin');
   const userSkills = skills.filter((s) => s.source === 'user');
   const projectSkills = skills.filter((s) => s.source === 'project');
 
@@ -79,26 +80,33 @@ export function SkillsManager({ onCancel }: SkillsManagerProps) {
             </Text>
             <Text color="gray"> (.blade/skills/)</Text>
           </Box>
-          {projectSkills.map((skill) => (
-            <Box key={skill.name} flexDirection="column" paddingLeft={2}>
-              <Box>
-                <Text bold color="green">
-                  • {skill.name}
+          {projectSkills.map((skill) => {
+            const maxDescLen = 80;
+            const desc =
+              skill.description.length > maxDescLen
+                ? `${skill.description.substring(0, maxDescLen)}...`
+                : skill.description;
+            return (
+              <Box key={skill.name} flexDirection="column" paddingLeft={2}>
+                <Text>
+                  <Text bold color="green">
+                    • {skill.name}
+                  </Text>
+                  <Text color="gray"> - {desc}</Text>
                 </Text>
-                <Text color="gray"> - {skill.description}</Text>
-              </Box>
-              {skill.allowedTools && skill.allowedTools.length > 0 && (
+                {skill.allowedTools && skill.allowedTools.length > 0 && (
+                  <Box paddingLeft={2}>
+                    <Text color="gray">工具: {skill.allowedTools.join(', ')}</Text>
+                  </Box>
+                )}
                 <Box paddingLeft={2}>
-                  <Text color="gray">工具: {skill.allowedTools.join(', ')}</Text>
+                  <Text color="gray" dimColor>
+                    {skill.path}
+                  </Text>
                 </Box>
-              )}
-              <Box paddingLeft={2}>
-                <Text color="gray" dimColor>
-                  {skill.path}
-                </Text>
               </Box>
-            </Box>
-          ))}
+            );
+          })}
         </Box>
       )}
 
@@ -111,26 +119,68 @@ export function SkillsManager({ onCancel }: SkillsManagerProps) {
             </Text>
             <Text color="gray"> (~/.blade/skills/)</Text>
           </Box>
-          {userSkills.map((skill) => (
-            <Box key={skill.name} flexDirection="column" paddingLeft={2}>
-              <Box>
-                <Text bold color="green">
-                  • {skill.name}
+          {userSkills.map((skill) => {
+            const maxDescLen = 80;
+            const desc =
+              skill.description.length > maxDescLen
+                ? `${skill.description.substring(0, maxDescLen)}...`
+                : skill.description;
+            return (
+              <Box key={skill.name} flexDirection="column" paddingLeft={2}>
+                <Text>
+                  <Text bold color="green">
+                    • {skill.name}
+                  </Text>
+                  <Text color="gray"> - {desc}</Text>
                 </Text>
-                <Text color="gray"> - {skill.description}</Text>
-              </Box>
-              {skill.allowedTools && skill.allowedTools.length > 0 && (
+                {skill.allowedTools && skill.allowedTools.length > 0 && (
+                  <Box paddingLeft={2}>
+                    <Text color="gray">工具: {skill.allowedTools.join(', ')}</Text>
+                  </Box>
+                )}
                 <Box paddingLeft={2}>
-                  <Text color="gray">工具: {skill.allowedTools.join(', ')}</Text>
+                  <Text color="gray" dimColor>
+                    {skill.path}
+                  </Text>
                 </Box>
-              )}
-              <Box paddingLeft={2}>
-                <Text color="gray" dimColor>
-                  {skill.path}
-                </Text>
               </Box>
-            </Box>
-          ))}
+            );
+          })}
+        </Box>
+      )}
+
+      {/* 内置 Skills */}
+      {builtinSkills.length > 0 && (
+        <Box flexDirection="column" marginBottom={1}>
+          <Box paddingLeft={1}>
+            <Text bold color="cyan">
+              内置
+            </Text>
+            <Text color="gray"> (builtin)</Text>
+          </Box>
+          {builtinSkills.map((skill) => {
+            // 截断过长的描述
+            const maxDescLen = 80;
+            const desc =
+              skill.description.length > maxDescLen
+                ? `${skill.description.substring(0, maxDescLen)}...`
+                : skill.description;
+            return (
+              <Box key={skill.name} flexDirection="column" paddingLeft={2}>
+                <Text>
+                  <Text bold color="green">
+                    • {skill.name}
+                  </Text>
+                  <Text color="gray"> - {desc}</Text>
+                </Text>
+                {skill.userInvocable && (
+                  <Box paddingLeft={2}>
+                    <Text color="blue">命令: /{skill.name}</Text>
+                  </Box>
+                )}
+              </Box>
+            );
+          })}
         </Box>
       )}
 
