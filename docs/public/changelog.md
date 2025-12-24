@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.35] - 2025-12-24
+
+### ✨ 新功能
+
+- 添加终端resize时的Static组件刷新功能 (183affb)
+
+
 ## [0.0.34] - 2025-12-24
 
 ### ✨ 新功能
