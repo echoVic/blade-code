@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.34] - 2025-12-24
+
+### ✨ 新功能
+
+- 支持同步 changelog 到外部 blade-doc 仓库 (0e1ea8b)
+
+### 🐛 问题修复
+
+- 解决终端resize残影问题并优化布局 (a1701e1)
+
+### 📝 文档更新
+
+- 更新项目文档链接和问题反馈地址 (064824e)
+
+
 ## [0.0.33] - 2025-12-23
 
 ### ✨ 新功能
