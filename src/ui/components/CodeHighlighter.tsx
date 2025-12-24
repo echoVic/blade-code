@@ -93,10 +93,18 @@ function highlightLine(
     if (!language || !lowlight.registered(language)) {
       // 尝试自动检测语言
       const result = lowlight.highlightAuto(displayLine);
+      // 如果自动检测返回空结果，降级为纯文本
+      if (!result.children || result.children.length === 0) {
+        return <Text color={colors.default}>{displayLine}</Text>;
+      }
       return renderHastNode(result, colors);
     }
 
     const result = lowlight.highlight(language, displayLine);
+    // 如果高亮返回空结果，降级为纯文本
+    if (!result.children || result.children.length === 0) {
+      return <Text color={colors.default}>{displayLine}</Text>;
+    }
     return renderHastNode(result, colors);
   } catch (_error) {
     // 高亮失败，返回原始文本

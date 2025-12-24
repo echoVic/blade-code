@@ -13,13 +13,16 @@ importers:
         version: 0.12.0(zod@3.25.76)
       '@inkjs/ui':
         specifier: ^2.0.0
-        version: 2.0.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3))
+        version: 2.0.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3))
       '@modelcontextprotocol/sdk':
         specifier: ^1.17.4
         version: 1.25.1(hono@4.11.1)(zod@3.25.76)
       ahooks:
         specifier: ^3.9.5
         version: 3.9.6(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      ansi-escapes:
+        specifier: ^7.2.0
+        version: 7.2.0
       async-mutex:
         specifier: ^0.5.0
         version: 0.5.0
@@ -35,6 +38,9 @@ importers:
       fast-glob:
         specifier: ^3.3.3
         version: 3.3.3
+      fullscreen-ink:
+        specifier: ^0.1.0
+        version: 0.1.0(@types/react@19.2.7)
       fuse.js:
         specifier: ^7.1.0
         version: 7.1.0
@@ -42,26 +48,26 @@ importers:
         specifier: ^11.0.3
         version: 11.1.0
       ink:
-        specifier: ^6.4.0
-        version: 6.5.1(@types/react@19.2.7)(react@19.2.3)
+        specifier: npm:@jrichman/ink@6.4.6
+        version: '@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3)'
       ink-big-text:
         specifier: ^2.0.0
-        version: 2.0.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3))(react@19.2.3)
+        version: 2.0.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3))(react@19.2.3)
       ink-gradient:
         specifier: ^3.0.0
-        version: 3.0.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3))
+        version: 3.0.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3))
       ink-progress-bar:
         specifier: ^3.0.0
         version: 3.0.0
       ink-select-input:
         specifier: ^6.2.0
-        version: 6.2.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3))(react@19.2.3)
+        version: 6.2.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3))(react@19.2.3)
       ink-spinner:
         specifier: ^5.0.0
-        version: 5.0.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3))(react@19.2.3)
+        version: 5.0.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3))(react@19.2.3)
       ink-text-input:
         specifier: ^6.0.0
-        version: 6.0.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3))(react@19.2.3)
+        version: 6.0.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3))(react@19.2.3)
       inquirer:
         specifier: ^12.6.3
         version: 12.11.1(@types/node@22.19.3)
@@ -272,24 +278,28 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@biomejs/cli-linux-arm64@2.3.9':
     resolution: {integrity: sha512-BXBB6HbAgZI6T6QB8q6NSwIapVngqArP6K78BqkMerht7YjL6yWctqfeTnJm0qGF2bKBYFexslrbV+VTlM2E6g==}
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@biomejs/cli-linux-x64-musl@2.3.9':
     resolution: {integrity: sha512-FUkb/5beCIC2trpqAbW9e095X4vamdlju80c1ExSmhfdrojLZnWkah/XfTSixKb/dQzbAjpD7vvs6rWkJ+P07Q==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@biomejs/cli-linux-x64@2.3.9':
     resolution: {integrity: sha512-PjYuv2WLmvf0WtidxAkFjlElsn0P6qcvfPijrqu1j+3GoW3XSQh3ywGu7gZ25J25zrYj3KEovUjvUZB55ATrGw==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@biomejs/cli-win32-arm64@2.3.9':
     resolution: {integrity: sha512-w48Yh/XbYHO2cBw8B5laK3vCAEKuocX5ItGXVDAqFE7Ze2wnR00/1vkY6GXglfRDOjWHu2XtxI0WKQ52x1qxEA==}
@@ -653,6 +663,19 @@ packages:
     resolution: {integrity: sha512-ZXRY4jNvVgSVQ8DL3LTcakaAtXwTVUxE81hslsyD2AtoXW/wVob10HkOJ1X/pAlcI7D+2YoZKg5do8G/w6RYgA==}
     engines: {node: '>=8'}
 
+  '@jrichman/ink@6.4.6':
+    resolution: {integrity: sha512-QHl6l1cl3zPCaRMzt9TUbTX6Q5SzvkGEZDDad0DmSf5SPmT1/90k6pGPejEvDCJprkitwObXpPaTWGHItqsy4g==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@types/react': '>=19.0.0'
+      react: '>=19.0.0'
+      react-devtools-core: ^6.1.2
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+      react-devtools-core:
+        optional: true
+
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
 
@@ -732,56 +755,67 @@ packages:
     resolution: {integrity: sha512-dV3T9MyAf0w8zPVLVBptVlzaXxka6xg1f16VAQmjg+4KMSTWDvhimI/Y6mp8oHwNrmnmVl9XxJ/w/mO4uIQONA==}
     cpu: [arm]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-arm-musleabihf@4.53.5':
     resolution: {integrity: sha512-wIGYC1x/hyjP+KAu9+ewDI+fi5XSNiUi9Bvg6KGAh2TsNMA3tSEs+Sh6jJ/r4BV/bx/CyWu2ue9kDnIdRyafcQ==}
     cpu: [arm]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-arm64-gnu@4.53.5':
     resolution: {integrity: sha512-Y+qVA0D9d0y2FRNiG9oM3Hut/DgODZbU9I8pLLPwAsU0tUKZ49cyV1tzmB/qRbSzGvY8lpgGkJuMyuhH7Ma+Vg==}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-arm64-musl@4.53.5':
     resolution: {integrity: sha512-juaC4bEgJsyFVfqhtGLz8mbopaWD+WeSOYr5E16y+1of6KQjc0BpwZLuxkClqY1i8sco+MdyoXPNiCkQou09+g==}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-loong64-gnu@4.53.5':
     resolution: {integrity: sha512-rIEC0hZ17A42iXtHX+EPJVL/CakHo+tT7W0pbzdAGuWOt2jxDFh7A/lRhsNHBcqL4T36+UiAgwO8pbmn3dE8wA==}
     cpu: [loong64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-ppc64-gnu@4.53.5':
     resolution: {integrity: sha512-T7l409NhUE552RcAOcmJHj3xyZ2h7vMWzcwQI0hvn5tqHh3oSoclf9WgTl+0QqffWFG8MEVZZP1/OBglKZx52Q==}
     cpu: [ppc64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-gnu@4.53.5':
     resolution: {integrity: sha512-7OK5/GhxbnrMcxIFoYfhV/TkknarkYC1hqUw1wU2xUN3TVRLNT5FmBv4KkheSG2xZ6IEbRAhTooTV2+R5Tk0lQ==}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-musl@4.53.5':
     resolution: {integrity: sha512-GwuDBE/PsXaTa76lO5eLJTyr2k8QkPipAyOrs4V/KJufHCZBJ495VCGJol35grx9xryk4V+2zd3Ri+3v7NPh+w==}
     cpu: [riscv64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-s390x-gnu@4.53.5':
     resolution: {integrity: sha512-IAE1Ziyr1qNfnmiQLHBURAD+eh/zH1pIeJjeShleII7Vj8kyEm2PF77o+lf3WTHDpNJcu4IXJxNO0Zluro8bOw==}
     cpu: [s390x]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-x64-gnu@4.53.5':
     resolution: {integrity: sha512-Pg6E+oP7GvZ4XwgRJBuSXZjcqpIW3yCBhK4BcsANvb47qMvAbCjR6E+1a/U2WXz1JJxp9/4Dno3/iSJLcm5auw==}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-x64-musl@4.53.5':
     resolution: {integrity: sha512-txGtluxDKTxaMDzUduGP0wdfng24y1rygUMnmlUJ88fzCCULCLn7oE5kb2+tRB+MWq1QDZT6ObT5RrR8HFRKqg==}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-openharmony-arm64@4.53.5':
     resolution: {integrity: sha512-3DFiLPnTxiOQV993fMc+KO8zXHTcIjgaInrqlG8zDp1TlhYl6WgrOHuJkJQ6M8zHEcntSJsUp1XFZSY8C1DYbg==}
@@ -1144,6 +1178,10 @@ packages:
     resolution: {integrity: sha512-/+40ljC3ONVnYIttjMWrlL51nItDAbBrq2upN8BPyvGU/2n5Oxw3tbNwORCaNuNqLJnxGqOfjUuhsv7l5Q4IsQ==}
     engines: {node: '>=18.20'}
 
+  cli-truncate@4.0.0:
+    resolution: {integrity: sha512-nPdaFdQ0h/GEigbPClz11D0v/ZJEwxmeVZGeMo3Z5StPtUTkA9o1lD6QwoirYiSDzbcwn2XcjwmCp68W1IS4TA==}
+    engines: {node: '>=18'}
+
   cli-truncate@5.1.1:
     resolution: {integrity: sha512-SroPvNHxUnk+vIW/dOSfNqdy1sPEFkrTk6TUtqLCnBlo3N7TNYYkzzN7uSD6+jVjrdO4+p8nH7JzH6cIvUem6A==}
     engines: {node: '>=20'}
@@ -1450,6 +1488,9 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  fullscreen-ink@0.1.0:
+    resolution: {integrity: sha512-GkyPG5Y8YxRT6i1Q8mZ0BCMSpgQjdBY+C39DnCUMswBpSypTk0G80rAYs6FoEp6Da2gzAwygXbJbju6GahbrFQ==}
+
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
 
@@ -1657,6 +1698,10 @@ packages:
     resolution: {integrity: sha512-zymm5+u+sCsSWyD9qNaejV3DFvhCKclKdizYaJUuHA83RLjb7nSuGnddCHGv0hk+KY7BMAlsWeK4Ueg6EV6XQg==}
     engines: {node: '>=8'}
 
+  is-fullwidth-code-point@4.0.0:
+    resolution: {integrity: sha512-O4L094N2/dZ7xqVdrXhh9r1KODPJpFms8B5sGdJLPy664AgvXsreZUyCQQNItZRDlYug4xStLjNp/sz3HvBowQ==}
+    engines: {node: '>=12'}
+
   is-fullwidth-code-point@5.1.0:
     resolution: {integrity: sha512-5XHYaSyiqADb4RnZ1Bdad6cPp8Toise4TzEjcOYDHZkTCbKgiUl7WTUCpNWHuxmDt91wnsZBc9xinNzopv3JMQ==}
     engines: {node: '>=18'}
@@ -1856,6 +1901,9 @@ packages:
     resolution: {integrity: sha512-qOOzS1cBTWYF4BH8fVePDBOO9iptMnGUEZwNc/cMWnTV2nVLZ7VoNWEPHkYczZA0pdoA7dl6e7FL659nX9S2aw==}
     engines: {node: '>=16 || 14 >=14.17'}
 
+  mnemonist@0.40.3:
+    resolution: {integrity: sha512-Vjyr90sJ23CKKH/qPAgUKicw/v6pRoamxIEDFOF8uSgFME7DqPRpHgRTejWVjkdGg5dXj0/NyxZHZ9bcjH+2uQ==}
+
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
 
@@ -1891,6 +1939,9 @@ packages:
   object-inspect@1.13.4:
     resolution: {integrity: sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==}
     engines: {node: '>= 0.4'}
+
+  obliterator@2.0.5:
+    resolution: {integrity: sha512-42CPE9AhahZRsMNslczq0ctAEtqk8Eka26QofnqC346BZdHDySk3LWka23LI7ULIw11NmltpiLagIq8gBozxTw==}
 
   on-exit-leak-free@2.1.2:
     resolution: {integrity: sha512-0eJJY6hXLGf1udHwfNftBqH+g73EU4B504nZeKpz1sYRKafAghwxEJunB2O7rDZkL4PGfsMVnTXZ2EjibbqcsA==}
@@ -2062,6 +2113,12 @@ packages:
   react-is@17.0.2:
     resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
 
+  react-reconciler@0.32.0:
+    resolution: {integrity: sha512-2NPMOzgTlG0ZWdIf3qG+dcbLSoAc/uLfOwckc3ofy5sSK0pLJqnQLpUFxvGcN2rlXSjnVtGeeFLNimCQEj5gOQ==}
+    engines: {node: '>=0.10.0'}
+    peerDependencies:
+      react: ^19.1.0
+
   react-reconciler@0.33.0:
     resolution: {integrity: sha512-KetWRytFv1epdpJc3J4G75I4WrplZE5jOL7Yq0p34+OVOKF4Se7WrdIdVC45XsSSmUTlht2FM/fM1FZb1mfQeA==}
     engines: {node: '>=0.10.0'}
@@ -2124,6 +2181,9 @@ packages:
     resolution: {integrity: sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==}
     engines: {node: '>=v12.22.7'}
 
+  scheduler@0.26.0:
+    resolution: {integrity: sha512-NlHwttCI/l5gCPR3D1nNXtWABUmBwvZpEQiD4IXSbIDq8BzLIK/7Ir5gTFSGZDUu37K5cMNp0hFtzO38sC7gWA==}
+
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
 
@@ -2183,6 +2243,10 @@ packages:
   signal-exit@4.1.0:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
+
+  slice-ansi@5.0.0:
+    resolution: {integrity: sha512-FC+lgizVPfie0kkhqUScwRu1O/lF6NOgJmlCgK+/LYxDCTk8sGelYaHDhFcDN+Sn3Cv+3VSa4Byeo+IMCzpMgQ==}
+    engines: {node: '>=12'}
 
   slice-ansi@7.1.2:
     resolution: {integrity: sha512-iOBWFgUX7caIZiuutICxVgX1SdxwAVFFKwt1EvMYYec/NWO5meOJ6K5uQxhrYBdQJne4KxiqZc+KptFOWFSI9w==}
@@ -2776,13 +2840,13 @@ snapshots:
     dependencies:
       hono: 4.11.1
 
-  '@inkjs/ui@2.0.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3))':
+  '@inkjs/ui@2.0.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3))':
     dependencies:
       chalk: 5.6.2
       cli-spinners: 3.3.0
       deepmerge: 4.3.1
       figures: 6.1.0
-      ink: 6.5.1(@types/react@19.2.7)(react@19.2.3)
+      ink: '@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3)'
 
   '@inquirer/ansi@1.0.2': {}
 
@@ -2925,6 +2989,38 @@ snapshots:
       wrap-ansi-cjs: wrap-ansi@7.0.0
 
   '@istanbuljs/schema@0.1.3': {}
+
+  '@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3)':
+    dependencies:
+      '@alcalzone/ansi-tokenize': 0.2.2
+      ansi-escapes: 7.2.0
+      ansi-styles: 6.2.3
+      auto-bind: 5.0.1
+      chalk: 5.6.2
+      cli-boxes: 3.0.0
+      cli-cursor: 4.0.0
+      cli-truncate: 4.0.0
+      code-excerpt: 4.0.0
+      es-toolkit: 1.43.0
+      indent-string: 5.0.0
+      is-in-ci: 2.0.0
+      mnemonist: 0.40.3
+      patch-console: 2.0.0
+      react: 19.2.3
+      react-reconciler: 0.32.0(react@19.2.3)
+      signal-exit: 3.0.7
+      slice-ansi: 7.1.2
+      stack-utils: 2.0.6
+      string-width: 8.1.0
+      type-fest: 4.41.0
+      wrap-ansi: 9.0.2
+      ws: 8.18.3
+      yoga-layout: 3.2.1
+    optionalDependencies:
+      '@types/react': 19.2.7
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -3409,6 +3505,11 @@ snapshots:
 
   cli-spinners@3.3.0: {}
 
+  cli-truncate@4.0.0:
+    dependencies:
+      slice-ansi: 5.0.0
+      string-width: 7.2.0
+
   cli-truncate@5.1.1:
     dependencies:
       slice-ansi: 7.1.2
@@ -3723,6 +3824,16 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
+  fullscreen-ink@0.1.0(@types/react@19.2.7):
+    dependencies:
+      ink: 6.5.1(@types/react@19.2.7)(react@19.2.3)
+      react: 19.2.3
+    transitivePeerDependencies:
+      - '@types/react'
+      - bufferutil
+      - react-devtools-core
+      - utf-8-validate
+
   function-bind@1.1.2: {}
 
   fuse.js@7.1.0: {}
@@ -3845,18 +3956,18 @@ snapshots:
 
   inherits@2.0.4: {}
 
-  ink-big-text@2.0.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3))(react@19.2.3):
+  ink-big-text@2.0.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3))(react@19.2.3):
     dependencies:
       cfonts: 3.3.1
-      ink: 6.5.1(@types/react@19.2.7)(react@19.2.3)
+      ink: '@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3)'
       prop-types: 15.8.1
       react: 19.2.3
 
-  ink-gradient@3.0.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3)):
+  ink-gradient@3.0.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3)):
     dependencies:
       '@types/gradient-string': 1.1.6
       gradient-string: 2.0.2
-      ink: 6.5.1(@types/react@19.2.7)(react@19.2.3)
+      ink: '@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3)'
       prop-types: 15.8.1
       strip-ansi: 7.1.2
 
@@ -3865,23 +3976,23 @@ snapshots:
       blacklist: 1.1.4
       prop-types: 15.8.1
 
-  ink-select-input@6.2.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3))(react@19.2.3):
+  ink-select-input@6.2.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3))(react@19.2.3):
     dependencies:
       figures: 6.1.0
-      ink: 6.5.1(@types/react@19.2.7)(react@19.2.3)
+      ink: '@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3)'
       react: 19.2.3
       to-rotated: 1.0.0
 
-  ink-spinner@5.0.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3))(react@19.2.3):
+  ink-spinner@5.0.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3))(react@19.2.3):
     dependencies:
       cli-spinners: 2.9.2
-      ink: 6.5.1(@types/react@19.2.7)(react@19.2.3)
+      ink: '@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3)'
       react: 19.2.3
 
-  ink-text-input@6.0.0(ink@6.5.1(@types/react@19.2.7)(react@19.2.3))(react@19.2.3):
+  ink-text-input@6.0.0(@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3))(react@19.2.3):
     dependencies:
       chalk: 5.6.2
-      ink: 6.5.1(@types/react@19.2.7)(react@19.2.3)
+      ink: '@jrichman/ink@6.4.6(@types/react@19.2.7)(react@19.2.3)'
       react: 19.2.3
       type-fest: 4.41.0
 
@@ -3951,6 +4062,8 @@ snapshots:
   is-extglob@2.1.1: {}
 
   is-fullwidth-code-point@3.0.0: {}
+
+  is-fullwidth-code-point@4.0.0: {}
 
   is-fullwidth-code-point@5.1.0:
     dependencies:
@@ -4137,6 +4250,10 @@ snapshots:
 
   minipass@7.1.2: {}
 
+  mnemonist@0.40.3:
+    dependencies:
+      obliterator: 2.0.5
+
   ms@2.1.3: {}
 
   mute-stream@2.0.0: {}
@@ -4157,6 +4274,8 @@ snapshots:
   object-assign@4.1.1: {}
 
   object-inspect@1.13.4: {}
+
+  obliterator@2.0.5: {}
 
   on-exit-leak-free@2.1.2: {}
 
@@ -4326,6 +4445,11 @@ snapshots:
 
   react-is@17.0.2: {}
 
+  react-reconciler@0.32.0(react@19.2.3):
+    dependencies:
+      react: 19.2.3
+      scheduler: 0.26.0
+
   react-reconciler@0.33.0(react@19.2.3):
     dependencies:
       react: 19.2.3
@@ -4404,6 +4528,8 @@ snapshots:
     dependencies:
       xmlchars: 2.2.0
 
+  scheduler@0.26.0: {}
+
   scheduler@0.27.0: {}
 
   screenfull@5.2.0: {}
@@ -4478,6 +4604,11 @@ snapshots:
   signal-exit@3.0.7: {}
 
   signal-exit@4.1.0: {}
+
+  slice-ansi@5.0.0:
+    dependencies:
+      ansi-styles: 6.2.3
+      is-fullwidth-code-point: 4.0.0
 
   slice-ansi@7.1.2:
     dependencies:

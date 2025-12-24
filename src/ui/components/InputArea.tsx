@@ -96,8 +96,12 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
     return (
       <Box
         flexDirection="row"
+        width="100%"
         paddingX={2}
         paddingY={0}
+        flexShrink={0}
+        flexGrow={0}
+        overflow="hidden"
         borderStyle="round"
         borderColor="gray"
       >

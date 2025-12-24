@@ -525,7 +525,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     ) : null;
 
   return (
-    <Box flexDirection="column" width="100%" height="100%">
+    <Box flexDirection="column" width="100%" overflow="hidden">
       {blockingModal ?? (
         <>
           {/* MessageArea 内部直接获取状态，不需要 props */}
