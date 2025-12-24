@@ -288,5 +288,18 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
         session: { ...state.session, expandedMessageCount: count },
       }));
     },
+
+    /**
+     * 增加 clearCount（用于强制 Static 组件重新挂载）
+     * 主要用于终端 resize 时刷新显示，避免重渲染问题
+     */
+    incrementClearCount: () => {
+      set((state) => ({
+        session: {
+          ...state.session,
+          clearCount: state.session.clearCount + 1,
+        },
+      }));
+    },
   },
 });

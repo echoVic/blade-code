@@ -99,6 +99,8 @@ export interface SessionActions {
   setHistoryExpanded: (expanded: boolean) => void;
   toggleHistoryExpanded: () => void;
   setExpandedMessageCount: (count: number) => void;
+  // Static 组件刷新相关 actions
+  incrementClearCount: () => void;
 }
 
 /**

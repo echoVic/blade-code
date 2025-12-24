@@ -29,6 +29,7 @@ import { useCommandHistory } from '../hooks/useCommandHistory.js';
 import { useConfirmation } from '../hooks/useConfirmation.js';
 import { useInputBuffer } from '../hooks/useInputBuffer.js';
 import { useMainInput } from '../hooks/useMainInput.js';
+import { useRefreshStatic } from '../hooks/useRefreshStatic.js';
 import { AgentCreationWizard } from './AgentCreationWizard.js';
 import { AgentsManager } from './AgentsManager.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
@@ -117,6 +118,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   );
 
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
+
+  // ==================== Refresh Static ====================
+  // 处理终端 resize 时的 Static 组件刷新（防止重渲染问题）
+  useRefreshStatic();
 
   // ==================== Input Buffer ====================
   // 使用 useInputBuffer 创建稳定的输入状态，避免 resize 时重建

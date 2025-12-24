@@ -69,7 +69,9 @@
       "WebFetch(domain:zed.dev)",
       "WebFetch(domain:agentclientprotocol.com)",
       "WebFetch(domain:www.npmjs.com)",
-      "WebFetch(domain:deepwiki.com)"
+      "WebFetch(domain:deepwiki.com)",
+      "Bash(timeout 3 npm run start:*)",
+      "Bash(gtimeout 3 npm run start:*)"
     ],
     "deny": [],
     "ask": [],

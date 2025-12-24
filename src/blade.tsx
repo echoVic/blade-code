@@ -140,9 +140,8 @@ export async function main() {
         render(React.createElement(BladeApp, appProps), {
           patchConsole: true,
           exitOnCtrlC: false, // 由 useCtrlCHandler 处理（支持智能双击退出）
-          // 使用 alternate buffer 解决 resize 时的残影问题
-          // @jrichman/ink 支持此选项
-          alternateBuffer: true,
+          // 不使用 alternateBuffer，以支持终端原生滚动
+          alternateBuffer: false,
         });
       }
     );
