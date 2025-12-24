@@ -531,12 +531,18 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       />
     ) : null;
 
+  // 是否有阻塞式弹窗
+  const hasBlockingModal = Boolean(blockingModal);
+
   return (
     <Box flexDirection="column" width="100%" overflow="hidden">
-      {blockingModal ?? (
-        <>
-          {/* MessageArea 内部直接获取状态，不需要 props */}
-          <MessageArea />
+      {/* 阻塞式弹窗（确认、主题选择器等） */}
+      {blockingModal}
+
+      {/* 主界面内容 - 当有阻塞弹窗时通过 display="none" 隐藏但不卸载，避免 Static 组件重复渲染 */}
+      <Box flexDirection="column" display={hasBlockingModal ? 'none' : 'flex'}>
+        {/* MessageArea 内部直接获取状态，不需要 props */}
+        <MessageArea />
 
           {/* 加载指示器 - 内部计算可见性 */}
           <LoadingIndicator />
@@ -598,10 +604,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             selectedIndex={selectedSuggestionIndex}
             visible={showSuggestions && !inlineModelUiVisible}
           />
-          {/* 状态栏 - 内部获取状态 */}
-          <ChatStatusBar />
-        </>
-      )}
+        {/* 状态栏 - 内部获取状态 */}
+        <ChatStatusBar />
+      </Box>
     </Box>
   );
 };

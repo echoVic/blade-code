@@ -21,12 +21,23 @@ const MAX_DESCRIPTION_LENGTH = 1024;
 
 /**
  * 解析 SKILL.md 的 YAML 前置数据
+ * 完全对齐 Claude Code Skills 规范
  */
 interface RawFrontmatter {
   name?: string;
   description?: string;
   'allowed-tools'?: string | string[];
   version?: string;
+  /** 参数提示，如 '<file_path>' */
+  'argument-hint'?: string;
+  /** 是否支持 /skill-name 调用 */
+  'user-invocable'?: boolean | string;
+  /** 是否禁止 AI 自动调用 */
+  'disable-model-invocation'?: boolean | string;
+  /** 指定模型 */
+  model?: string;
+  /** 额外触发条件 */
+  when_to_use?: string;
 }
 
 /**
@@ -47,6 +58,20 @@ function parseAllowedTools(raw: string | string[] | undefined): string[] | undef
     return raw.map((t) => String(t).trim()).filter(Boolean);
   }
 
+  return undefined;
+}
+
+/**
+ * 解析布尔值字段（支持 true/false 字符串）
+ */
+function parseBoolean(value: boolean | string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const lower = value.toLowerCase().trim();
+    if (lower === 'true' || lower === 'yes' || lower === '1') return true;
+    if (lower === 'false' || lower === 'no' || lower === '0') return false;
+  }
   return undefined;
 }
 
@@ -79,6 +104,13 @@ function validateMetadata(
     };
   }
 
+  // 解析 model 字段
+  let model: string | undefined;
+  if (frontmatter.model) {
+    // 'inherit' 表示继承当前模型，其他值为具体模型名
+    model = frontmatter.model === 'inherit' ? 'inherit' : frontmatter.model;
+  }
+
   return {
     valid: true,
     metadata: {
@@ -86,6 +118,12 @@ function validateMetadata(
       description: frontmatter.description.trim(),
       allowedTools: parseAllowedTools(frontmatter['allowed-tools']),
       version: frontmatter.version,
+      // 新增字段
+      argumentHint: frontmatter['argument-hint']?.trim(),
+      userInvocable: parseBoolean(frontmatter['user-invocable']),
+      disableModelInvocation: parseBoolean(frontmatter['disable-model-invocation']),
+      model,
+      whenToUse: frontmatter.when_to_use?.trim(),
     },
   };
 }
@@ -96,7 +134,7 @@ function validateMetadata(
 export function parseSkillContent(
   content: string,
   filePath: string,
-  source: 'user' | 'project'
+  source: 'user' | 'project' | 'builtin'
 ): SkillParseResult {
   // 匹配 YAML 前置数据
   const match = content.match(FRONTMATTER_REGEX);
@@ -150,7 +188,7 @@ export function parseSkillContent(
  */
 export async function loadSkillMetadata(
   filePath: string,
-  source: 'user' | 'project'
+  source: 'user' | 'project' | 'builtin'
 ): Promise<SkillParseResult> {
   try {
     const content = await fs.readFile(filePath, 'utf-8');

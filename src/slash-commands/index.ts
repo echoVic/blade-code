@@ -3,6 +3,8 @@
  */
 
 import Fuse from 'fuse.js';
+import { discoverSkills, getSkillRegistry } from '../skills/index.js';
+import type { SkillMetadata } from '../skills/types.js';
 import { builtinCommands } from './builtinCommands.js';
 import gitCommand from './git.js';
 import ideCommand from './ide.js';
@@ -72,6 +74,57 @@ function findCommand(name: string): SlashCommand | undefined {
 }
 
 /**
+ * 为 User-invocable Skill 创建 SlashCommand
+ *
+ * 当 Skill 设置 `user-invocable: true` 时，自动生成对应的 slash command。
+ * 用户输入 `/skill-name args` 等同于 AI 调用 Skill({skill: "skill-name", args: "args"})
+ */
+function createSkillSlashCommand(skill: SkillMetadata): SlashCommand {
+  const usage = skill.argumentHint
+    ? `/${skill.name} ${skill.argumentHint}`
+    : `/${skill.name}`;
+
+  return {
+    name: skill.name,
+    description: skill.description,
+    fullDescription: `[Skill] ${skill.description}${skill.whenToUse ? `\n\n**When to use:** ${skill.whenToUse}` : ''}`,
+    usage,
+    category: 'skill',
+    examples: [usage],
+
+    handler: async (args, _context): Promise<SlashCommandResult> => {
+      // 返回特殊的 action，让 UI 层调用 Skill 工具
+      return {
+        success: true,
+        message: `Invoking skill: ${skill.name}`,
+        data: {
+          action: 'invoke_skill',
+          skillName: skill.name,
+          skillArgs: args.join(' '),
+        },
+      };
+    },
+  };
+}
+
+/**
+ * 查找 User-invocable Skill
+ * 注意：调用前需确保 registry 已初始化
+ */
+function findUserInvocableSkill(name: string): SkillMetadata | undefined {
+  const registry = getSkillRegistry();
+  const skills = registry.getUserInvocableSkills();
+  return skills.find((s) => s.name === name);
+}
+
+/**
+ * 确保 SkillRegistry 已初始化
+ */
+async function ensureSkillsInitialized(): Promise<void> {
+  await discoverSkills();
+}
+
+/**
  * 执行 slash command
  */
 export async function executeSlashCommand(
@@ -81,17 +134,25 @@ export async function executeSlashCommand(
   try {
     const { command, args } = parseSlashCommand(input);
 
-    // 查找命令（支持别名）
+    // 1. 先查找内置命令（支持别名）
     const slashCommand = findCommand(command);
-    if (!slashCommand) {
-      return {
-        success: false,
-        error: `未知命令: /${command}\\n使用 /help 查看可用命令`,
-      };
+    if (slashCommand) {
+      return await slashCommand.handler(args, context);
     }
 
-    // 执行命令
-    return await slashCommand.handler(args, context);
+    // 2. 确保 SkillRegistry 已初始化，再查找 User-invocable Skill
+    await ensureSkillsInitialized();
+    const skill = findUserInvocableSkill(command);
+    if (skill) {
+      const skillCommand = createSkillSlashCommand(skill);
+      return await skillCommand.handler(args, context);
+    }
+
+    // 3. 未找到命令
+    return {
+      success: false,
+      error: `未知命令: /${command}\n使用 /help 查看可用命令`,
+    };
   } catch (error) {
     return {
       success: false,
@@ -101,10 +162,16 @@ export async function executeSlashCommand(
 }
 
 /**
- * 获取所有注册的命令
+ * 获取所有注册的命令（包括 User-invocable Skills）
  */
 export function getRegisteredCommands(): SlashCommand[] {
-  return Object.values(slashCommands);
+  const builtinCmds = Object.values(slashCommands);
+
+  // 获取 User-invocable Skills 并转换为 SlashCommand
+  const registry = getSkillRegistry();
+  const skillCmds = registry.getUserInvocableSkills().map(createSkillSlashCommand);
+
+  return [...builtinCmds, ...skillCmds];
 }
 
 /**
@@ -136,12 +203,25 @@ export function getFuzzyCommandSuggestions(input: string): CommandSuggestion[] {
   const query = (input.startsWith('/') ? input.slice(1) : input).trim();
 
   // 准备搜索数据：将命令转换为可搜索的对象
-  const searchableCommands = Object.values(slashCommands).map((cmd) => ({
+  const builtinSearchable = Object.values(slashCommands).map((cmd) => ({
     name: cmd.name,
     description: cmd.description,
     aliases: cmd.aliases || [],
     command: cmd,
+    isSkill: false,
   }));
+
+  // 添加 User-invocable Skills
+  const registry = getSkillRegistry();
+  const skillSearchable = registry.getUserInvocableSkills().map((skill) => ({
+    name: skill.name,
+    description: skill.description,
+    aliases: [] as string[],
+    command: createSkillSlashCommand(skill),
+    isSkill: true,
+  }));
+
+  const searchableCommands = [...builtinSearchable, ...skillSearchable];
 
   if (!query) {
     // 如果没有输入，返回所有命令

@@ -14,7 +14,8 @@ export type SlashCommandAction =
   | 'show_agent_creation_wizard'
   | 'show_theme_selector'
   | 'show_permissions_editor'
-  | 'show_skills_manager';
+  | 'show_skills_manager'
+  | 'invoke_skill';
 
 /**
  * Slash command 返回的结构化数据

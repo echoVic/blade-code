@@ -84,7 +84,20 @@ export const useMainInput = (
 
   // 更新建议列表（支持斜杠命令和 @ 文件提及）
   useEffect(() => {
-    if (input.startsWith('/')) {
+    // 优先检查 @ 文件补全（可以在任何位置触发，包括斜杠命令后面）
+    if (atCompletion.hasQuery && atCompletion.suggestions.length > 0) {
+      // @ 文件/目录建议（转换为 CommandSuggestion 格式）
+      const fileSuggestions: CommandSuggestion[] = atCompletion.suggestions.map(
+        (path) => ({
+          command: path,
+          description: path.endsWith('/') ? `Directory: ${path}` : `File: ${path}`,
+          matchScore: 1,
+        })
+      );
+      setSuggestions(fileSuggestions);
+      setShowSuggestions(true);
+      setSelectedSuggestionIndex(0);
+    } else if (input.startsWith('/')) {
       // 斜杠命令建议：只在输入不包含空格时显示（空格表示已有子命令）
       const hasSubcommand = input.includes(' ');
       if (hasSubcommand) {
@@ -97,18 +110,6 @@ export const useMainInput = (
         setShowSuggestions(newSuggestions.length > 0);
         setSelectedSuggestionIndex(0);
       }
-    } else if (atCompletion.hasQuery && atCompletion.suggestions.length > 0) {
-      // @ 文件/目录建议（转换为 CommandSuggestion 格式）
-      const fileSuggestions: CommandSuggestion[] = atCompletion.suggestions.map(
-        (path) => ({
-          command: path,
-          description: path.endsWith('/') ? `Directory: ${path}` : `File: ${path}`,
-          matchScore: 1,
-        })
-      );
-      setSuggestions(fileSuggestions);
-      setShowSuggestions(true);
-      setSelectedSuggestionIndex(0);
     } else {
       setShowSuggestions(false);
       setSuggestions([]);

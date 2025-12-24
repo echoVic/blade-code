@@ -49,6 +49,22 @@ export function formatToolCallSummary(
       return `TodoWrite(${(params.todos as unknown[])?.length || 0} items)`;
     case 'UndoEdit':
       return `UndoEdit(${params.file_path || 'file'})`;
+    case 'Skill': {
+      const skill = params.skill as string;
+      const args = params.args as string;
+      if (args) {
+        return `Skill(${skill}: "${args.substring(0, 30)}${args.length > 30 ? '...' : ''}")`;
+      }
+      return `Skill(${skill || 'skill'})`;
+    }
+    case 'Task': {
+      const description = params.description as string;
+      const subagentType = params.subagent_type as string;
+      if (description) {
+        return `Task(${subagentType || 'agent'}: ${description})`;
+      }
+      return `Task(${subagentType || 'agent'})`;
+    }
     default:
       return `${toolName}()`;
   }
