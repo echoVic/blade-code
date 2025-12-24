@@ -16,8 +16,12 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { PermissionMode } from '../config/types.js';
+import { getSkillRegistry } from '../skills/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
 import { DEFAULT_SYSTEM_PROMPT, PLAN_MODE_SYSTEM_PROMPT } from './default.js';
+
+/** available_skills 占位符的正则表达式 */
+const AVAILABLE_SKILLS_REGEX = /<available_skills>\s*<\/available_skills>/;
 
 /**
  * 提示词构建选项
@@ -141,9 +145,31 @@ export async function buildSystemPrompt(
   }
 
   // 组合各部分
-  const prompt = parts.join('\n\n---\n\n');
+  let prompt = parts.join('\n\n---\n\n');
+
+  // 注入 Skills 元数据到 <available_skills> 占位符
+  prompt = injectSkillsToPrompt(prompt);
 
   return { prompt, sources };
+}
+
+/**
+ * 注入 Skills 列表到系统提示的 <available_skills> 占位符
+ */
+function injectSkillsToPrompt(prompt: string): string {
+  const registry = getSkillRegistry();
+  const skillsList = registry.generateAvailableSkillsList();
+
+  // 如果没有 skills，保持占位符为空（但保留标签结构）
+  if (!skillsList) {
+    return prompt;
+  }
+
+  // 替换占位符
+  return prompt.replace(
+    AVAILABLE_SKILLS_REGEX,
+    `<available_skills>\n${skillsList}\n</available_skills>`
+  );
 }
 
 /**

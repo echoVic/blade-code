@@ -11,6 +11,7 @@ import { HookManager } from '../hooks/HookManager.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { registerCleanup } from '../services/GracefulShutdown.js';
 import type { VersionCheckResult } from '../services/VersionChecker.js';
+import { discoverSkills } from '../skills/index.js';
 import { appActions, getState } from '../store/vanilla.js';
 import { BackgroundShellManager } from '../tools/builtin/shell/BackgroundShellManager.js';
 import { BladeInterface } from './components/BladeInterface.js';
@@ -72,8 +73,8 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
   const [versionInfo, setVersionInfo] = useState<VersionCheckResult | null>(null);
   const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
 
-  // 应用初始化（主题、subagents、hooks 等）
-  const initializeApp = useMemoizedFn(() => {
+  // 应用初始化（主题、subagents、hooks、skills 等）
+  const initializeApp = useMemoizedFn(async () => {
     // 1. 从 Store 读取配置（已由中间件初始化）
     const baseConfig = getState().config.config ?? DEFAULT_CONFIG;
 
@@ -124,7 +125,26 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
       }
     }
 
-    // 8. 注册退出清理函数
+    // 8. 初始化 Skills（发现并加载所有可用的 Skills）
+    try {
+      const skillsResult = await discoverSkills();
+      if (props.debug && skillsResult.skills.length > 0) {
+        console.log(
+          `✓ 已加载 ${skillsResult.skills.length} 个 skills: ${skillsResult.skills.map((s) => s.name).join(', ')}`
+        );
+      }
+      if (skillsResult.errors.length > 0 && props.debug) {
+        for (const error of skillsResult.errors) {
+          console.warn(`⚠️ Skill 加载错误 (${error.path}): ${error.error}`);
+        }
+      }
+    } catch (error) {
+      if (props.debug) {
+        console.warn('⚠️ Skills 初始化失败:', formatErrorMessage(error));
+      }
+    }
+
+    // 9. 注册退出清理函数
     registerCleanup(async () => {
       BackgroundShellManager.getInstance().killAll();
       await McpRegistry.getInstance().disconnectAll();
@@ -148,7 +168,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
     }
 
     // 2. 不需要升级，直接初始化应用
-    initializeApp();
+    await initializeApp();
   });
 
   // 启动时初始化配置和主题

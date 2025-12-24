@@ -27,6 +27,7 @@ interface RuleEntry {
 type RuleSelectValue = { type: 'add' } | { type: 'rule'; entry: RuleEntry };
 
 type RuleSelectItem = {
+  key?: string;
   label: string;
   value: RuleSelectValue;
 };
@@ -430,11 +431,13 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({ onClose 
     const tabKey = activeTab as Exclude<TabKey, 'info'>;
     const items: RuleSelectItem[] = [
       {
+        key: 'add-new-rule',
         label: `› ${addLabels[tabKey]}`,
         value: { type: 'add' },
       },
       ...entries[tabKey].map(
         (entry): RuleSelectItem => ({
+          key: entry.key,
           label: formatRuleLabel(entry.rule, entry.source),
           value: { type: 'rule', entry },
         })
