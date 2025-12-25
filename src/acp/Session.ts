@@ -10,6 +10,8 @@ import type {
   AvailableCommand,
   ClientCapabilities,
   ContentBlock,
+  PlanEntry,
+  PlanEntryPriority,
   PromptRequest,
   PromptResponse,
   RequestPermissionRequest,
@@ -33,6 +35,7 @@ import type {
   ConfirmationDetails,
   ConfirmationResponse,
 } from '../tools/types/ExecutionTypes.js';
+import type { TodoItem } from '../tools/builtin/todo/types.js';
 import { AcpServiceContext } from './AcpServiceContext.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -373,6 +376,11 @@ export class AcpSession {
             content,
           });
         },
+
+        // Todo 列表更新（发送 ACP plan）
+        onTodoUpdate: (todos: TodoItem[]) => {
+          this.sendPlanUpdate(todos);
+        },
       };
 
       // 4. 调用 Agent chat
@@ -561,6 +569,32 @@ export class AcpSession {
     // 异步发送，不等待
     this.connection.sessionUpdate(params).catch((error) => {
       logger.warn(`[AcpSession ${this.id}] Failed to send update:`, error);
+    });
+  }
+
+  /**
+   * 发送 Plan 更新（Todo 列表）
+   *
+   * 将 Blade TodoItem 转换为 ACP PlanEntry 格式发送给 IDE。
+   * IDE 会在 UI 中渲染为任务列表，显示进度和状态。
+   *
+   * @param todos - Blade Todo 列表
+   */
+  private sendPlanUpdate(todos: TodoItem[]): void {
+    // 将 Blade TodoItem 转换为 ACP PlanEntry
+    const entries: PlanEntry[] = todos.map((todo) => ({
+      content: todo.content,
+      priority: todo.priority as PlanEntryPriority,
+      status: todo.status, // pending | in_progress | completed 与 ACP 一致
+    }));
+
+    logger.debug(
+      `[AcpSession ${this.id}] Sending plan update with ${entries.length} entries`
+    );
+
+    this.sendUpdate({
+      sessionUpdate: 'plan',
+      entries,
     });
   }
 

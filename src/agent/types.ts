@@ -8,6 +8,7 @@ import { PermissionMode } from '../config/types.js';
 import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../tools/types/ToolTypes.js';
+import type { TodoItem } from '../tools/builtin/todo/types.js';
 
 /**
  * 用户消息内容类型
@@ -154,6 +155,9 @@ export interface LoopOptions {
 
   // 压缩状态回调
   onCompacting?: (isCompacting: boolean) => void;
+
+  // Todo 列表更新回调（用于 ACP plan 更新）
+  onTodoUpdate?: (todos: TodoItem[]) => void;
 
   // 轮次限制回调（100 轮后询问用户是否继续）
   onTurnLimitReached?: (data: {

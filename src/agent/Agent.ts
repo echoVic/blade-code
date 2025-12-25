@@ -1032,7 +1032,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
               logger.warn('[Agent] 保存工具结果失败:', error);
             }
 
-            // 如果是 TODO 工具,直接更新 store
+            // 如果是 TODO 工具,直接更新 store 并触发回调
             if (
               toolCall.function.name === 'TodoWrite' &&
               result.success &&
@@ -1043,10 +1043,12 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
               const todos = Array.isArray(content)
                 ? content
                 : ((content as Record<string, unknown>).todos as unknown[]) || [];
+              const typedTodos =
+                todos as import('../tools/builtin/todo/types.js').TodoItem[];
               // 直接更新 store，不再通过事件发射器
-              appActions().setTodos(
-                todos as import('../tools/builtin/todo/types.js').TodoItem[]
-              );
+              appActions().setTodos(typedTodos);
+              // 触发 onTodoUpdate 回调（用于 ACP plan 更新）
+              options?.onTodoUpdate?.(typedTodos);
             }
 
             // 如果是 Skill 工具，设置执行上下文（用于 allowed-tools 限制）
