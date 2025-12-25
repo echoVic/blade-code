@@ -6,10 +6,10 @@
 
 import { z } from 'zod';
 import {
-  HookEvent,
   DecisionBehavior,
-  PermissionDecision,
+  HookEvent,
   HookType,
+  PermissionDecision,
 } from '../types/HookTypes.js';
 
 // ============================================================================
@@ -51,10 +51,94 @@ export const StopInputSchema = HookInputBaseSchema.extend({
   reason: z.string().optional(),
 });
 
+export const PostToolUseFailureInputSchema = HookInputBaseSchema.extend({
+  hook_event_name: z.literal(HookEvent.PostToolUseFailure),
+  tool_name: z.string(),
+  tool_use_id: z.string(),
+  tool_input: z.record(z.unknown()),
+  error: z.string(),
+  error_type: z.string().optional(),
+  is_interrupt: z.boolean(),
+  is_timeout: z.boolean(),
+});
+
+export const PermissionRequestInputSchema = HookInputBaseSchema.extend({
+  hook_event_name: z.literal(HookEvent.PermissionRequest),
+  tool_name: z.string(),
+  tool_use_id: z.string(),
+  tool_input: z.record(z.unknown()),
+});
+
+export const UserPromptSubmitInputSchema = HookInputBaseSchema.extend({
+  hook_event_name: z.literal(HookEvent.UserPromptSubmit),
+  user_prompt: z.string(),
+  has_images: z.boolean(),
+  image_count: z.number(),
+});
+
+export const SessionStartInputSchema = HookInputBaseSchema.extend({
+  hook_event_name: z.literal(HookEvent.SessionStart),
+  is_resume: z.boolean(),
+  resume_session_id: z.string().optional(),
+});
+
+export const SessionEndInputSchema = HookInputBaseSchema.extend({
+  hook_event_name: z.literal(HookEvent.SessionEnd),
+  reason: z.enum([
+    'user_exit',
+    'error',
+    'max_turns',
+    'idle_timeout',
+    'ctrl_c',
+    'clear',
+    'logout',
+    'other',
+  ]),
+});
+
+export const SubagentStopInputSchema = HookInputBaseSchema.extend({
+  hook_event_name: z.literal(HookEvent.SubagentStop),
+  agent_type: z.string(),
+  task_description: z.string().optional(),
+  success: z.boolean(),
+  result_summary: z.string().optional(),
+  error: z.string().optional(),
+});
+
+export const NotificationInputSchema = HookInputBaseSchema.extend({
+  hook_event_name: z.literal(HookEvent.Notification),
+  notification_type: z.enum([
+    'permission_prompt',
+    'idle_prompt',
+    'auth_success',
+    'elicitation_dialog',
+    'info',
+    'warning',
+    'error',
+  ]),
+  title: z.string().optional(),
+  message: z.string(),
+});
+
+export const CompactionInputSchema = HookInputBaseSchema.extend({
+  hook_event_name: z.literal(HookEvent.Compaction),
+  trigger: z.enum(['manual', 'auto']),
+  messages_before: z.number(),
+  tokens_before: z.number(),
+});
+
 export const HookInputSchema = z.discriminatedUnion('hook_event_name', [
   PreToolUseInputSchema,
   PostToolUseInputSchema,
   StopInputSchema,
+  PostToolUseFailureInputSchema,
+  PermissionRequestInputSchema,
+  UserPromptSubmitInputSchema,
+  SessionStartInputSchema,
+  SessionEndInputSchema,
+  SubagentStopInputSchema,
+  NotificationInputSchema,
+  CompactionInputSchema,
 ]);
 
 // ============================================================================
@@ -74,6 +158,42 @@ const PostToolUseOutputSchema = z.object({
   updatedOutput: z.unknown().optional(),
 });
 
+const StopOutputSchema = z.object({
+  hookEventName: z.literal('Stop'),
+  continue: z.boolean().optional(),
+  continueReason: z.string().optional(),
+});
+
+const SubagentStopOutputSchema = z.object({
+  hookEventName: z.literal('SubagentStop'),
+  continue: z.boolean().optional(),
+  continueReason: z.string().optional(),
+  additionalContext: z.string().optional(),
+});
+
+const PermissionRequestOutputSchema = z.object({
+  hookEventName: z.literal('PermissionRequest'),
+  permissionDecision: z.enum(['approve', 'deny', 'ask']).optional(),
+  permissionDecisionReason: z.string().optional(),
+});
+
+const UserPromptSubmitOutputSchema = z.object({
+  hookEventName: z.literal('UserPromptSubmit'),
+  updatedPrompt: z.string().optional(),
+  contextInjection: z.string().optional(),
+});
+
+const SessionStartOutputSchema = z.object({
+  hookEventName: z.literal('SessionStart'),
+  env: z.record(z.string()).optional(),
+});
+
+const CompactionOutputSchema = z.object({
+  hookEventName: z.literal('Compaction'),
+  blockCompaction: z.boolean().optional(),
+  blockReason: z.string().optional(),
+});
+
 export const HookOutputSchema = z.object({
   decision: z
     .object({
@@ -85,6 +205,12 @@ export const HookOutputSchema = z.object({
     .discriminatedUnion('hookEventName', [
       PreToolUseOutputSchema,
       PostToolUseOutputSchema,
+      StopOutputSchema,
+      SubagentStopOutputSchema,
+      PermissionRequestOutputSchema,
+      UserPromptSubmitOutputSchema,
+      SessionStartOutputSchema,
+      CompactionOutputSchema,
     ])
     .optional(),
   suppressOutput: z.boolean().optional(),
@@ -107,15 +233,15 @@ const PromptHookSchema = z.object({
   timeout: z.number().positive().optional(),
 });
 
-const HookSchema = z.discriminatedUnion('type', [
-  CommandHookSchema,
-  PromptHookSchema,
-]);
+const HookSchema = z.discriminatedUnion('type', [CommandHookSchema, PromptHookSchema]);
+
+// 支持字符串或字符串数组
+const StringOrArraySchema = z.union([z.string(), z.array(z.string())]);
 
 const MatcherConfigSchema = z.object({
-  tools: z.string().optional(),
-  paths: z.string().optional(),
-  commands: z.string().optional(),
+  tools: StringOrArraySchema.optional(),
+  paths: StringOrArraySchema.optional(),
+  commands: StringOrArraySchema.optional(),
 });
 
 const HookMatcherSchema = z.object({
@@ -130,9 +256,21 @@ export const HookConfigSchema = z.object({
   timeoutBehavior: z.enum(['ignore', 'deny', 'ask']).optional(),
   failureBehavior: z.enum(['ignore', 'deny', 'ask']).optional(),
   maxConcurrentHooks: z.number().positive().optional(),
+  // 工具执行类
   PreToolUse: z.array(HookMatcherSchema).optional(),
   PostToolUse: z.array(HookMatcherSchema).optional(),
+  PostToolUseFailure: z.array(HookMatcherSchema).optional(),
+  PermissionRequest: z.array(HookMatcherSchema).optional(),
+  // 会话生命周期类
+  UserPromptSubmit: z.array(HookMatcherSchema).optional(),
+  SessionStart: z.array(HookMatcherSchema).optional(),
+  SessionEnd: z.array(HookMatcherSchema).optional(),
+  // 控制流类
   Stop: z.array(HookMatcherSchema).optional(),
+  SubagentStop: z.array(HookMatcherSchema).optional(),
+  // 其他
+  Notification: z.array(HookMatcherSchema).optional(),
+  Compaction: z.array(HookMatcherSchema).optional(),
 });
 
 // ============================================================================
@@ -165,7 +303,9 @@ export function validateHookConfig(data: unknown): z.infer<typeof HookConfigSche
  */
 export function safeParseHookOutput(
   data: unknown
-): { success: true; data: z.infer<typeof HookOutputSchema> } | { success: false; error: z.ZodError } {
+):
+  | { success: true; data: z.infer<typeof HookOutputSchema> }
+  | { success: false; error: z.ZodError } {
   const result = HookOutputSchema.safeParse(data);
   if (result.success) {
     return { success: true, data: result.data };

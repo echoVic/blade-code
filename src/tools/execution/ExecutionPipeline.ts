@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import type { PermissionConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
+import { HookManager } from '../../hooks/HookManager.js';
 import { HookStage } from '../../hooks/HookStage.js';
 import { PostToolUseHookStage } from '../../hooks/PostToolUseHookStage.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
@@ -173,7 +174,12 @@ export class ExecutionPipeline extends EventEmitter {
 
       return result;
     } catch (error) {
-      const errorResult: ToolResult = {
+      const endTime = Date.now();
+      const isTimeout = (error as Error).message?.includes('timeout') ||
+                       (error as Error).name === 'TimeoutError';
+
+      // 构建错误结果
+      let errorResult: ToolResult = {
         success: false,
         llmContent: `Tool execution failed: ${(error as Error).message}`,
         displayContent: `错误: ${(error as Error).message}`,
@@ -183,7 +189,40 @@ export class ExecutionPipeline extends EventEmitter {
         },
       };
 
-      const endTime = Date.now();
+      // 执行 PostToolUseFailure Hook
+      try {
+        const hookManager = HookManager.getInstance();
+        const hookResult = await hookManager.executePostToolUseFailureHooks(
+          execution.toolName,
+          `tool_use_${executionId}`,
+          execution.params,
+          (error as Error).message,
+          {
+            projectDir: process.cwd(),
+            sessionId: execution.context.sessionId || 'unknown',
+            permissionMode: (execution.context.permissionMode as PermissionMode) || PermissionMode.DEFAULT,
+            isInterrupt: false,
+            isTimeout,
+            abortSignal: execution.context.signal,
+          }
+        );
+
+        // 如果 hook 返回 additionalContext，附加到错误信息
+        if (hookResult.additionalContext) {
+          errorResult = {
+            ...errorResult,
+            llmContent: `${errorResult.llmContent}\n\n${hookResult.additionalContext}`,
+          };
+        }
+
+        // 如果有警告，记录日志
+        if (hookResult.warning) {
+          console.warn(`[ExecutionPipeline] PostToolUseFailure hook warning: ${hookResult.warning}`);
+        }
+      } catch (hookError) {
+        // Hook 执行失败不应阻止错误处理
+        console.warn('[ExecutionPipeline] PostToolUseFailure hook execution failed:', hookError);
+      }
 
       this.addToHistory({
         executionId,

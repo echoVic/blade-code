@@ -6,9 +6,14 @@
  * 2. 信号处理 (SIGINT/SIGTERM)
  * 3. 资源清理和会话保存
  * 4. 恢复终端状态（光标等）
+ * 5. 执行 SessionEnd hooks
  */
 
+import { PermissionMode } from '../config/types.js';
+import { HookManager } from '../hooks/HookManager.js';
+import type { SessionEndInput } from '../hooks/types/HookTypes.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+import { getState } from '../store/vanilla.js';
 
 /**
  * 恢复终端状态
@@ -32,7 +37,27 @@ type ExitReason =
   | 'unhandledRejection'
   | 'SIGINT'
   | 'SIGTERM'
+  | 'esc'
   | 'normal';
+
+/**
+ * 将 ExitReason 映射到 SessionEnd hook 的 reason
+ */
+function mapExitReasonToHookReason(reason: ExitReason): SessionEndInput['reason'] {
+  switch (reason) {
+    case 'SIGINT':
+      return 'ctrl_c';
+    case 'esc':
+      return 'esc';
+    case 'uncaughtException':
+    case 'unhandledRejection':
+      return 'error';
+    case 'SIGTERM':
+    case 'normal':
+    default:
+      return 'user_exit';
+  }
+}
 
 /**
  * 优雅退出管理器
@@ -157,6 +182,26 @@ class GracefulShutdownManager {
     this.isShuttingDown = true;
 
     logger.info(`[GracefulShutdown] 开始优雅退出 (原因: ${reason})`);
+
+    // 执行 SessionEnd hooks
+    try {
+      const hookManager = HookManager.getInstance();
+      if (hookManager.isEnabled()) {
+        const state = getState();
+        const sessionId = state.session?.sessionId || 'unknown';
+        const permissionMode =
+          state.config?.config?.permissionMode || PermissionMode.DEFAULT;
+
+        await hookManager.executeSessionEndHooks(mapExitReasonToHookReason(reason), {
+          projectDir: process.cwd(),
+          sessionId,
+          permissionMode,
+        });
+      }
+    } catch (error) {
+      // SessionEnd hooks 失败不应阻止退出
+      logger.debug('[GracefulShutdown] SessionEnd hooks 执行失败:', error);
+    }
 
     // 设置超时保护，防止清理函数卡住
     const timeoutMs = 5000;

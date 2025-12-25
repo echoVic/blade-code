@@ -4,18 +4,27 @@
  * 负责执行单个或多个 Hooks
  */
 
+import { OutputParser } from './OutputParser.js';
+import { SecureProcessExecutor } from './SecureProcessExecutor.js';
 import {
-  HookType,
+  type CommandHook,
+  type CompactionHookResult,
   type Hook,
-  type HookInput,
   type HookExecutionContext,
   type HookExecutionResult,
-  type PreToolHookResult,
+  type HookInput,
+  HookType,
+  type NotificationHookResult,
+  type PermissionRequestHookResult,
   type PostToolHookResult,
-  type CommandHook,
+  type PostToolUseFailureHookResult,
+  type PreToolHookResult,
+  type SessionEndHookResult,
+  type SessionStartHookResult,
+  type StopHookResult,
+  type SubagentStopHookResult,
+  type UserPromptSubmitHookResult,
 } from './types/HookTypes.js';
-import { SecureProcessExecutor } from './SecureProcessExecutor.js';
-import { OutputParser } from './OutputParser.js';
 
 /**
  * Hook 执行器
@@ -41,9 +50,7 @@ export class HookExecutor {
     }
 
     let cumulativeInput =
-      'tool_input' in input
-        ? (input.tool_input as Record<string, unknown>)
-        : {};
+      'tool_input' in input ? (input.tool_input as Record<string, unknown>) : {};
 
     const warnings: string[] = [];
 
@@ -55,11 +62,7 @@ export class HookExecutor {
           ...(cumulativeInput && { tool_input: cumulativeInput }),
         };
 
-        const result = await this.executeHook(
-          hook,
-          hookInput as HookInput,
-          context
-        );
+        const result = await this.executeHook(hook, hookInput as HookInput, context);
 
         // 处理结果
         if (!result.success) {
@@ -107,8 +110,8 @@ export class HookExecutor {
               break;
           }
 
-          // 累积 updatedInput
-          if (specific.updatedInput) {
+          // 累积 updatedInput (仅 PreToolUseOutput 有此字段)
+          if ('updatedInput' in specific && specific.updatedInput) {
             cumulativeInput = {
               ...cumulativeInput,
               ...specific.updatedInput,
@@ -184,7 +187,8 @@ export class HookExecutor {
           additionalContexts.push(specific.additionalContext);
         }
 
-        if (specific.updatedOutput !== undefined) {
+        // updatedOutput 仅 PostToolUseOutput 有此字段
+        if ('updatedOutput' in specific && specific.updatedOutput !== undefined) {
           modifiedOutput = specific.updatedOutput;
         }
       }
@@ -192,10 +196,450 @@ export class HookExecutor {
 
     return {
       additionalContext:
-        additionalContexts.length > 0
-          ? additionalContexts.join('\n\n')
-          : undefined,
+        additionalContexts.length > 0 ? additionalContexts.join('\n\n') : undefined,
       modifiedOutput,
+      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+    };
+  }
+
+  /**
+   * 执行 Stop Hooks (串行)
+   *
+   * 任何一个 hook 返回 continue: false 就阻止停止
+   */
+  async executeStopHooks(
+    hooks: Hook[],
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<StopHookResult> {
+    if (hooks.length === 0) {
+      return { shouldStop: true };
+    }
+
+    const warnings: string[] = [];
+
+    // 串行执行
+    for (const hook of hooks) {
+      try {
+        const result = await this.executeHook(hook, input, context);
+
+        if (!result.success) {
+          if (result.warning) {
+            warnings.push(result.warning);
+          }
+          continue;
+        }
+
+        // 检查 hookSpecificOutput
+        const specific = result.output?.hookSpecificOutput;
+        if (specific && 'continue' in specific && specific.continue === false) {
+          // Hook 返回 continue: false，阻止停止
+          return {
+            shouldStop: false,
+            continueReason: specific.continueReason,
+            warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+          };
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        warnings.push(`Hook failed: ${errorMsg}`);
+      }
+    }
+
+    return {
+      shouldStop: true,
+      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+    };
+  }
+
+  /**
+   * 执行 SubagentStop Hooks (串行)
+   */
+  async executeSubagentStopHooks(
+    hooks: Hook[],
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<SubagentStopHookResult> {
+    if (hooks.length === 0) {
+      return { shouldStop: true };
+    }
+
+    const warnings: string[] = [];
+    const additionalContexts: string[] = [];
+
+    for (const hook of hooks) {
+      try {
+        const result = await this.executeHook(hook, input, context);
+
+        if (!result.success) {
+          if (result.warning) {
+            warnings.push(result.warning);
+          }
+          continue;
+        }
+
+        const specific = result.output?.hookSpecificOutput;
+        if (specific && 'continue' in specific) {
+          if (specific.continue === false) {
+            return {
+              shouldStop: false,
+              continueReason: specific.continueReason,
+              warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+            };
+          }
+          if ('additionalContext' in specific && specific.additionalContext) {
+            additionalContexts.push(specific.additionalContext);
+          }
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        warnings.push(`Hook failed: ${errorMsg}`);
+      }
+    }
+
+    return {
+      shouldStop: true,
+      additionalContext:
+        additionalContexts.length > 0 ? additionalContexts.join('\n\n') : undefined,
+      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+    };
+  }
+
+  /**
+   * 执行 PermissionRequest Hooks (串行)
+   *
+   * 第一个 approve 或 deny 决策立即返回
+   */
+  async executePermissionRequestHooks(
+    hooks: Hook[],
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<PermissionRequestHookResult> {
+    if (hooks.length === 0) {
+      return { decision: 'ask' };
+    }
+
+    const warnings: string[] = [];
+
+    for (const hook of hooks) {
+      try {
+        const result = await this.executeHook(hook, input, context);
+
+        if (!result.success) {
+          if (result.warning) {
+            warnings.push(result.warning);
+          }
+          continue;
+        }
+
+        const specific = result.output?.hookSpecificOutput;
+        if (specific && 'permissionDecision' in specific) {
+          const decision = specific.permissionDecision;
+          if (decision === 'approve' || decision === 'deny') {
+            return {
+              decision,
+              reason: specific.permissionDecisionReason,
+              warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+            };
+          }
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        warnings.push(`Hook failed: ${errorMsg}`);
+      }
+    }
+
+    return {
+      decision: 'ask',
+      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+    };
+  }
+
+  /**
+   * 执行 UserPromptSubmit Hooks (串行)
+   *
+   * 收集 contextInjection (stdout) 和 updatedPrompt
+   */
+  async executeUserPromptSubmitHooks(
+    hooks: Hook[],
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<UserPromptSubmitHookResult> {
+    if (hooks.length === 0) {
+      return { proceed: true };
+    }
+
+    const warnings: string[] = [];
+    const contextInjections: string[] = [];
+    let updatedPrompt: string | undefined;
+
+    for (const hook of hooks) {
+      try {
+        const result = await this.executeHook(hook, input, context);
+
+        if (!result.success) {
+          if (result.blocking) {
+            // 阻塞错误，停止处理
+            return {
+              proceed: false,
+              warning: result.error,
+            };
+          }
+          if (result.warning) {
+            warnings.push(result.warning);
+          }
+          continue;
+        }
+
+        // 收集 stdout 作为 contextInjection
+        if (result.stdout && result.stdout.trim()) {
+          contextInjections.push(result.stdout.trim());
+        }
+
+        const specific = result.output?.hookSpecificOutput;
+        if (specific && 'updatedPrompt' in specific) {
+          if (specific.updatedPrompt) {
+            updatedPrompt = specific.updatedPrompt;
+          }
+          if (specific.contextInjection) {
+            contextInjections.push(specific.contextInjection);
+          }
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        warnings.push(`Hook failed: ${errorMsg}`);
+      }
+    }
+
+    return {
+      proceed: true,
+      updatedPrompt,
+      contextInjection:
+        contextInjections.length > 0 ? contextInjections.join('\n\n') : undefined,
+      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+    };
+  }
+
+  /**
+   * 执行 SessionStart Hooks (串行)
+   *
+   * 收集环境变量
+   */
+  async executeSessionStartHooks(
+    hooks: Hook[],
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<SessionStartHookResult> {
+    if (hooks.length === 0) {
+      return { proceed: true };
+    }
+
+    const warnings: string[] = [];
+    const env: Record<string, string> = {};
+
+    for (const hook of hooks) {
+      try {
+        const result = await this.executeHook(hook, input, context);
+
+        if (!result.success) {
+          if (result.blocking) {
+            return {
+              proceed: false,
+              warning: result.error,
+            };
+          }
+          if (result.warning) {
+            warnings.push(result.warning);
+          }
+          continue;
+        }
+
+        const specific = result.output?.hookSpecificOutput;
+        if (specific && 'env' in specific && specific.env) {
+          Object.assign(env, specific.env);
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        warnings.push(`Hook failed: ${errorMsg}`);
+      }
+    }
+
+    return {
+      proceed: true,
+      env: Object.keys(env).length > 0 ? env : undefined,
+      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+    };
+  }
+
+  /**
+   * 执行 SessionEnd Hooks (并行，不阻塞)
+   */
+  async executeSessionEndHooks(
+    hooks: Hook[],
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<SessionEndHookResult> {
+    if (hooks.length === 0) {
+      return {};
+    }
+
+    const warnings: string[] = [];
+
+    // 并行执行，不阻塞
+    const maxConcurrent = context.config.maxConcurrentHooks || 5;
+    const results = await this.executeHooksConcurrently(
+      hooks,
+      input,
+      context,
+      maxConcurrent
+    );
+
+    for (const result of results) {
+      if (!result.success && result.warning) {
+        warnings.push(result.warning);
+      }
+    }
+
+    return {
+      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+    };
+  }
+
+  /**
+   * 执行 PostToolUseFailure Hooks (并行)
+   */
+  async executePostToolUseFailureHooks(
+    hooks: Hook[],
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<PostToolUseFailureHookResult> {
+    if (hooks.length === 0) {
+      return {};
+    }
+
+    const warnings: string[] = [];
+    const additionalContexts: string[] = [];
+
+    const maxConcurrent = context.config.maxConcurrentHooks || 5;
+    const results = await this.executeHooksConcurrently(
+      hooks,
+      input,
+      context,
+      maxConcurrent
+    );
+
+    for (const result of results) {
+      if (!result.success && result.warning) {
+        warnings.push(result.warning);
+        continue;
+      }
+
+      // 收集 stdout 作为 additionalContext
+      if (result.stdout && result.stdout.trim()) {
+        additionalContexts.push(result.stdout.trim());
+      }
+    }
+
+    return {
+      additionalContext:
+        additionalContexts.length > 0 ? additionalContexts.join('\n\n') : undefined,
+      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+    };
+  }
+
+  /**
+   * 执行 Notification Hooks (串行)
+   */
+  async executeNotificationHooks(
+    hooks: Hook[],
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<NotificationHookResult> {
+    const originalMessage = 'message' in input ? (input.message as string) : '';
+
+    if (hooks.length === 0) {
+      return { suppress: false, message: originalMessage };
+    }
+
+    const warnings: string[] = [];
+    let suppress = false;
+    let message = originalMessage;
+
+    for (const hook of hooks) {
+      try {
+        const result = await this.executeHook(hook, input, context);
+
+        if (!result.success) {
+          if (result.warning) {
+            warnings.push(result.warning);
+          }
+          continue;
+        }
+
+        // 检查是否抑制通知
+        if (result.output?.suppressOutput) {
+          suppress = true;
+          break;
+        }
+
+        // 修改消息内容（来自 stdout）
+        if (result.stdout && result.stdout.trim()) {
+          message = result.stdout.trim();
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        warnings.push(`Hook failed: ${errorMsg}`);
+      }
+    }
+
+    return {
+      suppress,
+      message,
+      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+    };
+  }
+
+  /**
+   * 执行 Compaction Hooks (串行)
+   */
+  async executeCompactionHooks(
+    hooks: Hook[],
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<CompactionHookResult> {
+    if (hooks.length === 0) {
+      return { blockCompaction: false };
+    }
+
+    const warnings: string[] = [];
+
+    for (const hook of hooks) {
+      try {
+        const result = await this.executeHook(hook, input, context);
+
+        if (!result.success) {
+          if (result.warning) {
+            warnings.push(result.warning);
+          }
+          continue;
+        }
+
+        const specific = result.output?.hookSpecificOutput;
+        if (specific && 'blockCompaction' in specific && specific.blockCompaction) {
+          return {
+            blockCompaction: true,
+            blockReason: specific.blockReason,
+            warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+          };
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        warnings.push(`Hook failed: ${errorMsg}`);
+      }
+    }
+
+    return {
+      blockCompaction: false,
       warning: warnings.length > 0 ? warnings.join('\n') : undefined,
     };
   }
@@ -224,8 +668,7 @@ export class HookExecutor {
     input: HookInput,
     context: HookExecutionContext
   ): Promise<HookExecutionResult> {
-    const timeoutMs =
-      (hook.timeout ?? context.config.defaultTimeout ?? 60) * 1000;
+    const timeoutMs = (hook.timeout ?? context.config.defaultTimeout ?? 60) * 1000;
 
     try {
       const result = await this.processExecutor.execute(
@@ -277,11 +720,13 @@ export class HookExecutor {
       }));
 
       // 创建一个 void Promise 用于跟踪完成状态
-      const tracker = promise.then(() => {
-        executing.delete(tracker);
-      }).catch(() => {
-        executing.delete(tracker);
-      });
+      const tracker = promise
+        .then(() => {
+          executing.delete(tracker);
+        })
+        .catch(() => {
+          executing.delete(tracker);
+        });
 
       executing.add(tracker);
       results.push(promise);

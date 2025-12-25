@@ -45,7 +45,7 @@ async function compactCommandHandler(
 
     // 转换 SessionMessage[] 为 Message[] (CompactionService 使用 ChatService 的 Message 类型)
     const messages = sessionMessages.map((msg) => ({
-      role: msg.role as 'user' | 'assistant' | 'system',
+      role: msg.role,
       content: msg.content,
     }));
 

@@ -149,9 +149,21 @@ export const DEFAULT_CONFIG: BladeConfig = {
     timeoutBehavior: 'ignore',
     failureBehavior: 'ignore',
     maxConcurrentHooks: 5,
+    // 工具执行类
     PreToolUse: [],
     PostToolUse: [],
+    PostToolUseFailure: [],
+    PermissionRequest: [],
+    // 会话生命周期类
+    UserPromptSubmit: [],
+    SessionStart: [],
+    SessionEnd: [],
+    // 控制流类
     Stop: [],
+    SubagentStop: [],
+    // 其他
+    Notification: [],
+    Compaction: [],
   },
 
   // 环境变量

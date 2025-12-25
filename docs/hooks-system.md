@@ -47,6 +47,24 @@ Blade Hooks System 允许您在工具执行的关键时刻运行自定义命令�
 
 ## Hook 事件类型
 
+Blade 支持 11 种 Hook 事件，与 Claude Code 完全对齐：
+
+| 事件 | 触发时机 | 主要用途 |
+|------|---------|---------|
+| PreToolUse | 工具执行前 | 拦截、修改工具调用 |
+| PostToolUse | 工具执行后 | 注入上下文、运行验证 |
+| PostToolUseFailure | 工具执行失败后 | 错误处理、重试逻辑 |
+| PermissionRequest | 权限确认前 | 自动批准/拒绝 |
+| UserPromptSubmit | 用户提交消息时 | 动态上下文注入 |
+| SessionStart | 会话开始时 | 环境变量注入 |
+| SessionEnd | 会话结束时 | 清理、记录 |
+| Stop | Agent 完成响应时 | 阻止停止、强制继续 |
+| SubagentStop | 子 Agent 完成时 | 阻止停止、请求继续 |
+| Notification | 通知发送时 | 过滤、转发通知 |
+| Compaction | 上下文压缩时 | 阻止压缩 |
+
+---
+
 ### PreToolUse
 
 在工具执行**前**触发,可以:
@@ -75,6 +93,8 @@ Blade Hooks System 允许您在工具执行的关键时刻运行自定义命令�
   ]
 }
 ```
+
+---
 
 ### PostToolUse
 
@@ -106,12 +126,208 @@ Blade Hooks System 允许您在工具执行的关键时刻运行自定义命令�
 }
 ```
 
+---
+
+### PostToolUseFailure
+
+在工具执行**失败**后触发,可以:
+- 提供额外错误上下文
+- 记录失败日志
+- 触发告警
+
+**Hook 输入**:
+```json
+{
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "error": "Command failed with exit code 1",
+  "is_timeout": false,
+  "is_interrupt": false
+}
+```
+
+---
+
+### PermissionRequest
+
+在请求用户权限确认**前**触发,可以:
+- 自动批准 (返回 `approve`)
+- 自动拒绝 (返回 `deny`)
+- 交给用户决定 (返回 `ask`)
+
+**示例: 自动批准测试命令**
+
+```json
+{
+  "PermissionRequest": [
+    {
+      "matcher": {
+        "tools": "Bash(npm test*)"
+      },
+      "hooks": [
+        {
+          "type": "command",
+          "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"permissionDecision\":\"approve\"}}'"
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### UserPromptSubmit
+
+在用户提交消息、Claude 处理**前**触发,可以:
+- 修改用户输入 (通过 `updatedPrompt`)
+- 注入动态上下文 (stdout 内容会添加到上下文)
+- 拒绝处理某些消息
+
+**示例: 注入 Git 状态**
+
+```json
+{
+  "UserPromptSubmit": [
+    {
+      "matcher": {},
+      "hooks": [
+        {
+          "type": "command",
+          "command": "git status --porcelain 2>/dev/null | head -20"
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### SessionStart
+
+在会话**开始**时触发,可以:
+- 注入环境变量 (通过 `BLADE_ENV_FILE` 持久化)
+- 执行初始化脚本
+- 记录会话信息
+
+**Hook 输入**:
+```json
+{
+  "hook_event_name": "SessionStart",
+  "session_id": "abc123",
+  "is_resume": false,
+  "permission_mode": "default"
+}
+```
+
+**环境变量注入**:
+
+Hook 可以输出环境变量到 stdout，格式为 `KEY=VALUE`（每行一个）：
+
+```bash
+#!/bin/bash
+echo "PROJECT_VERSION=$(cat package.json | jq -r .version)"
+echo "GIT_BRANCH=$(git branch --show-current)"
+```
+
+或者使用 `BLADE_ENV_FILE` 环境变量指定的文件路径写入环境变量。
+
+---
+
+### SessionEnd
+
+在会话**结束**时触发,可以:
+- 清理临时文件
+- 记录会话统计
+- 触发后续流程
+
+**Hook 输入**:
+```json
+{
+  "hook_event_name": "SessionEnd",
+  "reason": "user_exit",  // 或 "ctrl_c", "error"
+  "session_id": "abc123"
+}
+```
+
+> 注意: SessionEnd hooks 在后台执行,不会阻塞退出流程。
+
+---
+
 ### Stop
 
-在 Claude 完成响应时触发,适合用于:
-- 清理临时文件
-- 记录会话信息
-- 触发 CI/CD
+在 Agent 完成响应、准备停止时触发,可以:
+- 阻止停止,强制继续执行 (返回 `continue: false`)
+- 清理临时状态
+- 记录完成信息
+
+**阻止停止示例**:
+
+```bash
+#!/bin/bash
+# 检查是否有未完成的任务
+if [ -f ".blade/pending-tasks" ]; then
+  echo '{"hookSpecificOutput":{"hookEventName":"Stop","continue":false,"continueReason":"还有未完成的任务"}}'
+  exit 0
+fi
+echo '{"hookSpecificOutput":{"hookEventName":"Stop","continue":true}}'
+```
+
+---
+
+### SubagentStop
+
+在子 Agent (Task 工具) 完成时触发,可以:
+- 阻止子 Agent 停止
+- 请求继续执行其他任务
+
+**Hook 输入**:
+```json
+{
+  "hook_event_name": "SubagentStop",
+  "agent_type": "Explore",
+  "task_description": "Find API endpoints",
+  "success": true,
+  "result_summary": "Found 15 endpoints..."
+}
+```
+
+---
+
+### Notification
+
+在发送通知时触发,可以:
+- 过滤某些通知
+- 转发到其他系统
+- 修改通知内容
+
+**Hook 输入**:
+```json
+{
+  "hook_event_name": "Notification",
+  "notification_type": "info",
+  "message": "Task completed successfully"
+}
+```
+
+---
+
+### Compaction
+
+在上下文压缩时触发,可以:
+- 阻止压缩 (返回 `blockCompaction: true`)
+- 记录压缩事件
+
+**Hook 输入**:
+```json
+{
+  "hook_event_name": "Compaction",
+  "trigger": "auto",
+  "messages_before": 150,
+  "tokens_before": 45000
+}
+```
 
 ## Hook 配置
 
@@ -128,7 +344,15 @@ Blade Hooks System 允许您在工具执行的关键时刻运行自定义命令�
 
     "PreToolUse": [...],
     "PostToolUse": [...],
-    "Stop": [...]
+    "PostToolUseFailure": [...],
+    "PermissionRequest": [...],
+    "UserPromptSubmit": [...],
+    "SessionStart": [...],
+    "SessionEnd": [...],
+    "Stop": [...],
+    "SubagentStop": [...],
+    "Notification": [...],
+    "Compaction": [...]
   }
 }
 ```
@@ -163,6 +387,36 @@ Matcher 用于匹配哪些工具调用会触发 hook:
 - **多个工具**: `"Edit|Write|Delete"` (管道分隔)
 - **正则表达式**: `".*Tool$"`
 - **通配符**: `"*"` (匹配所有)
+- **参数模式**: `"Bash(npm test*)"` (匹配特定命令)
+
+#### 参数模式语法
+
+参数模式允许匹配工具调用的特定参数，格式为 `工具名(参数模式)`：
+
+```json
+{
+  "matcher": {
+    "tools": "Bash(npm test*)"  // 匹配 npm test 开头的命令
+  }
+}
+```
+
+支持的参数模式：
+
+| 工具 | 匹配参数 | 示例 |
+|-----|---------|------|
+| Bash | command | `Bash(npm*)`, `Bash(git commit*)` |
+| Read | file_path | `Read(src/**/*.ts)` |
+| Write | file_path | `Write(**/test/*.ts)` |
+| Edit | file_path | `Edit(package.json)` |
+| Glob | pattern | `Glob(**/*.md)` |
+| Grep | pattern | `Grep(TODO\|FIXME)` |
+
+参数模式使用 [picomatch](https://github.com/micromatch/picomatch) 进行匹配，支持：
+- `*` - 匹配任意字符（不含路径分隔符）
+- `**` - 匹配任意字符（含路径分隔符）
+- `{a,b}` - 匹配 a 或 b
+- `[abc]` - 匹配字符集
 
 ### Paths 匹配模式
 

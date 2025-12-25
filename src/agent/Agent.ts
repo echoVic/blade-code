@@ -20,6 +20,7 @@ import {
 } from '../config/index.js';
 import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
+import { HookManager } from '../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { loadMcpConfigFromCli } from '../mcp/loadMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
@@ -32,6 +33,7 @@ import {
   type IChatService,
   type Message,
 } from '../services/ChatServiceInterface.js';
+import { discoverSkills, injectSkillsMetadata } from '../skills/index.js';
 import {
   appActions,
   configActions,
@@ -58,7 +60,6 @@ import type {
   LoopResult,
   UserMessageContent,
 } from './types.js';
-import { discoverSkills, injectSkillsMetadata } from '../skills/index.js';
 
 // 创建 Agent 专用 Logger
 const logger = createLogger(LogCategory.AGENT);
@@ -745,13 +746,22 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
         // 🆕 如果 LLM 返回了 thinking 内容（DeepSeek R1 等），通知 UI
         // 注意：检查 abort 状态，避免取消后仍然触发回调
-        if (turnResult.reasoningContent && options?.onThinking && !options.signal?.aborted) {
+        if (
+          turnResult.reasoningContent &&
+          options?.onThinking &&
+          !options.signal?.aborted
+        ) {
           options.onThinking(turnResult.reasoningContent);
         }
 
         // 🆕 如果 LLM 返回了 content，立即显示
         // 注意：检查 abort 状态，避免取消后仍然触发回调
-        if (turnResult.content && turnResult.content.trim() && options?.onContent && !options.signal?.aborted) {
+        if (
+          turnResult.content &&
+          turnResult.content.trim() &&
+          options?.onContent &&
+          !options.signal?.aborted
+        ) {
           options.onContent(turnResult.content);
         }
 
@@ -794,6 +804,47 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           }
 
           logger.debug('✅ 任务完成 - LLM 未请求工具调用');
+
+          // === 执行 Stop Hook ===
+          // Stop hook 可以阻止 Agent 停止，强制继续执行
+          try {
+            const hookManager = HookManager.getInstance();
+            const stopResult = await hookManager.executeStopHooks({
+              projectDir: process.cwd(),
+              sessionId: context.sessionId,
+              permissionMode: context.permissionMode as PermissionMode,
+              reason: turnResult.content,
+              abortSignal: options?.signal,
+            });
+
+            // 如果 hook 返回 shouldStop: false，继续执行
+            if (!stopResult.shouldStop) {
+              logger.debug(
+                `🔄 Stop hook 阻止停止，继续执行: ${stopResult.continueReason || '(无原因)'}`
+              );
+
+              // 将 continueReason 注入到消息中
+              const continueMessage = stopResult.continueReason
+                ? `\n\n<system-reminder>\n${stopResult.continueReason}\n</system-reminder>`
+                : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
+
+              messages.push({
+                role: 'user',
+                content: continueMessage,
+              });
+
+              // 继续循环
+              continue;
+            }
+
+            // 如果有警告，记录日志
+            if (stopResult.warning) {
+              logger.warn(`[Agent] Stop hook warning: ${stopResult.warning}`);
+            }
+          } catch (hookError) {
+            // Hook 执行失败不应阻止正常退出
+            logger.warn('[Agent] Stop hook execution failed:', hookError);
+          }
 
           // === 保存助手最终响应到 JSONL ===
           try {
@@ -1052,7 +1103,11 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
             }
 
             // 如果是 Skill 工具，设置执行上下文（用于 allowed-tools 限制）
-            if (toolCall.function.name === 'Skill' && result.success && result.metadata) {
+            if (
+              toolCall.function.name === 'Skill' &&
+              result.success &&
+              result.metadata
+            ) {
               const metadata = result.metadata as Record<string, unknown>;
               if (metadata.skillName) {
                 this.activeSkillContext = {
@@ -1758,9 +1813,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
     }
 
     const allowedTools = this.activeSkillContext.allowedTools;
-    logger.debug(
-      `🔒 Applying Skill tool restrictions: ${allowedTools.join(', ')}`
-    );
+    logger.debug(`🔒 Applying Skill tool restrictions: ${allowedTools.join(', ')}`);
 
     // 过滤工具列表，只保留 allowed-tools 中指定的工具
     const filteredTools = tools.filter((tool) => {
@@ -1843,7 +1896,9 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         return content;
       }
 
-      logger.debug(`✅ Processed ${attachments.length} @ file mentions in multimodal message`);
+      logger.debug(
+        `✅ Processed ${attachments.length} @ file mentions in multimodal message`
+      );
 
       // 构建附件内容块
       const attachmentText = this.buildAttachmentText(attachments);
@@ -1884,7 +1939,11 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           '</file>'
         );
       } else if (att.type === 'directory') {
-        contextBlocks.push(`<directory path="${att.path}">`, att.content, '</directory>');
+        contextBlocks.push(
+          `<directory path="${att.path}">`,
+          att.content,
+          '</directory>'
+        );
       } else if (att.type === 'error') {
         errors.push(`- @${att.path}: ${att.error}`);
       }

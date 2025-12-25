@@ -36,6 +36,7 @@ import { AgentsManager } from './AgentsManager.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
 import { CommandSuggestions } from './CommandSuggestions.js';
 import { ConfirmationPrompt } from './ConfirmationPrompt.js';
+import { HooksManager } from './HooksManager.js';
 import { InputArea } from './InputArea.js';
 import { LoadingIndicator } from './LoadingIndicator.js';
 import { MessageArea } from './MessageArea.js';
@@ -215,7 +216,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           // 不再过滤 tool 消息，让工具输出也能被渲染
           .map((msg, index) => ({
             id: `restored-${Date.now()}-${index}`,
-            role: msg.role as 'user' | 'assistant' | 'system' | 'tool',
+            role: msg.role,
             content:
               typeof msg.content === 'string'
                 ? msg.content
@@ -292,7 +293,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
       const sessionMessages = messages.map((msg, index) => ({
         id: `restored-${Date.now()}-${index}`,
-        role: msg.role as 'user' | 'assistant' | 'system' | 'tool',
+        role: msg.role,
         content:
           typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
         timestamp: Date.now() - (messages.length - index) * 1000,
@@ -363,6 +364,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     } else if (activeModal === 'agentCreationWizard') {
       // 显示 agent 创建向导时，焦点转移到向导
       focusActions.setFocus(FocusId.AGENT_CREATION_WIZARD);
+    } else if (activeModal === 'hooksManager') {
+      // 显示 hooks 管理器时，焦点转移到管理器
+      focusActions.setFocus(FocusId.HOOKS_MANAGER);
     } else if (activeModal === 'shortcuts') {
       // 显示快捷键帮助时，焦点保持在主输入框（帮助面板可以通过 ? 或 Esc 关闭）
       focusActions.setFocus(FocusId.MAIN_INPUT);
@@ -503,7 +507,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const agentsManagerVisible = activeModal === 'agentsManager';
   const agentCreationWizardVisible = activeModal === 'agentCreationWizard';
   const skillsManagerVisible = activeModal === 'skillsManager';
-
   const editingInitialConfig = editingModel
     ? {
         name: editingModel.name,
@@ -530,6 +533,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         onSelect={handleSessionSelect}
         onCancel={handleSessionCancel}
       />
+    ) : activeModal === 'hooksManager' ? (
+      <HooksManager onClose={closeModal} />
     ) : null;
 
   // 是否有阻塞式弹窗

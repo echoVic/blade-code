@@ -7,6 +7,7 @@ import { discoverSkills, getSkillRegistry } from '../skills/index.js';
 import type { SkillMetadata } from '../skills/types.js';
 import { builtinCommands } from './builtinCommands.js';
 import gitCommand from './git.js';
+import hooksCommand from './hooks.js';
 import ideCommand from './ide.js';
 import initCommand from './init.js';
 import modelCommand from './model.js';
@@ -31,6 +32,7 @@ const slashCommands: SlashCommandRegistry = {
   git: gitCommand,
   ide: ideCommand,
   skills: skillsCommand,
+  hooks: hooksCommand,
 };
 
 /**

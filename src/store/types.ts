@@ -163,7 +163,8 @@ export type ActiveModal =
   | 'modelEditWizard'
   | 'agentsManager'
   | 'agentCreationWizard'
-  | 'skillsManager';
+  | 'skillsManager'
+  | 'hooksManager';
 
 /**
  * 应用状态（纯 UI 状态）
@@ -219,6 +220,7 @@ export enum FocusId {
   PERMISSIONS_MANAGER = 'permissions-manager',
   AGENTS_MANAGER = 'agents-manager',
   AGENT_CREATION_WIZARD = 'agent-creation-wizard',
+  HOOKS_MANAGER = 'hooks-manager',
 }
 
 /**

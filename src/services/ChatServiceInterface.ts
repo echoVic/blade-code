@@ -5,6 +5,7 @@
 
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { ProviderType } from '../config/types.js';
+import type { MessageRole } from '../store/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { GptOpenaiPlatformChatService } from './GptOpenaiPlatformChatService.js';
 import { OpenAIChatService } from './OpenAIChatService.js';
@@ -39,7 +40,7 @@ export type ContentPart = TextContentPart | ImageContentPart;
  * content 支持纯文本或多模态内容（文本+图片）
  */
 export type Message = {
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  role: MessageRole;
   content: string | ContentPart[];
   reasoningContent?: string; // Thinking 模型的推理过程（如 DeepSeek Reasoner）
   tool_call_id?: string; // tool 角色必需

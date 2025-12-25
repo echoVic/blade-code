@@ -12,16 +12,45 @@ import type { PermissionMode } from '../../config/types.js';
 
 /**
  * Hook 事件类型
+ * 与 Claude Code 对齐的完整事件列表
  */
 export enum HookEvent {
+  // ========== 工具执行类 ==========
   /** 工具执行前 (可阻止或修改输入) */
   PreToolUse = 'PreToolUse',
 
   /** 工具执行后 (可添加上下文或修改输出) */
   PostToolUse = 'PostToolUse',
 
-  /** Claude 停止响应时 */
+  /** 工具执行失败后 */
+  PostToolUseFailure = 'PostToolUseFailure',
+
+  /** 权限请求时 (可自动批准/拒绝) */
+  PermissionRequest = 'PermissionRequest',
+
+  // ========== 会话生命周期类 ==========
+  /** 用户提交提示词时 (可注入上下文) */
+  UserPromptSubmit = 'UserPromptSubmit',
+
+  /** 会话启动时 */
+  SessionStart = 'SessionStart',
+
+  /** 会话结束时 */
+  SessionEnd = 'SessionEnd',
+
+  // ========== 控制流类 ==========
+  /** Agent 停止响应时 (可阻止停止) */
   Stop = 'Stop',
+
+  /** 子 Agent (Task) 停止响应时 */
+  SubagentStop = 'SubagentStop',
+
+  // ========== 其他 ==========
+  /** 通知事件 */
+  Notification = 'Notification',
+
+  /** 上下文压缩时 */
+  Compaction = 'Compaction',
 }
 
 // ============================================================================
@@ -103,9 +132,173 @@ export interface StopInput extends HookInputBase {
 }
 
 /**
+ * PostToolUseFailure 输入
+ */
+export interface PostToolUseFailureInput extends HookInputBase {
+  hook_event_name: HookEvent.PostToolUseFailure;
+
+  /** 工具名称 */
+  tool_name: string;
+
+  /** 工具使用 ID */
+  tool_use_id: string;
+
+  /** 工具输入参数 */
+  tool_input: Record<string, unknown>;
+
+  /** 错误信息 */
+  error: string;
+
+  /** 错误类型 */
+  error_type?: string;
+
+  /** 是否被中断 */
+  is_interrupt: boolean;
+
+  /** 是否超时 */
+  is_timeout: boolean;
+}
+
+/**
+ * PermissionRequest 输入
+ */
+export interface PermissionRequestInput extends HookInputBase {
+  hook_event_name: HookEvent.PermissionRequest;
+
+  /** 工具名称 */
+  tool_name: string;
+
+  /** 工具使用 ID */
+  tool_use_id: string;
+
+  /** 工具输入参数 */
+  tool_input: Record<string, unknown>;
+}
+
+/**
+ * UserPromptSubmit 输入
+ */
+export interface UserPromptSubmitInput extends HookInputBase {
+  hook_event_name: HookEvent.UserPromptSubmit;
+
+  /** 用户原始提示词 */
+  user_prompt: string;
+
+  /** 是否包含图片 */
+  has_images: boolean;
+
+  /** 图片数量 */
+  image_count: number;
+}
+
+/**
+ * SessionStart 输入
+ */
+export interface SessionStartInput extends HookInputBase {
+  hook_event_name: HookEvent.SessionStart;
+
+  /** 是否恢复会话 */
+  is_resume: boolean;
+
+  /** 恢复的会话 ID */
+  resume_session_id?: string;
+}
+
+/**
+ * SessionEnd 输入
+ */
+export interface SessionEndInput extends HookInputBase {
+  hook_event_name: HookEvent.SessionEnd;
+
+  /** 结束原因 */
+  reason:
+    | 'user_exit'
+    | 'error'
+    | 'max_turns'
+    | 'idle_timeout'
+    | 'ctrl_c'
+    | 'esc'
+    | 'clear'
+    | 'logout'
+    | 'other';
+}
+
+/**
+ * SubagentStop 输入
+ */
+export interface SubagentStopInput extends HookInputBase {
+  hook_event_name: HookEvent.SubagentStop;
+
+  /** 子 Agent 类型 */
+  agent_type: string;
+
+  /** 任务描述 */
+  task_description?: string;
+
+  /** 是否成功 */
+  success: boolean;
+
+  /** 结果摘要 */
+  result_summary?: string;
+
+  /** 错误信息 */
+  error?: string;
+}
+
+/**
+ * Notification 输入
+ */
+export interface NotificationInput extends HookInputBase {
+  hook_event_name: HookEvent.Notification;
+
+  /** 通知类型 */
+  notification_type:
+    | 'permission_prompt'
+    | 'idle_prompt'
+    | 'auth_success'
+    | 'elicitation_dialog'
+    | 'info'
+    | 'warning'
+    | 'error';
+
+  /** 通知标题 */
+  title?: string;
+
+  /** 通知内容 */
+  message: string;
+}
+
+/**
+ * Compaction 输入
+ */
+export interface CompactionInput extends HookInputBase {
+  hook_event_name: HookEvent.Compaction;
+
+  /** 触发方式 */
+  trigger: 'manual' | 'auto';
+
+  /** 压缩前消息数 */
+  messages_before: number;
+
+  /** 压缩前 token 数 */
+  tokens_before: number;
+}
+
+/**
  * Hook 输入联合类型
  */
-export type HookInput = PreToolUseInput | PostToolUseInput | StopInput;
+export type HookInput =
+  | PreToolUseInput
+  | PostToolUseInput
+  | PostToolUseFailureInput
+  | PermissionRequestInput
+  | UserPromptSubmitInput
+  | SessionStartInput
+  | SessionEndInput
+  | StopInput
+  | SubagentStopInput
+  | NotificationInput
+  | CompactionInput;
 
 // ============================================================================
 // Hook Output
@@ -164,6 +357,97 @@ export interface PostToolUseOutput {
 }
 
 /**
+ * Stop 特定输出
+ */
+export interface StopOutput {
+  hookEventName?: 'Stop';
+
+  /** 阻止停止，继续执行 */
+  continue?: boolean;
+
+  /** 继续执行的原因 (发送给 LLM) */
+  continueReason?: string;
+}
+
+/**
+ * SubagentStop 特定输出
+ */
+export interface SubagentStopOutput {
+  hookEventName?: 'SubagentStop';
+
+  /** 阻止停止，继续执行 */
+  continue?: boolean;
+
+  /** 继续执行的原因 */
+  continueReason?: string;
+
+  /** 额外上下文 */
+  additionalContext?: string;
+}
+
+/**
+ * PermissionRequest 特定输出
+ */
+export interface PermissionRequestOutput {
+  hookEventName?: 'PermissionRequest';
+
+  /** 权限决策: approve (直接批准), deny (拒绝), ask (显示确认对话框) */
+  permissionDecision?: 'approve' | 'deny' | 'ask';
+
+  /** 决策原因 */
+  permissionDecisionReason?: string;
+}
+
+/**
+ * UserPromptSubmit 特定输出
+ */
+export interface UserPromptSubmitOutput {
+  hookEventName?: 'UserPromptSubmit';
+
+  /** 修改后的用户提示词 */
+  updatedPrompt?: string;
+
+  /** 注入到上下文的内容 (来自 stdout) */
+  contextInjection?: string;
+}
+
+/**
+ * SessionStart 特定输出
+ */
+export interface SessionStartOutput {
+  hookEventName?: 'SessionStart';
+
+  /** 环境变量 (持久化到整个会话) */
+  env?: Record<string, string>;
+}
+
+/**
+ * Compaction 特定输出
+ */
+export interface CompactionOutput {
+  hookEventName?: 'Compaction';
+
+  /** 阻止压缩 */
+  blockCompaction?: boolean;
+
+  /** 阻止原因 */
+  blockReason?: string;
+}
+
+/**
+ * Hook 特定输出联合类型
+ */
+export type HookSpecificOutput =
+  | PreToolUseOutput
+  | PostToolUseOutput
+  | StopOutput
+  | SubagentStopOutput
+  | PermissionRequestOutput
+  | UserPromptSubmitOutput
+  | SessionStartOutput
+  | CompactionOutput;
+
+/**
  * Hook 输出结构
  */
 export interface HookOutput {
@@ -176,7 +460,7 @@ export interface HookOutput {
   systemMessage?: string;
 
   /** 事件特定输出 */
-  hookSpecificOutput?: PreToolUseOutput | PostToolUseOutput;
+  hookSpecificOutput?: HookSpecificOutput;
 
   /** 抑制输出 (不显示成功消息) */
   suppressOutput?: boolean;
@@ -232,14 +516,14 @@ export type Hook = CommandHook | PromptHook;
  * Matcher 配置
  */
 export interface MatcherConfig {
-  /** 工具名匹配 (支持精确、管道分隔、正则) */
-  tools?: string;
+  /** 工具名匹配 (支持精确、管道分隔、正则、或数组) */
+  tools?: string | string[];
 
   /** 文件路径匹配 (glob 模式) */
-  paths?: string;
+  paths?: string | string[];
 
   /** 命令匹配 (正则) */
-  commands?: string;
+  commands?: string | string[];
 }
 
 /**
@@ -258,6 +542,7 @@ export interface HookMatcher {
 
 /**
  * Hook 配置
+ * 与 Claude Code 对齐的完整配置
  */
 export interface HookConfig {
   /** 是否启用 hooks */
@@ -275,14 +560,42 @@ export interface HookConfig {
   /** 最大并发 Hook 数 */
   maxConcurrentHooks?: number;
 
+  // ========== 工具执行类 ==========
   /** PreToolUse Hooks */
   PreToolUse?: HookMatcher[];
 
   /** PostToolUse Hooks */
   PostToolUse?: HookMatcher[];
 
+  /** PostToolUseFailure Hooks */
+  PostToolUseFailure?: HookMatcher[];
+
+  /** PermissionRequest Hooks */
+  PermissionRequest?: HookMatcher[];
+
+  // ========== 会话生命周期类 ==========
+  /** UserPromptSubmit Hooks */
+  UserPromptSubmit?: HookMatcher[];
+
+  /** SessionStart Hooks */
+  SessionStart?: HookMatcher[];
+
+  /** SessionEnd Hooks */
+  SessionEnd?: HookMatcher[];
+
+  // ========== 控制流类 ==========
   /** Stop Hooks */
   Stop?: HookMatcher[];
+
+  /** SubagentStop Hooks */
+  SubagentStop?: HookMatcher[];
+
+  // ========== 其他 ==========
+  /** Notification Hooks */
+  Notification?: HookMatcher[];
+
+  /** Compaction Hooks */
+  Compaction?: HookMatcher[];
 }
 
 // ============================================================================
@@ -384,6 +697,130 @@ export interface PostToolHookResult {
 
   /** 修改后的输出 */
   modifiedOutput?: unknown;
+
+  /** 警告信息 */
+  warning?: string;
+}
+
+/**
+ * Stop Hook 执行结果
+ */
+export interface StopHookResult {
+  /** 是否应该停止 (false 表示继续执行) */
+  shouldStop: boolean;
+
+  /** 继续执行的原因 */
+  continueReason?: string;
+
+  /** 警告信息 */
+  warning?: string;
+}
+
+/**
+ * SubagentStop Hook 执行结果
+ */
+export interface SubagentStopHookResult {
+  /** 是否应该停止 */
+  shouldStop: boolean;
+
+  /** 继续执行的原因 */
+  continueReason?: string;
+
+  /** 额外上下文 */
+  additionalContext?: string;
+
+  /** 警告信息 */
+  warning?: string;
+}
+
+/**
+ * PermissionRequest Hook 执行结果
+ */
+export interface PermissionRequestHookResult {
+  /** 权限决策 */
+  decision: 'approve' | 'deny' | 'ask';
+
+  /** 决策原因 */
+  reason?: string;
+
+  /** 警告信息 */
+  warning?: string;
+}
+
+/**
+ * UserPromptSubmit Hook 执行结果
+ */
+export interface UserPromptSubmitHookResult {
+  /** 是否继续处理 */
+  proceed: boolean;
+
+  /** 修改后的提示词 */
+  updatedPrompt?: string;
+
+  /** 注入到上下文的内容 */
+  contextInjection?: string;
+
+  /** 警告信息 */
+  warning?: string;
+}
+
+/**
+ * SessionStart Hook 执行结果
+ */
+export interface SessionStartHookResult {
+  /** 是否继续启动 */
+  proceed: boolean;
+
+  /** 环境变量 */
+  env?: Record<string, string>;
+
+  /** 警告信息 */
+  warning?: string;
+}
+
+/**
+ * SessionEnd Hook 执行结果
+ * (通常不需要特殊处理)
+ */
+export interface SessionEndHookResult {
+  /** 警告信息 */
+  warning?: string;
+}
+
+/**
+ * PostToolUseFailure Hook 执行结果
+ */
+export interface PostToolUseFailureHookResult {
+  /** 额外上下文 */
+  additionalContext?: string;
+
+  /** 警告信息 */
+  warning?: string;
+}
+
+/**
+ * Notification Hook 执行结果
+ */
+export interface NotificationHookResult {
+  /** 是否抑制通知 */
+  suppress: boolean;
+
+  /** 修改后的消息 */
+  message: string;
+
+  /** 警告信息 */
+  warning?: string;
+}
+
+/**
+ * Compaction Hook 执行结果
+ */
+export interface CompactionHookResult {
+  /** 是否阻止压缩 */
+  blockCompaction: boolean;
+
+  /** 阻止原因 */
+  blockReason?: string;
 
   /** 警告信息 */
   warning?: string;

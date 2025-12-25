@@ -44,7 +44,7 @@ const resumeCommand: SlashCommand = {
           .filter((msg) => msg.role !== 'tool')
           .map((msg, index) => ({
             id: `restored-${Date.now()}-${index}`,
-            role: msg.role as 'user' | 'assistant' | 'system',
+            role: msg.role,
             content:
               typeof msg.content === 'string'
                 ? msg.content

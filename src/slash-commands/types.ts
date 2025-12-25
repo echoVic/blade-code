@@ -15,6 +15,7 @@ export type SlashCommandAction =
   | 'show_theme_selector'
   | 'show_permissions_editor'
   | 'show_skills_manager'
+  | 'show_hooks_manager'
   | 'invoke_skill';
 
 /**

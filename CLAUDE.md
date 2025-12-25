@@ -600,6 +600,25 @@ useEffect(() => {
 - **缩进**: 2 空格
 - **TypeScript**: 尽量避免 `any`，测试文件除外
 
+### 导入规范
+
+- **禁止动态导入**: 不要使用 `await import()` 动态导入模块，应使用顶部静态 `import` 语句
+  ```typescript
+  // ❌ 错误
+  const showStatus = async () => {
+    const { HookManager } = await import('../../hooks/HookManager.js');
+    // ...
+  };
+
+  // ✅ 正确
+  import { HookManager } from '../../hooks/HookManager.js';
+  const showStatus = () => {
+    const hookManager = HookManager.getInstance();
+    // ...
+  };
+  ```
+- **例外**: 仅在确实需要代码分割或条件加载时才使用动态导入（如按需加载大型依赖）
+
 ## Documentation Guidelines
 
 ### 文档结构

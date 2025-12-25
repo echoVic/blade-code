@@ -2,9 +2,11 @@
  * 上下文管理模块的核心类型定义
  */
 
+import type { MessageRole } from '../store/types.js';
+
 export interface ContextMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  role: MessageRole;
   content: string;
   timestamp: number;
   metadata?: Record<string, any>;
@@ -144,7 +146,7 @@ export interface BladeJSONLEntry {
   version: string;
   /** 消息内容 */
   message: {
-    role: 'user' | 'assistant' | 'system';
+    role: MessageRole;
     content: string | any; // 可以是字符串或复杂内容块
     model?: string; // AI 模型名称（assistant 消息）
     usage?: {

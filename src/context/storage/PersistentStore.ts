@@ -1,19 +1,20 @@
 import { nanoid } from 'nanoid';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import type { MessageRole } from '../../store/types.js';
 import type {
   BladeJSONLEntry,
   ContextData,
   ConversationContext,
   SessionContext,
 } from '../types.js';
+import { JSONLStore } from './JSONLStore.js';
 import {
   detectGitBranch,
   getProjectStoragePath,
   getSessionFilePath,
   listProjectDirectories,
 } from './pathUtils.js';
-import { JSONLStore } from './JSONLStore.js';
 
 /**
  * 持久化存储实现 - JSONL 格式
@@ -52,7 +53,7 @@ export class PersistentStore {
    */
   async saveMessage(
     sessionId: string,
-    messageRole: 'user' | 'assistant' | 'system',
+    messageRole: MessageRole,
     content: string,
     parentUuid: string | null = null,
     metadata?: {
@@ -74,7 +75,9 @@ export class PersistentStore {
             ? 'user'
             : messageRole === 'assistant'
               ? 'assistant'
-              : 'system',
+              : messageRole === 'tool'
+                ? 'tool_result'
+                : 'system',
         cwd: this.projectPath,
         gitBranch: detectGitBranch(this.projectPath),
         version: this.version,
@@ -267,12 +270,7 @@ export class PersistentStore {
 
       // 将每条消息转为 JSONL 条目并批量保存
       for (const msg of conversation.messages) {
-        await this.saveMessage(
-          sessionId,
-          msg.role as 'user' | 'assistant' | 'system',
-          msg.content,
-          null
-        );
+        await this.saveMessage(sessionId, msg.role, msg.content, null);
       }
     } catch (error) {
       console.warn(`[PersistentStore] 保存上下文失败 (session: ${sessionId}):`, error);

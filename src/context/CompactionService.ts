@@ -4,6 +4,8 @@
  */
 
 import { nanoid } from 'nanoid';
+import { PermissionMode } from '../config/types.js';
+import { HookManager } from '../hooks/HookManager.js';
 import { createChatService, type Message } from '../services/ChatServiceInterface.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
 import { TokenCounter } from './TokenCounter.js';
@@ -24,6 +26,10 @@ export interface CompactionOptions {
   baseURL?: string;
   /** 真实的 preTokens（可选，来自 LLM usage，比估算更准确） */
   actualPreTokens?: number;
+  /** 会话 ID（用于 hooks） */
+  sessionId?: string;
+  /** 权限模式（用于 hooks） */
+  permissionMode?: PermissionMode;
 }
 
 /**
@@ -63,7 +69,6 @@ export class CompactionService {
   /** 降级时保留比例（30%） */
   private static readonly FALLBACK_RETAIN_PERCENT = 0.3;
 
-
   /**
    * 执行压缩
    *
@@ -82,6 +87,47 @@ export class CompactionService {
       ? 'actual (from LLM usage)'
       : 'estimated';
     console.log(`[CompactionService] preTokens source: ${tokenSource}`);
+
+    // 执行 Compaction Hook（压缩前）
+    // Hook 可以阻止压缩
+    try {
+      const hookManager = HookManager.getInstance();
+      const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
+        projectDir: process.cwd(),
+        sessionId: options.sessionId || 'unknown',
+        permissionMode: options.permissionMode || PermissionMode.DEFAULT,
+        messagesBefore: messages.length,
+        tokensBefore: preTokens,
+      });
+
+      // 如果 hook 返回 blockCompaction: true，阻止压缩
+      if (hookResult.blockCompaction) {
+        console.log(
+          `[CompactionService] Compaction hook 阻止压缩: ${hookResult.blockReason || '(无原因)'}`
+        );
+        return {
+          success: false,
+          summary: '',
+          preTokens,
+          postTokens: preTokens,
+          filesIncluded: [],
+          compactedMessages: messages,
+          boundaryMessage: { role: 'system', content: '' } as Message,
+          summaryMessage: { role: 'user', content: '' } as Message,
+          error: hookResult.blockReason || 'Compaction blocked by hook',
+        };
+      }
+
+      // 如果有警告，记录日志
+      if (hookResult.warning) {
+        console.warn(
+          `[CompactionService] Compaction hook warning: ${hookResult.warning}`
+        );
+      }
+    } catch (hookError) {
+      // Hook 执行失败不应阻止压缩
+      console.warn('[CompactionService] Compaction hook execution failed:', hookError);
+    }
 
     try {
       console.log('[CompactionService] 开始压缩，消息数:', messages.length);
@@ -393,9 +439,13 @@ Please provide your summary following the structure specified above, with both <
 
     return {
       success: false,
-      summary: typeof summaryMessage.content === 'string'
-        ? summaryMessage.content
-        : summaryMessage.content.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n'),
+      summary:
+        typeof summaryMessage.content === 'string'
+          ? summaryMessage.content
+          : summaryMessage.content
+              .filter((p) => p.type === 'text')
+              .map((p) => (p as { text: string }).text)
+              .join('\n'),
       preTokens,
       postTokens,
       filesIncluded: [],

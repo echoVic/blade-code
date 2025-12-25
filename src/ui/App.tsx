@@ -5,6 +5,7 @@ import type { GlobalOptions } from '../cli/types.js';
 import {
   DEFAULT_CONFIG,
   mergeRuntimeConfig,
+  PermissionMode,
   type RuntimeConfig,
 } from '../config/index.js';
 import { HookManager } from '../hooks/HookManager.js';
@@ -112,12 +113,42 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
       }
     }
 
-    // 7. 初始化 HookManager
+    // 7. 初始化 HookManager 并执行 SessionStart hooks
     try {
       const hookManager = HookManager.getInstance();
       hookManager.loadConfig(mergedConfig.hooks || {});
       if (props.debug && mergedConfig.hooks?.enabled) {
         console.log('✓ Hooks 系统已启用');
+      }
+
+      // 执行 SessionStart hooks
+      if (hookManager.isEnabled()) {
+        const state = getState();
+        const sessionId = state.session.sessionId;
+        const permissionMode = state.config.config?.permissionMode || PermissionMode.DEFAULT;
+        const isResume = !!props.resume;
+
+        const sessionStartResult = await hookManager.executeSessionStartHooks({
+          projectDir: process.cwd(),
+          sessionId,
+          permissionMode,
+          isResume,
+          resumeSessionId: typeof props.resume === 'string' ? props.resume : undefined,
+        });
+
+        // 应用环境变量
+        if (sessionStartResult.env) {
+          for (const [key, value] of Object.entries(sessionStartResult.env)) {
+            process.env[key] = value;
+          }
+          if (props.debug) {
+            console.log('✓ SessionStart hooks 注入环境变量:', Object.keys(sessionStartResult.env).join(', '));
+          }
+        }
+
+        if (sessionStartResult.warning && props.debug) {
+          console.warn('⚠️ SessionStart hooks 警告:', sessionStartResult.warning);
+        }
       }
     } catch (error) {
       if (props.debug) {

@@ -1,6 +1,7 @@
 import { useMemoizedFn } from 'ahooks';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { useEffect, useRef } from 'react';
+import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
@@ -74,6 +75,9 @@ function handleSlashMessage(
       return true;
     case 'show_skills_manager':
       appActions.setActiveModal('skillsManager');
+      return true;
+    case 'show_hooks_manager':
+      appActions.setActiveModal('hooksManager');
       return true;
     case 'show_agent_creation_wizard':
       appActions.setActiveModal('agentCreationWizard');
@@ -318,14 +322,53 @@ export const useCommandHandler = (
           }
         }
 
+        // ========== UserPromptSubmit Hook ==========
+        // 在处理用户输入之前执行，可注入上下文或修改提示词
+        const hookManager = HookManager.getInstance();
+        let resolvedPrompt = resolved;
+        let hookContextInjection: string | undefined;
+
+        const hookResult = await hookManager.executeUserPromptSubmitHooks(
+          resolved.text,
+          {
+            projectDir: process.cwd(),
+            sessionId: sessionId,
+            permissionMode: permissionMode,
+            hasImages: resolved.images.length > 0,
+            imageCount: resolved.images.length,
+          }
+        );
+
+        if (!hookResult.proceed) {
+          // Hook 阻止了处理
+          if (hookResult.warning) {
+            sessionActions.addAssistantMessage(`⚠️ ${hookResult.warning}`);
+          }
+          return { success: false, error: 'blocked by hook' };
+        }
+
+        // 应用 hook 的修改
+        if (hookResult.updatedPrompt) {
+          resolvedPrompt = {
+            ...resolved,
+            text: hookResult.updatedPrompt,
+            displayText: hookResult.updatedPrompt,
+            parts: [{ type: 'text', text: hookResult.updatedPrompt }],
+          };
+        }
+
+        if (hookResult.contextInjection) {
+          hookContextInjection = hookResult.contextInjection;
+        }
+
         // 普通命令：添加用户消息（UI 显示带图片占位符的文本）
         // 注意：invoke_skill 的用户消息已在上面添加，这里跳过
         if (!userMessageAlreadyAdded) {
-          sessionActions.addUserMessage(resolved.displayText);
+          sessionActions.addUserMessage(resolvedPrompt.displayText);
         }
 
         // 构建用户消息内容（可能包含图片）
-        const userMessageContent = buildUserMessageContent(resolved);
+        const userMessageContent = buildUserMessageContent(resolvedPrompt);
 
         // ⚠️ 先创建 AbortController，再创建 Agent
         // 这样用户在 Agent 初始化期间按 Ctrl+C 也能正确中止
@@ -340,11 +383,22 @@ export const useCommandHandler = (
           return { success: false, error: 'aborted' };
         }
 
+        // 构建消息列表（可能包含 hook 注入的上下文）
+        const contextMessages = messages.map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        }));
+
+        // 如果有 hook 注入的上下文，添加为 system 消息
+        if (hookContextInjection) {
+          contextMessages.push({
+            role: 'system',
+            content: `<user-prompt-submit-hook>\n${hookContextInjection}\n</user-prompt-submit-hook>`,
+          });
+        }
+
         const chatContext = {
-          messages: messages.map((msg) => ({
-            role: msg.role as 'user' | 'assistant' | 'system',
-            content: msg.content,
-          })),
+          messages: contextMessages,
           userId: 'cli-user',
           sessionId: sessionId,
           workspaceRoot: process.cwd(),

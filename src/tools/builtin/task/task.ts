@@ -14,6 +14,8 @@ import type {
   SubagentContext,
   SubagentResult,
 } from '../../../agent/subagents/types.js';
+import { PermissionMode } from '../../../config/types.js';
+import { HookManager } from '../../../hooks/HookManager.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -157,10 +159,52 @@ ${subagentRegistry.getDescriptionsForPrompt()}
 
       // 4. 执行 subagent
       const startTime = Date.now();
-      const result: SubagentResult = await executor.execute(subagentContext);
-      const duration = Date.now() - startTime;
+      let result: SubagentResult = await executor.execute(subagentContext);
+      let duration = Date.now() - startTime;
 
-      // 5. 返回结果
+      // 5. 执行 SubagentStop Hook
+      // Hook 可以阻止 subagent 停止并请求继续执行
+      try {
+        const hookManager = HookManager.getInstance();
+        const stopResult = await hookManager.executeSubagentStopHooks(subagent_type, {
+          projectDir: process.cwd(),
+          sessionId: context.sessionId || 'unknown',
+          permissionMode:
+            (context.permissionMode as PermissionMode) || PermissionMode.DEFAULT,
+          taskDescription: description,
+          success: result.success,
+          resultSummary: result.message.slice(0, 500),
+          error: result.error,
+        });
+
+        // 如果 hook 返回 shouldStop: false，继续执行
+        if (!stopResult.shouldStop && stopResult.continueReason) {
+          console.log(
+            `[Task] SubagentStop hook 阻止停止，继续执行: ${stopResult.continueReason}`
+          );
+
+          // 使用 continueReason 作为新的 prompt 继续执行
+          const continueContext: SubagentContext = {
+            prompt: stopResult.continueReason,
+            parentSessionId: context.sessionId,
+            permissionMode: context.permissionMode,
+          };
+
+          const continueStartTime = Date.now();
+          result = await executor.execute(continueContext);
+          duration += Date.now() - continueStartTime;
+        }
+
+        // 如果有警告，记录日志
+        if (stopResult.warning) {
+          console.warn(`[Task] SubagentStop hook warning: ${stopResult.warning}`);
+        }
+      } catch (hookError) {
+        // Hook 执行失败不应阻止正常返回
+        console.warn('[Task] SubagentStop hook execution failed:', hookError);
+      }
+
+      // 6. 返回结果
       if (result.success) {
         const outputPreview =
           result.message.length > 1000

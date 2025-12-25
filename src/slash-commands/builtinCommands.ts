@@ -215,7 +215,7 @@ const contextCommand: SlashCommand = {
 
     // 计算 token 数量
     const messages = sessionMessages.map((msg) => ({
-      role: msg.role as 'user' | 'assistant' | 'system',
+      role: msg.role,
       content: msg.content,
     }));
 

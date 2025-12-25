@@ -6,6 +6,7 @@ import {
 } from '../../config/PermissionChecker.js';
 import type { PermissionConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
+import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { configActions, getConfig } from '../../store/vanilla.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
@@ -331,6 +332,43 @@ export class ConfirmationStage implements PipelineStage {
       const signature = tool.extractSignatureContent
         ? tool.extractSignatureContent(execution.params)
         : tool.name;
+
+      // ========== PermissionRequest Hook ==========
+      // 在显示用户确认之前，允许 hook 自动批准或拒绝
+      const hookManager = HookManager.getInstance();
+      if (hookManager.isEnabled()) {
+        const hookResult = await hookManager.executePermissionRequestHooks(
+          tool.name,
+          execution.context.sessionId || 'unknown',
+          execution.params,
+          {
+            projectDir: process.cwd(),
+            sessionId: execution.context.sessionId || 'unknown',
+            permissionMode: execution.context.permissionMode || PermissionMode.DEFAULT,
+          }
+        );
+
+        // 根据 hook 决策处理
+        switch (hookResult.decision) {
+          case 'approve':
+            // Hook 自动批准，跳过用户确认
+            logger.debug(`PermissionRequest hook 自动批准: ${tool.name}`);
+            return;
+
+          case 'deny':
+            // Hook 拒绝执行
+            execution.abort(
+              hookResult.reason || `PermissionRequest hook denied: ${tool.name}`,
+              { shouldExitLoop: true }
+            );
+            return;
+
+          case 'ask':
+          default:
+            // 继续显示用户确认
+            break;
+        }
+      }
 
       // 从权限检查结果构建确认详情
       const confirmationDetails = {
