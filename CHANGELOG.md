@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.37] - 2025-12-25
+
+### ✨ 新功能
+
+- 添加原子操作 addAssistantMessageAndClearThinking 避免闪烁 (a7726ed)
+- 新增 SkillInstaller 用于首次启动时自动下载官方技能 (2fc2661)
+
+### 🐛 问题修复
+
+- 替换直接process.exit为safeExit确保终端状态恢复 (169af5d)
+
+### ♻️ 代码重构
+
+- 统一主题管理逻辑并优化动态引入 (ead4bd0)
+
+
 ## [0.0.36] - 2025-12-24
 
 ### ✨ 新功能
