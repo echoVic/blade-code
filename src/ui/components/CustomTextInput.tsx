@@ -251,11 +251,20 @@ export function CustomTextInput({
       // 检查是否是被禁用的按键
       const isDisabledKey = disabledKeys.some((disabledKey) => key[disabledKey]);
 
-      // 跳过被禁用的按键和 Ctrl+C（由外部处理）
-      // 空输入时的 ? 键也跳过（用于切换快捷键帮助）
+      // 跳过被禁用的按键和需要外部处理的按键
+      // - Ctrl+C: 中断/退出
+      // - Shift+Tab: 切换权限模式
+      // - 空输入时的 ? 键: 切换快捷键帮助
+      // - Ctrl+L/T/O: 清屏/切换 thinking/切换历史折叠（由 useMainInput 处理）
       if (
         isDisabledKey ||
         (key.ctrl && rawInput === 'c') ||
+        (key.ctrl && rawInput === 'l') ||
+        (key.ctrl && rawInput === 't') ||
+        (key.ctrl && rawInput === 'o') ||
+        (key.meta && rawInput === 'l') ||
+        (key.meta && rawInput === 't') ||
+        (key.meta && rawInput === 'o') ||
         (key.shift && key.tab) ||
         (input === '?' && originalValue === '')
       ) {
