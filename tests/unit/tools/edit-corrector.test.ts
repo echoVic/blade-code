@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   flexibleMatch,
-  MatchStrategy,
   unescapeString,
 } from '../../../src/tools/builtin/file/editCorrector.js';
 

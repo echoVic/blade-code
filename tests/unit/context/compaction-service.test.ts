@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, test } from 'vitest';
-import type { Message } from '../../src/services/ChatServiceInterface.js';
+import type { Message } from '../../../src/services/ChatServiceInterface.js';
 
 /**
  * 模拟孤儿 tool 消息场景

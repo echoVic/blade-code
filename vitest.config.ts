@@ -8,17 +8,23 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'json'],
+      include: ['src/**/*.{ts,tsx}'],
       exclude: [
         '**/node_modules/**',
         '**/dist/**',
         '**/*.d.ts',
         '**/test/**',
+        '**/tests/**',
         '**/__tests__/**',
         '**/*.{test,spec}.{js,ts,jsx,tsx}',
         '**/scripts/**',
         '**/coverage/**',
         '**/examples/**',
         '**/docs/**',
+        '**/*.config.*',
+        'src/blade.tsx',
+        'src/index.ts',
+        'src/vite-env.d.ts',
       ],
       thresholds: {
         global: {

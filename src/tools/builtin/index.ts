@@ -2,9 +2,9 @@
  * 内置工具模块
  */
 
-import { McpRegistry } from '@/mcp/McpRegistry.js';
 import * as os from 'os';
 import * as path from 'path';
+import { McpRegistry } from '../../mcp/McpRegistry.js';
 import type { Tool } from '../types/index.js';
 // 文件操作工具
 import { editTool, readTool, writeTool } from './file/index.js';

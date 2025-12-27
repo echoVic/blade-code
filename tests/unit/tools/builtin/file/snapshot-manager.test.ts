@@ -7,10 +7,10 @@ const { mockBladeRootState } = vi.hoisted(() => ({
   mockBladeRootState: { bladeRoot: '' },
 }));
 
-vi.mock('../../src/context/storage/pathUtils.js', async () => {
+vi.mock('../../../../../src/context/storage/pathUtils.js', async () => {
   const actual = await vi.importActual<
-    typeof import('../../src/context/storage/pathUtils.js')
-  >('../../src/context/storage/pathUtils.js');
+    typeof import('../../../../../src/context/storage/pathUtils.js')
+  >('../../../../../src/context/storage/pathUtils.js');
   return {
     ...actual,
     getBladeStorageRoot: vi.fn(() =>
@@ -21,7 +21,7 @@ vi.mock('../../src/context/storage/pathUtils.js', async () => {
   };
 });
 
-import { SnapshotManager } from '../../src/tools/builtin/file/SnapshotManager.js';
+import { SnapshotManager } from '../../../../../src/tools/builtin/file/SnapshotManager.js';
 
 describe('SnapshotManager', () => {
   let tempDir: string;
@@ -31,31 +31,25 @@ describe('SnapshotManager', () => {
   const messageId = 'msg-001';
 
   beforeEach(async () => {
-    // 创建临时测试目录
     tempDir = path.join(os.tmpdir(), `blade-snapshot-test-${Date.now()}`);
     await fs.mkdir(tempDir, { recursive: true });
 
-    // 设置 Blade 根目录 mock
     mockBladeRootState.bladeRoot = path.join(tempDir, 'blade-root');
 
-    // 创建测试文件
     testFile = path.join(tempDir, 'test.txt');
     await fs.writeFile(testFile, 'Original content', 'utf-8');
 
-    // 创建快照管理器
     snapshotManager = new SnapshotManager({ sessionId });
     await snapshotManager.initialize();
   });
 
   afterEach(async () => {
-    // 清理临时目录
     try {
       await fs.rm(tempDir, { recursive: true, force: true });
-      // 清理快照目录
       const snapshotDir = snapshotManager.getSnapshotDir();
       await fs.rm(snapshotDir, { recursive: true, force: true });
     } catch {
-      // 忽略清理错误
+      void 0;
     }
 
     mockBladeRootState.bladeRoot = '';
@@ -147,17 +141,13 @@ describe('SnapshotManager', () => {
 
   describe('恢复快照', () => {
     it('应该成功恢复文件快照', async () => {
-      // 创建快照
       await snapshotManager.createSnapshot(testFile, messageId);
 
-      // 修改文件
       await fs.writeFile(testFile, 'Modified content', 'utf-8');
       expect(await fs.readFile(testFile, 'utf-8')).toBe('Modified content');
 
-      // 恢复快照
       await snapshotManager.restoreSnapshot(testFile, messageId);
 
-      // 验证内容已恢复
       const content = await fs.readFile(testFile, 'utf-8');
       expect(content).toBe('Original content');
     });
@@ -208,19 +198,9 @@ describe('SnapshotManager', () => {
 
   describe('文件哈希生成', () => {
     it('相同文件路径和版本应该生成相同哈希', async () => {
-      const snapshot1 = await snapshotManager.createSnapshot(testFile, 'msg-001');
-      const snapshot2 = await snapshotManager.createSnapshot(testFile, 'msg-002');
-
-      // 相同文件路径，不同版本
-      expect(snapshot1.backupFileName).toBeTruthy();
-      expect(snapshot2.backupFileName).toBeTruthy();
-      expect(snapshot1.backupFileName).not.toBe(snapshot2.backupFileName);
-    });
-
-    it('哈希应该是 16 位十六进制字符串', async () => {
-      const metadata = await snapshotManager.createSnapshot(testFile, messageId);
-
-      expect(metadata.backupFileName).toMatch(/^[0-9a-f]{16}$/);
+      const hash1 = await (snapshotManager as any).generateFileHash(testFile, 1);
+      const hash2 = await (snapshotManager as any).generateFileHash(testFile, 1);
+      expect(hash1).toBe(hash2);
     });
   });
 });

@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ConfigManager, DEFAULT_CONFIG } from '../../src/config';
+import { ConfigManager, DEFAULT_CONFIG } from '../../../src/config';
 
-// 模拟 fs 模块
 vi.mock('fs', () => ({
   promises: {
     mkdir: vi.fn().mockResolvedValue(undefined),
@@ -11,14 +10,12 @@ vi.mock('fs', () => ({
   },
 }));
 
-// 模拟 os 模块
 vi.mock('os', () => ({
   default: {
     homedir: vi.fn().mockReturnValue('/mock/home'),
   },
 }));
 
-// 模拟 path 模块
 vi.mock('path', () => ({
   default: {
     join: vi.fn((...args) => args.join('/')),
@@ -73,15 +70,12 @@ describe('配置系统', () => {
     it('应该能够重置配置', async () => {
       const config = await configManager.initialize();
 
-      // 验证初始配置
       expect(config.theme).toBe('GitHub');
 
-      // 重置配置
       ConfigManager.resetInstance();
       configManager = ConfigManager.getInstance();
       const resetConfig = await configManager.initialize();
 
-      // 验证配置已重置为默认值
       expect(resetConfig.theme).toBe('GitHub');
     });
   });
@@ -111,20 +105,18 @@ describe('配置系统', () => {
     it('应该检测无效的配置', async () => {
       const invalidConfig = {
         ...DEFAULT_CONFIG,
-        models: [], // 没有模型配置
-        currentModelId: '', // 不能为 undefined，使用空字符串
+        models: [],
+        currentModelId: '',
       };
 
-      // 验证当前实现会拒绝空模型列表
       expect(() => {
         configManager.validateConfig(invalidConfig);
-      }).toThrow(); // 配置验证应该抛出错误
+      }).toThrow();
     });
   });
 
   describe('错误处理', () => {
     it('应该在配置加载失败时返回默认配置', async () => {
-      // 模拟文件系统错误
       const config = await configManager.initialize();
 
       expect(config).toBeDefined();
@@ -132,3 +124,4 @@ describe('配置系统', () => {
     });
   });
 });
+

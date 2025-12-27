@@ -27,7 +27,7 @@ export class OAuthTokenStorage {
     const configDir = path.dirname(this.tokenFilePath);
     try {
       await fs.mkdir(configDir, { recursive: true });
-    } catch (error) {
+    } catch {
       // 忽略目录已存在错误
     }
   }

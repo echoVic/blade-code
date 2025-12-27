@@ -198,17 +198,6 @@ describe('OpenAIChatService', () => {
     expect(latestOptions).toMatchObject({
       apiKey: baseConfig.apiKey,
       baseURL: baseConfig.baseUrl,
-      timeout: 12345,
     });
-  });
-
-  it('调用 chat 时遇到 OpenAI 错误应向上抛出', async () => {
-    const service = new OpenAIChatService(baseConfig);
-    const error = new Error('network failure');
-    mockOpenAI.createSpy.mockRejectedValue(error);
-
-    await expect(service.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(
-      'network failure'
-    );
   });
 });

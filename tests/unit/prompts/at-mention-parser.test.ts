@@ -197,7 +197,6 @@ describe('AtMentionParser', () => {
     it('should handle line numbers with leading zeros', () => {
       const input = '@file.ts#L001-010';
       const mentions = AtMentionParser.extract(input);
-
       expect(mentions).toHaveLength(1);
       expect(mentions[0].lineRange).toEqual({ start: 1, end: 10 });
     });
