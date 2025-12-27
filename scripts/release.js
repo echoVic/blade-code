@@ -115,6 +115,19 @@ function checkCodeQuality() {
 }
 
 /**
+ * 同步远程 tags
+ */
+function fetchTags() {
+  console.log(chalk.yellow('🔄 同步远程 tags...'));
+  try {
+    exec('git fetch --tags', { allowInDryRun: true });
+    console.log(chalk.green('✅ Tags 已同步'));
+  } catch (error) {
+    console.log(chalk.yellow('⚠️ 无法同步远程 tags，使用本地 tags'));
+  }
+}
+
+/**
  * 获取最新的 git tags
  */
 function getLatestTag() {
@@ -671,23 +684,26 @@ async function main() {
     
     // 2. 检查工作目录
     checkWorkingDirectory();
-    
-    // 3. 检查代码质量
+
+    // 3. 同步远程 tags（确保 changelog 生成正确）
+    fetchTags();
+
+    // 4. 检查代码质量
     checkCodeQuality();
-    
-    // 4. 确定新版本号
+
+    // 5. 确定新版本号
     const newVersion = await determineNewVersion();
-    
-    // 5. 生成 changelog
+
+    // 6. 生成 changelog
     generateChangelog(newVersion);
-    
-    // 6. 更新 package.json
+
+    // 7. 更新 package.json
     updatePackageVersion(newVersion);
-    
-    // 7. 构建项目
+
+    // 8. 构建项目
     buildProject();
-    
-    // 8. 运行测试
+
+    // 9. 运行测试
     runTests();
     
     if (isDryRun) {
@@ -696,13 +712,13 @@ async function main() {
       return;
     }
     
-    // 9. 提交更改并创建标签
+    // 10. 提交更改并创建标签
     commitAndTag(newVersion);
-    
-    // 10. 发布到 npm
+
+    // 11. 发布到 npm
     publishToNpm();
-    
-    // 11. 推送到远程仓库
+
+    // 12. 推送到远程仓库
     pushToRemote();
     
     const tagPrefix = config.version?.tagPrefix || 'v';

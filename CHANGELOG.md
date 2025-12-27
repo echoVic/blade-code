@@ -7,56 +7,20 @@ All notable changes to this project will be documented in this file.
 
 ### ✨ 新功能
 
-- 添加对Anthropic、Gemini和Azure OpenAI的支持 (33ec933)
+- **多模型提供商支持**：添加对 Anthropic、Google Gemini 和 Azure OpenAI 的原生支持 (33ec933)
 - 添加完整的 Base64 编解码工具 (cab5a2c)
-- 优化加载指示器和代码高亮组件 (44c12d1)
-- 添加 Blade 命令和技能文档文件 (7b9a092)
-- 添加自定义 Slash Commands 系统 (db22092)
-- 实现完整的钩子系统与Claude对齐 (dfe8edb)
-- 添加 Todo 列表更新回调并发送 ACP plan 更新 (691a651)
-- 添加原子操作 addAssistantMessageAndClearThinking 避免闪烁 (a7726ed)
-- 新增 SkillInstaller 用于首次启动时自动下载官方技能 (2fc2661)
-- 实现完整的技能管理系统 (af6f40f)
-- 添加 Skills 系统支持动态 Prompt 扩展和工具限制 (f2588b6)
-- 添加终端resize时的Static组件刷新功能 (183affb)
-- 支持同步 changelog 到外部 blade-doc 仓库 (0e1ea8b)
-- 添加历史消息折叠功能及快捷键支持 (5f34b2b)
-- 添加图片粘贴和多模态消息处理功能 (a0532a4)
-- 支持 thinking 模型的 reasoning 内容处理 (811c8aa)
 
 ### 🐛 问题修复
 
-- 增加需要外部处理的快捷键检查 (cf1e447)
-- 添加操作中止检查并优化中止处理流程 (27596d4)
-- 替换直接process.exit为safeExit确保终端状态恢复 (169af5d)
-- 解决终端resize残影问题并优化布局 (a1701e1)
+- 修复 CustomTextInput 快捷键处理问题 (cf1e447)
 
 ### 📝 文档更新
 
 - 添加思维链支持文档及模型配置说明 (3607d0d)
-- 更新项目文档链接和问题反馈地址 (064824e)
-
-### ♻️ 代码重构
-
-- 统一主题管理逻辑并优化动态引入 (ead4bd0)
-- 合并 isThinking 状态到 isProcessing 并优化处理逻辑 (6e83764)
-- 统一使用 getUI 发送消息并支持取消信号 (24c401f)
 
 ### ✅ 测试相关
 
 - 添加大量单元测试和测试工具 (0c9a6ac)
-
-### 🔧 其他更改
-
-- release v0.0.39 (06dfb1d)
-- release v0.0.38 (16a08ea)
-- release v0.0.37 (7a01d18)
-- release v0.0.36 (60f6a4a)
-- release v0.0.35 (f4f0457)
-- release v0.0.34 (95ab341)
-- release v0.0.33 (7958cc1)
-- release v0.0.32 (39cb8e5)
-- release v0.0.31 (7ab96b1)
 
 
 ## [0.0.39] - 2025-12-26
