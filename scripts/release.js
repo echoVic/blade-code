@@ -571,12 +571,12 @@ function preReleaseCheck() {
     console.log(chalk.gray('⏭️  跳过安全检查'));
   }
 
-  // 检查过期依赖
+  // 检查过期依赖（设置超时避免卡住）
   try {
-    const outdatedCmd = packageManager === 'pnpm' ? 'pnpm outdated --format json' : 
-                       packageManager === 'yarn' ? 'yarn outdated --json' : 
+    const outdatedCmd = packageManager === 'pnpm' ? 'pnpm outdated --format json' :
+                       packageManager === 'yarn' ? 'yarn outdated --json' :
                        'npm outdated --json';
-    const outdated = exec(outdatedCmd, { allowFailure: true, allowInDryRun: true });
+    const outdated = exec(outdatedCmd, { allowFailure: true, allowInDryRun: true, timeout: 10000 });
     if (outdated) {
       let packages;
       if (packageManager === 'pnpm') {
