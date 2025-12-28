@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.41] - 2025-12-28
+
+### ✨ 新功能
+
+- 添加 Antigravity 和 Copilot 的 OAuth 登录功能 (2b31dae)
+- 添加同步远程 tags 功能确保 changelog 生成正确 (05a4a23)
+
+### 🐛 问题修复
+
+- 为依赖检查添加超时避免卡住 (1bf7816)
+
+
 ## [0.0.40] - 2025-12-27
 
 ### ✨ 新功能
