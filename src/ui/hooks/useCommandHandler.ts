@@ -25,6 +25,7 @@ import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
 import {
   formatToolCallSummary,
+  generateToolDetail,
   shouldShowToolDetail,
 } from '../utils/toolFormatters.js';
 import { useAgent } from './useAgent.js';
@@ -515,9 +516,14 @@ Remember: Follow the above instructions carefully to complete the user's request
               return;
             }
 
-            const detail = shouldShowToolDetail(toolCall.function.name, result)
-              ? result.displayContent
-              : undefined;
+            // 决定是否显示详细内容，并生成详细内容
+            let detail: string | undefined;
+            if (shouldShowToolDetail(toolCall.function.name, result)) {
+              // 优先使用 generateToolDetail 生成更友好的详情
+              detail =
+                generateToolDetail(toolCall.function.name, result) ||
+                result.displayContent;
+            }
 
             sessionActions.addToolMessage(result.metadata.summary, {
               toolName: toolCall.function.name,

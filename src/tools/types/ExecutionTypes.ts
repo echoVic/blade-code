@@ -3,10 +3,33 @@ import type { ToolResult } from './ToolTypes.js';
 import { ToolErrorType, ToolKind } from './ToolTypes.js';
 
 /**
+ * 问题选项类型（用于 AskUserQuestion）
+ */
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+/**
+ * 问题类型（用于 AskUserQuestion）
+ */
+export interface Question {
+  question: string;
+  header: string;
+  multiSelect: boolean;
+  options: QuestionOption[];
+}
+
+/**
  * 确认详情
  */
 export interface ConfirmationDetails {
-  type?: 'permission' | 'enterPlanMode' | 'exitPlanMode' | 'maxTurnsExceeded'; // 确认类型
+  type?:
+    | 'permission'
+    | 'enterPlanMode'
+    | 'exitPlanMode'
+    | 'maxTurnsExceeded'
+    | 'askUserQuestion'; // 确认类型
   kind?: ToolKind; // 工具类型（readonly, write, execute），用于 ACP 权限模式判断
   title?: string;
   message: string;
@@ -14,6 +37,7 @@ export interface ConfirmationDetails {
   risks?: string[];
   affectedFiles?: string[];
   planContent?: string; // Plan 模式的完整计划内容（Markdown 格式）
+  questions?: Question[]; // 🆕 AskUserQuestion 的问题列表
 }
 
 /**
@@ -27,6 +51,7 @@ export interface ConfirmationResponse {
   scope?: PermissionApprovalScope;
   targetMode?: PermissionMode; // Plan 模式退出后的目标权限模式
   feedback?: string; // 🆕 用户拒绝时的反馈意见（用于 Plan 模式调整）
+  answers?: Record<string, string | string[]>; // 🆕 AskUserQuestion 的用户答案
 }
 
 /**

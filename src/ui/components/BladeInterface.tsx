@@ -36,6 +36,7 @@ import { AgentsManager } from './AgentsManager.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
 import { CommandSuggestions } from './CommandSuggestions.js';
 import { ConfirmationPrompt } from './ConfirmationPrompt.js';
+import { QuestionPrompt } from './QuestionPrompt.js';
 import { HooksManager } from './HooksManager.js';
 import { InputArea } from './InputArea.js';
 import { LoadingIndicator } from './LoadingIndicator.js';
@@ -519,10 +520,20 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   const blockingModal =
     confirmationState.isVisible && confirmationState.details ? (
-      <ConfirmationPrompt
-        details={confirmationState.details}
-        onResponse={handleResponse}
-      />
+      // 根据确认类型选择不同的 UI 组件
+      confirmationState.details.type === 'askUserQuestion' &&
+      confirmationState.details.questions ? (
+        <QuestionPrompt
+          questions={confirmationState.details.questions}
+          onComplete={(answers) => handleResponse({ approved: true, answers })}
+          onCancel={() => handleResponse({ approved: false })}
+        />
+      ) : (
+        <ConfirmationPrompt
+          details={confirmationState.details}
+          onResponse={handleResponse}
+        />
+      )
     ) : activeModal === 'themeSelector' ? (
       <ThemeSelector />
     ) : activeModal === 'permissionsManager' ? (

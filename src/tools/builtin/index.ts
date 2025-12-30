@@ -17,7 +17,7 @@ import { globTool, grepTool } from './search/index.js';
 // Shell 命令工具
 import { bashOutputTool, bashTool, killShellTool } from './shell/index.js';
 // System 工具
-import { skillTool, slashCommandTool } from './system/index.js';
+import { askUserQuestionTool, skillTool, slashCommandTool } from './system/index.js';
 // 任务管理工具
 import { taskTool } from './task/index.js';
 // Todo 工具
@@ -78,7 +78,8 @@ export async function getBuiltinTools(opts?: {
     enterPlanModeTool,
     exitPlanModeTool,
 
-    // System: Skill, SlashCommand
+    // System: AskUserQuestion, Skill, SlashCommand
+    askUserQuestionTool,
     skillTool,
     slashCommandTool,
   ] as Tool[];
