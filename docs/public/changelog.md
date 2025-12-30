@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.43] - 2025-12-30
+
+### ✨ 新功能
+
+- 添加 AskUserQuestion 工具支持 (78a44e2)
+- 添加统一的代理fetch工具并替换多处直接fetch调用 (b727697)
+
+
 ## [0.0.42] - 2025-12-30
 
 ### ✨ 新功能
