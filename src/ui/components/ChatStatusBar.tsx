@@ -10,6 +10,7 @@ import {
   useIsProcessing,
   useIsReady,
   usePermissionMode,
+  useSpecProgress,
   useThinkingModeEnabled,
 } from '../../store/selectors/index.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
@@ -35,6 +36,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const contextRemaining = useContextRemaining();
   const isCompacting = useIsCompacting();
   const thinkingModeEnabled = useThinkingModeEnabled();
+  const specProgress = useSpecProgress();
 
   // 检查当前模型是否支持 thinking
   const supportsThinking = currentModel ? isThinkingModel(currentModel) : false;
@@ -69,9 +71,21 @@ export const ChatStatusBar: React.FC = React.memo(() => {
     }
 
     if (permissionMode === PermissionMode.SPEC) {
+      // 增强的 Spec 模式显示：阶段 + 进度
+      const { phase, completed, total } = specProgress;
+      let phaseDisplay: string;
+
+      if (!phase) {
+        phaseDisplay = 'init';
+      } else if ((phase === 'tasks' || phase === 'implementation') && total > 0) {
+        phaseDisplay = `${phase} ${completed}/${total}`;
+      } else {
+        phaseDisplay = phase;
+      }
+
       return (
         <Text color="blue">
-          📋 spec mode on <Text color="gray">(structured workflow)</Text>
+          📋 spec: {phaseDisplay} <Text color="gray">(shift+tab to cycle)</Text>
         </Text>
       );
     }

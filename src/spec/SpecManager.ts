@@ -5,6 +5,9 @@
  */
 
 import { nanoid } from 'nanoid';
+import { PermissionMode } from '../config/types.js';
+import { createLogger, LogCategory } from '../logging/Logger.js';
+import { configActions } from '../store/vanilla.js';
 import { SpecFileManager } from './SpecFileManager.js';
 import {
   PHASE_TRANSITIONS,
@@ -20,6 +23,8 @@ import {
   type TaskComplexity,
   type TaskStatus,
 } from './types.js';
+
+const logger = createLogger(LogCategory.SPEC);
 
 /**
  * Spec 管理器
@@ -265,6 +270,16 @@ export class SpecManager {
     }
 
     this.state.currentSpec = updated;
+
+    // 完成时自动切换到 DEFAULT 模式
+    if (targetPhase === 'done') {
+      try {
+        await configActions().setPermissionMode(PermissionMode.DEFAULT);
+        logger.info('Spec 已完成，已自动退出 Spec 模式');
+      } catch (error) {
+        logger.error('自动退出 Spec 模式失败:', error);
+      }
+    }
 
     return {
       success: true,

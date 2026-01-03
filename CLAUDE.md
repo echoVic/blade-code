@@ -28,6 +28,11 @@ Root (blade-code)
 │   ├── security/       # 安全管理
 │   ├── services/       # 共享服务层
 │   ├── slash-commands/ # 内置斜杠命令
+│   ├── spec/           # Spec-Driven Development 模式
+│   │   ├── SpecService.ts        # 无状态文件操作服务
+│   │   ├── SpecManager.ts        # 运行时状态管理器
+│   │   ├── SpecFileManager.ts    # 目录和文件操作
+│   │   └── types.ts              # 类型定义
 │   ├── telemetry/      # 遥测和监控（历史目录，当前实现中已不再使用）
 │   ├── tools/          # 工具系统
 │   │   ├── builtin/    # 内置工具（Read/Write/Bash等）
@@ -751,3 +756,190 @@ useEffect(() => {
 **详细文档**：
 - 实现细节：[text-editor-optimization.md](docs/development/implementation/text-editor-optimization.md)
 - 用户指南：待补充
+
+## Spec Mode (规格驱动开发)
+
+Spec Mode 是 Blade 的高级功能，提供结构化的开发工作流，适用于复杂功能的实现。
+
+### 核心理念
+
+Spec-Driven Development (SDD) 遵循 **先规划后编码** 的理念：
+- 在编写代码前，先定义清晰的规格说明
+- 通过结构化文档作为项目的单一信息源
+- 遵循 `Requirements → Design → Tasks → Implementation` 的流程
+
+### 架构设计
+
+```
+src/spec/
+├── SpecService.ts        # 无状态文件操作服务（SSOT 写入）
+├── SpecManager.ts        # 运行时状态管理器
+├── SpecFileManager.ts    # 目录和文件操作
+├── types.ts              # 类型定义（阶段、任务、元数据）
+└── templates/            # 文档模板
+
+src/store/slices/
+└── specSlice.ts          # Zustand Store 切片（SSOT）
+
+src/tools/builtin/spec/
+├── EnterSpecModeTool.ts      # 进入 Spec 模式
+├── ExitSpecModeTool.ts       # 退出/归档
+├── GetSpecContextTool.ts     # 获取当前上下文
+├── TransitionSpecPhaseTool.ts # 阶段转换
+├── AddTaskTool.ts            # 添加任务
+├── UpdateTaskStatusTool.ts   # 更新任务状态
+├── UpdateSpecTool.ts         # 更新文档
+└── ValidateSpecTool.ts       # 验证完整性
+
+src/prompts/
+└── spec.ts               # Spec 模式系统提示词
+```
+
+### 工作流阶段
+
+```
+┌───────┐    ┌─────────────┐    ┌────────┐    ┌───────┐    ┌──────────────┐    ┌──────┐
+│ init  │ → │ requirements│ → │ design │ → │ tasks │ → │implementation│ → │ done │
+│提案创建│    │  需求定义    │    │架构设计 │    │任务分解│    │    实现中     │    │已完成│
+└───────┘    └─────────────┘    └────────┘    └───────┘    └──────────────┘    └──────┘
+```
+
+**阶段转换规则**（`PHASE_TRANSITIONS`）：
+- `init` → `requirements`
+- `requirements` → `design` | `tasks`（可跳过设计）
+- `design` → `tasks`
+- `tasks` → `implementation`
+- `implementation` → `done` | `tasks`（可回退添加任务）
+- `done` → 终态
+
+### 目录结构
+
+Spec Mode 在项目根目录创建以下结构：
+
+```
+.blade/
+├── specs/              # 权威规格（单一信息源）
+│   └── [domain]/
+│       └── spec.md
+├── changes/            # 活跃的变更提案
+│   └── <feature>/
+│       ├── proposal.md    # 提案描述（为什么做）
+│       ├── spec.md        # 规格文件（做什么）
+│       ├── requirements.md # 需求文档（EARS 格式）
+│       ├── design.md      # 设计文档（怎么做）
+│       ├── tasks.md       # 任务分解
+│       └── .meta.json     # 元数据（状态、进度等）
+├── archive/            # 已完成的变更
+└── steering/           # 全局治理文档
+    ├── constitution.md # 项目治理原则
+    ├── product.md      # 产品愿景
+    ├── tech.md         # 技术栈约束
+    └── structure.md    # 代码组织模式
+```
+
+### 进入方式
+
+**主要方式：Shift+Tab 切换**
+```
+DEFAULT → AUTO_EDIT → PLAN → SPEC → DEFAULT
+```
+
+状态栏显示：`📋 spec: tasks 3/5 (shift+tab to cycle)`
+
+进入 Spec 模式后，AI 会主动引导用户完成工作流，用户只需通过自然语言对话即可。
+
+### 对话驱动工作流
+
+进入 Spec 模式后，用户**无需记忆任何命令**：
+
+1. **无活跃 Spec 时**：AI 询问"你想实现什么功能？"
+2. **有活跃 Spec 时**：AI 显示当前进度并建议下一步
+3. **阶段推进**：用户说"好"、"继续"等即可推进
+
+**对话示例**：
+```
+用户: 我想实现用户认证
+AI: [调用 EnterSpecMode] 已创建 Spec: user-auth。现在开始定义需求...
+
+用户: 需求写好了
+AI: [调用 TransitionSpecPhase] 进入设计阶段。让我创建架构图...
+
+用户: 开始实现
+AI: [获取下一个任务] 开始任务 1: 创建 User 模型...
+```
+
+### AI 工具（自动调用）
+
+Spec 模式下 AI 自动使用这些工具完成工作流：
+
+| 工具 | 用途 |
+|-----|------|
+| `EnterSpecMode` | 创建新 Spec |
+| `UpdateSpec` | 更新文档（proposal/requirements/design/tasks） |
+| `GetSpecContext` | 获取当前上下文和进度 |
+| `TransitionSpecPhase` | 阶段转换 |
+| `AddTask` | 添加任务 |
+| `UpdateTaskStatus` | 更新任务状态 |
+| `ValidateSpec` | 验证完整性 |
+| `ExitSpecMode` | 退出/归档 |
+
+### Store 集成
+
+Spec 状态通过 `specSlice` 管理，遵循 SSOT 原则：
+
+**状态读取**：
+```typescript
+import { getCurrentSpec } from '../store/vanilla.js';
+import { useCurrentSpec, useSpecProgress } from '../store/selectors/index.js';
+
+// Vanilla
+const spec = getCurrentSpec();
+
+// React Hook
+const spec = useCurrentSpec();
+const { phase, completed, total } = useSpecProgress();
+```
+
+**状态写入**：
+```typescript
+import { specActions } from '../store/vanilla.js';
+
+await specActions().createSpec('my-feature', 'Description');
+await specActions().transitionPhase('design');
+await specActions().addTask('Create API', 'Implement REST endpoints');
+await specActions().updateTaskStatus('task-id', 'completed');
+```
+
+### 系统提示词集成
+
+Spec 模式使用专用提示词（`src/prompts/spec.ts`）：
+
+```typescript
+import { buildSystemPrompt } from '../prompts/builder.js';
+
+const { prompt } = await buildSystemPrompt({
+  mode: PermissionMode.SPEC,
+  currentSpec: getCurrentSpec(),
+  steeringContext: await specActions().getSteeringContextString(),
+});
+```
+
+**提示词特点**：
+- **对话驱动**：用户无需记忆命令，AI 主动引导
+- **阶段提示**：根据当前阶段提供具体指导
+- **工具映射**：直接使用 Spec 工具完成工作流
+
+### 与 Plan Mode 的区别
+
+| 特性 | Plan Mode | Spec Mode |
+|------|-----------|-----------|
+| 复杂度 | 简单任务 | 复杂功能 |
+| 文档 | 单个计划文件 | 多个结构化文档 |
+| 阶段 | 单阶段 | 六阶段工作流 |
+| 持久化 | 临时 | 永久归档 |
+| 任务追踪 | 无 | 依赖管理、进度显示 |
+| 状态栏 | `‖ plan mode on` | `📋 spec: tasks 3/5` |
+
+### 详细文档
+
+- 用户指南：[docs/public/guides/spec-mode.md](docs/public/guides/spec-mode.md)

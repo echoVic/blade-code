@@ -406,3 +406,36 @@ export const useHistoryExpanded = () =>
  */
 export const useExpandedMessageCount = () =>
   useBladeStore((state) => state.session.expandedMessageCount);
+
+// ==================== Spec 选择器 ====================
+
+/**
+ * 获取当前 Spec 元数据
+ */
+export const useCurrentSpec = () => useBladeStore((state) => state.spec.currentSpec);
+
+/**
+ * 获取 Spec 是否激活
+ */
+export const useSpecIsActive = () => useBladeStore((state) => state.spec.isActive);
+
+/**
+ * 派生选择器：Spec 阶段和进度
+ * 用于状态栏显示
+ */
+export const useSpecProgress = () =>
+  useBladeStore(
+    useShallow((state) => {
+      const spec = state.spec.currentSpec;
+      if (!spec) {
+        return { phase: null, completed: 0, total: 0 };
+      }
+      const tasks = spec.tasks ?? [];
+      const completed = tasks.filter((t) => t.status === 'completed').length;
+      return {
+        phase: spec.phase,
+        completed,
+        total: tasks.length,
+      };
+    })
+  );

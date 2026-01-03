@@ -1,135 +1,135 @@
 /**
- * Spec-Driven Development (SDD) 类型定义
+ * Spec-Driven Development (SDD) Type Definitions
  *
- * 融合了 OpenSpec 和 GitHub Spec Kit 的设计理念：
- * - OpenSpec: specs/ + changes/ + archive/ 目录结构，变更追踪
- * - Spec Kit: constitution.md 治理原则，详细工作流阶段
+ * Combines design concepts from OpenSpec and GitHub Spec Kit:
+ * - OpenSpec: specs/ + changes/ + archive/ directory structure, change tracking
+ * - Spec Kit: constitution.md governance principles, detailed workflow phases
  */
 
 /**
- * Spec 工作流阶段
+ * Spec Workflow Phase
  *
- * 四阶段工作流：Requirements → Design → Tasks → Implementation
+ * Four-phase workflow: Requirements → Design → Tasks → Implementation
  */
 export type SpecPhase =
-  | 'init' // 初始化：创建提案骨架
-  | 'requirements' // 需求阶段：使用 EARS 格式生成需求文档
-  | 'design' // 设计阶段：创建技术架构（Mermaid 图、API 契约等）
-  | 'tasks' // 任务分解：拆分为可执行的原子任务
-  | 'implementation' // 实现阶段：逐个完成任务
-  | 'done'; // 完成：归档变更
+  | 'init' // Initialize: create proposal skeleton
+  | 'requirements' // Requirements phase: generate requirements doc using EARS format
+  | 'design' // Design phase: create technical architecture (Mermaid diagrams, API contracts, etc.)
+  | 'tasks' // Task breakdown: split into executable atomic tasks
+  | 'implementation' // Implementation phase: complete tasks one by one
+  | 'done'; // Done: archive changes
 
 /**
- * 任务状态
+ * Task Status
  */
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'skipped';
 
 /**
- * 任务复杂度
+ * Task Complexity
  */
 export type TaskComplexity = 'low' | 'medium' | 'high';
 
 /**
- * Spec 任务定义
+ * Spec Task Definition
  */
 export interface SpecTask {
-  /** 任务 ID（nanoid） */
+  /** Task ID (nanoid) */
   id: string;
-  /** 任务标题 */
+  /** Task title */
   title: string;
-  /** 任务描述 */
+  /** Task description */
   description: string;
-  /** 任务状态 */
+  /** Task status */
   status: TaskStatus;
-  /** 依赖的任务 ID 列表 */
+  /** Dependent task ID list */
   dependencies: string[];
-  /** 影响的文件列表 */
+  /** Affected file list */
   affectedFiles: string[];
-  /** 预估复杂度 */
+  /** Estimated complexity */
   complexity: TaskComplexity;
-  /** 完成时间（ISO 8601） */
+  /** Completion time (ISO 8601) */
   completedAt?: string;
-  /** 备注 */
+  /** Notes */
   notes?: string;
 }
 
 /**
- * Spec 元数据
+ * Spec Metadata
  *
- * 存储在 .blade/changes/<feature>/.meta.json
+ * Stored in .blade/changes/<feature>/.meta.json
  */
 export interface SpecMetadata {
-  /** Spec ID（nanoid） */
+  /** Spec ID (nanoid) */
   id: string;
-  /** Feature 名称（目录名） */
+  /** Feature name (directory name) */
   name: string;
-  /** Feature 描述 */
+  /** Feature description */
   description: string;
-  /** 当前阶段 */
+  /** Current phase */
   phase: SpecPhase;
-  /** 创建时间（ISO 8601） */
+  /** Creation time (ISO 8601) */
   createdAt: string;
-  /** 更新时间（ISO 8601） */
+  /** Update time (ISO 8601) */
   updatedAt: string;
-  /** 任务列表 */
+  /** Task list */
   tasks: SpecTask[];
-  /** 当前执行的任务 ID */
+  /** Current executing task ID */
   currentTaskId?: string;
-  /** 相关领域（用于 specs/ 目录分类） */
+  /** Related domains (for specs/ directory classification) */
   domains?: string[];
-  /** 标签 */
+  /** Tags */
   tags?: string[];
-  /** 作者 */
+  /** Author */
   author?: string;
 }
 
 /**
- * Steering Documents 上下文
+ * Steering Documents Context
  *
- * 全局项目治理文档，参考 Spec Kit 的 constitution.md
+ * Global project governance documents, referencing Spec Kit's constitution.md
  */
 export interface SteeringContext {
-  /** 项目治理原则（constitution.md） */
+  /** Project governance principles (constitution.md) */
   constitution?: string;
-  /** 产品愿景和目标（product.md） */
+  /** Product vision and goals (product.md) */
   product?: string;
-  /** 技术栈和约束（tech.md） */
+  /** Tech stack and constraints (tech.md) */
   tech?: string;
-  /** 代码组织模式（structure.md） */
+  /** Code organization patterns (structure.md) */
   structure?: string;
 }
 
 /**
- * Spec 运行时状态
+ * Spec Runtime State
  *
- * 存储在 Zustand Store 中
+ * Stored in Zustand Store
  */
 export interface SpecState {
-  /** 当前活跃的 Spec */
+  /** Current active Spec */
   currentSpec: SpecMetadata | null;
-  /** Spec 文件路径 */
+  /** Spec file path */
   specPath: string | null;
-  /** 是否处于 Spec 模式 */
+  /** Whether in Spec mode */
   isActive: boolean;
-  /** Steering 上下文（缓存） */
+  /** Steering context (cached) */
   steeringContext: SteeringContext | null;
-  /** 最近使用的 Spec 列表（用于快速切换） */
+  /** Recently used Spec list (for quick switching) */
   recentSpecs: string[];
 }
 
 /**
- * Spec 文件类型
+ * Spec File Type
  */
 export type SpecFileType =
-  | 'proposal' // 提案描述（为什么做）
-  | 'spec' // 规格文件（做什么）
-  | 'requirements' // 需求文档（EARS 格式）
-  | 'design' // 设计文档（怎么做）
-  | 'tasks' // 任务分解（具体步骤）
-  | 'meta'; // 元数据（.meta.json）
+  | 'proposal' // Proposal description (why)
+  | 'spec' // Specification file (what)
+  | 'requirements' // Requirements doc (EARS format)
+  | 'design' // Design doc (how)
+  | 'tasks' // Task breakdown (specific steps)
+  | 'meta'; // Metadata (.meta.json)
 
 /**
- * Spec 文件路径映射
+ * Spec File Path Mapping
  */
 export const SPEC_FILE_NAMES: Record<SpecFileType, string> = {
   proposal: 'proposal.md',
@@ -141,12 +141,12 @@ export const SPEC_FILE_NAMES: Record<SpecFileType, string> = {
 };
 
 /**
- * Spec 目录结构
+ * Spec Directory Structure
  *
  * .blade/
- * ├── specs/              # 权威规格（单一信息源）
+ * ├── specs/              # Authoritative specs (single source of truth)
  * │   └── [domain]/spec.md
- * ├── changes/            # 活跃的变更提案
+ * ├── changes/            # Active change proposals
  * │   └── <feature>/
  * │       ├── proposal.md
  * │       ├── spec.md
@@ -154,25 +154,25 @@ export const SPEC_FILE_NAMES: Record<SpecFileType, string> = {
  * │       ├── design.md
  * │       ├── tasks.md
  * │       ├── .meta.json
- * │       └── specs/      # 规格增量（delta）
- * ├── archive/            # 已完成的变更
- * └── steering/           # 全局治理文档
+ * │       └── specs/      # Spec delta
+ * ├── archive/            # Completed changes
+ * └── steering/           # Global governance docs
  */
 export const SPEC_DIRS = {
-  /** 权威规格目录 */
+  /** Authoritative specs directory */
   SPECS: 'specs',
-  /** 活跃变更目录 */
+  /** Active changes directory */
   CHANGES: 'changes',
-  /** 归档目录 */
+  /** Archive directory */
   ARCHIVE: 'archive',
-  /** 治理文档目录 */
+  /** Governance docs directory */
   STEERING: 'steering',
-  /** 规格增量目录（在 changes/<feature>/ 下） */
+  /** Spec delta directory (under changes/<feature>/) */
   SPEC_DELTA: 'specs',
 } as const;
 
 /**
- * Steering 文件名
+ * Steering File Names
  */
 export const STEERING_FILES = {
   CONSTITUTION: 'constitution.md',
@@ -182,7 +182,7 @@ export const STEERING_FILES = {
 } as const;
 
 /**
- * 阶段顺序
+ * Phase Order
  */
 export const PHASE_ORDER: SpecPhase[] = [
   'init',
@@ -194,19 +194,19 @@ export const PHASE_ORDER: SpecPhase[] = [
 ];
 
 /**
- * 阶段转换规则
+ * Phase Transition Rules
  */
 export const PHASE_TRANSITIONS: Record<SpecPhase, SpecPhase[]> = {
   init: ['requirements'],
-  requirements: ['design', 'tasks'], // 可以跳过 design 直接到 tasks
+  requirements: ['design', 'tasks'], // Can skip design and go directly to tasks
   design: ['tasks'],
   tasks: ['implementation'],
-  implementation: ['done', 'tasks'], // 可以回退到 tasks 添加新任务
-  done: [], // 终态
+  implementation: ['done', 'tasks'], // Can go back to tasks to add new ones
+  done: [], // Terminal state
 };
 
 /**
- * 阶段显示名称
+ * Phase Display Names (Chinese for UI display)
  */
 export const PHASE_DISPLAY_NAMES: Record<SpecPhase, string> = {
   init: '初始化',
@@ -218,34 +218,38 @@ export const PHASE_DISPLAY_NAMES: Record<SpecPhase, string> = {
 };
 
 /**
- * 阶段对应的主要文件
+ * Phase Primary File Mapping
  */
 export const PHASE_PRIMARY_FILE: Record<SpecPhase, SpecFileType | null> = {
   init: 'proposal',
   requirements: 'requirements',
   design: 'design',
   tasks: 'tasks',
-  implementation: 'tasks', // 实现阶段主要更新 tasks 状态
+  implementation: 'tasks', // Implementation phase mainly updates task status
   done: null,
 };
 
 /**
- * Spec 操作结果
+ * Spec Operation Result
+ *
+ * Supports generics for more precise type hints
+ * - Default data structure is generic
+ * - Can specify more specific data type via generic parameter
  */
-export interface SpecOperationResult {
+export interface SpecOperationResult<T = {
+  spec?: SpecMetadata;
+  path?: string;
+  phase?: SpecPhase;
+  task?: SpecTask;
+}> {
   success: boolean;
   message: string;
-  data?: {
-    spec?: SpecMetadata;
-    path?: string;
-    phase?: SpecPhase;
-    task?: SpecTask;
-  };
+  data?: T;
   error?: string;
 }
 
 /**
- * Spec 验证结果
+ * Spec Validation Result
  */
 export interface SpecValidationResult {
   valid: boolean;
@@ -262,7 +266,7 @@ export interface SpecValidationResult {
 }
 
 /**
- * 验证问题
+ * Validation Issue
  */
 export interface SpecValidationIssue {
   severity: 'error' | 'warning' | 'info';
@@ -272,21 +276,21 @@ export interface SpecValidationIssue {
 }
 
 /**
- * Spec 搜索选项
+ * Spec Search Options
  */
 export interface SpecSearchOptions {
-  /** 是否包含归档的 Spec */
+  /** Include archived Specs */
   includeArchived?: boolean;
-  /** 按阶段过滤 */
+  /** Filter by phase */
   phase?: SpecPhase;
-  /** 按标签过滤 */
+  /** Filter by tags */
   tags?: string[];
-  /** 搜索关键词 */
+  /** Search keyword */
   query?: string;
 }
 
 /**
- * Spec 列表项
+ * Spec List Item
  */
 export interface SpecListItem {
   name: string;

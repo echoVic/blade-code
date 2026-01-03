@@ -169,6 +169,11 @@ export const getTodos = () => getState().app.todos;
 export const getConfig = () => getState().config.config;
 
 /**
+ * 获取当前 Spec
+ */
+export const getCurrentSpec = () => getState().spec.currentSpec;
+
+/**
  * 确保 store 已初始化（用于防御性编程）
  *
  * 特性：

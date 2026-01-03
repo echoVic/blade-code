@@ -18,7 +18,9 @@ import path from 'path';
 import { PermissionMode } from '../config/types.js';
 import { getSkillRegistry } from '../skills/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
+import type { SpecMetadata } from '../spec/types.js';
 import { DEFAULT_SYSTEM_PROMPT, PLAN_MODE_SYSTEM_PROMPT } from './default.js';
+import { buildSpecModePrompt } from './spec.js';
 
 /** available_skills 占位符的正则表达式 */
 const AVAILABLE_SKILLS_REGEX = /<available_skills>\s*<\/available_skills>/;
@@ -43,7 +45,7 @@ export interface BuildSystemPromptOptions {
   append?: string;
 
   /**
-   * 权限模式（Plan 模式会使用独立的 system prompt）
+   * 权限模式（Plan/Spec 模式会使用独立的 system prompt）
    */
   mode?: PermissionMode;
 
@@ -51,6 +53,16 @@ export interface BuildSystemPromptOptions {
    * 是否包含环境上下文（默认 true）
    */
   includeEnvironment?: boolean;
+
+  /**
+   * Spec 模式专用：当前 Spec 元数据
+   */
+  currentSpec?: SpecMetadata | null;
+
+  /**
+   * Spec 模式专用：Steering 上下文
+   */
+  steeringContext?: string | null;
 }
 
 /**
@@ -99,6 +111,8 @@ export async function buildSystemPrompt(
     append,
     mode,
     includeEnvironment = true,
+    currentSpec,
+    steeringContext,
   } = options;
 
   const parts: string[] = [];
@@ -114,15 +128,28 @@ export async function buildSystemPrompt(
   }
 
   // 2. 默认提示或替换内容
-  // Plan 模式使用独立的 system prompt
+  // Plan/Spec 模式使用独立的 system prompt
   const isPlanMode = mode === PermissionMode.PLAN;
-  const basePrompt = isPlanMode
-    ? PLAN_MODE_SYSTEM_PROMPT
-    : (replaceDefault ?? DEFAULT_SYSTEM_PROMPT);
+  const isSpecMode = mode === PermissionMode.SPEC;
+
+  let basePrompt: string;
+  let sourceName: string;
+
+  if (isSpecMode) {
+    // Spec 模式：使用专用提示词
+    basePrompt = buildSpecModePrompt(currentSpec ?? null, steeringContext ?? null);
+    sourceName = 'spec_mode_prompt';
+  } else if (isPlanMode) {
+    basePrompt = PLAN_MODE_SYSTEM_PROMPT;
+    sourceName = 'plan_mode_prompt';
+  } else {
+    basePrompt = replaceDefault ?? DEFAULT_SYSTEM_PROMPT;
+    sourceName = replaceDefault ? 'replace_default' : 'default';
+  }
 
   parts.push(basePrompt);
   sources.push({
-    name: isPlanMode ? 'plan_mode_prompt' : replaceDefault ? 'replace_default' : 'default',
+    name: sourceName,
     loaded: true,
     length: basePrompt.length,
   });

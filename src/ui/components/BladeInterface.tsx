@@ -136,12 +136,16 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const handlePermissionModeToggle = useMemoizedFn(async () => {
     const currentMode: PermissionMode = permissionMode;
 
-    // Shift+Tab 循环切换: DEFAULT → AUTO_EDIT → PLAN → DEFAULT
+    // Shift+Tab 循环切换: DEFAULT → AUTO_EDIT → PLAN → SPEC → DEFAULT
     let nextMode: PermissionMode;
     if (currentMode === PermissionMode.DEFAULT) {
       nextMode = PermissionMode.AUTO_EDIT;
     } else if (currentMode === PermissionMode.AUTO_EDIT) {
       nextMode = PermissionMode.PLAN;
+    } else if (currentMode === PermissionMode.PLAN) {
+      nextMode = PermissionMode.SPEC;
+    } else if (currentMode === PermissionMode.SPEC) {
+      nextMode = PermissionMode.DEFAULT;
     } else {
       nextMode = PermissionMode.DEFAULT;
     }
@@ -149,6 +153,17 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     try {
       // 使用 configActions 自动同步内存 + 持久化
       await configActions().setPermissionMode(nextMode);
+
+      // Spec 模式：显示引导消息
+      if (nextMode === PermissionMode.SPEC) {
+        sessionActions.addAssistantMessage(
+          '📋 **已进入 Spec 模式**\n\n' +
+            '请告诉我你想实现什么功能，我会引导你完成整个工作流：\n' +
+            '`提案 → 需求 → 设计 → 任务 → 实现`\n\n' +
+            '例如："实现用户认证功能" 或 "添加暗黑模式支持"\n\n' +
+            '_按 Shift+Tab 可退出 Spec 模式_'
+        );
+      }
     } catch (error) {
       logger.error(
         '❌ 权限模式切换失败:',

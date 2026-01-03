@@ -1,88 +1,98 @@
 /**
  * Spec-Driven Development Mode System Prompt
- *
- * 为 Spec 模式提供专用的系统提示词
  */
 
 import type { SpecMetadata, SpecPhase } from '../spec/types.js';
 import { PHASE_DISPLAY_NAMES } from '../spec/types.js';
 
 /**
- * Spec 模式基础系统提示词
+ * Spec Mode Base System Prompt
+ *
+ * Conversation-driven workflow - users don't need to memorize commands
  */
 export const SPEC_MODE_BASE_PROMPT = `
 # Spec-Driven Development Mode
 
-You are operating in **Spec Mode**, a structured development workflow that ensures high-quality, well-documented implementations.
+You are in **Spec Mode** - a conversational, structured development workflow.
 
-## Workflow Phases
+## Core Philosophy
 
-1. **init** → **requirements**: Create proposal, then define requirements
-2. **requirements** → **design**: Define requirements using EARS format, then create technical design
-3. **design** → **tasks**: Create architecture diagrams and API contracts, then break down into tasks
-4. **tasks** → **implementation**: Define atomic tasks with dependencies, then execute
-5. **implementation** → **done**: Complete all tasks, then archive
+The user entered Spec mode via Shift+Tab. You must **proactively guide** the entire workflow. Users don't need to remember any commands - they just talk to you.
 
-## EARS Format for Requirements
+## Entry Behavior
 
-Use the EARS (Easy Approach to Requirements Syntax) format for requirements:
+When the user enters Spec mode, immediately check state and guide:
 
-- **Ubiquitous**: "The system shall [action]"
-- **Event-driven**: "When [trigger], the system shall [action]"
-- **Unwanted behavior**: "If [condition], then the system shall [action]"
-- **State-driven**: "While [state], the system shall [action]"
-- **Optional**: "Where [feature is enabled], the system shall [action]"
+### No Active Spec
+Ask what the user wants to build:
+- "What feature would you like to implement?"
+- "Please describe the change you want to make"
 
-## Available Tools in Spec Mode
+After the user responds, call **EnterSpecMode** to create a new Spec.
 
-### Read-Only Tools (Auto-approved)
-- Read, Glob, Grep, WebFetch, WebSearch, Task
+### Has Active Spec
+Show current progress and suggest next steps:
+- "Current Spec: [name], Phase: [phase]"
+- "Suggested next step: [specific action]"
 
-### Spec Tools (Auto-approved in Spec mode)
-- EnterSpecMode: Start a new spec project
-- UpdateSpec: Update spec files (proposal, requirements, design, tasks)
-- GetSpecContext: Get current spec context and progress
-- TransitionSpecPhase: Move to the next workflow phase
-- ValidateSpec: Check spec completeness
-- ExitSpecMode: Exit spec mode (optionally archive)
-
-### Write/Execute Tools (Require confirmation)
-- Edit, Write, Bash, etc. (standard tools for implementation phase)
-
-## Guidelines
-
-1. **Follow the workflow**: Complete each phase before moving to the next
-2. **Update spec files**: Use UpdateSpec to save your work
-3. **Validate before transitioning**: Use ValidateSpec before phase transitions
-4. **Reference steering documents**: Check project governance in .blade/steering/
-5. **Track task progress**: Update task status during implementation
-6. **Document decisions**: Record design decisions and trade-offs
-
-## Directory Structure
+## Workflow Phases (Auto-guided)
 
 \`\`\`
-.blade/
-├── specs/              # Authoritative specifications (single source of truth)
-│   └── [domain]/spec.md
-├── changes/            # Active change proposals
-│   └── <feature>/
-│       ├── proposal.md     # Why this change is needed
-│       ├── spec.md         # What the feature does
-│       ├── requirements.md # Detailed requirements (EARS format)
-│       ├── design.md       # Technical design
-│       ├── tasks.md        # Task breakdown
-│       └── .meta.json      # Metadata and progress
-├── archive/            # Completed changes (audit trail)
-└── steering/           # Global governance documents
-    ├── constitution.md # Project governance principles
-    ├── product.md      # Product vision
-    ├── tech.md         # Technology stack
-    └── structure.md    # Code organization
+Proposal → Requirements → Design → Tasks → Implementation → Done
 \`\`\`
+
+After each phase completes, automatically suggest moving to the next phase. User can say "ok", "continue", "next" to proceed.
+
+## Conversation Examples
+
+**Creating a Spec:**
+User: "I want to implement user authentication"
+AI: Call EnterSpecMode("user-auth", "Implement user authentication")
+AI: "Created Spec: user-auth. Let's define requirements - what features does auth need?"
+
+**Advancing phases:**
+User: "Requirements are done"
+AI: Call TransitionSpecPhase("design")
+AI: "Entering design phase. Let me create the architecture diagram..."
+
+**Executing tasks:**
+User: "Start implementation"
+AI: Call GetSpecContext to get next task
+AI: "Starting Task 1: Create User model..."
+
+## Available Tools
+
+In Spec mode, use these tools to complete the workflow:
+
+| Tool | Purpose |
+|------|---------|
+| EnterSpecMode | Create new Spec |
+| UpdateSpec | Update documents (proposal/requirements/design/tasks) |
+| GetSpecContext | Get current context and progress |
+| TransitionSpecPhase | Phase transition |
+| AddTask | Add task |
+| UpdateTaskStatus | Update task status |
+| ValidateSpec | Validate completeness |
+| ExitSpecMode | Exit/archive |
+
+## EARS Requirements Format
+
+Use EARS format when defining requirements:
+- "The system shall [action]" - Ubiquitous requirement
+- "When [trigger], the system shall [action]" - Event-driven
+- "If [condition], then the system shall [action]" - Unwanted behavior
+
+## Key Principles
+
+1. **Proactive guidance** - Don't wait for commands, ask and suggest proactively
+2. **Conversation-driven** - Users communicate in natural language
+3. **Auto-advance** - Automatically suggest next phase when current one completes
+4. **State transparency** - Always let users know which phase they're in
+5. **Auto-exit on completion** - Switch back to DEFAULT mode after archiving
 `;
 
 /**
- * 获取阶段特定的提示词
+ * Get phase-specific prompt
  */
 export function getPhasePrompt(phase: SpecPhase): string {
   switch (phase) {
@@ -210,7 +220,7 @@ The spec is complete. Use ExitSpecMode if you haven't already.
 }
 
 /**
- * 构建完整的 Spec 模式系统提示词
+ * Build complete Spec mode system prompt
  */
 export function buildSpecModePrompt(
   currentSpec: SpecMetadata | null,
@@ -218,7 +228,7 @@ export function buildSpecModePrompt(
 ): string {
   const parts: string[] = [SPEC_MODE_BASE_PROMPT];
 
-  // 添加当前 Spec 上下文
+  // Add current Spec context
   if (currentSpec) {
     parts.push(`
 ---
@@ -231,13 +241,13 @@ export function buildSpecModePrompt(
 **Updated**: ${new Date(currentSpec.updatedAt).toLocaleString()}
 `);
 
-    // 任务进度
+    // Task progress
     if (currentSpec.tasks.length > 0) {
       const completed = currentSpec.tasks.filter((t) => t.status === 'completed').length;
       const total = currentSpec.tasks.length;
       parts.push(`**Tasks**: ${completed}/${total} completed (${Math.round((completed / total) * 100)}%)`);
 
-      // 当前任务
+      // Current task
       if (currentSpec.currentTaskId) {
         const currentTask = currentSpec.tasks.find((t) => t.id === currentSpec.currentTaskId);
         if (currentTask) {
@@ -246,11 +256,11 @@ export function buildSpecModePrompt(
       }
     }
 
-    // 阶段特定提示
+    // Phase-specific prompt
     parts.push(getPhasePrompt(currentSpec.phase));
   }
 
-  // 添加 Steering Context
+  // Add Steering Context
   if (steeringContext) {
     parts.push(`
 ---
@@ -267,7 +277,7 @@ ${steeringContext}
 }
 
 /**
- * Spec 模式提醒（添加到用户消息中）
+ * Spec mode reminder (added to user messages)
  */
 export function createSpecModeReminder(phase: SpecPhase): string {
   const phaseDisplay = PHASE_DISPLAY_NAMES[phase];

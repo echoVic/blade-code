@@ -13,6 +13,7 @@
   * [Slash 命令](guides/slash-commands.md)
   * [Subagents 系统](guides/subagents.md)
   * [Plan 模式](guides/plan-mode.md)
+  * [Spec 模式](guides/spec-mode.md)
   * [@ 文件提及](guides/at-file-mentions.md)
   * [Markdown 支持](guides/markdown-support.md)
 

@@ -16,6 +16,28 @@ Spec-Driven Development (SDD) 是一种结构化的开发方法论，核心理�
 
 ## 快速开始
 
+### 进入 Spec 模式
+
+有两种方式进入 Spec 模式：
+
+**方式一：Shift+Tab 切换**
+
+按 `Shift+Tab` 循环切换模式：
+
+```
+DEFAULT → AUTO_EDIT → PLAN → SPEC → DEFAULT
+```
+
+状态栏会显示当前模式和进度：
+
+```
+📋 spec: tasks 3/5 (shift+tab to cycle)
+```
+
+**方式二：/spec 命令**
+
+直接使用 `/spec` 命令创建或加载 Spec。
+
 ### 创建新的 Spec
 
 ```bash
@@ -108,6 +130,16 @@ Spec Mode 遵循四个主要阶段：
 ```bash
 /spec apply
 ```
+
+### 5. 完成与归档
+
+当所有任务完成后，归档 Spec：
+
+```bash
+/spec archive
+```
+
+**自动退出**：Spec 完成（进入 `done` 阶段）后，系统会自动退出 Spec 模式，切换回 DEFAULT 模式。这让你可以无缝继续其他工作。
 
 ## 命令参考
 
@@ -222,6 +254,8 @@ Steering Documents 是项目级的全局治理文档，为 AI 提供上下文：
 | 阶段 | 单阶段 | 四阶段工作流 |
 | 持久化 | 临时 | 永久归档 |
 | 适用场景 | Bug 修复、小改动 | 新功能、重构 |
+| 模式切换 | Shift+Tab | Shift+Tab |
+| 状态栏 | `‖ plan mode on` | `📋 spec: tasks 3/5` |
 
 ## 故障排除
 

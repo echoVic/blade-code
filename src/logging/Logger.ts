@@ -37,6 +37,7 @@ export enum LogCategory {
   CHAT = 'Chat',
   GENERAL = 'General',
   PROMPTS = 'Prompts',
+  SPEC = 'Spec',
 }
 
 export interface LoggerOptions {
