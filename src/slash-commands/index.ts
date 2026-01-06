@@ -19,6 +19,7 @@ import { logoutCommand } from './logout.js';
 import modelCommand from './model.js';
 import permissionsCommand from './permissions.js';
 import skillsCommand from './skills.js';
+import tasksCommand from './tasks.js';
 import themeCommand from './theme.js';
 import type {
   CommandSuggestion,
@@ -41,6 +42,7 @@ const slashCommands: SlashCommandRegistry = {
   hooks: hooksCommand,
   login: loginCommand,
   logout: logoutCommand,
+  tasks: tasksCommand,
 };
 
 /**

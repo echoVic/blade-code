@@ -5,9 +5,12 @@
  * 2. 模型决策 - 让模型自己决定用哪个 subagent_type
  * 3. subagent_type 参数必需 - 明确指定要使用的 subagent
  * 4. 工具隔离 - 每个 subagent 配置自己的工具白名单
+ * 5. 后台执行 - 支持 run_in_background 参数
+ * 6. 会话恢复 - 支持 resume 参数
  */
 
 import { z } from 'zod';
+import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
 import { SubagentExecutor } from '../../../agent/subagents/SubagentExecutor.js';
 import { subagentRegistry } from '../../../agent/subagents/SubagentRegistry.js';
 import type {
@@ -56,6 +59,14 @@ export const taskTool = createTool({
       .max(100)
       .describe('Short task description (3-5 words)'),
     prompt: z.string().min(10).describe('Detailed task instructions'),
+    run_in_background: z
+      .boolean()
+      .default(false)
+      .describe('Set to true to run this agent in the background. Use TaskOutput to read the output later.'),
+    resume: z
+      .string()
+      .optional()
+      .describe('Optional agent ID to resume from. If provided, the agent will continue from the previous execution transcript.'),
   }),
 
   // 工具描述
@@ -81,9 +92,13 @@ ${subagentRegistry.getDescriptionsForPrompt()}
 - Other tasks that are not related to the agent descriptions above
 
 **Usage notes:**
+- Always include a short description (3-5 words) summarizing what the agent will do
 - Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
 - When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
-- Each agent invocation is stateless. You will not be able to send additional messages to the agent, nor will the agent be able to communicate with you outside of its final report. Therefore, your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.
+- You can optionally run agents in the background using the run_in_background parameter. When an agent runs in the background, you will need to use TaskOutput to retrieve its results once it's done. You can continue to work while background agents run - When you need their results to continue you can use TaskOutput in blocking mode to pause and wait for their results.
+- Agents can be resumed using the \`resume\` parameter by passing the agent ID from a previous invocation. When resumed, the agent continues with its full previous context preserved. When NOT resuming, each invocation starts fresh and you should provide a detailed task description with all necessary context.
+- When the agent is done, it will return a single message back to you along with its agent ID. You can use this ID to resume the agent later if needed for follow-up work.
+- Provide clear, detailed prompts so the agent can work autonomously and return exactly the information you need.
 - The agent's outputs should generally be trusted
 - Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent
 - If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
@@ -119,16 +134,12 @@ ${subagentRegistry.getDescriptionsForPrompt()}
 
   // 执行函数
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
-    const { subagent_type, description, prompt } = params;
+    const { subagent_type, description, prompt, run_in_background = false, resume } = params;
     const { updateOutput } = context;
 
     try {
       // 1. 获取 subagent 配置
-      // 诊断日志：检查 subagentRegistry 状态
       const registeredNames = subagentRegistry.getAllNames();
-      console.log(
-        `[Task] subagentRegistry 状态: registered=${registeredNames.length}, names=[${registeredNames.join(', ')}], looking for="${subagent_type}"`
-      );
 
       const subagentConfig = subagentRegistry.getSubagent(subagent_type);
       if (!subagentConfig) {
@@ -143,12 +154,23 @@ ${subagentRegistry.getDescriptionsForPrompt()}
         };
       }
 
+      // 2. 处理 resume 模式
+      if (resume) {
+        return handleResume(resume, prompt, subagentConfig, description, context);
+      }
+
+      // 3. 处理后台执行模式
+      if (run_in_background) {
+        return handleBackgroundExecution(subagentConfig, description, prompt, context);
+      }
+
+      // 4. 同步执行模式（原有逻辑）
       updateOutput?.(`🚀 启动 ${subagent_type} subagent: ${description}`);
 
-      // 2. 创建执行器
+      // 创建执行器
       const executor = new SubagentExecutor(subagentConfig);
 
-      // 3. 构建执行上下文
+      // 构建执行上下文
       const subagentContext: SubagentContext = {
         prompt,
         parentSessionId: context.sessionId,
@@ -267,3 +289,130 @@ ${subagentRegistry.getDescriptionsForPrompt()}
   extractSignatureContent: (params) => `${params.subagent_type}:${params.description}`,
   abstractPermissionRule: () => '',
 });
+
+/**
+ * 处理后台执行模式
+ */
+function handleBackgroundExecution(
+  subagentConfig: { name: string; description: string; systemPrompt?: string; tools?: string[] },
+  description: string,
+  prompt: string,
+  context: ExecutionContext
+): ToolResult {
+  const manager = BackgroundAgentManager.getInstance();
+
+  // 启动后台 agent
+  const agentId = manager.startBackgroundAgent({
+    config: subagentConfig,
+    description,
+    prompt,
+    parentSessionId: context.sessionId,
+    permissionMode: context.permissionMode,
+  });
+
+  return {
+    success: true,
+    llmContent: {
+      agent_id: agentId,
+      status: 'running',
+      message: `Agent started in background. Use TaskOutput(task_id: "${agentId}") to retrieve results.`,
+    },
+    displayContent:
+      `🚀 后台 Agent 已启动\n\n` +
+      `Agent ID: ${agentId}\n` +
+      `类型: ${subagentConfig.name}\n` +
+      `任务: ${description}\n\n` +
+      `💡 使用 TaskOutput 工具获取结果`,
+    metadata: {
+      agent_id: agentId,
+      subagent_type: subagentConfig.name,
+      description,
+      background: true,
+    },
+  };
+}
+
+/**
+ * 处理 resume 模式
+ */
+function handleResume(
+  agentId: string,
+  prompt: string,
+  subagentConfig: { name: string; description: string; systemPrompt?: string; tools?: string[] },
+  description: string,
+  context: ExecutionContext
+): ToolResult {
+  const manager = BackgroundAgentManager.getInstance();
+
+  // 检查会话是否存在
+  const session = manager.getAgent(agentId);
+  if (!session) {
+    return {
+      success: false,
+      llmContent: `Cannot resume agent ${agentId}: session not found`,
+      displayContent: `❌ 无法恢复 Agent: ${agentId}\n\n会话不存在或已过期`,
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: `Agent session not found: ${agentId}`,
+      },
+    };
+  }
+
+  // 检查是否正在运行
+  if (manager.isRunning(agentId)) {
+    return {
+      success: false,
+      llmContent: `Cannot resume agent ${agentId}: still running`,
+      displayContent: `❌ 无法恢复 Agent: ${agentId}\n\nAgent 仍在运行中，请使用 TaskOutput 获取结果`,
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: `Agent is still running: ${agentId}`,
+      },
+    };
+  }
+
+  // 恢复 agent
+  const newAgentId = manager.resumeAgent(
+    agentId,
+    prompt,
+    subagentConfig,
+    context.sessionId,
+    context.permissionMode
+  );
+
+  if (!newAgentId) {
+    return {
+      success: false,
+      llmContent: `Failed to resume agent ${agentId}`,
+      displayContent: `❌ 恢复 Agent 失败: ${agentId}`,
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: `Failed to resume agent: ${agentId}`,
+      },
+    };
+  }
+
+  return {
+    success: true,
+    llmContent: {
+      agent_id: newAgentId,
+      status: 'running',
+      resumed_from: agentId,
+      message: `Agent resumed in background. Use TaskOutput(task_id: "${newAgentId}") to retrieve results.`,
+    },
+    displayContent:
+      `🔄 Agent 已恢复执行\n\n` +
+      `Agent ID: ${newAgentId}\n` +
+      `恢复自: ${agentId}\n` +
+      `类型: ${subagentConfig.name}\n` +
+      `任务: ${description}\n\n` +
+      `💡 使用 TaskOutput 工具获取结果`,
+    metadata: {
+      agent_id: newAgentId,
+      resumed_from: agentId,
+      subagent_type: subagentConfig.name,
+      description,
+      background: true,
+    },
+  };
+}

@@ -48,10 +48,65 @@ vi.mock('../../../src/spec/SpecFileManager.js', () => ({
   SpecFileManager: vi.fn().mockImplementation(() => mockFileManager),
 }));
 
+// Mock store state
+let mockSpecState = {
+  currentSpec: null as any,
+  specPath: null as string | null,
+  isActive: false,
+  phase: null as string | null,
+  tasks: [] as any[],
+  steeringContext: null as any,
+  currentTaskId: null as string | null,
+  recentSpecs: [] as string[],
+};
+
+const resetMockState = () => {
+  mockSpecState = {
+    currentSpec: null,
+    specPath: null,
+    isActive: false,
+    phase: null,
+    tasks: [],
+    steeringContext: null,
+    currentTaskId: null,
+    recentSpecs: [],
+  };
+};
+
+vi.mock('../../../src/store/vanilla.js', () => ({
+  specActions: () => ({
+    reset: vi.fn(),
+    setCurrentSpec: vi.fn(),
+    setSpecPath: vi.fn(),
+    setActive: vi.fn(),
+    setPhase: vi.fn(),
+    addTask: vi.fn(),
+    updateTask: vi.fn(),
+    setTasks: vi.fn(),
+    setSteeringContext: vi.fn(),
+    updateState: vi.fn(),
+    update: vi.fn(),
+  }),
+  getState: () => ({
+    spec: mockSpecState,
+  }),
+  vanillaStore: {
+    getState: () => ({ spec: mockSpecState }),
+    setState: (updater: any) => {
+      const result = updater({ spec: mockSpecState });
+      Object.assign(mockSpecState, result.spec);
+    },
+    subscribe: vi.fn(),
+  },
+}));
+
 describe('SpecManager', () => {
   let specManager: SpecManager;
 
   beforeEach(async () => {
+    // Reset store state first
+    resetMockState();
+
     // Reset singleton
     SpecManager.resetInstance();
     specManager = SpecManager.getInstance();

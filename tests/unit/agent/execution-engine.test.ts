@@ -17,8 +17,6 @@ const mockChatService = {
   updateConfig: vi.fn(),
 };
 
-// 移除未使用的 mockContextManager
-
 describe('ExecutionEngine', () => {
   let executionEngine: ExecutionEngine;
 
@@ -36,15 +34,15 @@ describe('ExecutionEngine', () => {
     });
   });
 
-  describe('简单任务执行', () => {
-    it('应该能够执行简单任务', async () => {
+  describe('任务执行', () => {
+    it('应该能够执行任务', async () => {
       const task = {
         id: 'test-task',
         type: 'simple' as const,
         prompt: 'Test message',
       };
 
-      const response = await executionEngine.executeSimpleTask(task);
+      const response = await executionEngine.executeTask(task);
 
       expect(response).toBeDefined();
       expect(response.taskId).toBe('test-task');
@@ -59,45 +57,11 @@ describe('ExecutionEngine', () => {
         prompt: 'Test message',
       };
 
-      await executionEngine.executeSimpleTask(task);
+      await executionEngine.executeTask(task);
 
       expect(mockChatService.chat).toHaveBeenCalledWith([
         { role: 'user', content: 'Test message' },
       ]);
-    });
-  });
-
-  describe('并行任务执行', () => {
-    it('应该能够执行并行任务', async () => {
-      const task = {
-        id: 'test-task',
-        type: 'parallel' as const,
-        prompt: 'Test parallel task',
-      };
-
-      const response = await executionEngine.executeParallelTask(task);
-
-      expect(response).toBeDefined();
-      expect(response.taskId).toBe('test-task');
-      expect(response.content).toContain('Mock response');
-      expect((response.metadata as any).subTaskCount).toBe(2);
-    });
-  });
-
-  describe('隐式压束任务执行', () => {
-    it('应该能够执行隐式压束任务', async () => {
-      const task = {
-        id: 'test-task',
-        type: 'steering' as const,
-        prompt: 'Test steering task',
-      };
-
-      const response = await executionEngine.executeSteeringTask(task);
-
-      expect(response).toBeDefined();
-      expect(response.taskId).toBe('test-task');
-      // 验证响应包含预期的内容
-      expect(response.content).toBeDefined();
     });
   });
 
@@ -111,13 +75,10 @@ describe('ExecutionEngine', () => {
         prompt: 'Test message',
       };
 
-      await expect(executionEngine.executeSimpleTask(task)).rejects.toThrow(
-        'Execution Error'
-      );
+      await expect(executionEngine.executeTask(task)).rejects.toThrow('Execution Error');
     });
 
     it('应该正确处理上下文构建错误', async () => {
-      // 模拟聊天服务抛出错误（相当于上下文构建错误）
       mockChatService.chat.mockRejectedValueOnce(new Error('Context Error'));
 
       const task = {
@@ -126,22 +87,42 @@ describe('ExecutionEngine', () => {
         prompt: 'Test message',
       };
 
-      await expect(executionEngine.executeSimpleTask(task)).rejects.toThrow(
-        'Context Error'
-      );
+      await expect(executionEngine.executeTask(task)).rejects.toThrow('Context Error');
     });
   });
 
-  describe('任务状态管理', () => {
-    it('应该正确跟踪活动任务', async () => {
-      const _task = {
-        id: 'test-task',
-        type: 'simple' as const,
-        prompt: 'Test message',
-      };
+  describe('上下文管理', () => {
+    it('应该提供 ContextManager', () => {
+      const contextManager = executionEngine.getContextManager();
+      expect(contextManager).toBeDefined();
+    });
 
-      // 跳过活动任务测试，因为 ExecutionEngine 不再跟踪活动任务
-      expect(true).toBe(true);
+    it('应该提供 MemoryAdapter', () => {
+      const memoryAdapter = executionEngine.getMemoryAdapter();
+      expect(memoryAdapter).toBeDefined();
+      expect(memoryAdapter.getMessages()).toEqual([]);
+    });
+
+    it('MemoryAdapter 应该能够添加和获取消息', () => {
+      const memoryAdapter = executionEngine.getMemoryAdapter();
+
+      memoryAdapter.addMessage({ role: 'user', content: 'Hello' });
+      memoryAdapter.addMessage({ role: 'assistant', content: 'Hi there' });
+
+      const messages = memoryAdapter.getMessages();
+      expect(messages).toHaveLength(2);
+      expect(messages[0].content).toBe('Hello');
+      expect(messages[1].content).toBe('Hi there');
+    });
+
+    it('MemoryAdapter 应该能够清空上下文', () => {
+      const memoryAdapter = executionEngine.getMemoryAdapter();
+
+      memoryAdapter.addMessage({ role: 'user', content: 'Hello' });
+      expect(memoryAdapter.getContextSize()).toBe(1);
+
+      memoryAdapter.clearContext();
+      expect(memoryAdapter.getContextSize()).toBe(0);
     });
   });
 });

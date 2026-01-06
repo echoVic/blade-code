@@ -67,7 +67,7 @@ Before executing commands:
       'You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). If not specified, commands will timeout after 30000ms (30 seconds)',
       'It is very helpful if you write a clear, concise description of what this command does in 5-10 words',
       'If the output exceeds 30000 characters, output will be truncated before being returned to you',
-      'You can use the run_in_background parameter to run the command in the background, which allows you to continue working while the command runs. You can monitor the output using the BashOutput tool. You do not need to use "&" at the end of the command when using this parameter',
+      'You can use the run_in_background parameter to run the command in the background, which allows you to continue working while the command runs. You can monitor the output using the TaskOutput tool. You do not need to use "&" at the end of the command when using this parameter',
       'Avoid using Bash with the find, grep, cat, head, tail, sed, awk, or echo commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:',
       '  - File search: Use Glob (NOT find or ls)',
       '  - Content search: Use Grep (NOT grep or rg)',
@@ -295,7 +295,7 @@ function executeInBackground(
     `✅ 命令已在后台启动\n` +
     `🆔 进程 ID: ${backgroundProcess.pid}\n` +
     `💡 Bash ID: ${backgroundProcess.id}\n` +
-    `⚠️ 使用 BashOutput/KillShell 管理后台进程`;
+    `⚠️ 使用 TaskOutput/KillShell 管理后台进程`;
 
   return {
     success: true,

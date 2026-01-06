@@ -3,6 +3,7 @@ import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { useEffect, useRef } from 'react';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { streamDebug } from '../../logging/StreamDebugLogger.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
@@ -470,6 +471,10 @@ Remember: Follow the above instructions carefully to complete the user's request
           permissionMode: permissionMode,
         };
 
+        let contentDeltaCount = 0;
+        let contentDeltaTotalLen = 0;
+        let onContentCallCount = 0;
+
         const loopOptions = {
           // 启用流式输出（默认）
           stream: true,
@@ -479,6 +484,13 @@ Remember: Follow the above instructions carefully to complete the user's request
           // 流式内容增量
           // appendAssistantContent 会自动创建流式消息（如果尚未创建）
           onContentDelta: (delta: string) => {
+            contentDeltaCount++;
+            contentDeltaTotalLen += delta.length;
+            streamDebug('useCommandHandler', 'onContentDelta', {
+              callCount: contentDeltaCount,
+              deltaLen: delta.length,
+              totalLen: contentDeltaTotalLen,
+            });
             sessionActions.appendAssistantContent(delta);
           },
 
@@ -497,23 +509,30 @@ Remember: Follow the above instructions carefully to complete the user's request
             sessionActions.setCurrentThinkingContent(content);
           },
 
-          // LLM 输出内容
+          // 流式输出结束信号
           // 流式模式下：增量已通过 onContentDelta 发送，这里标记流结束并完成消息
+          onStreamEnd: () => {
+            streamDebug('useCommandHandler', 'onStreamEnd', {
+              contentDeltaCallCount: contentDeltaCount,
+              contentDeltaTotalLen,
+            });
+            sessionActions.finalizeStreamingMessage();
+          },
+
+          // LLM 输出内容（仅非流式模式）
           // 非流式 fallback 模式下：这里创建完整消息
           onContent: (content: string) => {
+            onContentCallCount++;
             // abort 检查已在 Agent 内部统一处理
             if (!content.trim()) return;
 
-            // 检查是否有活动的流式消息
-            const hasStreamingMessage = getState().session.currentStreamingMessageId !== null;
+            streamDebug('useCommandHandler', 'onContent (non-stream)', {
+              callCount: onContentCallCount,
+              contentLen: content.length,
+            });
 
-            if (hasStreamingMessage) {
-              // 流式模式：完成当前流式消息
-              sessionActions.finalizeStreamingMessage();
-            } else {
-              // 非流式 fallback：直接添加完整消息
-              sessionActions.addAssistantMessageAndClearThinking(content);
-            }
+            // 非流式 fallback：直接添加完整消息
+            sessionActions.addAssistantMessageAndClearThinking(content);
           },
           // 工具调用开始
           onToolStart: (toolCall: ChatCompletionMessageToolCall) => {

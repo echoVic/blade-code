@@ -55,45 +55,16 @@ export interface AgentOptions {
 
 export interface AgentTask {
   id: string;
-  type: 'simple' | 'complex' | 'recursive' | 'parallel' | 'steering';
+  type: 'simple';
   prompt: string;
   context?: Record<string, unknown>;
-  priority?: number;
   metadata?: Record<string, unknown>;
 }
 
 export interface AgentResponse {
   taskId: string;
   content: string;
-  subAgentResults?: SubAgentResult[];
-  executionPlan?: ExecutionStep[];
   metadata?: Record<string, unknown>;
-}
-
-export interface SubAgentResult {
-  agentName: string;
-  taskType: string;
-  result: unknown;
-  executionTime: number;
-}
-
-export interface ExecutionStep {
-  id: string;
-  type: 'llm' | 'tool' | 'subagent';
-  description: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
-  result?: unknown;
-  error?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface SubAgentInfo {
-  name: string;
-  description: string;
-  capabilities: string[];
-  specialization: string;
-  maxConcurrentTasks: number;
-  priority: number;
 }
 
 export interface ContextData {
@@ -139,7 +110,8 @@ export interface LoopOptions {
   // 🆕 流式信息显示回调
   onContentDelta?: (delta: string) => void; // 流式文本片段
   onThinkingDelta?: (delta: string) => void; // 流式推理内容片段（Thinking 模型）
-  onContent?: (content: string) => void; // 完整的 LLM 输出内容
+  onStreamEnd?: () => void; // 流式输出结束信号（用于 finalize 流式消息）
+  onContent?: (content: string) => void; // 完整的 LLM 输出内容（仅非流式模式）
   onThinking?: (content: string) => void; // LLM 推理过程(深度推理模型)
   onToolStart?: (
     toolCall: ChatCompletionMessageToolCall,

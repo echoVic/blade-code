@@ -17,11 +17,11 @@ import { specTools } from './spec/index.js';
 // 搜索工具
 import { globTool, grepTool } from './search/index.js';
 // Shell 命令工具
-import { bashOutputTool, bashTool, killShellTool } from './shell/index.js';
+import { bashTool, killShellTool } from './shell/index.js';
 // System 工具
 import { askUserQuestionTool, skillTool, slashCommandTool } from './system/index.js';
 // 任务管理工具
-import { taskTool } from './task/index.js';
+import { taskOutputTool, taskTool } from './task/index.js';
 // Todo 工具
 import { createTodoWriteTool } from './todo/index.js';
 // 网络工具
@@ -61,17 +61,17 @@ export async function getBuiltinTools(opts?: {
     globTool,
     grepTool,
 
-    // Shell 工具: Bash, BashOutput, KillShell
+    // Shell 工具: Bash, KillShell
     bashTool,
-    bashOutputTool,
     killShellTool,
 
     // 网络工具: WebFetch, WebSearch
     webFetchTool,
     webSearchTool,
 
-    // 任务管理: Task
+    // 任务管理: Task, TaskOutput
     taskTool,
+    taskOutputTool,
 
     // Todo: TodoWrite
     createTodoWriteTool({ sessionId, configDir }),

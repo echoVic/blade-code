@@ -215,7 +215,7 @@ export class PermissionStage implements PipelineStage {
    * 应用权限模式覆盖规则
    *
    * 权限模式行为：
-   * - DEFAULT: ReadOnly 工具（Read/Glob/Grep/WebFetch/WebSearch/BashOutput/TodoWrite/Plan）自动批准，其他需要确认
+   * - DEFAULT: ReadOnly 工具（Read/Glob/Grep/WebFetch/WebSearch/TaskOutput/TodoWrite/Plan）自动批准，其他需要确认
    * - AUTO_EDIT: ReadOnly + Write 工具自动批准，其他需要确认
    * - YOLO: 所有工具自动批准
    * - PLAN: 仅 ReadOnly 工具允许，其他全部拒绝

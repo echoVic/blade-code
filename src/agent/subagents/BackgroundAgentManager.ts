@@ -75,13 +75,41 @@ export class BackgroundAgentManager {
   // 会话存储
   private sessionStore = AgentSessionStore.getInstance();
 
-  private constructor() {}
+  private constructor() {
+    this.cleanupOrphanedSessions();
+  }
 
   static getInstance(): BackgroundAgentManager {
     if (!BackgroundAgentManager.instance) {
       BackgroundAgentManager.instance = new BackgroundAgentManager();
     }
     return BackgroundAgentManager.instance;
+  }
+
+  private cleanupOrphanedSessions(): void {
+    const sessions = this.sessionStore.listSessions();
+    const now = Date.now();
+    const maxOrphanAge = 30 * 60 * 1000;
+
+    for (const session of sessions) {
+      if (session.status === 'running') {
+        const isInMemory = this.runningAgents.has(session.id);
+        const age = now - session.lastActiveAt;
+
+        if (!isInMemory || age > maxOrphanAge) {
+          logger.warn(`Cleaning up orphaned agent session: ${session.id}`);
+          this.sessionStore.updateSession(session.id, {
+            status: 'failed',
+            result: {
+              success: false,
+              message: '',
+              error: 'Session was orphaned (process restart or timeout)',
+            },
+            completedAt: now,
+          });
+        }
+      }
+    }
   }
 
   /**

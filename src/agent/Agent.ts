@@ -22,6 +22,7 @@ import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { HookManager } from '../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+import { streamDebug } from '../logging/StreamDebugLogger.js';
 import { loadMcpConfigFromCli } from '../mcp/loadMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { buildSystemPrompt, createPlanModeReminder } from '../prompts/index.js';
@@ -50,7 +51,7 @@ import {
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
-import { type Tool, type ToolResult } from '../tools/types/index.js';
+import { type Tool, type ToolResult, ToolErrorType } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
 import { isThinkingModel } from '../utils/modelDetection.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
@@ -262,19 +263,7 @@ export class Agent {
     try {
       this.log(`开始执行任务: ${task.id}`);
 
-      // 根据任务类型选择执行策略
-      let response: AgentResponse;
-
-      if (task.type === 'parallel') {
-        // 并行子Agent执行
-        response = await this.executionEngine.executeParallelTask(task);
-      } else if (task.type === 'steering') {
-        // 隐式压束执行
-        response = await this.executionEngine.executeSteeringTask(task);
-      } else {
-        // 默认简单执行
-        response = await this.executionEngine.executeSimpleTask(task);
-      }
+      const response = await this.executionEngine.executeTask(task);
 
       this.activeTask = undefined;
       this.log(`任务执行完成: ${task.id}`);
@@ -777,6 +766,13 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           ? await this.processStreamResponse(messages, tools, options)
           : await this.chatService.chat(messages, tools, options?.signal);
 
+        streamDebug('executeLoop', 'after processStreamResponse/chat', {
+          isStreamEnabled,
+          turnResultContentLen: turnResult.content?.length ?? 0,
+          turnResultToolCallsLen: turnResult.toolCalls?.length ?? 0,
+          hasReasoningContent: !!turnResult.reasoningContent,
+        });
+
         // 累加 token 使用量，并保存真实的 prompt tokens 用于下一轮压缩检查
         if (turnResult.usage) {
           if (turnResult.usage.totalTokens) {
@@ -835,16 +831,21 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         }
 
         // 🆕 如果 LLM 返回了 content，通知 UI
-        // 流式模式下：增量已通过 onContentDelta 发送，这里调用 onContent 标记流结束
-        // 非流式模式下：这里是唯一的内容通知
+        // 流式模式下：增量已通过 onContentDelta 发送，调用 onStreamEnd 标记结束
+        // 非流式模式下：调用 onContent 发送完整内容
         // 注意：检查 abort 状态，避免取消后仍然触发回调
-        if (
-          turnResult.content &&
-          turnResult.content.trim() &&
-          options?.onContent &&
-          !options.signal?.aborted
-        ) {
-          options.onContent(turnResult.content);
+        if (turnResult.content && turnResult.content.trim() && !options?.signal?.aborted) {
+          if (isStreamEnabled) {
+            streamDebug('executeLoop', 'calling onStreamEnd (stream mode)', {
+              contentLen: turnResult.content.length,
+            });
+            options?.onStreamEnd?.();
+          } else if (options?.onContent) {
+            streamDebug('executeLoop', 'calling onContent (non-stream mode)', {
+              contentLen: turnResult.content.length,
+            });
+            options.onContent(turnResult.content);
+          }
         }
 
         // 4. 检查是否需要工具调用（任务完成条件）
@@ -989,45 +990,56 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           logger.warn('[Agent] 保存助手工具调用消息失败:', error);
         }
 
-        // 6. 执行每个工具调用并注入结果
-        for (const toolCall of turnResult.toolCalls) {
-          if (toolCall.type !== 'function') continue;
+        // 6. 并行执行所有工具调用（Claude Code 风格）
+        // LLM 被提示只把无依赖的工具放在同一响应中，因此可以安全地并行执行
 
-          // 在每个工具执行前检查取消信号
-          if (options?.signal?.aborted) {
-            logger.info(
-              `[Agent] Aborting before tool ${toolCall.function.name} due to signal.aborted=true`
-            );
-            return {
-              success: false,
-              error: {
-                type: 'aborted',
-                message: '任务已被用户中止',
-              },
-              metadata: {
-                turnsCount,
-                toolCallsCount: allToolResults.length,
-                duration: Date.now() - startTime,
-              },
-            };
+        // 在执行前检查取消信号
+        if (options?.signal?.aborted) {
+          logger.info('[Agent] Aborting before tool execution due to signal.aborted=true');
+          return {
+            success: false,
+            error: {
+              type: 'aborted',
+              message: '任务已被用户中止',
+            },
+            metadata: {
+              turnsCount,
+              toolCallsCount: allToolResults.length,
+              duration: Date.now() - startTime,
+            },
+          };
+        }
+
+        // 过滤出有效的函数调用
+        const functionCalls = turnResult.toolCalls.filter(
+          (tc) => tc.type === 'function'
+        );
+
+        // 触发所有工具开始回调（并行执行前）
+        if (options?.onToolStart && !options.signal?.aborted) {
+          for (const toolCall of functionCalls) {
+            const toolDef = this.executionPipeline
+              .getRegistry()
+              .get(toolCall.function.name);
+            const toolKind = toolDef?.kind as
+              | 'readonly'
+              | 'write'
+              | 'execute'
+              | undefined;
+            options.onToolStart(toolCall, toolKind);
           }
+        }
 
+        // 定义单个工具执行的 Promise
+        const executeToolCall = async (
+          toolCall: (typeof functionCalls)[0]
+        ): Promise<{
+          toolCall: typeof toolCall;
+          result: ToolResult;
+          toolUseUuid: string | null;
+          error?: Error;
+        }> => {
           try {
-            // 🆕 触发工具开始回调（流式显示）
-            // 注意：检查 abort 状态，避免取消后仍然触发回调
-            if (options?.onToolStart && !options.signal?.aborted) {
-              // 获取工具定义以传递 kind
-              const toolDef = this.executionPipeline
-                .getRegistry()
-                .get(toolCall.function.name);
-              const toolKind = toolDef?.kind as
-                | 'readonly'
-                | 'write'
-                | 'execute'
-                | undefined;
-              options.onToolStart(toolCall, toolKind);
-            }
-
             // 解析工具参数
             const params = JSON.parse(toolCall.function.arguments);
 
@@ -1037,7 +1049,6 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
                 params.todos = JSON.parse(params.todos);
                 this.log('[Agent] 自动修复了字符串化的 todos 参数');
               } catch {
-                // 解析失败,保持原样,让后续验证报错
                 this.error('[Agent] todos 参数格式异常,将由验证层处理');
               }
             }
@@ -1051,14 +1062,14 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
                   context.sessionId,
                   toolCall.function.name,
                   params,
-                  lastMessageUuid // 链接到助手消息
+                  lastMessageUuid
                 );
               }
             } catch (error) {
               logger.warn('[Agent] 保存工具调用失败:', error);
             }
 
-            // 使用 ExecutionPipeline 执行工具（自动走完6阶段流程）
+            // 使用 ExecutionPipeline 执行工具
             const signalToUse = options?.signal;
             if (!signalToUse) {
               logger.error(
@@ -1066,7 +1077,6 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
               );
             }
 
-            // 调试日志：追踪传递给 ExecutionPipeline 的 confirmationHandler
             logger.debug(
               '[Agent] Passing confirmationHandler to ExecutionPipeline.execute:',
               {
@@ -1086,12 +1096,11 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
                 workspaceRoot: context.workspaceRoot || process.cwd(),
                 signal: signalToUse,
                 confirmationHandler: context.confirmationHandler,
-                permissionMode: context.permissionMode, // 传递权限模式
+                permissionMode: context.permissionMode,
               }
             );
-            allToolResults.push(result);
 
-            // 🔍 调试：打印工具执行结果
+            // 🔍 调试日志
             logger.debug('\n========== 工具执行结果 ==========');
             logger.debug('工具名称:', toolCall.function.name);
             logger.debug('成功:', result.success);
@@ -1102,142 +1111,152 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
             }
             logger.debug('==================================\n');
 
-            // 🆕 检查是否应该退出循环（ExitPlanMode 或用户拒绝时设置此标记）
-            if (result.metadata?.shouldExitLoop) {
-              logger.debug('🚪 检测到退出循环标记，结束 Agent 循环');
-
-              // 确保 finalMessage 是字符串类型
-              const finalMessage =
-                typeof result.llmContent === 'string'
-                  ? result.llmContent
-                  : '循环已退出';
-
-              return {
-                success: result.success,
-                finalMessage,
-                metadata: {
-                  turnsCount,
-                  toolCallsCount: allToolResults.length,
-                  duration: Date.now() - startTime,
-                  shouldExitLoop: true,
-                  targetMode: result.metadata.targetMode, // 🆕 传递目标模式
-                },
-              };
-            }
-
-            // 调用 onToolResult 回调（如果提供）
-            // 用于显示工具执行的完成摘要和详细内容
-            // 注意：检查 abort 状态，避免取消后仍然触发回调
-            if (options?.onToolResult && !options.signal?.aborted) {
-              logger.debug('[Agent] Calling onToolResult:', {
-                toolName: toolCall.function.name,
-                hasCallback: true,
-                resultSuccess: result.success,
-                resultKeys: Object.keys(result),
-                hasMetadata: !!result.metadata,
-                metadataKeys: result.metadata ? Object.keys(result.metadata) : [],
-                hasSummary: !!result.metadata?.summary,
-                summary: result.metadata?.summary,
-              });
-              try {
-                await options.onToolResult(toolCall, result);
-                logger.debug('[Agent] onToolResult callback completed successfully');
-              } catch (error) {
-                logger.error('[Agent] onToolResult callback error:', error);
-              }
-            } else {
-              logger.debug('[Agent] No onToolResult callback provided');
-            }
-
-            // === 保存工具结果到 JSONL (tool_result) ===
-            try {
-              const contextMgr = this.executionEngine?.getContextManager();
-              if (contextMgr && context.sessionId) {
-                lastMessageUuid = await contextMgr.saveToolResult(
-                  context.sessionId,
-                  toolCall.id,
-                  result.success ? result.llmContent : undefined,
-                  toolUseUuid, // 链接到对应的工具调用
-                  result.success ? undefined : result.error?.message
-                );
-              }
-            } catch (error) {
-              logger.warn('[Agent] 保存工具结果失败:', error);
-            }
-
-            // 如果是 TODO 工具,直接更新 store 并触发回调
-            if (
-              toolCall.function.name === 'TodoWrite' &&
-              result.success &&
-              result.llmContent
-            ) {
-              const content =
-                typeof result.llmContent === 'object' ? result.llmContent : {};
-              const todos = Array.isArray(content)
-                ? content
-                : ((content as Record<string, unknown>).todos as unknown[]) || [];
-              const typedTodos =
-                todos as import('../tools/builtin/todo/types.js').TodoItem[];
-              // 直接更新 store，不再通过事件发射器
-              appActions().setTodos(typedTodos);
-              // 触发 onTodoUpdate 回调（用于 ACP plan 更新）
-              options?.onTodoUpdate?.(typedTodos);
-            }
-
-            // 如果是 Skill 工具，设置执行上下文（用于 allowed-tools 限制）
-            if (
-              toolCall.function.name === 'Skill' &&
-              result.success &&
-              result.metadata
-            ) {
-              const metadata = result.metadata as Record<string, unknown>;
-              if (metadata.skillName) {
-                this.activeSkillContext = {
-                  skillName: metadata.skillName as string,
-                  allowedTools: metadata.allowedTools as string[] | undefined,
-                  basePath: (metadata.basePath as string) || '',
-                };
-                logger.debug(
-                  `🎯 Skill "${this.activeSkillContext.skillName}" activated` +
-                    (this.activeSkillContext.allowedTools
-                      ? ` with allowed tools: ${this.activeSkillContext.allowedTools.join(', ')}`
-                      : '')
-                );
-              }
-            }
-
-            // 添加工具执行结果到消息历史
-            // 优先使用 llmContent（为 LLM 准备的详细内容），displayContent 仅用于终端显示
-            let toolResultContent = result.success
-              ? result.llmContent || result.displayContent || ''
-              : result.error?.message || '执行失败';
-
-            // 如果内容是对象，需要序列化为 JSON
-            if (typeof toolResultContent === 'object' && toolResultContent !== null) {
-              toolResultContent = JSON.stringify(toolResultContent, null, 2);
-            }
-
-            // 简化工具结果内容（不需要包装文字）
-            const finalContent =
-              typeof toolResultContent === 'string'
-                ? toolResultContent
-                : JSON.stringify(toolResultContent);
-
-            messages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              name: toolCall.function.name,
-              content: finalContent,
-            });
+            return { toolCall, result, toolUseUuid };
           } catch (error) {
             logger.error(`Tool execution failed for ${toolCall.function.name}:`, error);
-            messages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              name: toolCall.function.name,
-              content: `Execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-            });
+            return {
+              toolCall,
+              result: {
+                success: false,
+                llmContent: '',
+                displayContent: '',
+                error: {
+                  type: ToolErrorType.EXECUTION_ERROR,
+                  message: error instanceof Error ? error.message : 'Unknown error',
+                },
+              },
+              toolUseUuid: null,
+              error: error instanceof Error ? error : new Error('Unknown error'),
+            };
           }
+        };
+
+        // 🚀 并行执行所有工具调用
+        logger.info(
+          `[Agent] Executing ${functionCalls.length} tool calls in parallel`
+        );
+        const executionResults = await Promise.all(functionCalls.map(executeToolCall));
+
+        // 按顺序处理执行结果（保持与原始 tool_calls 顺序一致）
+        for (const { toolCall, result, toolUseUuid } of executionResults) {
+          allToolResults.push(result);
+
+          // 检查是否应该退出循环
+          if (result.metadata?.shouldExitLoop) {
+            logger.debug('🚪 检测到退出循环标记，结束 Agent 循环');
+            const finalMessage =
+              typeof result.llmContent === 'string'
+                ? result.llmContent
+                : '循环已退出';
+
+            return {
+              success: result.success,
+              finalMessage,
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                shouldExitLoop: true,
+                targetMode: result.metadata.targetMode,
+              },
+            };
+          }
+
+          // 调用 onToolResult 回调
+          if (options?.onToolResult && !options.signal?.aborted) {
+            logger.debug('[Agent] Calling onToolResult:', {
+              toolName: toolCall.function.name,
+              hasCallback: true,
+              resultSuccess: result.success,
+              resultKeys: Object.keys(result),
+              hasMetadata: !!result.metadata,
+              metadataKeys: result.metadata ? Object.keys(result.metadata) : [],
+              hasSummary: !!result.metadata?.summary,
+              summary: result.metadata?.summary,
+            });
+            try {
+              await options.onToolResult(toolCall, result);
+              logger.debug('[Agent] onToolResult callback completed successfully');
+            } catch (err) {
+              logger.error('[Agent] onToolResult callback error:', err);
+            }
+          }
+
+          // === 保存工具结果到 JSONL (tool_result) ===
+          try {
+            const contextMgr = this.executionEngine?.getContextManager();
+            if (contextMgr && context.sessionId) {
+              lastMessageUuid = await contextMgr.saveToolResult(
+                context.sessionId,
+                toolCall.id,
+                result.success ? result.llmContent : undefined,
+                toolUseUuid,
+                result.success ? undefined : result.error?.message
+              );
+            }
+          } catch (err) {
+            logger.warn('[Agent] 保存工具结果失败:', err);
+          }
+
+          // 如果是 TODO 工具,直接更新 store 并触发回调
+          if (
+            toolCall.function.name === 'TodoWrite' &&
+            result.success &&
+            result.llmContent
+          ) {
+            const content =
+              typeof result.llmContent === 'object' ? result.llmContent : {};
+            const todos = Array.isArray(content)
+              ? content
+              : ((content as Record<string, unknown>).todos as unknown[]) || [];
+            const typedTodos =
+              todos as import('../tools/builtin/todo/types.js').TodoItem[];
+            appActions().setTodos(typedTodos);
+            options?.onTodoUpdate?.(typedTodos);
+          }
+
+          // 如果是 Skill 工具，设置执行上下文
+          if (
+            toolCall.function.name === 'Skill' &&
+            result.success &&
+            result.metadata
+          ) {
+            const metadata = result.metadata as Record<string, unknown>;
+            if (metadata.skillName) {
+              this.activeSkillContext = {
+                skillName: metadata.skillName as string,
+                allowedTools: metadata.allowedTools as string[] | undefined,
+                basePath: (metadata.basePath as string) || '',
+              };
+              logger.debug(
+                `🎯 Skill "${this.activeSkillContext.skillName}" activated` +
+                  (this.activeSkillContext.allowedTools
+                    ? ` with allowed tools: ${this.activeSkillContext.allowedTools.join(', ')}`
+                    : '')
+              );
+            }
+          }
+
+          // 添加工具执行结果到消息历史
+          let toolResultContent = result.success
+            ? result.llmContent || result.displayContent || ''
+            : result.error?.message || '执行失败';
+
+          if (typeof toolResultContent === 'object' && toolResultContent !== null) {
+            toolResultContent = JSON.stringify(toolResultContent, null, 2);
+          }
+
+          const finalContent =
+            typeof toolResultContent === 'string'
+              ? toolResultContent
+              : JSON.stringify(toolResultContent);
+
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: toolCall.function.name,
+            content: finalContent,
+          });
         }
 
         // 检查工具执行后的中断信号
@@ -1454,9 +1473,17 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
         // 1. 处理文本增量
         if (chunk.content) {
+          const chunkLen = chunk.content.length;
           fullContent += chunk.content;
-          // 调用增量回调
+          streamDebug('processStreamResponse', 'onContentDelta BEFORE', {
+            chunkLen,
+            accumulatedLen: fullContent.length,
+          });
           options?.onContentDelta?.(chunk.content);
+          streamDebug('processStreamResponse', 'onContentDelta AFTER', {
+            chunkLen,
+            accumulatedLen: fullContent.length,
+          });
         }
 
         // 2. 处理推理内容增量（Thinking 模型如 DeepSeek R1）
@@ -1476,9 +1503,21 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
         // 4. 流结束
         if (chunk.finishReason) {
+          streamDebug('processStreamResponse', 'finishReason received', {
+            finishReason: chunk.finishReason,
+            fullContentLen: fullContent.length,
+            fullReasoningContentLen: fullReasoningContent.length,
+            toolCallAccumulatorSize: toolCallAccumulator.size,
+          });
           break;
         }
       }
+
+      streamDebug('processStreamResponse', 'stream ended', {
+        fullContentLen: fullContent.length,
+        fullReasoningContentLen: fullReasoningContent.length,
+        toolCallAccumulatorSize: toolCallAccumulator.size,
+      });
 
       // 构造完整响应
       return {
