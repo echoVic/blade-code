@@ -178,21 +178,26 @@ export class BackgroundAgentManager {
       });
 
       // 2. 执行 agentic loop
-      const loopResult = await agent.runAgenticLoop(
-        prompt,
-        {
-          messages: existingMessages || [],
-          userId: 'subagent',
-          sessionId: parentSessionId || `subagent_${agentId}`,
-          workspaceRoot: process.cwd(),
-          permissionMode,
-        },
-        {
-          signal, // 传递 AbortSignal 以支持 killAgent
-        }
-      );
+      // 创建 context 对象以便获取更新后的消息历史
+      const context = {
+        messages: existingMessages || [],
+        userId: 'subagent',
+        sessionId: parentSessionId || `subagent_${agentId}`,
+        workspaceRoot: process.cwd(),
+        permissionMode,
+      };
 
-      // 3. 构建结果
+      const loopResult = await agent.runAgenticLoop(prompt, context, {
+        signal, // 传递 AbortSignal 以支持 killAgent
+      });
+
+      // 3. 保存更新后的消息历史（用于 resume）
+      // runAgenticLoop 会修改 context.messages（添加 LLM 响应、工具调用等）
+      this.sessionStore.updateSession(agentId, {
+        messages: context.messages,
+      });
+
+      // 4. 构建结果
       const duration = Date.now() - startTime;
       const result: SubagentResult = loopResult.success
         ? {
@@ -211,7 +216,7 @@ export class BackgroundAgentManager {
             stats: { duration },
           };
 
-      // 4. 更新会话状态
+      // 5. 更新会话状态
       this.sessionStore.markCompleted(
         agentId,
         {
