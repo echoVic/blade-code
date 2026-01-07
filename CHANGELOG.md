@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.46] - 2026-01-07
+
+### ✨ 新功能
+
+- 添加对Claude Code配置的兼容支持 (99f42e9)
+
+
 ## [0.0.45] - 2026-01-06
 
 ### ✨ 新功能
