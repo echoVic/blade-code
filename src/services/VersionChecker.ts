@@ -244,7 +244,8 @@ export async function clearSkipVersion(): Promise<void> {
  * @returns 升级命令
  */
 export function getUpgradeCommand(): string {
-  return `npm install -g ${PACKAGE_NAME}@latest`;
+  // 指定官方 registry 确保获取最新版本，避免镜像源同步延迟问题
+  return `npm install -g ${PACKAGE_NAME}@latest --registry https://registry.npmjs.org`;
 }
 
 /**
