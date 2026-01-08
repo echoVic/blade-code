@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.0.47] - 2026-01-08
+
+### ✨ 新功能
+
+- 实现插件系统核心功能 (7eae689)
+- 更新文档结构和内容，优化用户指南和功能说明 (d1579cd)
+
+### 🐛 问题修复
+
+- 指定官方 registry 确保获取最新版本 (c6771e6)
+
+### ♻️ 代码重构
+
+- 移除模型相关配置选项 (ac7dbc9)
+
+
 ## [0.0.46] - 2026-01-07
 
 ### ✨ 新功能
@@ -367,7 +383,7 @@ All notable changes to this project will be documented in this file.
   - 使用 picomatch 替代自制 glob 匹配实现
   - 添加 vendor ripgrep 支持（可选，~40-50MB）
 - 新增下载脚本: `npm run vendor:ripgrep`
-- 完整文档（已迁移）: `/Users/example/Documents/my-files/deep-search/blade-code/docs/development/implementation/grep-tool.md`
+- 完整文档: `docs/development/implementation/grep-tool.md`
 
 ### 🧹 移除过时组件
 
