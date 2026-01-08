@@ -345,13 +345,7 @@ export function mergeRuntimeConfig(
 ): RuntimeConfig {
   const result: RuntimeConfig = { ...baseConfig };
 
-  // 1. 模型配置 (CLI 优先)
-  // 注意：现在模型通过 models 数组管理，不再使用单一的 model 字段
-  if (cliOptions.fallbackModel !== undefined) {
-    result.fallbackModel = cliOptions.fallbackModel;
-  }
-
-  // 2. Debug 模式 (CLI 优先，支持字符串过滤器)
+  // 1. Debug 模式 (CLI 优先，支持字符串过滤器)
   if (cliOptions.debug !== undefined) {
     // --debug 不带参数时，yargs 会解析为空字符串 ""
     // 空字符串应该被视为 true（启用所有 debug 日志）
@@ -359,45 +353,45 @@ export function mergeRuntimeConfig(
     result.debug = cliOptions.debug === '' ? true : cliOptions.debug;
   }
 
-  // 3. 权限模式 (CLI 优先，yolo 快捷方式)
+  // 2. 权限模式 (CLI 优先，yolo 快捷方式)
   if (cliOptions.yolo === true) {
     result.permissionMode = PermissionMode.YOLO;
   } else if (cliOptions.permissionMode !== undefined) {
     result.permissionMode = cliOptions.permissionMode as PermissionMode;
   }
 
-  // 4. 最大轮次 (CLI 优先)
+  // 3. 最大轮次 (CLI 优先)
   if (cliOptions.maxTurns !== undefined) {
     result.maxTurns = cliOptions.maxTurns;
   }
 
-  // 5. CLI 专属字段 - 系统提示
+  // 4. CLI 专属字段 - 系统提示
   result.systemPrompt = cliOptions.systemPrompt;
   result.appendSystemPrompt = cliOptions.appendSystemPrompt;
 
-  // 6. CLI 专属字段 - 会话管理
+  // 5. CLI 专属字段 - 会话管理
   result.resumeSessionId = cliOptions.sessionId;
   result.forkSession = cliOptions.forkSession;
 
-  // 7. CLI 专属字段 - 工具过滤
+  // 6. CLI 专属字段 - 工具过滤
   result.allowedTools = cliOptions.allowedTools;
   result.disallowedTools = cliOptions.disallowedTools;
 
-  // 8. CLI 专属字段 - MCP
+  // 7. CLI 专属字段 - MCP
   result.mcpConfigPaths = cliOptions.mcpConfig;
   result.strictMcpConfig = cliOptions.strictMcpConfig;
 
-  // 9. CLI 专属字段 - 目录访问
+  // 8. CLI 专属字段 - 目录访问
   result.addDirs = cliOptions.addDir;
 
-  // 10. CLI 专属字段 - 输入输出
+  // 9. CLI 专属字段 - 输入输出
   result.outputFormat = cliOptions.outputFormat;
   result.inputFormat = cliOptions.inputFormat;
   result.print = cliOptions.print;
   result.includePartialMessages = cliOptions.includePartialMessages;
   result.replayUserMessages = cliOptions.replayUserMessages;
 
-  // 11. CLI 专属字段 - 其他
+  // 10. CLI 专属字段 - 其他
   result.agentsConfig = cliOptions.agents;
   result.settingSources = cliOptions.settingSources;
 

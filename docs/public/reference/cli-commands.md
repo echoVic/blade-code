@@ -71,8 +71,6 @@ blade --debug "!chat,!loop"
 
 | 选项 | 说明 |
 |------|------|
-| `--model <model>` | 指定模型 |
-| `--fallback-model <model>` | 启用自动降级到指定模型 |
 | `--system-prompt <prompt>` | 替换系统提示词 |
 | `--append-system-prompt <prompt>` | 追加系统提示词 |
 | `--max-turns <n>` | 对话轮次限制（-1: 无限, 0: 禁用, N: 限制） |
@@ -252,9 +250,6 @@ blade --resume 2024-12-foo-session
 
 # 调试模式
 blade --debug agent "分析这段代码"
-
-# 指定模型
-blade --model gpt-4o "解释这个错误"
 
 # 完全自动模式
 blade --yolo "修复所有 TypeScript 错误"

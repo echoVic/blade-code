@@ -19,8 +19,7 @@ export interface GlobalOptions {
   continue?: boolean;
   resume?: string;
   forkSession?: boolean;
-  model?: string;
-  fallbackModel?: string;
+
   settings?: string;
   addDir?: string[];
   ide?: boolean;

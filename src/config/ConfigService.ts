@@ -234,12 +234,7 @@ export const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace',
     persistable: false,
   },
-  fallbackModel: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
+
   addDirs: {
     target: 'settings',
     defaultScope: 'local',

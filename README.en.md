@@ -122,7 +122,6 @@ blade --yolo "Auto-approve all operations"
 | `--print` | `-p` | Print response and exit |
 | `--continue` | `-c` | Continue recent session |
 | `--resume <id>` | `-r` | Resume specific session |
-| `--model <name>` | | Specify model |
 | `--yolo` | | Auto-approve all operations |
 
 ### Slash Commands

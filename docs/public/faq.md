@@ -32,7 +32,7 @@ A: 支持以下提供商：
 - Antigravity（需 OAuth 登录）
 
 **Q: 如何配置多个模型？**  
-A: 在 `config.json` 的 `models` 数组中添加多个配置，通过 `--model` 参数或 `/model` 命令切换。
+A: 在 `config.json` 的 `models` 数组中添加多个配置，通过 `/model` 命令切换。
 
 **Q: 配置文件格式错误怎么办？**  
 A: 未找到有效模型会触发向导；解析失败会在对话区提示错误。修正 JSON 后重启即可。

@@ -133,17 +133,7 @@ export const globalOptions = {
     describe: 'Create a new session ID when resuming',
     group: 'Session Options:',
   },
-  model: {
-    type: 'string',
-    describe: 'Model for the current session',
-    group: 'AI Options:',
-  },
-  'fallback-model': {
-    alias: ['fallbackModel'],
-    type: 'string',
-    describe: 'Enable automatic fallback to specified model',
-    group: 'AI Options:',
-  },
+
   // TODO: 未实现 - 需要在 UI/Agent 中读取并使用
   settings: {
     type: 'string',
