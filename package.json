@@ -52,7 +52,7 @@
     "release:minor": "node scripts/release.js --minor",
     "release:patch": "node scripts/release.js --patch",
     "clean": "rm -rf dist node_modules/.cache coverage",
-    "prepare": "bun run build",
+    "prepare": "test -n \"$CI\" || bun run build",
     "preflight": "npm run clean && pnpm install && npm run format && npm run lint && npm run build && npm run type-check && npm run test:ci"
   },
   "keywords": [
