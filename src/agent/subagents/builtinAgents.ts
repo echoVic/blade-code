@@ -107,16 +107,4 @@ Be thorough but concise. Focus on actionable steps.`,
   },
 ];
 
-/**
- * 获取内置 agent 的数量
- */
-export function getBuiltinAgentCount(): number {
-  return builtinAgents.length;
-}
 
-/**
- * 根据名称获取内置 agent
- */
-export function getBuiltinAgent(name: string): SubagentConfig | undefined {
-  return builtinAgents.find((agent) => agent.name.toLowerCase() === name.toLowerCase());
-}

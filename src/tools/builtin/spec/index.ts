@@ -21,20 +21,6 @@ import { updateSpecTool } from './UpdateSpecTool.js';
 import { updateTaskStatusTool } from './UpdateTaskStatusTool.js';
 import { validateSpecTool } from './ValidateSpecTool.js';
 
-export {
-  addTaskTool,
-  enterSpecModeTool,
-  exitSpecModeTool,
-  getSpecContextTool,
-  transitionSpecPhaseTool,
-  updateSpecTool,
-  updateTaskStatusTool,
-  validateSpecTool,
-};
-
-/**
- * 获取所有 Spec 工具
- */
 export const specTools = [
   enterSpecModeTool,
   updateSpecTool,

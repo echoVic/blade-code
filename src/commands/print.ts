@@ -16,7 +16,7 @@ interface PrintOptions {
   _?: (string | number)[];
 }
 
-export function printCommand(yargs: Argv) {
+function printCommand(yargs: Argv) {
   return yargs.command(
     '* [message]',
     'Print response and exit (useful for pipes)',

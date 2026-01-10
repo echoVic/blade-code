@@ -1,14 +1,13 @@
+import { isPlainObject } from 'lodash-es';
 import OpenAI from 'openai';
 import type {
-  ChatCompletionChunk,
   ChatCompletionAssistantMessageParam,
+  ChatCompletionChunk,
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
   ChatCompletionTool,
 } from 'openai/resources/chat';
-import { isPlainObject } from 'lodash-es';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import { isStreamUsageUnsupportedError } from './utils/streamUtils.js';
 import type {
   ChatConfig,
   ChatResponse,
@@ -17,6 +16,7 @@ import type {
   ReasoningFieldName,
   StreamChunk,
 } from './ChatServiceInterface.js';
+import { isStreamUsageUnsupportedError } from './utils/streamUtils.js';
 
 const _logger = createLogger(LogCategory.CHAT);
 
@@ -129,7 +129,8 @@ export class OpenAIChatService implements IChatService {
                 .map((p) => p.text)
                 .join('\n');
 
-        const baseMessage: ChatCompletionAssistantMessageParam & Record<string, unknown> = {
+        const baseMessage: ChatCompletionAssistantMessageParam &
+          Record<string, unknown> = {
           role: 'assistant',
           content: assistantContent || null,
           tool_calls: msg.tool_calls,
@@ -680,8 +681,3 @@ export class OpenAIChatService implements IChatService {
     });
   }
 }
-
-/**
- * 向后兼容导出
- */
-export { OpenAIChatService as ChatService };

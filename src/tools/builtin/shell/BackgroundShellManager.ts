@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 
-export type BackgroundShellStatus = 'running' | 'exited' | 'killed' | 'error';
+type BackgroundShellStatus = 'running' | 'exited' | 'killed' | 'error';
 
 interface StartOptions {
   command: string;

@@ -163,19 +163,6 @@ export interface IChatService {
 }
 
 /**
- * ChatService 工厂函数（同步版本）
- * 根据配置中的 provider 创建对应的服务实例
- *
- * 注意：此函数不处理内置 API Key，请使用 createChatServiceAsync
- *
- * @param config ChatConfig + provider 字段
- * @returns IChatService 实例
- */
-export function createChatService(config: ChatConfig): IChatService {
-  return createChatServiceInternal(config);
-}
-
-/**
  * ChatService 工厂函数（异步版本）
  * 支持内置 API Key 解析
  *

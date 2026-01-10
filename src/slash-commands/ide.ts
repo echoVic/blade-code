@@ -25,8 +25,7 @@ interface PortFileInfo {
   workspaceFolders: string[];
 }
 
-// IDE 连接状态
-export enum IdeConnectionStatus {
+enum IdeConnectionStatus {
   Connected = 'connected',
   Connecting = 'connecting',
   Disconnected = 'disconnected',
@@ -262,10 +261,7 @@ async function handleDisconnect(): Promise<string> {
   return '✅ 已断开与 IDE 的连接';
 }
 
-/**
- * /ide 命令
- */
-export const ideCommand: SlashCommand = {
+const ideCommand: SlashCommand = {
   name: 'ide',
   aliases: [],
   description: 'Manage IDE integrations and show status',

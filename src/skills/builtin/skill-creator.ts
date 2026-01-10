@@ -30,7 +30,7 @@ export const skillCreatorMetadata: SkillMetadata = {
 /**
  * skill-creator 的完整指令内容
  */
-export const skillCreatorInstructions = `# Skill Creator
+const skillCreatorInstructions = `# Skill Creator
 
 帮助用户创建新的 Blade Skills。
 

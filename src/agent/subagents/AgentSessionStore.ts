@@ -295,7 +295,4 @@ export class AgentSessionStore {
   }
 }
 
-/**
- * 导出单例获取函数
- */
-export const agentSessionStore = AgentSessionStore.getInstance();
+

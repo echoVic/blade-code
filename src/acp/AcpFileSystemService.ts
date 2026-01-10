@@ -198,31 +198,7 @@ export class AcpFileSystemService implements FileSystemService {
   }
 }
 
-/**
- * 创建 ACP 文件系统服务
- *
- * 根据 ACP 客户端能力创建适当的文件系统服务实例。
- *
- * @param connection - ACP 连接
- * @param sessionId - 会话 ID
- * @param capabilities - IDE 声明的文件系统能力（可选）
- * @returns 文件系统服务实例
- */
-export function createAcpFileSystemService(
-  connection: AgentSideConnection,
-  sessionId: string,
-  capabilities?: FileSystemCapability
-): FileSystemService {
-  if (capabilities && (capabilities.readTextFile || capabilities.writeTextFile)) {
-    logger.debug(
-      `[AcpFileSystem] Using ACP file system service (read: ${capabilities.readTextFile}, write: ${capabilities.writeTextFile})`
-    );
-    return new AcpFileSystemService(connection, sessionId, capabilities);
-  }
 
-  logger.debug('[AcpFileSystem] Using local file system service (no IDE capabilities)');
-  return new LocalFileSystemService();
-}
 
 /**
  * 对错误信息进行分类，便于诊断

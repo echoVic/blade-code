@@ -15,8 +15,3 @@ export const PASTE_CONFIG = {
   /** 中等文本多 chunk 判定阈值（字符数） */
   MEDIUM_SIZE_MULTI_CHUNK_THRESHOLD: 200,
 } as const;
-
-/**
- * 图片扩展名列表
- */
-export const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);

@@ -34,7 +34,7 @@ export enum ErrorType {
 /**
  * 分类后的错误
  */
-export interface ClassifiedError {
+interface ClassifiedError {
   type: ErrorType;
   isRetryable: boolean;
   originalError: Error;

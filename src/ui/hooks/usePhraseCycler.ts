@@ -17,7 +17,7 @@ const PHRASE_CHANGE_INTERVAL_MS = 15000;
  * 幽默短语列表 - 编程术语 × 中国风/武侠/修仙
  * 将计算机概念用修真世界的方式表达
  */
-export const WITTY_LOADING_PHRASES = [
+const WITTY_LOADING_PHRASES = [
   // 修仙风 - 代码炼化 (30条)
   '炼化代码灵气...',
   '参悟 AST 道法...',

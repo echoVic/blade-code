@@ -215,11 +215,4 @@ export class JSONLStore {
   }
 }
 
-/**
- * 创建 JSONL 存储实例的工厂函数
- * @param filePath JSONL 文件路径
- * @returns JSONLStore 实例
- */
-export function createJSONLStore(filePath: string): JSONLStore {
-  return new JSONLStore(filePath);
-}
+

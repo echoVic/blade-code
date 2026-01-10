@@ -7,7 +7,7 @@
 
 import type { ModelConfig, ProviderType } from './types.js';
 
-export interface BuiltinModelDefinition {
+interface BuiltinModelDefinition {
   name: string;
   provider: ProviderType;
   baseUrl: string;
@@ -22,7 +22,7 @@ export interface BuiltinModelDefinition {
 const BUILTIN_API_KEY = 'blade-free-tier';
 const BUILTIN_MODEL_ID = 'blade-builtin-glm47';
 
-export const BUILTIN_MODELS: BuiltinModelDefinition[] = [
+const BUILTIN_MODELS: BuiltinModelDefinition[] = [
   {
     name: '✨ GLM-4.7 (内置免费)',
     provider: 'openai-compatible',
@@ -48,9 +48,7 @@ export function isBuiltinModel(model: ModelConfig): boolean {
   return isBuiltinApiKey(model.apiKey);
 }
 
-export function createBuiltinModelConfig(
-  definition: BuiltinModelDefinition
-): ModelConfig {
+function createBuiltinModelConfig(definition: BuiltinModelDefinition): ModelConfig {
   return {
     id: BUILTIN_MODEL_ID,
     name: definition.name,
@@ -66,8 +64,4 @@ export function createBuiltinModelConfig(
 
 export function getDefaultBuiltinModel(): ModelConfig {
   return createBuiltinModelConfig(BUILTIN_MODELS[0]);
-}
-
-export function getAllBuiltinModels(): ModelConfig[] {
-  return BUILTIN_MODELS.map(createBuiltinModelConfig);
 }

@@ -45,7 +45,7 @@ export interface TerminalService {
   isAvailable(): boolean;
 }
 
-export interface TerminalExecuteOptions {
+interface TerminalExecuteOptions {
   cwd?: string;
   env?: Record<string, string>;
   timeout?: number;
@@ -53,7 +53,7 @@ export interface TerminalExecuteOptions {
   onOutput?: (output: string) => void;
 }
 
-export interface TerminalExecuteResult {
+interface TerminalExecuteResult {
   success: boolean;
   stdout: string;
   stderr: string;

@@ -439,9 +439,4 @@ export class BackgroundAgentManager {
   }
 }
 
-/**
- * 获取 BackgroundAgentManager 单例（避免模块加载时产生副作用）
- */
-export function getBackgroundAgentManager(): BackgroundAgentManager {
-  return BackgroundAgentManager.getInstance();
-}
+

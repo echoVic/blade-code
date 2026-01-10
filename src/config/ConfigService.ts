@@ -10,11 +10,11 @@
  * 6. 向前兼容（保留未知字段）
  */
 
+import { Mutex } from 'async-mutex';
+import { merge } from 'lodash-es';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Mutex } from 'async-mutex';
-import { merge } from 'lodash-es';
 import writeFileAtomic from 'write-file-atomic';
 import type { BladeConfig, PermissionConfig } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
@@ -45,7 +45,7 @@ interface FieldRouting {
  *
  * 所有其他常量（PERSISTABLE_FIELDS、NON_PERSISTABLE_FIELDS 等）从此表自动派生
  */
-export const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
+const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
   // ===== config.json 字段（基础配置）=====
   models: {
     target: 'config',
@@ -293,7 +293,7 @@ export const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
  * 可持久化的字段集合
  * 从 FIELD_ROUTING_TABLE 中提取 persistable: true 的字段
  */
-export const PERSISTABLE_FIELDS = new Set(
+const _PERSISTABLE_FIELDS = new Set(
   Object.entries(FIELD_ROUTING_TABLE)
     .filter(([_, routing]) => routing.persistable)
     .map(([field]) => field)
@@ -310,27 +310,9 @@ export const PERSISTABLE_FIELDS = new Set(
  *    - systemPrompt, initialMessage, resumeSessionId, forkSession 等
  *    - 仅存在于 CLI 启动期间，从不持久化
  */
-export const NON_PERSISTABLE_FIELDS = new Set(
+const _NON_PERSISTABLE_FIELDS = new Set(
   Object.entries(FIELD_ROUTING_TABLE)
     .filter(([_, routing]) => !routing.persistable)
-    .map(([field]) => field)
-);
-
-/**
- * config.json 字段
- */
-export const CONFIG_FIELDS = new Set(
-  Object.entries(FIELD_ROUTING_TABLE)
-    .filter(([_, routing]) => routing.target === 'config')
-    .map(([field]) => field)
-);
-
-/**
- * settings.json 字段
- */
-export const SETTINGS_FIELDS = new Set(
-  Object.entries(FIELD_ROUTING_TABLE)
-    .filter(([_, routing]) => routing.target === 'settings')
     .map(([field]) => field)
 );
 

@@ -162,25 +162,7 @@ assistant: Clients are marked as failed in the \`connectToServer\` function in s
 # Language Requirement
 IMPORTANT: Always respond in Chinese (Simplified Chinese). Translate all your responses to Chinese before sending them to the user.`;
 
-/**
- * 系统提示配置选项
- */
-export interface SystemPromptConfig {
-  enabled: boolean;
-  default: string;
-  allowOverride: boolean;
-  maxLength: number;
-}
 
-/**
- * 默认配置
- */
-export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {
-  enabled: true,
-  default: DEFAULT_SYSTEM_PROMPT,
-  allowOverride: true,
-  maxLength: 32000,
-};
 
 /**
  * Plan Mode System Prompt (Compact Version)

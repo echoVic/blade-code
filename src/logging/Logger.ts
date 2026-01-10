@@ -100,10 +100,7 @@ async function getPinoInstance(): Promise<PinoLogger> {
   return pinoInitPromise;
 }
 
-/**
- * 重置 Pino 实例（用于测试或动态切换配置）
- */
-export function resetPinoInstance(): void {
+function resetPinoInstance(): void {
   pinoInstance = null;
   pinoInitPromise = null;
 }

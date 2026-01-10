@@ -59,10 +59,6 @@ const askUserQuestionSchema = z.object({
     .describe('Questions to ask the user (1-4 questions)'),
 });
 
-export type AskUserQuestionParams = z.infer<typeof askUserQuestionSchema>;
-export type Question = z.infer<typeof questionSchema>;
-export type QuestionOption = z.infer<typeof optionSchema>;
-
 /**
  * AskUserQuestion tool
  * 允许 Claude 在执行过程中向用户提问

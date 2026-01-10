@@ -4,7 +4,6 @@
  * 提供 @ 文件提及的自动补全功能
  */
 
-import { useMemoizedFn } from 'ahooks';
 import fg from 'fast-glob';
 import Fuse from 'fuse.js';
 import { useEffect, useMemo, useState } from 'react';
@@ -293,7 +292,7 @@ export function useAtCompletion(
  * @param quoted - 是否需要引号
  * @returns 格式化后的 @ 提及
  */
-export function formatSuggestion(suggestion: string, quoted: boolean = false): string {
+function formatSuggestion(suggestion: string, quoted: boolean = false): string {
   // 如果路径包含空格，自动加引号
   if (suggestion.includes(' ') || quoted) {
     return `@"${suggestion}"`;
@@ -330,59 +329,4 @@ export function applySuggestion(
   const newCursorPos = atMatch.startIndex + formatted.length + 1;
 
   return { newInput, newCursorPos };
-}
-
-/**
- * 高级 Hook：包含选中状态和键盘导航
- */
-export function useAtCompletionWithNavigation(
-  input: string,
-  cursorPosition: number | undefined,
-  options: UseAtCompletionOptions = {}
-) {
-  const completion = useAtCompletion(input, cursorPosition, options);
-  const [selectedIndex, setSelectedIndex] = useState(0);
-
-  // 重置选中索引当建议变化时
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [completion.suggestions]);
-
-  /**
-   * 向上导航
-   */
-  const navigateUp = useMemoizedFn(() => {
-    setSelectedIndex((prev) => {
-      const newIndex = prev - 1;
-      return newIndex < 0 ? completion.suggestions.length - 1 : newIndex;
-    });
-  });
-
-  /**
-   * 向下导航
-   */
-  const navigateDown = useMemoizedFn(() => {
-    setSelectedIndex((prev) => {
-      const newIndex = prev + 1;
-      return newIndex >= completion.suggestions.length ? 0 : newIndex;
-    });
-  });
-
-  /**
-   * 选择当前建议
-   */
-  const selectCurrent = useMemoizedFn((): string | null => {
-    if (selectedIndex < completion.suggestions.length) {
-      return completion.suggestions[selectedIndex];
-    }
-    return null;
-  });
-
-  return {
-    ...completion,
-    selectedIndex,
-    navigateUp,
-    navigateDown,
-    selectCurrent,
-  };
 }

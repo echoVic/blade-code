@@ -133,10 +133,7 @@ function transformDuckDuckGoResponse(data: unknown): WebSearchResult[] {
   return [...directResults, ...relatedResults];
 }
 
-/**
- * DuckDuckGo 搜索提供商（默认）
- */
-export const duckDuckGoProvider: SearchProvider = {
+const duckDuckGoProvider: SearchProvider = {
   name: 'DuckDuckGo',
   endpoint: 'https://duckduckgo.com/',
   buildUrl: (query: string) => {
@@ -204,10 +201,7 @@ const SEARXNG_INSTANCES = [
   'https://searx.work',
 ];
 
-/**
- * 创建 SearXNG 提供商
- */
-export function createSearXNGProvider(instanceUrl: string): SearchProvider {
+function createSearXNGProvider(instanceUrl: string): SearchProvider {
   const hostname = (() => {
     try {
       return new URL(instanceUrl).hostname;

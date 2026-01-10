@@ -21,7 +21,6 @@ import type {
   ModelConfig,
   PermissionMode,
 } from '../config/types.js';
-import type { TodoItem } from '../tools/builtin/todo/types.js';
 import { themeManager } from '../ui/themes/ThemeManager.js';
 import {
   createAppSlice,
@@ -31,7 +30,7 @@ import {
   createSessionSlice,
   createSpecSlice,
 } from './slices/index.js';
-import type { BladeStore, SessionMessage } from './types.js';
+import type { BladeStore } from './types.js';
 
 /**
  * 核心 Vanilla Store 实例
@@ -70,11 +69,6 @@ export const vanillaStore = createStore<BladeStore>()(
  */
 export const getState = () => vanillaStore.getState();
 
-/**
- * 订阅状态变化
- */
-export const subscribe = vanillaStore.subscribe;
-
 // ==================== Actions 快捷访问 ====================
 
 /**
@@ -91,67 +85,7 @@ export const sessionActions = () => getState().session.actions;
  */
 export const appActions = () => getState().app.actions;
 
-/**
- * Focus Actions
- * @example
- * focusActions().setFocus(FocusId.MAIN_INPUT);
- */
-export const focusActions = () => getState().focus.actions;
-
-/**
- * Command Actions
- * @example
- * commandActions().abort();
- */
-export const commandActions = () => getState().command.actions;
-
-/**
- * Spec Actions
- * @example
- * specActions().setActive(true);
- */
-export const specActions = () => getState().spec.actions;
-
-// ==================== 选择器订阅 ====================
-
-/**
- * 订阅 Todos 变化
- * @param callback 变化回调
- * @returns 取消订阅函数
- *
- * @example
- * const unsubscribe = subscribeToTodos((todos) => {
- *   console.log('Todos updated:', todos);
- * });
- */
-export const subscribeToTodos = (callback: (todos: TodoItem[]) => void) => {
-  return subscribe((state) => state.app.todos, callback);
-};
-
-/**
- * 订阅 Processing 状态变化
- * @param callback 变化回调
- * @returns 取消订阅函数
- */
-export const subscribeToProcessing = (callback: (isProcessing: boolean) => void) => {
-  return subscribe((state) => state.command.isProcessing, callback);
-};
-
-/**
- * 订阅消息变化
- * @param callback 变化回调
- * @returns 取消订阅函数
- */
-export const subscribeToMessages = (callback: (messages: SessionMessage[]) => void) => {
-  return subscribe((state) => state.session.messages, callback);
-};
-
 // ==================== 状态读取器 ====================
-
-/**
- * 获取当前 Session ID
- */
-export const getSessionId = () => getState().session.sessionId;
 
 /**
  * 获取当前消息列表
@@ -159,19 +93,9 @@ export const getSessionId = () => getState().session.sessionId;
 export const getMessages = () => getState().session.messages;
 
 /**
- * 获取当前 Todos
- */
-export const getTodos = () => getState().app.todos;
-
-/**
  * 获取当前配置
  */
 export const getConfig = () => getState().config.config;
-
-/**
- * 获取当前 Spec
- */
-export const getCurrentSpec = () => getState().spec.currentSpec;
 
 /**
  * 确保 store 已初始化（用于防御性编程）
@@ -231,11 +155,6 @@ export async function ensureStoreInitialized(): Promise<void> {
 }
 
 /**
- * 获取权限模式
- */
-export const getPermissionMode = () => getState().config.config?.permissionMode;
-
-/**
  * 获取所有模型配置
  */
 export const getAllModels = () => getState().config.config?.models ?? [];
@@ -257,11 +176,6 @@ export const getCurrentModel = () => {
  * 获取所有 MCP 服务器配置
  */
 export const getMcpServers = () => getState().config.config?.mcpServers ?? {};
-
-/**
- * 检查是否正在处理
- */
-export const isProcessing = () => getState().command.isProcessing;
 
 /**
  * 获取 Thinking 模式是否启用

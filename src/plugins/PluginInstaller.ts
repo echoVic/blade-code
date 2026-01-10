@@ -16,7 +16,7 @@ import type { PluginManifest } from './types.js';
 /**
  * Installation result
  */
-export interface InstallResult {
+interface InstallResult {
   success: boolean;
   pluginName?: string;
   pluginPath?: string;
@@ -27,7 +27,7 @@ export interface InstallResult {
 /**
  * Uninstall result
  */
-export interface UninstallResult {
+interface UninstallResult {
   success: boolean;
   pluginName: string;
   pluginPath?: string;
@@ -360,11 +360,4 @@ export function getPluginInstaller(userPluginsDir?: string): PluginInstaller {
     installerInstance = new PluginInstaller(userPluginsDir);
   }
   return installerInstance;
-}
-
-/**
- * Reset the installer singleton (for testing)
- */
-export function resetPluginInstaller(): void {
-  installerInstance = null;
 }

@@ -23,10 +23,7 @@ export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
 // ==================== JSON Types ====================
 
-/**
- * JSON 值类型（用于表示可安全序列化的数据）
- */
-export type JsonPrimitive = string | number | boolean | null;
+type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
 
@@ -338,19 +335,4 @@ export interface BladeStore {
 
 // ==================== Utility Types ====================
 
-/**
- * 获取 Store 的状态部分（不包含 actions）
- */
-export type BladeStoreState = {
-  session: SessionState;
-  app: AppState;
-  config: ConfigState;
-  focus: FocusState;
-  command: CommandState;
-  spec: import('./slices/specSlice.js').SpecState;
-};
-
-/**
- * 重导出 PermissionMode 以便使用
- */
 export { PermissionMode };

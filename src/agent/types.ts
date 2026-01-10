@@ -67,18 +67,6 @@ export interface AgentResponse {
   metadata?: Record<string, unknown>;
 }
 
-export interface ContextData {
-  messages: Message[];
-  metadata?: Record<string, unknown>;
-}
-
-export interface ContextConfig {
-  maxTokens?: number;
-  maxMessages?: number;
-  compressionEnabled?: boolean;
-  storagePath?: string;
-}
-
 // ===== Agentic Loop Types =====
 
 /**

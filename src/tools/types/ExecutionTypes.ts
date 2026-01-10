@@ -2,27 +2,18 @@ import { PermissionMode } from '../../config/types.js';
 import type { Tool, ToolInvocation, ToolResult } from './ToolTypes.js';
 import { ToolErrorType, ToolKind } from './ToolTypes.js';
 
-/**
- * 问题选项类型（用于 AskUserQuestion）
- */
-export interface QuestionOption {
+interface QuestionOption {
   label: string;
   description: string;
 }
 
-/**
- * 问题类型（用于 AskUserQuestion）
- */
-export interface Question {
+interface Question {
   question: string;
   header: string;
   multiSelect: boolean;
   options: QuestionOption[];
 }
 
-/**
- * 确认详情
- */
 export interface ConfirmationDetails {
   type?:
     | 'permission'
@@ -40,10 +31,7 @@ export interface ConfirmationDetails {
   questions?: Question[]; // 🆕 AskUserQuestion 的问题列表
 }
 
-/**
- * 用户确认响应
- */
-export type PermissionApprovalScope = 'once' | 'session';
+type PermissionApprovalScope = 'once' | 'session';
 
 export interface ConfirmationResponse {
   approved: boolean;
@@ -84,10 +72,7 @@ export interface ExecutionContext {
   permissionMode?: PermissionMode;
 }
 
-/**
- * 工具执行内部状态 (由 Pipeline 阶段设置)
- */
-export interface ToolExecutionInternalState {
+interface ToolExecutionInternalState {
   // DiscoveryStage 设置
   tool?: Tool;
 
@@ -167,14 +152,4 @@ export interface ExecutionHistoryEntry {
   startTime: number;
   endTime: number;
   context: ExecutionContext;
-}
-
-/**
- * 并发管理配置
- */
-export interface ConcurrencyConfig {
-  maxConcurrent: number;
-  timeoutMs: number;
-  retryAttempts: number;
-  retryDelayMs: number;
 }

@@ -17,7 +17,7 @@ import type { LoadedPlugin } from './types.js';
 /**
  * Integration result for a single plugin
  */
-export interface PluginIntegrationResult {
+interface PluginIntegrationResult {
   pluginName: string;
   commandsRegistered: number;
   skillsRegistered: number;
@@ -30,7 +30,7 @@ export interface PluginIntegrationResult {
 /**
  * Overall integration result
  */
-export interface IntegrationResult {
+interface IntegrationResult {
   plugins: PluginIntegrationResult[];
   totalCommands: number;
   totalSkills: number;
@@ -45,7 +45,7 @@ export interface IntegrationResult {
  * Coordinates the integration of plugin resources into the various
  * Blade Code subsystems.
  */
-export class PluginIntegrator {
+class PluginIntegrator {
   private commandRegistry: CustomCommandRegistry;
   private hookManager: HookManager;
   private mcpRegistry: McpRegistry;

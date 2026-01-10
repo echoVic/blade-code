@@ -618,5 +618,3 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
     </Box>
   );
 };
-
-export default HooksManager;

@@ -8,7 +8,3 @@
 export async function resolveBuiltinApiKey(apiKey: string): Promise<string> {
   return apiKey;
 }
-
-export function clearBuiltinKeyCache(): void {
-  // no-op
-}

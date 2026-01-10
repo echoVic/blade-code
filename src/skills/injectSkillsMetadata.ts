@@ -58,19 +58,3 @@ export function injectSkillsMetadata(
     };
   });
 }
-
-/**
- * 检查是否有可用的 skills
- */
-export function hasAvailableSkills(): boolean {
-  const registry = getSkillRegistry();
-  return registry.size > 0;
-}
-
-/**
- * 获取可用 skills 的数量
- */
-export function getAvailableSkillsCount(): number {
-  const registry = getSkillRegistry();
-  return registry.size;
-}

@@ -4,10 +4,7 @@
 
 import { sessionActions } from '../store/vanilla.js';
 
-/**
- * Slash command 可返回的 UI 指令类型
- */
-export type SlashCommandAction =
+type SlashCommandAction =
   | 'show_model_selector'
   | 'show_model_add_wizard'
   | 'show_agents_manager'

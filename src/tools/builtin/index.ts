@@ -27,10 +27,7 @@ import { createTodoWriteTool } from './todo/index.js';
 // 网络工具
 import { webFetchTool, webSearchTool } from './web/index.js';
 
-/**
- * 获取MCP协议工具
- */
-export async function getMcpTools(): Promise<Tool[]> {
+async function getMcpTools(): Promise<Tool[]> {
   try {
     const mcpRegistry = McpRegistry.getInstance();
     return await mcpRegistry.getAvailableTools();

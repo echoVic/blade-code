@@ -133,7 +133,7 @@ function validateMetadata(
 /**
  * 解析 SKILL.md 文件内容
  */
-export function parseSkillContent(
+function parseSkillContent(
   content: string,
   filePath: string,
   source: 'user' | 'project' | 'builtin'

@@ -25,10 +25,7 @@ function formatUnknown(value: unknown): string {
   }
 }
 
-/**
- * 工具验证错误
- */
-export class ToolValidationError extends Error {
+class ToolValidationError extends Error {
   constructor(
     message: string,
     public readonly issues: Array<{

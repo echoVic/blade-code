@@ -31,14 +31,14 @@ const HookInputBaseSchema = z.object({
     .optional(),
 });
 
-export const PreToolUseInputSchema = HookInputBaseSchema.extend({
+const PreToolUseInputSchema = HookInputBaseSchema.extend({
   hook_event_name: z.literal(HookEvent.PreToolUse),
   tool_name: z.string(),
   tool_use_id: z.string(),
   tool_input: z.record(z.unknown()),
 });
 
-export const PostToolUseInputSchema = HookInputBaseSchema.extend({
+const PostToolUseInputSchema = HookInputBaseSchema.extend({
   hook_event_name: z.literal(HookEvent.PostToolUse),
   tool_name: z.string(),
   tool_use_id: z.string(),
@@ -46,12 +46,12 @@ export const PostToolUseInputSchema = HookInputBaseSchema.extend({
   tool_response: z.unknown(),
 });
 
-export const StopInputSchema = HookInputBaseSchema.extend({
+const StopInputSchema = HookInputBaseSchema.extend({
   hook_event_name: z.literal(HookEvent.Stop),
   reason: z.string().optional(),
 });
 
-export const PostToolUseFailureInputSchema = HookInputBaseSchema.extend({
+const PostToolUseFailureInputSchema = HookInputBaseSchema.extend({
   hook_event_name: z.literal(HookEvent.PostToolUseFailure),
   tool_name: z.string(),
   tool_use_id: z.string(),
@@ -62,27 +62,27 @@ export const PostToolUseFailureInputSchema = HookInputBaseSchema.extend({
   is_timeout: z.boolean(),
 });
 
-export const PermissionRequestInputSchema = HookInputBaseSchema.extend({
+const PermissionRequestInputSchema = HookInputBaseSchema.extend({
   hook_event_name: z.literal(HookEvent.PermissionRequest),
   tool_name: z.string(),
   tool_use_id: z.string(),
   tool_input: z.record(z.unknown()),
 });
 
-export const UserPromptSubmitInputSchema = HookInputBaseSchema.extend({
+const UserPromptSubmitInputSchema = HookInputBaseSchema.extend({
   hook_event_name: z.literal(HookEvent.UserPromptSubmit),
   user_prompt: z.string(),
   has_images: z.boolean(),
   image_count: z.number(),
 });
 
-export const SessionStartInputSchema = HookInputBaseSchema.extend({
+const SessionStartInputSchema = HookInputBaseSchema.extend({
   hook_event_name: z.literal(HookEvent.SessionStart),
   is_resume: z.boolean(),
   resume_session_id: z.string().optional(),
 });
 
-export const SessionEndInputSchema = HookInputBaseSchema.extend({
+const SessionEndInputSchema = HookInputBaseSchema.extend({
   hook_event_name: z.literal(HookEvent.SessionEnd),
   reason: z.enum([
     'user_exit',
@@ -96,7 +96,7 @@ export const SessionEndInputSchema = HookInputBaseSchema.extend({
   ]),
 });
 
-export const SubagentStopInputSchema = HookInputBaseSchema.extend({
+const SubagentStopInputSchema = HookInputBaseSchema.extend({
   hook_event_name: z.literal(HookEvent.SubagentStop),
   agent_type: z.string(),
   task_description: z.string().optional(),
@@ -105,7 +105,7 @@ export const SubagentStopInputSchema = HookInputBaseSchema.extend({
   error: z.string().optional(),
 });
 
-export const NotificationInputSchema = HookInputBaseSchema.extend({
+const NotificationInputSchema = HookInputBaseSchema.extend({
   hook_event_name: z.literal(HookEvent.Notification),
   notification_type: z.enum([
     'permission_prompt',
@@ -120,14 +120,14 @@ export const NotificationInputSchema = HookInputBaseSchema.extend({
   message: z.string(),
 });
 
-export const CompactionInputSchema = HookInputBaseSchema.extend({
+const CompactionInputSchema = HookInputBaseSchema.extend({
   hook_event_name: z.literal(HookEvent.Compaction),
   trigger: z.enum(['manual', 'auto']),
   messages_before: z.number(),
   tokens_before: z.number(),
 });
 
-export const HookInputSchema = z.discriminatedUnion('hook_event_name', [
+const _HookInputSchema = z.discriminatedUnion('hook_event_name', [
   PreToolUseInputSchema,
   PostToolUseInputSchema,
   StopInputSchema,
@@ -194,7 +194,7 @@ const CompactionOutputSchema = z.object({
   blockReason: z.string().optional(),
 });
 
-export const HookOutputSchema = z.object({
+const HookOutputSchema = z.object({
   decision: z
     .object({
       behavior: z.nativeEnum(DecisionBehavior),
@@ -250,7 +250,7 @@ const HookMatcherSchema = z.object({
   hooks: z.array(HookSchema),
 });
 
-export const HookConfigSchema = z.object({
+const _HookConfigSchema = z.object({
   enabled: z.boolean().optional(),
   defaultTimeout: z.number().positive().optional(),
   timeoutBehavior: z.enum(['ignore', 'deny', 'ask']).optional(),
@@ -276,27 +276,6 @@ export const HookConfigSchema = z.object({
 // ============================================================================
 // Validation Helpers
 // ============================================================================
-
-/**
- * 验证 Hook 输入
- */
-export function validateHookInput(data: unknown): z.infer<typeof HookInputSchema> {
-  return HookInputSchema.parse(data);
-}
-
-/**
- * 验证 Hook 输出
- */
-export function validateHookOutput(data: unknown): z.infer<typeof HookOutputSchema> {
-  return HookOutputSchema.parse(data);
-}
-
-/**
- * 验证 Hook 配置
- */
-export function validateHookConfig(data: unknown): z.infer<typeof HookConfigSchema> {
-  return HookConfigSchema.parse(data);
-}
 
 /**
  * 安全解析 Hook 输出 (不抛出异常)

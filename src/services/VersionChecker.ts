@@ -225,20 +225,6 @@ export async function setSkipUntilVersion(version: string): Promise<void> {
 }
 
 /**
- * 清除跳过设置
- */
-export async function clearSkipVersion(): Promise<void> {
-  const cache = await readCache();
-  if (cache) {
-    await writeCache({
-      latestVersion: cache.latestVersion,
-      checkedAt: cache.checkedAt,
-      // 不设置 skipUntilVersion
-    });
-  }
-}
-
-/**
  * 执行升级
  * @returns 升级命令
  */

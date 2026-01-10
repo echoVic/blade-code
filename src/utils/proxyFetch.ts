@@ -11,10 +11,7 @@
 
 import { type Dispatcher, ProxyAgent, fetch as undiciFetch } from 'undici';
 
-/**
- * 获取代理 URL（如果配置了代理环境变量）
- */
-export function getProxyUrl(): string | undefined {
+function getProxyUrl(): string | undefined {
   return (
     process.env.HTTPS_PROXY ||
     process.env.HTTP_PROXY ||
@@ -23,28 +20,17 @@ export function getProxyUrl(): string | undefined {
   );
 }
 
-/**
- * 获取代理 Agent（如果配置了代理环境变量）
- */
-export function getProxyAgent(): ProxyAgent | undefined {
+function getProxyAgent(): ProxyAgent | undefined {
   const proxyUrl = getProxyUrl();
 
   if (proxyUrl) {
     try {
       return new ProxyAgent(proxyUrl);
     } catch (_error) {
-      // 代理配置无效，静默忽略
       console.warn(`[proxyFetch] Invalid proxy URL: ${proxyUrl}`);
     }
   }
   return undefined;
-}
-
-/**
- * 检查是否配置了代理
- */
-export function hasProxy(): boolean {
-  return !!getProxyUrl();
 }
 
 /**
@@ -133,35 +119,4 @@ export async function proxyFetch(
     clearTimeout(timer);
     externalSignal?.removeEventListener('abort', abortListener);
   }
-}
-
-/**
- * 创建带有默认配置的 proxyFetch 实例
- *
- * @example
- * ```ts
- * const apiFetch = createProxyFetch({
- *   headers: {
- *     'Authorization': 'Bearer token',
- *     'User-Agent': 'MyApp/1.0',
- *   },
- *   timeout: 15000,
- * });
- *
- * const response = await apiFetch('/api/endpoint');
- * ```
- */
-export function createProxyFetch(
-  defaultOptions: ProxyFetchOptions = {}
-): (url: string | URL, options?: ProxyFetchOptions) => Promise<Response> {
-  return (url: string | URL, options: ProxyFetchOptions = {}) => {
-    return proxyFetch(url, {
-      ...defaultOptions,
-      ...options,
-      headers: {
-        ...defaultOptions.headers,
-        ...options.headers,
-      },
-    });
-  };
 }

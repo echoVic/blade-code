@@ -208,7 +208,7 @@ export interface PluginDiscoveryError {
 /**
  * Plugin error codes
  */
-export type PluginErrorCode =
+type PluginErrorCode =
   | 'INVALID_MANIFEST' // plugin.json is invalid
   | 'MANIFEST_NOT_FOUND' // No plugin.json found
   | 'INVALID_COMMAND' // Command file is invalid
@@ -238,20 +238,6 @@ export interface PluginLoadOptions {
 
   /** Skip loading MCP config */
   skipMcp?: boolean;
-}
-
-/**
- * Plugin configuration in settings
- */
-export interface PluginsConfig {
-  /** Explicitly enabled plugins */
-  enabled?: string[];
-
-  /** Explicitly disabled plugins */
-  disabled?: string[];
-
-  /** Additional plugin directories to scan */
-  dirs?: string[];
 }
 
 /**

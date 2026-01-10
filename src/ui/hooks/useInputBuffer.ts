@@ -38,7 +38,7 @@ const _PASTE_MARKER_REGEX = new RegExp(
 /**
  * 检查字符串是否包含任何粘贴标记
  */
-export function containsPasteMarker(text: string): boolean {
+function containsPasteMarker(text: string): boolean {
   return text.includes(PASTE_MARKER_START) && text.includes(PASTE_MARKER_END);
 }
 

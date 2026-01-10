@@ -10,7 +10,7 @@ import { PHASE_DISPLAY_NAMES } from '../spec/types.js';
  *
  * Conversation-driven workflow - users don't need to memorize commands
  */
-export const SPEC_MODE_BASE_PROMPT = `
+const SPEC_MODE_BASE_PROMPT = `
 # Spec-Driven Development Mode
 
 You are in **Spec Mode** - a structured development workflow that creates implementation plans based on the **current project's codebase**.
@@ -65,10 +65,7 @@ Show current progress and suggest next steps based on actual project state.
 5. **State transparency** - Always show current phase and progress
 `;
 
-/**
- * Get phase-specific prompt
- */
-export function getPhasePrompt(phase: SpecPhase): string {
+function getPhasePrompt(phase: SpecPhase): string {
   switch (phase) {
     case 'init':
       return `

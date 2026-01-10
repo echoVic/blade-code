@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
+import { useTheme } from '../../store/selectors/index.js';
 import type { TodoItem } from '../../tools/builtin/todo/types.js';
-import { useThemeColors } from '../hooks/useTheme.js';
 
 interface TodoPanelProps {
   todos: TodoItem[];
@@ -15,7 +15,7 @@ interface TodoPanelProps {
  */
 export const TodoPanel: React.FC<TodoPanelProps> = React.memo(
   ({ todos, visible = true, compact = false }) => {
-    const colors = useThemeColors();
+    const { colors } = useTheme();
 
     if (!visible || todos.length === 0) {
       return null;

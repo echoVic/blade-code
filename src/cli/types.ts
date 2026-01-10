@@ -14,8 +14,8 @@ export interface GlobalOptions {
   mcpConfig?: string[];
   systemPrompt?: string;
   appendSystemPrompt?: string;
-  permissionMode?: 'default' | 'autoEdit' | 'yolo' | 'plan'; // --permission-mode 同义词
-  yolo?: boolean; // --yolo 快捷方式,等同于 --permission-mode=yolo
+  permissionMode?: 'default' | 'autoEdit' | 'yolo' | 'plan';
+  yolo?: boolean;
   continue?: boolean;
   resume?: string;
   forkSession?: boolean;
@@ -27,39 +27,8 @@ export interface GlobalOptions {
   sessionId?: string;
   agents?: string;
   settingSources?: string;
-  maxTurns?: number; // 最大对话轮次 (-1=无限制, 0=禁用对话, N>0=限制轮次)
-  pluginDir?: string[]; // 插件目录列表
-}
-
-export interface ConfigSetOptions extends GlobalOptions {
-  global?: boolean;
-  key: string;
-  value: string;
-}
-
-export interface ConfigGetOptions extends GlobalOptions {
-  key: string;
-}
-
-export interface ConfigListOptions extends GlobalOptions {}
-
-export interface McpListOptions extends GlobalOptions {}
-
-export interface McpAddOptions extends GlobalOptions {
-  name: string;
-  config: string;
-}
-
-export interface McpRemoveOptions extends GlobalOptions {
-  name: string;
-}
-
-export interface McpStartOptions extends GlobalOptions {
-  name: string;
-}
-
-export interface McpStopOptions extends GlobalOptions {
-  name: string;
+  maxTurns?: number;
+  pluginDir?: string[];
 }
 
 export interface DoctorOptions extends GlobalOptions {}

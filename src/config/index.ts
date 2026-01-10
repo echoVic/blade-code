@@ -19,10 +19,8 @@ export {
 export type {
   BladeConfig,
   HookConfig,
-  McpProjectsConfig,
   McpServerConfig,
   PermissionConfig,
-  ProjectConfig,
   RuntimeConfig,
 } from './types.js';
 // 类型定义

@@ -4,7 +4,7 @@
 import type { Theme } from './types.js';
 
 // Ayu Dark 主题
-export const ayuDark: Theme = {
+const ayuDark: Theme = {
   name: 'ayu-dark',
   colors: {
     primary: '#ffcc66',
@@ -86,7 +86,7 @@ export const ayuDark: Theme = {
 };
 
 // Dracula 主题
-export const dracula: Theme = {
+const dracula: Theme = {
   name: 'dracula',
   colors: {
     primary: '#bd93f9',
@@ -168,7 +168,7 @@ export const dracula: Theme = {
 };
 
 // Monokai 主题
-export const monokai: Theme = {
+const monokai: Theme = {
   name: 'monokai',
   colors: {
     primary: '#66d9ef',
@@ -250,7 +250,7 @@ export const monokai: Theme = {
 };
 
 // Nord 主题
-export const nord: Theme = {
+const nord: Theme = {
   name: 'nord',
   colors: {
     primary: '#88c0d0',
@@ -331,8 +331,7 @@ export const nord: Theme = {
   },
 };
 
-// Solarized Light 主题
-export const solarizedLight: Theme = {
+const solarizedLight: Theme = {
   name: 'solarized-light',
   colors: {
     primary: '#268bd2',
@@ -413,8 +412,7 @@ export const solarizedLight: Theme = {
   },
 };
 
-// Solarized Dark 主题
-export const solarizedDark: Theme = {
+const solarizedDark: Theme = {
   name: 'solarized-dark',
   colors: {
     primary: '#268bd2',
@@ -496,7 +494,7 @@ export const solarizedDark: Theme = {
 };
 
 // Tokyo Night 主题
-export const tokyoNight: Theme = {
+const tokyoNight: Theme = {
   name: 'tokyo-night',
   colors: {
     primary: '#7aa2f7',
@@ -578,7 +576,7 @@ export const tokyoNight: Theme = {
 };
 
 // GitHub 主题
-export const github: Theme = {
+const github: Theme = {
   name: 'github',
   colors: {
     primary: '#0969da',
@@ -660,7 +658,7 @@ export const github: Theme = {
 };
 
 // Gruvbox 主题
-export const gruvbox: Theme = {
+const gruvbox: Theme = {
   name: 'gruvbox',
   colors: {
     primary: '#83a598',
@@ -741,8 +739,7 @@ export const gruvbox: Theme = {
   },
 };
 
-// One Dark 主题
-export const oneDark: Theme = {
+const oneDark: Theme = {
   name: 'one-dark',
   colors: {
     primary: '#61afef',
@@ -823,8 +820,7 @@ export const oneDark: Theme = {
   },
 };
 
-// Catppuccin 主题
-export const catppuccin: Theme = {
+const catppuccin: Theme = {
   name: 'catppuccin',
   colors: {
     primary: '#89b4fa',
@@ -906,7 +902,7 @@ export const catppuccin: Theme = {
 };
 
 // Rose Pine 主题
-export const rosePine: Theme = {
+const rosePine: Theme = {
   name: 'rose-pine',
   colors: {
     primary: '#9ccfd8',
@@ -987,8 +983,7 @@ export const rosePine: Theme = {
   },
 };
 
-// Kanagawa 主题
-export const kanagawa: Theme = {
+const kanagawa: Theme = {
   name: 'kanagawa',
   colors: {
     primary: '#8ba4b0',
@@ -1069,14 +1064,13 @@ export const kanagawa: Theme = {
   },
 };
 
-// 主题项接口 - 包含主题数据和元信息
-export interface ThemeItem {
-  id: string; // 主题唯一标识
-  label: string; // 显示名称
-  theme: Theme; // 主题配置
-  description?: string; // 主题描述
-  author?: string; // 作者
-  tags?: string[]; // 标签
+interface ThemeItem {
+  id: string;
+  label: string;
+  theme: Theme;
+  description?: string;
+  author?: string;
+  tags?: string[];
 }
 
 // 导出所有主题 - 数组格式，方便遍历和UI使用
@@ -1115,13 +1109,3 @@ export const themes: ThemeItem[] = [
   { id: 'rose-pine', label: 'Rose Pine', theme: rosePine, tags: ['dark', 'elegant'] },
   { id: 'kanagawa', label: 'Kanagawa', theme: kanagawa, tags: ['dark', 'japanese'] },
 ];
-
-// 辅助函数 - 根据 ID 查找主题
-export function getThemeById(id: string): Theme | undefined {
-  return themes.find((item) => item.id === id)?.theme;
-}
-
-// 辅助函数 - 获取所有主题 ID
-export function getThemeIds(): string[] {
-  return themes.map((item) => item.id);
-}

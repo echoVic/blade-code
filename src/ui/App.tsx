@@ -313,5 +313,3 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
     </ErrorBoundary>
   );
 };
-
-export default AppWrapper;

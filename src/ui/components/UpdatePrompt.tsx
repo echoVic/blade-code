@@ -170,5 +170,3 @@ export const UpdatePrompt: React.FC<UpdatePromptProps> = ({
     </Box>
   );
 };
-
-export default UpdatePrompt;

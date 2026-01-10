@@ -36,7 +36,4 @@ export function streamDebug(
   appendFileSync(LOG_FILE, line);
 }
 
-export function streamDebugReset(): void {
-  initialized = false;
-  ensureLogFile();
-}
+

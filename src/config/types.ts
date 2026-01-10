@@ -231,21 +231,7 @@ export interface McpServerConfig {
   };
 }
 
-/**
- * 项目配置（按项目路径组织）
- */
-export interface ProjectConfig {
-  mcpServers?: Record<string, McpServerConfig>;
-  allowedTools?: string[];
-  mcpContextUris?: string[];
-}
 
-/**
- * MCP 项目配置（按项目路径组织）
- */
-export interface McpProjectsConfig {
-  [projectPath: string]: ProjectConfig;
-}
 
 /**
  * SetupWizard 保存的配置字段

@@ -27,31 +27,5 @@
  * ```
  */
 
-export {
-  getAvailableSkillsCount,
-  hasAvailableSkills,
-  injectSkillsMetadata,
-} from './injectSkillsMetadata.js';
-export {
-  getSkillInstaller,
-  resetSkillInstaller,
-  SkillInstaller,
-} from './SkillInstaller.js';
-
-export {
-  hasSkillFile,
-  loadSkillContent,
-  loadSkillMetadata,
-  parseSkillContent,
-} from './SkillLoader.js';
-// 核心功能导出
-export { discoverSkills, getSkillRegistry, SkillRegistry } from './SkillRegistry.js';
-// 类型导出
-export type {
-  SkillContent,
-  SkillDiscoveryResult,
-  SkillExecutionContext,
-  SkillMetadata,
-  SkillParseResult,
-  SkillRegistryConfig,
-} from './types.js';
+export { injectSkillsMetadata } from './injectSkillsMetadata.js';
+export { discoverSkills, getSkillRegistry } from './SkillRegistry.js';

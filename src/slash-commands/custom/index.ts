@@ -5,16 +5,5 @@
  * 支持 .blade/commands/ 和 .claude/commands/ 目录
  */
 
-export { CustomCommandExecutor } from './CustomCommandExecutor.js';
-export { CustomCommandLoader } from './CustomCommandLoader.js';
-// 核心类导出
-export { CustomCommandParser } from './CustomCommandParser.js';
 export { CustomCommandRegistry } from './CustomCommandRegistry.js';
-// 类型导出
-export type {
-  CommandSearchDir,
-  CustomCommand,
-  CustomCommandConfig,
-  CustomCommandDiscoveryResult,
-  CustomCommandExecutionContext,
-} from './types.js';
+export type { CustomCommandDiscoveryResult } from './types.js';

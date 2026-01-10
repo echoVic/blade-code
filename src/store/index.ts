@@ -36,15 +36,3 @@ export function useBladeStore<T>(selector: (state: BladeStore) => T): T {
 export * from './selectors/index.js';
 // 导出类型
 export type { BladeStore } from './types.js';
-
-// 重新导出 vanilla store 的便捷访问器
-export {
-  appActions,
-  commandActions,
-  focusActions,
-  getState,
-  sessionActions,
-  specActions,
-  subscribe,
-  vanillaStore,
-} from './vanilla.js';

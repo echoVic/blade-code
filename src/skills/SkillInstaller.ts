@@ -227,9 +227,4 @@ export function getSkillInstaller(skillsDir?: string): SkillInstaller {
   return installerInstance;
 }
 
-/**
- * 重置单例（用于测试）
- */
-export function resetSkillInstaller(): void {
-  installerInstance = null;
-}
+

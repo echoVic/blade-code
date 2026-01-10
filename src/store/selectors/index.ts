@@ -12,7 +12,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type { ModelConfig } from '../../config/types.js';
 import { themeManager } from '../../ui/themes/ThemeManager.js';
 import { useBladeStore } from '../index.js';
-import { type ActiveModal, type FocusId, PermissionMode } from '../types.js';
+import { PermissionMode } from '../types.js';
 
 // ==================== 常量空引用（避免不必要的重渲染）====================
 
@@ -42,30 +42,9 @@ export const useIsCompacting = () =>
   useBladeStore((state) => state.session.isCompacting);
 
 /**
- * 获取当前命令
- */
-export const useCurrentCommand = () =>
-  useBladeStore((state) => state.session.currentCommand);
-
-/**
- * 获取 Session 错误
- */
-export const useSessionError = () => useBladeStore((state) => state.session.error);
-
-/**
- * 获取 Session 是否活跃
- */
-export const useIsActive = () => useBladeStore((state) => state.session.isActive);
-
-/**
  * 获取 Session Actions
  */
 export const useSessionActions = () => useBladeStore((state) => state.session.actions);
-
-/**
- * 获取 Token 使用量
- */
-export const useTokenUsage = () => useBladeStore((state) => state.session.tokenUsage);
 
 /**
  * 派生选择器：Context 剩余百分比
@@ -77,37 +56,6 @@ export const useContextRemaining = () =>
     const remaining = Math.max(0, 100 - (inputTokens / maxContextTokens) * 100);
     return Math.round(remaining);
   });
-
-/**
- * 派生选择器：最后一条消息
- */
-export const useLastMessage = () =>
-  useBladeStore((state) => {
-    const messages = state.session.messages;
-    return messages.length > 0 ? messages[messages.length - 1] : null;
-  });
-
-/**
- * 派生选择器：消息数量
- */
-export const useMessageCount = () =>
-  useBladeStore((state) => state.session.messages.length);
-
-/**
- * 组合选择器：完整 Session 状态（用于需要多个字段的组件）
- * 使用 useShallow 避免因返回新对象而导致的不必要重渲染
- */
-export const useSessionState = () =>
-  useBladeStore(
-    useShallow((state) => ({
-      sessionId: state.session.sessionId,
-      messages: state.session.messages,
-      isProcessing: state.command.isProcessing,
-      currentCommand: state.session.currentCommand,
-      error: state.session.error,
-      isActive: state.session.isActive,
-    }))
-  );
 
 // ==================== App 选择器 ====================
 
@@ -163,54 +111,12 @@ export const useIsReady = () =>
   useBladeStore((state) => state.app.initializationStatus === 'ready');
 
 /**
- * 派生选择器：是否需要设置
- */
-export const useNeedsSetup = () =>
-  useBladeStore((state) => state.app.initializationStatus === 'needsSetup');
-
-/**
  * 派生选择器：是否显示 Todo 面板
  */
 export const useShowTodoPanel = () =>
   useBladeStore((state) => state.app.todos.length > 0);
 
-/**
- * 派生选择器：Todo 统计
- * 使用 useShallow 避免因返回新对象而导致的不必要重渲染
- */
-export const useTodoStats = () =>
-  useBladeStore(
-    useShallow((state) => {
-      const todos = state.app.todos;
-      return {
-        total: todos.length,
-        completed: todos.filter((t) => t.status === 'completed').length,
-        inProgress: todos.filter((t) => t.status === 'in_progress').length,
-        pending: todos.filter((t) => t.status === 'pending').length,
-      };
-    })
-  );
-
-/**
- * 组合选择器：完整 App 状态（用于需要多个字段的组件）
- * 使用 useShallow 避免因返回新对象而导致的不必要重渲染
- */
-export const useAppState = () =>
-  useBladeStore(
-    useShallow((state) => ({
-      initializationStatus: state.app.initializationStatus,
-      initializationError: state.app.initializationError,
-      activeModal: state.app.activeModal,
-      todos: state.app.todos,
-    }))
-  );
-
 // ==================== Config 选择器 ====================
-
-/**
- * 获取配置
- */
-export const useConfig = () => useBladeStore((state) => state.config.config);
 
 /**
  * 派生选择器：权限模式
@@ -247,13 +153,6 @@ export const useCurrentModelId = () =>
   useBladeStore((state) => state.config.config?.currentModelId);
 
 /**
- * 派生选择器：当前主题名称
- * 用于触发主题相关组件的响应式更新
- */
-export const useCurrentThemeName = () =>
-  useBladeStore((state) => state.config.config?.theme ?? 'default');
-
-/**
  * 派生选择器：当前主题对象
  * 订阅 Store 中的主题名称变化，并返回完整的 Theme 对象
  *
@@ -275,11 +174,6 @@ export const useTheme = () =>
     return themeManager.getTheme();
   });
 
-/**
- * 获取 Config Actions
- */
-export const useConfigActions = () => useBladeStore((state) => state.config.actions);
-
 // ==================== Focus 选择器 ====================
 
 /**
@@ -288,21 +182,9 @@ export const useConfigActions = () => useBladeStore((state) => state.config.acti
 export const useCurrentFocus = () => useBladeStore((state) => state.focus.currentFocus);
 
 /**
- * 获取上一个焦点
- */
-export const usePreviousFocus = () =>
-  useBladeStore((state) => state.focus.previousFocus);
-
-/**
  * 获取 Focus Actions
  */
 export const useFocusActions = () => useBladeStore((state) => state.focus.actions);
-
-/**
- * 派生选择器：检查特定焦点是否激活
- */
-export const useIsFocused = (id: FocusId) =>
-  useBladeStore((state) => state.focus.currentFocus === id);
 
 // ==================== Command 选择器 ====================
 
@@ -311,12 +193,6 @@ export const useIsFocused = (id: FocusId) =>
  */
 export const useIsProcessing = () =>
   useBladeStore((state) => state.command.isProcessing);
-
-/**
- * 获取 AbortController
- */
-export const useAbortController = () =>
-  useBladeStore((state) => state.command.abortController);
 
 /**
  * 获取 Command Actions
@@ -328,50 +204,6 @@ export const useCommandActions = () => useBladeStore((state) => state.command.ac
  */
 export const usePendingCommands = () =>
   useBladeStore((state) => state.command.pendingCommands);
-
-/**
- * 派生选择器：是否可以中止
- */
-export const useCanAbort = () =>
-  useBladeStore(
-    (state) => state.command.isProcessing && state.command.abortController !== null
-  );
-
-// ==================== 跨 Slice 组合选择器 ====================
-
-/**
- * 派生选择器：输入是否禁用
- *
- * 输入禁用条件：
- * - 正在处理 (isProcessing)
- * - 未准备就绪
- * - 有活动模态框（除了 shortcuts）
- */
-export const useIsInputDisabled = () =>
-  useBladeStore((state) => {
-    const isProcessing = state.command.isProcessing;
-    const isReady = state.app.initializationStatus === 'ready';
-    const hasModal =
-      state.app.activeModal !== 'none' && state.app.activeModal !== 'shortcuts';
-    return isProcessing || !isReady || hasModal;
-  });
-
-/**
- * 派生选择器：是否有模态框打开
- */
-export const useHasActiveModal = () =>
-  useBladeStore((state) => state.app.activeModal !== 'none');
-
-/**
- * 派生选择器：是否是特定模态框
- */
-export const useIsModal = (modal: ActiveModal) =>
-  useBladeStore((state) => state.app.activeModal === modal);
-
-/**
- * 派生选择器：是否正在执行任务
- */
-export const useIsBusy = () => useBladeStore((state) => state.command.isProcessing);
 
 // ==================== Thinking 模式选择器 ====================
 
@@ -407,46 +239,6 @@ export const useCurrentStreamingMessageId = () =>
 export const useCurrentStreamingContent = () =>
   useBladeStore((state) => state.session.currentStreamingContent);
 
-/**
- * 获取当前流式消息的内容（如果有）
- * 只订阅 content 字符串，避免对象引用变化导致的重渲染
- */
-export const useStreamingMessageContent = () =>
-  useBladeStore((state) => {
-    const streamingId = state.session.currentStreamingMessageId;
-    if (!streamingId) return null;
-    const msg = state.session.messages.find((m) => m.id === streamingId);
-    return msg?.content ?? null;
-  });
-
-/**
- * 获取当前流式消息的元数据（如果有）
- * 只订阅 metadata，避免 content 变化导致的重渲染
- */
-export const useStreamingMessageMeta = () =>
-  useBladeStore((state) => {
-    const streamingId = state.session.currentStreamingMessageId;
-    if (!streamingId) return null;
-    const msg = state.session.messages.find((m) => m.id === streamingId);
-    if (!msg) return null;
-    return { id: msg.id, role: msg.role, metadata: msg.metadata };
-  });
-
-/**
- * 获取历史消息数量（不包含流式消息）
- * 用于检测历史消息是否变化
- */
-export const useHistoryMessagesCount = () =>
-  useBladeStore((state) => {
-    const streamingId = state.session.currentStreamingMessageId;
-    if (!streamingId) return state.session.messages.length;
-    const streamingIndex = state.session.messages.findIndex(
-      (msg) => msg.id === streamingId
-    );
-    if (streamingIndex === -1) return state.session.messages.length;
-    return streamingIndex;
-  });
-
 // ==================== 历史消息折叠选择器 ====================
 
 /**
@@ -460,18 +252,6 @@ export const useHistoryExpanded = () =>
  */
 export const useExpandedMessageCount = () =>
   useBladeStore((state) => state.session.expandedMessageCount);
-
-// ==================== Spec 选择器 ====================
-
-/**
- * 获取当前 Spec 元数据
- */
-export const useCurrentSpec = () => useBladeStore((state) => state.spec.currentSpec);
-
-/**
- * 获取 Spec 是否激活
- */
-export const useSpecIsActive = () => useBladeStore((state) => state.spec.isActive);
 
 /**
  * 派生选择器：Spec 阶段和进度

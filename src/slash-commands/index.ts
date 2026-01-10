@@ -153,13 +153,6 @@ export async function initializeCustomCommands(
 }
 
 /**
- * 获取自定义命令注册表
- */
-export function getCustomCommandRegistry(): CustomCommandRegistry {
-  return CustomCommandRegistry.getInstance();
-}
-
-/**
  * 执行 slash command
  */
 export async function executeSlashCommand(
@@ -295,27 +288,6 @@ export function getRegisteredCommands(): SlashCommand[] {
 }
 
 /**
- * 注册新的 slash command
- */
-export function registerSlashCommand(command: SlashCommand): void {
-  slashCommands[command.name] = command;
-}
-
-/**
- * 获取命令补全建议（简单前缀匹配）
- */
-export function getCommandSuggestions(partialCommand: string): string[] {
-  const prefix = partialCommand.startsWith('/')
-    ? partialCommand.slice(1)
-    : partialCommand;
-  const suggestions = Object.keys(slashCommands)
-    .filter((name) => name.toLowerCase().startsWith(prefix.toLowerCase()))
-    .map((name) => `/${name}`);
-
-  return suggestions;
-}
-
-/**
  * 获取模糊匹配的命令建议（使用 fuse.js）
  */
 export function getFuzzyCommandSuggestions(input: string): CommandSuggestion[] {
@@ -425,4 +397,4 @@ export function getFuzzyCommandSuggestions(input: string): CommandSuggestion[] {
   return suggestions.filter((s) => (s.matchScore || 0) >= 40);
 }
 
-export type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
+export type { SlashCommandContext } from './types.js';

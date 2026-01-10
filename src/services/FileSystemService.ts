@@ -114,10 +114,3 @@ export function setFileSystemService(service: FileSystemService): void {
 export function resetFileSystemService(): void {
   currentFileSystemService = new LocalFileSystemService();
 }
-
-/**
- * 检查当前是否使用 ACP 文件系统
- */
-export function isUsingAcpFileSystem(): boolean {
-  return !(currentFileSystemService instanceof LocalFileSystemService);
-}

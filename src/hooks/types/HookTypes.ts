@@ -864,37 +864,4 @@ export interface MatchContext {
   command?: string;
 }
 
-// ============================================================================
-// Hook Metrics
-// ============================================================================
 
-/**
- * Hook 统计
- */
-export interface HookStats {
-  /** 执行次数 */
-  executions: number;
-
-  /** 总耗时 (ms) */
-  totalDuration: number;
-
-  /** 失败次数 */
-  failures: number;
-}
-
-/**
- * Hook 性能报告
- */
-export interface HookPerformanceReport {
-  /** Hook 名称 */
-  hookName: string;
-
-  /** 平均耗时 (ms) */
-  avgDuration: number;
-
-  /** 执行次数 */
-  executions: number;
-
-  /** 失败率 */
-  failureRate: number;
-}

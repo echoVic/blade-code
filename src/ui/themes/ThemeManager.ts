@@ -6,7 +6,7 @@ import { themes } from './presets.js';
 import type { BaseColors, Theme } from './types.js';
 
 // 默认主题配置
-export const defaultColors: BaseColors = {
+const defaultColors: BaseColors = {
   primary: '#0066cc',
   secondary: '#6c757d',
   accent: '#e83e8c',
@@ -48,7 +48,7 @@ export const defaultColors: BaseColors = {
   },
 };
 
-export const defaultTheme: Theme = {
+const defaultTheme: Theme = {
   name: 'default',
   colors: defaultColors,
   spacing: {
@@ -90,7 +90,7 @@ export const defaultTheme: Theme = {
 };
 
 // 暗色主题配置
-export const darkTheme: Theme = {
+const darkTheme: Theme = {
   ...defaultTheme,
   name: 'dark',
   colors: {
@@ -127,7 +127,7 @@ export const darkTheme: Theme = {
 };
 
 // 主题管理器类
-export class ThemeManager {
+class ThemeManager {
   private currentTheme: Theme = defaultTheme;
   private themes: Map<string, Theme> = new Map();
 
@@ -199,6 +199,3 @@ export class ThemeManager {
 
 // 导出默认主题管理器实例
 export const themeManager = new ThemeManager();
-
-// 导出主题配置类型
-export type { BaseColors, Theme };

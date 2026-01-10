@@ -11,23 +11,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, isAbsolute } from 'node:path';
 
-/**
- * 根据平台返回剪贴板错误提示信息
- */
-function getClipboardErrorMessage(): string {
-  const platform = process.platform;
-  const messages = {
-    darwin:
-      'No image found in clipboard. Use Cmd + Ctrl + Shift + 4 to copy a screenshot to clipboard.',
-    win32:
-      'No image found in clipboard. Use Print Screen to copy a screenshot to clipboard.',
-    linux:
-      'No image found in clipboard. Use appropriate screenshot tool to copy a screenshot to clipboard.',
-  };
-  return messages[platform as keyof typeof messages] || messages.linux;
-}
 
-export const CLIPBOARD_ERROR_MESSAGE = getClipboardErrorMessage();
 
 /**
  * 基于二进制头检测图片类型（比 base64 前缀更可靠）

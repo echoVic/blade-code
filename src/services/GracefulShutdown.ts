@@ -282,10 +282,6 @@ export const initializeGracefulShutdown = (): void => {
   getGracefulShutdown().initialize();
 };
 
-export const isExiting = (): boolean => {
-  return getGracefulShutdown().isExiting();
-};
-
 /**
  * 安全退出应用
  * 恢复终端状态后退出，确保光标可见

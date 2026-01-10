@@ -78,19 +78,6 @@ export interface SkillContent {
   instructions: string;
 }
 
-/**
- * Skill 执行上下文
- */
-export interface SkillExecutionContext {
-  /** Skill 名称 */
-  skillName: string;
-
-  /** 执行期间的工具限制 */
-  allowedTools?: string[];
-
-  /** Skill 目录路径（可引用脚本/模板） */
-  basePath: string;
-}
 
 /**
  * SKILL.md 解析结果
