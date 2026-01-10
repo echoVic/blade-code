@@ -13,15 +13,15 @@
  * Step 7: 确认并保存
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { MultiSelect } from '@inkjs/ui';
 import { useMemoizedFn } from 'ahooks';
 import { Box, Text, useFocus, useFocusManager, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { useEffect, useState } from 'react';
 import { Agent } from '../../agent/Agent.js';
 import type { SubagentColor } from '../../agent/subagents/types.js';

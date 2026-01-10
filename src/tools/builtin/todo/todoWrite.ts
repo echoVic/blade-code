@@ -23,7 +23,8 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
 
     // 工具描述（对齐 Claude Code 官方）
     description: {
-      short: 'Use this tool to create and manage a structured task list for your current coding session',
+      short:
+        'Use this tool to create and manage a structured task list for your current coding session',
       long: `Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
 It also helps the user understand the progress of the task and overall progress of their requests.
 
@@ -105,7 +106,9 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
 
         const displayContent = formatTodoList(sortedTodos, stats);
 
-        updateOutput?.(`✅ TODO list updated (${stats.completed}/${stats.total} completed)`);
+        updateOutput?.(
+          `✅ TODO list updated (${stats.completed}/${stats.total} completed)`
+        );
 
         return {
           success: true,

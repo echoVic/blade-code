@@ -9,7 +9,8 @@ import type { SlashCommand, SlashCommandResult } from './types.js';
 const skillsCommand: SlashCommand = {
   name: 'skills',
   description: '查看所有可用的 Skills',
-  fullDescription: '显示所有已发现的 Skills 及其详细信息，包括名称、描述、来源和允许的工具。',
+  fullDescription:
+    '显示所有已发现的 Skills 及其详细信息，包括名称、描述、来源和允许的工具。',
   usage: '/skills',
   category: 'system',
   examples: ['/skills'],

@@ -26,10 +26,9 @@ import { streamDebug } from '../logging/StreamDebugLogger.js';
 import { loadMcpConfigFromCli } from '../mcp/loadMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { buildSystemPrompt, createPlanModeReminder } from '../prompts/index.js';
-import { buildSpecModePrompt, createSpecModeReminder } from '../prompts/spec.js';
-import { SpecManager } from '../spec/SpecManager.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
 import type { Attachment } from '../prompts/processors/types.js';
+import { buildSpecModePrompt, createSpecModeReminder } from '../prompts/spec.js';
 import {
   type ChatResponse,
   type ContentPart,
@@ -39,6 +38,7 @@ import {
   type StreamChunk,
 } from '../services/ChatServiceInterface.js';
 import { discoverSkills, injectSkillsMetadata } from '../skills/index.js';
+import { SpecManager } from '../spec/SpecManager.js';
 import {
   appActions,
   configActions,
@@ -51,7 +51,7 @@ import {
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
-import { type Tool, type ToolResult, ToolErrorType } from '../tools/types/index.js';
+import { type Tool, ToolErrorType, type ToolResult } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
 import { isThinkingModel } from '../utils/modelDetection.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
@@ -834,7 +834,11 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         // 流式模式下：增量已通过 onContentDelta 发送，调用 onStreamEnd 标记结束
         // 非流式模式下：调用 onContent 发送完整内容
         // 注意：检查 abort 状态，避免取消后仍然触发回调
-        if (turnResult.content && turnResult.content.trim() && !options?.signal?.aborted) {
+        if (
+          turnResult.content &&
+          turnResult.content.trim() &&
+          !options?.signal?.aborted
+        ) {
           if (isStreamEnabled) {
             streamDebug('executeLoop', 'calling onStreamEnd (stream mode)', {
               contentLen: turnResult.content.length,
@@ -995,7 +999,9 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
         // 在执行前检查取消信号
         if (options?.signal?.aborted) {
-          logger.info('[Agent] Aborting before tool execution due to signal.aborted=true');
+          logger.info(
+            '[Agent] Aborting before tool execution due to signal.aborted=true'
+          );
           return {
             success: false,
             error: {
@@ -1132,9 +1138,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         };
 
         // 🚀 并行执行所有工具调用
-        logger.info(
-          `[Agent] Executing ${functionCalls.length} tool calls in parallel`
-        );
+        logger.info(`[Agent] Executing ${functionCalls.length} tool calls in parallel`);
         const executionResults = await Promise.all(functionCalls.map(executeToolCall));
 
         // 按顺序处理执行结果（保持与原始 tool_calls 顺序一致）
@@ -1145,9 +1149,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           if (result.metadata?.shouldExitLoop) {
             logger.debug('🚪 检测到退出循环标记，结束 Agent 循环');
             const finalMessage =
-              typeof result.llmContent === 'string'
-                ? result.llmContent
-                : '循环已退出';
+              typeof result.llmContent === 'string' ? result.llmContent : '循环已退出';
 
             return {
               success: result.success,
@@ -1216,11 +1218,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           }
 
           // 如果是 Skill 工具，设置执行上下文
-          if (
-            toolCall.function.name === 'Skill' &&
-            result.success &&
-            result.metadata
-          ) {
+          if (toolCall.function.name === 'Skill' && result.success && result.metadata) {
             const metadata = result.metadata as Record<string, unknown>;
             if (metadata.skillName) {
               this.activeSkillContext = {

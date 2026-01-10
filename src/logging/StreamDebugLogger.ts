@@ -17,11 +17,18 @@ function ensureLogFile(): void {
   if (initialized) return;
   const logDir = path.dirname(LOG_FILE);
   mkdirSync(logDir, { recursive: true });
-  writeFileSync(LOG_FILE, `=== Stream Debug Log Started: ${new Date().toISOString()} ===\n`);
+  writeFileSync(
+    LOG_FILE,
+    `=== Stream Debug Log Started: ${new Date().toISOString()} ===\n`
+  );
   initialized = true;
 }
 
-export function streamDebug(source: string, message: string, data?: Record<string, unknown>): void {
+export function streamDebug(
+  source: string,
+  message: string,
+  data?: Record<string, unknown>
+): void {
   ensureLogFile();
   const timestamp = new Date().toISOString();
   const dataStr = data ? ` | ${JSON.stringify(data)}` : '';

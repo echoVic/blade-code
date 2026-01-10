@@ -272,7 +272,10 @@ export const ideCommand: SlashCommand = {
   usage: '/ide [status|connect|install|disconnect]',
   category: 'system',
 
-  async handler(args: string[], context: SlashCommandContext): Promise<SlashCommandResult> {
+  async handler(
+    args: string[],
+    context: SlashCommandContext
+  ): Promise<SlashCommandResult> {
     const subCommand = (args[0] || '').toLowerCase();
 
     let message: string;

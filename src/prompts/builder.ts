@@ -17,8 +17,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { PermissionMode } from '../config/types.js';
 import { getSkillRegistry } from '../skills/index.js';
-import { getEnvironmentContext } from '../utils/environment.js';
 import type { SpecMetadata } from '../spec/types.js';
+import { getEnvironmentContext } from '../utils/environment.js';
 import { DEFAULT_SYSTEM_PROMPT, PLAN_MODE_SYSTEM_PROMPT } from './default.js';
 import { buildSpecModePrompt } from './spec.js';
 
@@ -211,4 +211,3 @@ async function loadBladeConfig(projectPath: string): Promise<string | null> {
     return null;
   }
 }
-

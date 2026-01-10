@@ -81,7 +81,9 @@ function parseBoolean(value: boolean | string | undefined): boolean | undefined 
 function validateMetadata(
   frontmatter: RawFrontmatter,
   filePath: string
-): { valid: true; metadata: Omit<SkillMetadata, 'path' | 'basePath' | 'source'> } | { valid: false; error: string } {
+):
+  | { valid: true; metadata: Omit<SkillMetadata, 'path' | 'basePath' | 'source'> }
+  | { valid: false; error: string } {
   // 验证 name
   if (!frontmatter.name) {
     return { valid: false, error: 'Missing required field: name' };
@@ -210,7 +212,9 @@ export async function loadSkillMetadata(
 /**
  * 加载完整 Skill 内容
  */
-export async function loadSkillContent(metadata: SkillMetadata): Promise<SkillContent | null> {
+export async function loadSkillContent(
+  metadata: SkillMetadata
+): Promise<SkillContent | null> {
   try {
     const content = await fs.readFile(metadata.path, 'utf-8');
     const result = parseSkillContent(content, metadata.path, metadata.source);

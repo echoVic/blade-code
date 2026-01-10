@@ -145,11 +145,17 @@ describe('/tasks Command', () => {
       });
 
       mockAgentManager.listAll.mockReturnValue([
-        { id: 'agent_1', status: 'completed', createdAt: Date.now(), subagentType: 'Explore', description: 'Test' },
+        {
+          id: 'agent_1',
+          status: 'completed',
+          createdAt: Date.now(),
+          subagentType: 'Explore',
+          description: 'Test',
+        },
       ]);
       mockAgentManager.getRunningCount.mockReturnValue(0);
 
-      const result = await tasksCommand.handler([], mockContext);
+      await tasksCommand.handler([], mockContext);
 
       const message = mockSendMessage.mock.calls[0][0];
       expect(message).toContain('2 shells (1 运行中)');
@@ -193,7 +199,10 @@ describe('/tasks Command', () => {
     it('agent 不存在时应提示', async () => {
       mockAgentManager.killAgent.mockReturnValue(false);
 
-      const result = await tasksCommand.handler(['kill', 'agent_nonexistent'], mockContext);
+      const result = await tasksCommand.handler(
+        ['kill', 'agent_nonexistent'],
+        mockContext
+      );
 
       expect(result.success).toBe(false);
       const message = mockSendMessage.mock.calls[0][0];

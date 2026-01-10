@@ -4,9 +4,9 @@
  * 解析 .md 文件，提取 Frontmatter 配置和 Markdown 正文
  */
 
-import matter from 'gray-matter';
 import fs from 'node:fs';
 import path from 'node:path';
+import matter from 'gray-matter';
 import type { CustomCommand, CustomCommandConfig } from './types.js';
 
 export class CustomCommandParser {

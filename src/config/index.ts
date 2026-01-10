@@ -12,12 +12,10 @@ export { DEFAULT_CONFIG } from './defaults.js';
 // 权限检查器
 export {
   PermissionChecker,
-  PermissionResult,
   type PermissionCheckResult,
+  PermissionResult,
   type ToolInvocationDescriptor,
 } from './PermissionChecker.js';
-// 类型定义
-export { PermissionMode } from './types.js';
 export type {
   BladeConfig,
   HookConfig,
@@ -27,3 +25,5 @@ export type {
   ProjectConfig,
   RuntimeConfig,
 } from './types.js';
+// 类型定义
+export { PermissionMode } from './types.js';

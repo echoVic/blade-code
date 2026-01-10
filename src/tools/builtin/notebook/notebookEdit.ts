@@ -106,9 +106,9 @@ export const notebookEditTool = createTool({
             };
           }
           const cell = notebook.cells[cellIndex];
-          cell.source = new_source.split('\n').map((line, i, arr) =>
-            i < arr.length - 1 ? line + '\n' : line
-          );
+          cell.source = new_source
+            .split('\n')
+            .map((line, i, arr) => (i < arr.length - 1 ? line + '\n' : line));
           if (cell_type) {
             cell.cell_type = cell_type;
           }
@@ -129,13 +129,11 @@ export const notebookEditTool = createTool({
           }
           const newCell = {
             cell_type,
-            source: new_source.split('\n').map((line, i, arr) =>
-              i < arr.length - 1 ? line + '\n' : line
-            ),
+            source: new_source
+              .split('\n')
+              .map((line, i, arr) => (i < arr.length - 1 ? line + '\n' : line)),
             metadata: {},
-            ...(cell_type === 'code'
-              ? { execution_count: null, outputs: [] }
-              : {}),
+            ...(cell_type === 'code' ? { execution_count: null, outputs: [] } : {}),
           };
           const insertIndex = cellIndex === -1 ? 0 : cellIndex + 1;
           notebook.cells.splice(insertIndex, 0, newCell);
@@ -180,8 +178,7 @@ export const notebookEditTool = createTool({
         },
       };
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unknown error';
+      const message = error instanceof Error ? error.message : 'Unknown error';
       return {
         success: false,
         llmContent: `Failed to edit notebook: ${message}`,

@@ -1,7 +1,7 @@
-import { z } from 'zod';
 import { promises as fs } from 'node:fs';
-import * as path from 'node:path';
 import { homedir } from 'node:os';
+import * as path from 'node:path';
+import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
@@ -21,7 +21,8 @@ export const exitPlanModeTool = createTool({
 
   // 工具描述
   description: {
-    short: 'Use this tool when you are in plan mode and have finished creating your plan and are ready for user approval',
+    short:
+      'Use this tool when you are in plan mode and have finished creating your plan and are ready for user approval',
     long: `Use this tool when you are in plan mode and have finished creating your implementation plan and are ready for user approval.
 
 ## 🚨 PREREQUISITES (MUST be satisfied before calling)

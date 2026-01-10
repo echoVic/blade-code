@@ -66,7 +66,9 @@ const AnswerSummary = React.memo<{
   <Box flexDirection="column" marginBottom={1}>
     {questions.map((q) => {
       const answer = answers[q.header];
-      const answerStr = Array.isArray(answer) ? answer.join(', ') : answer || '(no answer)';
+      const answerStr = Array.isArray(answer)
+        ? answer.join(', ')
+        : answer || '(no answer)';
       return (
         <Box key={q.header} marginBottom={1}>
           <Text backgroundColor="blue" color="white">
@@ -355,7 +357,9 @@ export const QuestionPrompt: React.FC<QuestionPromptProps> = React.memo(
 
           {/* 导航提示 */}
           <Box marginTop={1}>
-            <Text color="gray">Enter to confirm · ↑↓ to navigate · Y/E for quick select</Text>
+            <Text color="gray">
+              Enter to confirm · ↑↓ to navigate · Y/E for quick select
+            </Text>
           </Box>
         </Box>
       );

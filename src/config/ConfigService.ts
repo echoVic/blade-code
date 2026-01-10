@@ -10,11 +10,11 @@
  * 6. 向前兼容（保留未知字段）
  */
 
-import { Mutex } from 'async-mutex';
-import { merge } from 'lodash-es';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Mutex } from 'async-mutex';
+import { merge } from 'lodash-es';
 import writeFileAtomic from 'write-file-atomic';
 import type { BladeConfig, PermissionConfig } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';

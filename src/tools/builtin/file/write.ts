@@ -212,7 +212,8 @@ export const writeTool = createTool({
         snapshot_created: snapshotCreated, // 是否创建了快照
         session_id: sessionId,
         message_id: messageId,
-        last_modified: stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
+        last_modified:
+          stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
         has_diff: !!diffSnippet, // 是否生成了 diff
         summary:
           encoding === 'utf8'
@@ -236,7 +237,8 @@ export const writeTool = createTool({
         llmContent: {
           file_path,
           size: stats?.size,
-          modified: stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
+          modified:
+            stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
         },
         displayContent: displayMessage,
         metadata,

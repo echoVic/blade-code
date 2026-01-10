@@ -179,7 +179,8 @@ For simpler planning needs, consider using EnterPlanMode instead.
               displayContent: '❌ Failed to initialize Spec',
               error: {
                 type: ToolErrorType.EXECUTION_ERROR,
-                message: error instanceof Error ? error.message : 'Initialization failed',
+                message:
+                  error instanceof Error ? error.message : 'Initialization failed',
               },
             };
           }

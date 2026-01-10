@@ -90,7 +90,10 @@ export const ToolSchemas = {
    * Environment variables schema
    */
   environment: () =>
-    z.record(z.string(), z.string()).describe('Environment variables (key-value)').optional(),
+    z
+      .record(z.string(), z.string())
+      .describe('Environment variables (key-value)')
+      .optional(),
 
   /**
    * 输出模式 Schema

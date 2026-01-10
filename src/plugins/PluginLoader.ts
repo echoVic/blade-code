@@ -5,10 +5,10 @@
  * including their commands, agents, skills, hooks, and MCP configurations.
  */
 
-import matter from 'gray-matter';
 import * as fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
+import matter from 'gray-matter';
 import type { SubagentConfig } from '../agent/subagents/types.js';
 import type { McpServerConfig } from '../config/types.js';
 import type { HookConfig } from '../hooks/types/HookTypes.js';

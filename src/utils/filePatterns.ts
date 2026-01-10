@@ -1,8 +1,8 @@
-import fg from 'fast-glob';
-import { LRUCache } from 'lru-cache';
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import fg from 'fast-glob';
+import { LRUCache } from 'lru-cache';
 import picomatch from 'picomatch';
 
 export const DEFAULT_EXCLUDE_DIRS = [

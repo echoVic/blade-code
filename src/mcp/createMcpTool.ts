@@ -38,7 +38,10 @@ export function createMcpTool(
     schema: zodSchema,
     description: {
       short: toolDef.description || `MCP Tool: ${toolDef.name}`,
-      important: [`From MCP server: ${serverName}`, 'Executes external tools; user confirmation required'],
+      important: [
+        `From MCP server: ${serverName}`,
+        'Executes external tools; user confirmation required',
+      ],
     },
     category: 'MCP tool',
     tags: ['mcp', 'external', serverName],

@@ -12,10 +12,10 @@ import {
   PHASE_PRIMARY_FILE,
   SPEC_DIRS,
   SPEC_FILE_NAMES,
-  STEERING_FILES,
   type SpecFileType,
   type SpecMetadata,
   type SpecPhase,
+  STEERING_FILES,
   type SteeringContext,
 } from './types.js';
 
@@ -206,7 +206,10 @@ export class SpecFileManager {
   /**
    * 更新 Spec 阶段
    */
-  async updatePhase(featureName: string, phase: SpecPhase): Promise<SpecMetadata | null> {
+  async updatePhase(
+    featureName: string,
+    phase: SpecPhase
+  ): Promise<SpecMetadata | null> {
     const metadata = await this.readMetadata(featureName);
     if (!metadata) return null;
 
@@ -222,7 +225,10 @@ export class SpecFileManager {
   /**
    * 读取 Spec 文件
    */
-  async readSpecFile(featureName: string, fileType: SpecFileType): Promise<string | null> {
+  async readSpecFile(
+    featureName: string,
+    fileType: SpecFileType
+  ): Promise<string | null> {
     const filePath = this.getChangeFilePath(featureName, fileType);
     return this.readFile(filePath);
   }
@@ -445,7 +451,10 @@ export class SpecFileManager {
   /**
    * Steering 模板文件名映射
    */
-  private static readonly STEERING_TEMPLATE_NAMES: Record<keyof typeof STEERING_FILES, string> = {
+  private static readonly STEERING_TEMPLATE_NAMES: Record<
+    keyof typeof STEERING_FILES,
+    string
+  > = {
     CONSTITUTION: 'steering/constitution.md.template',
     PRODUCT: 'steering/product.md.template',
     TECH: 'steering/tech.md.template',
@@ -466,7 +475,9 @@ export class SpecFileManager {
   /**
    * 读取 Steering 模板文件
    */
-  async readSteeringTemplate(fileName: keyof typeof STEERING_FILES): Promise<string | null> {
+  async readSteeringTemplate(
+    fileName: keyof typeof STEERING_FILES
+  ): Promise<string | null> {
     const templateName = SpecFileManager.STEERING_TEMPLATE_NAMES[fileName];
     const templatePath = path.join(TEMPLATES_DIR, templateName);
     return this.readFile(templatePath);

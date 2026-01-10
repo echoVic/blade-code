@@ -123,7 +123,9 @@ export class SubagentRegistry {
     const content = fs.readFileSync(filePath, 'utf-8');
 
     // 解析 YAML frontmatter（支持 \r\n 和 \n）
-    const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+    const frontmatterMatch = content.match(
+      /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/
+    );
     if (!frontmatterMatch) {
       throw new Error(`No YAML frontmatter found in ${filePath}`);
     }
@@ -168,7 +170,9 @@ export class SubagentRegistry {
    * @param value - 逗号分隔字符串或数组
    * @returns 字符串数组，如果输入为空则返回 undefined
    */
-  private parseStringOrArray(value: string | string[] | undefined): string[] | undefined {
+  private parseStringOrArray(
+    value: string | string[] | undefined
+  ): string[] | undefined {
     if (!value) {
       return undefined;
     }
@@ -263,7 +267,9 @@ export class SubagentRegistry {
     for (const config of this.subagents.values()) {
       const source = config.source || 'builtin';
       // Map plugin:xxx sources to 'plugin' category
-      const category: ConfigSource = source.startsWith('plugin:') ? 'plugin' : source as ConfigSource;
+      const category: ConfigSource = source.startsWith('plugin:')
+        ? 'plugin'
+        : (source as ConfigSource);
       result[category].push(config);
     }
 

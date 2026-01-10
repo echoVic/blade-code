@@ -10,7 +10,12 @@
  */
 
 import type { StateCreator } from 'zustand';
-import type { BladeStore, CommandSlice, CommandState, PendingCommand } from '../types.js';
+import type {
+  BladeStore,
+  CommandSlice,
+  CommandState,
+  PendingCommand,
+} from '../types.js';
 
 /**
  * 初始命令状态
@@ -24,12 +29,10 @@ const initialCommandState: CommandState = {
 /**
  * 创建 Command Slice
  */
-export const createCommandSlice: StateCreator<
-  BladeStore,
-  [],
-  [],
-  CommandSlice
-> = (set, get) => ({
+export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> = (
+  set,
+  get
+) => ({
   ...initialCommandState,
 
   actions: {

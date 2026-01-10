@@ -86,8 +86,8 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
       {/* 统计信息 */}
       <Box paddingLeft={2} marginBottom={1}>
         <Text color="gray">
-          启用: {stats.active} | 禁用: {stats.inactive} | 命令: {stats.commands} |
-          技能: {stats.skills} | 代理: {stats.agents}
+          启用: {stats.active} | 禁用: {stats.inactive} | 命令: {stats.commands} | 技能:{' '}
+          {stats.skills} | 代理: {stats.agents}
         </Text>
       </Box>
 
@@ -116,7 +116,8 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
                 {plugin.commands.length > 0 && (
                   <Box paddingLeft={2}>
                     <Text color="blue">
-                      命令: {plugin.commands.map((c) => `/${c.namespacedName}`).join(', ')}
+                      命令:{' '}
+                      {plugin.commands.map((c) => `/${c.namespacedName}`).join(', ')}
                     </Text>
                   </Box>
                 )}
@@ -151,7 +152,8 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
                 {plugin.commands.length > 0 && (
                   <Box paddingLeft={2}>
                     <Text color="blue">
-                      命令: {plugin.commands.map((c) => `/${c.namespacedName}`).join(', ')}
+                      命令:{' '}
+                      {plugin.commands.map((c) => `/${c.namespacedName}`).join(', ')}
                     </Text>
                   </Box>
                 )}
@@ -186,7 +188,8 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
                 {plugin.commands.length > 0 && (
                   <Box paddingLeft={2}>
                     <Text color="blue">
-                      命令: {plugin.commands.map((c) => `/${c.namespacedName}`).join(', ')}
+                      命令:{' '}
+                      {plugin.commands.map((c) => `/${c.namespacedName}`).join(', ')}
                     </Text>
                   </Box>
                 )}

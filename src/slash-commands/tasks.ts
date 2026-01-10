@@ -86,9 +86,7 @@ async function tasksHandler(
   const output: string[] = ['📋 **后台任务列表**\n'];
 
   // 列出 shells
-  const shells = Array.from(
-    (shellManager as any).processes?.values() || []
-  ) as Array<{
+  const shells = Array.from((shellManager as any).processes?.values() || []) as Array<{
     id: string;
     command: string;
     status: string;
@@ -143,7 +141,9 @@ async function tasksHandler(
   if (shells.length === 0 && agents.length === 0) {
     output.push('*暂无后台任务*\n');
   } else {
-    output.push(`**统计**: ${shells.length} shells (${runningShells} 运行中), ${agents.length} agents (${runningAgents} 运行中)`);
+    output.push(
+      `**统计**: ${shells.length} shells (${runningShells} 运行中), ${agents.length} agents (${runningAgents} 运行中)`
+    );
   }
 
   output.push('\n---');

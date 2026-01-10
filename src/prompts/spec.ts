@@ -222,13 +222,19 @@ export function buildSpecModePrompt(
 
     // Task progress
     if (currentSpec.tasks.length > 0) {
-      const completed = currentSpec.tasks.filter((t) => t.status === 'completed').length;
+      const completed = currentSpec.tasks.filter(
+        (t) => t.status === 'completed'
+      ).length;
       const total = currentSpec.tasks.length;
-      parts.push(`**Tasks**: ${completed}/${total} completed (${Math.round((completed / total) * 100)}%)`);
+      parts.push(
+        `**Tasks**: ${completed}/${total} completed (${Math.round((completed / total) * 100)}%)`
+      );
 
       // Current task
       if (currentSpec.currentTaskId) {
-        const currentTask = currentSpec.tasks.find((t) => t.id === currentSpec.currentTaskId);
+        const currentTask = currentSpec.tasks.find(
+          (t) => t.id === currentSpec.currentTaskId
+        );
         if (currentTask) {
           parts.push(`**Current Task**: ${currentTask.title}`);
         }

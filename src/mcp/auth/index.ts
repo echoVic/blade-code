@@ -5,8 +5,8 @@
 export { OAuthProvider } from './OAuthProvider.js';
 export { OAuthTokenStorage } from './OAuthTokenStorage.js';
 export type {
-  OAuthToken,
   OAuthConfig,
   OAuthCredentials,
+  OAuthToken,
   OAuthTokenResponse,
 } from './types.js';

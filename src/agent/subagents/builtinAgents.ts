@@ -9,7 +9,7 @@ import type { SubagentConfig } from './types.js';
 
 /**
  * 内置 Subagent 列表（4 个核心 agent）
- * 
+ *
  */
 export const builtinAgents: SubagentConfig[] = [
   {
@@ -118,7 +118,5 @@ export function getBuiltinAgentCount(): number {
  * 根据名称获取内置 agent
  */
 export function getBuiltinAgent(name: string): SubagentConfig | undefined {
-  return builtinAgents.find(
-    (agent) => agent.name.toLowerCase() === name.toLowerCase()
-  );
+  return builtinAgents.find((agent) => agent.name.toLowerCase() === name.toLowerCase());
 }

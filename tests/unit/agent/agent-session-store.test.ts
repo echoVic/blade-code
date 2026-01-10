@@ -44,8 +44,8 @@ vi.mock('../../../src/logging/Logger.js', () => ({
 }));
 
 import {
-  AgentSessionStore,
   type AgentSession,
+  AgentSessionStore,
 } from '../../../src/agent/subagents/AgentSessionStore.js';
 
 describe('AgentSessionStore', () => {
@@ -321,7 +321,11 @@ describe('AgentSessionStore', () => {
       };
 
       (fs.existsSync as any).mockReturnValue(true);
-      (fs.readdirSync as any).mockReturnValue(['agent_1.json', 'agent_2.json', 'readme.txt']);
+      (fs.readdirSync as any).mockReturnValue([
+        'agent_1.json',
+        'agent_2.json',
+        'readme.txt',
+      ]);
       (fs.readFileSync as any).mockImplementation((filePath: string) => {
         if (filePath.includes('agent_1')) return JSON.stringify(session1);
         if (filePath.includes('agent_2')) return JSON.stringify(session2);

@@ -40,8 +40,8 @@ vi.mock('openai', () => ({
   AzureOpenAI: mockAzureOpenAI.MockAzureOpenAI,
 }));
 
-import type { Message } from '../../../src/services/ChatServiceInterface.js';
 import { AzureOpenAIChatService } from '../../../src/services/AzureOpenAIChatService.js';
+import type { Message } from '../../../src/services/ChatServiceInterface.js';
 
 const baseConfig = {
   provider: 'azure-openai' as const,
@@ -137,7 +137,10 @@ describe('AzureOpenAIChatService', () => {
 
       const request = mockAzureOpenAI.createSpy.mock.calls[0][0];
       expect(request.messages).toHaveLength(2);
-      expect(request.messages[0]).toEqual({ role: 'system', content: 'You are a helpful assistant' });
+      expect(request.messages[0]).toEqual({
+        role: 'system',
+        content: 'You are a helpful assistant',
+      });
       expect(request.messages[1]).toEqual({ role: 'user', content: 'Hello' });
     });
 

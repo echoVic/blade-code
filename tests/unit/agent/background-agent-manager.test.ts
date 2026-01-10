@@ -22,9 +22,9 @@ vi.mock('node:crypto', () => ({
   randomUUID: () => 'test-uuid-1234',
 }));
 
-import { BackgroundAgentManager } from '../../../src/agent/subagents/BackgroundAgentManager.js';
-import { AgentSessionStore } from '../../../src/agent/subagents/AgentSessionStore.js';
 import { Agent } from '../../../src/agent/Agent.js';
+import { AgentSessionStore } from '../../../src/agent/subagents/AgentSessionStore.js';
+import { BackgroundAgentManager } from '../../../src/agent/subagents/BackgroundAgentManager.js';
 
 describe('BackgroundAgentManager', () => {
   let manager: BackgroundAgentManager;
@@ -207,11 +207,10 @@ describe('BackgroundAgentManager', () => {
       const mockStore = AgentSessionStore.getInstance();
       vi.mocked(mockStore.loadSession).mockReturnValue(undefined);
 
-      const result = manager.resumeAgent(
-        'agent_nonexistent',
-        'Continue',
-        { name: 'Explore', description: 'Test' }
-      );
+      const result = manager.resumeAgent('agent_nonexistent', 'Continue', {
+        name: 'Explore',
+        description: 'Test',
+      });
 
       expect(result).toBeUndefined();
     });
@@ -224,11 +223,10 @@ describe('BackgroundAgentManager', () => {
       });
 
       // isRunning 检查的是内存中的 runningAgents
-      const result = manager.resumeAgent(
-        agentId,
-        'Try to resume',
-        { name: 'Explore', description: 'Test' }
-      );
+      const result = manager.resumeAgent(agentId, 'Try to resume', {
+        name: 'Explore',
+        description: 'Test',
+      });
 
       expect(result).toBeUndefined();
     });

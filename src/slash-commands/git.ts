@@ -16,14 +16,26 @@ import {
   isGitRepository,
   stageAll,
 } from '../utils/git.js';
-import { getUI, type SlashCommand, type SlashCommandContext, type SlashCommandResult } from './types.js';
+import {
+  getUI,
+  type SlashCommand,
+  type SlashCommandContext,
+  type SlashCommandResult,
+} from './types.js';
 
 const gitCommand: SlashCommand = {
   name: 'git',
   description: 'Git 仓库查询和 AI 辅助',
   usage: '/git [status|log|diff|review|commit|pre-commit]',
   aliases: ['g'],
-  examples: ['/git', '/git status', '/git log 10', '/git review', '/git commit', '/git pre-commit'],
+  examples: [
+    '/git',
+    '/git status',
+    '/git log 10',
+    '/git review',
+    '/git commit',
+    '/git pre-commit',
+  ],
 
   async handler(
     args: string[],
@@ -97,7 +109,10 @@ async function handleStatus(context: SlashCommandContext): Promise<SlashCommandR
 /**
  * 显示提交历史
  */
-async function handleLog(context: SlashCommandContext, countArg?: string): Promise<SlashCommandResult> {
+async function handleLog(
+  context: SlashCommandContext,
+  countArg?: string
+): Promise<SlashCommandResult> {
   const ui = getUI(context);
   const count = Math.min(Math.max(parseInt(countArg || '5', 10) || 5, 1), 50);
   const log = await getRecentCommitMessages(context.cwd, count);
@@ -199,7 +214,9 @@ ${diff || '(无差异)'}
 /**
  * AI 生成 Commit Message（不提交）
  */
-async function handlePreCommit(context: SlashCommandContext): Promise<SlashCommandResult> {
+async function handlePreCommit(
+  context: SlashCommandContext
+): Promise<SlashCommandResult> {
   const ui = getUI(context);
   const { cwd, signal } = context;
 
@@ -253,7 +270,9 @@ async function handlePreCommit(context: SlashCommandContext): Promise<SlashComma
     .replace(/\n?```$/, '')
     .trim();
 
-  ui.sendMessage(`**生成的 Commit Message：**\n\`\`\`\n${cleanMessage}\n\`\`\`\n\n💡 使用以下命令提交：\n\`\`\`bash\ngit commit -m "${cleanMessage.split('\n')[0]}"\n\`\`\``);
+  ui.sendMessage(
+    `**生成的 Commit Message：**\n\`\`\`\n${cleanMessage}\n\`\`\`\n\n💡 使用以下命令提交：\n\`\`\`bash\ngit commit -m "${cleanMessage.split('\n')[0]}"\n\`\`\``
+  );
 
   return { success: true };
 }

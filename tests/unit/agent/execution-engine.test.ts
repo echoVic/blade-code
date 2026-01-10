@@ -75,7 +75,9 @@ describe('ExecutionEngine', () => {
         prompt: 'Test message',
       };
 
-      await expect(executionEngine.executeTask(task)).rejects.toThrow('Execution Error');
+      await expect(executionEngine.executeTask(task)).rejects.toThrow(
+        'Execution Error'
+      );
     });
 
     it('应该正确处理上下文构建错误', async () => {

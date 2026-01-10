@@ -4,10 +4,10 @@
  * 交互式 UI,用于创建、编辑、删除 subagent 配置
  */
 
+import fs from 'node:fs';
 import { useMemoizedFn } from 'ahooks';
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
-import fs from 'node:fs';
 import { useEffect, useMemo, useState } from 'react';
 import { subagentRegistry } from '../../agent/subagents/SubagentRegistry.js';
 import type { SubagentConfig } from '../../agent/subagents/types.js';

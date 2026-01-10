@@ -77,7 +77,9 @@ export class TestTools {
     ]);
   }
 
-  static async measureTime<T>(fn: () => Promise<T> | T): Promise<{ result: T; time: number }> {
+  static async measureTime<T>(
+    fn: () => Promise<T> | T
+  ): Promise<{ result: T; time: number }> {
     const startTime = Date.now();
     const result = await fn();
     const endTime = Date.now();
@@ -151,4 +153,3 @@ export const TestConfig = {
   longTimeout: 30000,
   shortTimeout: 1000,
 };
-

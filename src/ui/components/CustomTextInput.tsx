@@ -377,7 +377,8 @@ export function CustomTextInput({
 
             // 大段文本走 onPaste 流程（摘要/标记）
             const hasMultipleLines = sanitizedText.includes('\n');
-            const isLargeText = sanitizedText.length > PASTE_CONFIG.LARGE_INPUT_THRESHOLD;
+            const isLargeText =
+              sanitizedText.length > PASTE_CONFIG.LARGE_INPUT_THRESHOLD;
 
             if ((hasMultipleLines || isLargeText) && onPaste) {
               const result = await onPaste(sanitizedText);

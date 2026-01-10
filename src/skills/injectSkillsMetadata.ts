@@ -23,7 +23,9 @@ const AVAILABLE_SKILLS_REGEX = /<available_skills>\s*<\/available_skills>/;
  * @param tools - 工具函数声明列表
  * @returns 注入后的工具函数声明列表（新数组，不修改原数组）
  */
-export function injectSkillsMetadata(tools: FunctionDeclaration[]): FunctionDeclaration[] {
+export function injectSkillsMetadata(
+  tools: FunctionDeclaration[]
+): FunctionDeclaration[] {
   const registry = getSkillRegistry();
   const skillsList = registry.generateAvailableSkillsList();
 

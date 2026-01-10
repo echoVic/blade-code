@@ -63,7 +63,10 @@ export const loginCommand: SlashCommand = {
   category: 'auth',
   examples: ['/login', '/login copilot', '/login gemini'],
 
-  async handler(args: string[], context: SlashCommandContext): Promise<SlashCommandResult> {
+  async handler(
+    args: string[],
+    context: SlashCommandContext
+  ): Promise<SlashCommandResult> {
     const ui = getUI(context);
     const service = parseLoginArgs(args);
 
@@ -125,7 +128,8 @@ export const loginCommand: SlashCommand = {
     // Google Antigravity 登录
     // ================================
     const auth = AntigravityAuth.getInstance();
-    const configType: OAuthConfigType = service === 'gemini-cli' ? 'gemini-cli' : 'antigravity';
+    const configType: OAuthConfigType =
+      service === 'gemini-cli' ? 'gemini-cli' : 'antigravity';
     const configName = service === 'gemini-cli' ? 'Gemini CLI' : 'Antigravity';
 
     try {
@@ -136,7 +140,8 @@ export const loginCommand: SlashCommand = {
         const expiresIn = status.expiresAt
           ? Math.round((status.expiresAt.getTime() - Date.now()) / 1000 / 60)
           : 0;
-        const currentConfig = status.configType === 'gemini-cli' ? 'Gemini CLI' : 'Antigravity';
+        const currentConfig =
+          status.configType === 'gemini-cli' ? 'Gemini CLI' : 'Antigravity';
 
         ui.sendMessage(`✅ 已登录（${currentConfig} OAuth）`);
         ui.sendMessage(`Token 有效期还剩约 ${expiresIn} 分钟`);

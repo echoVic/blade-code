@@ -22,7 +22,12 @@ export type SpecPhase =
 /**
  * Task Status
  */
-export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'skipped';
+export type TaskStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  | 'blocked'
+  | 'skipped';
 
 /**
  * Task Complexity
@@ -236,12 +241,14 @@ export const PHASE_PRIMARY_FILE: Record<SpecPhase, SpecFileType | null> = {
  * - Default data structure is generic
  * - Can specify more specific data type via generic parameter
  */
-export interface SpecOperationResult<T = {
-  spec?: SpecMetadata;
-  path?: string;
-  phase?: SpecPhase;
-  task?: SpecTask;
-}> {
+export interface SpecOperationResult<
+  T = {
+    spec?: SpecMetadata;
+    path?: string;
+    phase?: SpecPhase;
+    task?: SpecTask;
+  },
+> {
   success: boolean;
   message: string;
   data?: T;

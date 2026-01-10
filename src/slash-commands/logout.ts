@@ -45,7 +45,10 @@ export const logoutCommand: SlashCommand = {
   category: 'auth',
   examples: ['/logout', '/logout copilot', '/logout all'],
 
-  async handler(args: string[], context: SlashCommandContext): Promise<SlashCommandResult> {
+  async handler(
+    args: string[],
+    context: SlashCommandContext
+  ): Promise<SlashCommandResult> {
     const ui = getUI(context);
     const service = parseLogoutArgs(args);
 
@@ -86,7 +89,8 @@ export const logoutCommand: SlashCommand = {
       return {
         success: true,
         message: '登出完成',
-        content: results.length > 0 ? `已登出: ${results.join(', ')}` : '当前未登录任何服务',
+        content:
+          results.length > 0 ? `已登出: ${results.join(', ')}` : '当前未登录任何服务',
       };
     }
 

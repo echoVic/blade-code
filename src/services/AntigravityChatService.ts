@@ -241,14 +241,19 @@ export class AntigravityChatService implements IChatService {
       // 获取当前使用的 OAuth 配置类型
       const configType = await this.auth.getConfigType();
       this.configType = configType || 'antigravity';
-      logger.debug(`🔄 [AntigravityChatService] Using OAuth config: ${this.configType}`);
+      logger.debug(
+        `🔄 [AntigravityChatService] Using OAuth config: ${this.configType}`
+      );
       logger.debug('🔄 [AntigravityChatService] Setting up user via loadCodeAssist...');
 
       const accessToken = await this.auth.getAccessToken();
 
       // Step 1: 调用 loadCodeAssist
       const loadRes = await this.callLoadCodeAssist(accessToken);
-      logger.debug('[AntigravityChatService] loadCodeAssist response:', JSON.stringify(loadRes));
+      logger.debug(
+        '[AntigravityChatService] loadCodeAssist response:',
+        JSON.stringify(loadRes)
+      );
 
       // Step 2: 检查是否已有有效的 tier 和 projectId
       if (loadRes.currentTier) {
@@ -256,33 +261,44 @@ export class AntigravityChatService implements IChatService {
 
         if (loadRes.cloudaicompanionProject) {
           this.projectId = loadRes.cloudaicompanionProject;
-          logger.debug(`✅ [AntigravityChatService] User already setup: tier=${this.userTier}, project=${this.projectId}`);
+          logger.debug(
+            `✅ [AntigravityChatService] User already setup: tier=${this.userTier}, project=${this.projectId}`
+          );
           this.projectIdInitialized = true;
           return;
         }
 
         // 有 tier 但没有 projectId，检查环境变量
-        const envProjectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT_ID;
+        const envProjectId =
+          process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT_ID;
         if (envProjectId) {
           this.projectId = envProjectId;
-          logger.debug(`✅ [AntigravityChatService] Using env project: ${this.projectId}`);
+          logger.debug(
+            `✅ [AntigravityChatService] Using env project: ${this.projectId}`
+          );
           this.projectIdInitialized = true;
           return;
         }
 
         // 需要通过 onboardUser 获取 projectId
-        logger.debug('⚠️ [AntigravityChatService] Has tier but no project, need onboarding...');
+        logger.debug(
+          '⚠️ [AntigravityChatService] Has tier but no project, need onboarding...'
+        );
       }
 
       // Step 3: 获取默认 tier 并调用 onboardUser
       const defaultTier = this.getDefaultTier(loadRes);
-      logger.debug(`🔄 [AntigravityChatService] Onboarding user with tier: ${defaultTier.id}`);
+      logger.debug(
+        `🔄 [AntigravityChatService] Onboarding user with tier: ${defaultTier.id}`
+      );
 
       const result = await this.callOnboardUser(accessToken, defaultTier.id);
       this.projectId = result.projectId;
       this.userTier = defaultTier.id;
 
-      logger.debug(`✅ [AntigravityChatService] User setup complete: tier=${this.userTier}, project=${this.projectId || '(managed)'}`);
+      logger.debug(
+        `✅ [AntigravityChatService] User setup complete: tier=${this.userTier}, project=${this.projectId || '(managed)'}`
+      );
     } catch (error) {
       logger.warn('Failed to setup user:', error);
       // 即使失败也标记为已初始化，避免重复尝试
@@ -295,7 +311,9 @@ export class AntigravityChatService implements IChatService {
   /**
    * 调用 loadCodeAssist API
    */
-  private async callLoadCodeAssist(accessToken: string): Promise<LoadCodeAssistResponse> {
+  private async callLoadCodeAssist(
+    accessToken: string
+  ): Promise<LoadCodeAssistResponse> {
     const url = `${ANTIGRAVITY_API_ENDPOINTS.production}${ANTIGRAVITY_API_PATHS.loadCodeAssist}`;
     const metadata = getClientMetadata(this.configType);
     const userAgent = getUserAgent(this.configType);
@@ -357,7 +375,8 @@ export class AntigravityChatService implements IChatService {
 
     // 非 FREE tier 可以使用环境变量中的 projectId
     if (tierId !== UserTierId.FREE) {
-      const envProjectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT_ID;
+      const envProjectId =
+        process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT_ID;
       if (envProjectId) {
         requestBody.cloudaicompanionProject = envProjectId;
         requestBody.metadata = {
@@ -388,10 +407,15 @@ export class AntigravityChatService implements IChatService {
       }
 
       const lroRes = (await response.json()) as OnboardUserResponse;
-      logger.debug(`[AntigravityChatService] onboardUser attempt ${attempts + 1}:`, JSON.stringify(lroRes));
+      logger.debug(
+        `[AntigravityChatService] onboardUser attempt ${attempts + 1}:`,
+        JSON.stringify(lroRes)
+      );
 
       if (lroRes.error) {
-        throw new Error(`onboardUser error: ${lroRes.error.message || lroRes.error.code}`);
+        throw new Error(
+          `onboardUser error: ${lroRes.error.message || lroRes.error.code}`
+        );
       }
 
       if (lroRes.done) {

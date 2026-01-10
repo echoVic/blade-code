@@ -15,8 +15,8 @@ import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { proxyFetch } from '../../utils/proxyFetch.js';
 import {
   ANTIGRAVITY_OAUTH_CONFIG,
-  GEMINI_CLI_OAUTH_CONFIG,
   type AntigravityToken,
+  GEMINI_CLI_OAUTH_CONFIG,
   type OAuthConfig,
   type OAuthConfigType,
   type OAuthTokenResponse,
@@ -31,7 +31,9 @@ const TOKEN_FILE_NAME = 'antigravity-token.json';
  * 获取 OAuth 配置
  */
 function getOAuthConfig(configType: OAuthConfigType): OAuthConfig {
-  return configType === 'gemini-cli' ? GEMINI_CLI_OAUTH_CONFIG : ANTIGRAVITY_OAUTH_CONFIG;
+  return configType === 'gemini-cli'
+    ? GEMINI_CLI_OAUTH_CONFIG
+    : ANTIGRAVITY_OAUTH_CONFIG;
 }
 
 /**
@@ -283,7 +285,10 @@ export class AntigravityAuth {
   /**
    * 构建授权 URL
    */
-  private buildAuthorizationUrl(pkceParams: PKCEParams, oauthConfig: OAuthConfig): string {
+  private buildAuthorizationUrl(
+    pkceParams: PKCEParams,
+    oauthConfig: OAuthConfig
+  ): string {
     const redirectUri = `http://localhost:${oauthConfig.redirectPort}${oauthConfig.redirectPath}`;
 
     const params = new URLSearchParams({

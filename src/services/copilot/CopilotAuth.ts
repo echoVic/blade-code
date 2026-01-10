@@ -167,7 +167,9 @@ export class CopilotAuth {
     // 从文件加载
     const token = await this.loadToken();
     if (!token) {
-      throw new Error('Not logged in to GitHub Copilot. Please run /login copilot first.');
+      throw new Error(
+        'Not logged in to GitHub Copilot. Please run /login copilot first.'
+      );
     }
 
     // 检查是否需要刷新
@@ -227,7 +229,9 @@ export class CopilotAuth {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Failed to request device code: ${response.status} - ${errorText}`);
+      throw new Error(
+        `Failed to request device code: ${response.status} - ${errorText}`
+      );
     }
 
     return (await response.json()) as DeviceCodeResponse;
@@ -299,7 +303,9 @@ export class CopilotAuth {
   /**
    * 用 GitHub token 换取 Copilot token
    */
-  private async exchangeForCopilotToken(githubToken: string): Promise<CopilotTokenResponse> {
+  private async exchangeForCopilotToken(
+    githubToken: string
+  ): Promise<CopilotTokenResponse> {
     const response = await proxyFetch(COPILOT_API_ENDPOINTS.tokenExchange, {
       method: 'GET',
       headers: {
@@ -323,7 +329,9 @@ export class CopilotAuth {
           'No Copilot subscription found. Please ensure you have an active GitHub Copilot subscription.'
         );
       }
-      throw new Error(`Failed to exchange for Copilot token: ${response.status} - ${errorText}`);
+      throw new Error(
+        `Failed to exchange for Copilot token: ${response.status} - ${errorText}`
+      );
     }
 
     return (await response.json()) as CopilotTokenResponse;

@@ -22,11 +22,11 @@ export const MCP_NAMESPACE_SEPARATOR = '__';
  * Result of parsing a namespaced name
  */
 export interface ParsedNamespace {
-    /** Plugin name, or null if no namespace */
-    plugin: string | null;
+  /** Plugin name, or null if no namespace */
+  plugin: string | null;
 
-    /** Resource name */
-    name: string;
+  /** Resource name */
+  name: string;
 }
 
 /**
@@ -39,11 +39,8 @@ export interface ParsedNamespace {
  * @example
  * getNamespacedName('my-plugin', 'commit') // => 'my-plugin:commit'
  */
-export function getNamespacedName(
-    pluginName: string,
-    resourceName: string
-): string {
-    return `${pluginName}${NAMESPACE_SEPARATOR}${resourceName}`;
+export function getNamespacedName(pluginName: string, resourceName: string): string {
+  return `${pluginName}${NAMESPACE_SEPARATOR}${resourceName}`;
 }
 
 /**
@@ -56,11 +53,8 @@ export function getNamespacedName(
  * @example
  * getMcpNamespacedName('my-plugin', 'github') // => 'my-plugin__github'
  */
-export function getMcpNamespacedName(
-    pluginName: string,
-    serverName: string
-): string {
-    return `${pluginName}${MCP_NAMESPACE_SEPARATOR}${serverName}`;
+export function getMcpNamespacedName(pluginName: string, serverName: string): string {
+  return `${pluginName}${MCP_NAMESPACE_SEPARATOR}${serverName}`;
 }
 
 /**
@@ -77,16 +71,16 @@ export function getMcpNamespacedName(
  * // => { plugin: null, name: 'commit' }
  */
 export function parseNamespacedName(namespacedName: string): ParsedNamespace {
-    const separatorIndex = namespacedName.indexOf(NAMESPACE_SEPARATOR);
+  const separatorIndex = namespacedName.indexOf(NAMESPACE_SEPARATOR);
 
-    if (separatorIndex === -1) {
-        return { plugin: null, name: namespacedName };
-    }
+  if (separatorIndex === -1) {
+    return { plugin: null, name: namespacedName };
+  }
 
-    return {
-        plugin: namespacedName.slice(0, separatorIndex),
-        name: namespacedName.slice(separatorIndex + 1),
-    };
+  return {
+    plugin: namespacedName.slice(0, separatorIndex),
+    name: namespacedName.slice(separatorIndex + 1),
+  };
 }
 
 /**
@@ -99,19 +93,17 @@ export function parseNamespacedName(namespacedName: string): ParsedNamespace {
  * parseMcpNamespacedName('my-plugin__github')
  * // => { plugin: 'my-plugin', name: 'github' }
  */
-export function parseMcpNamespacedName(
-    namespacedName: string
-): ParsedNamespace {
-    const separatorIndex = namespacedName.indexOf(MCP_NAMESPACE_SEPARATOR);
+export function parseMcpNamespacedName(namespacedName: string): ParsedNamespace {
+  const separatorIndex = namespacedName.indexOf(MCP_NAMESPACE_SEPARATOR);
 
-    if (separatorIndex === -1) {
-        return { plugin: null, name: namespacedName };
-    }
+  if (separatorIndex === -1) {
+    return { plugin: null, name: namespacedName };
+  }
 
-    return {
-        plugin: namespacedName.slice(0, separatorIndex),
-        name: namespacedName.slice(separatorIndex + MCP_NAMESPACE_SEPARATOR.length),
-    };
+  return {
+    plugin: namespacedName.slice(0, separatorIndex),
+    name: namespacedName.slice(separatorIndex + MCP_NAMESPACE_SEPARATOR.length),
+  };
 }
 
 /**
@@ -125,7 +117,7 @@ export function parseMcpNamespacedName(
  * hasNamespace('commit') // => false
  */
 export function hasNamespace(name: string): boolean {
-    return name.includes(NAMESPACE_SEPARATOR);
+  return name.includes(NAMESPACE_SEPARATOR);
 }
 
 /**
@@ -135,7 +127,7 @@ export function hasNamespace(name: string): boolean {
  * @returns True if the name contains an MCP namespace separator
  */
 export function hasMcpNamespace(name: string): boolean {
-    return name.includes(MCP_NAMESPACE_SEPARATOR);
+  return name.includes(MCP_NAMESPACE_SEPARATOR);
 }
 
 /**
@@ -149,8 +141,8 @@ export function hasMcpNamespace(name: string): boolean {
  * extractPluginName('commit') // => null
  */
 export function extractPluginName(name: string): string | null {
-    const { plugin } = parseNamespacedName(name);
-    return plugin;
+  const { plugin } = parseNamespacedName(name);
+  return plugin;
 }
 
 /**
@@ -164,8 +156,8 @@ export function extractPluginName(name: string): string | null {
  * extractResourceName('commit') // => 'commit'
  */
 export function extractResourceName(name: string): string {
-    const { name: resourceName } = parseNamespacedName(name);
-    return resourceName;
+  const { name: resourceName } = parseNamespacedName(name);
+  return resourceName;
 }
 
 /**
@@ -175,11 +167,11 @@ export function extractResourceName(name: string): string {
  * @returns True if the name is a valid plugin name
  */
 export function isValidPluginName(name: string): boolean {
-    // Must be lowercase letters, numbers, and hyphens
-    // Must start and end with alphanumeric
-    // Length: 2-64 characters
-    const pattern = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]{1,2}$/;
-    return name.length >= 2 && name.length <= 64 && pattern.test(name);
+  // Must be lowercase letters, numbers, and hyphens
+  // Must start and end with alphanumeric
+  // Length: 2-64 characters
+  const pattern = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]{1,2}$/;
+  return name.length >= 2 && name.length <= 64 && pattern.test(name);
 }
 
 /**
@@ -193,12 +185,12 @@ export function isValidPluginName(name: string): boolean {
  * toPluginName('MyPlugin123') // => 'myplugin123'
  */
 export function toPluginName(input: string): string {
-    return input
-        .toLowerCase()
-        .replace(/[^a-z0-9-]/g, '-') // Replace invalid chars with hyphens
-        .replace(/-+/g, '-') // Collapse multiple hyphens
-        .replace(/^-|-$/g, '') // Remove leading/trailing hyphens
-        .slice(0, 64); // Truncate to max length
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-') // Replace invalid chars with hyphens
+    .replace(/-+/g, '-') // Collapse multiple hyphens
+    .replace(/^-|-$/g, '') // Remove leading/trailing hyphens
+    .slice(0, 64); // Truncate to max length
 }
 
 /**
@@ -208,5 +200,5 @@ export function toPluginName(input: string): string {
  * @returns Formatted string for display (e.g., "/my-plugin:commit")
  */
 export function formatSlashCommand(namespacedName: string): string {
-    return `/${namespacedName}`;
+  return `/${namespacedName}`;
 }

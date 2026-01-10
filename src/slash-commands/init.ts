@@ -226,7 +226,9 @@ const initCommand: SlashCommand = {
 **Final output**: Return ONLY the complete BLADE.md content (markdown format), ready to be written to the file.`;
 
       // 使用 chat 方法让 Agent 可以调用工具
-      logger.info(`[/init] Starting agent.chat for new BLADE.md, signal.aborted: ${signal?.aborted}`);
+      logger.info(
+        `[/init] Starting agent.chat for new BLADE.md, signal.aborted: ${signal?.aborted}`
+      );
       const generatedContent = await agent.chat(
         analysisPrompt,
         {
@@ -259,7 +261,9 @@ const initCommand: SlashCommand = {
           },
         }
       );
-      logger.info(`[/init] agent.chat completed for new BLADE.md, signal.aborted: ${signal?.aborted}`);
+      logger.info(
+        `[/init] agent.chat completed for new BLADE.md, signal.aborted: ${signal?.aborted}`
+      );
 
       if (signal?.aborted) {
         logger.info('[/init] Returning cancelled after agent.chat (new BLADE.md)');

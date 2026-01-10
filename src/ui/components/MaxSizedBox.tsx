@@ -62,95 +62,97 @@ interface Row {
  *   </Box>
  * </MaxSizedBox>
  */
-export const MaxSizedBox: React.FC<MaxSizedBoxProps> = React.memo(({
-  children,
-  maxWidth,
-  maxHeight,
-  overflowDirection = 'top',
-  additionalHiddenLinesCount = 0,
-}) => {
-  const theme = useTheme();
-  const laidOutLines: StyledText[][] = [];
-  const targetMaxHeight = Math.max(
-    Math.round(maxHeight ?? Number.MAX_SAFE_INTEGER),
-    MINIMUM_MAX_HEIGHT
-  );
+export const MaxSizedBox: React.FC<MaxSizedBoxProps> = React.memo(
+  ({
+    children,
+    maxWidth,
+    maxHeight,
+    overflowDirection = 'top',
+    additionalHiddenLinesCount = 0,
+  }) => {
+    const theme = useTheme();
+    const laidOutLines: StyledText[][] = [];
+    const targetMaxHeight = Math.max(
+      Math.round(maxHeight ?? Number.MAX_SAFE_INTEGER),
+      MINIMUM_MAX_HEIGHT
+    );
 
-  // 遍历子元素，将每个 Box 转换为布局后的行
-  // 注意：仅支持 Box 子元素，不支持顶层 Text（会丢失嵌套样式）
-  function visitRows(element: React.ReactNode) {
-    if (!React.isValidElement<{ children?: React.ReactNode }>(element)) {
-      return;
+    // 遍历子元素，将每个 Box 转换为布局后的行
+    // 注意：仅支持 Box 子元素，不支持顶层 Text（会丢失嵌套样式）
+    function visitRows(element: React.ReactNode) {
+      if (!React.isValidElement<{ children?: React.ReactNode }>(element)) {
+        return;
+      }
+
+      if (element.type === Fragment) {
+        React.Children.forEach(element.props.children, visitRows);
+        return;
+      }
+
+      if (element.type === Box) {
+        layoutBoxAsStyledText(element, maxWidth, laidOutLines);
+        return;
+      }
+
+      // 其他元素类型（包括顶层 Text）忽略
+      // 如果需要处理纯文本，请用 <Box><Text>...</Text></Box> 包装
     }
 
-    if (element.type === Fragment) {
-      React.Children.forEach(element.props.children, visitRows);
-      return;
-    }
+    React.Children.forEach(children, visitRows);
 
-    if (element.type === Box) {
-      layoutBoxAsStyledText(element, maxWidth, laidOutLines);
-      return;
-    }
+    // 计算是否需要截断
+    const contentWillOverflow =
+      laidOutLines.length > targetMaxHeight || additionalHiddenLinesCount > 0;
+    const visibleContentHeight = contentWillOverflow
+      ? targetMaxHeight - 1 // 留一行给截断提示
+      : targetMaxHeight;
 
-    // 其他元素类型（包括顶层 Text）忽略
-    // 如果需要处理纯文本，请用 <Box><Text>...</Text></Box> 包装
-  }
+    const hiddenLinesCount =
+      visibleContentHeight !== undefined
+        ? Math.max(0, laidOutLines.length - visibleContentHeight)
+        : 0;
+    const totalHiddenLines = hiddenLinesCount + additionalHiddenLinesCount;
 
-  React.Children.forEach(children, visitRows);
+    // 根据溢出方向选择显示的行
+    const visibleLines =
+      hiddenLinesCount > 0
+        ? overflowDirection === 'top'
+          ? laidOutLines.slice(hiddenLinesCount)
+          : laidOutLines.slice(0, visibleContentHeight)
+        : laidOutLines;
 
-  // 计算是否需要截断
-  const contentWillOverflow =
-    laidOutLines.length > targetMaxHeight || additionalHiddenLinesCount > 0;
-  const visibleContentHeight = contentWillOverflow
-    ? targetMaxHeight - 1 // 留一行给截断提示
-    : targetMaxHeight;
+    // 渲染行
+    const renderedLines = visibleLines.map((line, index) => (
+      <Box key={index}>
+        {line.length > 0 ? (
+          line.map((segment, segIndex) => (
+            <Text key={segIndex} {...segment.props}>
+              {segment.text}
+            </Text>
+          ))
+        ) : (
+          <Text> </Text>
+        )}
+      </Box>
+    ));
 
-  const hiddenLinesCount =
-    visibleContentHeight !== undefined
-      ? Math.max(0, laidOutLines.length - visibleContentHeight)
-      : 0;
-  const totalHiddenLines = hiddenLinesCount + additionalHiddenLinesCount;
-
-  // 根据溢出方向选择显示的行
-  const visibleLines =
-    hiddenLinesCount > 0
-      ? overflowDirection === 'top'
-        ? laidOutLines.slice(hiddenLinesCount)
-        : laidOutLines.slice(0, visibleContentHeight)
-      : laidOutLines;
-
-  // 渲染行
-  const renderedLines = visibleLines.map((line, index) => (
-    <Box key={index}>
-      {line.length > 0 ? (
-        line.map((segment, segIndex) => (
-          <Text key={segIndex} {...segment.props}>
-            {segment.text}
+    return (
+      <Box flexDirection="column" width={maxWidth} flexShrink={0}>
+        {totalHiddenLines > 0 && overflowDirection === 'top' && (
+          <Text color={theme.colors.text.muted} dimColor>
+            ... {totalHiddenLines} line{totalHiddenLines === 1 ? '' : 's'} hidden ...
           </Text>
-        ))
-      ) : (
-        <Text> </Text>
-      )}
-    </Box>
-  ));
-
-  return (
-    <Box flexDirection="column" width={maxWidth} flexShrink={0}>
-      {totalHiddenLines > 0 && overflowDirection === 'top' && (
-        <Text color={theme.colors.text.muted} dimColor>
-          ... {totalHiddenLines} line{totalHiddenLines === 1 ? '' : 's'} hidden ...
-        </Text>
-      )}
-      {renderedLines}
-      {totalHiddenLines > 0 && overflowDirection === 'bottom' && (
-        <Text color={theme.colors.text.muted} dimColor>
-          ... {totalHiddenLines} line{totalHiddenLines === 1 ? '' : 's'} hidden ...
-        </Text>
-      )}
-    </Box>
-  );
-});
+        )}
+        {renderedLines}
+        {totalHiddenLines > 0 && overflowDirection === 'bottom' && (
+          <Text color={theme.colors.text.muted} dimColor>
+            ... {totalHiddenLines} line{totalHiddenLines === 1 ? '' : 's'} hidden ...
+          </Text>
+        )}
+      </Box>
+    );
+  }
+);
 
 /**
  * 从 Box 元素中提取行数据

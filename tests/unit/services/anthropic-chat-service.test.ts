@@ -38,8 +38,8 @@ vi.mock('@anthropic-ai/sdk', () => ({
   default: mockAnthropic.MockAnthropic,
 }));
 
-import type { Message } from '../../../src/services/ChatServiceInterface.js';
 import { AnthropicChatService } from '../../../src/services/AnthropicChatService.js';
+import type { Message } from '../../../src/services/ChatServiceInterface.js';
 
 const baseConfig = {
   provider: 'anthropic' as const,
@@ -160,8 +160,10 @@ describe('AnthropicChatService', () => {
 
       // 检查 tool result 在 user 消息中
       const userMsgs = request.messages.filter((m: any) => m.role === 'user');
-      const toolResultMsg = userMsgs.find((m: any) =>
-        Array.isArray(m.content) && m.content.some((c: any) => c.type === 'tool_result')
+      const toolResultMsg = userMsgs.find(
+        (m: any) =>
+          Array.isArray(m.content) &&
+          m.content.some((c: any) => c.type === 'tool_result')
       );
       expect(toolResultMsg).toBeDefined();
     });

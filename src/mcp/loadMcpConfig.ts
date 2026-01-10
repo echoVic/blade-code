@@ -55,7 +55,9 @@ export async function loadMcpConfigFromCli(mcpConfigs: string[]): Promise<void> 
       const updatedServers = { ...currentServers, ...configData };
       getState().config.actions.updateConfig({ mcpServers: updatedServers });
 
-      logger.debug(`✅ Loaded MCP config from CLI: ${Object.keys(configData).join(', ')}`);
+      logger.debug(
+        `✅ Loaded MCP config from CLI: ${Object.keys(configData).join(', ')}`
+      );
     } catch (error) {
       logger.warn(`⚠️ Failed to load MCP config "${configArg}":`, error);
     }

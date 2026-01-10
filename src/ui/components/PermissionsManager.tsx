@@ -230,7 +230,6 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({ onClose 
       mutator: (permissions: PermissionConfig) => PermissionConfig
     ) => {
       try {
-
         // 读取当前本地 settings 文件
         const localSettingsPath = path.join(
           process.cwd(),

@@ -77,7 +77,7 @@ describe('modelDetection', () => {
         baseUrl: 'url',
         model: 'deepseek-r1',
       };
-      
+
       const gpt4: ModelConfig = {
         id: 'gpt4',
         name: 'GPT4',

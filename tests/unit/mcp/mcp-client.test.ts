@@ -1,6 +1,6 @@
 /**
  * McpClient 错误处理测试
- * 
+ *
  * 主要测试 ErrorType 枚举和基本的 Client 结构，
  * 因为 McpClient 核心逻辑严重依赖外部 SDK 和网络，
  * 这里主要做基本的单元测试覆盖。
@@ -19,7 +19,7 @@ describe('McpClient', () => {
       expect(ErrorType.UNKNOWN).toBe('unknown');
     });
   });
-  
+
   // 更多复杂的测试需要 mock @modelcontextprotocol/sdk，
   // 目前先保证文件被 import 和基础定义被覆盖。
 });

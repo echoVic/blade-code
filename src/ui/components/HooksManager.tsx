@@ -38,10 +38,26 @@ const ACTIONS: Array<{ action: ActionType; description: string }> = [
   { action: 'list', description: 'List all configured hooks' },
 ];
 
-const SAVE_LOCATIONS: Array<{ location: SaveLocation; name: string; description: string }> = [
-  { location: 'local', name: 'Project settings (local)', description: 'Saved in .blade/settings.local.json' },
-  { location: 'project', name: 'Project settings', description: 'Checked in at .blade/settings.json' },
-  { location: 'user', name: 'User settings', description: 'Saved in at ~/.blade/settings.json' },
+const SAVE_LOCATIONS: Array<{
+  location: SaveLocation;
+  name: string;
+  description: string;
+}> = [
+  {
+    location: 'local',
+    name: 'Project settings (local)',
+    description: 'Saved in .blade/settings.local.json',
+  },
+  {
+    location: 'project',
+    name: 'Project settings',
+    description: 'Checked in at .blade/settings.json',
+  },
+  {
+    location: 'user',
+    name: 'User settings',
+    description: 'Saved in at ~/.blade/settings.json',
+  },
 ];
 
 const HOOK_EVENTS = [
@@ -136,9 +152,13 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       }
     } else if (step === 'location') {
       if (key.upArrow) {
-        setSelectedLocationIndex((prev) => (prev > 0 ? prev - 1 : SAVE_LOCATIONS.length - 1));
+        setSelectedLocationIndex((prev) =>
+          prev > 0 ? prev - 1 : SAVE_LOCATIONS.length - 1
+        );
       } else if (key.downArrow) {
-        setSelectedLocationIndex((prev) => (prev < SAVE_LOCATIONS.length - 1 ? prev + 1 : 0));
+        setSelectedLocationIndex((prev) =>
+          prev < SAVE_LOCATIONS.length - 1 ? prev + 1 : 0
+        );
       } else if (key.return) {
         setStep('confirm');
       }
@@ -276,7 +296,11 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       let settingsPath: string;
       switch (selectedLocation.location) {
         case 'local':
-          settingsPath = pathModule.join(process.cwd(), '.blade', 'settings.local.json');
+          settingsPath = pathModule.join(
+            process.cwd(),
+            '.blade',
+            'settings.local.json'
+          );
           break;
         case 'project':
           settingsPath = pathModule.join(process.cwd(), '.blade', 'settings.json');
@@ -300,7 +324,8 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
 
       // 获取现有 hooks 配置
       const existingHooks = (settings.hooks as Record<string, unknown>) || {};
-      const existingMatchers = (existingHooks[selectedEvent.event] as HookMatcher[]) || [];
+      const existingMatchers =
+        (existingHooks[selectedEvent.event] as HookMatcher[]) || [];
 
       // 构造合并后的 hooks 配置
       const updatedHooks = {
@@ -524,11 +549,16 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
             paddingY={1}
             marginBottom={1}
           >
-            <Text bold color={theme.colors.primary}>Save hook configuration</Text>
+            <Text bold color={theme.colors.primary}>
+              Save hook configuration
+            </Text>
             <Text> </Text>
-            <Text>  Event: {selectedEvent.event} - {selectedEvent.description}</Text>
-            <Text>  Matcher: {matcher || '(all)'}</Text>
-            <Text>  Command: {command}</Text>
+            <Text>
+              {' '}
+              Event: {selectedEvent.event} - {selectedEvent.description}
+            </Text>
+            <Text> Matcher: {matcher || '(all)'}</Text>
+            <Text> Command: {command}</Text>
           </Box>
 
           <Text bold>Where should this hook be saved?</Text>
@@ -536,13 +566,15 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
             {SAVE_LOCATIONS.map((item, index) => (
               <Box key={item.location}>
                 <Text
-                  color={index === selectedLocationIndex ? theme.colors.primary : undefined}
+                  color={
+                    index === selectedLocationIndex ? theme.colors.primary : undefined
+                  }
                   bold={index === selectedLocationIndex}
                 >
                   {index === selectedLocationIndex ? '❯ ' : '  '}
                   {index + 1}. {item.name}
                 </Text>
-                <Text color={theme.colors.muted}>  {item.description}</Text>
+                <Text color={theme.colors.muted}> {item.description}</Text>
               </Box>
             ))}
           </Box>

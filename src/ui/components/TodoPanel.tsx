@@ -13,49 +13,47 @@ interface TodoPanelProps {
  * TODO 任务面板组件
  * 极简设计,清晰的层次感,最少的视觉干扰
  */
-export const TodoPanel: React.FC<TodoPanelProps> = React.memo(({
-  todos,
-  visible = true,
-  compact = false,
-}) => {
-  const colors = useThemeColors();
+export const TodoPanel: React.FC<TodoPanelProps> = React.memo(
+  ({ todos, visible = true, compact = false }) => {
+    const colors = useThemeColors();
 
-  if (!visible || todos.length === 0) {
-    return null;
+    if (!visible || todos.length === 0) {
+      return null;
+    }
+
+    const stats = {
+      total: todos.length,
+      completed: todos.filter((t) => t.status === 'completed').length,
+      inProgress: todos.filter((t) => t.status === 'in_progress').length,
+    };
+
+    return (
+      <Box
+        flexDirection="column"
+        borderStyle="single"
+        borderColor={colors.border.light}
+        paddingX={1}
+        paddingY={compact ? 0 : 1}
+        marginBottom={1}
+      >
+        {/* 标题 - 极简风格 */}
+        <Box marginBottom={compact ? 0 : 1}>
+          <Text dimColor>Tasks </Text>
+          <Text color={colors.text.muted}>
+            {stats.completed}/{stats.total}
+          </Text>
+        </Box>
+
+        {/* 任务列表 */}
+        <Box flexDirection="column">
+          {todos.map((todo, index) => (
+            <TodoRow key={todo.id || index} todo={todo} compact={compact} />
+          ))}
+        </Box>
+      </Box>
+    );
   }
-
-  const stats = {
-    total: todos.length,
-    completed: todos.filter((t) => t.status === 'completed').length,
-    inProgress: todos.filter((t) => t.status === 'in_progress').length,
-  };
-
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="single"
-      borderColor={colors.border.light}
-      paddingX={1}
-      paddingY={compact ? 0 : 1}
-      marginBottom={1}
-    >
-      {/* 标题 - 极简风格 */}
-      <Box marginBottom={compact ? 0 : 1}>
-        <Text dimColor>Tasks </Text>
-        <Text color={colors.text.muted}>
-          {stats.completed}/{stats.total}
-        </Text>
-      </Box>
-
-      {/* 任务列表 */}
-      <Box flexDirection="column">
-        {todos.map((todo, index) => (
-          <TodoRow key={todo.id || index} todo={todo} compact={compact} />
-        ))}
-      </Box>
-    </Box>
-  );
-});
+);
 
 interface TodoRowProps {
   todo: TodoItem;

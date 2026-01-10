@@ -50,7 +50,7 @@ describe('TokenCounter', () => {
       // Construct a large message
       const largeContent = 'word '.repeat(1000);
       const messages: Message[] = [{ role: 'user', content: largeContent }];
-      
+
       // Max tokens 100, threshold 0.8 -> 80
       // 1000 words >> 80 tokens
       const result = TokenCounter.shouldCompact(messages, modelName, 100, 0.8);

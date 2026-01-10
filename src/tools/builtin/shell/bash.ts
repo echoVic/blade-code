@@ -43,8 +43,7 @@ export const bashTool = createTool({
 
   // 工具描述
   description: {
-    short:
-      'Execute bash commands in a persistent shell session with optional timeout',
+    short: 'Execute bash commands in a persistent shell session with optional timeout',
     long: `Executes bash commands with proper handling and security measures.
 
 IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.

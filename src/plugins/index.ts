@@ -115,9 +115,9 @@ export type {
   PluginErrorCode,
   PluginLoadOptions,
   PluginManifest,
-  PluginsConfig,
   PluginSearchDir,
   PluginSkill,
   PluginSource,
   PluginStatus,
+  PluginsConfig,
 } from './types.js';

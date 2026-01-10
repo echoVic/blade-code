@@ -4,15 +4,15 @@
  * 解析 Hook 命令的输出
  */
 
+import { safeParseHookOutput } from './schemas/HookSchemas.js';
 import type {
-  ProcessResult,
-  HookOutput,
-  HookExecutionResult,
-  HookExitCode,
   Hook,
   HookConfig,
+  HookExecutionResult,
+  HookExitCode,
+  HookOutput,
+  ProcessResult,
 } from './types/HookTypes.js';
-import { safeParseHookOutput } from './schemas/HookSchemas.js';
 
 /**
  * 输出解析器
@@ -75,7 +75,8 @@ export class OutputParser {
 
       if (!validation.success) {
         // 验证失败 - 根据 failureBehavior 配置处理
-        const errorMsg = 'error' in validation ? validation.error.message : 'Unknown validation error';
+        const errorMsg =
+          'error' in validation ? validation.error.message : 'Unknown validation error';
         const failureBehavior = config?.failureBehavior || 'ignore';
         const fullMsg = `Invalid hook output JSON: ${errorMsg}`;
 
@@ -188,86 +189,86 @@ export class OutputParser {
           hook,
         };
 
-      case 124: // TIMEOUT - 根据 timeoutBehavior 配置处理
-        {
-          const timeoutBehavior = config?.timeoutBehavior || 'ignore';
-          const errorMsg = 'Hook timeout';
+      case 124: {
+        // TIMEOUT - 根据 timeoutBehavior 配置处理
+        const timeoutBehavior = config?.timeoutBehavior || 'ignore';
+        const errorMsg = 'Hook timeout';
 
-          if (timeoutBehavior === 'deny') {
-            return {
-              success: false,
-              blocking: true,
-              error: errorMsg,
-              stdout: result.stdout,
-              stderr: result.stderr,
-              exitCode,
-              hook,
-            };
-          } else if (timeoutBehavior === 'ask') {
-            return {
-              success: false,
-              blocking: false,
-              needsConfirmation: true,
-              warning: `${errorMsg}. Continue?`,
-              stdout: result.stdout,
-              stderr: result.stderr,
-              exitCode,
-              hook,
-            };
-          } else {
-            // ignore
-            return {
-              success: false,
-              blocking: false,
-              warning: errorMsg,
-              stdout: result.stdout,
-              stderr: result.stderr,
-              exitCode,
-              hook,
-            };
-          }
+        if (timeoutBehavior === 'deny') {
+          return {
+            success: false,
+            blocking: true,
+            error: errorMsg,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode,
+            hook,
+          };
+        } else if (timeoutBehavior === 'ask') {
+          return {
+            success: false,
+            blocking: false,
+            needsConfirmation: true,
+            warning: `${errorMsg}. Continue?`,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode,
+            hook,
+          };
+        } else {
+          // ignore
+          return {
+            success: false,
+            blocking: false,
+            warning: errorMsg,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode,
+            hook,
+          };
         }
+      }
 
-      default: // NON_BLOCKING_ERROR - 根据 failureBehavior 配置处理
-        {
-          const failureBehavior = config?.failureBehavior || 'ignore';
-          const errorMsg =
-            result.stderr || result.stdout || `Hook failed with exit code ${exitCode}`;
+      default: {
+        // NON_BLOCKING_ERROR - 根据 failureBehavior 配置处理
+        const failureBehavior = config?.failureBehavior || 'ignore';
+        const errorMsg =
+          result.stderr || result.stdout || `Hook failed with exit code ${exitCode}`;
 
-          if (failureBehavior === 'deny') {
-            return {
-              success: false,
-              blocking: true,
-              error: errorMsg,
-              stdout: result.stdout,
-              stderr: result.stderr,
-              exitCode,
-              hook,
-            };
-          } else if (failureBehavior === 'ask') {
-            return {
-              success: false,
-              blocking: false,
-              needsConfirmation: true,
-              warning: `${errorMsg}. Continue?`,
-              stdout: result.stdout,
-              stderr: result.stderr,
-              exitCode,
-              hook,
-            };
-          } else {
-            // ignore
-            return {
-              success: false,
-              blocking: false,
-              warning: errorMsg,
-              stdout: result.stdout,
-              stderr: result.stderr,
-              exitCode,
-              hook,
-            };
-          }
+        if (failureBehavior === 'deny') {
+          return {
+            success: false,
+            blocking: true,
+            error: errorMsg,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode,
+            hook,
+          };
+        } else if (failureBehavior === 'ask') {
+          return {
+            success: false,
+            blocking: false,
+            needsConfirmation: true,
+            warning: `${errorMsg}. Continue?`,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode,
+            hook,
+          };
+        } else {
+          // ignore
+          return {
+            success: false,
+            blocking: false,
+            warning: errorMsg,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode,
+            hook,
+          };
         }
+      }
     }
   }
 

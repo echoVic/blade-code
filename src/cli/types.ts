@@ -72,4 +72,3 @@ export interface InstallOptions extends GlobalOptions {
   hook?: string;
   mcp?: string;
 }
-

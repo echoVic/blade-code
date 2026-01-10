@@ -5,7 +5,12 @@
 
 import { SessionService } from '../services/SessionService.js';
 import { sessionActions } from '../store/vanilla.js';
-import { getUI, type SlashCommand, type SlashCommandContext, type SlashCommandResult } from './types.js';
+import {
+  getUI,
+  type SlashCommand,
+  type SlashCommandContext,
+  type SlashCommandResult,
+} from './types.js';
 
 const resumeCommand: SlashCommand = {
   name: 'resume',

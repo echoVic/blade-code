@@ -10,15 +10,17 @@ const mockFileManager = {
   initializeDirectories: vi.fn().mockResolvedValue(undefined),
   changeExists: vi.fn().mockResolvedValue(false),
   createChangeDir: vi.fn().mockResolvedValue('/mock/.blade/changes/test-feature'),
-  createMetadata: vi.fn((name: string, description: string): SpecMetadata => ({
-    id: 'test-id',
-    name,
-    description,
-    phase: 'init',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    tasks: [],
-  })),
+  createMetadata: vi.fn(
+    (name: string, description: string): SpecMetadata => ({
+      id: 'test-id',
+      name,
+      description,
+      phase: 'init',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      tasks: [],
+    })
+  ),
   writeMetadata: vi.fn().mockResolvedValue(undefined),
   readMetadata: vi.fn().mockResolvedValue(null),
   writeSpecFile: vi.fn().mockResolvedValue(undefined),

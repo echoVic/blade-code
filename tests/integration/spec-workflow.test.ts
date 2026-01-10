@@ -9,7 +9,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SpecFileManager } from '../../src/spec/SpecFileManager.js';
 import { SpecManager } from '../../src/spec/SpecManager.js';
-import { SPEC_DIRS, STEERING_FILES, type SpecPhase } from '../../src/spec/types.js';
+import { SPEC_DIRS, type SpecPhase, STEERING_FILES } from '../../src/spec/types.js';
 
 describe('Spec Workflow Integration', () => {
   let tempDir: string;
@@ -50,10 +50,22 @@ describe('Spec Workflow Integration', () => {
 
       const [specsExists, changesExists, archiveExists, steeringExists] =
         await Promise.all([
-          fs.stat(specsDir).then(() => true).catch(() => false),
-          fs.stat(changesDir).then(() => true).catch(() => false),
-          fs.stat(archiveDir).then(() => true).catch(() => false),
-          fs.stat(steeringDir).then(() => true).catch(() => false),
+          fs
+            .stat(specsDir)
+            .then(() => true)
+            .catch(() => false),
+          fs
+            .stat(changesDir)
+            .then(() => true)
+            .catch(() => false),
+          fs
+            .stat(archiveDir)
+            .then(() => true)
+            .catch(() => false),
+          fs
+            .stat(steeringDir)
+            .then(() => true)
+            .catch(() => false),
         ]);
 
       expect(specsExists).toBe(true);
@@ -65,14 +77,20 @@ describe('Spec Workflow Integration', () => {
 
   describe('Spec Lifecycle', () => {
     it('should create a new spec with proposal file', async () => {
-      const result = await specManager.createSpec('auth-feature', 'Implement user authentication');
+      const result = await specManager.createSpec(
+        'auth-feature',
+        'Implement user authentication'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data?.spec?.name).toBe('auth-feature');
       expect(result.data?.spec?.phase).toBe('init');
 
       // 验证 proposal.md 已创建
-      const proposalContent = await fileManager.readSpecFile('auth-feature', 'proposal');
+      const proposalContent = await fileManager.readSpecFile(
+        'auth-feature',
+        'proposal'
+      );
       expect(proposalContent).toContain('# auth-feature');
       expect(proposalContent).toContain('Implement user authentication');
     });
@@ -106,7 +124,13 @@ describe('Spec Workflow Integration', () => {
     });
 
     it('should transition through phases sequentially', async () => {
-      const phases: SpecPhase[] = ['requirements', 'design', 'tasks', 'implementation', 'done'];
+      const phases: SpecPhase[] = [
+        'requirements',
+        'design',
+        'tasks',
+        'implementation',
+        'done',
+      ];
 
       for (const phase of phases) {
         const result = await specManager.transitionPhase(phase);
@@ -297,7 +321,8 @@ describe('Spec Workflow Integration', () => {
 
   describe('Steering Documents', () => {
     it('should read and write steering documents', async () => {
-      const productContent = '# Product Vision\n\nOur goal is to build amazing software.';
+      const productContent =
+        '# Product Vision\n\nOur goal is to build amazing software.';
 
       await fileManager.writeSteeringFile('PRODUCT', productContent);
       const steeringContext = await fileManager.readSteeringContext();

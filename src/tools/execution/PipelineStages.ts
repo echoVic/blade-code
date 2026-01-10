@@ -102,7 +102,11 @@ export class PermissionStage implements PipelineStage {
       // 这样 Shift+Tab 切换模式或 approve 后切换模式都能正确生效
       const currentPermissionMode =
         execution.context.permissionMode || this.defaultPermissionMode;
-      checkResult = this.applyModeOverrides(tool.kind, checkResult, currentPermissionMode);
+      checkResult = this.applyModeOverrides(
+        tool.kind,
+        checkResult,
+        currentPermissionMode
+      );
 
       // 根据检查结果采取行动
       switch (checkResult.result) {
@@ -159,7 +163,9 @@ export class PermissionStage implements PipelineStage {
         });
 
         if (dangerousPaths.length > 0) {
-          execution.abort(`Access to dangerous system paths denied: ${dangerousPaths.join(', ')}`);
+          execution.abort(
+            `Access to dangerous system paths denied: ${dangerousPaths.join(', ')}`
+          );
           return;
         }
 
@@ -249,7 +255,8 @@ export class PermissionStage implements PipelineStage {
         return {
           result: PermissionResult.DENY,
           matchedRule: 'mode:plan',
-          reason: 'Plan mode: modification tools are blocked; only read-only tools are allowed (Read/Glob/Grep/WebFetch/WebSearch/Task)',
+          reason:
+            'Plan mode: modification tools are blocked; only read-only tools are allowed (Read/Glob/Grep/WebFetch/WebSearch/Task)',
         };
       }
     }
@@ -274,10 +281,7 @@ export class PermissionStage implements PipelineStage {
     }
 
     // 6. AUTO_EDIT 模式：额外批准 Write 工具
-    if (
-      permissionMode === PermissionMode.AUTO_EDIT &&
-      toolKind === ToolKind.Write
-    ) {
+    if (permissionMode === PermissionMode.AUTO_EDIT && toolKind === ToolKind.Write) {
       return {
         result: PermissionResult.ALLOW,
         matchedRule: 'mode:autoEdit:write',
@@ -422,7 +426,9 @@ export class ConfirmationStage implements PipelineStage {
         }
       } else {
         // 如果没有提供 confirmationHandler,则自动通过确认（用于非交互式环境）
-        logger.warn('⚠️ No ConfirmationHandler; auto-approving tool execution (non-interactive environment only)');
+        logger.warn(
+          '⚠️ No ConfirmationHandler; auto-approving tool execution (non-interactive environment only)'
+        );
       }
     } catch (error) {
       execution.abort(`User confirmation failed: ${(error as Error).message}`);

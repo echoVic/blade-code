@@ -104,7 +104,10 @@ export class AzureOpenAIChatService implements IChatService {
         const toolContent =
           typeof msg.content === 'string'
             ? msg.content
-            : msg.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
+            : msg.content
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text)
+                .join('\n');
         return {
           role: 'tool',
           content: toolContent,
@@ -116,7 +119,10 @@ export class AzureOpenAIChatService implements IChatService {
         const assistantContent =
           typeof msg.content === 'string'
             ? msg.content
-            : msg.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
+            : msg.content
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text)
+                .join('\n');
 
         return {
           role: 'assistant',
@@ -145,7 +151,10 @@ export class AzureOpenAIChatService implements IChatService {
         content:
           typeof msg.content === 'string'
             ? msg.content
-            : msg.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n'),
+            : msg.content
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text)
+                .join('\n'),
       };
     });
   }
@@ -195,7 +204,8 @@ export class AzureOpenAIChatService implements IChatService {
       model: this.config.model, // Azure 中这是部署名称
       messages: openaiMessages,
       tools: openaiTools,
-      tool_choice: openaiTools && openaiTools.length > 0 ? ('auto' as const) : undefined,
+      tool_choice:
+        openaiTools && openaiTools.length > 0 ? ('auto' as const) : undefined,
       max_tokens: this.config.maxOutputTokens ?? 32768,
       temperature: this.config.temperature ?? 0.0,
     };
@@ -214,7 +224,11 @@ export class AzureOpenAIChatService implements IChatService {
       });
       const requestDuration = Date.now() - startTime;
 
-      _logger.debug('📥 [AzureOpenAIChatService] Response received in', requestDuration, 'ms');
+      _logger.debug(
+        '📥 [AzureOpenAIChatService] Response received in',
+        requestDuration,
+        'ms'
+      );
 
       if (!completion || !completion.choices || completion.choices.length === 0) {
         throw new Error('Invalid API response: missing choices');
@@ -282,13 +296,17 @@ export class AzureOpenAIChatService implements IChatService {
     const openaiMessages = this.convertToOpenAIMessages(filteredMessages);
     const openaiTools = this.convertToOpenAITools(tools);
 
-    _logger.debug('🔧 [AzureOpenAIChatService] Stream tools count:', openaiTools?.length || 0);
+    _logger.debug(
+      '🔧 [AzureOpenAIChatService] Stream tools count:',
+      openaiTools?.length || 0
+    );
 
     const requestParams = {
       model: this.config.model,
       messages: openaiMessages,
       tools: openaiTools,
-      tool_choice: openaiTools && openaiTools.length > 0 ? ('auto' as const) : undefined,
+      tool_choice:
+        openaiTools && openaiTools.length > 0 ? ('auto' as const) : undefined,
       max_tokens: this.config.maxOutputTokens ?? 32768,
       temperature: this.config.temperature ?? 0.0,
       stream: true as const,
@@ -307,7 +325,11 @@ export class AzureOpenAIChatService implements IChatService {
         signal,
       });
       const requestDuration = Date.now() - startTime;
-      _logger.debug('📥 [AzureOpenAIChatService] Stream started in', requestDuration, 'ms');
+      _logger.debug(
+        '📥 [AzureOpenAIChatService] Stream started in',
+        requestDuration,
+        'ms'
+      );
 
       let chunkCount = 0;
       let totalContent = '';
@@ -317,7 +339,10 @@ export class AzureOpenAIChatService implements IChatService {
         chunkCount++;
 
         if (!chunk || !chunk.choices || !Array.isArray(chunk.choices)) {
-          _logger.warn('⚠️ [AzureOpenAIChatService] Invalid chunk format in stream', chunkCount);
+          _logger.warn(
+            '⚠️ [AzureOpenAIChatService] Invalid chunk format in stream',
+            chunkCount
+          );
           continue;
         }
 
@@ -338,7 +363,10 @@ export class AzureOpenAIChatService implements IChatService {
 
         const finishReason = chunk.choices[0]?.finish_reason;
         if (finishReason) {
-          _logger.debug('🏁 [AzureOpenAIChatService] Stream finished with reason:', finishReason);
+          _logger.debug(
+            '🏁 [AzureOpenAIChatService] Stream finished with reason:',
+            finishReason
+          );
           _logger.debug('📊 [AzureOpenAIChatService] Stream summary:', {
             totalChunks: chunkCount,
             totalContentLength: totalContent.length,

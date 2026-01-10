@@ -82,8 +82,16 @@ describe('McpRegistry', () => {
   });
 
   it('应该能列出所有服务器', async () => {
-    await registry.registerServer('s1', { type: 'stdio' as const, command: 'a', args: [] });
-    await registry.registerServer('s2', { type: 'stdio' as const, command: 'b', args: [] });
+    await registry.registerServer('s1', {
+      type: 'stdio' as const,
+      command: 'a',
+      args: [],
+    });
+    await registry.registerServer('s2', {
+      type: 'stdio' as const,
+      command: 'b',
+      args: [],
+    });
 
     const servers = registry.getAllServers();
     expect(servers.size).toBe(2);

@@ -89,13 +89,14 @@ export const SpecStatusPanel: React.FC<SpecStatusPanelProps> = React.memo(
     }
 
     const currentPhaseIndex = PHASE_ORDER.indexOf(spec.phase);
-    const progress = spec.tasks.length > 0
-      ? Math.round(
-          (spec.tasks.filter((t) => t.status === 'completed').length /
-            spec.tasks.length) *
-            100
-        )
-      : 0;
+    const progress =
+      spec.tasks.length > 0
+        ? Math.round(
+            (spec.tasks.filter((t) => t.status === 'completed').length /
+              spec.tasks.length) *
+              100
+          )
+        : 0;
 
     return (
       <Box
@@ -154,7 +155,11 @@ export const SpecStatusPanel: React.FC<SpecStatusPanelProps> = React.memo(
               {spec.tasks.length}) ───
             </Text>
             {spec.tasks.slice(0, maxTasks).map((task) => (
-              <TaskItem key={task.id} task={task} isCurrent={task.id === spec.currentTaskId} />
+              <TaskItem
+                key={task.id}
+                task={task}
+                isCurrent={task.id === spec.currentTaskId}
+              />
             ))}
             {spec.tasks.length > maxTasks && (
               <Text color="gray" dimColor>

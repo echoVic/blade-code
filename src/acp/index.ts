@@ -5,8 +5,8 @@
  *
  */
 
-import * as acp from '@agentclientprotocol/sdk';
 import { Readable, Writable } from 'node:stream';
+import * as acp from '@agentclientprotocol/sdk';
 import { BladeAgent } from './BladeAgent.js';
 
 /**

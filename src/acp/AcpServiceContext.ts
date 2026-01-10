@@ -5,7 +5,6 @@
  * 使工具可以透明地使用 IDE 提供的能力或回退到本地实现。
  */
 
-import { spawn } from 'child_process';
 import type {
   AgentSideConnection,
   ClientCapabilities,
@@ -13,6 +12,7 @@ import type {
   ToolCallStatus,
   ToolKind,
 } from '@agentclientprotocol/sdk';
+import { spawn } from 'child_process';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import {
   type FileSystemService,

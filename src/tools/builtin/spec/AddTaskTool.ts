@@ -18,7 +18,10 @@ export const addTaskTool = createTool({
 
   schema: z.object({
     title: z.string().min(1).describe('Brief title of the task'),
-    description: z.string().min(1).describe('Detailed description of what needs to be done'),
+    description: z
+      .string()
+      .min(1)
+      .describe('Detailed description of what needs to be done'),
     complexity: z
       .enum(['low', 'medium', 'high'])
       .optional()

@@ -1,8 +1,8 @@
-import type { Entry } from 'fast-glob';
-import fg from 'fast-glob';
 import type { Stats } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
+import type { Entry } from 'fast-glob';
+import fg from 'fast-glob';
 import { join, resolve } from 'path';
 import { z } from 'zod';
 import { FileFilter } from '../../../utils/filePatterns.js';
@@ -51,7 +51,10 @@ export const globTool = createTool({
     })
       .max(1000, 'At most 1000 results can be returned')
       .default(100),
-    include_directories: z.boolean().default(false).describe('Include directories in results'),
+    include_directories: z
+      .boolean()
+      .default(false)
+      .describe('Include directories in results'),
     case_sensitive: z.boolean().default(false).describe('Case sensitive matching'),
   }),
 

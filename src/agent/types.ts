@@ -6,9 +6,9 @@ import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
+import type { TodoItem } from '../tools/builtin/todo/types.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../tools/types/ToolTypes.js';
-import type { TodoItem } from '../tools/builtin/todo/types.js';
 
 /**
  * 用户消息内容类型
@@ -133,9 +133,7 @@ export interface LoopOptions {
   onTodoUpdate?: (todos: TodoItem[]) => void;
 
   // 轮次限制回调（100 轮后询问用户是否继续）
-  onTurnLimitReached?: (data: {
-    turnsCount: number;
-  }) => Promise<TurnLimitResponse>;
+  onTurnLimitReached?: (data: { turnsCount: number }) => Promise<TurnLimitResponse>;
 }
 
 /**

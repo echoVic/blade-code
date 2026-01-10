@@ -108,7 +108,11 @@ describe('GeminiChatService', () => {
             finishReason: 'STOP',
           },
         ],
-        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
+        usageMetadata: {
+          promptTokenCount: 10,
+          candidatesTokenCount: 5,
+          totalTokenCount: 15,
+        },
       });
 
       await service.chat(messages);
@@ -138,7 +142,11 @@ describe('GeminiChatService', () => {
             finishReason: 'STOP',
           },
         ],
-        usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 10, totalTokenCount: 30 },
+        usageMetadata: {
+          promptTokenCount: 20,
+          candidatesTokenCount: 10,
+          totalTokenCount: 30,
+        },
       });
 
       await service.chat(messages);
@@ -181,7 +189,11 @@ describe('GeminiChatService', () => {
             finishReason: 'STOP',
           },
         ],
-        usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 10, totalTokenCount: 30 },
+        usageMetadata: {
+          promptTokenCount: 20,
+          candidatesTokenCount: 10,
+          totalTokenCount: 30,
+        },
       });
 
       await service.chat(messages);

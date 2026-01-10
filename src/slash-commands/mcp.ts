@@ -142,7 +142,10 @@ function showServersFromRegistry(ui: SlashCommandUI, servers: Map<string, any>):
 /**
  * 显示特定服务器详情
  */
-async function showServerDetails(ui: SlashCommandUI, serverName: string): Promise<void> {
+async function showServerDetails(
+  ui: SlashCommandUI,
+  serverName: string
+): Promise<void> {
   const mcpRegistry = McpRegistry.getInstance();
 
   // 从 Store 读取配置
@@ -264,7 +267,11 @@ function showServerDetailsFromRegistry(
 /**
  * 从配置显示服务器详情
  */
-function showServerDetailsFromConfig(ui: SlashCommandUI, serverName: string, config: any): void {
+function showServerDetailsFromConfig(
+  ui: SlashCommandUI,
+  serverName: string,
+  config: any
+): void {
   let output = `📦 **${serverName}**\n\n`;
 
   // 连接状态

@@ -7,7 +7,7 @@
  * 3. 使用 Promise 队列实现顺序执行
  */
 
-import { LogCategory, createLogger } from '../../logging/Logger.js';
+import { createLogger, LogCategory } from '../../logging/Logger.js';
 
 const logger = createLogger(LogCategory.EXECUTION);
 

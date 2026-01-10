@@ -31,11 +31,11 @@ import {
   getRegisteredCommands,
   isSlashCommand,
 } from '../slash-commands/index.js';
+import type { TodoItem } from '../tools/builtin/todo/types.js';
 import type {
   ConfirmationDetails,
   ConfirmationResponse,
 } from '../tools/types/ExecutionTypes.js';
-import type { TodoItem } from '../tools/builtin/todo/types.js';
 import { AcpServiceContext } from './AcpServiceContext.js';
 
 const logger = createLogger(LogCategory.AGENT);

@@ -25,12 +25,12 @@ const mockReadTool = createMockTool((params) => {
   return filePath ? `file_path:${filePath}` : '';
 });
 
-const mockWriteTool = createMockTool((params) => {
+const _mockWriteTool = createMockTool((params) => {
   const filePath = params.file_path as string;
   return filePath ? `file_path:${filePath}` : '';
 });
 
-const mockBashTool = createMockTool((params) => {
+const _mockBashTool = createMockTool((params) => {
   const command = params.command as string;
   return command ? `command:${command}` : '';
 });

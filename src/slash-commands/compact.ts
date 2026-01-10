@@ -6,7 +6,12 @@ import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { TokenCounter } from '../context/TokenCounter.js';
 import { getConfig, getCurrentModel, getState } from '../store/vanilla.js';
-import { getUI, type SlashCommand, type SlashCommandContext, type SlashCommandResult } from './types.js';
+import {
+  getUI,
+  type SlashCommand,
+  type SlashCommandContext,
+  type SlashCommandResult,
+} from './types.js';
 
 /**
  * Compact 命令处理函数

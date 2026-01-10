@@ -86,7 +86,10 @@ export interface SpecActions {
     }
   ) => Promise<SpecOperationResult>;
   /** 更新任务状态 */
-  updateTaskStatus: (taskId: string, status: TaskStatus) => Promise<SpecOperationResult>;
+  updateTaskStatus: (
+    taskId: string,
+    status: TaskStatus
+  ) => Promise<SpecOperationResult>;
   /** 获取下一个待执行任务 */
   getNextTask: () => SpecTask | null;
   /** 获取任务进度 */
@@ -365,7 +368,8 @@ export const createSpecSlice: StateCreator<BladeStore, [], [], SpecSlice> = (
       const updatedTask: SpecTask = {
         ...task,
         status,
-        completedAt: status === 'completed' ? new Date().toISOString() : task.completedAt,
+        completedAt:
+          status === 'completed' ? new Date().toISOString() : task.completedAt,
       };
 
       const updatedTasks = currentSpec.tasks.map((t) =>
@@ -435,7 +439,10 @@ export const createSpecSlice: StateCreator<BladeStore, [], [], SpecSlice> = (
 
         // 应用过滤器
         if (options?.phase && metadata.phase !== options.phase) continue;
-        if (options?.tags && !options.tags.some((tag) => metadata.tags?.includes(tag))) {
+        if (
+          options?.tags &&
+          !options.tags.some((tag) => metadata.tags?.includes(tag))
+        ) {
           continue;
         }
         if (

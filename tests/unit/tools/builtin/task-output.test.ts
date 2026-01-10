@@ -200,7 +200,10 @@ describe('TaskOutput Tool', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(mockAgentManager.waitForCompletion).toHaveBeenCalledWith('agent_wait', 5000);
+      expect(mockAgentManager.waitForCompletion).toHaveBeenCalledWith(
+        'agent_wait',
+        5000
+      );
     });
   });
 

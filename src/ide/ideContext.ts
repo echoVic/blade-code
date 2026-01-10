@@ -159,7 +159,10 @@ export class IdeContext {
 
   private readPackageJson(): Record<string, unknown> | null {
     try {
-      const content = fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8');
+      const content = fs.readFileSync(
+        path.join(process.cwd(), 'package.json'),
+        'utf-8'
+      );
       return JSON.parse(content);
     } catch {
       return null;
@@ -177,8 +180,8 @@ export class IdeContext {
 
     // 基于依赖推测项目类型
     const deps = {
-      ...(packageJson.dependencies as Record<string, string> || {}),
-      ...(packageJson.devDependencies as Record<string, string> || {}),
+      ...((packageJson.dependencies as Record<string, string>) || {}),
+      ...((packageJson.devDependencies as Record<string, string>) || {}),
     };
 
     if (deps.react) return 'react';

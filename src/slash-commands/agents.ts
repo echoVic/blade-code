@@ -5,7 +5,12 @@
 import os from 'node:os';
 import path from 'node:path';
 import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
-import { getUI, type SlashCommand, type SlashCommandContext, type SlashCommandResult } from './types.js';
+import {
+  getUI,
+  type SlashCommand,
+  type SlashCommandContext,
+  type SlashCommandResult,
+} from './types.js';
 
 export const agentsCommand: SlashCommand = {
   name: 'agents',

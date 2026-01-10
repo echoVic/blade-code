@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
 import { useStdout } from 'ink';
 import { debounce } from 'lodash-es';
+import { useEffect, useState } from 'react';
 
 /**
  * 获取终端高度的 hook

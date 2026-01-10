@@ -175,8 +175,9 @@ export class ExecutionPipeline extends EventEmitter {
       return result;
     } catch (error) {
       const endTime = Date.now();
-      const isTimeout = (error as Error).message?.includes('timeout') ||
-                       (error as Error).name === 'TimeoutError';
+      const isTimeout =
+        (error as Error).message?.includes('timeout') ||
+        (error as Error).name === 'TimeoutError';
 
       // 构建错误结果
       let errorResult: ToolResult = {
@@ -200,7 +201,9 @@ export class ExecutionPipeline extends EventEmitter {
           {
             projectDir: process.cwd(),
             sessionId: execution.context.sessionId || 'unknown',
-            permissionMode: (execution.context.permissionMode as PermissionMode) || PermissionMode.DEFAULT,
+            permissionMode:
+              (execution.context.permissionMode as PermissionMode) ||
+              PermissionMode.DEFAULT,
             isInterrupt: false,
             isTimeout,
             abortSignal: execution.context.signal,
@@ -217,11 +220,16 @@ export class ExecutionPipeline extends EventEmitter {
 
         // 如果有警告，记录日志
         if (hookResult.warning) {
-          console.warn(`[ExecutionPipeline] PostToolUseFailure hook warning: ${hookResult.warning}`);
+          console.warn(
+            `[ExecutionPipeline] PostToolUseFailure hook warning: ${hookResult.warning}`
+          );
         }
       } catch (hookError) {
         // Hook 执行失败不应阻止错误处理
-        console.warn('[ExecutionPipeline] PostToolUseFailure hook execution failed:', hookError);
+        console.warn(
+          '[ExecutionPipeline] PostToolUseFailure hook execution failed:',
+          hookError
+        );
       }
 
       this.addToHistory({

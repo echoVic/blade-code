@@ -104,8 +104,7 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
             `Phase: ${PHASE_DISPLAY_NAMES[currentPhase]}\n` +
             `Tasks: ${progress.completed}/${progress.total} completed` +
             incompleteWarning,
-          details:
-            'This will move the spec to archive and merge any spec deltas.',
+          details: 'This will move the spec to archive and merge any spec deltas.',
         });
 
         if (!response.approved) {

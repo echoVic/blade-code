@@ -173,7 +173,15 @@ export class AnthropicChatService implements IChatService {
       if (msg.role === 'assistant') {
         // assistant 消息：可能包含 text 和 tool_use blocks
         // 使用 ContentBlockParam 代替具体类型以获得更好的类型兼容性
-        const contentBlocks: Array<{ type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }> = [];
+        const contentBlocks: Array<
+          | { type: 'text'; text: string }
+          | {
+              type: 'tool_use';
+              id: string;
+              name: string;
+              input: Record<string, unknown>;
+            }
+        > = [];
 
         // 添加文本内容
         const text = getTextContent(msg.content);
@@ -280,7 +288,10 @@ export class AnthropicChatService implements IChatService {
         if (typeof lastMsg.content === 'string' && typeof msg.content === 'string') {
           lastMsg.content = `${lastMsg.content}\n\n${msg.content}`;
         } else if (Array.isArray(lastMsg.content) && Array.isArray(msg.content)) {
-          lastMsg.content = [...lastMsg.content, ...msg.content] as typeof lastMsg.content;
+          lastMsg.content = [
+            ...lastMsg.content,
+            ...msg.content,
+          ] as typeof lastMsg.content;
         } else if (typeof lastMsg.content === 'string' && Array.isArray(msg.content)) {
           lastMsg.content = [
             { type: 'text', text: lastMsg.content } as TextBlockParam,
@@ -378,7 +389,10 @@ export class AnthropicChatService implements IChatService {
       this.convertToAnthropicMessages(filteredMessages);
     const anthropicTools = this.convertToAnthropicTools(tools);
 
-    _logger.debug('🔧 [AnthropicChatService] Tools count:', anthropicTools?.length || 0);
+    _logger.debug(
+      '🔧 [AnthropicChatService] Tools count:',
+      anthropicTools?.length || 0
+    );
     _logger.debug('📤 [AnthropicChatService] Request params:', {
       model: this.config.model,
       messagesCount: anthropicMessages.length,
@@ -402,7 +416,11 @@ export class AnthropicChatService implements IChatService {
       );
 
       const requestDuration = Date.now() - startTime;
-      _logger.debug('📥 [AnthropicChatService] Response received in', requestDuration, 'ms');
+      _logger.debug(
+        '📥 [AnthropicChatService] Response received in',
+        requestDuration,
+        'ms'
+      );
 
       _logger.debug('📊 [AnthropicChatService] Response:', {
         stopReason: response.stop_reason,
@@ -457,7 +475,10 @@ export class AnthropicChatService implements IChatService {
       this.convertToAnthropicMessages(filteredMessages);
     const anthropicTools = this.convertToAnthropicTools(tools);
 
-    _logger.debug('🔧 [AnthropicChatService] Stream tools count:', anthropicTools?.length || 0);
+    _logger.debug(
+      '🔧 [AnthropicChatService] Stream tools count:',
+      anthropicTools?.length || 0
+    );
     _logger.debug('📤 [AnthropicChatService] Stream request params:', {
       model: this.config.model,
       messagesCount: anthropicMessages.length,
@@ -482,7 +503,11 @@ export class AnthropicChatService implements IChatService {
       );
 
       const requestDuration = Date.now() - startTime;
-      _logger.debug('📥 [AnthropicChatService] Stream started in', requestDuration, 'ms');
+      _logger.debug(
+        '📥 [AnthropicChatService] Stream started in',
+        requestDuration,
+        'ms'
+      );
 
       // 工具调用累积器：按 index 存储
       const toolCallAccumulator = new Map<
@@ -529,9 +554,7 @@ export class AnthropicChatService implements IChatService {
           // 如果是工具调用块，发出完整的工具调用
           const tool = toolCallAccumulator.get(event.index);
           if (tool && tool.id) {
-            _logger.debug(
-              `🔧 [AnthropicChatService] Tool use completed: ${tool.name}`
-            );
+            _logger.debug(`🔧 [AnthropicChatService] Tool use completed: ${tool.name}`);
             yield {
               toolCalls: [
                 {

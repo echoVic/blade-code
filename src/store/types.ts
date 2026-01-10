@@ -11,8 +11,8 @@
 import type { ModelConfig, RuntimeConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { SessionMetadata } from '../services/SessionService.js';
-import type { SpecSlice } from './slices/specSlice.js';
 import type { TodoItem } from '../tools/builtin/todo/types.js';
+import type { SpecSlice } from './slices/specSlice.js';
 
 // ==================== Session Types ====================
 

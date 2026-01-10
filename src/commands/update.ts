@@ -35,7 +35,10 @@ export const updateCommands: CommandModule<{}, UpdateOptions> = {
         console.log('');
         console.log('🚀 Updating...');
         try {
-          execSync('npm install -g blade-code@latest --registry https://registry.npmjs.org', { stdio: 'inherit' });
+          execSync(
+            'npm install -g blade-code@latest --registry https://registry.npmjs.org',
+            { stdio: 'inherit' }
+          );
           console.log('');
           console.log('✅ Update complete!');
         } catch (_errrr) {

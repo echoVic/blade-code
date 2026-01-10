@@ -27,10 +27,7 @@ export const taskOutputTool = createTool({
 
   schema: z.object({
     task_id: z.string().min(1).describe('The task ID to get output from'),
-    block: z
-      .boolean()
-      .default(true)
-      .describe('Whether to wait for completion'),
+    block: z.boolean().default(true).describe('Whether to wait for completion'),
     timeout: z
       .number()
       .min(0)
@@ -167,7 +164,9 @@ async function handleShellOutput(
     exit_code: snapshot.exitCode,
     signal: snapshot.signal,
     started_at: new Date(snapshot.startedAt).toISOString(),
-    finished_at: snapshot.endedAt ? new Date(snapshot.endedAt).toISOString() : undefined,
+    finished_at: snapshot.endedAt
+      ? new Date(snapshot.endedAt).toISOString()
+      : undefined,
     stdout: snapshot.stdout,
     stderr: snapshot.stderr,
   };

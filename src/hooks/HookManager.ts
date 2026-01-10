@@ -127,7 +127,11 @@ export class HookManager {
 
     try {
       // 读取本地 settings 文件
-      const localSettingsPath = path.join(process.cwd(), '.blade', 'settings.local.json');
+      const localSettingsPath = path.join(
+        process.cwd(),
+        '.blade',
+        'settings.local.json'
+      );
       const content = await fs.readFile(localSettingsPath, 'utf-8');
       const settings = JSON.parse(content);
 

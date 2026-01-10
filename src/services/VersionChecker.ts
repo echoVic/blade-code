@@ -138,7 +138,6 @@ async function fetchLatestVersion(): Promise<string | null> {
   }
 }
 
-
 /**
  * 检查版本更新
  *

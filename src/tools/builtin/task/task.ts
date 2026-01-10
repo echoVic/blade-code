@@ -101,17 +101,20 @@ export const taskTool = createTool({
     run_in_background: z
       .boolean()
       .default(false)
-      .describe('Set to true to run this agent in the background. Use TaskOutput to read the output later.'),
+      .describe(
+        'Set to true to run this agent in the background. Use TaskOutput to read the output later.'
+      ),
     resume: z
       .string()
       .optional()
-      .describe('Optional agent ID to resume from. If provided, the agent will continue from the previous execution transcript.'),
+      .describe(
+        'Optional agent ID to resume from. If provided, the agent will continue from the previous execution transcript.'
+      ),
   }),
 
   // 工具描述
   description: {
-    short:
-      'Launch a new agent to handle complex, multi-step tasks autonomously',
+    short: 'Launch a new agent to handle complex, multi-step tasks autonomously',
     // 使用 getter 动态生成描述，确保 subagentRegistry 已初始化
     get long() {
       return getTaskDescription();
@@ -146,7 +149,13 @@ export const taskTool = createTool({
 
   // 执行函数
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
-    const { subagent_type, description, prompt, run_in_background = false, resume } = params;
+    const {
+      subagent_type,
+      description,
+      prompt,
+      run_in_background = false,
+      resume,
+    } = params;
     const { updateOutput } = context;
 
     try {
@@ -306,7 +315,12 @@ export const taskTool = createTool({
  * 处理后台执行模式
  */
 function handleBackgroundExecution(
-  subagentConfig: { name: string; description: string; systemPrompt?: string; tools?: string[] },
+  subagentConfig: {
+    name: string;
+    description: string;
+    systemPrompt?: string;
+    tools?: string[];
+  },
   description: string,
   prompt: string,
   context: ExecutionContext
@@ -350,7 +364,12 @@ function handleBackgroundExecution(
 function handleResume(
   agentId: string,
   prompt: string,
-  subagentConfig: { name: string; description: string; systemPrompt?: string; tools?: string[] },
+  subagentConfig: {
+    name: string;
+    description: string;
+    systemPrompt?: string;
+    tools?: string[];
+  },
   description: string,
   context: ExecutionContext
 ): ToolResult {

@@ -51,9 +51,7 @@ export function SkillsManager({ onCancel }: SkillsManagerProps) {
           <Text color="gray">没有找到任何 Skill</Text>
         </Box>
         <Box marginTop={1} paddingLeft={2}>
-          <Text color="gray">
-            配置文件位置: ~/.blade/skills/ 或 .blade/skills/
-          </Text>
+          <Text color="gray">配置文件位置: ~/.blade/skills/ 或 .blade/skills/</Text>
         </Box>
         <Box marginTop={1}>
           <Text dimColor>按 ESC 返回菜单</Text>

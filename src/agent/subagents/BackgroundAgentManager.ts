@@ -8,13 +8,13 @@
  */
 
 import { randomUUID } from 'crypto';
-import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { PermissionMode } from '../../config/types.js';
+import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { Agent } from '../Agent.js';
 import {
-  AgentSessionStore,
   type AgentSession,
   type AgentSessionStatus,
+  AgentSessionStore,
 } from './AgentSessionStore.js';
 import type { SubagentConfig, SubagentResult } from './types.js';
 

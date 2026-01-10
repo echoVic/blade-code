@@ -3,10 +3,7 @@ import { Box, Text } from 'ink';
 import React from 'react';
 import { useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
-import {
-  createPasteMarkerStart,
-  getPasteMarkerEnd,
-} from '../hooks/useInputBuffer.js';
+import { createPasteMarkerStart, getPasteMarkerEnd } from '../hooks/useInputBuffer.js';
 import { CustomTextInput } from './CustomTextInput.js';
 
 interface InputAreaProps {

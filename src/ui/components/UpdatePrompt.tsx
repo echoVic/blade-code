@@ -154,7 +154,9 @@ export const UpdatePrompt: React.FC<UpdatePromptProps> = ({
                 {prefix}
                 {number}
                 {choice.label}
-                {choice.description && <Text color="gray"> ({choice.description})</Text>}
+                {choice.description && (
+                  <Text color="gray"> ({choice.description})</Text>
+                )}
               </Text>
             </Box>
           );

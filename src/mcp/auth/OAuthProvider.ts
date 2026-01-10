@@ -3,9 +3,9 @@
  * 实现基础的 OAuth 2.0 授权码流程 + PKCE
  */
 
+import { spawn } from 'child_process';
 import * as crypto from 'crypto';
 import * as http from 'http';
-import { spawn } from 'child_process';
 import { URL } from 'url';
 import { OAuthTokenStorage } from './OAuthTokenStorage.js';
 import type { OAuthConfig, OAuthToken, OAuthTokenResponse } from './types.js';

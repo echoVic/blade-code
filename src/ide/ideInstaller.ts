@@ -57,7 +57,9 @@ export class IdeInstaller {
   /**
    * 安装 Blade Code 扩展到 VS Code
    */
-  static async installExtension(ideId: string): Promise<{ success: boolean; message: string }> {
+  static async installExtension(
+    ideId: string
+  ): Promise<{ success: boolean; message: string }> {
     let command: string;
 
     switch (ideId) {

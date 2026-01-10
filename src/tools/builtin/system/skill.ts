@@ -22,10 +22,7 @@ export const skillTool = createTool({
     skill: z
       .string()
       .describe('The skill name. E.g., "commit-message" or "code-review"'),
-    args: z
-      .string()
-      .optional()
-      .describe('Optional arguments for the skill'),
+    args: z.string().optional().describe('Optional arguments for the skill'),
   }),
 
   description: {
@@ -62,7 +59,12 @@ Important:
     if (!registry.has(skill)) {
       return {
         success: false,
-        llmContent: `Skill "${skill}" not found. Available skills: ${registry.getAll().map((s) => s.name).join(', ') || 'none'}`,
+        llmContent: `Skill "${skill}" not found. Available skills: ${
+          registry
+            .getAll()
+            .map((s) => s.name)
+            .join(', ') || 'none'
+        }`,
         displayContent: `❌ Skill "${skill}" not found`,
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
@@ -86,7 +88,11 @@ Important:
     }
 
     // 构建完整的 Skill 指令（发送给 LLM）
-    const skillInstructions = buildSkillInstructions(content.metadata.name, content.instructions, content.metadata.basePath);
+    const skillInstructions = buildSkillInstructions(
+      content.metadata.name,
+      content.instructions,
+      content.metadata.basePath
+    );
 
     // 返回双消息
     return {
@@ -109,7 +115,11 @@ Important:
 /**
  * 构建完整的 Skill 指令
  */
-function buildSkillInstructions(name: string, instructions: string, basePath: string): string {
+function buildSkillInstructions(
+  name: string,
+  instructions: string,
+  basePath: string
+): string {
   return `# Skill: ${name}
 
 You are now operating in the "${name}" skill mode. Follow the instructions below to complete the task.

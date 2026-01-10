@@ -20,7 +20,10 @@ import TextInput from 'ink-text-input';
 import React, { useEffect, useState } from 'react';
 import type { ProviderType, SetupConfig } from '../../config/types.js';
 import { AntigravityAuth } from '../../services/antigravity/AntigravityAuth.js';
-import { ANTIGRAVITY_MODELS, GEMINI_CLI_MODELS } from '../../services/antigravity/types.js';
+import {
+  ANTIGRAVITY_MODELS,
+  GEMINI_CLI_MODELS,
+} from '../../services/antigravity/types.js';
 import { CopilotAuth } from '../../services/copilot/CopilotAuth.js';
 import { COPILOT_MODELS } from '../../services/copilot/types.js';
 import { configActions } from '../../store/vanilla.js';
@@ -732,7 +735,9 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   /**
    * 检查 Provider 是否使用 OAuth（不需要 API Key）
    */
-  const isOAuthProvider = (provider: ProviderType): provider is 'antigravity' | 'copilot' => {
+  const isOAuthProvider = (
+    provider: ProviderType
+  ): provider is 'antigravity' | 'copilot' => {
     return PROVIDER_CONFIG[provider].isOAuth;
   };
 
@@ -761,7 +766,9 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
       setInputValue(nextModel);
       setCurrentStep('model');
     } else {
-      const nextApiKey = isEditMode ? (config.apiKey ?? initialConfig?.apiKey ?? '') : '';
+      const nextApiKey = isEditMode
+        ? (config.apiKey ?? initialConfig?.apiKey ?? '')
+        : '';
       setInputValue(nextApiKey);
       setCurrentStep('apiKey');
     }
@@ -1049,14 +1056,16 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
       )}
 
       {/* OAuth 登录提示 */}
-      {currentStep === 'oauthLogin' && config.provider && isOAuthProvider(config.provider) && (
-        <OAuthLoginStep
-          provider={config.provider}
-          onLogin={handleOAuthLogin}
-          onCancel={onCancel}
-          isLoggingIn={isLoggingIn}
-        />
-      )}
+      {currentStep === 'oauthLogin' &&
+        config.provider &&
+        isOAuthProvider(config.provider) && (
+          <OAuthLoginStep
+            provider={config.provider}
+            onLogin={handleOAuthLogin}
+            onCancel={onCancel}
+            isLoggingIn={isLoggingIn}
+          />
+        )}
 
       {/* OAuth 模型选择 */}
       {currentStep === 'oauthModelSelect' &&

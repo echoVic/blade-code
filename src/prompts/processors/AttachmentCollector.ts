@@ -433,7 +433,8 @@ export class AttachmentCollector {
 
     // 格式化为多文件附件
     const contentParts = results.map(
-      (r) => `--- ${r.path} (${r.lines} lines${r.truncated ? ', truncated' : ''}) ---\n${r.content}`
+      (r) =>
+        `--- ${r.path} (${r.lines} lines${r.truncated ? ', truncated' : ''}) ---\n${r.content}`
     );
 
     const content = contentParts.join('\n\n');

@@ -101,9 +101,13 @@ export class OpenAIChatService implements IChatService {
     return messages.map((msg) => {
       if (msg.role === 'tool') {
         // tool 消息的 content 始终是字符串
-        const toolContent = typeof msg.content === 'string'
-          ? msg.content
-          : msg.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
+        const toolContent =
+          typeof msg.content === 'string'
+            ? msg.content
+            : msg.content
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text)
+                .join('\n');
         return {
           role: 'tool',
           content: toolContent,
@@ -113,9 +117,13 @@ export class OpenAIChatService implements IChatService {
 
       if (msg.role === 'assistant' && msg.tool_calls) {
         // assistant 消息的 content 始终是字符串或 null
-        const assistantContent = typeof msg.content === 'string'
-          ? msg.content
-          : msg.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
+        const assistantContent =
+          typeof msg.content === 'string'
+            ? msg.content
+            : msg.content
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text)
+                .join('\n');
 
         const baseMessage: any = {
           role: 'assistant',
@@ -128,7 +136,9 @@ export class OpenAIChatService implements IChatService {
         // 参考：https://api-docs.deepseek.com/guides/thinking_mode#tool-calls
         if (this.config.supportsThinking) {
           const reasoningValue =
-            'reasoningContent' in msg && msg.reasoningContent ? msg.reasoningContent : '';
+            'reasoningContent' in msg && msg.reasoningContent
+              ? msg.reasoningContent
+              : '';
 
           if (this.detectedReasoningFieldName) {
             // 已检测到字段名，使用检测到的字段名
@@ -167,9 +177,13 @@ export class OpenAIChatService implements IChatService {
       // 普通文本消息
       return {
         role: msg.role as 'user' | 'assistant' | 'system',
-        content: typeof msg.content === 'string'
-          ? msg.content
-          : msg.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n'),
+        content:
+          typeof msg.content === 'string'
+            ? msg.content
+            : msg.content
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text)
+                .join('\n'),
       };
     });
   }
@@ -193,7 +207,9 @@ export class OpenAIChatService implements IChatService {
   /**
    * 从 API 响应中提取 reasoning 并更新检测到的字段名
    */
-  private extractAndDetectReasoning(message: ExtendedMessageWithReasoning): string | undefined {
+  private extractAndDetectReasoning(
+    message: ExtendedMessageWithReasoning
+  ): string | undefined {
     const result = extractReasoningFromMessage(message);
     if (result) {
       // 保存检测到的字段名（用于后续发送请求时使用相同的字段名）
@@ -265,7 +281,8 @@ export class OpenAIChatService implements IChatService {
       '📝 [ChatService] Messages preview:',
       filteredMessages.map((m) => ({
         role: m.role,
-        contentLength: typeof m.content === 'string' ? m.content.length : m.content.length,
+        contentLength:
+          typeof m.content === 'string' ? m.content.length : m.content.length,
         isMultimodal: Array.isArray(m.content),
       }))
     );
@@ -369,7 +386,8 @@ export class OpenAIChatService implements IChatService {
       );
 
       // 提取 reasoning（DeepSeek R1 等 thinking 模型的扩展字段）
-      const extendedMessage = choice.message as typeof choice.message & ExtendedMessageWithReasoning;
+      const extendedMessage = choice.message as typeof choice.message &
+        ExtendedMessageWithReasoning;
       const reasoningContent = this.extractAndDetectReasoning(extendedMessage);
 
       // 调试日志：检查 API 实际返回的字段
@@ -444,7 +462,8 @@ export class OpenAIChatService implements IChatService {
       '📝 [ChatService] Messages preview:',
       filteredMessages.map((m) => ({
         role: m.role,
-        contentLength: typeof m.content === 'string' ? m.content.length : m.content.length,
+        contentLength:
+          typeof m.content === 'string' ? m.content.length : m.content.length,
         isMultimodal: Array.isArray(m.content),
       }))
     );
@@ -579,7 +598,9 @@ export class OpenAIChatService implements IChatService {
     // 如果 baseUrl 变化，重置检测到的字段名（不同代理可能使用不同字段名）
     if (oldConfig.baseUrl !== this.config.baseUrl) {
       this.detectedReasoningFieldName = null;
-      _logger.debug('🔄 [ChatService] Reset detectedReasoningFieldName due to baseUrl change');
+      _logger.debug(
+        '🔄 [ChatService] Reset detectedReasoningFieldName due to baseUrl change'
+      );
     }
 
     this.client = new OpenAI({

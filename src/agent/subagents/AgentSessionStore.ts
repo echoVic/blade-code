@@ -10,8 +10,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { Message } from '../../services/ChatServiceInterface.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import type { Message } from '../../services/ChatServiceInterface.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -160,7 +160,10 @@ export class AgentSessionStore {
   /**
    * 更新会话状态
    */
-  updateSession(agentId: string, updates: Partial<AgentSession>): AgentSession | undefined {
+  updateSession(
+    agentId: string,
+    updates: Partial<AgentSession>
+  ): AgentSession | undefined {
     const session = this.loadSession(agentId);
     if (!session) {
       return undefined;
