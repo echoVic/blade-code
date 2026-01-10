@@ -4,12 +4,14 @@
  */
 
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
+import { isBuiltinApiKey } from '../config/builtinModels.js';
 import type { ProviderType } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { MessageRole } from '../store/types.js';
 import { AnthropicChatService } from './AnthropicChatService.js';
 import { AntigravityChatService } from './AntigravityChatService.js';
 import { AzureOpenAIChatService } from './AzureOpenAIChatService.js';
+import { resolveBuiltinApiKey } from './BuiltinKeyService.js';
 import { CopilotChatService } from './CopilotChatService.js';
 import { GeminiChatService } from './GeminiChatService.js';
 import { OpenAIChatService } from './OpenAIChatService.js';
@@ -152,13 +154,38 @@ export interface IChatService {
 }
 
 /**
- * ChatService 工厂函数
+ * ChatService 工厂函数（同步版本）
  * 根据配置中的 provider 创建对应的服务实例
+ *
+ * 注意：此函数不处理内置 API Key，请使用 createChatServiceAsync
  *
  * @param config ChatConfig + provider 字段
  * @returns IChatService 实例
  */
 export function createChatService(config: ChatConfig): IChatService {
+  return createChatServiceInternal(config);
+}
+
+/**
+ * ChatService 工厂函数（异步版本）
+ * 支持内置 API Key 解析
+ *
+ * @param config ChatConfig + provider 字段
+ * @returns Promise<IChatService> 实例
+ */
+export async function createChatServiceAsync(config: ChatConfig): Promise<IChatService> {
+  let resolvedConfig = config;
+
+  if (isBuiltinApiKey(config.apiKey)) {
+    logger.info('🔑 检测到内置 API Key，正在获取...');
+    const realApiKey = await resolveBuiltinApiKey(config.apiKey);
+    resolvedConfig = { ...config, apiKey: realApiKey };
+  }
+
+  return createChatServiceInternal(resolvedConfig);
+}
+
+function createChatServiceInternal(config: ChatConfig): IChatService {
   switch (config.provider) {
     case 'openai-compatible':
       return new OpenAIChatService(config);

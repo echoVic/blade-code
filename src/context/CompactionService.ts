@@ -6,7 +6,10 @@
 import { nanoid } from 'nanoid';
 import { PermissionMode } from '../config/types.js';
 import { HookManager } from '../hooks/HookManager.js';
-import { createChatService, type Message } from '../services/ChatServiceInterface.js';
+import {
+  createChatServiceAsync,
+  type Message,
+} from '../services/ChatServiceInterface.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
 import { TokenCounter } from './TokenCounter.js';
 
@@ -228,7 +231,7 @@ export class CompactionService {
     console.log('[CompactionService] 使用压缩模型:', options.modelName);
 
     // 创建 ChatService
-    const chatService = createChatService({
+    const chatService = await createChatServiceAsync({
       apiKey: options.apiKey || process.env.BLADE_API_KEY || '',
       baseUrl:
         options.baseURL || process.env.BLADE_BASE_URL || 'https://api.openai.com/v1',

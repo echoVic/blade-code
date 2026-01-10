@@ -10,6 +10,7 @@ import { useMemoizedFn, useMount } from 'ahooks';
 import { Box, Text, useFocus, useFocusManager, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import { memo, useMemo, useState } from 'react';
+import { isBuiltinModel } from '../../config/builtinModels.js';
 import type { ModelConfig, ProviderType } from '../../config/types.js';
 import { useAllModels, useCurrentModelId } from '../../store/selectors/index.js';
 import { configActions } from '../../store/vanilla.js';
@@ -171,10 +172,13 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
     return models.find((m) => m.id === selectedId);
   }, [models, selectedId]);
 
-  const items = models.map((model) => ({
-    label: model.name + (model.id === currentModelId ? ' (当前)' : ''),
-    value: model.id,
-  }));
+  const items = models.map((model) => {
+    const suffix = model.id === currentModelId ? ' (当前)' : '';
+    return {
+      label: model.name + suffix,
+      value: model.id,
+    };
+  });
   const isCurrentSelection = selectedId === currentModelId;
   const shortcutHint = isProcessing
     ? '⏳ 处理中...'
@@ -238,6 +242,9 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
                 <Text bold color="cyan">
                   {selectedModel.name}
                 </Text>
+                {isBuiltinModel(selectedModel) && (
+                  <Text color="green"> (内置免费)</Text>
+                )}
               </Text>
               <Text>
                 <Text dimColor>Provider: </Text>
@@ -262,6 +269,13 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
                   <Text dimColor>Context Window: </Text>
                   <Text>{selectedModel.maxContextTokens}</Text>
                 </Text>
+              )}
+              {isBuiltinModel(selectedModel) && (
+                <Box marginTop={1}>
+                  <Text color="green" dimColor>
+                    💡 此模型由 Blade 提供免费额度
+                  </Text>
+                </Box>
               )}
             </Box>
           ) : (

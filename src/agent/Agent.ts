@@ -32,10 +32,9 @@ import { buildSpecModePrompt, createSpecModeReminder } from '../prompts/spec.js'
 import {
   type ChatResponse,
   type ContentPart,
-  createChatService,
+  createChatServiceAsync,
   type IChatService,
   type Message,
-  type StreamChunk,
 } from '../services/ChatServiceInterface.js';
 import { discoverSkills, injectSkillsMetadata } from '../skills/index.js';
 import { SpecManager } from '../spec/SpecManager.js';
@@ -47,6 +46,7 @@ import {
   getConfig,
   getCurrentModel,
   getMcpServers,
+  getThinkingModeEnabled,
 } from '../store/vanilla.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
@@ -206,10 +206,14 @@ export class Agent {
 
       this.log(`🚀 使用模型: ${modelConfig.name} (${modelConfig.model})`);
 
-      // 检测模型是否支持 thinking 模式
-      const supportsThinking = isThinkingModel(modelConfig);
-      if (supportsThinking) {
-        this.log(`🧠 检测到 Thinking 模型，启用 reasoning_content 支持`);
+      // 检测模型是否支持 thinking 模式，且用户已开启 thinking 模式
+      const modelSupportsThinking = isThinkingModel(modelConfig);
+      const thinkingModeEnabled = getThinkingModeEnabled();
+      const supportsThinking = modelSupportsThinking && thinkingModeEnabled;
+      if (modelSupportsThinking && !thinkingModeEnabled) {
+        this.log(`🧠 模型支持 Thinking，但用户未开启（按 Tab 开启）`);
+      } else if (supportsThinking) {
+        this.log(`🧠 Thinking 模式已启用，启用 reasoning_content 支持`);
       }
 
       // 保存当前模型的上下文窗口大小（用于 tokenUsage 上报）
@@ -217,7 +221,7 @@ export class Agent {
         modelConfig.maxContextTokens ?? this.config.maxContextTokens;
 
       // 使用工厂函数创建 ChatService（根据 provider 选择实现）
-      this.chatService = createChatService({
+      this.chatService = await createChatServiceAsync({
         provider: modelConfig.provider,
         apiKey: modelConfig.apiKey,
         model: modelConfig.model,

@@ -263,6 +263,11 @@ export const getMcpServers = () => getState().config.config?.mcpServers ?? {};
  */
 export const isProcessing = () => getState().command.isProcessing;
 
+/**
+ * 获取 Thinking 模式是否启用
+ */
+export const getThinkingModeEnabled = () => getState().app.thinkingModeEnabled;
+
 // ==================== Config Actions（带持久化）====================
 
 /**

@@ -28,6 +28,8 @@ const THINKING_MODEL_PATTERNS = [
   /doubao.*pro.*think/i, // doubao-pro-thinking
   // Claude
   /claude.*opus.*4/i, // Claude Opus 4 支持 extended thinking
+  // 智谱 GLM
+  /glm-4\.7/i, // GLM-4.7 (thinking model)
 ];
 
 /**

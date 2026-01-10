@@ -403,12 +403,6 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     finalizeStreamingMessage: (extraContent?: string, extraThinking?: string) => {
       set((state) => {
         const streamingId = state.session.currentStreamingMessageId;
-
-        if (!streamingId) {
-          return state;
-        }
-
-        // 合并内容：Store 中的 + 缓冲区剩余的
         const streamingContent =
           state.session.currentStreamingContent + (extraContent || '');
         const thinkingContent =
@@ -416,7 +410,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
 
         if (streamingContent.length > 0) {
           const finalMessage: SessionMessage = {
-            id: streamingId,
+            id: streamingId || `assistant-${Date.now()}-${Math.random()}`,
             role: 'assistant',
             content: streamingContent,
             timestamp: Date.now(),
@@ -434,7 +428,6 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
           };
         }
 
-        // 没有剩余内容，只清理状态
         return {
           session: {
             ...state.session,

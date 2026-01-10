@@ -2,6 +2,7 @@ import { useMemoizedFn } from 'ahooks';
 import React, { useEffect, useState } from 'react';
 import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
 import type { GlobalOptions } from '../cli/types.js';
+import { getBuiltinModelId, getDefaultBuiltinModel } from '../config/builtinModels.js';
 import {
   DEFAULT_CONFIG,
   mergeRuntimeConfig,
@@ -37,19 +38,36 @@ export interface AppProps extends GlobalOptions {
 /**
  * 初始化 Zustand store 状态
  * 检查配置并设置初始化状态
+ * 确保内置免费模型始终存在于模型列表中
  */
 function initializeStoreState(config: RuntimeConfig): void {
+  const builtinModel = getDefaultBuiltinModel();
+
+  if (!config.models) {
+    config.models = [];
+  }
+
+  // 检查是否已存在内置模型（通过固定 ID 判断）
+  const builtinModelId = getBuiltinModelId();
+  const hasBuiltinModel = config.models.some((m) => m.id === builtinModelId);
+
+  if (!hasBuiltinModel) {
+    // 将内置模型添加到列表开头
+    config.models.unshift(builtinModel);
+
+    if (config.debug) {
+      console.log('[Debug] 已添加内置免费模型到模型列表');
+    }
+  }
+
+  // 如果没有设置当前模型，使用内置模型
+  if (!config.currentModelId) {
+    config.currentModelId = builtinModel.id;
+    console.log('✨ 已自动配置内置免费模型: GLM-4.7');
+  }
+
   // 设置配置（使用 config slice）
   getState().config.actions.setConfig(config);
-
-  // 检查是否有模型配置
-  if (!config.models || config.models.length === 0) {
-    if (config.debug) {
-      console.log('[Debug] 未检测到模型配置，进入设置向导');
-    }
-    appActions().setInitializationStatus('needsSetup');
-    return;
-  }
 
   if (config.debug) {
     console.log('[Debug] 模型配置检查通过，准备就绪');
