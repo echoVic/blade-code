@@ -123,12 +123,6 @@ const PROVIDER_CONFIG: Record<ProviderType, ProviderInfo> = {
     description: '微软 Azure OpenAI 服务',
     isOAuth: false,
   },
-  'custom-openai': {
-    icon: '🔷',
-    name: 'GPT OpenAI Platform',
-    description: 'Doubao GPT 平台 (内部)',
-    isOAuth: false,
-  },
 };
 
 /**

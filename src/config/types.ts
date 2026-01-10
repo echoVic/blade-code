@@ -11,7 +11,6 @@
  * - anthropic: Anthropic Claude API
  * - gemini: Google Gemini API
  * - azure-openai: Azure OpenAI Service
- * - custom-openai: Doubao GPT 平台（内部使用）
  * - antigravity: Google Antigravity（OAuth 认证，统一网关访问 Claude/Gemini/GPT-OSS）
  * - copilot: GitHub Copilot（OAuth 认证，访问 GPT-4o/Claude/Gemini 等模型）
  */
@@ -20,7 +19,6 @@ export type ProviderType =
   | 'anthropic'
   | 'gemini'
   | 'azure-openai'
-  | 'custom-openai'
   | 'antigravity'
   | 'copilot';
 

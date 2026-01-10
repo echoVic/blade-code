@@ -11,8 +11,8 @@ import * as path from 'node:path';
  * 规则：将 / 替换为 -
  *
  * @example
- * escapeProjectPath('/Users/example/Documents/GitHub/Blade')
- * // 返回: '-Users-example-Documents-GitHub-Blade'
+ * escapeProjectPath('/Users/john/projects/my-app')
+ * // 返回: '-Users-john-projects-my-app'
  */
 export function escapeProjectPath(absPath: string): string {
   // 确保路径是绝对路径
@@ -25,8 +25,8 @@ export function escapeProjectPath(absPath: string): string {
  * 反转义目录名为项目路径
  *
  * @example
- * unescapeProjectPath('-Users-example-Documents-GitHub-Blade')
- * // 返回: '/Users/example/Documents/GitHub/Blade'
+ * unescapeProjectPath('-Users-john-projects-my-app')
+ * // 返回: '/Users/john/projects/my-app'
  */
 export function unescapeProjectPath(escapedPath: string): string {
   // 移除开头的 - 并替换所有 - 为 /

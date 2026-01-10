@@ -12,7 +12,6 @@ import { AntigravityChatService } from './AntigravityChatService.js';
 import { AzureOpenAIChatService } from './AzureOpenAIChatService.js';
 import { CopilotChatService } from './CopilotChatService.js';
 import { GeminiChatService } from './GeminiChatService.js';
-import { GptOpenaiPlatformChatService } from './GptOpenaiPlatformChatService.js';
 import { OpenAIChatService } from './OpenAIChatService.js';
 
 const logger = createLogger(LogCategory.SERVICE);
@@ -172,9 +171,6 @@ export function createChatService(config: ChatConfig): IChatService {
 
     case 'azure-openai':
       return new AzureOpenAIChatService(config);
-
-    case 'custom-openai':
-      return new GptOpenaiPlatformChatService(config);
 
     case 'antigravity':
       return new AntigravityChatService(config);

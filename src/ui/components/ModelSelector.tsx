@@ -28,8 +28,6 @@ function getProviderDisplayName(provider: ProviderType): string {
       return '✨ Google Gemini';
     case 'azure-openai':
       return '☁️ Azure OpenAI';
-    case 'custom-openai':
-      return '🔷 GPT OpenAI Platform';
     default:
       return provider;
   }

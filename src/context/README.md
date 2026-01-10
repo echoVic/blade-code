@@ -357,11 +357,11 @@ Blade 使用 JSONL (JSON Lines) 格式存储会话历史，每行一个 JSON 对
 ```
 ~/.blade/
 ├── projects/
-│   ├── -Users-example-Documents-GitHub-Blade/  # 项目目录（路径转义）
-│   │   ├── {sessionId}.jsonl                      # 会话文件
+│   ├── -Users-john-projects-my-app/  # 项目目录（路径转义）
+│   │   ├── {sessionId}.jsonl          # 会话文件
 │   │   ├── {sessionId2}.jsonl
 │   │   └── ...
-│   └── -Users-example-other-project/
+│   └── -Users-john-projects-other-project/
 │       └── ...
 ├── config.json        # 全局配置（未来功能）
 └── settings.json      # 全局设置（未来功能）
@@ -370,7 +370,7 @@ Blade 使用 JSONL (JSON Lines) 格式存储会话历史，每行一个 JSON 对
 ### 路径转义规则
 
 - `/` → `-`
-- `/Users/example/Documents/GitHub/Blade` → `-Users-example-Documents-GitHub-Blade`
+- `/Users/john/projects/my-app` → `-Users-john-projects-my-app`
 
 ### 消息类型
 
