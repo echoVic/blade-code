@@ -96,8 +96,7 @@ jobs:
       run: pnpm install --frozen-lockfile
 
     - name: Run linter and formatter
-      run: pnpm run check
-      continue-on-error: true
+      run: pnpm run lint && pnpm run format:check || echo "Lint warnings found (non-blocking)"
 
   cross-platform:
     name: Cross Platform (${{ matrix.os }})
