@@ -8,7 +8,7 @@ always respond in Chinese
 
 - **项目类型**: CLI 工具（TUI 应用）
 - **主要语言**: TypeScript
-- **运行时**: Node.js >=16.0.0（开发使用 Bun）
+- **运行时**: Node.js >=20.0.0（开发使用 Bun）
 - **UI 框架**: React 19 + Ink（终端 UI）
 - **状态管理**: Zustand
 - **配置管理**: 支持 JSON 配置和环境变量插值

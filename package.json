@@ -81,7 +81,7 @@
     "url": "https://github.com/echoVic/blade-code/issues"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=20.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.4",
