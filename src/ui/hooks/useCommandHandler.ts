@@ -20,10 +20,15 @@ import {
   usePermissionMode,
   useSessionActions,
   useSessionId,
+  useThinkingModeEnabled,
 } from '../../store/selectors/index.js';
-import { ensureStoreInitialized } from '../../store/vanilla.js';
+import { ensureStoreInitialized, getState } from '../../store/vanilla.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
+import {
+  appendMarkdownDelta,
+  finalizeMarkdownCache,
+} from '../utils/markdownIncremental.js';
 import {
   formatToolCallSummary,
   generateToolDetail,
@@ -247,6 +252,7 @@ export const useCommandHandler = (
   const messages = useMessages();
   const sessionId = useSessionId();
   const permissionMode = usePermissionMode();
+  const thinkingModeEnabled = useThinkingModeEnabled();
 
   // ==================== Store Actions ====================
   const sessionActions = useSessionActions();
@@ -281,7 +287,9 @@ export const useCommandHandler = (
   // 刷新 content 缓冲区
   const flushContentBuffer = useMemoizedFn(() => {
     if (contentBufferRef.current) {
-      sessionActions.appendAssistantContent(contentBufferRef.current);
+      const delta = contentBufferRef.current;
+      const messageId = sessionActions.appendAssistantContent(delta);
+      appendMarkdownDelta(messageId, delta);
       contentBufferRef.current = '';
     }
     if (contentFlushTimerRef.current) {
@@ -369,6 +377,12 @@ export const useCommandHandler = (
     };
   }, [cleanupAgent, resetStreamingBuffers]);
 
+  useEffect(() => {
+    if (!thinkingModeEnabled) {
+      sessionActions.setCurrentThinkingContent(null);
+    }
+  }, [thinkingModeEnabled, sessionActions]);
+
   // 停止任务
   const handleAbort = useMemoizedFn(() => {
     // 如果没有任务在执行，忽略
@@ -384,6 +398,13 @@ export const useCommandHandler = (
     // 这样 Agent 的 signal.aborted 检查能生效，阻止后续回调
     commandActions.abort();
     appActions.setTodos([]);
+
+    // 结束当前流式消息，避免残留的 streaming 占位遮挡终止提示
+    const streamingId = getState().session.currentStreamingMessageId;
+    if (streamingId) {
+      finalizeMarkdownCache(streamingId);
+    }
+    sessionActions.finalizeStreamingMessage();
 
     // 显示"任务已停止"消息（防止重复）
     if (!abortMessageSentRef.current) {
@@ -663,19 +684,23 @@ Remember: Follow the above instructions carefully to complete the user's request
           },
 
           // 流式推理内容增量（Thinking 模型，使用批处理）
-          onThinkingDelta: (delta: string) => {
-            batchAppendThinking(delta);
-          },
+          onThinkingDelta: thinkingModeEnabled
+            ? (delta: string) => {
+                batchAppendThinking(delta);
+              }
+            : undefined,
 
           // ===== 完整内容回调（流结束时调用）=====
 
           // LLM 推理内容（Thinking 模型如 DeepSeek R1）
           // 流式模式下：增量已通过 onThinkingDelta 发送，这里用于兼容
           // 非流式模式下：这是唯一的通知途径
-          onThinking: (content: string) => {
-            // abort 检查已在 Agent 内部统一处理
-            sessionActions.setCurrentThinkingContent(content);
-          },
+          onThinking: thinkingModeEnabled
+            ? (content: string) => {
+                // abort 检查已在 Agent 内部统一处理
+                sessionActions.setCurrentThinkingContent(content);
+              }
+            : undefined,
 
           // 流式输出结束信号
           // 流式模式下：增量已通过 onContentDelta 发送，这里标记流结束并完成消息
@@ -702,6 +727,14 @@ Remember: Follow the above instructions carefully to complete the user's request
             const extraThinking = thinkingBufferRef.current;
             contentBufferRef.current = '';
             thinkingBufferRef.current = '';
+
+            const streamingId = getState().session.currentStreamingMessageId;
+            if (streamingId) {
+              if (extraContent) {
+                appendMarkdownDelta(streamingId, extraContent);
+              }
+              finalizeMarkdownCache(streamingId);
+            }
 
             sessionActions.finalizeStreamingMessage(extraContent, extraThinking);
           },
@@ -806,15 +839,17 @@ Remember: Follow the above instructions carefully to complete the user's request
         const output = await agent.chat(userMessageContent, chatContext, loopOptions);
 
         // 如果返回空字符串，可能是用户取消或拒绝
+        // 流式场景下 output 可能为空，但内容已通过流式回调输出
         // 如果已经发送过 abort 消息，不再重复添加
         if (!output || output.trim() === '') {
-          if (!abortMessageSentRef.current) {
+          if (!abortMessageSentRef.current && contentDeltaCount === 0) {
             sessionActions.addAssistantMessage('⏹ 已取消');
+            return {
+              success: true,
+              output: '已取消',
+            };
           }
-          return {
-            success: true,
-            output: '已取消',
-          };
+          return { success: true, output: output ?? '' };
         }
 
         return { success: true, output };
@@ -878,6 +913,9 @@ Remember: Follow the above instructions carefully to complete the user's request
 
     // 重置流式批处理缓冲区
     resetStreamingBuffers();
+
+    // 清理上一次的最终渲染标记，避免新任务期间降级显示
+    sessionActions.clearFinalizingStreamingMessageId();
 
     // 设置处理状态
     commandActions.setProcessing(true);

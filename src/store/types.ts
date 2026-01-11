@@ -81,7 +81,12 @@ export interface SessionState {
   expandedMessageCount: number; // 始终保持展开的最近消息数量（默认 30）
   // 流式消息相关
   currentStreamingMessageId: string | null; // 当前正在流式接收的助手消息 ID
-  currentStreamingContent: string; // 🆕 当前流式消息的内容（独立存储，避免 messages 数组引用变化）
+  currentStreamingChunks: string[]; // 🆕 累积的原始增量片段（用于最终拼接）
+  currentStreamingLines: string[]; // 🆕 已完成行的缓冲区
+  currentStreamingTail: string; // 🆕 当前未完成的行片段
+  currentStreamingLineCount: number; // 🆕 已完成行总数（包含被裁剪的历史行）
+  currentStreamingVersion: number; // 🆕 流式缓冲版本号（用于触发订阅更新）
+  finalizingStreamingMessageId: string | null; // 正在从流式切换到最终渲染的消息 ID
 }
 
 /**
@@ -115,8 +120,9 @@ export interface SessionActions {
   incrementClearCount: () => void;
   // 流式消息相关 actions
   startStreamingAssistantMessage: () => string; // 开始流式助手消息，返回消息 ID
-  appendAssistantContent: (delta: string) => void; // 追加内容到当前流式消息
+  appendAssistantContent: (delta: string) => string; // 追加内容到当前流式消息
   finalizeStreamingMessage: (extraContent?: string, extraThinking?: string) => void; // 完成流式消息（可追加缓冲区剩余内容）
+  clearFinalizingStreamingMessageId: () => void; // 清理最终渲染标记
 }
 
 /**

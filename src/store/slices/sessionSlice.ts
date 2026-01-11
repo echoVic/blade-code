@@ -11,6 +11,7 @@
 
 import { nanoid } from 'nanoid';
 import type { StateCreator } from 'zustand';
+import { clearAllMarkdownCache } from '../../ui/utils/markdownIncremental.js';
 import type {
   BladeStore,
   SessionMessage,
@@ -19,6 +20,8 @@ import type {
   TokenUsage,
   ToolMessageMetadata,
 } from '../types.js';
+
+const STREAMING_LINE_BUFFER_LIMIT = 2000;
 
 /**
  * 初始 Token 使用量
@@ -49,7 +52,12 @@ const initialSessionState: SessionState = {
   expandedMessageCount: 100, // 默认显示最近 100 条消息完整内容
   // 流式消息相关
   currentStreamingMessageId: null, // 当前正在流式接收的助手消息 ID
-  currentStreamingContent: '', // 🆕 流式消息内容（独立存储）
+  currentStreamingChunks: [], // 🆕 原始增量片段
+  currentStreamingLines: [], // 🆕 已完成行缓冲
+  currentStreamingTail: '', // 🆕 当前未完成的行片段
+  currentStreamingLineCount: 0, // 🆕 已完成行总数
+  currentStreamingVersion: 0, // 🆕 流式缓冲版本号
+  finalizingStreamingMessageId: null, // 流式转最终渲染中的消息 ID
 };
 
 /**
@@ -176,6 +184,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
      * 同时递增 clearCount 以强制 UI 的 Static 组件重新挂载
      */
     clearMessages: () => {
+      clearAllMarkdownCache();
       set((state) => ({
         session: {
           ...state.session,
@@ -190,6 +199,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
      * 重置会话（保持 sessionId 和 actions）
      */
     resetSession: () => {
+      clearAllMarkdownCache();
       set((state) => ({
         session: {
           ...state.session, // 保留 actions
@@ -204,6 +214,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
      * 恢复会话
      */
     restoreSession: (sessionId: string, messages: SessionMessage[]) => {
+      clearAllMarkdownCache();
       set((state) => ({
         session: {
           ...state.session,
@@ -248,6 +259,9 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
      * 设置当前 thinking 内容（用于流式接收）
      */
     setCurrentThinkingContent: (content: string | null) => {
+      if (get().session.currentThinkingContent === content) {
+        return;
+      }
       set((state) => ({
         session: { ...state.session, currentThinkingContent: content },
       }));
@@ -351,6 +365,11 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
           ...state.session,
           messages: [...state.session.messages, message],
           currentStreamingMessageId: messageId,
+          currentStreamingChunks: [],
+          currentStreamingLines: [],
+          currentStreamingTail: '',
+          currentStreamingLineCount: 0,
+          currentStreamingVersion: 0,
           error: null,
         },
       }));
@@ -362,40 +381,60 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
      * 如果没有活动的流式消息，自动创建一个（支持流式输出）
      *
      * 简化设计：
-     * - 只累积内容到 currentStreamingContent
+     * - 只累积已完成行 + 当前行片段
      * - 不在流式过程中分割消息，保持消息完整性
-     * - 渲染层（MessageArea）负责分离稳定内容和流式内容
+     * - 渲染层（MessageArea）负责视窗化显示
      *
      * @param delta 增量文本
      */
     appendAssistantContent: (delta: string) => {
+      const streamingId = get().session.currentStreamingMessageId;
+      const nextStreamingId = streamingId ?? `assistant-${Date.now()}-${Math.random()}`;
       set((state) => {
-        const streamingId = state.session.currentStreamingMessageId;
+        const normalizeLine = (line: string) =>
+          line.endsWith('\r') ? line.slice(0, -1) : line;
 
-        if (!streamingId) {
-          const newStreamingId = `assistant-${Date.now()}-${Math.random()}`;
-          return {
-            session: {
-              ...state.session,
-              currentStreamingMessageId: newStreamingId,
-              currentStreamingContent: delta,
-              error: null,
-            },
-          };
+        const currentChunks = streamingId ? state.session.currentStreamingChunks : [];
+        const currentLines = streamingId ? state.session.currentStreamingLines : [];
+        const currentTail = streamingId ? state.session.currentStreamingTail : '';
+        const currentLineCount = streamingId
+          ? state.session.currentStreamingLineCount
+          : 0;
+        const currentVersion = streamingId ? state.session.currentStreamingVersion : 0;
+
+        const combined = currentTail + delta;
+        const parts = combined.split('\n');
+        const completedParts = parts.slice(0, -1).map(normalizeLine);
+        const nextTail = normalizeLine(parts[parts.length - 1] ?? '');
+        const nextChunks = [...currentChunks, delta];
+        let nextLines = currentLines;
+        if (completedParts.length > 0) {
+          nextLines = [...currentLines, ...completedParts];
+          if (nextLines.length > STREAMING_LINE_BUFFER_LIMIT) {
+            const overflow = nextLines.length - STREAMING_LINE_BUFFER_LIMIT;
+            nextLines = nextLines.slice(overflow);
+          }
         }
 
         return {
           session: {
             ...state.session,
-            currentStreamingContent: state.session.currentStreamingContent + delta,
+            currentStreamingMessageId: nextStreamingId,
+            currentStreamingChunks: nextChunks,
+            currentStreamingLines: nextLines,
+            currentStreamingTail: nextTail,
+            currentStreamingLineCount: currentLineCount + completedParts.length,
+            currentStreamingVersion: currentVersion + 1,
+            error: null,
           },
         };
       });
+      return nextStreamingId;
     },
 
     /**
      * 完成当前流式消息
-     * 将 currentStreamingContent 作为完整消息添加到 messages 数组，清理流式状态
+     * 将已完成行 + 尾部片段作为完整消息添加到 messages 数组，清理流式状态
      *
      * @param extraContent 可选的额外内容（缓冲区剩余），会追加到流式内容
      * @param extraThinking 可选的额外 thinking 内容（缓冲区剩余）
@@ -403,8 +442,8 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     finalizeStreamingMessage: (extraContent?: string, extraThinking?: string) => {
       set((state) => {
         const streamingId = state.session.currentStreamingMessageId;
-        const streamingContent =
-          state.session.currentStreamingContent + (extraContent || '');
+        const baseContent = state.session.currentStreamingChunks.join('');
+        const streamingContent = baseContent + (extraContent || '');
         const thinkingContent =
           (state.session.currentThinkingContent || '') + (extraThinking || '');
 
@@ -422,8 +461,13 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
               ...state.session,
               messages: [...state.session.messages, finalMessage],
               currentStreamingMessageId: null,
-              currentStreamingContent: '',
+              currentStreamingChunks: [],
+              currentStreamingLines: [],
+              currentStreamingTail: '',
+              currentStreamingLineCount: 0,
+              currentStreamingVersion: 0,
               currentThinkingContent: null,
+              finalizingStreamingMessageId: finalMessage.id,
             },
           };
         }
@@ -432,11 +476,25 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
           session: {
             ...state.session,
             currentStreamingMessageId: null,
-            currentStreamingContent: '',
+            currentStreamingChunks: [],
+            currentStreamingLines: [],
+            currentStreamingTail: '',
+            currentStreamingLineCount: 0,
+            currentStreamingVersion: 0,
             currentThinkingContent: null,
+            finalizingStreamingMessageId: null,
           },
         };
       });
+    },
+
+    /**
+     * 清理流式转最终渲染标记
+     */
+    clearFinalizingStreamingMessageId: () => {
+      set((state) => ({
+        session: { ...state.session, finalizingStreamingMessageId: null },
+      }));
     },
   },
 });

@@ -234,10 +234,23 @@ export const useCurrentStreamingMessageId = () =>
   useBladeStore((state) => state.session.currentStreamingMessageId);
 
 /**
- * 🆕 获取当前流式消息内容（独立存储，避免 messages 数组变化）
+ * 🆕 获取当前流式消息缓冲（行/尾部/总行数/版本）
  */
-export const useCurrentStreamingContent = () =>
-  useBladeStore((state) => state.session.currentStreamingContent);
+export const useCurrentStreamingBuffer = () =>
+  useBladeStore(
+    useShallow((state) => ({
+      lines: state.session.currentStreamingLines,
+      tail: state.session.currentStreamingTail,
+      lineCount: state.session.currentStreamingLineCount,
+      version: state.session.currentStreamingVersion,
+    }))
+  );
+
+/**
+ * 获取正在从流式切换到最终渲染的消息 ID
+ */
+export const useFinalizingStreamingMessageId = () =>
+  useBladeStore((state) => state.session.finalizingStreamingMessageId);
 
 // ==================== 历史消息折叠选择器 ====================
 

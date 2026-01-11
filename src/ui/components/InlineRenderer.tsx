@@ -19,13 +19,11 @@ const STRIKETHROUGH_MARKER_LENGTH = 2; // ~~
 const _INLINE_CODE_MARKER_LENGTH = 1; // `
 
 /**
- * 生成稳定的 key（基于内容和全局唯一序号）
- * 避免流式更新时因位置变化导致的不必要重渲染
+ * 生成稳定的 key（基于类型和局部序号）
+ * 避免同一文本在多次渲染中 key 抖动导致重渲染
  */
-let globalKeySeq = 0;
-function stableKey(_content: string, seq: number): string {
-  // 使用全局自增序号确保唯一性
-  return `inline-${globalKeySeq++}-${seq}`;
+function stableKey(kind: 'text' | 'match', seq: number): string {
+  return `inline-${kind}-${seq}`;
 }
 
 /**
@@ -67,12 +65,14 @@ const InlineRendererInternal: React.FC<InlineRendererProps> = ({ text }) => {
     // 添加匹配前的普通文本
     if (match.index > lastIndex) {
       const plainText = text.slice(lastIndex, match.index);
-      nodes.push(<Text key={stableKey(plainText, textSeq++)}>{plainText}</Text>);
+      nodes.push(
+        <Text key={stableKey('text', textSeq++)}>{plainText}</Text>
+      );
     }
 
     const fullMatch = match[0];
     let renderedNode: React.ReactNode = null;
-    const key = stableKey(fullMatch, matchSeq++);
+    const key = stableKey('match', matchSeq++);
 
     try {
       // 粗体：**text**
@@ -183,7 +183,9 @@ const InlineRendererInternal: React.FC<InlineRendererProps> = ({ text }) => {
   // 添加最后剩余的普通文本
   if (lastIndex < text.length) {
     const remaining = text.slice(lastIndex);
-    nodes.push(<Text key={stableKey(remaining, textSeq++)}>{remaining}</Text>);
+    nodes.push(
+      <Text key={stableKey('text', textSeq++)}>{remaining}</Text>
+    );
   }
 
   return <>{nodes.filter((node) => node !== null)}</>;
