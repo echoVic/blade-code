@@ -105,7 +105,7 @@ function normalizePermissions(input: unknown): PermissionConfig {
 
 async function readSettingsFile(filePath: string): Promise<{
   exists: boolean;
-  raw: any;
+  raw: unknown;
   permissions: PermissionConfig;
 }> {
   try {

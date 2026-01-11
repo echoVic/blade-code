@@ -3,7 +3,12 @@ import { z } from 'zod';
 import { isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import type {
+  ExecutionContext,
+  NodeError,
+  ReadMetadata,
+  ToolResult,
+} from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
@@ -132,7 +137,7 @@ export const readTool = createTool({
       const isBinaryFile = checkIsBinaryFile(ext);
 
       let content: string;
-      const metadata: Record<string, any> = {
+      const metadata: ReadMetadata = {
         file_path,
         file_size: stats?.size,
         file_type: ext,
@@ -224,8 +229,9 @@ export const readTool = createTool({
         displayContent: displayMessage,
         metadata,
       };
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
+    } catch (error) {
+      const nodeError = error as NodeError;
+      if (nodeError.name === 'AbortError') {
         return {
           success: false,
           llmContent: 'File read aborted',
@@ -239,12 +245,12 @@ export const readTool = createTool({
 
       return {
         success: false,
-        llmContent: `File read failed: ${error.message}`,
-        displayContent: `❌ 读取文件失败: ${error.message}`,
+        llmContent: `File read failed: ${nodeError.message}`,
+        displayContent: `❌ 读取文件失败: ${nodeError.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
-          message: error.message,
-          details: error,
+          message: nodeError.message,
+          details: nodeError,
         },
       };
     }
@@ -369,10 +375,10 @@ function checkIsBinaryFile(ext: string): boolean {
 /**
  * 格式化显示消息
  */
-function formatDisplayMessage(filePath: string, metadata: Record<string, any>): string {
+function formatDisplayMessage(filePath: string, metadata: ReadMetadata): string {
   let message = `✅ 成功读取文件: ${filePath}`;
 
-  if (metadata.file_size !== undefined) {
+  if (metadata.file_size !== undefined && typeof metadata.file_size === 'number') {
     message += ` (${formatFileSize(metadata.file_size)})`;
   }
 

@@ -1,13 +1,19 @@
+import type { Entry } from 'fast-glob';
+import fg from 'fast-glob';
 import type { Stats } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
-import type { Entry } from 'fast-glob';
-import fg from 'fast-glob';
 import { join, resolve } from 'path';
 import { z } from 'zod';
+
 import { FileFilter } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import type {
+  ExecutionContext,
+  GlobMetadata,
+  NodeError,
+  ToolResult,
+} from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
@@ -99,8 +105,9 @@ export const globTool = createTool({
             },
           };
         }
-      } catch (error: any) {
-        if (error.code === 'ENOENT') {
+      } catch (error) {
+        const nodeError = error as NodeError;
+        if (nodeError.code === 'ENOENT') {
           return {
             success: false,
             llmContent: `Search path does not exist: ${searchPath}`,
@@ -141,7 +148,7 @@ export const globTool = createTool({
 
       const sortedMatches = sortMatches(matches);
 
-      const metadata: Record<string, any> = {
+      const metadata: GlobMetadata = {
         search_path: searchPath,
         pattern,
         // 注意：total_matches 和 returned_matches 都是返回的条数（截断后）
@@ -180,8 +187,9 @@ export const globTool = createTool({
           matches: sortedMatches, // 保留原始数据在 metadata 中
         },
       };
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
+    } catch (error) {
+      const err = error as Error;
+      if (err.name === 'AbortError') {
         return {
           success: false,
           llmContent: 'File search aborted',
@@ -195,12 +203,12 @@ export const globTool = createTool({
 
       return {
         success: false,
-        llmContent: `Search failed: ${error.message}`,
-        displayContent: `❌ 搜索失败: ${error.message}`,
+        llmContent: `Search failed: ${err.message}`,
+        displayContent: `❌ 搜索失败: ${err.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
-          message: error.message,
-          details: error,
+          message: err.message,
+          details: err,
         },
       };
     }
@@ -394,7 +402,7 @@ function sortMatches(matches: FileMatch[]): FileMatch[] {
 /**
  * 格式化显示消息
  */
-function formatDisplayMessage(metadata: Record<string, any>): string {
+function formatDisplayMessage(metadata: GlobMetadata): string {
   const { search_path, pattern, total_matches, returned_matches, truncated } = metadata;
 
   let message: string;

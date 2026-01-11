@@ -11,7 +11,7 @@
     "dist",
     "vendor/ripgrep/**",
     "README.md",
-    "CHANGELOG.md"
+    "docs/public/changelog.md"
   ],
   "scripts": {
     "dev": "bun --watch src/blade.tsx",

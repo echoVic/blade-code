@@ -4,6 +4,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { Message } from '../services/ChatServiceInterface.js';
 
 /**
@@ -220,17 +221,22 @@ export class FileAnalyzer {
    * @param toolCall - 工具调用对象
    * @returns 文件路径列表
    */
-  private static extractFilePathsFromToolCall(toolCall: any): string[] {
+  private static extractFilePathsFromToolCall(
+    toolCall: ChatCompletionMessageToolCall
+  ): string[] {
     const paths: string[] = [];
 
-    try {
-      const functionName = toolCall.function?.name;
-      const args =
-        typeof toolCall.function?.arguments === 'string'
-          ? JSON.parse(toolCall.function.arguments)
-          : toolCall.function?.arguments || {};
+    if (toolCall.type !== 'function' || !toolCall.function) {
+      return paths;
+    }
 
-      // 常见的文件操作工具
+    try {
+      const functionName = toolCall.function.name;
+      const args = JSON.parse(toolCall.function.arguments || '{}') as Record<
+        string,
+        unknown
+      >;
+
       const fileTools = [
         'Read',
         'Write',
@@ -243,7 +249,6 @@ export class FileAnalyzer {
       ];
 
       if (fileTools.includes(functionName)) {
-        // 提取 file_path, path, notebook_path 等参数
         const pathKeys = ['file_path', 'path', 'notebook_path', 'filePath'];
         for (const key of pathKeys) {
           if (args[key] && typeof args[key] === 'string') {
@@ -251,7 +256,7 @@ export class FileAnalyzer {
           }
         }
       }
-    } catch (_error) {
+    } catch {
       // 解析失败，忽略
     }
 

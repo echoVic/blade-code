@@ -3,7 +3,13 @@ import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import type {
+  BashBackgroundMetadata,
+  BashForegroundMetadata,
+  ExecutionContext,
+  NodeError,
+  ToolResult,
+} from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { BackgroundShellManager } from './BackgroundShellManager.js';
@@ -280,10 +286,10 @@ function executeInBackground(
   const cmdPreview = command.length > 30 ? `${command.substring(0, 30)}...` : command;
   const summary = `后台启动命令: ${cmdPreview}`;
 
-  const metadata = {
+  const metadata: BashBackgroundMetadata = {
     command,
     background: true,
-    pid: backgroundProcess.pid,
+    pid: backgroundProcess.pid ?? 0,
     bash_id: backgroundProcess.id,
     shell_id: backgroundProcess.id,
     message: '命令已在后台启动',
@@ -389,7 +395,7 @@ async function executeWithAcpTerminal(
         ? `执行命令成功 (${executionTime}ms): ${cmdPreview}`
         : `执行命令完成 (退出码 ${result.exitCode}, ${executionTime}ms): ${cmdPreview}`;
 
-    const metadata = {
+    const metadata: BashForegroundMetadata = {
       command,
       execution_time: executionTime,
       exit_code: result.exitCode,
@@ -420,22 +426,23 @@ async function executeWithAcpTerminal(
       displayContent: displayMessage,
       metadata,
     };
-  } catch (error: any) {
+  } catch (error) {
+    const nodeError = error as NodeError;
     const executionTime = Date.now() - startTime;
 
     return {
       success: false,
-      llmContent: `Command execution failed: ${error.message}`,
-      displayContent: `❌ 命令执行失败: ${error.message}`,
+      llmContent: `Command execution failed: ${nodeError.message}`,
+      displayContent: `❌ 命令执行失败: ${nodeError.message}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
-        message: error.message,
-        details: error,
+        message: nodeError.message,
+        details: nodeError,
       },
       metadata: {
         command,
         execution_time: executionTime,
-        error: error.message,
+        error: nodeError.message,
       },
     };
   }
@@ -564,7 +571,7 @@ async function executeWithTimeout(
           ? `执行命令成功 (${executionTime}ms): ${cmdPreview}`
           : `执行命令完成 (退出码 ${code}, ${executionTime}ms): ${cmdPreview}`;
 
-      const metadata = {
+      const metadata: BashForegroundMetadata = {
         command,
         execution_time: executionTime,
         exit_code: code,
@@ -572,7 +579,7 @@ async function executeWithTimeout(
         stdout_length: stdout.length,
         stderr_length: stderr.length,
         has_stderr: stderr.length > 0,
-        summary, // 🆕 流式显示摘要
+        summary,
       };
 
       const displayMessage = formatDisplayMessage({

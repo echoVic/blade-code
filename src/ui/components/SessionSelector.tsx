@@ -50,7 +50,7 @@ function formatProjectPath(projectPath: string): string {
 /**
  * 自定义指示器组件 - 青色高亮
  */
-const Indicator: React.FC<any> = ({ isSelected }) => (
+const Indicator = ({ isSelected }: { isSelected?: boolean }) => (
   <Box marginRight={1}>
     <Text color={isSelected ? 'cyan' : 'gray'}>{isSelected ? '❯' : ' '}</Text>
   </Box>
@@ -59,7 +59,7 @@ const Indicator: React.FC<any> = ({ isSelected }) => (
 /**
  * 自定义选项组件 - 选中时青色加粗
  */
-const Item: React.FC<any> = ({ isSelected, label }) => (
+const Item = ({ isSelected, label }: { isSelected?: boolean; label: string }) => (
   <Text color={isSelected ? 'cyan' : 'white'} bold={isSelected}>
     {label}
   </Text>

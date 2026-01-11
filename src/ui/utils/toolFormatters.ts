@@ -3,6 +3,8 @@
  * 用于生成工具调用的摘要和判断是否显示详细内容
  */
 
+import { isEditMetadata, isGlobMetadata } from '../../tools/types/index.js';
+
 /**
  * 格式化工具调用摘要（用于流式显示）
  * 生成清晰的执行日志，让用户知道正在做什么
@@ -197,9 +199,10 @@ export function generateToolDetail(
 
   switch (toolName) {
     case 'Glob': {
-      const matches = result.metadata?.matches as Array<{ relative_path: string }>;
+      if (!isGlobMetadata(result.metadata)) return null;
+      const { matches } = result.metadata;
       if (!matches?.length) return null;
-      const maxShow = 5; // 紧凑显示
+      const maxShow = 5;
       const lines = matches.slice(0, maxShow).map((m) => m.relative_path);
       if (matches.length > maxShow) {
         lines.push(`... (+${matches.length - maxShow} more)`);
@@ -214,7 +217,7 @@ export function generateToolDetail(
         content?: string;
       }>;
       if (!Array.isArray(matches) || !matches.length) return null;
-      const maxShow = 5; // 紧凑显示
+      const maxShow = 5;
       const lines = matches.slice(0, maxShow).map((m) => {
         const fileName = m.file_path.split('/').pop() || m.file_path;
         if (m.line_number) {
@@ -229,8 +232,8 @@ export function generateToolDetail(
     }
 
     case 'Read': {
-      // 显示前几行预览 + 剩余行数
-      const content = result.metadata?.content_preview || result.llmContent;
+      const content =
+        (result.metadata?.content_preview as string | undefined) || result.llmContent;
       if (typeof content !== 'string' || !content) return null;
 
       const lines = content.split('\n');
@@ -255,7 +258,6 @@ export function generateToolDetail(
       let output = stdout || stderr;
       if (!output) return null;
 
-      // 限制输出行数
       const lines = output.split('\n');
       const maxLines = 8;
       if (lines.length > maxLines) {
@@ -271,8 +273,7 @@ export function generateToolDetail(
     }
 
     case 'Write': {
-      // 显示写入结果的简短预览
-      const content = result.metadata?.content as string;
+      const content = result.metadata?.content as string | undefined;
       if (!content) return null;
 
       const lines = content.split('\n');
@@ -284,10 +285,10 @@ export function generateToolDetail(
     }
 
     case 'Edit': {
-      // 显示编辑的简短 diff
-      const diff = result.metadata?.diff_snippet as string;
-      if (diff) {
-        const lines = diff.split('\n');
+      if (!isEditMetadata(result.metadata)) return null;
+      const { diff_snippet } = result.metadata;
+      if (diff_snippet) {
+        const lines = diff_snippet.split('\n');
         const maxLines = 6;
         if (lines.length > maxLines) {
           return (
@@ -295,7 +296,7 @@ export function generateToolDetail(
             `\n... (+${lines.length - maxLines} line(s))`
           );
         }
-        return diff;
+        return diff_snippet;
       }
       return null;
     }

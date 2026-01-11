@@ -3,6 +3,13 @@ import type { PermissionMode } from '../../config/types.js';
 import type { ExecutionContext } from './ExecutionTypes.js';
 
 /**
+ * Node.js 错误类型（带有 code 属性）
+ */
+export interface NodeError extends Error {
+  code?: string;
+}
+
+/**
  * 工具类型枚举（简化为 3 种）
  *
  * - ReadOnly: 只读操作，无副作用（Read, Glob, Grep, WebFetch, WebSearch, TaskOutput, TodoWrite, Plan 工具等）
@@ -16,37 +23,336 @@ export enum ToolKind {
 }
 
 /**
- * ToolResult.metadata 的通用结构。
- *
- * 说明：
- * - metadata 的键集合在不同工具/插件中可能不同，因此保留可扩展的 Record 形态。
- * - 但对项目内已经形成约定的字段，提供显式类型，减少 unknown 扩散。
+ * Metadata 基础字段 - 所有工具共享
  */
-export type ToolResultMetadata = Record<string, unknown> & {
-  /** 工具摘要（用于 UI/日志显示） */
+export interface BaseMetadataFields {
   summary?: string;
-
-  /** 用于 Agent 循环控制 */
   shouldExitLoop?: boolean;
   targetMode?: PermissionMode;
+}
 
-  /** 文件写入/编辑类工具常用字段（用于 diff 展示等） */
-  kind?: string;
-  file_path?: string;
-  oldContent?: string;
+/**
+ * 文件操作类工具的基础字段
+ */
+export interface FileMetadataFields extends BaseMetadataFields {
+  file_path: string;
+  file_size?: number;
+  last_modified?: string;
+}
+
+/**
+ * Diff 相关字段（Write/Edit 工具）
+ */
+export interface DiffMetadataFields extends FileMetadataFields {
+  kind: 'edit';
+  oldContent: string;
   newContent?: string;
+  snapshot_created?: boolean;
+  session_id?: string;
+  message_id?: string;
+}
+
+/**
+ * Read 工具的字段
+ */
+export interface ReadMetadataFields extends FileMetadataFields {
+  file_type: string;
+  encoding: string;
+  acp_mode?: boolean;
+  acp_fallback?: boolean;
+  is_binary?: boolean;
+  lines_read?: number;
+  total_lines?: number;
+  start_line?: number;
+  end_line?: number;
+}
+
+/**
+ * Write 工具的字段
+ */
+export interface WriteMetadataFields extends DiffMetadataFields {
+  content_size: number;
+  encoding: string;
+  created_directories?: boolean;
+  has_diff?: boolean;
+}
+
+/**
+ * Edit 工具的字段
+ */
+export interface EditMetadataFields extends DiffMetadataFields {
+  matches_found: number;
+  replacements_made: number;
+  replace_all: boolean;
+  old_string_length: number;
+  new_string_length: number;
+  original_size: number;
+  new_size: number;
+  size_diff: number;
+  diff_snippet?: string | null;
+}
+
+/**
+ * Edit 工具错误诊断的字段
+ */
+export interface EditErrorMetadataFields extends BaseMetadataFields {
+  searchStringLength: number;
+  fuzzyMatches: Array<{
+    line: number;
+    similarity: number;
+    preview: string;
+  }>;
+  excerptRange: [number, number];
+  totalLines: number;
+}
+
+/**
+ * Glob 工具的字段
+ */
+export interface GlobMetadataFields extends BaseMetadataFields {
+  search_path: string;
+  pattern: string;
+  total_matches: number;
+  returned_matches: number;
+  max_results: number;
+  include_directories?: boolean;
+  case_sensitive?: boolean;
+  truncated: boolean;
+  matches?: Array<{
+    path: string;
+    relative_path: string;
+    is_directory: boolean;
+    mtime?: number;
+  }>;
+}
+
+/**
+ * Grep 工具的字段
+ */
+export interface GrepMetadataFields extends BaseMetadataFields {
+  search_pattern: string;
+  search_path: string;
+  output_mode: string;
+  case_insensitive?: boolean;
+  total_matches: number;
+  original_total?: number;
+  offset?: number;
+  head_limit?: number;
+  strategy?: string;
+  exit_code?: number;
+}
+
+/**
+ * Bash 工具的字段（后台执行）
+ */
+export interface BashBackgroundMetadataFields extends BaseMetadataFields {
+  command: string;
+  background: true;
+  pid: number;
+  bash_id: string;
+  shell_id: string;
+  message?: string;
+}
+
+/**
+ * Bash 工具的字段（前台执行）
+ */
+export interface BashForegroundMetadataFields extends BaseMetadataFields {
+  command: string;
+  background?: false;
+  execution_time: number;
+  exit_code: number | null;
+  signal?: NodeJS.Signals | null;
+  stdout_length?: number;
+  stderr_length?: number;
+  has_stderr?: boolean;
+  acp_mode?: boolean;
+}
+
+/**
+ * WebSearch 工具的字段
+ */
+export interface WebSearchMetadataFields extends BaseMetadataFields {
+  query: string;
+  provider: string;
+  fetched_at: string;
+  total_results: number;
+  returned_results: number;
+  allowed_domains?: string[];
+  blocked_domains?: string[];
+}
+
+/**
+ * WebFetch 工具的字段
+ */
+export interface WebFetchMetadataFields extends BaseMetadataFields {
+  url: string;
+  method: string;
+  status: number;
+  response_time: number;
+  content_length: number;
+  redirected: boolean;
+  redirect_count: number;
+  final_url?: string;
+  content_type?: string;
+  redirect_chain?: string[];
+}
+
+/**
+ * 泛型 Metadata 类型
+ *
+ * @template T - 具体的 metadata 字段接口
+ *
+ * @example
+ * // 在工具内部使用具体类型
+ * const metadata: Metadata<EditMetadataFields> = { ... };
+ *
+ * // 返回时自动兼容 ToolResultMetadata
+ * return { success: true, metadata };
+ */
+export type Metadata<T extends BaseMetadataFields = BaseMetadataFields> = T & {
+  [key: string]: unknown;
 };
 
 /**
- * 工具执行结果
+ * 预定义的 Metadata 类型别名（方便使用）
  */
-export interface ToolResult {
-  success: boolean;
-  llmContent: string | object; // 传递给LLM的内容
-  displayContent: string; // 显示给用户的内容
-  error?: ToolError;
-  metadata?: ToolResultMetadata;
+export type BaseMetadata = Metadata<BaseMetadataFields>;
+export type FileMetadata = Metadata<FileMetadataFields>;
+export type DiffMetadata = Metadata<DiffMetadataFields>;
+export type ReadMetadata = Metadata<ReadMetadataFields>;
+export type WriteMetadata = Metadata<WriteMetadataFields>;
+export type EditMetadata = Metadata<EditMetadataFields>;
+export type EditErrorMetadata = Metadata<EditErrorMetadataFields>;
+export type GlobMetadata = Metadata<GlobMetadataFields>;
+export type GrepMetadata = Metadata<GrepMetadataFields>;
+export type BashBackgroundMetadata = Metadata<BashBackgroundMetadataFields>;
+export type BashForegroundMetadata = Metadata<BashForegroundMetadataFields>;
+export type BashMetadata = BashBackgroundMetadata | BashForegroundMetadata;
+export type WebSearchMetadata = Metadata<WebSearchMetadataFields>;
+export type WebFetchMetadata = Metadata<WebFetchMetadataFields>;
+
+/**
+ * ToolResult.metadata 的类型（向后兼容）
+ *
+ * 使用 Metadata<BaseMetadataFields> 作为基础，允许任意扩展字段
+ */
+export type ToolResultMetadata = Metadata<BaseMetadataFields>;
+
+/**
+ * 类型守卫：检查 metadata 是否为 diff 类型（Write/Edit）
+ */
+export function isDiffMetadata(
+  metadata: ToolResultMetadata | undefined
+): metadata is DiffMetadata {
+  return (
+    metadata !== undefined &&
+    metadata.kind === 'edit' &&
+    typeof metadata.file_path === 'string' &&
+    typeof metadata.oldContent === 'string'
+  );
 }
+
+/**
+ * 类型守卫：检查 metadata 是否为文件类型
+ */
+export function isFileMetadata(
+  metadata: ToolResultMetadata | undefined
+): metadata is FileMetadata {
+  return metadata !== undefined && typeof metadata.file_path === 'string';
+}
+
+/**
+ * 类型守卫：检查 metadata 是否为命令执行类型
+ */
+export function isBashMetadata(
+  metadata: ToolResultMetadata | undefined
+): metadata is BashMetadata {
+  return metadata !== undefined && typeof metadata.command === 'string';
+}
+
+/**
+ * 类型守卫：检查 metadata 是否为 Glob 类型
+ */
+export function isGlobMetadata(
+  metadata: ToolResultMetadata | undefined
+): metadata is GlobMetadata {
+  return (
+    metadata !== undefined &&
+    typeof metadata.pattern === 'string' &&
+    typeof metadata.search_path === 'string'
+  );
+}
+
+/**
+ * 类型守卫：检查 metadata 是否为 Grep 类型
+ */
+export function isGrepMetadata(
+  metadata: ToolResultMetadata | undefined
+): metadata is GrepMetadata {
+  return (
+    metadata !== undefined &&
+    typeof metadata.search_pattern === 'string' &&
+    typeof metadata.search_path === 'string'
+  );
+}
+
+/**
+ * 类型守卫：检查 metadata 是否为 Read 类型
+ */
+export function isReadMetadata(
+  metadata: ToolResultMetadata | undefined
+): metadata is ReadMetadata {
+  return (
+    metadata !== undefined &&
+    typeof metadata.file_path === 'string' &&
+    typeof metadata.file_type === 'string'
+  );
+}
+
+/**
+ * 类型守卫：检查 metadata 是否为 Edit 类型
+ */
+export function isEditMetadata(
+  metadata: ToolResultMetadata | undefined
+): metadata is EditMetadata {
+  return (
+    metadata !== undefined &&
+    metadata.kind === 'edit' &&
+    typeof metadata.matches_found === 'number'
+  );
+}
+
+/**
+ * 泛型工具执行结果
+ *
+ * @template TMetadata - metadata 的具体类型
+ *
+ * @example
+ * // 在工具内部使用具体类型
+ * async function execute(): Promise<TypedToolResult<EditMetadata>> {
+ *   return {
+ *     success: true,
+ *     llmContent: '...',
+ *     displayContent: '...',
+ *     metadata: { file_path: '...', matches_found: 1, ... }
+ *   };
+ * }
+ */
+export interface TypedToolResult<
+  TMetadata extends ToolResultMetadata = ToolResultMetadata,
+> {
+  success: boolean;
+  llmContent: string | object;
+  displayContent: string;
+  error?: ToolError;
+  metadata?: TMetadata;
+}
+
+/**
+ * 工具执行结果（向后兼容的非泛型版本）
+ */
+export type ToolResult = TypedToolResult<ToolResultMetadata>;
 
 /**
  * 工具错误类型

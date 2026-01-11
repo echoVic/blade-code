@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import type {
+  ExecutionContext,
+  ToolResult,
+  WebFetchMetadata,
+} from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { isPlainObject } from 'lodash-es';
@@ -128,7 +132,7 @@ Usage notes:
         delete response.headers;
       }
 
-      const metadata = {
+      const metadata: WebFetchMetadata = {
         url,
         method,
         status: response.status,

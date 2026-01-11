@@ -119,14 +119,15 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
           displayContent,
           metadata: { stats },
         };
-      } catch (error: any) {
+      } catch (error) {
+        const err = error as Error;
         return {
           success: false,
-          llmContent: `Update failed: ${error.message}`,
-          displayContent: `❌ 更新 TODO 列表失败: ${error.message}`,
+          llmContent: `Update failed: ${err.message}`,
+          displayContent: `❌ 更新 TODO 列表失败: ${err.message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: error.message,
+            message: err.message,
             details: error,
           },
         };

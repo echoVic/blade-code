@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
-import { ToolKind } from '../../types/ToolTypes.js';
+import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
 
 /**
  * Option schema - 选项定义
@@ -141,7 +141,7 @@ Usage notes:
           llmContent: `Failed to ask user questions: ${error instanceof Error ? error.message : 'Unknown error'}`,
           displayContent: '❌ 问题显示失败',
           error: {
-            type: 'execution_error' as any,
+            type: ToolErrorType.EXECUTION_ERROR,
             message: 'Failed to display questions',
           },
         };
@@ -155,7 +155,7 @@ Usage notes:
         'No confirmation handler available. Cannot ask user questions in non-interactive mode.',
       displayContent: '❌ 非交互模式，无法提问',
       error: {
-        type: 'execution_error' as any,
+        type: ToolErrorType.EXECUTION_ERROR,
         message: 'No confirmation handler available',
       },
     };

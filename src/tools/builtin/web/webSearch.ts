@@ -1,7 +1,11 @@
 import { type Dispatcher, ProxyAgent, fetch as undiciFetch } from 'undici';
 import { z } from 'zod';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import type {
+  ExecutionContext,
+  ToolResult,
+  WebSearchMetadata,
+} from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import {
   getAllProviders,
@@ -94,8 +98,9 @@ async function fetchWithTimeout(
       dispatcher,
     });
     return response as unknown as Response;
-  } catch (error: any) {
-    if (error.name === 'AbortError') {
+  } catch (error) {
+    const err = error as Error;
+    if (err.name === 'AbortError') {
       throw new Error('搜索请求超时或被中止');
     }
     throw error;
@@ -121,8 +126,8 @@ async function fetchWithRetry(
   for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
     try {
       return await fetchWithTimeout(url, options, timeout, signal, dispatcher);
-    } catch (error: any) {
-      lastError = error;
+    } catch (error) {
+      lastError = error as Error;
 
       // 如果是用户中止，立即抛出
       if (signal?.aborted) {
@@ -219,8 +224,9 @@ async function searchWithFallback(
         dispatcher,
         updateOutput
       );
-    } catch (error: any) {
-      const errorMsg = `${provider.name}: ${error.message}`;
+    } catch (error) {
+      const err = error as Error;
+      const errorMsg = `${provider.name}: ${err.message}`;
       errors.push(errorMsg);
       updateOutput?.(`⚠️ ${errorMsg}`);
 
@@ -409,7 +415,7 @@ IMPORTANT - Use the correct year in search queries:
         fetched_at: new Date().toISOString(),
       };
 
-      const metadata = {
+      const metadata: WebSearchMetadata = {
         query,
         provider: providerName,
         fetched_at: resultPayload.fetched_at,
@@ -439,14 +445,15 @@ IMPORTANT - Use the correct year in search queries:
         ),
         metadata,
       };
-    } catch (error: any) {
+    } catch (error) {
+      const err = error as Error;
       return {
         success: false,
-        llmContent: `WebSearch call failed: ${error.message}`,
-        displayContent: `❌ WebSearch 调用失败: ${error.message}`,
+        llmContent: `WebSearch call failed: ${err.message}`,
+        displayContent: `❌ WebSearch 调用失败: ${err.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
-          message: error.message,
+          message: err.message,
           details: {
             query,
             allowedDomains,

@@ -332,3 +332,34 @@ blade mcp list
 | Execute | ⚠️ 确认 | ⚠️ 确认 | ❌ 拒绝 | ✅ 自动 | ⚠️ 确认 |
 
 详见 [权限系统](../configuration/permissions.md) 章节。
+
+## 工具总览
+
+| 分类 | 工具 | 类型 | 说明 |
+|------|------|------|------|
+| 文件操作 | Read | ReadOnly | 读取文件内容 |
+| 文件操作 | Write | Write | 写入或创建文件 |
+| 文件操作 | Edit | Write | 按字符串/正则替换文件内容 |
+| 文件操作 | NotebookEdit | Write | 编辑 Jupyter Notebook |
+| 搜索 | Glob | ReadOnly | glob 模式查找文件 |
+| 搜索 | Grep | ReadOnly | 基于 ripgrep 的内容搜索 |
+| Shell | Bash | Execute | 执行 Shell 命令 |
+| Shell | KillShell | Execute | 终止后台命令 |
+| 网络 | WebFetch | ReadOnly | 获取网页/API 内容 |
+| 网络 | WebSearch | ReadOnly | 网络搜索（DuckDuckGo） |
+| 任务 | Task | ReadOnly | 启动子代理执行任务 |
+| 任务 | TaskOutput | ReadOnly | 获取后台任务输出 |
+| 任务 | TodoWrite | ReadOnly | 管理会话内 TODO 列表 |
+| Plan | EnterPlanMode | ReadOnly | 进入只读调研模式 |
+| Plan | ExitPlanMode | ReadOnly | 退出并提交方案 |
+| Spec | EnterSpecMode | Write | 进入 Spec 驱动开发模式 |
+| Spec | UpdateSpec | Write | 更新 Spec 文件 |
+| Spec | GetSpecContext | ReadOnly | 获取 Spec 上下文 |
+| Spec | TransitionSpecPhase | Write | 转换工作流阶段 |
+| Spec | AddTask | Write | 添加任务 |
+| Spec | UpdateTaskStatus | Write | 更新任务状态 |
+| Spec | ValidateSpec | ReadOnly | 验证 Spec 完整性 |
+| Spec | ExitSpecMode | Write | 退出 Spec 模式 |
+| 系统 | AskUserQuestion | ReadOnly | 向用户提问 |
+| 系统 | Skill | Execute | 调用已注册的 Skill |
+| 系统 | SlashCommand | Execute | 执行 Slash 命令 |

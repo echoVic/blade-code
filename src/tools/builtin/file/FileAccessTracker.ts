@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import { createLogger, LogCategory } from '../../../logging/Logger.js';
+import { NodeError } from '../../types/index.js';
 
 // 创建 FileAccessTracker 专用 Logger
 const logger = createLogger(LogCategory.TOOL);
@@ -159,8 +160,9 @@ export class FileAccessTracker {
       }
 
       return { modified: false };
-    } catch (error: any) {
-      if (error.code === 'ENOENT') {
+    } catch (error) {
+      const nodeError = error as NodeError;
+      if (nodeError.code === 'ENOENT') {
         return {
           modified: true,
           message: '文件已被删除',
@@ -169,7 +171,7 @@ export class FileAccessTracker {
 
       return {
         modified: false,
-        message: `无法检查文件状态: ${error.message}`,
+        message: `无法检查文件状态: ${nodeError.message}`,
       };
     }
   }
@@ -210,8 +212,9 @@ export class FileAccessTracker {
       }
 
       return { isExternal: false };
-    } catch (error: any) {
-      if (error.code === 'ENOENT') {
+    } catch (error) {
+      const nodeError = error as NodeError;
+      if (nodeError.code === 'ENOENT') {
         return {
           isExternal: true,
           message: '文件已被删除',
@@ -221,7 +224,7 @@ export class FileAccessTracker {
       logger.warn(`检查文件外部修改失败: ${filePath}`, error);
       return {
         isExternal: false,
-        message: `无法检查文件状态: ${error.message}`,
+        message: `无法检查文件状态: ${nodeError.message}`,
       };
     }
   }

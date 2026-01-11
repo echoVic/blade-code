@@ -360,16 +360,17 @@ export class AcpSession {
           const metadata = result.metadata;
           if (
             metadata?.kind === 'edit' &&
-            metadata.file_path &&
-            metadata.oldContent !== undefined &&
-            metadata.newContent !== undefined
+            typeof metadata.file_path === 'string' &&
+            typeof metadata.oldContent === 'string' &&
+            (typeof metadata.newContent === 'string' ||
+              metadata.newContent === undefined)
           ) {
             // 发送 diff 格式（IDE 会显示差异视图）
             content.push({
               type: 'diff',
               path: metadata.file_path,
               oldText: metadata.oldContent,
-              newText: metadata.newContent,
+              newText: (metadata.newContent as string) ?? null,
             });
           } else if (result.displayContent) {
             // 其他工具：发送文本内容

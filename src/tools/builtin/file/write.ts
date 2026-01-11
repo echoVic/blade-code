@@ -4,7 +4,12 @@ import { z } from 'zod';
 import { isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import type {
+  ExecutionContext,
+  NodeError,
+  ToolResult,
+  WriteMetadata,
+} from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { generateDiffSnippet } from './diffUtils.js';
@@ -66,8 +71,9 @@ export const writeTool = createTool({
         const dir = dirname(file_path);
         try {
           await fsService.mkdir(dir, { recursive: true });
-        } catch (error: any) {
-          if (error.code !== 'EEXIST') {
+        } catch (error) {
+          const nodeError = error as NodeError;
+          if (nodeError.code !== 'EEXIST') {
             throw error;
           }
         }
@@ -203,7 +209,7 @@ export const writeTool = createTool({
         }
       }
 
-      const metadata: Record<string, any> = {
+      const metadata: WriteMetadata = {
         file_path,
         content_size: content.length,
         file_size: stats?.size,
@@ -243,8 +249,9 @@ export const writeTool = createTool({
         displayContent: displayMessage,
         metadata,
       };
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
+    } catch (error) {
+      const nodeError = error as NodeError;
+      if (nodeError.name === 'AbortError') {
         return {
           success: false,
           llmContent: 'File write aborted',
@@ -258,12 +265,12 @@ export const writeTool = createTool({
 
       return {
         success: false,
-        llmContent: `File write failed: ${error.message}`,
-        displayContent: `❌ 写入文件失败: ${error.message}`,
+        llmContent: `File write failed: ${nodeError.message}`,
+        displayContent: `❌ 写入文件失败: ${nodeError.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
-          message: error.message,
-          details: error,
+          message: nodeError.message,
+          details: nodeError,
         },
       };
     }
@@ -292,14 +299,14 @@ export const writeTool = createTool({
  */
 function formatDisplayMessage(
   filePath: string,
-  metadata: Record<string, any>,
+  metadata: WriteMetadata,
   content?: string,
   diffSnippet?: string | null
 ): string {
   let message = `✅ 成功写入文件: ${filePath}`;
 
   if (metadata.file_size !== undefined) {
-    message += ` (${formatFileSize(metadata.file_size)})`;
+    message += ` (${formatFileSize(metadata.file_size as number)})`;
   }
 
   if (metadata.snapshot_created) {

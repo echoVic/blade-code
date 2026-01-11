@@ -3,7 +3,13 @@ import { z } from 'zod';
 import { isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import type {
+  EditErrorMetadata,
+  EditMetadata,
+  ExecutionContext,
+  NodeError,
+  ToolResult,
+} from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { generateDiffSnippetWithMatch } from './diffUtils.js';
@@ -77,8 +83,9 @@ export const editTool = createTool({
           updateOutput?.('通过 IDE 读取文件...');
         }
         content = await fsService.readTextFile(file_path);
-      } catch (error: any) {
-        if (error.code === 'ENOENT' || error.message?.includes('not found')) {
+      } catch (error) {
+        const nodeError = error as NodeError;
+        if (nodeError.code === 'ENOENT' || nodeError.message?.includes('not found')) {
           return {
             success: false,
             llmContent: `File not found: ${file_path}`,
@@ -324,7 +331,7 @@ export const editTool = createTool({
           ? `替换 1 处匹配到 ${fileName}`
           : `替换 ${replacedCount} 处匹配到 ${fileName}`;
 
-      const metadata: Record<string, any> = {
+      const metadata: EditMetadata = {
         file_path,
         matches_found: matches.length,
         replacements_made: replacedCount,
@@ -336,12 +343,11 @@ export const editTool = createTool({
         size_diff: newContent.length - content.length,
         last_modified:
           stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
-        snapshot_created: !!(sessionId && messageId), // 是否创建了快照
+        snapshot_created: !!(sessionId && messageId),
         session_id: sessionId,
         message_id: messageId,
-        diff_snippet: diffSnippet, // 添加差异片段
-        summary, // 🆕 流式显示摘要
-        // 🆕 ACP diff 支持：完整内容用于 IDE 显示差异
+        diff_snippet: diffSnippet,
+        summary,
         kind: 'edit',
         oldContent: content,
         newContent: newContent,
@@ -359,8 +365,9 @@ export const editTool = createTool({
         displayContent: displayMessage,
         metadata,
       };
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
+    } catch (error) {
+      const nodeError = error as NodeError;
+      if (nodeError.name === 'AbortError') {
         return {
           success: false,
           llmContent: 'File edit aborted',
@@ -374,12 +381,12 @@ export const editTool = createTool({
 
       return {
         success: false,
-        llmContent: `File edit failed: ${error.message}`,
-        displayContent: `❌ 编辑文件失败: ${error.message}`,
+        llmContent: `File edit failed: ${nodeError.message}`,
+        displayContent: `❌ 编辑文件失败: ${nodeError.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
-          message: error.message,
-          details: error,
+          message: nodeError.message,
+          details: nodeError,
         },
       };
     }
@@ -511,7 +518,7 @@ function findMatchesWithActual(content: string, actualString: string): number[] 
  * 格式化显示消息
  */
 function formatDisplayMessage(
-  metadata: Record<string, any>,
+  metadata: EditMetadata,
   diffSnippet?: string | null
 ): string {
   const { file_path, matches_found, replacements_made, replace_all, size_diff } =
@@ -549,7 +556,7 @@ function generateRichErrorMessage(
 ): {
   llmContent: string;
   displayContent: string;
-  metadata: Record<string, any>;
+  metadata: EditErrorMetadata;
 } {
   const lines = fileContent.split('\n');
   const totalLines = lines.length;

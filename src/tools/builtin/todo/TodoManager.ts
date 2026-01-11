@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { TodoItem, TodoStatus, ValidationResult } from './types.js';
+import type { NodeError } from '../../types/index.js';
 
 /**
  * TODO 任务管理器
@@ -139,8 +140,9 @@ export class TodoManager {
     try {
       const data = await fs.readFile(this.filePath, 'utf-8');
       this.todos = JSON.parse(data);
-    } catch (error: any) {
-      if (error.code === 'ENOENT') {
+    } catch (error) {
+      const nodeError = error as NodeError;
+      if (nodeError.code === 'ENOENT') {
         this.todos = [];
       } else {
         console.warn('加载 TODO 列表失败:', error);

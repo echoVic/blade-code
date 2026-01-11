@@ -19,6 +19,17 @@ Blade 使用双文件配置体系：`config.json`（基础配置）和 `settings
 
 环境变量插值 > settings.local.json > 项目 settings.json > 用户 settings.json > 项目 config.json > 用户 config.json > 默认值
 
+## 内置免费模型
+
+Blade Code v0.1.0 内置了免费的 GLM-4.7 模型，无需任何配置即可使用：
+
+- **模型**: GLM-4.7 Thinking（智谱）
+- **特性**: 支持思维链推理
+- **上下文**: 204,800 tokens
+- **输出**: 16,384 tokens
+
+首次启动时会自动使用内置模型。如需使用自己的 API 密钥，可通过 `/model add` 向导或手动编辑配置文件。
+
 ## config.json（基础配置）
 
 ### 多模型配置
@@ -328,8 +339,8 @@ Blade 支持配置多个模型，通过 `currentModelId` 指定当前使用的�
 
 ## 配置入口
 
-- **首次启动**：若未检测到模型，自动进入模型配置向导
-- **UI 内配置**：输入 `/model add` 打开向导
+- **首次启动**：若未检测到模型，自动使用内置免费模型 GLM-4.7
+- **UI 内配置**：输入 `/model add` 打开向导添加自定义模型
 - **手工编辑**：直接修改配置文件，保存后下次启动生效
 - **自动写入**：在权限确认弹窗中选择"会话内记住"会写入 `settings.local.json`
 

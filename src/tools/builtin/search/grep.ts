@@ -6,7 +6,11 @@ import picomatch from 'picomatch';
 import { z } from 'zod';
 import { DEFAULT_EXCLUDE_DIRS } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import type {
+  ExecutionContext,
+  GrepMetadata,
+  ToolResult,
+} from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 
@@ -628,7 +632,7 @@ function parseContentLine(line: string): GrepMatch | null {
 /**
  * 格式化显示消息
  */
-function formatDisplayMessage(metadata: Record<string, any>): string {
+function formatDisplayMessage(metadata: GrepMetadata): string {
   const { search_pattern, search_path, output_mode, total_matches, strategy } =
     metadata;
 
@@ -798,7 +802,7 @@ export const grepTool = createTool({
 
           result = await executeRipgrep(args, output_mode, signal, updateOutput);
           strategy = SearchStrategy.RIPGREP;
-        } catch (_error: any) {
+        } catch {
           updateOutput?.(`⚠️ ripgrep 失败，尝试降级策略...`);
           result = null;
         }
@@ -820,7 +824,7 @@ export const grepTool = createTool({
             signal
           );
           strategy = SearchStrategy.GIT_GREP;
-        } catch (_error: any) {
+        } catch {
           updateOutput?.(`⚠️ git grep 失败，继续尝试其他策略...`);
           result = null;
         }
@@ -841,7 +845,7 @@ export const grepTool = createTool({
             signal
           );
           strategy = SearchStrategy.SYSTEM_GREP;
-        } catch (_error: any) {
+        } catch {
           updateOutput?.(`⚠️ 系统 grep 失败，使用纯 JavaScript 实现...`);
           result = null;
         }
@@ -887,7 +891,7 @@ export const grepTool = createTool({
         matches = matches.slice(0, head_limit);
       }
 
-      const metadata: Record<string, any> = {
+      const metadata: GrepMetadata = {
         search_pattern: pattern,
         search_path: path,
         output_mode,
@@ -920,8 +924,9 @@ export const grepTool = createTool({
         displayContent: displayMessage,
         metadata,
       };
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
+    } catch (error) {
+      const err = error as Error;
+      if (err.name === 'AbortError') {
         return {
           success: false,
           llmContent: 'Search aborted',
@@ -935,12 +940,12 @@ export const grepTool = createTool({
 
       return {
         success: false,
-        llmContent: `Search failed: ${error.message}`,
-        displayContent: `❌ 搜索失败: ${error.message}`,
+        llmContent: `Search failed: ${err.message}`,
+        displayContent: `❌ 搜索失败: ${err.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
-          message: error.message,
-          details: error,
+          message: err.message,
+          details: err,
         },
       };
     }
