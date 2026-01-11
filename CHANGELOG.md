@@ -3,7 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 
-## [0.0.48] - 2026-01-11
+## [0.1.0] - 2026-01-11
+
+🎉 **首个开源版本发布！**
 
 ### ✨ 新功能
 
@@ -26,8 +28,9 @@ All notable changes to this project will be documented in this file.
 
 ### 🔧 其他更改
 
+- 清理未使用的配置文件和空目录 (codecov.yml, patches/, public/)
+- 移除重复的 shell 脚本 (download-ripgrep.sh)
 - 移除未使用的代码和导出 (a9db838)
-- remove local settings from tracking (70fecf4)
 - 移除公司敏感信息以准备开源 (a686be5)
 
 
