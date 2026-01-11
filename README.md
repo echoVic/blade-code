@@ -2,7 +2,7 @@
 
 # 🗡️ Blade Code
 
-**新一代智能 AI 编程助手**
+**新一代 AI 编程助手（CLI）**
 
 [![npm version](https://img.shields.io/npm/v/blade-code.svg?style=flat-square)](https://www.npmjs.com/package/blade-code)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
@@ -17,130 +17,78 @@
 
 ## ✨ 核心特性
 
-- 🤖 **智能对话** - 基于大语言模型，支持上下文理解和多轮对话
-- 🛠️ **丰富工具** - 内置 18+ 工具：文件读写、代码搜索、Shell 执行、Git 操作等
-- 🔗 **MCP 协议** - 支持 Model Context Protocol，轻松扩展外部工具
-- 🎨 **现代 UI** - 基于 React + Ink，支持 Markdown 渲染和语法高亮
-- 💾 **会话管理** - 多会话、继续对话、会话恢复、会话 Fork
-- 🔒 **安全可控** - 三级权限系统（allow/ask/deny）、工具白名单、操作确认
+- 🤖 **智能对话** - 上下文理解、多轮协作、可继续会话
+- 🆓 **开箱即用** - 内置免费 GLM-4.7 模型，可选自定义模型
+- 🛠️ **丰富工具** - 20+ 内置工具：文件/搜索/Shell/Git/Web 等
+- 🔗 **扩展能力** - MCP、插件与 Skills 系统
+- 📋 **结构化工作流** - Spec / Plan / Subagents
+- 🔒 **安全可控** - default/autoEdit/plan/yolo 权限模式与工具白/黑名单
+- 🎨 **现代 UI** - React + Ink 终端 UI，支持 Markdown 与高亮
 
 ---
 
 ## 🚀 快速开始
 
-### 零安装试用
-
 ```bash
 npx blade-code
-npx blade-code --print "解释什么是 TypeScript"
-```
 
-### 全局安装
-
-```bash
 npm install -g blade-code
 # 或
 pnpm add -g blade-code
+
+blade
+blade "帮我分析这个项目"
+blade --print "写一个快排算法"
 ```
 
-### 基本使用
-
-```bash
-blade                              # 交互式模式
-blade "帮我分析这个项目"            # 带首条消息进入
-blade --print "写一个快排算法"      # 打印模式（适合管道）
-blade --continue                   # 继续上次对话
-```
-
-> 首次运行若未配置 API 密钥，会自动弹出设置向导。
+> 默认使用内置免费模型；要使用自有模型，可运行 `blade` 按提示配置。
 
 ---
 
-## 🔐 配置
+## ⚙️ 可选配置
 
-### 配置文件
+配置文件支持全局和项目级：`~/.blade/config.json` 或 `.blade/config.json`。
+更多配置项见文档。
 
-```bash
-mkdir -p ~/.blade
-cat > ~/.blade/config.json << 'EOF'
+```json
 {
   "provider": "openai-compatible",
-  "apiKey": "your-api-key",
-  "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  "model": "qwen-max"
+  "apiKey": "${BLADE_API_KEY}",
+  "baseUrl": "https://api.openai.com/v1",
+  "model": "gpt-4o-mini"
 }
-EOF
-```
-
-支持环境变量插值：`"apiKey": "${BLADE_API_KEY}"`
-
-### 获取 API 密钥
-
-- **千问**: [DashScope 控制台](https://dashscope.console.aliyun.com/apiKey)
-- **火山引擎**: [火山方舟控制台](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey)
-- **OpenAI**: [OpenAI Platform](https://platform.openai.com/api-keys)
-
----
-
-## 💬 使用示例
-
-```bash
-# 智能工具调用
-blade "列出所有 TypeScript 文件"
-blade "查找包含 TODO 的代码"
-blade "审查 src/utils 目录的代码"
-
-# 会话管理
-blade --session-id "my-project" "开始新项目"
-blade --resume <id>                # 恢复会话
-blade --resume <id> --fork-session # Fork 会话
-
-# 安全控制
-blade --allowed-tools "Read,Grep" "只读操作"
-blade --permission-mode plan "只规划不执行"
-blade --yolo "自动批准所有操作"
 ```
 
 ---
 
-## 📚 命令参考
+## 🧰 命令速览
 
-### 主要命令
+**常用命令**
 
-| 命令 | 说明 |
-|------|------|
-| `blade` | 启动交互式助手 |
-| `blade config` | 配置管理 |
-| `blade mcp` | MCP 服务器管理 |
-| `blade doctor` | 系统健康检查 |
-| `blade update` | 检查更新 |
+- `blade` 启动交互式界面
+- `blade mcp` 管理 MCP 服务器
+- `blade doctor` 环境自检
+- `blade update` 检查更新
+- `blade install` 安装指定版本（实验）
 
-### 常用选项
+**常用选项**
 
-| 选项 | 简写 | 说明 |
-|------|------|------|
-| `--print` | `-p` | 打印响应并退出 |
-| `--continue` | `-c` | 继续最近会话 |
-| `--resume <id>` | `-r` | 恢复指定会话 |
-| `--yolo` | | 自动批准所有操作 |
-
-### Slash 命令
-
-在交互模式中使用：`/init` `/help` `/clear` `/compact` `/context` `/agents` `/permissions` `/mcp` `/resume` `/theme` `/model`
+- `--print/-p` 打印模式（适合管道）
+- `--output-format` 输出格式（text/json/stream-json）
+- `--permission-mode` 权限模式
+- `--resume/-r` 恢复会话 / `--session-id` 指定会话
 
 ---
 
 ## 📖 文档
 
-- **[用户文档](https://echovic.github.io/blade-doc/#/)** - 安装、配置、使用指南
-- **[开发者文档](docs/development/README.md)** - 架构设计、技术实现
-- **[贡献指南](CONTRIBUTING.md)** - 参与开源贡献
+- **[用户文档](https://echovic.github.io/blade-doc/#/)**
+- **[本仓库文档入口](docs/README.md)**
+- **[贡献指南](CONTRIBUTING.md)**
 
 ---
 
 ## 🤝 贡献
-
-欢迎贡献！详见 [贡献指南](CONTRIBUTING.md)。
 
 ```bash
 git clone https://github.com/echoVic/blade-code.git
@@ -158,6 +106,7 @@ cd blade-code && pnpm install && pnpm dev
 ## 🔗 相关资源
 
 - [NPM 包](https://www.npmjs.com/package/blade-code)
+- [Discord 社区](https://discord.gg/utXDVcv6) - 加入我们的 Discord 服务器
 - [问题反馈](https://github.com/echoVic/blade-code/issues)
 
 ---

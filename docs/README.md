@@ -68,12 +68,14 @@ blade "帮我分析这个项目"
 - **[常见问题](faq.md)** - FAQ
 - **[更新日志](changelog.md)** - 版本历史
 
+## 💬 交流群
+
+- [Discord 社区](https://discord.gg/utXDVcv6) - 加入我们的 Discord 服务器
+- 微信群：添加小助手微信 **VIc-Forever**，备注「Blade」拉你进群
+
 ## 🔗 相关资源
 
+- [官网](https://echovic.github.io/blade-code/#/)
 - [GitHub 仓库](https://github.com/echoVic/blade-code)
 - [NPM 包](https://www.npmjs.com/package/blade-code)
-- [问题反馈](https://github.com/echoVic/blade-code/issues)
-
-## 💬 交流
-
-添加小助手微信 **VIc-Forever**，备注「Blade」拉你进群。
+- [问题反馈](https://github.com/echoVic/blade-doc/issues)

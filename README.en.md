@@ -2,7 +2,7 @@
 
 # 🗡️ Blade Code
 
-**Next-Generation AI-Powered Coding Assistant**
+**Next-Generation AI Coding Assistant (CLI)**
 
 [![npm version](https://img.shields.io/npm/v/blade-code.svg?style=flat-square)](https://www.npmjs.com/package/blade-code)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
@@ -17,130 +17,78 @@ English | [简体中文](README.md)
 
 ## ✨ Key Features
 
-- 🤖 **Intelligent Conversations** - LLM-powered with context understanding and multi-turn dialogues
-- 🛠️ **Rich Toolset** - 18+ built-in tools: file operations, code search, shell execution, Git, and more
-- 🔗 **MCP Protocol** - Model Context Protocol support for seamless external tool integration
-- 🎨 **Modern UI** - React + Ink based terminal UI with Markdown rendering and syntax highlighting
-- 💾 **Session Management** - Multi-session, continuation, recovery, and forking support
-- 🔒 **Secure & Controllable** - Three-tier permission system (allow/ask/deny), tool whitelisting
+- 🤖 **Smart Chat** - Context-aware, multi-turn collaboration with session continuity
+- 🆓 **Out of the Box** - Built-in free GLM-4.7 model, plus custom models
+- 🛠️ **Rich Tooling** - 20+ built-in tools: file/search/shell/git/web and more
+- 🔗 **Extensible** - MCP, plugins, and Skills system
+- 📋 **Structured Workflows** - Spec / Plan / Subagents
+- 🔒 **Secure Control** - Permission modes: default/autoEdit/plan/yolo + allow/deny lists
+- 🎨 **Modern UI** - React + Ink TUI with Markdown and syntax highlighting
 
 ---
 
 ## 🚀 Quick Start
 
-### Try Without Installation
-
 ```bash
 npx blade-code
-npx blade-code --print "Explain what TypeScript is"
-```
 
-### Global Installation
-
-```bash
 npm install -g blade-code
 # or
 pnpm add -g blade-code
+
+blade
+blade "Help me analyze this project"
+blade --print "Write a quicksort"
 ```
 
-### Basic Usage
-
-```bash
-blade                              # Interactive mode
-blade "Help me analyze this project" # Enter with initial message
-blade --print "Write a quicksort"   # Print mode (for piping)
-blade --continue                   # Continue last conversation
-```
-
-> On first run, if no API key is configured, a setup wizard will appear automatically.
+> Uses the built-in free model by default; run `blade` to configure your own provider.
 
 ---
 
-## 🔐 Configuration
+## ⚙️ Optional Configuration
 
-### Config File
+Config supports global and project scope: `~/.blade/config.json` or `.blade/config.json`.
+See docs for the full schema.
 
-```bash
-mkdir -p ~/.blade
-cat > ~/.blade/config.json << 'EOF'
+```json
 {
   "provider": "openai-compatible",
-  "apiKey": "your-api-key",
+  "apiKey": "${BLADE_API_KEY}",
   "baseUrl": "https://api.openai.com/v1",
-  "model": "gpt-4"
+  "model": "gpt-4o-mini"
 }
-EOF
-```
-
-Supports environment variable interpolation: `"apiKey": "${BLADE_API_KEY}"`
-
-### Get API Keys
-
-- **Qwen**: [DashScope Console](https://dashscope.console.aliyun.com/apiKey)
-- **VolcEngine**: [Volcano Ark Console](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey)
-- **OpenAI**: [OpenAI Platform](https://platform.openai.com/api-keys)
-
----
-
-## 💬 Usage Examples
-
-```bash
-# Smart tool invocation
-blade "List all TypeScript files"
-blade "Find code containing TODO"
-blade "Review code in src/utils"
-
-# Session management
-blade --session-id "my-project" "Start new project"
-blade --resume <id>                # Resume session
-blade --resume <id> --fork-session # Fork session
-
-# Security control
-blade --allowed-tools "Read,Grep" "Read-only operations"
-blade --permission-mode plan "Plan only, no execution"
-blade --yolo "Auto-approve all operations"
 ```
 
 ---
 
-## 📚 Command Reference
+## 🧰 CLI At a Glance
 
-### Main Commands
+**Common Commands**
 
-| Command | Description |
-|---------|-------------|
-| `blade` | Start interactive assistant |
-| `blade config` | Configuration management |
-| `blade mcp` | MCP server management |
-| `blade doctor` | System health check |
-| `blade update` | Check for updates |
+- `blade` start interactive UI
+- `blade mcp` manage MCP servers
+- `blade doctor` environment check
+- `blade update` check for updates
+- `blade install` install a specific version (experimental)
 
-### Common Options
+**Common Options**
 
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--print` | `-p` | Print response and exit |
-| `--continue` | `-c` | Continue recent session |
-| `--resume <id>` | `-r` | Resume specific session |
-| `--yolo` | | Auto-approve all operations |
-
-### Slash Commands
-
-Use in interactive mode: `/init` `/help` `/clear` `/compact` `/context` `/agents` `/permissions` `/mcp` `/resume` `/theme` `/model`
+- `--print/-p` print mode (pipe-friendly)
+- `--output-format` output: text/json/stream-json
+- `--permission-mode` permission mode
+- `--resume/-r` resume session / `--session-id` set session
 
 ---
 
 ## 📖 Documentation
 
-- **[User Docs](https://echovic.github.io/blade-doc/#/)** - Installation, configuration, usage guides
-- **[Developer Docs](docs/development/README.md)** - Architecture, implementation details
-- **[Contributing Guide](CONTRIBUTING.md)** - Open source contribution
+- **[User Docs](https://echovic.github.io/blade-doc/#/)**
+- **[Docs entry in repo](docs/README.md)**
+- **[Contributing Guide](CONTRIBUTING.md)**
 
 ---
 
 ## 🤝 Contributing
-
-Contributions welcome! See [Contributing Guide](CONTRIBUTING.md).
 
 ```bash
 git clone https://github.com/echoVic/blade-code.git
@@ -151,20 +99,15 @@ cd blade-code && pnpm install && pnpm dev
 
 ## 💬 Community
 
-Add WeChat **VIc-Forever** with note "Blade" to join the group.
-
----
-
-## 💬 Community
-
-Add assistant on WeChat **VIc-Forever**, remark "Blade" to join the group.
+Add WeChat **VIc-Forever**, remark "Blade" to join the group.
 
 ---
 
 ## 🔗 Related Resources
 
 - [NPM Package](https://www.npmjs.com/package/blade-code)
-- [Report Issues](https://github.com/echoVic/blade-doc/issues)
+- [Discord Community](https://discord.gg/utXDVcv6) - Join our Discord server
+- [Report Issues](https://github.com/echoVic/blade-code/issues)
 
 ---
 

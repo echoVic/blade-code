@@ -14,6 +14,7 @@
 - ⚡ Skills & Hooks：动态 Prompt 和工具钩子
 
 [GitHub](https://github.com/echoVic/blade-code)
+[官网](https://echovic.github.io/blade-code/#/)
 [快速开始](getting-started/quick-start.md)
 
 <!-- 背景色 -->

@@ -28,4 +28,5 @@
 * [更新日志](changelog.md)
 
 * 其他
+  * [官网](https://echovic.github.io/blade-code/#/)
   * [GitHub](https://github.com/echoVic/blade-code)
