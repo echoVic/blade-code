@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.1.2] - 2026-01-12
+
+### 🐛 问题修复
+
+- 更新 changelog 文件路径并移除重复的同步逻辑 (624eb65)
+
+
 ## [0.1.1] - 2026-01-12
 
 ### ✨ 新功能
