@@ -50,9 +50,16 @@ function initializeStoreState(config: RuntimeConfig): void {
 
   // 检查是否已存在内置模型（通过固定 ID 判断）
   const builtinModelId = getBuiltinModelId();
-  const hasBuiltinModel = config.models.some((m) => m.id === builtinModelId);
+  const existingBuiltinIndex = config.models.findIndex((m) => m.id === builtinModelId);
 
-  if (!hasBuiltinModel) {
+  if (existingBuiltinIndex >= 0) {
+    // 更新已存在的内置模型配置（确保使用最新的 baseUrl 和其他配置）
+    config.models[existingBuiltinIndex] = builtinModel;
+
+    if (config.debug) {
+      console.log('[Debug] 已更新内置免费模型配置');
+    }
+  } else {
     // 将内置模型添加到列表开头
     config.models.unshift(builtinModel);
 
