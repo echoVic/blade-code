@@ -55,12 +55,98 @@ const PINO_LEVELS: Record<LogLevel, string> = {
 };
 
 /**
- * 获取或创建日志文件路径
+ * 优雅关闭日志系统
+ * 在应用退出前调用，确保所有日志都已写入
  */
-async function ensureLogDirectory(): Promise<string> {
-  const logDir = path.join(os.homedir(), '.blade', 'logs');
-  await fs.mkdir(logDir, { recursive: true });
-  return path.join(logDir, 'blade.log');
+export async function shutdownLogger(): Promise<void> {
+  if (pinoInstance) {
+    try {
+      // Pino 的 flush 方法是同步的，但我们包装成 Promise 以便统一处理
+      if (typeof pinoInstance.flush === 'function') {
+        pinoInstance.flush();
+      }
+      // 给一点时间让 Worker 线程完成写入
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } catch (error) {
+      // 忽略关闭错误，避免影响退出流程
+      console.error('[Logger] 关闭日志系统时出错:', error);
+    }
+  }
+  pinoInstance = null;
+  pinoInitPromise = null;
+}
+
+/**
+ * 当前 session ID（由外部设置）
+ */
+let currentSessionId: string | null = null;
+
+/**
+ * 设置当前 session ID（用于日志文件命名）
+ * 应该在 session 初始化时调用
+ */
+export function setLoggerSessionId(sessionId: string): void {
+  // 如果 session ID 变化，重置 Pino 实例以使用新的日志文件
+  if (currentSessionId !== sessionId) {
+    currentSessionId = sessionId;
+    resetPinoInstance();
+  }
+}
+
+/**
+ * 获取或创建日志文件路径
+ * 每个 session 使用独立的日志文件
+ */
+async function ensureLogDirectory(): Promise<string | null> {
+  try {
+    const logDir = path.join(os.homedir(), '.blade', 'logs');
+    await fs.mkdir(logDir, { recursive: true });
+
+    // 清理旧日志（保留最近 30 天）
+    await cleanOldLogs(logDir, 30);
+
+    // 使用 session ID 作为日志文件名
+    const sessionId = currentSessionId || 'default';
+    const logFileName = `blade-${sessionId}.log`;
+    return path.join(logDir, logFileName);
+  } catch (error) {
+    console.error('[Logger] 无法创建日志目录:', error);
+    return null; // 降级：不使用文件日志
+  }
+}
+
+/**
+ * 清理旧日志文件
+ * @param logDir 日志目录
+ * @param maxAgeDays 最大保留天数
+ */
+async function cleanOldLogs(logDir: string, maxAgeDays: number): Promise<void> {
+  try {
+    const files = await fs.readdir(logDir);
+    const now = Date.now();
+    const maxAge = maxAgeDays * 24 * 60 * 60 * 1000;
+
+    for (const file of files) {
+      // 只清理 blade-*.log 文件
+      if (!file.startsWith('blade-') || !file.endsWith('.log')) {
+        continue;
+      }
+
+      const filePath = path.join(logDir, file);
+      try {
+        const stat = await fs.stat(filePath);
+        if (now - stat.mtimeMs > maxAge) {
+          await fs.unlink(filePath);
+          console.error(`[Logger] 已清理旧日志: ${file}`);
+        }
+      } catch (_error) {
+        // 忽略单个文件的错误
+      }
+    }
+  } catch (error) {
+    // 清理失败不影响日志功能
+    console.error('[Logger] 清理旧日志失败:', error);
+  }
 }
 
 /**
@@ -68,9 +154,9 @@ async function ensureLogDirectory(): Promise<string> {
  * 注意：只用于文件日志，终端输出由 Logger.log() 手动控制
  */
 let pinoInstance: PinoLogger | null = null;
-let pinoInitPromise: Promise<PinoLogger> | null = null;
+let pinoInitPromise: Promise<PinoLogger | null> | null = null;
 
-async function getPinoInstance(): Promise<PinoLogger> {
+async function getPinoInstance(): Promise<PinoLogger | null> {
   // 已有实例直接返回
   if (pinoInstance) {
     return pinoInstance;
@@ -82,25 +168,44 @@ async function getPinoInstance(): Promise<PinoLogger> {
   }
 
   pinoInitPromise = (async () => {
-    const logFilePath = await ensureLogDirectory();
+    try {
+      const logFilePath = await ensureLogDirectory();
 
-    // 只配置文件传输（始终记录 JSON 格式日志）
-    // 终端输出由 Logger.log() 手动控制（应用分类过滤）
-    pinoInstance = pino({
-      level: 'debug',
-      transport: {
-        target: 'pino/file',
-        options: { destination: logFilePath },
-      },
-    });
+      // 如果日志目录创建失败，降级为只使用终端输出
+      if (!logFilePath) {
+        console.warn('[Logger] 文件日志已禁用（目录创建失败）');
+        return null;
+      }
 
-    return pinoInstance;
+      // 只配置文件传输（始终记录 JSON 格式日志）
+      // 终端输出由 Logger.log() 手动控制（应用分类过滤）
+      pinoInstance = pino({
+        level: 'debug',
+        transport: {
+          target: 'pino/file',
+          options: { destination: logFilePath },
+        },
+      });
+
+      return pinoInstance;
+    } catch (error) {
+      console.error('[Logger] Pino 初始化失败:', error);
+      return null; // 降级：只使用 console 输出
+    }
   })();
 
   return pinoInitPromise;
 }
 
 function resetPinoInstance(): void {
+  // 先关闭旧的 Pino 实例
+  if (pinoInstance && typeof pinoInstance.flush === 'function') {
+    try {
+      pinoInstance.flush();
+    } catch (_error) {
+      // 忽略关闭错误
+    }
+  }
   pinoInstance = null;
   pinoInitPromise = null;
 }
@@ -142,8 +247,10 @@ export class Logger {
   private async initPino(): Promise<void> {
     try {
       const basePino = await getPinoInstance();
-      // 创建 child logger 用于分类
-      this.pinoLogger = basePino.child({ category: this.category });
+      // 创建 child logger 用于分类（如果 basePino 为 null，则不使用文件日志）
+      if (basePino) {
+        this.pinoLogger = basePino.child({ category: this.category });
+      }
     } catch (error) {
       console.error('[Logger] Failed to initialize pino:', error);
     }

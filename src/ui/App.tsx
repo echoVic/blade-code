@@ -10,6 +10,7 @@ import {
   type RuntimeConfig,
 } from '../config/index.js';
 import { HookManager } from '../hooks/HookManager.js';
+import { setLoggerSessionId } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { getPluginRegistry, integrateAllPlugins } from '../plugins/index.js';
 import { registerCleanup } from '../services/GracefulShutdown.js';
@@ -141,10 +142,13 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
         console.log('✓ Hooks 系统已启用');
       }
 
+      // 获取当前 session ID 并设置到日志系统（每个 session 使用独立的日志文件）
+      const state = getState();
+      const sessionId = state.session.sessionId;
+      setLoggerSessionId(sessionId);
+
       // 执行 SessionStart hooks
       if (hookManager.isEnabled()) {
-        const state = getState();
-        const sessionId = state.session.sessionId;
         const permissionMode =
           state.config.config?.permissionMode || PermissionMode.DEFAULT;
         const isResume = !!props.resume;

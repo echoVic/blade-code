@@ -12,7 +12,7 @@
 import { PermissionMode } from '../config/types.js';
 import { HookManager } from '../hooks/HookManager.js';
 import type { SessionEndInput } from '../hooks/types/HookTypes.js';
-import { createLogger, LogCategory } from '../logging/Logger.js';
+import { createLogger, LogCategory, shutdownLogger } from '../logging/Logger.js';
 import { getState } from '../store/vanilla.js';
 
 /**
@@ -183,6 +183,13 @@ class GracefulShutdownManager {
 
     logger.info(`[GracefulShutdown] 开始优雅退出 (原因: ${reason})`);
 
+    // 先关闭日志系统的 Worker 线程，避免后续清理过程中的日志写入导致 "worker has exited" 错误
+    try {
+      await shutdownLogger();
+    } catch (_error) {
+      // 忽略日志关闭错误
+    }
+
     // 执行 SessionEnd hooks
     try {
       const hookManager = HookManager.getInstance();
@@ -200,7 +207,7 @@ class GracefulShutdownManager {
       }
     } catch (error) {
       // SessionEnd hooks 失败不应阻止退出
-      logger.debug('[GracefulShutdown] SessionEnd hooks 执行失败:', error);
+      console.error('[GracefulShutdown] SessionEnd hooks 执行失败:', error);
     }
 
     // 设置超时保护，防止清理函数卡住
@@ -217,7 +224,7 @@ class GracefulShutdownManager {
 
       await Promise.race([cleanupPromise, timeoutPromise]);
 
-      logger.info('[GracefulShutdown] 所有清理函数执行完成');
+      console.error('[GracefulShutdown] 所有清理函数执行完成');
     } catch (error) {
       console.error('[GracefulShutdown] 清理过程中发生错误:', error);
     } finally {
