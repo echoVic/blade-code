@@ -78,7 +78,7 @@ export class SkillInstaller {
       logger.info(`Installing official skill: ${skillName}...`);
 
       // 确保目录存在
-      await fs.mkdir(this.skillsDir, { recursive: true });
+      await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
 
       // 使用 git clone --depth 1 --filter 克隆指定目录
       // 方法：克隆整个仓库（浅克隆），然后只复制需要的目录
@@ -134,7 +134,7 @@ export class SkillInstaller {
    */
   async ensureDefaultSkillsInstalled(): Promise<void> {
     // 确保目录存在
-    await fs.mkdir(this.skillsDir, { recursive: true });
+    await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
 
     for (const skillName of OFFICIAL_SKILLS_REPO.defaultSkills) {
       const installed = await this.isInstalled(skillName);
@@ -161,7 +161,7 @@ export class SkillInstaller {
       }
 
       // 确保目录存在
-      await fs.mkdir(this.skillsDir, { recursive: true });
+      await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
 
       // 克隆整个仓库
       logger.info('Cloning official skills repository...');

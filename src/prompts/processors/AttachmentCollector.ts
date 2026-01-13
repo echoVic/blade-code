@@ -8,6 +8,7 @@ import fg from 'fast-glob';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { splitPath } from '../../utils/pathHelpers.js';
 import { PathSecurity } from '../../utils/pathSecurity.js';
 import { AtMentionParser } from './AtMentionParser.js';
 import type { AtMention, Attachment, CollectorOptions, LineRange } from './types.js';
@@ -300,7 +301,7 @@ export class AttachmentCollector {
     const tree: FileTree = new Map<string, FileTreeEntry>();
 
     for (const file of files) {
-      const parts = file.split('/');
+      const parts = splitPath(file);
       let current: FileTree = tree;
 
       for (let i = 0; i < parts.length; i++) {

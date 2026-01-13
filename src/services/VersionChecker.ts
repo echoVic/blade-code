@@ -108,7 +108,7 @@ async function readCache(): Promise<VersionCache | null> {
  */
 async function writeCache(cache: VersionCache): Promise<void> {
   try {
-    await fs.mkdir(CACHE_DIR, { recursive: true });
+    await fs.mkdir(CACHE_DIR, { recursive: true, mode: 0o755 });
     await fs.writeFile(CACHE_FILE, JSON.stringify(cache, null, 2));
   } catch {
     // 静默失败

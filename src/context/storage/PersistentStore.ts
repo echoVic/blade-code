@@ -41,7 +41,7 @@ export class PersistentStore {
   async initialize(): Promise<void> {
     try {
       const storagePath = getProjectStoragePath(this.projectPath);
-      await fs.mkdir(storagePath, { recursive: true });
+      await fs.mkdir(storagePath, { recursive: true, mode: 0o755 });
       console.log(`[PersistentStore] 初始化存储目录: ${storagePath}`);
     } catch (error) {
       console.warn('[PersistentStore] 无法创建持久化存储目录:', error);
@@ -498,7 +498,7 @@ export class PersistentStore {
       const storagePath = getProjectStoragePath(this.projectPath);
 
       // 尝试创建目录
-      await fs.mkdir(storagePath, { recursive: true });
+      await fs.mkdir(storagePath, { recursive: true, mode: 0o755 });
 
       // 尝试写入测试文件
       const testFile = path.join(storagePath, '.health-check');

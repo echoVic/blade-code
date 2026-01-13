@@ -3,6 +3,7 @@
  * 用于生成工具调用的摘要和判断是否显示详细内容
  */
 
+import { basename } from 'node:path';
 import { isEditMetadata, isGlobMetadata } from '../../tools/types/index.js';
 
 /**
@@ -16,17 +17,17 @@ export function formatToolCallSummary(
   switch (toolName) {
     case 'Write': {
       const filePath = params.file_path as string;
-      const fileName = filePath?.split('/').pop() || 'file';
+      const fileName = filePath ? basename(filePath) : 'file';
       return `📝 Writing ${fileName}`;
     }
     case 'Edit': {
       const filePath = params.file_path as string;
-      const fileName = filePath?.split('/').pop() || 'file';
+      const fileName = filePath ? basename(filePath) : 'file';
       return `✏️ Editing ${fileName}`;
     }
     case 'Read': {
       const filePath = params.file_path as string;
-      const fileName = filePath?.split('/').pop() || 'file';
+      const fileName = filePath ? basename(filePath) : 'file';
       return `📖 Reading ${fileName}`;
     }
     case 'Bash': {
@@ -48,7 +49,7 @@ export function formatToolCallSummary(
       const truncatedPattern =
         pattern && pattern.length > 30 ? pattern.substring(0, 30) + '...' : pattern;
       if (path) {
-        const pathName = path.split('/').pop() || path;
+        const pathName = basename(path);
         return `🔎 Searching "${truncatedPattern}" in ${pathName}`;
       }
       return `🔎 Searching "${truncatedPattern}"`;
@@ -77,7 +78,7 @@ export function formatToolCallSummary(
     }
     case 'UndoEdit': {
       const filePath = params.file_path as string;
-      const fileName = filePath?.split('/').pop() || 'file';
+      const fileName = filePath ? basename(filePath) : 'file';
       return `↩️ Undoing changes to ${fileName}`;
     }
     case 'Skill': {
@@ -95,12 +96,12 @@ export function formatToolCallSummary(
     case 'LSP': {
       const operation = params.operation as string;
       const filePath = params.filePath as string;
-      const fileName = filePath?.split('/').pop() || 'file';
+      const fileName = filePath ? basename(filePath) : 'file';
       return `🔗 LSP ${operation} in ${fileName}`;
     }
     case 'NotebookEdit': {
       const notebookPath = params.notebook_path as string;
-      const fileName = notebookPath?.split('/').pop() || 'notebook';
+      const fileName = notebookPath ? basename(notebookPath) : 'notebook';
       return `📓 Editing notebook: ${fileName}`;
     }
     // Spec Mode Tools
@@ -219,7 +220,7 @@ export function generateToolDetail(
       if (!Array.isArray(matches) || !matches.length) return null;
       const maxShow = 5;
       const lines = matches.slice(0, maxShow).map((m) => {
-        const fileName = m.file_path.split('/').pop() || m.file_path;
+        const fileName = basename(m.file_path);
         if (m.line_number) {
           return `${fileName}:${m.line_number}`;
         }

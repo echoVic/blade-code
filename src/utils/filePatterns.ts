@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import fg from 'fast-glob';
 import { LRUCache } from 'lru-cache';
 import picomatch from 'picomatch';
+import { splitPath } from './pathHelpers.js';
 
 export const DEFAULT_EXCLUDE_DIRS = [
   'node_modules',
@@ -109,7 +110,8 @@ async function collectGitignoreRulesOrderedAsync(
     unique: true,
     ignore: scanIgnore,
   });
-  files.sort((a, b) => a.split('/').length - b.split('/').length);
+  // 按路径深度排序（跨平台）
+  files.sort((a, b) => splitPath(a).length - splitPath(b).length);
   const rules: Rule[] = [];
   for (const rel of files) {
     const dirRaw = dirname(rel).replace(/\\/g, '/');

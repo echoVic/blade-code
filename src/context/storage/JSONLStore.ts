@@ -22,7 +22,7 @@ export class JSONLStore {
   async append(entry: BladeJSONLEntry): Promise<void> {
     try {
       // 确保父目录存在
-      await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+      await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o755 });
 
       // 将对象序列化为 JSON 字符串并追加换行符
       const line = JSON.stringify(entry) + '\n';
@@ -42,7 +42,7 @@ export class JSONLStore {
   async appendBatch(entries: BladeJSONLEntry[]): Promise<void> {
     try {
       // 确保父目录存在
-      await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+      await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o755 });
 
       // 将所有条目序列化为一个字符串
       const lines = entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n';

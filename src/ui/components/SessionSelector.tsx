@@ -5,6 +5,7 @@
 
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
+import { basename } from 'node:path';
 import React, { useEffect, useMemo, useState } from 'react';
 import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
 import { useCurrentFocus } from '../../store/selectors/index.js';
@@ -43,8 +44,7 @@ function formatTimestamp(timestamp: string): string {
  * 格式化项目路径（显示项目名称）
  */
 function formatProjectPath(projectPath: string): string {
-  const parts = projectPath.split('/');
-  return parts[parts.length - 1] || projectPath;
+  return basename(projectPath);
 }
 
 /**

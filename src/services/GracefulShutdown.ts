@@ -223,8 +223,6 @@ class GracefulShutdownManager {
       const cleanupPromise = this.runCleanupHandlers();
 
       await Promise.race([cleanupPromise, timeoutPromise]);
-
-      console.error('[GracefulShutdown] 所有清理函数执行完成');
     } catch (error) {
       console.error('[GracefulShutdown] 清理过程中发生错误:', error);
     } finally {

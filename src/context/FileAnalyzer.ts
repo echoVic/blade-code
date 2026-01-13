@@ -4,6 +4,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { Message } from '../services/ChatServiceInterface.js';
 
@@ -306,8 +307,7 @@ export class FileAnalyzer {
     }
 
     // 必须有文件扩展名
-    const parts = path.split('/');
-    const filename = parts[parts.length - 1];
+    const filename = basename(path);
     if (!filename.includes('.')) {
       return false;
     }

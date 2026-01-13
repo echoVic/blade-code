@@ -78,7 +78,7 @@ export class PluginInstaller {
       }
 
       // Ensure plugins directory exists
-      await fs.mkdir(this.userPluginsDir, { recursive: true });
+      await fs.mkdir(this.userPluginsDir, { recursive: true, mode: 0o755 });
 
       const pluginPath = path.join(this.userPluginsDir, pluginName);
 

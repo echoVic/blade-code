@@ -92,7 +92,7 @@ export class SpecFileManager {
    */
   async initializeDirectories(): Promise<void> {
     // 只创建 changes 目录，其他目录在使用时按需创建
-    await fs.mkdir(this.getChangesDir(), { recursive: true });
+    await fs.mkdir(this.getChangesDir(), { recursive: true, mode: 0o755 });
   }
 
   /**
@@ -100,10 +100,10 @@ export class SpecFileManager {
    */
   async createChangeDir(featureName: string): Promise<string> {
     const changePath = this.getChangePath(featureName);
-    await fs.mkdir(changePath, { recursive: true });
+    await fs.mkdir(changePath, { recursive: true, mode: 0o755 });
 
     // 创建 specs delta 子目录
-    await fs.mkdir(path.join(changePath, SPEC_DIRS.SPEC_DELTA), { recursive: true });
+    await fs.mkdir(path.join(changePath, SPEC_DIRS.SPEC_DELTA), { recursive: true, mode: 0o755 });
 
     return changePath;
   }
@@ -131,7 +131,7 @@ export class SpecFileManager {
    */
   async writeFile(filePath: string, content: string): Promise<void> {
     const dir = path.dirname(filePath);
-    await fs.mkdir(dir, { recursive: true });
+    await fs.mkdir(dir, { recursive: true, mode: 0o755 });
     await fs.writeFile(filePath, content, 'utf-8');
   }
 
@@ -352,7 +352,7 @@ export class SpecFileManager {
     const targetPath = path.join(this.getArchiveDir(), featureName);
 
     // 确保目标目录存在
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.mkdir(path.dirname(targetPath), { recursive: true, mode: 0o755 });
 
     // 移动目录
     await fs.rename(sourcePath, targetPath);

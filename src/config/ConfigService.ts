@@ -674,7 +674,7 @@ export class ConfigService {
     // 使用 Mutex 确保串行执行
     await mutex.runExclusive(async () => {
       // 1. 确保目录存在
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o755 });
 
       // 2. 读取当前磁盘内容（Read）
       let existingConfig: Record<string, unknown> = {};
@@ -702,7 +702,7 @@ export class ConfigService {
     updates: Record<string, unknown>
   ): Promise<void> {
     // 1. 确保目录存在
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o755 });
 
     // 2. 读取当前磁盘内容（Read）
     let existingConfig: Record<string, unknown> = {};

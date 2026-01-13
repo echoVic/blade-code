@@ -156,7 +156,7 @@ export class TodoManager {
    */
   private async saveTodos(): Promise<void> {
     try {
-      await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+      await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o755 });
       await fs.writeFile(this.filePath, JSON.stringify(this.todos, null, 2), 'utf-8');
     } catch (error) {
       console.error('保存 TODO 列表失败:', error);

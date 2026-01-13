@@ -16,7 +16,7 @@ let initialized = false;
 function ensureLogFile(): void {
   if (initialized) return;
   const logDir = path.dirname(LOG_FILE);
-  mkdirSync(logDir, { recursive: true });
+  mkdirSync(logDir, { recursive: true, mode: 0o755 });
   writeFileSync(
     LOG_FILE,
     `=== Stream Debug Log Started: ${new Date().toISOString()} ===\n`

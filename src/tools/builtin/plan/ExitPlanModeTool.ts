@@ -69,7 +69,7 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
     if (planContent && context.sessionId) {
       try {
         const planDir = path.join(homedir(), '.blade', 'plans');
-        await fs.mkdir(planDir, { recursive: true });
+        await fs.mkdir(planDir, { recursive: true, mode: 0o755 });
         const planPath = path.join(planDir, `plan_${context.sessionId}.md`);
         await fs.writeFile(planPath, planContent, 'utf-8');
       } catch (error) {

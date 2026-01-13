@@ -98,7 +98,7 @@ export class AgentSessionStore {
    */
   private ensureDirectory(): void {
     if (!fs.existsSync(this.sessionsDir)) {
-      fs.mkdirSync(this.sessionsDir, { recursive: true });
+      fs.mkdirSync(this.sessionsDir, { recursive: true, mode: 0o755 });
     }
   }
 
@@ -294,5 +294,3 @@ export class AgentSessionStore {
     this.cache.clear();
   }
 }
-
-

@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs';
-import { dirname, extname } from 'path';
+import { basename, dirname, extname } from 'path';
 import { z } from 'zod';
 import { isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
@@ -70,7 +70,7 @@ export const writeTool = createTool({
       if (create_directories) {
         const dir = dirname(file_path);
         try {
-          await fsService.mkdir(dir, { recursive: true });
+          await fsService.mkdir(dir, { recursive: true, mode: 0o755 });
         } catch (error) {
           const nodeError = error as NodeError;
           if (nodeError.code !== 'EEXIST') {
@@ -197,7 +197,7 @@ export const writeTool = createTool({
 
       // 计算写入的行数（仅对文本文件）
       const lineCount = encoding === 'utf8' ? content.split('\n').length : 0;
-      const fileName = file_path.split('/').pop() || file_path;
+      const fileName = basename(file_path);
 
       // 生成 diff（如果是覆盖现有文本文件）
       let diffSnippet: string | null = null;

@@ -1,4 +1,4 @@
-import { extname } from 'path';
+import { basename, extname } from 'path';
 import { z } from 'zod';
 import { isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
@@ -325,7 +325,7 @@ export const editTool = createTool({
       );
 
       // 生成 summary 用于流式显示
-      const fileName = file_path.split('/').pop() || file_path;
+      const fileName = basename(file_path);
       const summary =
         replacedCount === 1
           ? `替换 1 处匹配到 ${fileName}`

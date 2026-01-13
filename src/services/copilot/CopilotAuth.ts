@@ -373,7 +373,7 @@ export class CopilotAuth {
    */
   private async saveToken(token: CopilotToken): Promise<void> {
     const configDir = getBladeConfigDir();
-    await fs.mkdir(configDir, { recursive: true });
+    await fs.mkdir(configDir, { recursive: true, mode: 0o755 });
 
     const tokenPath = path.join(configDir, TOKEN_FILE_NAME);
     await fs.writeFile(tokenPath, JSON.stringify(token, null, 2), { mode: 0o600 });

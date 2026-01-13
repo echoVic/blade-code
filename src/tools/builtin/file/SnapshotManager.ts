@@ -65,7 +65,7 @@ export class SnapshotManager {
     }
 
     try {
-      await fs.mkdir(this.snapshotDir, { recursive: true });
+      await fs.mkdir(this.snapshotDir, { recursive: true, mode: 0o755 });
       console.log(`[SnapshotManager] 初始化快照目录: ${this.snapshotDir}`);
     } catch (error) {
       console.warn('[SnapshotManager] 创建快照目录失败:', error);

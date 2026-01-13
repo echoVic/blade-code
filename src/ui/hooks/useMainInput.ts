@@ -12,6 +12,7 @@ import {
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
+import { endsWithSeparator } from '../../utils/pathHelpers.js';
 import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
 import type { HistoryEntry, PasteMappings } from './useCommandHistory.js';
 import { useCtrlCHandler } from './useCtrlCHandler.js';
@@ -90,7 +91,7 @@ export const useMainInput = (
       const fileSuggestions: CommandSuggestion[] = atCompletion.suggestions.map(
         (path) => ({
           command: path,
-          description: path.endsWith('/') ? `Directory: ${path}` : `File: ${path}`,
+          description: endsWithSeparator(path) ? `Directory: ${path}` : `File: ${path}`,
           matchScore: 1,
         })
       );

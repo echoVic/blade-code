@@ -100,7 +100,28 @@ export function setLoggerSessionId(sessionId: string): void {
 async function ensureLogDirectory(): Promise<string | null> {
   try {
     const logDir = path.join(os.homedir(), '.blade', 'logs');
-    await fs.mkdir(logDir, { recursive: true });
+    await fs.mkdir(logDir, { recursive: true, mode: 0o755 });
+
+    // 检查目录权限（检测是否属于 root）
+    try {
+      const stats = await fs.stat(logDir);
+      if (stats.uid === 0 && process.getuid && process.getuid() !== 0) {
+        // 目录属于 root，但当前不是 root 用户
+        console.error('');
+        console.error('❌ 权限错误：~/.blade/logs 目录属于 root 用户');
+        console.error('');
+        console.error('这通常是因为您曾经使用 sudo 运行过 blade。');
+        console.error('');
+        console.error('解决方法：');
+        console.error('  sudo chown -R $USER:$USER ~/.blade/');
+        console.error('');
+        console.error('然后重新运行 blade（不要使用 sudo）');
+        console.error('');
+        return null; // 降级：不使用文件日志
+      }
+    } catch (_statError) {
+      // 忽略 stat 错误，继续尝试创建日志文件
+    }
 
     // 清理旧日志（保留最近 30 天）
     await cleanOldLogs(logDir, 30);
