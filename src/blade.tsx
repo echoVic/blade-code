@@ -19,6 +19,7 @@ import { installCommands } from './commands/install.js';
 import { mcpCommands } from './commands/mcp.js';
 import { handlePrintMode } from './commands/print.js';
 import { updateCommands } from './commands/update.js';
+import { webCommands } from './commands/web.js';
 import { Logger } from './logging/Logger.js';
 import { initializeGracefulShutdown } from './services/GracefulShutdown.js';
 import { checkVersionOnStartup } from './services/VersionChecker.js';
@@ -96,6 +97,7 @@ export async function main() {
     .command(doctorCommands)
     .command(updateCommands)
     .command(installCommands)
+    .command(webCommands)
 
     // 自动生成补全（隐藏，避免干扰普通用户）
     .completion('completion', false)
