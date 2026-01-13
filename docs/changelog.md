@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.1.4] - 2026-01-13
+
+### 🐛 问题修复
+
+- 修复内置模型更新逻辑 (36dd8c1)
+
+
 ## [0.1.3] - 2026-01-13
 
 ### ✨ 新功能
