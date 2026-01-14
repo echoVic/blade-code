@@ -126,6 +126,12 @@ const PROVIDER_CONFIG: Record<ProviderType, ProviderInfo> = {
     description: '微软 Azure OpenAI 服务',
     isOAuth: false,
   },
+  'blade-claude': {
+    icon: '🗡️',
+    name: 'Blade Claude (内置)',
+    description: 'Blade 内置 Claude 服务 (免费额度)',
+    isOAuth: false,
+  },
 };
 
 /**
