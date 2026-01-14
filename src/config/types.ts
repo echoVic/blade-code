@@ -13,6 +13,7 @@
  * - azure-openai: Azure OpenAI Service
  * - antigravity: Google Antigravity（OAuth 认证，统一网关访问 Claude/Gemini/GPT-OSS）
  * - copilot: GitHub Copilot（OAuth 认证，访问 GPT-4o/Claude/Gemini 等模型）
+ * - blade-claude: Blade 内置 Claude（通过私有包访问）
  */
 export type ProviderType =
   | 'openai-compatible'
@@ -20,7 +21,8 @@ export type ProviderType =
   | 'gemini'
   | 'azure-openai'
   | 'antigravity'
-  | 'copilot';
+  | 'copilot'
+  | 'blade-claude';
 
 /**
  * 权限模式枚举

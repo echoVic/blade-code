@@ -14,6 +14,7 @@ import type { MessageRole } from '../store/types.js';
 import { AnthropicChatService } from './AnthropicChatService.js';
 import { AntigravityChatService } from './AntigravityChatService.js';
 import { AzureOpenAIChatService } from './AzureOpenAIChatService.js';
+import { BladeClaudeChatService } from './BladeClaudeChatService.js';
 import { resolveBuiltinApiKey } from './BuiltinKeyService.js';
 import { CopilotChatService } from './CopilotChatService.js';
 import { GeminiChatService } from './GeminiChatService.js';
@@ -205,6 +206,9 @@ function createChatServiceInternal(config: ChatConfig): IChatService {
 
     case 'copilot':
       return new CopilotChatService(config);
+
+    case 'blade-claude':
+      return new BladeClaudeChatService(config);
 
     default:
       logger.warn(`⚠️  未知的 provider: ${config.provider}, 回退到 openai-compatible`);

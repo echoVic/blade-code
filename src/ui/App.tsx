@@ -2,7 +2,7 @@ import { useMemoizedFn } from 'ahooks';
 import React, { useEffect, useState } from 'react';
 import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
 import type { GlobalOptions } from '../cli/types.js';
-import { getBuiltinModelId, getDefaultBuiltinModel } from '../config/builtinModels.js';
+import { getBuiltinModelId, getBuiltinClaudeModelId, getAllBuiltinModels } from '../config/builtinModels.js';
 import {
   DEFAULT_CONFIG,
   mergeRuntimeConfig,
@@ -42,35 +42,36 @@ export interface AppProps extends GlobalOptions {
  * 确保内置免费模型始终存在于模型列表中
  */
 function initializeStoreState(config: RuntimeConfig): void {
-  const builtinModel = getDefaultBuiltinModel();
+  const builtinModels = getAllBuiltinModels();
 
   if (!config.models) {
     config.models = [];
   }
 
-  // 检查是否已存在内置模型（通过固定 ID 判断）
-  const builtinModelId = getBuiltinModelId();
-  const existingBuiltinIndex = config.models.findIndex((m) => m.id === builtinModelId);
+  // 添加或更新所有内置模型
+  for (const builtinModel of builtinModels) {
+    const existingIndex = config.models.findIndex((m) => m.id === builtinModel.id);
 
-  if (existingBuiltinIndex >= 0) {
-    // 更新已存在的内置模型配置（确保使用最新的 baseUrl 和其他配置）
-    config.models[existingBuiltinIndex] = builtinModel;
+    if (existingIndex >= 0) {
+      // 更新已存在的内置模型配置
+      config.models[existingIndex] = builtinModel;
 
-    if (config.debug) {
-      console.log('[Debug] 已更新内置免费模型配置');
-    }
-  } else {
-    // 将内置模型添加到列表开头
-    config.models.unshift(builtinModel);
+      if (config.debug) {
+        console.log(`[Debug] 已更新内置模型: ${builtinModel.name}`);
+      }
+    } else {
+      // 将内置模型添加到列表开头
+      config.models.unshift(builtinModel);
 
-    if (config.debug) {
-      console.log('[Debug] 已添加内置免费模型到模型列表');
+      if (config.debug) {
+        console.log(`[Debug] 已添加内置模型: ${builtinModel.name}`);
+      }
     }
   }
 
-  // 如果没有设置当前模型，使用内置模型
+  // 如果没有设置当前模型，使用第一个内置模型（GLM）
   if (!config.currentModelId) {
-    config.currentModelId = builtinModel.id;
+    config.currentModelId = getBuiltinModelId();
     console.log('✨ 已自动配置内置免费模型: GLM-4.7');
   }
 
