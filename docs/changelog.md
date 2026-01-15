@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.1.6] - 2026-01-15
+
+### 🐛 问题修复
+
+- 移除内置 Claude 模型及相关功能 (e5dfdb4)
+- add blade-claude provider to ModelConfigWizard (2976448)
+
+### 📝 文档更新
+
+- remove redundant website button from coverpage (2ef7d7c)
+
+
 ## [0.1.5] - 2026-01-14
 
 ### ✨ 新功能
