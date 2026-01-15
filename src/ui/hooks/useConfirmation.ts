@@ -1,5 +1,5 @@
 import { useMemoizedFn } from 'ahooks';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type {
   ConfirmationDetails,
   ConfirmationHandler,
@@ -25,6 +25,32 @@ export const useConfirmation = () => {
     details: null,
     resolver: null,
   });
+  const activeRef = useRef<{
+    details: ConfirmationDetails;
+    resolve: (response: ConfirmationResponse) => void;
+  } | null>(null);
+  const queueRef = useRef<
+    {
+      details: ConfirmationDetails;
+      resolve: (response: ConfirmationResponse) => void;
+    }[]
+  >([]);
+
+  const showActive = useMemoizedFn(
+    (
+      entry: {
+        details: ConfirmationDetails;
+        resolve: (response: ConfirmationResponse) => void;
+      } | null
+    ) => {
+      activeRef.current = entry;
+      setConfirmationState({
+        isVisible: Boolean(entry),
+        details: entry?.details ?? null,
+        resolver: entry?.resolve ?? null,
+      });
+    }
+  );
 
   /**
    * 显示确认对话框
@@ -32,11 +58,13 @@ export const useConfirmation = () => {
   const showConfirmation = useMemoizedFn(
     (details: ConfirmationDetails): Promise<ConfirmationResponse> => {
       return new Promise((resolve) => {
-        setConfirmationState({
-          isVisible: true,
-          details,
-          resolver: resolve,
-        });
+        const entry = { details, resolve };
+        if (!activeRef.current) {
+          showActive(entry);
+          return;
+        }
+
+        queueRef.current.push(entry);
       });
     }
   );
@@ -45,16 +73,12 @@ export const useConfirmation = () => {
    * 处理用户响应
    */
   const handleResponse = useMemoizedFn((response: ConfirmationResponse) => {
-    if (confirmationState.resolver) {
-      confirmationState.resolver(response);
+    if (activeRef.current) {
+      activeRef.current.resolve(response);
     }
 
-    // 重置状态
-    setConfirmationState({
-      isVisible: false,
-      details: null,
-      resolver: null,
-    });
+    const next = queueRef.current.shift() ?? null;
+    showActive(next);
   });
 
   /**
