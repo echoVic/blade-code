@@ -72,7 +72,6 @@ function initializeStoreState(config: RuntimeConfig): void {
   // 如果没有设置当前模型，使用第一个内置模型（GLM）
   if (!config.currentModelId) {
     config.currentModelId = getBuiltinModelId();
-    console.log('✨ 已自动配置内置免费模型: GLM-4.7');
   }
 
   // 设置配置（使用 config slice）

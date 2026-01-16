@@ -41,7 +41,7 @@ import { HooksManager } from './HooksManager.js';
 import { InputArea } from './InputArea.js';
 import { LoadingIndicator } from './LoadingIndicator.js';
 import { MessageArea } from './MessageArea.js';
-import { ModelConfigWizard } from './ModelConfigWizard.js';
+import { ModelConfigWizard } from './model-config/index.js';
 import { ModelSelector } from './ModelSelector.js';
 import { PermissionsManager } from './PermissionsManager.js';
 import { PluginsManager } from './PluginsManager.js';

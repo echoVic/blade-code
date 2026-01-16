@@ -11,6 +11,7 @@ import { isBuiltinApiKey } from '../config/builtinModels.js';
 import type { ProviderType } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { MessageRole } from '../store/types.js';
+import { getProviderHeaders } from '../ui/components/model-config/types.js';
 import { AnthropicChatService } from './AnthropicChatService.js';
 import { AntigravityChatService } from './AntigravityChatService.js';
 import { AzureOpenAIChatService } from './AzureOpenAIChatService.js';
@@ -72,6 +73,8 @@ export interface ChatConfig {
   timeout?: number;
   apiVersion?: string; // GPT OpenAI Platform 专用：API 版本（如 '2024-03-01-preview'）
   supportsThinking?: boolean; // 是否支持 thinking 模式（DeepSeek Reasoner 等）
+  customHeaders?: Record<string, string>; // Provider 特定的自定义 HTTP Headers
+  providerId?: string; // models.dev 中的 Provider ID（用于获取特定配置）
 }
 
 /**
@@ -181,6 +184,21 @@ export async function createChatServiceAsync(
     logger.info('🔑 检测到内置 API Key，正在获取...');
     const realApiKey = await resolveBuiltinApiKey(config.apiKey);
     resolvedConfig = { ...config, apiKey: realApiKey };
+  }
+
+  // 自动注入 Provider 特定的 Headers
+  if (resolvedConfig.providerId) {
+    const providerHeaders = getProviderHeaders(resolvedConfig.providerId);
+    if (Object.keys(providerHeaders).length > 0) {
+      resolvedConfig = {
+        ...resolvedConfig,
+        customHeaders: {
+          ...providerHeaders,
+          ...resolvedConfig.customHeaders, // 用户配置优先
+        },
+      };
+      logger.debug(`🔧 注入 ${resolvedConfig.providerId} 特定 headers:`, Object.keys(providerHeaders));
+    }
   }
 
   return createChatServiceInternal(resolvedConfig);

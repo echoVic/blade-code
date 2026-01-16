@@ -142,7 +142,12 @@ export class AnthropicChatService implements IChatService {
       baseURL: config.baseUrl || undefined, // Anthropic 默认使用官方 API
       timeout: config.timeout ?? 180000,
       maxRetries: 3,
+      defaultHeaders: config.customHeaders,
     });
+
+    if (config.customHeaders && Object.keys(config.customHeaders).length > 0) {
+      _logger.debug('🔧 [AnthropicChatService] Custom headers configured:', Object.keys(config.customHeaders));
+    }
 
     _logger.debug('✅ [AnthropicChatService] Initialized successfully');
   }
@@ -652,6 +657,7 @@ export class AnthropicChatService implements IChatService {
       baseURL: this.config.baseUrl || undefined,
       timeout: this.config.timeout ?? 180000,
       maxRetries: 3,
+      defaultHeaders: this.config.customHeaders,
     });
 
     _logger.debug('✅ [AnthropicChatService] Configuration updated successfully');

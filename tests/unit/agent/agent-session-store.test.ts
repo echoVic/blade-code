@@ -81,7 +81,7 @@ describe('AgentSessionStore', () => {
 
       expect(fs.mkdirSync).toHaveBeenCalledWith(
         expect.stringContaining('.blade/agents/sessions'),
-        { recursive: true }
+        expect.objectContaining({ recursive: true })
       );
     });
   });

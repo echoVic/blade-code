@@ -258,7 +258,12 @@ export class OpenAIChatService implements IChatService {
       baseURL: config.baseUrl, // OpenAI SDK 使用 baseURL
       timeout: config.timeout ?? 180000, // 180秒超时（长上下文场景需要更长时间）
       maxRetries: 3,
+      defaultHeaders: config.customHeaders,
     });
+
+    if (config.customHeaders && Object.keys(config.customHeaders).length > 0) {
+      _logger.debug('🔧 [ChatService] Custom headers configured:', Object.keys(config.customHeaders));
+    }
 
     _logger.debug('✅ [ChatService] ChatService initialized successfully');
   }
@@ -669,6 +674,7 @@ export class OpenAIChatService implements IChatService {
       baseURL: this.config.baseUrl, // OpenAI SDK 使用 baseURL
       timeout: this.config.timeout ?? 180000, // 180秒超时（长上下文场景需要更长时间）
       maxRetries: 2, // 2次重试，平衡稳定性和响应速度
+      defaultHeaders: this.config.customHeaders,
     });
 
     _logger.debug('✅ [ChatService] Configuration updated successfully');
