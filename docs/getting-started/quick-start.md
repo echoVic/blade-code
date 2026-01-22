@@ -67,6 +67,17 @@ blade "帮我分析这个项目的架构"
 
 配置完成后，使用 `/model` 命令切换模型。
 
+### 自定义 Provider
+
+如果你的 Provider 不在列表中，选择 **🔧 自定义 OpenAI Compatible**：
+
+1. 选择 "🔧 自定义 OpenAI Compatible"
+2. 输入 API Key
+3. 输入 Base URL（必填，例如 `https://api.example.com/v1`）
+4. 输入模型名称
+
+适用于任何兼容 OpenAI API 格式的服务。
+
 ## 基本交互
 
 ### 对话

@@ -35,18 +35,18 @@
 
 ### Edit
 
-按字符串或正则表达式替换文件内容。
+执行精确字符串替换。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `file_path` | string | ✅ | 文件绝对路径 |
-| `old_string` | string | | 要替换的字符串 |
-| `new_string` | string | | 替换后的字符串 |
-| `pattern` | string | | 正则表达式模式 |
-| `max_replacements` | number | | 最大替换次数 |
+| `old_string` | string | ✅ | 要替换的字符串（不能为空） |
+| `new_string` | string | ✅ | 替换后的字符串（可以为空） |
+| `replace_all` | boolean | | 是否替换所有匹配（默认仅替换第一个） |
 
 **类型**: Write  
-**特性**: 支持回滚、预览、并发文件锁
+**特性**: 支持回滚、预览、并发文件锁  
+**注意**: 使用前必须先用 Read 工具读取文件
 
 ### NotebookEdit
 
@@ -103,11 +103,11 @@
 | `command` | string | ✅ | 要执行的命令 |
 | `cwd` | string | | 工作目录 |
 | `env` | object | | 环境变量 |
-| `background` | boolean | | 后台运行 |
-| `timeout` | number | | 超时时间（毫秒） |
+| `run_in_background` | boolean | | 后台运行（适用于长时间运行的命令） |
+| `timeout` | number | | 超时时间（毫秒，默认 30000） |
 
 **类型**: Execute  
-**返回**: 后台运行时返回 `bash_id`，可用于后续查询
+**返回**: 后台运行时返回 `bash_id` 和 `shell_id`，可用于 KillShell 或 TaskOutput 查询
 
 ### KillShell
 

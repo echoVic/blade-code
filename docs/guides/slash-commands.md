@@ -24,6 +24,8 @@ Slash 命令是 Blade 的快捷操作入口，输入 `/` 触发建议，`Tab` �
 | `/resume` | - | 恢复历史会话 |
 | `/compact` | - | 手动压缩上下文 |
 | `/git` | `/g` | Git 操作 |
+| `/login` | - | 登录 OAuth 服务 |
+| `/logout` | - | 登出 OAuth 服务 |
 
 ## 命令详解
 
@@ -43,9 +45,14 @@ Slash 命令是 Blade 的快捷操作入口，输入 `/` 触发建议，`Tab` �
 模型管理命令：
 
 ```bash
-/model          # 打开模型选择器
-/model add      # 添加新模型配置
-/model remove <name>  # 删除指定模型
+/model              # 打开模型选择器（交互式切换）
+/model add          # 添加新模型配置（交互式向导）
+/model remove <名称> # 删除指定模型（按名称模糊匹配）
+```
+
+示例：
+```bash
+/model remove 千问   # 删除名称包含"千问"的模型
 ```
 
 ### /git
@@ -87,6 +94,29 @@ Git 仓库查询和 AI 辅助：
 
 ```bash
 /compact
+```
+
+### /login
+
+登录 OAuth 服务（Antigravity / Copilot）：
+
+```bash
+/login              # 默认登录 Google Antigravity
+/login copilot      # 登录 GitHub Copilot
+/login gemini       # 登录 Gemini CLI
+```
+
+支持的服务：
+- **Google Antigravity** - 通过 Google OAuth 认证，支持 Claude、Gemini 模型（需 Code Assist 订阅）
+- **GitHub Copilot** - 通过 GitHub OAuth 认证，支持 GPT、Claude、Gemini 模型（需 Copilot 订阅）
+
+### /logout
+
+登出 OAuth 服务：
+
+```bash
+/logout             # 默认登出 Google Antigravity
+/logout copilot     # 登出 GitHub Copilot
 ```
 
 ### /permissions
