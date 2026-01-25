@@ -13,6 +13,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@api": path.resolve(__dirname, "../src/api"),
     },
   },
   server: {
@@ -59,6 +60,14 @@ export default defineConfig({
         ws: true,
       },
       '/terminal': {
+        target: API_TARGET,
+        changeOrigin: true,
+      },
+      '/mcp': {
+        target: API_TARGET,
+        changeOrigin: true,
+      },
+      '/skills': {
         target: API_TARGET,
         changeOrigin: true,
       },

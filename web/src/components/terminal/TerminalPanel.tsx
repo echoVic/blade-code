@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/AppStore'
+import { useIsDark } from '@/store/SettingsStore'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
@@ -11,6 +12,7 @@ export const TerminalPanel = () => {
   const { isTerminalOpen, toggleTerminal } = useAppStore()
   const [isMinimized, setIsMinimized] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
+  const isDark = useIsDark()
   const terminalRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -60,6 +62,30 @@ export const TerminalPanel = () => {
   useEffect(() => {
     if (!isTerminalOpen || !terminalRef.current || xtermRef.current) return
 
+    const lightTheme = {
+      background: '#ffffff',
+      foreground: '#111827',
+      cursor: '#111827',
+      cursorAccent: '#ffffff',
+      selectionBackground: '#E5E7EB',
+      black: '#111827',
+      red: '#dc2626',
+      green: '#16a34a',
+      yellow: '#ca8a04',
+      blue: '#2563eb',
+      magenta: '#7c3aed',
+      cyan: '#0891b2',
+      white: '#111827',
+      brightBlack: '#6b7280',
+      brightRed: '#ef4444',
+      brightGreen: '#22c55e',
+      brightYellow: '#facc15',
+      brightBlue: '#60a5fa',
+      brightMagenta: '#a855f7',
+      brightCyan: '#22d3ee',
+      brightWhite: '#111827',
+    }
+
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
@@ -67,7 +93,7 @@ export const TerminalPanel = () => {
       fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, monospace',
       allowTransparency: true,
       scrollback: 10000,
-      theme: {
+      theme: isDark ? {
         background: '#0a0a0a',
         foreground: '#e4e4e7',
         cursor: '#e4e4e7',
@@ -89,7 +115,7 @@ export const TerminalPanel = () => {
         brightMagenta: '#c084fc',
         brightCyan: '#22d3ee',
         brightWhite: '#fafafa',
-      },
+      } : lightTheme,
     })
 
     const fitAddon = new FitAddon()
@@ -119,6 +145,55 @@ export const TerminalPanel = () => {
   }, [isTerminalOpen, connect, disconnect, sendInput])
 
   useEffect(() => {
+    if (!xtermRef.current) return
+    xtermRef.current.options.theme = isDark ? {
+      background: '#0a0a0a',
+      foreground: '#e4e4e7',
+      cursor: '#e4e4e7',
+      cursorAccent: '#0a0a0a',
+      selectionBackground: '#3f3f46',
+      black: '#18181b',
+      red: '#ef4444',
+      green: '#22c55e',
+      yellow: '#eab308',
+      blue: '#3b82f6',
+      magenta: '#a855f7',
+      cyan: '#06b6d4',
+      white: '#e4e4e7',
+      brightBlack: '#52525b',
+      brightRed: '#f87171',
+      brightGreen: '#4ade80',
+      brightYellow: '#facc15',
+      brightBlue: '#60a5fa',
+      brightMagenta: '#c084fc',
+      brightCyan: '#22d3ee',
+      brightWhite: '#fafafa',
+    } : {
+      background: '#ffffff',
+      foreground: '#111827',
+      cursor: '#111827',
+      cursorAccent: '#ffffff',
+      selectionBackground: '#E5E7EB',
+      black: '#111827',
+      red: '#dc2626',
+      green: '#16a34a',
+      yellow: '#ca8a04',
+      blue: '#2563eb',
+      magenta: '#7c3aed',
+      cyan: '#0891b2',
+      white: '#111827',
+      brightBlack: '#6b7280',
+      brightRed: '#ef4444',
+      brightGreen: '#22c55e',
+      brightYellow: '#facc15',
+      brightBlue: '#60a5fa',
+      brightMagenta: '#a855f7',
+      brightCyan: '#22d3ee',
+      brightWhite: '#111827',
+    }
+  }, [isDark])
+
+  useEffect(() => {
     if (!isTerminalOpen || isMinimized) return
 
     const handleResize = () => {
@@ -139,14 +214,14 @@ export const TerminalPanel = () => {
   return (
     <div
       className={cn(
-        'fixed bottom-0 left-0 right-0 z-40 bg-[#0a0a0a] border-t border-zinc-800 transition-all duration-200',
+        'fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-[#0a0a0a] border-t border-[#E5E7EB] dark:border-zinc-800 transition-all duration-200',
         isMinimized ? 'h-10' : 'h-72'
       )}
     >
-      <div className="flex items-center justify-between h-10 px-3 border-b border-zinc-800 bg-zinc-900/50">
+      <div className="flex items-center justify-between h-10 px-3 border-b border-[#E5E7EB] dark:border-zinc-800 bg-[#F9FAFB] dark:bg-zinc-900/50">
         <div className="flex items-center gap-2">
-          <TerminalIcon className="h-4 w-4 text-zinc-400" />
-          <span className="text-sm text-zinc-400">Terminal</span>
+          <TerminalIcon className="h-4 w-4 text-[#9CA3AF] dark:text-zinc-400" />
+          <span className="text-sm text-[#6B7280] dark:text-zinc-400">Terminal</span>
           <span
             className={cn(
               'w-2 h-2 rounded-full',
@@ -157,7 +232,7 @@ export const TerminalPanel = () => {
         <div className="flex items-center gap-1">
           <button
             onClick={() => setIsMinimized(!isMinimized)}
-            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+            className="p-1.5 rounded hover:bg-[#E5E7EB] text-[#9CA3AF] hover:text-[#111827] dark:hover:bg-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
           >
             <Minus className="h-4 w-4" />
           </button>
@@ -166,7 +241,7 @@ export const TerminalPanel = () => {
               disconnect()
               toggleTerminal()
             }}
-            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+            className="p-1.5 rounded hover:bg-[#E5E7EB] text-[#9CA3AF] hover:text-[#111827] dark:hover:bg-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
           >
             <X className="h-4 w-4" />
           </button>

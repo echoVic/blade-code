@@ -110,10 +110,13 @@ export const editTool = createTool({
           return {
             success: false,
             llmContent: `You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.`,
-            displayContent: `❌ 编辑失败：必须先使用 Read 工具读取文件\n\n请先用 Read 工具查看文件内容，再进行编辑。`,
+            displayContent: `📖 我需要先读取文件内容，然后再进行编辑。`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File not read before edit',
+            },
+            metadata: {
+              requiresRead: true,
             },
           };
         }
@@ -124,7 +127,7 @@ export const editTool = createTool({
           return {
             success: false,
             llmContent: `The file has been modified by an external program since you last read it. You must use the Read tool again to see the current content before editing.\n\nDetails: ${externalModCheck.message}`,
-            displayContent: `❌ 编辑失败：文件已被外部程序修改\n\n${externalModCheck.message}\n\n💡 请重新使用 Read 工具读取最新内容后再编辑`,
+            displayContent: `❌ 编辑失败：文件已被外部程序修改\n\n${externalModCheck.message}\n\n💡 我需要重新读取文件内容后再编辑`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File modified externally',
@@ -647,10 +650,10 @@ Common issues:
   }
 
   displayContent += `\n📄 文件内容摘录 (${excerptStartLine + 1}-${excerptEndLine} 行):\n${excerpt}\n`;
-  displayContent += `\n🔧 建议:\n`;
-  displayContent += `  1. 使用 Read 工具重新读取文件\n`;
-  displayContent += `  2. 检查空格、换行符、引号是否完全匹配\n`;
-  displayContent += `  3. 提供更多上下文代码确保唯一性`;
+  displayContent += `\n🔧 接下来我会:\n`;
+  displayContent += `  1. 重新读取文件内容\n`;
+  displayContent += `  2. 仔细核对空格、换行符、引号\n`;
+  displayContent += `  3. 使用更多上下文代码确保唯一性`;
 
   return {
     llmContent,

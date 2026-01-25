@@ -63,6 +63,11 @@ export interface BuildSystemPromptOptions {
    * Spec 模式专用：Steering 上下文
    */
   steeringContext?: string | null;
+
+  /**
+   * AI 回复语言（如 'zh-CN', 'en-US'）
+   */
+  language?: string;
 }
 
 /**
@@ -113,6 +118,7 @@ export async function buildSystemPrompt(
     includeEnvironment = true,
     currentSpec,
     steeringContext,
+    language,
   } = options;
 
   const parts: string[] = [];
@@ -177,6 +183,9 @@ export async function buildSystemPrompt(
   // 注入 Skills 元数据到 <available_skills> 占位符
   prompt = injectSkillsToPrompt(prompt);
 
+  // 注入语言指令
+  prompt = injectLanguageInstruction(prompt, language);
+
   return { prompt, sources };
 }
 
@@ -197,6 +206,29 @@ function injectSkillsToPrompt(prompt: string): string {
     AVAILABLE_SKILLS_REGEX,
     `<available_skills>\n${skillsList}\n</available_skills>`
   );
+}
+
+const LANGUAGE_NAMES: Record<string, string> = {
+  'zh-CN': 'Chinese (Simplified Chinese)',
+  'zh-TW': 'Chinese (Traditional Chinese)',
+  'en-US': 'English',
+  'en-GB': 'English (British)',
+  'ja-JP': 'Japanese',
+  'ko-KR': 'Korean',
+  'es-ES': 'Spanish',
+  'fr-FR': 'French',
+  'de-DE': 'German',
+  'pt-BR': 'Portuguese (Brazilian)',
+  'ru-RU': 'Russian',
+};
+
+function injectLanguageInstruction(prompt: string, language?: string): string {
+  const lang = language || 'zh-CN';
+  const langName = LANGUAGE_NAMES[lang] || lang;
+  
+  const instruction = `IMPORTANT: Always respond in ${langName}. All your responses must be in ${langName}.`;
+  
+  return prompt.replace('{{LANGUAGE_INSTRUCTION}}', instruction);
 }
 
 /**

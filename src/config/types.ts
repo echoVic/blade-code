@@ -50,13 +50,6 @@ export enum PermissionMode {
   SPEC = 'spec',
 }
 
-/**
- * Hooks 配置
- * 导入自 hooks 模块
- */
-import type { HookConfig as HookConfigType } from '../hooks/types/HookTypes.js';
-export type HookConfig = HookConfigType;
-
 export interface ModelConfig {
   id: string;
   name: string;
@@ -75,6 +68,14 @@ export interface ModelConfig {
   projectId?: string;
   providerId?: string;
 }
+
+import { UiTheme } from '@/api/schemas.js';
+/**
+ * Hooks 配置
+ * 导入自 hooks 模块
+ */
+import type { HookConfig as HookConfigType } from '../hooks/types/HookTypes.js';
+export type HookConfig = HookConfigType;
 
 export interface BladeConfig {
   // =====================================
@@ -96,8 +97,17 @@ export interface BladeConfig {
 
   // UI
   theme: string;
+  uiTheme: UiTheme;
   language: string;
   fontSize: number;
+
+  // General Settings
+  autoSaveSessions: boolean;
+  notifyBuild: boolean;
+  notifyErrors: boolean;
+  notifySounds: boolean;
+  privacyTelemetry: boolean;
+  privacyCrash: boolean;
 
   // 核心
   // debug 支持 boolean 或字符串过滤器（如 "agent,ui" 或 "!chat,!loop"）

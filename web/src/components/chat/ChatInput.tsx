@@ -2,8 +2,9 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 import { applyAtMentionSuggestion, useAtMention } from '@/hooks/useAtMention'
+import { useInputHistory } from '@/hooks/useInputHistory'
 import { applySlashCommandSuggestion, useSlashCommand } from '@/hooks/useSlashCommand'
-import { PermissionMode, useConfigStore } from '@/store/ConfigStore'
+import { PermissionModeEnum, useConfigStore, type PermissionMode } from '@/store/ConfigStore'
 import { useSessionStore } from '@/store/SessionStore'
 import { ChevronDown, Paperclip, Send, Square } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -17,10 +18,10 @@ interface ChatInputProps {
 }
 
 const MODES: { value: PermissionMode; label: string }[] = [
-  { value: PermissionMode.DEFAULT, label: 'Default' },
-  { value: PermissionMode.AUTO_EDIT, label: 'Auto Edit' },
-  { value: PermissionMode.PLAN, label: 'Plan' },
-  { value: PermissionMode.SPEC, label: 'Spec' },
+  { value: PermissionModeEnum.DEFAULT, label: 'Default' },
+  { value: PermissionModeEnum.AUTO_EDIT, label: 'Auto Edit' },
+  { value: PermissionModeEnum.PLAN, label: 'Plan' },
+  { value: PermissionModeEnum.SPEC, label: 'Spec' },
 ]
 
 export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputProps) {
@@ -35,6 +36,7 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
 
   const slashCommand = useSlashCommand(input, cursorPosition)
   const atMention = useAtMention(input, cursorPosition)
+  const inputHistory = useInputHistory()
 
   const showSlashSuggestions = slashCommand.hasQuery && slashCommand.suggestions.length > 0
   const showAtSuggestions = atMention.hasQuery && atMention.suggestions.length > 0
@@ -56,10 +58,11 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
 
   const handleSend = useCallback(() => {
     if (!input.trim() || disabled) return
+    inputHistory.addToHistory(input)
     onSend(input)
     setInput("")
     setCursorPosition(undefined)
-  }, [input, disabled, onSend])
+  }, [input, disabled, onSend, inputHistory])
 
   const handleSlashSelect = useCallback((index: number) => {
     const suggestion = slashCommand.suggestions[index]
@@ -136,7 +139,7 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
         atMention.selectPrevious()
         return
       }
-      if (e.key === 'Tab') {
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
         e.preventDefault()
         handleAtSelect(atMention.selectedIndex)
         return
@@ -151,6 +154,46 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
+      return
+    }
+
+    if (e.key === 'ArrowUp' && !e.shiftKey) {
+      const textarea = e.target as HTMLTextAreaElement
+      const isAtStart = textarea.selectionStart === 0 && textarea.selectionEnd === 0
+      const isSingleLine = !input.includes('\n')
+      
+      if (isAtStart || isSingleLine) {
+        const prev = inputHistory.getPrevious(input)
+        if (prev !== null) {
+          e.preventDefault()
+          setInput(prev)
+          requestAnimationFrame(() => {
+            if (textareaRef.current) {
+              textareaRef.current.setSelectionRange(prev.length, prev.length)
+            }
+          })
+        }
+      }
+      return
+    }
+
+    if (e.key === 'ArrowDown' && !e.shiftKey) {
+      const textarea = e.target as HTMLTextAreaElement
+      const isAtEnd = textarea.selectionStart === input.length && textarea.selectionEnd === input.length
+      const isSingleLine = !input.includes('\n')
+      
+      if ((isAtEnd || isSingleLine) && inputHistory.historyIndex !== -1) {
+        const next = inputHistory.getNext()
+        if (next !== null) {
+          e.preventDefault()
+          setInput(next)
+          requestAnimationFrame(() => {
+            if (textareaRef.current) {
+              textareaRef.current.setSelectionRange(next.length, next.length)
+            }
+          })
+        }
+      }
     }
   }, [
     showSlashSuggestions,
@@ -160,6 +203,8 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
     handleSlashSelect,
     handleAtSelect,
     handleSend,
+    input,
+    inputHistory,
   ])
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -184,9 +229,9 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
   const currentModeLabel = MODES.find(m => m.value === currentMode)?.label || 'Default'
 
   return (
-    <div className="py-4 border-t border-border/40 bg-background">
+    <div className="py-4 border-t border-[#E5E7EB] dark:border-zinc-800 bg-white dark:bg-[#09090b]">
       <div className="w-full px-4 md:px-6">
-        <div className="relative border border-zinc-800 rounded-lg shadow-sm bg-zinc-950/50 focus-within:border-zinc-600 focus-within:ring-1 focus-within:ring-zinc-600 transition-all duration-200 flex flex-col min-h-[120px]">
+        <div className="relative border border-[#E5E7EB] dark:border-zinc-800 rounded-lg shadow-sm bg-white dark:bg-zinc-950/50 focus-within:border-[#D1D5DB] dark:focus-within:border-zinc-600 focus-within:ring-1 focus-within:ring-[#D1D5DB] dark:focus-within:ring-zinc-600 transition-all duration-200 flex flex-col min-h-[120px]">
           <SuggestionPopover
             type="command"
             suggestions={slashCommand.suggestions}
@@ -215,27 +260,27 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
             onSelect={handleSelect}
             onClick={handleSelect}
             placeholder="Type @ for files, / for commands..."
-            className="flex-1 w-full resize-none border-0 bg-transparent py-4 px-4 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none text-zinc-300 placeholder:text-zinc-600"
+            className="flex-1 w-full resize-none border-0 bg-transparent py-4 px-4 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none text-[#111827] dark:text-zinc-300 placeholder:text-[#9CA3AF] dark:placeholder:text-zinc-600"
             disabled={disabled || isStreaming}
           />
         
           <div className="flex items-center justify-between p-3 mt-auto">
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50">
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-zinc-500 dark:hover:text-zinc-300 dark:hover:bg-zinc-800/50">
                 <Paperclip className="h-4 w-4" />
               </Button>
                  
               <Popover open={modelOpen} onOpenChange={setModelOpen}>
                 <PopoverTrigger asChild>
-                  <button className="flex items-center gap-1 text-xs text-zinc-500 px-2 py-1 rounded hover:bg-zinc-800/50 cursor-pointer transition-colors">
+                  <button className="flex items-center gap-1 text-xs text-[#6B7280] hover:text-[#111827] px-2 py-1 rounded hover:bg-[#E5E7EB] dark:text-zinc-500 dark:hover:text-zinc-200 dark:hover:bg-zinc-800/50 cursor-pointer transition-colors">
                     {displayModelName}
                     <ChevronDown className="h-3 w-3" />
                   </button>
                 </PopoverTrigger>
-                <PopoverContent className="w-64 p-2" align="start">
+                <PopoverContent className="w-64 p-2 bg-white dark:bg-zinc-900 border border-[#E5E7EB] dark:border-zinc-700" align="start">
                   <div className="max-h-72 overflow-y-auto">
                     {configuredModels.length === 0 ? (
-                      <div className="text-xs text-zinc-500 px-2 py-2">No models configured</div>
+                      <div className="text-xs text-[#6B7280] dark:text-zinc-500 px-2 py-2">No models configured</div>
                     ) : (
                       Object.entries(
                         configuredModels.reduce((acc, model) => {
@@ -246,12 +291,12 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
                         }, {} as Record<string, typeof configuredModels>)
                       ).map(([provider, models]) => (
                         <div key={provider} className="mb-2">
-                          <div className="text-xs text-zinc-500 px-2 py-1 capitalize">{provider.replace(/-/g, ' ')}</div>
+                          <div className="text-xs text-[#6B7280] dark:text-zinc-500 px-2 py-1 capitalize">{provider.replace(/-/g, ' ')}</div>
                           {models.map((model) => (
                             <button
                               key={model.id}
-                              className={`w-full text-left px-2 py-1.5 text-sm rounded hover:bg-zinc-800 transition-colors ${
-                                model.id === currentModelId ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400'
+                              className={`w-full text-left px-2 py-1.5 text-sm rounded hover:bg-[#E5E7EB] dark:hover:bg-zinc-800 transition-colors ${
+                                model.id === currentModelId ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100' : 'text-[#6B7280] dark:text-zinc-400'
                               }`}
                               onClick={() => {
                                 setCurrentModel(model.id)
@@ -270,18 +315,18 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
 
               <Popover open={modeOpen} onOpenChange={setModeOpen}>
                 <PopoverTrigger asChild>
-                  <button className="flex items-center gap-1 text-xs text-zinc-500 px-2 py-1 rounded hover:bg-zinc-800/50 cursor-pointer transition-colors">
+                  <button className="flex items-center gap-1 text-xs text-[#6B7280] hover:text-[#111827] px-2 py-1 rounded hover:bg-[#E5E7EB] dark:text-zinc-500 dark:hover:text-zinc-200 dark:hover:bg-zinc-800/50 cursor-pointer transition-colors">
                     {currentModeLabel}
                     <ChevronDown className="h-3 w-3" />
                   </button>
                 </PopoverTrigger>
-                <PopoverContent className="w-40 p-1" align="start">
+                <PopoverContent className="w-40 p-1 bg-white dark:bg-zinc-900 border border-[#E5E7EB] dark:border-zinc-700" align="start">
                   <div className="flex flex-col gap-0.5">
                     {MODES.map((mode) => (
                       <button
                         key={mode.value}
-                        className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-zinc-800 transition-colors ${
-                          currentMode === mode.value ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400'
+                        className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-[#E5E7EB] dark:hover:bg-zinc-800 transition-colors ${
+                          currentMode === mode.value ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100' : 'text-[#6B7280] dark:text-zinc-400'
                         }`}
                         onClick={() => {
                           setMode(mode.value)
@@ -308,14 +353,14 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
                 size="icon" 
                 onClick={handleSend} 
                 disabled={!input.trim() || disabled || showAnySuggestions}
-                className="h-8 w-8 bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-600"
+                className="h-8 w-8 bg-[#111827] text-white hover:bg-[#0F172A] disabled:bg-[#E5E7EB] disabled:text-[#9CA3AF] dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white dark:disabled:bg-zinc-800 dark:disabled:text-zinc-600"
               >
                 <Send className="h-4 w-4" />
               </Button>
             )}
           </div>
         </div>
-        <div className="text-center text-xs text-zinc-600 mt-3 font-mono">
+        <div className="text-center text-xs text-[#6B7280] dark:text-zinc-600 mt-3 font-mono">
           Blade can make mistakes. Please check important information.
         </div>
       </div>

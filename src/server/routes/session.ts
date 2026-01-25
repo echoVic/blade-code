@@ -9,6 +9,9 @@ import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { SessionService } from '../../services/SessionService.js';
 import { BadRequestError, NotFoundError } from '../error.js';
+import { requestConfirmation } from './permission.js';
+import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
+import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -46,6 +49,19 @@ const activeSessions = new Map<string, ActiveSession>();
 
 type Variables = {
   directory: string;
+};
+
+const sanitizeToolMetadata = (metadata: ToolResultMetadata | undefined) => {
+  if (!metadata || typeof metadata !== 'object') return metadata;
+  const sanitized = { ...(metadata as Record<string, unknown>) };
+  const MAX_INLINE_CONTENT = 200000;
+  if (typeof sanitized.oldContent === 'string' && sanitized.oldContent.length > MAX_INLINE_CONTENT) {
+    delete sanitized.oldContent;
+  }
+  if (typeof sanitized.newContent === 'string' && sanitized.newContent.length > MAX_INLINE_CONTENT) {
+    delete sanitized.newContent;
+  }
+  return sanitized as ToolResultMetadata;
 };
 
 export const SessionRoutes = () => {
@@ -272,6 +288,10 @@ export const SessionRoutes = () => {
             content: '',
           });
 
+          const confirmationHandler: ConfirmationHandler = {
+            requestConfirmation: (details) => requestConfirmation(sessionId, details),
+          };
+
           const chatContext: ChatContext = {
             messages: currentSession.messages,
             userId: 'web-user',
@@ -279,6 +299,7 @@ export const SessionRoutes = () => {
             workspaceRoot: currentSession.projectPath,
             signal: abortController.signal,
             permissionMode,
+            confirmationHandler,
           };
 
           const loopOptions: LoopOptions = {
@@ -305,13 +326,14 @@ export const SessionRoutes = () => {
                 sessionId,
               });
             },
-            onToolStart: async (toolCall) => {
+            onToolStart: async (toolCall, toolKind) => {
               if (toolCall.type !== 'function') return;
               await Bus.publish('tool.start', {
                 sessionId,
                 toolName: toolCall.function.name,
                 toolCallId: toolCall.id,
                 arguments: toolCall.function.arguments,
+                toolKind,
               });
             },
             onToolResult: async (toolCall, result) => {
@@ -322,6 +344,8 @@ export const SessionRoutes = () => {
                 toolCallId: toolCall.id,
                 success: !result.error,
                 summary: result.metadata?.summary,
+                output: result.displayContent,
+                metadata: sanitizeToolMetadata(result.metadata),
               });
             },
             onTokenUsage: async (usage) => {

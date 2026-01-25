@@ -26,6 +26,24 @@ export interface SubagentProgress {
   startTime: number
 }
 
+export interface ToolCallItem {
+  toolCallId: string
+  toolName: string
+  arguments?: string
+  toolKind?: string
+  status: 'running' | 'success' | 'error'
+  summary?: string
+  output?: string
+  startTime: number
+}
+
+export interface ToolBatch {
+  id: string
+  tools: ToolCallItem[]
+  startTime: number
+  isComplete: boolean
+}
+
 interface SessionState {
   sessions: Session[]
   currentSessionId: string | null
@@ -40,6 +58,8 @@ interface SessionState {
   thinkingExpanded: boolean
   todos: TodoItem[]
   subagentProgress: SubagentProgress | null
+  currentToolBatch: ToolBatch | null
+  toolBatchAggregationEnabled: boolean
 
   loadSessions: () => Promise<void>
   createSession: (projectPath?: string) => Promise<Session>
@@ -53,6 +73,7 @@ interface SessionState {
   clearError: () => void
   toggleThinkingExpanded: () => void
   setMaxContextTokens: (tokens: number, isDefault?: boolean) => void
+  setToolBatchAggregation: (enabled: boolean) => void
 }
 
 const initialTokenUsage: TokenUsage = {
@@ -64,6 +85,56 @@ const initialTokenUsage: TokenUsage = {
 }
 
 const TEMP_SESSION_ID = '__temp__'
+
+const toolToBatchMap = new Map<string, string>()
+
+const READ_ONLY_TOOLS = new Set([
+  'Glob',
+  'Grep',
+  'Read',
+  'LS',
+  'SearchCodebase',
+  'WebSearch',
+  'WebFetch',
+  'mcp_Fetch_fetch',
+  'mcp_context7_resolve-library-id',
+  'mcp_context7_query-docs',
+  'mcp_GitHub_search_repositories',
+  'mcp_GitHub_search_code',
+  'mcp_GitHub_search_issues',
+  'mcp_GitHub_search_users',
+  'mcp_GitHub_get_file_contents',
+  'mcp_GitHub_list_commits',
+  'mcp_GitHub_list_issues',
+  'mcp_GitHub_list_pull_requests',
+  'mcp_GitHub_get_issue',
+  'mcp_GitHub_get_pull_request',
+  'mcp_GitHub_get_pull_request_files',
+  'mcp_GitHub_get_pull_request_status',
+  'mcp_GitHub_get_pull_request_comments',
+  'mcp_GitHub_get_pull_request_reviews',
+  'mcp_pencil_get_editor_state',
+  'mcp_pencil_get_guidelines',
+  'mcp_pencil_get_screenshot',
+  'mcp_pencil_get_style_guide',
+  'mcp_pencil_get_style_guide_tags',
+  'mcp_pencil_get_variables',
+  'mcp_pencil_snapshot_layout',
+  'mcp_pencil_search_all_unique_properties',
+  'mcp_pencil_batch_get',
+  'mcp_Puppeteer_puppeteer_screenshot',
+  'mcp_Sequential_Thinking_sequentialthinking',
+  'CheckCommandStatus',
+  'GetDiagnostics',
+])
+
+const isReadOnlyTool = (toolName: string): boolean => {
+  if (READ_ONLY_TOOLS.has(toolName)) return true
+  if (toolName.startsWith('mcp_') && toolName.includes('_get_')) return true
+  if (toolName.startsWith('mcp_') && toolName.includes('_list_')) return true
+  if (toolName.startsWith('mcp_') && toolName.includes('_search_')) return true
+  return false
+}
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: [],
@@ -79,6 +150,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   thinkingExpanded: false,
   todos: [],
   subagentProgress: null,
+  currentToolBatch: null,
+  toolBatchAggregationEnabled: true,
 
   loadSessions: async () => {
     set({ isLoading: true, error: null })
@@ -126,7 +199,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   selectSession: async (sessionId: string) => {
-    set({ isLoading: true, error: null, currentSessionId: sessionId, isTemporarySession: false })
+    toolToBatchMap.clear()
+    set({ isLoading: true, error: null, currentSessionId: sessionId, isTemporarySession: false, currentToolBatch: null })
     try {
       const messages = await api.listMessages(sessionId)
       set({
@@ -217,6 +291,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { currentSessionId } = get()
     const props = event.properties as Record<string, unknown>
     const eventSessionId = props.sessionId as string | undefined
+    const now = Date.now()
 
     switch (event.type) {
       case 'session.created': {
@@ -280,7 +355,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (eventSessionId !== currentSessionId) break
         const messageId = props.messageId as string
         const delta = props.delta as string
+        if (!delta) break
         set((state) => {
+          const existingMsg = state.messages.find((m) => m.id === messageId)
+          if (!existingMsg) {
+            const newMsg: Message = {
+              id: messageId,
+              role: 'assistant',
+              content: delta,
+              timestamp: now,
+            }
+            return { messages: [...state.messages, newMsg], isStreaming: true }
+          }
           const newMessages = state.messages.map((m) =>
             m.id === messageId ? { ...m, content: m.content + delta } : m
           )
@@ -291,17 +377,225 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       case 'message.complete': {
         if (eventSessionId !== currentSessionId) break
-        set({ isStreaming: false })
+        set({ isStreaming: false, currentToolBatch: null })
         break
       }
 
       case 'tool.start': {
         if (eventSessionId !== currentSessionId) break
+        const toolCallId = props.toolCallId as string | undefined
+        const toolName = props.toolName as string | undefined
+        const args = props.arguments as string | undefined
+        const toolKind = props.toolKind as string | undefined
+        
+        const { toolBatchAggregationEnabled, currentToolBatch } = get()
+        const shouldAggregate = toolBatchAggregationEnabled && toolName && isReadOnlyTool(toolName)
+        
+        if (shouldAggregate) {
+          const newTool: ToolCallItem = {
+            toolCallId: toolCallId || `tool-${now}`,
+            toolName: toolName || 'Unknown',
+            arguments: args,
+            toolKind,
+            status: 'running',
+            startTime: now,
+          }
+          
+          const actualToolCallId = toolCallId || `tool-${now}`
+          
+          if (currentToolBatch) {
+            toolToBatchMap.set(actualToolCallId, currentToolBatch.id)
+            
+            set((state) => ({
+              currentToolBatch: state.currentToolBatch ? {
+                ...state.currentToolBatch,
+                tools: [...state.currentToolBatch.tools, newTool],
+              } : null,
+            }))
+            
+            set((state) => {
+              const batchMsgId = `tool-batch-${state.currentToolBatch?.id}`
+              const messages = state.messages.map((m) => {
+                if (m.id === batchMsgId && m.metadata?.kind === 'tool_batch') {
+                  return {
+                    ...m,
+                    metadata: {
+                      ...m.metadata,
+                      tools: state.currentToolBatch?.tools || [],
+                    },
+                  }
+                }
+                return m
+              })
+              return { messages }
+            })
+          } else {
+            const batchId = `batch-${now}`
+            toolToBatchMap.set(actualToolCallId, batchId)
+            
+            const newBatch: ToolBatch = {
+              id: batchId,
+              tools: [newTool],
+              startTime: now,
+              isComplete: false,
+            }
+            
+            const batchMessage: Message = {
+              id: `tool-batch-${batchId}`,
+              role: 'assistant',
+              content: '',
+              timestamp: now,
+              metadata: {
+                kind: 'tool_batch',
+                batchId,
+                tools: [newTool],
+                isComplete: false,
+              },
+            }
+            
+            set((state) => ({
+              currentToolBatch: newBatch,
+              messages: [...state.messages, batchMessage],
+            }))
+          }
+        } else {
+          if (currentToolBatch) {
+            set({ currentToolBatch: null })
+          }
+          const messageId = toolCallId ? `tool-call-${toolCallId}` : `tool-call-${now}`
+          const message: Message = {
+            id: messageId,
+            role: 'assistant',
+            content: '',
+            timestamp: now,
+            metadata: {
+              kind: 'tool_call',
+              toolCallId,
+              toolName,
+              arguments: args,
+              toolKind,
+              status: 'running',
+            },
+          }
+          set((state) => ({ messages: [...state.messages, message] }))
+        }
         break
       }
 
       case 'tool.result': {
         if (eventSessionId !== currentSessionId) break
+        const toolCallId = props.toolCallId as string | undefined
+        const toolName = props.toolName as string | undefined
+        const success = props.success as boolean | undefined
+        const output = props.output as string | undefined
+        const summary = props.summary as string | undefined
+        const metadata = props.metadata as Record<string, unknown> | undefined
+        
+        const batchId = toolCallId ? toolToBatchMap.get(toolCallId) : undefined
+        
+        if (batchId) {
+          set((state) => {
+            const batchMsgId = `tool-batch-${batchId}`
+            
+            const messages = state.messages.map((m) => {
+              if (m.id === batchMsgId && m.metadata?.kind === 'tool_batch') {
+                const tools = (m.metadata.tools as ToolCallItem[]) || []
+                const updatedTools = tools.map((tool): ToolCallItem => {
+                  if (tool.toolCallId === toolCallId) {
+                    return {
+                      ...tool,
+                      status: success ? 'success' : 'error',
+                      summary,
+                      output,
+                    }
+                  }
+                  return tool
+                })
+                
+                const allComplete = updatedTools.every((t) => t.status !== 'running')
+                
+                return {
+                  ...m,
+                  metadata: {
+                    ...m.metadata,
+                    tools: updatedTools,
+                    isComplete: allComplete,
+                  },
+                }
+              }
+              return m
+            })
+            
+            if (state.currentToolBatch?.id === batchId) {
+              const updatedTools = state.currentToolBatch.tools.map((tool): ToolCallItem => {
+                if (tool.toolCallId === toolCallId) {
+                  return {
+                    ...tool,
+                    status: success ? 'success' : 'error',
+                    summary,
+                    output,
+                  }
+                }
+                return tool
+              })
+              const allComplete = updatedTools.every((t) => t.status !== 'running')
+              
+              return {
+                currentToolBatch: allComplete ? null : {
+                  ...state.currentToolBatch,
+                  tools: updatedTools,
+                  isComplete: allComplete,
+                },
+                messages,
+              }
+            }
+            
+            return { messages }
+          })
+        } else {
+          if (toolCallId) {
+            set((state) => {
+              const hasToolCall = state.messages.some(
+                (m) => m.metadata?.kind === 'tool_call' && m.metadata.toolCallId === toolCallId
+              )
+              
+              if (hasToolCall) {
+                const messages = state.messages.map((m) => {
+                  if (m.metadata?.kind === 'tool_call' && m.metadata.toolCallId === toolCallId) {
+                    return {
+                      ...m,
+                      metadata: {
+                        ...m.metadata,
+                        status: success ? 'success' : 'error',
+                        summary,
+                        output,
+                      },
+                    }
+                  }
+                  return m
+                })
+                return { messages }
+              }
+              
+              const resultMessage: Message = {
+                id: `tool-result-${toolCallId}`,
+                role: 'assistant',
+                content: output || '',
+                timestamp: now,
+                metadata: {
+                  kind: 'tool_result',
+                  toolCallId,
+                  toolName,
+                  success,
+                  summary,
+                  output,
+                  metadata,
+                },
+              }
+              return { messages: [...state.messages, resultMessage] }
+            })
+          }
+        }
         break
       }
 
@@ -394,6 +688,49 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
         break
       }
+
+      case 'permission.asked': {
+        if (eventSessionId && eventSessionId !== currentSessionId) break
+        const requestId = props.requestId as string
+        const details = props.details as Record<string, unknown> | undefined
+        const message: Message = {
+          id: `permission-${requestId}`,
+          role: 'assistant',
+          content: '',
+          timestamp: now,
+          metadata: {
+            kind: 'confirmation',
+            requestId,
+            details,
+            status: 'pending',
+          },
+        }
+        set((state) => ({ messages: [...state.messages, message] }))
+        break
+      }
+
+      case 'permission.replied': {
+        const requestId = props.requestId as string
+        const approved = props.approved as boolean
+        const answers = props.answers as Record<string, unknown> | undefined
+        set((state) => {
+          const messages = state.messages.map((m) => {
+            if (m.metadata?.kind === 'confirmation' && m.metadata.requestId === requestId) {
+              return {
+                ...m,
+                metadata: {
+                  ...m.metadata,
+                  status: approved ? 'approved' : 'denied',
+                  answers,
+                },
+              }
+            }
+            return m
+          })
+          return { messages }
+        })
+        break
+      }
     }
   },
 
@@ -402,4 +739,5 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setMaxContextTokens: (tokens: number, isDefault = false) => set((state) => ({
     tokenUsage: { ...state.tokenUsage, maxContextTokens: tokens, isDefaultMaxTokens: isDefault },
   })),
+  setToolBatchAggregation: (enabled: boolean) => set({ toolBatchAggregationEnabled: enabled }),
 }))

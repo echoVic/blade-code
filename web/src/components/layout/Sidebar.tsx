@@ -2,7 +2,7 @@ import { ScrollArea } from '@/components/ui/ScrollArea'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/AppStore'
 import { useSessionStore } from '@/store/SessionStore'
-import { Check, ChevronLeft, Pencil, Plus, Settings, Terminal, Trash2, X } from 'lucide-react'
+import { Check, ChevronLeft, Pencil, Plus, Server, Settings, Sparkles, Terminal, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 
 interface SidebarProps {
@@ -10,7 +10,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ className }: SidebarProps) {
-  const { toggleSettings, toggleSidebar, isSidebarOpen, isTerminalOpen, toggleTerminal } = useAppStore()
+  const { toggleSettings, toggleSidebar, isSidebarOpen, isTerminalOpen, toggleTerminal, toggleMcp, toggleSkills } = useAppStore()
   const { sessions, currentSessionId, selectSession, startTemporarySession, deleteSession, loadSessions } = useSessionStore()
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
@@ -113,14 +113,14 @@ export function Sidebar({ className }: SidebarProps) {
 
   if (!isSidebarOpen) {
     return (
-      <div className={cn("h-screen flex flex-col bg-[#09090b] items-center py-6 gap-2 w-[64px]", className)}>
-        <div className="h-7 w-7 rounded-lg bg-[#22C55E] flex items-center justify-center cursor-pointer" onClick={toggleSidebar}>
+      <div className={cn("h-screen flex flex-col bg-[#F9FAFB] dark:bg-[#09090b] items-center py-6 gap-2 w-[64px]", className)}>
+        <div className="h-7 w-7 rounded-lg bg-[#16A34A] dark:bg-[#22C55E] flex items-center justify-center cursor-pointer" onClick={toggleSidebar}>
           <div className="w-2 h-2 bg-black rounded-full" />
         </div>
 
         <button
           onClick={handleNewChat}
-          className="mt-6 h-10 w-10 rounded-md bg-[#22C55E] hover:bg-[#16A34A] text-white flex items-center justify-center transition-colors"
+          className="mt-6 h-10 w-10 rounded-md bg-[#16A34A] hover:bg-[#15803D] dark:bg-[#22C55E] dark:hover:bg-[#16A34A] text-white flex items-center justify-center transition-colors"
         >
           <Plus className="h-4 w-4 stroke-[3]" />
         </button>
@@ -130,25 +130,41 @@ export function Sidebar({ className }: SidebarProps) {
           className={cn(
             "h-10 w-10 rounded-md flex items-center justify-center transition-colors",
             isTerminalOpen
-              ? "bg-[#22C55E] text-black"
-              : "bg-[#18181b] text-[#22C55E] hover:bg-[#27272a]"
+              ? "bg-[#F3F4F6] text-[#111827] dark:bg-[#18181b] dark:text-[#E5E5E5]"
+              : "bg-[#F3F4F6] text-[#16A34A] hover:bg-[#E5E7EB] dark:bg-[#18181b] dark:text-[#22C55E] dark:hover:bg-[#27272a]"
           )}
         >
-          <Terminal className="h-4 w-4" />
+          <Terminal className={cn("h-4 w-4", isTerminalOpen ? "text-[#16A34A] dark:text-[#22C55E]" : "")} />
         </button>
 
         <div className="flex-1" />
 
+        <div className="w-8 h-px bg-[#E5E7EB] dark:bg-[#1f2937] my-2" />
+
+        <button
+          onClick={toggleSkills}
+          className="h-10 w-10 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#F3F4F6] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#18181b] flex items-center justify-center transition-colors"
+        >
+          <Sparkles className="h-4 w-4" />
+        </button>
+
+        <button
+          onClick={toggleMcp}
+          className="h-10 w-10 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#F3F4F6] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#18181b] flex items-center justify-center transition-colors"
+        >
+          <Server className="h-4 w-4" />
+        </button>
+
         <button
           onClick={toggleSettings}
-          className="h-10 w-10 rounded-md text-[#71717a] hover:text-[#E5E5E5] flex items-center justify-center transition-colors"
+          className="h-10 w-10 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#F3F4F6] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#18181b] flex items-center justify-center transition-colors"
         >
           <Settings className="h-4 w-4" />
         </button>
 
         <div className="mt-4">
-          <div className="h-7 w-7 rounded-lg bg-[#27272a] flex items-center justify-center">
-            <div className="w-2 h-2 bg-[#E5E5E5] rounded-full" />
+          <div className="h-7 w-7 rounded-lg bg-[#E5E7EB] dark:bg-[#27272a] flex items-center justify-center">
+            <div className="w-2 h-2 bg-[#111827] dark:bg-[#E5E5E5] rounded-full" />
           </div>
         </div>
       </div>
@@ -156,18 +172,18 @@ export function Sidebar({ className }: SidebarProps) {
   }
 
   return (
-    <div className={cn("h-screen flex flex-col bg-[#09090b] w-[260px]", className)}>
+    <div className={cn("h-screen flex flex-col bg-[#F9FAFB] dark:bg-[#09090b] w-[260px]", className)}>
       <div className="p-6 flex flex-col gap-8">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-7 w-7 rounded-lg bg-[#22C55E] flex items-center justify-center">
+            <div className="h-7 w-7 rounded-lg bg-[#16A34A] dark:bg-[#22C55E] flex items-center justify-center">
               <div className="w-2 h-2 bg-black rounded-full" />
             </div>
-            <span className="font-semibold text-base text-[#E5E5E5]">Blade</span>
+            <span className="font-semibold text-base text-[#111827] dark:text-[#E5E5E5]">Blade</span>
           </div>
           <button
             onClick={toggleSidebar}
-            className="h-6 w-6 rounded bg-[#18181b] text-[#71717a] hover:text-[#E5E5E5] flex items-center justify-center transition-colors"
+            className="h-6 w-6 rounded bg-[#F3F4F6] text-[#6B7280] hover:text-[#111827] dark:bg-[#18181b] dark:text-[#71717a] dark:hover:text-[#E5E5E5] flex items-center justify-center transition-colors"
           >
             <ChevronLeft className="h-3 w-3" />
           </button>
@@ -176,7 +192,7 @@ export function Sidebar({ className }: SidebarProps) {
         <div className="flex flex-col gap-2">
           <button
             onClick={handleNewChat}
-            className="w-full h-10 rounded-md bg-[#22C55E] hover:bg-[#16A34A] text-white font-semibold text-sm font-mono flex items-center gap-3 px-3 transition-colors"
+            className="w-full h-10 rounded-md bg-[#16A34A] hover:bg-[#15803D] dark:bg-[#22C55E] dark:hover:bg-[#16A34A] text-white font-semibold text-sm font-mono flex items-center gap-3 px-3 transition-colors"
           >
             <Plus className="h-4 w-4 stroke-[3]" />
             New Chat
@@ -187,11 +203,11 @@ export function Sidebar({ className }: SidebarProps) {
             className={cn(
               "w-full h-10 rounded-md font-medium text-sm font-mono flex items-center gap-3 px-3 transition-colors",
               isTerminalOpen
-                ? "bg-[#22C55E] text-black"
-                : "bg-[#18181b] text-[#22C55E] hover:bg-[#27272a]"
+                ? "bg-[#F3F4F6] text-[#111827] dark:bg-[#18181b] dark:text-[#E5E5E5]"
+                : "bg-[#F3F4F6] text-[#16A34A] hover:bg-[#E5E7EB] dark:bg-[#18181b] dark:text-[#22C55E] dark:hover:bg-[#27272a]"
             )}
           >
-            <Terminal className="h-4 w-4" />
+            <Terminal className={cn("h-4 w-4", isTerminalOpen ? "text-[#16A34A] dark:text-[#22C55E]" : "")} />
             Terminal
           </button>
         </div>
@@ -202,7 +218,7 @@ export function Sidebar({ className }: SidebarProps) {
           {sessionGroups.map((group, groupIndex) => (
             <div key={group.label}>
               <div className={cn(
-                "px-3 pb-2 text-[11px] text-[#52525b] font-mono",
+                "px-3 pb-2 text-[11px] text-[#6B7280] dark:text-[#52525b] font-mono",
                 groupIndex === 0 ? "pt-3" : "pt-4"
               )}>
                 {group.label}
@@ -216,7 +232,7 @@ export function Sidebar({ className }: SidebarProps) {
                   return (
                     <div
                       key={session.sessionId}
-                      className="w-full h-[34px] flex items-center gap-2 px-3 bg-[#27272a]"
+                      className="w-full h-[34px] flex items-center gap-2 px-3 bg-[#F3F4F6] dark:bg-[#27272a]"
                     >
                       <input
                         type="text"
@@ -227,17 +243,17 @@ export function Sidebar({ className }: SidebarProps) {
                           if (e.key === 'Escape') handleCancelRename()
                         }}
                         autoFocus
-                        className="flex-1 bg-[#18181b] text-[13px] text-[#E5E5E5] font-mono px-2 py-1 rounded outline-none focus:ring-1 focus:ring-[#22C55E]"
+                        className="flex-1 bg-white dark:bg-[#18181b] text-[13px] text-[#111827] dark:text-[#E5E5E5] font-mono px-2 py-1 rounded outline-none focus:ring-1 focus:ring-[#22C55E]"
                       />
                       <button
                         onClick={() => handleSaveRename(session.sessionId)}
-                        className="p-1 text-[#22C55E] hover:bg-[#18181b] rounded"
+                        className="p-1 text-[#22C55E] hover:bg-[#E5E7EB] dark:hover:bg-[#18181b] rounded"
                       >
                         <Check className="h-3 w-3" />
                       </button>
                       <button
                         onClick={handleCancelRename}
-                        className="p-1 text-[#71717a] hover:bg-[#18181b] rounded"
+                        className="p-1 text-[#9CA3AF] dark:text-[#71717a] hover:bg-[#E5E7EB] dark:hover:bg-[#18181b] rounded"
                       >
                         <X className="h-3 w-3" />
                       </button>
@@ -250,9 +266,9 @@ export function Sidebar({ className }: SidebarProps) {
                     key={session.sessionId}
                     onMouseEnter={() => setHoveredSessionId(session.sessionId)}
                     onMouseLeave={() => setHoveredSessionId(null)}
-                    className={cn(
-                      "w-full h-[34px] flex items-center gap-2 px-3 transition-colors group cursor-pointer",
-                      isActive ? "bg-[#27272a]" : "hover:bg-[#18181b]"
+                      className={cn(
+                        "w-full h-[34px] flex items-center gap-2 px-3 transition-colors group cursor-pointer",
+                      isActive ? "bg-[#E5E7EB] dark:bg-[#27272a]" : "hover:bg-[#F3F4F6] dark:hover:bg-[#18181b]"
                     )}
                     onClick={() => selectSession(session.sessionId)}
                   >
@@ -260,14 +276,14 @@ export function Sidebar({ className }: SidebarProps) {
                       className={cn(
                         "w-1.5 h-1.5 rounded-full shrink-0",
                         isActive
-                          ? "bg-[#22C55E] shadow-[0_0_4px_rgba(34,197,94,0.4)]"
-                          : "border border-[#52525b]"
+                          ? "bg-[#16A34A] dark:bg-[#22C55E] shadow-[0_0_4px_rgba(34,197,94,0.4)]"
+                          : "border border-[#D1D5DB] dark:border-[#52525b]"
                       )}
                     />
                     <span
                       className={cn(
                         "text-[13px] font-mono truncate text-left flex-1",
-                        isActive ? "text-[#E5E5E5]" : "text-[#a1a1aa]"
+                        isActive ? "text-[#111827] dark:text-[#E5E5E5]" : "text-[#6B7280] dark:text-[#a1a1aa]"
                       )}
                     >
                       {getSessionTitle(session)}
@@ -276,13 +292,13 @@ export function Sidebar({ className }: SidebarProps) {
                       <div className="flex items-center gap-1">
                         <button
                           onClick={(e) => handleStartRename(e, session)}
-                          className="p-1 text-[#71717a] hover:text-[#E5E5E5] hover:bg-[#27272a] rounded transition-colors"
+                          className="p-1 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] rounded transition-colors"
                         >
                           <Pencil className="h-3 w-3" />
                         </button>
                         <button
                           onClick={(e) => handleDeleteSession(e, session.sessionId)}
-                          className="p-1 text-[#71717a] hover:text-red-400 hover:bg-[#27272a] rounded transition-colors"
+                          className="p-1 text-[#9CA3AF] hover:text-red-500 hover:bg-[#F3F4F6] dark:text-[#71717a] dark:hover:text-red-400 dark:hover:bg-[#27272a] rounded transition-colors"
                         >
                           <Trash2 className="h-3 w-3" />
                         </button>
@@ -295,7 +311,7 @@ export function Sidebar({ className }: SidebarProps) {
           ))}
 
           {sessions.length === 0 && (
-            <div className="px-3 py-8 text-center text-[13px] text-[#52525b] font-mono">
+            <div className="px-3 py-8 text-center text-[13px] text-[#6B7280] dark:text-[#52525b] font-mono">
               No chat history
             </div>
           )}
@@ -303,21 +319,37 @@ export function Sidebar({ className }: SidebarProps) {
       </ScrollArea>
 
       <div className="p-6 flex flex-col gap-4">
+        <div className="border-t border-[#E5E7EB] dark:border-[#1f2937] pt-4 flex flex-col gap-2">
+          <button
+            onClick={toggleSkills}
+            className="w-full h-10 rounded-md text-[#6B7280] hover:text-[#111827] hover:bg-[#F3F4F6] dark:text-[#a1a1aa] dark:hover:text-[#E5E5E5] dark:hover:bg-[#18181b] font-normal text-sm font-mono flex items-center gap-3 px-3 transition-colors"
+          >
+            <Sparkles className="h-4 w-4 text-[#9CA3AF] dark:text-[#71717a]" />
+            Skills
+          </button>
+          <button
+            onClick={toggleMcp}
+            className="w-full h-10 rounded-md text-[#6B7280] hover:text-[#111827] hover:bg-[#F3F4F6] dark:text-[#a1a1aa] dark:hover:text-[#E5E5E5] dark:hover:bg-[#18181b] font-normal text-sm font-mono flex items-center gap-3 px-3 transition-colors"
+          >
+            <Server className="h-4 w-4 text-[#9CA3AF] dark:text-[#71717a]" />
+            MCP
+          </button>
         <button
           onClick={toggleSettings}
-          className="w-full h-10 rounded-md text-[#a1a1aa] hover:text-[#E5E5E5] hover:bg-[#18181b] font-normal text-sm font-mono flex items-center gap-3 px-3 transition-colors"
+          className="w-full h-10 rounded-md text-[#6B7280] hover:text-[#111827] hover:bg-[#F3F4F6] dark:text-[#a1a1aa] dark:hover:text-[#E5E5E5] dark:hover:bg-[#18181b] font-normal text-sm font-mono flex items-center gap-3 px-3 transition-colors"
         >
-          <Settings className="h-4 w-4 text-[#71717a]" />
+          <Settings className="h-4 w-4 text-[#9CA3AF] dark:text-[#71717a]" />
           Settings
         </button>
+        </div>
 
-        <div className="flex items-center gap-3 pt-4 border-t border-[#27272a]">
-          <div className="h-7 w-7 rounded-lg bg-[#27272a] flex items-center justify-center">
-            <div className="w-2 h-2 bg-[#E5E5E5] rounded-full" />
+        <div className="flex items-center gap-3 pt-4 border-t border-[#E5E7EB] dark:border-[#27272a]">
+          <div className="h-7 w-7 rounded-lg bg-[#E5E7EB] dark:bg-[#27272a] flex items-center justify-center">
+            <div className="w-2 h-2 bg-[#111827] dark:bg-[#E5E5E5] rounded-full" />
           </div>
           <div className="flex flex-col gap-0.5">
-            <span className="text-[13px] text-[#E5E5E5] font-mono">User</span>
-            <span className="text-[11px] text-[#22C55E] font-mono">Connected</span>
+            <span className="text-[13px] text-[#111827] dark:text-[#E5E5E5] font-mono">User</span>
+            <span className="text-[11px] text-[#16A34A] dark:text-[#22C55E] font-mono">Connected</span>
           </div>
         </div>
       </div>

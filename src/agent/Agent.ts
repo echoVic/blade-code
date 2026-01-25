@@ -423,8 +423,9 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
     // Plan 模式差异 1: 使用统一入口构建 Plan 模式系统提示词
     const { prompt: systemPrompt } = await buildSystemPrompt({
       projectPath: process.cwd(),
-      mode: PermissionMode.PLAN, // Plan 模式会使用 PLAN_MODE_SYSTEM_PROMPT
+      mode: PermissionMode.PLAN,
       includeEnvironment: true,
+      language: this.config.language,
     });
 
     // Plan 模式差异 2: 在用户消息中注入 system-reminder
@@ -556,6 +557,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       replaceDefault: replacePrompt,
       append: appendPrompt,
       includeEnvironment: false,
+      language: this.config.language,
     });
 
     return result.prompt;
@@ -1858,6 +1860,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         replaceDefault: replacePrompt,
         append: appendPrompt,
         includeEnvironment: false,
+        language: this.config.language,
       });
 
       if (result.prompt) {

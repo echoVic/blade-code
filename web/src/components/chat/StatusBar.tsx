@@ -17,9 +17,9 @@ export function StatusBar() {
   }
 
   return (
-    <div className="flex items-center gap-4 px-4 py-2 border-t border-zinc-800 bg-zinc-950/50 text-xs text-zinc-500">
+    <div className="flex items-center gap-4 px-4 py-2 border-t border-[#E5E7EB] dark:border-zinc-800 bg-white dark:bg-zinc-950/50 text-xs text-[#6B7280] dark:text-zinc-500">
       <div className="flex items-center gap-2">
-        <span className="text-zinc-400">Tokens:</span>
+        <span className="text-[#6B7280] dark:text-zinc-400">Tokens:</span>
         <span className={cn(
           usagePercent > 80 && 'text-yellow-500',
           usagePercent > 95 && 'text-red-500'
@@ -30,17 +30,17 @@ export function StatusBar() {
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <HelpCircle className="h-3 w-3 text-zinc-500 cursor-help" />
+                <HelpCircle className="h-3 w-3 text-[#9CA3AF] dark:text-zinc-500 cursor-help" />
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-[220px]">
                 <p className="text-xs">
-                  Token limit is estimated. Configure maxContextTokens in Settings for accurate tracking.
+                  Token limit is estimated. It updates when the model reports its context size.
                 </p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
         )}
-        <div className="w-20 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+        <div className="w-20 h-1.5 bg-[#E5E7EB] dark:bg-zinc-800 rounded-full overflow-hidden">
           <div
             className={cn(
               'h-full transition-all duration-300',
@@ -51,7 +51,7 @@ export function StatusBar() {
             style={{ width: `${Math.min(usagePercent, 100)}%` }}
           />
         </div>
-        <span className="text-zinc-600">({usagePercent}%)</span>
+        <span className="text-[#9CA3AF] dark:text-zinc-600">({usagePercent}%)</span>
       </div>
 
       <div className="flex-1" />
@@ -64,10 +64,10 @@ export function StatusBar() {
             subagentProgress.status === 'completed' && 'bg-green-500',
             subagentProgress.status === 'failed' && 'bg-red-500'
           )} />
-          <span className="text-zinc-400">{subagentProgress.type}:</span>
+          <span className="text-[#6B7280] dark:text-zinc-400">{subagentProgress.type}:</span>
           <span>{subagentProgress.description}</span>
           {subagentProgress.currentTool && (
-            <span className="text-zinc-600">({subagentProgress.currentTool})</span>
+            <span className="text-[#9CA3AF] dark:text-zinc-600">({subagentProgress.currentTool})</span>
           )}
         </div>
       )}

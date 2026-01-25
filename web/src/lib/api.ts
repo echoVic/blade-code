@@ -1,15 +1,18 @@
-import type { BusEvent, SessionMessage, SessionMetadata } from './types'
-import { PermissionMode } from './types'
+import type {
+  BusEvent,
+  Message,
+  MessageRole,
+  ModelConfig,
+  PermissionMode,
+  PermissionResponse,
+  Session
+} from '@api/schemas'
+import { PermissionModeEnum } from '@api/schemas'
+
+export { PermissionModeEnum }
+export type { BusEvent, Message, MessageRole, ModelConfig, PermissionMode, Session }
 
 const API_BASE = ''
-
-export type Session = SessionMetadata & {
-  isActive?: boolean
-}
-
-export type Message = SessionMessage
-
-export type { BusEvent }
 
 class ApiClient {
   private baseUrl: string
@@ -66,13 +69,31 @@ class ApiClient {
   }
 
   async listMessages(sessionId: string): Promise<Message[]> {
-    const result = await this.request<Array<{ id: string; role: string; content: string }>>(`/sessions/${sessionId}/message`)
-    return result.map((m) => ({
-      id: m.id,
-      role: m.role as Message['role'],
-      content: m.content || '',
-      timestamp: Date.now(),
-    }))
+    const result = await this.request<Message[]>(`/sessions/${sessionId}/message`)
+    const now = Date.now()
+    return result.map((m, index) => {
+      const content = normalizeContent(m.content)
+      const metadata = m.role === 'tool'
+        ? {
+            kind: 'tool_result',
+            toolCallId: m.tool_call_id,
+            toolName: m.name,
+            output: content,
+          }
+        : m.metadata
+
+      return {
+        id: m.id || `history-${index}-${now}`,
+        role: m.role,
+        content,
+        timestamp: now,
+        metadata,
+        tool_call_id: m.tool_call_id,
+        name: m.name,
+        tool_calls: m.tool_calls,
+        thinkingContent: m.thinkingContent,
+      }
+    })
   }
 
   async sendMessage(
@@ -86,7 +107,7 @@ class ApiClient {
     })
     return {
       id: result.messageId,
-      role: result.role as Message['role'],
+      role: result.role as MessageRole,
       content: result.content,
       timestamp: new Date(result.timestamp).getTime(),
     }
@@ -98,6 +119,16 @@ class ApiClient {
 
   async getGitInfo(): Promise<{ branch: string | null }> {
     return this.request<{ branch: string | null }>('/suggestions/git-info')
+  }
+
+  async respondPermission(
+    permissionId: string,
+    payload: Omit<PermissionResponse, 'remember'>
+  ): Promise<void> {
+    await this.request(`/permissions/${permissionId}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
   }
 
   subscribeEvents(onEvent: (event: BusEvent) => void): () => void {
@@ -123,3 +154,16 @@ class ApiClient {
 }
 
 export const api = new ApiClient()
+
+function normalizeContent(content: unknown): string {
+  if (Array.isArray(content)) {
+    const textParts = content
+      .filter((part) => part && typeof part === 'object' && 'type' in part && part.type === 'text')
+      .map((part) => (part as { text?: string }).text || '')
+      .join('\n')
+    return textParts || JSON.stringify(content)
+  }
+  if (content == null) return ''
+  if (typeof content === 'string') return content
+  return JSON.stringify(content)
+}

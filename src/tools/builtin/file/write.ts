@@ -107,10 +107,13 @@ export const writeTool = createTool({
           return {
             success: false,
             llmContent: `If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.`,
-            displayContent: `❌ 写入失败：必须先使用 Read 工具读取文件\n\n文件 ${file_path} 已存在，请先用 Read 工具查看其内容。`,
+            displayContent: `📖 我需要先读取文件内容，然后再进行写入。`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File not read before write',
+            },
+            metadata: {
+              requiresRead: true,
             },
           };
         }
@@ -121,7 +124,7 @@ export const writeTool = createTool({
           return {
             success: false,
             llmContent: `The file has been modified by an external program since you last read it. You must use the Read tool again to see the current content before writing.\n\nDetails: ${externalModCheck.message}`,
-            displayContent: `❌ 写入失败：文件已被外部程序修改\n\n${externalModCheck.message}\n\n💡 请重新使用 Read 工具读取最新内容后再写入`,
+            displayContent: `❌ 写入失败：文件已被外部程序修改\n\n${externalModCheck.message}\n\n💡 我需要重新读取文件内容后再写入`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File modified externally',
@@ -162,7 +165,7 @@ export const writeTool = createTool({
           return {
             success: false,
             llmContent: `Binary file writes are not supported in ACP mode. The IDE only supports text file operations. Please use encoding='utf8' for text files, or ask the user to write the file manually.`,
-            displayContent: `❌ ACP 模式不支持二进制文件写入\n\n当前通过 IDE 执行文件操作，但 IDE 仅支持文本文件。\n\n💡 建议：\n  • 如果是文本文件，使用 encoding='utf8'\n  • 如果必须写入二进制文件，请在本地终端执行`,
+            displayContent: `❌ ACP 模式不支持二进制文件写入\n\n当前通过 IDE 执行文件操作，但 IDE 仅支持文本文件。\n\n💡 如果是文本文件，我会使用 encoding='utf8' 重试；如果必须写入二进制文件，需要在本地终端执行`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'Binary writes not supported in ACP mode',

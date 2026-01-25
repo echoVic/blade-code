@@ -145,6 +145,123 @@ export class SkillInstaller {
   }
 
   /**
+   * 从 GitHub 仓库安装 Skill
+   * @param repoUrl GitHub 仓库 URL (例如: https://github.com/user/skill-name)
+   * @param skillName 可选的 skill 名称，默认从 URL 提取
+   */
+  async installFromRepo(repoUrl: string, skillName?: string): Promise<boolean> {
+    const name = skillName || this.extractRepoName(repoUrl);
+    const localPath = path.join(this.skillsDir, name);
+    const tempDir = path.join(this.skillsDir, `.tmp-repo-${name}-${Date.now()}`);
+
+    try {
+      if (!(await this.isGitAvailable())) {
+        logger.warn('Git not available, cannot install from repo');
+        return false;
+      }
+
+      logger.info(`Installing skill from repo: ${repoUrl}...`);
+
+      await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
+
+      await execAsync(
+        `git clone --depth 1 "${repoUrl}" "${tempDir}"`,
+        { timeout: 60000 }
+      );
+
+      const skillMdPath = path.join(tempDir, 'SKILL.md');
+      try {
+        await fs.access(skillMdPath);
+      } catch {
+        logger.warn(`No SKILL.md found in repository ${repoUrl}`);
+        await fs.rm(tempDir, { recursive: true, force: true });
+        return false;
+      }
+
+      await fs.rm(localPath, { recursive: true, force: true });
+      await fs.rename(tempDir, localPath);
+
+      try {
+        await fs.rm(path.join(localPath, '.git'), { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+
+      logger.info(`Successfully installed skill from repo: ${name}`);
+      return true;
+    } catch (error) {
+      try {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+      logger.warn(
+        `Failed to install from repo ${repoUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * 从本地路径安装 Skill（创建符号链接或复制）
+   * @param localSourcePath 本地 skill 路径
+   * @param skillName 可选的 skill 名称，默认从路径提取
+   * @param symlink 是否使用符号链接（默认 true，方便开发）
+   */
+  async installFromLocal(localSourcePath: string, skillName?: string, symlink = true): Promise<boolean> {
+    const name = skillName || path.basename(localSourcePath);
+    const targetPath = path.join(this.skillsDir, name);
+
+    try {
+      const sourcePath = path.resolve(localSourcePath);
+      
+      try {
+        await fs.access(sourcePath);
+      } catch {
+        logger.warn(`Local path does not exist: ${sourcePath}`);
+        return false;
+      }
+
+      const skillMdPath = path.join(sourcePath, 'SKILL.md');
+      try {
+        await fs.access(skillMdPath);
+      } catch {
+        logger.warn(`No SKILL.md found in local path: ${sourcePath}`);
+        return false;
+      }
+
+      logger.info(`Installing skill from local path: ${sourcePath}...`);
+
+      await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
+
+      await fs.rm(targetPath, { recursive: true, force: true });
+
+      if (symlink) {
+        await fs.symlink(sourcePath, targetPath, 'dir');
+        logger.info(`Created symlink for skill: ${name}`);
+      } else {
+        await fs.cp(sourcePath, targetPath, { recursive: true });
+        logger.info(`Copied skill to: ${name}`);
+      }
+
+      return true;
+    } catch (error) {
+      logger.warn(
+        `Failed to install from local path ${localSourcePath}: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * 从 URL 提取仓库名称
+   */
+  private extractRepoName(url: string): string {
+    const match = url.match(/\/([^/]+?)(\.git)?$/);
+    return match?.[1] || 'unknown-skill';
+  }
+
+  /**
    * 安装所有官方 Skills
    */
   async installAllOfficialSkills(): Promise<{ installed: string[]; failed: string[] }> {

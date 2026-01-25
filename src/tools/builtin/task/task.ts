@@ -458,7 +458,7 @@ function handleResume(
     return {
       success: false,
       llmContent: `Cannot resume agent ${agentId}: still running`,
-      displayContent: `❌ 无法恢复 Agent: ${agentId}\n\nAgent 仍在运行中，请使用 TaskOutput 获取结果`,
+      displayContent: `❌ 无法恢复 Agent: ${agentId}\n\nAgent 仍在运行中，我会使用 TaskOutput 获取结果`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: `Agent is still running: ${agentId}`,

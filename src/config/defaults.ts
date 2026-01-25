@@ -23,9 +23,18 @@ export const DEFAULT_CONFIG: BladeConfig = {
   timeout: 180000, // 180秒超时（长上下文 agentic 场景需要更长时间）
 
   // UI
-  theme: 'GitHub',
+  theme: 'dracula',
+  uiTheme: 'system',
   language: 'zh-CN',
   fontSize: 14,
+
+  // General Settings
+  autoSaveSessions: true,
+  notifyBuild: true,
+  notifyErrors: false,
+  notifySounds: false,
+  privacyTelemetry: false,
+  privacyCrash: true,
 
   // 核心
   debug: false,

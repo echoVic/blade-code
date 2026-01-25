@@ -19,12 +19,12 @@ export function SubagentProgress() {
   return (
     <div className="flex items-center gap-2 py-1 font-mono text-[13px]">
       <Loader2 className="h-3.5 w-3.5 text-[#3B82F6] animate-spin" />
-      <span className="text-[#71717a]">Subagent</span>
-      <span className="text-[#E5E5E5] font-semibold">
+      <span className="text-[#6B7280] dark:text-[#71717a]">Subagent</span>
+      <span className="text-[#111827] dark:text-[#E5E5E5] font-semibold">
         {subagentProgress.type}
       </span>
-      <span className="text-[#27272a]">|</span>
-      <span className="text-[#a1a1aa] truncate">
+      <span className="text-[#D1D5DB] dark:text-[#27272a]">|</span>
+      <span className="text-[#6B7280] dark:text-[#a1a1aa] truncate">
         {subagentProgress.description}
       </span>
       <span className="text-[#3B82F6] text-[12px] ml-auto">
@@ -49,17 +49,17 @@ export function InlineSubagentProgress({
 
   if (status === 'completed') {
     return (
-      <div className="my-2 rounded-lg border border-[#27272a] bg-[#18181b]/50 overflow-hidden">
+      <div className="my-2 rounded-lg border border-[#E5E7EB] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#18181b]/50 overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3">
-          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[#22C55E]/10">
-            <Check className="h-3.5 w-3.5 text-[#22C55E]" />
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[#DCFCE7] dark:bg-[#22C55E]/10">
+            <Check className="h-3.5 w-3.5 text-[#16A34A] dark:text-[#22C55E]" />
           </div>
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-[13px] font-medium text-[#E5E5E5] font-mono">
+              <span className="text-[13px] font-medium text-[#111827] dark:text-[#E5E5E5] font-mono">
                 {type}
               </span>
-              <span className="text-[11px] text-[#71717a] font-mono">
+              <span className="text-[11px] text-[#6B7280] dark:text-[#71717a] font-mono">
                 Completed in {elapsed}s
               </span>
             </div>
@@ -78,7 +78,7 @@ export function InlineSubagentProgress({
           </div>
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-[13px] font-medium text-[#E5E5E5] font-mono">
+              <span className="text-[13px] font-medium text-[#111827] dark:text-[#E5E5E5] font-mono">
                 {type}
               </span>
               <span className="text-[11px] text-red-400 font-mono">
@@ -95,21 +95,21 @@ export function InlineSubagentProgress({
   }
 
   return (
-    <div className="my-2 rounded-lg border border-[#27272a] bg-[#18181b]/50 overflow-hidden">
+    <div className="my-2 rounded-lg border border-[#E5E7EB] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#18181b]/50 overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-3">
-        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[#22C55E]/10">
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[#DCFCE7] dark:bg-[#22C55E]/10">
           <Loader2 className="h-3.5 w-3.5 text-[#22C55E] animate-spin" />
         </div>
         <div className="flex flex-col gap-0.5 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[13px] font-medium text-[#E5E5E5] font-mono">
+            <span className="text-[13px] font-medium text-[#111827] dark:text-[#E5E5E5] font-mono">
               {type}
             </span>
-            <span className="text-[11px] text-[#71717a] font-mono">
+            <span className="text-[11px] text-[#6B7280] dark:text-[#71717a] font-mono">
               {elapsed}s
             </span>
           </div>
-          <span className="text-[12px] text-[#a1a1aa] font-mono truncate">
+          <span className="text-[12px] text-[#6B7280] dark:text-[#a1a1aa] font-mono truncate">
             {description}
           </span>
         </div>

@@ -160,7 +160,7 @@ assistant: Clients are marked as failed in the \`connectToServer\` function in s
 </example>
 
 # Language Requirement
-IMPORTANT: Always respond in Chinese (Simplified Chinese). Translate all your responses to Chinese before sending them to the user.`;
+{{LANGUAGE_INSTRUCTION}}`;
 
 
 

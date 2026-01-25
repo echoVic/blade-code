@@ -16,7 +16,7 @@ export function ThinkingBlock() {
       ) : (
         <ChevronRight className="h-3 w-3 text-[#3B82F6]" />
       )}
-      <span className="text-[13px] text-[#71717a] font-mono">
+      <span className="text-[13px] text-[#6B7280] dark:text-[#71717a] font-mono">
         Thinking ({lines.length} lines)
       </span>
     </div>
@@ -30,8 +30,8 @@ export function ThinkingContent() {
 
   return (
     <div className={cn(
-      'text-[13px] text-[#a1a1aa] font-mono whitespace-pre-wrap',
-      'bg-[#18181b] rounded-md p-3 max-h-[300px] overflow-y-auto'
+      'text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono whitespace-pre-wrap',
+      'bg-[#F3F4F6] dark:bg-[#18181b] rounded-md p-3 max-h-[300px] overflow-y-auto'
     )}>
       {currentThinkingContent}
     </div>

@@ -89,6 +89,12 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace',
     persistable: true,
   },
+  uiTheme: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
   language: {
     target: 'config',
     defaultScope: 'global',
@@ -96,6 +102,48 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     persistable: true,
   },
   debug: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  fontSize: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  autoSaveSessions: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  notifyBuild: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  notifyErrors: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  notifySounds: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  privacyTelemetry: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  privacyCrash: {
     target: 'config',
     defaultScope: 'global',
     mergeStrategy: 'replace',
@@ -141,7 +189,7 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
   },
   mcpServers: {
     target: 'config',
-    defaultScope: 'project', // MCP 服务器配置默认存储在项目配置中
+    defaultScope: 'global', // MCP 服务器配置存储在用户全局配置中
     mergeStrategy: 'replace',
     persistable: true,
   },
@@ -161,12 +209,6 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     persistable: false,
   },
   topK: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  fontSize: {
     target: 'config',
     defaultScope: 'global',
     mergeStrategy: 'replace',

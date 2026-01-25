@@ -2,7 +2,9 @@ import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { Bus } from '../../bus/index.js';
+import { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import type { ConfirmationDetails, ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
 import { BadRequestError, NotFoundError } from '../error.js';
 
 const logger = createLogger(LogCategory.SERVICE);
@@ -10,11 +12,12 @@ const logger = createLogger(LogCategory.SERVICE);
 interface PendingPermission {
   id: string;
   sessionId: string;
-  toolName: string;
-  description: string;
+  toolName?: string;
+  description?: string;
   args?: Record<string, unknown>;
+  details: ConfirmationDetails;
   createdAt: Date;
-  resolve: (approved: boolean, remember?: boolean) => void;
+  resolve: (response: ConfirmationResponse) => void;
 }
 
 const pendingPermissions = new Map<string, PendingPermission>();
@@ -22,13 +25,18 @@ const pendingPermissions = new Map<string, PendingPermission>();
 const PermissionResponseSchema = z.object({
   approved: z.boolean(),
   remember: z.boolean().optional(),
+  scope: z.enum(['once', 'session']).optional(),
+  targetMode: z.enum(['default', 'autoEdit', 'plan', 'spec', 'yolo']).optional(),
+  feedback: z.string().optional(),
+  answers: z.record(z.union([z.string(), z.array(z.string())])).optional(),
 });
 
 const CreatePermissionSchema = z.object({
   sessionId: z.string(),
-  toolName: z.string(),
-  description: z.string(),
+  toolName: z.string().optional(),
+  description: z.string().optional(),
   args: z.record(z.any()).optional(),
+  details: z.record(z.any()).optional(),
 });
 
 export const PermissionRoutes = () => {
@@ -41,6 +49,7 @@ export const PermissionRoutes = () => {
       toolName: p.toolName,
       description: p.description,
       args: p.args,
+      details: p.details,
       createdAt: p.createdAt.toISOString(),
     }));
 
@@ -56,7 +65,15 @@ export const PermissionRoutes = () => {
         throw new BadRequestError('Invalid permission request format. Expected { sessionId, toolName, description, args? }');
       }
 
-      const { sessionId, toolName, description, args } = parsed.data;
+      const { sessionId, toolName, description, args, details } = parsed.data;
+      const confirmationDetails: ConfirmationDetails = (details as ConfirmationDetails) || {
+        type: 'permission',
+        title: toolName ? `Permission: ${toolName}` : 'Permission required',
+        message: description || 'This action requires confirmation',
+        details: description,
+        toolName,
+        args,
+      };
       const id = nanoid(12);
 
       const permission: PendingPermission = {
@@ -65,6 +82,7 @@ export const PermissionRoutes = () => {
         toolName,
         description,
         args,
+        details: confirmationDetails,
         createdAt: new Date(),
         resolve: () => {
           // Will be called when permission is responded to
@@ -79,6 +97,7 @@ export const PermissionRoutes = () => {
         toolName,
         description,
         args,
+        details: confirmationDetails,
       });
 
       logger.info(`[PermissionRoutes] Permission request created: ${id} for ${toolName}`);
@@ -89,6 +108,7 @@ export const PermissionRoutes = () => {
         toolName,
         description,
         args,
+        details: confirmationDetails,
         createdAt: permission.createdAt.toISOString(),
       }, 201);
     } catch (error) {
@@ -111,6 +131,7 @@ export const PermissionRoutes = () => {
       toolName: permission.toolName,
       description: permission.description,
       args: permission.args,
+      details: permission.details,
       createdAt: permission.createdAt.toISOString(),
     });
   });
@@ -131,15 +152,28 @@ export const PermissionRoutes = () => {
         throw new BadRequestError('Invalid permission response format');
       }
 
-      const { approved, remember } = parsed.data;
+      const { approved, remember, scope, targetMode, feedback, answers } = parsed.data;
+      const response: ConfirmationResponse = {
+        approved,
+        reason: feedback,
+        scope,
+        targetMode: targetMode as PermissionMode | undefined,
+        feedback,
+        answers,
+      };
 
-      permission.resolve(approved, remember);
+      permission.resolve(response);
       pendingPermissions.delete(permissionId);
 
       await Bus.publish('permission.replied', {
         requestId: permissionId,
+        sessionId: permission.sessionId,
         approved,
         remember,
+        scope,
+        targetMode,
+        feedback,
+        answers,
       });
 
       logger.info(`[PermissionRoutes] Permission ${permissionId} ${approved ? 'approved' : 'denied'}`);
@@ -159,11 +193,12 @@ export const PermissionRoutes = () => {
       throw new NotFoundError('Permission request', permissionId);
     }
 
-    permission.resolve(false);
+    permission.resolve({ approved: false });
     pendingPermissions.delete(permissionId);
 
     await Bus.publish('permission.replied', {
       requestId: permissionId,
+      sessionId: permission.sessionId,
       approved: false,
     });
 
@@ -175,24 +210,23 @@ export const PermissionRoutes = () => {
   return app;
 };
 
-export async function requestPermission(
+export async function requestConfirmation(
   sessionId: string,
-  toolName: string,
-  description: string,
-  args?: Record<string, unknown>
-): Promise<{ approved: boolean; remember?: boolean }> {
+  details: ConfirmationDetails
+): Promise<ConfirmationResponse> {
   const id = nanoid(12);
 
-  const resultPromise = new Promise<{ approved: boolean; remember?: boolean }>((resolve) => {
+  const resultPromise = new Promise<ConfirmationResponse>((resolve) => {
     const permission: PendingPermission = {
       id,
       sessionId,
-      toolName,
-      description,
-      args,
+      toolName: details.toolName,
+      description: details.message,
+      args: details.args,
+      details,
       createdAt: new Date(),
-      resolve: (approved, remember) => {
-        resolve({ approved, remember });
+      resolve: (response) => {
+        resolve(response);
       },
     };
 
@@ -200,26 +234,44 @@ export async function requestPermission(
   });
 
   try {
+    logger.info(`[PermissionRoutes] Publishing permission.asked event for request ${id}`);
     await Bus.publish('permission.asked', {
       requestId: id,
       sessionId,
-      toolName,
-      description,
-      args,
+      toolName: details.toolName,
+      description: details.message,
+      args: details.args,
+      details,
     });
+    logger.info(`[PermissionRoutes] permission.asked event published successfully`);
   } catch (err) {
     logger.error(`[PermissionRoutes] Failed to publish permission.asked event:`, err);
   }
 
-  logger.info(`[PermissionRoutes] Permission request created: ${id} for ${toolName}`);
+  logger.info(`[PermissionRoutes] Confirmation request created: ${id}`);
 
   return resultPromise;
+}
+
+export async function requestPermission(
+  sessionId: string,
+  toolName: string,
+  description: string,
+  args?: Record<string, unknown>
+): Promise<ConfirmationResponse> {
+  return requestConfirmation(sessionId, {
+    type: 'permission',
+    title: `Permission: ${toolName}`,
+    message: description || 'This action requires confirmation',
+    toolName,
+    args,
+  });
 }
 
 export function cancelPendingPermissions(sessionId: string): void {
   for (const [id, permission] of pendingPermissions) {
     if (permission.sessionId === sessionId) {
-      permission.resolve(false);
+      permission.resolve({ approved: false });
       pendingPermissions.delete(id);
       logger.info(`[PermissionRoutes] Permission ${id} cancelled (session ${sessionId} cleanup)`);
     }

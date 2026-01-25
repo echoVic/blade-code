@@ -67,9 +67,10 @@ export const PermissionAskedEvent = z.object({
   properties: z.object({
     requestId: z.string(),
     sessionId: z.string(),
-    toolName: z.string(),
-    description: z.string(),
+    toolName: z.string().optional(),
+    description: z.string().optional(),
     args: z.record(z.any()).optional(),
+    details: z.record(z.any()).optional(),
   }),
 });
 
@@ -77,8 +78,13 @@ export const PermissionRepliedEvent = z.object({
   type: z.literal('permission.replied'),
   properties: z.object({
     requestId: z.string(),
+    sessionId: z.string().optional(),
     approved: z.boolean(),
     remember: z.boolean().optional(),
+    scope: z.enum(['once', 'session']).optional(),
+    targetMode: z.string().optional(),
+    feedback: z.string().optional(),
+    answers: z.record(z.union([z.string(), z.array(z.string())])).optional(),
   }),
 });
 
@@ -135,6 +141,7 @@ export const ToolStartEvent = z.object({
     sessionId: z.string(),
     toolName: z.string(),
     toolCallId: z.string(),
+    toolKind: z.string().optional(),
     arguments: z.string().optional(),
   }),
 });
@@ -147,6 +154,8 @@ export const ToolResultEvent = z.object({
     toolCallId: z.string(),
     success: z.boolean(),
     summary: z.string().optional(),
+    output: z.string().optional(),
+    metadata: z.record(z.any()).optional(),
   }),
 });
 

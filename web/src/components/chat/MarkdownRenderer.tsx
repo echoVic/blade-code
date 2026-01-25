@@ -1,9 +1,10 @@
 import { cn } from '@/lib/utils'
+import { useIsDark } from '@/store/SettingsStore'
 import { Check, Copy } from 'lucide-react'
 import { useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { oneLight, vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import remarkGfm from 'remark-gfm'
 
 interface MarkdownRendererProps {
@@ -12,6 +13,8 @@ interface MarkdownRendererProps {
 }
 
 export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
+  const isDark = useIsDark()
+
   const components: Components = {
     code({ node, className, children, ...props }) {
       const match = /language-(\w+)/.exec(className || '')
@@ -21,20 +24,20 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
 
       if (isInline) {
         return (
-          <code className={cn("bg-[#27272a] px-1.5 py-0.5 rounded text-[#E5E5E5] font-mono text-[13px]", className)} {...props}>
+          <code className={cn("bg-[#F3F4F6] dark:bg-[#27272a] px-1.5 py-0.5 rounded text-[#111827] dark:text-[#E5E5E5] font-mono text-[13px]", className)} {...props}>
             {children}
           </code>
         )
       }
 
       return (
-        <div className="relative my-4 rounded-lg overflow-hidden border border-[#27272a] bg-[#1e1e1e]">
-          <div className="flex items-center justify-between px-4 py-2 bg-[#27272a] border-b border-[#27272a]">
-            <span className="text-xs text-[#a1a1aa] font-mono">{language || 'text'}</span>
+        <div className="relative my-4 rounded-lg overflow-hidden border border-[#E5E7EB] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1e1e1e]">
+          <div className="flex items-center justify-between px-4 py-2 bg-[#F3F4F6] dark:bg-[#27272a] border-b border-[#E5E7EB] dark:border-[#27272a]">
+            <span className="text-xs text-[#6B7280] dark:text-[#a1a1aa] font-mono">{language || 'text'}</span>
             <CopyButton content={codeString} />
           </div>
           <SyntaxHighlighter
-            style={vscDarkPlus as any}
+            style={(isDark ? vscDarkPlus : oneLight) as any}
             language={language}
             PreTag="div"
             wrapLongLines={true}
@@ -64,16 +67,16 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
       return <li className="leading-relaxed">{children}</li>
     },
     h1({ children }) {
-      return <h1 className="text-2xl font-bold mb-4 mt-6 text-[#E5E5E5]">{children}</h1>
+      return <h1 className="text-2xl font-bold mb-4 mt-6 text-[#111827] dark:text-[#E5E5E5]">{children}</h1>
     },
     h2({ children }) {
-      return <h2 className="text-xl font-bold mb-3 mt-5 text-[#E5E5E5]">{children}</h2>
+      return <h2 className="text-xl font-bold mb-3 mt-5 text-[#111827] dark:text-[#E5E5E5]">{children}</h2>
     },
     h3({ children }) {
-      return <h3 className="text-lg font-bold mb-2 mt-4 text-[#E5E5E5]">{children}</h3>
+      return <h3 className="text-lg font-bold mb-2 mt-4 text-[#111827] dark:text-[#E5E5E5]">{children}</h3>
     },
     blockquote({ children }) {
-      return <blockquote className="border-l-2 border-[#22C55E] pl-4 italic text-[#a1a1aa] mb-4">{children}</blockquote>
+      return <blockquote className="border-l-2 border-[#22C55E] pl-4 italic text-[#6B7280] dark:text-[#a1a1aa] mb-4">{children}</blockquote>
     },
     a({ href, children }) {
       return (
@@ -88,30 +91,30 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
       )
     },
     table({ children }) {
-      return <div className="overflow-x-auto mb-4 border border-[#27272a] rounded-lg"><table className="w-full text-sm text-left">{children}</table></div>
+      return <div className="overflow-x-auto mb-4 border border-[#E5E7EB] dark:border-[#27272a] rounded-lg"><table className="w-full text-sm text-left">{children}</table></div>
     },
     thead({ children }) {
-      return <thead className="bg-[#27272a] text-[#E5E5E5]">{children}</thead>
+      return <thead className="bg-[#F3F4F6] text-[#111827] dark:bg-[#27272a] dark:text-[#E5E5E5]">{children}</thead>
     },
     tbody({ children }) {
-      return <tbody className="divide-y divide-[#27272a]">{children}</tbody>
+      return <tbody className="divide-y divide-[#E5E7EB] dark:divide-[#27272a]">{children}</tbody>
     },
     tr({ children }) {
-      return <tr className="hover:bg-[#27272a]/50 transition-colors">{children}</tr>
+      return <tr className="hover:bg-[#F3F4F6] dark:hover:bg-[#27272a]/50 transition-colors">{children}</tr>
     },
     th({ children }) {
       return <th className="px-4 py-3 font-medium whitespace-nowrap">{children}</th>
     },
     td({ children }) {
-      return <td className="px-4 py-3 text-[#d4d4d8]">{children}</td>
+      return <td className="px-4 py-3 text-[#374151] dark:text-[#d4d4d8]">{children}</td>
     },
     hr() {
-      return <hr className="my-6 border-[#27272a]" />
+      return <hr className="my-6 border-[#E5E7EB] dark:border-[#27272a]" />
     }
   }
 
   return (
-    <div className={cn("text-[14px] text-[#E5E5E5] font-mono break-words min-w-0 w-full", className)}>
+    <div className={cn("text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono break-words min-w-0 w-full", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={components}
@@ -134,7 +137,7 @@ function CopyButton({ content }: { content: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="p-1 hover:bg-[#3f3f46] rounded-md transition-colors text-[#a1a1aa] hover:text-[#E5E5E5]"
+      className="p-1 hover:bg-[#E5E7EB] dark:hover:bg-[#3f3f46] rounded-md transition-colors text-[#9CA3AF] dark:text-[#a1a1aa] hover:text-[#111827] dark:hover:text-[#E5E5E5]"
       title="Copy code"
     >
       {copied ? <Check className="h-3.5 w-3.5 text-[#22C55E]" /> : <Copy className="h-3.5 w-3.5" />}

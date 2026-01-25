@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button'
 import { SettingsModal } from '@/components/settings/SettingsModal'
 import { FilePreview } from '@/components/preview/FilePreview'
 import { TerminalPanel } from '@/components/terminal/TerminalPanel'
+import { McpModal } from '@/components/mcp/McpModal'
+import { SkillsModal } from '@/components/skills/SkillsModal'
 import { useEffect, useMemo, useState } from 'react'
 
 interface LayoutProps {
@@ -63,18 +65,18 @@ export function Layout({ children }: LayoutProps) {
       </div>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 border-b flex items-center px-8 gap-4 bg-background z-10">
+        <header className="h-16 border-b border-[#E5E7EB] dark:border-zinc-800 flex items-center px-8 gap-4 bg-white dark:bg-[#09090b] z-10">
           <div className="flex items-center gap-3">
-            <span className="font-normal text-sm text-zinc-500 font-mono truncate max-w-md" title={currentPath}>{currentPath}</span>
+            <span className="font-normal text-sm text-[#6B7280] dark:text-zinc-500 font-mono truncate max-w-md" title={currentPath}>{currentPath}</span>
             {gitBranch && (
-              <span className="flex items-center gap-1 text-xs text-zinc-600 bg-zinc-800/50 px-2 py-0.5 rounded">
+              <span className="flex items-center gap-1 text-xs text-[#6B7280] dark:text-zinc-300 bg-[#F3F4F6] dark:bg-zinc-800/50 px-2 py-0.5 rounded">
                 <GitBranch className="h-3 w-3" />
                 {gitBranch}
               </span>
             )}
           </div>
           <div className="ml-auto">
-             <Button variant="ghost" size="icon" onClick={toggleFilePreview} className={cn(isFilePreviewOpen && "bg-accent", "text-zinc-500 hover:text-zinc-300")}>
+             <Button variant="ghost" size="icon" onClick={toggleFilePreview} className={cn(isFilePreviewOpen && "bg-accent", "text-[#9CA3AF] hover:text-[#111827] dark:text-zinc-500 dark:hover:text-zinc-300")}>
                <FileCode className="h-4 w-4" />
              </Button>
           </div>
@@ -89,6 +91,8 @@ export function Layout({ children }: LayoutProps) {
         </main>
       </div>
       <SettingsModal />
+      <McpModal />
+      <SkillsModal />
       <TerminalPanel />
     </div>
   )

@@ -176,7 +176,7 @@ TransitionSpecPhase({ targetPhase: "design" })
             '})\n' +
             '```\n\n' +
             'After adding tasks, try transitioning again.',
-          displayContent: '❌ No tasks defined - use AddTask first',
+          displayContent: '❌ No tasks defined - 我需要先添加任务',
           error: {
             type: ToolErrorType.VALIDATION_ERROR,
             message: 'No tasks defined. Use AddTask tool to add tasks first.',

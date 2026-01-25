@@ -62,8 +62,8 @@ export const SuggestionPopover = ({
 
   return (
     <div className="absolute bottom-full left-0 right-0 mb-2 z-50">
-      <div className="mx-4 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800 text-xs text-zinc-400">
+      <div className="mx-4 bg-white dark:bg-zinc-900 border border-[#E5E7EB] dark:border-zinc-700 rounded-lg shadow-xl overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-[#E5E7EB] dark:border-zinc-800 text-xs text-[#6B7280] dark:text-zinc-400">
           <Icon className="h-3.5 w-3.5" />
           <span>{type === 'command' ? 'Commands' : 'Files'}</span>
           {loading && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
@@ -71,11 +71,11 @@ export const SuggestionPopover = ({
 
         <div ref={listRef} className="max-h-64 overflow-y-auto py-1">
           {suggestions.length === 0 && loading ? (
-            <div className="px-3 py-4 text-center text-zinc-500 text-sm">
+            <div className="px-3 py-4 text-center text-[#6B7280] dark:text-zinc-500 text-sm">
               Loading...
             </div>
           ) : suggestions.length === 0 ? (
-            <div className="px-3 py-4 text-center text-zinc-500 text-sm">
+            <div className="px-3 py-4 text-center text-[#6B7280] dark:text-zinc-500 text-sm">
               No matches found
             </div>
           ) : (
@@ -90,8 +90,8 @@ export const SuggestionPopover = ({
                   className={cn(
                     'w-full text-left px-3 py-2 flex items-start gap-3 transition-colors',
                     isSelected
-                      ? 'bg-zinc-800 text-zinc-100'
-                      : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300'
+                      ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
+                      : 'text-[#6B7280] hover:bg-[#F3F4F6] hover:text-[#111827] dark:text-zinc-400 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-300'
                   )}
                   onClick={() => onSelect(index)}
                   onMouseEnter={() => onHover(index)}
@@ -100,23 +100,23 @@ export const SuggestionPopover = ({
                     <>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-sm text-blue-400">
+                          <span className="font-mono text-sm text-blue-600 dark:text-blue-400">
                             {item.command}
                           </span>
                           {item.argumentHint && (
-                            <span className="text-xs text-zinc-500 font-mono">
+                            <span className="text-xs text-[#9CA3AF] dark:text-zinc-500 font-mono">
                               {item.argumentHint}
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-zinc-500 mt-0.5 truncate">
+                        <p className="text-xs text-[#9CA3AF] dark:text-zinc-500 mt-0.5 truncate">
                           {item.description}
                         </p>
                       </div>
                     </>
                   ) : (
                     <div className="flex items-center gap-2 min-w-0">
-                      <FileText className="h-4 w-4 flex-shrink-0 text-zinc-500" />
+                      <FileText className="h-4 w-4 flex-shrink-0 text-[#9CA3AF] dark:text-zinc-500" />
                       <span className="font-mono text-sm truncate">{item}</span>
                     </div>
                   )}
@@ -126,17 +126,17 @@ export const SuggestionPopover = ({
           )}
         </div>
 
-        <div className="px-3 py-1.5 border-t border-zinc-800 text-xs text-zinc-500 flex items-center gap-4">
+        <div className="px-3 py-1.5 border-t border-[#E5E7EB] dark:border-zinc-800 text-xs text-[#9CA3AF] dark:text-zinc-500 flex items-center gap-4">
           <span>
-            <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-400">↑↓</kbd>
+            <kbd className="px-1.5 py-0.5 bg-[#E5E7EB] dark:bg-zinc-800 rounded text-[#6B7280] dark:text-zinc-400">↑↓</kbd>
             {' '}Navigate
           </span>
           <span>
-            <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-400">Tab</kbd>
+            <kbd className="px-1.5 py-0.5 bg-[#E5E7EB] dark:bg-zinc-800 rounded text-[#6B7280] dark:text-zinc-400">Tab</kbd>
             {' '}Select
           </span>
           <span>
-            <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-400">Esc</kbd>
+            <kbd className="px-1.5 py-0.5 bg-[#E5E7EB] dark:bg-zinc-800 rounded text-[#6B7280] dark:text-zinc-400">Esc</kbd>
             {' '}Close
           </span>
         </div>

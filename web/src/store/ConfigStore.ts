@@ -1,8 +1,9 @@
-import { ModelConfig, PermissionMode } from '@/lib/types'
+import type { ModelConfig, PermissionMode } from '@api/schemas'
+import { PermissionModeEnum } from '@api/schemas'
 import { create } from 'zustand'
 
-export { PermissionMode }
-export type { ModelConfig }
+export type { ModelConfig, PermissionMode }
+export { PermissionModeEnum }
 
 interface ConfigState {
   currentModelId: string | null
@@ -19,7 +20,7 @@ interface ConfigState {
 
 export const useConfigStore = create<ConfigState>((set) => ({
   currentModelId: null,
-  currentMode: PermissionMode.DEFAULT,
+  currentMode: PermissionModeEnum.DEFAULT,
   configuredModels: [],
   availableModels: [],
   isLoading: false,

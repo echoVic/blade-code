@@ -12,10 +12,12 @@ import { getVersion } from '../utils/packageInfo.js';
 import { BladeServerError } from './error.js';
 import { ConfigRoutes } from './routes/config.js';
 import { GlobalRoutes } from './routes/global.js';
+import { McpRoutes } from './routes/mcp.js';
 import { ModelsRoutes } from './routes/models.js';
 import { PermissionRoutes } from './routes/permission.js';
 import { ProviderRoutes } from './routes/provider.js';
 import { SessionRoutes } from './routes/session.js';
+import { SkillsRoutes } from './routes/skills.js';
 import { SuggestionsRoutes } from './routes/suggestions.js';
 import { TerminalRoutes, terminalWebSocket } from './routes/terminal.js';
 
@@ -148,6 +150,8 @@ function createApp(): Hono<{ Variables: Variables }> {
   app.route('/models', ModelsRoutes());
   app.route('/suggestions', SuggestionsRoutes());
   app.route('/terminal', TerminalRoutes());
+  app.route('/mcp', McpRoutes());
+  app.route('/skills', SkillsRoutes());
 
   app.get('/health', (c) => {
     return c.json({ healthy: true, version: getVersion() });
