@@ -124,6 +124,7 @@
     "ansi-escapes": "^7.2.0",
     "async-mutex": "^0.5.0",
     "axios": "^1.12.2",
+    "bun-pty": "^0.4.8",
     "chalk": "^5.4.1",
     "diff": "^8.0.2",
     "fast-glob": "^3.3.3",

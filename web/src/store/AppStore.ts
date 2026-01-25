@@ -7,6 +7,8 @@ interface AppState {
   toggleFilePreview: () => void
   isSettingsOpen: boolean
   toggleSettings: () => void
+  isTerminalOpen: boolean
+  toggleTerminal: () => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -16,4 +18,6 @@ export const useAppStore = create<AppState>((set) => ({
   toggleFilePreview: () => set((state) => ({ isFilePreviewOpen: !state.isFilePreviewOpen })),
   isSettingsOpen: false,
   toggleSettings: () => set((state) => ({ isSettingsOpen: !state.isSettingsOpen })),
+  isTerminalOpen: false,
+  toggleTerminal: () => set((state) => ({ isTerminalOpen: !state.isTerminalOpen })),
 }))

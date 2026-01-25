@@ -16,6 +16,8 @@ import { ModelsRoutes } from './routes/models.js';
 import { PermissionRoutes } from './routes/permission.js';
 import { ProviderRoutes } from './routes/provider.js';
 import { SessionRoutes } from './routes/session.js';
+import { SuggestionsRoutes } from './routes/suggestions.js';
+import { TerminalRoutes, terminalWebSocket } from './routes/terminal.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -144,6 +146,8 @@ function createApp(): Hono<{ Variables: Variables }> {
   app.route('/permissions', PermissionRoutes());
   app.route('/providers', ProviderRoutes());
   app.route('/models', ModelsRoutes());
+  app.route('/suggestions', SuggestionsRoutes());
+  app.route('/terminal', TerminalRoutes());
 
   app.get('/health', (c) => {
     return c.json({ healthy: true, version: getVersion() });
@@ -323,8 +327,9 @@ function startWithBun(
     serve: (options: {
       hostname: string;
       port: number;
-      fetch: (request: Request) => Response | Promise<Response>;
+      fetch: (request: Request, server: unknown) => Response | Promise<Response>;
       idleTimeout?: number;
+      websocket?: unknown;
     }) => BunServer;
   };
 
@@ -335,8 +340,10 @@ function startWithBun(
         port,
         fetch: honoApp.fetch,
         idleTimeout: 0,
+        websocket: terminalWebSocket,
       });
-    } catch {
+    } catch (err) {
+      logger.error('Failed to start Bun server:', err);
       return undefined;
     }
   };

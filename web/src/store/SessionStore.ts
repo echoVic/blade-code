@@ -259,6 +259,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             newMessages[existingIndex] = message
             return { messages: newMessages }
           }
+          if (role === 'user') {
+            const tempIndex = state.messages.findIndex(
+              (m) => m.role === 'user' && m.id?.startsWith('temp-') && m.content === content
+            )
+            if (tempIndex >= 0) {
+              const newMessages = [...state.messages]
+              newMessages[tempIndex] = message
+              return { messages: newMessages }
+            }
+          }
           return { messages: [...state.messages, message] }
         })
         break
@@ -272,8 +282,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           const newMessages = state.messages.map((m) =>
             m.id === messageId ? { ...m, content: m.content + delta } : m
           )
-          return { messages: newMessages }
+          return { messages: newMessages, isStreaming: true }
         })
+        break
+      }
+
+      case 'message.complete': {
+        if (eventSessionId !== currentSessionId) break
+        set({ isStreaming: false })
+        break
+      }
+
+      case 'tool.start': {
+        if (eventSessionId !== currentSessionId) break
+        break
+      }
+
+      case 'tool.result': {
+        if (eventSessionId !== currentSessionId) break
         break
       }
 
@@ -293,7 +319,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       case 'token.usage': {
         if (eventSessionId !== currentSessionId) break
-        const usage = props.usage as Partial<TokenUsage>
+        const usage: Partial<TokenUsage> = {
+          inputTokens: props.inputTokens as number | undefined,
+          outputTokens: props.outputTokens as number | undefined,
+          totalTokens: props.totalTokens as number | undefined,
+          maxContextTokens: props.maxContextTokens as number | undefined,
+        }
         set((state) => ({
           tokenUsage: { ...state.tokenUsage, ...usage },
         }))

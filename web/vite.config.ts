@@ -50,6 +50,18 @@ export default defineConfig({
         target: API_TARGET,
         changeOrigin: true,
       },
+      '/suggestions': {
+        target: API_TARGET,
+        changeOrigin: true,
+      },
+      '/terminal/ws': {
+        target: API_TARGET.replace('http', 'ws'),
+        ws: true,
+      },
+      '/terminal': {
+        target: API_TARGET,
+        changeOrigin: true,
+      },
     },
   },
 })

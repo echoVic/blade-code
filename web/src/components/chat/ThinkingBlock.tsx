@@ -1,5 +1,5 @@
 import { useSessionStore } from '@/store/SessionStore'
-import { ChevronDown, ChevronRight, Brain } from 'lucide-react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export function ThinkingBlock() {
@@ -8,37 +8,32 @@ export function ThinkingBlock() {
   if (!currentThinkingContent) return null
 
   const lines = currentThinkingContent.split('\n')
-  const previewLines = lines.slice(0, 3).join('\n')
-  const hasMore = lines.length > 3
 
   return (
-    <div className="mx-4 mb-4 border border-purple-500/20 rounded-lg bg-purple-500/5 overflow-hidden">
-      <button
-        onClick={toggleThinkingExpanded}
-        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-purple-400 hover:bg-purple-500/10 transition-colors"
-      >
-        <Brain className="h-4 w-4" />
-        <span className="font-medium">Thinking</span>
-        <span className="text-purple-500/60 text-xs">({lines.length} lines)</span>
-        <div className="flex-1" />
-        {thinkingExpanded ? (
-          <ChevronDown className="h-4 w-4" />
-        ) : (
-          <ChevronRight className="h-4 w-4" />
-        )}
-      </button>
+    <div className="flex items-center gap-2 cursor-pointer" onClick={toggleThinkingExpanded}>
+      {thinkingExpanded ? (
+        <ChevronDown className="h-3 w-3 text-[#3B82F6]" />
+      ) : (
+        <ChevronRight className="h-3 w-3 text-[#3B82F6]" />
+      )}
+      <span className="text-[13px] text-[#71717a] font-mono">
+        Thinking ({lines.length} lines)
+      </span>
+    </div>
+  )
+}
 
-      <div className={cn(
-        'px-3 pb-3 text-sm text-purple-300/80 font-mono whitespace-pre-wrap overflow-hidden transition-all duration-200',
-        thinkingExpanded ? 'max-h-[400px] overflow-y-auto' : 'max-h-20'
-      )}>
-        {thinkingExpanded ? currentThinkingContent : (
-          <>
-            {previewLines}
-            {hasMore && <span className="text-purple-500/50">...</span>}
-          </>
-        )}
-      </div>
+export function ThinkingContent() {
+  const { currentThinkingContent, thinkingExpanded } = useSessionStore()
+
+  if (!currentThinkingContent || !thinkingExpanded) return null
+
+  return (
+    <div className={cn(
+      'text-[13px] text-[#a1a1aa] font-mono whitespace-pre-wrap',
+      'bg-[#18181b] rounded-md p-3 max-h-[300px] overflow-y-auto'
+    )}>
+      {currentThinkingContent}
     </div>
   )
 }

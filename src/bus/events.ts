@@ -112,20 +112,84 @@ export const TodoUpdatedEvent = z.object({
   }),
 });
 
+export const MessageDeltaEvent = z.object({
+  type: z.literal('message.delta'),
+  properties: z.object({
+    sessionId: z.string(),
+    messageId: z.string(),
+    delta: z.string(),
+  }),
+});
+
+export const MessageCompleteEvent = z.object({
+  type: z.literal('message.complete'),
+  properties: z.object({
+    sessionId: z.string(),
+    messageId: z.string(),
+  }),
+});
+
+export const ToolStartEvent = z.object({
+  type: z.literal('tool.start'),
+  properties: z.object({
+    sessionId: z.string(),
+    toolName: z.string(),
+    toolCallId: z.string(),
+    arguments: z.string().optional(),
+  }),
+});
+
+export const ToolResultEvent = z.object({
+  type: z.literal('tool.result'),
+  properties: z.object({
+    sessionId: z.string(),
+    toolName: z.string(),
+    toolCallId: z.string(),
+    success: z.boolean(),
+    summary: z.string().optional(),
+  }),
+});
+
+export const TokenUsageEvent = z.object({
+  type: z.literal('token.usage'),
+  properties: z.object({
+    sessionId: z.string(),
+    inputTokens: z.number().optional(),
+    outputTokens: z.number().optional(),
+    totalTokens: z.number().optional(),
+    cacheReadTokens: z.number().optional(),
+    cacheWriteTokens: z.number().optional(),
+  }),
+});
+
+export const SessionErrorEvent = z.object({
+  type: z.literal('session.error'),
+  properties: z.object({
+    sessionId: z.string(),
+    error: z.string(),
+  }),
+});
+
 export const BusEventPayload = z.discriminatedUnion('type', [
   SessionCreatedEvent,
   SessionUpdatedEvent,
   SessionDeletedEvent,
   SessionStatusEvent,
+  SessionErrorEvent,
   MessageCreatedEvent,
   MessageUpdatedEvent,
   MessagePartUpdatedEvent,
+  MessageDeltaEvent,
+  MessageCompleteEvent,
   PermissionAskedEvent,
   PermissionRepliedEvent,
   ServerConnectedEvent,
   ServerHeartbeatEvent,
   ConfigUpdatedEvent,
   TodoUpdatedEvent,
+  ToolStartEvent,
+  ToolResultEvent,
+  TokenUsageEvent,
 ]);
 
 export type BusEventPayload = z.infer<typeof BusEventPayload>;

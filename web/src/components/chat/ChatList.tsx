@@ -31,14 +31,14 @@ export function ChatList({ messages, isLoading }: ChatListProps) {
 
   return (
     <ScrollArea className="flex-1 h-full">
-      <div className="flex flex-col pb-4 px-[160px]">
+      <div className="flex flex-col pb-4 w-full px-4 md:px-6">
         {messages.map((message, index) => (
           <ChatMessage key={message.id || `msg-${index}`} message={message} />
         ))}
         {isLoading && (
           <div className="flex w-full gap-4 p-4 justify-start">
-            <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded border border-green-600 bg-green-500 text-black font-bold text-sm shadow-sm">
-              B
+            <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-lg bg-[#22C55E]">
+              <div className="w-2 h-2 rounded-full bg-black" />
             </div>
             <div className="flex items-center gap-1 text-zinc-400">
               <span className="animate-pulse">●</span>

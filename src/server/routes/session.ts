@@ -5,6 +5,9 @@ import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { Bus } from '../../bus/index.js';
 import { NotFoundError, BadRequestError } from '../error.js';
 import { SessionService } from '../../services/SessionService.js';
+import { Agent } from '../../agent/Agent.js';
+import type { ChatContext, LoopOptions } from '../../agent/types.js';
+import type { Message } from '../../services/ChatServiceInterface.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -33,6 +36,8 @@ interface ActiveSession {
   title: string;
   createdAt: Date;
   abortController?: AbortController;
+  agent?: Agent;
+  messages: Message[];
 }
 
 const activeSessions = new Map<string, ActiveSession>();
@@ -89,6 +94,7 @@ export const SessionRoutes = () => {
         projectPath: directory,
         title: title || `Session ${sessionId.slice(0, 6)}`,
         createdAt: new Date(),
+        messages: [],
       };
 
       activeSessions.set(sessionId, session);
@@ -223,6 +229,7 @@ export const SessionRoutes = () => {
           projectPath: directory,
           title: `Session ${sessionId.slice(0, 6)}`,
           createdAt: new Date(),
+          messages: [],
         };
         activeSessions.set(sessionId, session);
       }
@@ -244,15 +251,94 @@ export const SessionRoutes = () => {
       const abortController = new AbortController();
       session.abortController = abortController;
 
+      const currentSession = session;
+
       setImmediate(async () => {
         try {
+          if (!currentSession.agent) {
+            currentSession.agent = await Agent.create({});
+          }
+
           const assistantMessageId = nanoid(12);
 
           await Bus.publish('message.created', {
             sessionId,
             messageId: assistantMessageId,
             role: 'assistant',
+            content: '',
           });
+
+          const chatContext: ChatContext = {
+            messages: currentSession.messages,
+            userId: 'web-user',
+            sessionId: sessionId,
+            workspaceRoot: currentSession.projectPath,
+            signal: abortController.signal,
+          };
+
+          const loopOptions: LoopOptions = {
+            stream: true,
+            onContentDelta: async (delta: string) => {
+              await Bus.publish('message.delta', {
+                sessionId,
+                messageId: assistantMessageId,
+                delta,
+              });
+            },
+            onThinkingDelta: async (delta: string) => {
+              await Bus.publish('thinking.delta', {
+                sessionId,
+                delta,
+              });
+            },
+            onStreamEnd: async () => {
+              await Bus.publish('message.complete', {
+                sessionId,
+                messageId: assistantMessageId,
+              });
+              await Bus.publish('thinking.completed', {
+                sessionId,
+              });
+            },
+            onToolStart: async (toolCall) => {
+              if (toolCall.type !== 'function') return;
+              await Bus.publish('tool.start', {
+                sessionId,
+                toolName: toolCall.function.name,
+                toolCallId: toolCall.id,
+                arguments: toolCall.function.arguments,
+              });
+            },
+            onToolResult: async (toolCall, result) => {
+              if (toolCall.type !== 'function') return;
+              await Bus.publish('tool.result', {
+                sessionId,
+                toolName: toolCall.function.name,
+                toolCallId: toolCall.id,
+                success: !result.error,
+                summary: result.metadata?.summary,
+              });
+            },
+            onTokenUsage: async (usage) => {
+              await Bus.publish('token.usage', {
+                sessionId,
+                ...usage,
+              });
+            },
+            onTodoUpdate: async (todos) => {
+              await Bus.publish('todo.updated', {
+                sessionId,
+                todos,
+              });
+            },
+          };
+
+          const response = await currentSession.agent.chat(content, chatContext, loopOptions);
+
+          currentSession.messages.push(
+            { role: 'user', content },
+            { role: 'assistant', content: response }
+          );
 
           await Bus.publish('session.status', {
             sessionId,
@@ -260,10 +346,16 @@ export const SessionRoutes = () => {
           });
         } catch (error) {
           logger.error('[SessionRoutes] Agent execution error:', error);
+          await Bus.publish('session.error', {
+            sessionId,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
           await Bus.publish('session.status', {
             sessionId,
             status: 'error',
           });
+        } finally {
+          currentSession.abortController = undefined;
         }
       });
 

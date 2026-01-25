@@ -91,6 +91,10 @@ class ApiClient {
     await this.request(`/sessions/${sessionId}/abort`, { method: 'POST' })
   }
 
+  async getGitInfo(): Promise<{ branch: string | null }> {
+    return this.request<{ branch: string | null }>('/suggestions/git-info')
+  }
+
   subscribeEvents(onEvent: (event: BusEvent) => void): () => void {
     const eventSource = new EventSource(`${this.baseUrl}/event`)
     

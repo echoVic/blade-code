@@ -10,7 +10,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ className }: SidebarProps) {
-  const { toggleSettings, toggleSidebar, isSidebarOpen } = useAppStore()
+  const { toggleSettings, toggleSidebar, isSidebarOpen, isTerminalOpen, toggleTerminal } = useAppStore()
   const { sessions, currentSessionId, selectSession, startTemporarySession, deleteSession, loadSessions } = useSessionStore()
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
@@ -125,7 +125,15 @@ export function Sidebar({ className }: SidebarProps) {
           <Plus className="h-4 w-4 stroke-[3]" />
         </button>
 
-        <button className="h-10 w-10 rounded-md bg-[#18181b] text-[#22C55E] flex items-center justify-center">
+        <button
+          onClick={toggleTerminal}
+          className={cn(
+            "h-10 w-10 rounded-md flex items-center justify-center transition-colors",
+            isTerminalOpen
+              ? "bg-[#22C55E] text-black"
+              : "bg-[#18181b] text-[#22C55E] hover:bg-[#27272a]"
+          )}
+        >
           <Terminal className="h-4 w-4" />
         </button>
 
@@ -139,8 +147,8 @@ export function Sidebar({ className }: SidebarProps) {
         </button>
 
         <div className="mt-4">
-          <div className="h-8 w-8 rounded-full bg-[#27272a] flex items-center justify-center">
-            <span className="text-sm text-[#E5E5E5] font-mono">U</span>
+          <div className="h-7 w-7 rounded-lg bg-[#27272a] flex items-center justify-center">
+            <div className="w-2 h-2 bg-[#E5E5E5] rounded-full" />
           </div>
         </div>
       </div>
@@ -152,10 +160,10 @@ export function Sidebar({ className }: SidebarProps) {
       <div className="p-6 flex flex-col gap-8">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-6 w-6 rounded bg-[#22C55E] flex items-center justify-center">
-              <div className="w-3 h-3 bg-black rounded-sm" />
+            <div className="h-7 w-7 rounded-lg bg-[#22C55E] flex items-center justify-center">
+              <div className="w-2 h-2 bg-black rounded-full" />
             </div>
-            <span className="font-semibold text-base text-[#E5E5E5] font-mono">blade_web</span>
+            <span className="font-semibold text-base text-[#E5E5E5]">Blade</span>
           </div>
           <button
             onClick={toggleSidebar}
@@ -174,7 +182,15 @@ export function Sidebar({ className }: SidebarProps) {
             New Chat
           </button>
 
-          <button className="w-full h-10 rounded-md bg-[#18181b] text-[#22C55E] font-medium text-sm font-mono flex items-center gap-3 px-3">
+          <button
+            onClick={toggleTerminal}
+            className={cn(
+              "w-full h-10 rounded-md font-medium text-sm font-mono flex items-center gap-3 px-3 transition-colors",
+              isTerminalOpen
+                ? "bg-[#22C55E] text-black"
+                : "bg-[#18181b] text-[#22C55E] hover:bg-[#27272a]"
+            )}
+          >
             <Terminal className="h-4 w-4" />
             Terminal
           </button>
@@ -296,8 +312,8 @@ export function Sidebar({ className }: SidebarProps) {
         </button>
 
         <div className="flex items-center gap-3 pt-4 border-t border-[#27272a]">
-          <div className="h-8 w-8 rounded-full bg-[#27272a] flex items-center justify-center">
-            <span className="text-sm text-[#E5E5E5] font-mono">U</span>
+          <div className="h-7 w-7 rounded-lg bg-[#27272a] flex items-center justify-center">
+            <div className="w-2 h-2 bg-[#E5E5E5] rounded-full" />
           </div>
           <div className="flex flex-col gap-0.5">
             <span className="text-[13px] text-[#E5E5E5] font-mono">User</span>
