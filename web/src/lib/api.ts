@@ -1,4 +1,5 @@
 import type { BusEvent, SessionMessage, SessionMetadata } from './types'
+import { PermissionMode } from './types'
 
 const API_BASE = ''
 
@@ -77,7 +78,7 @@ class ApiClient {
   async sendMessage(
     sessionId: string, 
     content: string, 
-    permissionMode?: 'default' | 'auto-edit' | 'plan' | 'spec' | 'yolo'
+    permissionMode?: PermissionMode
   ): Promise<Message> {
     const result = await this.request<{ messageId: string; role: string; content: string; timestamp: string }>(`/sessions/${sessionId}/message`, {
       method: 'POST',

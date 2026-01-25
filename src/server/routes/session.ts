@@ -25,7 +25,7 @@ const SendMessageSchema = z.object({
     url: z.string().optional(),
     content: z.string().optional(),
   })).optional(),
-  permissionMode: z.enum(['default', 'auto-edit', 'plan', 'spec', 'yolo']).optional(),
+  permissionMode: z.enum(['default', 'autoEdit', 'plan', 'spec', 'yolo']).optional(),
 });
 
 const UpdateSessionSchema = z.object({
@@ -223,14 +223,7 @@ export const SessionRoutes = () => {
 
       const { content, permissionMode: requestedMode } = parsed.data;
 
-      const permissionModeMap: Record<string, PermissionMode> = {
-        'default': PermissionMode.DEFAULT,
-        'auto-edit': PermissionMode.AUTO_EDIT,
-        'plan': PermissionMode.PLAN,
-        'spec': PermissionMode.SPEC,
-        'yolo': PermissionMode.YOLO,
-      };
-      const permissionMode = requestedMode ? permissionModeMap[requestedMode] : PermissionMode.DEFAULT;
+      const permissionMode = (requestedMode as PermissionMode) || PermissionMode.DEFAULT;
 
       let session = activeSessions.get(sessionId);
       if (!session) {
