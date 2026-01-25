@@ -1,12 +1,10 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { streamSSE } from 'hono/streaming';
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer, type Server as NodeServer } from 'node:http';
 import { networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Bus, type BusEventPayload } from '../bus/index.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { getVersion } from '../utils/packageInfo.js';
 import { BladeServerError } from './error.js';
@@ -157,43 +155,6 @@ function createApp(): Hono<{ Variables: Variables }> {
     return c.json({ healthy: true, version: getVersion() });
   });
 
-  app.get('/event', async (c) => {
-    logger.info('[Server] SSE event connection established');
-    
-    return streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        data: JSON.stringify({
-          type: 'server.connected',
-          properties: {},
-        }),
-      });
-
-      const unsubscribe = Bus.subscribe(async (event: BusEventPayload) => {
-        await stream.writeSSE({
-          data: JSON.stringify(event),
-        });
-      });
-
-      const heartbeat = setInterval(() => {
-        stream.writeSSE({
-          data: JSON.stringify({
-            type: 'server.heartbeat',
-            properties: {},
-          }),
-        });
-      }, 30000);
-
-      await new Promise<void>((resolve) => {
-        stream.onAbort(() => {
-          clearInterval(heartbeat);
-          unsubscribe();
-          resolve();
-          logger.info('[Server] SSE event connection closed');
-        });
-      });
-    });
-  });
-
   const webDistPath = getWebDistPath();
   
   if (webDistPath) {
@@ -267,11 +228,10 @@ function createApp(): Hono<{ Variables: Variables }> {
         hint: 'Web UI not built. Run "cd web && pnpm build" to enable.',
         endpoints: {
           health: '/health',
-          event: '/event',
-          session: '/session',
-          config: '/config',
-          permission: '/permission',
-          provider: '/provider',
+          sessions: '/sessions',
+          configs: '/configs',
+          permissions: '/permissions',
+          providers: '/providers',
         },
       });
     });

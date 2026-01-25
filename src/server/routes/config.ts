@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
-import { Bus } from '../../bus/index.js';
 import { BadRequestError } from '../error.js';
 import { getConfig, configActions } from '../../store/vanilla.js';
 
@@ -39,7 +38,6 @@ export const ConfigRoutes = () => {
 
       const { updates, options } = parsed.data;
       await configActions().updateConfig(updates, options);
-      await Bus.publish('config.updated', { key: Object.keys(updates).join(',') });
 
       return c.json({ success: true, updates });
     } catch (error) {

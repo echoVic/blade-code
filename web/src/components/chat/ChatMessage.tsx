@@ -420,16 +420,17 @@ function PermissionPrompt({
   details: ConfirmationDetails
 }) {
   const [submitting, setSubmitting] = useState(false)
+  const { currentSessionId } = useSessionStore()
   const argsText = details.args ? JSON.stringify(details.args, null, 2) : ''
   const title = details.title || (details.toolName ? `Permission: ${details.toolName}` : 'Permission required')
   const canRespond = status === 'pending' || status === undefined
-  const allowActions = canRespond && !!requestId && !submitting
+  const allowActions = canRespond && !!requestId && !submitting && !!currentSessionId
 
   const respond = async (payload: { approved: boolean; scope?: 'once' | 'session' }) => {
-    if (!requestId || submitting) return
+    if (!requestId || !currentSessionId || submitting) return
     setSubmitting(true)
     try {
-      await api.respondPermission(requestId, payload)
+      await api.respondPermission(currentSessionId, requestId, payload)
     } finally {
       setSubmitting(false)
     }
@@ -572,6 +573,7 @@ function QuestionPrompt({
   answers?: Record<string, string | string[]>
 }) {
   const [submitting, setSubmitting] = useState(false)
+  const { currentSessionId } = useSessionStore()
   const [selection, setSelection] = useState<Record<string, string[]>>(() => {
     const initial: Record<string, string[]> = {}
     for (const question of questions) {
@@ -581,7 +583,7 @@ function QuestionPrompt({
   })
   const [otherText, setOtherText] = useState<Record<string, string>>({})
   const canRespond = status === 'pending' || status === undefined
-  const allowActions = canRespond && !!requestId && !submitting
+  const allowActions = canRespond && !!requestId && !submitting && !!currentSessionId
 
   const toggleOption = (header: string, label: string, multi: boolean) => {
     setSelection((prev) => {
@@ -599,11 +601,11 @@ function QuestionPrompt({
   }
 
   const respond = async (approved: boolean) => {
-    if (!requestId || submitting) return
+    if (!requestId || !currentSessionId || submitting) return
     if (!approved) {
       setSubmitting(true)
       try {
-        await api.respondPermission(requestId, { approved: false })
+        await api.respondPermission(currentSessionId, requestId, { approved: false })
       } finally {
         setSubmitting(false)
       }
@@ -628,7 +630,7 @@ function QuestionPrompt({
 
     setSubmitting(true)
     try {
-      await api.respondPermission(requestId, { approved: true, answers: payloadAnswers })
+      await api.respondPermission(currentSessionId, requestId, { approved: true, answers: payloadAnswers })
     } finally {
       setSubmitting(false)
     }

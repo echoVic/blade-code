@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { Bus } from '../../bus/index.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import {
     configActions,
@@ -45,8 +44,6 @@ export const ModelsRoutes = () => {
         apiKey: apiKey || undefined,
       });
 
-      await Bus.publish('config.updated', { key: 'models' });
-
       return c.json({ success: true, model: modelConfig });
     } catch (error) {
       logger.error('[ModelsRoutes] Failed to add model:', error);
@@ -65,7 +62,6 @@ export const ModelsRoutes = () => {
         apiKey: apiKey || undefined,
         model: model || undefined,
       });
-      await Bus.publish('config.updated', { key: 'models' });
       return c.json({ success: true });
     } catch (error) {
       logger.error('[ModelsRoutes] Failed to update model:', error);
@@ -77,7 +73,6 @@ export const ModelsRoutes = () => {
     try {
       const modelId = c.req.param('modelId');
       await configActions().removeModel(modelId);
-      await Bus.publish('config.updated', { key: 'models' });
       return c.json({ success: true });
     } catch (error) {
       logger.error('[ModelsRoutes] Failed to delete model:', error);

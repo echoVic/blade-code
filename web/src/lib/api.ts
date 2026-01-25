@@ -14,6 +14,11 @@ export type { BusEvent, Message, MessageRole, ModelConfig, PermissionMode, Sessi
 
 const API_BASE = ''
 
+export interface StreamEvent {
+  type: string
+  properties: Record<string, unknown>
+}
+
 class ApiClient {
   private baseUrl: string
 
@@ -96,20 +101,78 @@ class ApiClient {
     })
   }
 
-  async sendMessage(
-    sessionId: string, 
-    content: string, 
-    permissionMode?: PermissionMode
-  ): Promise<Message> {
-    const result = await this.request<{ messageId: string; role: string; content: string; timestamp: string }>(`/sessions/${sessionId}/message`, {
-      method: 'POST',
-      body: JSON.stringify({ content, permissionMode }),
-    })
+  sendMessageStream(
+    sessionId: string,
+    content: string,
+    permissionMode?: PermissionMode,
+    onEvent?: (event: StreamEvent) => void
+  ): { abort: () => void; done: Promise<void> } {
+    const abortController = new AbortController()
+
+    const done = (async () => {
+      const url = `${this.baseUrl}/sessions/${sessionId}/message`
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify({ content, permissionMode }),
+        signal: abortController.signal,
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: response.statusText }))
+        throw new Error(error.error?.message || error.message || 'Request failed')
+      }
+
+      if (!response.body) {
+        throw new Error('No response body')
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6)
+            if (data) {
+              try {
+                const event = JSON.parse(data) as StreamEvent
+                onEvent?.(event)
+              } catch {
+                // Ignore invalid JSON
+              }
+            }
+          }
+        }
+      }
+
+      if (buffer.startsWith('data: ')) {
+        const data = buffer.slice(6)
+        if (data) {
+          try {
+            const event = JSON.parse(data) as StreamEvent
+            onEvent?.(event)
+          } catch {
+            // Ignore invalid JSON
+          }
+        }
+      }
+    })()
+
     return {
-      id: result.messageId,
-      role: result.role as MessageRole,
-      content: result.content,
-      timestamp: new Date(result.timestamp).getTime(),
+      abort: () => abortController.abort(),
+      done,
     }
   }
 
@@ -122,34 +185,14 @@ class ApiClient {
   }
 
   async respondPermission(
+    sessionId: string,
     permissionId: string,
     payload: Omit<PermissionResponse, 'remember'>
   ): Promise<void> {
-    await this.request(`/permissions/${permissionId}`, {
+    await this.request(`/permissions/${permissionId}?sessionId=${sessionId}`, {
       method: 'POST',
       body: JSON.stringify(payload),
     })
-  }
-
-  subscribeEvents(onEvent: (event: BusEvent) => void): () => void {
-    const eventSource = new EventSource(`${this.baseUrl}/event`)
-    
-    eventSource.onmessage = (e) => {
-      try {
-        const event = JSON.parse(e.data) as BusEvent
-        onEvent(event)
-      } catch (err) {
-        console.error('Failed to parse SSE event:', e.data, err)
-      }
-    }
-
-    eventSource.onerror = () => {
-      console.error('SSE connection error')
-    }
-
-    return () => {
-      eventSource.close()
-    }
   }
 }
 

@@ -1,17 +1,16 @@
 import { Hono } from 'hono';
+import { type SSEStreamingApi, streamSSE } from 'hono/streaming';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { Agent } from '../../agent/Agent.js';
 import type { ChatContext, LoopOptions } from '../../agent/types.js';
-import { Bus } from '../../bus/index.js';
 import { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { SessionService } from '../../services/SessionService.js';
-import { BadRequestError, NotFoundError } from '../error.js';
-import { requestConfirmation } from './permission.js';
-import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
+import type { ConfirmationDetails, ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
+import { BadRequestError, NotFoundError } from '../error.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -41,11 +40,16 @@ interface ActiveSession {
   title: string;
   createdAt: Date;
   abortController?: AbortController;
-  agent?: Agent;
   messages: Message[];
 }
 
 const activeSessions = new Map<string, ActiveSession>();
+
+const globalPendingPermissions = new Map<string, {
+  sessionId: string;
+  resolve: (response: ConfirmationResponse) => void;
+  details: ConfirmationDetails;
+}>();
 
 type Variables = {
   directory: string;
@@ -62,6 +66,12 @@ const sanitizeToolMetadata = (metadata: ToolResultMetadata | undefined) => {
     delete sanitized.newContent;
   }
   return sanitized as ToolResultMetadata;
+};
+
+const writeEvent = async (stream: SSEStreamingApi, type: string, properties: Record<string, unknown>) => {
+  await stream.writeSSE({
+    data: JSON.stringify({ type, properties }),
+  });
 };
 
 export const SessionRoutes = () => {
@@ -116,12 +126,6 @@ export const SessionRoutes = () => {
       };
 
       activeSessions.set(sessionId, session);
-
-      await Bus.publish('session.created', {
-        sessionId,
-        projectPath: directory,
-        title: session.title,
-      });
 
       return c.json({
         sessionId,
@@ -189,8 +193,6 @@ export const SessionRoutes = () => {
         activeSession.title = title;
       }
 
-      await Bus.publish('session.updated', { sessionId, title });
-
       return c.json({ success: true, title });
     } catch (error) {
       logger.error('[SessionRoutes] Failed to update session:', error);
@@ -208,8 +210,13 @@ export const SessionRoutes = () => {
       }
       activeSessions.delete(sessionId);
     }
-
-    await Bus.publish('session.deleted', { sessionId });
+    
+    for (const [permId, pending] of globalPendingPermissions) {
+      if (pending.sessionId === sessionId) {
+        pending.resolve({ approved: false });
+        globalPendingPermissions.delete(permId);
+      }
+    }
 
     return c.json({ success: true });
   });
@@ -229,175 +236,175 @@ export const SessionRoutes = () => {
   app.post('/:sessionId/message', async (c) => {
     const sessionId = c.req.param('sessionId');
 
-    try {
-      const body = await c.req.json();
-      const parsed = SendMessageSchema.safeParse(body);
-      
-      if (!parsed.success) {
-        throw new BadRequestError('Invalid message format');
-      }
-
-      const { content, permissionMode: requestedMode } = parsed.data;
-
-      const permissionMode = (requestedMode as PermissionMode) || PermissionMode.DEFAULT;
-
-      let session = activeSessions.get(sessionId);
-      if (!session) {
-        const directory = c.get('directory') || process.cwd();
-        session = {
-          id: sessionId,
-          projectPath: directory,
-          title: `Session ${sessionId.slice(0, 6)}`,
-          createdAt: new Date(),
-          messages: [],
-        };
-        activeSessions.set(sessionId, session);
-      }
-
-      const messageId = nanoid(12);
-
-      await Bus.publish('message.created', {
-        sessionId,
-        messageId,
-        role: 'user',
-        content,
-      });
-
-      await Bus.publish('session.status', {
-        sessionId,
-        status: 'running',
-      });
-
-      const abortController = new AbortController();
-      session.abortController = abortController;
-
-      const currentSession = session;
-
-      setImmediate(async () => {
-        try {
-          if (!currentSession.agent) {
-            currentSession.agent = await Agent.create({});
-          }
-
-          const assistantMessageId = nanoid(12);
-
-          await Bus.publish('message.created', {
-            sessionId,
-            messageId: assistantMessageId,
-            role: 'assistant',
-            content: '',
-          });
-
-          const confirmationHandler: ConfirmationHandler = {
-            requestConfirmation: (details) => requestConfirmation(sessionId, details),
-          };
-
-          const chatContext: ChatContext = {
-            messages: currentSession.messages,
-            userId: 'web-user',
-            sessionId: sessionId,
-            workspaceRoot: currentSession.projectPath,
-            signal: abortController.signal,
-            permissionMode,
-            confirmationHandler,
-          };
-
-          const loopOptions: LoopOptions = {
-            stream: true,
-            onContentDelta: async (delta: string) => {
-              await Bus.publish('message.delta', {
-                sessionId,
-                messageId: assistantMessageId,
-                delta,
-              });
-            },
-            onThinkingDelta: async (delta: string) => {
-              await Bus.publish('thinking.delta', {
-                sessionId,
-                delta,
-              });
-            },
-            onStreamEnd: async () => {
-              await Bus.publish('message.complete', {
-                sessionId,
-                messageId: assistantMessageId,
-              });
-              await Bus.publish('thinking.completed', {
-                sessionId,
-              });
-            },
-            onToolStart: async (toolCall, toolKind) => {
-              if (toolCall.type !== 'function') return;
-              await Bus.publish('tool.start', {
-                sessionId,
-                toolName: toolCall.function.name,
-                toolCallId: toolCall.id,
-                arguments: toolCall.function.arguments,
-                toolKind,
-              });
-            },
-            onToolResult: async (toolCall, result) => {
-              if (toolCall.type !== 'function') return;
-              await Bus.publish('tool.result', {
-                sessionId,
-                toolName: toolCall.function.name,
-                toolCallId: toolCall.id,
-                success: !result.error,
-                summary: result.metadata?.summary,
-                output: result.displayContent,
-                metadata: sanitizeToolMetadata(result.metadata),
-              });
-            },
-            onTokenUsage: async (usage) => {
-              await Bus.publish('token.usage', {
-                sessionId,
-                ...usage,
-              });
-            },
-            onTodoUpdate: async (todos) => {
-              await Bus.publish('todo.updated', {
-                sessionId,
-                todos,
-              });
-            },
-          };
-
-          const response = await currentSession.agent.chat(content, chatContext, loopOptions);
-
-          currentSession.messages.push(
-            { role: 'user', content },
-            { role: 'assistant', content: response }
-          );
-
-          await Bus.publish('session.status', {
-            sessionId,
-            status: 'idle',
-          });
-        } catch (error) {
-          logger.error('[SessionRoutes] Agent execution error:', error);
-          await Bus.publish('session.error', {
-            sessionId,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-          await Bus.publish('session.status', {
-            sessionId,
-            status: 'error',
-          });
-        } finally {
-          currentSession.abortController = undefined;
-        }
-      });
-
-      return c.json({
-        messageId,
-        role: 'user',
-        content,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      logger.error('[SessionRoutes] Failed to send message:', error);
-      throw error;
+    const body = await c.req.json();
+    const parsed = SendMessageSchema.safeParse(body);
+    
+    if (!parsed.success) {
+      throw new BadRequestError('Invalid message format');
     }
+
+    const { content, permissionMode: requestedMode } = parsed.data;
+    const permissionMode = (requestedMode as PermissionMode) || PermissionMode.DEFAULT;
+    const directory = c.get('directory') || process.cwd();
+
+    let session = activeSessions.get(sessionId);
+    if (!session) {
+      session = {
+        id: sessionId,
+        projectPath: directory,
+        title: `Session ${sessionId.slice(0, 6)}`,
+        createdAt: new Date(),
+        messages: [],
+      };
+      activeSessions.set(sessionId, session);
+    }
+
+    const currentSession = session;
+    const abortController = new AbortController();
+    currentSession.abortController = abortController;
+
+    return streamSSE(c, async (stream) => {
+      const userMessageId = nanoid(12);
+      const assistantMessageId = nanoid(12);
+
+      try {
+        await writeEvent(stream, 'message.created', {
+          sessionId,
+          messageId: userMessageId,
+          role: 'user',
+          content,
+        });
+
+        await writeEvent(stream, 'session.status', {
+          sessionId,
+          status: 'running',
+        });
+
+        await writeEvent(stream, 'message.created', {
+          sessionId,
+          messageId: assistantMessageId,
+          role: 'assistant',
+          content: '',
+        });
+
+        const agent = await Agent.create({});
+
+        const requestConfirmation = async (details: ConfirmationDetails): Promise<ConfirmationResponse> => {
+          const requestId = nanoid(12);
+          
+          const resultPromise = new Promise<ConfirmationResponse>((resolve) => {
+            globalPendingPermissions.set(requestId, { sessionId, resolve, details });
+          });
+
+          await writeEvent(stream, 'permission.asked', {
+            requestId,
+            sessionId,
+            toolName: details.toolName,
+            description: details.message,
+            args: details.args,
+            details,
+          });
+
+          logger.info(`[SessionRoutes] Permission request created: ${requestId}, sessionId: ${sessionId}`);
+          return resultPromise;
+        };
+
+        const chatContext: ChatContext = {
+          messages: currentSession.messages,
+          userId: 'web-user',
+          sessionId: sessionId,
+          workspaceRoot: currentSession.projectPath,
+          signal: abortController.signal,
+          permissionMode,
+          confirmationHandler: { requestConfirmation },
+        };
+
+        const loopOptions: LoopOptions = {
+          stream: true,
+          onContentDelta: async (delta: string) => {
+            await writeEvent(stream, 'message.delta', {
+              sessionId,
+              messageId: assistantMessageId,
+              delta,
+            });
+          },
+          onThinkingDelta: async (delta: string) => {
+            await writeEvent(stream, 'thinking.delta', {
+              sessionId,
+              delta,
+            });
+          },
+          onStreamEnd: async () => {
+            await writeEvent(stream, 'message.complete', {
+              sessionId,
+              messageId: assistantMessageId,
+            });
+            await writeEvent(stream, 'thinking.completed', {
+              sessionId,
+            });
+          },
+          onToolStart: async (toolCall, toolKind) => {
+            if (toolCall.type !== 'function') return;
+            await writeEvent(stream, 'tool.start', {
+              sessionId,
+              toolName: toolCall.function.name,
+              toolCallId: toolCall.id,
+              arguments: toolCall.function.arguments,
+              toolKind,
+            });
+          },
+          onToolResult: async (toolCall, result) => {
+            if (toolCall.type !== 'function') return;
+            await writeEvent(stream, 'tool.result', {
+              sessionId,
+              toolName: toolCall.function.name,
+              toolCallId: toolCall.id,
+              success: !result.error,
+              summary: result.metadata?.summary,
+              output: result.displayContent,
+              metadata: sanitizeToolMetadata(result.metadata),
+            });
+          },
+          onTokenUsage: async (usage) => {
+            await writeEvent(stream, 'token.usage', {
+              sessionId,
+              ...usage,
+            });
+          },
+          onTodoUpdate: async (todos) => {
+            await writeEvent(stream, 'todo.updated', {
+              sessionId,
+              todos,
+            });
+          },
+        };
+
+        const response = await agent.chat(content, chatContext, loopOptions);
+
+        currentSession.messages.push(
+          { role: 'user', content },
+          { role: 'assistant', content: response }
+        );
+
+        await writeEvent(stream, 'session.status', {
+          sessionId,
+          status: 'idle',
+        });
+
+      } catch (error) {
+        logger.error('[SessionRoutes] Agent execution error:', error);
+        await writeEvent(stream, 'session.error', {
+          sessionId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        await writeEvent(stream, 'session.status', {
+          sessionId,
+          status: 'error',
+        });
+      } finally {
+        currentSession.abortController = undefined;
+      }
+    });
   });
 
   app.post('/:sessionId/abort', async (c) => {
@@ -408,11 +415,6 @@ export const SessionRoutes = () => {
       session.abortController.abort();
       session.abortController = undefined;
     }
-
-    await Bus.publish('session.status', {
-      sessionId,
-      status: 'idle',
-    });
 
     return c.json({ success: true });
   });
@@ -431,3 +433,33 @@ export const SessionRoutes = () => {
 
   return app;
 };
+
+export function respondToPermission(
+  sessionId: string,
+  permissionId: string,
+  response: ConfirmationResponse
+): boolean {
+  const pending = globalPendingPermissions.get(permissionId);
+  if (!pending) {
+    logger.error(`[SessionRoutes] Permission not found: ${permissionId}, pending permissions: ${Array.from(globalPendingPermissions.keys()).join(', ')}`);
+    return false;
+  }
+
+  if (pending.sessionId !== sessionId) {
+    logger.error(`[SessionRoutes] Session mismatch: expected ${pending.sessionId}, got ${sessionId}`);
+    return false;
+  }
+
+  pending.resolve(response);
+  globalPendingPermissions.delete(permissionId);
+  return true;
+}
+
+export function cancelPendingPermissions(sessionId: string): void {
+  for (const [permId, pending] of globalPendingPermissions) {
+    if (pending.sessionId === sessionId) {
+      pending.resolve({ approved: false });
+      globalPendingPermissions.delete(permId);
+    }
+  }
+}

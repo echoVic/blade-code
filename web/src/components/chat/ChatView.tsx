@@ -1,4 +1,3 @@
-import { api } from '@/lib/api'
 import { useSessionStore } from '@/store/SessionStore'
 import { useEffect } from 'react'
 import { ChatInput } from './ChatInput'
@@ -16,18 +15,12 @@ export function ChatView() {
     sendMessage,
     abortSession,
     startTemporarySession,
-    handleEvent,
     clearError,
   } = useSessionStore()
 
   useEffect(() => {
     loadSessions()
   }, [loadSessions])
-
-  useEffect(() => {
-    const unsubscribe = api.subscribeEvents(handleEvent)
-    return () => unsubscribe()
-  }, [handleEvent])
 
   useEffect(() => {
     if (!currentSessionId) {
