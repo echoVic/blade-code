@@ -5,6 +5,7 @@ import { createServer, type Server as NodeServer } from 'node:http';
 import { networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WebSocketServer } from 'ws';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { getVersion } from '../utils/packageInfo.js';
 import { BladeServerError } from './error.js';
@@ -17,7 +18,7 @@ import { ProviderRoutes } from './routes/provider.js';
 import { SessionRoutes } from './routes/session.js';
 import { SkillsRoutes } from './routes/skills.js';
 import { SuggestionsRoutes } from './routes/suggestions.js';
-import { TerminalRoutes, terminalWebSocket } from './routes/terminal.js';
+import { setupNodeWebSocket, TerminalRoutes, terminalWebSocket } from './routes/terminal.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -335,7 +336,7 @@ function startWithNode(
   return new Promise((resolve, reject) => {
     const server: NodeServer = createServer(async (req, res) => {
       const url = new URL(req.url || '/', `http://${req.headers.host}`);
-      
+
       const headers = new Headers();
       for (const [key, value] of Object.entries(req.headers)) {
         if (value) {
@@ -367,7 +368,7 @@ function startWithNode(
 
       try {
         const response = await honoApp.fetch(request);
-        
+
         res.statusCode = response.status;
         response.headers.forEach((value, key) => {
           res.setHeader(key, value);
@@ -396,6 +397,23 @@ function startWithNode(
       }
     });
 
+    // Set up WebSocket server for terminal (noServer mode for manual upgrade handling)
+    const wss = new WebSocketServer({ noServer: true });
+    const currentDirectory = process.cwd();
+    setupNodeWebSocket(wss, () => currentDirectory);
+
+    // Handle WebSocket upgrade requests
+    server.on('upgrade', (request, socket, head) => {
+      const url = new URL(request.url || '/', `http://${request.headers.host}`);
+      if (url.pathname === '/terminal/ws') {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit('connection', ws, request);
+        });
+      } else {
+        socket.destroy();
+      }
+    });
+
     const tryListen = (port: number): Promise<number> => {
       return new Promise((resolve, reject) => {
         server.once('error', (err: NodeJS.ErrnoException) => {
@@ -418,7 +436,7 @@ function startWithNode(
 
     const startServer = async () => {
       let actualPort: number;
-      
+
       if (opts.port === 0) {
         try {
           actualPort = await tryListen(4096);
@@ -437,7 +455,9 @@ function startWithNode(
         hostname: opts.hostname,
         stop: async () => {
           return new Promise((resolve) => {
-            server.close(() => resolve());
+            wss.close(() => {
+              server.close(() => resolve());
+            });
           });
         },
       });

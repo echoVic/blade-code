@@ -163,7 +163,7 @@ export function FilePreview() {
 
       <Tabs
         value={activeTab}
-        onValueChange={(value) => {
+        onValueChange={(value: string) => {
           setActiveTab(value as typeof activeTab)
           if (value !== 'diff') {
             setShowFullDiff(false)

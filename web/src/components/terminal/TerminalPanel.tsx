@@ -127,7 +127,7 @@ export const TerminalPanel = () => {
     
     fitAddon.fit()
 
-    term.onData((data) => {
+    term.onData((data: string) => {
       sendInput(data)
     })
 

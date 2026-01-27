@@ -531,7 +531,7 @@ function SkillsInstallStatusModal({
   onRetry: () => void
 }) {
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
+    <Dialog open={open} onOpenChange={(next: boolean) => !next && onCancel()}>
       <DialogContent
         className="sm:max-w-[320px] p-0 overflow-hidden gap-0 bg-white dark:bg-[#09090b] border border-[#E5E7EB] dark:border-zinc-800 rounded-xl"
         aria-describedby={undefined}
