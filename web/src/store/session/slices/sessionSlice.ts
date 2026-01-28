@@ -2,6 +2,7 @@ import { sessionService } from '@/services'
 import { useConfigStore } from '@/store/ConfigStore'
 import { initialTokenUsage, TEMP_SESSION_ID } from '../constants'
 import type { SessionSlice, SliceCreator } from '../types'
+import { aggregateMessages } from '../utils/aggregateMessages'
 
 export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
   sessions: [],
@@ -65,7 +66,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       isTemporarySession: false,
     })
     try {
-      const messages = await sessionService.getMessages(sessionId)
+      const rawMessages = await sessionService.getMessages(sessionId)
+      const messages = aggregateMessages(rawMessages)
       set({
         messages,
         isLoading: false,

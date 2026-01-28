@@ -1,51 +1,23 @@
-import { useSessionStore } from '@/store/session'
 import { Check, Loader2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-export function SubagentProgress() {
-  const { subagentProgress } = useSessionStore()
-  const [elapsed, setElapsed] = useState(0)
-
-  useEffect(() => {
-    if (!subagentProgress) return
-    const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - subagentProgress.startTime) / 1000))
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [subagentProgress])
-
-  if (!subagentProgress) return null
-
-  return (
-    <div className="flex items-center gap-2 py-1 font-mono text-[13px]">
-      <Loader2 className="h-3.5 w-3.5 text-[#3B82F6] animate-spin" />
-      <span className="text-[#6B7280] dark:text-[#71717a]">Subagent</span>
-      <span className="text-[#111827] dark:text-[#E5E5E5] font-semibold">
-        {subagentProgress.type}
-      </span>
-      <span className="text-[#D1D5DB] dark:text-[#27272a]">|</span>
-      <span className="text-[#6B7280] dark:text-[#a1a1aa] truncate">
-        {subagentProgress.description}
-      </span>
-      <span className="text-[#3B82F6] text-[12px] ml-auto">
-        {elapsed}s
-      </span>
-    </div>
-  )
-}
-
-export function InlineSubagentProgress({ 
-  type, 
-  description, 
-  startTime,
-  status 
-}: { 
+interface SubagentProgressProps {
   type: string
   description: string
   startTime: number
   status: 'running' | 'completed' | 'failed'
-}) {
-  const elapsed = Math.floor((Date.now() - startTime) / 1000)
+}
+
+export function SubagentProgress({ type, description, startTime, status }: SubagentProgressProps) {
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    if (status !== 'running') return
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTime) / 1000))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [startTime, status])
 
   if (status === 'completed') {
     return (
@@ -81,13 +53,9 @@ export function InlineSubagentProgress({
               <span className="text-[13px] font-medium text-[#111827] dark:text-[#E5E5E5] font-mono">
                 {type}
               </span>
-              <span className="text-[11px] text-red-400 font-mono">
-                Failed
-              </span>
+              <span className="text-[11px] text-red-400 font-mono">Failed</span>
             </div>
-            <span className="text-[12px] text-red-400/80 font-mono truncate">
-              {description}
-            </span>
+            <span className="text-[12px] text-red-400/80 font-mono truncate">{description}</span>
           </div>
         </div>
       </div>
@@ -105,9 +73,7 @@ export function InlineSubagentProgress({
             <span className="text-[13px] font-medium text-[#111827] dark:text-[#E5E5E5] font-mono">
               {type}
             </span>
-            <span className="text-[11px] text-[#6B7280] dark:text-[#71717a] font-mono">
-              {elapsed}s
-            </span>
+            <span className="text-[11px] text-[#6B7280] dark:text-[#71717a] font-mono">{elapsed}s</span>
           </div>
           <span className="text-[12px] text-[#6B7280] dark:text-[#a1a1aa] font-mono truncate">
             {description}

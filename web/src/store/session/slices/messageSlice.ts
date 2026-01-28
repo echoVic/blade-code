@@ -19,7 +19,7 @@ const createEmptyAgentContent = (): AgentResponseContent => ({
   question: null,
 })
 
-export const createMessageSlice: SliceCreator<MessageSlice> = (set, get) => ({
+export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
   messages: [],
 
   setMessages: (messages) => set({ messages }),

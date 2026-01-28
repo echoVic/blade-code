@@ -190,7 +190,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   )
 }
 
-function ConfirmationSection({ confirmation, messageId }: { confirmation: AgentResponseContent['confirmation']; messageId: string }) {
+function ConfirmationSection({ confirmation }: { confirmation: AgentResponseContent['confirmation'] }) {
   const [submitting, setSubmitting] = useState(false)
   const { currentSessionId } = useSessionStore()
 
@@ -252,7 +252,7 @@ function ConfirmationSection({ confirmation, messageId }: { confirmation: AgentR
   )
 }
 
-function QuestionSection({ question, messageId }: { question: AgentResponseContent['question']; messageId: string }) {
+function QuestionSection({ question }: { question: AgentResponseContent['question'] }) {
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({})
   const [submitting, setSubmitting] = useState(false)
   const { currentSessionId } = useSessionStore()
@@ -355,8 +355,8 @@ function AgentMessageContent({ message }: { message: Message }) {
       {todos.length > 0 && <TodoSection todos={todos} />}
       {subagent && <SubagentSection subagent={subagent} />}
       <ToolCallsList toolCalls={toolCalls} />
-      {confirmation && <ConfirmationSection confirmation={confirmation} messageId={message.id} />}
-      {question && <QuestionSection question={question} messageId={message.id} />}
+      {confirmation && <ConfirmationSection confirmation={confirmation} />}
+      {question && <QuestionSection question={question} />}
       {textAfter && <MarkdownRenderer content={textAfter} />}
     </div>
   )

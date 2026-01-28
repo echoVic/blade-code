@@ -4,11 +4,12 @@ import { useSessionStore } from '@/store/session'
 import { HelpCircle } from 'lucide-react'
 
 export function StatusBar() {
-  const { tokenUsage, isStreaming, subagentProgress } = useSessionStore()
+  const { tokenUsage, isStreaming } = useSessionStore()
 
-  const usagePercent = tokenUsage.maxContextTokens > 0
-    ? Math.round((tokenUsage.totalTokens / tokenUsage.maxContextTokens) * 100)
-    : 0
+  const usagePercent =
+    tokenUsage.maxContextTokens > 0
+      ? Math.round((tokenUsage.totalTokens / tokenUsage.maxContextTokens) * 100)
+      : 0
 
   const formatTokens = (n: number) => {
     if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
@@ -20,10 +21,9 @@ export function StatusBar() {
     <div className="flex items-center gap-4 px-4 py-2 border-t border-[#E5E7EB] dark:border-zinc-800 bg-white dark:bg-zinc-950/50 text-xs text-[#6B7280] dark:text-zinc-500">
       <div className="flex items-center gap-2">
         <span className="text-[#6B7280] dark:text-zinc-400">Tokens:</span>
-        <span className={cn(
-          usagePercent > 80 && 'text-yellow-500',
-          usagePercent > 95 && 'text-red-500'
-        )}>
+        <span
+          className={cn(usagePercent > 80 && 'text-yellow-500', usagePercent > 95 && 'text-red-500')}
+        >
           {formatTokens(tokenUsage.totalTokens)} / {formatTokens(tokenUsage.maxContextTokens)}
         </span>
         {tokenUsage.isDefaultMaxTokens && (
@@ -44,9 +44,7 @@ export function StatusBar() {
           <div
             className={cn(
               'h-full transition-all duration-300',
-              usagePercent > 95 ? 'bg-red-500' :
-              usagePercent > 80 ? 'bg-yellow-500' :
-              'bg-green-500'
+              usagePercent > 95 ? 'bg-red-500' : usagePercent > 80 ? 'bg-yellow-500' : 'bg-green-500'
             )}
             style={{ width: `${Math.min(usagePercent, 100)}%` }}
           />
@@ -56,23 +54,7 @@ export function StatusBar() {
 
       <div className="flex-1" />
 
-      {subagentProgress && (
-        <div className="flex items-center gap-2">
-          <span className={cn(
-            'w-2 h-2 rounded-full',
-            subagentProgress.status === 'running' && 'bg-blue-500 animate-pulse',
-            subagentProgress.status === 'completed' && 'bg-green-500',
-            subagentProgress.status === 'failed' && 'bg-red-500'
-          )} />
-          <span className="text-[#6B7280] dark:text-zinc-400">{subagentProgress.type}:</span>
-          <span>{subagentProgress.description}</span>
-          {subagentProgress.currentTool && (
-            <span className="text-[#9CA3AF] dark:text-zinc-600">({subagentProgress.currentTool})</span>
-          )}
-        </div>
-      )}
-
-      {isStreaming && !subagentProgress && (
+      {isStreaming && (
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
           <span>Generating...</span>

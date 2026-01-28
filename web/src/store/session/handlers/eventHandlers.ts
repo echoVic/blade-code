@@ -27,7 +27,7 @@ const createEmptyAgentContent = (): AgentResponseContent => ({
   question: null,
 })
 
-const handleMessageCreated: EventHandler = (props, get, set) => {
+const handleMessageCreated: EventHandler = (props, get, _set) => {
   const { currentSessionId, addMessage, startAgentResponse } = get()
   console.log('[handleMessageCreated]', { propsSessionId: props.sessionId, currentSessionId })
   if (props.sessionId !== currentSessionId) return
@@ -82,7 +82,7 @@ const handleMessageDelta: EventHandler = (props, get, set) => {
 }
 
 const handleMessageComplete: EventHandler = (props, get) => {
-  const { currentSessionId, updateMessage, currentAssistantMessageId, messages } = get()
+  const { currentSessionId, updateMessage, messages } = get()
   if (props.sessionId !== currentSessionId) return
 
   const messageId = props.messageId as string
@@ -112,17 +112,23 @@ const handleToolStart: EventHandler = (props, get) => {
 
   setHasToolCalls(true)
 
-  const subagentType = props.subagent_type as string
-  if (subagentType) {
-    const args = props.arguments as string
-    let description = ''
+  const toolName = (props.toolName as string) || 'Unknown'
+  const args = props.arguments as string
+  
+  let subagentType: string | undefined
+  let description = ''
+  
+  if (toolName === 'Task') {
     try {
       const parsed = JSON.parse(args)
-      description = parsed.description || parsed.prompt || subagentType
+      subagentType = parsed.subagent_type
+      description = parsed.description || parsed.query || subagentType || ''
     } catch {
-      description = subagentType
+      // ignore
     }
-    
+  }
+
+  if (subagentType) {
     setSubagent(currentAssistantMessageId, {
       id: (props.toolCallId as string) || `subagent-${Date.now()}`,
       type: subagentType,
@@ -130,12 +136,13 @@ const handleToolStart: EventHandler = (props, get) => {
       status: 'running',
       startTime: Date.now(),
     })
+    return
   }
 
   const toolCall: ToolCallInfo = {
     toolCallId: (props.toolCallId as string) || `tool-${Date.now()}`,
-    toolName: (props.toolName as string) || 'Unknown',
-    arguments: props.arguments as string,
+    toolName,
+    arguments: args,
     toolKind: props.toolKind as string,
     status: 'running',
     startTime: Date.now(),
