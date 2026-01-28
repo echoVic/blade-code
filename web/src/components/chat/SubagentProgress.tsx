@@ -1,4 +1,4 @@
-import { useSessionStore } from '@/store/SessionStore'
+import { useSessionStore } from '@/store/session'
 import { Check, Loader2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 

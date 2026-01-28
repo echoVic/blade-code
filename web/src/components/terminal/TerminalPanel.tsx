@@ -142,6 +142,7 @@ export const TerminalPanel = () => {
       xtermRef.current = null
       fitAddonRef.current = null
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTerminalOpen, connect, disconnect, sendInput])
 
   useEffect(() => {

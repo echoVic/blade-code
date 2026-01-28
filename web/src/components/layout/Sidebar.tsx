@@ -1,7 +1,7 @@
 import { ScrollArea } from '@/components/ui/ScrollArea'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/AppStore'
-import { useSessionStore } from '@/store/SessionStore'
+import { useSessionStore } from '@/store/session'
 import { Check, ChevronLeft, Pencil, Plus, Server, Settings, Sparkles, Terminal, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 

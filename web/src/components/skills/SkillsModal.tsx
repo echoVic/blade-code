@@ -136,13 +136,13 @@ export function SkillsModal() {
     <Fragment>
       <Dialog open={isSkillsOpen} onOpenChange={toggleSkills}>
         <DialogContent
-          className="sm:max-w-[820px] h-[620px] p-0 overflow-hidden gap-0 bg-white dark:bg-[#09090b] border border-[#E5E7EB] dark:border-zinc-800 rounded-xl"
+          className="sm:max-w-[820px] h-[620px] p-0 overflow-hidden gap-0 bg-white dark:bg-[#09090b] border border-[#E5E7EB] dark:border-zinc-800 rounded-xl flex flex-col"
           aria-describedby={undefined}
           hideCloseButton
         >
           <DialogTitle className="sr-only">Skills</DialogTitle>
-          <div className="flex h-full">
-            <div className="flex-1 p-8 flex flex-col gap-5 overflow-hidden">
+          <div className="flex h-full min-h-0">
+            <div className="flex-1 p-8 flex flex-col gap-5 min-h-0">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">Skills</h2>
                 <div className="flex items-center gap-2">
@@ -169,8 +169,8 @@ export function SkillsModal() {
                 </div>
               </div>
 
-              <div className="flex gap-5 flex-1 min-h-0">
-                <div className="w-[220px] flex flex-col gap-3 min-h-0">
+              <div className="flex gap-5 flex-1 min-h-0 overflow-hidden">
+                <div className="w-[220px] flex flex-col gap-3 min-h-0 overflow-hidden">
                   <div className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5] shrink-0">Installed</div>
                   <input
                     value={searchInstalled}
@@ -178,7 +178,7 @@ export function SkillsModal() {
                     placeholder="Search skills..."
                     className="h-8 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] px-3 text-[12px] text-[#111827] dark:text-[#E5E5E5] font-mono placeholder:text-[#9CA3AF] dark:placeholder:text-[#71717a] border border-transparent focus:outline-none focus:border-[#E5E7EB] dark:focus:border-[#27272a] shrink-0"
                   />
-                  <div className="flex flex-col gap-2 overflow-y-auto flex-1 min-h-0">
+                  <div className="flex flex-col gap-2 overflow-y-auto flex-1 min-h-0 pr-1">
                     {filteredSkills.length === 0 && !loading && (
                       <div className="text-center py-8 text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">No skills installed</div>
                     )}
@@ -206,7 +206,7 @@ export function SkillsModal() {
                 </div>
 
                 {selectedSkill ? (
-                  <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-2 min-h-0">
+                  <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-2 min-h-0 overflow-hidden">
                   <div className="flex items-center justify-between">
                     <span className="text-base font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">{selectedSkill.name}</span>
                     <span className="text-xs font-mono text-[#9CA3AF] dark:text-[#71717a]">v{selectedSkill.version}</span>

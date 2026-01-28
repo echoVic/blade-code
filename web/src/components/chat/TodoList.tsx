@@ -1,4 +1,4 @@
-import { useSessionStore, type TodoItem } from '@/store/SessionStore'
+import { useSessionStore, type TodoItem } from '@/store/session'
 import { cn } from '@/lib/utils'
 
 function TodoItemRow({ item }: { item: TodoItem }) {

@@ -65,6 +65,7 @@ export function SettingsModal() {
       loadModels()
       settings.loadSettings()
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSettingsOpen, loadModels, settings.loadSettings])
 
   const handleSaveModel = async (formData: ModelFormData) => {
@@ -118,7 +119,7 @@ export function SettingsModal() {
   return (
     <>
       <Dialog open={isSettingsOpen} onOpenChange={toggleSettings}>
-        <DialogContent className="sm:max-w-[800px] h-[600px] p-0 overflow-hidden gap-0 bg-white dark:bg-[#09090b] border border-[#E5E7EB] dark:border-zinc-800 rounded-xl" aria-describedby={undefined} hideCloseButton>
+        <DialogContent className="sm:max-w-[800px] h-[600px] p-0 overflow-hidden gap-0 bg-white dark:bg-[#09090b] border border-[#E5E7EB] dark:border-zinc-800 rounded-xl flex flex-col" aria-describedby={undefined} hideCloseButton>
           <DialogTitle className="sr-only">Settings</DialogTitle>
           <div className="flex h-full">
             <div className="w-[200px] h-full bg-[#F3F4F6] dark:bg-[#18181b] p-6 flex flex-col gap-2">
@@ -152,12 +153,13 @@ export function SettingsModal() {
               </div>
 
               {activeTab === 'models' && (
-                <div className="flex flex-col gap-6 flex-1 overflow-hidden">
-                  <p className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
+                <div className="flex flex-col gap-6 flex-1 min-h-0 overflow-hidden">
+                  <p className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono shrink-0">
                     Configure API keys and model settings for different providers.
                   </p>
 
-                  <div className="flex flex-col gap-2 overflow-y-auto flex-1">
+                  <div className="flex-1 overflow-y-auto min-h-0">
+                  <div className="flex flex-col gap-2 pr-2">
                     {Object.entries(groupedModels).map(([provider, models]) => {
                       const iconInfo = PROVIDER_ICONS[provider] || { bg: '#71717a', label: '?' }
                       const isConnected = models.some(m => m.apiKey)
@@ -243,10 +245,11 @@ export function SettingsModal() {
                       </div>
                     )}
                   </div>
+                  </div>
 
                   <button 
                     onClick={() => setAddModelOpen(true)}
-                    className="w-full py-3 rounded-md text-[#6B7280] dark:text-[#a1a1aa] text-[13px] font-mono hover:bg-[#F3F4F6] dark:bg-[#18181b] transition-colors"
+                    className="w-full py-3 rounded-md text-[#6B7280] dark:text-[#a1a1aa] text-[13px] font-mono hover:bg-[#F3F4F6] dark:bg-[#18181b] transition-colors shrink-0"
                   >
                     + Add New Model
                   </button>
@@ -386,8 +389,8 @@ export function SettingsModal() {
               )}
 
               {activeTab === 'shortcuts' && (
-                <div className="flex flex-col gap-4 flex-1 overflow-hidden">
-                  <div className="flex items-center gap-3">
+                <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-hidden">
+                  <div className="flex items-center gap-3 shrink-0">
                     <input
                       value={shortcutQuery}
                       onChange={(event) => setShortcutQuery(event.target.value)}
@@ -416,7 +419,7 @@ export function SettingsModal() {
                     </button>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto border border-[#E5E7EB] dark:border-[#27272a] rounded-lg bg-[#E5E7EB] dark:bg-[#111827]">
+                  <div className="flex-1 min-h-0 overflow-y-auto border border-[#E5E7EB] dark:border-[#27272a] rounded-lg bg-[#E5E7EB] dark:bg-[#111827]">
                     <div className="grid grid-cols-[1fr_180px_120px] gap-2 px-3 py-2 bg-white dark:bg-[#0C0C0C] text-[12px] text-[#6B7280] dark:text-[#94a3b8] font-mono font-semibold">
                       <span>Action</span>
                       <span>Shortcut</span>

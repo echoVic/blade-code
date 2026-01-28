@@ -1,6 +1,6 @@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { useSessionStore } from '@/store/SessionStore'
+import { useSessionStore } from '@/store/session'
 import { HelpCircle } from 'lucide-react'
 
 export function StatusBar() {

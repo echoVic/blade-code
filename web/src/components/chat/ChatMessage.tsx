@@ -1,6 +1,6 @@
-import { api, type Message } from '@/lib/api'
+import { sessionService, type Message } from '@/services'
 import { cn } from '@/lib/utils'
-import { useSessionStore } from '@/store/SessionStore'
+import { useSessionStore } from '@/store/session'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -430,7 +430,7 @@ function PermissionPrompt({
     if (!requestId || !currentSessionId || submitting) return
     setSubmitting(true)
     try {
-      await api.respondPermission(currentSessionId, requestId, payload)
+      await sessionService.respondPermission(currentSessionId, requestId, payload)
     } finally {
       setSubmitting(false)
     }
@@ -605,7 +605,7 @@ function QuestionPrompt({
     if (!approved) {
       setSubmitting(true)
       try {
-        await api.respondPermission(currentSessionId, requestId, { approved: false })
+        await sessionService.respondPermission(currentSessionId, requestId, { approved: false })
       } finally {
         setSubmitting(false)
       }
@@ -630,7 +630,7 @@ function QuestionPrompt({
 
     setSubmitting(true)
     try {
-      await api.respondPermission(currentSessionId, requestId, { approved: true, answers: payloadAnswers })
+      await sessionService.respondPermission(currentSessionId, requestId, { approved: true, answers: payloadAnswers })
     } finally {
       setSubmitting(false)
     }

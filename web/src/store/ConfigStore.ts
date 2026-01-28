@@ -53,7 +53,7 @@ export const useConfigStore = create<ConfigState>((set) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           updates: { currentModelId: modelId },
-          options: { scope: 'local' }
+          options: { scope: 'global' }
         }),
       })
       if (!response.ok) throw new Error('Failed to set model')

@@ -16,7 +16,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
   const isDark = useIsDark()
 
   const components: Components = {
-    code({ node, className, children, ...props }) {
+    code({ className, children, ...props }) {
       const match = /language-(\w+)/.exec(className || '')
       const isInline = !match
       const language = match ? match[1] : ''
@@ -37,7 +37,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
             <CopyButton content={codeString} />
           </div>
           <SyntaxHighlighter
-            style={(isDark ? vscDarkPlus : oneLight) as any}
+            style={(isDark ? vscDarkPlus : oneLight) as Record<string, React.CSSProperties>}
             language={language}
             PreTag="div"
             wrapLongLines={true}
@@ -55,13 +55,13 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
       )
     },
     p({ children }) {
-      return <p className="mb-4 last:mb-0 leading-relaxed">{children}</p>
+      return <p className="mb-4 leading-relaxed last:mb-0">{children}</p>
     },
     ul({ children }) {
-      return <ul className="list-disc pl-4 mb-4 space-y-1 last:mb-0">{children}</ul>
+      return <ul className="pl-4 mb-4 space-y-1 list-disc last:mb-0">{children}</ul>
     },
     ol({ children }) {
-      return <ol className="list-decimal pl-4 mb-4 space-y-1 last:mb-0">{children}</ol>
+      return <ol className="pl-4 mb-4 space-y-1 list-decimal last:mb-0">{children}</ol>
     },
     li({ children }) {
       return <li className="leading-relaxed">{children}</li>

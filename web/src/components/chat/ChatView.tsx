@@ -1,4 +1,4 @@
-import { useSessionStore } from '@/store/SessionStore'
+import { useSessionStore } from '@/store/session'
 import { useEffect } from 'react'
 import { ChatInput } from './ChatInput'
 import { ChatList } from './ChatList'

@@ -263,12 +263,12 @@ export function McpModal() {
 
               {tab === 'installed' ? (
                 <div className="flex gap-5 flex-1 min-h-0 overflow-hidden">
-                  <div className="w-[220px] flex flex-col gap-3 min-h-0">
+                  <div className="w-[220px] flex flex-col gap-3 min-h-0 overflow-hidden">
                     <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5] shrink-0">Servers</span>
                     <div className="h-8 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] flex items-center px-3 text-[12px] text-[#9CA3AF] dark:text-[#71717a] font-mono shrink-0">
                       Search servers...
                     </div>
-                    <div className="flex flex-col gap-2 overflow-y-auto flex-1 min-h-0">
+                    <div className="flex flex-col gap-2 overflow-y-auto flex-1 min-h-0 pr-1">
                       {servers.length === 0 && !loading && (
                         <div className="text-center py-8 text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">
                           No MCP servers configured

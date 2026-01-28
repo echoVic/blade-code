@@ -1,8 +1,8 @@
 import { Sidebar } from './Sidebar'
 import { useAppStore } from '@/store/AppStore'
-import { useSessionStore } from '@/store/SessionStore'
+import { useSessionStore } from '@/store/session'
 import { cn } from '@/lib/utils'
-import { api } from '@/lib/api'
+import { sessionService } from '@/services'
 import { FileCode, GitBranch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SettingsModal } from '@/components/settings/SettingsModal'
@@ -41,7 +41,7 @@ export function Layout({ children }: LayoutProps) {
   useEffect(() => {
     const fetchGitInfo = async () => {
       try {
-        const info = await api.getGitInfo()
+        const info = await sessionService.getGitInfo()
         setGitBranch(info.branch)
       } catch {
         setGitBranch(null)

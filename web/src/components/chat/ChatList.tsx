@@ -1,5 +1,5 @@
 import { ScrollArea } from '@/components/ui/ScrollArea'
-import type { Message } from '@/lib/api'
+import type { Message } from '@/services'
 import { useEffect, useRef } from 'react'
 import { ChatMessage } from './ChatMessage'
 
