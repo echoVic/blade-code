@@ -121,20 +121,94 @@ export const sessionService = {
 
   subscribeEvents: (
     sessionId: string,
-    onEvent: (event: StreamEvent) => void
+    onEvent: (event: StreamEvent) => void,
+    options?: { maxRetries?: number; onConnectionChange?: (connected: boolean) => void }
   ): (() => void) => {
-    const eventSource = new EventSource(`${API_BASE}/sessions/${sessionId}/events`)
-    eventSource.onmessage = (e) => {
-      try {
-        onEvent(JSON.parse(e.data) as StreamEvent)
-      } catch (err) {
-        console.error('Failed to parse SSE event:', e.data, err)
+    const maxRetries = options?.maxRetries ?? 5
+    const onConnectionChange = options?.onConnectionChange
+    let eventSource: EventSource | null = null
+    let retryCount = 0
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null
+    let isManualClose = false
+    let lastHeartbeat = Date.now()
+    let heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null
+
+    const connect = () => {
+      if (isManualClose) return
+
+      eventSource = new EventSource(`${API_BASE}/sessions/${sessionId}/events`)
+
+      eventSource.onopen = () => {
+        retryCount = 0
+        lastHeartbeat = Date.now()
+        onConnectionChange?.(true)
+
+        heartbeatCheckInterval = setInterval(() => {
+          if (Date.now() - lastHeartbeat > 45000) {
+            console.warn('SSE heartbeat timeout, reconnecting...')
+            eventSource?.close()
+            scheduleReconnect()
+          }
+        }, 15000)
+      }
+
+      eventSource.onmessage = (e) => {
+        try {
+          const event = JSON.parse(e.data) as StreamEvent
+          lastHeartbeat = Date.now()
+          if (event.type === 'heartbeat' || event.type === 'connected') {
+            return
+          }
+          onEvent(event)
+        } catch (err) {
+          console.error('Failed to parse SSE event:', e.data, err)
+        }
+      }
+
+      eventSource.onerror = () => {
+        if (isManualClose) return
+        console.error('SSE connection error')
+        onConnectionChange?.(false)
+        cleanup()
+        scheduleReconnect()
       }
     }
-    eventSource.onerror = () => {
-      console.error('SSE connection error')
+
+    const cleanup = () => {
+      if (heartbeatCheckInterval) {
+        clearInterval(heartbeatCheckInterval)
+        heartbeatCheckInterval = null
+      }
+      eventSource?.close()
+      eventSource = null
     }
-    return () => eventSource.close()
+
+    const scheduleReconnect = () => {
+      if (isManualClose || retryCount >= maxRetries) {
+        if (retryCount >= maxRetries) {
+          console.error(`SSE max retries (${maxRetries}) reached, giving up`)
+        }
+        return
+      }
+
+      retryCount++
+      const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 30000)
+      console.log(`SSE reconnecting in ${delay}ms (attempt ${retryCount}/${maxRetries})`)
+
+      retryTimeout = setTimeout(connect, delay)
+    }
+
+    connect()
+
+    return () => {
+      isManualClose = true
+      if (retryTimeout) {
+        clearTimeout(retryTimeout)
+        retryTimeout = null
+      }
+      cleanup()
+      onConnectionChange?.(false)
+    }
   },
 
   respondPermission: async (
@@ -148,6 +222,32 @@ export const sessionService = {
       body: JSON.stringify(payload),
     })
     if (!res.ok) throw new Error('Failed to respond to permission')
+  },
+
+  respondToConfirmation: async (
+    sessionId: string,
+    toolCallId: string,
+    approved: boolean
+  ): Promise<void> => {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/confirmation/${toolCallId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved }),
+    })
+    if (!res.ok) throw new Error('Failed to respond to confirmation')
+  },
+
+  respondToQuestion: async (
+    sessionId: string,
+    toolCallId: string,
+    answers: Record<string, string | string[]>
+  ): Promise<void> => {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/question/${toolCallId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers }),
+    })
+    if (!res.ok) throw new Error('Failed to respond to question')
   },
 
   getGitInfo: async (): Promise<{ branch: string | null }> => {

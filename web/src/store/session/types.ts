@@ -1,7 +1,7 @@
-import type { Message, PermissionMode, Session, StreamEvent } from '@/services'
+import type { Message as BaseMessage, PermissionMode, Session, StreamEvent } from '@/services'
 import type { StateCreator } from 'zustand'
 
-export type { Message, PermissionMode, Session, StreamEvent }
+export type { PermissionMode, Session, StreamEvent }
 
 export interface TokenUsage {
   inputTokens: number
@@ -27,7 +27,7 @@ export interface SubagentProgress {
   startTime: number
 }
 
-export interface ToolCallItem {
+export interface ToolCallInfo {
   toolCallId: string
   toolName: string
   arguments?: string
@@ -38,11 +38,40 @@ export interface ToolCallItem {
   startTime: number
 }
 
-export interface ToolBatch {
-  id: string
-  tools: ToolCallItem[]
-  startTime: number
-  isComplete: boolean
+export interface AgentResponseContent {
+  textBefore: string
+  toolCalls: ToolCallInfo[]
+  textAfter: string
+  thinkingContent: string
+  todos: TodoItem[]
+  subagent: SubagentProgress | null
+  confirmation: ConfirmationInfo | null
+  question: QuestionInfo | null
+}
+
+export interface ConfirmationInfo {
+  toolCallId: string
+  toolName: string
+  description: string
+  diff?: string
+  status: 'pending' | 'approved' | 'denied'
+}
+
+export interface QuestionInfo {
+  toolCallId: string
+  questions: Array<{
+    question: string
+    header: string
+    options: Array<{ label: string; description: string }>
+    multiSelect: boolean
+  }>
+  status: 'pending' | 'answered'
+  answers?: Record<string, string | string[]>
+}
+
+export interface Message extends Omit<BaseMessage, 'metadata'> {
+  metadata?: Record<string, unknown>
+  agentContent?: AgentResponseContent
 }
 
 export interface SessionSlice {
@@ -74,7 +103,14 @@ export interface MessageSlice {
   setMessages: (messages: Message[]) => void
   addMessage: (message: Message) => void
   updateMessage: (id: string, updates: Partial<Message>) => void
-  appendDelta: (id: string, delta: string) => void
+  appendDelta: (id: string, delta: string, position: 'before' | 'after') => void
+  appendToolCall: (id: string, toolCall: ToolCallInfo) => void
+  updateToolCall: (messageId: string, toolCallId: string, updates: Partial<ToolCallInfo>) => void
+  appendThinking: (id: string, delta: string) => void
+  setConfirmation: (id: string, confirmation: ConfirmationInfo | null) => void
+  setQuestion: (id: string, question: QuestionInfo | null) => void
+  setSubagent: (id: string, subagent: SubagentProgress | null) => void
+  setTodos: (id: string, todos: TodoItem[]) => void
   replaceTemp: (content: string, message: Message) => void
 }
 
@@ -82,41 +118,28 @@ export interface StreamingSlice {
   isStreaming: boolean
   currentRunId: string | null
   eventUnsubscribe: (() => void) | null
+  currentAssistantMessageId: string | null
+  hasToolCalls: boolean
 
   setStreaming: (streaming: boolean) => void
   setRunId: (runId: string | null) => void
   subscribeToEvents: (sessionId: string) => void
   unsubscribeFromEvents: () => void
   handleEvent: (event: StreamEvent) => void
-}
-
-export interface ToolSlice {
-  currentToolBatch: ToolBatch | null
-  toolBatchAggregationEnabled: boolean
-
-  handleToolStart: (props: ToolStartProps) => void
-  handleToolResult: (props: ToolResultProps) => void
-  setToolBatchAggregation: (enabled: boolean) => void
-  clearToolBatch: () => void
+  setCurrentAssistantMessageId: (id: string | null) => void
+  setHasToolCalls: (has: boolean) => void
+  startAgentResponse: (messageId: string) => void
+  endAgentResponse: () => void
 }
 
 export interface UiSlice {
   tokenUsage: TokenUsage
-  currentThinkingContent: string | null
-  thinkingExpanded: boolean
-  todos: TodoItem[]
-  subagentProgress: SubagentProgress | null
 
   updateTokenUsage: (usage: Partial<TokenUsage>) => void
-  appendThinking: (delta: string) => void
-  clearThinking: () => void
-  toggleThinkingExpanded: () => void
-  setTodos: (todos: TodoItem[]) => void
-  setSubagentProgress: (progress: SubagentProgress | null) => void
   setMaxContextTokens: (tokens: number, isDefault?: boolean) => void
 }
 
-export type SessionStoreState = SessionSlice & MessageSlice & StreamingSlice & ToolSlice & UiSlice
+export type SessionStoreState = SessionSlice & MessageSlice & StreamingSlice & UiSlice
 
 export type SliceCreator<T> = StateCreator<SessionStoreState, [], [], T>
 

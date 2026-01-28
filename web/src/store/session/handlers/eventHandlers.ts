@@ -1,207 +1,361 @@
 import type { StreamEvent } from '@/services'
-import type { Message, SessionStoreState, TodoItem, TokenUsage } from '../types'
+import type {
+    AgentResponseContent,
+    Message,
+    SessionStoreState,
+    SubagentProgress,
+    TodoItem,
+    ToolCallInfo,
+} from '../types'
 
 type GetState = () => SessionStoreState
-type SetState = (partial: Partial<SessionStoreState> | ((state: SessionStoreState) => Partial<SessionStoreState>)) => void
-type EventHandler = (props: Record<string, unknown>, get: GetState, set: SetState) => void
+type SetState = (
+  partial: SessionStoreState | Partial<SessionStoreState> | ((state: SessionStoreState) => SessionStoreState | Partial<SessionStoreState>),
+  replace?: boolean
+) => void
 
-const handleSessionStatus: EventHandler = (props, get, set) => {
-  const { currentSessionId } = get()
-  const status = props.status as string
-  set({
-    isStreaming: props.sessionId === currentSessionId && status === 'running',
-  })
-}
+type EventHandler = (properties: Record<string, unknown>, get: GetState, set: SetState) => void
 
-const handleSessionDeleted: EventHandler = (props, _get, set) => {
-  const eventSessionId = props.sessionId as string
-  set((state) => ({
-    sessions: state.sessions.filter((s) => s.sessionId !== eventSessionId),
-    currentSessionId: state.currentSessionId === eventSessionId ? null : state.currentSessionId,
-    messages: state.currentSessionId === eventSessionId ? [] : state.messages,
-  }))
-}
+const createEmptyAgentContent = (): AgentResponseContent => ({
+  textBefore: '',
+  toolCalls: [],
+  textAfter: '',
+  thinkingContent: '',
+  todos: [],
+  subagent: null,
+  confirmation: null,
+  question: null,
+})
 
-const handleMessageCreated: EventHandler = (props, get) => {
-  const { currentSessionId, replaceTemp, addMessage } = get()
+const handleMessageCreated: EventHandler = (props, get, set) => {
+  const { currentSessionId, addMessage, startAgentResponse } = get()
+  console.log('[handleMessageCreated]', { propsSessionId: props.sessionId, currentSessionId })
   if (props.sessionId !== currentSessionId) return
+
+  const messageId = props.messageId as string
+  const role = (props.role as 'user' | 'assistant') || 'assistant'
 
   const message: Message = {
-    id: props.messageId as string,
-    role: props.role as 'user' | 'assistant',
+    id: messageId,
+    role,
     content: (props.content as string) || '',
     timestamp: Date.now(),
+    agentContent: role === 'assistant' ? createEmptyAgentContent() : undefined,
+  }
+  console.log('[handleMessageCreated] Adding message:', message)
+  addMessage(message)
+
+  if (role === 'assistant') {
+    startAgentResponse(messageId)
+  }
+}
+
+const handleMessageDelta: EventHandler = (props, get, set) => {
+  const { currentSessionId, appendDelta, currentAssistantMessageId, hasToolCalls, addMessage, startAgentResponse } = get()
+  if (props.sessionId !== currentSessionId) return
+
+  const messageId = props.messageId as string
+  const delta = props.delta as string
+
+  if (!currentAssistantMessageId) {
+    const newMessage: Message = {
+      id: messageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      agentContent: createEmptyAgentContent(),
+    }
+    addMessage(newMessage)
+    startAgentResponse(messageId)
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId
+          ? { ...m, agentContent: { ...(m.agentContent || createEmptyAgentContent()), textBefore: delta } }
+          : m
+      ),
+    }))
+    return
   }
 
-  if (props.role === 'user') {
-    replaceTemp(props.content as string, message)
-  } else {
-    addMessage(message)
+  const position = hasToolCalls ? 'after' : 'before'
+  appendDelta(currentAssistantMessageId, delta, position)
+}
+
+const handleMessageComplete: EventHandler = (props, get) => {
+  const { currentSessionId, updateMessage, currentAssistantMessageId, messages } = get()
+  if (props.sessionId !== currentSessionId) return
+
+  const messageId = props.messageId as string
+  const message = messages.find((m) => m.id === messageId)
+  if (message?.agentContent) {
+    const { textBefore, textAfter } = message.agentContent
+    updateMessage(messageId, {
+      content: textBefore + textAfter,
+    })
   }
-}
-
-const handleMessageDelta: EventHandler = (props, get) => {
-  const { currentSessionId, appendDelta } = get()
-  if (props.sessionId !== currentSessionId) return
-  appendDelta(props.messageId as string, props.delta as string)
-}
-
-const handleMessageComplete: EventHandler = (props, get, set) => {
-  const { currentSessionId } = get()
-  if (props.sessionId !== currentSessionId) return
-
-  set((state) => ({
-    messages: state.messages.map((m) =>
-      m.id === props.messageId
-        ? {
-            ...m,
-            content: (props.content as string) || m.content,
-            tool_calls: props.toolCalls,
-          }
-        : m
-    ),
-  }))
-}
-
-const handleSessionCompleted: EventHandler = (props, get, set) => {
-  const { currentSessionId, clearThinking, clearToolBatch } = get()
-  if (props.sessionId !== currentSessionId) return
-  set({ isStreaming: false, currentRunId: null })
-  clearThinking()
-  clearToolBatch()
-}
-
-const handleSessionError: EventHandler = (props, get, set) => {
-  const { currentSessionId, clearThinking, clearToolBatch } = get()
-  if (props.sessionId !== currentSessionId) return
-  set({
-    isStreaming: false,
-    currentRunId: null,
-    error: (props.error as string) || 'An error occurred',
-  })
-  clearThinking()
-  clearToolBatch()
-}
-
-const handleToolStart: EventHandler = (props, get) => {
-  const { currentSessionId, handleToolStart: toolStart } = get()
-  if (props.sessionId !== currentSessionId) return
-  toolStart({
-    toolCallId: props.toolCallId as string,
-    toolName: props.toolName as string,
-    arguments: props.arguments as string,
-    toolKind: props.toolKind as string,
-  })
-}
-
-const handleToolResult: EventHandler = (props, get) => {
-  const { currentSessionId, handleToolResult: toolResult } = get()
-  if (props.sessionId !== currentSessionId) return
-  toolResult({
-    toolCallId: props.toolCallId as string,
-    toolName: props.toolName as string,
-    success: props.success as boolean,
-    output: props.output as string,
-    summary: props.summary as string,
-    metadata: props.metadata as Record<string, unknown>,
-  })
 }
 
 const handleThinkingDelta: EventHandler = (props, get) => {
-  const { currentSessionId, appendThinking } = get()
+  const { currentSessionId, appendThinking, currentAssistantMessageId } = get()
   if (props.sessionId !== currentSessionId) return
-  appendThinking(props.delta as string)
+  if (!currentAssistantMessageId) return
+
+  appendThinking(currentAssistantMessageId, props.delta as string)
 }
 
-const handleThinkingCompleted: EventHandler = (props, get) => {
-  const { currentSessionId, clearThinking } = get()
+const handleThinkingCompleted: EventHandler = () => {}
+
+const handleToolStart: EventHandler = (props, get) => {
+  const { currentSessionId, appendToolCall, currentAssistantMessageId, setHasToolCalls, setSubagent } = get()
   if (props.sessionId !== currentSessionId) return
-  clearThinking()
+  if (!currentAssistantMessageId) return
+
+  setHasToolCalls(true)
+
+  const subagentType = props.subagent_type as string
+  if (subagentType) {
+    const args = props.arguments as string
+    let description = ''
+    try {
+      const parsed = JSON.parse(args)
+      description = parsed.description || parsed.prompt || subagentType
+    } catch {
+      description = subagentType
+    }
+    
+    setSubagent(currentAssistantMessageId, {
+      id: (props.toolCallId as string) || `subagent-${Date.now()}`,
+      type: subagentType,
+      description,
+      status: 'running',
+      startTime: Date.now(),
+    })
+  }
+
+  const toolCall: ToolCallInfo = {
+    toolCallId: (props.toolCallId as string) || `tool-${Date.now()}`,
+    toolName: (props.toolName as string) || 'Unknown',
+    arguments: props.arguments as string,
+    toolKind: props.toolKind as string,
+    status: 'running',
+    startTime: Date.now(),
+  }
+  appendToolCall(currentAssistantMessageId, toolCall)
+}
+
+const handleToolResult: EventHandler = (props, get, set) => {
+  const { currentSessionId, updateToolCall, currentAssistantMessageId, messages } = get()
+  if (props.sessionId !== currentSessionId) return
+  if (!currentAssistantMessageId) return
+
+  const toolCallId = props.toolCallId as string
+  if (!toolCallId) return
+
+  updateToolCall(currentAssistantMessageId, toolCallId, {
+    status: props.success ? 'success' : 'error',
+    summary: props.summary as string,
+    output: props.output as string,
+  })
+
+  const message = messages.find((m) => m.id === currentAssistantMessageId)
+  if (message?.agentContent?.subagent?.id === toolCallId) {
+    set((state) => ({
+      messages: state.messages.map((m) => {
+        if (m.id !== currentAssistantMessageId) return m
+        if (!m.agentContent?.subagent) return m
+        return {
+          ...m,
+          agentContent: {
+            ...m.agentContent,
+            subagent: {
+              ...m.agentContent.subagent,
+              status: props.success ? 'completed' : 'failed',
+            },
+          },
+        }
+      }),
+    }))
+  }
 }
 
 const handleTokenUsage: EventHandler = (props, get) => {
-  const { currentSessionId, updateTokenUsage } = get()
+  const { currentSessionId, updateTokenUsage, setMaxContextTokens } = get()
   if (props.sessionId !== currentSessionId) return
-  updateTokenUsage(props as Partial<TokenUsage>)
+
+  updateTokenUsage({
+    inputTokens: props.inputTokens as number,
+    outputTokens: props.outputTokens as number,
+    totalTokens: props.totalTokens as number,
+  })
+
+  if (props.maxContextTokens) {
+    setMaxContextTokens(props.maxContextTokens as number, false)
+  }
 }
 
-const handleTodoUpdated: EventHandler = (props, get) => {
-  const { currentSessionId, setTodos } = get()
+const handleTodoUpdate: EventHandler = (props, get) => {
+  const { currentSessionId, setTodos, currentAssistantMessageId } = get()
   if (props.sessionId !== currentSessionId) return
-  setTodos(props.todos as TodoItem[])
-}
+  if (!currentAssistantMessageId) return
 
-const handlePermissionAsked: EventHandler = (props, get, set) => {
-  const { currentSessionId } = get()
-  if (props.sessionId !== currentSessionId) return
-
-  set((state) => ({
-    messages: state.messages.map((m) =>
-      m.id === props.messageId
-        ? {
-            ...m,
-            permissionRequest: {
-              requestId: props.requestId as string,
-              details: props.details as Record<string, unknown>,
-              status: 'pending' as const,
-            },
-          }
-        : m
-    ),
-  }))
-}
-
-const handleRunCancelled: EventHandler = (props, get, set) => {
-  const { currentSessionId, clearThinking, clearToolBatch } = get()
-  if (props.sessionId !== currentSessionId) return
-  set({ isStreaming: false, currentRunId: null })
-  clearThinking()
-  clearToolBatch()
+  const todos = (props.todos as TodoItem[]) || []
+  setTodos(currentAssistantMessageId, todos)
 }
 
 const handleSubagentStart: EventHandler = (props, get) => {
-  const { currentSessionId, setSubagentProgress } = get()
+  const { currentSessionId, setSubagent, currentAssistantMessageId } = get()
   if (props.sessionId !== currentSessionId) return
-  setSubagentProgress({
-    id: props.subagentId as string,
-    type: props.type as string,
-    description: props.description as string,
+  if (!currentAssistantMessageId) return
+
+  const subagent: SubagentProgress = {
+    id: (props.subagentId as string) || `subagent-${Date.now()}`,
+    type: (props.type as string) || 'unknown',
+    description: (props.description as string) || '',
     status: 'running',
     startTime: Date.now(),
+  }
+  setSubagent(currentAssistantMessageId, subagent)
+}
+
+const handleSubagentUpdate: EventHandler = (props, get, set) => {
+  const { currentSessionId, currentAssistantMessageId, messages } = get()
+  if (props.sessionId !== currentSessionId) return
+  if (!currentAssistantMessageId) return
+
+  const message = messages.find((m) => m.id === currentAssistantMessageId)
+  if (!message?.agentContent?.subagent) return
+
+  set((state) => ({
+    messages: state.messages.map((m) => {
+      if (m.id !== currentAssistantMessageId) return m
+      if (!m.agentContent?.subagent) return m
+      return {
+        ...m,
+        agentContent: {
+          ...m.agentContent,
+          subagent: {
+            ...m.agentContent.subagent,
+            currentTool: props.toolName as string,
+          },
+        },
+      }
+    }),
+  }))
+}
+
+const handleSubagentComplete: EventHandler = (props, get, set) => {
+  const { currentSessionId, currentAssistantMessageId, messages } = get()
+  if (props.sessionId !== currentSessionId) return
+  if (!currentAssistantMessageId) return
+
+  const message = messages.find((m) => m.id === currentAssistantMessageId)
+  if (!message?.agentContent?.subagent) return
+
+  set((state) => ({
+    messages: state.messages.map((m) => {
+      if (m.id !== currentAssistantMessageId) return m
+      if (!m.agentContent?.subagent) return m
+      return {
+        ...m,
+        agentContent: {
+          ...m.agentContent,
+          subagent: {
+            ...m.agentContent.subagent,
+            status: props.success ? 'completed' : 'failed',
+          },
+        },
+      }
+    }),
+  }))
+}
+
+const handleConfirmationRequired: EventHandler = (props, get) => {
+  const { currentSessionId, setConfirmation, currentAssistantMessageId } = get()
+  if (props.sessionId !== currentSessionId) return
+  if (!currentAssistantMessageId) return
+
+  setConfirmation(currentAssistantMessageId, {
+    toolCallId: props.toolCallId as string,
+    toolName: props.toolName as string,
+    description: props.description as string,
+    diff: props.diff as string,
+    status: 'pending',
   })
 }
 
-const handleSubagentComplete: EventHandler = (props, get) => {
-  const { currentSessionId, setSubagentProgress } = get()
+const handleQuestionRequired: EventHandler = (props, get) => {
+  const { currentSessionId, setQuestion, currentAssistantMessageId } = get()
   if (props.sessionId !== currentSessionId) return
-  setSubagentProgress(null)
+  if (!currentAssistantMessageId) return
+
+  setQuestion(currentAssistantMessageId, {
+    toolCallId: props.toolCallId as string,
+    questions: props.questions as QuestionInfo['questions'],
+    status: 'pending',
+  })
+}
+
+interface QuestionInfo {
+  toolCallId: string
+  questions: Array<{
+    question: string
+    header: string
+    options: Array<{ label: string; description: string }>
+    multiSelect: boolean
+  }>
+  status: 'pending' | 'answered'
+  answers?: Record<string, string | string[]>
+}
+
+const handleSessionCompleted: EventHandler = (props, get) => {
+  const { currentSessionId, endAgentResponse } = get()
+  if (props.sessionId !== currentSessionId) return
+  endAgentResponse()
+}
+
+const handleSessionError: EventHandler = (props, get, set) => {
+  const { currentSessionId, endAgentResponse } = get()
+  if (props.sessionId !== currentSessionId) return
+
+  set({ error: (props.error as string) || 'An error occurred' })
+  endAgentResponse()
+}
+
+const handleSessionStatus: EventHandler = (props, get, set) => {
+  const { currentSessionId } = get()
+  if (props.sessionId !== currentSessionId) return
+
+  if (props.status === 'idle') {
+    set({ isStreaming: false })
+  }
 }
 
 const eventHandlers: Record<string, EventHandler> = {
-  'session.status': handleSessionStatus,
-  'session.deleted': handleSessionDeleted,
   'message.created': handleMessageCreated,
   'message.delta': handleMessageDelta,
   'message.complete': handleMessageComplete,
-  'session.completed': handleSessionCompleted,
-  'session.error': handleSessionError,
-  'tool.start': handleToolStart,
-  'tool.result': handleToolResult,
   'thinking.delta': handleThinkingDelta,
   'thinking.completed': handleThinkingCompleted,
+  'tool.start': handleToolStart,
+  'tool.result': handleToolResult,
   'token.usage': handleTokenUsage,
-  'todo.updated': handleTodoUpdated,
-  'permission.asked': handlePermissionAsked,
-  'run.cancelled': handleRunCancelled,
+  'todo.update': handleTodoUpdate,
   'subagent.start': handleSubagentStart,
+  'subagent.update': handleSubagentUpdate,
   'subagent.complete': handleSubagentComplete,
+  'confirmation.required': handleConfirmationRequired,
+  'question.required': handleQuestionRequired,
+  'session.completed': handleSessionCompleted,
+  'session.error': handleSessionError,
+  'session.status': handleSessionStatus,
 }
 
 export const createEventDispatcher = (get: GetState, set: SetState) => {
   return (event: StreamEvent) => {
+    console.log('[SSE Event]', event.type, event.properties)
     const handler = eventHandlers[event.type]
     if (handler) {
-      handler(event as unknown as Record<string, unknown>, get, set)
+      handler(event.properties, get, set)
     }
   }
 }

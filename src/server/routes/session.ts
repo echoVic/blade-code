@@ -254,31 +254,52 @@ export const SessionRoutes = () => {
     }
 
     return streamSSE(c, async (stream) => {
+      const HEARTBEAT_INTERVAL = 15000;
+
+      await stream.writeSSE({ 
+        data: JSON.stringify({ type: 'connected', properties: { sessionId, timestamp: Date.now() } }) 
+      });
+
       const onEvent = (event: { type: string; properties: Record<string, unknown> }) => {
-        stream.writeSSE({ data: JSON.stringify(event) }).catch(() => {});
+        stream.writeSSE({ data: JSON.stringify(event) }).catch(() => { /* ignore write errors on closed streams */ });
       };
 
+      let currentRun: RunState | null = null;
+      let currentRunId: string | undefined = undefined;
+
       const checkRun = () => {
-        if (session.currentRunId) {
+        if (session.currentRunId && session.currentRunId !== currentRunId) {
+          if (currentRun) {
+            currentRun.emitter.off('event', onEvent);
+          }
           const run = activeRuns.get(session.currentRunId);
           if (run) {
             run.emitter.on('event', onEvent);
+            currentRun = run;
+            currentRunId = session.currentRunId;
             return run;
           }
         }
-        return null;
+        return currentRun;
       };
 
-      let currentRun = checkRun();
+      checkRun();
 
-      const interval = setInterval(() => {
-        if (!currentRun && session.currentRunId) {
-          currentRun = checkRun();
-        }
+      const runCheckInterval = setInterval(() => {
+        checkRun();
       }, 100);
 
+      const heartbeatInterval = setInterval(() => {
+        if (!stream.aborted) {
+          stream.writeSSE({ 
+            data: JSON.stringify({ type: 'heartbeat', properties: { timestamp: Date.now() } }) 
+          }).catch(() => { /* ignore write errors on closed streams */ });
+        }
+      }, HEARTBEAT_INTERVAL);
+
       stream.onAbort(() => {
-        clearInterval(interval);
+        clearInterval(runCheckInterval);
+        clearInterval(heartbeatInterval);
         if (currentRun) {
           currentRun.emitter.off('event', onEvent);
         }
@@ -398,11 +419,25 @@ async function executeRunAsync(
 
     const requestConfirmation = async (details: ConfirmationDetails): Promise<ConfirmationResponse> => {
       const permissionId = nanoid(12);
+      const PERMISSION_TIMEOUT = 5 * 60 * 1000;
       
       run.status = 'waiting_permission';
       
       const resultPromise = new Promise<ConfirmationResponse>((resolve) => {
-        run.pendingPermission = { permissionId, resolve, details };
+        const timeout = setTimeout(() => {
+          logger.warn(`[SessionRoutes] Permission ${permissionId} timed out after ${PERMISSION_TIMEOUT}ms`);
+          emit('permission.timeout', { requestId: permissionId });
+          resolve({ approved: false, reason: 'timeout' });
+        }, PERMISSION_TIMEOUT);
+
+        run.pendingPermission = { 
+          permissionId, 
+          resolve: (response) => {
+            clearTimeout(timeout);
+            resolve(response);
+          }, 
+          details 
+        };
       });
 
       emit('permission.asked', {

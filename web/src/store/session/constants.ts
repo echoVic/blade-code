@@ -57,5 +57,3 @@ export const initialTokenUsage: TokenUsage = {
   maxContextTokens: 128000,
   isDefaultMaxTokens: true,
 }
-
-export const toolToBatchMap = new Map<string, string>()

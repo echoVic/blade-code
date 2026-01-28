@@ -1,6 +1,6 @@
 import { sessionService } from '@/services'
 import { useConfigStore } from '@/store/ConfigStore'
-import { initialTokenUsage, TEMP_SESSION_ID, toolToBatchMap } from '../constants'
+import { initialTokenUsage, TEMP_SESSION_ID } from '../constants'
 import type { SessionSlice, SliceCreator } from '../types'
 
 export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
@@ -44,9 +44,6 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       isTemporarySession: true,
       messages: [],
       tokenUsage: { ...initialTokenUsage },
-      currentThinkingContent: null,
-      todos: [],
-      subagentProgress: null,
       error: null,
     }),
 
@@ -61,13 +58,11 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
   },
 
   selectSession: async (sessionId: string) => {
-    toolToBatchMap.clear()
     set({
       isLoading: true,
       error: null,
       currentSessionId: sessionId,
       isTemporarySession: false,
-      currentToolBatch: null,
     })
     try {
       const messages = await sessionService.getMessages(sessionId)
@@ -75,9 +70,6 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
         messages,
         isLoading: false,
         tokenUsage: { ...initialTokenUsage },
-        currentThinkingContent: null,
-        todos: [],
-        subagentProgress: null,
       })
     } catch (err) {
       set({ error: (err as Error).message, isLoading: false })

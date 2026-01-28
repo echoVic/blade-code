@@ -6,19 +6,42 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
   isStreaming: false,
   currentRunId: null,
   eventUnsubscribe: null,
+  currentAssistantMessageId: null,
+  hasToolCalls: false,
 
   setStreaming: (streaming) => set({ isStreaming: streaming }),
 
   setRunId: (runId) => set({ currentRunId: runId }),
 
-  subscribeToEvents: (sessionId) => {
+  setCurrentAssistantMessageId: (id) => set({ currentAssistantMessageId: id }),
+
+  setHasToolCalls: (has) => set({ hasToolCalls: has }),
+
+  startAgentResponse: (messageId) => {
+    set({
+      currentAssistantMessageId: messageId,
+      hasToolCalls: false,
+      isStreaming: true,
+    })
+  },
+
+  endAgentResponse: () => {
+    set({
+      currentAssistantMessageId: null,
+      hasToolCalls: false,
+      isStreaming: false,
+      currentRunId: null,
+    })
+  },
+
+  subscribeToEvents: (sessionId: string) => {
     const { eventUnsubscribe } = get()
     if (eventUnsubscribe) {
       eventUnsubscribe()
     }
 
-    const dispatcher = createEventDispatcher(get, set)
-    const unsubscribe = sessionService.subscribeEvents(sessionId, dispatcher)
+    const dispatch = createEventDispatcher(get, set)
+    const unsubscribe = sessionService.subscribeEvents(sessionId, dispatch)
     set({ eventUnsubscribe: unsubscribe })
   },
 
@@ -31,7 +54,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
   },
 
   handleEvent: (event) => {
-    const dispatcher = createEventDispatcher(get, set)
-    dispatcher(event)
+    const dispatch = createEventDispatcher(get, set)
+    dispatch(event)
   },
 })
