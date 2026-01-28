@@ -276,16 +276,17 @@ const handleSubagentComplete: EventHandler = (props, get, set) => {
   }))
 }
 
-const handleConfirmationRequired: EventHandler = (props, get) => {
+const handlePermissionAsked: EventHandler = (props, get) => {
   const { currentSessionId, setConfirmation, currentAssistantMessageId } = get()
   if (props.sessionId !== currentSessionId) return
   if (!currentAssistantMessageId) return
 
+  const details = props.details as Record<string, unknown> | undefined
   setConfirmation(currentAssistantMessageId, {
-    toolCallId: props.toolCallId as string,
+    toolCallId: (props.requestId as string) || '',
     toolName: props.toolName as string,
     description: props.description as string,
-    diff: props.diff as string,
+    diff: (details?.diff as string) || '',
     status: 'pending',
   })
 }
@@ -350,7 +351,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'subagent.start': handleSubagentStart,
   'subagent.update': handleSubagentUpdate,
   'subagent.complete': handleSubagentComplete,
-  'confirmation.required': handleConfirmationRequired,
+  'permission.asked': handlePermissionAsked,
   'question.required': handleQuestionRequired,
   'session.completed': handleSessionCompleted,
   'session.error': handleSessionError,

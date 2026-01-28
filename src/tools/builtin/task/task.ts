@@ -320,6 +320,7 @@ export const taskTool = createTool({
             `✅ Subagent 任务完成\n\n` +
             `类型: ${subagent_type}\n` +
             `任务: ${description}\n` +
+            `Agent ID: ${result.agentId || 'N/A'}\n` +
             `耗时: ${duration}ms\n` +
             `工具调用: ${result.stats?.toolCalls || 0} 次\n` +
             `Token: ${result.stats?.tokens || 0}\n\n` +
@@ -329,6 +330,10 @@ export const taskTool = createTool({
             description,
             duration,
             stats: result.stats,
+            subagentSessionId: result.agentId,
+            subagentType: subagent_type,
+            subagentStatus: 'completed' as const,
+            subagentSummary: result.message.slice(0, 500),
           },
         };
       } else {
@@ -339,11 +344,17 @@ export const taskTool = createTool({
             `⚠️ Subagent 任务失败\n\n` +
             `类型: ${subagent_type}\n` +
             `任务: ${description}\n` +
+            `Agent ID: ${result.agentId || 'N/A'}\n` +
             `耗时: ${duration}ms\n` +
             `错误: ${result.error}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: result.error || 'Unknown error',
+          },
+          metadata: {
+            subagentSessionId: result.agentId,
+            subagentType: subagent_type,
+            subagentStatus: 'failed' as const,
           },
         };
       }
@@ -418,6 +429,9 @@ function handleBackgroundExecution(
       subagent_type: subagentConfig.name,
       description,
       background: true,
+      subagentSessionId: agentId,
+      subagentType: subagentConfig.name,
+      subagentStatus: 'running' as const,
     },
   };
 }
@@ -508,6 +522,9 @@ function handleResume(
       subagent_type: subagentConfig.name,
       description,
       background: true,
+      subagentSessionId: newAgentId,
+      subagentType: subagentConfig.name,
+      subagentStatus: 'running' as const,
     },
   };
 }

@@ -647,7 +647,10 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
           lastMessageUuid = await contextMgr.saveMessage(
             context.sessionId,
             'user',
-            textContent
+            textContent,
+            null,
+            undefined,
+            context.subagentInfo
           );
         } else if (textContent.trim() === '') {
           logger.debug('[Agent] 跳过保存空用户消息');
@@ -992,7 +995,9 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
                   context.sessionId,
                   'assistant',
                   turnResult.content,
-                  lastMessageUuid // 链接到上一条消息
+                  lastMessageUuid,
+                  undefined,
+                  context.subagentInfo
                 );
               } else {
                 logger.debug('[Agent] 跳过保存空响应（任务完成时）');
@@ -1033,7 +1038,9 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
                 context.sessionId,
                 'assistant',
                 turnResult.content,
-                lastMessageUuid // 链接到上一条消息
+                lastMessageUuid,
+                undefined,
+                context.subagentInfo
               );
             } else {
               logger.debug('[Agent] 跳过保存空响应（工具调用时）');
@@ -1117,7 +1124,8 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
                   context.sessionId,
                   toolCall.function.name,
                   params,
-                  lastMessageUuid
+                  lastMessageUuid,
+                  context.subagentInfo
                 );
               }
             } catch (error) {
@@ -1242,7 +1250,8 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
                 toolCall.id,
                 result.success ? toJsonValue(result.llmContent) : null,
                 toolUseUuid,
-                result.success ? undefined : result.error?.message
+                result.success ? undefined : result.error?.message,
+                context.subagentInfo
               );
             }
           } catch (err) {

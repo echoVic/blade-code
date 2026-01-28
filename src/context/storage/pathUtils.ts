@@ -69,6 +69,19 @@ export function getSessionFilePath(projectPath: string, sessionId: string): stri
 }
 
 /**
+ * 获取子代理会话文件路径
+ * 子代理 JSONL 文件与主会话存储在同一目录下
+ *
+ * @param projectPath 项目绝对路径
+ * @param agentId 子代理 ID (格式: agent_<uuid>)
+ * @returns ~/.blade/projects/{escaped-path}/{agentId}.jsonl
+ */
+export function getSubagentFilePath(projectPath: string, agentId: string): string {
+  const safeId = agentId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return path.join(getProjectStoragePath(projectPath), `${safeId}.jsonl`);
+}
+
+/**
  * 检测当前项目的 Git 分支
  * @param projectPath 项目路径
  * @returns Git 分支名称，如果不是 Git 仓库则返回 undefined

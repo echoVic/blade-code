@@ -200,7 +200,7 @@ function ConfirmationSection({ confirmation }: { confirmation: AgentResponseCont
     if (!currentSessionId || submitting) return
     setSubmitting(true)
     try {
-      await sessionService.respondToConfirmation(currentSessionId, confirmation.toolCallId, approved)
+      await sessionService.respondPermission(currentSessionId, confirmation.toolCallId, { approved })
     } finally {
       setSubmitting(false)
     }

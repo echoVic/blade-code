@@ -184,4 +184,20 @@ export interface BladeJSONLEntry {
     /** 包含的文件列表 */
     filesIncluded?: string[];
   };
+
+  // === 子代理关联字段 ===
+  /** 父会话 ID（子代理 JSONL 必带，用于回链主会话） */
+  parentSessionId?: string;
+  /** 是否为侧链/子代理会话（Claude 概念兼容） */
+  isSidechain?: boolean;
+
+  // === 主会话中的子代理引用字段 ===
+  /** 关联的子代理会话 ID */
+  subagentSessionId?: string;
+  /** 子代理类型 */
+  subagentType?: string;
+  /** 子代理状态 */
+  subagentStatus?: 'running' | 'completed' | 'failed' | 'cancelled';
+  /** 子代理结果摘要（避免重复全文） */
+  subagentSummary?: string;
 }

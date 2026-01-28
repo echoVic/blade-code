@@ -259,9 +259,21 @@ export class ContextManager {
     metadata?: {
       model?: string;
       usage?: { input_tokens: number; output_tokens: number };
+    },
+    subagentInfo?: {
+      parentSessionId: string;
+      subagentType: string;
+      isSidechain: boolean;
     }
   ): Promise<string> {
-    return this.persistent.saveMessage(sessionId, role, content, parentUuid, metadata);
+    return this.persistent.saveMessage(
+      sessionId,
+      role,
+      content,
+      parentUuid,
+      metadata,
+      subagentInfo
+    );
   }
 
   /**
@@ -271,9 +283,20 @@ export class ContextManager {
     sessionId: string,
     toolName: string,
     toolInput: JsonValue,
-    parentUuid: string | null = null
+    parentUuid: string | null = null,
+    subagentInfo?: {
+      parentSessionId: string;
+      subagentType: string;
+      isSidechain: boolean;
+    }
   ): Promise<string> {
-    return this.persistent.saveToolUse(sessionId, toolName, toolInput, parentUuid);
+    return this.persistent.saveToolUse(
+      sessionId,
+      toolName,
+      toolInput,
+      parentUuid,
+      subagentInfo
+    );
   }
 
   /**
@@ -284,14 +307,27 @@ export class ContextManager {
     toolId: string,
     toolOutput: JsonValue,
     parentUuid: string | null = null,
-    error?: string
+    error?: string,
+    subagentInfo?: {
+      parentSessionId: string;
+      subagentType: string;
+      isSidechain: boolean;
+    },
+    subagentRef?: {
+      subagentSessionId: string;
+      subagentType: string;
+      subagentStatus: 'running' | 'completed' | 'failed' | 'cancelled';
+      subagentSummary?: string;
+    }
   ): Promise<string> {
     return this.persistent.saveToolResult(
       sessionId,
       toolId,
       toolOutput,
       parentUuid,
-      error
+      error,
+      subagentInfo,
+      subagentRef
     );
   }
 

@@ -138,6 +138,9 @@ export interface SubagentResult {
   /** 错误信息（如果失败） */
   error?: string;
 
+  /** 子代理会话 ID（用于关联独立 JSONL 文件） */
+  agentId?: string;
+
   /** 执行统计 */
   stats?: {
     /** Token 使用量 */

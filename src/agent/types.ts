@@ -17,6 +17,15 @@ import type { ToolResult } from '../tools/types/ToolTypes.js';
 export type UserMessageContent = string | ContentPart[];
 
 /**
+ * 子代理信息（用于 JSONL 写入）
+ */
+export interface SubagentInfoForContext {
+  parentSessionId: string;
+  subagentType: string;
+  isSidechain: boolean;
+}
+
+/**
  * 聊天上下文接口
  *
  * 职责：保存会话相关的数据和状态
@@ -34,6 +43,7 @@ export interface ChatContext {
   confirmationHandler?: ConfirmationHandler; // 会话级别的确认处理器
   permissionMode?: PermissionMode; // 当前权限模式（用于 Plan 模式判断）
   systemPrompt?: string; // 动态传入的系统提示词（无状态设计）
+  subagentInfo?: SubagentInfoForContext; // 子代理信息（用于 JSONL 写入）
 }
 
 /**

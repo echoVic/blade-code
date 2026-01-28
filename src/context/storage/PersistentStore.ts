@@ -59,6 +59,11 @@ export class PersistentStore {
     metadata?: {
       model?: string;
       usage?: { input_tokens: number; output_tokens: number };
+    },
+    subagentInfo?: {
+      parentSessionId: string;
+      subagentType: string;
+      isSidechain: boolean;
     }
   ): Promise<string> {
     try {
@@ -86,6 +91,11 @@ export class PersistentStore {
           content,
           ...(metadata || {}),
         },
+        ...(subagentInfo && {
+          parentSessionId: subagentInfo.parentSessionId,
+          isSidechain: subagentInfo.isSidechain,
+          subagentType: subagentInfo.subagentType,
+        }),
       };
 
       await store.append(entry);
@@ -103,7 +113,12 @@ export class PersistentStore {
     sessionId: string,
     toolName: string,
     toolInput: JsonValue,
-    parentUuid: string | null = null
+    parentUuid: string | null = null,
+    subagentInfo?: {
+      parentSessionId: string;
+      subagentType: string;
+      isSidechain: boolean;
+    }
   ): Promise<string> {
     try {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
@@ -127,6 +142,11 @@ export class PersistentStore {
           name: toolName,
           input: toolInput,
         },
+        ...(subagentInfo && {
+          parentSessionId: subagentInfo.parentSessionId,
+          isSidechain: subagentInfo.isSidechain,
+          subagentType: subagentInfo.subagentType,
+        }),
       };
 
       await store.append(entry);
@@ -148,7 +168,18 @@ export class PersistentStore {
     toolId: string,
     toolOutput: JsonValue,
     parentUuid: string | null = null,
-    error?: string
+    error?: string,
+    subagentInfo?: {
+      parentSessionId: string;
+      subagentType: string;
+      isSidechain: boolean;
+    },
+    subagentRef?: {
+      subagentSessionId: string;
+      subagentType: string;
+      subagentStatus: 'running' | 'completed' | 'failed' | 'cancelled';
+      subagentSummary?: string;
+    }
   ): Promise<string> {
     try {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
@@ -172,6 +203,17 @@ export class PersistentStore {
           output: toolOutput,
           error,
         },
+        ...(subagentInfo && {
+          parentSessionId: subagentInfo.parentSessionId,
+          isSidechain: subagentInfo.isSidechain,
+          subagentType: subagentInfo.subagentType,
+        }),
+        ...(subagentRef && {
+          subagentSessionId: subagentRef.subagentSessionId,
+          subagentType: subagentRef.subagentType,
+          subagentStatus: subagentRef.subagentStatus,
+          subagentSummary: subagentRef.subagentSummary,
+        }),
       };
 
       await store.append(entry);

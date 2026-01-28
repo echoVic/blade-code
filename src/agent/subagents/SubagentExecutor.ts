@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Agent } from '../Agent.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
 
@@ -8,6 +9,7 @@ import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js
  * - 创建子 Agent 实例
  * - 配置工具白名单
  * - 执行任务并返回结果
+ * - 将子代理对话流写入独立 JSONL 文件
  */
 export class SubagentExecutor {
   constructor(private config: SubagentConfig) {}
@@ -15,21 +17,19 @@ export class SubagentExecutor {
   /**
    * 执行 subagent 任务
    * 无状态设计：systemPrompt 通过 ChatContext 传入
+   * 子代理对话流写入独立 JSONL 文件 (agent_<id>.jsonl)
    */
   async execute(context: SubagentContext): Promise<SubagentResult> {
     const startTime = Date.now();
+    const agentId = `agent_${randomUUID()}`;
 
     try {
-      // 1. 构建系统提示
       const systemPrompt = this.buildSystemPrompt(context);
 
-      // 2. 创建子 Agent（无状态设计：不再传递 systemPrompt 到 AgentOptions）
       const agent = await Agent.create({
-        toolWhitelist: this.config.tools, // 应用工具白名单
+        toolWhitelist: this.config.tools,
       });
 
-      // 3. 执行对话循环（让 Agent 自主完成任务）
-      // 无状态设计：systemPrompt 通过 ChatContext 传入
       let finalMessage = '';
       let toolCallCount = 0;
       let tokensUsed = 0;
@@ -39,10 +39,15 @@ export class SubagentExecutor {
         {
           messages: [],
           userId: 'subagent',
-          sessionId: context.parentSessionId || `subagent_${Date.now()}`,
+          sessionId: agentId,
           workspaceRoot: process.cwd(),
-          permissionMode: context.permissionMode, // 继承父 Agent 的权限模式
-          systemPrompt, // 🆕 无状态设计：通过 context 传入 systemPrompt
+          permissionMode: context.permissionMode,
+          systemPrompt,
+          subagentInfo: {
+            parentSessionId: context.parentSessionId || '',
+            subagentType: this.config.name,
+            isSidechain: true,
+          },
         },
         {
           onToolStart: context.onToolStart
@@ -63,12 +68,12 @@ export class SubagentExecutor {
         throw new Error(loopResult.error?.message || 'Subagent execution failed');
       }
 
-      // 4. 返回结果
       const duration = Date.now() - startTime;
 
       return {
         success: true,
         message: finalMessage,
+        agentId,
         stats: {
           tokens: tokensUsed,
           toolCalls: toolCallCount,
@@ -80,6 +85,7 @@ export class SubagentExecutor {
       return {
         success: false,
         message: '',
+        agentId,
         error: error instanceof Error ? error.message : String(error),
         stats: {
           duration,
@@ -88,9 +94,6 @@ export class SubagentExecutor {
     }
   }
 
-  /**
-   * 构建系统提示
-   */
   private buildSystemPrompt(_context: SubagentContext): string {
     return this.config.systemPrompt || '';
   }

@@ -194,44 +194,43 @@ export class BackgroundAgentManager {
     const startTime = Date.now();
 
     try {
-      // 检查是否已取消
       if (signal.aborted) {
         throw new Error('Agent execution was cancelled');
       }
 
-      // 1. 创建 Agent
       const systemPrompt = config.systemPrompt || '';
       const agent = await Agent.create({
         systemPrompt,
         toolWhitelist: config.tools,
       });
 
-      // 2. 执行 agentic loop
-      // 创建 context 对象以便获取更新后的消息历史
       const context = {
         messages: existingMessages || [],
         userId: 'subagent',
-        sessionId: parentSessionId || `subagent_${agentId}`,
+        sessionId: agentId,
         workspaceRoot: process.cwd(),
         permissionMode,
+        subagentInfo: {
+          parentSessionId: parentSessionId || '',
+          subagentType: config.name,
+          isSidechain: true,
+        },
       };
 
       const loopResult = await agent.runAgenticLoop(prompt, context, {
-        signal, // 传递 AbortSignal 以支持 killAgent
+        signal,
       });
 
-      // 3. 保存更新后的消息历史（用于 resume）
-      // runAgenticLoop 会修改 context.messages（添加 LLM 响应、工具调用等）
       this.sessionStore.updateSession(agentId, {
         messages: context.messages,
       });
 
-      // 4. 构建结果
       const duration = Date.now() - startTime;
       const result: SubagentResult = loopResult.success
         ? {
             success: true,
             message: loopResult.finalMessage || '',
+            agentId,
             stats: {
               tokens: loopResult.metadata?.tokensUsed || 0,
               toolCalls: loopResult.metadata?.toolCallsCount || 0,
@@ -241,11 +240,11 @@ export class BackgroundAgentManager {
         : {
             success: false,
             message: '',
+            agentId,
             error: loopResult.error?.message || 'Unknown error',
             stats: { duration },
           };
 
-      // 5. 更新会话状态
       this.sessionStore.markCompleted(
         agentId,
         {
@@ -262,7 +261,6 @@ export class BackgroundAgentManager {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      // 更新会话状态
       this.sessionStore.markCompleted(
         agentId,
         {
@@ -278,6 +276,7 @@ export class BackgroundAgentManager {
       return {
         success: false,
         message: '',
+        agentId,
         error: errorMessage,
         stats: { duration },
       };
