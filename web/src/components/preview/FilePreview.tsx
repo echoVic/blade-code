@@ -64,7 +64,6 @@ export function FilePreview() {
   const [filePreviewLoading, setFilePreviewLoading] = useState(false)
   const [filePreviewError, setFilePreviewError] = useState<string | null>(null)
   const [filePreviewTruncated, setFilePreviewTruncated] = useState(false)
-  const [showFullDiff, setShowFullDiff] = useState(false)
 
   const loadTreeNodes = async (dirPath: string = '') => {
     try {
@@ -105,12 +104,13 @@ export function FilePreview() {
     setChildrenCache({})
   }, [currentSessionId])
 
-  const latestDiff = useMemo(() => findLatestDiff(messages), [messages])
+  const allDiffs = useMemo(() => findAllDiffs(messages), [messages])
   const logs = useMemo(() => buildLogs(messages), [messages])
+  const [expandedDiffs, setExpandedDiffs] = useState<Record<string, boolean>>({})
 
-  useEffect(() => {
-    setShowFullDiff(false)
-  }, [latestDiff?.filePath, latestDiff?.diff?.patch])
+  const toggleDiffExpand = (filePath: string) => {
+    setExpandedDiffs((prev) => ({ ...prev, [filePath]: !prev[filePath] }))
+  }
 
   const openFile = async (path: string) => {
     setSelectedFile(path)
@@ -163,12 +163,7 @@ export function FilePreview() {
 
       <Tabs
         value={activeTab}
-        onValueChange={(value: string) => {
-          setActiveTab(value as typeof activeTab)
-          if (value !== 'diff') {
-            setShowFullDiff(false)
-          }
-        }}
+        onValueChange={(value: string) => setActiveTab(value as typeof activeTab)}
         className="flex flex-col flex-1 min-h-0"
       >
         <div className="px-4 py-3 border-b border-[#E5E7EB] dark:border-zinc-800">
@@ -195,48 +190,52 @@ export function FilePreview() {
         </div>
 
         <TabsContent value="diff" className="overflow-hidden flex-1 mt-0">
-          <div className="overflow-y-auto px-4 py-4 space-y-4 h-full">
-            {!latestDiff ? (
+          <div className="overflow-y-auto px-4 py-4 space-y-3 h-full">
+            {allDiffs.length === 0 ? (
               <EmptyState title="No patch yet" subtitle="Run a tool that changes files to see diffs here." />
             ) : (
               <>
-                <div className="flex justify-between items-center">
-                  <div>
-                    <div className="text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono">Latest change</div>
-                    <div className="text-[13px] text-[#111827] dark:text-[#E5E5E5] font-mono">
-                      {latestDiff.filePath || 'Untitled file'}
-                    </div>
-                  </div>
-                  <div className="flex gap-3 items-center">
-                    {latestDiff.summary && (
-                      <span className="text-[12px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">{latestDiff.summary}</span>
-                    )}
-                    {latestDiff.oldContent && latestDiff.newContent && (
-                      <button
-                        onClick={() => setShowFullDiff((prev) => !prev)}
-                        className="text-[12px] font-mono text-[#111827] dark:text-[#E5E5E5] border border-[#E5E7EB] dark:border-[#27272a] px-2 py-1 rounded-md hover:bg-[#F3F4F6] dark:hover:bg-[#111113]"
-                      >
-                        {showFullDiff ? 'Collapse full diff' : 'Open full diff'}
-                      </button>
-                    )}
-                  </div>
+                <div className="text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono mb-2">
+                  {allDiffs.length} changed file{allDiffs.length > 1 ? 's' : ''}
                 </div>
-                <DiffViewer diff={latestDiff.diff} />
-                {showFullDiff && latestDiff.oldContent && latestDiff.newContent && (
-                  <div className="border border-[#E5E7EB] dark:border-[#27272a] rounded-lg overflow-hidden">
-                    <div className="px-3 py-2 bg-[#F9FAFB] dark:bg-[#111113] border-b border-[#E5E7EB] dark:border-[#27272a] text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono">
-                      Monaco Diff View
+                {allDiffs.map((diffItem) => {
+                  const fileName = diffItem.filePath?.split('/').pop() || 'unknown'
+                  const isExpanded = expandedDiffs[diffItem.filePath || ''] !== false
+                  return (
+                    <div
+                      key={diffItem.filePath}
+                      className="border border-[#E5E7EB] dark:border-[#27272a] rounded-lg overflow-hidden"
+                    >
+                      <button
+                        onClick={() => toggleDiffExpand(diffItem.filePath || '')}
+                        className="w-full flex items-center gap-2 px-3 py-2 bg-[#F9FAFB] dark:bg-[#111113] hover:bg-[#F3F4F6] dark:hover:bg-[#18181b] transition-colors"
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="w-4 h-4 text-[#6B7280] dark:text-[#71717a]" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 text-[#6B7280] dark:text-[#71717a]" />
+                        )}
+                        <FileText className="w-4 h-4 text-[#6B7280] dark:text-[#71717a]" />
+                        <span className="text-[13px] text-[#111827] dark:text-[#E5E5E5] font-mono flex-1 text-left truncate">
+                          {fileName}
+                        </span>
+                        {diffItem.summary && (
+                          <span className="text-[11px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
+                            {diffItem.summary}
+                          </span>
+                        )}
+                      </button>
+                      {isExpanded && (
+                        <div className="border-t border-[#E5E7EB] dark:border-[#27272a]">
+                          <div className="px-3 py-1 text-[11px] text-[#9CA3AF] dark:text-[#52525b] font-mono truncate">
+                            {diffItem.filePath}
+                          </div>
+                          <DiffViewer diff={diffItem.diff} />
+                        </div>
+                      )}
                     </div>
-                    <div className="h-[320px]">
-                      <Suspense fallback={<MonacoFallback />}>
-                        <MonacoDiffView
-                          original={latestDiff.oldContent}
-                          modified={latestDiff.newContent}
-                        />
-                      </Suspense>
-                    </div>
-                  </div>
-                )}
+                  )
+                })}
               </>
             )}
           </div>
@@ -536,13 +535,16 @@ function buildLogs(
   })
 }
 
-function findLatestDiff(
+function findAllDiffs(
   messages: Array<{
     metadata?: Record<string, unknown>
     content?: string
-    agentContent?: { toolCalls?: Array<{ output?: string; metadata?: Record<string, unknown>; toolName?: string; summary?: string }> }
+    agentContent?: { toolCalls?: Array<{ output?: string; metadata?: Record<string, unknown>; toolName?: string; summary?: string; toolCallId?: string }> }
   }>
-): FullDiffPayload | null {
+): FullDiffPayload[] {
+  const diffs: FullDiffPayload[] = []
+  const seenFiles = new Set<string>()
+
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i]
 
@@ -553,14 +555,18 @@ function findLatestDiff(
         const output = toolCall.output || ''
         const diffCandidate = extractDiffBlock(output) || extractDiffBlock((toolMeta?.diff_snippet as string) || '')
         if (diffCandidate?.diff) {
-          const oldContent = typeof toolMeta?.oldContent === 'string' ? toolMeta.oldContent : undefined
-          const newContent = typeof toolMeta?.newContent === 'string' ? toolMeta.newContent : undefined
-          return {
-            diff: diffCandidate.diff,
-            filePath: (toolMeta?.file_path as string) || toolCall.toolName,
-            summary: toolCall.summary,
-            oldContent,
-            newContent,
+          const filePath = (toolMeta?.file_path as string) || toolCall.toolName || 'unknown'
+          if (!seenFiles.has(filePath)) {
+            seenFiles.add(filePath)
+            const oldContent = typeof toolMeta?.oldContent === 'string' ? toolMeta.oldContent : undefined
+            const newContent = typeof toolMeta?.newContent === 'string' ? toolMeta.newContent : undefined
+            diffs.push({
+              diff: diffCandidate.diff,
+              filePath,
+              summary: toolCall.summary,
+              oldContent,
+              newContent,
+            })
           }
         }
       }
@@ -572,18 +578,22 @@ function findLatestDiff(
     const output = (meta.output as string) || message.content || ''
     const diffCandidate = extractDiffBlock(output) || extractDiffBlock((toolMeta?.diff_snippet as string) || '')
     if (diffCandidate?.diff) {
-      const oldContent = typeof toolMeta?.oldContent === 'string' ? (toolMeta.oldContent as string) : undefined
-      const newContent = typeof toolMeta?.newContent === 'string' ? (toolMeta.newContent as string) : undefined
-      return {
-        diff: diffCandidate.diff,
-        filePath: (toolMeta?.file_path as string) || (meta.toolName as string),
-        summary: meta.summary as string | undefined,
-        oldContent,
-        newContent,
+      const filePath = (toolMeta?.file_path as string) || (meta.toolName as string) || 'unknown'
+      if (!seenFiles.has(filePath)) {
+        seenFiles.add(filePath)
+        const oldContent = typeof toolMeta?.oldContent === 'string' ? (toolMeta.oldContent as string) : undefined
+        const newContent = typeof toolMeta?.newContent === 'string' ? (toolMeta.newContent as string) : undefined
+        diffs.push({
+          diff: diffCandidate.diff,
+          filePath,
+          summary: meta.summary as string | undefined,
+          oldContent,
+          newContent,
+        })
       }
     }
   }
-  return null
+  return diffs.reverse()
 }
 
 function extractDiffBlock(output: string): { diff?: DiffData } | null {
