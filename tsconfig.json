@@ -1,36 +1,20 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "noImplicitAny": true,
-    "noImplicitOverride": false,
-    "noImplicitReturns": false,
-    "noImplicitThis": false,
-    "forceConsistentCasingInFileNames": true,
-    "noPropertyAccessFromIndexSignature": false,
-    "noUnusedLocals": false,
-    "strictBindCallApply": true,
-    "strictFunctionTypes": true,
-    "strictNullChecks": true,
-    "strictPropertyInitialization": true,
-    "resolveJsonModule": true,
-    "sourceMap": true,
-    "incremental": true,
-    "declaration": true,
-    "allowSyntheticDefaultImports": true,
-    "verbatimModuleSyntax": false,
-    "lib": ["ES2023", "DOM"],
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "target": "es2022",
-    "types": ["node", "vitest/globals"],
-    "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@blade/cli/*": ["./packages/cli/src/*"],
+      "@blade/web/*": ["./packages/web/src/*"],
+      "@blade/shared/*": ["./packages/shared/src/*"],
+      "@blade/vscode/*": ["./packages/vscode/src/*"]
     }
   },
-  "include": ["src/**/*", "tests/**/*"],
-  "exclude": ["node_modules", "dist", "bin", "bundle", "packages"]
+  "references": [
+    { "path": "./packages/cli" },
+    { "path": "./packages/web" },
+    { "path": "./packages/shared" },
+    { "path": "./packages/vscode" }
+  ],
+  "include": [],
+  "exclude": ["node_modules", "dist", "packages"]
 }

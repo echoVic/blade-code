@@ -6,36 +6,49 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Blade Code is a modern AI-powered CLI coding assistant built with React + Ink and TypeScript.
+Blade Code is a modern AI-powered CLI coding assistant built with React + Ink and TypeScript. The project uses **pnpm workspace monorepo** architecture.
 
 ## Quick Commands
 
 ```bash
-pnpm run dev          # Development mode with hot reload
-pnpm run build        # Build the CLI
-pnpm run test:all     # Run all tests
-pnpm run lint         # Run linter
-pnpm run type-check   # TypeScript type checking
-pnpm run check:full   # Full check (type, lint, format, test)
+pnpm dev              # Start all packages in dev mode
+pnpm dev:cli          # Start CLI dev mode only
+pnpm dev:web          # Start Web UI dev mode only
+pnpm build            # Build all packages
+pnpm test:all         # Run all tests
+pnpm lint             # Run linter
+pnpm type-check       # TypeScript type checking
+pnpm preflight        # Full check (clean, install, format, lint, build, type-check, test)
 ```
 
 ## Architecture
 
+### Monorepo Structure
+
 ```
-src/
-├── agent/              # Stateless Agent core
-├── tools/              # Tool system (builtin, execution, registry)
-├── mcp/                # MCP protocol support
-├── context/            # Context management
-├── config/             # Configuration management
-├── ui/                 # UI components (React + Ink)
-├── store/              # State management (Zustand)
-├── services/           # Service layer
-├── cli/                # CLI configuration
-├── commands/           # Command handlers
-├── prompts/            # Prompt templates
-├── slash-commands/     # Slash commands
-└── blade.tsx           # Entry point
+Blade/
+├── packages/
+│   ├── cli/            # @blade/cli - CLI core
+│   │   └── src/
+│   │       ├── agent/          # Stateless Agent core
+│   │       ├── tools/          # Tool system (builtin, execution, registry)
+│   │       ├── mcp/            # MCP protocol support
+│   │       ├── context/        # Context management
+│   │       ├── config/         # Configuration management
+│   │       ├── ui/             # UI components (React + Ink)
+│   │       ├── store/          # State management (Zustand)
+│   │       ├── services/       # Service layer
+│   │       ├── cli/            # CLI configuration
+│   │       ├── commands/       # Command handlers
+│   │       ├── prompts/        # Prompt templates
+│   │       ├── slash-commands/ # Slash commands
+│   │       └── blade.tsx       # Entry point
+│   ├── web/            # @blade/web - Web UI
+│   ├── vscode/         # @blade/vscode - VSCode extension
+│   └── shared/         # @blade/shared - Shared utilities
+├── docs/               # Documentation
+├── pnpm-workspace.yaml # Workspace config
+└── tsconfig.base.json  # Shared TypeScript config
 ```
 
 ## Key Design Principles
@@ -55,14 +68,12 @@ src/
 ## Testing
 
 - Test framework: Vitest
-- Tests location: `tests/`
-- Run tests: `pnpm run test:all`
+- Tests location: `packages/cli/tests/`
+- Run tests: `pnpm test:all`
 
 ## Documentation
 
-- User docs: `docs/public/`
-- Developer docs: `docs/development/`
-- Contributing docs: `docs/contributing/`
+- User docs: `docs/`
 
 ## More Information
 

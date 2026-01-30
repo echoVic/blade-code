@@ -3,7 +3,14 @@
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["src/**/*", "tests/**/*", "*.ts", "*.tsx", "*.js", "*.jsx"]
+    "includes": [
+      "packages/*/src/**/*",
+      "packages/*/tests/**/*",
+      "*.ts",
+      "*.tsx",
+      "*.js",
+      "*.jsx"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -102,7 +109,12 @@
   },
   "overrides": [
     {
-      "includes": ["tests/**/*", "**/*.test.ts", "**/*.spec.ts", "src/**/*test*"],
+      "includes": [
+        "packages/*/tests/**/*",
+        "**/*.test.ts",
+        "**/*.spec.ts",
+        "packages/*/src/**/*test*"
+      ],
       "linter": {
         "rules": {
           "suspicious": {

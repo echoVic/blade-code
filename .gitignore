@@ -71,3 +71,14 @@ blade-context/
 # Local settings
 .blade/settings.local.json
 .claude/settings.local.json
+
+# Monorepo - 各包的构建输出
+packages/*/dist/
+packages/*/coverage/
+packages/*/.tsbuildinfo
+
+# VSCode 扩展打包输出
+packages/vscode/*.vsix
+
+# Web 构建缓存
+packages/web/.vite/

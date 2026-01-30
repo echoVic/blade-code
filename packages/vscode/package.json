@@ -1,0 +1,81 @@
+{
+  "name": "blade-vscode",
+  "displayName": "Blade Code",
+  "description": "Blade Code IDE integration - AI-powered coding assistant",
+  "version": "0.0.1",
+  "publisher": "blade-code",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/echoVic/blade-code"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "ai",
+    "assistant",
+    "blade",
+    "code",
+    "llm"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "blade-code.start",
+        "title": "Blade Code: Start Server"
+      },
+      {
+        "command": "blade-code.stop",
+        "title": "Blade Code: Stop Server"
+      },
+      {
+        "command": "blade-code.status",
+        "title": "Blade Code: Show Status"
+      }
+    ],
+    "configuration": {
+      "title": "Blade Code",
+      "properties": {
+        "bladeCode.port": {
+          "type": "number",
+          "default": 0,
+          "description": "WebSocket server port (0 = auto-select)"
+        },
+        "bladeCode.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start server when VS Code opens"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run compile",
+    "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch",
+    "build": "pnpm run compile",
+    "package": "pnpm run compile && vsce package --no-dependencies",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.24",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.12",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.19.0",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

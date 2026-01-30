@@ -1,21 +1,28 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  "entry": [
-    "src/blade.tsx",
-    "src/acp/index.ts",
-    "vscode-extension/src/extension.ts"
-  ],
-  "project": ["src/**/*.{ts,tsx}", "vscode-extension/src/**/*.ts"],
-  "ignore": [
-    "**/*.test.ts",
-    "**/*.spec.ts",
-    "tests/**/*"
-  ],
-  "ignoreDependencies": [
-    "@azure/identity",
-    "pino-pretty",
-    "vscode"
-  ],
+  "workspaces": {
+    "packages/cli": {
+      "entry": ["src/blade.tsx", "src/acp/index.ts"],
+      "project": ["src/**/*.{ts,tsx}"],
+      "ignore": ["**/*.test.ts", "**/*.spec.ts", "tests/**/*"]
+    },
+    "packages/web": {
+      "entry": ["src/main.tsx"],
+      "project": ["src/**/*.{ts,tsx}"],
+      "ignore": ["**/*.test.ts", "**/*.spec.ts"]
+    },
+    "packages/vscode": {
+      "entry": ["src/extension.ts"],
+      "project": ["src/**/*.ts"],
+      "ignore": ["**/*.test.ts", "**/*.spec.ts"]
+    },
+    "packages/shared": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts"],
+      "ignore": ["**/*.test.ts", "**/*.spec.ts"]
+    }
+  },
+  "ignoreDependencies": ["@azure/identity", "pino-pretty", "vscode"],
   "ignoreExportsUsedInFile": true,
   "rules": {
     "enumMembers": "off"

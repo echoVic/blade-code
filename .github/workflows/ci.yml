@@ -47,17 +47,20 @@ jobs:
     - name: Install dependencies
       run: pnpm install --frozen-lockfile
 
+    - name: Build shared package
+      run: pnpm build:shared
+
     - name: Run tests
       run: pnpm test
 
     - name: Run type check
-      run: pnpm run type-check
+      run: pnpm type-check
 
-    - name: Build project
-      run: pnpm run build
+    - name: Build all packages
+      run: pnpm build
 
-    - name: Test build
-      run: pnpm run start -- --help
+    - name: Test CLI build
+      run: pnpm --filter @blade/cli start -- --help
 
   code-quality:
     name: Code Quality
@@ -96,7 +99,7 @@ jobs:
       run: pnpm install --frozen-lockfile
 
     - name: Run linter and formatter
-      run: pnpm run lint && pnpm run format:check || echo "Lint warnings found (non-blocking)"
+      run: pnpm lint && pnpm format:check || echo "Lint warnings found (non-blocking)"
 
   cross-platform:
     name: Cross Platform (${{ matrix.os }})
@@ -138,11 +141,11 @@ jobs:
     - name: Install dependencies
       run: pnpm install --frozen-lockfile
 
-    - name: Build project
-      run: pnpm run build
+    - name: Build all packages
+      run: pnpm build
 
     - name: Test CLI basics
-      run: pnpm run start -- --help
+      run: pnpm --filter @blade/cli start -- --help
 
 env:
   CI: true
