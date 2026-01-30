@@ -40,16 +40,19 @@ function getWebDistPath(): string | null {
   const currentDir = dirname(fileURLToPath(import.meta.url));
   
   const possiblePaths = [
-    join(currentDir, '..', 'web'),
     join(currentDir, 'web'),
     join(process.cwd(), 'dist/web'),
     join(process.cwd(), 'packages/cli/dist/web'),
   ];
 
   for (const p of possiblePaths) {
-    if (existsSync(join(p, 'index.html'))) {
-      logger.debug(`[Server] Found web dist at: ${p}`);
-      return p;
+    const indexPath = join(p, 'index.html');
+    if (existsSync(indexPath)) {
+      const content = readFileSync(indexPath, 'utf-8');
+      if (content.includes('/assets/')) {
+        logger.debug(`[Server] Found web dist at: ${p}`);
+        return p;
+      }
     }
   }
 
