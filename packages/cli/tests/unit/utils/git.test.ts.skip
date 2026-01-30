@@ -1,0 +1,326 @@
+/**
+ * Git 工具函数测试
+ */
+
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import {
+  isGitRepository,
+  hasUncommittedChanges,
+  getCurrentBranch,
+  getRecentCommitMessages,
+  stageAll,
+  gitCommit,
+  getGitStatus,
+  getLlmGitStatus,
+  getStagedFileList,
+  getStagedDiff,
+} from '../../../src/utils/git.js';
+
+describe('Git 工具函数', () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    // 创建临时测试目录
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'blade-git-test-'));
+  });
+
+  afterEach(async () => {
+    // 清理临时目录
+    try {
+      await fs.rm(testDir, { recursive: true, force: true });
+    } catch (e) {
+      // 忽略清理错误
+    }
+  });
+
+  describe('isGitRepository', () => {
+    it('应该返回 true 对于 Git 仓库', async () => {
+      // 初始化 Git 仓库
+      await exec('git', ['init'], { cwd: testDir });
+      await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: testDir });
+      await exec('git', ['config', 'user.name', 'Test User'], { cwd: testDir });
+
+      const result = await isGitRepository(testDir);
+      expect(result).toBe(true);
+    });
+
+    it('应该返回 false 对于非 Git 仓库', async () => {
+      const result = await isGitRepository(testDir);
+      expect(result).toBe(false);
+    });
+
+    it('应该返回 false 对于不存在的目录', async () => {
+      const result = await isGitRepository('/nonexistent/path');
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('hasUncommittedChanges', () => {
+    beforeEach(async () => {
+      // 初始化 Git 仓库
+      await exec('git', ['init'], { cwd: testDir });
+      await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: testDir });
+      await exec('git', ['config', 'user.name', 'Test User'], { cwd: testDir });
+      await exec('git', ['commit', '--allow-empty', '-m', 'Initial commit'], { cwd: testDir });
+    });
+
+    it('应该返回 false 对于干净的仓库', async () => {
+      const result = await hasUncommittedChanges(testDir);
+      expect(result).toBe(false);
+    });
+
+    it('应该返回 true 对于有未跟踪文件的仓库', async () => {
+      await fs.writeFile(path.join(testDir, 'new-file.txt'), 'content');
+      const result = await hasUncommittedChanges(testDir);
+      expect(result).toBe(true);
+    });
+
+    it('应该返回 true 对于有修改文件的仓库', async () => {
+      await fs.writeFile(path.join(testDir, 'file.txt'), 'original');
+      await exec('git', ['add', 'file.txt'], { cwd: testDir });
+      await exec('git', ['commit', '-m', 'Add file'], { cwd: testDir });
+      await fs.writeFile(path.join(testDir, 'file.txt'), 'modified');
+      const result = await hasUncommittedChanges(testDir);
+      expect(result).toBe(true);
+    });
+  });
+
+  describe('getCurrentBranch', () => {
+    it('应该返回当前分支名', async () => {
+      await exec('git', ['init'], { cwd: testDir });
+      await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: testDir });
+      await exec('git', ['config', 'user.name', 'Test User'], { cwd: testDir });
+      await exec('git', ['checkout', '-b', 'feature-branch'], { cwd: testDir });
+
+      const result = await getCurrentBranch(testDir);
+      expect(result).toBe('feature-branch');
+    });
+
+    it('应该返回 main/master 默认分支', async () => {
+      await exec('git', ['init'], { cwd: testDir });
+      await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: testDir });
+      await exec('git', ['config', 'user.name', 'Test User'], { cwd: testDir });
+
+      const result = await getCurrentBranch(testDir);
+      expect(result).toMatch(/^(main|master)$/);
+    });
+
+    it('应该返回空字符串对于非 Git 仓库', async () => {
+      const result = await getCurrentBranch(testDir);
+      expect(result).toBe('');
+    });
+  });
+
+  describe('getRecentCommitMessages', () => {
+    beforeEach(async () => {
+      await exec('git', ['init'], { cwd: testDir });
+      await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: testDir });
+      await exec('git', ['config', 'user.name', 'Test User'], { cwd: testDir });
+    });
+
+    it('应该返回最近的提交消息', async () => {
+      await fs.writeFile(path.join(testDir, 'file1.txt'), 'content1');
+      await exec('git', ['add', 'file1.txt'], { cwd: testDir });
+      await exec('git', ['commit', '-m', 'First commit'], { cwd: testDir });
+
+      await fs.writeFile(path.join(testDir, 'file2.txt'), 'content2');
+      await exec('git', ['add', 'file2.txt'], { cwd: testDir });
+      await exec('git', ['commit', '-m', 'Second commit'], { cwd: testDir });
+
+      const messages = await getRecentCommitMessages(testDir, 2);
+      expect(messages).toHaveLength(2);
+      expect(messages[0]).toContain('Second commit');
+      expect(messages[1]).toContain('First commit');
+    });
+
+    it('应该限制返回的消息数量', async () => {
+      for (let i = 0; i < 5; i++) {
+        await fs.writeFile(path.join(testDir, `file${i}.txt`), `content${i}`);
+        await exec('git', ['add', `file${i}.txt`], { cwd: testDir });
+        await exec('git', ['commit', '-m', `Commit ${i}`], { cwd: testDir });
+      }
+
+      const messages = await getRecentCommitMessages(testDir, 3);
+      expect(messages).toHaveLength(3);
+    });
+
+    it('应该返回空数组对于没有提交的仓库', async () => {
+      const messages = await getRecentCommitMessages(testDir, 5);
+      expect(messages).toHaveLength(0);
+    });
+  });
+
+  describe('stageAll', () => {
+    beforeEach(async () => {
+      await exec('git', ['init'], { cwd: testDir });
+      await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: testDir });
+      await exec('git', ['config', 'user.name', 'Test User'], { cwd: testDir });
+    });
+
+    it('应该暂存所有文件', async () => {
+      await fs.writeFile(path.join(testDir, 'file1.txt'), 'content1');
+      await fs.writeFile(path.join(testDir, 'file2.txt'), 'content2');
+
+      await stageAll(testDir);
+
+      const { stdout } = await exec('git', ['diff', '--cached', '--name-only'], { cwd: testDir });
+      const stagedFiles = stdout.trim().split('\n');
+      expect(stagedFiles).toContain('file1.txt');
+      expect(stagedFiles).toContain('file2.txt');
+    });
+  });
+
+  describe('gitCommit', () => {
+    beforeEach(async () => {
+      await exec('git', ['init'], { cwd: testDir });
+      await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: testDir });
+      await exec('git', ['config', 'user.name', 'Test User'], { cwd: testDir });
+    });
+
+    it('应该创建提交', async () => {
+      await fs.writeFile(path.join(testDir, 'file.txt'), 'content');
+      await exec('git', ['add', 'file.txt'], { cwd: testDir });
+      await gitCommit(testDir, 'Test commit');
+
+      const messages = await getRecentCommitMessages(testDir, 1);
+      expect(messages[0]).toContain('Test commit');
+    });
+
+    it('应该支持自定义作者信息', async () => {
+      await fs.writeFile(path.join(testDir, 'file.txt'), 'content');
+      await exec('git', ['add', 'file.txt'], { cwd: testDir });
+      await gitCommit(testDir, 'Test commit', {
+        authorName: 'Custom Author',
+        authorEmail: 'custom@example.com',
+      });
+
+      const { stdout } = await exec('git', ['log', '--format=%an <%ae>', '-1'], { cwd: testDir });
+      expect(stdout.trim()).toBe('Custom Author <custom@example.com>');
+    });
+  });
+
+  describe('getGitStatus', () => {
+    beforeEach(async () => {
+      await exec('git', ['init'], { cwd: testDir });
+      await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: testDir });
+      await exec('git', ['config', 'user.name', 'Test User'], { cwd: testDir });
+      await exec('git', ['commit', '--allow-empty', '-m', 'Initial'], { cwd: testDir });
+    });
+
+    it('应该返回干净的仓库状态', async () => {
+      const status = await getGitStatus({ cwd: testDir });
+      expect(status).not.toBeNull();
+      expect(status!.clean).toBe(true);
+      expect(status!.staged.length).toBe(0);
+      expect(status!.unstaged.length).toBe(0);
+      expect(status!.untracked.length).toBe(0);
+    });
+
+    it('应该检测未跟踪文件', async () => {
+      await fs.writeFile(path.join(testDir, 'new-file.txt'), 'content');
+      const status = await getGitStatus({ cwd: testDir });
+      expect(status!.clean).toBe(false);
+      expect(status!.untracked).toContain('new-file.txt');
+    });
+
+    it('应该检测已暂存的文件', async () => {
+      await fs.writeFile(path.join(testDir, 'file.txt'), 'content');
+      await exec('git', ['add', 'file.txt'], { cwd: testDir });
+      const status = await getGitStatus({ cwd: testDir });
+      expect(status!.clean).toBe(false);
+      expect(status!.staged).toContain('file.txt');
+    });
+
+    it('应该返回 null 对于非 Git 仓库', async () => {
+      const status = await getGitStatus({ cwd: '/nonexistent' });
+      expect(status).toBeNull();
+    });
+  });
+
+  describe('getLlmGitStatus', () => {
+    it('应该返回 null 对于干净的仓库', async () => {
+      const result = getLlmGitStatus({
+        clean: true,
+        staged: [],
+        unstaged: [],
+        untracked: [],
+        branch: 'main',
+      });
+      expect(result).toBeNull();
+    });
+
+    it('应该返回格式化的状态字符串', async () => {
+      const result = getLlmGitStatus({
+        clean: false,
+        staged: ['file1.ts'],
+        unstaged: ['file2.ts'],
+        untracked: ['file3.ts'],
+        branch: 'feature',
+      });
+      expect(result).toContain('分支: feature');
+      expect(result).toContain('已暂存: file1.ts');
+      expect(result).toContain('未暂存: file2.ts');
+      expect(result).toContain('未跟踪: file3.ts');
+    });
+  });
+
+  describe('getStagedFileList', () => {
+    beforeEach(async () => {
+      await exec('git', ['init'], { cwd: testDir });
+      await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: testDir });
+      await exec('git', ['config', 'user.name', 'Test User'], { cwd: testDir });
+      await exec('git', ['commit', '--allow-empty', '-m', 'Initial'], { cwd: testDir });
+    });
+
+    it('应该返回已暂存的文件列表', async () => {
+      await fs.writeFile(path.join(testDir, 'file1.txt'), 'content1');
+      await fs.writeFile(path.join(testDir, 'file2.txt'), 'content2');
+      await exec('git', ['add', '.'], { cwd: testDir });
+
+      const result = await getStagedFileList(testDir);
+      expect(result).toContain('file1.txt');
+      expect(result).toContain('file2.txt');
+    });
+
+    it('应该返回空字符串对于没有暂存文件的仓库', async () => {
+      const result = await getStagedFileList(testDir);
+      expect(result).toBe('');
+    });
+  });
+
+  describe('getStagedDiff', () => {
+    beforeEach(async () => {
+      await exec('git', ['init'], { cwd: testDir });
+      await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: testDir });
+      await exec('git', ['config', 'user.name', 'Test User'], { cwd: testDir });
+    });
+
+    it('应该返回已暂存的差异', async () => {
+      await fs.writeFile(path.join(testDir, 'file.txt'), 'original');
+      await exec('git', ['add', 'file.txt'], { cwd: testDir });
+      await exec('git', ['commit', '-m', 'Initial'], { cwd: testDir });
+      await fs.writeFile(path.join(testDir, 'file.txt'), 'modified');
+      await exec('git', ['add', 'file.txt'], { cwd: testDir });
+
+      const diff = await getStagedDiff(testDir);
+      expect(diff).toContain('-original');
+      expect(diff).toContain('+modified');
+    });
+
+    it('应该返回空字符串对于没有暂存的仓库', async () => {
+      const diff = await getStagedDiff(testDir);
+      expect(diff).toBe('');
+    });
+  });
+});
+
+// Helper function to execute commands
+async function exec(command: string, args: string[], options: { cwd: string }) {
+  const { exec: execFile } = await import('child_process');
+  const { promisify } = await import('util');
+  const execFileAsync = promisify(execFile);
+  return execFileAsync(command, args, options);
+}

@@ -79,7 +79,9 @@ export const writeTool = createTool({
         }
       }
 
-      signal.throwIfAborted();
+      if (typeof signal.throwIfAborted === 'function') {
+        signal.throwIfAborted();
+      }
 
       // 检查文件是否存在（统一使用 FileSystemService）
       let fileExists = false;
@@ -148,7 +150,9 @@ export const writeTool = createTool({
         }
       }
 
-      signal.throwIfAborted();
+      if (typeof signal.throwIfAborted === 'function') {
+        signal.throwIfAborted();
+      }
 
       // 根据编码写入文件
       if (encoding === 'utf8') {
@@ -193,7 +197,9 @@ export const writeTool = createTool({
         await tracker.recordFileEdit(file_path, sessionId, 'write');
       }
 
-      signal.throwIfAborted();
+      if (typeof signal.throwIfAborted === 'function') {
+        signal.throwIfAborted();
+      }
 
       // 验证写入是否成功（统一使用 FileSystemService）
       const stats = await fsService.stat(file_path);

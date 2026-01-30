@@ -108,7 +108,9 @@ export const readTool = createTool({
       }
 
       // 检查中止信号
-      signal.throwIfAborted();
+      if (typeof signal.throwIfAborted === 'function') {
+        signal.throwIfAborted();
+      }
 
       // 记录文件访问（用于 Read-Before-Write 验证）
       if (sessionId) {
@@ -183,7 +185,9 @@ export const readTool = createTool({
         }
       }
 
-      signal.throwIfAborted();
+      if (typeof signal.throwIfAborted === 'function') {
+        signal.throwIfAborted();
+      }
 
       // 处理行级切片（仅文本文件）
       if (

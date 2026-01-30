@@ -99,7 +99,9 @@ export const editTool = createTool({
         throw error;
       }
 
-      signal.throwIfAborted();
+      if (typeof signal.throwIfAborted === 'function') {
+        signal.throwIfAborted();
+      }
 
       // Read-Before-Write 验证（对齐 Claude Code 官方：强制模式）
       if (sessionId) {
@@ -301,7 +303,9 @@ export const editTool = createTool({
         replacedCount = 1;
       }
 
-      signal.throwIfAborted();
+      if (typeof signal.throwIfAborted === 'function') {
+        signal.throwIfAborted();
+      }
 
       // 写入文件（统一使用 FileSystemService）
       if (useAcp) {
