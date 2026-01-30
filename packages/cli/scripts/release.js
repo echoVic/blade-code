@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rootDir = join(__dirname, '..');
+const monorepoRoot = join(__dirname, '../../..');
 const packageJsonPath = join(rootDir, 'package.json');
 const configPath = join(rootDir, 'release.config.js');
 
@@ -420,9 +421,9 @@ function commitAndTag(newVersion) {
   
   try {
     const tagPrefix = config.version?.tagPrefix || 'v';
-    exec('git add .');
-    exec(`git commit -m "chore: release ${tagPrefix}${newVersion}"`);
-    exec(`git tag ${tagPrefix}${newVersion}`);
+    exec('git add .', { cwd: monorepoRoot });
+    exec(`git commit -m "chore: release ${tagPrefix}${newVersion}"`, { cwd: monorepoRoot });
+    exec(`git tag ${tagPrefix}${newVersion}`, { cwd: monorepoRoot });
     
     console.log(chalk.green(`✅ 已创建标签 ${tagPrefix}${newVersion}`));
   } catch (error) {
@@ -477,10 +478,10 @@ function pushToRemote() {
   
   try {
     if (config.publish?.gitConfig?.pushBranch !== false) {
-      exec('git push');
+      exec('git push', { cwd: monorepoRoot });
     }
     if (config.publish?.gitConfig?.pushTags !== false) {
-      exec('git push --tags');
+      exec('git push --tags', { cwd: monorepoRoot });
     }
     
     console.log(chalk.green('✅ 已推送到远程仓库'));

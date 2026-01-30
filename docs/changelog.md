@@ -3,6 +3,37 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.2.0] - 2026-01-30
+
+### ✨ 新功能
+
+- 支持展示所有变更文件并允许展开/折叠差异 (a96ac69)
+- 移除pino日志库并实现自定义日志系统 (d5b5b67)
+- 支持Node.js环境的终端WebSocket连接 (ff2cde1)
+- 添加多语言支持并优化UI主题配置 (de2fe52)
+- 添加权限模式支持并优化侧边栏样式 (5b83127)
+- 添加终端功能及UI改进 (37831e3)
+- 实现临时会话功能并增强侧边栏 (4c598e9)
+- 添加模型管理和会话功能 (c85cff9)
+- 实现聊天会话管理和消息流式处理功能 (9b2682c)
+- 添加完整的Web UI界面 (55540e5)
+- 新增Blade服务器核心功能及API路由 (52e3db3)
+
+### 🐛 问题修复
+
+- correct web dist path detection in server (b778444)
+
+### ♻️ 代码重构
+
+- simplify monorepo architecture (1c820dd)
+- 重构消息组件和状态管理逻辑 (05e579a)
+- 重构会话存储结构，移除工具切片并优化事件处理 (e6fe25e)
+- 重构会话存储结构，将状态管理拆分为多个切片 (785bd56)
+- 重构会话管理及事件处理机制 (18d75a5)
+- 移除事件总线并重构会话和权限处理 (67a4dab)
+- 统一使用 PermissionMode 枚举类型 (11b3b4d)
+
+
 ## [0.1.10] - 2026-01-22
 
 ### ♻️ 代码重构
