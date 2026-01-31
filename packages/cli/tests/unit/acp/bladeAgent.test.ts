@@ -7,18 +7,45 @@ import { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { createMockACPClient } from '../../mocks/mockACPClient.js';
 import { AcpSession } from '../../../src/acp/Session.js';
 
+// 获取创建的 session 实例的辅助函数
+const getCreatedSessions = () => (AcpSession as any)._getCreatedSessions();
+
 // Mock AcpSession
-vi.mock('../../../src/acp/Session.js', () => ({
-  AcpSession: vi.fn().mockImplementation(() => ({
-    initialize: vi.fn().mockResolvedValue(undefined),
-    prompt: vi.fn().mockResolvedValue({ stopReason: 'end_turn' }),
-    cancel: vi.fn(),
-    setMode: vi.fn().mockResolvedValue(undefined),
-    setModel: vi.fn().mockResolvedValue(undefined),
-    destroy: vi.fn().mockResolvedValue(undefined),
-    sendAvailableCommandsDelayed: vi.fn(),
-  })),
-}));
+let _createdSessions: any[] = [];
+vi.mock('../../../src/acp/Session.js', () => {
+  const mockAcpSessionImpl = (
+    id: string,
+    cwd: string,
+    connection: any,
+    clientCapabilities: any
+  ) => {
+    const session = {
+      id,
+      cwd,
+      connection,
+      clientCapabilities,
+      initialize: vi.fn().mockResolvedValue(undefined),
+      prompt: vi.fn().mockResolvedValue({ stopReason: 'end_turn' }),
+      cancel: vi.fn(),
+      setMode: vi.fn().mockResolvedValue(undefined),
+      setModel: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      sendAvailableCommandsDelayed: vi.fn(),
+    };
+    _createdSessions.push(session);
+    return session;
+  };
+
+  const MockAcpSession = vi.fn().mockImplementation(mockAcpSessionImpl);
+  (MockAcpSession as any)._getCreatedSessions = () => _createdSessions;
+  (MockAcpSession as any)._resetCreatedSessions = () => {
+    _createdSessions = [];
+  };
+
+  return {
+    AcpSession: MockAcpSession,
+  };
+});
 
 // Mock Agent
 const MockAgentClass = vi.fn().mockImplementation(() => ({
@@ -39,8 +66,8 @@ vi.mock('../../../src/agent/Agent.js', () => ({
 vi.mock('../../../src/store/vanilla.js', () => ({
   getConfig: vi.fn(() => ({
     models: [
-      { id: 'gpt-4', name: 'GPT-4' },
-      { id: 'gpt-3.5', name: 'GPT-3.5' },
+      { id: 'gpt-4', name: 'GPT-4', provider: 'openai' },
+      { id: 'gpt-3.5', name: 'GPT-3.5', provider: 'openai' },
     ],
     currentModelId: 'gpt-4',
   })),
@@ -64,6 +91,9 @@ describe('BladeAgent', () => {
   let agent: BladeAgent;
 
   beforeEach(() => {
+    // 重置创建的 session 列表
+    (AcpSession as any)._resetCreatedSessions?.();
+
     // 创建 mock 连接
     mockConnection = createMockACPClient();
 
@@ -198,12 +228,12 @@ describe('BladeAgent', () => {
         {
           modelId: 'gpt-4',
           name: 'GPT-4',
-          description: 'Provider: undefined',
+          description: 'Provider: openai',
         },
         {
           modelId: 'gpt-3.5',
           name: 'GPT-3.5',
-          description: 'Provider: undefined',
+          description: 'Provider: openai',
         },
       ]);
       expect(response.models?.currentModelId).toBe('gpt-4');
@@ -260,9 +290,9 @@ describe('BladeAgent', () => {
       await agent.cancel(cancelParams);
 
       // 验证会话的 cancel 方法被调用
-      const sessionCalls = (AcpSession as any).mock.calls;
-      const sessionInstance = sessionCalls[sessionCalls.length - 1]?.[0];
-      expect(sessionInstance?.cancel).toHaveBeenCalled();
+      const sessions = getCreatedSessions();
+      expect(sessions.length).toBe(1);
+      expect(sessions[0].cancel).toHaveBeenCalled();
     });
 
     it('应该处理取消不存在的会话', async () => {
@@ -291,8 +321,8 @@ describe('BladeAgent', () => {
       expect(response).toEqual({});
 
       // 验证会话的 setMode 方法被调用
-      const sessionCalls = (AcpSession as any).mock.calls;
-      const sessionInstance = sessionCalls[sessionCalls.length - 1]?.[0];
+      const sessions = getCreatedSessions();
+      const sessionInstance = sessions[sessions.length - 1];
       expect(sessionInstance?.setMode).toHaveBeenCalledWith('yolo');
     });
 
@@ -324,8 +354,8 @@ describe('BladeAgent', () => {
       expect(response).toEqual({});
 
       // 验证会话的 setModel 方法被调用
-      const sessionCalls = (AcpSession as any).mock.calls;
-      const sessionInstance = sessionCalls[sessionCalls.length - 1]?.[0];
+      const sessions = getCreatedSessions();
+      const sessionInstance = sessions[sessions.length - 1];
       expect(sessionInstance?.setModel).toHaveBeenCalledWith('gpt-3.5');
     });
   });
@@ -339,11 +369,10 @@ describe('BladeAgent', () => {
       await agent.destroy();
 
       // 验证所有会话的 destroy 方法被调用
-      const sessionCalls = (AcpSession as any).mock.calls;
-      expect(sessionCalls.length).toBe(2);
+      const sessions = getCreatedSessions();
+      expect(sessions.length).toBe(2);
 
-      for (const call of sessionCalls) {
-        const sessionInstance = call?.[0];
+      for (const sessionInstance of sessions) {
         expect(sessionInstance?.destroy).toHaveBeenCalled();
       }
     });
@@ -412,9 +441,11 @@ describe('BladeAgent', () => {
       });
 
       // 验证第一个会话已被取消
-      const sessionCalls = (AcpSession as any).mock.calls;
-      const sessionInstance1 = sessionCalls[0]?.[0];
+      const sessions = getCreatedSessions();
+      const sessionInstance1 = sessions[0];
+      const sessionInstance2 = sessions[1];
       expect(sessionInstance1?.cancel).toHaveBeenCalled();
+      expect(sessionInstance2?.cancel).not.toHaveBeenCalled();
     });
   });
 
@@ -426,8 +457,8 @@ describe('BladeAgent', () => {
       await new Promise((resolve) => setTimeout(resolve, 600));
 
       // 验证会话的 sendAvailableCommandsDelayed 方法被调用
-      const sessionCalls = (AcpSession as any).mock.calls;
-      const sessionInstance = sessionCalls[sessionCalls.length - 1]?.[0];
+      const sessions = getCreatedSessions();
+      const sessionInstance = sessions[sessions.length - 1];
       expect(sessionInstance?.sendAvailableCommandsDelayed).toHaveBeenCalled();
     });
   });
