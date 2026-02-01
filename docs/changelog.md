@@ -3,6 +3,34 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.2.1] - 2026-02-01
+
+### ✨ 新功能
+
+- 增强子任务执行状态展示和交互 (f725f00)
+- 添加子代理会话ID支持并优化相关功能 (c39a083)
+- 添加bun-pty类型定义并修复pty调用 (ae75567)
+- 添加全面的单元测试、集成测试和端到端测试 (4e7ce95)
+
+### 🐛 问题修复
+
+- git operations should run in monorepo root to include changelog (913d26c)
+
+### 📝 文档更新
+
+- 更新文档以反映0.2.0版本新增的Web UI功能 (b583c93)
+
+### ♻️ 代码重构
+
+- 重构子会话实现为独立会话模型 (6b7f4c9)
+
+### ✅ 测试相关
+
+- 修复测试中文件路径和模拟数据的错误 (f674f49)
+- 修复单元测试问题 (eb6a72b)
+- 大幅提升测试覆盖率和测试基础设施 (12650b1)
+
+
 ## [0.2.0] - 2026-01-30
 
 🎉 **重大更新：Web UI 发布！**
