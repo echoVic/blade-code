@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
-import { setupTestEnvironment } from '../support/helpers/setupTestEnvironment.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { TestEnvironment } from '../support/helpers/setupTestEnvironment.js';
+import { setupTestEnvironment } from '../support/helpers/setupTestEnvironment.js';
 
 describe('路径遍历攻击防护', () => {
   let env: TestEnvironment;
@@ -52,6 +52,26 @@ describe('路径遍历攻击防护', () => {
   });
 
   describe('绝对路径限制', () => {
+    const isWithinProject = (projectRoot: string, targetPath: string) => {
+      if (
+        !path.isAbsolute(targetPath) &&
+        path.win32.isAbsolute(targetPath) &&
+        process.platform !== 'win32'
+      ) {
+        return false;
+      }
+
+      const resolvedProject = path.resolve(projectRoot);
+      const resolvedTarget = path.resolve(targetPath);
+      const projectPrefix = resolvedProject.endsWith(path.sep)
+        ? resolvedProject
+        : `${resolvedProject}${path.sep}`;
+
+      return (
+        resolvedTarget === resolvedProject || resolvedTarget.startsWith(projectPrefix)
+      );
+    };
+
     it('应该检测项目目录外的绝对路径', () => {
       const projectRoot = env.projectDir;
       const outsidePaths = [
@@ -62,9 +82,7 @@ describe('路径遍历攻击防护', () => {
       ];
 
       for (const outsidePath of outsidePaths) {
-        const resolvedPath = path.resolve(outsidePath);
-        const isWithinProject = resolvedPath.startsWith(projectRoot);
-        expect(isWithinProject).toBe(false);
+        expect(isWithinProject(projectRoot, outsidePath)).toBe(false);
       }
     });
 
@@ -77,8 +95,7 @@ describe('路径遍历攻击防护', () => {
       ];
 
       for (const insidePath of insidePaths) {
-        const isWithinProject = insidePath.startsWith(projectRoot);
-        expect(isWithinProject).toBe(true);
+        expect(isWithinProject(projectRoot, insidePath)).toBe(true);
       }
     });
   });

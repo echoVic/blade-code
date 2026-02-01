@@ -41,7 +41,6 @@ async function spawnPty(
 ): Promise<IPtyProcess> {
   if (isBunRuntime()) {
     // Use bun-pty in Bun runtime
-    // @ts-expect-error bun-pty is only available in Bun runtime
     const { spawn } = await import('bun-pty');
     const ptyProcess = spawn(command, args, {
       name: 'xterm-256color',
@@ -51,7 +50,7 @@ async function spawnPty(
     return {
       pid: ptyProcess.pid,
       write: (data: string) => ptyProcess.write(data),
-      resize: (cols: number, rows: number) => ptyProcess.resize({ cols, rows }),
+      resize: (cols: number, rows: number) => ptyProcess.resize(cols, rows),
       kill: () => ptyProcess.kill(),
       onData: (callback: (data: string) => void) => ptyProcess.onData(callback),
       onExit: (callback: (exitInfo: { exitCode: number }) => void) => ptyProcess.onExit(callback),
