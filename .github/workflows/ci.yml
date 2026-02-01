@@ -47,8 +47,8 @@ jobs:
     - name: Install dependencies
       run: pnpm install --frozen-lockfile
 
-    - name: Build shared package
-      run: pnpm build:shared
+    - name: Build CLI package
+      run: pnpm build:cli
 
     - name: Run unit tests
       run: pnpm --filter blade-code test:unit
@@ -105,8 +105,8 @@ jobs:
     - name: Install dependencies
       run: pnpm install --frozen-lockfile
 
-    - name: Build shared package
-      run: pnpm build:shared
+    - name: Build CLI package
+      run: pnpm build:cli
 
     - name: Run tests with coverage
       run: pnpm --filter blade-code test:coverage
@@ -165,8 +165,8 @@ jobs:
     - name: Install dependencies
       run: pnpm install --frozen-lockfile
 
-    - name: Build shared package
-      run: pnpm build:shared
+    - name: Build CLI package
+      run: pnpm build:cli
 
     - name: Run security tests
       run: pnpm --filter blade-code test:security
