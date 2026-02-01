@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.2.2] - 2026-02-01
+
+### ✨ 新功能
+
+- 支持单次对话指定模型功能 (80e80c5)
+
+
 ## [0.2.1] - 2026-02-01
 
 ### ✨ 新功能
