@@ -199,9 +199,12 @@ export class BackgroundAgentManager {
       }
 
       const systemPrompt = config.systemPrompt || '';
+      const modelId =
+        config.model && config.model !== 'inherit' ? config.model : undefined;
       const agent = await Agent.create({
         systemPrompt,
         toolWhitelist: config.tools,
+        modelId,
       });
 
       const context = {

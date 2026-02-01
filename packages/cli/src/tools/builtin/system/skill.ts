@@ -93,6 +93,12 @@ Important:
       content.instructions,
       content.metadata.basePath
     );
+    const requestedModelId =
+      typeof content.metadata.model === 'string' &&
+      content.metadata.model !== 'inherit' &&
+      content.metadata.model.trim() !== ''
+        ? content.metadata.model
+        : undefined;
 
     // 返回双消息
     return {
@@ -107,6 +113,7 @@ Important:
         version: content.metadata.version,
         // allowed-tools: 限制 Skill 执行期间可用的工具
         allowedTools: content.metadata.allowedTools,
+        modelId: requestedModelId,
       },
     };
   },

@@ -11,6 +11,7 @@ export interface AgentOptions {
   systemPrompt?: string;
   appendSystemPrompt?: string;
   maxTurns?: number;
+  modelId?: string;
 }
 
 /**
@@ -29,12 +30,13 @@ export function useAgent(options: AgentOptions) {
   /**
    * 创建并设置 Agent 实例
    */
-  const createAgent = useMemoizedFn(async (): Promise<Agent> => {
+  const createAgent = useMemoizedFn(async (overrides?: Partial<AgentOptions>): Promise<Agent> => {
     // 创建新 Agent
     const agent = await Agent.create({
-      systemPrompt: options.systemPrompt,
-      appendSystemPrompt: options.appendSystemPrompt,
-      maxTurns: options.maxTurns,
+      systemPrompt: overrides?.systemPrompt ?? options.systemPrompt,
+      appendSystemPrompt: overrides?.appendSystemPrompt ?? options.appendSystemPrompt,
+      maxTurns: overrides?.maxTurns ?? options.maxTurns,
+      modelId: overrides?.modelId ?? options.modelId,
     });
     agentRef.current = agent;
 

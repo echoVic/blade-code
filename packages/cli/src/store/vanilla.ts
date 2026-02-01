@@ -172,6 +172,12 @@ export const getCurrentModel = () => {
   return model ?? config.models[0];
 };
 
+export const getModelById = (modelId: string) => {
+  const config = getConfig();
+  if (!config) return undefined;
+  return config.models.find((m) => m.id === modelId);
+};
+
 /**
  * 获取所有 MCP 服务器配置
  */

@@ -19,6 +19,7 @@ import {
   type PermissionConfig,
   PermissionMode,
 } from '../config/index.js';
+import type { ModelConfig } from '../config/types.js';
 import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { HookManager } from '../hooks/HookManager.js';
@@ -49,6 +50,7 @@ function toJsonValue(value: string | object): JsonValue {
   }
 }
 
+
 import { discoverSkills, injectSkillsMetadata } from '../skills/index.js';
 import { SpecManager } from '../spec/SpecManager.js';
 import {
@@ -59,6 +61,7 @@ import {
   getConfig,
   getCurrentModel,
   getMcpServers,
+  getModelById,
   getThinkingModeEnabled,
 } from '../store/vanilla.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
@@ -111,6 +114,7 @@ export class Agent {
 
   // 当前模型的上下文窗口大小（用于 tokenUsage 上报）
   private currentModelMaxContextTokens!: number;
+  private currentModelId?: string;
 
   constructor(
     config: BladeConfig,
@@ -142,6 +146,57 @@ export class Agent {
       permissionMode,
       maxHistorySize: 1000,
     });
+  }
+
+  private resolveModelConfig(requestedModelId?: string): ModelConfig {
+    const modelId = requestedModelId && requestedModelId !== 'inherit' ? requestedModelId : undefined;
+    const modelConfig = modelId ? getModelById(modelId) : getCurrentModel();
+    if (!modelConfig) {
+      throw new Error(`❌ 模型配置未找到: ${modelId ?? 'current'}`);
+    }
+    return modelConfig;
+  }
+
+  private async applyModelConfig(modelConfig: ModelConfig, label: string): Promise<void> {
+    this.log(`${label} ${modelConfig.name} (${modelConfig.model})`);
+
+    const modelSupportsThinking = isThinkingModel(modelConfig);
+    const thinkingModeEnabled = getThinkingModeEnabled();
+    const supportsThinking = modelSupportsThinking && thinkingModeEnabled;
+    if (modelSupportsThinking && !thinkingModeEnabled) {
+      this.log(`🧠 模型支持 Thinking，但用户未开启（按 Tab 开启）`);
+    } else if (supportsThinking) {
+      this.log(`🧠 Thinking 模式已启用，启用 reasoning_content 支持`);
+    }
+
+    this.currentModelMaxContextTokens =
+      modelConfig.maxContextTokens ?? this.config.maxContextTokens;
+
+    this.chatService = await createChatServiceAsync({
+      provider: modelConfig.provider,
+      apiKey: modelConfig.apiKey,
+      model: modelConfig.model,
+      baseUrl: modelConfig.baseUrl,
+      temperature: modelConfig.temperature ?? this.config.temperature,
+      maxContextTokens: this.currentModelMaxContextTokens,
+      maxOutputTokens: modelConfig.maxOutputTokens ?? this.config.maxOutputTokens,
+      timeout: this.config.timeout,
+      supportsThinking,
+    });
+
+    const contextManager = this.executionEngine?.getContextManager();
+    this.executionEngine = new ExecutionEngine(this.chatService, contextManager);
+    this.currentModelId = modelConfig.id;
+  }
+
+  private async switchModelIfNeeded(modelId: string): Promise<void> {
+    if (!modelId || modelId === this.currentModelId) return;
+    const modelConfig = getModelById(modelId);
+    if (!modelConfig) {
+      this.log(`⚠️ 模型配置未找到: ${modelId}`);
+      return;
+    }
+    await this.applyModelConfig(modelConfig, '🔁 切换模型');
   }
 
   /**
@@ -211,43 +266,8 @@ export class Agent {
       await this.discoverSkills();
 
       // 5. 初始化核心组件
-      // 获取当前模型配置（从 Store）
-      const modelConfig = getCurrentModel();
-      if (!modelConfig) {
-        throw new Error('❌ 当前模型配置未找到');
-      }
-
-      this.log(`🚀 使用模型: ${modelConfig.name} (${modelConfig.model})`);
-
-      // 检测模型是否支持 thinking 模式，且用户已开启 thinking 模式
-      const modelSupportsThinking = isThinkingModel(modelConfig);
-      const thinkingModeEnabled = getThinkingModeEnabled();
-      const supportsThinking = modelSupportsThinking && thinkingModeEnabled;
-      if (modelSupportsThinking && !thinkingModeEnabled) {
-        this.log(`🧠 模型支持 Thinking，但用户未开启（按 Tab 开启）`);
-      } else if (supportsThinking) {
-        this.log(`🧠 Thinking 模式已启用，启用 reasoning_content 支持`);
-      }
-
-      // 保存当前模型的上下文窗口大小（用于 tokenUsage 上报）
-      this.currentModelMaxContextTokens =
-        modelConfig.maxContextTokens ?? this.config.maxContextTokens;
-
-      // 使用工厂函数创建 ChatService（根据 provider 选择实现）
-      this.chatService = await createChatServiceAsync({
-        provider: modelConfig.provider,
-        apiKey: modelConfig.apiKey,
-        model: modelConfig.model,
-        baseUrl: modelConfig.baseUrl,
-        temperature: modelConfig.temperature ?? this.config.temperature,
-        maxContextTokens: this.currentModelMaxContextTokens, // 上下文窗口（压缩判断）
-        maxOutputTokens: modelConfig.maxOutputTokens ?? this.config.maxOutputTokens, // 输出限制（API max_tokens）
-        timeout: this.config.timeout,
-        supportsThinking, // 传递 thinking 模式支持标志
-      });
-
-      // 4. 初始化执行引擎
-      this.executionEngine = new ExecutionEngine(this.chatService);
+      const modelConfig = this.resolveModelConfig(this.runtimeOptions.modelId);
+      await this.applyModelConfig(modelConfig, '🚀 使用模型:');
 
       // 5. 初始化附件收集器（@ 文件提及）
       this.attachmentCollector = new AttachmentCollector({
@@ -814,7 +834,6 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         // 3. 调用 ChatService（流式或非流式）
         // 默认启用流式，除非显式设置 stream: false
         const isStreamEnabled = options?.stream !== false;
-
         const turnResult = isStreamEnabled
           ? await this.processStreamResponse(messages, tools, options)
           : await this.chatService.chat(messages, tools, options?.signal);
@@ -1333,6 +1352,14 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
                     : '')
               );
             }
+          }
+
+          const modelId =
+            result.metadata?.modelId?.trim() ||
+            result.metadata?.model?.trim() ||
+            undefined;
+          if (modelId) {
+            await this.switchModelIfNeeded(modelId);
           }
 
           // 添加工具执行结果到消息历史

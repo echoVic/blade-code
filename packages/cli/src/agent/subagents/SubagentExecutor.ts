@@ -26,8 +26,13 @@ export class SubagentExecutor {
     try {
       const systemPrompt = this.buildSystemPrompt(context);
 
+      const modelId =
+        this.config.model && this.config.model !== 'inherit'
+          ? this.config.model
+          : undefined;
       const agent = await Agent.create({
         toolWhitelist: this.config.tools,
+        modelId,
       });
 
       let finalMessage = '';

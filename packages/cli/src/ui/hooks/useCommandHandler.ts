@@ -82,6 +82,12 @@ interface InvokePluginCommandData {
   };
 }
 
+interface InvokeOnceModelData {
+  action: 'invoke_once_model';
+  modelId: string;
+  prompt: string;
+}
+
 /**
  * 处理 slash 命令返回的 UI 消息
  * 直接调用 appActions 而非使用 ActionMapper
@@ -154,6 +160,16 @@ function handleSlashMessage(
     default:
       return false;
   }
+}
+
+function isInvokeOnceModelAction(data: unknown): data is InvokeOnceModelData {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as InvokeOnceModelData).action === 'invoke_once_model' &&
+    typeof (data as InvokeOnceModelData).modelId === 'string' &&
+    typeof (data as InvokeOnceModelData).prompt === 'string'
+  );
 }
 
 /**
@@ -417,7 +433,8 @@ export const useCommandHandler = (
   const handleCommandSubmit = useMemoizedFn(
     async (resolved: ResolvedInput): Promise<CommandResult> => {
       const { text: command } = resolved;
-      let userMessageAlreadyAdded = false; // 标记用户消息是否已添加
+      let userMessageAlreadyAdded = false;
+      let onceModelId: string | undefined;
 
       try {
         // 检查是否为 slash command（先检查，避免 /clear 时显示用户消息）
@@ -544,6 +561,20 @@ Remember: Follow the above instructions carefully to complete the user's request
             // 不 return，跳出 if (isSlashCommand) 分支，进入普通消息处理
           }
 
+          if (isInvokeOnceModelAction(slashResult.data)) {
+            const { modelId, prompt } = slashResult.data;
+            sessionActions.addUserMessage(prompt);
+            userMessageAlreadyAdded = true;
+            isSkillOrCommandInvocation = true;
+            onceModelId = modelId;
+            resolved = {
+              displayText: prompt,
+              text: prompt,
+              images: [],
+              parts: [{ type: 'text', text: prompt }],
+            };
+          }
+
           if (!isSkillOrCommandInvocation) {
             // 非 invoke_skill 的 slash command，正常处理
             if (!slashResult.success && slashResult.error) {
@@ -628,7 +659,7 @@ Remember: Follow the above instructions carefully to complete the user's request
         const abortController = commandActions.createAbortController();
 
         // 创建并设置 Agent（可能耗时，如连接 MCP）
-        const agent = await createAgent();
+        const agent = await createAgent(onceModelId ? { modelId: onceModelId } : undefined);
 
         // 检查 Agent 创建期间是否已被中止
         if (abortController.signal.aborted) {

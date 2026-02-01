@@ -29,6 +29,8 @@ interface BaseMetadataFields {
   summary?: string;
   shouldExitLoop?: boolean;
   targetMode?: PermissionMode;
+  modelId?: string;
+  model?: string;
 }
 
 /**

@@ -16,11 +16,13 @@ const modelCommand: SlashCommand = {
   (无参数)        显示模型选择器（交互式切换）
   add            添加新模型配置（交互式向导）
   remove <名称>  删除指定模型配置（按名称匹配）
+  once <模型> <内容>  仅当前轮对话使用指定模型
 
 示例：
   /model              # 显示模型选择器
   /model add          # 添加新模型
   /model remove 千问  # 删除名称包含"千问"的模型
+  /model once claude-sonnet 帮我总结这段代码
   `,
 
   async handler(
@@ -85,6 +87,34 @@ const modelCommand: SlashCommand = {
         } catch (error) {
           return { success: false, message: `❌ ${(error as Error).message}` };
         }
+      }
+      case 'once': {
+        const modelQuery = args[1];
+        const prompt = args.slice(2).join(' ').trim();
+        if (!modelQuery || !prompt) {
+          return {
+            success: false,
+            message: '❌ 用法: /model once <模型> <内容>',
+          };
+        }
+        const models = getAllModels();
+        const matched =
+          models.find((m) => m.id === modelQuery) ||
+          models.find((m) => m.name.toLowerCase().includes(modelQuery.toLowerCase()));
+        if (!matched) {
+          return {
+            success: false,
+            message: `❌ 未找到匹配的模型配置: ${modelQuery}`,
+          };
+        }
+        return {
+          success: true,
+          data: {
+            action: 'invoke_once_model',
+            modelId: matched.id,
+            prompt,
+          },
+        };
       }
 
       default:

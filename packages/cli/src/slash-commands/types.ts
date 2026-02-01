@@ -16,7 +16,8 @@ type SlashCommandAction =
   | 'show_plugins_manager'
   | 'invoke_skill'
   | 'invoke_custom_command'
-  | 'invoke_plugin_command';
+  | 'invoke_plugin_command'
+  | 'invoke_once_model';
 
 /**
  * Slash command 返回的结构化数据
