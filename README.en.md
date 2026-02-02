@@ -32,7 +32,6 @@ English | [简体中文](README.md)
 ## ✨ Key Features
 
 - 🤖 **Smart Chat** - Context-aware, multi-turn collaboration with session continuity
-- 🆓 **Out of the Box** - Built-in free GLM-4.7 model (with chain-of-thought), plus custom models
 - 🌐 **Dual Interface** - CLI terminal + Web UI, switch as you like
 - 🛠️ **Rich Tooling** - 20+ built-in tools: file/search/shell/git/web and more
 - 🔍 **Smart Search** - WebSearch with multi-provider fallback (Exa → DuckDuckGo → SearXNG)
@@ -64,7 +63,7 @@ blade web                    # Start and open browser
 blade serve --port 3000      # Headless server mode
 ```
 
-> Uses the built-in free model by default; run `blade` to configure your own provider.
+> Run `blade` and type `/model add` to configure your model on first launch.
 
 ---
 

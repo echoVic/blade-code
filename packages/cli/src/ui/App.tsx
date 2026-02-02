@@ -2,7 +2,6 @@ import { useMemoizedFn } from 'ahooks';
 import React, { useEffect, useState } from 'react';
 import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
 import type { GlobalOptions } from '../cli/types.js';
-import { getAllBuiltinModels, getBuiltinModelId } from '../config/builtinModels.js';
 import {
   DEFAULT_CONFIG,
   mergeRuntimeConfig,
@@ -39,41 +38,8 @@ export interface AppProps extends GlobalOptions {
 /**
  * 初始化 Zustand store 状态
  * 检查配置并设置初始化状态
- * 确保内置免费模型始终存在于模型列表中
  */
 function initializeStoreState(config: RuntimeConfig): void {
-  const builtinModels = getAllBuiltinModels();
-
-  if (!config.models) {
-    config.models = [];
-  }
-
-  // 添加或更新所有内置模型
-  for (const builtinModel of builtinModels) {
-    const existingIndex = config.models.findIndex((m) => m.id === builtinModel.id);
-
-    if (existingIndex >= 0) {
-      // 更新已存在的内置模型配置
-      config.models[existingIndex] = builtinModel;
-
-      if (config.debug) {
-        console.log(`[Debug] 已更新内置模型: ${builtinModel.name}`);
-      }
-    } else {
-      // 将内置模型添加到列表开头
-      config.models.unshift(builtinModel);
-
-      if (config.debug) {
-        console.log(`[Debug] 已添加内置模型: ${builtinModel.name}`);
-      }
-    }
-  }
-
-  // 如果没有设置当前模型，使用第一个内置模型（GLM）
-  if (!config.currentModelId) {
-    config.currentModelId = getBuiltinModelId();
-  }
-
   // 设置配置（使用 config slice）
   getState().config.actions.setConfig(config);
 

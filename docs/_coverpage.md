@@ -6,7 +6,6 @@
 
 > 🗡️ 新一代 AI 编程助手（CLI + Web UI）
 
-- 🆓 **开箱即用**：内置免费 GLM-4.7 模型，支持思维链推理
 - 🌐 **双模式界面**：CLI 终端 + Web UI，随心切换
 - 🤖 **80+ Provider**：OpenAI、Anthropic、DeepSeek、Gemini 等
 - 🛠️ **丰富工具**：20+ 内置工具，文件/搜索/Shell/Git/Web
