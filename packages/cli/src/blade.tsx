@@ -40,21 +40,36 @@ if (debugIndex !== -1) {
 
 export async function main() {
   // 🛡️ 防止使用 sudo 运行（避免创建 root 拥有的文件）
+  // 但允许在容器/沙箱/CI 等天然 root 环境中运行
   if (process.getuid && process.getuid() === 0) {
-    console.error('');
-    console.error('❌ 请不要使用 sudo 运行 blade');
-    console.error('');
-    console.error('原因：');
-    console.error('  使用 sudo 会创建属于 root 的配置文件，');
-    console.error('  导致普通用户无法访问。');
-    console.error('');
-    console.error('正确用法：');
-    console.error('  blade           # 直接运行，不要加 sudo');
-    console.error('');
-    console.error('如果遇到权限错误，请运行：');
-    console.error('  sudo chown -R $USER:$USER ~/.blade/');
-    console.error('');
-    process.exit(1);
+    const isSudo = !!process.env.SUDO_USER;
+    const isContainer =
+      !!process.env.container ||
+      !!process.env.DOCKER_CONTAINER ||
+      !!process.env.KUBERNETES_SERVICE_HOST;
+    const isCI = !!process.env.CI;
+    const isAllowRoot = !!process.env.BLADE_ALLOW_ROOT;
+
+    // 只有通过 sudo 提权运行时才阻止，天然 root 环境放行
+    if (isSudo && !isAllowRoot) {
+      console.error('');
+      console.error('❌ 请不要使用 sudo 运行 blade');
+      console.error('');
+      console.error('原因：');
+      console.error('  使用 sudo 会创建属于 root 的配置文件，');
+      console.error('  导致普通用户无法访问。');
+      console.error('');
+      console.error('正确用法：');
+      console.error('  blade           # 直接运行，不要加 sudo');
+      console.error('');
+      console.error('如果遇到权限错误，请运行：');
+      console.error('  sudo chown -R $USER:$USER ~/.blade/');
+      console.error('');
+      console.error('如果你确实需要以 root 运行（容器/CI），设置环境变量：');
+      console.error('  BLADE_ALLOW_ROOT=1 blade');
+      console.error('');
+      process.exit(1);
+    }
   }
 
   // 初始化优雅退出处理器（捕获 uncaughtException/unhandledRejection/SIGTERM）
