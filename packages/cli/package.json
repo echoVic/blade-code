@@ -76,7 +76,7 @@
     "fuse.js": "^7.1.0",
     "gray-matter": "^4.0.3",
     "hono": "^4.7.10",
-    "ink": "npm:@jrichman/ink@6.4.6",
+    "ink": "npm:@jrichman/ink@6.4.10",
     "ink-big-text": "^2.0.0",
     "ink-gradient": "^3.0.0",
     "ink-select-input": "^6.2.0",
