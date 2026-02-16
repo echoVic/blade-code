@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.2.5] - 2026-02-16
+
+### 🔧 其他更改
+
+- upgrade @jrichman/ink from 6.4.6 to 6.4.10 (e6ff7ca)
+
+
 ## [0.2.4] - 2026-02-09
 
 ### 🐛 问题修复
