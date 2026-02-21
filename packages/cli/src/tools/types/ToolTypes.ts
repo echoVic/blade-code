@@ -516,7 +516,7 @@ export interface Tool<TParams = unknown> {
   /**
    * 一键执行
    */
-  execute(params: TParams, signal?: AbortSignal): Promise<ToolResult>;
+  execute(params: TParams, signal?: AbortSignal, context?: Partial<ExecutionContext>): Promise<ToolResult>;
 
   /**
    * ✅ 新增：签名内容提取器

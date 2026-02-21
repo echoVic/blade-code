@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Tool, ToolConfig, ToolInvocation, ToolResult } from '../types/index.js';
+import type { ExecutionContext, Tool, ToolConfig, ToolInvocation, ToolResult } from '../types/index.js';
 import { isReadOnlyKind } from '../types/ToolTypes.js';
 import { parseWithZod } from '../validation/errorFormatter.js';
 import { zodToFunctionSchema } from '../validation/zodToJson.js';
@@ -96,9 +96,9 @@ export function createTool<TSchema extends z.ZodSchema>(
     /**
      * 一键执行
      */
-    async execute(params: TParams, signal?: AbortSignal): Promise<ToolResult> {
+    async execute(params: TParams, signal?: AbortSignal, context?: Partial<ExecutionContext>): Promise<ToolResult> {
       const invocation = this.build(params);
-      return invocation.execute(signal || new AbortController().signal);
+      return invocation.execute(signal || new AbortController().signal, undefined, context);
     },
 
     /**
