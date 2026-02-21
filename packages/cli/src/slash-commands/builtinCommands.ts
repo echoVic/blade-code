@@ -11,6 +11,7 @@ import { agentsCommand } from './agents.js';
 import compactCommand from './compact.js';
 import { CustomCommandRegistry } from './custom/index.js';
 import mcpCommand from './mcp.js';
+import memoryCommand from './memory.js';
 import permissionsCommand from './permissions.js';
 import resumeCommand from './resume.js';
 import {
@@ -42,6 +43,7 @@ const helpCommand: SlashCommand = {
 **/clear** - 清除屏幕内容
 **/resume** - 恢复历史会话
 **/compact** - 手动压缩上下文，生成总结并节省 token
+**/memory** - 管理项目 Auto Memory（跨会话持久记忆）
 **/version** - 显示 Blade Code 版本信息
 **/status** - 显示当前配置状态
 **/permissions** - 管理本地权限规则`;
@@ -315,5 +317,6 @@ export const builtinCommands = {
   resume: resumeCommand,
   compact: compactCommand,
   mcp: mcpCommand,
+  memory: memoryCommand,
   agents: agentsCommand,
 };

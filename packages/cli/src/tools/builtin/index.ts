@@ -8,6 +8,8 @@ import { McpRegistry } from '../../mcp/McpRegistry.js';
 import type { Tool } from '../types/index.js';
 // 文件操作工具
 import { editTool, readTool, writeTool } from './file/index.js';
+// Memory 工具
+import { memoryReadTool, memoryWriteTool } from './memory/index.js';
 // Notebook 工具
 import { notebookEditTool } from './notebook/index.js';
 // Plan 工具
@@ -84,6 +86,10 @@ export async function getBuiltinTools(opts?: {
     askUserQuestionTool,
     skillTool,
     slashCommandTool,
+
+    // Memory: MemoryRead, MemoryWrite
+    memoryReadTool,
+    memoryWriteTool,
   ] as Tool[];
 
   // 添加 MCP 协议工具

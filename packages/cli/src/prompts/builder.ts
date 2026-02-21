@@ -4,8 +4,9 @@
  * ## 构建顺序（固定）
  * 1. 默认提示（DEFAULT_SYSTEM_PROMPT）或 replaceDefault
  * 2. 项目配置（BLADE.md）- 始终加载，不受 replaceDefault 影响
- * 3. 追加内容（append）
- * 4. 模式特定提示（Plan 模式等）
+ * 3. Auto Memory（MEMORY.md 前 200 行）- 跨会话持久记忆
+ * 4. 追加内容（append）
+ * 5. 模式特定提示（Plan 模式等）
  *
  * ## 规则
  * - replaceDefault 仅替换默认提示，不影响 BLADE.md 和 append
@@ -16,6 +17,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { PermissionMode } from '../config/types.js';
+import { AutoMemoryManager } from '../memory/AutoMemoryManager.js';
 import { getSkillRegistry } from '../skills/index.js';
 import type { SpecMetadata } from '../spec/types.js';
 import { getEnvironmentContext } from '../utils/environment.js';
@@ -92,7 +94,7 @@ export interface BuildSystemPromptResult {
 /**
  * 构建系统提示词（统一入口）
  *
- * 构建顺序：环境上下文 → 默认/replaceDefault → BLADE.md → append → 模式特定
+ * 构建顺序：环境上下文 → 默认/replaceDefault → BLADE.md → Auto Memory → append → 模式特定
  *
  * @example
  * // 普通模式
@@ -171,7 +173,23 @@ export async function buildSystemPrompt(
     }
   }
 
-  // 4. 追加内容
+  // 4. Auto Memory（MEMORY.md 前 N 行）- 跨会话持久记忆
+  if (projectPath && process.env.BLADE_AUTO_MEMORY !== '0') {
+    try {
+      const memoryManager = new AutoMemoryManager(projectPath);
+      const memoryContent = await memoryManager.loadIndex();
+      if (memoryContent) {
+        parts.push(`<auto-memory>\n${memoryContent}\n</auto-memory>`);
+        sources.push({ name: 'auto_memory', loaded: true, length: memoryContent.length });
+      } else {
+        sources.push({ name: 'auto_memory', loaded: false });
+      }
+    } catch {
+      sources.push({ name: 'auto_memory', loaded: false });
+    }
+  }
+
+  // 5. 追加内容
   if (append?.trim()) {
     parts.push(append.trim());
     sources.push({ name: 'append', loaded: true, length: append.trim().length });

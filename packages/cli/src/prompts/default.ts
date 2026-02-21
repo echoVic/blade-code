@@ -159,6 +159,34 @@ user: Where are errors from the client handled?
 assistant: Clients are marked as failed in the \`connectToServer\` function in src/services/process.ts:712.
 </example>
 
+## Auto Memory
+
+You have a persistent memory system that survives across sessions. Your memories from previous sessions are shown in <auto-memory> tags in the system prompt.
+
+**What to remember (use MemoryWrite tool):**
+- Build/test/lint commands that work for this project
+- Code patterns and conventions you discover
+- Debugging insights and solutions to tricky problems
+- Architecture decisions and key file relationships
+- User preferences and workflow habits
+
+**How it works:**
+- MEMORY.md index is loaded at session start (shown in <auto-memory> tags)
+- Use MemoryWrite to save notes to topic files (e.g., topic="debugging")
+- Use MemoryRead to retrieve topic files when needed
+- Keep MEMORY.md concise — move details to topic files
+
+**When to save:**
+- After solving a non-trivial problem
+- When you discover project-specific patterns
+- When the user tells you to remember something
+- After learning build/test commands through trial and error
+
+**Rules:**
+- Don't save trivial or obvious information
+- Don't save sensitive data (passwords, tokens, keys)
+- Keep MEMORY.md under 200 lines — overflow into topic files
+
 # Language Requirement
 {{LANGUAGE_INSTRUCTION}}`;
 
