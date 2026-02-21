@@ -32,6 +32,7 @@
 ## ✨ 核心特性
 
 - 🤖 **智能对话** - 上下文理解、多轮协作、可继续会话
+- 🧠 **自动记忆** - 跨会话持久化项目知识，自动学习构建命令、代码模式、调试洞察
 - 🌐 **双模式界面** - CLI 终端 + Web UI，随心切换
 - 🛠️ **丰富工具** - 20+ 内置工具：文件/搜索/Shell/Git/Web 等
 - 🔗 **扩展能力** - MCP、插件与 Skills 系统
@@ -99,6 +100,13 @@ blade serve --port 3000      # 无头服务器模式
 - `--output-format` 输出格式（text/json/stream-json）
 - `--permission-mode` 权限模式
 - `--resume/-r` 恢复会话 / `--session-id` 指定会话
+
+**交互式命令（会话内）**
+
+- `/memory list` 列出所有记忆文件
+- `/memory show` 显示 MEMORY.md 内容
+- `/memory edit [topic]` 用编辑器编辑记忆文件
+- `/memory clear` 清空所有记忆
 
 ---
 
