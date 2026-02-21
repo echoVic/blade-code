@@ -3,7 +3,6 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { JsonValue, MessageRole } from '../../store/types.js';
 import type {
-  ContextData,
   ConversationContext,
   MessageInfo,
   PartInfo,
@@ -368,35 +367,25 @@ export class PersistentStore {
   }
 
   /**
-   * 保存完整上下文数据（向后兼容方法）
-   * 将 ContextData 转为 JSONL 格式保存
+   * 保存会话初始化事件到 JSONL
+   * 仅创建 session_created 事件，不写入空消息
    */
-  async saveContext(sessionId: string, contextData: ContextData): Promise<void> {
+  async initSession(sessionId: string): Promise<void> {
+    await this.ensureSessionCreated(sessionId);
+  }
+
+  /**
+   * 加载会话的原始 JSONL 事件流
+   */
+  async loadEvents(sessionId: string): Promise<SessionEvent[] | null> {
     try {
-      const { conversation } = contextData.layers;
-      for (const msg of conversation.messages) {
-        await this.saveMessage(sessionId, msg.role, msg.content, null);
-      }
-    } catch (error) {
-      console.warn(`[PersistentStore] 保存上下文失败 (session: ${sessionId}):`, error);
+      const filePath = getSessionFilePath(this.projectPath, sessionId);
+      const store = new JSONLStore(filePath);
+      const entries = await store.readAll();
+      return entries.length > 0 ? entries : null;
+    } catch {
+      return null;
     }
-  }
-
-  /**
-   * 保存会话上下文（向后兼容方法 - 已废弃）
-   */
-  async saveSession(sessionId: string, sessionContext: SessionContext): Promise<void> {
-    console.warn('[PersistentStore] saveSession 方法已废弃，请使用 saveMessage');
-  }
-
-  /**
-   * 保存对话上下文（向后兼容方法 - 已废弃）
-   */
-  async saveConversation(
-    sessionId: string,
-    conversation: ConversationContext
-  ): Promise<void> {
-    console.warn('[PersistentStore] saveConversation 方法已废弃，请使用 saveMessage');
   }
 
   /**

@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import { nanoid } from 'nanoid';
 import type { JsonObject, JsonValue } from '../store/types.js';
+import { ContextAssembler } from './ContextAssembler.js';
 import { ContextCompressor } from './processors/ContextCompressor.js';
 import { ContextFilter } from './processors/ContextFilter.js';
 import { CacheStore } from './storage/CacheStore.js';
@@ -33,6 +34,13 @@ export class ContextManager {
 
   private currentSessionId: string | null = null;
   private initialized = false;
+
+  /**
+   * 获取持久化存储实例（供外部直接调用 JSONL 操作）
+   */
+  get persistentStore(): PersistentStore {
+    return this.persistent;
+  }
 
   constructor(options: Partial<ContextManagerOptions> = {}) {
     // 默认使用 ~/.blade/ 作为存储根目录
@@ -138,7 +146,7 @@ export class ContextManager {
 
     // 存储到内存和持久化存储
     this.memory.setContext(contextData);
-    await this.persistent.saveContext(sessionId, contextData);
+    await this.persistent.initSession(sessionId);
 
     this.currentSessionId = sessionId;
 
@@ -155,35 +163,22 @@ export class ContextManager {
       let contextData = this.memory.getContext();
 
       if (!contextData || contextData.layers.session.sessionId !== sessionId) {
-        // 从持久化存储加载
-        const [session, conversation] = await Promise.all([
-          this.persistent.loadSession(sessionId),
-          this.persistent.loadConversation(sessionId),
-        ]);
-
-        if (!session || !conversation) {
+        // 从 JSONL 事件流重建
+        const events = await this.persistent.loadEvents(sessionId);
+        if (!events || events.length === 0) {
           return false;
         }
 
-        // 重建完整的上下文数据
-        contextData = {
-          layers: {
-            system: await this.createSystemContext(),
-            session,
-            conversation,
-            tool: {
-              recentCalls: [],
-              toolStates: {},
-              dependencies: {},
-            },
-            workspace: await this.createWorkspaceContext(),
-          },
-          metadata: {
-            totalTokens: 0,
-            priority: 1,
-            lastUpdated: Date.now(),
-          },
-        };
+        const assembler = new ContextAssembler();
+        contextData = assembler.assembleContextData(
+          events,
+          await this.createSystemContext(),
+          await this.createWorkspaceContext()
+        );
+
+        if (!contextData) {
+          return false;
+        }
 
         this.memory.setContext(contextData);
       }
@@ -558,12 +553,8 @@ export class ContextManager {
   }
 
   private async saveCurrentSession(): Promise<void> {
-    if (!this.currentSessionId) return;
-
-    const contextData = this.memory.getContext();
-    if (contextData) {
-      await this.persistent.saveContext(this.currentSessionId, contextData);
-    }
+    // JSONL 持久化已由 Agent.ts 通过 saveMessage/saveToolUse/saveToolResult 直接完成
+    // 此方法保留为空，避免重复写入
   }
 
   private saveCurrentSessionAsync(): void {
