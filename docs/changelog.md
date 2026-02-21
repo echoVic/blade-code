@@ -3,6 +3,32 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.2.6] - 2026-02-21
+
+### ✨ 新功能
+
+- add /memory edit command with $EDITOR support (75dbfe7)
+- add Auto Memory system for cross-session persistent knowledge (4012898)
+
+### 🐛 问题修复
+
+- createTool.execute now passes ExecutionContext to tools (bbd353a)
+
+### 📝 文档更新
+
+- add Auto Memory documentation (b2716e9)
+- update README with Auto Memory feature and /memory commands (2ae1dab)
+
+### ♻️ 代码重构
+
+- clean up ContextManager/PersistentStore responsibilities (e799a2f)
+
+### ✅ 测试相关
+
+- add 20 unit tests for ContextAssembler (4bd66f1)
+- add Auto Memory unit tests (38 cases) (511c523)
+
+
 ## [Unreleased]
 
 ### ✨ 新功能
