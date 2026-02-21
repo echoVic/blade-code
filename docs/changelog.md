@@ -3,6 +3,31 @@
 All notable changes to this project will be documented in this file.
 
 
+## [Unreleased]
+
+### ✨ 新功能
+
+- **Auto Memory 系统** — Agent 跨会话持久化项目知识（构建命令、代码模式、调试洞察）
+  - `MemoryRead` / `MemoryWrite` 工具：Agent 自动读写记忆文件，内置敏感数据过滤
+  - `/memory` 命令：`list` / `show` / `edit` / `clear` 管理记忆文件
+  - 启动时自动注入 MEMORY.md 前 200 行到 system prompt
+  - 环境变量 `BLADE_AUTO_MEMORY=0` 可禁用
+
+### 🐛 问题修复
+
+- `createTool.execute()` 现在正确传递 `ExecutionContext` 到工具函数，修复 `context.workspaceRoot` 等始终为 undefined 的问题
+
+### ♻️ 代码重构
+
+- 清理 `PersistentStore` 废弃方法（`saveContext` / `saveSession` / `saveConversation`）
+- 新增 `ContextAssembler`：集中 JSONL 事件流到 ContextData 的重建逻辑，修复 tool calls 和 compaction summary 丢失问题
+- 修复 `ContextManager.saveCurrentSession()` 重复写入 JSONL 的问题
+
+### ✅ 测试相关
+
+- 新增 58 个单元测试（AutoMemoryManager 20 + MemoryTools 18 + ContextAssembler 20）
+
+
 ## [0.2.5] - 2026-02-16
 
 ### 🔧 其他更改

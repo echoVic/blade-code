@@ -282,6 +282,30 @@
 
 ## 系统工具
 
+### MemoryRead
+
+读取项目记忆文件。Agent 自动记录的项目知识跨会话持久化。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `topic` | string | ✅ | 主题名（如 "debugging"）或 "_list" 列出所有文件，"MEMORY" 读取索引 |
+
+**类型**: ReadOnly  
+**返回**: 记忆文件内容或文件列表
+
+### MemoryWrite
+
+保存项目记忆。支持敏感数据过滤（password/token/secret/api_key/private_key）。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `topic` | string | ✅ | 主题名（如 "patterns"），"MEMORY" 写入索引 |
+| `content` | string | ✅ | 要保存的内容 |
+| `mode` | string | | 写入模式：overwrite / append（默认 append） |
+
+**类型**: Write  
+**特性**: 自动过滤敏感数据，防止路径遍历
+
 ### AskUserQuestion
 
 向用户提问并等待回复。
@@ -363,6 +387,8 @@ blade mcp list
 | Spec | UpdateTaskStatus | Write | 更新任务状态 |
 | Spec | ValidateSpec | ReadOnly | 验证 Spec 完整性 |
 | Spec | ExitSpecMode | Write | 退出 Spec 模式 |
+| 系统 | MemoryRead | ReadOnly | 读取项目记忆文件 |
+| 系统 | MemoryWrite | Write | 保存项目记忆 |
 | 系统 | AskUserQuestion | ReadOnly | 向用户提问 |
 | 系统 | Skill | Execute | 调用已注册的 Skill |
 | 系统 | SlashCommand | Execute | 执行 Slash 命令 |

@@ -23,6 +23,7 @@ Slash 命令是 Blade 的快捷操作入口，输入 `/` 触发建议，`Tab` �
 | `/hooks` | - | 管理 Hooks |
 | `/resume` | - | 恢复历史会话 |
 | `/compact` | - | 手动压缩上下文 |
+| `/memory` | - | 管理项目记忆 |
 | `/git` | `/g` | Git 操作 |
 | `/login` | - | 登录 OAuth 服务 |
 | `/logout` | - | 登出 OAuth 服务 |
@@ -95,6 +96,24 @@ Git 仓库查询和 AI 辅助：
 ```bash
 /compact
 ```
+
+### /memory
+
+管理项目的自动记忆系统。Agent 在工作中自动记录的项目知识（构建命令、代码模式、调试洞察等）会跨会话持久化。
+
+```bash
+/memory              # 等同于 /memory list
+/memory list         # 列出所有记忆文件
+/memory show         # 显示 MEMORY.md 索引内容
+/memory show <topic> # 显示指定主题文件内容
+/memory edit         # 用 $EDITOR 编辑 MEMORY.md
+/memory edit <topic> # 用 $EDITOR 编辑指定主题文件
+/memory clear        # 清空所有记忆文件
+```
+
+记忆文件存储在 `~/.blade/projects/{project}/memory/` 目录下。
+
+可通过环境变量 `BLADE_AUTO_MEMORY=0` 禁用自动记忆功能。
 
 ### /login
 

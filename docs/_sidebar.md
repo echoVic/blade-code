@@ -12,6 +12,7 @@
 
 * 使用指南
   * [Slash 命令](guides/slash-commands.md)
+  * [Auto Memory](guides/memory.md)
   * [Subagents 系统](guides/subagents.md)
   * [Skills 系统](guides/skills.md)
   * [Hooks 钩子](guides/hooks.md)
