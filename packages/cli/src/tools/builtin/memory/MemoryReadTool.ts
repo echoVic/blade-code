@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { AutoMemoryManager } from '../../../memory/AutoMemoryManager.js';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import type { ToolResult } from '../../types/index.js';
 import { ToolKind } from '../../types/index.js';
 
 export const memoryReadTool = createTool({
@@ -45,9 +45,9 @@ export const memoryReadTool = createTool({
     ],
   },
 
-  async execute(params, context: ExecutionContext): Promise<ToolResult> {
+  async execute(params): Promise<ToolResult> {
     const { topic } = params;
-    const projectPath = context.workspaceRoot || process.cwd();
+    const projectPath = process.cwd();
     const manager = new AutoMemoryManager(projectPath);
 
     // 列出所有主题

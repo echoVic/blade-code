@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { AutoMemoryManager } from '../../../memory/AutoMemoryManager.js';
 import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import type { ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 
 /** 禁止写入的敏感关键词 */
@@ -66,9 +66,9 @@ export const memoryWriteTool = createTool({
     ],
   },
 
-  async execute(params, context: ExecutionContext): Promise<ToolResult> {
+  async execute(params): Promise<ToolResult> {
     const { topic, content, mode } = params;
-    const projectPath = context.workspaceRoot || process.cwd();
+    const projectPath = process.cwd();
 
     // 安全检查：拒绝写入敏感信息
     for (const pattern of SENSITIVE_PATTERNS) {

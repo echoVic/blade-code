@@ -24,9 +24,13 @@ export class AutoMemoryManager {
   private readonly config: AutoMemoryConfig;
   private initialized = false;
 
-  constructor(projectPath: string, config?: Partial<AutoMemoryConfig>) {
-    const storagePath = getProjectStoragePath(projectPath);
-    this.memoryDir = path.join(storagePath, MEMORY_DIR);
+  constructor(projectPath: string, config?: Partial<AutoMemoryConfig>, memoryDirOverride?: string) {
+    if (memoryDirOverride) {
+      this.memoryDir = memoryDirOverride;
+    } else {
+      const storagePath = getProjectStoragePath(projectPath);
+      this.memoryDir = path.join(storagePath, MEMORY_DIR);
+    }
     this.config = { ...DEFAULT_AUTO_MEMORY_CONFIG, ...config };
   }
 
