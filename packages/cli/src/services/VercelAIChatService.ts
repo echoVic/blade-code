@@ -2,6 +2,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createAzure } from '@ai-sdk/azure';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, jsonSchema, type LanguageModel, streamText } from 'ai';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
@@ -90,6 +91,15 @@ export class VercelAIChatService implements IChatService {
     const { provider, apiKey, baseUrl, model, customHeaders, providerId, apiVersion } = config;
 
     switch (provider) {
+      case 'openai': {
+        const openai = createOpenAI({
+          apiKey,
+          baseURL: baseUrl || undefined,
+          headers: customHeaders,
+        });
+        return openai(model);
+      }
+
       case 'anthropic': {
         const anthropic = createAnthropic({
           apiKey,

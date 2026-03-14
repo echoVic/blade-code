@@ -4,6 +4,7 @@
  */
 
 export type ProviderType =
+  | 'openai'
   | 'openai-compatible'
   | 'anthropic'
   | 'gemini'

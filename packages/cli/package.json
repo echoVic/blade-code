@@ -62,6 +62,7 @@
     "@ai-sdk/azure": "^3.0.5",
     "@ai-sdk/deepseek": "^2.0.4",
     "@ai-sdk/google": "^3.0.4",
+    "@ai-sdk/openai": "^3.0.26",
     "@ai-sdk/openai-compatible": "^2.0.4",
     "@inkjs/ui": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.17.4",

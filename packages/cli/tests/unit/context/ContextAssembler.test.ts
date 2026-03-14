@@ -8,16 +8,15 @@ import type { SessionEvent } from '../../../src/context/types.js';
 
 // Helper: 创建基础事件字段
 const base = (
-  type: string,
-  sessionId = 'sess-1',
-  timestamp = '2026-02-21T10:00:00.000Z'
+	type: string,
+	sessionId = 'sess-1',
+	timestamp = '2026-02-21T10:00:00.000Z'
 ): Omit<SessionEvent, 'type' | 'data'> => ({
-  id: `evt-${Math.random().toString(36).slice(2, 8)}`,
-  sessionId,
-  timestamp,
-  type: type as any,
-  cwd: '/tmp/test',
-  version: '1.0.0',
+	id: `evt-${Math.random().toString(36).slice(2, 8)}`,
+	sessionId,
+	timestamp,
+	cwd: '/tmp/test',
+	version: '1.0.0',
 });
 
 function sessionCreatedEvent(sessionId = 'sess-1', ts = '2026-02-21T10:00:00.000Z'): SessionEvent {
