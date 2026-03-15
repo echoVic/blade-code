@@ -15,6 +15,7 @@ import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { generateDiffSnippetWithMatch } from './diffUtils.js';
 import {
   flexibleMatch,
+  fuzzyMatch,
   type MatchResult,
   MatchStrategy,
   unescapeString,
@@ -466,10 +467,17 @@ function smartMatch(content: string, searchString: string): MatchResult {
     return { matched: unescaped, strategy: MatchStrategy.UNESCAPE };
   }
 
-  // 策略 4: 弹性缩进匹配
+  // 策略 4: 弹性缩进与空白匹配
   const flexible = flexibleMatch(content, searchString);
   if (flexible) {
     return { matched: flexible, strategy: MatchStrategy.FLEXIBLE };
+  }
+
+  // 策略 5: 模糊匹配 (Patch 容错算法)
+  // 仅在多行场景下且唯一高置信度时自动修复
+  const fuzzy = fuzzyMatch(content, searchString);
+  if (fuzzy) {
+    return { matched: fuzzy, strategy: MatchStrategy.FUZZY };
   }
 
   // 所有策略都失败

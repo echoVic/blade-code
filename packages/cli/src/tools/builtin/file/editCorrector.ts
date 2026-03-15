@@ -15,6 +15,7 @@ export enum MatchStrategy {
   NORMALIZE_QUOTES = 'normalize_quotes', // 引号标准化匹配
   UNESCAPE = 'unescape', // 反转义匹配
   FLEXIBLE = 'flexible', // 弹性缩进匹配
+  FUZZY = 'fuzzy', // 模糊匹配（允许微小差异）
   FAILED = 'failed', // 所有策略都失败
 }
 
@@ -24,6 +25,19 @@ export enum MatchStrategy {
 export interface MatchResult {
   matched: string | null; // 匹配到的实际字符串（保持原文件格式）
   strategy: MatchStrategy; // 使用的匹配策略
+}
+
+/**
+ * 字符串标准化（用于比较）
+ */
+function normalizeForComparison(text: string): string {
+  return text
+    .trim()
+    .replace(/\s+/g, ' ')
+    // 统一双引号
+    .replace(/[\u201c\u201d"]/g, '"')
+    // 统一单引号
+    .replace(/[\u2018\u2019']/g, "'");
 }
 
 /**
@@ -74,70 +88,121 @@ export function unescapeString(input: string): string {
 
 /**
  * 弹性缩进匹配
- * 忽略缩进差异，在文件内容中查找匹配的字符串
- *
- * @param content 文件内容
- * @param searchString 要搜索的字符串
- * @returns 匹配到的实际字符串（保持原文件缩进），如果未找到则返回 null
- *
- * @example
- * const content = '  function foo() {\n    return 1;\n  }';
- * const search = '    function foo() {\n      return 1;\n    }';
- * flexibleMatch(content, search) // → '  function foo() {\n    return 1;\n  }'
+ * 忽略缩进差异，并在标准化行内容后进行匹配
  */
-export function flexibleMatch(content: string, searchString: string): string | null {
+export function flexibleMatch(
+  content: string,
+  searchString: string
+): string | null {
   const searchLines = searchString.split('\n');
 
-  // 如果只有一行，无法使用弹性匹配
+  // 如果只有一行，尝试标准化后匹配
   if (searchLines.length === 1) {
+    const searchNorm = normalizeForComparison(searchString);
+    const contentLines = content.split('\n');
+    for (let i = 0; i < contentLines.length; i++) {
+      if (normalizeForComparison(contentLines[i]) === searchNorm) {
+        return contentLines[i];
+      }
+    }
     return null;
   }
 
-  // 1. 提取搜索字符串的第一行缩进
-  const firstLine = searchLines[0];
-  const indentMatch = firstLine.match(/^(\s+)/);
-
-  if (!indentMatch) {
-    return null; // 第一行没有缩进，无法使用弹性匹配
-  }
-
-  const searchIndent = indentMatch[1];
-
-  // 2. 去除搜索字符串的缩进
-  const deindentedSearchLines = searchLines.map((line) => {
-    if (line.startsWith(searchIndent)) {
-      return line.slice(searchIndent.length);
-    }
-    return line;
-  });
-  const deindentedSearch = deindentedSearchLines.join('\n');
-
-  // 3. 在文件内容中搜索
+  // 多行匹配逻辑
+  const searchLinesNorm = searchLines.map(normalizeForComparison);
   const contentLines = content.split('\n');
 
-  // 尝试在每个可能的位置匹配
   for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
-    const lineIndentMatch = contentLines[i].match(/^(\s+)/);
-    const fileIndent = lineIndentMatch ? lineIndentMatch[1] : '';
-
-    // 提取从当前行开始的内容片段（与搜索字符串行数相同）
     const snippet = contentLines.slice(i, i + searchLines.length);
+    const snippetNorm = snippet.map(normalizeForComparison);
 
-    // 去除文件片段的缩进
-    const deindentedSnippet = snippet.map((line) => {
-      if (line.startsWith(fileIndent)) {
-        return line.slice(fileIndent.length);
+    // 逐行比较标准化后的内容
+    let allMatch = true;
+    for (let j = 0; j < searchLines.length; j++) {
+      if (snippetNorm[j] !== searchLinesNorm[j]) {
+        allMatch = false;
+        break;
       }
-      return line;
-    });
-    const deindentedContent = deindentedSnippet.join('\n');
+    }
 
-    // 如果去除缩进后完全匹配
-    if (deindentedContent === deindentedSearch) {
-      // 返回原文件中的实际字符串（保持原始缩进）
+    if (allMatch) {
       return snippet.join('\n');
     }
   }
 
   return null;
+}
+
+/**
+ * 模糊匹配 (Patch 容错算法)
+ * 允许少量行由于 LLM 生成时的格式微差（如缺失分号、微小拼写差异）导致的失配
+ */
+export function fuzzyMatch(
+  content: string,
+  searchString: string,
+  threshold = 0.95
+): string | null {
+  const searchLines = searchString.split('\n');
+  const contentLines = content.split('\n');
+
+  // 仅在多行场景下启用窗口模糊匹配
+  if (searchLines.length < 2) return null;
+
+  let bestMatch: string | null = null;
+  let highestSim = 0;
+  let matchCount = 0;
+
+  for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
+    const snippet = contentLines.slice(i, i + searchLines.length);
+    
+    // 计算多行块的综合相似度
+    const similarity = calculateBlockSimilarity(searchLines, snippet);
+
+    if (similarity >= threshold) {
+      if (similarity > highestSim) {
+        highestSim = similarity;
+        bestMatch = snippet.join('\n');
+      }
+      matchCount++;
+    }
+  }
+
+  // 🔴 关键安全控制：只有找到唯一且高置信度的模糊匹配时才自动纠错
+  return matchCount === 1 && highestSim > 0.98 ? bestMatch : null;
+}
+
+/**
+ * 计算两个代码块的行平均相似度
+ */
+function calculateBlockSimilarity(searchLines: string[], snippet: string[]): number {
+  let totalSim = 0;
+  for (let i = 0; i < searchLines.length; i++) {
+    totalSim += calculateLineSimilarity(
+      normalizeForComparison(searchLines[i]),
+      normalizeForComparison(snippet[i])
+    );
+  }
+  return totalSim / searchLines.length;
+}
+
+/**
+ * 极简相似度算法 (Jaro-Winkler 风格)
+ */
+function calculateLineSimilarity(s1: string, s2: string): number {
+  if (s1 === s2) return 1.0;
+  if (!s1 || !s2) return 0;
+
+  const longer = s1.length > s2.length ? s1 : s2;
+  const shorter = s1.length > s2.length ? s2 : s1;
+  
+  if (longer.length === 0) return 1.0;
+  
+  // 简单的前缀匹配 + 长度比例
+  let commonPrefix = 0;
+  for (let i = 0; i < shorter.length; i++) {
+    if (s1[i] === s2[i]) commonPrefix++;
+    else break;
+  }
+  
+  return (commonPrefix / longer.length) * 0.4 + (shorter.length / longer.length) * 0.6;
 }
