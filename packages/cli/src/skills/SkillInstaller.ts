@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+import { cloneRepository } from '../utils/git.js';
 
 const execAsync = promisify(exec);
 const logger = createLogger(LogCategory.GENERAL);
@@ -80,12 +81,11 @@ export class SkillInstaller {
       // 确保目录存在
       await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
 
-      // 使用 git clone --depth 1 --filter 克隆指定目录
-      // 方法：克隆整个仓库（浅克隆），然后只复制需要的目录
-      await execAsync(
-        `git clone --depth 1 --branch ${branch} --single-branch ${url} "${tempDir}"`,
-        { timeout: 30000 }
-      );
+      // 使用克隆镜像缓存工具
+      await cloneRepository(url, tempDir, {
+        branch,
+        depth: 1,
+      });
 
       // 复制指定的 skill 目录
       const sourceDir = path.join(tempDir, 'skills', skillName);
@@ -164,10 +164,7 @@ export class SkillInstaller {
 
       await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
 
-      await execAsync(
-        `git clone --depth 1 "${repoUrl}" "${tempDir}"`,
-        { timeout: 60000 }
-      );
+      await cloneRepository(repoUrl, tempDir, { depth: 1 });
 
       const skillMdPath = path.join(tempDir, 'SKILL.md');
       try {
@@ -282,10 +279,10 @@ export class SkillInstaller {
 
       // 克隆整个仓库
       logger.info('Cloning official skills repository...');
-      await execAsync(
-        `git clone --depth 1 --branch ${branch} --single-branch ${url} "${tempDir}"`,
-        { timeout: 60000 }
-      );
+      await cloneRepository(url, tempDir, {
+        branch,
+        depth: 1,
+      });
 
       // 获取所有 skills
       const skillsSourceDir = path.join(tempDir, 'skills');

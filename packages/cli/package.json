@@ -15,7 +15,7 @@
   "scripts": {
     "dev": "bun --watch src/blade.tsx",
     "dev:serve": "bun --watch src/blade.tsx serve --port 4097",
-    "build": "rm -rf dist && bun run scripts/build.ts",
+    "build": "rm -rf dist && node scripts/build-cli.js",
     "start": "bun run dist/blade.js",
     "test": "node scripts/test.js",
     "test:all": "vitest run --config vitest.config.ts",

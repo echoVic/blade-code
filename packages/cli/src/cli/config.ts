@@ -24,6 +24,12 @@ export const globalOptions = {
     describe: 'Print response and exit (useful for pipes)',
     group: 'Output Options:',
   },
+  headless: {
+    type: 'boolean',
+    describe:
+      'Run in headless (non-TUI) mode, printing responses directly to stdout',
+    group: 'Output Options:',
+  },
   'output-format': {
     alias: ['outputFormat'],
     type: 'string',
@@ -169,6 +175,28 @@ export const globalOptions = {
     type: 'string',
     describe: 'Use a specific session ID for the conversation',
     group: 'Session Options:',
+  },
+  provider: {
+    type: 'string',
+    describe: 'AI provider to use (e.g. openai, anthropic)',
+    group: 'AI Options:',
+  },
+  model: {
+    type: 'string',
+    describe: 'AI model to use (e.g. gpt-4o, claude-3-5-sonnet)',
+    group: 'AI Options:',
+  },
+  'api-key': {
+    alias: ['apiKey'],
+    type: 'string',
+    describe: 'API key for the AI provider',
+    group: 'AI Options:',
+  },
+  'base-url': {
+    alias: ['baseUrl'],
+    type: 'string',
+    describe: 'Base URL for the AI provider',
+    group: 'AI Options:',
   },
   // TODO: 未实现 - 需要解析 JSON 并配置自定义 Agent
   agents: {

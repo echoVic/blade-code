@@ -149,7 +149,23 @@ export class Agent {
   }
 
   private resolveModelConfig(requestedModelId?: string): ModelConfig {
-    const modelId = requestedModelId && requestedModelId !== 'inherit' ? requestedModelId : undefined;
+    // 🆕 1. 优先检查运行时选项中是否直接提供了模型配置
+    const { provider, model, apiKey, baseUrl } = this.runtimeOptions;
+    if (provider && model && apiKey) {
+      return {
+        id: 'runtime-config',
+        name: model,
+        provider,
+        model,
+        apiKey,
+        baseUrl: baseUrl ?? '',
+      } as ModelConfig;
+    }
+
+    const modelId =
+      requestedModelId && requestedModelId !== 'inherit'
+        ? requestedModelId
+        : undefined;
     const modelConfig = modelId ? getModelById(modelId) : getCurrentModel();
     if (!modelConfig) {
       throw new Error(`❌ 模型配置未找到: ${modelId ?? 'current'}`);
@@ -208,8 +224,12 @@ export class Agent {
     await ensureStoreInitialized();
 
     // 1. 检查是否有可用的模型配置
+    // 如果运行时直接提供了模型配置，则无需检查 Store 中的模型
     const models = getAllModels();
-    if (models.length === 0) {
+    const hasRuntimeConfig =
+      options.provider && options.model && options.apiKey;
+
+    if (!hasRuntimeConfig && models.length === 0) {
       throw new Error(
         '❌ 没有可用的模型配置\n\n' +
           '请先使用以下命令添加模型：\n' +

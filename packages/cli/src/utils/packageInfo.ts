@@ -1,9 +1,34 @@
 /**
  * Package.json 信息读取工具
  * 提供统一的包信息访问接口
+ *
+ * 注意：为兼容纯 Node ESM 运行环境，这里不再使用对 package.json 的静态 import，
+ * 而是通过 fs 读取并解析 JSON，避免对 `import ... assert { type: "json" }` 的依赖。
  */
 
-import packageJson from '../../package.json';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+let packageJsonPath = path.resolve(__dirname, '../../../package.json');
+try {
+  readFileSync(packageJsonPath, 'utf8');
+} catch (e) {
+  try {
+    packageJsonPath = path.resolve(__dirname, '../../package.json');
+    readFileSync(packageJsonPath, 'utf8');
+  } catch (e2) {
+    packageJsonPath = path.resolve(__dirname, '../package.json');
+  }
+}
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
+  name: string;
+  version: string;
+  description: string;
+};
 
 export interface PackageInfo {
   name: string;

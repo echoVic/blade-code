@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import { logger } from '../logging/Logger.js';
 import { isValidPluginDir, parsePluginManifest } from './PluginManifest.js';
 import type { PluginManifest } from './types.js';
+import { cloneRepository } from '../utils/git.js';
 
 /**
  * Installation result
@@ -98,10 +99,7 @@ export class PluginInstaller {
       // Clone the repository
       logger.info(`Cloning ${gitUrl} to ${pluginPath}...`);
       try {
-        execSync(`git clone --depth 1 "${gitUrl}" "${pluginPath}"`, {
-          stdio: 'pipe',
-          timeout: 60000, // 60 second timeout
-        });
+        await cloneRepository(gitUrl, pluginPath, { depth: 1 });
       } catch (error) {
         return {
           success: false,

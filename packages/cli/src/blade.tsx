@@ -19,13 +19,14 @@ import { installCommands } from './commands/install.js';
 import { mcpCommands } from './commands/mcp.js';
 import { handlePrintMode } from './commands/print.js';
 import { serveCommand } from './commands/serve.js';
+import { statsCommand } from './commands/stats.js';
 import { updateCommands } from './commands/update.js';
 import { webCommand } from './commands/web.js';
 import { Logger } from './logging/Logger.js';
 import { initializeGracefulShutdown } from './services/GracefulShutdown.js';
 import { checkVersionOnStartup } from './services/VersionChecker.js';
 import type { AppProps } from './ui/App.js';
-import { AppWrapper as BladeApp } from './ui/App.js';
+import { runHeadlessChat } from './commands/headless.js';
 
 // ⚠️ 关键：在创建任何 logger 之前，先解析 --debug 参数并设置全局配置
 // 这样可以确保所有 logger（包括 middleware、commands 中的）都能正确输出到终端
@@ -115,6 +116,7 @@ export async function main() {
     .command(installCommands)
     .command(webCommand)
     .command(serveCommand)
+    .command(statsCommand)
 
     // 自动生成补全（隐藏，避免干扰普通用户）
     .completion('completion', false)
@@ -153,11 +155,19 @@ export async function main() {
         // 不定义 positional，避免在 --help 中显示 Positionals 部分
       },
       async (argv) => {
-        // 启动 UI 模式
         // 从 argv._ 中获取额外的参数作为 initialMessage
         const nonOptionArgs = (argv._ as string[]).slice(1); // 跳过命令名
         const initialMessage =
           nonOptionArgs.length > 0 ? nonOptionArgs.join(' ') : undefined;
+
+        // Headless 模式：不渲染 Ink UI，直接通过 Agent 输出结果
+        if (argv.headless) {
+          await runHeadlessChat({
+            ...(argv as Record<string, unknown>),
+            initialMessage,
+          });
+          return;
+        }
 
         // 启动 React UI - 传递所有选项
         const appProps = {
@@ -174,6 +184,9 @@ export async function main() {
         delete appProps._;
         delete appProps.$0;
         delete appProps.message;
+
+        // 延迟加载 UI 组件，避免在纯 CLI 场景下加载所有 UI 依赖
+        const { AppWrapper: BladeApp } = await import('./ui/App.js');
 
         render(React.createElement(BladeApp, appProps), {
           patchConsole: true,

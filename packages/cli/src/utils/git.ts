@@ -11,6 +11,8 @@
 
 import { type ExecFileException, execFile, spawn } from 'child_process';
 import { promisify } from 'util';
+import * as os from 'os';
+import * as path from 'path';
 
 const execFileAsync = promisify(execFile);
 
@@ -212,6 +214,62 @@ export async function gitCommit(
       }
     });
   });
+}
+
+/**
+ * 克隆仓库并使用本地镜像缓存 (Git Mirror Cache)
+ * 显著提升大仓库克隆速度，减少网络依赖
+ * 
+ * @param url 远程仓库 URL
+ * @param targetPath 目标路径
+ * @param options 克隆选项
+ */
+export async function cloneRepository(
+  url: string,
+  targetPath: string,
+  options: {
+    branch?: string;
+    depth?: number;
+    useMirror?: boolean;
+    mirrorDir?: string;
+  } = {}
+): Promise<void> {
+  const { branch, depth, useMirror = true, mirrorDir = path.join(os.homedir(), '.blade/cache/git-mirrors') } = options;
+  
+  // 1. 生成镜像路径 (基于 URL 的 hash)
+  const urlHash = Buffer.from(url).toString('hex').slice(0, 12);
+  const mirrorPath = path.join(mirrorDir, `${urlHash}.git`);
+  
+  if (useMirror) {
+    // 确保镜像目录存在
+    await execFileAsync('mkdir', ['-p', mirrorDir]);
+    
+    // 如果镜像不存在，先创建 bare 镜像
+    if (!(await isGitRepository(mirrorPath))) {
+      await execFileAsync('git', ['clone', '--mirror', url, mirrorPath]);
+    } else {
+      // 如果镜像已存在，更新它
+      await gitExec(mirrorPath, ['remote', 'update', '--prune']);
+    }
+  }
+
+  // 2. 从本地镜像克隆
+  const args = ['clone'];
+  if (useMirror) {
+    args.push('--reference', mirrorPath);
+  }
+  if (branch) {
+    args.push('--branch', branch);
+  }
+  if (depth) {
+    args.push('--depth', String(depth));
+  }
+  args.push(url, targetPath);
+
+  const { code, stderr } = await gitExec(process.cwd(), args);
+  if (code !== 0) {
+    throw new Error(`Failed to clone repository: ${stderr}`);
+  }
 }
 
 // ============================================================================

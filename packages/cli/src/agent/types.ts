@@ -60,6 +60,12 @@ export interface AgentOptions {
   toolWhitelist?: string[]; // 工具白名单（仅允许指定工具）
   modelId?: string;
 
+  // 临时模型配置（用于 CLI 参数直接传入，绕过 Store）
+  provider?: string;
+  model?: string;
+  apiKey?: string;
+  baseUrl?: string;
+
   // MCP 配置
   mcpConfig?: string[]; // CLI 参数：MCP 配置文件路径或 JSON 字符串数组
   strictMcpConfig?: boolean; // CLI 参数：严格模式，仅使用 --mcp-config 指定的配置

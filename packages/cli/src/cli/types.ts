@@ -5,6 +5,7 @@
 export interface GlobalOptions {
   debug?: string;
   print?: boolean;
+  headless?: boolean;
   outputFormat?: 'text' | 'json' | 'stream-json';
   includePartialMessages?: boolean;
   inputFormat?: 'text' | 'stream-json';
@@ -29,6 +30,10 @@ export interface GlobalOptions {
   settingSources?: string;
   maxTurns?: number;
   pluginDir?: string[];
+  provider?: string;
+  model?: string;
+  apiKey?: string;
+  baseUrl?: string;
 }
 
 export interface DoctorOptions extends GlobalOptions {}
