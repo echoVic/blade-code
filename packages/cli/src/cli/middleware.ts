@@ -79,8 +79,8 @@ export const loadConfiguration: MiddlewareFunction = async (argv) => {
  */
 export const validateOutput: MiddlewareFunction = (argv) => {
   // 验证输出格式组合
-  if (argv.outputFormat && argv.outputFormat !== 'text' && !argv.print) {
-    throw new Error('--output-format can only be used with --print flag');
+  if (argv.outputFormat && argv.outputFormat !== 'text' && !argv.print && !argv.headless) {
+    throw new Error('--output-format can only be used with --print or --headless');
   }
 
   // 验证输入格式

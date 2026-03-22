@@ -174,7 +174,7 @@ export interface RuntimeConfig extends BladeConfig {
 
   // CLI 专属字段 - 其他
   addDirs?: string[]; // 额外允许访问的目录
-  outputFormat?: 'text' | 'json' | 'stream-json'; // 输出格式
+  outputFormat?: 'text' | 'json' | 'stream-json' | 'jsonl'; // 输出格式
   inputFormat?: 'text' | 'stream-json'; // 输入格式
   print?: boolean; // 打印响应后退出
   includePartialMessages?: boolean; // 包含部分消息

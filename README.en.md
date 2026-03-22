@@ -57,6 +57,8 @@ pnpm add -g blade-code
 blade
 blade "Help me analyze this project"
 blade --print "Write a quicksort"
+blade --headless "Analyze this repo and propose a refactor"
+blade --headless --output-format jsonl "Run the full agent loop in CI"
 
 # Web UI mode (new in 0.2.0)
 blade web                    # Start and open browser
@@ -97,9 +99,16 @@ See docs for the full schema.
 **Common Options**
 
 - `--print/-p` print mode (pipe-friendly)
-- `--output-format` output: text/json/stream-json
+- `--headless` full agent mode without Ink UI, prints streamed events to the terminal
+- `--output-format` output: text/json/stream-json/jsonl
 - `--permission-mode` permission mode
 - `--resume/-r` resume session / `--session-id` set session
+
+**Headless Mode**
+
+- `blade --headless "..."` runs the full agent loop without the interactive Ink UI
+- default permission mode is `yolo`, unless explicitly overridden with `--permission-mode`
+- `--output-format jsonl` emits a stable machine-friendly event stream for CI, sandbox runs, and tests
 
 ---
 

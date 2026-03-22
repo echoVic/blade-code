@@ -24,12 +24,17 @@ export const globalOptions = {
     describe: 'Print response and exit (useful for pipes)',
     group: 'Output Options:',
   },
+  headless: {
+    type: 'boolean',
+    describe: 'Run full agent loop without Ink UI and print all events to the terminal',
+    group: 'Output Options:',
+  },
   'output-format': {
     alias: ['outputFormat'],
     type: 'string',
-    choices: ['text', 'json', 'stream-json'],
+    choices: ['text', 'json', 'stream-json', 'jsonl'],
     default: 'text',
-    describe: 'Output format (only works with --print)',
+    describe: 'Output format (works with --print and --headless)',
     group: 'Output Options:',
   },
   'include-partial-messages': {

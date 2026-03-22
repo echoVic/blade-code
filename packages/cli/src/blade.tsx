@@ -15,6 +15,7 @@ import {
 } from './cli/middleware.js';
 // 导入命令处理器
 import { doctorCommands } from './commands/doctor.js';
+import { handleHeadlessMode } from './commands/headless.js';
 import { installCommands } from './commands/install.js';
 import { mcpCommands } from './commands/mcp.js';
 import { handlePrintMode } from './commands/print.js';
@@ -78,6 +79,11 @@ export async function main() {
   // ⚡ 尽早启动版本检查（不 await，与后续初始化并行）
   // 版本检查不依赖任何配置状态，可以立即开始网络请求
   const versionCheckPromise = checkVersionOnStartup();
+
+  // 首先检查是否是 print 模式
+  if (await handleHeadlessMode()) {
+    return;
+  }
 
   // 首先检查是否是 print 模式
   if (await handlePrintMode()) {

@@ -27,5 +27,28 @@ describe('Blade CLI 基本行为', () => {
     const combinedOutput = `${result.stdout}\n${result.stderr}`;
     expect(combinedOutput.length).toBeGreaterThan(0);
     expect(combinedOutput.toLowerCase()).toContain('blade');
+    expect(combinedOutput).toContain('--headless');
+  });
+
+  it('执行 --headless /help 应该走 headless 入口并成功退出', () => {
+    if (!existsSync(CLI_ENTRY)) {
+      console.warn(
+        '[cli] dist/blade.js 不存在，跳过 CLI 测试（请先运行 npm run build）'
+      );
+      return;
+    }
+
+    const result = spawnSync('node', [CLI_ENTRY, '--headless', '/help'], {
+      encoding: 'utf-8',
+      env: {
+        ...process.env,
+        BLADE_TELEMETRY_DISABLED: '1',
+      },
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    const combinedOutput = `${result.stdout}\n${result.stderr}`;
+    expect(combinedOutput).toContain('帮助信息已显示');
   });
 });

@@ -5,7 +5,8 @@
 export interface GlobalOptions {
   debug?: string;
   print?: boolean;
-  outputFormat?: 'text' | 'json' | 'stream-json';
+  headless?: boolean;
+  outputFormat?: 'text' | 'json' | 'stream-json' | 'jsonl';
   includePartialMessages?: boolean;
   inputFormat?: 'text' | 'stream-json';
   replayUserMessages?: boolean;

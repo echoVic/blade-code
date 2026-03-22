@@ -57,6 +57,8 @@ pnpm add -g blade-code
 blade
 blade "帮我分析这个项目"
 blade --print "写一个快排算法"
+blade --headless "分析这个仓库并给出重构建议"
+blade --headless --output-format jsonl "在 CI 中运行完整 agent 循环"
 
 # Web UI 模式（0.2.0 新增）
 blade web                    # 启动并打开浏览器
@@ -97,9 +99,16 @@ blade serve --port 3000      # 无头服务器模式
 **常用选项**
 
 - `--print/-p` 打印模式（适合管道）
-- `--output-format` 输出格式（text/json/stream-json）
+- `--headless` 无 Ink UI 的完整 agent 模式，按终端事件流输出
+- `--output-format` 输出格式（text/json/stream-json/jsonl）
 - `--permission-mode` 权限模式
 - `--resume/-r` 恢复会话 / `--session-id` 指定会话
+
+**Headless 模式**
+
+- `blade --headless "..."` 会运行完整 agent loop，但不启动交互式 Ink UI
+- 默认权限模式为 `yolo`，除非显式传入 `--permission-mode`
+- `--output-format jsonl` 会输出稳定的机器可消费事件流，适合 CI、sandbox 和测试场景
 
 **交互式命令（会话内）**
 
