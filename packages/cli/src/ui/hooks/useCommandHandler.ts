@@ -41,6 +41,45 @@ import type { ResolvedInput } from './useInputBuffer.js';
 const logger = createLogger(LogCategory.UI);
 
 /**
+ * 从 API 错误中提取用户友好的错误信息
+ * 处理 Vercel AI SDK 的 RetryError/APICallError 嵌套结构
+ */
+function extractFriendlyErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return '未知错误';
+
+  // Vercel AI SDK RetryError: 从嵌套的 lastError 中提取根因
+  const retryError = error as Error & { lastError?: Error };
+  const rootError = retryError.lastError ?? error;
+
+  // APICallError: 尝试从 responseBody 解析原始错误消息
+  const apiError = rootError as Error & {
+    responseBody?: string;
+    statusCode?: number;
+  };
+
+  if (apiError.responseBody) {
+    try {
+      const body = JSON.parse(apiError.responseBody);
+      const msg = body?.error?.message;
+      if (msg) {
+        const statusHint = apiError.statusCode ? ` (HTTP ${apiError.statusCode})` : '';
+        return `${msg}${statusHint}`;
+      }
+    } catch {
+      // JSON 解析失败，fallback
+    }
+  }
+
+  // 清理 RetryError 的冗长前缀
+  const lastErrorMatch = error.message.match(/Last error:\s*(.+)$/);
+  if (lastErrorMatch) {
+    return lastErrorMatch[1];
+  }
+
+  return error.message;
+}
+
+/**
  * invoke_skill action 的数据类型
  */
 interface InvokeSkillData {
@@ -891,15 +930,16 @@ Remember: Follow the above instructions carefully to complete the user's request
           return { success: false, error: 'aborted' };
         }
 
-        const errorMessage = error instanceof Error ? error.message : '未知错误';
+        const errorMessage = extractFriendlyErrorMessage(error);
 
         // 检测是否是图片/多模态不支持的错误
+        const rawMessage = error instanceof Error ? error.message : '';
         const isVisionNotSupportedError =
-          errorMessage.includes('can only concatenate str') ||
-          errorMessage.includes('image_url') ||
-          errorMessage.includes('multimodal') ||
-          errorMessage.includes('vision') ||
-          errorMessage.includes('does not support images');
+          rawMessage.includes('can only concatenate str') ||
+          rawMessage.includes('image_url') ||
+          rawMessage.includes('multimodal') ||
+          rawMessage.includes('vision') ||
+          rawMessage.includes('does not support images');
 
         let displayMessage = errorMessage;
         if (isVisionNotSupportedError) {

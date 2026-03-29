@@ -87,6 +87,46 @@ import type {
 const logger = createLogger(LogCategory.AGENT);
 
 /**
+ * 从 API 错误中提取用户友好的错误信息
+ * 处理 Vercel AI SDK 的 RetryError 和 APICallError 嵌套结构
+ */
+function extractApiErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return '未知错误';
+
+  // Vercel AI SDK RetryError: 从嵌套的 lastError/cause 中提取根因
+  const retryError = error as Error & { lastError?: Error; reason?: string };
+  const rootError = retryError.lastError ?? error;
+
+  // APICallError: 尝试从 responseBody 解析原始错误消息
+  const apiError = rootError as Error & {
+    responseBody?: string;
+    statusCode?: number;
+  };
+
+  if (apiError.responseBody) {
+    try {
+      const body = JSON.parse(apiError.responseBody);
+      const msg = body?.error?.message;
+      if (msg) {
+        const statusHint = apiError.statusCode ? ` (HTTP ${apiError.statusCode})` : '';
+        return `${msg}${statusHint}`;
+      }
+    } catch {
+      // JSON 解析失败，fallback
+    }
+  }
+
+  // 清理 RetryError 的冗长前缀
+  const message = error.message;
+  const lastErrorMatch = message.match(/Last error:\s*(.+)$/);
+  if (lastErrorMatch) {
+    return lastErrorMatch[1];
+  }
+
+  return message;
+}
+
+/**
  * Skill 执行上下文
  * 用于跟踪当前活动的 Skill 及其工具限制
  */
@@ -1584,12 +1624,15 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
         };
       }
 
-      logger.error('Enhanced chat processing error:', error);
+      // 只在 debug 模式下打印完整堆栈，避免用户看到巨大的错误信息
+      logger.debug('Enhanced chat processing error (full):', error);
+      const friendlyMessage = extractApiErrorMessage(error);
+      logger.error(`API 调用失败: ${friendlyMessage}`);
       return {
         success: false,
         error: {
           type: 'api_error',
-          message: `处理消息时发生错误: ${error instanceof Error ? error.message : '未知错误'}`,
+          message: friendlyMessage,
           details: error,
         },
         metadata: {

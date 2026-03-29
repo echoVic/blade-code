@@ -213,6 +213,34 @@ function createConfirmationHandler() {
   };
 }
 
+/**
+ * 从 API 错误中提取用户友好的错误信息
+ */
+function extractHeadlessErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return 'Unknown error';
+
+  const retryError = error as Error & { lastError?: Error };
+  const rootError = retryError.lastError ?? error;
+  const apiError = rootError as Error & { responseBody?: string; statusCode?: number };
+
+  if (apiError.responseBody) {
+    try {
+      const body = JSON.parse(apiError.responseBody);
+      const msg = body?.error?.message;
+      if (msg) {
+        return apiError.statusCode ? `${msg} (HTTP ${apiError.statusCode})` : msg;
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  const lastErrorMatch = error.message.match(/Last error:\s*(.+)$/);
+  if (lastErrorMatch) return lastErrorMatch[1];
+
+  return error.message;
+}
+
 function resolveOutputFormat(outputFormat?: string): HeadlessOutputFormat {
   return outputFormat === 'jsonl' ? 'jsonl' : 'text';
 }
@@ -492,7 +520,7 @@ export async function runHeadless(
     if (streamState.hasOpenThinking() && outputFormat === 'text') {
       io.stderr.write('\n');
     }
-    eventWriter.error(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    eventWriter.error(`Error: ${extractHeadlessErrorMessage(error)}`);
     return 1;
   }
 }
