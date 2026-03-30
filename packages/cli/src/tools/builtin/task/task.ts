@@ -14,13 +14,13 @@ import { z } from 'zod';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
 import { SubagentExecutor } from '../../../agent/subagents/SubagentExecutor.js';
 import { subagentRegistry } from '../../../agent/subagents/SubagentRegistry.js';
+import { createSubagentExecutionContext } from '../../../agent/subagents/createSubagentExecutionContext.js';
 import type {
   SubagentContext,
   SubagentResult,
 } from '../../../agent/subagents/types.js';
 import { PermissionMode } from '../../../config/types.js';
 import { HookManager } from '../../../hooks/HookManager.js';
-import { Bus } from '../../../server/bus.js';
 import { vanillaStore } from '../../../store/vanilla.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
@@ -264,68 +264,14 @@ export const taskTool = createTool({
         .app.actions.startSubagentProgress(subagentId, subagent_type, description);
 
       // 构建执行上下文
-      const subagentContext: SubagentContext = {
-        prompt,
-        parentSessionId: context.sessionId,
-        permissionMode: context.permissionMode, // 继承父 Agent 的权限模式
-        subagentSessionId,
-        onToolStart: (toolCall, toolKind) => {
-          const toolName =
-            toolCall.type === 'function' ? toolCall.function.name : 'Unknown';
-          vanillaStore.getState().app.actions.updateSubagentTool(toolName);
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.update', {
-              subagentSessionId,
-              toolName,
-            });
-            if (toolCall.type === 'function') {
-              Bus.publish(parentSessionId, 'subagent.tool.start', {
-                subagentSessionId,
-                toolCallId: toolCall.id,
-                toolName,
-                arguments: toolCall.function.arguments,
-                toolKind,
-              });
-            }
-          }
-        },
-        onToolResult: (toolCall, result) => {
-          if (!parentSessionId) return;
-          if (toolCall.type !== 'function') return;
-          Bus.publish(parentSessionId, 'subagent.tool.result', {
-            subagentSessionId,
-            toolCallId: toolCall.id,
-            toolName: toolCall.function.name,
-            success: !result.error,
-            summary: result.metadata?.summary,
-            output: result.displayContent,
-            metadata: result.metadata,
-          });
-        },
-        onContentDelta: (delta) => {
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.delta', {
-              subagentSessionId,
-              delta,
-            });
-          }
-        },
-        onThinkingDelta: (delta) => {
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.thinking.delta', {
-              subagentSessionId,
-              delta,
-            });
-          }
-        },
-        onStreamEnd: () => {
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.stream.end', {
-              subagentSessionId,
-            });
-          }
-        },
-      };
+      const subagentContext = createSubagentExecutionContext(
+        {
+          parentSessionId,
+          permissionMode: context.permissionMode,
+          subagentSessionId,
+          prompt,
+        }
+      );
 
       updateOutput?.(`⚙️  执行任务中...`);
 
@@ -357,9 +303,8 @@ export const taskTool = createTool({
 
           // 使用 continueReason 作为新的 prompt 继续执行
           const continueContext: SubagentContext = {
+            ...subagentContext,
             prompt: stopResult.continueReason,
-            parentSessionId: context.sessionId,
-            permissionMode: context.permissionMode,
           };
 
           const continueStartTime = Date.now();

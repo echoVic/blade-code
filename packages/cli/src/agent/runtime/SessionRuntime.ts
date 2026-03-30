@@ -27,7 +27,9 @@ import { ExecutionPipeline } from '../../tools/execution/ExecutionPipeline.js';
 import { InMemorySessionApprovalStore } from '../../tools/execution/SessionApprovalStore.js';
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
+import { buildAgentLoopRuntimeState } from '../buildAgentLoopRuntimeState.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
+import type { AgentLoopRuntimeState } from '../agentLoopDependencyTypes.js';
 import type { AgentOptions } from '../types.js';
 import { subagentRegistry } from '../subagents/SubagentRegistry.js';
 
@@ -115,6 +117,20 @@ export class SessionRuntime {
 
   getCurrentModelMaxContextTokens(): number {
     return this.currentModelMaxContextTokens;
+  }
+
+  createAgentLoopRuntimeState(
+    runtimeOptions: AgentOptions,
+    executionPipeline: ExecutionPipeline
+  ): AgentLoopRuntimeState {
+    return buildAgentLoopRuntimeState({
+      config: this.config,
+      runtimeOptions,
+      currentModelMaxContextTokens: this.currentModelMaxContextTokens,
+      executionPipeline,
+      executionEngine: this.executionEngine as any,
+      chatService: this.chatService,
+    });
   }
 
   async initialize(): Promise<void> {

@@ -172,3 +172,23 @@ export interface LoopResult {
     planContent?: string; // Plan 模式批准后的方案内容
   };
 }
+
+export type LoopResultMetadataInput = Pick<
+  NonNullable<LoopResult['metadata']>,
+  'turnsCount' | 'toolCallsCount' | 'duration'
+> &
+  Partial<NonNullable<LoopResult['metadata']>>;
+
+export interface AgentLoopInvocation {
+  message: UserMessageContent;
+  context: ChatContext;
+  options?: LoopOptions;
+}
+
+export interface AgentExecutionInvocation extends AgentLoopInvocation {
+  systemPrompt?: string;
+}
+
+export interface RunAgentLoopRequest extends AgentExecutionInvocation {
+  dependencies: import('./agentLoopDependencyTypes.js').AgentLoopDependencies;
+}

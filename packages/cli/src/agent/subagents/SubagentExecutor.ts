@@ -1,5 +1,7 @@
 import { nanoid } from 'nanoid';
 import { Agent } from '../Agent.js';
+import { buildSubagentLoopInvocation } from './buildSubagentLoopInvocation.js';
+import { buildSubagentLoopOptions } from './buildSubagentLoopOptions.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
 
 /**
@@ -39,35 +41,17 @@ export class SubagentExecutor {
       let toolCallCount = 0;
       let tokensUsed = 0;
 
-      const subagentInfo = {
-        parentSessionId: context.parentSessionId || '',
+      const invocation = buildSubagentLoopInvocation({
+        prompt: context.prompt,
+        loopOptions: buildSubagentLoopOptions(context),
+        sessionId: agentId,
+        permissionMode: context.permissionMode,
+        systemPrompt,
+        parentSessionId: context.parentSessionId,
         subagentType: this.config.name,
-        isSidechain: false,
-      };
-      
-      const loopResult = await agent.runAgenticLoop(
-        context.prompt,
-        {
-          messages: [],
-          userId: 'subagent',
-          sessionId: agentId,
-          workspaceRoot: process.cwd(),
-          permissionMode: context.permissionMode,
-          systemPrompt,
-          subagentInfo,
-        },
-        {
-          onToolStart: context.onToolStart,
-          onToolResult: context.onToolResult
-            ? async (toolCall, result) => {
-                context.onToolResult?.(toolCall, result);
-              }
-            : undefined,
-          onContentDelta: context.onContentDelta,
-          onThinkingDelta: context.onThinkingDelta,
-          onStreamEnd: context.onStreamEnd,
-        }
-      );
+      });
+
+      const loopResult = await agent.runAgenticLoopInvocation(invocation);
 
       if (loopResult.success) {
         finalMessage = loopResult.finalMessage || '';

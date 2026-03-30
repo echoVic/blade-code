@@ -5,6 +5,7 @@
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { PermissionMode } from '../../config/types.js';
 import type { ToolResult } from '../../tools/types/index.js';
+import type { LoopOptions } from '../types.js';
 
 /**
  * Claude Code permissionMode 类型
@@ -107,10 +108,7 @@ export interface SubagentConfig {
     | `plugin:${string}`;
 }
 
-/**
- * Subagent 执行上下文
- */
-export interface SubagentContext {
+interface SubagentExecutionContext {
   /** 任务提示 */
   prompt: string;
 
@@ -125,21 +123,28 @@ export interface SubagentContext {
 
   /** 子代理会话 ID（用于与主会话关联） */
   subagentSessionId?: string;
+}
 
-  /** 工具执行开始回调（用于 UI 进度显示） */
-  onToolStart?: (
-    toolCall: ChatCompletionMessageToolCall,
-    toolKind?: 'readonly' | 'write' | 'execute'
-  ) => void;
+export type SubagentLoopCallbacks = Omit<
+  Pick<
+    LoopOptions,
+    | 'onToolStart'
+    | 'onToolResult'
+    | 'onContentDelta'
+    | 'onThinkingDelta'
+    | 'onStreamEnd'
+    | 'onContent'
+    | 'onThinking'
+  >,
+  'onToolResult'
+> & {
   onToolResult?: (
     toolCall: ChatCompletionMessageToolCall,
     result: ToolResult
-  ) => void;
+  ) => void | Promise<void>;
+};
 
-  onContentDelta?: (delta: string) => void;
-  onThinkingDelta?: (delta: string) => void;
-  onStreamEnd?: () => void;
-}
+export type SubagentContext = SubagentExecutionContext & SubagentLoopCallbacks;
 
 /**
  * Subagent 执行结果

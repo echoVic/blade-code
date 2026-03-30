@@ -13,6 +13,7 @@ import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { Agent } from '../Agent.js';
 import { SessionRuntime } from '../runtime/SessionRuntime.js';
+import { buildSubagentLoopInvocation } from './buildSubagentLoopInvocation.js';
 import {
   type AgentSession,
   type AgentSessionStatus,
@@ -214,25 +215,20 @@ export class BackgroundAgentManager {
         modelId,
       });
 
-      const context = {
+      const invocation = buildSubagentLoopInvocation({
+        prompt,
+        loopOptions: { signal },
         messages: existingMessages || [],
-        userId: 'subagent',
         sessionId: agentId,
-        workspaceRoot: process.cwd(),
         permissionMode,
-        subagentInfo: {
-          parentSessionId: parentSessionId || '',
-          subagentType: config.name,
-          isSidechain: false,
-        },
-      };
-
-      const loopResult = await agent.runAgenticLoop(prompt, context, {
-        signal,
+        parentSessionId,
+        subagentType: config.name,
       });
 
+      const loopResult = await agent.runAgenticLoopInvocation(invocation);
+
       this.sessionStore.updateSession(agentId, {
-        messages: context.messages,
+        messages: invocation.context.messages,
       });
 
       const duration = Date.now() - startTime;

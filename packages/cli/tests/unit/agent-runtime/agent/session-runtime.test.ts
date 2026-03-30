@@ -90,4 +90,31 @@ describe('SessionRuntime', () => {
     expect(chatDispose).toHaveBeenCalledTimes(1);
     expect((runtime as any).initialized).toBe(false);
   });
+
+  it('builds agent loop runtime state from the session runtime and execution pipeline', () => {
+    const runtime = new SessionRuntime({ maxTurns: -1 } as any, {
+      sessionId: 'session-1',
+    });
+    const executionPipeline = { getRegistry: vi.fn(), execute: vi.fn() } as any;
+    const chatService = { chat: vi.fn(), getConfig: vi.fn() } as any;
+    const executionEngine = { getContextManager: vi.fn() } as any;
+
+    (runtime as any).chatService = chatService;
+    (runtime as any).executionEngine = executionEngine;
+    (runtime as any).currentModelMaxContextTokens = 128000;
+
+    const runtimeState = runtime.createAgentLoopRuntimeState(
+      { maxTurns: 5 } as any,
+      executionPipeline
+    );
+
+    expect(runtimeState).toEqual({
+      config: runtime.getConfig(),
+      runtimeOptions: { maxTurns: 5 },
+      currentModelMaxContextTokens: 128000,
+      executionPipeline,
+      executionEngine,
+      chatService,
+    });
+  });
 });

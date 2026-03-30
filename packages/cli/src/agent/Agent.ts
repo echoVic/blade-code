@@ -10,7 +10,6 @@
  * 负责：LLM 交互、工具执行、循环检测
  */
 
-import { nanoid } from 'nanoid';
 import * as os from 'os';
 import * as path from 'path';
 import {
@@ -20,38 +19,20 @@ import {
   PermissionMode,
 } from '../config/index.js';
 import type { ModelConfig } from '../config/types.js';
-import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
-import { HookManager } from '../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import { streamDebug } from '../logging/StreamDebugLogger.js';
 import { loadMcpConfigFromCli } from '../mcp/loadMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
-import { buildSystemPrompt, createPlanModeReminder } from '../prompts/index.js';
+import { buildSystemPrompt } from '../prompts/index.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
 import type { Attachment } from '../prompts/processors/types.js';
-import { buildSpecModePrompt, createSpecModeReminder } from '../prompts/spec.js';
 import {
-  type ChatResponse,
   type ContentPart,
   createChatServiceAsync,
   type IChatService,
   type Message,
-  type StreamToolCall,
 } from '../services/ChatServiceInterface.js';
-import type { JsonValue } from '../store/types.js';
-
-function toJsonValue(value: string | object): JsonValue {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.parse(JSON.stringify(value)) as JsonValue;
-  } catch {
-    return String(value);
-  }
-}
-
-
-import { discoverSkills, injectSkillsMetadata } from '../skills/index.js';
+import { discoverSkills } from '../skills/index.js';
 import { SpecManager } from '../spec/SpecManager.js';
 import {
   appActions,
@@ -67,13 +48,33 @@ import {
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
-import { type Tool, ToolErrorType, type ToolResult } from '../tools/types/index.js';
+import { type Tool } from '../tools/types/index.js';
 import { getEnvironmentContext } from '../utils/environment.js';
 import { isThinkingModel } from '../utils/modelDetection.js';
+import type { AgentLoopRuntimeState } from './agentLoopDependencyTypes.js';
+import { createAgentSkillContextController } from './agentSkillContextController.js';
+import {
+  buildApprovedPlanContinuationInput,
+  type ApprovedPlanContinuationInput,
+} from './buildApprovedPlanContinuationInput.js';
+import { buildContextualLoopExecutionInput } from './buildContextualLoopExecutionInput.js';
+import { buildDefaultLoopExecutionInput } from './buildDefaultLoopExecutionInput.js';
+import { buildAgentLoopDependencies } from './buildAgentLoopDependencies.js';
+import { buildAgentExecutionInvocation } from './buildAgentExecutionInvocation.js';
+import { buildAgentLoopRuntimeState } from './buildAgentLoopRuntimeState.js';
+import { buildPlanLoopExecutionInput } from './buildPlanLoopExecutionInput.js';
+import { buildRunAgentLoopRequest } from './buildRunAgentLoopRequest.js';
+import { buildSpecLoopExecutionInput } from './buildSpecLoopExecutionInput.js';
+import { createAgentLoopController } from './createAgentLoopController.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
+import { loadSpecLoopContext } from './loadSpecLoopContext.js';
+import type { LoopExecutionInput } from './loopExecutionInput.js';
+import { runAgentLoop } from './runAgentLoop.js';
 import { SessionRuntime } from './runtime/SessionRuntime.js';
 import { subagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
+  AgentLoopInvocation,
+  AgentExecutionInvocation,
   AgentOptions,
   AgentResponse,
   AgentTask,
@@ -85,16 +86,6 @@ import type {
 
 // 创建 Agent 专用 Logger
 const logger = createLogger(LogCategory.AGENT);
-
-/**
- * Skill 执行上下文
- * 用于跟踪当前活动的 Skill 及其工具限制
- */
-interface SkillExecutionContext {
-  skillName: string;
-  allowedTools?: string[];
-  basePath: string;
-}
 
 export class Agent {
   private config: BladeConfig;
@@ -109,9 +100,16 @@ export class Agent {
   private chatService!: IChatService;
   private executionEngine!: ExecutionEngine;
   private attachmentCollector?: AttachmentCollector;
-
-  // Skill 执行上下文（用于 allowed-tools 限制）
-  private activeSkillContext?: SkillExecutionContext;
+  private skillContextController = createAgentSkillContextController({
+    debug: (message) => logger.debug(message),
+  });
+  private loopController = createAgentLoopController({
+    skillContextController: this.skillContextController,
+    switchModelIfNeeded: (modelId) => this.switchModelIfNeeded(modelId),
+    setTodos: (todos) => appActions().setTodos(todos),
+    log: (message) => this.log(message),
+    error: (message) => this.error(message),
+  });
 
   // 当前模型的上下文窗口大小（用于 tokenUsage 上报）
   private currentModelMaxContextTokens!: number;
@@ -372,79 +370,7 @@ export class Agent {
 
     // 如果提供了 context，使用增强的工具调用流程
     if (context) {
-      // 合并 signal 和 options
-      const loopOptions: LoopOptions = {
-        signal: context.signal,
-        ...options,
-      };
-
-      // Plan/Spec 模式使用专门的 runLoop 方法
-      let result: LoopResult;
-      if (context.permissionMode === 'plan') {
-        result = await this.runPlanLoop(enhancedMessage, context, loopOptions);
-      } else if (context.permissionMode === 'spec') {
-        result = await this.runSpecLoop(enhancedMessage, context, loopOptions);
-      } else {
-        result = await this.runLoop(enhancedMessage, context, loopOptions);
-      }
-
-      if (!result.success) {
-        // 如果是用户中止或用户拒绝，返回空字符串（不抛出异常）
-        if (result.error?.type === 'aborted' || result.metadata?.shouldExitLoop) {
-          return ''; // 返回空字符串，让调用方自行处理
-        }
-        // 其他错误则抛出异常
-        throw new Error(result.error?.message || '执行失败');
-      }
-
-      // 🆕 检查是否需要切换模式并重新执行（Plan 模式批准后）
-      if (result.metadata?.targetMode && context.permissionMode === 'plan') {
-        const targetMode = result.metadata.targetMode as PermissionMode;
-        const planContent = result.metadata.planContent as string | undefined;
-        logger.debug(`🔄 Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
-
-        // 更新内存中的权限模式（运行时状态，不持久化）
-        await configActions().setPermissionMode(targetMode);
-        logger.debug(`✅ 权限模式已更新: ${targetMode}`);
-
-        // 创建新的 context，使用批准的目标模式
-        const newContext: ChatContext = {
-          ...context,
-          permissionMode: targetMode,
-        };
-
-        // 🆕 将 plan 内容注入到消息中，确保 AI 按照 plan 执行
-        let messageWithPlan: UserMessageContent = enhancedMessage;
-        if (planContent) {
-          const planSuffix = `
-
-<approved-plan>
-${planContent}
-</approved-plan>
-
-IMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
-
-          // 处理多模态消息：将 plan 内容追加到文本部分
-          if (typeof enhancedMessage === 'string') {
-            messageWithPlan = enhancedMessage + planSuffix;
-          } else {
-            // 多模态消息：在最后添加一个文本部分
-            messageWithPlan = [...enhancedMessage, { type: 'text', text: planSuffix }];
-          }
-          logger.debug(`📋 已将 plan 内容注入到消息中 (${planContent.length} 字符)`);
-        }
-
-        return this.runLoop(messageWithPlan, newContext, loopOptions).then(
-          (newResult) => {
-            if (!newResult.success) {
-              throw new Error(newResult.error?.message || '执行失败');
-            }
-            return newResult.finalMessage || '';
-          }
-        );
-      }
-
-      return result.finalMessage || '';
+      return this.executeContextualChat(enhancedMessage, context, options);
     }
 
     // 否则使用原有的简单流程（仅支持纯文本消息）
@@ -467,161 +393,100 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
     return response.content;
   }
 
-  /**
-   * 运行 Plan 模式循环 - 专门处理 Plan 模式的逻辑
-   * Plan 模式特点：只读调研、系统化研究方法论、最终输出实现计划
-   */
-  /**
-   * Plan 模式入口 - 准备 Plan 专用配置后调用通用循环
-   */
-  private async runPlanLoop(
+  private async executeLoopInput(
+    executionInput: LoopExecutionInput,
+    context: ChatContext,
+    options?: LoopOptions
+  ): Promise<LoopResult> {
+    return this.executeLoop(
+      executionInput.message,
+      context,
+      options,
+      executionInput.systemPrompt
+    );
+  }
+
+  private async executeContextualLoop(
     message: UserMessageContent,
     context: ChatContext,
     options?: LoopOptions
   ): Promise<LoopResult> {
-    logger.debug('🔵 Processing Plan mode message...');
+    const loopOptions: LoopOptions = {
+      signal: context.signal,
+      ...options,
+    };
 
-    // Plan 模式差异 1: 使用统一入口构建 Plan 模式系统提示词
-    const { prompt: systemPrompt } = await buildSystemPrompt({
-      projectPath: process.cwd(),
-      mode: PermissionMode.PLAN,
-      includeEnvironment: true,
+    const executionInput = await buildContextualLoopExecutionInput({
+      message,
+      context,
+      runtimeOptions: {
+        systemPrompt: this.runtimeOptions.systemPrompt,
+        appendSystemPrompt: this.runtimeOptions.appendSystemPrompt,
+      },
       language: this.config.language,
+      environmentContext: getEnvironmentContext(),
+      specManager: SpecManager.getInstance(),
+      onSpecInitializationWarning: (error) =>
+        logger.warn('SpecManager initialization warning:', error),
     });
 
-    // Plan 模式差异 2: 在用户消息中注入 system-reminder
-    // 处理多模态消息：提取文本部分添加 reminder
-    let messageWithReminder: UserMessageContent;
-    if (typeof message === 'string') {
-      messageWithReminder = createPlanModeReminder(message);
-    } else {
-      // 多模态消息：在第一个文本部分前添加 reminder，或创建新的文本部分
-      const textParts = message.filter((p) => p.type === 'text');
-      if (textParts.length > 0) {
-        const firstTextPart = textParts[0] as { type: 'text'; text: string };
-        messageWithReminder = message.map((p) =>
-          p === firstTextPart
-            ? {
-                type: 'text' as const,
-                text: createPlanModeReminder(firstTextPart.text),
-              }
-            : p
-        );
-      } else {
-        // 仅图片，添加空的 reminder
-        messageWithReminder = [
-          { type: 'text', text: createPlanModeReminder('') },
-          ...message,
-        ];
-      }
-    }
-
-    // 调用通用循环，传入 Plan 模式专用配置
-    // 注意：不再传递 isPlanMode 参数，executeLoop 会从 context.permissionMode 读取
-    return this.executeLoop(messageWithReminder, context, options, systemPrompt);
+    return this.executeLoopInput(executionInput, context, loopOptions);
   }
 
-  /**
-   * Spec 模式入口 - 准备 Spec 专用配置后调用通用循环
-   * Spec 模式特点：结构化 4 阶段工作流（Requirements → Design → Tasks → Implementation）
-   */
-  private async runSpecLoop(
+  private async executeContextualChat(
     message: UserMessageContent,
     context: ChatContext,
     options?: LoopOptions
-  ): Promise<LoopResult> {
-    logger.debug('🔷 Processing Spec mode message...');
+  ): Promise<string> {
+    const result = await this.executeContextualLoop(message, context, options);
 
-    // 1. 确保 SpecManager 已初始化
-    const specManager = SpecManager.getInstance();
-    const workspaceRoot = context.workspaceRoot || process.cwd();
-
-    try {
-      // 尝试初始化（如果已初始化会安全返回）
-      await specManager.initialize(workspaceRoot);
-    } catch (error) {
-      logger.warn('SpecManager initialization warning:', error);
-      // 继续执行，可能是首次进入 Spec 模式
-    }
-
-    // 2. 获取当前 Spec 上下文
-    const currentSpec = specManager.getCurrentSpec();
-    const steeringContextString = await specManager.getSteeringContextString();
-
-    // 2. 构建 Spec 模式系统提示词
-    const systemPrompt = buildSpecModePrompt(currentSpec, steeringContextString);
-
-    // 3. 在用户消息中注入 spec-mode-reminder
-    let messageWithReminder: UserMessageContent;
-    const phase = currentSpec?.phase || 'init';
-
-    if (typeof message === 'string') {
-      messageWithReminder = `${createSpecModeReminder(phase)}\n\n${message}`;
-    } else {
-      // 多模态消息：在第一个文本部分前添加 reminder
-      const textParts = message.filter((p) => p.type === 'text');
-      if (textParts.length > 0) {
-        const firstTextPart = textParts[0] as { type: 'text'; text: string };
-        messageWithReminder = message.map((p) =>
-          p === firstTextPart
-            ? {
-                type: 'text' as const,
-                text: `${createSpecModeReminder(phase)}\n\n${firstTextPart.text}`,
-              }
-            : p
-        );
-      } else {
-        // 仅图片，添加 reminder
-        messageWithReminder = [
-          { type: 'text', text: createSpecModeReminder(phase) },
-          ...message,
-        ];
+    if (!result.success) {
+      if (result.error?.type === 'aborted' || result.metadata?.shouldExitLoop) {
+        return '';
       }
+      throw new Error(result.error?.message || '执行失败');
     }
 
-    // 4. 调用通用循环，传入 Spec 模式专用配置
-    return this.executeLoop(messageWithReminder, context, options, systemPrompt);
+    if (result.metadata?.targetMode && context.permissionMode === 'plan') {
+      const targetMode = result.metadata.targetMode as PermissionMode;
+      const planContent = result.metadata.planContent as string | undefined;
+      logger.debug(`🔄 Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
+      const continuation = buildApprovedPlanContinuationInput({
+        message,
+        context,
+        targetMode,
+        planContent,
+      });
+      if (planContent) {
+        logger.debug(`📋 已将 plan 内容注入到消息中 (${planContent.length} 字符)`);
+      }
+
+      return this.continueApprovedPlanExecution(continuation, options);
+    }
+
+    return result.finalMessage || '';
   }
 
-  /**
-   * 普通模式入口 - 准备普通模式配置后调用通用循环
-   * 无状态设计：systemPrompt 从 context 传入，或按需动态构建
-   */
-  private async runLoop(
-    message: UserMessageContent,
-    context: ChatContext,
+  private async continueApprovedPlanExecution(
+    continuation: ApprovedPlanContinuationInput,
     options?: LoopOptions
-  ): Promise<LoopResult> {
-    logger.debug('💬 Processing enhanced chat message...');
+  ): Promise<string> {
+    const targetMode = continuation.context.permissionMode as PermissionMode;
 
-    // 无状态设计：优先使用 context.systemPrompt，否则按需构建
-    const basePrompt =
-      context.systemPrompt ?? (await this.buildSystemPromptOnDemand());
-    const envContext = getEnvironmentContext();
-    const systemPrompt = basePrompt
-      ? `${envContext}\n\n---\n\n${basePrompt}`
-      : envContext;
+    await configActions().setPermissionMode(targetMode);
+    logger.debug(`✅ 权限模式已更新: ${targetMode}`);
 
-    // 调用通用循环
-    return this.executeLoop(message, context, options, systemPrompt);
-  }
+    const result = await this.executeContextualLoop(
+      continuation.message,
+      continuation.context,
+      options
+    );
 
-  /**
-   * 按需构建系统提示词（用于未传入 context.systemPrompt 的场景）
-   */
-  private async buildSystemPromptOnDemand(): Promise<string> {
-    const replacePrompt = this.runtimeOptions.systemPrompt;
-    const appendPrompt = this.runtimeOptions.appendSystemPrompt;
+    if (!result.success) {
+      throw new Error(result.error?.message || '执行失败');
+    }
 
-    const result = await buildSystemPrompt({
-      projectPath: process.cwd(),
-      replaceDefault: replacePrompt,
-      append: appendPrompt,
-      includeEnvironment: false,
-      language: this.config.language,
-    });
-
-    return result.prompt;
+    return result.finalMessage || '';
   }
 
   /**
@@ -639,1159 +504,54 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
     options?: LoopOptions,
     systemPrompt?: string
   ): Promise<LoopResult> {
+    return this.executeLoopInvocation(
+      buildAgentExecutionInvocation({
+        message,
+        context,
+        options,
+        systemPrompt,
+      })
+    );
+  }
+
+  private async executeLoopInvocation({
+    message,
+    context,
+    options,
+    systemPrompt,
+  }: AgentExecutionInvocation): Promise<LoopResult> {
     if (!this.isInitialized) {
       throw new Error('Agent未初始化');
     }
-
-    const startTime = Date.now();
-
-    try {
-      // 1. 获取可用工具定义
-      // 根据 permissionMode 决定工具暴露策略（单一信息源：ToolRegistry.getFunctionDeclarationsByMode）
-      const registry = this.executionPipeline.getRegistry();
-      const permissionMode = context.permissionMode as PermissionMode | undefined;
-      let rawTools = registry.getFunctionDeclarationsByMode(permissionMode);
-      // 注入 Skills 元数据到 Skill 工具的 <available_skills> 占位符
-      rawTools = injectSkillsMetadata(rawTools);
-      // 应用 Skill 的 allowed-tools 限制（如果有活动的 Skill）
-      const tools = this.applySkillToolRestrictions(rawTools);
-      const isPlanMode = permissionMode === PermissionMode.PLAN;
-
-      if (isPlanMode) {
-        const readOnlyTools = registry.getReadOnlyTools();
-        logger.debug(
-          `🔒 Plan mode: 使用只读工具 (${readOnlyTools.length} 个): ${readOnlyTools.map((t) => t.name).join(', ')}`
-        );
-      }
-
-      // 2. 构建消息历史
-      const needsSystemPrompt =
-        context.messages.length === 0 ||
-        !context.messages.some((msg) => msg.role === 'system');
-
-      const messages: Message[] = [];
-
-      // 注入系统提示词（由调用方决定使用哪个提示词）
-      // 🆕 为 Anthropic 模型启用 Prompt Caching（成本降低 90%，延迟降低 85%）
-      if (needsSystemPrompt && systemPrompt) {
-        messages.push({
-          role: 'system',
-          content: [
-            {
-              type: 'text',
-              text: systemPrompt,
-              providerOptions: {
-                anthropic: { cacheControl: { type: 'ephemeral' } },
-              },
-            },
-          ],
-        });
-      }
-
-      // 添加历史消息和当前用户消息
-      messages.push(...context.messages, { role: 'user', content: message });
-
-      // === 保存用户消息到 JSONL ===
-      let lastMessageUuid: string | null = null; // 追踪上一条消息的 UUID,用于建立消息链
-      try {
-        const contextMgr = this.executionEngine?.getContextManager();
-        // 提取纯文本内容用于保存（多模态消息只保存文本部分）
-        const textContent =
-          typeof message === 'string'
-            ? message
-            : message
-                .filter((p) => p.type === 'text')
-                .map((p) => (p as { text: string }).text)
-                .join('\n');
-        // 🔧 修复：过滤空用户消息（与助手消息保持一致）
-        if (contextMgr && context.sessionId && textContent.trim() !== '') {
-          lastMessageUuid = await contextMgr.saveMessage(
-            context.sessionId,
-            'user',
-            textContent,
-            null,
-            undefined,
-            context.subagentInfo
-          );
-        } else if (textContent.trim() === '') {
-          logger.debug('[Agent] 跳过保存空用户消息');
-        }
-      } catch (error) {
-        logger.warn('[Agent] 保存用户消息失败:', error);
-        // 不阻塞主流程
-      }
-
-      // === Agentic Loop: 循环调用直到任务完成 ===
-      const SAFETY_LIMIT = 100; // 安全上限（100 轮后询问用户）
-      const isYoloMode = context.permissionMode === PermissionMode.YOLO; // YOLO 模式不限制
-      // 优先级: runtimeOptions (CLI参数) > options (chat调用参数) > config (配置文件) > 默认值(-1)
-      const configuredMaxTurns =
-        this.runtimeOptions.maxTurns ?? options?.maxTurns ?? this.config.maxTurns ?? -1;
-
-      // 特殊值处理：maxTurns = 0 完全禁用对话功能
-      if (configuredMaxTurns === 0) {
-        return {
-          success: false,
-          error: {
-            type: 'chat_disabled',
-            message:
-              '对话功能已被禁用 (maxTurns=0)。如需启用，请调整配置：\n' +
-              '  • CLI 参数: blade --max-turns -1\n' +
-              '  • 配置文件: ~/.blade/config.json 中设置 "maxTurns": -1\n' +
-              '  • 环境变量: export BLADE_MAX_TURNS=-1',
-          },
-          metadata: {
-            turnsCount: 0,
-            toolCallsCount: 0,
-            duration: 0,
-          },
-        };
-      }
-
-      // 应用安全上限：-1 表示无限制，但仍受 SAFETY_LIMIT 保护（YOLO 模式除外）
-      const maxTurns =
-        configuredMaxTurns === -1
-          ? SAFETY_LIMIT
-          : Math.min(configuredMaxTurns, SAFETY_LIMIT);
-
-      // 调试日志
-      if (this.config.debug) {
-        logger.debug(
-          `[MaxTurns] runtimeOptions: ${this.runtimeOptions.maxTurns}, options: ${options?.maxTurns}, config: ${this.config.maxTurns}, 最终: ${configuredMaxTurns} → ${maxTurns}, YOLO: ${isYoloMode}`
-        );
-      }
-
-      let turnsCount = 0;
-      const allToolResults: ToolResult[] = [];
-      let totalTokens = 0; //- 累计 token 使用量
-      let lastPromptTokens: number | undefined; // 上一轮 LLM 返回的真实 prompt tokens
-
-      // Agentic Loop: 循环调用直到任务完成
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        // === 1. 检查中断信号 ===
-        if (options?.signal?.aborted) {
-          return {
-            success: false,
-            error: {
-              type: 'aborted',
-              message: '任务已被用户中止',
-            },
-            metadata: {
-              turnsCount,
-              toolCallsCount: allToolResults.length,
-              duration: Date.now() - startTime,
-            },
-          };
-        }
-
-        // === 2. 每轮循环前检查并压缩上下文 ===
-        // 📊 记录压缩前的状态，用于判断是否需要重建 messages
-        const preCompactLength = context.messages.length;
-
-        // 传递实际要发送给 LLM 的 messages 数组（包含 system prompt）
-        // checkAndCompactInLoop 返回是否发生了压缩
-        // 🆕 传入上一轮 LLM 返回的真实 prompt tokens（比估算更准确）
-        const didCompact = await this.checkAndCompactInLoop(
-          context,
-          turnsCount,
-          lastPromptTokens, // 首轮为 undefined，使用估算；后续轮次使用真实值
-          options?.onCompacting
-        );
-
-        // 🔧 关键修复：如果发生了压缩，必须重建 messages 数组
-        // 即使长度相同但内容不同的压缩场景也能正确处理
-        if (didCompact) {
-          logger.debug(
-            `[Agent] [轮次 ${turnsCount}] 检测到压缩发生，重建 messages 数组 (${preCompactLength} → ${context.messages.length} 条历史消息)`
-          );
-
-          // 找到 messages 中非历史部分的起始位置
-          // messages 结构: [system?, ...context.messages(旧), user当前消息?, assistant?, tool?...]
-          const systemMsgCount = needsSystemPrompt && systemPrompt ? 1 : 0;
-          const historyEndIdx = systemMsgCount + preCompactLength;
-
-          // 保留非历史部分（当前轮次新增的消息）
-          const systemMessages = messages.slice(0, systemMsgCount);
-          const newMessages = messages.slice(historyEndIdx); // 当前轮次新增的 user/assistant/tool
-
-          // 重建：system + 压缩后的历史 + 当前轮次新增
-          messages.length = 0; // 清空原数组
-          messages.push(...systemMessages, ...context.messages, ...newMessages);
-
-          logger.debug(
-            `[Agent] [轮次 ${turnsCount}] messages 重建完成: ${systemMessages.length} system + ${context.messages.length} 历史 + ${newMessages.length} 新增 = ${messages.length} 总计`
-          );
-        }
-
-        // === 3. 轮次计数 ===
-        turnsCount++;
-        logger.debug(`🔄 [轮次 ${turnsCount}/${maxTurns}] 调用 LLM...`);
-
-        // 再次检查 abort 信号（在调用 LLM 前）
-        if (options?.signal?.aborted) {
-          return {
-            success: false,
-            error: {
-              type: 'aborted',
-              message: '任务已被用户中止',
-            },
-            metadata: {
-              turnsCount: turnsCount - 1, // 这一轮还没开始
-              toolCallsCount: allToolResults.length,
-              duration: Date.now() - startTime,
-            },
-          };
-        }
-
-        // 触发轮次开始事件 (供 UI 显示进度)
-        options?.onTurnStart?.({ turn: turnsCount, maxTurns });
-
-        // 🔍 调试：打印发送给 LLM 的消息
-        logger.debug('\n========== 发送给 LLM ==========');
-        logger.debug('轮次:', turnsCount + 1);
-        logger.debug('消息数量:', messages.length);
-        logger.debug('最后 3 条消息:');
-        messages.slice(-3).forEach((msg, idx) => {
-          logger.debug(
-            `  [${idx}] ${msg.role}:`,
-            typeof msg.content === 'string'
-              ? msg.content.substring(0, 100) + (msg.content.length > 100 ? '...' : '')
-              : JSON.stringify(msg.content).substring(0, 100)
-          );
-          if (msg.tool_calls) {
-            logger.debug(
-              '    tool_calls:',
-              msg.tool_calls
-                .map((tc) => ('function' in tc ? tc.function.name : tc.type))
-                .join(', ')
-            );
-          }
-        });
-        logger.debug('可用工具数量:', tools.length);
-        logger.debug('================================\n');
-
-        // 3. 调用 ChatService（流式或非流式）
-        // 默认启用流式，除非显式设置 stream: false
-        const isStreamEnabled = options?.stream !== false;
-        const turnResult = isStreamEnabled
-          ? await this.processStreamResponse(messages, tools, options)
-          : await this.chatService.chat(messages, tools, options?.signal);
-
-        streamDebug('executeLoop', 'after processStreamResponse/chat', {
-          isStreamEnabled,
-          turnResultContentLen: turnResult.content?.length ?? 0,
-          turnResultToolCallsLen: turnResult.toolCalls?.length ?? 0,
-          hasReasoningContent: !!turnResult.reasoningContent,
-        });
-
-        // 累加 token 使用量，并保存真实的 prompt tokens 用于下一轮压缩检查
-        if (turnResult.usage) {
-          if (turnResult.usage.totalTokens) {
-            totalTokens += turnResult.usage.totalTokens;
-          }
-          // 保存真实的 prompt tokens，用于下一轮循环的压缩检查（比估算更准确）
-          lastPromptTokens = turnResult.usage.promptTokens;
-          logger.debug(
-            `[Agent] LLM usage: prompt=${lastPromptTokens}, completion=${turnResult.usage.completionTokens}, total=${turnResult.usage.totalTokens}`
-          );
-
-          // 通知 UI 更新 token 使用量
-          if (options?.onTokenUsage) {
-            options.onTokenUsage({
-              inputTokens: turnResult.usage.promptTokens ?? 0,
-              outputTokens: turnResult.usage.completionTokens ?? 0,
-              totalTokens,
-              maxContextTokens: this.currentModelMaxContextTokens,
-            });
-          }
-        }
-
-        // 检查 abort 信号（LLM 调用后）
-        if (options?.signal?.aborted) {
-          return {
-            success: false,
-            error: {
-              type: 'aborted',
-              message: '任务已被用户中止',
-            },
-            metadata: {
-              turnsCount: turnsCount - 1,
-              toolCallsCount: allToolResults.length,
-              duration: Date.now() - startTime,
-            },
-          };
-        }
-
-        // 🔍 调试：打印模型返回
-        logger.debug('\n========== LLM 返回 ==========');
-        logger.debug('Content:', turnResult.content);
-        logger.debug('Tool Calls:', JSON.stringify(turnResult.toolCalls, null, 2));
-        logger.debug('当前权限模式:', context.permissionMode);
-        logger.debug('================================\n');
-
-        // 🆕 如果 LLM 返回了 thinking 内容（DeepSeek R1 等），通知 UI
-        // 流式模式下，增量已通过 onThinkingDelta 发送，这里发送完整内容用于兼容
-        // 非流式模式下，这是唯一的通知途径
-        // 注意：检查 abort 状态，避免取消后仍然触发回调
-        if (
-          turnResult.reasoningContent &&
-          options?.onThinking &&
-          !options.signal?.aborted
-        ) {
-          options.onThinking(turnResult.reasoningContent);
-        }
-
-        // 🆕 如果 LLM 返回了 content，通知 UI
-        // 流式模式下：增量已通过 onContentDelta 发送，调用 onStreamEnd 标记结束
-        // 非流式模式下：调用 onContent 发送完整内容
-        // 注意：检查 abort 状态，避免取消后仍然触发回调
-        if (
-          turnResult.content &&
-          turnResult.content.trim() &&
-          !options?.signal?.aborted
-        ) {
-          if (isStreamEnabled) {
-            streamDebug('executeLoop', 'calling onStreamEnd (stream mode)', {
-              contentLen: turnResult.content.length,
-            });
-            options?.onStreamEnd?.();
-          } else if (options?.onContent) {
-            streamDebug('executeLoop', 'calling onContent (non-stream mode)', {
-              contentLen: turnResult.content.length,
-            });
-            options.onContent(turnResult.content);
-          }
-        }
-
-        // 4. 检查是否需要工具调用（任务完成条件）
-        if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
-          // === 检测"意图未完成"模式 ===
-          // 某些模型（如 qwen）会说"让我来..."但不实际调用工具
-          const INCOMPLETE_INTENT_PATTERNS = [
-            /：\s*$/, // 中文冒号结尾
-            /:\s*$/, // 英文冒号结尾
-            /\.\.\.\s*$/, // 省略号结尾
-            /让我(先|来|开始|查看|检查|修复)/, // 中文意图词
-            /Let me (first|start|check|look|fix)/i, // 英文意图词
-          ];
-
-          const content = turnResult.content || '';
-          const isIncompleteIntent = INCOMPLETE_INTENT_PATTERNS.some((p) =>
-            p.test(content)
-          );
-
-          // 统计最近的重试消息数量（避免无限循环）
-          const RETRY_PROMPT = '请执行你提到的操作，不要只是描述。';
-          const recentRetries = messages
-            .slice(-10)
-            .filter((m) => m.role === 'user' && m.content === RETRY_PROMPT).length;
-
-          if (isIncompleteIntent && recentRetries < 2) {
-            logger.debug(
-              `⚠️ 检测到意图未完成（重试 ${recentRetries + 1}/2）: "${content.slice(-50)}"`
-            );
-
-            // 追加提示消息，要求 LLM 执行操作
-            messages.push({
-              role: 'user',
-              content: RETRY_PROMPT,
-            });
-
-            // 继续循环，不返回
-            continue;
-          }
-
-          logger.debug('✅ 任务完成 - LLM 未请求工具调用');
-
-          // === 执行 Stop Hook ===
-          // Stop hook 可以阻止 Agent 停止，强制继续执行
-          try {
-            const hookManager = HookManager.getInstance();
-            const stopResult = await hookManager.executeStopHooks({
-              projectDir: process.cwd(),
-              sessionId: context.sessionId,
-              permissionMode: context.permissionMode as PermissionMode,
-              reason: turnResult.content,
-              abortSignal: options?.signal,
-            });
-
-            // 如果 hook 返回 shouldStop: false，继续执行
-            if (!stopResult.shouldStop) {
-              logger.debug(
-                `🔄 Stop hook 阻止停止，继续执行: ${stopResult.continueReason || '(无原因)'}`
-              );
-
-              // 将 continueReason 注入到消息中
-              const continueMessage = stopResult.continueReason
-                ? `\n\n<system-reminder>\n${stopResult.continueReason}\n</system-reminder>`
-                : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
-
-              messages.push({
-                role: 'user',
-                content: continueMessage,
-              });
-
-              // 继续循环
-              continue;
-            }
-
-            // 如果有警告，记录日志
-            if (stopResult.warning) {
-              logger.warn(`[Agent] Stop hook warning: ${stopResult.warning}`);
-            }
-          } catch (hookError) {
-            // Hook 执行失败不应阻止正常退出
-            logger.warn('[Agent] Stop hook execution failed:', hookError);
-          }
-
-          // === 保存助手最终响应到 JSONL ===
-          try {
-            const contextMgr = this.executionEngine?.getContextManager();
-            if (contextMgr && context.sessionId && turnResult.content) {
-              // 🆕 跳过空内容或纯空格的消息
-              if (turnResult.content.trim() !== '') {
-                lastMessageUuid = await contextMgr.saveMessage(
-                  context.sessionId,
-                  'assistant',
-                  turnResult.content,
-                  lastMessageUuid,
-                  undefined,
-                  context.subagentInfo
-                );
-              } else {
-                logger.debug('[Agent] 跳过保存空响应（任务完成时）');
-              }
-            }
-          } catch (error) {
-            logger.warn('[Agent] 保存助手消息失败:', error);
-          }
-
-          return {
-            success: true,
-            finalMessage: turnResult.content,
-            metadata: {
-              turnsCount,
-              toolCallsCount: allToolResults.length,
-              duration: Date.now() - startTime,
-              tokensUsed: totalTokens,
-            },
-          };
-        }
-
-        // 5. 添加 LLM 的响应到消息历史（包含 tool_calls 和 reasoningContent）
-        messages.push({
-          role: 'assistant',
-          content: turnResult.content || '',
-          reasoningContent: turnResult.reasoningContent, // ✅ 保存 thinking 推理内容
-          tool_calls: turnResult.toolCalls,
-        });
-
-        // === 保存助手的工具调用请求到 JSONL ===
-        try {
-          const contextMgr = this.executionEngine?.getContextManager();
-          if (contextMgr && context.sessionId && turnResult.content) {
-            // 🆕 跳过空内容或纯空格的消息
-            if (turnResult.content.trim() !== '') {
-              // 保存助手消息（包含工具调用意图）
-              lastMessageUuid = await contextMgr.saveMessage(
-                context.sessionId,
-                'assistant',
-                turnResult.content,
-                lastMessageUuid,
-                undefined,
-                context.subagentInfo
-              );
-            } else {
-              logger.debug('[Agent] 跳过保存空响应（工具调用时）');
-            }
-          }
-        } catch (error) {
-          logger.warn('[Agent] 保存助手工具调用消息失败:', error);
-        }
-
-        // 6. 并行执行所有工具调用（Claude Code 风格）
-        // LLM 被提示只把无依赖的工具放在同一响应中，因此可以安全地并行执行
-
-        // 在执行前检查取消信号
-        if (options?.signal?.aborted) {
-          logger.info(
-            '[Agent] Aborting before tool execution due to signal.aborted=true'
-          );
-          return {
-            success: false,
-            error: {
-              type: 'aborted',
-              message: '任务已被用户中止',
-            },
-            metadata: {
-              turnsCount,
-              toolCallsCount: allToolResults.length,
-              duration: Date.now() - startTime,
-            },
-          };
-        }
-
-        // 过滤出有效的函数调用
-        const functionCalls = turnResult.toolCalls.filter(
-          (tc) => tc.type === 'function'
-        );
-
-        // 触发所有工具开始回调（并行执行前）
-        if (options?.onToolStart && !options.signal?.aborted) {
-          for (const toolCall of functionCalls) {
-            const toolDef = this.executionPipeline
-              .getRegistry()
-              .get(toolCall.function.name);
-            const toolKind = toolDef?.kind as
-              | 'readonly'
-              | 'write'
-              | 'execute'
-              | undefined;
-            options.onToolStart(toolCall, toolKind);
-          }
-        }
-
-        // 定义单个工具执行的 Promise
-        const executeToolCall = async (
-          toolCall: (typeof functionCalls)[0]
-        ): Promise<{
-          toolCall: typeof toolCall;
-          result: ToolResult;
-          toolUseUuid: string | null;
-          error?: Error;
-        }> => {
-          try {
-            // 解析工具参数
-            const params = JSON.parse(toolCall.function.arguments);
-            if (
-              toolCall.function.name === 'Task' &&
-              (typeof params.subagent_session_id !== 'string' ||
-                params.subagent_session_id.length === 0)
-            ) {
-              params.subagent_session_id =
-                typeof params.resume === 'string' && params.resume.length > 0
-                  ? params.resume
-                  : nanoid();
-            }
-
-            // 智能修复: 如果 todos 参数被错误地序列化为字符串,自动解析
-            if (params.todos && typeof params.todos === 'string') {
-              try {
-                params.todos = JSON.parse(params.todos);
-                this.log('[Agent] 自动修复了字符串化的 todos 参数');
-              } catch {
-                this.error('[Agent] todos 参数格式异常,将由验证层处理');
-              }
-            }
-
-            // === 保存工具调用到 JSONL (tool_use) ===
-            let toolUseUuid: string | null = null;
-            try {
-              const contextMgr = this.executionEngine?.getContextManager();
-              if (contextMgr && context.sessionId) {
-                toolUseUuid = await contextMgr.saveToolUse(
-                  context.sessionId,
-                  toolCall.function.name,
-                  params,
-                  lastMessageUuid,
-                  context.subagentInfo
-                );
-              }
-            } catch (error) {
-              logger.warn('[Agent] 保存工具调用失败:', error);
-            }
-
-            // 使用 ExecutionPipeline 执行工具
-            const signalToUse = options?.signal;
-            if (!signalToUse) {
-              logger.error(
-                '[Agent] Missing signal in tool execution, this should not happen'
-              );
-            }
-
-            logger.debug(
-              '[Agent] Passing confirmationHandler to ExecutionPipeline.execute:',
-              {
-                toolName: toolCall.function.name,
-                hasHandler: !!context.confirmationHandler,
-                hasMethod: !!context.confirmationHandler?.requestConfirmation,
-                methodType: typeof context.confirmationHandler?.requestConfirmation,
-              }
-            );
-
-            const result = await this.executionPipeline.execute(
-              toolCall.function.name,
-              params,
-              {
-                sessionId: context.sessionId,
-                userId: context.userId || 'default',
-                workspaceRoot: context.workspaceRoot || process.cwd(),
-                signal: signalToUse,
-                confirmationHandler: context.confirmationHandler,
-                permissionMode: context.permissionMode,
-              }
-            );
-
-            // 🔍 调试日志
-            logger.debug('\n========== 工具执行结果 ==========');
-            logger.debug('工具名称:', toolCall.function.name);
-            logger.debug('成功:', result.success);
-            logger.debug('LLM Content:', result.llmContent);
-            logger.debug('Display Content:', result.displayContent);
-            if (result.error) {
-              logger.debug('错误:', result.error);
-            }
-            logger.debug('==================================\n');
-
-            return { toolCall, result, toolUseUuid };
-          } catch (error) {
-            logger.error(`Tool execution failed for ${toolCall.function.name}:`, error);
-            return {
-              toolCall,
-              result: {
-                success: false,
-                llmContent: '',
-                displayContent: '',
-                error: {
-                  type: ToolErrorType.EXECUTION_ERROR,
-                  message: error instanceof Error ? error.message : 'Unknown error',
-                },
-              },
-              toolUseUuid: null,
-              error: error instanceof Error ? error : new Error('Unknown error'),
-            };
-          }
-        };
-
-        // 🚀 并行执行所有工具调用
-        logger.info(`[Agent] Executing ${functionCalls.length} tool calls in parallel`);
-        const executionResults = await Promise.all(functionCalls.map(executeToolCall));
-
-        // 按顺序处理执行结果（保持与原始 tool_calls 顺序一致）
-        for (const { toolCall, result, toolUseUuid } of executionResults) {
-          allToolResults.push(result);
-
-          // 检查是否应该退出循环
-          if (result.metadata?.shouldExitLoop) {
-            logger.debug('🚪 检测到退出循环标记，结束 Agent 循环');
-            const finalMessage =
-              typeof result.llmContent === 'string' ? result.llmContent : '循环已退出';
-
-            return {
-              success: result.success,
-              finalMessage,
-              metadata: {
-                turnsCount,
-                toolCallsCount: allToolResults.length,
-                duration: Date.now() - startTime,
-                shouldExitLoop: true,
-                targetMode: result.metadata?.targetMode,
-              },
-            };
-          }
-
-          // 调用 onToolResult 回调
-          if (options?.onToolResult && !options.signal?.aborted) {
-            logger.debug('[Agent] Calling onToolResult:', {
-              toolName: toolCall.function.name,
-              hasCallback: true,
-              resultSuccess: result.success,
-              resultKeys: Object.keys(result),
-              hasMetadata: !!result.metadata,
-              metadataKeys: result.metadata ? Object.keys(result.metadata) : [],
-              hasSummary: !!result.metadata?.summary,
-              summary: result.metadata?.summary,
-            });
-            try {
-              await options.onToolResult(toolCall, result);
-              logger.debug('[Agent] onToolResult callback completed successfully');
-            } catch (err) {
-              logger.error('[Agent] onToolResult callback error:', err);
-            }
-          }
-
-          // === 保存工具结果到 JSONL (tool_result) ===
-          try {
-            const contextMgr = this.executionEngine?.getContextManager();
-            if (contextMgr && context.sessionId) {
-              const metadata =
-                result.metadata && typeof result.metadata === 'object'
-                  ? (result.metadata as Record<string, unknown>)
-                  : undefined;
-              const isSubagentStatus = (
-                value: unknown
-              ): value is 'running' | 'completed' | 'failed' | 'cancelled' =>
-                value === 'running' ||
-                value === 'completed' ||
-                value === 'failed' ||
-                value === 'cancelled';
-              const subagentStatus = isSubagentStatus(metadata?.subagentStatus)
-                ? metadata.subagentStatus
-                : 'completed';
-              const subagentRef =
-                metadata && typeof metadata.subagentSessionId === 'string'
-                  ? {
-                      subagentSessionId: metadata.subagentSessionId,
-                      subagentType:
-                        typeof metadata.subagentType === 'string'
-                          ? metadata.subagentType
-                          : toolCall.function.name,
-                      subagentStatus,
-                      subagentSummary:
-                        typeof metadata.subagentSummary === 'string'
-                          ? metadata.subagentSummary
-                          : undefined,
-                    }
-                  : undefined;
-              lastMessageUuid = await contextMgr.saveToolResult(
-                context.sessionId,
-                toolCall.id,
-                toolCall.function.name,
-                result.success ? toJsonValue(result.llmContent) : null,
-                toolUseUuid,
-                result.success ? undefined : result.error?.message,
-                context.subagentInfo,
-                subagentRef
-              );
-            }
-          } catch (err) {
-            logger.warn('[Agent] 保存工具结果失败:', err);
-          }
-
-          // 如果是 TODO 工具,直接更新 store 并触发回调
-          if (
-            toolCall.function.name === 'TodoWrite' &&
-            result.success &&
-            result.llmContent
-          ) {
-            const content =
-              typeof result.llmContent === 'object' ? result.llmContent : {};
-            const todos = Array.isArray(content)
-              ? content
-              : ((content as Record<string, unknown>).todos as unknown[]) || [];
-            const typedTodos =
-              todos as import('../tools/builtin/todo/types.js').TodoItem[];
-            appActions().setTodos(typedTodos);
-            options?.onTodoUpdate?.(typedTodos);
-          }
-
-          // 如果是 Skill 工具，设置执行上下文
-          if (toolCall.function.name === 'Skill' && result.success && result.metadata) {
-            const metadata = result.metadata as Record<string, unknown>;
-            if (metadata.skillName) {
-              this.activeSkillContext = {
-                skillName: metadata.skillName as string,
-                allowedTools: metadata.allowedTools as string[] | undefined,
-                basePath: (metadata.basePath as string) || '',
-              };
-              logger.debug(
-                `🎯 Skill "${this.activeSkillContext.skillName}" activated` +
-                  (this.activeSkillContext.allowedTools
-                    ? ` with allowed tools: ${this.activeSkillContext.allowedTools.join(', ')}`
-                    : '')
-              );
-            }
-          }
-
-          const modelId =
-            result.metadata?.modelId?.trim() ||
-            result.metadata?.model?.trim() ||
-            undefined;
-          if (modelId) {
-            await this.switchModelIfNeeded(modelId);
-          }
-
-          // 添加工具执行结果到消息历史
-          let toolResultContent = result.success
-            ? result.llmContent || result.displayContent || ''
-            : result.error?.message || '执行失败';
-
-          if (typeof toolResultContent === 'object' && toolResultContent !== null) {
-            toolResultContent = JSON.stringify(toolResultContent, null, 2);
-          }
-
-          const finalContent =
-            typeof toolResultContent === 'string'
-              ? toolResultContent
-              : JSON.stringify(toolResultContent);
-
-          messages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            name: toolCall.function.name,
-            content: finalContent,
-          });
-        }
-
-        // 检查工具执行后的中断信号
-        if (options?.signal?.aborted) {
-          return {
-            success: false,
-            error: {
-              type: 'aborted',
-              message: '任务已被用户中止',
-            },
-            metadata: {
-              turnsCount,
-              toolCallsCount: allToolResults.length,
-              duration: Date.now() - startTime,
-            },
-          };
-        }
-
-        // === 7. 检查轮次上限（非 YOLO 模式） ===
-        if (turnsCount >= maxTurns && !isYoloMode) {
-          logger.info(`⚠️ 达到轮次上限 ${maxTurns} 轮，等待用户确认...`);
-
-          if (options?.onTurnLimitReached) {
-            // 交互模式：询问用户
-            const response = await options.onTurnLimitReached({ turnsCount });
-
-            if (response?.continue) {
-              // 用户选择继续，先压缩上下文
-              logger.info('✅ 用户选择继续，压缩上下文...');
-
-              try {
-                const chatConfig = this.chatService.getConfig();
-                const compactResult = await CompactionService.compact(
-                  context.messages,
-                  {
-                    trigger: 'auto',
-                    modelName: chatConfig.model,
-                    maxContextTokens:
-                      chatConfig.maxContextTokens ?? this.config.maxContextTokens,
-                    apiKey: chatConfig.apiKey,
-                    baseURL: chatConfig.baseUrl,
-                    actualPreTokens: lastPromptTokens,
-                  }
-                );
-
-                // 更新 context.messages 为压缩后的消息
-                context.messages = compactResult.compactedMessages;
-
-                // 重建 messages 数组
-                const systemMsg = messages.find((m) => m.role === 'system');
-                messages.length = 0;
-                if (systemMsg) {
-                  messages.push(systemMsg);
-                }
-                messages.push(...context.messages);
-
-                // 添加继续执行的指令
-                const continueMessage: Message = {
-                  role: 'user',
-                  content:
-                    'This session is being continued from a previous conversation. ' +
-                    'The conversation is summarized above.\n\n' +
-                    'Please continue the conversation from where we left it off without asking the user any further questions. ' +
-                    'Continue with the last task that you were asked to work on.',
-                };
-                messages.push(continueMessage);
-                context.messages.push(continueMessage);
-
-                // 保存压缩数据到 JSONL
-                try {
-                  const contextMgr = this.executionEngine?.getContextManager();
-                  if (contextMgr && context.sessionId) {
-                    await contextMgr.saveCompaction(
-                      context.sessionId,
-                      compactResult.summary,
-                      {
-                        trigger: 'auto',
-                        preTokens: compactResult.preTokens,
-                        postTokens: compactResult.postTokens,
-                        filesIncluded: compactResult.filesIncluded,
-                      },
-                      null
-                    );
-                  }
-                } catch (saveError) {
-                  logger.warn('[Agent] 保存压缩数据失败:', saveError);
-                }
-
-                logger.info(
-                  `✅ 上下文已压缩 (${compactResult.preTokens} → ${compactResult.postTokens} tokens)，重置轮次计数`
-                );
-              } catch (compactError) {
-                // 压缩失败时的降级处理
-                logger.error('[Agent] 压缩失败，使用降级策略:', compactError);
-
-                const systemMsg = messages.find((m) => m.role === 'system');
-                const recentMessages = messages.slice(-80);
-                messages.length = 0;
-                if (systemMsg && !recentMessages.some((m) => m.role === 'system')) {
-                  messages.push(systemMsg);
-                }
-                messages.push(...recentMessages);
-                context.messages = messages.filter((m) => m.role !== 'system');
-
-                logger.warn(`⚠️ 降级压缩完成，保留 ${messages.length} 条消息`);
-              }
-
-              turnsCount = 0;
-              continue; // 继续循环
-            }
-
-            // 用户选择停止
-            return {
-              success: true,
-              finalMessage: response?.reason || '已达到对话轮次上限，用户选择停止',
-              metadata: {
-                turnsCount,
-                toolCallsCount: allToolResults.length,
-                duration: Date.now() - startTime,
-                tokensUsed: totalTokens,
-              },
-            };
-          }
-
-          // 非交互模式：直接停止
-          return {
-            success: false,
-            error: {
-              type: 'max_turns_exceeded',
-              message: `已达到轮次上限 (${maxTurns} 轮)。使用 --permission-mode yolo 跳过此限制。`,
-            },
-            metadata: {
-              turnsCount,
-              toolCallsCount: allToolResults.length,
-              duration: Date.now() - startTime,
-              tokensUsed: totalTokens,
-            },
-          };
-        }
-
-        // 继续下一轮循环...
-      }
-    } catch (error) {
-      // 检查是否是用户主动中止
-      if (
-        error instanceof Error &&
-        (error.name === 'AbortError' || error.message.includes('aborted'))
-      ) {
-        return {
-          success: false,
-          error: {
-            type: 'aborted',
-            message: '任务已被用户中止',
-          },
-          metadata: {
-            turnsCount: 0,
-            toolCallsCount: 0,
-            duration: Date.now() - startTime,
-          },
-        };
-      }
-
-      logger.error('Enhanced chat processing error:', error);
-      return {
-        success: false,
-        error: {
-          type: 'api_error',
-          message: `处理消息时发生错误: ${error instanceof Error ? error.message : '未知错误'}`,
-          details: error,
-        },
-        metadata: {
-          turnsCount: 0,
-          toolCallsCount: 0,
-          duration: Date.now() - startTime,
-        },
-      };
-    }
+    const request = buildRunAgentLoopRequest({
+      message,
+      context,
+      options,
+      systemPrompt,
+      dependencies: buildAgentLoopDependencies({
+        runtimeState: this.getLoopRuntimeState(),
+        loopController: this.loopController,
+      }),
+    });
+    return runAgentLoop(request);
   }
 
-  /**
-   * 处理流式响应
-   *
-   * 调用 ChatService.streamChat() 获取流式响应，
-   * 累积 content、reasoningContent 和 toolCalls，
-   * 同时通过回调实时输出增量内容。
-   *
-   * @param messages 消息数组
-   * @param tools 工具定义
-   * @param options 循环选项（包含回调）
-   * @returns 完整的 ChatResponse
-   */
-  private async processStreamResponse(
-    messages: Message[],
-    tools: Array<{ name: string; description: string; parameters: unknown }>,
-    options?: LoopOptions
-  ): Promise<ChatResponse> {
-    // 累积器
-    let fullContent = '';
-    let fullReasoningContent = '';
-    let streamUsage: ChatResponse['usage'];
-    const toolCallAccumulator = new Map<
-      number,
-      { id: string; name: string; arguments: string }
-    >();
-
-    try {
-      // 获取流式生成器
-      const stream = this.chatService.streamChat(messages, tools, options?.signal);
-
-      let chunkCount = 0;
-      for await (const chunk of stream) {
-        chunkCount++;
-        // 检查 abort 信号
-        if (options?.signal?.aborted) {
-          break;
-        }
-
-        // 1. 处理文本增量
-        if (chunk.content) {
-          const chunkLen = chunk.content.length;
-          fullContent += chunk.content;
-          streamDebug('processStreamResponse', 'onContentDelta BEFORE', {
-            chunkLen,
-            accumulatedLen: fullContent.length,
-          });
-          options?.onContentDelta?.(chunk.content);
-          streamDebug('processStreamResponse', 'onContentDelta AFTER', {
-            chunkLen,
-            accumulatedLen: fullContent.length,
-          });
-        }
-
-        // 2. 处理推理内容增量（Thinking 模型如 DeepSeek R1）
-        if (chunk.reasoningContent) {
-          fullReasoningContent += chunk.reasoningContent;
-          // 调用增量回调
-          options?.onThinkingDelta?.(chunk.reasoningContent);
-        }
-
-        // 2.5 记录流式 usage（通常只在结束时提供）
-        if (chunk.usage) {
-          streamUsage = chunk.usage;
-        }
-
-        // 3. 累积工具调用参数
-        // 流式响应中 toolCalls 参数是分块的：{"file_` → `path": "/src` → `/app.ts"}`
-        if (chunk.toolCalls) {
-          for (const tc of chunk.toolCalls) {
-            this.accumulateToolCall(toolCallAccumulator, tc);
-          }
-        }
-
-        // 4. 流结束
-        if (chunk.finishReason) {
-          streamDebug('processStreamResponse', 'finishReason received', {
-            finishReason: chunk.finishReason,
-            fullContentLen: fullContent.length,
-            fullReasoningContentLen: fullReasoningContent.length,
-            toolCallAccumulatorSize: toolCallAccumulator.size,
-          });
-          break;
-        }
-      }
-
-      streamDebug('processStreamResponse', 'stream ended', {
-        fullContentLen: fullContent.length,
-        fullReasoningContentLen: fullReasoningContent.length,
-        toolCallAccumulatorSize: toolCallAccumulator.size,
-      });
-
-      // 如果流返回0个chunk且没有被中止，回退到非流式模式
-      // 某些 API（如 qwen3-coder-plus）可能不完全支持流式响应
-      if (
-        chunkCount === 0 &&
-        !options?.signal?.aborted &&
-        fullContent.length === 0 &&
-        toolCallAccumulator.size === 0
-      ) {
-        logger.warn('[Agent] 流式响应返回0个chunk，回退到非流式模式');
-        return this.chatService.chat(messages, tools, options?.signal);
-      }
-
-      // 构造完整响应
-      return {
-        content: fullContent,
-        reasoningContent: fullReasoningContent || undefined,
-        toolCalls: this.buildFinalToolCalls(toolCallAccumulator),
-        usage: streamUsage,
-      };
-    } catch (error) {
-      // 检查是否是流式不支持的错误，如果是则降级到非流式
-      if (this.isStreamingNotSupportedError(error)) {
-        logger.warn('[Agent] 流式请求失败，降级到非流式模式');
-        return this.chatService.chat(messages, tools, options?.signal);
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * 累积工具调用参数
-   * 不同 provider 的 chunk 格式略有不同，但都包含 index、id、function.name、function.arguments
-   */
-  private accumulateToolCall(
-    accumulator: Map<number, { id: string; name: string; arguments: string }>,
-    chunk: StreamToolCall
-  ): void {
-    const tc = chunk as {
-      index?: number;
-      id?: string;
-      function?: { name?: string; arguments?: string };
-    };
-    const index = tc.index ?? 0;
-
-    if (!accumulator.has(index)) {
-      accumulator.set(index, {
-        id: tc.id || '',
-        name: tc.function?.name || '',
-        arguments: '',
-      });
+  private getLoopRuntimeState(): AgentLoopRuntimeState {
+    if (this.sessionRuntime) {
+      return this.sessionRuntime.createAgentLoopRuntimeState(
+        this.runtimeOptions,
+        this.executionPipeline
+      );
     }
 
-    const entry = accumulator.get(index)!;
-
-    // 更新 ID 和名称（首次出现时）
-    if (tc.id && !entry.id) entry.id = tc.id;
-    if (tc.function?.name && !entry.name) entry.name = tc.function.name;
-
-    // 累积参数
-    if (tc.function?.arguments) {
-      entry.arguments += tc.function.arguments;
-    }
-  }
-
-  /**
-   * 从累积器构建最终的工具调用数组
-   */
-  private buildFinalToolCalls(
-    accumulator: Map<number, { id: string; name: string; arguments: string }>
-  ): ChatResponse['toolCalls'] | undefined {
-    if (accumulator.size === 0) return undefined;
-
-    return Array.from(accumulator.values())
-      .filter((tc) => tc.id && tc.name)
-      .map((tc) => ({
-        id: tc.id,
-        type: 'function' as const,
-        function: {
-          name: tc.name,
-          arguments: tc.arguments,
-        },
-      }));
-  }
-
-  /**
-   * 检查错误是否表示流式不支持
-   */
-  private isStreamingNotSupportedError(error: unknown): boolean {
-    if (!(error instanceof Error)) return false;
-
-    const streamErrors = [
-      'stream not supported',
-      'streaming is not available',
-      'sse not supported',
-      'does not support streaming',
-    ];
-
-    return streamErrors.some((msg) =>
-      error.message.toLowerCase().includes(msg.toLowerCase())
-    );
+    return buildAgentLoopRuntimeState({
+      config: this.config,
+      runtimeOptions: this.runtimeOptions,
+      currentModelMaxContextTokens: this.currentModelMaxContextTokens,
+      executionPipeline: this.executionPipeline as any,
+      executionEngine: this.executionEngine as any,
+      chatService: this.chatService,
+    });
   }
 
   /**
@@ -1802,6 +562,18 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
     context: ChatContext,
     options?: LoopOptions
   ): Promise<LoopResult> {
+    return this.runAgenticLoopInvocation({
+      message,
+      context,
+      options,
+    });
+  }
+
+  public async runAgenticLoopInvocation({
+    message,
+    context,
+    options,
+  }: AgentLoopInvocation): Promise<LoopResult> {
     if (!this.isInitialized) {
       throw new Error('Agent未初始化');
     }
@@ -1820,8 +592,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       subagentInfo: context.subagentInfo, // 🆕 继承 subagent 信息（用于 JSONL 写入）
     };
 
-    // 调用重构后的 runLoop
-    return await this.runLoop(message, chatContext, options);
+    return await this.executeContextualLoop(message, chatContext, options);
   }
 
   /**
@@ -2012,130 +783,18 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
 
   /**
    * 获取系统提示（按需构建，无状态设计）
-   * @deprecated 建议通过 context.systemPrompt 传入，或使用 buildSystemPromptOnDemand
+   * @deprecated 建议通过 context.systemPrompt 传入
    */
   public async getSystemPrompt(): Promise<string | undefined> {
-    return this.buildSystemPromptOnDemand();
-  }
-
-  /**
-   * 在 Agent 循环中检查并执行压缩
-   * 仅使用 LLM 返回的真实 usage.promptTokens 进行判断（不再估算）
-   *
-   * @param context - 聊天上下文
-   * @param currentTurn - 当前轮次
-   * @param actualPromptTokens - LLM 返回的真实 prompt tokens（必须，来自上一轮响应）
-   * @param onCompacting - 压缩状态回调
-   * @returns 是否发生了压缩
-   */
-  private async checkAndCompactInLoop(
-    context: ChatContext,
-    currentTurn: number,
-    actualPromptTokens?: number,
-    onCompacting?: (isCompacting: boolean) => void
-  ): Promise<boolean> {
-    // 没有真实数据时跳过检查（第 1 轮没有历史 usage）
-    if (actualPromptTokens === undefined) {
-      logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`);
-      return false;
-    }
-
-    const chatConfig = this.chatService.getConfig();
-    const modelName = chatConfig.model;
-    const maxContextTokens =
-      chatConfig.maxContextTokens ?? this.config.maxContextTokens;
-    // 用于计算压缩阈值的 maxOutputTokens，如果未配置则使用保守的默认值 8192
-    const maxOutputTokens = chatConfig.maxOutputTokens ?? this.config.maxOutputTokens ?? 8192;
-
-    // 计算可用于输入的空间：上下文窗口 - 预留给输出的空间
-    const availableForInput = maxContextTokens - maxOutputTokens;
-    // 当输入占用 80% 可用空间时触发压缩
-    const threshold = Math.floor(availableForInput * 0.8);
-
-    logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩检查:`, {
-      promptTokens: actualPromptTokens,
-      maxContextTokens,
-      maxOutputTokens,
-      availableForInput,
-      threshold,
-      shouldCompact: actualPromptTokens >= threshold,
+    const result = await buildSystemPrompt({
+      projectPath: process.cwd(),
+      replaceDefault: this.runtimeOptions.systemPrompt,
+      append: this.runtimeOptions.appendSystemPrompt,
+      includeEnvironment: false,
+      language: this.config.language,
     });
 
-    // 使用真实 prompt tokens 判断是否需要压缩
-    if (actualPromptTokens < threshold) {
-      return false; // 不需要压缩
-    }
-
-    const compactLogPrefix =
-      currentTurn === 0
-        ? '[Agent] 触发自动压缩'
-        : `[Agent] [轮次 ${currentTurn}] 触发循环内自动压缩`;
-    logger.debug(compactLogPrefix);
-
-    // 通知 UI 开始压缩
-    onCompacting?.(true);
-
-    try {
-      const result = await CompactionService.compact(context.messages, {
-        trigger: 'auto',
-        modelName,
-        maxContextTokens,
-        apiKey: chatConfig.apiKey,
-        baseURL: chatConfig.baseUrl,
-        actualPreTokens: actualPromptTokens, // 传入真实的 preTokens
-      });
-
-      if (result.success) {
-        // 使用压缩后的消息列表
-        context.messages = result.compactedMessages;
-
-        logger.debug(
-          `[Agent] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} → ${result.postTokens} tokens (-${((1 - result.postTokens / result.preTokens) * 100).toFixed(1)}%)`
-        );
-      } else {
-        // 降级策略执行成功，但使用了截断
-        context.messages = result.compactedMessages;
-
-        logger.warn(
-          `[Agent] [轮次 ${currentTurn}] 压缩使用降级策略: ${result.preTokens} → ${result.postTokens} tokens`
-        );
-      }
-
-      // 保存压缩边界和总结到 JSONL
-      try {
-        const contextMgr = this.executionEngine?.getContextManager();
-        if (contextMgr && context.sessionId) {
-          await contextMgr.saveCompaction(
-            context.sessionId,
-            result.summary,
-            {
-              trigger: 'auto',
-              preTokens: result.preTokens,
-              postTokens: result.postTokens,
-              filesIncluded: result.filesIncluded,
-            },
-            null
-          );
-          logger.debug(`[Agent] [轮次 ${currentTurn}] 压缩数据已保存到 JSONL`);
-        }
-      } catch (saveError) {
-        logger.warn(`[Agent] [轮次 ${currentTurn}] 保存压缩数据失败:`, saveError);
-        // 不阻塞流程
-      }
-
-      // 通知 UI 压缩完成
-      onCompacting?.(false);
-
-      // 返回 true 表示发生了压缩
-      return true;
-    } catch (error) {
-      // 通知 UI 压缩完成（即使失败）
-      onCompacting?.(false);
-
-      logger.error(`[Agent] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
-      // 压缩失败，返回 false
-      return false;
-    }
+    return result.prompt;
   }
 
   /**
@@ -2273,59 +932,11 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
   }
 
   /**
-   * 应用 Skill 的 allowed-tools 限制
-   * 如果有活动的 Skill 且定义了 allowed-tools，则过滤可用工具列表
-   *
-   * @param tools - 原始工具列表
-   * @returns 过滤后的工具列表
-   */
-  private applySkillToolRestrictions(
-    tools: import('../tools/types/index.js').FunctionDeclaration[]
-  ): import('../tools/types/index.js').FunctionDeclaration[] {
-    // 如果没有活动的 Skill，或者 Skill 没有定义 allowed-tools，返回原始工具列表
-    if (!this.activeSkillContext?.allowedTools) {
-      return tools;
-    }
-
-    const allowedTools = this.activeSkillContext.allowedTools;
-    logger.debug(`🔒 Applying Skill tool restrictions: ${allowedTools.join(', ')}`);
-
-    // 过滤工具列表，只保留 allowed-tools 中指定的工具
-    const filteredTools = tools.filter((tool) => {
-      // 检查工具名称是否在 allowed-tools 列表中
-      // 支持精确匹配和通配符模式（如 Bash(git:*)）
-      return allowedTools.some((allowed) => {
-        // 精确匹配
-        if (allowed === tool.name) {
-          return true;
-        }
-
-        // 通配符匹配：Bash(git:*) 匹配 Bash
-        const match = allowed.match(/^(\w+)\(.*\)$/);
-        if (match && match[1] === tool.name) {
-          return true;
-        }
-
-        return false;
-      });
-    });
-
-    logger.debug(
-      `🔒 Filtered tools: ${filteredTools.map((t) => t.name).join(', ')} (${filteredTools.length}/${tools.length})`
-    );
-
-    return filteredTools;
-  }
-
-  /**
    * 清除 Skill 执行上下文
    * 当 Skill 执行完成或需要重置时调用
    */
   public clearSkillContext(): void {
-    if (this.activeSkillContext) {
-      logger.debug(`🎯 Skill "${this.activeSkillContext.skillName}" deactivated`);
-      this.activeSkillContext = undefined;
-    }
+    this.skillContextController.clearSkillContext();
   }
 
   /**

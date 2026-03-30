@@ -66,7 +66,7 @@ describe('BackgroundAgentManager', () => {
     vi.mocked(AgentSessionStore.getInstance).mockReturnValue(mockSessionStore as any);
 
     const mockAgent = {
-      runAgenticLoop: vi.fn().mockResolvedValue({
+      runAgenticLoopInvocation: vi.fn().mockResolvedValue({
         success: true,
         finalMessage: 'Task completed',
         metadata: { tokensUsed: 100, toolCallsCount: 5 },
