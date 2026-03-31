@@ -36,7 +36,9 @@ vi.mock('../../../../src/agent/Agent.js', () => ({
 vi.mock('../../../../src/server/bus.js', () => ({
   Bus: {
     publish: vi.fn(),
-    subscribe: vi.fn(() => () => { /* noop */ }),
+    subscribe: vi.fn(() => () => {
+      /* noop */
+    }),
   },
 }));
 
@@ -44,7 +46,9 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
   SessionService: {
     listSessions: vi.fn(async () => []),
     loadSession: vi.fn(async () => []),
-    deleteSession: vi.fn(async () => { /* noop */ }),
+    deleteSession: vi.fn(async () => {
+      /* noop */
+    }),
   },
 }));
 
@@ -74,7 +78,9 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('reuses one SessionRuntime for repeated messages in the same session', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { SessionRuntime } = await import('../../../../src/agent/runtime/SessionRuntime.js');
+    const { SessionRuntime } = await import(
+      '../../../../src/agent/runtime/SessionRuntime.js'
+    );
     const { Agent } = await import('../../../../src/agent/Agent.js');
 
     const app = SessionRoutes();
@@ -101,6 +107,88 @@ describe('SessionRoutes runtime reuse', () => {
     });
     expect(Agent.createWithRuntime).toHaveBeenNthCalledWith(2, runtimeState.runtime, {
       sessionId: 'session-1',
+    });
+  });
+
+  it('builds multimodal user content from image attachments', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    const app = SessionRoutes();
+
+    const response = await app.request('/session-2/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'describe this image',
+        attachments: [{ type: 'image', content: 'data:image/png;base64,abc' }],
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(agentState.chat).toHaveBeenCalledWith(
+      [
+        { type: 'text', text: 'describe this image' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+      ],
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
+  it('builds image-only user content when the request only contains image attachments', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    const app = SessionRoutes();
+
+    const response = await app.request('/session-3/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: '',
+        attachments: [{ type: 'image', content: 'data:image/png;base64,image-only' }],
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(agentState.chat).toHaveBeenCalledWith(
+      [{ type: 'image_url', image_url: { url: 'data:image/png;base64,image-only' } }],
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
+  it('hydrates persisted session history before sending a follow-up message', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionService } = await import(
+      '../../../../src/services/SessionService.js'
+    );
+
+    vi.mocked(SessionService.loadSession).mockResolvedValue([
+      { role: 'user', content: 'earlier question' },
+      { role: 'assistant', content: 'earlier answer' },
+    ] as never);
+
+    const app = SessionRoutes();
+
+    const response = await app.request('/persisted-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'follow up' }),
+    });
+
+    expect(response.status).toBe(202);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(SessionService.loadSession).toHaveBeenCalledWith('persisted-session');
+    expect(agentState.chat.mock.calls[0]?.[1]).toMatchObject({
+      messages: [
+        { role: 'user', content: 'earlier question' },
+        { role: 'assistant', content: 'earlier answer' },
+      ],
     });
   });
 });

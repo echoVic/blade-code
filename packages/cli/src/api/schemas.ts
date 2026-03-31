@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-export const PermissionModeSchema = z.enum(['default', 'autoEdit', 'yolo', 'plan', 'spec']);
+export const PermissionModeSchema = z.enum([
+  'default',
+  'autoEdit',
+  'yolo',
+  'plan',
+  'spec',
+]);
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
 
 export const PermissionModeEnum = {
@@ -14,10 +20,23 @@ export const PermissionModeEnum = {
 export const MessageRoleSchema = z.enum(['user', 'assistant', 'system', 'tool']);
 export type MessageRole = z.infer<typeof MessageRoleSchema>;
 
+export const MessageContentPartSchema = z.union([
+  z.object({
+    type: z.literal('text'),
+    text: z.string(),
+  }),
+  z.object({
+    type: z.literal('image_url'),
+    image_url: z.object({
+      url: z.string(),
+    }),
+  }),
+]);
+
 export const MessageSchema = z.object({
   id: z.string(),
   role: MessageRoleSchema,
-  content: z.string(),
+  content: z.union([z.string(), z.array(MessageContentPartSchema)]),
   timestamp: z.number(),
   metadata: z.record(z.unknown()).optional(),
   thinkingContent: z.string().optional(),
@@ -49,12 +68,18 @@ export type BusEvent = z.infer<typeof BusEventSchema>;
 export const SendMessageRequestSchema = z.object({
   content: z.string(),
   permissionMode: PermissionModeSchema.optional(),
-  attachments: z.array(z.object({
-    type: z.enum(['file', 'image', 'url']),
-    path: z.string().optional(),
-    url: z.string().optional(),
-    content: z.string().optional(),
-  })).optional(),
+  attachments: z
+    .array(
+      z.object({
+        type: z.enum(['file', 'image', 'url']),
+        path: z.string().optional(),
+        url: z.string().optional(),
+        content: z.string().optional(),
+        mimeType: z.string().optional(),
+        name: z.string().optional(),
+      })
+    )
+    .optional(),
 });
 export type SendMessageRequest = z.infer<typeof SendMessageRequestSchema>;
 

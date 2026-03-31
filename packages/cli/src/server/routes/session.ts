@@ -5,13 +5,20 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { Agent } from '../../agent/Agent.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
-import type { ChatContext, LoopOptions } from '../../agent/types.js';
+import type {
+  ChatContext,
+  LoopOptions,
+  UserMessageContent,
+} from '../../agent/types.js';
 import { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
-import type { Message } from '../../services/ChatServiceInterface.js';
+import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import { SessionService } from '../../services/SessionService.js';
-import type { ConfirmationDetails, ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
+import type {
+  ConfirmationDetails,
+  ConfirmationResponse,
+} from '../../tools/types/ExecutionTypes.js';
 import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
 import { Bus } from '../bus.js';
 import { BadRequestError, NotFoundError } from '../error.js';
@@ -25,12 +32,18 @@ const CreateSessionSchema = z.object({
 
 const SendMessageSchema = z.object({
   content: z.string(),
-  attachments: z.array(z.object({
-    type: z.enum(['file', 'image', 'url']),
-    path: z.string().optional(),
-    url: z.string().optional(),
-    content: z.string().optional(),
-  })).optional(),
+  attachments: z
+    .array(
+      z.object({
+        type: z.enum(['file', 'image', 'url']),
+        path: z.string().optional(),
+        url: z.string().optional(),
+        content: z.string().optional(),
+        mimeType: z.string().optional(),
+        name: z.string().optional(),
+      })
+    )
+    .optional(),
   permissionMode: z.enum(['default', 'autoEdit', 'plan', 'spec', 'yolo']).optional(),
 });
 
@@ -82,14 +95,54 @@ const sanitizeToolMetadata = (metadata: ToolResultMetadata | undefined) => {
   if (!metadata || typeof metadata !== 'object') return metadata;
   const sanitized = { ...(metadata as Record<string, unknown>) };
   const MAX_INLINE_CONTENT = 200000;
-  if (typeof sanitized.oldContent === 'string' && sanitized.oldContent.length > MAX_INLINE_CONTENT) {
+  if (
+    typeof sanitized.oldContent === 'string' &&
+    sanitized.oldContent.length > MAX_INLINE_CONTENT
+  ) {
     delete sanitized.oldContent;
   }
-  if (typeof sanitized.newContent === 'string' && sanitized.newContent.length > MAX_INLINE_CONTENT) {
+  if (
+    typeof sanitized.newContent === 'string' &&
+    sanitized.newContent.length > MAX_INLINE_CONTENT
+  ) {
     delete sanitized.newContent;
   }
   return sanitized as ToolResultMetadata;
 };
+
+function getDisplayContent(content: UserMessageContent): string {
+  if (typeof content === 'string') return content;
+  return content
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n');
+}
+
+function buildUserMessageContent(
+  content: string,
+  attachments?: Array<{ type: 'file' | 'image' | 'url'; content?: string }>
+): UserMessageContent {
+  const imageParts = (attachments ?? [])
+    .filter(
+      (attachment) =>
+        attachment.type === 'image' && typeof attachment.content === 'string'
+    )
+    .map((attachment) => ({
+      type: 'image_url' as const,
+      image_url: { url: attachment.content as string },
+    }));
+
+  if (imageParts.length === 0) {
+    return content;
+  }
+
+  const parts: ContentPart[] = [];
+  if (content.trim()) {
+    parts.push({ type: 'text', text: content });
+  }
+  parts.push(...imageParts);
+  return parts;
+}
 
 export const SessionRoutes = () => {
   const app = new Hono<{ Variables: Variables }>();
@@ -98,32 +151,37 @@ export const SessionRoutes = () => {
   app.get('/', async (c) => {
     try {
       const persistedSessions = await SessionService.listSessions();
-      
+
       const subagentSessionIds = new Set(
-        persistedSessions.filter((s) => s.relationType === 'subagent').map((s) => s.sessionId)
+        persistedSessions
+          .filter((s) => s.relationType === 'subagent')
+          .map((s) => s.sessionId)
       );
 
       const activeSessionsList = Array.from(sessions.values())
         .filter((s) => !subagentSessionIds.has(s.id) && s.relationType !== 'subagent')
         .map((s) => ({
-        sessionId: s.id,
-        projectPath: s.projectPath,
-        title: s.title,
-        parentId: undefined,
-        relationType: undefined,
-        status: undefined,
-        agentType: undefined,
-        model: undefined,
-        messageCount: s.messages.length,
-        firstMessageTime: s.createdAt.toISOString(),
-        lastMessageTime: new Date().toISOString(),
-        hasErrors: false,
-        isActive: true,
-      }));
+          sessionId: s.id,
+          projectPath: s.projectPath,
+          title: s.title,
+          parentId: undefined,
+          relationType: undefined,
+          status: undefined,
+          agentType: undefined,
+          model: undefined,
+          messageCount: s.messages.length,
+          firstMessageTime: s.createdAt.toISOString(),
+          lastMessageTime: new Date().toISOString(),
+          hasErrors: false,
+          isActive: true,
+        }));
 
       const activeSessionIds = new Set(activeSessionsList.map((s) => s.sessionId));
       const filteredPersisted = persistedSessions.filter(
-        (s) => !sessions.has(s.sessionId) && !activeSessionIds.has(s.sessionId) && s.relationType !== 'subagent'
+        (s) =>
+          !sessions.has(s.sessionId) &&
+          !activeSessionIds.has(s.sessionId) &&
+          s.relationType !== 'subagent'
       );
 
       const seenSessionIds = new Set(activeSessionIds);
@@ -133,10 +191,7 @@ export const SessionRoutes = () => {
         return true;
       });
 
-      const allSessions = [
-        ...activeSessionsList,
-        ...deduplicatedPersisted,
-      ];
+      const allSessions = [...activeSessionsList, ...deduplicatedPersisted];
       return c.json(allSessions);
     } catch (error) {
       logger.error('[SessionRoutes] Failed to list sessions:', error);
@@ -148,7 +203,7 @@ export const SessionRoutes = () => {
     try {
       const body = await c.req.json();
       const parsed = CreateSessionSchema.safeParse(body);
-      
+
       if (!parsed.success) {
         throw new BadRequestError('Invalid request body');
       }
@@ -207,7 +262,7 @@ export const SessionRoutes = () => {
     try {
       const persistedSessions = await SessionService.listSessions();
       const persistedSession = persistedSessions.find((s) => s.sessionId === sessionId);
-      
+
       if (!persistedSession) {
         throw new NotFoundError('Session', sessionId);
       }
@@ -306,22 +361,39 @@ export const SessionRoutes = () => {
     return streamSSE(c, async (stream) => {
       const HEARTBEAT_INTERVAL = 15000;
 
-      await stream.writeSSE({ 
-        data: JSON.stringify({ type: 'connected', properties: { sessionId, timestamp: Date.now() } }) 
+      await stream.writeSSE({
+        data: JSON.stringify({
+          type: 'connected',
+          properties: { sessionId, timestamp: Date.now() },
+        }),
       });
 
       const unsubscribe = Bus.subscribe((event) => {
         if (event.sessionId !== sessionId) return;
-        stream.writeSSE({ 
-          data: JSON.stringify({ type: event.type, properties: { sessionId: event.sessionId, ...event.properties } }) 
-        }).catch(() => { /* ignore write errors on closed streams */ });
+        stream
+          .writeSSE({
+            data: JSON.stringify({
+              type: event.type,
+              properties: { sessionId: event.sessionId, ...event.properties },
+            }),
+          })
+          .catch(() => {
+            /* ignore write errors on closed streams */
+          });
       });
 
       const heartbeatInterval = setInterval(() => {
         if (!stream.aborted) {
-          stream.writeSSE({ 
-            data: JSON.stringify({ type: 'heartbeat', properties: { timestamp: Date.now() } }) 
-          }).catch(() => { /* ignore write errors on closed streams */ });
+          stream
+            .writeSSE({
+              data: JSON.stringify({
+                type: 'heartbeat',
+                properties: { timestamp: Date.now() },
+              }),
+            })
+            .catch(() => {
+              /* ignore write errors on closed streams */
+            });
         }
       }, HEARTBEAT_INTERVAL);
 
@@ -342,23 +414,27 @@ export const SessionRoutes = () => {
 
     const body = await c.req.json();
     const parsed = SendMessageSchema.safeParse(body);
-    
+
     if (!parsed.success) {
       throw new BadRequestError('Invalid message format');
     }
 
-    const { content, permissionMode: requestedMode } = parsed.data;
+    const { content, attachments, permissionMode: requestedMode } = parsed.data;
     const permissionMode = (requestedMode as PermissionMode) || PermissionMode.DEFAULT;
     const directory = c.get('directory') || process.cwd();
+    const userContent = buildUserMessageContent(content, attachments);
 
     let session = sessions.get(sessionId);
     if (!session) {
+      const persistedMessages = await SessionService.loadSession(sessionId).catch(
+        () => []
+      );
       session = {
         id: sessionId,
         projectPath: directory,
         title: `Session ${sessionId.slice(0, 6)}`,
         createdAt: new Date(),
-        messages: [],
+        messages: persistedMessages,
       };
       sessions.set(sessionId, session);
     }
@@ -377,9 +453,11 @@ export const SessionRoutes = () => {
     activeRuns.set(runId, run);
     session.currentRunId = runId;
 
-    executeRunAsync(run, session, content, permissionMode, runtimes).catch((error) => {
-      logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
-    });
+    executeRunAsync(run, session, userContent, permissionMode, runtimes).catch(
+      (error) => {
+        logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
+      }
+    );
 
     return c.json({ runId, status: 'running' }, 202);
   });
@@ -422,7 +500,7 @@ export const SessionRoutes = () => {
 async function executeRunAsync(
   run: RunState,
   session: SessionInfo,
-  content: string,
+  content: UserMessageContent,
   permissionMode: PermissionMode,
   runtimes: Map<string, SessionRuntime>
 ): Promise<void> {
@@ -435,9 +513,17 @@ async function executeRunAsync(
   };
 
   try {
-    emit('message.created', { messageId: userMessageId, role: 'user', content });
+    emit('message.created', {
+      messageId: userMessageId,
+      role: 'user',
+      content: getDisplayContent(content),
+    });
     emit('session.status', { status: 'running' });
-    emit('message.created', { messageId: assistantMessageId, role: 'assistant', content: '' });
+    emit('message.created', {
+      messageId: assistantMessageId,
+      role: 'assistant',
+      content: '',
+    });
 
     let runtime = runtimes.get(sessionId);
     if (!runtime) {
@@ -446,26 +532,30 @@ async function executeRunAsync(
     }
     const agent = await Agent.createWithRuntime(runtime, { sessionId });
 
-    const requestConfirmation = async (details: ConfirmationDetails): Promise<ConfirmationResponse> => {
+    const requestConfirmation = async (
+      details: ConfirmationDetails
+    ): Promise<ConfirmationResponse> => {
       const permissionId = nanoid(12);
       const PERMISSION_TIMEOUT = 5 * 60 * 1000;
-      
+
       run.status = 'waiting_permission';
-      
+
       const resultPromise = new Promise<ConfirmationResponse>((resolve) => {
         const timeout = setTimeout(() => {
-          logger.warn(`[SessionRoutes] Permission ${permissionId} timed out after ${PERMISSION_TIMEOUT}ms`);
+          logger.warn(
+            `[SessionRoutes] Permission ${permissionId} timed out after ${PERMISSION_TIMEOUT}ms`
+          );
           emit('permission.timeout', { requestId: permissionId });
           resolve({ approved: false, reason: 'timeout' });
         }, PERMISSION_TIMEOUT);
 
-        run.pendingPermission = { 
-          permissionId, 
+        run.pendingPermission = {
+          permissionId,
           resolve: (response) => {
             clearTimeout(timeout);
             resolve(response);
-          }, 
-          details 
+          },
+          details,
         };
       });
 
@@ -477,18 +567,22 @@ async function executeRunAsync(
         details,
       });
 
-      logger.info(`[SessionRoutes] Permission request created: ${permissionId}, runId: ${runId}`);
-      
+      logger.info(
+        `[SessionRoutes] Permission request created: ${permissionId}, runId: ${runId}`
+      );
+
       const response = await resultPromise;
-      logger.info(`[SessionRoutes] Permission response received: ${permissionId}, approved: ${response.approved}`);
+      logger.info(
+        `[SessionRoutes] Permission response received: ${permissionId}, approved: ${response.approved}`
+      );
       run.status = 'running';
       run.pendingPermission = undefined;
-      
+
       return response;
     };
 
     const chatContext: ChatContext = {
-      messages: session.messages,
+      messages: [...session.messages],
       userId: 'web-user',
       sessionId,
       workspaceRoot: session.projectPath,
@@ -549,11 +643,12 @@ async function executeRunAsync(
     run.status = 'completed';
     emit('session.completed', { runId });
     emit('session.status', { status: 'idle' });
-
   } catch (error) {
     logger.error('[SessionRoutes] Agent execution error:', error);
     run.status = 'failed';
-    emit('session.error', { error: error instanceof Error ? error.message : 'Unknown error' });
+    emit('session.error', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
     emit('session.status', { status: 'error' });
   }
 }
@@ -563,14 +658,23 @@ export function respondToPermission(
   permissionId: string,
   response: ConfirmationResponse
 ): boolean {
-  logger.info(`[SessionRoutes] Looking for permission ${permissionId} in session ${sessionId}`);
+  logger.info(
+    `[SessionRoutes] Looking for permission ${permissionId} in session ${sessionId}`
+  );
   logger.info(`[SessionRoutes] Active runs: ${activeRuns.size}`);
-  
+
   for (const [runId, run] of activeRuns.entries()) {
-    logger.info(`[SessionRoutes] Checking run ${runId}: sessionId=${run.sessionId}, pendingPermission=${run.pendingPermission?.permissionId}`);
-    if (run.sessionId === sessionId && run.pendingPermission?.permissionId === permissionId) {
+    logger.info(
+      `[SessionRoutes] Checking run ${runId}: sessionId=${run.sessionId}, pendingPermission=${run.pendingPermission?.permissionId}`
+    );
+    if (
+      run.sessionId === sessionId &&
+      run.pendingPermission?.permissionId === permissionId
+    ) {
       run.pendingPermission.resolve(response);
-      logger.info(`[SessionRoutes] Permission ${permissionId} responded, runId: ${run.id}`);
+      logger.info(
+        `[SessionRoutes] Permission ${permissionId} responded, runId: ${run.id}`
+      );
       return true;
     }
   }

@@ -12,8 +12,8 @@ import {
 } from '../context/storage/pathUtils.js';
 import type { SessionEvent } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import type { Message } from './ChatServiceInterface.js';
 import type { JsonValue } from '../store/types.js';
+import type { ContentPart, Message } from './ChatServiceInterface.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -116,7 +116,9 @@ export class SessionService {
     const sessionCreated = entries.find((entry) => entry.type === 'session_created');
 
     const messageCount = entries.filter(
-      (entry) => entry.type === 'message_created' && ['user', 'assistant'].includes(entry.data.role)
+      (entry) =>
+        entry.type === 'message_created' &&
+        ['user', 'assistant'].includes(entry.data.role)
     ).length;
     const hasErrors = entries.some(
       (entry) =>
@@ -177,11 +179,7 @@ export class SessionService {
     const sessions = await this.listSessions();
     const matches = sessions.filter((s) => s.sessionId === sessionId);
     if (matches.length === 0) return 0;
-    await Promise.all(
-      matches.map((s) =>
-        rm(s.filePath, { force: true })
-      )
-    );
+    await Promise.all(matches.map((s) => rm(s.filePath, { force: true })));
     return matches.length;
   }
 
@@ -208,6 +206,7 @@ export class SessionService {
   static convertJSONLToMessages(entries: SessionEvent[]): Message[] {
     const messages: Message[] = [];
     const messageMap = new Map<string, Message>();
+    const partMap = new Map<string, ContentPart[]>();
     for (const entry of entries) {
       if (entry.type === 'message_created') {
         const message: Message = {
@@ -215,6 +214,7 @@ export class SessionService {
           content: '',
         };
         messageMap.set(entry.data.messageId, message);
+        partMap.set(entry.data.messageId, []);
         messages.push(message);
       }
       if (entry.type === 'part_created') {
@@ -222,7 +222,24 @@ export class SessionService {
           const message = messageMap.get(entry.data.messageId);
           if (message) {
             const payload = entry.data.payload as { text?: string };
-            message.content = payload.text ?? '';
+            const parts = partMap.get(entry.data.messageId);
+            if (parts) {
+              parts.push({ type: 'text', text: payload.text ?? '' });
+              message.content = toMessageContent(parts);
+            } else {
+              message.content = payload.text ?? '';
+            }
+          }
+        }
+        if (entry.data.partType === 'image') {
+          const message = messageMap.get(entry.data.messageId);
+          if (message) {
+            const payload = entry.data.payload as { dataUrl?: string };
+            const parts = partMap.get(entry.data.messageId);
+            if (parts && payload.dataUrl) {
+              parts.push({ type: 'image_url', image_url: { url: payload.dataUrl } });
+              message.content = toMessageContent(parts);
+            }
           }
         }
         if (entry.data.partType === 'tool_result') {
@@ -276,4 +293,11 @@ export class SessionService {
   private static getSessionFilePath(projectPath: string, sessionId: string): string {
     return getSessionFilePath(projectPath, sessionId);
   }
+}
+
+function toMessageContent(parts: ContentPart[]): Message['content'] {
+  if (parts.length === 1 && parts[0]?.type === 'text') {
+    return parts[0].text;
+  }
+  return [...parts];
 }

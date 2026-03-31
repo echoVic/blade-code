@@ -1,8 +1,9 @@
-import { useSessionStore } from '@/store/session'
-import { useEffect } from 'react'
-import { ChatInput } from './ChatInput'
-import { ChatList } from './ChatList'
-import { StatusBar } from './StatusBar'
+import { useEffect } from 'react';
+import { useSessionStore } from '@/store/session';
+import type { ComposerImageAttachment } from './ChatInput';
+import { ChatInput } from './ChatInput';
+import { ChatList } from './ChatList';
+import { StatusBar } from './StatusBar';
 
 export function ChatView() {
   const {
@@ -17,38 +18,52 @@ export function ChatView() {
     startTemporarySession,
     clearError,
     unsubscribeFromEvents,
-  } = useSessionStore()
+  } = useSessionStore();
 
   useEffect(() => {
-    loadSessions()
-  }, [loadSessions])
+    loadSessions();
+  }, [loadSessions]);
 
   useEffect(() => {
     if (!currentSessionId) {
-      startTemporarySession()
+      startTemporarySession();
     }
-  }, [currentSessionId, startTemporarySession])
+  }, [currentSessionId, startTemporarySession]);
 
   useEffect(() => {
     return () => {
-      unsubscribeFromEvents()
-    }
-  }, [unsubscribeFromEvents])
+      unsubscribeFromEvents();
+    };
+  }, [unsubscribeFromEvents]);
 
-  const handleSend = async (content: string) => {
-    await sendMessage(content)
-  }
+  const handleSend = async (payload: {
+    content: string;
+    attachments: ComposerImageAttachment[];
+  }) => {
+    await sendMessage({
+      content: payload.content,
+      attachments: payload.attachments.map((attachment) => ({
+        type: 'image' as const,
+        content: attachment.dataUrl,
+        mimeType: attachment.mimeType,
+        name: attachment.name,
+      })),
+    });
+  };
 
   const handleAbort = () => {
-    abortSession()
-  }
+    abortSession();
+  };
 
   return (
     <div className="flex flex-col h-full">
       {error && (
         <div className="bg-[#FEE2E2] border border-[#FCA5A5] text-[#b91c1c] dark:bg-[#3f1d1d] dark:border-[#7f1d1d] dark:text-[#fca5a5] px-4 py-2 text-[13px] font-mono flex items-center justify-between">
           <span>{error}</span>
-          <button onClick={clearError} className="text-[#b91c1c] hover:text-[#7f1d1d] dark:text-[#fca5a5] dark:hover:text-[#fecaca]">
+          <button
+            onClick={clearError}
+            className="text-[#b91c1c] hover:text-[#7f1d1d] dark:text-[#fca5a5] dark:hover:text-[#fecaca]"
+          >
             ✕
           </button>
         </div>
@@ -62,5 +77,5 @@ export function ChatView() {
       />
       <StatusBar />
     </div>
-  )
+  );
 }

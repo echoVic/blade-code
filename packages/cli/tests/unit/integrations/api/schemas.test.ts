@@ -4,38 +4,44 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  PermissionModeSchema,
-  MessageSchema,
-  SessionSchema,
-  BusEventSchema,
-  SendMessageRequestSchema,
-  SendMessageResponseSchema,
-  PermissionResponseSchema,
-  ModelConfigSchema,
-  EditorThemeSchema,
-  UiThemeSchema,
-  GeneralSettingsSchema,
-  GeneralSettingsUpdateSchema,
-  type PermissionMode,
-  type Message,
-  type Session,
   type BusEvent,
-  type SendMessageRequest,
-  type SendMessageResponse,
-  type PermissionResponse,
-  type ModelConfig,
+  BusEventSchema,
   type EditorTheme,
-  type UiTheme,
+  EditorThemeSchema,
   type GeneralSettings,
+  GeneralSettingsSchema,
   type GeneralSettingsUpdate,
+  GeneralSettingsUpdateSchema,
+  type Message,
+  MessageSchema,
+  type ModelConfig,
+  ModelConfigSchema,
+  type PermissionMode,
   PermissionModeEnum,
+  PermissionModeSchema,
+  type PermissionResponse,
+  PermissionResponseSchema,
+  type SendMessageRequest,
+  SendMessageRequestSchema,
+  type SendMessageResponse,
+  SendMessageResponseSchema,
+  type Session,
+  SessionSchema,
+  type UiTheme,
+  UiThemeSchema,
 } from '../../../../src/api/schemas.js';
 
 describe('API Schemas', () => {
   describe('PermissionModeSchema', () => {
     it('应该验证有效的权限模式', () => {
-      const validModes: PermissionMode[] = ['default', 'autoEdit', 'yolo', 'plan', 'spec'];
-      
+      const validModes: PermissionMode[] = [
+        'default',
+        'autoEdit',
+        'yolo',
+        'plan',
+        'spec',
+      ];
+
       validModes.forEach((mode) => {
         expect(() => PermissionModeSchema.parse(mode)).not.toThrow();
       });
@@ -81,6 +87,20 @@ describe('API Schemas', () => {
       };
 
       expect(() => MessageSchema.parse(messageWithThinking)).not.toThrow();
+    });
+
+    it('应该验证多模态用户消息', () => {
+      const multimodalMessage: Message = {
+        id: 'msg-multimodal',
+        role: 'user',
+        content: [
+          { type: 'text', text: 'describe this image' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+        ],
+        timestamp: Date.now(),
+      };
+
+      expect(() => MessageSchema.parse(multimodalMessage)).not.toThrow();
     });
 
     it('应该验证工具调用消息', () => {
@@ -198,7 +218,27 @@ describe('API Schemas', () => {
         ],
       };
 
-      expect(() => SendMessageRequestSchema.parse(requestWithAttachments)).not.toThrow();
+      expect(() =>
+        SendMessageRequestSchema.parse(requestWithAttachments)
+      ).not.toThrow();
+    });
+
+    it('应该验证带图片内容和元数据的请求', () => {
+      const requestWithImageMetadata: SendMessageRequest = {
+        content: '',
+        attachments: [
+          {
+            type: 'image',
+            content: 'data:image/png;base64,abc',
+            mimeType: 'image/png',
+            name: 'pasted.png',
+          },
+        ],
+      };
+
+      expect(() =>
+        SendMessageRequestSchema.parse(requestWithImageMetadata)
+      ).not.toThrow();
     });
   });
 

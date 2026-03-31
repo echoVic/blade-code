@@ -50,7 +50,6 @@ function toJsonValue(value: string | object): JsonValue {
   }
 }
 
-
 import { discoverSkills, injectSkillsMetadata } from '../skills/index.js';
 import { SpecManager } from '../spec/SpecManager.js';
 import {
@@ -85,6 +84,9 @@ import type {
 
 // 创建 Agent 专用 Logger
 const logger = createLogger(LogCategory.AGENT);
+const COMPACTION_FALLBACK_OUTPUT_RATIO = 0.1;
+const COMPACTION_FALLBACK_MIN_OUTPUT_TOKENS = 8192;
+const COMPACTION_FALLBACK_MAX_OUTPUT_TOKENS = 32768;
 
 /**
  * 从 API 错误中提取用户友好的错误信息
@@ -193,7 +195,8 @@ export class Agent {
   }
 
   private resolveModelConfig(requestedModelId?: string): ModelConfig {
-    const modelId = requestedModelId && requestedModelId !== 'inherit' ? requestedModelId : undefined;
+    const modelId =
+      requestedModelId && requestedModelId !== 'inherit' ? requestedModelId : undefined;
     const modelConfig = modelId ? getModelById(modelId) : getCurrentModel();
     if (!modelConfig) {
       throw new Error(`❌ 模型配置未找到: ${modelId ?? 'current'}`);
@@ -201,7 +204,10 @@ export class Agent {
     return modelConfig;
   }
 
-  private async applyModelConfig(modelConfig: ModelConfig, label: string): Promise<void> {
+  private async applyModelConfig(
+    modelConfig: ModelConfig,
+    label: string
+  ): Promise<void> {
     this.log(`${label} ${modelConfig.name} (${modelConfig.model})`);
 
     const modelSupportsThinking = isThinkingModel(modelConfig);
@@ -635,8 +641,7 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
     logger.debug('💬 Processing enhanced chat message...');
 
     // 无状态设计：优先使用 context.systemPrompt，否则按需构建
-    const basePrompt =
-      context.systemPrompt ?? (await this.buildSystemPromptOnDemand());
+    const basePrompt = context.systemPrompt ?? (await this.buildSystemPromptOnDemand());
     const envContext = getEnvironmentContext();
     const systemPrompt = basePrompt
       ? `${envContext}\n\n---\n\n${basePrompt}`
@@ -735,25 +740,22 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
       let lastMessageUuid: string | null = null; // 追踪上一条消息的 UUID,用于建立消息链
       try {
         const contextMgr = this.executionEngine?.getContextManager();
-        // 提取纯文本内容用于保存（多模态消息只保存文本部分）
-        const textContent =
+        const hasPersistableContent =
           typeof message === 'string'
-            ? message
-            : message
-                .filter((p) => p.type === 'text')
-                .map((p) => (p as { text: string }).text)
-                .join('\n');
-        // 🔧 修复：过滤空用户消息（与助手消息保持一致）
-        if (contextMgr && context.sessionId && textContent.trim() !== '') {
+            ? message.trim() !== ''
+            : message.some((part) =>
+                part.type === 'text' ? part.text.trim() !== '' : true
+              );
+        if (contextMgr && context.sessionId && hasPersistableContent) {
           lastMessageUuid = await contextMgr.saveMessage(
             context.sessionId,
             'user',
-            textContent,
+            message,
             null,
             undefined,
             context.subagentInfo
           );
-        } else if (textContent.trim() === '') {
+        } else if (!hasPersistableContent) {
           logger.debug('[Agent] 跳过保存空用户消息');
         }
       } catch (error) {
@@ -2087,8 +2089,16 @@ IMPORTANT: Execute according to the approved plan above. Follow the steps exactl
     const modelName = chatConfig.model;
     const maxContextTokens =
       chatConfig.maxContextTokens ?? this.config.maxContextTokens;
-    // 用于计算压缩阈值的 maxOutputTokens，如果未配置则使用保守的默认值 8192
-    const maxOutputTokens = chatConfig.maxOutputTokens ?? this.config.maxOutputTokens ?? 8192;
+    const maxOutputTokens =
+      chatConfig.maxOutputTokens ??
+      this.config.maxOutputTokens ??
+      Math.min(
+        Math.max(
+          Math.floor(maxContextTokens * COMPACTION_FALLBACK_OUTPUT_RATIO),
+          COMPACTION_FALLBACK_MIN_OUTPUT_TOKENS
+        ),
+        COMPACTION_FALLBACK_MAX_OUTPUT_TOKENS
+      );
 
     // 计算可用于输入的空间：上下文窗口 - 预留给输出的空间
     const availableForInput = maxContextTokens - maxOutputTokens;

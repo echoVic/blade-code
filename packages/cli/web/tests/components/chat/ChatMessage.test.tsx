@@ -1,26 +1,26 @@
 // @vitest-environment jsdom
 
-import { act } from 'react'
-import ReactDOM from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { act } from 'react';
+import ReactDOM from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { useSessionStore } from '../../../src/store/session'
-import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages'
+import { useSessionStore } from '../../../src/store/session';
+import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages';
 
 vi.mock('../../../src/components/chat/MarkdownRenderer', () => ({
   MarkdownRenderer: ({ content }: { content: string }) => content,
-}))
+}));
 
-import { ChatMessage } from '../../../src/components/chat/ChatMessage'
+import { ChatMessage } from '../../../src/components/chat/ChatMessage';
 
 describe('ChatMessage', () => {
-  let container: HTMLDivElement
-  let root: ReactDOM.Root
+  let container: HTMLDivElement;
+  let root: ReactDOM.Root;
 
   beforeEach(() => {
-    container = document.createElement('div')
-    document.body.appendChild(container)
-    root = ReactDOM.createRoot(container)
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = ReactDOM.createRoot(container);
 
     useSessionStore.setState({
       messages: [],
@@ -40,15 +40,15 @@ describe('ChatMessage', () => {
         maxContextTokens: 0,
         isDefaultMaxTokens: false,
       },
-    })
-  })
+    });
+  });
 
   afterEach(() => {
     act(() => {
-      root.unmount()
-    })
-    container.remove()
-  })
+      root.unmount();
+    });
+    container.remove();
+  });
 
   test('keeps expanded tool details visible after rerendering with re-aggregated stable tool ids', () => {
     const rawMessages = [
@@ -66,33 +66,72 @@ describe('ChatMessage', () => {
           },
         ],
       },
-    ]
+    ];
 
-    const [firstMessage] = aggregateMessages(rawMessages as never)
-    const [secondMessage] = aggregateMessages(rawMessages as never)
+    const [firstMessage] = aggregateMessages(rawMessages as never);
+    const [secondMessage] = aggregateMessages(rawMessages as never);
 
     act(() => {
-      root.render(<ChatMessage message={firstMessage} />)
-    })
+      root.render(<ChatMessage message={firstMessage} />);
+    });
 
     const toggle = Array.from(container.querySelectorAll('button')).find((button) =>
       button.textContent?.includes('Read')
-    )
+    );
 
-    expect(toggle).toBeTruthy()
-
-    act(() => {
-      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-
-    expect(container.textContent).toContain('Arguments')
-    expect(container.textContent).toContain('/tmp/demo.ts')
+    expect(toggle).toBeTruthy();
 
     act(() => {
-      root.render(<ChatMessage message={secondMessage} />)
-    })
+      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
 
-    expect(container.textContent).toContain('Arguments')
-    expect(container.textContent).toContain('/tmp/demo.ts')
-  })
-})
+    expect(container.textContent).toContain('Arguments');
+    expect(container.textContent).toContain('/tmp/demo.ts');
+
+    act(() => {
+      root.render(<ChatMessage message={secondMessage} />);
+    });
+
+    expect(container.textContent).toContain('Arguments');
+    expect(container.textContent).toContain('/tmp/demo.ts');
+  });
+
+  test('renders user text and image previews from multimodal content', () => {
+    const message = {
+      id: 'user-1',
+      role: 'user',
+      content: [
+        { type: 'text', text: 'look at this' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+      ],
+      timestamp: 1700000000000,
+    };
+
+    act(() => {
+      root.render(<ChatMessage message={message as never} />);
+    });
+
+    expect(container.textContent).toContain('look at this');
+    const image = container.querySelector('img');
+    expect(image?.getAttribute('src')).toBe('data:image/png;base64,abc');
+  });
+
+  test('renders image-only user messages loaded from history', () => {
+    const message = {
+      id: 'user-2',
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,history' } },
+      ],
+      timestamp: 1700000000001,
+    };
+
+    act(() => {
+      root.render(<ChatMessage message={message as never} />);
+    });
+
+    const image = container.querySelector('img');
+    expect(image?.getAttribute('src')).toBe('data:image/png;base64,history');
+    expect(container.textContent).not.toContain('undefined');
+  });
+});

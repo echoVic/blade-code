@@ -1,8 +1,37 @@
-import { sessionService } from '@/services'
-import { useConfigStore } from '@/store/ConfigStore'
-import { initialTokenUsage, TEMP_SESSION_ID } from '../constants'
-import type { SessionSlice, SliceCreator } from '../types'
-import { aggregateMessages } from '../utils/aggregateMessages'
+import { sessionService } from '@/services';
+import { useConfigStore } from '@/store/ConfigStore';
+import { initialTokenUsage, TEMP_SESSION_ID } from '../constants';
+import type {
+  MessageContentPart,
+  SendMessagePayload,
+  SessionSlice,
+  SliceCreator,
+} from '../types';
+import { aggregateMessages } from '../utils/aggregateMessages';
+
+const buildOptimisticUserContent = (payload: SendMessagePayload) => {
+  const parts: MessageContentPart[] = [];
+
+  if (payload.content.trim()) {
+    parts.push({ type: 'text', text: payload.content });
+  }
+
+  for (const attachment of payload.attachments ?? []) {
+    if (attachment.type === 'image') {
+      parts.push({ type: 'image_url', image_url: { url: attachment.content } });
+    }
+  }
+
+  if (parts.length === 0) {
+    return payload.content;
+  }
+
+  if (parts.length === 1 && parts[0]?.type === 'text') {
+    return parts[0].text;
+  }
+
+  return parts;
+};
 
 export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
   sessions: [],
@@ -21,7 +50,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
   removeSession: (sessionId) =>
     set((state) => ({
       sessions: state.sessions.filter((s) => s.sessionId !== sessionId),
-      currentSessionId: state.currentSessionId === sessionId ? null : state.currentSessionId,
+      currentSessionId:
+        state.currentSessionId === sessionId ? null : state.currentSessionId,
       messages: state.currentSessionId === sessionId ? [] : state.messages,
     })),
 
@@ -49,12 +79,12 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
     }),
 
   loadSessions: async () => {
-    set({ isLoading: true, error: null })
+    set({ isLoading: true, error: null });
     try {
-      const sessions = await sessionService.listSessions()
-      set({ sessions, isLoading: false })
+      const sessions = await sessionService.listSessions();
+      set({ sessions, isLoading: false });
     } catch (err) {
-      set({ error: (err as Error).message, isLoading: false })
+      set({ error: (err as Error).message, isLoading: false });
     }
   },
 
@@ -64,89 +94,104 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       error: null,
       currentSessionId: sessionId,
       isTemporarySession: false,
-    })
+    });
     try {
-      const rawMessages = await sessionService.getMessages(sessionId)
-      const messages = aggregateMessages(rawMessages)
+      const rawMessages = await sessionService.getMessages(sessionId);
+      const messages = aggregateMessages(rawMessages);
       set({
         messages,
         isLoading: false,
         tokenUsage: { ...initialTokenUsage },
-      })
+      });
     } catch (err) {
-      set({ error: (err as Error).message, isLoading: false })
+      set({ error: (err as Error).message, isLoading: false });
     }
   },
 
   deleteSession: async (sessionId: string) => {
     try {
-      await sessionService.deleteSession(sessionId)
+      await sessionService.deleteSession(sessionId);
       set((state) => ({
         sessions: state.sessions.filter((s) => s.sessionId !== sessionId),
-        currentSessionId: state.currentSessionId === sessionId ? null : state.currentSessionId,
+        currentSessionId:
+          state.currentSessionId === sessionId ? null : state.currentSessionId,
         messages: state.currentSessionId === sessionId ? [] : state.messages,
-      }))
+      }));
     } catch (err) {
-      set({ error: (err as Error).message })
+      set({ error: (err as Error).message });
     }
   },
 
-  sendMessage: async (content: string) => {
-    const { currentSessionId, isTemporarySession, subscribeToEvents, addSession, addMessage } = get()
+  sendMessage: async (payload: SendMessagePayload) => {
+    const {
+      currentSessionId,
+      isTemporarySession,
+      subscribeToEvents,
+      addSession,
+      addMessage,
+    } = get();
 
-    let sessionId = currentSessionId
+    let sessionId = currentSessionId;
 
-    if (isTemporarySession || !currentSessionId || currentSessionId === TEMP_SESSION_ID) {
+    if (
+      isTemporarySession ||
+      !currentSessionId ||
+      currentSessionId === TEMP_SESSION_ID
+    ) {
       try {
-        const session = await sessionService.createSession()
-        addSession(session)
+        const session = await sessionService.createSession();
+        addSession(session);
         set({
           currentSessionId: session.sessionId,
           isTemporarySession: false,
-        })
-        sessionId = session.sessionId
+        });
+        sessionId = session.sessionId;
       } catch (err) {
-        set({ error: (err as Error).message })
-        return
+        set({ error: (err as Error).message });
+        return;
       }
     }
 
     if (!sessionId || sessionId === TEMP_SESSION_ID) {
-      set({ error: 'Failed to create session' })
-      return
+      set({ error: 'Failed to create session' });
+      return;
     }
 
     addMessage({
       id: `temp-${Date.now()}`,
       role: 'user',
-      content,
+      content: buildOptimisticUserContent(payload),
       timestamp: Date.now(),
-    })
+    });
 
-    set({ isStreaming: true, error: null })
-    subscribeToEvents(sessionId)
+    set({ isStreaming: true, error: null });
+    subscribeToEvents(sessionId);
 
     try {
-      const { currentMode } = useConfigStore.getState()
-      const response = await sessionService.sendMessage(sessionId, content, currentMode)
-      set({ currentRunId: response.runId })
+      const { currentMode } = useConfigStore.getState();
+      const response = await sessionService.sendMessage(
+        sessionId,
+        payload,
+        currentMode
+      );
+      set({ currentRunId: response.runId });
     } catch (err) {
-      set({ error: (err as Error).message, isStreaming: false })
+      set({ error: (err as Error).message, isStreaming: false });
     }
   },
 
   abortSession: async () => {
-    const { currentSessionId, unsubscribeFromEvents } = get()
+    const { currentSessionId, unsubscribeFromEvents } = get();
 
-    unsubscribeFromEvents()
-    set({ isStreaming: false, currentRunId: null })
+    unsubscribeFromEvents();
+    set({ isStreaming: false, currentRunId: null });
 
     if (currentSessionId) {
       try {
-        await sessionService.abortSession(currentSessionId)
+        await sessionService.abortSession(currentSessionId);
       } catch {
         // Ignore abort errors
       }
     }
   },
-})
+});

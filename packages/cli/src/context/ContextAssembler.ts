@@ -98,7 +98,13 @@ export class ContextAssembler {
   private assembleConversation(events: SessionEvent[]): ConversationContext {
     const messageMap = new Map<
       string,
-      { id: string; role: MessageRole; content: string; timestamp: number; metadata?: JsonObject }
+      {
+        id: string;
+        role: MessageRole;
+        content: string;
+        timestamp: number;
+        metadata?: JsonObject;
+      }
     >();
 
     let latestSummary: string | undefined;
@@ -110,9 +116,7 @@ export class ContextAssembler {
           role: event.data.role,
           content: '',
           timestamp: new Date(event.timestamp).getTime(),
-          metadata: event.data.model
-            ? { model: event.data.model }
-            : undefined,
+          metadata: event.data.model ? { model: event.data.model } : undefined,
         });
       }
 
@@ -123,6 +127,10 @@ export class ContextAssembler {
         if (partType === 'text' && message) {
           const p = payload as { text?: string };
           message.content = p.text ?? '';
+        }
+
+        if (partType === 'image' && message) {
+          message.content = message.content ? `${message.content}\n[Image]` : '[Image]';
         }
 
         // 提取 compaction summary
@@ -168,7 +176,11 @@ export class ContextAssembler {
       const { partType, partId, payload } = event.data;
 
       if (partType === 'tool_call') {
-        const p = payload as { toolCallId?: string; toolName?: string; input?: JsonValue };
+        const p = payload as {
+          toolCallId?: string;
+          toolName?: string;
+          input?: JsonValue;
+        };
         const id = p.toolCallId ?? partId;
         toolCalls.set(id, {
           id,

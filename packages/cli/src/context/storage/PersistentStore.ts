@@ -1,6 +1,7 @@
-import { nanoid } from 'nanoid';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { nanoid } from 'nanoid';
+import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import type { JsonValue, MessageRole } from '../../store/types.js';
 import type {
   ConversationContext,
@@ -56,7 +57,11 @@ export class PersistentStore {
 
   private async ensureSessionCreated(
     sessionId: string,
-    subagentInfo?: { parentSessionId: string; subagentType: string; isSidechain: boolean }
+    subagentInfo?: {
+      parentSessionId: string;
+      subagentType: string;
+      isSidechain: boolean;
+    }
   ): Promise<void> {
     const filePath = getSessionFilePath(this.projectPath, sessionId);
     const store = new JSONLStore(filePath);
@@ -114,7 +119,7 @@ export class PersistentStore {
   async saveMessage(
     sessionId: string,
     messageRole: MessageRole,
-    content: string,
+    content: string | ContentPart[],
     parentUuid: string | null = null,
     metadata?: {
       model?: string;
@@ -141,15 +146,34 @@ export class PersistentStore {
         usage: metadata?.usage,
       };
       const messageEntry = this.createEvent('message_created', sessionId, messageInfo);
-      const partInfo: PartInfo = {
-        partId: nanoid(),
-        messageId,
-        partType: 'text',
-        payload: { text: content },
-        createdAt: now,
-      };
-      const partEntry = this.createEvent('part_created', sessionId, partInfo);
-      await store.appendBatch([messageEntry, partEntry]);
+      const partEntries =
+        typeof content === 'string'
+          ? [
+              this.createEvent('part_created', sessionId, {
+                partId: nanoid(),
+                messageId,
+                partType: 'text',
+                payload: { text: content },
+                createdAt: now,
+              }),
+            ]
+          : content.map((part) =>
+              this.createEvent('part_created', sessionId, {
+                partId: nanoid(),
+                messageId,
+                partType: part.type === 'text' ? 'text' : 'image',
+                payload:
+                  part.type === 'text'
+                    ? { text: part.text }
+                    : {
+                        mimeType:
+                          extractMimeTypeFromDataUrl(part.image_url.url) ?? 'image/png',
+                        dataUrl: part.image_url.url,
+                      },
+                createdAt: now,
+              })
+            );
+      await store.appendBatch([messageEntry, ...partEntries]);
       return messageId;
     } catch (error) {
       console.error(`[PersistentStore] 保存消息失败 (session: ${sessionId}):`, error);
@@ -279,13 +303,17 @@ export class PersistentStore {
         partId: toolId,
         messageId,
         partType: 'tool_result',
-        payload: { toolCallId: toolId, toolName, output: toolOutput, error: error ?? null },
+        payload: {
+          toolCallId: toolId,
+          toolName,
+          output: toolOutput,
+          error: error ?? null,
+        },
         createdAt: now,
       };
       entries.push(this.createEvent('part_created', sessionId, toolResultPart));
       if (subagentRef) {
-        const finishedAt =
-          subagentRef.subagentStatus === 'running' ? null : now;
+        const finishedAt = subagentRef.subagentStatus === 'running' ? null : now;
         const subtaskPart: PartInfo = {
           partId: nanoid(),
           messageId,
@@ -422,7 +450,10 @@ export class PersistentStore {
 
       const entries = await store.readAll();
       if (entries.length === 0) return null;
-      const messageMap = new Map<string, { id: string; role: MessageRole; content: string; timestamp: number }>();
+      const messageMap = new Map<
+        string,
+        { id: string; role: MessageRole; content: string; timestamp: number }
+      >();
       for (const entry of entries) {
         if (entry.type === 'message_created') {
           messageMap.set(entry.data.messageId, {
@@ -437,6 +468,14 @@ export class PersistentStore {
           if (message) {
             const payload = entry.data.payload as { text?: string };
             message.content = payload.text ?? '';
+          }
+        }
+        if (entry.type === 'part_created' && entry.data.partType === 'image') {
+          const message = messageMap.get(entry.data.messageId);
+          if (message) {
+            message.content = message.content
+              ? `${message.content}\n[Image]`
+              : '[Image]';
           }
         }
       }
@@ -491,7 +530,9 @@ export class PersistentStore {
 
       const lastEntry = entries[entries.length - 1];
       const messageCount = entries.filter(
-        (entry) => entry.type === 'message_created' && ['user', 'assistant'].includes(entry.data.role)
+        (entry) =>
+          entry.type === 'message_created' &&
+          ['user', 'assistant'].includes(entry.data.role)
       ).length;
 
       return {
@@ -623,4 +664,9 @@ export class PersistentStore {
   static async listAllProjects(): Promise<string[]> {
     return listProjectDirectories();
   }
+}
+
+function extractMimeTypeFromDataUrl(dataUrl: string): string | null {
+  const match = /^data:([^;,]+)[;,]/.exec(dataUrl);
+  return match?.[1] ?? null;
 }

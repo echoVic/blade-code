@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import { nanoid } from 'nanoid';
+import type { ContentPart } from '../services/ChatServiceInterface.js';
 import type { JsonObject, JsonValue } from '../store/types.js';
 import { ContextAssembler } from './ContextAssembler.js';
 import { ContextCompressor } from './processors/ContextCompressor.js';
@@ -249,7 +250,7 @@ export class ContextManager {
   async saveMessage(
     sessionId: string,
     role: 'user' | 'assistant' | 'system',
-    content: string,
+    content: string | ContentPart[],
     parentUuid: string | null = null,
     metadata?: {
       model?: string;
