@@ -3,6 +3,27 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.2.9] - 2026-03-31
+
+### ✨ 新功能
+
+- 支持多模态图像输入功能 (fecd446)
+- 添加稳定的工具调用和子代理ID生成功能 (0ae38b7)
+
+### 🐛 问题修复
+
+- API 错误信息友好化，不再向用户暴露完整堆栈 (58b1bd4)
+- stop release flow after npm publish failure (1b1d3bf)
+
+### 📝 文档更新
+
+- add web image input design spec (c9b3a51)
+
+### ⚡ 性能优化
+
+- 终端交互层全面性能优化 (82937a8)
+
+
 ## [0.2.7] - 2026-03-24
 
 ### ✨ 新功能
