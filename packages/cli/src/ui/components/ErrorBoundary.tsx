@@ -1,8 +1,10 @@
 import { Box, Text } from 'ink';
-import React, { ErrorInfo, ReactNode } from 'react';
+import React, { type ErrorInfo, type ReactNode } from 'react';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
+  fallback?: ReactNode;
+  name?: string;
 }
 
 interface ErrorBoundaryState {
@@ -24,11 +26,10 @@ export class ErrorBoundary extends React.Component<
     };
   }
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+  static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
     return {
       hasError: true,
       error,
-      errorInfo: null,
     };
   }
 
@@ -38,15 +39,22 @@ export class ErrorBoundary extends React.Component<
       errorInfo,
     });
 
-    // 记录错误到控制台
     console.error('未捕获的错误:', error, errorInfo);
   }
 
   render(): ReactNode {
     if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+
       return (
         <Box flexDirection="column" padding={1} borderStyle="round" borderColor="red">
-          <Text color="red">💥 应用发生错误</Text>
+          <Text bold color="red">
+            {this.props.name
+              ? `💥 Error in ${this.props.name}`
+              : '💥 应用发生错误'}
+          </Text>
           <Text> </Text>
           <Text color="red">{this.state.error?.message}</Text>
           <Text> </Text>

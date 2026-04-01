@@ -1,36 +1,30 @@
+import type { Command as CommandType } from '@commander-js/extra-typings';
+import { CommanderError } from '@commander-js/extra-typings';
+import type { MiddlewareFunction } from 'yargs';
 import { ConfigManager } from '../config/index.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { getState } from '../store/vanilla.js';
 
 const logger = createLogger(LogCategory.GENERAL);
 
-/**
- * Yargs 中间件
- * 处理全局逻辑，如权限验证、配置加载等
- */
+type AnyCommand = CommandType<unknown[], Record<string, unknown>, Record<string, unknown>>;
 
-import type { MiddlewareFunction } from 'yargs';
-
-/**
- * 权限验证中间件
- */
-export const validatePermissions: MiddlewareFunction = (argv) => {
-  // 处理 --yolo 快捷方式
-  if (argv.yolo) {
-    // 如果同时指定了 --yolo 和 --permission-mode，抛出错误
-    if (argv.permissionMode && argv.permissionMode !== 'yolo') {
+function validatePermissionsCore(opts: Record<string, unknown>): void {
+  if (opts.yolo) {
+    if (opts.permissionMode && opts.permissionMode !== 'yolo') {
       throw new Error(
         'Cannot use both --yolo and --permission-mode with different values'
       );
     }
-    // 将 --yolo 映射到 --permission-mode=yolo
-    argv.permissionMode = 'yolo';
   }
 
-  // 验证工具列表冲突
-  if (Array.isArray(argv.allowedTools) && Array.isArray(argv.disallowedTools)) {
-    const intersection = argv.allowedTools.filter((tool: string) =>
-      (argv.disallowedTools as string[]).includes(tool)
+  const allowedTools = opts.allowedTools as string[] | undefined;
+  const disallowedTools = opts.disallowedTools as string[] | undefined;
+
+  if (Array.isArray(allowedTools) && allowedTools.length > 0 &&
+      Array.isArray(disallowedTools) && disallowedTools.length > 0) {
+    const intersection = allowedTools.filter((tool: string) =>
+      disallowedTools.includes(tool)
     );
     if (intersection.length > 0) {
       throw new Error(
@@ -38,55 +32,97 @@ export const validatePermissions: MiddlewareFunction = (argv) => {
       );
     }
   }
-};
+}
 
-/**
- * 配置加载中间件
- * 所有命令（包括 UI 模式）都会执行，负责初始化 ConfigManager 和 Store
- */
-export const loadConfiguration: MiddlewareFunction = async (argv) => {
-  // 1. 初始化 ConfigManager 和 Store（所有命令共用）
+async function loadConfigurationCore(opts: Record<string, unknown>): Promise<void> {
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs.includes('--help') || rawArgs.includes('-h') ||
+      rawArgs.includes('--version') || rawArgs.includes('-V')) {
+    return;
+  }
+
   try {
     const configManager = ConfigManager.getInstance();
     const config = await configManager.initialize();
     getState().config.actions.setConfig(config);
 
-    if (argv.debug) {
+    if (opts.debug) {
       logger.info('[CLI] 配置已加载到 Store');
     }
   } catch (error) {
-    logger.error(
-      '[CLI] ❌ 配置初始化失败',
-      error instanceof Error ? error.message : error
+    throw new Error(
+      `配置初始化失败: ${error instanceof Error ? error.message : '未知错误'}`
     );
-    console.error('\n❌ 配置初始化失败\n');
-    console.error('原因:', error instanceof Error ? error.message : '未知错误');
-    console.error('\n请检查：');
-    console.error('  1. 配置文件格式是否正确 (~/.blade/config.json)');
-    console.error('  2. 是否需要运行 blade 进行首次配置');
-    console.error('  3. 配置文件权限是否正确\n');
-    process.exit(1);
   }
 
-  // 2. 验证会话选项
-  if (argv.continue && argv.resume) {
-    throw new Error('Cannot use both --continue and --resume flags simultaneously');
+  if (opts.continue && opts.resume) {
+    throw new Error(
+      'Cannot use both --continue and --resume flags simultaneously'
+    );
   }
-};
+}
 
-/**
- * 输出格式验证中间件
- */
-export const validateOutput: MiddlewareFunction = (argv) => {
-  // 验证输出格式组合
-  if (argv.outputFormat && argv.outputFormat !== 'text' && !argv.print && !argv.headless) {
-    throw new Error('--output-format can only be used with --print or --headless');
+function validateOutputCore(opts: Record<string, unknown>): void {
+  if (opts.outputFormat && opts.outputFormat !== 'text' && !opts.print && !opts.headless) {
+    throw new Error(
+      '--output-format can only be used with --print or --headless'
+    );
   }
 
-  // 验证输入格式
-  if (argv.inputFormat === 'stream-json' && argv.print) {
+  if (opts.inputFormat === 'stream-json' && opts.print) {
     logger.warn(
       '⚠️  Warning: stream-json input format may not work as expected with --print'
     );
   }
+}
+
+export function validatePermissionsHook(thisCommand: AnyCommand, _actionCommand: AnyCommand): void {
+  const opts = thisCommand.optsWithGlobals() as Record<string, unknown>;
+  validatePermissionsCore(opts);
+  if (opts.yolo) {
+    thisCommand.setOptionValue('permissionMode', 'yolo');
+  }
+}
+
+export async function loadConfigurationHook(thisCommand: AnyCommand, _actionCommand: AnyCommand): Promise<void> {
+  const opts = thisCommand.optsWithGlobals() as Record<string, unknown>;
+  await loadConfigurationCore(opts);
+}
+
+export function validateOutputHook(thisCommand: AnyCommand, _actionCommand: AnyCommand): void {
+  const opts = thisCommand.optsWithGlobals() as Record<string, unknown>;
+  validateOutputCore(opts);
+}
+
+/** @deprecated Yargs middleware - kept for backward compatibility with headless/print commands */
+export const validatePermissions: MiddlewareFunction = (argv) => {
+  validatePermissionsCore(argv as Record<string, unknown>);
+  if (argv.yolo) {
+    argv.permissionMode = 'yolo';
+  }
 };
+
+/** @deprecated Yargs middleware - kept for backward compatibility with headless/print commands */
+export const loadConfiguration: MiddlewareFunction = async (argv) => {
+  await loadConfigurationCore(argv as Record<string, unknown>);
+};
+
+/** @deprecated Yargs middleware - kept for backward compatibility with headless/print commands */
+export const validateOutput: MiddlewareFunction = (argv) => {
+  validateOutputCore(argv as Record<string, unknown>);
+};
+
+export function setupErrorHandling(program: AnyCommand): void {
+  program.exitOverride((err: CommanderError) => {
+    if (err.code === 'commander.helpDisplayed' || err.code === 'commander.version') {
+      process.exit(0);
+    }
+    throw err;
+  });
+
+  program.configureOutput({
+    outputError(str: string, write: (s: string) => void) {
+      write(`❌ ${str}`);
+    },
+  });
+}
