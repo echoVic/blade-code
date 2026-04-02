@@ -25,29 +25,19 @@
         "@ai-sdk/google": "^3.0.4",
         "@ai-sdk/openai": "^3.0.26",
         "@ai-sdk/openai-compatible": "^2.0.4",
-        "@alcalzone/ansi-tokenize": "^0.3.0",
-        "@commander-js/extra-typings": "^14.0.0",
         "@inkjs/ui": "^2.0.0",
         "@modelcontextprotocol/sdk": "^1.17.4",
         "ahooks": "^3.9.6",
         "ai": "^6.0.39",
         "ansi-escapes": "^7.2.0",
         "async-mutex": "^0.5.0",
-        "auto-bind": "^5.0.1",
         "axios": "^1.12.2",
-        "bidi-js": "^1.0.3",
         "chalk": "^5.4.1",
-        "cli-boxes": "^4.0.1",
-        "code-excerpt": "^4.0.0",
-        "commander": "^14.0.3",
         "diff": "^8.0.2",
-        "emoji-regex": "^10.6.0",
         "fast-glob": "^3.3.3",
         "fuse.js": "^7.1.0",
-        "get-east-asian-width": "^1.5.0",
         "gray-matter": "^4.0.3",
         "hono": "^4.7.10",
-        "indent-string": "^5.0.0",
         "ink": "npm:@jrichman/ink@6.4.10",
         "ink-big-text": "^2.0.0",
         "ink-gradient": "^3.0.0",
@@ -64,22 +54,13 @@
         "picomatch": "^4.0.3",
         "react": "^19.1.1",
         "react-dom": "^19.1.1",
-        "react-reconciler": "^0.33.0",
         "semver": "^7.7.3",
-        "signal-exit": "^4.1.0",
-        "stack-utils": "^2.0.6",
         "string-width": "^8.1.0",
-        "strip-ansi": "^7.2.0",
-        "supports-hyperlinks": "^4.4.0",
-        "type-fest": "^5.5.0",
         "undici": "^7.16.0",
-        "usehooks-ts": "^3.1.1",
-        "wrap-ansi": "^10.0.0",
         "write-file-atomic": "^7.0.0",
         "ws": "^8.18.0",
         "yaml": "^2.8.1",
         "yargs": "^18.0.0",
-        "yoga-layout": "^3.2.1",
         "zod": "^3.24.2",
         "zod-to-json-schema": "^3.24.6",
         "zustand": "^5.0.9",
@@ -94,7 +75,6 @@
         "@types/react": "^19.1.1",
         "@types/react-dom": "^19.1.1",
         "@types/semver": "^7.7.1",
-        "@types/stack-utils": "^2.0.3",
         "@types/write-file-atomic": "^4.0.3",
         "@types/ws": "^8.5.12",
         "@types/yargs": "^17.0.33",
@@ -189,7 +169,7 @@
 
     "@ai-sdk/provider-utils": ["@ai-sdk/provider-utils@4.0.4", "https://bnpm.byted.org/@ai-sdk/provider-utils/-/provider-utils-4.0.4.tgz", { "dependencies": { "@ai-sdk/provider": "3.0.2", "@standard-schema/spec": "1.1.0", "eventsource-parser": "3.0.6" }, "peerDependencies": { "zod": "3.25.76" } }, "sha512-VxhX0B/dWGbpNHxrKCWUAJKXIXV015J4e7qYjdIU9lLWeptk0KMLGcqkB4wFxff5Njqur8dt8wRi1MN9lZtDqg=="],
 
-    "@alcalzone/ansi-tokenize": ["@alcalzone/ansi-tokenize@0.3.0", "https://bnpm.byted.org/@alcalzone/ansi-tokenize/-/ansi-tokenize-0.3.0.tgz", { "dependencies": { "ansi-styles": "6.2.3", "is-fullwidth-code-point": "5.1.0" } }, "sha512-p+CMKJ93HFmLkjXKlXiVGlMQEuRb6H0MokBSwUsX+S6BRX8eV5naFZpQJFfJHjRZY0Hmnqy1/r6UWl3x+19zYA=="],
+    "@alcalzone/ansi-tokenize": ["@alcalzone/ansi-tokenize@0.2.2", "https://bnpm.byted.org/@alcalzone/ansi-tokenize/-/ansi-tokenize-0.2.2.tgz", { "dependencies": { "ansi-styles": "6.2.3", "is-fullwidth-code-point": "5.1.0" } }, "sha512-mkOh+Wwawzuf5wa30bvc4nA+Qb6DIrGWgBhRR/Pw4T9nsgYait8izvXkNyU78D6Wcu3Z+KUdwCmLCxlWjEotYA=="],
 
     "@alloc/quick-lru": ["@alloc/quick-lru@5.2.0", "https://bnpm.byted.org/@alloc/quick-lru/-/quick-lru-5.2.0.tgz", {}, "sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw=="],
 
@@ -282,8 +262,6 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.3.9", "https://bnpm.byted.org/@biomejs/cli-win32-arm64/-/cli-win32-arm64-2.3.9.tgz", { "os": "win32", "cpu": "arm64" }, "sha512-w48Yh/XbYHO2cBw8B5laK3vCAEKuocX5ItGXVDAqFE7Ze2wnR00/1vkY6GXglfRDOjWHu2XtxI0WKQ52x1qxEA=="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.3.9", "https://bnpm.byted.org/@biomejs/cli-win32-x64/-/cli-win32-x64-2.3.9.tgz", { "os": "win32", "cpu": "x64" }, "sha512-90+J63VT7qImy9s3pkWL0ZX27VzVwMNCRzpLpe5yMzMYPbO1vcjL/w/Q5f/juAGMvP7a2Fd0H7IhAR6F7/i78A=="],
-
-    "@commander-js/extra-typings": ["@commander-js/extra-typings@14.0.0", "https://bnpm.byted.org/@commander-js/extra-typings/-/extra-typings-14.0.0.tgz", { "peerDependencies": { "commander": "14.0.3" } }, "sha512-hIn0ncNaJRLkZrxBIp5AsW/eXEHNKYQBh0aPdoUqNgD+Io3NIykQqpKFyKcuasZhicGaEZJX/JBSIkZ4e5x8Dg=="],
 
     "@csstools/color-helpers": ["@csstools/color-helpers@5.1.0", "https://bnpm.byted.org/@csstools/color-helpers/-/color-helpers-5.1.0.tgz", {}, "sha512-S11EXWJyy0Mz5SYvRmY8nJYTFFd1LCNV+7cXyAgQtOOuzb4EsgfqDufL+9esx72/eLhsRdGZwaldu/h+E4t4BA=="],
 
@@ -639,8 +617,6 @@
 
     "@types/semver": ["@types/semver@7.7.1", "https://bnpm.byted.org/@types/semver/-/semver-7.7.1.tgz", {}, "sha512-FmgJfu+MOcQ370SD0ev7EI8TlCAfKYU+B4m5T3yXc1CiRN94g/SZPtsCkk506aUDtlMnFZvasDwHHUcZUEaYuA=="],
 
-    "@types/stack-utils": ["@types/stack-utils@2.0.3", "https://bnpm.byted.org/@types/stack-utils/-/stack-utils-2.0.3.tgz", {}, "sha512-9aEbYZ3TbYMznPdcdr3SmIrLXwC/AKZXQeCf9Pgao5CKb8CyHuEX5jzWPTkvregvhRJHcpRO6BFoGW9ycaOkYw=="],
-
     "@types/tinycolor2": ["@types/tinycolor2@1.4.6", "https://bnpm.byted.org/@types/tinycolor2/-/tinycolor2-1.4.6.tgz", {}, "sha512-iEN8J0BoMnsWBqjVbWH/c0G0Hh7O21lpR2/+PrvAVgWdzL7eexIFm4JN/Wn10PTcmNdtS6U67r499mlWMXOxNw=="],
 
     "@types/trusted-types": ["@types/trusted-types@2.0.7", "https://bnpm.byted.org/@types/trusted-types/-/trusted-types-2.0.7.tgz", {}, "sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw=="],
@@ -765,8 +741,6 @@
 
     "baseline-browser-mapping": ["baseline-browser-mapping@2.9.19", "https://bnpm.byted.org/baseline-browser-mapping/-/baseline-browser-mapping-2.9.19.tgz", { "bin": { "baseline-browser-mapping": "dist/cli.js" } }, "sha512-ipDqC8FrAl/76p2SSWKSI+H9tFwm7vYqXQrItCuiVPt26Km0jS+NzSsBWAaBusvSbQcfJG+JitdMm+wZAgTYqg=="],
 
-    "bidi-js": ["bidi-js@1.0.3", "https://bnpm.byted.org/bidi-js/-/bidi-js-1.0.3.tgz", { "dependencies": { "require-from-string": "2.0.2" } }, "sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw=="],
-
     "binary-extensions": ["binary-extensions@2.3.0", "https://bnpm.byted.org/binary-extensions/-/binary-extensions-2.3.0.tgz", {}, "sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw=="],
 
     "binaryextensions": ["binaryextensions@6.11.0", "https://bnpm.byted.org/binaryextensions/-/binaryextensions-6.11.0.tgz", { "dependencies": { "editions": "6.22.0" } }, "sha512-sXnYK/Ij80TO3lcqZVV2YgfKN5QjUWIRk/XSm2J/4bd/lPko3lvk0O4ZppH6m+6hB2/GTu+ptNwVFe1xh+QLQw=="],
@@ -843,7 +817,7 @@
 
     "class-variance-authority": ["class-variance-authority@0.7.1", "https://bnpm.byted.org/class-variance-authority/-/class-variance-authority-0.7.1.tgz", { "dependencies": { "clsx": "2.1.1" } }, "sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg=="],
 
-    "cli-boxes": ["cli-boxes@4.0.1", "https://bnpm.byted.org/cli-boxes/-/cli-boxes-4.0.1.tgz", {}, "sha512-5IOn+jcCEHEraYolBPs/sT4BxYCe2nHg374OPiItB1O96KZFseS2gthU4twyYzeDcFew4DaUM/xwc5BQf08JJw=="],
+    "cli-boxes": ["cli-boxes@3.0.0", "https://bnpm.byted.org/cli-boxes/-/cli-boxes-3.0.0.tgz", {}, "sha512-/lzGpEWL/8PfI0BmBOPRwp0c/wFNX1RdUML3jK/RcSBA9T8mZDdQpqYBKtCFTOfQbwPqWEOpjqW+Fnayc0969g=="],
 
     "cli-cursor": ["cli-cursor@4.0.0", "https://bnpm.byted.org/cli-cursor/-/cli-cursor-4.0.0.tgz", { "dependencies": { "restore-cursor": "4.0.0" } }, "sha512-VGtlMu3x/4DOtIUwEkRezxUZ2lBacNJCHash0N0WeZDBS+7Ux1dm3XWAgWYxLJFMMdOeXMHXorshEFhbMSGelg=="],
 
@@ -867,7 +841,7 @@
 
     "comma-separated-tokens": ["comma-separated-tokens@2.0.3", "https://bnpm.byted.org/comma-separated-tokens/-/comma-separated-tokens-2.0.3.tgz", {}, "sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg=="],
 
-    "commander": ["commander@14.0.3", "https://bnpm.byted.org/commander/-/commander-14.0.3.tgz", {}, "sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw=="],
+    "commander": ["commander@12.1.0", "https://bnpm.byted.org/commander/-/commander-12.1.0.tgz", {}, "sha512-Vw8qHK3bZM9y/P10u3Vib8o/DdkvA2OtPtZvD871QKjy74Wj1WSKFILMPRPSdUSx5RFK1arlJzEtA4PkFgnbuA=="],
 
     "concat-map": ["concat-map@0.0.1", "https://bnpm.byted.org/concat-map/-/concat-map-0.0.1.tgz", {}, "sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg=="],
 
@@ -1095,7 +1069,7 @@
 
     "gray-matter": ["gray-matter@4.0.3", "https://bnpm.byted.org/gray-matter/-/gray-matter-4.0.3.tgz", { "dependencies": { "js-yaml": "3.14.2", "kind-of": "6.0.3", "section-matter": "1.0.0", "strip-bom-string": "1.0.0" } }, "sha512-5v6yZd4JK3eMI3FqqCouswVqwugaA9r4dNZB1wwcmrD02QkV5H0y7XBQW8QwQqEaZY1pM9aqORSORhJRdNK44Q=="],
 
-    "has-flag": ["has-flag@5.0.1", "https://bnpm.byted.org/has-flag/-/has-flag-5.0.1.tgz", {}, "sha512-CsNUt5x9LUdx6hnk/E2SZLsDyvfqANZSUq4+D3D8RzDJ2M+HDTIkF60ibS1vHaK55vzgiZw1bEPFG9yH7l33wA=="],
+    "has-flag": ["has-flag@4.0.0", "https://bnpm.byted.org/has-flag/-/has-flag-4.0.0.tgz", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
 
     "has-symbols": ["has-symbols@1.1.0", "https://bnpm.byted.org/has-symbols/-/has-symbols-1.1.0.tgz", {}, "sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ=="],
 
@@ -1278,8 +1252,6 @@
     "lodash": ["lodash@4.17.21", "https://bnpm.byted.org/lodash/-/lodash-4.17.21.tgz", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
 
     "lodash-es": ["lodash-es@4.17.22", "https://bnpm.byted.org/lodash-es/-/lodash-es-4.17.22.tgz", {}, "sha512-XEawp1t0gxSi9x01glktRZ5HDy0HXqrM0x5pXQM98EaI0NxO6jVM7omDOxsuEo5UIASAnm2bRp1Jt/e0a2XU8Q=="],
-
-    "lodash.debounce": ["lodash.debounce@4.0.8", "https://bnpm.byted.org/lodash.debounce/-/lodash.debounce-4.0.8.tgz", {}, "sha512-FT1yDzDYEoYWhnSGnpE/4Kj1fLZkDFyqRb7fNt6FdYOSxlUWAtp42Eh6Wb0rGIv/m9Bgo7x4GhQbm5Ys4SG5ow=="],
 
     "lodash.includes": ["lodash.includes@4.3.0", "https://bnpm.byted.org/lodash.includes/-/lodash.includes-4.3.0.tgz", {}, "sha512-W3Bx6mdkRTGtlJISOvVD/lbqjTlPPUDTMnlXZFnVwi9NKJ6tiAk6LVdlhZMm17VZisqhKcgzpO5Wz91PCt5b0w=="],
 
@@ -1595,7 +1567,7 @@
 
     "react-markdown": ["react-markdown@10.1.0", "https://bnpm.byted.org/react-markdown/-/react-markdown-10.1.0.tgz", { "dependencies": { "@types/hast": "3.0.4", "@types/mdast": "4.0.4", "devlop": "1.1.0", "hast-util-to-jsx-runtime": "2.3.6", "html-url-attributes": "3.0.1", "mdast-util-to-hast": "13.2.1", "remark-parse": "11.0.0", "remark-rehype": "11.1.2", "unified": "11.0.5", "unist-util-visit": "5.1.0", "vfile": "6.0.3" }, "peerDependencies": { "@types/react": "19.2.10", "react": "19.2.4" } }, "sha512-qKxVopLT/TyA6BX3Ue5NwabOsAzm0Q7kAPwq6L+wWDwisYs7R8vZ0nRXqq6rkueboxpkjvLGU9fWifiX/ZZFxQ=="],
 
-    "react-reconciler": ["react-reconciler@0.33.0", "https://bnpm.byted.org/react-reconciler/-/react-reconciler-0.33.0.tgz", { "dependencies": { "scheduler": "0.27.0" }, "peerDependencies": { "react": "19.2.4" } }, "sha512-KetWRytFv1epdpJc3J4G75I4WrplZE5jOL7Yq0p34+OVOKF4Se7WrdIdVC45XsSSmUTlht2FM/fM1FZb1mfQeA=="],
+    "react-reconciler": ["react-reconciler@0.32.0", "https://bnpm.byted.org/react-reconciler/-/react-reconciler-0.32.0.tgz", { "dependencies": { "scheduler": "0.26.0" }, "peerDependencies": { "react": "19.2.4" } }, "sha512-2NPMOzgTlG0ZWdIf3qG+dcbLSoAc/uLfOwckc3ofy5sSK0pLJqnQLpUFxvGcN2rlXSjnVtGeeFLNimCQEj5gOQ=="],
 
     "react-refresh": ["react-refresh@0.17.0", "https://bnpm.byted.org/react-refresh/-/react-refresh-0.17.0.tgz", {}, "sha512-z6F7K9bV85EfseRCp2bzrpyQ0Gkw1uLoCel9XBVWPg/TjRj94SkJzUTGfOa4bs7iJvBWtQG0Wq7wnI0syw3EBQ=="],
 
@@ -1685,7 +1657,7 @@
 
     "siginfo": ["siginfo@2.0.0", "https://bnpm.byted.org/siginfo/-/siginfo-2.0.0.tgz", {}, "sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g=="],
 
-    "signal-exit": ["signal-exit@4.1.0", "https://bnpm.byted.org/signal-exit/-/signal-exit-4.1.0.tgz", {}, "sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw=="],
+    "signal-exit": ["signal-exit@3.0.7", "https://bnpm.byted.org/signal-exit/-/signal-exit-3.0.7.tgz", {}, "sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ=="],
 
     "simple-concat": ["simple-concat@1.0.1", "https://bnpm.byted.org/simple-concat/-/simple-concat-1.0.1.tgz", {}, "sha512-cSFtAPtRhljv69IK0hTVZQ+OfE9nePi/rtJmw5UjHeVyVroEqJXP1sFztKUy1qU+xvz3u/sfYJLa947b7nAN2Q=="],
 
@@ -1747,17 +1719,15 @@
 
     "sucrase": ["sucrase@3.35.1", "https://bnpm.byted.org/sucrase/-/sucrase-3.35.1.tgz", { "dependencies": { "@jridgewell/gen-mapping": "0.3.13", "commander": "4.1.1", "lines-and-columns": "1.2.4", "mz": "2.7.0", "pirates": "4.0.7", "tinyglobby": "0.2.15", "ts-interface-checker": "0.1.13" }, "bin": { "sucrase": "bin/sucrase", "sucrase-node": "bin/sucrase-node" } }, "sha512-DhuTmvZWux4H1UOnWMB3sk0sbaCVOoQZjv8u1rDoTV0HTdGem9hkAZtl4JZy8P2z4Bg0nT+YMeOFyVr4zcG5Tw=="],
 
-    "supports-color": ["supports-color@10.2.2", "https://bnpm.byted.org/supports-color/-/supports-color-10.2.2.tgz", {}, "sha512-SS+jx45GF1QjgEXQx4NJZV9ImqmO2NPz5FNsIHrsDjh2YsHnawpan7SNQ1o8NuhrbHZy9AZhIoCUiCeaW/C80g=="],
+    "supports-color": ["supports-color@7.2.0", "https://bnpm.byted.org/supports-color/-/supports-color-7.2.0.tgz", { "dependencies": { "has-flag": "4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
 
-    "supports-hyperlinks": ["supports-hyperlinks@4.4.0", "https://bnpm.byted.org/supports-hyperlinks/-/supports-hyperlinks-4.4.0.tgz", { "dependencies": { "has-flag": "5.0.1", "supports-color": "10.2.2" } }, "sha512-UKbpT93hN5Nr9go5UY7bopIB9YQlMz9nm/ct4IXt/irb5YRkn9WaqrOBJGZ5Pwvsd5FQzSVeYlGdXoCAPQZrPg=="],
+    "supports-hyperlinks": ["supports-hyperlinks@3.2.0", "https://bnpm.byted.org/supports-hyperlinks/-/supports-hyperlinks-3.2.0.tgz", { "dependencies": { "has-flag": "4.0.0", "supports-color": "7.2.0" } }, "sha512-zFObLMyZeEwzAoKCyu1B91U79K2t7ApXuQfo8OuxwXLDgcKxuwM+YvcbIhm6QWqz7mHUH1TVytR1PwVVjEuMig=="],
 
     "supports-preserve-symlinks-flag": ["supports-preserve-symlinks-flag@1.0.0", "https://bnpm.byted.org/supports-preserve-symlinks-flag/-/supports-preserve-symlinks-flag-1.0.0.tgz", {}, "sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w=="],
 
     "symbol-tree": ["symbol-tree@3.2.4", "https://bnpm.byted.org/symbol-tree/-/symbol-tree-3.2.4.tgz", {}, "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw=="],
 
     "table": ["table@6.9.0", "https://bnpm.byted.org/table/-/table-6.9.0.tgz", { "dependencies": { "ajv": "8.17.1", "lodash.truncate": "4.4.2", "slice-ansi": "4.0.0", "string-width": "4.2.3", "strip-ansi": "6.0.1" } }, "sha512-9kY+CygyYM6j02t5YFHbNz2FN5QmYGv9zAjVp4lCDjlCw7amdckXlEt/bjMhUIfj4ThGRE4gCUH5+yGnNuPo5A=="],
-
-    "tagged-tag": ["tagged-tag@1.0.0", "https://bnpm.byted.org/tagged-tag/-/tagged-tag-1.0.0.tgz", {}, "sha512-yEFYrVhod+hdNyx7g5Bnkkb0G6si8HJurOoOEgC8B/O0uXLHlaey/65KRv6cuWBNhBgHKAROVpc7QyYqE5gFng=="],
 
     "tailwind-merge": ["tailwind-merge@2.6.0", "https://bnpm.byted.org/tailwind-merge/-/tailwind-merge-2.6.0.tgz", {}, "sha512-P+Vu1qXfzediirmHOC3xKGAYeZtPcV9g76X+xg2FD4tYgR71ewMA35Y3sCz3zhiN/dwefRpJX0yBcgwi1fXNQA=="],
 
@@ -1825,7 +1795,7 @@
 
     "tunnel-agent": ["tunnel-agent@0.6.0", "https://bnpm.byted.org/tunnel-agent/-/tunnel-agent-0.6.0.tgz", { "dependencies": { "safe-buffer": "5.2.1" } }, "sha512-McnNiV1l8RYeY8tBgEpuodCC1mLUdbSN+CYBL7kJsJNInOP8UjDDEwdk6Mw60vdLLrr5NHKZhMAOSrR2NZuQ+w=="],
 
-    "type-fest": ["type-fest@5.5.0", "https://bnpm.byted.org/type-fest/-/type-fest-5.5.0.tgz", { "dependencies": { "tagged-tag": "1.0.0" } }, "sha512-PlBfpQwiUvGViBNX84Yxwjsdhd1TUlXr6zjX7eoirtCPIr08NAmxwa+fcYBTeRQxHo9YC9wwF3m9i700sHma8g=="],
+    "type-fest": ["type-fest@4.41.0", "https://bnpm.byted.org/type-fest/-/type-fest-4.41.0.tgz", {}, "sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA=="],
 
     "type-is": ["type-is@2.0.1", "https://bnpm.byted.org/type-is/-/type-is-2.0.1.tgz", { "dependencies": { "content-type": "1.0.5", "media-typer": "1.1.0", "mime-types": "3.0.2" } }, "sha512-OZs6gsjF4vMp32qrCbiVSkrFmXtG/AZhY3t0iAMrMBiAZyV9oALtXO8hsrHbMXF9x6L3grlFuwW2oAz7cav+Gw=="],
 
@@ -1869,8 +1839,6 @@
 
     "use-sync-external-store": ["use-sync-external-store@1.6.0", "https://bnpm.byted.org/use-sync-external-store/-/use-sync-external-store-1.6.0.tgz", { "peerDependencies": { "react": "19.2.4" } }, "sha512-Pp6GSwGP/NrPIrxVFAIkOQeyw8lFenOHijQWkUTrDvrF4ALqylP2C/KCkeS9dpUM3KvYRQhna5vt7IL95+ZQ9w=="],
 
-    "usehooks-ts": ["usehooks-ts@3.1.1", "https://bnpm.byted.org/usehooks-ts/-/usehooks-ts-3.1.1.tgz", { "dependencies": { "lodash.debounce": "4.0.8" }, "peerDependencies": { "react": "19.2.4" } }, "sha512-I4diPp9Cq6ieSUH2wu+fDAVQO43xwtulo+fKEidHUwZPnYImbtkTjzIJYcDcJqxgmX31GVqNFURodvcgHcW0pA=="],
-
     "util-deprecate": ["util-deprecate@1.0.2", "https://bnpm.byted.org/util-deprecate/-/util-deprecate-1.0.2.tgz", {}, "sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw=="],
 
     "uuid": ["uuid@8.3.2", "https://bnpm.byted.org/uuid/-/uuid-8.3.2.tgz", { "bin": { "uuid": "dist/bin/uuid" } }, "sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg=="],
@@ -1909,7 +1877,7 @@
 
     "window-size": ["window-size@1.1.1", "https://bnpm.byted.org/window-size/-/window-size-1.1.1.tgz", { "dependencies": { "define-property": "1.0.0", "is-number": "3.0.0" }, "bin": { "window-size": "cli.js" } }, "sha512-5D/9vujkmVQ7pSmc0SCBmHXbkv6eaHwXEx65MywhmUMsI8sGqJ972APq1lotfcwMKPFLuCFfL8xGHLIp7jaBmA=="],
 
-    "wrap-ansi": ["wrap-ansi@10.0.0", "https://bnpm.byted.org/wrap-ansi/-/wrap-ansi-10.0.0.tgz", { "dependencies": { "ansi-styles": "6.2.3", "string-width": "8.2.0", "strip-ansi": "7.2.0" } }, "sha512-SGcvg80f0wUy2/fXES19feHMz8E0JoXv2uNgHOu4Dgi2OrCy1lqwFYEJz1BLbDI0exjPMe/ZdzZ/YpGECBG/aQ=="],
+    "wrap-ansi": ["wrap-ansi@9.0.2", "https://bnpm.byted.org/wrap-ansi/-/wrap-ansi-9.0.2.tgz", { "dependencies": { "ansi-styles": "6.2.3", "string-width": "7.2.0", "strip-ansi": "7.2.0" } }, "sha512-42AtmgqjV+X1VpdOfyTGOYRi0/zsoLqtXQckTmqTeybT+BDIbM/Guxo7x3pE2vtpr1ok6xRqM9OpBe+Jyoqyww=="],
 
     "wrap-ansi-cjs": ["wrap-ansi@7.0.0", "https://bnpm.byted.org/wrap-ansi/-/wrap-ansi-7.0.0.tgz", { "dependencies": { "ansi-styles": "4.3.0", "string-width": "4.2.3", "strip-ansi": "6.0.1" } }, "sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q=="],
 
@@ -2037,8 +2005,6 @@
 
     "@vscode/vsce/chalk": ["chalk@4.1.2", "https://bnpm.byted.org/chalk/-/chalk-4.1.2.tgz", { "dependencies": { "ansi-styles": "4.3.0", "supports-color": "7.2.0" } }, "sha512-oKnbhFyRIXpUuez8iBMmyEa4nbj4IOQyuhc/wy9kY7/WVPcwIO9VA668Pu8RkO7+0G76SLROeyw9CpQ061i4mA=="],
 
-    "@vscode/vsce/commander": ["commander@12.1.0", "https://bnpm.byted.org/commander/-/commander-12.1.0.tgz", {}, "sha512-Vw8qHK3bZM9y/P10u3Vib8o/DdkvA2OtPtZvD871QKjy74Wj1WSKFILMPRPSdUSx5RFK1arlJzEtA4PkFgnbuA=="],
-
     "ai/@ai-sdk/provider": ["@ai-sdk/provider@3.0.4", "https://bnpm.byted.org/@ai-sdk/provider/-/provider-3.0.4.tgz", { "dependencies": { "json-schema": "0.4.0" } }, "sha512-5KXyBOSEX+l67elrEa+wqo/LSsSTtrPj9Uoh3zMbe/ceQX4ucHI3b9nUEfNkGF3Ry1svv90widAt+aiKdIJasQ=="],
 
     "ai/@ai-sdk/provider-utils": ["@ai-sdk/provider-utils@4.0.8", "https://bnpm.byted.org/@ai-sdk/provider-utils/-/provider-utils-4.0.8.tgz", { "dependencies": { "@ai-sdk/provider": "3.0.4", "@standard-schema/spec": "1.1.0", "eventsource-parser": "3.0.6" }, "peerDependencies": { "zod": "3.25.76" } }, "sha512-ns9gN7MmpI8vTRandzgz+KK/zNMLzhrriiKECMt4euLtQFSBgNfydtagPOX4j4pS1/3KvHF6RivhT3gNQgBZsg=="],
@@ -2061,9 +2027,9 @@
 
     "cliui/string-width": ["string-width@7.2.0", "https://bnpm.byted.org/string-width/-/string-width-7.2.0.tgz", { "dependencies": { "emoji-regex": "10.6.0", "get-east-asian-width": "1.5.0", "strip-ansi": "7.2.0" } }, "sha512-tsaTIkKW9b4N+AEj+SVA+WhJzV7/zMhcSu78mLKWSk7cXMOSHsBKFWUs0fWwq8QyK3MgJBQRX6Gbi4kYbdvGkQ=="],
 
-    "cliui/wrap-ansi": ["wrap-ansi@9.0.2", "https://bnpm.byted.org/wrap-ansi/-/wrap-ansi-9.0.2.tgz", { "dependencies": { "ansi-styles": "6.2.3", "string-width": "7.2.0", "strip-ansi": "7.2.0" } }, "sha512-42AtmgqjV+X1VpdOfyTGOYRi0/zsoLqtXQckTmqTeybT+BDIbM/Guxo7x3pE2vtpr1ok6xRqM9OpBe+Jyoqyww=="],
-
     "dom-serializer/entities": ["entities@4.5.0", "https://bnpm.byted.org/entities/-/entities-4.5.0.tgz", {}, "sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw=="],
+
+    "foreground-child/signal-exit": ["signal-exit@4.1.0", "https://bnpm.byted.org/signal-exit/-/signal-exit-4.1.0.tgz", {}, "sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw=="],
 
     "form-data/mime-types": ["mime-types@2.1.35", "https://bnpm.byted.org/mime-types/-/mime-types-2.1.35.tgz", { "dependencies": { "mime-db": "1.52.0" } }, "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw=="],
 
@@ -2077,27 +2043,11 @@
 
     "htmlparser2/entities": ["entities@7.0.1", "https://bnpm.byted.org/entities/-/entities-7.0.1.tgz", {}, "sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA=="],
 
-    "ink/@alcalzone/ansi-tokenize": ["@alcalzone/ansi-tokenize@0.2.2", "https://bnpm.byted.org/@alcalzone/ansi-tokenize/-/ansi-tokenize-0.2.2.tgz", { "dependencies": { "ansi-styles": "6.2.3", "is-fullwidth-code-point": "5.1.0" } }, "sha512-mkOh+Wwawzuf5wa30bvc4nA+Qb6DIrGWgBhRR/Pw4T9nsgYait8izvXkNyU78D6Wcu3Z+KUdwCmLCxlWjEotYA=="],
-
-    "ink/cli-boxes": ["cli-boxes@3.0.0", "https://bnpm.byted.org/cli-boxes/-/cli-boxes-3.0.0.tgz", {}, "sha512-/lzGpEWL/8PfI0BmBOPRwp0c/wFNX1RdUML3jK/RcSBA9T8mZDdQpqYBKtCFTOfQbwPqWEOpjqW+Fnayc0969g=="],
-
-    "ink/react-reconciler": ["react-reconciler@0.32.0", "https://bnpm.byted.org/react-reconciler/-/react-reconciler-0.32.0.tgz", { "dependencies": { "scheduler": "0.26.0" }, "peerDependencies": { "react": "19.2.4" } }, "sha512-2NPMOzgTlG0ZWdIf3qG+dcbLSoAc/uLfOwckc3ofy5sSK0pLJqnQLpUFxvGcN2rlXSjnVtGeeFLNimCQEj5gOQ=="],
-
-    "ink/signal-exit": ["signal-exit@3.0.7", "https://bnpm.byted.org/signal-exit/-/signal-exit-3.0.7.tgz", {}, "sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ=="],
-
     "ink/string-width": ["string-width@8.1.0", "https://bnpm.byted.org/string-width/-/string-width-8.1.0.tgz", { "dependencies": { "get-east-asian-width": "1.5.0", "strip-ansi": "7.2.0" } }, "sha512-Kxl3KJGb/gxkaUMOjRsQ8IrXiGW75O4E3RPjFIINOVH8AMl2SQ/yWdTzWwF3FevIX9LcMAjJW+GRwAlAbTSXdg=="],
-
-    "ink/type-fest": ["type-fest@4.41.0", "https://bnpm.byted.org/type-fest/-/type-fest-4.41.0.tgz", {}, "sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA=="],
-
-    "ink/wrap-ansi": ["wrap-ansi@9.0.2", "https://bnpm.byted.org/wrap-ansi/-/wrap-ansi-9.0.2.tgz", { "dependencies": { "ansi-styles": "6.2.3", "string-width": "7.2.0", "strip-ansi": "7.2.0" } }, "sha512-42AtmgqjV+X1VpdOfyTGOYRi0/zsoLqtXQckTmqTeybT+BDIbM/Guxo7x3pE2vtpr1ok6xRqM9OpBe+Jyoqyww=="],
 
     "ink-spinner/cli-spinners": ["cli-spinners@2.9.2", "https://bnpm.byted.org/cli-spinners/-/cli-spinners-2.9.2.tgz", {}, "sha512-ywqV+5MmyL4E7ybXgKys4DugZbX0FC6LnwrhjuykIjnK9k8OQacQ7axGKnjDXWNhns0xot3bZI5h55H8yo9cJg=="],
 
-    "ink-text-input/type-fest": ["type-fest@4.41.0", "https://bnpm.byted.org/type-fest/-/type-fest-4.41.0.tgz", {}, "sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA=="],
-
     "is-number/kind-of": ["kind-of@3.2.2", "https://bnpm.byted.org/kind-of/-/kind-of-3.2.2.tgz", { "dependencies": { "is-buffer": "1.1.6" } }, "sha512-NOW9QQXMoZGg/oqnVNoNTTIFEIid1627WCffUBJEdMxYApq7mNE7CpzucIPc+ZQg25Phej7IJSmX3hO+oblOtQ=="],
-
-    "istanbul-lib-report/supports-color": ["supports-color@7.2.0", "https://bnpm.byted.org/supports-color/-/supports-color-7.2.0.tgz", { "dependencies": { "has-flag": "4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
 
     "knip/zod": ["zod@4.3.5", "https://bnpm.byted.org/zod/-/zod-4.3.5.tgz", {}, "sha512-k7Nwx6vuWx1IJ9Bjuf4Zt1PEllcwe7cls3VNzm4CQ1/hgtFUK2bRNG3rvnpPUhFjmqJKAKtjV576KnUkHocg/g=="],
 
@@ -2113,8 +2063,6 @@
 
     "parse-entities/@types/unist": ["@types/unist@2.0.11", "https://bnpm.byted.org/@types/unist/-/unist-2.0.11.tgz", {}, "sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA=="],
 
-    "parse-json/type-fest": ["type-fest@4.41.0", "https://bnpm.byted.org/type-fest/-/type-fest-4.41.0.tgz", {}, "sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA=="],
-
     "parse-semver/semver": ["semver@5.7.2", "https://bnpm.byted.org/semver/-/semver-5.7.2.tgz", { "bin": { "semver": "bin/semver" } }, "sha512-cBznnQ9KjJqU67B52RMC65CMarK2600WFnbkcaiwWq3xy/5haFJlshgnpjovMVJ+Hff49d8GEn0b87C5pDQ10g=="],
 
     "postcss/nanoid": ["nanoid@3.3.11", "https://bnpm.byted.org/nanoid/-/nanoid-3.3.11.tgz", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w=="],
@@ -2125,17 +2073,15 @@
 
     "rc/strip-json-comments": ["strip-json-comments@2.0.1", "https://bnpm.byted.org/strip-json-comments/-/strip-json-comments-2.0.1.tgz", {}, "sha512-4gB8na07fecVVkOI6Rs4e7T6NOTki5EmL7TUduTs6bu3EdnSycntVJ4re8kgZA+wx9IueI2Y11bfbgwtzuE0KQ=="],
 
+    "react-reconciler/scheduler": ["scheduler@0.26.0", "https://bnpm.byted.org/scheduler/-/scheduler-0.26.0.tgz", {}, "sha512-NlHwttCI/l5gCPR3D1nNXtWABUmBwvZpEQiD4IXSbIDq8BzLIK/7Ir5gTFSGZDUu37K5cMNp0hFtzO38sC7gWA=="],
+
     "react-syntax-highlighter/highlight.js": ["highlight.js@10.7.3", "https://bnpm.byted.org/highlight.js/-/highlight.js-10.7.3.tgz", {}, "sha512-tzcUFauisWKNHaRkN4Wjl/ZA07gENAjFl3J/c480dprkGTg5EQstgaNFqBfUqCq54kZRIEcreTsAgF/m2quD7A=="],
 
     "react-syntax-highlighter/lowlight": ["lowlight@1.20.0", "https://bnpm.byted.org/lowlight/-/lowlight-1.20.0.tgz", { "dependencies": { "fault": "1.0.4", "highlight.js": "10.7.3" } }, "sha512-8Ktj+prEb1RoCPkEOrPMYUN/nCggB7qAWe3a7OpMjWQkh3l2RD5wKRQ+o8Q8YuI9RG/xs95waaI/E6ym/7NsTw=="],
 
-    "read-pkg/type-fest": ["type-fest@4.41.0", "https://bnpm.byted.org/type-fest/-/type-fest-4.41.0.tgz", {}, "sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA=="],
-
     "read-pkg/unicorn-magic": ["unicorn-magic@0.1.0", "https://bnpm.byted.org/unicorn-magic/-/unicorn-magic-0.1.0.tgz", {}, "sha512-lRfVq8fE8gz6QMBuDM6a+LO3IAzTi05H6gCVaUpir2E1Rwpo4ZUog45KpNXKC/Mn3Yb9UDuHumeFTo9iV/D9FQ=="],
 
     "readdirp/picomatch": ["picomatch@2.3.1", "https://bnpm.byted.org/picomatch/-/picomatch-2.3.1.tgz", {}, "sha512-JU3teHTNjmE2VCGFzuY8EXzCDVwEqB2a8fsIvwaStHhAWJEeVd1o1QD80CU6+ZdEXXSLbSsuLwJjkCBWqRQUVA=="],
-
-    "restore-cursor/signal-exit": ["signal-exit@3.0.7", "https://bnpm.byted.org/signal-exit/-/signal-exit-3.0.7.tgz", {}, "sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ=="],
 
     "string-width-cjs/emoji-regex": ["emoji-regex@8.0.0", "https://bnpm.byted.org/emoji-regex/-/emoji-regex-8.0.0.tgz", {}, "sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A=="],
 
@@ -2157,8 +2103,6 @@
 
     "tailwindcss/jiti": ["jiti@1.21.7", "https://bnpm.byted.org/jiti/-/jiti-1.21.7.tgz", { "bin": { "jiti": "bin/jiti.js" } }, "sha512-/imKNG4EbWNrVjoNC/1H5/9GFy+tqjGBHCaSsN+P2RnPqjsLmv6UD3Ej+Kj8nBWaRAwyk7kK5ZUc+OEatnTR3A=="],
 
-    "terminal-link/supports-hyperlinks": ["supports-hyperlinks@3.2.0", "https://bnpm.byted.org/supports-hyperlinks/-/supports-hyperlinks-3.2.0.tgz", { "dependencies": { "has-flag": "4.0.0", "supports-color": "7.2.0" } }, "sha512-zFObLMyZeEwzAoKCyu1B91U79K2t7ApXuQfo8OuxwXLDgcKxuwM+YvcbIhm6QWqz7mHUH1TVytR1PwVVjEuMig=="],
-
     "test-exclude/glob": ["glob@10.5.0", "https://bnpm.byted.org/glob/-/glob-10.5.0.tgz", { "dependencies": { "foreground-child": "3.3.1", "jackspeak": "3.4.3", "minimatch": "9.0.5", "minipass": "7.1.2", "package-json-from-dist": "1.0.1", "path-scurry": "1.11.1" }, "bin": { "glob": "dist/esm/bin.mjs" } }, "sha512-DfXN8DfhJ7NH3Oe7cFmu3NCu1wKbkReJ8TorzSAFbSKrlNaQSKfIzqYqVY8zlbs2NLBbWpRiU52GX2PbaBVNkg=="],
 
     "test-exclude/minimatch": ["minimatch@9.0.5", "https://bnpm.byted.org/minimatch/-/minimatch-9.0.5.tgz", { "dependencies": { "brace-expansion": "2.0.2" } }, "sha512-G6T0ZX48xgozx7587koeX9Ys2NYy6Gmv//P89sEte9V9whIapMNF4idKxnW2QtCcLiTWlb/wfCabAtAFWhhBow=="],
@@ -2171,11 +2115,15 @@
 
     "vitest/@types/node": ["@types/node@22.19.3", "https://bnpm.byted.org/@types/node/-/node-22.19.3.tgz", { "dependencies": { "undici-types": "6.21.0" } }, "sha512-1N9SBnWYOJTrNZCdh/yJE+t910Y128BoyY+zBLWhL3r0TYzlTmFdXrPwHL9DyFZmlEXNQQolTZh3KHV31QDhyA=="],
 
+    "wrap-ansi/string-width": ["string-width@7.2.0", "https://bnpm.byted.org/string-width/-/string-width-7.2.0.tgz", { "dependencies": { "emoji-regex": "10.6.0", "get-east-asian-width": "1.5.0", "strip-ansi": "7.2.0" } }, "sha512-tsaTIkKW9b4N+AEj+SVA+WhJzV7/zMhcSu78mLKWSk7cXMOSHsBKFWUs0fWwq8QyK3MgJBQRX6Gbi4kYbdvGkQ=="],
+
     "wrap-ansi-cjs/ansi-styles": ["ansi-styles@4.3.0", "https://bnpm.byted.org/ansi-styles/-/ansi-styles-4.3.0.tgz", { "dependencies": { "color-convert": "2.0.1" } }, "sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg=="],
 
     "wrap-ansi-cjs/string-width": ["string-width@4.2.3", "https://bnpm.byted.org/string-width/-/string-width-4.2.3.tgz", { "dependencies": { "emoji-regex": "8.0.0", "is-fullwidth-code-point": "3.0.0", "strip-ansi": "6.0.1" } }, "sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g=="],
 
     "wrap-ansi-cjs/strip-ansi": ["strip-ansi@6.0.1", "https://bnpm.byted.org/strip-ansi/-/strip-ansi-6.0.1.tgz", { "dependencies": { "ansi-regex": "5.0.1" } }, "sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A=="],
+
+    "write-file-atomic/signal-exit": ["signal-exit@4.1.0", "https://bnpm.byted.org/signal-exit/-/signal-exit-4.1.0.tgz", {}, "sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw=="],
 
     "yargs/string-width": ["string-width@7.2.0", "https://bnpm.byted.org/string-width/-/string-width-7.2.0.tgz", { "dependencies": { "emoji-regex": "10.6.0", "get-east-asian-width": "1.5.0", "strip-ansi": "7.2.0" } }, "sha512-tsaTIkKW9b4N+AEj+SVA+WhJzV7/zMhcSu78mLKWSk7cXMOSHsBKFWUs0fWwq8QyK3MgJBQRX6Gbi4kYbdvGkQ=="],
 
@@ -2184,8 +2132,6 @@
     "@isaacs/cliui/string-width/emoji-regex": ["emoji-regex@9.2.2", "https://bnpm.byted.org/emoji-regex/-/emoji-regex-9.2.2.tgz", {}, "sha512-L18DaJsXSUk2+42pv8mLs5jJT2hqFkFE4j21wOmgbUqsZ2hL72NsUU785g9RXgo3s0ZNgVl42TiHp3ZtOv/Vyg=="],
 
     "@textlint/linter-formatter/chalk/ansi-styles": ["ansi-styles@4.3.0", "https://bnpm.byted.org/ansi-styles/-/ansi-styles-4.3.0.tgz", { "dependencies": { "color-convert": "2.0.1" } }, "sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg=="],
-
-    "@textlint/linter-formatter/chalk/supports-color": ["supports-color@7.2.0", "https://bnpm.byted.org/supports-color/-/supports-color-7.2.0.tgz", { "dependencies": { "has-flag": "4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
 
     "@textlint/linter-formatter/string-width/emoji-regex": ["emoji-regex@8.0.0", "https://bnpm.byted.org/emoji-regex/-/emoji-regex-8.0.0.tgz", {}, "sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A=="],
 
@@ -2199,15 +2145,11 @@
 
     "@vscode/vsce/chalk/ansi-styles": ["ansi-styles@4.3.0", "https://bnpm.byted.org/ansi-styles/-/ansi-styles-4.3.0.tgz", { "dependencies": { "color-convert": "2.0.1" } }, "sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg=="],
 
-    "@vscode/vsce/chalk/supports-color": ["supports-color@7.2.0", "https://bnpm.byted.org/supports-color/-/supports-color-7.2.0.tgz", { "dependencies": { "has-flag": "4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
-
     "blade-code/@types/node/undici-types": ["undici-types@6.21.0", "https://bnpm.byted.org/undici-types/-/undici-types-6.21.0.tgz", {}, "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ=="],
 
     "blade-vscode/@types/node/undici-types": ["undici-types@6.21.0", "https://bnpm.byted.org/undici-types/-/undici-types-6.21.0.tgz", {}, "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ=="],
 
     "bun-types/@types/node/undici-types": ["undici-types@6.21.0", "https://bnpm.byted.org/undici-types/-/undici-types-6.21.0.tgz", {}, "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ=="],
-
-    "cfonts/supports-color/has-flag": ["has-flag@4.0.0", "https://bnpm.byted.org/has-flag/-/has-flag-4.0.0.tgz", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
 
     "cli-truncate/slice-ansi/is-fullwidth-code-point": ["is-fullwidth-code-point@4.0.0", "https://bnpm.byted.org/is-fullwidth-code-point/-/is-fullwidth-code-point-4.0.0.tgz", {}, "sha512-O4L094N2/dZ7xqVdrXhh9r1KODPJpFms8B5sGdJLPy664AgvXsreZUyCQQNItZRDlYug4xStLjNp/sz3HvBowQ=="],
 
@@ -2215,15 +2157,7 @@
 
     "gradient-string/chalk/ansi-styles": ["ansi-styles@4.3.0", "https://bnpm.byted.org/ansi-styles/-/ansi-styles-4.3.0.tgz", { "dependencies": { "color-convert": "2.0.1" } }, "sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg=="],
 
-    "gradient-string/chalk/supports-color": ["supports-color@7.2.0", "https://bnpm.byted.org/supports-color/-/supports-color-7.2.0.tgz", { "dependencies": { "has-flag": "4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
-
     "gray-matter/js-yaml/argparse": ["argparse@1.0.10", "https://bnpm.byted.org/argparse/-/argparse-1.0.10.tgz", { "dependencies": { "sprintf-js": "1.0.3" } }, "sha512-o5Roy6tNG4SL/FOkCAN6RzjiakZS25RLYFrcMttJqbdd8BWrnA+fGz57iN5Pb06pvBGvl5gQ0B48dJlslXvoTg=="],
-
-    "ink/react-reconciler/scheduler": ["scheduler@0.26.0", "https://bnpm.byted.org/scheduler/-/scheduler-0.26.0.tgz", {}, "sha512-NlHwttCI/l5gCPR3D1nNXtWABUmBwvZpEQiD4IXSbIDq8BzLIK/7Ir5gTFSGZDUu37K5cMNp0hFtzO38sC7gWA=="],
-
-    "ink/wrap-ansi/string-width": ["string-width@7.2.0", "https://bnpm.byted.org/string-width/-/string-width-7.2.0.tgz", { "dependencies": { "emoji-regex": "10.6.0", "get-east-asian-width": "1.5.0", "strip-ansi": "7.2.0" } }, "sha512-tsaTIkKW9b4N+AEj+SVA+WhJzV7/zMhcSu78mLKWSk7cXMOSHsBKFWUs0fWwq8QyK3MgJBQRX6Gbi4kYbdvGkQ=="],
-
-    "istanbul-lib-report/supports-color/has-flag": ["has-flag@4.0.0", "https://bnpm.byted.org/has-flag/-/has-flag-4.0.0.tgz", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
 
     "normalize-package-data/hosted-git-info/lru-cache": ["lru-cache@10.4.3", "https://bnpm.byted.org/lru-cache/-/lru-cache-10.4.3.tgz", {}, "sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ=="],
 
@@ -2238,10 +2172,6 @@
     "table/string-width/is-fullwidth-code-point": ["is-fullwidth-code-point@3.0.0", "https://bnpm.byted.org/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz", {}, "sha512-zymm5+u+sCsSWyD9qNaejV3DFvhCKclKdizYaJUuHA83RLjb7nSuGnddCHGv0hk+KY7BMAlsWeK4Ueg6EV6XQg=="],
 
     "table/strip-ansi/ansi-regex": ["ansi-regex@5.0.1", "https://bnpm.byted.org/ansi-regex/-/ansi-regex-5.0.1.tgz", {}, "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ=="],
-
-    "terminal-link/supports-hyperlinks/has-flag": ["has-flag@4.0.0", "https://bnpm.byted.org/has-flag/-/has-flag-4.0.0.tgz", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
-
-    "terminal-link/supports-hyperlinks/supports-color": ["supports-color@7.2.0", "https://bnpm.byted.org/supports-color/-/supports-color-7.2.0.tgz", { "dependencies": { "has-flag": "4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
 
     "test-exclude/glob/jackspeak": ["jackspeak@3.4.3", "https://bnpm.byted.org/jackspeak/-/jackspeak-3.4.3.tgz", { "dependencies": { "@isaacs/cliui": "8.0.2" }, "optionalDependencies": { "@pkgjs/parseargs": "0.11.0" } }, "sha512-OGlZQpz2yfahA/Rd1Y8Cd9SIEsqvXkLVoSw/cgwhnhFMDbsQFeZYoJJ7bIZBS9BcamUW96asq/npPWugM+RQBw=="],
 
@@ -2304,12 +2234,6 @@
     "wrap-ansi-cjs/string-width/is-fullwidth-code-point": ["is-fullwidth-code-point@3.0.0", "https://bnpm.byted.org/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz", {}, "sha512-zymm5+u+sCsSWyD9qNaejV3DFvhCKclKdizYaJUuHA83RLjb7nSuGnddCHGv0hk+KY7BMAlsWeK4Ueg6EV6XQg=="],
 
     "wrap-ansi-cjs/strip-ansi/ansi-regex": ["ansi-regex@5.0.1", "https://bnpm.byted.org/ansi-regex/-/ansi-regex-5.0.1.tgz", {}, "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ=="],
-
-    "@textlint/linter-formatter/chalk/supports-color/has-flag": ["has-flag@4.0.0", "https://bnpm.byted.org/has-flag/-/has-flag-4.0.0.tgz", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
-
-    "@vscode/vsce/chalk/supports-color/has-flag": ["has-flag@4.0.0", "https://bnpm.byted.org/has-flag/-/has-flag-4.0.0.tgz", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
-
-    "gradient-string/chalk/supports-color/has-flag": ["has-flag@4.0.0", "https://bnpm.byted.org/has-flag/-/has-flag-4.0.0.tgz", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
 
     "test-exclude/glob/path-scurry/lru-cache": ["lru-cache@10.4.3", "https://bnpm.byted.org/lru-cache/-/lru-cache-10.4.3.tgz", {}, "sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ=="],
   }

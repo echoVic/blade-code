@@ -9,9 +9,9 @@
     "packages/cli/web"
   ],
   "scripts": {
-    "dev": "bun run --filter blade-code dev",
-    "dev:cli": "bun run --filter blade-code dev",
-    "dev:web": "bun run --filter blade-code dev:serve & VITE_API_TARGET=http://localhost:4097 bun run --filter blade-web dev",
+    "dev": "cd packages/cli && bun run dev",
+    "dev:cli": "cd packages/cli && bun run dev",
+    "dev:web": "cd packages/cli && bun run dev:serve & VITE_API_TARGET=http://localhost:4097 bun run --filter blade-web dev",
     "build": "bun run build:cli && bun run build:vscode",
     "build:cli": "bun run --filter blade-code build",
     "build:vscode": "bun run --filter blade-vscode build",
