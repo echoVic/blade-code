@@ -47,11 +47,11 @@ async function loadConfigurationCore(opts: Record<string, unknown>): Promise<voi
     getState().config.actions.setConfig(config);
 
     if (opts.debug) {
-      logger.info('[CLI] 配置已加载到 Store');
+      logger.info('[CLI] Configuration loaded into Store');
     }
   } catch (error) {
     throw new Error(
-      `配置初始化失败: ${error instanceof Error ? error.message : '未知错误'}`
+      `Configuration initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`
     );
   }
 

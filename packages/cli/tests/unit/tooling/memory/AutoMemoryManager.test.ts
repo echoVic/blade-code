@@ -53,7 +53,7 @@ describe('AutoMemoryManager', () => {
 
     it('should load full content when under line limit', async () => {
       await manager.initialize();
-      const content = '# Memory\n\n- Build: `pnpm build`\n- Test: `pnpm test`';
+      const content = '# Memory\n\n- Build: `bun run build`\n- Test: `bun run test`';
       await fs.writeFile(path.join(memDir, 'MEMORY.md'), content, 'utf-8');
       const result = await manager.loadIndex();
       expect(result).toBe(content);
@@ -117,7 +117,7 @@ describe('AutoMemoryManager', () => {
 
   describe('updateIndex', () => {
     it('should create MEMORY.md with overwrite', async () => {
-      await manager.updateIndex('# Project Memory\n\n- Build: pnpm build');
+      await manager.updateIndex('# Project Memory\n\n- Build: bun run build');
       const result = await manager.readTopic('MEMORY');
       expect(result).toContain('# Project Memory');
     });

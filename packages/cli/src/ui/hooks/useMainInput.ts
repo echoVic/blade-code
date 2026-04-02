@@ -17,8 +17,6 @@ import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
 import type { HistoryEntry, PasteMappings } from './useCommandHistory.js';
 import { useCtrlCHandler } from './useCtrlCHandler.js';
 import type { InputBuffer, ResolvedInput } from './useInputBuffer.js';
-import { useKeyboardMachine } from './useKeyboardMachine.js';
-import { useSuggestions } from './useSuggestions.js';
 
 const logger = createLogger(LogCategory.UI);
 
@@ -45,9 +43,6 @@ export const useMainInput = (
   const appActions = useAppActions();
   const currentModel = useCurrentModel();
   const supportsThinking = currentModel ? isThinkingModel(currentModel) : false;
-
-  const _keyboard = useKeyboardMachine();
-  const _suggestionState = useSuggestions();
 
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);

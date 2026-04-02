@@ -2,6 +2,10 @@ import type { ModelConfig, RuntimeConfig } from '../config/types.js';
 import type { SessionMetadata } from '../services/SessionService.js';
 import type { TodoItem } from '../tools/builtin/todo/types.js';
 import type {
+  SpecActions,
+  SpecState,
+} from './slices/specSlice.js';
+import type {
   ActiveModal,
   FocusId,
   InitializationStatus,
@@ -11,10 +15,6 @@ import type {
   TokenUsage,
   ToolMessageMetadata,
 } from './types.js';
-import type {
-  SpecActions,
-  SpecState,
-} from './slices/specSlice.js';
 
 export interface AppState
   extends SessionFields,
@@ -176,7 +176,7 @@ const initialTokenUsage: TokenUsage = {
   maxContextTokens: 200000,
 };
 
-export function getDefaultAppState(): Omit<
+type AppStateData = Omit<
   AppState,
   | keyof SessionActionFields
   | keyof AppActionFields
@@ -184,7 +184,9 @@ export function getDefaultAppState(): Omit<
   | keyof FocusActionFields
   | keyof CommandActionFields
   | keyof SpecActionFields
-> {
+>;
+
+export function getDefaultAppState(): AppStateData {
   return {
     // Session
     sessionId: '',

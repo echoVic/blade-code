@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from '@commander-js/extra-typings';
 import { render } from 'ink';
+import { fileURLToPath } from 'node:url';
 import React from 'react';
 import type { CommandModule } from 'yargs';
 import { applyGlobalOptions, cliConfig } from './cli/config.js';
@@ -142,13 +143,13 @@ export async function main() {
 
     const initialMessage = parsedArgs.length > 0 ? parsedArgs.join(' ') : undefined;
 
-    const appProps = {
-      ...opts,
+    const appProps: AppProps = {
+      ...(opts as Partial<AppProps>),
       initialMessage,
-      debug: opts.debug,
+      debug: opts.debug as string | undefined,
       print: Boolean(opts.print),
       versionCheckPromise,
-    } as unknown as AppProps & Record<string, unknown>;
+    };
 
     render(React.createElement(BladeApp, appProps), {
       patchConsole: true,
@@ -171,6 +172,11 @@ export async function main() {
   }
 }
 
-if (import.meta.main) {
+const isMainModule =
+  'main' in import.meta
+    ? (import.meta as ImportMeta & { main?: boolean }).main
+    : process.argv[1] === fileURLToPath(import.meta.url);
+
+if (isMainModule) {
   main().catch(console.error);
 }

@@ -59,7 +59,7 @@ export const memoryWriteTool = createTool({
         params: {
           topic: 'MEMORY',
           content:
-            '# Project Memory\n\n- Build: `pnpm build`\n- Test: `pnpm test`\n- See debugging.md for common issues',
+            '# Project Memory\n\n- Build: `bun run build`\n- Test: `bun run test`\n- See debugging.md for common issues',
           mode: 'overwrite',
         },
       },

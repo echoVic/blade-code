@@ -83,6 +83,8 @@ export function useVirtualScroll(
   const viewportH = scrollRef.current?.getViewportHeight() ?? 0
   const isSticky = scrollRef.current?.isSticky() ?? true
 
+  // Intentional: cache cleanup in useMemo runs before render for correct offset
+  // computation. The operation is idempotent so double-invocation in Strict Mode is safe.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useMemo(() => {
     const live = new Set(itemKeys)

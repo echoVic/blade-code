@@ -3,11 +3,11 @@ node_modules/
 dist/
 bundle/
 
-# pnpm 相关文件
+# 包管理器缓存
 .pnpm/
 .pnpm-store/
 
-# 锁定文件 (保留 pnpm-lock.yaml，但忽略其他)
+# 锁定文件（bun.lock 提交到仓库，忽略其他）
 yarn.lock
 package-lock.json
 

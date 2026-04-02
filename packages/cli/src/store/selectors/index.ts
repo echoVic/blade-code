@@ -234,7 +234,12 @@ export const useCurrentStreamingMessageId = () =>
 /**
  * 🆕 获取当前流式消息缓冲（行/尾部/总行数/版本）
  */
-export const useCurrentStreamingBuffer = () =>
+export const useCurrentStreamingBuffer = (): {
+  lines: string[];
+  tail: string;
+  lineCount: number;
+  version: number;
+} =>
   useBladeStore(
     useShallow((state) => ({
       lines: state.session.currentStreamingLines,

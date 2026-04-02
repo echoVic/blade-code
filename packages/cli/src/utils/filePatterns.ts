@@ -31,6 +31,7 @@ export const DEFAULT_EXCLUDE_FILE_PATTERNS = [
   'yarn-debug.log*',
   'pnpm-debug.log*',
   '*.lock',
+  'bun.lock',
   'package-lock.json',
   'yarn.lock',
   'pnpm-lock.yaml',

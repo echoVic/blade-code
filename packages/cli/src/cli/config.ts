@@ -176,7 +176,11 @@ export function applyGlobalOptionsToCommand(cmd: Command): Command {
   return applyGlobalOptions(cmd);
 }
 
-/** @deprecated Yargs-compatible globalOptions kept for backward compatibility with headless/print commands */
+/**
+ * @deprecated Yargs-compatible globalOptions kept for backward compatibility with headless/print commands.
+ * TODO: Remove once headless/print commands are migrated to Commander.js.
+ * These definitions MUST stay in sync with `globalOptionDefinitions` above.
+ */
 export const globalOptions: Record<string, import('yargs').Options> = {
   debug: {
     alias: 'd',

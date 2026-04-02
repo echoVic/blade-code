@@ -145,7 +145,7 @@ export const MessageArea: React.FC = React.memo(() => {
       content,
       timestamp: Date.now(),
     };
-  }, [currentStreamingMessageId, currentStreamingBuffer.lines, currentStreamingBuffer.tail, currentStreamingBuffer.version]);
+  }, [currentStreamingMessageId, currentStreamingBuffer.lines, currentStreamingBuffer.tail, currentStreamingBuffer.version]); // version triggers recompute when buffer updates in-place
 
   const messageAreaHeight = Math.max(1, terminalHeight - 6);
 

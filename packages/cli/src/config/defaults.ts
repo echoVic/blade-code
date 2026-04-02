@@ -73,6 +73,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
 
       // 📦 包管理器只读命令（无需确认）
       'Bash(npm list *)',
+      'Bash(bun pm ls *)',
       'Bash(npm view *)',
       'Bash(npm outdated *)',
       'Bash(pnpm list *)',

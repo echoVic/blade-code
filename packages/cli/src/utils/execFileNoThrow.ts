@@ -23,8 +23,13 @@ export function execFileNoThrow(
       args,
       { timeout: options?.timeout ?? 5000 },
       (error, stdout, stderr) => {
+        let code: number | null = 0
+        if (error) {
+          const status = (error as { status?: number }).status
+          code = typeof status === 'number' ? status : 1
+        }
         resolve({
-          code: error ? (error as NodeJS.ErrnoException & { code?: number }).code as unknown as number ?? 1 : 0,
+          code,
           stdout: String(stdout),
           stderr: String(stderr),
         })

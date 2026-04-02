@@ -1,7 +1,6 @@
 import { useMemoizedFn } from 'ahooks';
 import React, { useEffect } from 'react';
 import {
-  type ModelConfig,
   PermissionMode,
   type SetupConfig,
 } from '../../config/types.js';
@@ -25,9 +24,9 @@ import { useConfirmation } from '../hooks/useConfirmation.js';
 import { useInputBuffer } from '../hooks/useInputBuffer.js';
 import { useMainInput } from '../hooks/useMainInput.js';
 import { useRefreshStatic } from '../hooks/useRefreshStatic.js';
-import { ModelConfigWizard } from './model-config/index.js';
 import { MainLayout } from './MainLayout.js';
 import { useModalOrchestrator } from './ModalOrchestrator.js';
+import { ModelConfigWizard } from './model-config/index.js';
 import { SessionInitializer } from './SessionInitializer.js';
 
 const logger = createLogger(LogCategory.UI);
@@ -78,21 +77,16 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   const inputBuffer = useInputBuffer('', 0);
 
-  const handlePermissionModeToggle = useMemoizedFn(async () => {
-    const currentMode: PermissionMode = permissionMode;
+  const PERMISSION_CYCLE: PermissionMode[] = [
+    PermissionMode.DEFAULT,
+    PermissionMode.AUTO_EDIT,
+    PermissionMode.PLAN,
+    PermissionMode.SPEC,
+  ];
 
-    let nextMode: PermissionMode;
-    if (currentMode === PermissionMode.DEFAULT) {
-      nextMode = PermissionMode.AUTO_EDIT;
-    } else if (currentMode === PermissionMode.AUTO_EDIT) {
-      nextMode = PermissionMode.PLAN;
-    } else if (currentMode === PermissionMode.PLAN) {
-      nextMode = PermissionMode.SPEC;
-    } else if (currentMode === PermissionMode.SPEC) {
-      nextMode = PermissionMode.DEFAULT;
-    } else {
-      nextMode = PermissionMode.DEFAULT;
-    }
+  const handlePermissionModeToggle = useMemoizedFn(async () => {
+    const idx = PERMISSION_CYCLE.indexOf(permissionMode);
+    const nextMode = PERMISSION_CYCLE[(idx + 1) % PERMISSION_CYCLE.length]!;
 
     try {
       await configActions().setPermissionMode(nextMode);

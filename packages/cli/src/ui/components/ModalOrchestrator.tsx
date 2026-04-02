@@ -49,42 +49,25 @@ type ActiveModal =
   | { kind: 'shortcuts' }
   | { kind: 'todoPanel' };
 
+const SIMPLE_MODALS = new Set([
+  'sessionSelector', 'modelSelector', 'modelAddWizard', 'themeSelector',
+  'permissionsManager', 'hooksManager', 'agentsManager', 'agentCreationWizard',
+  'skillsManager', 'pluginsManager', 'specStatusPanel', 'shortcuts', 'todoPanel',
+] as const)
+
 function resolveActiveModal(
   storeModal: ActiveModalType,
   editingModel: ModelConfig | null,
 ): ActiveModal {
-  switch (storeModal) {
-    case 'sessionSelector':
-      return { kind: 'sessionSelector' };
-    case 'modelSelector':
-      return { kind: 'modelSelector' };
-    case 'modelAddWizard':
-      return { kind: 'modelAddWizard' };
-    case 'modelEditWizard':
-      return editingModel
-        ? { kind: 'modelEditWizard', model: editingModel }
-        : { kind: 'none' };
-    case 'themeSelector':
-      return { kind: 'themeSelector' };
-    case 'permissionsManager':
-      return { kind: 'permissionsManager' };
-    case 'hooksManager':
-      return { kind: 'hooksManager' };
-    case 'agentsManager':
-      return { kind: 'agentsManager' };
-    case 'agentCreationWizard':
-      return { kind: 'agentCreationWizard' };
-    case 'skillsManager':
-      return { kind: 'skillsManager' };
-    case 'pluginsManager':
-      return { kind: 'pluginsManager' };
-    case 'shortcuts':
-      return { kind: 'shortcuts' };
-    case 'todoPanel':
-      return { kind: 'todoPanel' };
-    default:
-      return { kind: 'none' };
+  if (storeModal === 'modelEditWizard') {
+    return editingModel
+      ? { kind: 'modelEditWizard', model: editingModel }
+      : { kind: 'none' };
   }
+  if (storeModal === 'none' || !SIMPLE_MODALS.has(storeModal as typeof SIMPLE_MODALS extends Set<infer T> ? T : never)) {
+    return { kind: 'none' };
+  }
+  return { kind: storeModal } as ActiveModal;
 }
 
 interface ConfirmationState {
@@ -162,6 +145,18 @@ export function useModalOrchestrator(props: UseModalOrchestratorProps) {
     closeModal();
   });
 
+  const MODAL_FOCUS_MAP: Record<string, FocusId> = {
+    sessionSelector: FocusId.SESSION_SELECTOR,
+    themeSelector: FocusId.THEME_SELECTOR,
+    modelSelector: FocusId.MODEL_SELECTOR,
+    modelAddWizard: FocusId.MODEL_CONFIG_WIZARD,
+    modelEditWizard: FocusId.MODEL_CONFIG_WIZARD,
+    permissionsManager: FocusId.PERMISSIONS_MANAGER,
+    agentsManager: FocusId.AGENTS_MANAGER,
+    agentCreationWizard: FocusId.AGENT_CREATION_WIZARD,
+    hooksManager: FocusId.HOOKS_MANAGER,
+  };
+
   useEffect(() => {
     if (props.requiresSetup) {
       focusActions.setFocus(FocusId.MODEL_CONFIG_WIZARD);
@@ -170,28 +165,10 @@ export function useModalOrchestrator(props: UseModalOrchestratorProps) {
 
     if (props.confirmationState.isVisible) {
       focusActions.setFocus(FocusId.CONFIRMATION_PROMPT);
-    } else if (activeModalStore === 'sessionSelector') {
-      focusActions.setFocus(FocusId.SESSION_SELECTOR);
-    } else if (activeModalStore === 'themeSelector') {
-      focusActions.setFocus(FocusId.THEME_SELECTOR);
-    } else if (activeModalStore === 'modelSelector') {
-      focusActions.setFocus(FocusId.MODEL_SELECTOR);
-    } else if (activeModalStore === 'modelAddWizard' || activeModalStore === 'modelEditWizard') {
-      focusActions.setFocus(FocusId.MODEL_CONFIG_WIZARD);
-    } else if (activeModalStore === 'permissionsManager') {
-      focusActions.setFocus(FocusId.PERMISSIONS_MANAGER);
-    } else if (activeModalStore === 'agentsManager') {
-      focusActions.setFocus(FocusId.AGENTS_MANAGER);
-    } else if (activeModalStore === 'agentCreationWizard') {
-      focusActions.setFocus(FocusId.AGENT_CREATION_WIZARD);
-    } else if (activeModalStore === 'hooksManager') {
-      focusActions.setFocus(FocusId.HOOKS_MANAGER);
-    } else if (activeModalStore === 'shortcuts') {
-      focusActions.setFocus(FocusId.MAIN_INPUT);
     } else {
-      focusActions.setFocus(FocusId.MAIN_INPUT);
+      focusActions.setFocus(MODAL_FOCUS_MAP[activeModalStore] ?? FocusId.MAIN_INPUT);
     }
-  }, [props.requiresSetup, props.confirmationState.isVisible, activeModalStore, focusActions.setFocus]);
+  }, [props.requiresSetup, props.confirmationState.isVisible, activeModalStore]);
 
   const editingInitialConfig = modal.kind === 'modelEditWizard'
     ? {

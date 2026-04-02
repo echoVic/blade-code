@@ -34,7 +34,7 @@
 
 2. **安装依赖**：
    ```bash
-   pnpm install
+   bun install
    ```
 
 3. **配置开发环境**：
@@ -52,29 +52,28 @@
 
 2. **开发模式**：
    ```bash
-   cd packages/cli
-   pnpm dev           # 启动 CLI 开发模式（watch）
-   pnpm dev:serve     # 启动 CLI + Web 服务器
+   bun run dev        # 启动 CLI 开发模式（watch）
+   bun run dev:web    # 启动 CLI + Web 服务器
    ```
 
 3. **测试 Web UI**：
    ```bash
    # 构建后启动 Web UI
-   pnpm build
+   bun run build
    blade web          # 启动 Web UI 并打开浏览器
    blade serve        # 启动无头服务器模式
    ```
 
 4. **代码质量检查**：
    ```bash
-   pnpm lint          # 运行 linting 检查
-   pnpm type-check    # TypeScript 类型检查
-   pnpm test:all      # 运行测试
+   bun run lint       # 运行 linting 检查
+   bun run type-check # TypeScript 类型检查
+   bun run test:all   # 运行测试
    ```
 
 5. **构建验证**：
    ```bash
-   pnpm build         # 构建 CLI
+   bun run build      # 构建 CLI
    ```
 
 #### 代码规范
@@ -86,10 +85,10 @@
 
 #### 测试要求
 
-- **单元测试**：`pnpm test:unit`
-- **集成测试**：`pnpm test:integration`
-- **CLI 测试**：`pnpm test:cli`
-- **覆盖率报告**：`pnpm test:coverage`
+- **单元测试**：`bun run test:unit`
+- **集成测试**：`bun run test:integration`
+- **CLI 测试**：`bun run test:cli`
+- **覆盖率报告**：`bun run test:coverage`
 
 #### Pull Request 指南
 

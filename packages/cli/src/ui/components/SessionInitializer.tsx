@@ -41,10 +41,12 @@ export const SessionInitializer: React.FC<SessionInitializerProps> = ({
   executeCommand,
   addToHistory,
 }) => {
-  const hasProcessedResumeRef = useRef(false);
-  const hasSentInitialMessage = useRef(false);
-  const readyAnnouncementSent = useRef(false);
-  const lastInitializationError = useRef<string | null>(null);
+  const initFlags = useRef({
+    processedResume: false,
+    sentInitialMessage: false,
+    readyAnnouncement: false,
+    lastError: null as string | null,
+  });
 
   const initializationError = useInitializationError();
   const initializationStatus = useInitializationStatus();
@@ -64,7 +66,7 @@ export const SessionInitializer: React.FC<SessionInitializerProps> = ({
   }, [themeName]);
 
   const handleContinue = useMemoizedFn(async () => {
-    readyAnnouncementSent.current = true;
+    initFlags.current.readyAnnouncement = true;
     try {
       const sessions = await SessionService.listSessions();
 
@@ -96,7 +98,7 @@ export const SessionInitializer: React.FC<SessionInitializerProps> = ({
   });
 
   const handleResume = useMemoizedFn(async () => {
-    readyAnnouncementSent.current = true;
+    initFlags.current.readyAnnouncement = true;
     try {
       if (typeof resume === 'string' && resume !== 'true') {
         const messages = await SessionService.loadSession(resume);
@@ -132,32 +134,32 @@ export const SessionInitializer: React.FC<SessionInitializerProps> = ({
   });
 
   useEffect(() => {
-    if (hasProcessedResumeRef.current) return;
+    if (initFlags.current.processedResume) return;
 
     if (continueSession) {
-      hasProcessedResumeRef.current = true;
+      initFlags.current.processedResume = true;
       handleContinue();
       return;
     }
 
     if (resume) {
-      hasProcessedResumeRef.current = true;
+      initFlags.current.processedResume = true;
       handleResume();
     }
   }, [continueSession, resume, handleContinue, handleResume]);
 
   useEffect(() => {
-    if (!readyForChat || readyAnnouncementSent.current) {
+    if (!readyForChat || initFlags.current.readyAnnouncement) {
       return;
     }
 
     const messages = getMessages();
     if (messages.length > 0) {
-      readyAnnouncementSent.current = true;
+      initFlags.current.readyAnnouncement = true;
       return;
     }
 
-    readyAnnouncementSent.current = true;
+    initFlags.current.readyAnnouncement = true;
     sessionActions.addAssistantMessage('请输入您的问题，我将为您提供帮助。');
   }, [readyForChat]);
 
@@ -166,11 +168,11 @@ export const SessionInitializer: React.FC<SessionInitializerProps> = ({
       return;
     }
 
-    if (lastInitializationError.current === initializationError) {
+    if (initFlags.current.lastError === initializationError) {
       return;
     }
 
-    lastInitializationError.current = initializationError;
+    initFlags.current.lastError = initializationError;
 
     if (initializationStatus === 'error') {
       sessionActions.addAssistantMessage(`❌ 初始化失败: ${initializationError}`);
@@ -196,11 +198,11 @@ export const SessionInitializer: React.FC<SessionInitializerProps> = ({
 
   useEffect(() => {
     const message = initialMessage?.trim();
-    if (!message || hasSentInitialMessage.current || !readyForChat || requiresSetup) {
+    if (!message || initFlags.current.sentInitialMessage || !readyForChat || requiresSetup) {
       return;
     }
 
-    hasSentInitialMessage.current = true;
+    initFlags.current.sentInitialMessage = true;
     addToHistory(message);
     sendInitialMessage(message);
   }, [

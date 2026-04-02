@@ -12,9 +12,9 @@ Blade Code is a modern AI-powered coding assistant with CLI + Web UI, built with
 
 ```bash
 # Development
-pnpm dev              # Start CLI dev mode (watch)
-pnpm dev:serve        # Start CLI + Web server
-pnpm build            # Build CLI
+bun run dev           # Start CLI dev mode (watch)
+bun run dev:web       # Start CLI + Web server
+bun run build         # Build CLI
 
 # Running
 blade                 # Start interactive CLI
@@ -22,9 +22,9 @@ blade web             # Start Web UI (opens browser)
 blade serve           # Start headless server
 
 # Testing & Quality
-pnpm test:all         # Run all tests
-pnpm lint             # Run linter
-pnpm type-check       # TypeScript type checking
+bun run test:all      # Run all tests
+bun run lint          # Run linter
+bun run type-check    # TypeScript type checking
 ```
 
 ## Architecture
@@ -75,7 +75,7 @@ Blade/
 
 - Test framework: Vitest
 - Tests location: `packages/cli/tests/`
-- Run tests: `pnpm test:all`
+- Run tests: `bun run test:all`
 
 ## Documentation
 
