@@ -28,9 +28,9 @@ code --install-extension blade-code-0.0.1.vsix
 ### 开发模式
 
 ```bash
-cd vscode-extension
-pnpm install
-pnpm run compile
+cd packages/vscode
+bun install
+bun run compile
 # 在 VS Code 中按 F5 启动调试
 ```
 
@@ -101,16 +101,16 @@ WebSocket 支持以下方法：
 
 ```bash
 # 安装依赖
-pnpm install
+bun install
 
 # 编译
-pnpm run compile
+bun run compile
 
 # 监听模式
-pnpm run watch
+bun run watch
 
 # 打包
-pnpm run package
+bun run package
 ```
 
 ## License

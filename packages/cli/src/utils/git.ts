@@ -302,6 +302,7 @@ export async function getStagedFileList(cwd: string): Promise<string> {
 export async function getStagedDiff(cwd: string): Promise<string> {
   // 排除锁文件和常见大文件类型
   const excludePatterns = [
+    ':!bun.lock',
     ':!pnpm-lock.yaml',
     ':!package-lock.json',
     ':!yarn.lock',

@@ -224,14 +224,14 @@ function createApp(): Hono<{ Variables: Variables }> {
       return c.html(html);
     });
   } else {
-    logger.warn('[Server] Web UI not found. Run "cd web && pnpm build" to enable web interface.');
+    logger.warn('[Server] Web UI not found. Run "cd packages/cli/web && bun run build" to enable web interface.');
     
     app.get('/', (c) => {
       return c.json({
         message: 'Blade API Server',
         version: getVersion(),
         webUI: false,
-        hint: 'Web UI not built. Run "cd web && pnpm build" to enable.',
+        hint: 'Web UI not built. Run "cd packages/cli/web && bun run build" to enable.',
         endpoints: {
           health: '/health',
           sessions: '/sessions',

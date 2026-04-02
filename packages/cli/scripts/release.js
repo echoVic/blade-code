@@ -32,8 +32,9 @@ const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 const currentVersion = packageJson.version;
 
 // 检测包管理器类型
-const packageManager = existsSync(join(rootDir, 'pnpm-lock.yaml')) ? 'pnpm' :
-                      existsSync(join(rootDir, 'yarn.lock')) ? 'yarn' : 'npm';
+const packageManager = existsSync(join(monorepoRoot, 'bun.lock')) ? 'bun' :
+                      existsSync(join(monorepoRoot, 'pnpm-lock.yaml')) ? 'pnpm' :
+                      existsSync(join(monorepoRoot, 'yarn.lock')) ? 'yarn' : 'npm';
 
 console.log(chalk.blue('🚀 Blade AI 发包脚本'));
 console.log(chalk.gray(`当前版本: ${currentVersion}`));
@@ -64,6 +65,18 @@ function exec(command, options = {}) {
       return null;
     }
     throw error;
+  }
+}
+
+function scriptCommand(scriptName) {
+  switch (packageManager) {
+    case 'bun':
+    case 'pnpm':
+    case 'npm':
+    case 'yarn':
+      return `${packageManager} run ${scriptName}`;
+    default:
+      return `${packageManager} run ${scriptName}`;
   }
 }
 
@@ -104,7 +117,7 @@ function checkCodeQuality() {
   
   try {
     if (packageJson.scripts?.check) {
-      exec(`${packageManager} run check`);
+      exec(scriptCommand('check'));
       console.log(chalk.green('✅ 代码质量检查通过'));
     } else {
       console.log(chalk.gray('未找到 check 脚本，跳过'));
@@ -379,7 +392,7 @@ function buildProject() {
   console.log(chalk.yellow('🔨 构建项目...'));
   
   try {
-    const buildCommand = config.build?.command || `${packageManager} run build`;
+    const buildCommand = config.build?.command || scriptCommand('build');
     exec(buildCommand);
     console.log(chalk.green('✅ 项目构建成功'));
   } catch (error) {
@@ -402,7 +415,7 @@ function runTests() {
   try {
     // 检查是否有测试脚本
     if (packageJson.scripts && packageJson.scripts.test && packageJson.scripts.test !== 'echo "Error: no test specified" && exit 1') {
-      exec(`${packageManager} test`);
+      exec(scriptCommand('test'));
       console.log(chalk.green('✅ 测试通过'));
     } else {
       console.log(chalk.gray('跳过测试 (无测试脚本)'));
@@ -617,7 +630,10 @@ function preReleaseCheck() {
   // 检查依赖安全
   if (config.preChecks?.checkSecurity !== false) {
     try {
-      exec(`${packageManager} audit --audit-level=high`, { allowInDryRun: true });
+      const auditCommand = packageManager === 'bun'
+        ? 'bun audit --audit-level=high'
+        : `${packageManager} audit --audit-level=high`;
+      exec(auditCommand, { allowInDryRun: true });
       console.log(chalk.green('✅ 依赖安全检查通过'));
     } catch (error) {
       console.log(chalk.red('❌ 发现高风险依赖问题'));
@@ -631,13 +647,29 @@ function preReleaseCheck() {
 
   // 检查过期依赖（设置超时避免卡住）
   try {
-    const outdatedCmd = packageManager === 'pnpm' ? 'pnpm outdated --format json' :
+    const outdatedCmd = packageManager === 'bun' ? 'bun outdated --no-progress --quiet' :
+                       packageManager === 'pnpm' ? 'pnpm outdated --format json' :
                        packageManager === 'yarn' ? 'yarn outdated --json' :
                        'npm outdated --json';
     const outdated = exec(outdatedCmd, { allowFailure: true, allowInDryRun: true, timeout: 10000 });
     if (outdated) {
       let packages;
-      if (packageManager === 'pnpm') {
+      if (packageManager === 'bun') {
+        const rows = outdated
+          .split('\n')
+          .map(line => line.trim())
+          .filter(line => line.startsWith('|') && !line.includes('Package') && !/^(\|[-\s]+)+\|$/.test(line));
+        packages = {};
+        rows.forEach((line) => {
+          const cells = line
+            .split('|')
+            .map(cell => cell.trim())
+            .filter(Boolean);
+          if (cells.length >= 4) {
+            packages[cells[0]] = { current: cells[1], latest: cells[3] };
+          }
+        });
+      } else if (packageManager === 'pnpm') {
         // pnpm outdated 输出格式不同，需要特殊处理
         const lines = outdated.split('\n').filter(line => line.trim());
         packages = {};

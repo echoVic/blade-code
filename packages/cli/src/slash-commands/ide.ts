@@ -238,7 +238,7 @@ async function handleInstall(): Promise<string> {
   lines.push('  2. 运行: code --install-extension blade-code-x.x.x.vsix');
   lines.push('');
   lines.push('或从源码构建:');
-  lines.push('  cd vscode-extension && pnpm install && pnpm run package');
+  lines.push('  cd packages/vscode && bun install && bun run package');
   lines.push('  code --install-extension blade-code-0.0.1.vsix');
   lines.push('');
   lines.push('安装完成后，在 VS Code 终端中运行 blade 即可自动连接');

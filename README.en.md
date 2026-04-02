@@ -124,7 +124,7 @@ See docs for the full schema.
 
 ```bash
 git clone https://github.com/echoVic/blade-code.git
-cd blade-code && pnpm install && pnpm dev
+cd blade-code && bun install && bun run dev
 ```
 
 ---

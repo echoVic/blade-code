@@ -60,11 +60,11 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run compile",
+    "vscode:prepublish": "bun run compile",
     "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
     "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch",
-    "build": "pnpm run compile",
-    "package": "pnpm run compile && vsce package --no-dependencies",
+    "build": "bun run compile",
+    "package": "bun run compile && vsce package --no-dependencies",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
