@@ -1,6 +1,6 @@
 import { useMemoizedFn } from 'ahooks';
 import chalk from 'chalk';
-import { type Key, Text, useInput } from 'ink';
+import { type Key, Text, useInput, useStdin } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import { PASTE_CONFIG } from '../constants.js';
 import {
@@ -168,6 +168,8 @@ export function CustomTextInput({
     applyInsert(sanitized);
   });
 
+  const { isRawModeSupported } = useStdin();
+
   useInput(
     (rawInput, key) => {
       const input = normalizeInputText(rawInput);
@@ -261,7 +263,7 @@ export function CustomTextInput({
       if (nextValue !== originalValue) onChange(nextValue);
       if (nextCursor !== cursorPosition) onChangeCursorPosition(nextCursor);
     },
-    { isActive: focus },
+    { isActive: focus && isRawModeSupported },
   );
 
   const showCursor = focus;

@@ -1,14 +1,14 @@
 import { useMemoizedFn } from 'ahooks';
-import { useInput } from 'ink';
+import { useInput, useStdin } from 'ink';
 import { useEffect, useRef, useState } from 'react';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getFuzzyCommandSuggestions } from '../../slash-commands/index.js';
 import type { CommandSuggestion } from '../../slash-commands/types.js';
 import {
-  useAppActions,
-  useCurrentFocus,
-  useCurrentModel,
-  useSessionActions,
+    useAppActions,
+    useCurrentFocus,
+    useCurrentModel,
+    useSessionActions,
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
@@ -145,6 +145,8 @@ export const useMainInput = (
     buffer.setCursorPosition(entry.display.length);
   });
 
+  const { isRawModeSupported } = useStdin();
+
   useInput(
     (inputKey, key) => {
       if (inputKey === '?' && !input) {
@@ -233,7 +235,7 @@ export const useMainInput = (
         return;
       }
     },
-    { isActive: isFocused },
+    { isActive: isFocused && isRawModeSupported },
   );
 
   return {
