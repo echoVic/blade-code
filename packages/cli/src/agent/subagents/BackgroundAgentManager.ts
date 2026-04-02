@@ -12,6 +12,7 @@ import type { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { Agent } from '../Agent.js';
+import { drainLoop } from '../loop/index.js';
 import { SessionRuntime } from '../runtime/SessionRuntime.js';
 import {
   type AgentSession,
@@ -227,9 +228,11 @@ export class BackgroundAgentManager {
         },
       };
 
-      const loopResult = await agent.runAgenticLoop(prompt, context, {
-        signal,
-      });
+      const loopResult = await drainLoop(
+        agent.runAgenticLoop(prompt, context, {
+          signal,
+        })
+      );
 
       this.sessionStore.updateSession(agentId, {
         messages: context.messages,

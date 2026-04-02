@@ -22,6 +22,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { nanoid } from 'nanoid';
 import { Agent } from '../agent/Agent.js';
+import { drainLoop } from '../agent/loop/index.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
 import type { ChatContext, LoopOptions } from '../agent/types.js';
 import { PermissionMode } from '../config/types.js';
@@ -405,7 +406,28 @@ export class AcpSession {
       };
 
       // 4. 调用 Agent chat
-      const response = await this.agent.chat(message, context, loopOptions);
+      const loopResult = await drainLoop(
+        this.agent.chat(message, context, loopOptions),
+        async (event) => {
+          switch (event.type) {
+            case 'turn_start':
+              loopOptions.onTurnStart?.({
+                turn: event.turn,
+                maxTurns: event.maxTurns,
+              });
+              break;
+            case 'tool_result':
+              if (loopOptions.onToolResult) {
+                await loopOptions.onToolResult(event.toolCall, event.result);
+              }
+              break;
+            case 'todo_update':
+              loopOptions.onTodoUpdate?.(event.todos);
+              break;
+          }
+        }
+      );
+      const response = loopResult.finalMessage || '';
 
       // 5. 保存助手响应到历史
       if (response) {

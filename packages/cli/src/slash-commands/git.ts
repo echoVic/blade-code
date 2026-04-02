@@ -4,6 +4,7 @@
  */
 
 import { Agent } from '../agent/Agent.js';
+import { drainLoop } from '../agent/loop/index.js';
 import { getState } from '../store/vanilla.js';
 import {
   getGitStatus,
@@ -198,13 +199,16 @@ ${diff || '(无差异)'}
 
 如果改动很好，也请说明优点。保持简洁专业。`;
 
-  const result = await agent.chat(reviewPrompt, {
-    messages: [],
-    userId: 'cli-user',
-    sessionId: sessionId || 'git-review',
-    workspaceRoot: cwd,
-    signal,
-  });
+  const loopResult = await drainLoop(
+    agent.chat(reviewPrompt, {
+      messages: [],
+      userId: 'cli-user',
+      sessionId: sessionId || 'git-review',
+      workspaceRoot: cwd,
+      signal,
+    })
+  );
+  const result = loopResult.finalMessage || '';
 
   ui.sendMessage(result);
 
@@ -256,13 +260,16 @@ async function handlePreCommit(
 
   const commitPrompt = generateCommitPrompt(fileList, diff, recentCommits);
 
-  const commitMessage = await agent.chat(commitPrompt, {
-    messages: [],
-    userId: 'cli-user',
-    sessionId: sessionId || 'git-pre-commit',
-    workspaceRoot: cwd,
-    signal,
-  });
+  const commitLoopResult = await drainLoop(
+    agent.chat(commitPrompt, {
+      messages: [],
+      userId: 'cli-user',
+      sessionId: sessionId || 'git-pre-commit',
+      workspaceRoot: cwd,
+      signal,
+    })
+  );
+  const commitMessage = commitLoopResult.finalMessage || '';
 
   // 清理 commit message（移除可能的代码块标记）
   const cleanMessage = commitMessage
@@ -320,13 +327,16 @@ async function handleCommit(context: SlashCommandContext): Promise<SlashCommandR
 
   const commitPrompt = generateCommitPrompt(fileList, diff, recentCommits);
 
-  const commitMessage = await agent.chat(commitPrompt, {
-    messages: [],
-    userId: 'cli-user',
-    sessionId: sessionId || 'git-commit',
-    workspaceRoot: cwd,
-    signal,
-  });
+  const commitLoopResult = await drainLoop(
+    agent.chat(commitPrompt, {
+      messages: [],
+      userId: 'cli-user',
+      sessionId: sessionId || 'git-commit',
+      workspaceRoot: cwd,
+      signal,
+    })
+  );
+  const commitMessage = commitLoopResult.finalMessage || '';
 
   // 清理 commit message（移除可能的代码块标记）
   const cleanMessage = commitMessage

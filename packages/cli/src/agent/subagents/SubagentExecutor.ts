@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 import { Agent } from '../Agent.js';
+import { drainLoop } from '../loop/index.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
 
 /**
@@ -45,28 +46,30 @@ export class SubagentExecutor {
         isSidechain: false,
       };
       
-      const loopResult = await agent.runAgenticLoop(
-        context.prompt,
-        {
-          messages: [],
-          userId: 'subagent',
-          sessionId: agentId,
-          workspaceRoot: process.cwd(),
-          permissionMode: context.permissionMode,
-          systemPrompt,
-          subagentInfo,
-        },
-        {
-          onToolStart: context.onToolStart,
-          onToolResult: context.onToolResult
-            ? async (toolCall, result) => {
-                context.onToolResult?.(toolCall, result);
-              }
-            : undefined,
-          onContentDelta: context.onContentDelta,
-          onThinkingDelta: context.onThinkingDelta,
-          onStreamEnd: context.onStreamEnd,
-        }
+      const loopResult = await drainLoop(
+        agent.runAgenticLoop(
+          context.prompt,
+          {
+            messages: [],
+            userId: 'subagent',
+            sessionId: agentId,
+            workspaceRoot: process.cwd(),
+            permissionMode: context.permissionMode,
+            systemPrompt,
+            subagentInfo,
+          },
+          {
+            onToolStart: context.onToolStart,
+            onToolResult: context.onToolResult
+              ? async (toolCall, result) => {
+                  context.onToolResult?.(toolCall, result);
+                }
+              : undefined,
+            onContentDelta: context.onContentDelta,
+            onThinkingDelta: context.onThinkingDelta,
+            onStreamEnd: context.onStreamEnd,
+          }
+        )
       );
 
       if (loopResult.success) {

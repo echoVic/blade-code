@@ -1,5 +1,6 @@
 import type { Argv } from 'yargs';
 import { Agent } from '../agent/Agent.js';
+import { drainLoop } from '../agent/loop/index.js';
 import {
   initializeCliPlugins,
   normalizeCliInput,
@@ -100,12 +101,15 @@ function printCommand(yargs: Argv) {
         if (argv.appendSystemPrompt) {
           response = await agent.chatWithSystem(argv.appendSystemPrompt, input);
         } else {
-          response = await agent.chat(input, {
-            messages: [],
-            userId: 'cli-user',
-            sessionId: `print-${Date.now()}`,
-            workspaceRoot: process.cwd(),
-          });
+          const loopResult = await drainLoop(
+            agent.chat(input, {
+              messages: [],
+              userId: 'cli-user',
+              sessionId: `print-${Date.now()}`,
+              workspaceRoot: process.cwd(),
+            })
+          );
+          response = loopResult.finalMessage || '';
         }
 
         // 根据输出格式打印结果

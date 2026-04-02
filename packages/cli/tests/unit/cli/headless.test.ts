@@ -12,9 +12,22 @@ vi.mock('../../../src/agent/Agent.js', () => ({
 }));
 
 describe('headless runner', () => {
+  /** Helper: create a mock async generator that yields events and returns a LoopResult */
+  function mockChatGenerator(
+    events: Array<Record<string, unknown>>,
+    finalMessage = 'final response'
+  ) {
+    return async function* () {
+      for (const event of events) {
+        yield event;
+      }
+      return { success: true, finalMessage, metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 } };
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
-    agentState.chat.mockResolvedValue('final response');
+    agentState.chat.mockImplementation(mockChatGenerator([]));
     agentState.create.mockResolvedValue({
       chat: agentState.chat,
     });
@@ -24,54 +37,39 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockImplementationOnce(async (_input, _context, loopOptions) => {
-      loopOptions?.onThinkingDelta?.('reasoning');
-      loopOptions?.onContentDelta?.('hello');
-      loopOptions?.onToolStart?.({
+    agentState.chat.mockImplementationOnce(mockChatGenerator([
+      { type: 'thinking_delta', delta: 'reasoning' },
+      { type: 'content_delta', delta: 'hello' },
+      { type: 'tool_start', toolCall: {
         id: 'tool-1',
         type: 'function',
-        function: {
-          name: 'Read',
-          arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }),
-        },
-      });
-      await loopOptions?.onToolResult?.(
-        {
-          id: 'tool-1',
-          type: 'function',
-          function: {
-            name: 'Read',
-            arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }),
-          },
-        },
-        {
-          success: true,
-          displayContent: 'const demo = true;',
-          metadata: {
-            summary: 'Read demo.ts',
-            content_preview: 'const demo = true;',
-          },
-        }
-      );
-      loopOptions?.onTodoUpdate?.([
-        {
-          id: 'todo-1',
-          content: 'Ship headless mode',
-          status: 'in_progress',
-          activeForm: 'Shipping headless mode',
-          priority: 'high',
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      loopOptions?.onTokenUsage?.({
+        function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
+      }},
+      { type: 'tool_result', toolCall: {
+        id: 'tool-1',
+        type: 'function',
+        function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
+      }, result: {
+        success: true,
+        displayContent: 'const demo = true;',
+        metadata: { summary: 'Read demo.ts', content_preview: 'const demo = true;' },
+      }},
+      { type: 'todo_update', todos: [{
+        id: 'todo-1',
+        content: 'Ship headless mode',
+        status: 'in_progress',
+        activeForm: 'Shipping headless mode',
+        priority: 'high',
+        createdAt: new Date().toISOString(),
+      }]},
+      { type: 'token_usage', usage: {
         inputTokens: 10,
         outputTokens: 20,
         totalTokens: 30,
         maxContextTokens: 1000,
-      });
-      loopOptions?.onStreamEnd?.();
-      return 'final response';
-    });
+      }},
+      { type: 'stream_end' },
+    ]));
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
 
@@ -104,29 +102,23 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockImplementationOnce(async (_input, _context, loopOptions) => {
-      loopOptions?.onContentDelta?.('hello');
-      loopOptions?.onToolStart?.({
+    agentState.chat.mockImplementationOnce(mockChatGenerator([
+      { type: 'content_delta', delta: 'hello' },
+      { type: 'tool_start', toolCall: {
         id: 'tool-2',
         type: 'function',
-        function: {
-          name: 'Read',
-          arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }),
-        },
-      });
-      loopOptions?.onTodoUpdate?.([
-        {
-          id: 'todo-2',
-          content: 'Capture jsonl',
-          status: 'pending',
-          activeForm: 'Capturing jsonl',
-          priority: 'medium',
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      loopOptions?.onStreamEnd?.();
-      return 'final response';
-    });
+        function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
+      }},
+      { type: 'todo_update', todos: [{
+        id: 'todo-2',
+        content: 'Capture jsonl',
+        status: 'pending',
+        activeForm: 'Capturing jsonl',
+        priority: 'medium',
+        createdAt: new Date().toISOString(),
+      }]},
+      { type: 'stream_end' },
+    ]));
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
     const { HeadlessJsonlEventSchema } = await import(
@@ -204,16 +196,15 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockImplementationOnce(async (_input, _context, loopOptions) => {
-      loopOptions?.onThinkingDelta?.('first');
-      loopOptions?.onContentDelta?.('hello');
-      loopOptions?.onStreamEnd?.();
-      loopOptions?.onCompacting?.(true);
-      loopOptions?.onCompacting?.(false);
-      loopOptions?.onThinkingDelta?.('second');
-      loopOptions?.onStreamEnd?.();
-      return 'final response';
-    });
+    agentState.chat.mockImplementationOnce(mockChatGenerator([
+      { type: 'thinking_delta', delta: 'first' },
+      { type: 'content_delta', delta: 'hello' },
+      { type: 'stream_end' },
+      { type: 'compaction_start' },
+      { type: 'compaction_end' },
+      { type: 'thinking_delta', delta: 'second' },
+      { type: 'stream_end' },
+    ]));
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
 
@@ -244,7 +235,10 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockRejectedValueOnce(new Error('boom'));
+    agentState.chat.mockImplementationOnce(async function* () {
+      yield { type: 'turn_start', turn: 1, maxTurns: 1 };
+      throw new Error('boom');
+    });
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
     const { HeadlessJsonlEventSchema } = await import(

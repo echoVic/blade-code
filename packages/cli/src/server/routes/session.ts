@@ -4,6 +4,7 @@ import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { Agent } from '../../agent/Agent.js';
+import { drainLoop } from '../../agent/loop/index.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type {
   ChatContext,
@@ -633,7 +634,34 @@ async function executeRunAsync(
       },
     };
 
-    const response = await agent.chat(content, chatContext, loopOptions);
+    const loopResult = await drainLoop(
+      agent.chat(content, chatContext, loopOptions),
+      async (event) => {
+        switch (event.type) {
+          case 'turn_start':
+            loopOptions.onTurnStart?.({
+              turn: event.turn,
+              maxTurns: event.maxTurns,
+            });
+            break;
+          case 'tool_start':
+            loopOptions.onToolStart?.(event.toolCall, event.toolKind);
+            break;
+          case 'tool_result':
+            if (loopOptions.onToolResult) {
+              return loopOptions.onToolResult(event.toolCall, event.result) as any;
+            }
+            break;
+          case 'token_usage':
+            loopOptions.onTokenUsage?.(event.usage);
+            break;
+          case 'todo_update':
+            loopOptions.onTodoUpdate?.(event.todos);
+            break;
+        }
+      }
+    );
+    const response = loopResult.finalMessage || '';
 
     session.messages.push(
       { role: 'user', content },

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Agent } from '../../../../src/agent/Agent.js';
 import type { ChatContext } from '../../../../src/agent/types.js';
 import { type BladeConfig, PermissionMode } from '../../../../src/config/types.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
+import { checkAndCompactInLoop } from '../../../../src/agent/loop/executeLoopGenerator.js';
+import type { LoopDependencies } from '../../../../src/agent/loop/types.js';
 
 function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
   return {
@@ -53,7 +54,6 @@ function createContext(): ChatContext {
 
 describe('Agent compaction threshold fallback', () => {
   it('uses a larger dynamic fallback output budget when maxOutputTokens is not configured', async () => {
-    const agent = new Agent(createConfig());
     const compactSpy = vi.spyOn(CompactionService, 'compact').mockResolvedValue({
       success: true,
       summary: 'summary',
@@ -65,16 +65,21 @@ describe('Agent compaction threshold fallback', () => {
       summaryMessage: { role: 'user', content: 'summary' },
     });
 
-    (agent as any).chatService = {
-      getConfig: () => ({
-        model: 'test-model',
-        maxContextTokens: 200000,
-        apiKey: 'test-key',
-        baseUrl: 'https://example.com/v1',
-      }),
-    };
+    const deps = {
+      chatService: {
+        getConfig: () => ({
+          model: 'test-model',
+          maxContextTokens: 200000,
+          apiKey: 'test-key',
+          baseUrl: 'https://example.com/v1',
+        }),
+      },
+      config: createConfig(),
+      executionEngine: undefined,
+    } as unknown as LoopDependencies;
 
-    const didCompact = await (agent as any).checkAndCompactInLoop(
+    const didCompact = await checkAndCompactInLoop(
+      deps,
       createContext(),
       2,
       148000

@@ -9,6 +9,7 @@ import type { Argv } from 'yargs';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { z } from 'zod';
 import { Agent } from '../agent/Agent.js';
+import { drainLoop } from '../agent/loop/index.js';
 import type { ChatContext, LoopOptions } from '../agent/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
@@ -514,7 +515,51 @@ export async function runHeadless(
       strictMcpConfig: validatedOptions.strictMcpConfig,
     });
 
-    await agent.chat(normalized.content, chatContext, loopOptions);
+    await drainLoop(agent.chat(normalized.content, chatContext, loopOptions), async (event) => {
+      switch (event.type) {
+        case 'turn_start':
+          loopOptions.onTurnStart?.({ turn: event.turn, maxTurns: event.maxTurns });
+          break;
+        case 'content_delta':
+          loopOptions.onContentDelta?.(event.delta);
+          break;
+        case 'thinking_delta':
+          loopOptions.onThinkingDelta?.(event.delta);
+          break;
+        case 'stream_end':
+          loopOptions.onStreamEnd?.();
+          break;
+        case 'tool_start': {
+          const tc = event.toolCall as { function: { name: string; arguments: string } };
+          try {
+            const params = JSON.parse(tc.function.arguments);
+            const summary = formatToolCallSummary(tc.function.name, params);
+            eventWriter.toolStart(tc.function.name, summary);
+          } catch {
+            eventWriter.toolStart(tc.function.name, tc.function.name);
+          }
+          break;
+        }
+        case 'tool_result': {
+          if (loopOptions.onToolResult) {
+            await loopOptions.onToolResult(event.toolCall, event.result);
+          }
+          break;
+        }
+        case 'token_usage':
+          loopOptions.onTokenUsage?.(event.usage);
+          break;
+        case 'compaction_start':
+          loopOptions.onCompacting?.(true);
+          break;
+        case 'compaction_end':
+          loopOptions.onCompacting?.(false);
+          break;
+        case 'todo_update':
+          loopOptions.onTodoUpdate?.(event.todos);
+          break;
+      }
+    });
     return 0;
   } catch (error) {
     if (streamState.hasOpenThinking() && outputFormat === 'text') {

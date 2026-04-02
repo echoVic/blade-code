@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { streamDebug } from '../../logging/StreamDebugLogger.js';
+import { drainLoop, type LoopEvent } from '../../agent/loop/index.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
@@ -907,7 +908,40 @@ Remember: Follow the above instructions carefully to complete the user's request
             : undefined,
         };
 
-        const output = await agent.chat(userMessageContent, chatContext, loopOptions);
+        const loopResult = await drainLoop(
+          agent.chat(userMessageContent, chatContext, loopOptions),
+          async (event: LoopEvent) => {
+            switch (event.type) {
+              case 'content_delta':
+                loopOptions.onContentDelta?.(event.delta);
+                break;
+              case 'thinking_delta':
+                loopOptions.onThinkingDelta?.(event.delta);
+                break;
+              case 'stream_end':
+                loopOptions.onStreamEnd?.();
+                break;
+              case 'tool_start':
+                loopOptions.onToolStart?.(event.toolCall);
+                break;
+              case 'tool_result':
+                if (loopOptions.onToolResult) {
+                  await loopOptions.onToolResult(event.toolCall, event.result);
+                }
+                break;
+              case 'token_usage':
+                loopOptions.onTokenUsage?.(event.usage);
+                break;
+              case 'compaction_start':
+                loopOptions.onCompacting?.(true);
+                break;
+              case 'compaction_end':
+                loopOptions.onCompacting?.(false);
+                break;
+            }
+          }
+        );
+        const output = loopResult.finalMessage || '';
 
         // 如果返回空字符串，可能是用户取消或拒绝
         // 流式场景下 output 可能为空，但内容已通过流式回调输出

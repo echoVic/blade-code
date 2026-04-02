@@ -5,6 +5,7 @@
  */
 
 import type { Agent } from '../../../src/agent/Agent.js';
+import type { LoopEvent } from '../../../src/agent/loop/index.js';
 import type { ChatContext, LoopOptions, LoopResult } from '../../../src/agent/types.js';
 import { vi } from 'vitest';
 
@@ -26,9 +27,15 @@ export class MockAgent implements Partial<Agent> {
   }
 
   // 模拟 chat 方法
-  async chat(message: string, context: ChatContext, options?: LoopOptions): Promise<string> {
+  async *chat(
+    message: string,
+    context: ChatContext,
+    options?: LoopOptions
+  ): AsyncGenerator<LoopEvent, LoopResult, void> {
     // 记录调用
     this.calls.push({ message, context, options });
+    // yield 至少一个事件以满足 lint 规则
+    yield { type: 'turn_start', turn: 1, maxTurns: 1 } as LoopEvent;
 
     // 检查是否应该抛出错误
     if (this.shouldThrow) {
@@ -38,22 +45,39 @@ export class MockAgent implements Partial<Agent> {
     // 检查是否有预设响应
     const key = `${message}-${context.sessionId}`;
     if (this.chatResponses.has(key)) {
-      return this.chatResponses.get(key)!;
+      return {
+        success: true,
+        finalMessage: this.chatResponses.get(key)!,
+      };
     }
 
     // 检查是否有默认响应
     if (this.chatResponses.has('*')) {
-      return this.chatResponses.get('*')!;
+      return {
+        success: true,
+        finalMessage: this.chatResponses.get('*')!,
+      };
     }
 
     // 检查是否有预设结果
     if (this.chatResult) {
-      // 模拟返回结果
-      return this.chatResult.finalMessage || 'Mock response';
+      return this.chatResult;
     }
 
     // 默认返回空字符串
-    return '';
+    return {
+      success: true,
+      finalMessage: '',
+    };
+  }
+
+  // 模拟 runAgenticLoop 方法
+  async *runAgenticLoop(
+    message: string,
+    context: ChatContext,
+    options?: LoopOptions
+  ): AsyncGenerator<LoopEvent, LoopResult, void> {
+    return yield* this.chat(message, context, options);
   }
 
   // 设置 chat 响应
