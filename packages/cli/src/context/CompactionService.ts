@@ -59,6 +59,9 @@ export interface CompactionResult {
   error?: string;
 }
 
+const sessionFailures = new Map<string, number>();
+const MAX_CONSECUTIVE_FAILURES = 3;
+
 /**
  * Compaction Service - 上下文压缩服务
  */
@@ -132,6 +135,13 @@ export class CompactionService {
       console.warn('[CompactionService] Compaction hook execution failed:', hookError);
     }
 
+    const sessionKey = options.sessionId ?? '_default';
+    const failures = sessionFailures.get(sessionKey) ?? 0;
+    if (failures >= MAX_CONSECUTIVE_FAILURES) {
+      console.warn(`[CompactionService] Circuit breaker open (${failures} consecutive failures for session ${sessionKey}), using fallback`);
+      return this.fallbackCompact(messages, options, preTokens, new Error('Circuit breaker open'));
+    }
+
     try {
       console.log('[CompactionService] 开始压缩，消息数:', messages.length);
       console.log('[CompactionService] 压缩前 tokens:', preTokens);
@@ -197,6 +207,8 @@ export class CompactionService {
         `(-${((1 - postTokens / preTokens) * 100).toFixed(1)}%)`
       );
 
+      sessionFailures.delete(sessionKey);
+
       return {
         success: true,
         summary,
@@ -208,6 +220,7 @@ export class CompactionService {
         summaryMessage,
       };
     } catch (error) {
+      sessionFailures.set(sessionKey, (sessionFailures.get(sessionKey) ?? 0) + 1);
       console.error('[CompactionService] 压缩失败，使用降级策略', error);
       return this.fallbackCompact(messages, options, preTokens, error);
     }
@@ -457,5 +470,13 @@ Please provide your summary following the structure specified above, with both <
       summaryMessage,
       error: errorMsg,
     };
+  }
+}
+
+export function resetCompactionCircuitBreaker(sessionId?: string): void {
+  if (sessionId) {
+    sessionFailures.delete(sessionId);
+  } else {
+    sessionFailures.clear();
   }
 }

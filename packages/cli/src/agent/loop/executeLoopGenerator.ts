@@ -6,8 +6,11 @@
  */
 
 import { nanoid } from 'nanoid';
-import { CompactionService } from '../../context/CompactionService.js';
 import { type PermissionMode } from '../../config/index.js';
+import { CompactionService } from '../../context/CompactionService.js';
+import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
+import { snipCompact } from '../../context/SnipCompaction.js';
+import { applyToolResultBudget } from '../../context/ToolResultBudget.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type {
@@ -85,6 +88,18 @@ function isStreamingNotSupportedError(error: unknown): boolean {
   ];
   return streamErrors.some((msg) =>
     error.message.toLowerCase().includes(msg.toLowerCase())
+  );
+}
+
+function isPromptTooLongError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes('prompt_too_long') ||
+    msg.includes('prompt is too long') ||
+    msg.includes('maximum context length') ||
+    msg.includes('request too large') ||
+    (error as any).status === 413
   );
 }
 
@@ -243,6 +258,16 @@ export async function checkAndCompactInLoop(
     return false;
   }
 
+  // Level 1: Snip compaction — 轻量截断旧工具调用，无 LLM 调用
+  const snipResult = snipCompact(context.messages);
+  if (snipResult.snippedCount > 0) {
+    context.messages = snipResult.messages;
+    logger.debug(
+      `[Loop] [轮次 ${currentTurn}] Snip 压缩: 移除 ${snipResult.snippedCount} 轮旧工具调用，释放约 ${snipResult.estimatedTokensFreed} tokens`
+    );
+  }
+
+  // Level 2: LLM compaction — 80% 阈值触发 LLM 摘要压缩
   const chatConfig = deps.chatService.getConfig();
   const modelName = chatConfig.model;
   const maxContextTokens =
@@ -417,6 +442,8 @@ export async function* executeLoopGenerator(
     let totalTokens = 0;
     let lastPromptTokens: number | undefined;
 
+    const reactiveCompaction = new ReactiveCompaction();
+
     // eslint-disable-next-line no-constant-condition
     while (true) {
       // 1. 检查中断信号
@@ -454,6 +481,7 @@ export async function* executeLoopGenerator(
 
       // 3. 轮次计数
       turnsCount++;
+      reactiveCompaction.reset();
       yield { type: 'turn_start', turn: turnsCount, maxTurns } as LoopEvent;
 
       if (options?.signal?.aborted) {
@@ -473,42 +501,70 @@ export async function* executeLoopGenerator(
       let turnResult: ChatResponse;
       let streamingExecutor: StreamingToolExecutor | undefined;
 
-      if (isStreamEnabled) {
-        streamingExecutor = new StreamingToolExecutor(
-          deps.executionPipeline,
-          {
-            sessionId: context.sessionId,
-            userId: context.userId || 'default',
-            workspaceRoot: context.workspaceRoot || process.cwd(),
-            signal: options?.signal,
-            confirmationHandler: context.confirmationHandler,
-            permissionMode: context.permissionMode,
-          },
-          deps.executionPipeline.getRegistry(),
-          deps.executionEngine?.getContextManager(),
-          context.sessionId,
-          lastMessageUuid,
-          context.subagentInfo
-        );
+      try {
+        if (isStreamEnabled) {
+          streamingExecutor = new StreamingToolExecutor(
+            deps.executionPipeline,
+            {
+              sessionId: context.sessionId,
+              userId: context.userId || 'default',
+              workspaceRoot: context.workspaceRoot || process.cwd(),
+              signal: options?.signal,
+              confirmationHandler: context.confirmationHandler,
+              permissionMode: context.permissionMode,
+            },
+            deps.executionPipeline.getRegistry(),
+            deps.executionEngine?.getContextManager(),
+            context.sessionId,
+            lastMessageUuid,
+            context.subagentInfo
+          );
 
-        const { response, events } = await processStreamResponse(
-          deps,
-          messages,
-          tools,
-          options?.signal,
-          streamingExecutor
-        );
-        // Yield 所有流式事件（content_delta, thinking_delta, tool_start）
-        for (const event of events) {
-          yield event;
+          const { response, events } = await processStreamResponse(
+            deps,
+            messages,
+            tools,
+            options?.signal,
+            streamingExecutor
+          );
+          // Yield 所有流式事件（content_delta, thinking_delta, tool_start）
+          for (const event of events) {
+            yield event;
+          }
+          turnResult = response;
+        } else {
+          turnResult = await deps.chatService.chat(
+            messages,
+            tools,
+            options?.signal
+          );
         }
-        turnResult = response;
-      } else {
-        turnResult = await deps.chatService.chat(
-          messages,
-          tools,
-          options?.signal
-        );
+      } catch (llmError) {
+        // Check if it's a 413 / prompt_too_long error
+        if (isPromptTooLongError(llmError)) {
+          logger.warn('[Loop] 检测到 prompt_too_long 错误，尝试反应式压缩');
+          const chatConfig = deps.chatService.getConfig();
+          const result = await reactiveCompaction.tryReactiveCompact(
+            context.messages,
+            {
+              modelName: chatConfig.model,
+              maxContextTokens: chatConfig.maxContextTokens ?? deps.config.maxContextTokens,
+              apiKey: chatConfig.apiKey,
+              baseURL: chatConfig.baseUrl,
+            }
+          );
+          if (result.success) {
+            context.messages = result.messages;
+            const systemMsgCount = needsSystemPrompt && systemPrompt ? 1 : 0;
+            const systemMessages = messages.slice(0, systemMsgCount);
+            messages.length = 0;
+            messages.push(...systemMessages, ...context.messages);
+            logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
+            turnsCount--;
+            continue; // Retry the turn
+          }
+        }
+        throw llmError; // Re-throw if not recoverable
       }
 
       // Token 使用量
@@ -932,6 +988,15 @@ export async function* executeLoopGenerator(
         ) {
           toolResultContent = JSON.stringify(toolResultContent, null, 2);
         }
+
+        // Apply tool result budget — truncate oversized results
+        if (typeof toolResultContent === 'string' && toolResultContent.length > 100_000) {
+          toolResultContent = applyToolResultBudget(
+            toolResultContent,
+            toolCall.function.name
+          ) as string;
+        }
+
         const finalContent =
           typeof toolResultContent === 'string'
             ? toolResultContent
