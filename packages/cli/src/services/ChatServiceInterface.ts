@@ -91,6 +91,7 @@ export interface ChatConfig {
   supportsThinking?: boolean; // 是否支持 thinking 模式（DeepSeek Reasoner 等）
   customHeaders?: Record<string, string>; // Provider 特定的自定义 HTTP Headers
   providerId?: string; // models.dev 中的 Provider ID（用于获取特定配置）
+  fallbackModel?: string; // 备用模型 ID（429/529/503 时自动切换）
 }
 
 /**
@@ -110,6 +111,7 @@ export interface ChatResponse {
   reasoningContent?: string; // Thinking 模型的推理过程（如 DeepSeek R1）
   toolCalls?: ChatCompletionMessageToolCall[];
   usage?: UsageInfo;
+  finishReason?: string;
 }
 
 /**
@@ -126,10 +128,11 @@ export type StreamToolCall =
  */
 export interface StreamChunk {
   content?: string;
-  reasoningContent?: string; // Thinking 模型的推理过程片段
+  reasoningContent?: string;
   toolCalls?: StreamToolCall[];
   finishReason?: string;
-  usage?: UsageInfo; // 流式响应的使用统计（通常仅在结束时提供）
+  usage?: UsageInfo;
+  modelFallback?: boolean;
 }
 
 /**

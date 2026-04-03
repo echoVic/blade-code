@@ -149,6 +149,7 @@ async function processStreamResponse(
   let fullContent = '';
   let fullReasoningContent = '';
   let streamUsage: ChatResponse['usage'];
+  let streamFinishReason: string | undefined;
   const toolCallAccumulator = new Map<
     number,
     { id: string; name: string; arguments: string }
@@ -162,6 +163,17 @@ async function processStreamResponse(
     for await (const chunk of stream) {
       chunkCount++;
       if (signal?.aborted) break;
+
+      if (chunk.modelFallback) {
+        executor?.discard();
+        fullContent = '';
+        fullReasoningContent = '';
+        streamUsage = undefined;
+        streamFinishReason = undefined;
+        toolCallAccumulator.clear();
+        events.length = 0;
+        continue;
+      }
 
       if (chunk.content) {
         fullContent += chunk.content;
@@ -207,7 +219,10 @@ async function processStreamResponse(
           }
         }
       }
-      if (chunk.finishReason) break;
+      if (chunk.finishReason) {
+        streamFinishReason = chunk.finishReason;
+        break;
+      }
     }
 
     // 如果流返回0个chunk且没有被中止，回退到非流式模式
@@ -229,6 +244,7 @@ async function processStreamResponse(
         reasoningContent: fullReasoningContent || undefined,
         toolCalls: buildFinalToolCalls(toolCallAccumulator),
         usage: streamUsage,
+        finishReason: streamFinishReason,
       },
       events,
     };
@@ -441,6 +457,7 @@ export async function* executeLoopGenerator(
     const allToolResults: import('../../tools/types/index.js').ToolResult[] = [];
     let totalTokens = 0;
     let lastPromptTokens: number | undefined;
+    let maxOutputRecoveryCount = 0;
 
     const reactiveCompaction = new ReactiveCompaction();
 
@@ -608,6 +625,42 @@ export async function* executeLoopGenerator(
         } else {
           yield { type: 'content', content: turnResult.content } as LoopEvent;
         }
+      }
+
+
+      // Max output tokens recovery
+      const MAX_OUTPUT_RECOVERY_LIMIT = 3;
+      if (
+        turnResult.finishReason === 'length' &&
+        maxOutputRecoveryCount < MAX_OUTPUT_RECOVERY_LIMIT
+      ) {
+        maxOutputRecoveryCount++;
+        logger.warn(
+          `[Loop] Max output tokens hit (recovery ${maxOutputRecoveryCount}/${MAX_OUTPUT_RECOVERY_LIMIT})`
+        );
+
+        // Add the truncated assistant message to history
+        const truncatedAssistantMsg: Message = {
+          role: 'assistant',
+          content: turnResult.content || '',
+          reasoningContent: turnResult.reasoningContent,
+          tool_calls: turnResult.toolCalls,
+        };
+        messages.push(truncatedAssistantMsg);
+        context.messages.push(truncatedAssistantMsg);
+
+        // Inject recovery prompt
+        const recoveryMsg: Message = {
+          role: 'user',
+          content:
+            'Output token limit hit. Resume directly — no apology, no recap. ' +
+            'Pick up mid-thought if that is where the cut happened. ' +
+            'Break remaining work into smaller pieces.',
+        };
+        messages.push(recoveryMsg);
+        context.messages.push(recoveryMsg);
+
+        continue; // Retry the turn
       }
 
       // 5. 检查是否需要工具调用
