@@ -11,6 +11,7 @@ import { CompactionService } from '../../context/CompactionService.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { snipCompact } from '../../context/SnipCompaction.js';
 import { applyToolResultBudget } from '../../context/ToolResultBudget.js';
+import { checkTokenBudget, createBudgetTracker, recordOutput } from '../../context/TokenBudget.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type {
@@ -459,6 +460,12 @@ export async function* executeLoopGenerator(
     let lastPromptTokens: number | undefined;
     let maxOutputRecoveryCount = 0;
 
+    const isSubagent = !!context.subagentInfo;
+    let budgetTracker = createBudgetTracker({
+      budget: deps.currentModelMaxContextTokens,
+      isSubagent,
+    });
+
     const reactiveCompaction = new ReactiveCompaction();
 
     // eslint-disable-next-line no-constant-condition
@@ -601,6 +608,10 @@ export async function* executeLoopGenerator(
         } as LoopEvent;
       }
 
+      // Record output for token budget tracking
+      const outputTokens = turnResult.usage?.completionTokens ?? 0;
+      budgetTracker = recordOutput(budgetTracker, outputTokens, maxOutputRecoveryCount > 0);
+
       if (options?.signal?.aborted) {
         return {
           success: false,
@@ -634,33 +645,37 @@ export async function* executeLoopGenerator(
         turnResult.finishReason === 'length' &&
         maxOutputRecoveryCount < MAX_OUTPUT_RECOVERY_LIMIT
       ) {
-        maxOutputRecoveryCount++;
-        logger.warn(
-          `[Loop] Max output tokens hit (recovery ${maxOutputRecoveryCount}/${MAX_OUTPUT_RECOVERY_LIMIT})`
-        );
+        if (checkTokenBudget(budgetTracker) === 'stop') {
+          logger.info('[Loop] Token budget: diminishing returns detected, skipping recovery');
+        } else {
+          maxOutputRecoveryCount++;
+          logger.warn(
+            `[Loop] Max output tokens hit (recovery ${maxOutputRecoveryCount}/${MAX_OUTPUT_RECOVERY_LIMIT})`
+          );
 
-        // Add the truncated assistant message to history
-        const truncatedAssistantMsg: Message = {
-          role: 'assistant',
-          content: turnResult.content || '',
-          reasoningContent: turnResult.reasoningContent,
-          tool_calls: turnResult.toolCalls,
-        };
-        messages.push(truncatedAssistantMsg);
-        context.messages.push(truncatedAssistantMsg);
+          // Add the truncated assistant message to history
+          const truncatedAssistantMsg: Message = {
+            role: 'assistant',
+            content: turnResult.content || '',
+            reasoningContent: turnResult.reasoningContent,
+            tool_calls: turnResult.toolCalls,
+          };
+          messages.push(truncatedAssistantMsg);
+          context.messages.push(truncatedAssistantMsg);
 
-        // Inject recovery prompt
-        const recoveryMsg: Message = {
-          role: 'user',
-          content:
-            'Output token limit hit. Resume directly — no apology, no recap. ' +
-            'Pick up mid-thought if that is where the cut happened. ' +
-            'Break remaining work into smaller pieces.',
-        };
-        messages.push(recoveryMsg);
-        context.messages.push(recoveryMsg);
+          // Inject recovery prompt
+          const recoveryMsg: Message = {
+            role: 'user',
+            content:
+              'Output token limit hit. Resume directly — no apology, no recap. ' +
+              'Pick up mid-thought if that is where the cut happened. ' +
+              'Break remaining work into smaller pieces.',
+          };
+          messages.push(recoveryMsg);
+          context.messages.push(recoveryMsg);
 
-        continue; // Retry the turn
+          continue; // Retry the turn
+        }
       }
 
       // 5. 检查是否需要工具调用
