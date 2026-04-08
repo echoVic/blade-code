@@ -10,8 +10,8 @@ import { type PermissionMode } from '../../config/index.js';
 import { CompactionService } from '../../context/CompactionService.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { snipCompact } from '../../context/SnipCompaction.js';
-import { applyToolResultBudget } from '../../context/ToolResultBudget.js';
 import { checkTokenBudget, createBudgetTracker, recordOutput } from '../../context/TokenBudget.js';
+import { applyToolResultBudget } from '../../context/ToolResultBudget.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type {
@@ -667,6 +667,9 @@ export async function* executeLoopGenerator(
 
           continue; // Retry the turn
         }
+      } else if (turnResult.finishReason !== 'length') {
+        // Reset recovery counter on normal completion to prevent drift
+        maxOutputRecoveryCount = 0;
       }
 
       // 5. 检查是否需要工具调用

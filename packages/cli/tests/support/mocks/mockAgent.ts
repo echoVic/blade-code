@@ -35,7 +35,7 @@ export class MockAgent implements Partial<Agent> {
     // 记录调用
     this.calls.push({ message, context, options });
     // yield 至少一个事件以满足 lint 规则
-    yield { type: 'turn_start', turn: 1, maxTurns: 1 } as LoopEvent;
+    yield { kind: 'turn_start', turn: 1, maxTurns: 1 } as LoopEvent;
 
     // 检查是否应该抛出错误
     if (this.shouldThrow) {

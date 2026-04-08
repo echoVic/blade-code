@@ -9,17 +9,33 @@
  * - discard() 用于流式降级到非流式时清理
  */
 
+import type { ContextManager } from '../../context/ContextManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import type { JsonValue } from '../../store/types.js';
 import type { ExecutionPipeline } from '../../tools/execution/ExecutionPipeline.js';
 import type { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
+import type { ExecutionContext } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
 import { ToolErrorType } from '../../tools/types/index.js';
-import type { ExecutionContext } from '../../tools/types/ExecutionTypes.js';
-import type { ContextManager } from '../../context/ContextManager.js';
-import type { JsonValue } from '../../store/types.js';
 import type { ToolExecResult } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
+
+/** Combine two AbortSignals — aborts when either fires */
+function combineAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
+  // Use AbortSignal.any if available (Node 20+)
+  if ('any' in AbortSignal && typeof (AbortSignal as any).any === 'function') {
+    return (AbortSignal as any).any([a, b]);
+  }
+  // Fallback: manual composite
+  if (a.aborted) return a;
+  if (b.aborted) return b;
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  a.addEventListener('abort', onAbort, { once: true });
+  b.addEventListener('abort', onAbort, { once: true });
+  return controller.signal;
+}
 
 /** 仅处理 function 类型的 tool call */
 type FunctionToolCall = {
@@ -40,6 +56,7 @@ export class StreamingToolExecutor {
   private discarded = false;
   private order: string[] = [];
   private dispatched = new Set<string>();
+  private abortController = new AbortController();
 
   constructor(
     private pipeline: ExecutionPipeline,
@@ -136,6 +153,9 @@ export class StreamingToolExecutor {
    * modelFallback 时调用：清理旧模型的工具执行，使执行器可接受新模型的 tool calls。
    */
   discard(): void {
+    // Abort all in-flight tool executions
+    this.abortController.abort();
+    this.abortController = new AbortController();
     this.queued = [];
     this.order = [];
     this.dispatched.clear();
@@ -156,7 +176,25 @@ export class StreamingToolExecutor {
     toolCall: FunctionToolCall,
     params: Record<string, unknown>
   ): Promise<ToolExecResult> {
+    // Capture current signal at dispatch time so abort after discard() is detected
+    const signal = this.abortController.signal;
+
     try {
+      // Check if already aborted before starting
+      if (signal.aborted) {
+        const abortResult: ToolResult = {
+          success: false,
+          llmContent: '',
+          displayContent: '',
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: 'Tool execution aborted due to discard',
+          },
+          metadata: undefined,
+        };
+        return { toolCall, result: abortResult, toolUseUuid: null };
+      }
+
       let toolUseUuid: string | null = null;
       try {
         if (this.contextMgr && this.sessionId) {
@@ -172,10 +210,21 @@ export class StreamingToolExecutor {
         logger.warn('[StreamingToolExecutor] 保存工具调用失败:', err);
       }
 
+      // Merge discard signal with existing execution context signal
+      // Either user abort OR discard abort should cancel the tool
+      const userSignal = this.execContext.signal;
+      const combinedSignal = userSignal
+        ? combineAbortSignals(signal, userSignal)
+        : signal;
+      const execContext: ExecutionContext = {
+        ...this.execContext,
+        signal: combinedSignal,
+      };
+
       const result = await this.pipeline.execute(
         toolCall.function.name,
         params,
-        this.execContext
+        execContext
       );
 
       const execResult: ToolExecResult = {

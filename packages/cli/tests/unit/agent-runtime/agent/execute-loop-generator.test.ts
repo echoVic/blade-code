@@ -278,7 +278,7 @@ describe('executeLoopGenerator', () => {
       // Verify tool_start event
       const toolStartEvents = events.filter((e) => e.kind === 'tool_start');
       expect(toolStartEvents.length).toBe(1);
-      if (toolStartEvents[0].kind === 'tool_start') {
+      if (toolStartEvents[0].kind === 'tool_start' && toolStartEvents[0].toolCall.type === 'function') {
         expect(toolStartEvents[0].toolCall.function.name).toBe('Read');
       }
 

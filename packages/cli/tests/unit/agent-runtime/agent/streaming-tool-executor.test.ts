@@ -77,7 +77,11 @@ describe('StreamingToolExecutor', () => {
       executor.addTool(tc, { path: '/tmp' });
 
       expect(pipeline.execute).toHaveBeenCalledTimes(1);
-      expect(pipeline.execute).toHaveBeenCalledWith('readFile', { path: '/tmp' }, execContext);
+      expect(pipeline.execute).toHaveBeenCalledWith(
+        'readFile',
+        { path: '/tmp' },
+        expect.objectContaining({ signal: expect.any(Object) }),
+      );
       expect(executor.hasTools()).toBe(true);
     });
 
