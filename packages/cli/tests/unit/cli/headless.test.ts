@@ -38,14 +38,14 @@ describe('headless runner', () => {
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
     agentState.chat.mockImplementationOnce(mockChatGenerator([
-      { type: 'thinking_delta', delta: 'reasoning' },
-      { type: 'content_delta', delta: 'hello' },
-      { type: 'tool_start', toolCall: {
+      { kind: 'thinking_delta', delta: 'reasoning' },
+      { kind: 'content_delta', delta: 'hello' },
+      { kind: 'tool_start', toolCall: {
         id: 'tool-1',
         type: 'function',
         function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
       }},
-      { type: 'tool_result', toolCall: {
+      { kind: 'tool_result', toolCall: {
         id: 'tool-1',
         type: 'function',
         function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
@@ -54,7 +54,7 @@ describe('headless runner', () => {
         displayContent: 'const demo = true;',
         metadata: { summary: 'Read demo.ts', content_preview: 'const demo = true;' },
       }},
-      { type: 'todo_update', todos: [{
+      { kind: 'todo_update', todos: [{
         id: 'todo-1',
         content: 'Ship headless mode',
         status: 'in_progress',
@@ -62,13 +62,13 @@ describe('headless runner', () => {
         priority: 'high',
         createdAt: new Date().toISOString(),
       }]},
-      { type: 'token_usage', usage: {
+      { kind: 'token_usage', usage: {
         inputTokens: 10,
         outputTokens: 20,
         totalTokens: 30,
         maxContextTokens: 1000,
       }},
-      { type: 'stream_end' },
+      { kind: 'stream_end' },
     ]));
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
@@ -103,13 +103,13 @@ describe('headless runner', () => {
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
     agentState.chat.mockImplementationOnce(mockChatGenerator([
-      { type: 'content_delta', delta: 'hello' },
-      { type: 'tool_start', toolCall: {
+      { kind: 'content_delta', delta: 'hello' },
+      { kind: 'tool_start', toolCall: {
         id: 'tool-2',
         type: 'function',
         function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
       }},
-      { type: 'todo_update', todos: [{
+      { kind: 'todo_update', todos: [{
         id: 'todo-2',
         content: 'Capture jsonl',
         status: 'pending',
@@ -117,7 +117,7 @@ describe('headless runner', () => {
         priority: 'medium',
         createdAt: new Date().toISOString(),
       }]},
-      { type: 'stream_end' },
+      { kind: 'stream_end' },
     ]));
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
@@ -197,13 +197,13 @@ describe('headless runner', () => {
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
     agentState.chat.mockImplementationOnce(mockChatGenerator([
-      { type: 'thinking_delta', delta: 'first' },
-      { type: 'content_delta', delta: 'hello' },
-      { type: 'stream_end' },
-      { type: 'compaction_start' },
-      { type: 'compaction_end' },
-      { type: 'thinking_delta', delta: 'second' },
-      { type: 'stream_end' },
+      { kind: 'thinking_delta', delta: 'first' },
+      { kind: 'content_delta', delta: 'hello' },
+      { kind: 'stream_end' },
+      { kind: 'compaction', phase: 'start' },
+      { kind: 'compaction', phase: 'end' },
+      { kind: 'thinking_delta', delta: 'second' },
+      { kind: 'stream_end' },
     ]));
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
@@ -236,7 +236,7 @@ describe('headless runner', () => {
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
     agentState.chat.mockImplementationOnce(async function* () {
-      yield { type: 'turn_start', turn: 1, maxTurns: 1 };
+      yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
       throw new Error('boom');
     });
 

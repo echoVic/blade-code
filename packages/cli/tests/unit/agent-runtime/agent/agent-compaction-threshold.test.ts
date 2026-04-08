@@ -85,7 +85,7 @@ describe('Agent compaction threshold fallback', () => {
       148000
     );
 
-    expect(didCompact).toBe(true);
+    expect(didCompact).toBe('compacted');
     expect(compactSpy).toHaveBeenCalledOnce();
   });
 });
