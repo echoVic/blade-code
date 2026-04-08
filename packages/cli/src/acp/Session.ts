@@ -409,7 +409,7 @@ export class AcpSession {
       const loopResult = await drainLoop(
         this.agent.chat(message, context, loopOptions),
         async (event) => {
-          switch (event.type) {
+          switch (event.kind) {
             case 'turn_start':
               loopOptions.onTurnStart?.({
                 turn: event.turn,
@@ -424,6 +424,18 @@ export class AcpSession {
             case 'todo_update':
               loopOptions.onTodoUpdate?.(event.todos);
               break;
+            case 'content_delta':
+            case 'thinking_delta':
+            case 'stream_end':
+            case 'tool_start':
+            case 'compaction':
+            case 'token_usage':
+            case 'model_fallback':
+              break;
+            default: {
+              const _exhaustive: never = event;
+              void _exhaustive;
+            }
           }
         }
       );

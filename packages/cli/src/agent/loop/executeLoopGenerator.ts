@@ -171,17 +171,17 @@ async function* processStreamResponse(
         streamUsage = undefined;
         streamFinishReason = undefined;
         toolCallAccumulator.clear();
-        yield { type: 'model_fallback' };
+        yield { kind: 'model_fallback' };
         continue;
       }
 
       if (chunk.content) {
         fullContent += chunk.content;
-        yield { type: 'content_delta', delta: chunk.content };
+        yield { kind: 'content_delta', delta: chunk.content };
       }
       if (chunk.reasoningContent) {
         fullReasoningContent += chunk.reasoningContent;
-        yield { type: 'thinking_delta', delta: chunk.reasoningContent };
+        yield { kind: 'thinking_delta', delta: chunk.reasoningContent };
       }
       if (chunk.usage) {
         streamUsage = chunk.usage;
@@ -212,7 +212,7 @@ async function* processStreamResponse(
                 const toolKind = toolDef?.kind as 'readonly' | 'write' | 'execute' | undefined;
                 // 先启动工具执行，再 yield 事件通知消费者
                 executor.addTool(toolCall, params);
-                yield { type: 'tool_start', toolCall, toolKind };
+                yield { kind: 'tool_start', toolCall, toolKind };
               } catch {
                 // JSON 解析失败，等流结束后处理
               }
@@ -493,8 +493,8 @@ export async function* executeLoopGenerator(
 
       if (compactResult !== 'none') {
         if (compactResult === 'compacted') {
-          yield { type: 'compaction_start' } as LoopEvent;
-          yield { type: 'compaction_end' } as LoopEvent;
+          yield { kind: 'compaction', phase: 'start' as const };
+          yield { kind: 'compaction', phase: 'end' as const };
         }
         // snipped 和 compacted 都需要重建 messages，
         // 因为 context.messages 已被替换为新数组
@@ -509,7 +509,7 @@ export async function* executeLoopGenerator(
       // 3. 轮次计数
       turnsCount++;
       reactiveCompaction.reset();
-      yield { type: 'turn_start', turn: turnsCount, maxTurns } as LoopEvent;
+      yield { kind: 'turn_start', turn: turnsCount, maxTurns };
 
       if (options?.signal?.aborted) {
         return {
@@ -596,14 +596,14 @@ export async function* executeLoopGenerator(
         }
         lastPromptTokens = turnResult.usage.promptTokens;
         yield {
-          type: 'token_usage',
+          kind: 'token_usage',
           usage: {
             inputTokens: turnResult.usage.promptTokens ?? 0,
             outputTokens: turnResult.usage.completionTokens ?? 0,
             totalTokens,
             maxContextTokens: deps.currentModelMaxContextTokens,
           },
-        } as LoopEvent;
+        };
       }
 
       // Record output for token budget tracking
@@ -622,17 +622,10 @@ export async function* executeLoopGenerator(
         };
       }
 
-      // Thinking 内容（非流式模式）
-      if (turnResult.reasoningContent && !isStreamEnabled) {
-        yield { type: 'thinking', content: turnResult.reasoningContent } as LoopEvent;
-      }
-
       // Content 通知
       if (turnResult.content && turnResult.content.trim()) {
         if (isStreamEnabled) {
-          yield { type: 'stream_end' } as LoopEvent;
-        } else {
-          yield { type: 'content', content: turnResult.content } as LoopEvent;
+          yield { kind: 'stream_end' };
         }
       }
 
@@ -826,10 +819,10 @@ export async function* executeLoopGenerator(
             | 'execute'
             | undefined;
           yield {
-            type: 'tool_start',
+            kind: 'tool_start',
             toolCall: toolCall as ToolCallRef,
             toolKind,
-          } as LoopEvent;
+          };
         }
 
         // 并行执行所有工具
@@ -945,10 +938,10 @@ export async function* executeLoopGenerator(
 
         // Yield tool_result 事件
         yield {
-          type: 'tool_result',
+          kind: 'tool_result',
           toolCall: toolCall as ToolCallRef,
           result,
-        } as LoopEvent;
+        };
 
         // 保存 tool_result 到 JSONL
         try {
@@ -1014,9 +1007,9 @@ export async function* executeLoopGenerator(
             ? content
             : ((content as Record<string, unknown>).todos as unknown[]) || [];
           yield {
-            type: 'todo_update',
+            kind: 'todo_update',
             todos: todos as import('../../tools/builtin/todo/types.js').TodoItem[],
-          } as LoopEvent;
+          };
         }
 
         // Skill 激活

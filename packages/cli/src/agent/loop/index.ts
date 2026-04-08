@@ -10,14 +10,18 @@ export type { CompactResult } from './executeLoopGenerator.js';
 export { StreamingToolExecutor } from './StreamingToolExecutor.js';
 
 export type {
+  DomainEvent,
   FunctionDeclaration,
   LoopDependencies,
   LoopEvent,
   LoopPhase,
   LoopState,
   SkillExecutionContext,
+  StreamEvent,
+  SystemEvent,
   TokenUsageInfo,
   ToolCallRef,
+  ToolEvent,
   ToolExecResult,
   ToolKindStr
 } from './types.js';

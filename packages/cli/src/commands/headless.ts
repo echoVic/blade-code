@@ -516,7 +516,7 @@ export async function runHeadless(
     });
 
     await drainLoop(agent.chat(normalized.content, chatContext, loopOptions), async (event) => {
-      switch (event.type) {
+      switch (event.kind) {
         case 'turn_start':
           loopOptions.onTurnStart?.({ turn: event.turn, maxTurns: event.maxTurns });
           break;
@@ -549,11 +549,8 @@ export async function runHeadless(
         case 'token_usage':
           loopOptions.onTokenUsage?.(event.usage);
           break;
-        case 'compaction_start':
-          loopOptions.onCompacting?.(true);
-          break;
-        case 'compaction_end':
-          loopOptions.onCompacting?.(false);
+        case 'compaction':
+          loopOptions.onCompacting?.(event.phase === 'start');
           break;
         case 'model_fallback':
           loopOptions.onModelFallback?.();
@@ -561,6 +558,10 @@ export async function runHeadless(
         case 'todo_update':
           loopOptions.onTodoUpdate?.(event.todos);
           break;
+        default: {
+          const _exhaustive: never = event;
+          void _exhaustive;
+        }
       }
     });
     return 0;

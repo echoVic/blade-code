@@ -13,6 +13,30 @@ import type { ToolResult } from '../../tools/types/index.js';
 import type { ExecutionEngine } from '../ExecutionEngine.js';
 import type { AgentOptions } from '../types.js';
 
+// ===== Loop Event Subtypes =====
+
+/** 流式增量事件 */
+export type StreamEvent =
+  | { kind: 'content_delta'; delta: string }
+  | { kind: 'thinking_delta'; delta: string }
+  | { kind: 'stream_end' }
+  | { kind: 'model_fallback' };
+
+/** 工具生命周期事件 */
+export type ToolEvent =
+  | { kind: 'tool_start'; toolCall: ToolCallRef; toolKind?: ToolKindStr }
+  | { kind: 'tool_result'; toolCall: ToolCallRef; result: ToolResult };
+
+/** 循环控制事件 */
+export type SystemEvent =
+  | { kind: 'turn_start'; turn: number; maxTurns: number }
+  | { kind: 'compaction'; phase: 'start' | 'end' }
+  | { kind: 'token_usage'; usage: TokenUsageInfo };
+
+/** 业务事件 */
+export type DomainEvent =
+  | { kind: 'todo_update'; todos: TodoItem[] };
+
 // ===== Tool Call Reference =====
 
 /** 工具调用引用（与 OpenAI 格式兼容） */
@@ -32,20 +56,7 @@ export interface TokenUsageInfo {
 // ===== Loop Events =====
 
 /** Generator yield 的事件联合类型 */
-export type LoopEvent =
-  | { type: 'turn_start'; turn: number; maxTurns: number }
-  | { type: 'content_delta'; delta: string }
-  | { type: 'thinking_delta'; delta: string }
-  | { type: 'model_fallback' }
-  | { type: 'stream_end' }
-  | { type: 'content'; content: string }
-  | { type: 'thinking'; content: string }
-  | { type: 'tool_start'; toolCall: ToolCallRef; toolKind?: ToolKindStr }
-  | { type: 'tool_result'; toolCall: ToolCallRef; result: ToolResult }
-  | { type: 'compaction_start' }
-  | { type: 'compaction_end' }
-  | { type: 'token_usage'; usage: TokenUsageInfo }
-  | { type: 'todo_update'; todos: TodoItem[] };
+export type LoopEvent = StreamEvent | ToolEvent | SystemEvent | DomainEvent;
 
 // ===== Loop State =====
 
@@ -81,7 +92,9 @@ export interface SkillExecutionContext {
 // ===== Function Declaration (re-export from tools) =====
 
 import type { FunctionDeclaration as _FunctionDeclaration } from '../../tools/types/ToolTypes.js';
+
 export type { FunctionDeclaration } from '../../tools/types/ToolTypes.js';
+
 type FunctionDeclaration = _FunctionDeclaration;
 
 // ===== Loop Dependencies =====
