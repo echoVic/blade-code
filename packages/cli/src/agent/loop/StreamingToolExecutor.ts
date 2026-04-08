@@ -132,12 +132,17 @@ export class StreamingToolExecutor {
   }
 
   /**
-   * 丢弃所有挂起/排队的工作（流失败时调用）
+   * 丢弃所有挂起/排队的工作并重置状态。
+   * modelFallback 时调用：清理旧模型的工具执行，使执行器可接受新模型的 tool calls。
    */
   discard(): void {
-    this.discarded = true;
     this.queued = [];
-    logger.debug('[StreamingToolExecutor] 已丢弃所有挂起工作');
+    this.order = [];
+    this.dispatched.clear();
+    this.completed.clear();
+    this.pending.clear();
+    this.discarded = false;
+    logger.debug('[StreamingToolExecutor] 已丢弃所有挂起工作并重置状态');
   }
 
   /**

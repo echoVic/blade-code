@@ -36,6 +36,7 @@ export type LoopEvent =
   | { type: 'turn_start'; turn: number; maxTurns: number }
   | { type: 'content_delta'; delta: string }
   | { type: 'thinking_delta'; delta: string }
+  | { type: 'model_fallback' }
   | { type: 'stream_end' }
   | { type: 'content'; content: string }
   | { type: 'thinking'; content: string }

@@ -555,6 +555,9 @@ export async function runHeadless(
         case 'compaction_end':
           loopOptions.onCompacting?.(false);
           break;
+        case 'model_fallback':
+          loopOptions.onModelFallback?.();
+          break;
         case 'todo_update':
           loopOptions.onTodoUpdate?.(event.todos);
           break;

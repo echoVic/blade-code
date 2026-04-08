@@ -5,7 +5,8 @@
  */
 
 export { drainLoop } from './consumeLoop.js';
-export { executeLoopGenerator, checkAndCompactInLoop } from './executeLoopGenerator.js';
+export { checkAndCompactInLoop, executeLoopGenerator } from './executeLoopGenerator.js';
+export type { CompactResult } from './executeLoopGenerator.js';
 export { StreamingToolExecutor } from './StreamingToolExecutor.js';
 
 export type {
@@ -18,5 +19,6 @@ export type {
   TokenUsageInfo,
   ToolCallRef,
   ToolExecResult,
-  ToolKindStr,
+  ToolKindStr
 } from './types.js';
+

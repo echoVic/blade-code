@@ -130,6 +130,9 @@ export interface LoopOptions {
   // 压缩状态回调
   onCompacting?: (isCompacting: boolean) => void;
 
+  // 模型降级回调（通知消费者清空已累积的流式内容）
+  onModelFallback?: () => void;
+
   // Todo 列表更新回调（用于 ACP plan 更新）
   onTodoUpdate?: (todos: TodoItem[]) => void;
 

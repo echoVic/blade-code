@@ -1,10 +1,10 @@
 import { useMemoizedFn } from 'ahooks';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { useEffect, useRef } from 'react';
+import { drainLoop, type LoopEvent } from '../../agent/loop/index.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { streamDebug } from '../../logging/StreamDebugLogger.js';
-import { drainLoop, type LoopEvent } from '../../agent/loop/index.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
@@ -891,7 +891,11 @@ Remember: Follow the above instructions carefully to complete the user's request
               sessionActions.resetTokenUsage();
             }
           },
-          // 轮次限制回调（达到 maxTurns 后询问用户是否继续）
+          onModelFallback: () => {
+            resetStreamingBuffers();
+            sessionActions.finalizeStreamingMessage();
+            sessionActions.setCurrentThinkingContent(null);
+          },
           onTurnLimitReached: confirmationHandler
             ? async (data: { turnsCount: number }) => {
                 const response = await confirmationHandler.requestConfirmation({
@@ -937,6 +941,9 @@ Remember: Follow the above instructions carefully to complete the user's request
                 break;
               case 'compaction_end':
                 loopOptions.onCompacting?.(false);
+                break;
+              case 'model_fallback':
+                loopOptions.onModelFallback?.();
                 break;
             }
           }

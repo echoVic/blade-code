@@ -140,13 +140,13 @@ function buildFinalToolCalls(
 
 // ===== processStreamResponse (extracted from Agent.ts) =====
 
-async function processStreamResponse(
+async function* processStreamResponse(
   deps: LoopDependencies,
   messages: Message[],
   tools: Array<{ name: string; description: string; parameters: unknown }>,
   signal?: AbortSignal,
   executor?: StreamingToolExecutor
-): Promise<{ response: ChatResponse; events: LoopEvent[] }> {
+): AsyncGenerator<LoopEvent, ChatResponse, void> {
   let fullContent = '';
   let fullReasoningContent = '';
   let streamUsage: ChatResponse['usage'];
@@ -155,7 +155,6 @@ async function processStreamResponse(
     number,
     { id: string; name: string; arguments: string }
   >();
-  const events: LoopEvent[] = [];
 
   try {
     const stream = deps.chatService.streamChat(messages, tools, signal);
@@ -172,17 +171,17 @@ async function processStreamResponse(
         streamUsage = undefined;
         streamFinishReason = undefined;
         toolCallAccumulator.clear();
-        events.length = 0;
+        yield { type: 'model_fallback' };
         continue;
       }
 
       if (chunk.content) {
         fullContent += chunk.content;
-        events.push({ type: 'content_delta', delta: chunk.content });
+        yield { type: 'content_delta', delta: chunk.content };
       }
       if (chunk.reasoningContent) {
         fullReasoningContent += chunk.reasoningContent;
-        events.push({ type: 'thinking_delta', delta: chunk.reasoningContent });
+        yield { type: 'thinking_delta', delta: chunk.reasoningContent };
       }
       if (chunk.usage) {
         streamUsage = chunk.usage;
@@ -211,8 +210,9 @@ async function processStreamResponse(
                 };
                 const toolDef = deps.executionPipeline.getRegistry().get(entry.name);
                 const toolKind = toolDef?.kind as 'readonly' | 'write' | 'execute' | undefined;
-                events.push({ type: 'tool_start', toolCall, toolKind });
+                // 先启动工具执行，再 yield 事件通知消费者
                 executor.addTool(toolCall, params);
+                yield { type: 'tool_start', toolCall, toolKind };
               } catch {
                 // JSON 解析失败，等流结束后处理
               }
@@ -235,26 +235,21 @@ async function processStreamResponse(
     ) {
       logger.warn('[Loop] 流式响应返回0个chunk，回退到非流式模式');
       executor?.discard();
-      const response = await deps.chatService.chat(messages, tools, signal);
-      return { response, events: [] };
+      return await deps.chatService.chat(messages, tools, signal);
     }
 
     return {
-      response: {
-        content: fullContent,
-        reasoningContent: fullReasoningContent || undefined,
-        toolCalls: buildFinalToolCalls(toolCallAccumulator),
-        usage: streamUsage,
-        finishReason: streamFinishReason,
-      },
-      events,
+      content: fullContent,
+      reasoningContent: fullReasoningContent || undefined,
+      toolCalls: buildFinalToolCalls(toolCallAccumulator),
+      usage: streamUsage,
+      finishReason: streamFinishReason,
     };
   } catch (error) {
     if (isStreamingNotSupportedError(error)) {
       logger.warn('[Loop] 流式请求失败，降级到非流式模式');
       executor?.discard();
-      const response = await deps.chatService.chat(messages, tools, signal);
-      return { response, events: [] };
+      return await deps.chatService.chat(messages, tools, signal);
     }
     throw error;
   }
@@ -262,23 +257,27 @@ async function processStreamResponse(
 
 // ===== checkAndCompactInLoop (extracted from Agent.ts) =====
 
+export type CompactResult = 'none' | 'snipped' | 'compacted';
+
 export async function checkAndCompactInLoop(
   deps: LoopDependencies,
   context: ChatContext,
   currentTurn: number,
   actualPromptTokens?: number
-): Promise<boolean> {
+): Promise<CompactResult> {
   if (actualPromptTokens === undefined) {
     logger.debug(
       `[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`
     );
-    return false;
+    return 'none';
   }
 
   // Level 1: Snip compaction — 轻量截断旧工具调用，无 LLM 调用
   const snipResult = snipCompact(context.messages);
+  let didSnip = false;
   if (snipResult.snippedCount > 0) {
     context.messages = snipResult.messages;
+    didSnip = true;
     logger.debug(
       `[Loop] [轮次 ${currentTurn}] Snip 压缩: 移除 ${snipResult.snippedCount} 轮旧工具调用，释放约 ${snipResult.estimatedTokensFreed} tokens`
     );
@@ -312,7 +311,7 @@ export async function checkAndCompactInLoop(
     shouldCompact: actualPromptTokens >= threshold,
   });
 
-  if (actualPromptTokens < threshold) return false;
+  if (actualPromptTokens < threshold) return didSnip ? 'snipped' : 'none';
 
   logger.debug(
     currentTurn === 0
@@ -361,10 +360,10 @@ export async function checkAndCompactInLoop(
       logger.warn(`[Loop] [轮次 ${currentTurn}] 保存压缩数据失败:`, saveError);
     }
 
-    return true;
+    return 'compacted';
   } catch (error) {
     logger.error(`[Loop] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
-    return false;
+    return didSnip ? 'snipped' : 'none';
   }
 }
 
@@ -485,16 +484,20 @@ export async function* executeLoopGenerator(
 
       // 2. 上下文压缩检查
       const preCompactLength = context.messages.length;
-      const didCompact = await checkAndCompactInLoop(
+      const compactResult = await checkAndCompactInLoop(
         deps,
         context,
         turnsCount,
         lastPromptTokens
       );
 
-      if (didCompact) {
-        yield { type: 'compaction_start' } as LoopEvent;
-        yield { type: 'compaction_end' } as LoopEvent;
+      if (compactResult !== 'none') {
+        if (compactResult === 'compacted') {
+          yield { type: 'compaction_start' } as LoopEvent;
+          yield { type: 'compaction_end' } as LoopEvent;
+        }
+        // snipped 和 compacted 都需要重建 messages，
+        // 因为 context.messages 已被替换为新数组
         const systemMsgCount = needsSystemPrompt && systemPrompt ? 1 : 0;
         const historyEndIdx = systemMsgCount + preCompactLength;
         const systemMessages = messages.slice(0, systemMsgCount);
@@ -544,18 +547,13 @@ export async function* executeLoopGenerator(
             context.subagentInfo
           );
 
-          const { response, events } = await processStreamResponse(
+          turnResult = yield* processStreamResponse(
             deps,
             messages,
             tools,
             options?.signal,
             streamingExecutor
           );
-          // Yield 所有流式事件（content_delta, thinking_delta, tool_start）
-          for (const event of events) {
-            yield event;
-          }
-          turnResult = response;
         } else {
           turnResult = await deps.chatService.chat(
             messages,
