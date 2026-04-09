@@ -4,6 +4,7 @@
  * 提供 AsyncGenerator 驱动的 Agent 循环实现
  */
 
+export { ConversationState, isRootSystemPrompt } from './ConversationState.js';
 export { drainLoop } from './consumeLoop.js';
 export { checkAndCompactInLoop, executeLoopGenerator } from './executeLoopGenerator.js';
 export type { CompactResult } from './executeLoopGenerator.js';

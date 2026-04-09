@@ -28,6 +28,7 @@ import type {
   LoopResult,
   UserMessageContent,
 } from '../types.js';
+import { ConversationState } from './ConversationState.js';
 import { StreamingToolExecutor } from './StreamingToolExecutor.js';
 import type { LoopDependencies, LoopEvent, ToolCallRef } from './types.js';
 
@@ -386,27 +387,9 @@ export async function* executeLoopGenerator(
     rawTools = injectSkillsMetadata(rawTools);
     const tools = deps.applySkillToolRestrictions(rawTools);
 
-    // 2. 构建消息历史
-    const needsSystemPrompt =
-      context.messages.length === 0 ||
-      !context.messages.some((msg) => msg.role === 'system');
-
-    const messages: Message[] = [];
-    if (needsSystemPrompt && systemPrompt) {
-      messages.push({
-        role: 'system',
-        content: [
-          {
-            type: 'text',
-            text: systemPrompt,
-            providerOptions: {
-              anthropic: { cacheControl: { type: 'ephemeral' } },
-            },
-          },
-        ],
-      });
-    }
-    messages.push(...context.messages, { role: 'user', content: message });
+    // 2. 构建消息历史 — 使用 ConversationState 单一消息源
+    const state = new ConversationState(context, systemPrompt);
+    state.appendUser({ role: 'user', content: message });
 
     // 保存用户消息到 JSONL
     let lastMessageUuid: string | null = null;
@@ -467,6 +450,7 @@ export async function* executeLoopGenerator(
 
     const reactiveCompaction = new ReactiveCompaction();
 
+    try {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       // 1. 检查中断信号
@@ -483,7 +467,9 @@ export async function* executeLoopGenerator(
       }
 
       // 2. 上下文压缩检查
-      const preCompactLength = context.messages.length;
+      // writeback 确保 context.messages 与 state.history 同步，
+      // 因为 checkAndCompactInLoop 直接读取 context.messages
+      state.writeback();
       const compactResult = await checkAndCompactInLoop(
         deps,
         context,
@@ -496,14 +482,8 @@ export async function* executeLoopGenerator(
           yield { kind: 'compaction', phase: 'start' as const };
           yield { kind: 'compaction', phase: 'end' as const };
         }
-        // snipped 和 compacted 都需要重建 messages，
-        // 因为 context.messages 已被替换为新数组
-        const systemMsgCount = needsSystemPrompt && systemPrompt ? 1 : 0;
-        const historyEndIdx = systemMsgCount + preCompactLength;
-        const systemMessages = messages.slice(0, systemMsgCount);
-        const newMessages = messages.slice(historyEndIdx);
-        messages.length = 0;
-        messages.push(...systemMessages, ...context.messages, ...newMessages);
+        // checkAndCompactInLoop 已更新 context.messages，同步到 state
+        state.replaceHistory(context.messages);
       }
 
       // 3. 轮次计数
@@ -549,14 +529,14 @@ export async function* executeLoopGenerator(
 
           turnResult = yield* processStreamResponse(
             deps,
-            messages,
+            state.toLLMMessages(),
             tools,
             options?.signal,
             streamingExecutor
           );
         } else {
           turnResult = await deps.chatService.chat(
-            messages,
+            state.toLLMMessages(),
             tools,
             options?.signal
           );
@@ -577,10 +557,8 @@ export async function* executeLoopGenerator(
           );
           if (result.success) {
             context.messages = result.messages;
-            const systemMsgCount = needsSystemPrompt && systemPrompt ? 1 : 0;
-            const systemMessages = messages.slice(0, systemMsgCount);
-            messages.length = 0;
-            messages.push(...systemMessages, ...context.messages);
+            // 同步到 state，清空 pending（重试当前轮次）
+            state.replaceHistory(context.messages);
             logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
             turnsCount--;
             continue; // Retry the turn
@@ -651,8 +629,7 @@ export async function* executeLoopGenerator(
             reasoningContent: turnResult.reasoningContent,
             tool_calls: turnResult.toolCalls,
           };
-          messages.push(truncatedAssistantMsg);
-          context.messages.push(truncatedAssistantMsg);
+          state.appendBoth(truncatedAssistantMsg);
 
           // Inject recovery prompt
           const recoveryMsg: Message = {
@@ -662,8 +639,7 @@ export async function* executeLoopGenerator(
               'Pick up mid-thought if that is where the cut happened. ' +
               'Break remaining work into smaller pieces.',
           };
-          messages.push(recoveryMsg);
-          context.messages.push(recoveryMsg);
+          state.appendBoth(recoveryMsg);
 
           continue; // Retry the turn
         }
@@ -687,14 +663,14 @@ export async function* executeLoopGenerator(
           p.test(content)
         );
         const RETRY_PROMPT = '请执行你提到的操作，不要只是描述。';
-        const recentRetries = messages
+        const recentMessages = state.toLLMMessages();
+        const recentRetries = recentMessages
           .slice(-10)
           .filter((m) => m.role === 'user' && m.content === RETRY_PROMPT).length;
 
         if (isIncompleteIntent && recentRetries < 2) {
           const retryMsg: Message = { role: 'user', content: RETRY_PROMPT };
-          messages.push(retryMsg);
-          context.messages.push(retryMsg);
+          state.appendBoth(retryMsg);
           continue;
         }
 
@@ -714,8 +690,7 @@ export async function* executeLoopGenerator(
               ? `\n\n<system-reminder>\n${stopResult.continueReason}\n</system-reminder>`
               : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
             const continueMsg: Message = { role: 'user', content: continueMessage };
-            messages.push(continueMsg);
-            context.messages.push(continueMsg);
+            state.appendBoth(continueMsg);
             continue;
           }
         } catch (hookError) {
@@ -752,7 +727,7 @@ export async function* executeLoopGenerator(
       }
 
       // 6. 添加 LLM 响应到消息历史
-      messages.push({
+      state.appendAssistant({
         role: 'assistant',
         content: turnResult.content || '',
         reasoningContent: turnResult.reasoningContent,
@@ -1063,7 +1038,7 @@ export async function* executeLoopGenerator(
           typeof toolResultContent === 'string'
             ? toolResultContent
             : JSON.stringify(toolResultContent);
-        messages.push({
+        state.appendToolResult({
           role: 'tool',
           tool_call_id: toolCall.id,
           name: toolCall.function.name,
@@ -1093,6 +1068,8 @@ export async function* executeLoopGenerator(
 
           if (response?.continue) {
             // 用户选择继续，压缩上下文
+            // 先同步 state 到 context，确保压缩读取到完整历史
+            state.writeback();
             try {
               const chatConfig = deps.chatService.getConfig();
               const compactResult = await CompactionService.compact(
@@ -1109,10 +1086,7 @@ export async function* executeLoopGenerator(
               );
 
               context.messages = compactResult.compactedMessages;
-              const systemMsg = messages.find((m) => m.role === 'system');
-              messages.length = 0;
-              if (systemMsg) messages.push(systemMsg);
-              messages.push(...context.messages);
+              state.replaceHistory(context.messages);
 
               const continueMessage: Message = {
                 role: 'user',
@@ -1122,8 +1096,7 @@ export async function* executeLoopGenerator(
                   'Please continue the conversation from where we left it off without asking the user any further questions. ' +
                   'Continue with the last task that you were asked to work on.',
               };
-              messages.push(continueMessage);
-              context.messages.push(continueMessage);
+              state.appendBoth(continueMessage);
 
               // 保存压缩数据到 JSONL
               try {
@@ -1145,16 +1118,11 @@ export async function* executeLoopGenerator(
                 logger.warn('[Loop] 保存压缩数据失败:', saveError);
               }
             } catch (compactError) {
-              // 降级处理
+              // 降级处理：保留最近 80 条消息
               logger.error('[Loop] 压缩失败，使用降级策略:', compactError);
-              const systemMsg = messages.find((m) => m.role === 'system');
-              const recentMessages = messages.slice(-80);
-              messages.length = 0;
-              if (systemMsg && !recentMessages.some((m) => m.role === 'system')) {
-                messages.push(systemMsg);
-              }
-              messages.push(...recentMessages);
-              context.messages = messages.filter((m) => m.role !== 'system');
+              const currentHistory = state.getHistory();
+              const recentHistory = currentHistory.slice(-80);
+              state.replaceHistory(recentHistory);
             }
 
             turnsCount = 0;
@@ -1192,6 +1160,10 @@ export async function* executeLoopGenerator(
       }
 
       // 继续下一轮循环...
+    }
+    } finally {
+      // 确保所有退出路径都将消息回写到 context.messages
+      state.writeback();
     }
   } catch (error) {
     if (
