@@ -2,10 +2,8 @@
  * Subagent 系统类型定义
  */
 
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { PermissionMode } from '../../config/types.js';
 import type { LoopEvent } from '../loop/types.js';
-import type { ToolResult } from '../../tools/types/index.js';
 
 /**
  * Claude Code permissionMode 类型
@@ -112,9 +110,8 @@ export interface SubagentConfig {
  * Subagent 执行上下文
  *
  * 事件传递：
- * - 优先使用 `onEvent` 统一回调（推荐）
- * - 如果 `onEvent` 未提供，SubagentExecutor 会将 LoopEvent
- *   拆分到 5 个命名回调（向后兼容）
+ * - 通过 `onEvent` 统一回调接收所有 LoopEvent
+ * - Phase 4 完成：旧命名回调已删除，统一走 onEvent
  */
 export interface SubagentContext {
   /** 任务提示 */
@@ -133,27 +130,10 @@ export interface SubagentContext {
   subagentSessionId?: string;
 
   /**
-   * 统一事件回调（推荐）
-   * 当提供此回调时，SubagentExecutor 会直接转发 LoopEvent，
-   * 忽略下方 5 个命名回调。
+   * 统一事件回调
+   * SubagentExecutor 直接转发所有 LoopEvent。
    */
   onEvent?: (event: LoopEvent) => void | Promise<void>;
-
-  // --- 以下为向后兼容的命名回调，当 onEvent 未提供时使用 ---
-
-  /** 工具执行开始回调（用于 UI 进度显示） */
-  onToolStart?: (
-    toolCall: ChatCompletionMessageToolCall,
-    toolKind?: 'readonly' | 'write' | 'execute'
-  ) => void;
-  onToolResult?: (
-    toolCall: ChatCompletionMessageToolCall,
-    result: ToolResult
-  ) => void;
-
-  onContentDelta?: (delta: string) => void;
-  onThinkingDelta?: (delta: string) => void;
-  onStreamEnd?: () => void;
 }
 
 /**
