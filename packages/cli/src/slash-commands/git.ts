@@ -200,7 +200,7 @@ ${diff || '(无差异)'}
 如果改动很好，也请说明优点。保持简洁专业。`;
 
   const loopResult = await drainLoop(
-    agent.chat(reviewPrompt, {
+    agent.chatStream(reviewPrompt, {
       messages: [],
       userId: 'cli-user',
       sessionId: sessionId || 'git-review',
@@ -261,7 +261,7 @@ async function handlePreCommit(
   const commitPrompt = generateCommitPrompt(fileList, diff, recentCommits);
 
   const commitLoopResult = await drainLoop(
-    agent.chat(commitPrompt, {
+    agent.chatStream(commitPrompt, {
       messages: [],
       userId: 'cli-user',
       sessionId: sessionId || 'git-pre-commit',
@@ -328,7 +328,7 @@ async function handleCommit(context: SlashCommandContext): Promise<SlashCommandR
   const commitPrompt = generateCommitPrompt(fileList, diff, recentCommits);
 
   const commitLoopResult = await drainLoop(
-    agent.chat(commitPrompt, {
+    agent.chatStream(commitPrompt, {
       messages: [],
       userId: 'cli-user',
       sessionId: sessionId || 'git-commit',

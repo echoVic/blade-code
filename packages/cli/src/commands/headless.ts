@@ -6,11 +6,11 @@
  * while the exported JSONL contract remains snake_case and versioned.
  */
 import type { Argv } from 'yargs';
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { z } from 'zod';
 import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
-import type { ChatContext, LoopOptions } from '../agent/types.js';
+import type { LoopEvent } from '../agent/loop/types.js';
+import type { ChatContext } from '../agent/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { TodoItem } from '../tools/builtin/todo/types.js';
@@ -18,7 +18,6 @@ import type {
   ConfirmationDetails,
   ConfirmationResponse,
 } from '../tools/types/ExecutionTypes.js';
-import type { ToolResult } from '../tools/types/index.js';
 import {
   initializeCliPlugins,
   normalizeCliInput,
@@ -430,81 +429,6 @@ export async function runHeadless(
       confirmationHandler: createConfirmationHandler(),
     };
 
-    const loopOptions: LoopOptions = {
-      stream: true,
-      maxTurns: validatedOptions.maxTurns,
-      onContentDelta: (delta: string) => {
-        streamState.markAssistantContent();
-        eventWriter.contentDelta(delta);
-      },
-      onThinkingDelta: (delta: string) => {
-        streamState.setThinkingOpened(
-          eventWriter.thinkingDelta(delta, streamState.hasOpenThinking())
-        );
-      },
-      onThinking: (content: string) => {
-        if (!content) return;
-        eventWriter.thinking(content);
-      },
-      onStreamEnd: () => {
-        const snapshot = streamState.completeStream();
-        eventWriter.streamEnd(
-          snapshot.wroteAssistantContent,
-          snapshot.openedThinking
-        );
-      },
-      onContent: (content: string) => {
-        if (!content.trim()) return;
-        eventWriter.content(content);
-        streamState.markAssistantContent();
-      },
-      onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
-        if (toolCall.type !== 'function') return;
-        // TodoWrite 由 onTodoUpdate 处理，避免重复输出
-        if (toolCall.function.name === 'TodoWrite') return;
-        try {
-          const params = JSON.parse(toolCall.function.arguments);
-          const summary = formatToolCallSummary(toolCall.function.name, params);
-          eventWriter.toolStart(toolCall.function.name, summary);
-        } catch {
-          // JSON 解析失败，使用工具名作为 fallback
-          eventWriter.toolStart(toolCall.function.name, toolCall.function.name);
-        }
-      },
-      onToolResult: async (
-        toolCall: ChatCompletionMessageToolCall,
-        result: ToolResult
-      ) => {
-        if (toolCall.type !== 'function') return;
-        const summary = result.metadata?.summary;
-        if (summary) {
-          eventWriter.toolResult(toolCall.function.name, summary);
-        }
-
-        if (shouldShowToolDetail(toolCall.function.name, result)) {
-          const detail =
-            generateToolDetail(toolCall.function.name, result) ||
-            result.displayContent;
-          if (detail) {
-            eventWriter.toolDetail(toolCall.function.name, detail);
-          }
-        }
-      },
-      onTodoUpdate: (todos: TodoItem[]) => {
-        eventWriter.todoUpdate(todos);
-      },
-      onTokenUsage: (usage) => {
-        eventWriter.tokenUsage(usage);
-      },
-      onCompacting: (isCompacting: boolean) => {
-        eventWriter.compacting(isCompacting);
-      },
-      onTurnLimitReached: async (data) => {
-        eventWriter.turnLimit(data.turnsCount);
-        return { continue: true, reason: 'headless-auto-continue' };
-      },
-    };
-
     const agent = await Agent.create({
       systemPrompt: validatedOptions.systemPrompt,
       appendSystemPrompt: validatedOptions.appendSystemPrompt,
@@ -515,58 +439,118 @@ export async function runHeadless(
       strictMcpConfig: validatedOptions.strictMcpConfig,
     });
 
-    const loopResult = await drainLoop(agent.chat(normalized.content, chatContext, loopOptions), async (event) => {
-      switch (event.kind) {
-        case 'turn_start':
-          loopOptions.onTurnStart?.({ turn: event.turn, maxTurns: event.maxTurns });
-          break;
-        case 'content_delta':
-          loopOptions.onContentDelta?.(event.delta);
-          break;
-        case 'thinking_delta':
-          loopOptions.onThinkingDelta?.(event.delta);
-          break;
-        case 'stream_end':
-          loopOptions.onStreamEnd?.();
-          break;
-        case 'tool_start': {
-          const tc = event.toolCall as { function: { name: string; arguments: string } };
-          try {
-            const params = JSON.parse(tc.function.arguments);
-            const summary = formatToolCallSummary(tc.function.name, params);
-            eventWriter.toolStart(tc.function.name, summary);
-          } catch {
-            eventWriter.toolStart(tc.function.name, tc.function.name);
+    // Phase 4: 使用 chatStream() + onEvent 事件驱动消费
+    // headless 在 content_complete/thinking_complete 路径下输出完整内容，
+    // 在 stream_end 做 flush。
+    const loopResult = await drainLoop(
+      agent.chatStream(normalized.content, chatContext, {
+        stream: true,
+        maxTurns: validatedOptions.maxTurns,
+        onTurnLimitReached: async (data) => {
+          eventWriter.turnLimit(data.turnsCount);
+          return { continue: true, reason: 'headless-auto-continue' };
+        },
+      }),
+      async (event: LoopEvent) => {
+        switch (event.kind) {
+          // --- 流式增量 ---
+          case 'content_delta':
+            streamState.markAssistantContent();
+            eventWriter.contentDelta(event.delta);
+            break;
+          case 'thinking_delta':
+            streamState.setThinkingOpened(
+              eventWriter.thinkingDelta(event.delta, streamState.hasOpenThinking())
+            );
+            break;
+
+          // --- 完整内容（非流式 fallback） ---
+          case 'content_complete':
+            if (event.content && event.content.trim()) {
+              eventWriter.content(event.content);
+              streamState.markAssistantContent();
+            }
+            break;
+          case 'thinking_complete':
+            if (event.content) {
+              eventWriter.thinking(event.content);
+            }
+            break;
+
+          // --- 流结束 flush ---
+          case 'stream_end': {
+            const snapshot = streamState.completeStream();
+            eventWriter.streamEnd(
+              snapshot.wroteAssistantContent,
+              snapshot.openedThinking
+            );
+            break;
           }
-          break;
-        }
-        case 'tool_result': {
-          if (loopOptions.onToolResult) {
-            await loopOptions.onToolResult(event.toolCall, event.result);
+
+          // --- 工具事件 ---
+          case 'tool_start': {
+            const toolCall = event.toolCall;
+            if (!('function' in toolCall)) break;
+            // TodoWrite 由 todo_update 处理，避免重复输出
+            if (toolCall.function.name === 'TodoWrite') break;
+            try {
+              const params = JSON.parse(toolCall.function.arguments);
+              const summary = formatToolCallSummary(toolCall.function.name, params);
+              eventWriter.toolStart(toolCall.function.name, summary);
+            } catch {
+              eventWriter.toolStart(toolCall.function.name, toolCall.function.name);
+            }
+            break;
           }
-          break;
-        }
-        case 'token_usage':
-          loopOptions.onTokenUsage?.(event.usage);
-          break;
-        case 'compaction':
-          loopOptions.onCompacting?.(event.phase === 'start');
-          break;
-        case 'model_fallback':
-          loopOptions.onModelFallback?.();
-          break;
-        case 'todo_update':
-          loopOptions.onTodoUpdate?.(event.todos);
-          break;
-        case 'content_complete':
-        case 'thinking_complete':
-          break;
-        default: {
-          const _exhaustive: never = event;
-          void _exhaustive;
+          case 'tool_result': {
+            const toolCall = event.toolCall;
+            if (!('function' in toolCall)) break;
+            const summary = event.result.metadata?.summary;
+            if (summary) {
+              eventWriter.toolResult(toolCall.function.name, summary as string);
+            }
+            if (shouldShowToolDetail(toolCall.function.name, event.result)) {
+              const detail =
+                generateToolDetail(toolCall.function.name, event.result) ||
+                event.result.displayContent;
+              if (detail) {
+                eventWriter.toolDetail(toolCall.function.name, detail);
+              }
+            }
+            break;
+          }
+
+          // --- Token 使用 ---
+          case 'token_usage':
+            eventWriter.tokenUsage(event.usage);
+            break;
+
+          // --- 压缩 ---
+          case 'compaction':
+            eventWriter.compacting(event.phase === 'start');
+            break;
+
+          // --- 业务事件 ---
+          case 'todo_update':
+            eventWriter.todoUpdate(event.todos);
+            break;
+
+          // --- 模型降级 ---
+          case 'model_fallback':
+            // 在 headless 模式下不需要特殊处理
+            break;
+
+          // --- 系统事件 ---
+          case 'turn_start':
+            break;
+
+          default: {
+            const _exhaustive: never = event;
+            void _exhaustive;
+          }
         }
       }
-    });
+    );
 
     // 输出截断告警
     if (loopResult.metadata?.outputTruncated) {

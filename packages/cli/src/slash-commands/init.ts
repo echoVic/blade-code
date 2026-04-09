@@ -4,13 +4,11 @@
  */
 
 import { promises as fs } from 'fs';
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import * as path from 'path';
 import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { getState } from '../store/vanilla.js';
-import type { ToolResult } from '../tools/types/index.js';
 import { formatToolCallSummary } from '../ui/utils/toolFormatters.js';
 import {
   getUI,
@@ -114,10 +112,10 @@ const initCommand: SlashCommand = {
 
 **Final output**: Return your analysis and suggestions as plain text. Do NOT use Write tool.`;
 
-        // 使用 chat 方法让 Agent 可以调用工具
-        logger.info(`[/init] Starting agent.chat, signal.aborted: ${signal?.aborted}`);
+        // 使用 chatStream 方法让 Agent 可以调用工具
+        logger.info(`[/init] Starting agent.chatStream, signal.aborted: ${signal?.aborted}`);
         const loopResult = await drainLoop(
-          agent.chat(
+          agent.chatStream(
             analysisPrompt,
             {
               messages: [],
@@ -125,11 +123,13 @@ const initCommand: SlashCommand = {
               sessionId: sessionId || 'init-session',
               workspaceRoot: cwd,
               signal,
-            },
-            {
-              // 注意：abort 检查已在 Agent 内部统一处理
-              onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
-                if (toolCall.type !== 'function') return;
+            }
+          ),
+          async (event) => {
+            switch (event.kind) {
+              case 'tool_start': {
+                const toolCall = event.toolCall;
+                if (!('function' in toolCall)) return;
                 try {
                   const params = JSON.parse(toolCall.function.arguments);
                   const summary = formatToolCallSummary(toolCall.function.name, params);
@@ -137,22 +137,24 @@ const initCommand: SlashCommand = {
                 } catch {
                   // 静默处理解析错误
                 }
-              },
-              onToolResult: async (
-                toolCall: ChatCompletionMessageToolCall,
-                result: ToolResult
-              ) => {
-                if (toolCall.type !== 'function') return;
-                const summary = result.metadata?.summary;
+                break;
+              }
+              case 'tool_result': {
+                const toolCall = event.toolCall;
+                if (!('function' in toolCall)) return;
+                const summary = event.result.metadata?.summary;
                 if (summary) {
-                  sendToolMessage(summary);
+                  sendToolMessage(summary as string);
                 }
-              },
+                break;
+              }
+              default:
+                break;
             }
-          )
+          }
         );
         const result = loopResult.finalMessage || '';
-        logger.info(`[/init] agent.chat completed, signal.aborted: ${signal?.aborted}`);
+        logger.info(`[/init] agent.chatStream completed, signal.aborted: ${signal?.aborted}`);
 
         if (signal?.aborted) {
           logger.info('[/init] Returning cancelled after agent.chat');
@@ -230,12 +232,12 @@ const initCommand: SlashCommand = {
 
 **Final output**: Return ONLY the complete BLADE.md content (markdown format), ready to be written to the file.`;
 
-      // 使用 chat 方法让 Agent 可以调用工具
+      // 使用 chatStream 方法让 Agent 可以调用工具
       logger.info(
-        `[/init] Starting agent.chat for new BLADE.md, signal.aborted: ${signal?.aborted}`
+        `[/init] Starting agent.chatStream for new BLADE.md, signal.aborted: ${signal?.aborted}`
       );
       const generatedLoopResult = await drainLoop(
-        agent.chat(
+        agent.chatStream(
           analysisPrompt,
           {
             messages: [],
@@ -243,11 +245,13 @@ const initCommand: SlashCommand = {
             sessionId: sessionId || 'init-session',
             workspaceRoot: cwd,
             signal,
-          },
-          {
-            // 注意：abort 检查已在 Agent 内部统一处理
-            onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
-              if (toolCall.type !== 'function') return;
+          }
+        ),
+        async (event) => {
+          switch (event.kind) {
+            case 'tool_start': {
+              const toolCall = event.toolCall;
+              if (!('function' in toolCall)) return;
               try {
                 const params = JSON.parse(toolCall.function.arguments);
                 const summary = formatToolCallSummary(toolCall.function.name, params);
@@ -255,24 +259,27 @@ const initCommand: SlashCommand = {
               } catch {
                 // 静默处理解析错误
               }
-            },
-            onToolResult: async (
-              toolCall: ChatCompletionMessageToolCall,
-              result: ToolResult
-            ) => {
-              if (toolCall.type !== 'function') return;
-              if (result?.metadata?.summary) {
-                if (typeof result.metadata.summary === 'string') {
-                  sendToolMessage(result.metadata.summary);
+              break;
+            }
+            case 'tool_result': {
+              const toolCall = event.toolCall;
+              if (!('function' in toolCall)) return;
+              const resultMeta = event.result?.metadata;
+              if (resultMeta?.summary) {
+                if (typeof resultMeta.summary === 'string') {
+                  sendToolMessage(resultMeta.summary);
                 }
               }
-            },
+              break;
+            }
+            default:
+              break;
           }
-        )
+        }
       );
       const generatedContent = generatedLoopResult.finalMessage || '';
       logger.info(
-        `[/init] agent.chat completed for new BLADE.md, signal.aborted: ${signal?.aborted}`
+        `[/init] agent.chatStream completed for new BLADE.md, signal.aborted: ${signal?.aborted}`
       );
 
       if (signal?.aborted) {

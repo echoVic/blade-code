@@ -102,7 +102,7 @@ function printCommand(yargs: Argv) {
           response = await agent.chatWithSystem(argv.appendSystemPrompt, input);
         } else {
           const loopResult = await drainLoop(
-            agent.chat(input, {
+            agent.chatStream(input, {
               messages: [],
               userId: 'cli-user',
               sessionId: `print-${Date.now()}`,

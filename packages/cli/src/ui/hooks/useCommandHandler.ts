@@ -1,5 +1,4 @@
 import { useMemoizedFn } from 'ahooks';
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { useEffect, useRef } from 'react';
 import { drainLoop, type LoopEvent } from '../../agent/loop/index.js';
 import { HookManager } from '../../hooks/HookManager.js';
@@ -25,7 +24,6 @@ import {
 } from '../../store/selectors/index.js';
 import { ensureStoreInitialized, getState } from '../../store/vanilla.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
-import type { ToolResult } from '../../tools/types/index.js';
 import {
   appendMarkdownDelta,
   finalizeMarkdownCache,
@@ -734,219 +732,167 @@ Remember: Follow the above instructions carefully to complete the user's request
 
         let contentDeltaCount = 0;
         let contentDeltaTotalLen = 0;
-        let onContentCallCount = 0;
 
-        const loopOptions = {
-          // 启用流式输出（默认）
-          stream: true,
-
-          // ===== 流式增量回调 =====
-
-          // 流式内容增量（使用批处理减少渲染频率）
-          // batchAppendContent 会累积内容，每 50ms 刷新一次
-          onContentDelta: (delta: string) => {
-            contentDeltaCount++;
-            contentDeltaTotalLen += delta.length;
-            streamDebug('useCommandHandler', 'onContentDelta', {
-              callCount: contentDeltaCount,
-              deltaLen: delta.length,
-              totalLen: contentDeltaTotalLen,
-            });
-            batchAppendContent(delta);
-          },
-
-          // 流式推理内容增量（Thinking 模型，使用批处理）
-          onThinkingDelta: thinkingModeEnabled
-            ? (delta: string) => {
-                batchAppendThinking(delta);
-              }
-            : undefined,
-
-          // ===== 完整内容回调（流结束时调用）=====
-
-          // LLM 推理内容（Thinking 模型如 DeepSeek R1）
-          // 流式模式下：增量已通过 onThinkingDelta 发送，这里用于兼容
-          // 非流式模式下：这是唯一的通知途径
-          onThinking: thinkingModeEnabled
-            ? (content: string) => {
-                // abort 检查已在 Agent 内部统一处理
-                sessionActions.setCurrentThinkingContent(content);
-              }
-            : undefined,
-
-          // 流式输出结束信号
-          // 流式模式下：增量已通过 onContentDelta 发送，这里标记流结束并完成消息
-          onStreamEnd: () => {
-            streamDebug('useCommandHandler', 'onStreamEnd', {
-              contentDeltaCallCount: contentDeltaCount,
-              contentDeltaTotalLen,
-              remainingBuffer: contentBufferRef.current.length,
-            });
-
-            // 清理定时器
-            if (contentFlushTimerRef.current) {
-              clearTimeout(contentFlushTimerRef.current);
-              contentFlushTimerRef.current = null;
-            }
-            if (thinkingFlushTimerRef.current) {
-              clearTimeout(thinkingFlushTimerRef.current);
-              thinkingFlushTimerRef.current = null;
-            }
-
-            // 一次原子操作：追加缓冲区剩余内容 + 完成消息
-            // 避免多次 Store 更新导致闪屏
-            const extraContent = contentBufferRef.current;
-            const extraThinking = thinkingBufferRef.current;
-            contentBufferRef.current = '';
-            thinkingBufferRef.current = '';
-
-            const streamingId = getState().session.currentStreamingMessageId;
-            if (streamingId) {
-              if (extraContent) {
-                appendMarkdownDelta(streamingId, extraContent);
-              }
-              finalizeMarkdownCache(streamingId);
-            }
-
-            sessionActions.finalizeStreamingMessage(extraContent, extraThinking);
-          },
-
-          // LLM 输出内容（仅非流式模式）
-          // 非流式 fallback 模式下：这里创建完整消息
-          onContent: (content: string) => {
-            onContentCallCount++;
-            // abort 检查已在 Agent 内部统一处理
-            if (!content.trim()) return;
-
-            streamDebug('useCommandHandler', 'onContent (non-stream)', {
-              callCount: onContentCallCount,
-              contentLen: content.length,
-            });
-
-            // 非流式 fallback：直接添加完整消息
-            sessionActions.addAssistantMessageAndClearThinking(content);
-          },
-          // 工具调用开始
-          onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
-            // abort 检查已在 Agent 内部统一处理
-            if (toolCall.type !== 'function') return;
-            // 跳过 TodoWrite 的显示（任务列表由侧边栏显示）
-            if (toolCall.function.name === 'TodoWrite') {
-              return;
-            }
-
-            try {
-              const params = JSON.parse(toolCall.function.arguments);
-              const summary = formatToolCallSummary(toolCall.function.name, params);
-              sessionActions.addToolMessage(summary, {
-                toolName: toolCall.function.name,
-                phase: 'start',
-                summary,
-                params,
-              });
-            } catch (error) {
-              logger.error('[useCommandHandler] onToolStart error:', error);
-            }
-          },
-          // 工具执行完成（显示摘要 + 可选的详细内容）
-          onToolResult: async (
-            toolCall: ChatCompletionMessageToolCall,
-            result: ToolResult
-          ) => {
-            // abort 检查已在 Agent 内部统一处理
-            if (toolCall.type !== 'function') return;
-            const summary = result.metadata?.summary;
-            if (!summary) return;
-
-            // 决定是否显示详细内容，并生成详细内容
-            let detail: string | undefined;
-            if (shouldShowToolDetail(toolCall.function.name, result)) {
-              // 优先使用 generateToolDetail 生成更友好的详情
-              detail =
-                generateToolDetail(toolCall.function.name, result) ||
-                result.displayContent;
-            }
-
-            sessionActions.addToolMessage(summary, {
-              toolName: toolCall.function.name,
-              phase: 'complete',
-              summary,
-              detail,
-            });
-          },
-          // Token 使用量更新
-          onTokenUsage: (usage: {
-            inputTokens: number;
-            outputTokens: number;
-            totalTokens: number;
-            maxContextTokens: number;
-          }) => {
-            sessionActions.updateTokenUsage(usage);
-          },
-          // 压缩状态更新
-          onCompacting: (isCompacting: boolean) => {
-            sessionActions.setCompacting(isCompacting);
-            // 压缩完成后重置 token 使用量
-            if (!isCompacting) {
-              sessionActions.resetTokenUsage();
-            }
-          },
-          onModelFallback: () => {
-            resetStreamingBuffers();
-            sessionActions.finalizeStreamingMessage();
-            sessionActions.setCurrentThinkingContent(null);
-          },
-          onTurnLimitReached: confirmationHandler
-            ? async (data: { turnsCount: number }) => {
-                const response = await confirmationHandler.requestConfirmation({
-                  type: 'maxTurnsExceeded',
-                  title: '对话轮次上限',
-                  message: `已进行 ${data.turnsCount} 轮对话。是否继续？`,
-                  risks: ['继续执行可能导致更长的等待时间', '可能产生更多的 API 费用'],
-                });
-                return {
-                  continue: response.approved,
-                  reason: response.reason,
-                };
-              }
-            : undefined,
-        };
-
+        // Phase 4: 使用 chatStream() + onEvent 事件驱动消费
+        // UI 契约：content_complete/thinking_complete 只写 snapshot，stream_end 才 commit
         const loopResult = await drainLoop(
-          agent.chat(userMessageContent, chatContext, loopOptions),
+          agent.chatStream(userMessageContent, chatContext, {
+            stream: true,
+            onTurnLimitReached: confirmationHandler
+              ? async (data: { turnsCount: number }) => {
+                  const response = await confirmationHandler.requestConfirmation({
+                    type: 'maxTurnsExceeded',
+                    title: '对话轮次上限',
+                    message: `已进行 ${data.turnsCount} 轮对话。是否继续？`,
+                    risks: ['继续执行可能导致更长的等待时间', '可能产生更多的 API 费用'],
+                  });
+                  return {
+                    continue: response.approved,
+                    reason: response.reason,
+                  };
+                }
+              : undefined,
+          }),
           async (event: LoopEvent) => {
             switch (event.kind) {
+              // --- 流式增量（批处理减少渲染频率） ---
               case 'content_delta':
-                loopOptions.onContentDelta?.(event.delta);
+                contentDeltaCount++;
+                contentDeltaTotalLen += event.delta.length;
+                streamDebug('useCommandHandler', 'onContentDelta', {
+                  callCount: contentDeltaCount,
+                  deltaLen: event.delta.length,
+                  totalLen: contentDeltaTotalLen,
+                });
+                batchAppendContent(event.delta);
                 break;
+
               case 'thinking_delta':
-                loopOptions.onThinkingDelta?.(event.delta);
-                break;
-              case 'stream_end':
-                loopOptions.onStreamEnd?.();
-                break;
-              case 'tool_start':
-                loopOptions.onToolStart?.(event.toolCall);
-                break;
-              case 'tool_result':
-                if (loopOptions.onToolResult) {
-                  await loopOptions.onToolResult(event.toolCall, event.result);
+                if (thinkingModeEnabled) {
+                  batchAppendThinking(event.delta);
                 }
                 break;
+
+              // --- 完整内容（非流式 fallback，content_complete 只写 snapshot） ---
+              case 'content_complete':
+                if (event.content && event.content.trim()) {
+                  streamDebug('useCommandHandler', 'onContent (non-stream)', {
+                    contentLen: event.content.length,
+                  });
+                  sessionActions.addAssistantMessageAndClearThinking(event.content);
+                }
+                break;
+
+              case 'thinking_complete':
+                if (thinkingModeEnabled && event.content) {
+                  sessionActions.setCurrentThinkingContent(event.content);
+                }
+                break;
+
+              // --- stream_end 才 commit（原子操作：flush 缓冲区 + finalize 消息）---
+              case 'stream_end': {
+                streamDebug('useCommandHandler', 'onStreamEnd', {
+                  contentDeltaCallCount: contentDeltaCount,
+                  contentDeltaTotalLen,
+                  remainingBuffer: contentBufferRef.current.length,
+                });
+
+                // 清理定时器
+                if (contentFlushTimerRef.current) {
+                  clearTimeout(contentFlushTimerRef.current);
+                  contentFlushTimerRef.current = null;
+                }
+                if (thinkingFlushTimerRef.current) {
+                  clearTimeout(thinkingFlushTimerRef.current);
+                  thinkingFlushTimerRef.current = null;
+                }
+
+                // 一次原子操作：追加缓冲区剩余内容 + 完成消息
+                const extraContent = contentBufferRef.current;
+                const extraThinking = thinkingBufferRef.current;
+                contentBufferRef.current = '';
+                thinkingBufferRef.current = '';
+
+                const streamingId = getState().session.currentStreamingMessageId;
+                if (streamingId) {
+                  if (extraContent) {
+                    appendMarkdownDelta(streamingId, extraContent);
+                  }
+                  finalizeMarkdownCache(streamingId);
+                }
+
+                sessionActions.finalizeStreamingMessage(extraContent, extraThinking);
+                break;
+              }
+
+              // --- 工具事件 ---
+              case 'tool_start': {
+                const toolCall = event.toolCall;
+                if (!('function' in toolCall)) break;
+                if (toolCall.function.name === 'TodoWrite') break;
+                try {
+                  const params = JSON.parse(toolCall.function.arguments);
+                  const summary = formatToolCallSummary(toolCall.function.name, params);
+                  sessionActions.addToolMessage(summary, {
+                    toolName: toolCall.function.name,
+                    phase: 'start',
+                    summary,
+                    params,
+                  });
+                } catch (error) {
+                  logger.error('[useCommandHandler] onToolStart error:', error);
+                }
+                break;
+              }
+              case 'tool_result': {
+                const toolCall = event.toolCall;
+                if (!('function' in toolCall)) break;
+                const summary = event.result.metadata?.summary;
+                if (!summary) break;
+
+                let detail: string | undefined;
+                if (shouldShowToolDetail(toolCall.function.name, event.result)) {
+                  detail =
+                    generateToolDetail(toolCall.function.name, event.result) ||
+                    event.result.displayContent;
+                }
+
+                sessionActions.addToolMessage(summary as string, {
+                  toolName: toolCall.function.name,
+                  phase: 'complete',
+                  summary: summary as string,
+                  detail,
+                });
+                break;
+              }
+
+              // --- Token 使用 ---
               case 'token_usage':
-                loopOptions.onTokenUsage?.(event.usage);
+                sessionActions.updateTokenUsage(event.usage);
                 break;
+
+              // --- 压缩 ---
               case 'compaction':
-                loopOptions.onCompacting?.(event.phase === 'start');
+                sessionActions.setCompacting(event.phase === 'start');
+                if (event.phase === 'end') {
+                  sessionActions.resetTokenUsage();
+                }
                 break;
+
+              // --- 模型降级（Item 14: 同时清理 hook 层和 store 层缓冲） ---
               case 'model_fallback':
-                loopOptions.onModelFallback?.();
+                // hook 层清理：contentBufferRef / thinkingBufferRef + flush timer
+                resetStreamingBuffers();
+                // store 层清理：streamingChunksBuffer + currentStreaming* 字段
+                sessionActions.discardStreamingMessage();
+                sessionActions.setCurrentThinkingContent(null);
                 break;
+
+              // --- 系统事件和业务事件 ---
               case 'turn_start':
               case 'todo_update':
-              case 'content_complete':
-              case 'thinking_complete':
                 break;
+
               default: {
                 const _exhaustive: never = event;
                 void _exhaustive;

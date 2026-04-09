@@ -123,6 +123,7 @@ export interface SessionActions {
   appendAssistantContent: (delta: string) => string; // 追加内容到当前流式消息
   finalizeStreamingMessage: (extraContent?: string, extraThinking?: string) => void; // 完成流式消息（可追加缓冲区剩余内容）
   clearFinalizingStreamingMessageId: () => void; // 清理最终渲染标记
+  discardStreamingMessage: () => void; // 丢弃流式消息（不提交，用于模型降级场景）
 }
 
 /**

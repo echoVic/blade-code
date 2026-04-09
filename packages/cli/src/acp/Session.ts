@@ -23,8 +23,9 @@ import type {
 import { nanoid } from 'nanoid';
 import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
+import type { LoopEvent } from '../agent/loop/types.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
-import type { ChatContext, LoopOptions } from '../agent/types.js';
+import type { ChatContext } from '../agent/types.js';
 import { PermissionMode } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { Message } from '../services/ChatServiceInterface.js';
@@ -318,135 +319,104 @@ export class AcpSession {
         },
       };
 
-      // 3. 定义回调选项
-      // 注意：abort 检查已在 Agent 内部统一处理，回调不再需要重复检查
-      const loopOptions: LoopOptions = {
-        signal: abortController.signal,
-
-        // 文本内容流式输出
-        onContent: (text: string) => {
-          this.sendUpdate({
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text },
-          });
-        },
-
-        // 思考过程流式输出（DeepSeek R1 等）
-        onThinking: (text: string) => {
-          this.sendUpdate({
-            sessionUpdate: 'agent_thought_chunk',
-            content: { type: 'text', text },
-          });
-        },
-
-        // 工具调用开始
-        onToolStart: (toolCall, toolKind) => {
-          const toolName =
-            'function' in toolCall ? toolCall.function.name : toolCall.type;
-          // 映射 Blade ToolKind 到 ACP ToolKind
-          const acpKind = this.mapToolKind(toolKind);
-          this.sendUpdate({
-            sessionUpdate: 'tool_call',
-            toolCallId: toolCall.id,
-            status: 'in_progress' as ToolCallStatus,
-            title: `Executing ${toolName}`,
-            content: [],
-            kind: acpKind,
-          });
-        },
-
-        // 工具调用完成
-        onToolResult: async (toolCall, result) => {
-          const content: ToolCallContent[] = [];
-
-          // 检查是否有 diff 信息（Edit/Write 工具）
-          const metadata = result.metadata;
-          if (
-            metadata?.kind === 'edit' &&
-            typeof metadata.file_path === 'string' &&
-            typeof metadata.oldContent === 'string' &&
-            (typeof metadata.newContent === 'string' ||
-              metadata.newContent === undefined)
-          ) {
-            // 发送 diff 格式（IDE 会显示差异视图）
-            content.push({
-              type: 'diff',
-              path: metadata.file_path,
-              oldText: metadata.oldContent,
-              newText: (metadata.newContent as string) ?? null,
-            });
-          } else if (result.displayContent) {
-            // 其他工具：发送文本内容
-            const displayText =
-              typeof result.displayContent === 'string'
-                ? result.displayContent
-                : JSON.stringify(result.displayContent);
-            content.push({
-              type: 'content',
-              content: { type: 'text', text: displayText },
-            });
-          }
-
-          const _toolName =
-            'function' in toolCall ? toolCall.function.name : toolCall.type;
-          const status: ToolCallStatus = result.success ? 'completed' : 'failed';
-
-          this.sendUpdate({
-            sessionUpdate: 'tool_call_update',
-            toolCallId: toolCall.id,
-            status,
-            content,
-          });
-        },
-
-        // Todo 列表更新（发送 ACP plan）
-        onTodoUpdate: (todos: TodoItem[]) => {
-          this.sendPlanUpdate(todos);
-        },
-      };
-
-      // 4. 调用 Agent chat
+      // 4. 调用 Agent chatStream（Phase 4: 事件驱动消费）
+      // stream_end 不外发给 ACP 客户端（保持内部语义）
       const loopResult = await drainLoop(
-        this.agent.chat(message, context, loopOptions),
-        async (event) => {
+        this.agent.chatStream(message, context),
+        async (event: LoopEvent) => {
           switch (event.kind) {
-            case 'turn_start':
-              loopOptions.onTurnStart?.({
-                turn: event.turn,
-                maxTurns: event.maxTurns,
+            // --- 流式内容 ---
+            case 'content_complete':
+              // 非流式路径：完整内容一次性发送
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: event.content },
               });
               break;
-            case 'tool_result':
-              if (loopOptions.onToolResult) {
-                await loopOptions.onToolResult(event.toolCall, event.result);
-              }
-              break;
-            case 'todo_update':
-              loopOptions.onTodoUpdate?.(event.todos);
-              break;
-            case 'content_delta':
-            case 'thinking_delta':
-            case 'content_complete':
             case 'thinking_complete':
-            case 'stream_end':
-            case 'tool_start':
-            case 'compaction':
-            case 'token_usage':
-            case 'model_fallback':
+              // 非流式路径：完整思考内容一次性发送
+              this.sendUpdate({
+                sessionUpdate: 'agent_thought_chunk',
+                content: { type: 'text', text: event.content },
+              });
               break;
-            default: {
-              const _exhaustive: never = event;
-              void _exhaustive;
+
+            // --- 工具事件 ---
+            case 'tool_start': {
+              const toolCall = event.toolCall;
+              const toolName =
+                'function' in toolCall ? toolCall.function.name : toolCall.type;
+              const acpKind = this.mapToolKind(event.toolKind);
+              this.sendUpdate({
+                sessionUpdate: 'tool_call',
+                toolCallId: toolCall.id,
+                status: 'in_progress' as ToolCallStatus,
+                title: `Executing ${toolName}`,
+                content: [],
+                kind: acpKind,
+              });
+              break;
             }
+            case 'tool_result': {
+              const toolCall = event.toolCall;
+              const result = event.result;
+              const content: ToolCallContent[] = [];
+
+              // 检查是否有 diff 信息（Edit/Write 工具）
+              const metadata = result.metadata;
+              if (
+                metadata?.kind === 'edit' &&
+                typeof metadata.file_path === 'string' &&
+                typeof metadata.oldContent === 'string' &&
+                (typeof metadata.newContent === 'string' ||
+                  metadata.newContent === undefined)
+              ) {
+                content.push({
+                  type: 'diff',
+                  path: metadata.file_path,
+                  oldText: metadata.oldContent,
+                  newText: (metadata.newContent as string) ?? null,
+                });
+              } else if (result.displayContent) {
+                const displayText =
+                  typeof result.displayContent === 'string'
+                    ? result.displayContent
+                    : JSON.stringify(result.displayContent);
+                content.push({
+                  type: 'content',
+                  content: { type: 'text', text: displayText },
+                });
+              }
+
+              const status: ToolCallStatus = result.success ? 'completed' : 'failed';
+              this.sendUpdate({
+                sessionUpdate: 'tool_call_update',
+                toolCallId: toolCall.id,
+                status,
+                content,
+              });
+              break;
+            }
+
+            // --- 业务事件 ---
+            case 'todo_update':
+              this.sendPlanUpdate(event.todos);
+              break;
+
+            // --- 流式增量和系统事件不外发 ---
+            // content_delta / thinking_delta: ACP 使用 complete 语义
+            // stream_end: 内部 per-turn 信号，不外发
+            // turn_start, compaction, token_usage, model_fallback: 内部事件
+            default:
+              break;
           }
         }
       );
       const response = loopResult.finalMessage || '';
 
-      // 5. 保存助手响应到历史
+      // 5. 使用 chatContext.messages 作为完整历史（Phase 4: 不再手工构造）
       if (response) {
-        this.messages.push({ role: 'user', content: message });
-        this.messages.push({ role: 'assistant', content: response });
+        this.messages = [...context.messages];
       }
 
       // 6. 检查是否被取消

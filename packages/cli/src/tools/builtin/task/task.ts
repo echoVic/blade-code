@@ -18,6 +18,7 @@ import type {
   SubagentContext,
   SubagentResult,
 } from '../../../agent/subagents/types.js';
+import type { LoopEvent } from '../../../agent/loop/types.js';
 import { PermissionMode } from '../../../config/types.js';
 import { HookManager } from '../../../hooks/HookManager.js';
 import { Bus } from '../../../server/bus.js';
@@ -265,65 +266,81 @@ export const taskTool = createTool({
         .app.actions.startSubagentProgress(subagentId, subagent_type, description);
 
       // 构建执行上下文
+      // Phase 4: 使用统一 onEvent 回调收敛 Bus 发布逻辑
       const subagentContext: SubagentContext = {
         prompt,
         parentSessionId: context.sessionId,
         permissionMode: context.permissionMode, // 继承父 Agent 的权限模式
         subagentSessionId,
-        onToolStart: (toolCall, toolKind) => {
-          const toolName =
-            toolCall.type === 'function' ? toolCall.function.name : 'Unknown';
-          vanillaStore.getState().app.actions.updateSubagentTool(toolName);
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.update', {
-              subagentSessionId,
-              toolName,
-            });
-            if (toolCall.type === 'function') {
-              Bus.publish(parentSessionId, 'subagent.tool.start', {
+        onEvent: (event: LoopEvent) => {
+          switch (event.kind) {
+            case 'tool_start': {
+              const toolCall = event.toolCall;
+              const toolName =
+                'function' in toolCall ? toolCall.function.name : 'Unknown';
+              vanillaStore.getState().app.actions.updateSubagentTool(toolName);
+              if (parentSessionId) {
+                Bus.publish(parentSessionId, 'subagent.update', {
+                  subagentSessionId,
+                  toolName,
+                });
+                if ('function' in toolCall) {
+                  Bus.publish(parentSessionId, 'subagent.tool.start', {
+                    subagentSessionId,
+                    toolCallId: toolCall.id,
+                    toolName,
+                    arguments: toolCall.function.arguments,
+                    toolKind: event.toolKind,
+                  });
+                }
+              }
+              break;
+            }
+            case 'tool_result': {
+              if (!parentSessionId) break;
+              const toolCall = event.toolCall;
+              if (!('function' in toolCall)) break;
+              Bus.publish(parentSessionId, 'subagent.tool.result', {
                 subagentSessionId,
                 toolCallId: toolCall.id,
-                toolName,
-                arguments: toolCall.function.arguments,
-                toolKind,
+                toolName: toolCall.function.name,
+                success: !event.result.error,
+                summary: event.result.metadata?.summary,
+                output: event.result.displayContent,
+                metadata: event.result.metadata,
               });
+              break;
             }
-          }
-        },
-        onToolResult: (toolCall, result) => {
-          if (!parentSessionId) return;
-          if (toolCall.type !== 'function') return;
-          Bus.publish(parentSessionId, 'subagent.tool.result', {
-            subagentSessionId,
-            toolCallId: toolCall.id,
-            toolName: toolCall.function.name,
-            success: !result.error,
-            summary: result.metadata?.summary,
-            output: result.displayContent,
-            metadata: result.metadata,
-          });
-        },
-        onContentDelta: (delta) => {
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.delta', {
-              subagentSessionId,
-              delta,
-            });
-          }
-        },
-        onThinkingDelta: (delta) => {
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.thinking.delta', {
-              subagentSessionId,
-              delta,
-            });
-          }
-        },
-        onStreamEnd: () => {
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.stream.end', {
-              subagentSessionId,
-            });
+            case 'content_delta': {
+              if (parentSessionId) {
+                Bus.publish(parentSessionId, 'subagent.delta', {
+                  subagentSessionId,
+                  delta: event.delta,
+                });
+              }
+              break;
+            }
+            case 'thinking_delta': {
+              if (parentSessionId) {
+                Bus.publish(parentSessionId, 'subagent.thinking.delta', {
+                  subagentSessionId,
+                  delta: event.delta,
+                });
+              }
+              break;
+            }
+            case 'stream_end': {
+              // stream_end 是 per-turn 语义，映射到 subagent.stream.end
+              if (parentSessionId) {
+                Bus.publish(parentSessionId, 'subagent.stream.end', {
+                  subagentSessionId,
+                });
+              }
+              break;
+            }
+            // 系统事件静默忽略（turn_start, compaction, token_usage, model_fallback 等）
+            default:
+              break;
           }
         },
       };

@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import { Agent } from '../Agent.js';
 import { drainLoop } from '../loop/index.js';
+import type { LoopEvent } from '../loop/types.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
 
 /**
@@ -45,9 +46,37 @@ export class SubagentExecutor {
         subagentType: this.config.name,
         isSidechain: false,
       };
-      
+
+      /**
+       * 将 LoopEvent 转发到 SubagentContext 的回调
+       * Phase 4: 统一通过 onEvent 或命名回调收敛事件处理
+       */
+      const onEvent = context.onEvent
+        ? context.onEvent
+        : (event: LoopEvent) => {
+            switch (event.kind) {
+              case 'tool_start':
+                context.onToolStart?.(event.toolCall, event.toolKind);
+                break;
+              case 'tool_result':
+                context.onToolResult?.(event.toolCall, event.result);
+                break;
+              case 'content_delta':
+                context.onContentDelta?.(event.delta);
+                break;
+              case 'thinking_delta':
+                context.onThinkingDelta?.(event.delta);
+                break;
+              case 'stream_end':
+                context.onStreamEnd?.();
+                break;
+              default:
+                break;
+            }
+          };
+
       const loopResult = await drainLoop(
-        agent.runAgenticLoop(
+        agent.chatStream(
           context.prompt,
           {
             messages: [],
@@ -57,19 +86,9 @@ export class SubagentExecutor {
             permissionMode: context.permissionMode,
             systemPrompt,
             subagentInfo,
-          },
-          {
-            onToolStart: context.onToolStart,
-            onToolResult: context.onToolResult
-              ? async (toolCall, result) => {
-                  context.onToolResult?.(toolCall, result);
-                }
-              : undefined,
-            onContentDelta: context.onContentDelta,
-            onThinkingDelta: context.onThinkingDelta,
-            onStreamEnd: context.onStreamEnd,
           }
-        )
+        ),
+        onEvent
       );
 
       if (loopResult.success) {

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const agentState = vi.hoisted(() => ({
   create: vi.fn(),
-  chat: vi.fn(),
+  chatStream: vi.fn(),
 }));
 
 vi.mock('../../../src/agent/Agent.js', () => ({
@@ -27,9 +27,9 @@ describe('headless runner', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    agentState.chat.mockImplementation(mockChatGenerator([]));
+    agentState.chatStream.mockImplementation(mockChatGenerator([]));
     agentState.create.mockResolvedValue({
-      chat: agentState.chat,
+      chatStream: agentState.chatStream,
     });
   });
 
@@ -37,7 +37,7 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockImplementationOnce(mockChatGenerator([
+    agentState.chatStream.mockImplementationOnce(mockChatGenerator([
       { kind: 'thinking_delta', delta: 'reasoning' },
       { kind: 'content_delta', delta: 'hello' },
       { kind: 'tool_start', toolCall: {
@@ -102,7 +102,7 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockImplementationOnce(mockChatGenerator([
+    agentState.chatStream.mockImplementationOnce(mockChatGenerator([
       { kind: 'content_delta', delta: 'hello' },
       { kind: 'tool_start', toolCall: {
         id: 'tool-2',
@@ -196,7 +196,7 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockImplementationOnce(mockChatGenerator([
+    agentState.chatStream.mockImplementationOnce(mockChatGenerator([
       { kind: 'thinking_delta', delta: 'first' },
       { kind: 'content_delta', delta: 'hello' },
       { kind: 'stream_end' },
@@ -235,7 +235,7 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockImplementationOnce(async function* () {
+    agentState.chatStream.mockImplementationOnce(async function* () {
       yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
       throw new Error('boom');
     });

@@ -4,6 +4,7 @@
 
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { PermissionMode } from '../../config/types.js';
+import type { LoopEvent } from '../loop/types.js';
 import type { ToolResult } from '../../tools/types/index.js';
 
 /**
@@ -109,6 +110,11 @@ export interface SubagentConfig {
 
 /**
  * Subagent 执行上下文
+ *
+ * 事件传递：
+ * - 优先使用 `onEvent` 统一回调（推荐）
+ * - 如果 `onEvent` 未提供，SubagentExecutor 会将 LoopEvent
+ *   拆分到 5 个命名回调（向后兼容）
  */
 export interface SubagentContext {
   /** 任务提示 */
@@ -125,6 +131,15 @@ export interface SubagentContext {
 
   /** 子代理会话 ID（用于与主会话关联） */
   subagentSessionId?: string;
+
+  /**
+   * 统一事件回调（推荐）
+   * 当提供此回调时，SubagentExecutor 会直接转发 LoopEvent，
+   * 忽略下方 5 个命名回调。
+   */
+  onEvent?: (event: LoopEvent) => void | Promise<void>;
+
+  // --- 以下为向后兼容的命名回调，当 onEvent 未提供时使用 ---
 
   /** 工具执行开始回调（用于 UI 进度显示） */
   onToolStart?: (

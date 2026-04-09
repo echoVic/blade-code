@@ -515,5 +515,36 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
         session: { ...state.session, finalizingStreamingMessageId: null },
       }));
     },
+
+    /**
+     * 丢弃流式消息（不提交到消息列表）
+     *
+     * 用于模型降级（model_fallback）场景：丢弃 store 层的
+     * streamingChunksBuffer + currentStreaming* 字段，但不将
+     * 已累积的 chunks 提交为最终消息。
+     *
+     * UI 两层缓冲清理契约（Item 15）：
+     * - hook 层: contentBufferRef / thinkingBufferRef + flush timer
+     *   由 useCommandHandler 的 resetStreamingBuffers() 清理
+     * - store 层: streamingChunksBuffer + currentStreaming* 字段
+     *   由本方法 discardStreamingMessage() 清理
+     */
+    discardStreamingMessage: () => {
+      // 丢弃模块级 chunks 缓冲区（不消费，直接清空）
+      streamingChunksBuffer = [];
+      set((state) => ({
+        session: {
+          ...state.session,
+          currentStreamingMessageId: null,
+          currentStreamingChunks: [],
+          currentStreamingLines: [],
+          currentStreamingTail: '',
+          currentStreamingLineCount: 0,
+          currentStreamingVersion: 0,
+          // 注意：不清理 currentThinkingContent，由调用方按需清理
+          finalizingStreamingMessageId: null,
+        },
+      }));
+    },
   },
 });

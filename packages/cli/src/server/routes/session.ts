@@ -5,10 +5,10 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
+import type { LoopEvent } from '../../agent/loop/types.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type {
   ChatContext,
-  LoopOptions,
   UserMessageContent,
 } from '../../agent/types.js';
 import { PermissionMode } from '../../config/types.js';
@@ -592,93 +592,72 @@ async function executeRunAsync(
       confirmationHandler: { requestConfirmation },
     };
 
-    const loopOptions: LoopOptions = {
-      stream: true,
-      onContentDelta: async (delta: string) => {
-        emit('message.delta', { messageId: assistantMessageId, delta });
-      },
-      onThinkingDelta: async (delta: string) => {
-        emit('thinking.delta', { delta });
-      },
-      onStreamEnd: async () => {
-        emit('message.complete', { messageId: assistantMessageId });
-        emit('thinking.completed', {});
-      },
-      onToolStart: async (toolCall, toolKind) => {
-        if (toolCall.type !== 'function') return;
-        emit('tool.start', {
-          messageId: assistantMessageId,
-          toolName: toolCall.function.name,
-          toolCallId: toolCall.id,
-          arguments: toolCall.function.arguments,
-          toolKind,
-        });
-      },
-      onToolResult: async (toolCall, result) => {
-        if (toolCall.type !== 'function') return;
-        emit('tool.result', {
-          messageId: assistantMessageId,
-          toolName: toolCall.function.name,
-          toolCallId: toolCall.id,
-          success: !result.error,
-          summary: result.metadata?.summary,
-          output: result.displayContent,
-          metadata: sanitizeToolMetadata(result.metadata),
-        });
-      },
-      onTokenUsage: async (usage) => {
-        emit('token.usage', usage);
-      },
-      onTodoUpdate: async (todos) => {
-        emit('todo.updated', { todos });
-      },
-    };
-
+    // Phase 4: 使用 chatStream() + onEvent 事件驱动消费
+    // message.complete 只在整个 run 结束时发一次（run-level 语义）
+    // stream_end 不外发给客户端（内部 per-turn 信号）
     const loopResult = await drainLoop(
-      agent.chat(content, chatContext, loopOptions),
-      async (event) => {
+      agent.chatStream(content, chatContext, { stream: true }),
+      async (event: LoopEvent) => {
         switch (event.kind) {
-          case 'turn_start':
-            loopOptions.onTurnStart?.({
-              turn: event.turn,
-              maxTurns: event.maxTurns,
-            });
+          // --- 流式增量 ---
+          case 'content_delta':
+            emit('message.delta', { messageId: assistantMessageId, delta: event.delta });
             break;
+          case 'thinking_delta':
+            emit('thinking.delta', { delta: event.delta });
+            break;
+
+          // --- 工具事件 ---
           case 'tool_start':
-            loopOptions.onToolStart?.(event.toolCall, event.toolKind);
-            break;
-          case 'tool_result':
-            if (loopOptions.onToolResult) {
-              return loopOptions.onToolResult(event.toolCall, event.result) as any;
+            if ('function' in event.toolCall) {
+              emit('tool.start', {
+                messageId: assistantMessageId,
+                toolName: event.toolCall.function.name,
+                toolCallId: event.toolCall.id,
+                arguments: event.toolCall.function.arguments,
+                toolKind: event.toolKind,
+              });
             }
             break;
+          case 'tool_result':
+            if ('function' in event.toolCall) {
+              emit('tool.result', {
+                messageId: assistantMessageId,
+                toolName: event.toolCall.function.name,
+                toolCallId: event.toolCall.id,
+                success: !event.result.error,
+                summary: event.result.metadata?.summary,
+                output: event.result.displayContent,
+                metadata: sanitizeToolMetadata(event.result.metadata),
+              });
+            }
+            break;
+
+          // --- Token 使用 ---
           case 'token_usage':
-            loopOptions.onTokenUsage?.(event.usage);
+            emit('token.usage', { ...event.usage });
             break;
+
+          // --- 业务事件 ---
           case 'todo_update':
-            loopOptions.onTodoUpdate?.(event.todos);
+            emit('todo.updated', { todos: event.todos });
             break;
-          case 'content_delta':
-          case 'thinking_delta':
-          case 'content_complete':
-          case 'thinking_complete':
-          case 'stream_end':
-          case 'compaction':
-          case 'model_fallback':
+
+          // --- 系统事件和内部信号不外发 ---
+          // stream_end: per-turn 内部信号，不外发
+          // content_complete / thinking_complete: server 使用 delta 模式
+          // compaction, model_fallback, turn_start: 内部事件
+          default:
             break;
-          default: {
-            const _exhaustive: never = event;
-            void _exhaustive;
-          }
         }
       }
     );
-    const response = loopResult.finalMessage || '';
 
-    session.messages.push(
-      { role: 'user', content },
-      { role: 'assistant', content: response }
-    );
+    // Phase 4: 使用 chatContext.messages 作为完整历史（不再手工构造）
+    session.messages = [...chatContext.messages];
+
+    // message.complete 只在整个 run 结束时发一次（run-level 语义）
+    emit('message.complete', { messageId: assistantMessageId });
 
     run.status = 'completed';
     emit('session.completed', {

@@ -229,7 +229,7 @@ export class BackgroundAgentManager {
       };
 
       const loopResult = await drainLoop(
-        agent.runAgenticLoop(prompt, context, {
+        agent.chatStream(prompt, context, {
           signal,
         })
       );
