@@ -54,6 +54,7 @@ import { getEnvironmentContext } from '../utils/environment.js';
 import { isThinkingModel } from '../utils/modelDetection.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import { executeLoopGenerator } from './loop/index.js';
+import { drainLoop } from './loop/consumeLoop.js';
 import { SessionRuntime } from './runtime/SessionRuntime.js';
 import { subagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
@@ -63,6 +64,7 @@ import type {
   ChatContext,
   LoopOptions,
   LoopResult,
+  StreamOptions,
   UserMessageContent,
 } from './types.js';
 
@@ -343,12 +345,17 @@ export class Agent {
   /**
    * 聊天接口 — 返回 AsyncGenerator 事件流
    *
-   * 调用方通过 for-await-of 消费事件，generator 的 return value 是 LoopResult。
+   * 这是事件流的唯一入口。调用方通过 for-await-of 消费事件，
+   * generator 的 return value 是 LoopResult。
+   *
+   * @param message  用户消息（纯文本或多模态）
+   * @param context  聊天上下文（消息历史、会话标识等）
+   * @param options  循环控制选项（可传 LoopOptions 以兼容旧回调，或 StreamOptions 仅控制参数）
    */
-  public async *chat(
+  public async *chatStream(
     message: UserMessageContent,
     context?: ChatContext,
-    options?: LoopOptions
+    options?: LoopOptions | StreamOptions
   ): AsyncGenerator<import('./loop/types.js').LoopEvent, LoopResult, void> {
     if (!this.isInitialized) {
       throw new Error('Agent未初始化');
@@ -418,6 +425,23 @@ export class Agent {
       finalMessage: response.content,
       metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
     };
+  }
+
+  /**
+   * 聊天接口 — 兼容性 AsyncGenerator 包装
+   *
+   * 当前实现委托到 `chatStream()`，保持 AsyncGenerator 签名不变。
+   * Phase 4 将把此方法改为返回 `Promise<LoopResult>`，届时消费者需迁移到
+   * `chatStream()` 获取事件流，或直接 await `chat()` 获取最终结果。
+   *
+   * @deprecated 事件流消费请使用 `chatStream()`；Phase 4 后此方法将返回 Promise。
+   */
+  public async *chat(
+    message: UserMessageContent,
+    context?: ChatContext,
+    options?: LoopOptions
+  ): AsyncGenerator<import('./loop/types.js').LoopEvent, LoopResult, void> {
+    return yield* this.chatStream(message, context, options);
   }
 
   /**
@@ -621,6 +645,8 @@ export class Agent {
   /**
    * 运行 Agentic Loop（公共接口，用于子任务递归）
    * 返回 AsyncGenerator 事件流
+   *
+   * 内部只负责规范化 context，然后委托到 chatStream()。
    */
   public async *runAgenticLoop(
     message: string,
@@ -643,7 +669,7 @@ export class Agent {
       subagentInfo: context.subagentInfo,
     };
 
-    return yield* this.runLoop(message, chatContext, options);
+    return yield* this.chatStream(message, chatContext, options);
   }
 
   /**

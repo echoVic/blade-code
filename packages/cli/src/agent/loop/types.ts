@@ -19,6 +19,16 @@ import type { AgentOptions } from '../types.js';
 export type StreamEvent =
   | { kind: 'content_delta'; delta: string }
   | { kind: 'thinking_delta'; delta: string }
+  | { kind: 'content_complete'; content: string }
+  | { kind: 'thinking_complete'; content: string }
+  /**
+   * 单次 LLM turn 的流式输出结束信号。
+   *
+   * 在一次 agentic run 中，如果有多轮 LLM 调用（tool-use loop），
+   * `stream_end` 会在每轮 LLM 输出结束时被 yield 一次，
+   * 因此它可能出现多次。消费者应将其视为 per-turn 终止信号，
+   * 而非整个 run 的完成标志。
+   */
   | { kind: 'stream_end' }
   | { kind: 'model_fallback' };
 

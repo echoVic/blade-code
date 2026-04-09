@@ -575,11 +575,27 @@ export async function* executeLoopGenerator(
         return makeAbortResult(turnsCount - 1, allToolResults.length, startTime);
       }
 
-      // Content 通知
-      if (turnResult.content && turnResult.content.trim()) {
-        if (isStreamEnabled) {
-          yield { kind: 'stream_end' };
+      // Content 通知 — 为流式和非流式路径都发出完整事件
+      if (turnResult.reasoningContent && turnResult.reasoningContent.trim()) {
+        if (!isStreamEnabled) {
+          // 非流式路径：补发 thinking_delta（完整内容一次性发出）
+          yield { kind: 'thinking_delta', delta: turnResult.reasoningContent };
         }
+        yield { kind: 'thinking_complete', content: turnResult.reasoningContent };
+      }
+      if (turnResult.content && turnResult.content.trim()) {
+        if (!isStreamEnabled) {
+          // 非流式路径：补发 content_delta（完整内容一次性发出）
+          yield { kind: 'content_delta', delta: turnResult.content };
+        }
+        yield { kind: 'content_complete', content: turnResult.content };
+      }
+      // stream_end 作为 per-turn 终止信号，流式和非流式路径都发出
+      if (
+        (turnResult.content && turnResult.content.trim()) ||
+        (turnResult.reasoningContent && turnResult.reasoningContent.trim())
+      ) {
+        yield { kind: 'stream_end' };
       }
 
 

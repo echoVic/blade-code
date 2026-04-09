@@ -83,6 +83,23 @@ export interface AgentResponse {
 // ===== Agentic Loop Types =====
 
 /**
+ * 流式控制选项（仅包含控制参数，不承载事件回调）
+ *
+ * 用于 `chatStream()` 的第三个参数，控制循环行为。
+ * 事件回调通过 generator yield 的 `LoopEvent` 传递，不再放在 options 中。
+ */
+export interface StreamOptions {
+  /** 最大对话轮次 (-1=无限制) */
+  maxTurns?: number;
+  /** 自动上下文压缩 */
+  autoCompact?: boolean;
+  /** 取消信号 */
+  signal?: AbortSignal;
+  /** 是否启用流式传输 */
+  stream?: boolean;
+}
+
+/**
  * Agentic Loop 选项
  *
  * 职责：控制循环行为和监听循环事件
@@ -92,6 +109,8 @@ export interface AgentResponse {
  * 设计原则：
  * - 所有循环相关的回调统一放在这里，保持语义一致性
  * - 和 ChatContext 职责分离：LoopOptions = 行为控制，ChatContext = 数据状态
+ *
+ * 注意：Phase 4 后将逐步弃用回调字段，消费者应迁移到 chatStream() + LoopEvent 模式
  */
 export interface LoopOptions {
   // 循环控制参数

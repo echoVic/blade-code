@@ -944,6 +944,8 @@ Remember: Follow the above instructions carefully to complete the user's request
                 break;
               case 'turn_start':
               case 'todo_update':
+              case 'content_complete':
+              case 'thinking_complete':
                 break;
               default: {
                 const _exhaustive: never = event;

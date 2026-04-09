@@ -660,6 +660,8 @@ async function executeRunAsync(
             break;
           case 'content_delta':
           case 'thinking_delta':
+          case 'content_complete':
+          case 'thinking_complete':
           case 'stream_end':
           case 'compaction':
           case 'model_fallback':

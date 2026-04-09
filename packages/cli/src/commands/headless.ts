@@ -558,6 +558,9 @@ export async function runHeadless(
         case 'todo_update':
           loopOptions.onTodoUpdate?.(event.todos);
           break;
+        case 'content_complete':
+        case 'thinking_complete':
+          break;
         default: {
           const _exhaustive: never = event;
           void _exhaustive;

@@ -6,13 +6,13 @@
 
 import type { Agent } from '../../../src/agent/Agent.js';
 import type { LoopEvent } from '../../../src/agent/loop/index.js';
-import type { ChatContext, LoopOptions, LoopResult } from '../../../src/agent/types.js';
+import type { ChatContext, LoopOptions, LoopResult, StreamOptions } from '../../../src/agent/types.js';
 import { vi } from 'vitest';
 
 export interface MockAgentCall {
   message: string;
   context: ChatContext;
-  options?: LoopOptions;
+  options?: LoopOptions | StreamOptions;
 }
 
 export class MockAgent implements Partial<Agent> {
@@ -26,11 +26,11 @@ export class MockAgent implements Partial<Agent> {
     return Promise.resolve();
   }
 
-  // 模拟 chat 方法
-  async *chat(
+  // 模拟 chatStream 方法 — 事件流唯一入口
+  async *chatStream(
     message: string,
     context: ChatContext,
-    options?: LoopOptions
+    options?: LoopOptions | StreamOptions
   ): AsyncGenerator<LoopEvent, LoopResult, void> {
     // 记录调用
     this.calls.push({ message, context, options });
@@ -71,13 +71,25 @@ export class MockAgent implements Partial<Agent> {
     };
   }
 
+  /**
+   * 模拟 chat 方法 — 兼容性包装，委托到 chatStream()
+   * Phase 4 将改为返回 Promise<LoopResult>
+   */
+  async *chat(
+    message: string,
+    context: ChatContext,
+    options?: LoopOptions
+  ): AsyncGenerator<LoopEvent, LoopResult, void> {
+    return yield* this.chatStream(message, context, options);
+  }
+
   // 模拟 runAgenticLoop 方法
   async *runAgenticLoop(
     message: string,
     context: ChatContext,
     options?: LoopOptions
   ): AsyncGenerator<LoopEvent, LoopResult, void> {
-    return yield* this.chat(message, context, options);
+    return yield* this.chatStream(message, context, options);
   }
 
   // 设置 chat 响应
