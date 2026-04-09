@@ -890,7 +890,9 @@ Remember: Follow the above instructions carefully to complete the user's request
 
               // --- 系统事件和业务事件 ---
               case 'turn_start':
+                break;
               case 'todo_update':
+                appActions.setTodos(event.todos);
                 break;
 
               default: {

@@ -114,7 +114,7 @@ function isPromptTooLongError(error: unknown): boolean {
     msg.includes('prompt is too long') ||
     msg.includes('maximum context length') ||
     msg.includes('request too large') ||
-    (error as any).status === 413
+    (error as Error & { status?: number }).status === 413
   );
 }
 
@@ -540,7 +540,7 @@ export async function* executeLoopGenerator(
           );
           if (result.success) {
             context.messages = result.messages;
-            // 同步到 state，清空 pending（重试当前轮次）
+            // 同步到 state（此时 pending 已被 writeback() commit，为空）
             state.replaceHistory(context.messages);
             logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
             turnsCount--;
