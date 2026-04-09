@@ -54,7 +54,6 @@ import { getEnvironmentContext } from '../utils/environment.js';
 import { isThinkingModel } from '../utils/modelDetection.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import { executeLoopGenerator } from './loop/index.js';
-import { drainLoop } from './loop/consumeLoop.js';
 import { SessionRuntime } from './runtime/SessionRuntime.js';
 import { subagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
