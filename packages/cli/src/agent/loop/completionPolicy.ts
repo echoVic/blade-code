@@ -122,8 +122,7 @@ const STOP_HOOK_TIMEOUT = 30_000;
 
 export type StopHookAction =
   | { action: 'stop' }
-  | { action: 'continue'; reason?: string }
-  | { action: 'none' };
+  | { action: 'continue'; reason?: string };
 
 /**
  * 执行 stop hook 并加超时保护。
@@ -148,28 +147,33 @@ export async function checkStopHook(context: {
       abortSignal: context.abortSignal,
     });
 
-    const timeoutPromise = new Promise<'timeout'>((resolve) =>
-      setTimeout(() => resolve('timeout'), STOP_HOOK_TIMEOUT),
-    );
+    let timerId: ReturnType<typeof setTimeout>;
+    const timeoutPromise = new Promise<'timeout'>((resolve) => {
+      timerId = setTimeout(() => resolve('timeout'), STOP_HOOK_TIMEOUT);
+    });
 
-    const raceResult = await Promise.race([hookPromise, timeoutPromise]);
+    try {
+      const raceResult = await Promise.race([hookPromise, timeoutPromise]);
 
-    if (raceResult === 'timeout') {
-      logger.warn(
-        `[Loop] Stop hook 超时 (${STOP_HOOK_TIMEOUT}ms)，按 shouldStop: true 处理`,
-      );
+      if (raceResult === 'timeout') {
+        logger.warn(
+          `[Loop] Stop hook 超时 (${STOP_HOOK_TIMEOUT}ms)，按 shouldStop: true 处理`,
+        );
+        return { action: 'stop' };
+      }
+
+      const stopResult = raceResult;
+      if (!stopResult.shouldStop) {
+        return {
+          action: 'continue',
+          reason: stopResult.continueReason,
+        };
+      }
+
       return { action: 'stop' };
+    } finally {
+      clearTimeout(timerId!);
     }
-
-    const stopResult = raceResult;
-    if (!stopResult.shouldStop) {
-      return {
-        action: 'continue',
-        reason: stopResult.continueReason,
-      };
-    }
-
-    return { action: 'stop' };
   } catch (hookError) {
     logger.warn('[Loop] Stop hook execution failed:', hookError);
     // hook 执行失败时按 stop 处理（保守策略）
