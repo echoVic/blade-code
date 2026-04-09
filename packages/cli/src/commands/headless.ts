@@ -515,7 +515,7 @@ export async function runHeadless(
       strictMcpConfig: validatedOptions.strictMcpConfig,
     });
 
-    await drainLoop(agent.chat(normalized.content, chatContext, loopOptions), async (event) => {
+    const loopResult = await drainLoop(agent.chat(normalized.content, chatContext, loopOptions), async (event) => {
       switch (event.kind) {
         case 'turn_start':
           loopOptions.onTurnStart?.({ turn: event.turn, maxTurns: event.maxTurns });
@@ -564,6 +564,14 @@ export async function runHeadless(
         }
       }
     });
+
+    // 输出截断告警
+    if (loopResult.metadata?.outputTruncated) {
+      eventWriter.error(
+        '[warning] 输出因达到 token 上限被截断，部分内容可能不完整。',
+      );
+    }
+
     return 0;
   } catch (error) {
     if (streamState.hasOpenThinking() && outputFormat === 'text') {

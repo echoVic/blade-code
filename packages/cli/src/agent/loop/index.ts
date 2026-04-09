@@ -6,6 +6,25 @@
 
 export { ConversationState, isRootSystemPrompt } from './ConversationState.js';
 export { drainLoop } from './consumeLoop.js';
+export {
+  checkOutputRecovery,
+  checkIncompleteIntent,
+  checkStopHook,
+} from './completionPolicy.js';
+export {
+  saveUserMessage,
+  saveAssistantMessage,
+  saveToolUse,
+  saveToolResult,
+  saveCompaction,
+} from './conversationPersistence.js';
+export {
+  applyToolDomainEffects,
+  handleTodoWrite,
+  handleSkillActivation,
+  extractModelSwitch,
+} from './toolDomainPolicy.js';
+export type { FunctionToolCallRef, TodoUpdateAction } from './toolDomainPolicy.js';
 export { checkAndCompactInLoop, executeLoopGenerator } from './executeLoopGenerator.js';
 export type { CompactResult } from './executeLoopGenerator.js';
 export { StreamingToolExecutor } from './StreamingToolExecutor.js';

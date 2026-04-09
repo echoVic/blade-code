@@ -952,6 +952,14 @@ Remember: Follow the above instructions carefully to complete the user's request
             }
           }
         );
+
+        // 检查输出截断告警
+        if (loopResult.metadata?.outputTruncated) {
+          sessionActions.addAssistantMessage(
+            '⚠️ 输出因达到 token 上限被截断，部分内容可能不完整。',
+          );
+        }
+
         const output = loopResult.finalMessage || '';
 
         // 如果返回空字符串，可能是用户取消或拒绝

@@ -10,9 +10,8 @@ import { type PermissionMode } from '../../config/index.js';
 import { CompactionService } from '../../context/CompactionService.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { snipCompact } from '../../context/SnipCompaction.js';
-import { checkTokenBudget, createBudgetTracker, recordOutput } from '../../context/TokenBudget.js';
+import { createBudgetTracker, recordOutput } from '../../context/TokenBudget.js';
 import { applyToolResultBudget } from '../../context/ToolResultBudget.js';
-import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type {
   ChatResponse,
@@ -30,6 +29,20 @@ import type {
 } from '../types.js';
 import { ConversationState } from './ConversationState.js';
 import { StreamingToolExecutor } from './StreamingToolExecutor.js';
+import {
+  checkOutputRecovery,
+  checkIncompleteIntent,
+  checkStopHook,
+} from './completionPolicy.js';
+import {
+  saveUserMessage,
+  saveAssistantMessage,
+  saveToolUse,
+  saveToolResult as persistToolResult,
+  saveCompaction as persistCompaction,
+} from './conversationPersistence.js';
+import { applyToolDomainEffects } from './toolDomainPolicy.js';
+import type { FunctionToolCallRef } from './toolDomainPolicy.js';
 import type { LoopDependencies, LoopEvent, ToolCallRef } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -343,24 +356,12 @@ export async function checkAndCompactInLoop(
     }
 
     // 保存压缩数据到 JSONL
-    try {
-      const contextMgr = deps.executionEngine?.getContextManager();
-      if (contextMgr && context.sessionId) {
-        await contextMgr.saveCompaction(
-          context.sessionId,
-          result.summary,
-          {
-            trigger: 'auto',
-            preTokens: result.preTokens,
-            postTokens: result.postTokens,
-            filesIncluded: result.filesIncluded,
-          },
-          null
-        );
-      }
-    } catch (saveError) {
-      logger.warn(`[Loop] [轮次 ${currentTurn}] 保存压缩数据失败:`, saveError);
-    }
+    await persistCompaction(deps, context, result.summary, {
+      trigger: 'auto',
+      preTokens: result.preTokens,
+      postTokens: result.postTokens,
+      filesIncluded: result.filesIncluded,
+    });
 
     return 'compacted';
   } catch (error) {
@@ -370,6 +371,23 @@ export async function checkAndCompactInLoop(
 }
 
 // ===== Main Generator =====
+
+/** Helper: 构建 abort 返回值，减少重复代码 */
+function makeAbortResult(
+  turnsCount: number,
+  toolCallsCount: number,
+  startTime: number,
+): LoopResult {
+  return {
+    success: false,
+    error: { type: 'aborted', message: '任务已被用户中止' },
+    metadata: {
+      turnsCount,
+      toolCallsCount,
+      duration: Date.now() - startTime,
+    },
+  };
+}
 
 export async function* executeLoopGenerator(
   deps: LoopDependencies,
@@ -393,28 +411,7 @@ export async function* executeLoopGenerator(
     state.appendUser({ role: 'user', content: message });
 
     // 保存用户消息到 JSONL
-    let lastMessageUuid: string | null = null;
-    try {
-      const contextMgr = deps.executionEngine?.getContextManager();
-      const hasPersistableContent =
-        typeof message === 'string'
-          ? message.trim() !== ''
-          : message.some((part) =>
-              part.type === 'text' ? part.text.trim() !== '' : true
-            );
-      if (contextMgr && context.sessionId && hasPersistableContent) {
-        lastMessageUuid = await contextMgr.saveMessage(
-          context.sessionId,
-          'user',
-          message,
-          null,
-          undefined,
-          context.subagentInfo
-        );
-      }
-    } catch (error) {
-      logger.warn('[Loop] 保存用户消息失败:', error);
-    }
+    let lastMessageUuid: string | null = await saveUserMessage(deps, context, message);
 
     // === Agentic Loop ===
     const isYoloMode = context.permissionMode === ('yolo' as PermissionMode);
@@ -442,6 +439,7 @@ export async function* executeLoopGenerator(
     let totalTokens = 0;
     let lastPromptTokens: number | undefined;
     let maxOutputRecoveryCount = 0;
+    let incompleteIntentRetryCount = 0;
 
     const isSubagent = !!context.subagentInfo;
     let budgetTracker = createBudgetTracker({
@@ -456,15 +454,7 @@ export async function* executeLoopGenerator(
     while (true) {
       // 1. 检查中断信号
       if (options?.signal?.aborted) {
-        return {
-          success: false,
-          error: { type: 'aborted', message: '任务已被用户中止' },
-          metadata: {
-            turnsCount,
-            toolCallsCount: allToolResults.length,
-            duration: Date.now() - startTime,
-          },
-        };
+        return makeAbortResult(turnsCount, allToolResults.length, startTime);
       }
 
       // 2. 上下文压缩检查
@@ -493,15 +483,7 @@ export async function* executeLoopGenerator(
       yield { kind: 'turn_start', turn: turnsCount, maxTurns };
 
       if (options?.signal?.aborted) {
-        return {
-          success: false,
-          error: { type: 'aborted', message: '任务已被用户中止' },
-          metadata: {
-            turnsCount: turnsCount - 1,
-            toolCallsCount: allToolResults.length,
-            duration: Date.now() - startTime,
-          },
-        };
+        return makeAbortResult(turnsCount - 1, allToolResults.length, startTime);
       }
 
       // 4. 调用 LLM
@@ -590,15 +572,7 @@ export async function* executeLoopGenerator(
       budgetTracker = recordOutput(budgetTracker, outputTokens, maxOutputRecoveryCount > 0);
 
       if (options?.signal?.aborted) {
-        return {
-          success: false,
-          error: { type: 'aborted', message: '任务已被用户中止' },
-          metadata: {
-            turnsCount: turnsCount - 1,
-            toolCallsCount: allToolResults.length,
-            duration: Date.now() - startTime,
-          },
-        };
+        return makeAbortResult(turnsCount - 1, allToolResults.length, startTime);
       }
 
       // Content 通知
@@ -609,111 +583,106 @@ export async function* executeLoopGenerator(
       }
 
 
-      // Max output tokens recovery
-      const MAX_OUTPUT_RECOVERY_LIMIT = 3;
-      if (
-        turnResult.finishReason === 'length' &&
-        maxOutputRecoveryCount < MAX_OUTPUT_RECOVERY_LIMIT
-      ) {
-        if (checkTokenBudget(budgetTracker) === 'stop') {
-          logger.info('[Loop] Token budget: diminishing returns detected, skipping recovery');
-        } else {
-          maxOutputRecoveryCount++;
-          logger.warn(
-            `[Loop] Max output tokens hit (recovery ${maxOutputRecoveryCount}/${MAX_OUTPUT_RECOVERY_LIMIT})`
-          );
+      // Max output tokens recovery (via completionPolicy)
+      const recoveryAction = checkOutputRecovery(
+        turnResult.finishReason,
+        maxOutputRecoveryCount,
+        budgetTracker,
+      );
 
-          // Add the truncated assistant message to history
-          const truncatedAssistantMsg: Message = {
-            role: 'assistant',
-            content: turnResult.content || '',
-            reasoningContent: turnResult.reasoningContent,
-            tool_calls: turnResult.toolCalls,
-          };
-          state.appendToHistory(truncatedAssistantMsg);
+      if (recoveryAction.action === 'recover') {
+        maxOutputRecoveryCount++;
+        logger.warn(
+          `[Loop] Max output tokens hit (recovery ${maxOutputRecoveryCount}/3)`
+        );
 
-          // Inject recovery prompt
-          const recoveryMsg: Message = {
-            role: 'user',
-            content:
-              'Output token limit hit. Resume directly — no apology, no recap. ' +
-              'Pick up mid-thought if that is where the cut happened. ' +
-              'Break remaining work into smaller pieces.',
-          };
-          state.appendToHistory(recoveryMsg);
+        // Add the truncated assistant message to history
+        const truncatedAssistantMsg: Message = {
+          role: 'assistant',
+          content: turnResult.content || '',
+          reasoningContent: turnResult.reasoningContent,
+          tool_calls: turnResult.toolCalls,
+        };
+        state.appendToHistory(truncatedAssistantMsg);
 
-          continue; // Retry the turn
-        }
-      } else if (turnResult.finishReason !== 'length') {
+        // Inject recovery prompt
+        const recoveryMsg: Message = {
+          role: 'user',
+          content:
+            'Output token limit hit. Resume directly — no apology, no recap. ' +
+            'Pick up mid-thought if that is where the cut happened. ' +
+            'Break remaining work into smaller pieces.',
+        };
+        state.appendToHistory(recoveryMsg);
+
+        continue; // Retry the turn
+      }
+
+      if (recoveryAction.action === 'truncated' || recoveryAction.action === 'budget_stop') {
+        // 截断：recovery 达上限或 budget 递减收益，标记截断并正常结束
+        const uuid = await saveAssistantMessage(
+          deps, context, turnResult.content || '', lastMessageUuid,
+        );
+        if (uuid) lastMessageUuid = uuid;
+
+        return {
+          success: true,
+          finalMessage: turnResult.content,
+          metadata: {
+            turnsCount,
+            toolCallsCount: allToolResults.length,
+            duration: Date.now() - startTime,
+            tokensUsed: totalTokens,
+            outputTruncated: true,
+          },
+        };
+      }
+
+      if (turnResult.finishReason !== 'length') {
         // Reset recovery counter on normal completion to prevent drift
         maxOutputRecoveryCount = 0;
       }
 
       // 5. 检查是否需要工具调用
       if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
-        // 意图未完成检测
-        const INCOMPLETE_INTENT_PATTERNS = [
-          /：\s*$/,
-          /:\s*$/,
-          /\.\.\.\s*$/,
-          /让我(先|来|开始|查看|检查|修复)/,
-          /Let me (first|start|check|look|fix)/i,
-        ];
-        const content = turnResult.content || '';
-        const isIncompleteIntent = INCOMPLETE_INTENT_PATTERNS.some((p) =>
-          p.test(content)
+        // 意图未完成检测 (via completionPolicy)
+        const intentAction = checkIncompleteIntent(
+          turnResult.content,
+          incompleteIntentRetryCount,
         );
-        const RETRY_PROMPT = '请执行你提到的操作，不要只是描述。';
-        const recentMessages = state.toLLMMessages();
-        const recentRetries = recentMessages
-          .slice(-10)
-          .filter((m) => m.role === 'user' && m.content === RETRY_PROMPT).length;
 
-        if (isIncompleteIntent && recentRetries < 2) {
-          const retryMsg: Message = { role: 'user', content: RETRY_PROMPT };
+        if (intentAction.action === 'retry') {
+          incompleteIntentRetryCount++;
+          const retryMsg: Message = { role: 'user', content: intentAction.prompt };
           state.appendToHistory(retryMsg);
           continue;
         }
 
-        // Stop Hook
-        try {
-          const hookManager = HookManager.getInstance();
-          const stopResult = await hookManager.executeStopHooks({
-            projectDir: process.cwd(),
-            sessionId: context.sessionId,
-            permissionMode: context.permissionMode as PermissionMode,
-            reason: turnResult.content,
-            abortSignal: options?.signal,
-          });
+        // 正常完成时归零 incompleteIntentRetryCount
+        incompleteIntentRetryCount = 0;
 
-          if (!stopResult.shouldStop) {
-            const continueMessage = stopResult.continueReason
-              ? `\n\n<system-reminder>\n${stopResult.continueReason}\n</system-reminder>`
-              : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
-            const continueMsg: Message = { role: 'user', content: continueMessage };
-            state.appendToHistory(continueMsg);
-            continue;
-          }
-        } catch (hookError) {
-          logger.warn('[Loop] Stop hook execution failed:', hookError);
+        // Stop Hook (via completionPolicy, with timeout)
+        const stopAction = await checkStopHook({
+          sessionId: context.sessionId,
+          permissionMode: context.permissionMode as PermissionMode,
+          reason: turnResult.content,
+          abortSignal: options?.signal,
+        });
+
+        if (stopAction.action === 'continue') {
+          const continueMessage = stopAction.reason
+            ? `\n\n<system-reminder>\n${stopAction.reason}\n</system-reminder>`
+            : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
+          const continueMsg: Message = { role: 'user', content: continueMessage };
+          state.appendToHistory(continueMsg);
+          continue;
         }
 
         // 保存助手最终响应到 JSONL
-        try {
-          const contextMgr = deps.executionEngine?.getContextManager();
-          if (contextMgr && context.sessionId && turnResult.content?.trim()) {
-            lastMessageUuid = await contextMgr.saveMessage(
-              context.sessionId,
-              'assistant',
-              turnResult.content,
-              lastMessageUuid,
-              undefined,
-              context.subagentInfo
-            );
-          }
-        } catch (error) {
-          logger.warn('[Loop] 保存助手消息失败:', error);
-        }
+        const uuid = await saveAssistantMessage(
+          deps, context, turnResult.content || '', lastMessageUuid,
+        );
+        if (uuid) lastMessageUuid = uuid;
 
         return {
           success: true,
@@ -736,33 +705,16 @@ export async function* executeLoopGenerator(
       });
 
       // 保存助手工具调用请求到 JSONL
-      try {
-        const contextMgr = deps.executionEngine?.getContextManager();
-        if (contextMgr && context.sessionId && turnResult.content?.trim()) {
-          lastMessageUuid = await contextMgr.saveMessage(
-            context.sessionId,
-            'assistant',
-            turnResult.content,
-            lastMessageUuid,
-            undefined,
-            context.subagentInfo
-          );
-        }
-      } catch (error) {
-        logger.warn('[Loop] 保存助手工具调用消息失败:', error);
+      {
+        const uuid = await saveAssistantMessage(
+          deps, context, turnResult.content || '', lastMessageUuid,
+        );
+        if (uuid) lastMessageUuid = uuid;
       }
 
       // 7. 执行工具
       if (options?.signal?.aborted) {
-        return {
-          success: false,
-          error: { type: 'aborted', message: '任务已被用户中止' },
-          metadata: {
-            turnsCount,
-            toolCallsCount: allToolResults.length,
-            duration: Date.now() - startTime,
-          },
-        };
+        return makeAbortResult(turnsCount, allToolResults.length, startTime);
       }
 
       const functionCalls = turnResult.toolCalls.filter(
@@ -829,20 +781,9 @@ export async function* executeLoopGenerator(
             }
 
             let toolUseUuid: string | null = null;
-            try {
-              const contextMgr = deps.executionEngine?.getContextManager();
-              if (contextMgr && context.sessionId) {
-                toolUseUuid = await contextMgr.saveToolUse(
-                  context.sessionId,
-                  toolCall.function.name,
-                  params,
-                  lastMessageUuid,
-                  context.subagentInfo
-                );
-              }
-            } catch (err) {
-              logger.warn('[Loop] 保存工具调用失败:', err);
-            }
+            toolUseUuid = await saveToolUse(
+              deps, context, toolCall.function.name, params, lastMessageUuid,
+            );
 
             const result = await deps.executionPipeline.execute(
               toolCall.function.name,
@@ -922,98 +863,62 @@ export async function* executeLoopGenerator(
           result,
         };
 
-        // 保存 tool_result 到 JSONL
-        try {
-          const contextMgr = deps.executionEngine?.getContextManager();
-          if (contextMgr && context.sessionId) {
-            const metadata =
-              result.metadata && typeof result.metadata === 'object'
-                ? (result.metadata as Record<string, unknown>)
-                : undefined;
-            const isSubagentStatus = (
-              value: unknown
-            ): value is
-              | 'running'
-              | 'completed'
-              | 'failed'
-              | 'cancelled' =>
-              value === 'running' ||
-              value === 'completed' ||
-              value === 'failed' ||
-              value === 'cancelled';
-            const subagentStatus = isSubagentStatus(metadata?.subagentStatus)
-              ? metadata.subagentStatus
-              : 'completed';
-            const subagentRef =
-              metadata && typeof metadata.subagentSessionId === 'string'
-                ? {
-                    subagentSessionId: metadata.subagentSessionId,
-                    subagentType:
-                      typeof metadata.subagentType === 'string'
-                        ? metadata.subagentType
-                        : toolCall.function.name,
-                    subagentStatus,
-                    subagentSummary:
-                      typeof metadata.subagentSummary === 'string'
-                        ? metadata.subagentSummary
-                        : undefined,
-                  }
-                : undefined;
-            lastMessageUuid = await contextMgr.saveToolResult(
-              context.sessionId,
-              toolCall.id,
-              toolCall.function.name,
-              result.success ? toJsonValue(result.llmContent) : null,
-              toolUseUuid,
-              result.success ? undefined : result.error?.message,
-              context.subagentInfo,
-              subagentRef
-            );
-          }
-        } catch (err) {
-          logger.warn('[Loop] 保存工具结果失败:', err);
+        // 保存 tool_result 到 JSONL (via conversationPersistence)
+        {
+          const metadata =
+            result.metadata && typeof result.metadata === 'object'
+              ? (result.metadata as Record<string, unknown>)
+              : undefined;
+          const isSubagentStatus = (
+            value: unknown
+          ): value is
+            | 'running'
+            | 'completed'
+            | 'failed'
+            | 'cancelled' =>
+            value === 'running' ||
+            value === 'completed' ||
+            value === 'failed' ||
+            value === 'cancelled';
+          const subagentStatus = isSubagentStatus(metadata?.subagentStatus)
+            ? metadata.subagentStatus
+            : 'completed';
+          const subagentRef =
+            metadata && typeof metadata.subagentSessionId === 'string'
+              ? {
+                  subagentSessionId: metadata.subagentSessionId,
+                  subagentType:
+                    typeof metadata.subagentType === 'string'
+                      ? metadata.subagentType
+                      : toolCall.function.name,
+                  subagentStatus,
+                  subagentSummary:
+                    typeof metadata.subagentSummary === 'string'
+                      ? metadata.subagentSummary
+                      : undefined,
+                }
+              : undefined;
+          const uuid = await persistToolResult(
+            deps,
+            context,
+            toolCall.id,
+            toolCall.function.name,
+            result.success ? toJsonValue(result.llmContent) : null,
+            toolUseUuid,
+            result.success ? undefined : result.error?.message,
+            subagentRef,
+          );
+          if (uuid) lastMessageUuid = uuid;
         }
 
-        // TodoWrite 处理
-        if (
-          toolCall.function.name === 'TodoWrite' &&
-          result.success &&
-          result.llmContent
-        ) {
-          const content =
-            typeof result.llmContent === 'object' ? result.llmContent : {};
-          const todos = Array.isArray(content)
-            ? content
-            : ((content as Record<string, unknown>).todos as unknown[]) || [];
-          yield {
-            kind: 'todo_update',
-            todos: todos as import('../../tools/builtin/todo/types.js').TodoItem[],
-          };
-        }
-
-        // Skill 激活
-        if (
-          toolCall.function.name === 'Skill' &&
-          result.success &&
-          result.metadata
-        ) {
-          const metadata = result.metadata as Record<string, unknown>;
-          if (metadata.skillName) {
-            deps.onSkillActivated?.({
-              skillName: metadata.skillName as string,
-              allowedTools: metadata.allowedTools as string[] | undefined,
-              basePath: (metadata.basePath as string) || '',
-            });
-          }
-        }
-
-        // 模型切换
-        const modelId =
-          (result.metadata as Record<string, unknown>)?.modelId?.toString().trim() ||
-          (result.metadata as Record<string, unknown>)?.model?.toString().trim() ||
-          undefined;
-        if (modelId) {
-          await deps.onModelSwitch?.(modelId);
+        // 领域副作用 (via toolDomainPolicy)
+        const todoAction = await applyToolDomainEffects(
+          toolCall as FunctionToolCallRef,
+          result,
+          deps,
+        );
+        if (todoAction) {
+          yield todoAction;
         }
 
         // 添加工具结果到消息历史
@@ -1049,15 +954,7 @@ export async function* executeLoopGenerator(
 
       // 检查工具执行后的中断信号
       if (options?.signal?.aborted) {
-        return {
-          success: false,
-          error: { type: 'aborted', message: '任务已被用户中止' },
-          metadata: {
-            turnsCount,
-            toolCallsCount: allToolResults.length,
-            duration: Date.now() - startTime,
-          },
-        };
+        return makeAbortResult(turnsCount, allToolResults.length, startTime);
       }
 
       // 9. 检查轮次上限
@@ -1100,24 +997,12 @@ export async function* executeLoopGenerator(
               state.appendToHistory(continueMessage);
 
               // 保存压缩数据到 JSONL
-              try {
-                const contextMgr = deps.executionEngine?.getContextManager();
-                if (contextMgr && context.sessionId) {
-                  await contextMgr.saveCompaction(
-                    context.sessionId,
-                    compactResult.summary,
-                    {
-                      trigger: 'auto',
-                      preTokens: compactResult.preTokens,
-                      postTokens: compactResult.postTokens,
-                      filesIncluded: compactResult.filesIncluded,
-                    },
-                    null
-                  );
-                }
-              } catch (saveError) {
-                logger.warn('[Loop] 保存压缩数据失败:', saveError);
-              }
+              await persistCompaction(deps, context, compactResult.summary, {
+                trigger: 'auto',
+                preTokens: compactResult.preTokens,
+                postTokens: compactResult.postTokens,
+                filesIncluded: compactResult.filesIncluded,
+              });
             } catch (compactError) {
               // 降级处理：保留最近 80 条消息
               logger.error('[Loop] 压缩失败，使用降级策略:', compactError);

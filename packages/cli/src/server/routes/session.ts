@@ -679,7 +679,10 @@ async function executeRunAsync(
     );
 
     run.status = 'completed';
-    emit('session.completed', { runId });
+    emit('session.completed', {
+      runId,
+      outputTruncated: loopResult.metadata?.outputTruncated ?? false,
+    });
     emit('session.status', { status: 'idle' });
   } catch (error) {
     logger.error('[SessionRoutes] Agent execution error:', error);
