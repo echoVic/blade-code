@@ -734,7 +734,7 @@ Remember: Follow the above instructions carefully to complete the user's request
         let contentDeltaTotalLen = 0;
 
         // Phase 4: 使用 chatStream() + onEvent 事件驱动消费
-        // UI 契约：content_complete/thinking_complete 只写 snapshot，stream_end 才 commit
+        // UI 契约：delta 写入缓冲区，stream_end 才 commit
         const loopResult = await drainLoop(
           agent.chatStream(userMessageContent, chatContext, {
             stream: true,
@@ -771,11 +771,6 @@ Remember: Follow the above instructions carefully to complete the user's request
                 if (thinkingModeEnabled) {
                   batchAppendThinking(event.delta);
                 }
-                break;
-
-              // --- deprecated: producer 不再发射 complete 事件 ---
-              case 'content_complete':
-              case 'thinking_complete':
                 break;
 
               // --- stream_end 才 commit（原子操作：flush 缓冲区 + finalize 消息）---

@@ -440,8 +440,6 @@ export async function runHeadless(
     });
 
     // Phase 4: 使用 chatStream() + onEvent 事件驱动消费
-    // headless 在 content_complete/thinking_complete 路径下输出完整内容，
-    // 在 stream_end 做 flush。
     const loopResult = await drainLoop(
       agent.chatStream(normalized.content, chatContext, {
         stream: true,
@@ -462,11 +460,6 @@ export async function runHeadless(
             streamState.setThinkingOpened(
               eventWriter.thinkingDelta(event.delta, streamState.hasOpenThinking())
             );
-            break;
-
-          // --- deprecated: producer 不再发射 complete 事件 ---
-          case 'content_complete':
-          case 'thinking_complete':
             break;
 
           // --- 流结束 flush ---

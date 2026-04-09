@@ -87,15 +87,6 @@ export class MockAgent implements Partial<Agent> {
     return result.value;
   }
 
-  /** @deprecated 无调用者 */
-  async *runAgenticLoop(
-    message: string,
-    context: ChatContext,
-    options?: LoopOptions
-  ): AsyncGenerator<LoopEvent, LoopResult, void> {
-    return yield* this.chatStream(message, context, options);
-  }
-
   // 设置 chat 响应
   setChatResponse(message: string, sessionId: string, response: string): void {
     this.chatResponses.set(`${message}-${sessionId}`, response);

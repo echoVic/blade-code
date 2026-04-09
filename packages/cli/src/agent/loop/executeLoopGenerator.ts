@@ -586,7 +586,6 @@ export async function* executeLoopGenerator(
       // Content 通知 — delta 是唯一内容信号
       // - 正常流式：delta 已在 processStreamResponse 中逐 chunk yield
       // - 非流式 fallback / 纯非流式：补发单个完整内容的 delta
-      // content_complete / thinking_complete 不再发射，避免消费者重复渲染
       const needsDelta = !isStreamEnabled || !!(turnResult as StreamResponseResult)._nonStreamingFallback;
       if (needsDelta) {
         if (turnResult.reasoningContent && turnResult.reasoningContent.trim()) {

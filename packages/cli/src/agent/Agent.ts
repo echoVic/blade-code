@@ -638,33 +638,6 @@ export class Agent {
 
 
   /**
-   * @deprecated 无调用者。请直接使用 chatStream()。
-   */
-  public async *runAgenticLoop(
-    message: string,
-    context: ChatContext,
-    options?: LoopOptions
-  ): AsyncGenerator<import('./loop/types.js').LoopEvent, LoopResult, void> {
-    if (!this.isInitialized) {
-      throw new Error('Agent未初始化');
-    }
-
-    const chatContext: ChatContext = {
-      messages: context.messages as Message[],
-      userId: (context.userId as string) || 'subagent',
-      sessionId: (context.sessionId as string) || `subagent_${Date.now()}`,
-      workspaceRoot: (context.workspaceRoot as string) || process.cwd(),
-      signal: context.signal,
-      confirmationHandler: context.confirmationHandler,
-      permissionMode: context.permissionMode,
-      systemPrompt: context.systemPrompt,
-      subagentInfo: context.subagentInfo,
-    };
-
-    return yield* this.chatStream(message, chatContext, options);
-  }
-
-  /**
    * 带系统提示的聊天接口
    */
   public async chatWithSystem(systemPrompt: string, message: string): Promise<string> {
@@ -848,14 +821,6 @@ export class Agent {
       this.error('系统提示配置验证失败', error);
       // 系统提示失败不应该阻止 Agent 初始化
     }
-  }
-
-  /**
-   * 获取系统提示（按需构建，无状态设计）
-   * @deprecated 建议通过 context.systemPrompt 传入，或使用 buildSystemPromptOnDemand
-   */
-  public async getSystemPrompt(): Promise<string | undefined> {
-    return this.buildSystemPromptOnDemand();
   }
 
   /**

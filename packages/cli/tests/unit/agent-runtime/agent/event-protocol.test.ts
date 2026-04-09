@@ -2,7 +2,7 @@
  * Event Protocol 测试
  *
  * 验证 LoopEvent 流的协议约束：
- * - delta 是唯一内容信号（content_complete / thinking_complete 不再发射）
+ * - delta 是唯一内容信号
  * - stream_end 在每个 turn 中无条件存在
  * - drainLoop 正确消费所有事件并返回 LoopResult
  * - 空内容 turn 的正确处理
@@ -119,8 +119,8 @@ describe('Event Protocol', () => {
       expect(streamEndCount).toBe(2);
     });
 
-    it('content_complete is never emitted (delta is the sole content signal)', async () => {
-      // After protocol convergence, producer never emits content_complete.
+    it('delta is the sole content signal (no complete events in protocol)', async () => {
+      // After protocol convergence, only delta events exist for content.
       // Non-streaming paths emit content_delta with full content instead.
       const nonStreamingEvents: LoopEvent[] = [
         { kind: 'turn_start', turn: 1, maxTurns: 5 },
@@ -134,11 +134,10 @@ describe('Event Protocol', () => {
         received.push(event.kind);
       });
 
-      // Only delta events, no complete events
+      // Only delta events for content
       expect(received).toContain('content_delta');
       expect(received).toContain('thinking_delta');
-      expect(received).not.toContain('content_complete');
-      expect(received).not.toContain('thinking_complete');
+      expect(received).toContain('stream_end');
     });
   });
 

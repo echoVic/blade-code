@@ -339,11 +339,6 @@ export class AcpSession {
               });
               break;
 
-            // --- deprecated: producer 不再发射，保留 case 以满足 exhaustive switch ---
-            case 'content_complete':
-            case 'thinking_complete':
-              break;
-
             // --- 工具事件 ---
             case 'tool_start': {
               const toolCall = event.toolCall;

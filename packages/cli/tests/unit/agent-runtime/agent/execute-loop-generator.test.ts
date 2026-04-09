@@ -365,7 +365,7 @@ describe('executeLoopGenerator', () => {
   });
 
   // ------------------------------------------------------------------
-  // 6. Event protocol: delta 是唯一内容信号，content_complete/thinking_complete 不发射
+  // 6. Event protocol: delta 是唯一内容信号
   // ------------------------------------------------------------------
   describe('event protocol: delta-only content signals', () => {
     it('non-streaming turn emits content_delta but NOT content_complete', async () => {
@@ -392,10 +392,6 @@ describe('executeLoopGenerator', () => {
       expect(thinkingDeltas.length).toBe(1);
       expect((thinkingDeltas[0] as { delta: string }).delta).toBe('I should greet');
 
-      // complete 不应存在
-      expect(events.filter((e) => e.kind === 'content_complete')).toHaveLength(0);
-      expect(events.filter((e) => e.kind === 'thinking_complete')).toHaveLength(0);
-
       // stream_end 必须存在
       expect(events.filter((e) => e.kind === 'stream_end')).toHaveLength(1);
     });
@@ -415,7 +411,6 @@ describe('executeLoopGenerator', () => {
       );
 
       expect(events.filter((e) => e.kind === 'content_delta')).toHaveLength(0);
-      expect(events.filter((e) => e.kind === 'content_complete')).toHaveLength(0);
       expect(events.filter((e) => e.kind === 'stream_end')).toHaveLength(1);
     });
 

@@ -645,7 +645,6 @@ async function executeRunAsync(
 
           // --- 系统事件和内部信号不外发 ---
           // stream_end: per-turn 内部信号，不外发
-          // content_complete / thinking_complete: server 使用 delta 模式
           // compaction, model_fallback, turn_start: 内部事件
           default:
             break;
