@@ -58,7 +58,13 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
     if (s.aborted) return s;
   }
   const controller = new AbortController();
-  const onAbort = () => controller.abort();
+  const onAbort = () => {
+    controller.abort();
+    // 清理所有 signal 上的 listener，防止长生命周期 signal 上累积 listener
+    for (const s of validSignals) {
+      s.removeEventListener('abort', onAbort);
+    }
+  };
   for (const s of validSignals) {
     s.addEventListener('abort', onAbort, { once: true });
   }
@@ -81,7 +87,6 @@ export class StreamingToolExecutor {
   private pending = new Map<string, Promise<ToolExecResult>>();
   private completed = new Map<string, ToolExecResult>();
   private queued: QueuedTool[] = [];
-  private discarded = false;
   private order: string[] = [];
   private dispatched = new Set<string>();
   private abortController = new AbortController();
@@ -109,8 +114,6 @@ export class StreamingToolExecutor {
    * 流式中调用：在 allowlist 中的工具立即执行，否则排队
    */
   addTool(toolCall: FunctionToolCall, params: Record<string, unknown>): void {
-    if (this.discarded) return;
-
     if (this.dispatched.has(toolCall.id)) {
       logger.debug(
         `[StreamingToolExecutor] 跳过已分发工具: ${toolCall.function.name} (${toolCall.id})`
@@ -140,8 +143,6 @@ export class StreamingToolExecutor {
    * 流结束后调用：按添加顺序 yield 所有结果
    */
   async *getRemainingResults(): AsyncGenerator<ToolExecResult> {
-    if (this.discarded) return;
-
     for (const id of this.order) {
       // 已完成的
       if (this.completed.has(id)) {
@@ -204,7 +205,6 @@ export class StreamingToolExecutor {
     this.dispatched.clear();
     this.completed.clear();
     this.pending.clear();
-    this.discarded = false;
     logger.debug(
       `[StreamingToolExecutor] 已丢弃所有挂起工作并重置状态 (epoch=${this.epoch})`
     );
@@ -224,6 +224,27 @@ export class StreamingToolExecutor {
     return this.epoch;
   }
 
+  /** 构建 abort/discard 结果 */
+  private makeAbortResult(
+    toolCall: FunctionToolCall,
+    message: string
+  ): ToolExecResult {
+    return {
+      toolCall,
+      result: {
+        success: false,
+        llmContent: '',
+        displayContent: '',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message,
+        },
+        metadata: undefined,
+      },
+      toolUseUuid: null,
+    };
+  }
+
   private async executeOne(
     toolCall: FunctionToolCall,
     params: Record<string, unknown>
@@ -241,17 +262,7 @@ export class StreamingToolExecutor {
     try {
       // Check if already aborted before starting
       if (executorSignal.aborted || perToolAc.signal.aborted) {
-        const abortResult: ToolResult = {
-          success: false,
-          llmContent: '',
-          displayContent: '',
-          error: {
-            type: ToolErrorType.EXECUTION_ERROR,
-            message: 'Tool execution aborted due to discard',
-          },
-          metadata: undefined,
-        };
-        return { toolCall, result: abortResult, toolUseUuid: null };
+        return this.makeAbortResult(toolCall, 'Tool execution aborted due to discard');
       }
 
       let toolUseUuid: string | null = null;
@@ -292,17 +303,7 @@ export class StreamingToolExecutor {
         logger.debug(
           `[StreamingToolExecutor] 丢弃旧世代工具结果: ${toolCall.function.name} (startEpoch=${startEpoch}, currentEpoch=${this.epoch})`
         );
-        const abortResult: ToolResult = {
-          success: false,
-          llmContent: '',
-          displayContent: '',
-          error: {
-            type: ToolErrorType.EXECUTION_ERROR,
-            message: 'Tool execution aborted due to epoch mismatch (discard)',
-          },
-          metadata: undefined,
-        };
-        return { toolCall, result: abortResult, toolUseUuid: null };
+        return this.makeAbortResult(toolCall, 'Tool execution aborted due to epoch mismatch (discard)');
       }
 
       const execResult: ToolExecResult = {
@@ -321,17 +322,7 @@ export class StreamingToolExecutor {
     } catch (error) {
       // Epoch guard: 异常路径也检查 epoch
       if (startEpoch !== this.epoch) {
-        const abortResult: ToolResult = {
-          success: false,
-          llmContent: '',
-          displayContent: '',
-          error: {
-            type: ToolErrorType.EXECUTION_ERROR,
-            message: 'Tool execution aborted due to epoch mismatch (discard)',
-          },
-          metadata: undefined,
-        };
-        return { toolCall, result: abortResult, toolUseUuid: null };
+        return this.makeAbortResult(toolCall, 'Tool execution aborted due to epoch mismatch (discard)');
       }
 
       logger.error(
