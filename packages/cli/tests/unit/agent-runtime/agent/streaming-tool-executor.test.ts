@@ -1,9 +1,14 @@
 /**
  * StreamingToolExecutor unit tests
+ *
+ * 测试流式预启动逻辑现在基于 STREAMING_PRELAUNCH_ALLOWLIST（而非 isConcurrencySafe）。
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { StreamingToolExecutor } from '../../../../src/agent/loop/StreamingToolExecutor.js';
+import {
+  STREAMING_PRELAUNCH_ALLOWLIST,
+  StreamingToolExecutor,
+} from '../../../../src/agent/loop/StreamingToolExecutor.js';
 import { ToolErrorType } from '../../../../src/tools/types/index.js';
 
 import type { ExecutionPipeline } from '../../../../src/tools/execution/ExecutionPipeline.js';
@@ -67,38 +72,63 @@ describe('StreamingToolExecutor', () => {
   });
 
   // ----------------------------------------------------------------
+  // STREAMING_PRELAUNCH_ALLOWLIST
+  // ----------------------------------------------------------------
+  describe('STREAMING_PRELAUNCH_ALLOWLIST', () => {
+    it('contains the expected tools', () => {
+      const expected = [
+        'Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch',
+        'MemoryRead', 'GetSpecContext', 'ValidateSpec', 'TaskOutput',
+      ];
+      for (const name of expected) {
+        expect(STREAMING_PRELAUNCH_ALLOWLIST.has(name)).toBe(true);
+      }
+      expect(STREAMING_PRELAUNCH_ALLOWLIST.size).toBe(expected.length);
+    });
+
+    it('does not contain write/execute tools', () => {
+      const excluded = [
+        'Edit', 'Write', 'Bash', 'NotebookEdit', 'Task',
+        'Skill', 'SlashCommand', 'AskUserQuestion',
+      ];
+      for (const name of excluded) {
+        expect(STREAMING_PRELAUNCH_ALLOWLIST.has(name)).toBe(false);
+      }
+    });
+  });
+
+  // ----------------------------------------------------------------
   // addTool
   // ----------------------------------------------------------------
   describe('addTool', () => {
-    it('concurrency-safe tool is immediately executed', async () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
-      const tc = makeToolCall('t1', 'readFile');
+    it('allowlisted tool is immediately executed (prelaunch)', async () => {
+      // 'Read' is in the allowlist
+      const tc = makeToolCall('t1', 'Read');
 
-      executor.addTool(tc, { path: '/tmp' });
+      executor.addTool(tc, { file_path: '/tmp' });
 
       expect(pipeline.execute).toHaveBeenCalledTimes(1);
       expect(pipeline.execute).toHaveBeenCalledWith(
-        'readFile',
-        { path: '/tmp' },
+        'Read',
+        { file_path: '/tmp' },
         expect.objectContaining({ signal: expect.any(Object) }),
       );
       expect(executor.hasTools()).toBe(true);
     });
 
-    it('non-concurrent-safe tool is queued, not immediately executed', () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: false });
-      const tc = makeToolCall('t1', 'writeFile');
+    it('non-allowlisted tool is queued, not immediately executed', () => {
+      // 'Edit' is NOT in the allowlist
+      const tc = makeToolCall('t1', 'Edit');
 
-      executor.addTool(tc, { path: '/tmp' });
+      executor.addTool(tc, { file_path: '/tmp' });
 
       expect(pipeline.execute).not.toHaveBeenCalled();
       expect(executor.hasTools()).toBe(true);
     });
 
     it('duplicate toolCall.id is skipped', () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
-      const tc1 = makeToolCall('dup', 'readFile');
-      const tc2 = makeToolCall('dup', 'readFile');
+      const tc1 = makeToolCall('dup', 'Read');
+      const tc2 = makeToolCall('dup', 'Read');
 
       executor.addTool(tc1, {});
       executor.addTool(tc2, {});
@@ -106,13 +136,26 @@ describe('StreamingToolExecutor', () => {
       expect(pipeline.execute).toHaveBeenCalledTimes(1);
     });
 
-    it('tool with unknown definition defaults to concurrency-safe', () => {
-      registry.get.mockReturnValue(undefined);
+    it('unknown tool not in allowlist is queued', () => {
       const tc = makeToolCall('t1', 'unknownTool');
 
       executor.addTool(tc, {});
 
-      // isConcurrencySafe defaults to true, so execute should be called immediately
+      // unknownTool is not in allowlist, so it should be queued
+      expect(pipeline.execute).not.toHaveBeenCalled();
+    });
+
+    it('prelaunch decision is based on allowlist, not isConcurrencySafe', () => {
+      // Even if registry says isConcurrencySafe: true for Edit, it should be queued
+      registry.get.mockReturnValue({ isConcurrencySafe: true });
+      const tc = makeToolCall('t1', 'Edit');
+      executor.addTool(tc, {});
+      expect(pipeline.execute).not.toHaveBeenCalled();
+
+      // Even if registry says isConcurrencySafe: false for Read, it should be immediate
+      registry.get.mockReturnValue({ isConcurrencySafe: false });
+      const tc2 = makeToolCall('t2', 'Read');
+      executor.addTool(tc2, {});
       expect(pipeline.execute).toHaveBeenCalledTimes(1);
     });
   });
@@ -121,18 +164,15 @@ describe('StreamingToolExecutor', () => {
   // getRemainingResults
   // ----------------------------------------------------------------
   describe('getRemainingResults', () => {
-    it('yields results in insertion order for concurrent-safe tools', async () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
-
-      const results = ['r1', 'r2', 'r3'];
+    it('yields results in insertion order for allowlisted tools', async () => {
       pipeline.execute
         .mockResolvedValueOnce(makeSuccessResult('r1'))
         .mockResolvedValueOnce(makeSuccessResult('r2'))
         .mockResolvedValueOnce(makeSuccessResult('r3'));
 
-      executor.addTool(makeToolCall('a', 'tool1'), {});
-      executor.addTool(makeToolCall('b', 'tool2'), {});
-      executor.addTool(makeToolCall('c', 'tool3'), {});
+      executor.addTool(makeToolCall('a', 'Read'), {});
+      executor.addTool(makeToolCall('b', 'Glob'), {});
+      executor.addTool(makeToolCall('c', 'Grep'), {});
 
       const collected = await collectAsync(executor.getRemainingResults());
 
@@ -147,17 +187,15 @@ describe('StreamingToolExecutor', () => {
       expect(collected[2].toolCall.id).toBe('c');
     });
 
-    it('executes queued (non-concurrent-safe) tools sequentially on drain', async () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: false });
-
+    it('executes queued (non-allowlisted) tools sequentially on drain', async () => {
       const callOrder: string[] = [];
       pipeline.execute.mockImplementation(async (name: string) => {
         callOrder.push(name);
         return makeSuccessResult(name);
       });
 
-      executor.addTool(makeToolCall('q1', 'write1'), {});
-      executor.addTool(makeToolCall('q2', 'write2'), {});
+      executor.addTool(makeToolCall('q1', 'Edit'), {});
+      executor.addTool(makeToolCall('q2', 'Write'), {});
 
       // Nothing executed yet
       expect(pipeline.execute).not.toHaveBeenCalled();
@@ -165,26 +203,21 @@ describe('StreamingToolExecutor', () => {
       const collected = await collectAsync(executor.getRemainingResults());
 
       expect(collected).toHaveLength(2);
-      expect(callOrder).toEqual(['write1', 'write2']);
+      expect(callOrder).toEqual(['Edit', 'Write']);
       expect(collected[0].toolCall.id).toBe('q1');
       expect(collected[1].toolCall.id).toBe('q2');
     });
 
-    it('yields mixed concurrent + queued tools in insertion order', async () => {
-      // A = safe, B = unsafe, C = safe
-      registry.get
-        .mockReturnValueOnce({ isConcurrencySafe: true })   // A
-        .mockReturnValueOnce({ isConcurrencySafe: false })   // B
-        .mockReturnValueOnce({ isConcurrencySafe: true });   // C
-
+    it('yields mixed allowlisted + queued tools in insertion order', async () => {
+      // A = allowlisted (Read), B = non-allowlisted (Edit), C = allowlisted (Glob)
       pipeline.execute
         .mockResolvedValueOnce(makeSuccessResult('resA'))  // A (immediate)
         .mockResolvedValueOnce(makeSuccessResult('resC'))  // C (immediate, second call)
         .mockResolvedValueOnce(makeSuccessResult('resB')); // B (queued, executed on drain)
 
-      executor.addTool(makeToolCall('A', 'safe1'), {});
-      executor.addTool(makeToolCall('B', 'unsafe1'), {});
-      executor.addTool(makeToolCall('C', 'safe2'), {});
+      executor.addTool(makeToolCall('A', 'Read'), {});
+      executor.addTool(makeToolCall('B', 'Edit'), {});
+      executor.addTool(makeToolCall('C', 'Glob'), {});
 
       // A and C executed immediately, B queued
       expect(pipeline.execute).toHaveBeenCalledTimes(2);
@@ -208,27 +241,27 @@ describe('StreamingToolExecutor', () => {
   // discard
   // ----------------------------------------------------------------
   describe('discard', () => {
-    it('resets all internal state', () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
+    it('resets all internal state and increments epoch', () => {
       pipeline.execute.mockResolvedValue(makeSuccessResult('x'));
 
-      executor.addTool(makeToolCall('t1', 'read'), {});
+      executor.addTool(makeToolCall('t1', 'Read'), {});
       expect(executor.hasTools()).toBe(true);
+      expect(executor.getEpoch()).toBe(0);
 
       executor.discard();
 
       expect(executor.hasTools()).toBe(false);
+      expect(executor.getEpoch()).toBe(1);
     });
 
     it('allows adding new tools after discard (reset, not disable)', async () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
       pipeline.execute.mockResolvedValue(makeSuccessResult('after-discard'));
 
-      executor.addTool(makeToolCall('old', 'readOld'), {});
+      executor.addTool(makeToolCall('old', 'Read'), {});
       executor.discard();
 
       // Now add a new tool — should work normally
-      executor.addTool(makeToolCall('new', 'readNew'), { path: '/new' });
+      executor.addTool(makeToolCall('new', 'Read'), { file_path: '/new' });
 
       expect(executor.hasTools()).toBe(true);
       expect(pipeline.execute).toHaveBeenCalledTimes(2); // once for 'old', once for 'new'
@@ -239,15 +272,14 @@ describe('StreamingToolExecutor', () => {
     });
 
     it('previously used toolCall.id can be re-added after discard', () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
       pipeline.execute.mockResolvedValue(makeSuccessResult('v'));
 
-      executor.addTool(makeToolCall('reuse', 'tool'), {});
+      executor.addTool(makeToolCall('reuse', 'Read'), {});
       expect(pipeline.execute).toHaveBeenCalledTimes(1);
 
       executor.discard();
 
-      executor.addTool(makeToolCall('reuse', 'tool'), {});
+      executor.addTool(makeToolCall('reuse', 'Read'), {});
       expect(pipeline.execute).toHaveBeenCalledTimes(2);
     });
   });
@@ -257,8 +289,6 @@ describe('StreamingToolExecutor', () => {
   // ----------------------------------------------------------------
   describe('getCompletedResults', () => {
     it('returns completed results and clears them', async () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
-
       // Use a deferred promise so we can control when execution completes
       let resolve!: (v: ReturnType<typeof makeSuccessResult>) => void;
       const deferred = new Promise<ReturnType<typeof makeSuccessResult>>((r) => {
@@ -266,7 +296,7 @@ describe('StreamingToolExecutor', () => {
       });
       pipeline.execute.mockReturnValue(deferred);
 
-      executor.addTool(makeToolCall('c1', 'read'), {});
+      executor.addTool(makeToolCall('c1', 'Read'), {});
 
       // Not completed yet
       expect(executor.getCompletedResults()).toEqual([]);
@@ -294,9 +324,8 @@ describe('StreamingToolExecutor', () => {
     });
 
     it('returns true after adding a tool', () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
       pipeline.execute.mockResolvedValue(makeSuccessResult('x'));
-      executor.addTool(makeToolCall('t1', 'tool'), {});
+      executor.addTool(makeToolCall('t1', 'Read'), {});
       expect(executor.hasTools()).toBe(true);
     });
   });
@@ -306,10 +335,9 @@ describe('StreamingToolExecutor', () => {
   // ----------------------------------------------------------------
   describe('error handling', () => {
     it('pipeline rejection yields error result without throwing', async () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
       pipeline.execute.mockRejectedValue(new Error('boom'));
 
-      executor.addTool(makeToolCall('e1', 'failTool'), {});
+      executor.addTool(makeToolCall('e1', 'Read'), {});
 
       const collected = await collectAsync(executor.getRemainingResults());
 
@@ -324,10 +352,9 @@ describe('StreamingToolExecutor', () => {
     });
 
     it('non-Error rejection is wrapped into an Error', async () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
       pipeline.execute.mockRejectedValue('string-error');
 
-      executor.addTool(makeToolCall('e2', 'failTool'), {});
+      executor.addTool(makeToolCall('e2', 'Read'), {});
 
       const collected = await collectAsync(executor.getRemainingResults());
 
@@ -339,11 +366,10 @@ describe('StreamingToolExecutor', () => {
       expect(result.error!.message).toBe('Unknown error');
     });
 
-    it('error in queued (non-concurrent-safe) tool is handled gracefully', async () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: false });
+    it('error in queued (non-allowlisted) tool is handled gracefully', async () => {
       pipeline.execute.mockRejectedValue(new Error('queue-fail'));
 
-      executor.addTool(makeToolCall('qe1', 'writeFail'), {});
+      executor.addTool(makeToolCall('qe1', 'Edit'), {});
 
       const collected = await collectAsync(executor.getRemainingResults());
 
@@ -372,17 +398,16 @@ describe('StreamingToolExecutor', () => {
         'msg-uuid',
       );
 
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
       pipeline.execute.mockResolvedValue(makeSuccessResult('ctx'));
 
-      executor.addTool(makeToolCall('ctx1', 'readFile'), { path: '/a' });
+      executor.addTool(makeToolCall('ctx1', 'Read'), { file_path: '/a' });
 
       const collected = await collectAsync(executor.getRemainingResults());
 
       expect(mockContextMgr.saveToolUse).toHaveBeenCalledWith(
         'session-1',
-        'readFile',
-        { path: '/a' },
+        'Read',
+        { file_path: '/a' },
         'msg-uuid',
         undefined,
       );
@@ -402,10 +427,9 @@ describe('StreamingToolExecutor', () => {
         'session-2',
       );
 
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
       pipeline.execute.mockResolvedValue(makeSuccessResult('ok'));
 
-      executor.addTool(makeToolCall('ctx2', 'tool'), {});
+      executor.addTool(makeToolCall('ctx2', 'Read'), {});
 
       const collected = await collectAsync(executor.getRemainingResults());
 
@@ -416,10 +440,9 @@ describe('StreamingToolExecutor', () => {
     });
 
     it('skips saveToolUse when contextMgr is not provided', async () => {
-      registry.get.mockReturnValue({ isConcurrencySafe: true });
       pipeline.execute.mockResolvedValue(makeSuccessResult('no-ctx'));
 
-      executor.addTool(makeToolCall('nc1', 'tool'), {});
+      executor.addTool(makeToolCall('nc1', 'Read'), {});
 
       const collected = await collectAsync(executor.getRemainingResults());
 

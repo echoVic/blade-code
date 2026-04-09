@@ -21,6 +21,7 @@ export const memoryWriteTool = createTool({
   name: 'MemoryWrite',
   displayName: 'Memory Write',
   kind: ToolKind.Write,
+  isConcurrencySafe: false, // 写入操作
 
   schema: z.object({
     topic: z

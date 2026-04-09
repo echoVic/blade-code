@@ -14,6 +14,7 @@ export const exitPlanModeTool = createTool({
   name: 'ExitPlanMode',
   displayName: 'Exit Plan Mode',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: false, // 模式切换，改变状态
 
   schema: z.object({
     plan: z.string().describe('The complete implementation plan in markdown format'),

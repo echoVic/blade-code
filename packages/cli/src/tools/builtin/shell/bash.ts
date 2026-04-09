@@ -28,6 +28,7 @@ export const bashTool = createTool({
   name: 'Bash',
   displayName: 'Bash Command',
   kind: ToolKind.Execute,
+  isConcurrencySafe: false, // 命令执行，可能有副作用
 
   // Zod Schema 定义
   schema: z.object({

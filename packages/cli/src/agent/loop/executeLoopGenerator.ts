@@ -172,6 +172,7 @@ async function* processStreamResponse(
         streamUsage = undefined;
         streamFinishReason = undefined;
         toolCallAccumulator.clear();
+        chunkCount = 0;
         yield { kind: 'model_fallback' };
         continue;
       }

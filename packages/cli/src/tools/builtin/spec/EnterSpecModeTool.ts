@@ -14,6 +14,7 @@ export const enterSpecModeTool = createTool({
   name: 'EnterSpecMode',
   displayName: 'Enter Spec Mode',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: false, // 模式切换，改变状态
 
   schema: z.object({
     featureName: z

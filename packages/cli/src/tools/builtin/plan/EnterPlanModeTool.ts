@@ -11,6 +11,7 @@ export const enterPlanModeTool = createTool({
   name: 'EnterPlanMode',
   displayName: 'Enter Plan Mode',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: false, // 模式切换，改变状态
 
   schema: z.object({}),
 

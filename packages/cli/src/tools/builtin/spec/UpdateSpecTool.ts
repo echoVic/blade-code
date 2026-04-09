@@ -61,6 +61,7 @@ export const updateSpecTool = createTool({
   name: 'UpdateSpec',
   displayName: 'Update Spec',
   kind: ToolKind.Write,
+  isConcurrencySafe: false, // 写入 Spec 状态
 
   schema: z.object({
     fileType: z

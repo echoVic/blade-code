@@ -81,6 +81,7 @@ export const transitionSpecPhaseTool = createTool({
   name: 'TransitionSpecPhase',
   displayName: 'Transition Spec Phase',
   kind: ToolKind.Write,
+  isConcurrencySafe: false, // 写入 Spec 状态
 
   schema: z.object({
     targetPhase: z

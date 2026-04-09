@@ -379,6 +379,7 @@ export const webSearchTool = createTool({
   name: 'WebSearch',
   displayName: 'Web Search',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   schema: z.object({
     query: z

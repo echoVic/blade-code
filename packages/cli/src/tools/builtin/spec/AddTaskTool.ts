@@ -15,6 +15,7 @@ export const addTaskTool = createTool({
   name: 'AddTask',
   displayName: 'Add Task',
   kind: ToolKind.Write,
+  isConcurrencySafe: false, // 写入 Spec 状态
 
   schema: z.object({
     title: z.string().min(1).describe('Brief title of the task'),

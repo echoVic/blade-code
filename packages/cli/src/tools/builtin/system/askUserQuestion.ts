@@ -67,6 +67,7 @@ export const askUserQuestionTool = createTool({
   name: 'AskUserQuestion',
   displayName: 'Ask User Question',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: false, // 阻塞用户输入
 
   schema: askUserQuestionSchema,
 

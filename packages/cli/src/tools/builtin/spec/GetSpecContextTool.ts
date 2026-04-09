@@ -15,6 +15,7 @@ export const getSpecContextTool = createTool({
   name: 'GetSpecContext',
   displayName: 'Get Spec Context',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   schema: z.object({
     includeFiles: z

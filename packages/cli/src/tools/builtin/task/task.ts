@@ -129,6 +129,7 @@ export const taskTool = createTool({
   displayName: 'Subagent Scheduler',
   kind: ToolKind.ReadOnly, // Plan 模式下允许：子 Agent 的工具使用受各自模式限制
   isReadOnly: true,
+  isConcurrencySafe: false, // 开子代理，有副作用
 
   // Zod Schema 定义
   // 注意：使用 z.string() + refine 而非 z.enum()，因为 enum 在模块加载时求值，

@@ -4,9 +4,13 @@
  * 在 LLM 流式输出过程中即开始执行工具，节省 RTT。
  *
  * 设计：
- * - isConcurrencySafe 的工具（Read, Glob, Grep 等）→ 立即启动
- * - 非并发安全的工具（Edit, Write 等）→ 排队等流结束后顺序执行
- * - discard() 用于流式降级到非流式时清理
+ * - STREAMING_PRELAUNCH_ALLOWLIST 中的工具 → 立即启动（流式预启动）
+ * - 不在 allowlist 中的工具 → 排队等流结束后顺序执行
+ * - discard() 用于流式降级到非流式时清理，递增 epoch 阻止旧世代结果
+ *
+ * 注意：流式预启动 allowlist 与 isConcurrencySafe 是独立概念：
+ * - allowlist 决定是否允许在流式阶段提前执行
+ * - isConcurrencySafe 仅在 ExecutionPipeline 中决定是否需要文件锁
  */
 
 import type { ContextManager } from '../../context/ContextManager.js';
@@ -21,19 +25,43 @@ import type { ToolExecResult } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
-/** Combine two AbortSignals — aborts when either fires */
-function combineAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
+/**
+ * 允许在流式阶段提前执行的工具白名单。
+ * 仅纯读、无副作用的工具才应出现在此列表中。
+ * 此列表与 isConcurrencySafe（文件锁语义）完全独立。
+ */
+export const STREAMING_PRELAUNCH_ALLOWLIST: ReadonlySet<string> = new Set([
+  'Read',
+  'Glob',
+  'Grep',
+  'WebFetch',
+  'WebSearch',
+  'MemoryRead',
+  'GetSpecContext',
+  'ValidateSpec',
+  'TaskOutput',
+]);
+
+/** Combine multiple AbortSignals — aborts when any fires */
+function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
+  // Filter out undefined/null
+  const validSignals = signals.filter(Boolean);
+  if (validSignals.length === 0) return new AbortController().signal;
+  if (validSignals.length === 1) return validSignals[0];
+
   // Use AbortSignal.any if available (Node 20+)
   if ('any' in AbortSignal && typeof (AbortSignal as any).any === 'function') {
-    return (AbortSignal as any).any([a, b]);
+    return (AbortSignal as any).any(validSignals);
   }
   // Fallback: manual composite
-  if (a.aborted) return a;
-  if (b.aborted) return b;
+  for (const s of validSignals) {
+    if (s.aborted) return s;
+  }
   const controller = new AbortController();
   const onAbort = () => controller.abort();
-  a.addEventListener('abort', onAbort, { once: true });
-  b.addEventListener('abort', onAbort, { once: true });
+  for (const s of validSignals) {
+    s.addEventListener('abort', onAbort, { once: true });
+  }
   return controller.signal;
 }
 
@@ -58,6 +86,11 @@ export class StreamingToolExecutor {
   private dispatched = new Set<string>();
   private abortController = new AbortController();
 
+  /** 世代计数器：每次 discard() 递增，用于防止旧世代工具结果泄漏 */
+  private epoch = 0;
+  /** 每个工具执行的独立 AbortController，discard() 时逐一 abort */
+  private activeAborts = new Map<string, AbortController>();
+
   constructor(
     private pipeline: ExecutionPipeline,
     private execContext: ExecutionContext,
@@ -73,7 +106,7 @@ export class StreamingToolExecutor {
   ) {}
 
   /**
-   * 流式中调用：并发安全的工具立即执行，否则排队
+   * 流式中调用：在 allowlist 中的工具立即执行，否则排队
    */
   addTool(toolCall: FunctionToolCall, params: Record<string, unknown>): void {
     if (this.discarded) return;
@@ -87,18 +120,17 @@ export class StreamingToolExecutor {
     this.dispatched.add(toolCall.id);
 
     this.order.push(toolCall.id);
-    const toolDef = this.registry.get(toolCall.function.name);
-    const isSafe = toolDef?.isConcurrencySafe ?? true;
+    const canPrelaunch = STREAMING_PRELAUNCH_ALLOWLIST.has(toolCall.function.name);
 
-    if (isSafe) {
+    if (canPrelaunch) {
       logger.debug(
-        `[StreamingToolExecutor] 立即执行并发安全工具: ${toolCall.function.name}`
+        `[StreamingToolExecutor] 立即执行预启动工具: ${toolCall.function.name}`
       );
       const promise = this.executeOne(toolCall, params);
       this.pending.set(toolCall.id, promise);
     } else {
       logger.debug(
-        `[StreamingToolExecutor] 排队非并发安全工具: ${toolCall.function.name}`
+        `[StreamingToolExecutor] 排队非预启动工具: ${toolCall.function.name}`
       );
       this.queued.push({ toolCall, params });
     }
@@ -151,18 +183,31 @@ export class StreamingToolExecutor {
   /**
    * 丢弃所有挂起/排队的工作并重置状态。
    * modelFallback 时调用：清理旧模型的工具执行，使执行器可接受新模型的 tool calls。
+   * 递增 epoch，使旧世代工具返回后被忽略。
    */
   discard(): void {
-    // Abort all in-flight tool executions
+    // 递增 epoch，旧世代的 executeOne() 返回后会被拦截
+    this.epoch++;
+
+    // Abort executor 级 signal
     this.abortController.abort();
     this.abortController = new AbortController();
+
+    // Abort 所有 per-tool signal
+    for (const [, ac] of this.activeAborts) {
+      ac.abort();
+    }
+    this.activeAborts.clear();
+
     this.queued = [];
     this.order = [];
     this.dispatched.clear();
     this.completed.clear();
     this.pending.clear();
     this.discarded = false;
-    logger.debug('[StreamingToolExecutor] 已丢弃所有挂起工作并重置状态');
+    logger.debug(
+      `[StreamingToolExecutor] 已丢弃所有挂起工作并重置状态 (epoch=${this.epoch})`
+    );
   }
 
   /**
@@ -172,16 +217,30 @@ export class StreamingToolExecutor {
     return this.order.length > 0;
   }
 
+  /**
+   * 获取当前 epoch（仅供测试使用）
+   */
+  getEpoch(): number {
+    return this.epoch;
+  }
+
   private async executeOne(
     toolCall: FunctionToolCall,
     params: Record<string, unknown>
   ): Promise<ToolExecResult> {
-    // Capture current signal at dispatch time so abort after discard() is detected
-    const signal = this.abortController.signal;
+    // 捕获启动时的 epoch，用于检测 discard
+    const startEpoch = this.epoch;
+
+    // 为此工具创建独立的 AbortController
+    const perToolAc = new AbortController();
+    this.activeAborts.set(toolCall.id, perToolAc);
+
+    // Capture current executor-level signal at dispatch time
+    const executorSignal = this.abortController.signal;
 
     try {
       // Check if already aborted before starting
-      if (signal.aborted) {
+      if (executorSignal.aborted || perToolAc.signal.aborted) {
         const abortResult: ToolResult = {
           success: false,
           llmContent: '',
@@ -210,12 +269,13 @@ export class StreamingToolExecutor {
         logger.warn('[StreamingToolExecutor] 保存工具调用失败:', err);
       }
 
-      // Merge discard signal with existing execution context signal
-      // Either user abort OR discard abort should cancel the tool
+      // Merge executor signal, per-tool signal, and user signal
+      const signalsToMerge = [executorSignal, perToolAc.signal];
       const userSignal = this.execContext.signal;
-      const combinedSignal = userSignal
-        ? combineAbortSignals(signal, userSignal)
-        : signal;
+      if (userSignal) {
+        signalsToMerge.push(userSignal);
+      }
+      const combinedSignal = combineAbortSignals(...signalsToMerge);
       const execContext: ExecutionContext = {
         ...this.execContext,
         signal: combinedSignal,
@@ -226,6 +286,24 @@ export class StreamingToolExecutor {
         params,
         execContext
       );
+
+      // Epoch guard: 如果工具执行期间发生了 discard，丢弃结果
+      if (startEpoch !== this.epoch) {
+        logger.debug(
+          `[StreamingToolExecutor] 丢弃旧世代工具结果: ${toolCall.function.name} (startEpoch=${startEpoch}, currentEpoch=${this.epoch})`
+        );
+        const abortResult: ToolResult = {
+          success: false,
+          llmContent: '',
+          displayContent: '',
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: 'Tool execution aborted due to epoch mismatch (discard)',
+          },
+          metadata: undefined,
+        };
+        return { toolCall, result: abortResult, toolUseUuid: null };
+      }
 
       const execResult: ToolExecResult = {
         toolCall,
@@ -241,6 +319,21 @@ export class StreamingToolExecutor {
 
       return execResult;
     } catch (error) {
+      // Epoch guard: 异常路径也检查 epoch
+      if (startEpoch !== this.epoch) {
+        const abortResult: ToolResult = {
+          success: false,
+          llmContent: '',
+          displayContent: '',
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: 'Tool execution aborted due to epoch mismatch (discard)',
+          },
+          metadata: undefined,
+        };
+        return { toolCall, result: abortResult, toolUseUuid: null };
+      }
+
       logger.error(
         `[StreamingToolExecutor] 工具执行失败: ${toolCall.function.name}`,
         error
@@ -269,6 +362,9 @@ export class StreamingToolExecutor {
       }
 
       return execResult;
+    } finally {
+      // 清理 per-tool AbortController
+      this.activeAborts.delete(toolCall.id);
     }
   }
 }

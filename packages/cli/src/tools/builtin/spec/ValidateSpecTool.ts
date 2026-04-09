@@ -15,6 +15,7 @@ export const validateSpecTool = createTool({
   name: 'ValidateSpec',
   displayName: 'Validate Spec',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   schema: z.object({}),
 

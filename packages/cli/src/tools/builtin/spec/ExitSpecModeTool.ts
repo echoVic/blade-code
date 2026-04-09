@@ -15,6 +15,7 @@ export const exitSpecModeTool = createTool({
   name: 'ExitSpecMode',
   displayName: 'Exit Spec Mode',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: false, // 模式切换，改变状态
 
   schema: z.object({
     archive: z

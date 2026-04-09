@@ -12,6 +12,7 @@ export const memoryReadTool = createTool({
   name: 'MemoryRead',
   displayName: 'Memory Read',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   schema: z.object({
     topic: z

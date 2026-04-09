@@ -49,6 +49,7 @@ export const webFetchTool = createTool({
   name: 'WebFetch',
   displayName: 'Web Fetch',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   // Zod Schema 定义
   schema: z.object({

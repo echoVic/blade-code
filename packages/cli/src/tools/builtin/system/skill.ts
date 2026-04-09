@@ -17,6 +17,7 @@ export const skillTool = createTool({
   name: 'Skill',
   displayName: 'Skill',
   kind: ToolKind.Execute,
+  isConcurrencySafe: false, // 执行技能，可能有副作用
 
   schema: z.object({
     skill: z

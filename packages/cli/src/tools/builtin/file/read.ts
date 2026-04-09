@@ -21,6 +21,7 @@ export const readTool = createTool({
   name: 'Read',
   displayName: 'File Read',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   // Zod Schema 定义
   schema: z.object({

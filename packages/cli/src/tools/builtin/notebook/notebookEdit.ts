@@ -12,6 +12,7 @@ export const notebookEditTool = createTool({
   name: 'NotebookEdit',
   displayName: 'Notebook Edit',
   kind: ToolKind.Write,
+  isConcurrencySafe: false, // 文件写入操作
 
   schema: z.object({
     notebook_path: z

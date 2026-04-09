@@ -16,6 +16,7 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
     name: 'TodoWrite',
     displayName: 'Todo Write',
     kind: ToolKind.ReadOnly,
+    isConcurrencySafe: false, // 写入 Todo 状态
 
     schema: z.object({
       todos: z.array(TodoItemSchema).min(1, 'At least one task is required'),

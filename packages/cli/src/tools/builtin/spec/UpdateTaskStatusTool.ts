@@ -23,6 +23,7 @@ export const updateTaskStatusTool = createTool({
   name: 'UpdateTaskStatus',
   displayName: 'Update Task Status',
   kind: ToolKind.Write,
+  isConcurrencySafe: false, // 写入 Spec 状态
 
   schema: z.object({
     taskId: z.string().min(1).describe('The ID of the task to update'),

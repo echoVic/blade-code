@@ -47,6 +47,7 @@ export const slashCommandTool = createTool({
   name: 'SlashCommand',
   displayName: 'Slash Command',
   kind: ToolKind.Execute,
+  isConcurrencySafe: false, // 执行命令，可能有副作用
 
   schema: z.object({
     command: z

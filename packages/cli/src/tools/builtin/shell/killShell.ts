@@ -8,6 +8,7 @@ export const killShellTool = createTool({
   name: 'KillShell',
   displayName: '终止后台 Shell',
   kind: ToolKind.Execute,
+  isConcurrencySafe: false, // 终止进程，有副作用
 
   schema: z.object({
     shell_id: z.string().min(1).describe('Background Shell ID to terminate'),
