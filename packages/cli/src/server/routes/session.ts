@@ -658,6 +658,8 @@ async function executeRunAsync(
 
     // message.complete 只在整个 run 结束时发一次（run-level 语义）
     emit('message.complete', { messageId: assistantMessageId });
+    // 保持 thinking.completed 向后兼容（Web 客户端注册了该事件，虽然当前是 no-op）
+    emit('thinking.completed', {});
 
     run.status = 'completed';
     emit('session.completed', {

@@ -415,9 +415,7 @@ export class AcpSession {
       const response = loopResult.finalMessage || '';
 
       // 5. 使用 chatContext.messages 作为完整历史（Phase 4: 不再手工构造）
-      if (response) {
-        this.messages = [...context.messages];
-      }
+      this.messages = [...context.messages];
 
       // 6. 检查是否被取消
       if (abortController.signal.aborted) {
