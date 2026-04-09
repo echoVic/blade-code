@@ -464,17 +464,9 @@ export async function runHeadless(
             );
             break;
 
-          // --- 完整内容（非流式 fallback） ---
+          // --- deprecated: producer 不再发射 complete 事件 ---
           case 'content_complete':
-            if (event.content && event.content.trim()) {
-              eventWriter.content(event.content);
-              streamState.markAssistantContent();
-            }
-            break;
           case 'thinking_complete':
-            if (event.content) {
-              eventWriter.thinking(event.content);
-            }
             break;
 
           // --- 流结束 flush ---

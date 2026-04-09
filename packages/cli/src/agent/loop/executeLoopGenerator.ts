@@ -154,13 +154,19 @@ function buildFinalToolCalls(
 
 // ===== processStreamResponse (extracted from Agent.ts) =====
 
+/** processStreamResponse 的扩展返回类型，携带 fallback 标记 */
+type StreamResponseResult = ChatResponse & {
+  /** 标记此 turn 实际走了非流式 fallback（0-chunk 降级 或 streaming-not-supported） */
+  _nonStreamingFallback?: boolean;
+};
+
 async function* processStreamResponse(
   deps: LoopDependencies,
   messages: Message[],
   tools: Array<{ name: string; description: string; parameters: unknown }>,
   signal?: AbortSignal,
   executor?: StreamingToolExecutor
-): AsyncGenerator<LoopEvent, ChatResponse, void> {
+): AsyncGenerator<LoopEvent, StreamResponseResult, void> {
   let fullContent = '';
   let fullReasoningContent = '';
   let streamUsage: ChatResponse['usage'];
@@ -250,7 +256,8 @@ async function* processStreamResponse(
     ) {
       logger.warn('[Loop] 流式响应返回0个chunk，回退到非流式模式');
       executor?.discard();
-      return await deps.chatService.chat(messages, tools, signal);
+      const fallbackResult = await deps.chatService.chat(messages, tools, signal);
+      return { ...fallbackResult, _nonStreamingFallback: true };
     }
 
     return {
@@ -264,7 +271,8 @@ async function* processStreamResponse(
     if (isStreamingNotSupportedError(error)) {
       logger.warn('[Loop] 流式请求失败，降级到非流式模式');
       executor?.discard();
-      return await deps.chatService.chat(messages, tools, signal);
+      const fallbackResult = await deps.chatService.chat(messages, tools, signal);
+      return { ...fallbackResult, _nonStreamingFallback: true };
     }
     throw error;
   }
@@ -488,7 +496,7 @@ export async function* executeLoopGenerator(
 
       // 4. 调用 LLM
       const isStreamEnabled = options?.stream !== false;
-      let turnResult: ChatResponse;
+      let turnResult: StreamResponseResult;
       let streamingExecutor: StreamingToolExecutor | undefined;
 
       try {
@@ -575,28 +583,22 @@ export async function* executeLoopGenerator(
         return makeAbortResult(turnsCount - 1, allToolResults.length, startTime);
       }
 
-      // Content 通知 — 为流式和非流式路径都发出完整事件
-      if (turnResult.reasoningContent && turnResult.reasoningContent.trim()) {
-        if (!isStreamEnabled) {
-          // 非流式路径：补发 thinking_delta（完整内容一次性发出）
+      // Content 通知 — delta 是唯一内容信号
+      // - 正常流式：delta 已在 processStreamResponse 中逐 chunk yield
+      // - 非流式 fallback / 纯非流式：补发单个完整内容的 delta
+      // content_complete / thinking_complete 不再发射，避免消费者重复渲染
+      const needsDelta = !isStreamEnabled || !!(turnResult as StreamResponseResult)._nonStreamingFallback;
+      if (needsDelta) {
+        if (turnResult.reasoningContent && turnResult.reasoningContent.trim()) {
           yield { kind: 'thinking_delta', delta: turnResult.reasoningContent };
         }
-        yield { kind: 'thinking_complete', content: turnResult.reasoningContent };
-      }
-      if (turnResult.content && turnResult.content.trim()) {
-        if (!isStreamEnabled) {
-          // 非流式路径：补发 content_delta（完整内容一次性发出）
+        if (turnResult.content && turnResult.content.trim()) {
           yield { kind: 'content_delta', delta: turnResult.content };
         }
-        yield { kind: 'content_complete', content: turnResult.content };
       }
-      // stream_end 作为 per-turn 终止信号，流式和非流式路径都发出
-      if (
-        (turnResult.content && turnResult.content.trim()) ||
-        (turnResult.reasoningContent && turnResult.reasoningContent.trim())
-      ) {
-        yield { kind: 'stream_end' };
-      }
+      // stream_end 作为 per-turn 无条件终止信号，即使 content 和 thinking 都为空
+      // （例如空 content + tool_calls 场景），消费者依赖此信号结束 turn 渲染
+      yield { kind: 'stream_end' };
 
 
       // Max output tokens recovery (via completionPolicy)
@@ -636,6 +638,14 @@ export async function* executeLoopGenerator(
 
       if (recoveryAction.action === 'truncated' || recoveryAction.action === 'budget_stop') {
         // 截断：recovery 达上限或 budget 递减收益，标记截断并正常结束
+        // 必须将最终 assistant 消息写入 state，确保 writeback 时 context.messages 包含它
+        state.appendAssistant({
+          role: 'assistant',
+          content: turnResult.content || '',
+          reasoningContent: turnResult.reasoningContent,
+          tool_calls: turnResult.toolCalls,
+        });
+
         const uuid = await saveAssistantMessage(
           deps, context, turnResult.content || '', lastMessageUuid,
         );
@@ -669,6 +679,12 @@ export async function* executeLoopGenerator(
 
         if (intentAction.action === 'retry') {
           incompleteIntentRetryCount++;
+          // 先写入本轮 assistant 消息，确保下一轮 LLM 能看到自己刚才的输出
+          state.appendAssistant({
+            role: 'assistant',
+            content: turnResult.content || '',
+            reasoningContent: turnResult.reasoningContent,
+          });
           const retryMsg: Message = { role: 'user', content: intentAction.prompt };
           state.appendToHistory(retryMsg);
           continue;
@@ -686,6 +702,12 @@ export async function* executeLoopGenerator(
         });
 
         if (stopAction.action === 'continue') {
+          // 先写入本轮 assistant 消息，确保下一轮 LLM 能看到自己刚才的输出
+          state.appendAssistant({
+            role: 'assistant',
+            content: turnResult.content || '',
+            reasoningContent: turnResult.reasoningContent,
+          });
           const continueMessage = stopAction.reason
             ? `\n\n<system-reminder>\n${stopAction.reason}\n</system-reminder>`
             : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
@@ -695,6 +717,13 @@ export async function* executeLoopGenerator(
         }
 
         // 保存助手最终响应到 JSONL
+        // 必须将最终 assistant 消息写入 state，确保 writeback 时 context.messages 包含它
+        state.appendAssistant({
+          role: 'assistant',
+          content: turnResult.content || '',
+          reasoningContent: turnResult.reasoningContent,
+        });
+
         const uuid = await saveAssistantMessage(
           deps, context, turnResult.content || '', lastMessageUuid,
         );

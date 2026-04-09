@@ -6,13 +6,13 @@
 
 import type { Agent } from '../../../src/agent/Agent.js';
 import type { LoopEvent } from '../../../src/agent/loop/index.js';
-import type { ChatContext, LoopOptions, LoopResult, StreamOptions } from '../../../src/agent/types.js';
+import type { ChatContext, LoopOptions, LoopResult } from '../../../src/agent/types.js';
 import { vi } from 'vitest';
 
 export interface MockAgentCall {
   message: string;
   context: ChatContext;
-  options?: LoopOptions | StreamOptions;
+  options?: LoopOptions;
 }
 
 export class MockAgent implements Partial<Agent> {
@@ -30,7 +30,7 @@ export class MockAgent implements Partial<Agent> {
   async *chatStream(
     message: string,
     context: ChatContext,
-    options?: LoopOptions | StreamOptions
+    options?: LoopOptions
   ): AsyncGenerator<LoopEvent, LoopResult, void> {
     // 记录调用
     this.calls.push({ message, context, options });
@@ -72,18 +72,22 @@ export class MockAgent implements Partial<Agent> {
   }
 
   /**
-   * 模拟 chat 方法 — 兼容性包装，委托到 chatStream()
-   * Phase 4 将改为返回 Promise<LoopResult>
+   * 高层 API：消费 chatStream() 并返回 LoopResult。
    */
-  async *chat(
+  async chat(
     message: string,
     context: ChatContext,
     options?: LoopOptions
-  ): AsyncGenerator<LoopEvent, LoopResult, void> {
-    return yield* this.chatStream(message, context, options);
+  ): Promise<LoopResult> {
+    const gen = this.chatStream(message, context, options);
+    let result = await gen.next();
+    while (!result.done) {
+      result = await gen.next();
+    }
+    return result.value;
   }
 
-  // 模拟 runAgenticLoop 方法
+  /** @deprecated 无调用者 */
   async *runAgenticLoop(
     message: string,
     context: ChatContext,

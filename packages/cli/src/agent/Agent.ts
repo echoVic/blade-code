@@ -63,7 +63,6 @@ import type {
   ChatContext,
   LoopOptions,
   LoopResult,
-  StreamOptions,
   UserMessageContent,
 } from './types.js';
 
@@ -349,12 +348,12 @@ export class Agent {
    *
    * @param message  用户消息（纯文本或多模态）
    * @param context  聊天上下文（消息历史、会话标识等）
-   * @param options  循环控制选项（可传 LoopOptions 以兼容旧回调，或 StreamOptions 仅控制参数）
+   * @param options  循环控制选项（行为回调 + 控制参数）
    */
   public async *chatStream(
     message: UserMessageContent,
     context?: ChatContext,
-    options?: LoopOptions | StreamOptions
+    options?: LoopOptions
   ): AsyncGenerator<import('./loop/types.js').LoopEvent, LoopResult, void> {
     if (!this.isInitialized) {
       throw new Error('Agent未初始化');
@@ -427,20 +426,17 @@ export class Agent {
   }
 
   /**
-   * 聊天接口 — 兼容性 AsyncGenerator 包装
-   *
-   * 当前实现委托到 `chatStream()`，保持 AsyncGenerator 签名不变。
-   * Phase 4 将把此方法改为返回 `Promise<LoopResult>`，届时消费者需迁移到
-   * `chatStream()` 获取事件流，或直接 await `chat()` 获取最终结果。
-   *
-   * @deprecated 事件流消费请使用 `chatStream()`；Phase 4 后此方法将返回 Promise。
+   * 高层 API：发送消息并等待最终结果。
+   * 不暴露事件流，内部消费 chatStream() 并返回 LoopResult。
+   * 事件流消费请使用 chatStream()。
    */
-  public async *chat(
+  public async chat(
     message: UserMessageContent,
     context?: ChatContext,
     options?: LoopOptions
-  ): AsyncGenerator<import('./loop/types.js').LoopEvent, LoopResult, void> {
-    return yield* this.chatStream(message, context, options);
+  ): Promise<LoopResult> {
+    const { drainLoop } = await import('./loop/index.js');
+    return drainLoop(this.chatStream(message, context, options));
   }
 
   /**
@@ -642,10 +638,7 @@ export class Agent {
 
 
   /**
-   * 运行 Agentic Loop（公共接口，用于子任务递归）
-   * 返回 AsyncGenerator 事件流
-   *
-   * 内部只负责规范化 context，然后委托到 chatStream()。
+   * @deprecated 无调用者。请直接使用 chatStream()。
    */
   public async *runAgenticLoop(
     message: string,

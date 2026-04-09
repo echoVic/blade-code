@@ -59,11 +59,14 @@ export class ConversationState {
     // 从 context.messages 中提取已有的根系统提示
     const existingRootPrompt = context.messages.find(isRootSystemPrompt);
 
-    // 构建 systemMessages
-    this.systemMessages = [];
-    if (!existingRootPrompt && systemPrompt) {
+    // 构建 systemMessages — 根 system prompt 必须从 history 中隔离，
+    // 确保 compaction 不会改写或丢掉它（Invariant #1）
+    if (existingRootPrompt) {
+      // 从持久化恢复的根 system prompt，提取到 systemMessages
+      this.systemMessages = [existingRootPrompt];
+    } else if (systemPrompt) {
       // 没有现有的根系统提示，注入新的
-      this.systemMessages.push({
+      this.systemMessages = [{
         role: 'system',
         content: [
           {
@@ -74,13 +77,14 @@ export class ConversationState {
             },
           },
         ],
-      });
+      }];
+    } else {
+      this.systemMessages = [];
     }
 
-    // history = context.messages（不含根系统提示，因为已在 systemMessages 中）
-    // 但如果 context.messages 中有根系统提示，保留在 history 中
-    // 因为这意味着它是从持久化恢复的，压缩服务需要看到它
-    this._history = [...context.messages];
+    // history = context.messages 中排除根系统提示
+    // 根 system prompt 已在 systemMessages 中，不参与 compaction
+    this._history = context.messages.filter((msg) => !isRootSystemPrompt(msg));
   }
 
   /** 当前 history 长度（压缩检查使用） */
@@ -177,11 +181,14 @@ export class ConversationState {
   /**
    * 替换 history（压缩后调用）
    *
+   * 自动过滤掉根 system prompt，确保 Invariant #1：
+   * 根 system prompt 只存在于 systemMessages 中，不会出现在 history 里。
+   *
    * 调用后 pending 保持不变（压缩不影响当前轮次的 pending 消息）。
    * toLLMMessages() 会自动反映新 history。
    */
   replaceHistory(newHistory: Message[]): void {
-    this._history = newHistory;
+    this._history = newHistory.filter((msg) => !isRootSystemPrompt(msg));
   }
 
   /**

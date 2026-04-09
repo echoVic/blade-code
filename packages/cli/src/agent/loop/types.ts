@@ -19,7 +19,15 @@ import type { AgentOptions } from '../types.js';
 export type StreamEvent =
   | { kind: 'content_delta'; delta: string }
   | { kind: 'thinking_delta'; delta: string }
+  /**
+   * @deprecated Producer 不再发射此事件。delta 是唯一内容信号。
+   * 保留类型定义以兼容 exhaustive switch 编译检查。
+   */
   | { kind: 'content_complete'; content: string }
+  /**
+   * @deprecated Producer 不再发射此事件。delta 是唯一内容信号。
+   * 保留类型定义以兼容 exhaustive switch 编译检查。
+   */
   | { kind: 'thinking_complete'; content: string }
   /**
    * 单次 LLM turn 的流式输出结束信号。

@@ -325,20 +325,23 @@ export class AcpSession {
         this.agent.chatStream(message, context),
         async (event: LoopEvent) => {
           switch (event.kind) {
-            // --- 流式内容 ---
-            case 'content_complete':
-              // 非流式路径：完整内容一次性发送
+            // --- 流式内容（delta 是唯一内容信号） ---
+            case 'content_delta':
               this.sendUpdate({
                 sessionUpdate: 'agent_message_chunk',
-                content: { type: 'text', text: event.content },
+                content: { type: 'text', text: event.delta },
               });
               break;
-            case 'thinking_complete':
-              // 非流式路径：完整思考内容一次性发送
+            case 'thinking_delta':
               this.sendUpdate({
                 sessionUpdate: 'agent_thought_chunk',
-                content: { type: 'text', text: event.content },
+                content: { type: 'text', text: event.delta },
               });
+              break;
+
+            // --- deprecated: producer 不再发射，保留 case 以满足 exhaustive switch ---
+            case 'content_complete':
+            case 'thinking_complete':
               break;
 
             // --- 工具事件 ---
@@ -403,8 +406,7 @@ export class AcpSession {
               this.sendPlanUpdate(event.todos);
               break;
 
-            // --- 流式增量和系统事件不外发 ---
-            // content_delta / thinking_delta: ACP 使用 complete 语义
+            // --- 系统事件不外发 ---
             // stream_end: 内部 per-turn 信号，不外发
             // turn_start, compaction, token_usage, model_fallback: 内部事件
             default:
@@ -412,7 +414,6 @@ export class AcpSession {
           }
         }
       );
-      const response = loopResult.finalMessage || '';
 
       // 5. 使用 chatContext.messages 作为完整历史（Phase 4: 不再手工构造）
       this.messages = [...context.messages];

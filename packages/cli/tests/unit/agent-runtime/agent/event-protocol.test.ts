@@ -2,8 +2,8 @@
  * Event Protocol 测试
  *
  * 验证 LoopEvent 流的协议约束：
- * - 流式 delta 和非流式 complete 事件的互斥性
- * - stream_end 在每个流式 turn 中始终存在
+ * - delta 是唯一内容信号（content_complete / thinking_complete 不再发射）
+ * - stream_end 在每个 turn 中无条件存在
  * - drainLoop 正确消费所有事件并返回 LoopResult
  * - 空内容 turn 的正确处理
  */
@@ -119,12 +119,13 @@ describe('Event Protocol', () => {
       expect(streamEndCount).toBe(2);
     });
 
-    it('content_complete and content_delta do not mix in the same turn (mutual exclusion)', async () => {
-      // In a non-streaming fallback scenario, content_complete is used instead of deltas
+    it('content_complete is never emitted (delta is the sole content signal)', async () => {
+      // After protocol convergence, producer never emits content_complete.
+      // Non-streaming paths emit content_delta with full content instead.
       const nonStreamingEvents: LoopEvent[] = [
         { kind: 'turn_start', turn: 1, maxTurns: 5 },
-        { kind: 'content_complete', content: 'full response' },
-        { kind: 'thinking_complete', content: 'full thinking' },
+        { kind: 'content_delta', delta: 'full response' },
+        { kind: 'thinking_delta', delta: 'full thinking' },
         { kind: 'stream_end' },
       ];
 
@@ -133,9 +134,11 @@ describe('Event Protocol', () => {
         received.push(event.kind);
       });
 
-      // Should have content_complete but no content_delta
-      expect(received).toContain('content_complete');
-      expect(received).not.toContain('content_delta');
+      // Only delta events, no complete events
+      expect(received).toContain('content_delta');
+      expect(received).toContain('thinking_delta');
+      expect(received).not.toContain('content_complete');
+      expect(received).not.toContain('thinking_complete');
     });
   });
 

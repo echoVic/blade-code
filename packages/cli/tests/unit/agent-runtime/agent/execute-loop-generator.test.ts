@@ -363,4 +363,163 @@ describe('executeLoopGenerator', () => {
       expect(result.error?.message).toBe('API failure');
     });
   });
+
+  // ------------------------------------------------------------------
+  // 6. Event protocol: delta 是唯一内容信号，content_complete/thinking_complete 不发射
+  // ------------------------------------------------------------------
+  describe('event protocol: delta-only content signals', () => {
+    it('non-streaming turn emits content_delta but NOT content_complete', async () => {
+      const deps = createMockDeps();
+      (deps.chatService.chat as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        content: 'Hello world',
+        reasoningContent: 'I should greet',
+        toolCalls: undefined,
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+        finishReason: 'stop',
+      });
+      const context = createMockContext();
+
+      const { events } = await drainGenerator(
+        executeLoopGenerator(deps, 'Hi', context, { stream: false } as LoopOptions, undefined),
+      );
+
+      // delta 应存在
+      const contentDeltas = events.filter((e) => e.kind === 'content_delta');
+      expect(contentDeltas.length).toBe(1);
+      expect((contentDeltas[0] as { delta: string }).delta).toBe('Hello world');
+
+      const thinkingDeltas = events.filter((e) => e.kind === 'thinking_delta');
+      expect(thinkingDeltas.length).toBe(1);
+      expect((thinkingDeltas[0] as { delta: string }).delta).toBe('I should greet');
+
+      // complete 不应存在
+      expect(events.filter((e) => e.kind === 'content_complete')).toHaveLength(0);
+      expect(events.filter((e) => e.kind === 'thinking_complete')).toHaveLength(0);
+
+      // stream_end 必须存在
+      expect(events.filter((e) => e.kind === 'stream_end')).toHaveLength(1);
+    });
+
+    it('non-streaming turn with empty content still emits stream_end', async () => {
+      const deps = createMockDeps();
+      (deps.chatService.chat as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        content: '',
+        toolCalls: undefined,
+        usage: { promptTokens: 10, completionTokens: 0, totalTokens: 10 },
+        finishReason: 'stop',
+      });
+      const context = createMockContext();
+
+      const { events } = await drainGenerator(
+        executeLoopGenerator(deps, 'Hi', context, { stream: false } as LoopOptions, undefined),
+      );
+
+      expect(events.filter((e) => e.kind === 'content_delta')).toHaveLength(0);
+      expect(events.filter((e) => e.kind === 'content_complete')).toHaveLength(0);
+      expect(events.filter((e) => e.kind === 'stream_end')).toHaveLength(1);
+    });
+
+    it('event ordering: turn_start → content_delta → stream_end', async () => {
+      const deps = createMockDeps();
+      (deps.chatService.chat as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        content: 'Result',
+        toolCalls: undefined,
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+        finishReason: 'stop',
+      });
+      const context = createMockContext();
+
+      const { events } = await drainGenerator(
+        executeLoopGenerator(deps, 'Hi', context, { stream: false } as LoopOptions, undefined),
+      );
+
+      const kinds = events.map((e) => e.kind);
+      const turnIdx = kinds.indexOf('turn_start');
+      const deltaIdx = kinds.indexOf('content_delta');
+      const endIdx = kinds.indexOf('stream_end');
+
+      expect(turnIdx).toBeGreaterThanOrEqual(0);
+      expect(deltaIdx).toBeGreaterThan(turnIdx);
+      expect(endIdx).toBeGreaterThan(deltaIdx);
+    });
+  });
+
+  // ------------------------------------------------------------------
+  // 7. Continue 分支必须保留 assistant 消息到历史
+  // ------------------------------------------------------------------
+  describe('continue branches preserve assistant messages in history', () => {
+    it('incomplete-intent retry writes assistant message before continue', async () => {
+      const deps = createMockDeps();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      // Turn 1: 触发 incomplete-intent（以 "让我先" 结尾）
+      chatMock.mockResolvedValueOnce({
+        content: '让我先查看一下文件',
+        toolCalls: undefined,
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+        finishReason: 'stop',
+      });
+      // Turn 2: 正常完成
+      chatMock.mockResolvedValueOnce({
+        content: 'Done.',
+        toolCalls: undefined,
+        usage: { promptTokens: 30, completionTokens: 10, totalTokens: 40 },
+        finishReason: 'stop',
+      });
+
+      const context = createMockContext();
+      const { result } = await drainGenerator(
+        executeLoopGenerator(deps, 'Fix the bug', context, { stream: false } as LoopOptions, undefined),
+      );
+
+      expect(result.success).toBe(true);
+      // context.messages 应包含 turn 1 的 assistant 消息
+      const assistantMessages = context.messages.filter(
+        (m: { role: string }) => m.role === 'assistant',
+      );
+      expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
+      // 第一条 assistant 消息是 incomplete-intent 那轮的输出
+      expect(assistantMessages[0].content).toBe('让我先查看一下文件');
+    });
+
+    it('stop-hook continue writes assistant message before continue', async () => {
+      // 覆盖 HookManager mock：第一次 shouldStop=false（continue），第二次 shouldStop=true
+      const { HookManager } = await import('../../../../src/hooks/HookManager.js');
+      const mockHookMgr = (HookManager.getInstance as ReturnType<typeof vi.fn>)();
+      (mockHookMgr.executeStopHooks as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ shouldStop: false, reason: 'keep going' })
+        .mockResolvedValueOnce({ shouldStop: true });
+
+      const deps = createMockDeps();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      // Turn 1: 正常内容，stop hook 说 continue
+      chatMock.mockResolvedValueOnce({
+        content: 'First part of work',
+        toolCalls: undefined,
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+        finishReason: 'stop',
+      });
+      // Turn 2: 正常完成，stop hook 说 stop
+      chatMock.mockResolvedValueOnce({
+        content: 'All done.',
+        toolCalls: undefined,
+        usage: { promptTokens: 30, completionTokens: 10, totalTokens: 40 },
+        finishReason: 'stop',
+      });
+
+      const context = createMockContext();
+      const { result } = await drainGenerator(
+        executeLoopGenerator(deps, 'Do the work', context, { stream: false } as LoopOptions, undefined),
+      );
+
+      expect(result.success).toBe(true);
+      // context.messages 应包含 turn 1 的 assistant 消息
+      const assistantMessages = context.messages.filter(
+        (m: { role: string }) => m.role === 'assistant',
+      );
+      expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
+      expect(assistantMessages[0].content).toBe('First part of work');
+    });
+  });
 });

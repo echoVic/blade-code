@@ -773,20 +773,9 @@ Remember: Follow the above instructions carefully to complete the user's request
                 }
                 break;
 
-              // --- 完整内容（非流式 fallback，content_complete 只写 snapshot） ---
+              // --- deprecated: producer 不再发射 complete 事件 ---
               case 'content_complete':
-                if (event.content && event.content.trim()) {
-                  streamDebug('useCommandHandler', 'onContent (non-stream)', {
-                    contentLen: event.content.length,
-                  });
-                  sessionActions.addAssistantMessageAndClearThinking(event.content);
-                }
-                break;
-
               case 'thinking_complete':
-                if (thinkingModeEnabled && event.content) {
-                  sessionActions.setCurrentThinkingContent(event.content);
-                }
                 break;
 
               // --- stream_end 才 commit（原子操作：flush 缓冲区 + finalize 消息）---
