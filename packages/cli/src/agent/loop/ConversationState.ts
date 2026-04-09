@@ -151,12 +151,16 @@ export class ConversationState {
   }
 
   /**
-   * 追加消息到 history 和 pending（需要同时出现在持久历史和 LLM 消息中的消息，
-   * 如 recovery prompt、incomplete intent retry、stop hook continue）
+   * 直接追加消息到 history（跳过 pending）。
+   *
+   * 用于 recovery prompt、incomplete intent retry、stop hook continue 等场景：
+   * 这些消息在 `continue` 前写入，下一轮循环顶部会 commitPending() 后再调用
+   * toLLMMessages()，此时消息已在 history 中，LLM 自然可见。
+   *
+   * 不要同时推入 pending，否则 commitPending() 会再次把它推入 history 造成重复。
    */
-  appendBoth(msg: Message): void {
+  appendToHistory(msg: Message): void {
     this._history.push(msg);
-    this._pending.push(msg);
   }
 
   /**

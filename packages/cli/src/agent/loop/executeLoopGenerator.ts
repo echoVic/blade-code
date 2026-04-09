@@ -629,7 +629,7 @@ export async function* executeLoopGenerator(
             reasoningContent: turnResult.reasoningContent,
             tool_calls: turnResult.toolCalls,
           };
-          state.appendBoth(truncatedAssistantMsg);
+          state.appendToHistory(truncatedAssistantMsg);
 
           // Inject recovery prompt
           const recoveryMsg: Message = {
@@ -639,7 +639,7 @@ export async function* executeLoopGenerator(
               'Pick up mid-thought if that is where the cut happened. ' +
               'Break remaining work into smaller pieces.',
           };
-          state.appendBoth(recoveryMsg);
+          state.appendToHistory(recoveryMsg);
 
           continue; // Retry the turn
         }
@@ -670,7 +670,7 @@ export async function* executeLoopGenerator(
 
         if (isIncompleteIntent && recentRetries < 2) {
           const retryMsg: Message = { role: 'user', content: RETRY_PROMPT };
-          state.appendBoth(retryMsg);
+          state.appendToHistory(retryMsg);
           continue;
         }
 
@@ -690,7 +690,7 @@ export async function* executeLoopGenerator(
               ? `\n\n<system-reminder>\n${stopResult.continueReason}\n</system-reminder>`
               : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
             const continueMsg: Message = { role: 'user', content: continueMessage };
-            state.appendBoth(continueMsg);
+            state.appendToHistory(continueMsg);
             continue;
           }
         } catch (hookError) {
@@ -1096,7 +1096,7 @@ export async function* executeLoopGenerator(
                   'Please continue the conversation from where we left it off without asking the user any further questions. ' +
                   'Continue with the last task that you were asked to work on.',
               };
-              state.appendBoth(continueMessage);
+              state.appendToHistory(continueMessage);
 
               // 保存压缩数据到 JSONL
               try {
