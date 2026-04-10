@@ -137,6 +137,16 @@ async function drainGenerator(
   return { events, result: iterResult.value };
 }
 
+function createMockContextManager() {
+  const ids = ['msg-user-1', 'msg-assistant-1', 'msg-user-2', 'msg-assistant-2'];
+  return {
+    saveMessage: vi.fn().mockImplementation(async () => ids.shift() ?? `msg-${Date.now()}`),
+    saveToolUse: vi.fn(),
+    saveToolResult: vi.fn(),
+    saveCompaction: vi.fn(),
+  };
+}
+
 // ===== Tests =====
 
 describe('executeLoopGenerator', () => {
@@ -443,7 +453,7 @@ describe('executeLoopGenerator', () => {
   // 7. Continue 分支必须保留 assistant 消息到历史
   // ------------------------------------------------------------------
   describe('continue branches preserve assistant messages in history', () => {
-    it('incomplete-intent retry writes assistant message before continue', async () => {
+    it('incomplete-intent retry preserves assistant-before-control order in history', async () => {
       const deps = createMockDeps();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
 
@@ -473,11 +483,23 @@ describe('executeLoopGenerator', () => {
         (m: { role: string }) => m.role === 'assistant',
       );
       expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
-      // 第一条 assistant 消息是 incomplete-intent 那轮的输出
+      // 第一�� assistant 消息是 incomplete-intent 那轮的输出
       expect(assistantMessages[0].content).toBe('让我先查看一下文件');
+
+      // 关键顺序断言：assistant 消息必须紧挨在 retry 控制消息之前
+      const allMessages = context.messages;
+      const firstAssistantIdx = allMessages.findIndex(
+        (m: { role: string; content: unknown }) =>
+          m.role === 'assistant' && m.content === '让我先查看一下文件',
+      );
+      expect(firstAssistantIdx).toBeGreaterThanOrEqual(0);
+      // 下一条消息应该是 retry 控制消息（user role）
+      const nextMsg = allMessages[firstAssistantIdx + 1];
+      expect(nextMsg).toBeDefined();
+      expect(nextMsg.role).toBe('user');
     });
 
-    it('stop-hook continue writes assistant message before continue', async () => {
+    it('stop-hook continue preserves assistant-before-control order in history', async () => {
       // 覆盖 HookManager mock：第一次 shouldStop=false（continue），第二次 shouldStop=true
       const { HookManager } = await import('../../../../src/hooks/HookManager.js');
       const mockHookMgr = (HookManager.getInstance as ReturnType<typeof vi.fn>)();
@@ -515,6 +537,248 @@ describe('executeLoopGenerator', () => {
       );
       expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
       expect(assistantMessages[0].content).toBe('First part of work');
+
+      // 关键顺序断言：assistant 消息必须紧挨在 continue 控制消息之前
+      const allMessages = context.messages;
+      const firstAssistantIdx = allMessages.findIndex(
+        (m: { role: string; content: unknown }) =>
+          m.role === 'assistant' && m.content === 'First part of work',
+      );
+      expect(firstAssistantIdx).toBeGreaterThanOrEqual(0);
+      // 下一条消息应该是 continue 控制消息（user role）
+      const nextMsg = allMessages[firstAssistantIdx + 1];
+      expect(nextMsg).toBeDefined();
+      expect(nextMsg.role).toBe('user');
+    });
+
+    it('persists retry branch messages with a continuous parent UUID chain', async () => {
+      const contextMgr = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: vi.fn().mockReturnValue(contextMgr),
+        } as any,
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      chatMock
+        .mockResolvedValueOnce({
+          content: '让我先查看一下文件',
+          toolCalls: undefined,
+          usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: 'Done.',
+          toolCalls: undefined,
+          usage: { promptTokens: 30, completionTokens: 10, totalTokens: 40 },
+          finishReason: 'stop',
+        });
+
+      const context = createMockContext();
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Fix the bug',
+          context,
+          { stream: false } as LoopOptions,
+          undefined,
+        ),
+      );
+
+      expect(result.success).toBe(true);
+      expect(contextMgr.saveMessage.mock.calls).toHaveLength(4);
+      expect(
+        contextMgr.saveMessage.mock.calls.map(
+          ([sessionId, role, content, parentUuid]: [string, string, unknown, string | null]) => ({
+            sessionId,
+            role,
+            content,
+            parentUuid,
+          }),
+        ),
+      ).toEqual([
+        {
+          sessionId: 'test-session',
+          role: 'user',
+          content: 'Fix the bug',
+          parentUuid: null,
+        },
+        {
+          sessionId: 'test-session',
+          role: 'assistant',
+          content: '让我先查看一下文件',
+          parentUuid: 'msg-user-1',
+        },
+        {
+          sessionId: 'test-session',
+          role: 'user',
+          content: '请执行你提到的操作，不要只是描述。',
+          parentUuid: 'msg-assistant-1',
+        },
+        {
+          sessionId: 'test-session',
+          role: 'assistant',
+          content: 'Done.',
+          parentUuid: 'msg-user-2',
+        },
+      ]);
+    });
+
+    it('persists stop-hook continue messages with a continuous parent UUID chain', async () => {
+      const { HookManager } = await import('../../../../src/hooks/HookManager.js');
+      const mockHookMgr = (HookManager.getInstance as ReturnType<typeof vi.fn>)();
+      (mockHookMgr.executeStopHooks as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ shouldStop: false, continueReason: 'keep going' })
+        .mockResolvedValueOnce({ shouldStop: true });
+
+      const contextMgr = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: vi.fn().mockReturnValue(contextMgr),
+        } as any,
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      chatMock
+        .mockResolvedValueOnce({
+          content: 'First part of work',
+          toolCalls: undefined,
+          usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: 'All done.',
+          toolCalls: undefined,
+          usage: { promptTokens: 30, completionTokens: 10, totalTokens: 40 },
+          finishReason: 'stop',
+        });
+
+      const context = createMockContext();
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Do the work',
+          context,
+          { stream: false } as LoopOptions,
+          undefined,
+        ),
+      );
+
+      expect(result.success).toBe(true);
+      expect(contextMgr.saveMessage.mock.calls).toHaveLength(4);
+      expect(
+        contextMgr.saveMessage.mock.calls.map(
+          ([sessionId, role, content, parentUuid]: [string, string, unknown, string | null]) => ({
+            sessionId,
+            role,
+            content,
+            parentUuid,
+          }),
+        ),
+      ).toEqual([
+        {
+          sessionId: 'test-session',
+          role: 'user',
+          content: 'Do the work',
+          parentUuid: null,
+        },
+        {
+          sessionId: 'test-session',
+          role: 'assistant',
+          content: 'First part of work',
+          parentUuid: 'msg-user-1',
+        },
+        {
+          sessionId: 'test-session',
+          role: 'user',
+          content: '\n\n<system-reminder>\nkeep going\n</system-reminder>',
+          parentUuid: 'msg-assistant-1',
+        },
+        {
+          sessionId: 'test-session',
+          role: 'assistant',
+          content: 'All done.',
+          parentUuid: 'msg-user-2',
+        },
+      ]);
+    });
+  });
+
+  describe('recovery branch persistence', () => {
+    it('persists recovery assistant and prompt with a continuous parent UUID chain', async () => {
+      const contextMgr = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: vi.fn().mockReturnValue(contextMgr),
+        } as any,
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      chatMock
+        .mockResolvedValueOnce({
+          content: 'Partial output',
+          toolCalls: undefined,
+          usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce({
+          content: 'Final output.',
+          toolCalls: undefined,
+          usage: { promptTokens: 30, completionTokens: 10, totalTokens: 40 },
+          finishReason: 'stop',
+        });
+
+      const context = createMockContext();
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Write the answer',
+          context,
+          { stream: false } as LoopOptions,
+          undefined,
+        ),
+      );
+
+      expect(result.success).toBe(true);
+      expect(contextMgr.saveMessage.mock.calls).toHaveLength(4);
+      expect(
+        contextMgr.saveMessage.mock.calls.map(
+          ([sessionId, role, content, parentUuid]: [string, string, unknown, string | null]) => ({
+            sessionId,
+            role,
+            content,
+            parentUuid,
+          }),
+        ),
+      ).toEqual([
+        {
+          sessionId: 'test-session',
+          role: 'user',
+          content: 'Write the answer',
+          parentUuid: null,
+        },
+        {
+          sessionId: 'test-session',
+          role: 'assistant',
+          content: 'Partial output',
+          parentUuid: 'msg-user-1',
+        },
+        {
+          sessionId: 'test-session',
+          role: 'user',
+          content:
+            'Output token limit hit. Resume directly — no apology, no recap. ' +
+            'Pick up mid-thought if that is where the cut happened. ' +
+            'Break remaining work into smaller pieces.',
+          parentUuid: 'msg-assistant-1',
+        },
+        {
+          sessionId: 'test-session',
+          role: 'assistant',
+          content: 'Final output.',
+          parentUuid: 'msg-user-2',
+        },
+      ]);
     });
   });
 });

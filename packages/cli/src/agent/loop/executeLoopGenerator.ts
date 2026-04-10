@@ -622,6 +622,12 @@ export async function* executeLoopGenerator(
         };
         state.appendToHistory(truncatedAssistantMsg);
 
+        // JSONL 持久化：确保 resume 时能恢复此 assistant 消息
+        const recoveryAssistantUuid = await saveAssistantMessage(
+          deps, context, turnResult.content || '', lastMessageUuid,
+        );
+        if (recoveryAssistantUuid) lastMessageUuid = recoveryAssistantUuid;
+
         // Inject recovery prompt
         const recoveryMsg: Message = {
           role: 'user',
@@ -631,6 +637,10 @@ export async function* executeLoopGenerator(
             'Break remaining work into smaller pieces.',
         };
         state.appendToHistory(recoveryMsg);
+
+        // JSONL 持久化：确保 resume 时能恢复此 recovery prompt
+        const recoveryUserUuid = await saveUserMessage(deps, context, recoveryMsg.content as string, lastMessageUuid);
+        if (recoveryUserUuid) lastMessageUuid = recoveryUserUuid;
 
         continue; // Retry the turn
       }
@@ -678,14 +688,26 @@ export async function* executeLoopGenerator(
 
         if (intentAction.action === 'retry') {
           incompleteIntentRetryCount++;
-          // 先写入本轮 assistant 消息，确保下一轮 LLM 能看到自己刚才的输出
+          // assistant 输出与 retry 控制消息必须走同一条 pending 队列，保证下一轮看到的时序正确
           state.appendAssistant({
             role: 'assistant',
             content: turnResult.content || '',
             reasoningContent: turnResult.reasoningContent,
           });
+
+          // JSONL 持久化：确保 resume 时能恢复此 assistant 消息
+          const retryAssistantUuid = await saveAssistantMessage(
+            deps, context, turnResult.content || '', lastMessageUuid,
+          );
+          if (retryAssistantUuid) lastMessageUuid = retryAssistantUuid;
+
           const retryMsg: Message = { role: 'user', content: intentAction.prompt };
-          state.appendToHistory(retryMsg);
+          state.appendControl('user', retryMsg);
+
+          // JSONL 持久化：确保 resume 时能恢复此 retry prompt
+          const retryUserUuid = await saveUserMessage(deps, context, retryMsg.content as string, lastMessageUuid);
+          if (retryUserUuid) lastMessageUuid = retryUserUuid;
+
           continue;
         }
 
@@ -701,17 +723,29 @@ export async function* executeLoopGenerator(
         });
 
         if (stopAction.action === 'continue') {
-          // 先写入本轮 assistant 消息，确保下一轮 LLM 能看到自己刚才的输出
+          // assistant 输出与 continue 控制消息必须走同一条 pending 队列，保证下一轮看到的时序正确
           state.appendAssistant({
             role: 'assistant',
             content: turnResult.content || '',
             reasoningContent: turnResult.reasoningContent,
           });
+
+          // JSONL 持久化：确保 resume 时能恢复此 assistant 消息
+          const continueAssistantUuid = await saveAssistantMessage(
+            deps, context, turnResult.content || '', lastMessageUuid,
+          );
+          if (continueAssistantUuid) lastMessageUuid = continueAssistantUuid;
+
           const continueMessage = stopAction.reason
             ? `\n\n<system-reminder>\n${stopAction.reason}\n</system-reminder>`
             : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
           const continueMsg: Message = { role: 'user', content: continueMessage };
-          state.appendToHistory(continueMsg);
+          state.appendControl('user', continueMsg);
+
+          // JSONL 持久化：确保 resume 时能恢复此 continue prompt
+          const continueUserUuid = await saveUserMessage(deps, context, continueMsg.content as string, lastMessageUuid);
+          if (continueUserUuid) lastMessageUuid = continueUserUuid;
+
           continue;
         }
 

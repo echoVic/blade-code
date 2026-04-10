@@ -157,11 +157,9 @@ export class ConversationState {
   /**
    * 直接追加消息到 history（跳过 pending）。
    *
-   * 用于 recovery prompt、incomplete intent retry、stop hook continue 等场景：
-   * 这些消息在 `continue` 前写入，下一轮循环顶部会 commitPending() 后再调用
-   * toLLMMessages()，此时消息已在 history 中，LLM 自然可见。
-   *
-   * 不要同时推入 pending，否则 commitPending() 会再次把它推入 history 造成重复。
+   * 用于 recovery prompt 等需要绕过 pending 队列的场景。
+   * 注意：不要与 appendAssistant/appendControl 混用同一组消息，
+   * 否则 commitPending() 会导致顺序错乱或重复。
    */
   appendToHistory(msg: Message): void {
     this._history.push(msg);

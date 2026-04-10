@@ -26,6 +26,7 @@ export async function saveUserMessage(
   deps: LoopDependencies,
   context: ChatContext,
   message: UserMessageContent,
+  parentUuid: string | null = null,
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
@@ -40,7 +41,7 @@ export async function saveUserMessage(
         context.sessionId,
         'user',
         message,
-        null,
+        parentUuid,
         undefined,
         context.subagentInfo,
       );

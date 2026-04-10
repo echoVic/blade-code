@@ -1,31 +1,24 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SessionService } from '../../../../src/services/SessionService.js';
 
 const readdirMock = vi.fn();
 const readFileMock = vi.fn();
 
-const pathEscapeModulePath = path.resolve(
-  path.dirname(fileURLToPath(new URL(import.meta.url))),
-  '../../../../src/context/storage/pathUtils.js'
-);
+vi.mock('node:fs/promises', () => ({
+  readdir: (...args: any[]) => readdirMock(...args),
+  readFile: (...args: any[]) => readFileMock(...args),
+}));
+
+vi.mock('../../../../src/context/storage/pathUtils.js', () => ({
+  getBladeStorageRoot: () => '/blade-root',
+  unescapeProjectPath: (escaped: string) => `/projects/${escaped}`,
+  getSessionFilePath: (projectPath: string, sessionId: string) =>
+    `${projectPath}/sessions/${sessionId}.jsonl`,
+}));
 
 beforeEach(() => {
-  vi.resetModules();
   readdirMock.mockReset();
   readFileMock.mockReset();
-
-  vi.doMock('node:fs/promises', () => ({
-    readdir: (...args: any[]) => readdirMock(...args),
-    readFile: (...args: any[]) => readFileMock(...args),
-  }));
-
-  vi.doMock(pathEscapeModulePath, () => ({
-    getBladeStorageRoot: () => '/blade-root',
-    unescapeProjectPath: (escaped: string) => `/projects/${escaped}`,
-    getSessionFilePath: (projectPath: string, sessionId: string) =>
-      `${projectPath}/sessions/${sessionId}.jsonl`,
-  }));
 });
 
 const makeDirent = (name: string, isDir: boolean) => ({
@@ -155,7 +148,6 @@ describe('SessionService with mocked filesystem', () => {
       throw new Error(`unexpected file ${filePath}`);
     });
 
-    const { SessionService } = await import('../../../../src/services/SessionService.js');
     const sessions = await SessionService.listSessions();
 
     expect(sessions.map((s) => s.sessionId)).toEqual(['session-b', 'session-a']);
@@ -221,7 +213,6 @@ describe('SessionService with mocked filesystem', () => {
       ].join('\n')
     );
 
-    const { SessionService } = await import('../../../../src/services/SessionService.js');
     const originalResolver = (SessionService as any).getSessionFilePath;
     (SessionService as any).getSessionFilePath = () =>
       '/project/demo/sessions/session-x.jsonl';
@@ -246,7 +237,6 @@ describe('SessionService with mocked filesystem', () => {
   });
 
   it('convertJSONLToMessages 应处理消息与工具结果', async () => {
-    const { SessionService } = await import('../../../../src/services/SessionService.js');
     const messages = SessionService.convertJSONLToMessages([
       {
         id: 'e1',
