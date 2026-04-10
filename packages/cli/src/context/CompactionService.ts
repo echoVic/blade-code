@@ -202,7 +202,7 @@ export class CompactionService {
       console.log(
         '[CompactionService] Token 变化:',
         preTokens,
-        '→',
+        '->',
         postTokens,
         `(-${((1 - postTokens / preTokens) * 100).toFixed(1)}%)`
       );

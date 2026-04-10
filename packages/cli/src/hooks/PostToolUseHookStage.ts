@@ -17,7 +17,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * PostToolUse Hook 阶段
  *
  * 插入到 Execution 和 Formatting 之间:
- * Discovery → Permission → Hook(Pre) → Confirmation → Execution → **PostHook** → Formatting
+ * Discovery -> Permission -> Hook(Pre) -> Confirmation -> Execution -> **PostHook** -> Formatting
  */
 export class PostToolUseHookStage implements PipelineStage {
   readonly name = 'post-hook';

@@ -44,17 +44,17 @@ function getStatusMessage(): { type: 'info' | 'error'; content: string } {
     case IdeConnectionStatus.Connected:
       return {
         type: 'info',
-        content: `🟢 已连接到 ${connectedIdeName || 'IDE'} (端口: ${idePort})`,
+        content: `[OK] 已连接到 ${connectedIdeName || 'IDE'} (端口: ${idePort})`,
       };
     case IdeConnectionStatus.Connecting:
       return {
         type: 'info',
-        content: '🟡 正在连接...',
+        content: '正在连接...',
       };
     default:
       return {
         type: 'error',
-        content: '🔴 未连接到 IDE',
+        content: '未连接到 IDE',
       };
   }
 }
@@ -105,7 +105,7 @@ async function handleStatus(): Promise<string> {
   lines.push('');
 
   // 2. 检测已安装的 IDE
-  lines.push('📦 已安装的 IDE:');
+  lines.push('已安装的 IDE:');
   const installedIdes = await IdeInstaller.getInstalledIdes();
 
   if (installedIdes.length === 0) {
@@ -120,7 +120,7 @@ async function handleStatus(): Promise<string> {
   // 3. 检测当前环境
   const currentIde = await IdeDetector.detectIde();
   if (currentIde) {
-    lines.push(`🖥️  当前环境: ${currentIde.name} ${currentIde.version}`);
+    lines.push(`当前环境: ${currentIde.name} ${currentIde.version}`);
 
     // 显示已安装的扩展数量
     if (currentIde.extensions.length > 0) {
@@ -132,13 +132,13 @@ async function handleStatus(): Promise<string> {
   const port = detectIdePort();
   const portInfo = readPortFile();
   if (port) {
-    lines.push(`🔌 IDE 端口: ${port}`);
+    lines.push(`IDE 端口: ${port}`);
     if (portInfo && portInfo.workspaceFolders.length > 0) {
       lines.push(`   工作区: ${portInfo.workspaceFolders[0]}`);
     }
   } else {
     lines.push('');
-    lines.push('💡 提示: 在 VS Code 中安装 Blade Code 插件后，运行 /ide connect 连接');
+    lines.push('提示: 在 VS Code 中安装 Blade Code 插件后，运行 /ide connect 连接');
   }
 
   return lines.join('\n');
@@ -151,7 +151,7 @@ async function handleConnect(): Promise<string> {
   const port = detectIdePort();
 
   if (!port) {
-    return `❌ 未检测到 IDE 端口
+    return `未检测到 IDE 端口
 
 请确保:
 1. 已在 VS Code 中安装 Blade Code 插件
@@ -190,7 +190,7 @@ async function handleConnect(): Promise<string> {
       });
     });
 
-    return `✅ 成功连接到 IDE (端口: ${port})
+    return `[OK] 成功连接到 IDE (端口: ${port})
 
 现在可以使用以下功能:
   • 在 IDE 中打开文件
@@ -198,7 +198,7 @@ async function handleConnect(): Promise<string> {
   • 查看打开的编辑器列表`;
   } catch (error) {
     ideConnectionStatus = IdeConnectionStatus.Disconnected;
-    return `❌ 连接失败: ${error instanceof Error ? error.message : '未知错误'}
+    return `连接失败: ${error instanceof Error ? error.message : '未知错误'}
 
 请检查:
 1. VS Code 插件是否正在运行
@@ -213,21 +213,21 @@ async function handleConnect(): Promise<string> {
 async function handleInstall(): Promise<string> {
   const lines: string[] = [];
 
-  lines.push('📦 安装 Blade Code VS Code 插件');
+  lines.push('安装 Blade Code VS Code 插件');
   lines.push('');
 
   // 检测 VS Code
   const isVsCodeInstalled = await IdeInstaller.isIdeInstalled('vscode');
 
   if (!isVsCodeInstalled) {
-    lines.push('❌ 未检测到 VS Code');
+    lines.push('未检测到 VS Code');
     lines.push('');
     lines.push('请先安装 VS Code:');
     lines.push('  https://code.visualstudio.com/');
     return lines.join('\n');
   }
 
-  lines.push('✅ 检测到 VS Code');
+  lines.push('[OK] 检测到 VS Code');
   lines.push('');
 
   // 提供安装方式
@@ -251,14 +251,14 @@ async function handleInstall(): Promise<string> {
  */
 async function handleDisconnect(): Promise<string> {
   if (ideConnectionStatus === IdeConnectionStatus.Disconnected) {
-    return '⚠️ 当前未连接到任何 IDE';
+    return '[WARN] 当前未连接到任何 IDE';
   }
 
   ideConnectionStatus = IdeConnectionStatus.Disconnected;
   connectedIdeName = null;
   idePort = null;
 
-  return '✅ 已断开与 IDE 的连接';
+  return '[OK] 已断开与 IDE 的连接';
 }
 
 const ideCommand: SlashCommand = {

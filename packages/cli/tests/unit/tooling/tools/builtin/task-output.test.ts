@@ -275,7 +275,7 @@ describe('TaskOutput Tool', () => {
   });
 
   describe('status display', () => {
-    it('running 状态应显示 ⏳', async () => {
+    it('running 状态应显示 [WAIT]', async () => {
       mockAgentManager.getAgent.mockReturnValue({
         id: 'agent_running',
         subagentType: 'Explore',
@@ -291,10 +291,10 @@ describe('TaskOutput Tool', () => {
         timeout: 30000,
       });
 
-      expect(result.displayContent).toContain('⏳');
+      expect(result.displayContent).toContain('[WAIT]');
     });
 
-    it('completed 状态应显示 ✅', async () => {
+    it('completed 状态应显示 [OK]', async () => {
       mockAgentManager.getAgent.mockReturnValue({
         id: 'agent_done',
         subagentType: 'Explore',
@@ -311,10 +311,10 @@ describe('TaskOutput Tool', () => {
         timeout: 30000,
       });
 
-      expect(result.displayContent).toContain('✅');
+      expect(result.displayContent).toContain('[OK]');
     });
 
-    it('failed 状态应显示 ❌', async () => {
+    it('failed 状态应显示 [FAIL]', async () => {
       mockAgentManager.getAgent.mockReturnValue({
         id: 'agent_failed',
         subagentType: 'Explore',
@@ -331,7 +331,7 @@ describe('TaskOutput Tool', () => {
         timeout: 30000,
       });
 
-      expect(result.displayContent).toContain('❌');
+      expect(result.displayContent).toContain('[FAIL]');
       expect(result.displayContent).toContain('Something broke');
     });
   });

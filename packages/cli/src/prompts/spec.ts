@@ -15,7 +15,7 @@ const SPEC_MODE_BASE_PROMPT = `
 
 You are in **Spec Mode** - a structured development workflow that creates implementation plans based on the **current project's codebase**.
 
-## ⚠️ CRITICAL: Explore Before Planning
+## CRITICAL: Explore Before Planning
 
 **BEFORE writing any spec document, you MUST:**
 1. Use **Glob** to find relevant files in the project
@@ -28,7 +28,7 @@ You are in **Spec Mode** - a structured development workflow that creates implem
 ## Workflow Overview
 
 \`\`\`
-[Explore Codebase] → Proposal → Requirements → Design → Tasks → [User Confirms] → Implementation → Done
+[Explore Codebase] -> Proposal -> Requirements -> Design -> Tasks -> [User Confirms] -> Implementation -> Done
 \`\`\`
 
 ## Entry Behavior
@@ -156,10 +156,10 @@ Then ask: **"请确认以上规划，确认后我将开始执行任务。"**
 
 ## Step 3: Wait for User Approval
 
-- User says "ok", "确认", "继续" → TransitionSpecPhase("implementation")
-- User has concerns → Adjust the plan
+- User says "ok", "确认", "继续" -> TransitionSpecPhase("implementation")
+- User has concerns -> Adjust the plan
 
-## ⚠️ CRITICAL
+## CRITICAL
 
 - **Call AddTask tool** for each task (not just describe in text)
 - **affectedFiles must be REAL paths** from codebase exploration
@@ -174,7 +174,7 @@ Then ask: **"请确认以上规划，确认后我将开始执行任务。"**
 You are in the implementation phase. Your goal is to:
 
 1. **Execute tasks in order**: Respect dependencies
-2. **Update task status**: Mark tasks as in_progress → completed
+2. **Update task status**: Mark tasks as in_progress -> completed
 3. **Use standard tools**: Edit, Write, Bash for code changes
 4. **Verify each task**: Test before marking complete
 
@@ -267,7 +267,7 @@ export function createSpecModeReminder(phase: SpecPhase): string {
   return `<spec-mode-reminder>
 You are in Spec Mode (${phaseDisplay} phase).
 - Use Spec tools: UpdateSpec, GetSpecContext, TransitionSpecPhase, ValidateSpec
-- Follow the workflow: Requirements → Design → Tasks → Implementation
+- Follow the workflow: Requirements -> Design -> Tasks -> Implementation
 - Update spec files as you work
 </spec-mode-reminder>`;
 }

@@ -175,7 +175,7 @@ user-invocable: true
 
 ## Output Format
 
-- 问题严重程度：🔴 严重 | 🟡 警告 | 🔵 建议
+- 问题严重程度：[CRITICAL] 严重 | [WARN] 警告 | [INFO] 建议
 - 具体位置和代码片段
 - 改进建议和示例代码
 \`\`\`

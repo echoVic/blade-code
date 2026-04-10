@@ -23,7 +23,7 @@ const lowlight = createLowlight(common);
 // ==================== HAST 结果 LRU 缓存 ====================
 // 缓存 lowlight 的 HAST 解析结果，避免重复解析相同代码行
 const HIGHLIGHT_CACHE_CAPACITY = 200;
-const highlightCache = new Map<string, unknown>(); // key → HAST root node
+const highlightCache = new Map<string, unknown>(); // key -> HAST root node
 
 function getCachedHighlight(
   line: string,

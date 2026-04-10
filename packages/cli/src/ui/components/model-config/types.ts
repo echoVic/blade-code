@@ -77,32 +77,32 @@ export const OAUTH_PROVIDERS: Record<
 > = {
   antigravity: {
     bladeProvider: 'antigravity',
-    icon: '🚀',
+    icon: '',
     description: 'OAuth 登录使用 Claude/Gemini (需 Code Assist 订阅)',
   },
   copilot: {
     bladeProvider: 'copilot',
-    icon: '🐙',
+    icon: '',
     description: 'OAuth 登录使用 GPT/Claude/Gemini (需 Copilot 订阅)',
   },
 };
 
 export const PROVIDER_ICONS: Record<string, string> = {
-  anthropic: '🤖',
-  openai: '⚡',
-  'google-generative-ai': '✨',
-  deepseek: '🌊',
-  groq: '🚀',
-  openrouter: '🔀',
-  azure: '☁️',
-  ollama: '🦙',
-  together: '🤝',
-  fireworks: '🎆',
-  mistral: '🌀',
-  cohere: '🔮',
-  perplexity: '🔍',
-  xai: '🅧',
-  default: '🔌',
+  anthropic: '',
+  openai: '',
+  'google-generative-ai': '',
+  deepseek: '',
+  groq: '',
+  openrouter: '',
+  azure: '',
+  ollama: '',
+  together: '',
+  fireworks: '',
+  mistral: '',
+  cohere: '',
+  perplexity: '',
+  xai: '',
+  default: '',
 };
 
 export const DEFAULT_BASE_URLS: Record<string, string> = {

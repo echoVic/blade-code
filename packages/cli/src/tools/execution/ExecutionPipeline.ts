@@ -28,7 +28,7 @@ import {
 
 /**
  * 7阶段执行管道
- * Discovery → Permission → Hook(Pre) → Confirmation → Execution → PostHook → Formatting
+ * Discovery -> Permission -> Hook(Pre) -> Confirmation -> Execution -> PostHook -> Formatting
  */
 export class ExecutionPipeline extends EventEmitter {
   private stages: PipelineStage[];

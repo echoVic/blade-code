@@ -78,7 +78,7 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
       return {
         success: false,
         llmContent: 'No active spec to exit from.',
-        displayContent: '❌ No active spec',
+        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
@@ -95,7 +95,7 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
       if (archive && context.confirmationHandler) {
         const incompleteWarning =
           progress.total > 0 && progress.completed < progress.total
-            ? `\n\n⚠️ Warning: ${progress.total - progress.completed} tasks are not completed.`
+            ? `\n\n[WARN] Warning: ${progress.total - progress.completed} tasks are not completed.`
             : '';
 
         const response = await context.confirmationHandler.requestConfirmation({
@@ -112,7 +112,7 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
           return {
             success: true,
             llmContent: 'Archive cancelled. Still in Spec mode.',
-            displayContent: '⚠️ Archive cancelled',
+            displayContent: '[WARN] Archive cancelled',
             metadata: {
               archived: false,
               stillActive: true,
@@ -128,7 +128,7 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
           return {
             success: false,
             llmContent: `Failed to archive: ${result.message}`,
-            displayContent: '❌ Archive failed',
+            displayContent: '[FAIL] Archive failed',
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
               message: result.error || 'Archive failed',
@@ -139,14 +139,14 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
         return {
           success: true,
           llmContent:
-            `✅ Spec "${featureName}" archived successfully!\n\n` +
-            `📊 Final Status:\n` +
+            `[OK] Spec "${featureName}" archived successfully!\n\n` +
+            `Final Status:\n` +
             `- Phase: ${PHASE_DISPLAY_NAMES[currentPhase]}\n` +
             `- Tasks: ${progress.completed}/${progress.total} completed\n` +
             (summary ? `- Summary: ${summary}\n` : '') +
-            `\n📁 Location: .blade/archive/${featureName}/\n\n` +
+            `\nLocation: .blade/archive/${featureName}/\n\n` +
             'Exited Spec mode. You can start a new spec or continue with regular work.',
-          displayContent: `✅ Archived: ${featureName}`,
+          displayContent: `[OK] Archived: ${featureName}`,
           metadata: {
             archived: true,
             featureName,
@@ -164,14 +164,14 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
       return {
         success: true,
         llmContent:
-          `✅ Exited Spec mode for "${featureName}"\n\n` +
-          `📊 Current Status:\n` +
+          `[OK] Exited Spec mode for "${featureName}"\n\n` +
+          `Current Status:\n` +
           `- Phase: ${PHASE_DISPLAY_NAMES[currentPhase]}\n` +
           `- Tasks: ${progress.completed}/${progress.total} completed\n\n` +
-          `📁 Spec preserved at: .blade/changes/${featureName}/\n` +
-          `💡 Resume later with: /spec load ${featureName}\n\n` +
+          `Spec preserved at: .blade/changes/${featureName}/\n` +
+          `Resume later with: /spec load ${featureName}\n\n` +
           'You can now work on other tasks or start a new spec.',
-        displayContent: `✅ Exited: ${featureName} (preserved)`,
+        displayContent: `[OK] Exited: ${featureName} (preserved)`,
         metadata: {
           archived: false,
           featureName,
@@ -184,7 +184,7 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
       return {
         success: false,
         llmContent: `Exit failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        displayContent: '❌ Exit failed',
+        displayContent: '[FAIL] Exit failed',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: error instanceof Error ? error.message : 'Exit error',

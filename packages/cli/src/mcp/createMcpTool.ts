@@ -14,7 +14,7 @@ export function createMcpTool(
   toolDef: McpToolDefinition,
   customName?: string // 可选的自定义工具名（用于冲突处理）
 ) {
-  // 1. JSON Schema → Zod Schema 转换（带错误处理）
+  // 1. JSON Schema -> Zod Schema 转换（带错误处理）
   let zodSchema: z.ZodSchema;
   try {
     zodSchema = convertJsonSchemaToZod(toolDef.inputSchema);
@@ -73,7 +73,7 @@ export function createMcpTool(
           return {
             success: false,
             llmContent: llmContent || 'MCP tool execution failed',
-            displayContent: `❌ ${displayContent || 'MCP工具执行失败'}`,
+            displayContent: `[FAIL] ${displayContent || 'MCP工具执行失败'}`,
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
               message: llmContent || 'MCP tool execution failed',
@@ -84,7 +84,7 @@ export function createMcpTool(
         return {
           success: true,
           llmContent: llmContent || 'Execution succeeded',
-          displayContent: `✅ MCP工具 ${toolDef.name} 执行成功\n${displayContent}`,
+          displayContent: `[OK] MCP工具 ${toolDef.name} 执行成功\n${displayContent}`,
           metadata: {
             serverName,
             toolName: toolDef.name,
@@ -95,7 +95,7 @@ export function createMcpTool(
         return {
           success: false,
           llmContent: `MCP tool execution failed: ${(error as Error).message}`,
-          displayContent: `❌ ${(error as Error).message}`,
+          displayContent: `[FAIL] ${(error as Error).message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: (error as Error).message,
@@ -107,7 +107,7 @@ export function createMcpTool(
 }
 
 /**
- * JSON Schema → Zod 转换辅助函数
+ * JSON Schema -> Zod 转换辅助函数
  */
 function convertJsonSchemaToZod(jsonSchema: JSONSchema7): z.ZodSchema {
   // 处理 object 类型

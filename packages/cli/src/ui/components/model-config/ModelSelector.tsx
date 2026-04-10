@@ -22,7 +22,7 @@ interface ModelSelectorProps {
 
 const SelectIndicator: React.FC<{ isSelected?: boolean }> = ({ isSelected }) => (
   <Box marginRight={1}>
-    <Text color={isSelected ? 'yellow' : 'gray'}>{isSelected ? '▶' : ' '}</Text>
+    <Text color={isSelected ? 'yellow' : 'gray'}>{isSelected ? '>' : ' '}</Text>
   </Box>
 );
 
@@ -112,7 +112,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   if (isLoading) {
     return (
       <Box flexDirection="column">
-        <Text color="yellow">⏳ 正在加载 {provider.name} 模型列表...</Text>
+        <Text color="yellow">正在加载 {provider.name} 模型列表...</Text>
       </Box>
     );
   }
@@ -120,7 +120,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   if (error) {
     return (
       <Box flexDirection="column">
-        <Text color="red">❌ {error}</Text>
+        <Text color="red">{error}</Text>
         <Text dimColor>按 Esc 返回</Text>
       </Box>
     );
@@ -130,7 +130,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold color="blue">
-          🤖 Step 3: 选择模型
+          Step 3: 选择模型
         </Text>
       </Box>
 
@@ -150,7 +150,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             </Text>
           </Box>
           <Box>
-            <Text bold color="cyan">▶ </Text>
+            <Text bold color="cyan">{'> '}</Text>
             <TextInput
               value={customModel}
               onChange={setCustomModel}
@@ -162,7 +162,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       ) : (
         <>
           <Box marginBottom={1}>
-            <Text color="cyan">🔍 </Text>
+            <Text color="cyan">{'> '}</Text>
             <TextInput
               value={searchQuery}
               onChange={setSearchQuery}

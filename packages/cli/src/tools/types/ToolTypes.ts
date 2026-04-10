@@ -332,12 +332,12 @@ export function isEditMetadata(
  * @example
  * // 在工具内部使用具体类型
  * async function execute(): Promise<TypedToolResult<EditMetadata>> {
- *   return {
- *     success: true,
- *     llmContent: '...',
- *     displayContent: '...',
- *     metadata: { file_path: '...', matches_found: 1, ... }
- *   };
+ * return {
+ * success: true,
+ * llmContent: '...',
+ * displayContent: '...',
+ * metadata: { file_path: '...', matches_found: 1, ... }
+ * };
  * }
  */
 interface TypedToolResult<TMetadata extends ToolResultMetadata = ToolResultMetadata> {
@@ -427,11 +427,11 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   displayName: string;
   /** 工具类型 */
   kind: ToolKind;
-  /** 🆕 是否为只读工具（可选，默认根据 kind 推断） */
+  /** 是否为只读工具（可选，默认根据 kind 推断） */
   isReadOnly?: boolean;
-  /** 🆕 是否支持并发安全（可选，默认 true） */
+  /** 是否支持并发安全（可选，默认 true） */
   isConcurrencySafe?: boolean;
-  /** 🆕 是否启用 OpenAI Structured Outputs（可选，默认 false） */
+  /** 是否启用 OpenAI Structured Outputs（可选，默认 false） */
   strict?: boolean;
   /** Schema 定义 (通常是 Zod Schema) */
   schema: TSchema;
@@ -447,7 +447,7 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   tags?: string[];
 
   /**
-   * ✅ 新增：签名内容提取器
+   * [OK] 新增：签名内容提取器
    * 从参数中提取用于权限签名的内容字符串
    * @param params - 类型安全的参数对象
    * @returns 签名内容字符串（如 "mv file.txt" 或 "/src/foo.ts"）
@@ -460,7 +460,7 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   extractSignatureContent?: (params: TParams) => string;
 
   /**
-   * ✅ 新增：权限规则抽象器
+   * [OK] 新增：权限规则抽象器
    * 将具体参数抽象为通配符权限规则
    * @param params - 类型安全的参数对象
    * @returns 权限规则字符串（如 "mv:*" 或 "**\/*.ts"）
@@ -483,11 +483,11 @@ export interface Tool<TParams = unknown> {
   readonly displayName: string;
   /** 工具类型 */
   readonly kind: ToolKind;
-  /** 🆕 是否为只读工具 */
+  /** 是否为只读工具 */
   readonly isReadOnly: boolean;
-  /** 🆕 是否支持并发安全 */
+  /** 是否支持并发安全 */
   readonly isConcurrencySafe: boolean;
-  /** 🆕 是否启用 OpenAI Structured Outputs */
+  /** 是否启用 OpenAI Structured Outputs */
   readonly strict: boolean;
   /** 工具描述 */
   readonly description: ToolDescription;
@@ -519,13 +519,13 @@ export interface Tool<TParams = unknown> {
   execute(params: TParams, signal?: AbortSignal, context?: Partial<ExecutionContext>): Promise<ToolResult>;
 
   /**
-   * ✅ 新增：签名内容提取器
+   * [OK] 新增：签名内容提取器
    * 从参数中提取用于权限签名的内容字符串
    */
   extractSignatureContent?: (params: TParams) => string;
 
   /**
-   * ✅ 新增：权限规则抽象器
+   * [OK] 新增：权限规则抽象器
    * 将具体参数抽象为通配符权限规则
    */
   abstractPermissionRule?: (params: TParams) => string;

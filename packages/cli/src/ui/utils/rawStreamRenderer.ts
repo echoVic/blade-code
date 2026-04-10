@@ -104,7 +104,7 @@ export function renderTail(
   // 隐藏行提示
   if (hiddenLines > 0) {
     outputLines.push(
-      `${indent}${chalk.dim.hex(theme.colors.text.muted)(`↑ ${hiddenLines} lines above (streaming...)`)}`
+      `${indent}${chalk.dim.hex(theme.colors.text.muted)(`^ ${hiddenLines} lines above (streaming...)`)}`
     );
   }
 

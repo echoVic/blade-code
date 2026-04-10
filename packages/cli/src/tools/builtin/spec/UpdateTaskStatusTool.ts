@@ -12,11 +12,11 @@ import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
 
 const STATUS_DISPLAY: Record<TaskStatus, string> = {
-  pending: '⏳ 待处理',
-  in_progress: '🔄 进行中',
-  completed: '✅ 已完成',
-  blocked: '🚫 已阻塞',
-  skipped: '⏭️ 已跳过',
+  pending: '[WAIT] 待处理',
+  in_progress: '[WIP] 进行中',
+  completed: '[OK] 已完成',
+  blocked: '[BLOCKED] 已阻塞',
+  skipped: '[SKIP] 已跳过',
 };
 
 export const updateTaskStatusTool = createTool({
@@ -85,7 +85,7 @@ UpdateTaskStatus({
         llmContent:
           'No active spec. Use EnterSpecMode to start a new spec project, ' +
           'or use the /spec command to load an existing one.',
-        displayContent: '❌ No active spec',
+        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
@@ -101,7 +101,7 @@ UpdateTaskStatus({
         llmContent:
           `Task "${taskId}" not found.\n\n` +
           `Available tasks:\n${currentSpec.tasks.map((t) => `- ${t.id}: ${t.title}`).join('\n') || 'No tasks'}`,
-        displayContent: `❌ Task not found: ${taskId}`,
+        displayContent: `[FAIL] Task not found: ${taskId}`,
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'Task not found',
@@ -116,7 +116,7 @@ UpdateTaskStatus({
       return {
         success: false,
         llmContent: `Failed to update task status: ${result.message}`,
-        displayContent: `❌ Failed to update: ${result.message}`,
+        displayContent: `[FAIL] Failed to update: ${result.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: result.message,
@@ -129,22 +129,22 @@ UpdateTaskStatus({
 
     let nextTaskInfo = '';
     if (status === 'completed' && nextTask) {
-      nextTaskInfo = `\n\n🎯 Next task: "${nextTask.title}" (${nextTask.id})`;
+      nextTaskInfo = `\n\nNext task: "${nextTask.title}" (${nextTask.id})`;
     } else if (status === 'completed' && progress.completed === progress.total) {
       nextTaskInfo =
-        '\n\n🎉 All tasks completed! Use /spec archive to archive this spec.';
+        '\n\nAll tasks completed! Use /spec archive to archive this spec.';
     }
 
     return {
       success: true,
       llmContent:
-        `✅ Updated task "${task.title}"\n\n` +
-        `📋 Task ID: ${taskId}\n` +
-        `📊 Status: ${STATUS_DISPLAY[status as TaskStatus]}\n` +
-        (notes ? `📝 Notes: ${notes}\n` : '') +
-        `\n📈 Progress: ${progress.completed}/${progress.total} tasks (${progress.percentage}%)` +
+        `[OK] Updated task "${task.title}"\n\n` +
+        `Task ID: ${taskId}\n` +
+        `Status: ${STATUS_DISPLAY[status as TaskStatus]}\n` +
+        (notes ? `Notes: ${notes}\n` : '') +
+        `\nProgress: ${progress.completed}/${progress.total} tasks (${progress.percentage}%)` +
         nextTaskInfo,
-      displayContent: `✅ ${task.title}: ${STATUS_DISPLAY[status as TaskStatus]}`,
+      displayContent: `[OK] ${task.title}: ${STATUS_DISPLAY[status as TaskStatus]}`,
       metadata: {
         taskId,
         title: task.title,

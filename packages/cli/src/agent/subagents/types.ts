@@ -21,12 +21,12 @@ export type ClaudeCodePermissionMode =
  * 将 Claude Code permissionMode 映射到 Blade PermissionMode
  *
  * 映射关系：
- * - default → DEFAULT (默认模式)
- * - acceptEdits → AUTO_EDIT (自动接受编辑)
- * - dontAsk → YOLO (不询问直接执行)
- * - bypassPermissions → YOLO (绕过权限检查)
- * - plan → PLAN (计划模式)
- * - ignore → DEFAULT (忽略，使用默认)
+ * - default -> DEFAULT (默认模式)
+ * - acceptEdits -> AUTO_EDIT (自动接受编辑)
+ * - dontAsk -> YOLO (不询问直接执行)
+ * - bypassPermissions -> YOLO (绕过权限检查)
+ * - plan -> PLAN (计划模式)
+ * - ignore -> DEFAULT (忽略，使用默认)
  */
 export function mapClaudeCodePermissionMode(
   mode: ClaudeCodePermissionMode | undefined

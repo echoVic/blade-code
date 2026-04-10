@@ -153,7 +153,7 @@ export class AcpSession {
           },
           // 发送工具调用结果通知
           sendToolResult: (
-            toolName: string,
+            _toolName: string,
             result: { success: boolean; summary?: string }
           ) => {
             // 工具结果通过 sendMessage 显示即可
@@ -183,7 +183,7 @@ export class AcpSession {
       if (result.error) {
         this.sendUpdate({
           sessionUpdate: 'agent_message_chunk',
-          content: { type: 'text', text: `❌ ${result.error}` },
+          content: { type: 'text', text: `[FAIL] ${result.error}` },
         });
       }
 
@@ -196,7 +196,7 @@ export class AcpSession {
         sessionUpdate: 'agent_message_chunk',
         content: {
           type: 'text',
-          text: `❌ 命令执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
+          text: `[FAIL] 命令执行失败: ${error instanceof Error ? error.message : '未知错误'}`,
         },
       });
       return { stopReason: 'cancelled' };
@@ -321,7 +321,7 @@ export class AcpSession {
 
       // 4. 调用 Agent chatStream（Phase 4: 事件驱动消费）
       // stream_end 不外发给 ACP 客户端（保持内部语义）
-      const loopResult = await drainLoop(
+      await drainLoop(
         this.agent.chatStream(message, context),
         async (event: LoopEvent) => {
           switch (event.kind) {

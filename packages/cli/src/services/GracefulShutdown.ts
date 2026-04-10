@@ -17,12 +17,25 @@ import { getState } from '../store/vanilla.js';
 
 /**
  * 恢复终端状态
- * 确保退出时光标可见、终端模式正常
+ * 确保退出时光标可见、终端模式和键盘协议正常
  */
 function restoreTerminal(): void {
-  // 显示光标（ANSI 转义序列 ESC[?25h）
+  if (process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {
+    try {
+      process.stdin.setRawMode(false);
+    } catch {
+      // 忽略 raw mode 恢复失败，继续发送 ANSI 复位序列
+    }
+  }
+
+  // 复位常见的终端输入/键盘协议，避免 Ghostty 等终端在退出后残留增强键盘模式
+  process.stdout.write('\x1B[<u');
+  process.stdout.write('\x1B[>4;0m');
+  process.stdout.write('\x1B[?2004l');
+  process.stdout.write('\x1B[?1l\x1B>');
+
+  // 恢复光标和样式
   process.stdout.write('\x1B[?25h');
-  // 重置终端属性
   process.stdout.write('\x1B[0m');
 }
 
@@ -153,7 +166,7 @@ class GracefulShutdownManager {
 
     console.error('');
     console.error('═'.repeat(60));
-    console.error(`💥 发生未捕获的错误 (${type})`);
+    console.error(`Uncaught error (${type})`);
     console.error('═'.repeat(60));
     console.error('');
     console.error('错误信息:', error.message);
@@ -294,6 +307,5 @@ export const initializeGracefulShutdown = (): void => {
  * @param exitCode - 退出码（默认 0）
  */
 export const safeExit = (exitCode: number = 0): void => {
-  restoreTerminal();
-  process.exit(exitCode);
+  void getGracefulShutdown().shutdown('normal', exitCode);
 };

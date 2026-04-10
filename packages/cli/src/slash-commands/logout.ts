@@ -81,9 +81,9 @@ export const logoutCommand: SlashCommand = {
       }
 
       if (results.length > 0) {
-        ui.sendMessage(`✅ 已登出: ${results.join(', ')}`);
+        ui.sendMessage(`[OK] 已登出: ${results.join(', ')}`);
       } else {
-        ui.sendMessage('ℹ️ 当前未登录任何服务');
+        ui.sendMessage('当前未登录任何服务');
       }
 
       return {
@@ -103,7 +103,7 @@ export const logoutCommand: SlashCommand = {
       try {
         const isLoggedIn = await auth.isLoggedIn();
         if (!isLoggedIn) {
-          ui.sendMessage('ℹ️ 当前未登录 GitHub Copilot');
+          ui.sendMessage('当前未登录 GitHub Copilot');
           return {
             success: true,
             message: '未登录',
@@ -113,7 +113,7 @@ export const logoutCommand: SlashCommand = {
 
         await auth.logout();
 
-        ui.sendMessage('✅ 已登出 GitHub Copilot');
+        ui.sendMessage('[OK] 已登出 GitHub Copilot');
         ui.sendMessage('');
         ui.sendMessage('Token 已清除。如需重新使用，请执行 /login copilot');
 
@@ -124,7 +124,7 @@ export const logoutCommand: SlashCommand = {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        ui.sendMessage(`❌ 登出失败: ${errorMessage}`);
+        ui.sendMessage(`登出失败: ${errorMessage}`);
         return { success: false, error: errorMessage };
       }
     }
@@ -137,7 +137,7 @@ export const logoutCommand: SlashCommand = {
     try {
       const isLoggedIn = await auth.isLoggedIn();
       if (!isLoggedIn) {
-        ui.sendMessage('ℹ️ 当前未登录 Antigravity');
+        ui.sendMessage('当前未登录 Antigravity');
 
         return {
           success: true,
@@ -148,7 +148,7 @@ export const logoutCommand: SlashCommand = {
 
       await auth.logout();
 
-      ui.sendMessage('✅ 已登出 Antigravity');
+      ui.sendMessage('[OK] 已登出 Antigravity');
       ui.sendMessage('');
       ui.sendMessage('Token 已清除。如需重新使用 Antigravity，请执行 /login');
 
@@ -160,7 +160,7 @@ export const logoutCommand: SlashCommand = {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      ui.sendMessage(`❌ 登出失败: ${errorMessage}`);
+      ui.sendMessage(`登出失败: ${errorMessage}`);
 
       return {
         success: false,

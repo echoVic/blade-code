@@ -47,7 +47,7 @@ const OptionItem = React.memo<{
       color={isHighlighted ? 'yellow' : isSelected ? 'green' : undefined}
       bold={isHighlighted}
     >
-      {isMultiSelect ? (isSelected ? '● ' : '○ ') : isHighlighted ? '❯ ' : '  '}
+      {isMultiSelect ? (isSelected ? '(*) ' : '( ) ') : isHighlighted ? '> ' : '  '}
       {index + 1}. {option.label}
     </Text>
     <Box marginLeft={4}>
@@ -330,7 +330,7 @@ export const QuestionPrompt: React.FC<QuestionPromptProps> = React.memo(
           {/* 标题 */}
           <Box marginBottom={1}>
             <Text bold color="green">
-              ✓ Review Your Answers
+              [OK] Review Your Answers
             </Text>
           </Box>
 
@@ -343,14 +343,14 @@ export const QuestionPrompt: React.FC<QuestionPromptProps> = React.memo(
               color={submitHighlight === 0 ? 'yellow' : undefined}
               bold={submitHighlight === 0}
             >
-              {submitHighlight === 0 ? '❯ ' : '  '}
+              {submitHighlight === 0 ? '> ' : '  '}
               [Y] Submit answers
             </Text>
             <Text
               color={submitHighlight === 1 ? 'yellow' : undefined}
               bold={submitHighlight === 1}
             >
-              {submitHighlight === 1 ? '❯ ' : '  '}
+              {submitHighlight === 1 ? '> ' : '  '}
               [E] Edit answers
             </Text>
           </Box>
@@ -358,7 +358,7 @@ export const QuestionPrompt: React.FC<QuestionPromptProps> = React.memo(
           {/* 导航提示 */}
           <Box marginTop={1}>
             <Text color="gray">
-              Enter to confirm · ↑↓ to navigate · Y/E for quick select
+              Enter to confirm · Up/Down to navigate · Y/E for quick select
             </Text>
           </Box>
         </Box>
@@ -392,7 +392,7 @@ export const QuestionPrompt: React.FC<QuestionPromptProps> = React.memo(
           <Box flexDirection="column" marginTop={1}>
             <Text color="yellow">Enter your response:</Text>
             <Box marginTop={1}>
-              <Text color="cyan">{'❯ '}</Text>
+              <Text color="cyan">{'> '}</Text>
               <TextInput
                 value={customInput}
                 onChange={setCustomInput}
@@ -425,7 +425,7 @@ export const QuestionPrompt: React.FC<QuestionPromptProps> = React.memo(
             <Text color="gray">
               {current.multiSelect
                 ? 'Space to toggle · Enter to confirm · 1-9 for quick select'
-                : 'Enter to select · ↑↓ or Tab to navigate · 1-9 for quick select'}
+                : 'Enter to select · Up/Down or Tab to navigate · 1-9 for quick select'}
             </Text>
             {current.multiSelect && selectedMulti.length > 0 && (
               <Text color="green">Selected: {selectedMulti.join(', ')}</Text>

@@ -85,7 +85,7 @@ export const loginCommand: SlashCommand = {
             ? Math.round((status.expiresAt.getTime() - Date.now()) / 1000 / 60)
             : 0;
 
-          ui.sendMessage('✅ 已登录 GitHub Copilot');
+          ui.sendMessage('[OK] 已登录 GitHub Copilot');
           ui.sendMessage(`Token 有效期还剩约 ${expiresIn} 分钟`);
           ui.sendMessage('');
           ui.sendMessage('如需重新登录，请先执行 /logout copilot');
@@ -119,7 +119,7 @@ export const loginCommand: SlashCommand = {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        ui.sendMessage(`❌ 登录失败: ${errorMessage}`);
+        ui.sendMessage(`登录失败: ${errorMessage}`);
         return { success: false, error: errorMessage };
       }
     }
@@ -143,7 +143,7 @@ export const loginCommand: SlashCommand = {
         const currentConfig =
           status.configType === 'gemini-cli' ? 'Gemini CLI' : 'Antigravity';
 
-        ui.sendMessage(`✅ 已登录（${currentConfig} OAuth）`);
+        ui.sendMessage(`[OK] 已登录（${currentConfig} OAuth）`);
         ui.sendMessage(`Token 有效期还剩约 ${expiresIn} 分钟`);
         ui.sendMessage('');
         ui.sendMessage('如需重新登录或切换 OAuth 方式，请先执行 /logout');
@@ -156,13 +156,13 @@ export const loginCommand: SlashCommand = {
       }
 
       // 执行登录
-      ui.sendMessage(`🔐 开始 ${configName} OAuth 登录...`);
+      ui.sendMessage(`开始 ${configName} OAuth 登录...`);
       ui.sendMessage('');
 
       await auth.login(configType);
 
       ui.sendMessage('');
-      ui.sendMessage(`✅ ${configName} 登录成功！`);
+      ui.sendMessage(`[OK] ${configName} 登录成功！`);
       ui.sendMessage('');
       ui.sendMessage('**可用模型：**');
 
@@ -185,7 +185,7 @@ export const loginCommand: SlashCommand = {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      ui.sendMessage(`❌ 登录失败: ${errorMessage}`);
+      ui.sendMessage(`登录失败: ${errorMessage}`);
 
       return {
         success: false,

@@ -10,7 +10,6 @@ import { useMemoizedFn, useMount } from 'ahooks';
 import { Box, Text, useFocus, useFocusManager, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import { memo, useMemo, useState } from 'react';
-import { isBuiltinModel } from '../../config/builtinModels.js';
 import type { ModelConfig, ProviderType } from '../../config/types.js';
 import { useAllModels, useCurrentModelId } from '../../store/selectors/index.js';
 import { configActions } from '../../store/vanilla.js';
@@ -22,13 +21,13 @@ import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 function getProviderDisplayName(provider: ProviderType): string {
   switch (provider) {
     case 'openai-compatible':
-      return '⚡ OpenAI Compatible';
+      return 'OpenAI Compatible';
     case 'anthropic':
-      return '🤖 Anthropic Claude';
+      return 'Anthropic Claude';
     case 'gemini':
-      return '✨ Google Gemini';
+      return 'Google Gemini';
     case 'azure-openai':
-      return '☁️ Azure OpenAI';
+      return 'Azure OpenAI';
     default:
       return provider;
   }
@@ -42,7 +41,7 @@ interface ModelSelectorProps {
 // 自定义 SelectInput 组件 - 高对比度样式
 const Indicator: React.FC<{ isSelected?: boolean }> = ({ isSelected }) => (
   <Box marginRight={1}>
-    <Text color={isSelected ? 'yellow' : 'gray'}>{isSelected ? '▶' : ' '}</Text>
+    <Text color={isSelected ? 'yellow' : 'gray'}>{isSelected ? '>' : ' '}</Text>
   </Box>
 );
 
@@ -181,7 +180,7 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
   });
   const isCurrentSelection = selectedId === currentModelId;
   const shortcutHint = isProcessing
-    ? '⏳ 处理中...'
+    ? '处理中...'
     : isCurrentSelection
       ? 'Enter=关闭 • E=编辑 • Esc=取消'
       : 'Enter=切换 • D=删除 • E=编辑 • Esc=取消';
@@ -232,7 +231,7 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
           <Text dimColor>模型详情</Text>
           <Box marginY={1}>
             <Text color={isCurrentSelection ? 'green' : 'yellow'}>
-              {isCurrentSelection ? '● 当前使用' : '● 可切换'}
+              {isCurrentSelection ? '* 当前使用' : '* 可切换'}
             </Text>
           </Box>
           {selectedModel ? (
@@ -242,9 +241,6 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
                 <Text bold color="cyan">
                   {selectedModel.name}
                 </Text>
-                {isBuiltinModel(selectedModel) && (
-                  <Text color="green"> (内置免费)</Text>
-                )}
               </Text>
               <Text>
                 <Text dimColor>Provider: </Text>
@@ -270,13 +266,6 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
                   <Text>{selectedModel.maxContextTokens}</Text>
                 </Text>
               )}
-              {isBuiltinModel(selectedModel) && (
-                <Box marginTop={1}>
-                  <Text color="green" dimColor>
-                    💡 此模型由 Blade 提供免费额度
-                  </Text>
-                </Box>
-              )}
             </Box>
           ) : (
             <Text dimColor>请选择一个模型查看详情</Text>
@@ -286,7 +275,7 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
 
       {error && (
         <Box marginTop={1}>
-          <Text color="red">❌ {error}</Text>
+          <Text color="red">{error}</Text>
         </Box>
       )}
 
@@ -295,7 +284,7 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
       </Box>
 
       <Box justifyContent="center">
-        <Text dimColor>提示：D=删除 • E=编辑 • ↑↓=移动 • Enter/ESC=确认</Text>
+        <Text dimColor>提示：D=删除 * E=编辑 * Up/Down=移动 * Enter/ESC=确认</Text>
       </Box>
     </Box>
   );

@@ -11,3 +11,4 @@ export { getConfigService, type SaveOptions } from './ConfigService.js';
 export { DEFAULT_CONFIG } from './defaults.js';
 export { PermissionMode } from './types.js';
 export type { BladeConfig, PermissionConfig, RuntimeConfig } from './types.js'; // 类型定义
+

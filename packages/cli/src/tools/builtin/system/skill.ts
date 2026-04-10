@@ -66,7 +66,7 @@ Important:
             .map((s) => s.name)
             .join(', ') || 'none'
         }`,
-        displayContent: `❌ Skill "${skill}" not found`,
+        displayContent: `[FAIL] Skill "${skill}" not found`,
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: `Skill "${skill}" is not registered`,
@@ -80,7 +80,7 @@ Important:
       return {
         success: false,
         llmContent: `Failed to load skill "${skill}" content`,
-        displayContent: `❌ Failed to load skill "${skill}"`,
+        displayContent: `[FAIL] Failed to load skill "${skill}"`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: `Could not read SKILL.md for "${skill}"`,

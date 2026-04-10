@@ -34,7 +34,7 @@ export const killShellTool = createTool({
       return {
         success: false,
         llmContent: `Shell not found: ${params.shell_id}`,
-        displayContent: `❌ 未找到 Shell: ${params.shell_id}`,
+        displayContent: `[FAIL] 未找到 Shell: ${params.shell_id}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: 'Shell ID 不存在或已清理',
@@ -46,7 +46,7 @@ export const killShellTool = createTool({
       return {
         success: false,
         llmContent: `Failed to terminate Shell: ${params.shell_id}`,
-        displayContent: `❌ 无法终止 Shell (${params.shell_id})`,
+        displayContent: `[FAIL] 无法终止 Shell (${params.shell_id})`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: '发送终止信号失败',
@@ -69,7 +69,7 @@ export const killShellTool = createTool({
         exit_code: result.exitCode,
         signal: result.signal,
       },
-      displayContent: result.alreadyExited ? `ℹ️ ${statusText}` : `✂️ ${statusText}`,
+      displayContent: result.alreadyExited ? `${statusText}` : `${statusText}`,
       metadata: { ...result },
     };
   },

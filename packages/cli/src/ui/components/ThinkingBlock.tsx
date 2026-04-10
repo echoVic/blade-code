@@ -69,7 +69,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(
         {/* 标题栏 */}
         <Box flexDirection="row">
           {/* 展开/折叠指示符 */}
-          <Text color={thinkingColor}>{isExpanded ? '▼' : '▶'}</Text>
+          <Text color={thinkingColor}>{isExpanded ? 'v' : '>'}</Text>
           <Text> </Text>
 
           {/* 标题文本 */}

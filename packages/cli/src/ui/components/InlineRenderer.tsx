@@ -30,12 +30,12 @@ function stableKey(kind: 'text' | 'match', seq: number): string {
  * 内联 Markdown 渲染器组件
  *
  * 支持的格式：
- * - **粗体** → <Text bold>
- * - *斜体* 或 _斜体_ → <Text italic>
- * - ~~删除线~~ → <Text strikethrough>
- * - `内联代码` → <Text color={accent} backgroundColor="gray">
- * - [链接文本](URL) → 文本 + <Text color={link}>(URL)</Text>
- * - 自动识别 URL → <Text color={link}>
+ * - **粗体** -> <Text bold>
+ * - *斜体* 或 _斜体_ -> <Text italic>
+ * - ~~删除线~~ -> <Text strikethrough>
+ * - `内联代码` -> <Text color={accent} backgroundColor="gray">
+ * - [链接文本](URL) -> 文本 + <Text color={link}>(URL)</Text>
+ * - 自动识别 URL -> <Text color={link}>
  *
  * @example
  * <InlineRenderer text="This is **bold** and *italic* text" />

@@ -100,7 +100,7 @@ ${generateAvailableCommandsDescription()}`,
       return {
         success: false,
         llmContent: `Custom command system not initialized. Please wait for the application to fully initialize.`,
-        displayContent: '❌ Custom command system not initialized',
+        displayContent: '[FAIL] Custom command system not initialized',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: 'CustomCommandRegistry not initialized',
@@ -118,7 +118,7 @@ ${generateAvailableCommandsDescription()}`,
       return {
         success: false,
         llmContent: `Command "/${command}" not found. Available commands: ${available || 'none'}`,
-        displayContent: `❌ Command "/${command}" not found`,
+        displayContent: `[FAIL] Command "/${command}" not found`,
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: `Command "/${command}" is not registered`,
@@ -131,7 +131,7 @@ ${generateAvailableCommandsDescription()}`,
       return {
         success: false,
         llmContent: `Command "/${command}" has disabled model invocation. This command can only be executed by the user directly.`,
-        displayContent: `❌ Command "/${command}" disabled for AI`,
+        displayContent: `[FAIL] Command "/${command}" disabled for AI`,
         error: {
           type: ToolErrorType.PERMISSION_DENIED,
           message: `Command "/${command}" has disable-model-invocation: true`,
@@ -144,7 +144,7 @@ ${generateAvailableCommandsDescription()}`,
       return {
         success: false,
         llmContent: `Command "/${command}" does not have a description and cannot be invoked by AI. Add a description in the command's frontmatter to enable AI invocation.`,
-        displayContent: `❌ Command "/${command}" has no description`,
+        displayContent: `[FAIL] Command "/${command}" has no description`,
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: `Command "/${command}" missing description for AI invocation`,
@@ -166,7 +166,7 @@ ${generateAvailableCommandsDescription()}`,
         return {
           success: false,
           llmContent: `Failed to execute command "/${command}"`,
-          displayContent: `❌ Failed to execute "/${command}"`,
+          displayContent: `[FAIL] Failed to execute "/${command}"`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: `Command execution returned null`,
@@ -204,7 +204,7 @@ ${generateAvailableCommandsDescription()}`,
       return {
         success: false,
         llmContent: `Error executing command "/${command}": ${errorMessage}`,
-        displayContent: `❌ Error executing "/${command}"`,
+        displayContent: `[FAIL] Error executing "/${command}"`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: errorMessage,

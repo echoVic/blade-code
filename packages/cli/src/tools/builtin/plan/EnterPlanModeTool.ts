@@ -115,14 +115,14 @@ User: "What files handle routing?"
           return {
             success: true,
             llmContent:
-              '✅ User approved entering Plan mode.\n\n' +
+              '[OK] User approved entering Plan mode.\n\n' +
               'You are now in PLAN MODE. Remember:\n' +
               '- Use ONLY read-only tools: Read, Glob, Grep, WebFetch, WebSearch, Task\n' +
               '- DO NOT use Edit, Write, Bash, or any file-modifying tools\n' +
               '- When your research is complete, call ExitPlanMode with your implementation plan\n' +
               '- For pure research questions, answer directly without ExitPlanMode\n\n' +
               'Begin your research now.',
-            displayContent: '✅ Entering Plan mode',
+            displayContent: '[OK] Entering Plan mode',
             metadata: {
               approved: true,
               enterPlanMode: true, // Signal to switch to Plan mode
@@ -132,11 +132,11 @@ User: "What files handle routing?"
           return {
             success: true, // Rejection is not an error
             llmContent:
-              '⚠️ User declined to enter Plan mode.\n\n' +
+              '[WARN] User declined to enter Plan mode.\n\n' +
               'Proceed with the task directly without planning phase. ' +
               'You can still use search tools to understand the codebase as needed, ' +
               'but implement the solution directly.',
-            displayContent: '⚠️ Plan mode declined, proceeding directly',
+            displayContent: '[WARN] Plan mode declined, proceeding directly',
             metadata: {
               approved: false,
               enterPlanMode: false,
@@ -147,7 +147,7 @@ User: "What files handle routing?"
         return {
           success: false,
           llmContent: `Confirmation flow error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          displayContent: '❌ Failed to request confirmation',
+          displayContent: '[FAIL] Failed to request confirmation',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Confirmation flow error',

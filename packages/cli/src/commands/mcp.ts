@@ -168,8 +168,8 @@ const mcpAddCommand: CommandModule = {
 
       // 验证必需参数
       if (!nameStr || !commandOrUrlStr) {
-        console.error('❌ 缺少必需参数: name 和 commandOrUrl');
-        console.log('\n💡 用法:');
+        console.error('Error: 缺少必需参数: name 和 commandOrUrl');
+        console.log('\nTip: 用法:');
         console.log('  blade mcp add <name> <command> [args...]');
         console.log('  blade mcp add <name> -- <command> [args...]');
         console.log('\n示例:');
@@ -209,11 +209,11 @@ const mcpAddCommand: CommandModule = {
       const configPath = isGlobal
         ? path.join(os.homedir(), '.blade', 'config.json')
         : path.join(process.cwd(), '.blade', 'config.json');
-      console.log(`✅ MCP 服务器 "${nameStr}" 已添加`);
+      console.log(`MCP 服务器 "${nameStr}" 已添加`);
       console.log(`   配置文件: ${configPath}`);
     } catch (error) {
       console.error(
-        `❌ 添加失败: ${error instanceof Error ? error.message : '未知错误'}`
+        `Error: 添加失败: ${error instanceof Error ? error.message : '未知错误'}`
       );
       process.exit(1);
     }
@@ -247,22 +247,22 @@ const mcpRemoveCommand: CommandModule = {
 
       const nameStr = asString(argv.name);
       if (!nameStr) {
-        console.error('❌ 缺少必需参数: name');
+        console.error('Error: 缺少必需参数: name');
         process.exit(1);
       }
 
       if (!servers[nameStr]) {
-        console.error(`❌ 服务器 "${nameStr}" 不存在`);
+        console.error(`Error: 服务器 "${nameStr}" 不存在`);
         process.exit(1);
       }
 
       await configActions().removeMcpServer(nameStr, {
         scope: isGlobal ? 'global' : 'project',
       });
-      console.log(`✅ MCP 服务器 "${nameStr}" 已删除`);
+      console.log(`MCP 服务器 "${nameStr}" 已删除`);
     } catch (error) {
       console.error(
-        `❌ 删除失败: ${error instanceof Error ? error.message : '未知错误'}`
+        `Error: 删除失败: ${error instanceof Error ? error.message : '未知错误'}`
       );
       process.exit(1);
     }
@@ -315,7 +315,7 @@ const mcpListCommand: CommandModule = {
       // 显示结果
       for (const { name, config, serverInfo, error } of results) {
         const status = serverInfo?.status || McpConnectionStatus.DISCONNECTED;
-        const statusSymbol = status === McpConnectionStatus.CONNECTED ? '✓' : '✗';
+        const statusSymbol = status === McpConnectionStatus.CONNECTED ? '[OK]' : '[FAIL]';
         const statusText =
           status === McpConnectionStatus.CONNECTED ? 'Connected' : 'Failed';
 
@@ -345,7 +345,7 @@ const mcpListCommand: CommandModule = {
       process.exit(0);
     } catch (error) {
       console.error(
-        `❌ 列表获取失败: ${error instanceof Error ? error.message : '未知错误'}`
+        `Error: 列表获取失败: ${error instanceof Error ? error.message : '未知错误'}`
       );
       process.exit(1);
     }
@@ -370,13 +370,13 @@ const mcpGetCommand: CommandModule = {
       const servers = getMcpServers();
       const nameStr = asString(argv.name);
       if (!nameStr) {
-        console.error('❌ 缺少必需参数: name');
+        console.error('Error: 缺少必需参数: name');
         process.exit(1);
       }
       const config = servers[nameStr];
 
       if (!config) {
-        console.error(`❌ 服务器 "${nameStr}" 不存在`);
+        console.error(`Error: 服务器 "${nameStr}" 不存在`);
         process.exit(1);
       }
 
@@ -384,7 +384,7 @@ const mcpGetCommand: CommandModule = {
       console.log(JSON.stringify(config, null, 2));
     } catch (error) {
       console.error(
-        `❌ 获取失败: ${error instanceof Error ? error.message : '未知错误'}`
+        `Error: 获取失败: ${error instanceof Error ? error.message : '未知错误'}`
       );
       process.exit(1);
     }
@@ -441,11 +441,11 @@ const mcpAddJsonCommand: CommandModule = {
       const configPath = isGlobal
         ? path.join(os.homedir(), '.blade', 'config.json')
         : path.join(process.cwd(), '.blade', 'config.json');
-      console.log(`✅ MCP 服务器 "${nameStr}" 已添加`);
+      console.log(`MCP 服务器 "${nameStr}" 已添加`);
       console.log(`   配置文件: ${configPath}`);
     } catch (error) {
       console.error(
-        `❌ 添加失败: ${error instanceof Error ? error.message : '未知错误'}`
+        `Error: 添加失败: ${error instanceof Error ? error.message : '未知错误'}`
       );
       process.exit(1);
     }

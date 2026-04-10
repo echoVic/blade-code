@@ -20,7 +20,7 @@ interface ProviderSelectorProps {
 
 const SelectIndicator: React.FC<{ isSelected?: boolean }> = ({ isSelected }) => (
   <Box marginRight={1}>
-    <Text color={isSelected ? 'yellow' : 'gray'}>{isSelected ? '▶' : ' '}</Text>
+    <Text color={isSelected ? 'yellow' : 'gray'}>{isSelected ? '>' : ' '}</Text>
   </Box>
 );
 
@@ -73,7 +73,7 @@ export const ProviderSelector: React.FC<ProviderSelectorProps> = ({
   if (isLoading) {
     return (
       <Box flexDirection="column">
-        <Text color="yellow">⏳ 正在加载 Provider 列表...</Text>
+        <Text color="yellow">正在加载 Provider 列表...</Text>
       </Box>
     );
   }
@@ -81,7 +81,7 @@ export const ProviderSelector: React.FC<ProviderSelectorProps> = ({
   if (error) {
     return (
       <Box flexDirection="column">
-        <Text color="red">❌ {error}</Text>
+        <Text color="red">{error}</Text>
         <Text dimColor>按 Esc 返回</Text>
       </Box>
     );
@@ -91,12 +91,12 @@ export const ProviderSelector: React.FC<ProviderSelectorProps> = ({
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold color="blue">
-          📡 Step 1: 选择 API 提供商
+          Step 1: 选择 API 提供商
         </Text>
       </Box>
 
       <Box marginBottom={1}>
-        <Text color="cyan">🔍 </Text>
+        <Text color="cyan">{'> '}</Text>
         <TextInput
           value={searchQuery}
           onChange={setSearchQuery}

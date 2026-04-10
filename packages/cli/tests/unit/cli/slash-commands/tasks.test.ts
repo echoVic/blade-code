@@ -190,7 +190,7 @@ describe('/tasks Command', () => {
   });
 
   describe('status icons', () => {
-    it('running 应显示 ⏳', async () => {
+    it('running 应显示 [RUNNING]', async () => {
       mockAgentManager.listAll.mockReturnValue([
         {
           id: 'agent_running',
@@ -204,10 +204,10 @@ describe('/tasks Command', () => {
       await tasksCommand.handler([], mockContext);
 
       const message = mockSendMessage.mock.calls[0][0];
-      expect(message).toContain('⏳');
+      expect(message).toContain('[RUNNING]');
     });
 
-    it('completed 应显示 ✅', async () => {
+    it('completed 应显示 [OK]', async () => {
       mockAgentManager.listAll.mockReturnValue([
         {
           id: 'agent_done',
@@ -222,10 +222,10 @@ describe('/tasks Command', () => {
       await tasksCommand.handler([], mockContext);
 
       const message = mockSendMessage.mock.calls[0][0];
-      expect(message).toContain('✅');
+      expect(message).toContain('[OK]');
     });
 
-    it('failed 应显示 ❌', async () => {
+    it('failed 应显示 [FAIL]', async () => {
       mockAgentManager.listAll.mockReturnValue([
         {
           id: 'agent_failed',
@@ -240,10 +240,10 @@ describe('/tasks Command', () => {
       await tasksCommand.handler([], mockContext);
 
       const message = mockSendMessage.mock.calls[0][0];
-      expect(message).toContain('❌');
+      expect(message).toContain('[FAIL]');
     });
 
-    it('cancelled 应显示 ✂️', async () => {
+    it('cancelled 应显示 [STOPPED]', async () => {
       mockAgentManager.listAll.mockReturnValue([
         {
           id: 'agent_cancelled',
@@ -257,7 +257,7 @@ describe('/tasks Command', () => {
       await tasksCommand.handler([], mockContext);
 
       const message = mockSendMessage.mock.calls[0][0];
-      expect(message).toContain('✂️');
+      expect(message).toContain('[STOPPED]');
     });
   });
 

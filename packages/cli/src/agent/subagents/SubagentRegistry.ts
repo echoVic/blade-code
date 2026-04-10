@@ -147,7 +147,7 @@ export class SubagentRegistry {
     // 解析 skills（支持逗号分隔字符串或数组）
     const skills = this.parseStringOrArray(frontmatter.skills);
 
-    // 映射 permissionMode（Claude Code → Blade）
+    // 映射 permissionMode（Claude Code -> Blade）
     const permissionMode = mapClaudeCodePermissionMode(frontmatter.permissionMode);
 
     return {
@@ -223,7 +223,7 @@ export class SubagentRegistry {
     this.loadFromDirectory(bladeProjectAgentsDir, 'blade-project');
 
     const count = this.getAllNames().length;
-    logger.debug(`📦 Loaded ${count} subagents from standard locations`);
+    logger.debug(`Loaded ${count} subagents from standard locations`);
 
     return count;
   }

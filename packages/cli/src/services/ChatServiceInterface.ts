@@ -7,13 +7,11 @@ import type {
     ChatCompletionChunk,
     ChatCompletionMessageToolCall,
 } from 'openai/resources/chat';
-import { isBuiltinApiKey } from '../config/builtinModels.js';
 import type { ProviderType } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { JsonValue, MessageRole } from '../store/types.js';
 import { getProviderHeaders } from '../ui/components/model-config/types.js';
 import { AntigravityChatService } from './AntigravityChatService.js';
-import { resolveBuiltinApiKey } from './BuiltinKeyService.js';
 import { CopilotChatService } from './CopilotChatService.js';
 import { VercelAIChatService } from './VercelAIChatService.js';
 
@@ -189,12 +187,6 @@ export async function createChatServiceAsync(
 ): Promise<IChatService> {
   let resolvedConfig = config;
 
-  if (isBuiltinApiKey(config.apiKey)) {
-    logger.info('🔑 检测到内置 API Key，正在获取...');
-    const realApiKey = await resolveBuiltinApiKey(config.apiKey);
-    resolvedConfig = { ...config, apiKey: realApiKey };
-  }
-
   // 自动注入 Provider 特定的 Headers
   if (resolvedConfig.providerId) {
     const providerHeaders = getProviderHeaders(resolvedConfig.providerId);
@@ -206,7 +198,7 @@ export async function createChatServiceAsync(
           ...resolvedConfig.customHeaders, // 用户配置优先
         },
       };
-      logger.debug(`🔧 注入 ${resolvedConfig.providerId} 特定 headers:`, Object.keys(providerHeaders));
+      logger.debug(`Injected ${resolvedConfig.providerId} specific headers:`, Object.keys(providerHeaders));
     }
   }
 

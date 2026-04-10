@@ -56,10 +56,10 @@ export const loadConfiguration: MiddlewareFunction = async (argv) => {
     }
   } catch (error) {
     logger.error(
-      '[CLI] ❌ 配置初始化失败',
+      '[CLI] [FAIL] 配置初始化失败',
       error instanceof Error ? error.message : error
     );
-    console.error('\n❌ 配置初始化失败\n');
+    console.error('\n[FAIL] 配置初始化失败\n');
     console.error('原因:', error instanceof Error ? error.message : '未知错误');
     console.error('\n请检查：');
     console.error('  1. 配置文件格式是否正确 (~/.blade/config.json)');
@@ -86,7 +86,7 @@ export const validateOutput: MiddlewareFunction = (argv) => {
   // 验证输入格式
   if (argv.inputFormat === 'stream-json' && argv.print) {
     logger.warn(
-      '⚠️  Warning: stream-json input format may not work as expected with --print'
+      '[WARN] Warning: stream-json input format may not work as expected with --print'
     );
   }
 };

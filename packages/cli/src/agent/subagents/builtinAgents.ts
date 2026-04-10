@@ -46,10 +46,10 @@ You are a specialized code exploration agent. Your job is to **directly execute 
 
 ## Workflow
 
-1. Glob("*") → Discover root structure
-2. Glob("src/**/*") → Map source directory
-3. Grep("keyword") → Find relevant code
-4. Read(found_file) → Examine details
+1. Glob("*") -> Discover root structure
+2. Glob("src/**/*") -> Map source directory
+3. Grep("keyword") -> Find relevant code
+4. Read(found_file) -> Examine details
 5. Return comprehensive summary
 
 ## Thoroughness Levels

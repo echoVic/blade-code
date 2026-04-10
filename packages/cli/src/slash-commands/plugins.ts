@@ -126,7 +126,7 @@ function listPlugins(
   if (bySource.cli.length > 0) {
     lines.push('### CLI 指定');
     for (const p of bySource.cli) {
-      const status = p.status === 'inactive' ? ' ⏸️' : ' ✅';
+      const status = p.status === 'inactive' ? ' [PAUSED]' : ' [OK]';
       lines.push(`- **${p.manifest.name}** v${p.manifest.version}${status}`);
       lines.push(`  ${p.manifest.description}`);
     }
@@ -136,7 +136,7 @@ function listPlugins(
   if (bySource.project.length > 0) {
     lines.push('### 项目级');
     for (const p of bySource.project) {
-      const status = p.status === 'inactive' ? ' ⏸️' : ' ✅';
+      const status = p.status === 'inactive' ? ' [PAUSED]' : ' [OK]';
       lines.push(`- **${p.manifest.name}** v${p.manifest.version}${status}`);
       lines.push(`  ${p.manifest.description}`);
     }
@@ -146,7 +146,7 @@ function listPlugins(
   if (bySource.user.length > 0) {
     lines.push('### 用户级');
     for (const p of bySource.user) {
-      const status = p.status === 'inactive' ? ' ⏸️' : ' ✅';
+      const status = p.status === 'inactive' ? ' [PAUSED]' : ' [OK]';
       lines.push(`- **${p.manifest.name}** v${p.manifest.version}${status}`);
       lines.push(`  ${p.manifest.description}`);
     }
@@ -179,7 +179,7 @@ function showPluginInfo(
     '',
     `**版本**: ${plugin.manifest.version}`,
     `**描述**: ${plugin.manifest.description}`,
-    `**状态**: ${plugin.status === 'active' ? '✅ 启用' : '⏸️ 禁用'}`,
+    `**状态**: ${plugin.status === 'active' ? '[OK] 启用' : '禁用'}`,
     `**来源**: ${getSourceLabel(plugin.source)}`,
     `**路径**: \`${plugin.basePath}\``,
     '',
@@ -255,7 +255,7 @@ function enablePlugin(
   }
 
   if (registry.enable(name)) {
-    sessionActions().addAssistantMessage(`✅ 已启用插件: ${name}`);
+    sessionActions().addAssistantMessage(`[OK] 已启用插件: ${name}`);
     return { success: true, message: `Plugin ${name} enabled` };
   }
 
@@ -282,7 +282,7 @@ function disablePlugin(
   }
 
   if (registry.disable(name)) {
-    sessionActions().addAssistantMessage(`⏸️ 已禁用插件: ${name}`);
+    sessionActions().addAssistantMessage(`已禁用插件: ${name}`);
     return { success: true, message: `Plugin ${name} disabled` };
   }
 
@@ -330,7 +330,7 @@ async function refreshPlugins(
     const integration = await integrateAllPlugins();
 
     const lines: string[] = [
-      `✅ 已刷新插件列表`,
+      `[OK] 已刷新插件列表`,
       '',
       `- 加载了 ${result.plugins.length} 个插件`,
       `- 集成了 ${integration.totalCommands} 个命令, ${integration.totalSkills} 个技能, ${integration.totalAgents} 个代理`,
@@ -357,7 +357,7 @@ async function refreshPlugins(
     return { success: true, message: 'Plugins refreshed' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    sessionActions().addAssistantMessage(`❌ 刷新失败: ${message}`);
+    sessionActions().addAssistantMessage(`刷新失败: ${message}`);
     return { success: false, error: message };
   }
 }
@@ -422,7 +422,7 @@ async function installPlugin(source: string | undefined): Promise<SlashCommandRe
 
   if (result.success) {
     const lines = [
-      `✅ 插件安装成功!`,
+      `[OK] 插件安装成功!`,
       '',
       `**名称**: ${result.pluginName}`,
       `**路径**: \`${result.pluginPath}\``,
@@ -440,7 +440,7 @@ async function installPlugin(source: string | undefined): Promise<SlashCommandRe
     return { success: true, message: `Installed ${result.pluginName}` };
   }
 
-  sessionActions().addAssistantMessage(`❌ 安装失败: ${result.error}`);
+  sessionActions().addAssistantMessage(`安装失败: ${result.error}`);
   return { success: false, error: result.error };
 }
 
@@ -458,13 +458,13 @@ async function uninstallPlugin(name: string | undefined): Promise<SlashCommandRe
 
   if (result.success) {
     sessionActions().addAssistantMessage(
-      `✅ 已卸载插件: ${result.pluginName}\n\n` +
+      `[OK] 已卸载插件: ${result.pluginName}\n\n` +
         '使用 `/plugins refresh` 刷新插件列表。'
     );
     return { success: true, message: `Uninstalled ${result.pluginName}` };
   }
 
-  sessionActions().addAssistantMessage(`❌ 卸载失败: ${result.error}`);
+  sessionActions().addAssistantMessage(`卸载失败: ${result.error}`);
   return { success: false, error: result.error };
 }
 
@@ -483,7 +483,7 @@ async function updatePlugin(name: string | undefined): Promise<SlashCommandResul
   const result = await installer.update(name);
 
   if (result.success) {
-    const lines = [`✅ 插件更新成功!`, '', `**名称**: ${result.pluginName}`];
+    const lines = [`[OK] 插件更新成功!`, '', `**名称**: ${result.pluginName}`];
 
     if (result.manifest) {
       lines.push(`**版本**: ${result.manifest.version}`);
@@ -496,7 +496,7 @@ async function updatePlugin(name: string | undefined): Promise<SlashCommandResul
     return { success: true, message: `Updated ${result.pluginName}` };
   }
 
-  sessionActions().addAssistantMessage(`❌ 更新失败: ${result.error}`);
+  sessionActions().addAssistantMessage(`更新失败: ${result.error}`);
   return { success: false, error: result.error };
 }
 

@@ -124,7 +124,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = React.memo(
         {/* diff 统计信息 */}
         {needsCollapse && (
           <Text color={theme.colors.info}>
-            📊 显示前 {maxLines} 行，共 {totalLines} 行 diff
+            显示前 {maxLines} 行，共 {totalLines} 行 diff
           </Text>
         )}
 
@@ -187,7 +187,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = React.memo(
         {needsCollapse && (
           <Box marginTop={1}>
             <Text color={theme.colors.warning} dimColor>
-              ⚠️ 已隐藏剩余 {hiddenLines} 行 diff（总共 {totalLines} 行）
+              已隐藏剩余 {hiddenLines} 行 diff（总共 {totalLines} 行）
             </Text>
           </Box>
         )}

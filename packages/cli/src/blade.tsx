@@ -28,7 +28,7 @@ import { checkVersionOnStartup } from './services/VersionChecker.js';
 import type { AppProps } from './ui/App.js';
 import { AppWrapper as BladeApp } from './ui/App.js';
 
-// ⚠️ 关键：在创建任何 logger 之前，先解析 --debug 参数并设置全局配置
+// NOTE: 关键：在创建任何 logger 之前，先解析 --debug 参数并设置全局配置
 // 这样可以确保所有 logger（包括 middleware、commands 中的）都能正确输出到终端
 const rawArgs = hideBin(process.argv);
 const debugIndex = rawArgs.indexOf('--debug');
@@ -40,7 +40,7 @@ if (debugIndex !== -1) {
 }
 
 export async function main() {
-  // 🛡️ 防止使用 sudo 运行（避免创建 root 拥有的文件）
+  // 防止使用 sudo 运行（避免创建 root 拥有的文件）
   // 但允许在容器/沙箱/CI 等天然 root 环境中运行
   if (process.getuid && process.getuid() === 0) {
     const isSudo = !!process.env.SUDO_USER;
@@ -49,7 +49,7 @@ export async function main() {
     // 只有通过 sudo 提权运行时才阻止，天然 root 环境放行
     if (isSudo && !isAllowRoot) {
       console.error('');
-      console.error('❌ 请不要使用 sudo 运行 blade');
+      console.error('Error: 请不要使用 sudo 运行 blade');
       console.error('');
       console.error('原因：');
       console.error('  使用 sudo 会创建属于 root 的配置文件，');
@@ -71,7 +71,7 @@ export async function main() {
   // 初始化优雅退出处理器（捕获 uncaughtException/unhandledRejection/SIGTERM）
   initializeGracefulShutdown();
 
-  // ⚡ 尽早启动版本检查（不 await，与后续初始化并行）
+  // 尽早启动版本检查（不 await，与后续初始化并行）
   // 版本检查不依赖任何配置状态，可以立即开始网络请求
   const versionCheckPromise = checkVersionOnStartup();
 
@@ -129,7 +129,7 @@ export async function main() {
     .fail((msg, err, yargs) => {
       if (err) {
         // CLI 错误输出直接使用 console.error（总是可见，不依赖 debug 模式）
-        console.error('💥 An error occurred:');
+        console.error('An error occurred:');
         console.error(err.message);
         // 总是显示堆栈信息（用于调试）
         console.error('\nStack trace:');
@@ -138,9 +138,9 @@ export async function main() {
       }
 
       if (msg) {
-        console.error('❌ Invalid arguments:');
+        console.error('Error: Invalid arguments:');
         console.error(msg);
-        console.error('\n💡 Did you mean:');
+        console.error('\nHint: Did you mean:');
         yargs.showHelp();
         process.exit(1);
       }
@@ -189,7 +189,7 @@ export async function main() {
   try {
     await cli.parse();
   } catch (error) {
-    console.error('❌ Parse error:', error);
+    console.error('Error: Parse error:', error);
     process.exit(1);
   }
 }

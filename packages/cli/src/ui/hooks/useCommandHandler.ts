@@ -119,7 +119,7 @@ export const useCommandHandler = (
 
     // 4. 显示停止消息（防重复）
     if (!abortMessageSentRef.current) {
-      sessionActions.addAssistantMessage('✋ 任务已停止');
+      sessionActions.addAssistantMessage('任务已停止');
       abortMessageSentRef.current = true;
     }
   });
@@ -172,7 +172,7 @@ export const useCommandHandler = (
 
         if (!hookResult.proceed) {
           if (hookResult.warning) {
-            sessionActions.addAssistantMessage(`⚠️ ${hookResult.warning}`);
+            sessionActions.addAssistantMessage(`${hookResult.warning}`);
           }
           return { success: false, error: 'blocked by hook' };
         }
@@ -266,7 +266,7 @@ export const useCommandHandler = (
         // --- 6. 后处理 ---
         if (loopResult.metadata?.outputTruncated) {
           sessionActions.addAssistantMessage(
-            '⚠️ 输出因达到 token 上限被截断，部分内容可能不完整。',
+            '输出因达到 token 上限被截断，部分内容可能不完整。',
           );
         }
 
@@ -274,7 +274,7 @@ export const useCommandHandler = (
 
         if (!output || output.trim() === '') {
           if (!abortMessageSentRef.current && stats.contentDeltaCount === 0) {
-            sessionActions.addAssistantMessage('⏹ 已取消');
+            sessionActions.addAssistantMessage('已取消');
             return { success: true, output: '已取消' };
           }
           return { success: true, output: output ?? '' };
@@ -287,7 +287,7 @@ export const useCommandHandler = (
         }
 
         const classified = classifyError(error);
-        sessionActions.addAssistantMessage(`❌ ${classified.displayMessage}`);
+        sessionActions.addAssistantMessage(`${classified.displayMessage}`);
         return { success: false, error: classified.displayMessage };
       }
     }
@@ -316,7 +316,7 @@ export const useCommandHandler = (
     // 重置中止提示标记
     abortMessageSentRef.current = false;
 
-    // ⚠️ 先创建 AbortController，保存引用用于 finally 中的清理判断
+    // NOTE: 先创建 AbortController，保存引用用于 finally 中的清理判断
     // 依赖 createAbortController() 的"复用未中止 controller"语义（commandSlice.ts:53-64）
     const taskAbortController = commandActions.createAbortController();
 
@@ -343,7 +343,7 @@ export const useCommandHandler = (
         sessionActions.setError(`执行失败: ${classified.displayMessage}`);
       }
     } finally {
-      // ⚠️ 关键：只有当我们的 controller 仍然是当前的才重置状态
+      // NOTE: 关键：只有当我们的 controller 仍然是当前的才重置状态
       // 防止竞态条件：用户取消后立即发送新消息时，旧任务的 finally 不影响新任务
       const currentController = commandActions.getAbortController();
       const isOurTask = currentController === taskAbortController;
@@ -354,7 +354,7 @@ export const useCommandHandler = (
         sessionActions.setCurrentThinkingContent(null);
 
         // 处理队列中的下一个命令
-        // ⚠️ 队列调度也必须在 isOurTask 内，防止旧任务并行启动新任务
+        // NOTE: 队列调度也必须在 isOurTask 内，防止旧任务并行启动新任务
         const nextCommand = commandActions.dequeueCommand();
         if (nextCommand) {
           setTimeout(

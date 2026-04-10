@@ -108,7 +108,7 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
         const displayContent = formatTodoList(sortedTodos, stats);
 
         updateOutput?.(
-          `✅ TODO list updated (${stats.completed}/${stats.total} completed)`
+          `[OK] TODO list updated (${stats.completed}/${stats.total} completed)`
         );
 
         return {
@@ -125,7 +125,7 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
         return {
           success: false,
           llmContent: `Update failed: ${err.message}`,
-          displayContent: `❌ 更新 TODO 列表失败: ${err.message}`,
+          displayContent: `[FAIL] 更新 TODO 列表失败: ${err.message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: err.message,
@@ -172,25 +172,25 @@ function formatTodoList(todos: TodoItem[], stats: TodoStats): string {
   const percentage =
     stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0;
 
-  lines.push(`📋 TODO 列表 (${stats.completed}/${stats.total} 完成，${percentage}%)`);
+  lines.push(`TODO 列表 (${stats.completed}/${stats.total} 完成，${percentage}%)`);
   lines.push('');
 
   if (todos.length === 0) {
-    lines.push('  (暂无任务)');
+    lines.push(' (暂无任务)');
     return lines.join('\n');
   }
 
   for (const todo of todos) {
-    const icon = todo.status === 'completed' ? '☑' : '☐';
+    const icon = todo.status === 'completed' ? '[x]' : '[ ]';
 
     const priorityLabel = `(P${todo.priority === 'high' ? 0 : todo.priority === 'medium' ? 1 : 2})`;
 
-    const statusFlag = todo.status === 'in_progress' ? ' ⚡' : '';
+    const statusFlag = todo.status === 'in_progress' ? ' ' : '';
 
     const strikethrough = todo.status === 'completed' ? '~~' : '';
 
     lines.push(
-      `  ${icon} ${priorityLabel} ${strikethrough}${todo.content}${strikethrough}${statusFlag}`
+      ` ${icon} ${priorityLabel} ${strikethrough}${todo.content}${strikethrough}${statusFlag}`
     );
   }
 

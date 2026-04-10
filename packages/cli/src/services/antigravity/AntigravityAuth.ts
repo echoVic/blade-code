@@ -104,7 +104,7 @@ export class AntigravityAuth {
    */
   async login(configType: OAuthConfigType = 'antigravity'): Promise<void> {
     const configName = configType === 'gemini-cli' ? 'Gemini CLI' : 'Antigravity';
-    logger.info(`🔐 Starting ${configName} OAuth login...`);
+    logger.info(`Starting ${configName} OAuth login...`);
 
     const oauthConfig = getOAuthConfig(configType);
 
@@ -114,7 +114,7 @@ export class AntigravityAuth {
     // 构建授权 URL
     const authUrl = this.buildAuthorizationUrl(pkceParams, oauthConfig);
 
-    console.log('\n🌐 Opening browser for Google authentication...');
+    console.log('\nOpening browser for Google authentication...');
     console.log(
       '\nIf the browser does not open automatically, copy and paste this URL:'
     );
@@ -134,7 +134,7 @@ export class AntigravityAuth {
     // 等待回调
     const code = await callbackPromise;
 
-    console.log('✅ Authorization code received, exchanging for tokens...');
+    console.log('Authorization code received, exchanging for tokens...');
 
     // 用授权码换取令牌
     const tokenResponse = await this.exchangeCodeForToken(
@@ -156,7 +156,7 @@ export class AntigravityAuth {
     await this.saveToken(token);
     this.cachedToken = token;
 
-    console.log(`✅ ${configName} login successful!`);
+    console.log(`${configName} login successful!`);
     logger.info(`${configName} OAuth login completed`);
   }
 
@@ -168,7 +168,7 @@ export class AntigravityAuth {
     try {
       await fs.unlink(tokenPath);
       this.cachedToken = null;
-      console.log('✅ Logged out from Antigravity');
+      console.log('Logged out from Antigravity');
       logger.info('Antigravity logout completed');
     } catch (error) {
       // 文件不存在也算登出成功
@@ -227,7 +227,7 @@ export class AntigravityAuth {
     const oauthConfig = getOAuthConfig(configType);
     const configName = configType === 'gemini-cli' ? 'Gemini CLI' : 'Antigravity';
 
-    logger.info(`🔄 Refreshing ${configName} access token...`);
+    logger.info(`Refreshing ${configName} access token...`);
 
     const params = new URLSearchParams({
       grant_type: 'refresh_token',
@@ -265,7 +265,7 @@ export class AntigravityAuth {
     await this.saveToken(newToken);
     this.cachedToken = newToken;
 
-    logger.info('✅ Token refreshed successfully');
+    logger.info('Token refreshed successfully');
   }
 
   /**
@@ -346,7 +346,7 @@ export class AntigravityAuth {
               <html>
                 <head><title>Authentication Failed</title></head>
                 <body style="font-family: system-ui; padding: 40px; text-align: center;">
-                  <h1 style="color: #dc2626;">❌ Authentication Failed</h1>
+                  <h1 style="color: #dc2626;">[FAIL] Authentication Failed</h1>
                   <p>Error: ${error}</p>
                   <p>You can close this window.</p>
                 </body>
@@ -385,7 +385,7 @@ export class AntigravityAuth {
             <html>
               <head><title>Authentication Successful</title></head>
               <body style="font-family: system-ui; padding: 40px; text-align: center;">
-                <h1 style="color: #16a34a;">✅ Authentication Successful!</h1>
+                <h1 style="color: #16a34a;">[OK] Authentication Successful!</h1>
                 <p>You can close this window and return to Blade.</p>
                 <script>setTimeout(() => window.close(), 2000);</script>
               </body>

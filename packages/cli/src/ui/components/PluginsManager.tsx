@@ -43,7 +43,7 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            🔌 插件管理器
+            插件管理器
           </Text>
         </Box>
         <Box paddingLeft={2}>
@@ -78,7 +78,7 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
     <Box flexDirection="column" paddingY={1}>
       <Box marginBottom={1}>
         <Text bold color="cyan">
-          🔌 插件管理器
+          插件管理器
         </Text>
         <Text color="gray"> (共 {stats.total} 个插件)</Text>
       </Box>
@@ -101,7 +101,7 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
             <Text color="gray"> (--plugin-dir)</Text>
           </Box>
           {bySource.cli.map((plugin) => {
-            const statusIcon = plugin.status === 'active' ? '✅' : '⏸️';
+            const statusIcon = plugin.status === 'active' ? '[on]' : '[off]';
             return (
               <Box key={plugin.manifest.name} flexDirection="column" paddingLeft={2}>
                 <Text>
@@ -137,7 +137,7 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
             <Text color="gray"> (.blade/plugins/)</Text>
           </Box>
           {bySource.project.map((plugin) => {
-            const statusIcon = plugin.status === 'active' ? '✅' : '⏸️';
+            const statusIcon = plugin.status === 'active' ? '[on]' : '[off]';
             return (
               <Box key={plugin.manifest.name} flexDirection="column" paddingLeft={2}>
                 <Text>
@@ -173,7 +173,7 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
             <Text color="gray"> (~/.blade/plugins/)</Text>
           </Box>
           {bySource.user.map((plugin) => {
-            const statusIcon = plugin.status === 'active' ? '✅' : '⏸️';
+            const statusIcon = plugin.status === 'active' ? '[on]' : '[off]';
             return (
               <Box key={plugin.manifest.name} flexDirection="column" paddingLeft={2}>
                 <Text>

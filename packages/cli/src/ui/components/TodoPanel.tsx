@@ -61,25 +61,25 @@ interface TodoRowProps {
 }
 
 const TodoRow: React.FC<TodoRowProps> = React.memo(({ todo, compact }) => {
-  // 简约符号：✓ (completed), ▶ (in progress), ○ (pending)
+  // Symbols: [OK] (completed), > (in progress), - (pending)
   let icon: string;
   let dimmed = false;
   let text: string;
 
   switch (todo.status) {
     case 'completed':
-      icon = '✓';
+      icon = '[OK]';
       dimmed = true;
       text = todo.content;
       break;
     case 'in_progress':
-      icon = '▶';
+      icon = '>';
       dimmed = false;
       text = todo.activeForm;
       break;
     case 'pending':
     default:
-      icon = '○';
+      icon = '-';
       dimmed = true;
       text = todo.content;
       break;

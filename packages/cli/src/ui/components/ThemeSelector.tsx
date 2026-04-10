@@ -163,7 +163,7 @@ export const ThemeSelector: React.FC = () => {
       appActions.closeModal();
     } catch (error) {
       // 输出错误到控制台
-      console.error('❌ 主题切换失败:', error instanceof Error ? error.message : error);
+      console.error('主题切换失败:', error instanceof Error ? error.message : error);
     } finally {
       setIsProcessing(false);
     }
@@ -205,7 +205,7 @@ export const ThemeSelector: React.FC = () => {
   const renderThemeItem = (props: { isSelected?: boolean; label: string }) => {
     const { isSelected, label } = props;
     const isCurrent = label === currentThemeName;
-    const marker = isCurrent ? '✓' : ' ';
+    const marker = isCurrent ? '[OK]' : ' ';
 
     return (
       <Text
@@ -228,7 +228,7 @@ export const ThemeSelector: React.FC = () => {
         borderColor={selectedTheme.colors.border.light}
       >
         <Text bold color={selectedTheme.colors.primary}>
-          🎨 主题选择器
+          主题选择器
         </Text>
       </Box>
 

@@ -2,9 +2,9 @@
  * toolDomainPolicy — 工具结果的领域副作用处理
  *
  * 从 executeLoopGenerator 中提取的 domain side effects：
- * - TodoWrite → 更新 todo 列表
- * - Skill → 激活 skill context
- * - ModelSwitch → 触发模型切换
+ * - TodoWrite -> 更新 todo 列表
+ * - Skill -> 激活 skill context
+ * - ModelSwitch -> 触发模型切换
  *
  * 纯函数 / 薄封装，返回 action descriptors 或直接调用 deps 回调。
  */

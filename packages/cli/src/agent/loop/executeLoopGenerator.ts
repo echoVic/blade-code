@@ -355,11 +355,11 @@ export async function checkAndCompactInLoop(
     context.messages = result.compactedMessages;
     if (result.success) {
       logger.debug(
-        `[Loop] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} → ${result.postTokens} tokens`
+        `[Loop] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} -> ${result.postTokens} tokens`
       );
     } else {
       logger.warn(
-        `[Loop] [轮次 ${currentTurn}] 压缩使用降级策略: ${result.preTokens} → ${result.postTokens} tokens`
+        `[Loop] [轮次 ${currentTurn}] 压缩使用降级策略: ${result.preTokens} -> ${result.postTokens} tokens`
       );
     }
 
@@ -1037,7 +1037,7 @@ export async function* executeLoopGenerator(
 
       // 9. 检查轮次上限
       if (turnsCount >= maxTurns && !isYoloMode) {
-        logger.info(`⚠️ 达到轮次上限 ${maxTurns} 轮`);
+        logger.info(`Warning: 达到轮次上限 ${maxTurns} 轮`);
 
         if (options?.onTurnLimitReached) {
           const response = await options.onTurnLimitReached({ turnsCount });

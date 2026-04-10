@@ -99,7 +99,7 @@ export const globTool = createTool({
           return {
             success: false,
             llmContent: `Search path must be a directory: ${searchPath}`,
-            displayContent: `❌ 搜索路径必须是目录: ${searchPath}`,
+            displayContent: `[FAIL] 搜索路径必须是目录: ${searchPath}`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: '搜索路径必须是目录',
@@ -112,7 +112,7 @@ export const globTool = createTool({
           return {
             success: false,
             llmContent: `Search path does not exist: ${searchPath}`,
-            displayContent: `❌ 搜索路径不存在: ${searchPath}`,
+            displayContent: `[FAIL] 搜索路径不存在: ${searchPath}`,
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
               message: '搜索路径不存在',
@@ -194,7 +194,7 @@ export const globTool = createTool({
         return {
           success: false,
           llmContent: 'File search aborted',
-          displayContent: '⚠️ 文件搜索被用户中止',
+          displayContent: '[WARN] 文件搜索被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '操作被中止',
@@ -205,7 +205,7 @@ export const globTool = createTool({
       return {
         success: false,
         llmContent: `Search failed: ${err.message}`,
-        displayContent: `❌ 搜索失败: ${err.message}`,
+        displayContent: `[FAIL] 搜索失败: ${err.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: err.message,
@@ -410,11 +410,11 @@ function formatDisplayMessage(metadata: GlobMetadata): string {
 
   if (truncated) {
     // 截断时使用"至少 N 个"避免误导
-    message = `✅ 在 ${search_path} 中找到至少 ${total_matches} 个匹配 "${pattern}" 的文件（已截断）`;
-    message += `\n📋 显示前 ${returned_matches} 个结果`;
+    message = `[OK] 在 ${search_path} 中找到至少 ${total_matches} 个匹配 "${pattern}" 的文件（已截断）`;
+    message += `\n显示前 ${returned_matches} 个结果`;
   } else {
     // 未截断时显示准确数量
-    message = `✅ 在 ${search_path} 中找到 ${total_matches} 个匹配 "${pattern}" 的文件`;
+    message = `[OK] 在 ${search_path} 中找到 ${total_matches} 个匹配 "${pattern}" 的文件`;
   }
 
   return message;

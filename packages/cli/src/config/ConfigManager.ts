@@ -8,10 +8,10 @@
  * - 验证配置完整性
  * - 返回完整的 BladeConfig 供 Store 使用
  *
- * ⚠️ 注意：
+ * NOTE:
  * - 运行时配置管理由 Store（vanilla.ts）负责
  * - 配置持久化由 ConfigService 负责
- * - ConfigManager 只在启动时调用一次：ConfigManager.initialize() → Store.setConfig()
+ * - ConfigManager 只在启动时调用一次：ConfigManager.initialize() -> Store.setConfig()
  *
  * 单例模式：避免重复加载配置文件
  */

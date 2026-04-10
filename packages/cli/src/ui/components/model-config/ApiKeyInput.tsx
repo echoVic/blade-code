@@ -37,7 +37,7 @@ export const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold color="blue">
-          🔑 Step 2: 输入 API Key
+          Step 2: 输入 API Key
         </Text>
       </Box>
 
@@ -50,7 +50,7 @@ export const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
       {envHint && (
         <Box marginBottom={1}>
           <Text dimColor>
-            💡 环境变量: <Text color="cyan">{envHint}</Text>
+            环境变量: <Text color="cyan">{envHint}</Text>
           </Text>
         </Box>
       )}
@@ -58,7 +58,7 @@ export const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
       {provider.docUrl && (
         <Box marginBottom={1}>
           <Text dimColor>
-            📖 文档: <Text color="blue">{provider.docUrl}</Text>
+            文档: <Text color="blue">{provider.docUrl}</Text>
           </Text>
         </Box>
       )}
@@ -69,7 +69,7 @@ export const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
 
       <Box>
         <Text bold color="cyan">
-          ▶{' '}
+          {'>'}{' '}
         </Text>
         <TextInput
           value={value}
@@ -82,13 +82,13 @@ export const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
 
       {error && (
         <Box marginTop={1}>
-          <Text color="red">❌ {error}</Text>
+          <Text color="red">{error}</Text>
         </Box>
       )}
 
       <Box marginTop={1}>
         <Text dimColor>
-          💡 输入完成后按 <Text bold>Enter</Text>，<Text bold>Esc</Text> 返回
+          输入完成后按 <Text bold>Enter</Text>，<Text bold>Esc</Text> 返回
         </Text>
       </Box>
     </Box>

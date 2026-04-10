@@ -30,7 +30,7 @@ export const webCommand: CommandModule<object, WebArgs> = {
     await ensureStoreInitialized();
 
     if (!process.env.BLADE_SERVER_PASSWORD) {
-      console.log(chalk.yellow('⚠️  BLADE_SERVER_PASSWORD is not set; server is unsecured.'));
+      console.log(chalk.yellow('[WARN] BLADE_SERVER_PASSWORD is not set; server is unsecured.'));
       console.log(chalk.gray('   Set this environment variable to enable Basic Auth.\n'));
     }
 

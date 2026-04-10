@@ -109,7 +109,7 @@ export const writeTool = createTool({
           return {
             success: false,
             llmContent: `If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.`,
-            displayContent: `📖 我需要先读取文件内容，然后再进行写入。`,
+            displayContent: `我需要先读取文件内容，然后再进行写入。`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File not read before write',
@@ -120,13 +120,13 @@ export const writeTool = createTool({
           };
         }
 
-        // 🔴 检查文件是否被外部程序修改（强制失败）
+        // 检查文件是否被外部程序修改（强制失败）
         const externalModCheck = await tracker.checkExternalModification(file_path);
         if (externalModCheck.isExternal) {
           return {
             success: false,
             llmContent: `The file has been modified by an external program since you last read it. You must use the Read tool again to see the current content before writing.\n\nDetails: ${externalModCheck.message}`,
-            displayContent: `❌ 写入失败：文件已被外部程序修改\n\n${externalModCheck.message}\n\n💡 我需要重新读取文件内容后再写入`,
+            displayContent: `[FAIL] 写入失败：文件已被外部程序修改\n\n${externalModCheck.message}\n\n我需要重新读取文件内容后再写入`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File modified externally',
@@ -163,13 +163,13 @@ export const writeTool = createTool({
         await fsService.writeTextFile(file_path, content);
       } else {
         // 二进制文件写入
-        // ⚠️ ACP 模式下不支持二进制写入，必须明确失败
+        // [WARN] ACP 模式下不支持二进制写入，必须明确失败
         // 否则会写到本地磁盘而非远端，造成数据丢失/错位
         if (useAcp) {
           return {
             success: false,
             llmContent: `Binary file writes are not supported in ACP mode. The IDE only supports text file operations. Please use encoding='utf8' for text files, or ask the user to write the file manually.`,
-            displayContent: `❌ ACP 模式不支持二进制文件写入\n\n当前通过 IDE 执行文件操作，但 IDE 仅支持文本文件。\n\n💡 如果是文本文件，我会使用 encoding='utf8' 重试；如果必须写入二进制文件，需要在本地终端执行`,
+            displayContent: `[FAIL] ACP 模式不支持二进制文件写入\n\n当前通过 IDE 执行文件操作，但 IDE 仅支持文本文件。\n\n如果是文本文件，我会使用 encoding='utf8' 重试；如果必须写入二进制文件，需要在本地终端执行`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'Binary writes not supported in ACP mode',
@@ -191,7 +191,7 @@ export const writeTool = createTool({
         await fs.writeFile(file_path, writeBuffer);
       }
 
-      // 🔴 更新文件访问记录（记录写入操作）
+      // 更新文件访问记录（记录写入操作）
       if (sessionId) {
         const tracker = FileAccessTracker.getInstance();
         await tracker.recordFileEdit(file_path, sessionId, 'write');
@@ -234,7 +234,7 @@ export const writeTool = createTool({
           encoding === 'utf8'
             ? `写入 ${lineCount} 行到 ${fileName}`
             : `写入 ${stats?.size ? formatFileSize(stats.size) : 'unknown'} 到 ${fileName}`,
-        // 🆕 ACP diff 支持：完整内容用于 IDE 显示差异
+        // ACP diff 支持：完整内容用于 IDE 显示差异
         kind: 'edit',
         oldContent: oldContent || '', // 新文件为空字符串
         newContent: encoding === 'utf8' ? content : undefined, // 仅文本文件
@@ -264,7 +264,7 @@ export const writeTool = createTool({
         return {
           success: false,
           llmContent: 'File write aborted',
-          displayContent: '⚠️ 文件写入被用户中止',
+          displayContent: '[WARN] 文件写入被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '操作被中止',
@@ -275,7 +275,7 @@ export const writeTool = createTool({
       return {
         success: false,
         llmContent: `File write failed: ${nodeError.message}`,
-        displayContent: `❌ 写入文件失败: ${nodeError.message}`,
+        displayContent: `[FAIL] 写入文件失败: ${nodeError.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: nodeError.message,
@@ -312,18 +312,18 @@ function formatDisplayMessage(
   content?: string,
   diffSnippet?: string | null
 ): string {
-  let message = `✅ 成功写入文件: ${filePath}`;
+  let message = `[OK] 成功写入文件: ${filePath}`;
 
   if (metadata.file_size !== undefined) {
     message += ` (${formatFileSize(metadata.file_size as number)})`;
   }
 
   if (metadata.snapshot_created) {
-    message += `\n📸 已创建快照 (可回滚)`;
+    message += `\n已创建快照 (可回滚)`;
   }
 
   if (metadata.encoding !== 'utf8') {
-    message += `\n🔐 使用编码: ${metadata.encoding}`;
+    message += `\n使用编码: ${metadata.encoding}`;
   }
 
   // 优先显示 diff（如果有）
@@ -409,7 +409,7 @@ function generateContentPreview(filePath: string, content: string): string | nul
   }
 
   // 生成 Markdown 代码块
-  let preview = '📄 文件内容:\n\n';
+  let preview = '文件内容:\n\n';
   preview += '```' + language + '\n';
   preview += previewContent;
   if (!previewContent.endsWith('\n')) {
@@ -418,7 +418,7 @@ function generateContentPreview(filePath: string, content: string): string | nul
   preview += '```';
 
   if (truncated) {
-    preview += `\n\n⚠️ 内容已截断（完整文件共 ${lines.length} 行，${content.length} 字符）`;
+    preview += `\n\n[WARN] 内容已截断（完整文件共 ${lines.length} 行，${content.length} 字符）`;
   }
 
   return preview;

@@ -51,12 +51,12 @@ async function showServersOverview(ui: SlashCommandUI): Promise<void> {
 
   if (Object.keys(configuredServers).length === 0) {
     ui.sendMessage(
-      '🔌 **MCP 服务器状态**\n\n⚠️ 暂无配置的 MCP 服务器\n\n💡 使用 `blade mcp add` 命令添加 MCP 服务器'
+      '**MCP 服务器状态**\n\n[WARN] 暂无配置的 MCP 服务器\n\n使用 `blade mcp add` 命令添加 MCP 服务器'
     );
     return;
   }
 
-  ui.sendMessage('🔍 正在检查 MCP 服务器状态...');
+  ui.sendMessage('正在检查 MCP 服务器状态...');
 
   // 尝试连接所有配置的服务器
   const checkPromises = Object.entries(configuredServers).map(
@@ -94,14 +94,14 @@ function showServersFromRegistry(
   ui: SlashCommandUI,
   servers: Map<string, McpServerInfo>
 ): void {
-  let output = '🔌 **MCP 服务器状态**\n\n';
+  let output = '**MCP 服务器状态**\n\n';
   let connectedCount = 0;
   let disconnectedCount = 0;
   let totalTools = 0;
 
   for (const [name, serverInfo] of servers) {
     const { config, status, connectedAt, lastError, tools } = serverInfo;
-    const statusSymbol = status === McpConnectionStatus.CONNECTED ? '✓' : '✗';
+    const statusSymbol = status === McpConnectionStatus.CONNECTED ? '[OK]' : '[FAIL]';
     const statusText =
       status === McpConnectionStatus.CONNECTED ? 'Connected' : 'Disconnected';
 
@@ -112,7 +112,7 @@ function showServersFromRegistry(
       disconnectedCount++;
     }
 
-    output += `📦 **${name}**\n`;
+    output += `**${name}**\n`;
     output += `  状态: ${statusSymbol} ${statusText}\n`;
     output += `  类型: ${config.type}\n`;
 
@@ -138,8 +138,8 @@ function showServersFromRegistry(
   output += '**总计:**\n';
   output += `- 服务器: ${servers.size} 个 (${connectedCount} 连接, ${disconnectedCount} 断开)\n`;
   output += `- 可用工具: ${totalTools} 个\n\n`;
-  output += '💡 使用 `/mcp <server-name>` 查看详细信息\n';
-  output += '💡 使用 `/mcp tools` 查看所有工具';
+  output += '使用 `/mcp <server-name>` 查看详细信息\n';
+  output += '使用 `/mcp tools` 查看所有工具';
 
   ui.sendMessage(output);
 }
@@ -159,7 +159,7 @@ async function showServerDetails(
 
   if (!config) {
     ui.sendMessage(
-      `❌ 服务器 "${serverName}" 不存在\n\n💡 使用 \`/mcp\` 查看所有可用服务器`
+      `服务器 "${serverName}" 不存在\n\n使用 \`/mcp\` 查看所有可用服务器`
     );
     return;
   }
@@ -169,11 +169,11 @@ async function showServerDetails(
     let serverInfo = mcpRegistry.getServerStatus(serverName);
 
     if (!serverInfo) {
-      ui.sendMessage(`🔍 正在连接 ${serverName}...`);
+      ui.sendMessage(`正在连接 ${serverName}...`);
       await mcpRegistry.registerServer(serverName, config);
       serverInfo = mcpRegistry.getServerStatus(serverName);
     } else if (serverInfo.status === McpConnectionStatus.DISCONNECTED) {
-      ui.sendMessage(`🔍 正在重新连接 ${serverName}...`);
+      ui.sendMessage(`正在重新连接 ${serverName}...`);
       await mcpRegistry.connectServer(serverName);
       serverInfo = mcpRegistry.getServerStatus(serverName);
     }
@@ -189,7 +189,7 @@ async function showServerDetails(
     // 连接失败，显示配置详情和错误信息
     showServerDetailsFromConfig(ui, serverName, config);
     ui.sendMessage(
-      `\n⚠️ 连接失败: ${error instanceof Error ? error.message : '未知错误'}`
+      `\n[WARN] 连接失败: ${error instanceof Error ? error.message : '未知错误'}`
     );
   }
 }
@@ -203,11 +203,11 @@ function showServerDetailsFromRegistry(
   serverInfo: McpServerInfo
 ): void {
   const { config, status, connectedAt, lastError, tools } = serverInfo;
-  const statusSymbol = status === McpConnectionStatus.CONNECTED ? '✓' : '✗';
+  const statusSymbol = status === McpConnectionStatus.CONNECTED ? '[OK]' : '[FAIL]';
   const statusText =
     status === McpConnectionStatus.CONNECTED ? 'Connected' : 'Disconnected';
 
-  let output = `📦 **${serverName}**\n\n`;
+  let output = `**${serverName}**\n\n`;
 
   // 连接状态
   output += '**连接状态:**\n';
@@ -257,7 +257,7 @@ function showServerDetailsFromRegistry(
       }
     }
   } else {
-    output += '**工具:**\n  ⚠️ 服务器未连接，无法获取工具列表\n';
+    output += '**工具:**\n  [WARN] 服务器未连接，无法获取工具列表\n';
   }
 
   // 错误信息
@@ -277,11 +277,11 @@ function showServerDetailsFromConfig(
   serverName: string,
   config: McpServerConfig
 ): void {
-  let output = `📦 **${serverName}**\n\n`;
+  let output = `**${serverName}**\n\n`;
 
   // 连接状态
   output += '**连接状态:**\n';
-  output += `  ⏸️ 未启动 (等待 Agent 连接)\n\n`;
+  output += `  未启动 (等待 Agent 连接)\n\n`;
 
   // 配置信息
   output += '**配置信息:**\n';
@@ -306,7 +306,7 @@ function showServerDetailsFromConfig(
     output += `  超时: ${config.timeout}ms\n`;
   }
 
-  output += '\n💡 服务器将在 Agent 启动时自动连接';
+  output += '\n服务器将在 Agent 启动时自动连接';
 
   ui.sendMessage(output);
 }
@@ -322,12 +322,12 @@ async function showAllTools(ui: SlashCommandUI): Promise<void> {
 
   if (Object.keys(configuredServers).length === 0) {
     ui.sendMessage(
-      '🔧 **可用的 MCP 工具**\n\n⚠️ 暂无配置的 MCP 服务器\n\n💡 使用 `blade mcp add` 命令添加 MCP 服务器'
+      '**可用的 MCP 工具**\n\n[WARN] 暂无配置的 MCP 服务器\n\n使用 `blade mcp add` 命令添加 MCP 服务器'
     );
     return;
   }
 
-  ui.sendMessage('🔍 正在检查 MCP 服务器并获取工具列表...');
+  ui.sendMessage('正在检查 MCP 服务器并获取工具列表...');
 
   // 尝试连接所有配置的服务器
   const checkPromises = Object.entries(configuredServers).map(
@@ -354,7 +354,7 @@ async function showAllTools(ui: SlashCommandUI): Promise<void> {
   // 获取所有服务器
   const servers = mcpRegistry.getAllServers();
 
-  let output = '🔧 **可用的 MCP 工具**\n\n';
+  let output = '**可用的 MCP 工具**\n\n';
   let totalTools = 0;
 
   for (const [name, serverInfo] of servers) {
@@ -363,7 +363,7 @@ async function showAllTools(ui: SlashCommandUI): Promise<void> {
     output += `**${name} (${tools.length} 个工具):**\n`;
 
     if (status !== McpConnectionStatus.CONNECTED) {
-      output += '  ⚠️ 服务器未连接\n\n';
+      output += '  [WARN] 服务器未连接\n\n';
       continue;
     }
 

@@ -125,9 +125,9 @@ export const UpdatePrompt: React.FC<UpdatePromptProps> = ({
     <Box flexDirection="column" marginY={1}>
       {/* 标题 */}
       <Text color="yellow" bold>
-        {'✨ Update available! '}
+        {'Update available! '}
         <Text color="gray">
-          {versionInfo.currentVersion} {'→'} {versionInfo.latestVersion}
+          {versionInfo.currentVersion} {'->'} {versionInfo.latestVersion}
         </Text>
       </Text>
 

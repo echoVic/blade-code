@@ -128,7 +128,7 @@ async function readSettingsFile(filePath: string): Promise<{
 function formatRuleLabel(rule: string, source: RuleSource): string {
   const padding = rule.padEnd(32, ' ');
   const suffix =
-    source === 'local' ? `${sourceLabels[source]} ← 可删除` : sourceLabels[source];
+    source === 'local' ? `${sourceLabels[source]} <- 可删除` : sourceLabels[source];
   return `${padding} ${suffix}`;
 }
 
@@ -463,15 +463,15 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({ onClose 
       <Box flexDirection="column" marginLeft={2}>
         <Text>
           1. .blade/settings.local.json (本地配置，不提交 Git){' '}
-          {status.localExists ? '✓ 存在' : '✗ 不存在'}
+          {status.localExists ? '[OK] 存在' : '[X] 不存在'}
         </Text>
         <Text>
           2. .blade/settings.json (项目配置，提交 Git){' '}
-          {status.projectExists ? '✓ 存在' : '✗ 不存在'}
+          {status.projectExists ? '[OK] 存在' : '[X] 不存在'}
         </Text>
         <Text>
           3. ~/.blade/settings.json (用户全局配置){' '}
-          {status.globalExists ? '✓ 存在' : '✗ 不存在'}
+          {status.globalExists ? '[OK] 存在' : '[X] 不存在'}
         </Text>
       </Box>
       <Text>说明：</Text>
@@ -579,7 +579,7 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({ onClose 
       width={80}
     >
       <Text color="cyan" bold>
-        ⚙️ 权限管理器
+        权限管理器
       </Text>
       {renderTabHeader()}
       <Box flexDirection="column" gap={1}>

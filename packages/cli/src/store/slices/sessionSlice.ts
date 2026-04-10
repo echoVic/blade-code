@@ -66,11 +66,11 @@ const initialSessionState: SessionState = {
   expandedMessageCount: 100, // 默认显示最近 100 条消息完整内容
   // 流式消息相关
   currentStreamingMessageId: null, // 当前正在流式接收的助手消息 ID
-  currentStreamingChunks: [], // 🆕 原始增量片段
-  currentStreamingLines: [], // 🆕 已完成行缓冲
-  currentStreamingTail: '', // 🆕 当前未完成的行片段
-  currentStreamingLineCount: 0, // 🆕 已完成行总数
-  currentStreamingVersion: 0, // 🆕 流式缓冲版本号
+  currentStreamingChunks: [], // NEW: 原始增量片段
+  currentStreamingLines: [], // NEW: 已完成行缓冲
+  currentStreamingTail: '', // NEW: 当前未完成的行片段
+  currentStreamingLineCount: 0, // NEW: 已完成行总数
+  currentStreamingVersion: 0, // NEW: 流式缓冲版本号
   finalizingStreamingMessageId: null, // 流式转最终渲染中的消息 ID
 };
 

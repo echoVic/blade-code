@@ -60,9 +60,9 @@ flowchart TD
 
 ### Forbidden Dependencies
 
-- ❌ Core → UI (no upward dependencies)
-- ❌ Utils → * (utils must be standalone)
-- ❌ Circular dependencies
+- Core -> UI (no upward dependencies)
+- Utils -> * (utils must be standalone)
+- Circular dependencies
 
 ## File Naming
 
@@ -84,7 +84,7 @@ export { PublicClass } from './PublicClass.js';
 export type { PublicType } from './types.js';
 
 // Don't export internal implementations
-// ❌ export { InternalHelper } from './InternalHelper.js';
+// export { InternalHelper } from './InternalHelper.js';
 ```
 
 ### Type-only Exports

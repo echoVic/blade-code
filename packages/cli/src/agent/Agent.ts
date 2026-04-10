@@ -140,7 +140,7 @@ export class Agent {
       requestedModelId && requestedModelId !== 'inherit' ? requestedModelId : undefined;
     const modelConfig = modelId ? getModelById(modelId) : getCurrentModel();
     if (!modelConfig) {
-      throw new Error(`❌ 模型配置未找到: ${modelId ?? 'current'}`);
+      throw new Error(`模型配置未找到: ${modelId ?? 'current'}`);
     }
     return modelConfig;
   }
@@ -155,9 +155,9 @@ export class Agent {
     const thinkingModeEnabled = getThinkingModeEnabled();
     const supportsThinking = modelSupportsThinking && thinkingModeEnabled;
     if (modelSupportsThinking && !thinkingModeEnabled) {
-      this.log(`🧠 模型支持 Thinking，但用户未开启（按 Tab 开启）`);
+      this.log(`模型支持 Thinking，但用户未开启（按 Tab 开启）`);
     } else if (supportsThinking) {
-      this.log(`🧠 Thinking 模式已启用，启用 reasoning_content 支持`);
+      this.log(`Thinking 模式已启用，启用 reasoning_content 支持`);
     }
 
     this.currentModelMaxContextTokens =
@@ -189,10 +189,10 @@ export class Agent {
     if (!modelId || modelId === this.currentModelId) return;
     const modelConfig = getModelById(modelId);
     if (!modelConfig) {
-      this.log(`⚠️ 模型配置未找到: ${modelId}`);
+      this.log(`Warning: 模型配置未找到: ${modelId}`);
       return;
     }
-    await this.applyModelConfig(modelConfig, '🔁 切换模型');
+    await this.applyModelConfig(modelConfig, '切换模型');
   }
 
   /**
@@ -213,7 +213,7 @@ export class Agent {
     const models = getAllModels();
     if (models.length === 0) {
       throw new Error(
-        '❌ 没有可用的模型配置\n\n' +
+        '没有可用的模型配置\n\n' +
           '请先使用以下命令添加模型：\n' +
           '  /model add\n\n' +
           '或运行初始化向导：\n' +
@@ -224,7 +224,7 @@ export class Agent {
     // 2. 获取 BladeConfig（从 Store）
     const config = getConfig();
     if (!config) {
-      throw new Error('❌ 配置未初始化，请确保应用已正确启动');
+      throw new Error('配置未初始化，请确保应用已正确启动');
     }
 
     // 3. 验证配置
@@ -294,7 +294,7 @@ export class Agent {
 
       // 5. 初始化核心组件
       const modelConfig = this.resolveModelConfig(this.runtimeOptions.modelId);
-      await this.applyModelConfig(modelConfig, '🚀 使用模型:');
+      await this.applyModelConfig(modelConfig, '使用模型:');
 
       // 5. 初始化附件收集器（@ 文件提及）
       this.attachmentCollector = new AttachmentCollector({
@@ -381,7 +381,7 @@ export class Agent {
       if (result.success && result.metadata?.targetMode && context.permissionMode === 'plan') {
         const targetMode = result.metadata.targetMode as PermissionMode;
         const planContent = result.metadata.planContent as string | undefined;
-        logger.debug(`🔄 Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
+        logger.debug(`Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
 
         await configActions().setPermissionMode(targetMode);
 
@@ -451,7 +451,7 @@ export class Agent {
     context: ChatContext,
     options?: LoopOptions
   ): AsyncGenerator<import('./loop/types.js').LoopEvent, LoopResult, void> {
-    logger.debug('🔵 Processing Plan mode message...');
+    logger.debug('Processing Plan mode message...');
 
     // Plan 模式差异 1: 使用统一入口构建 Plan 模式系统提示词
     const { prompt: systemPrompt } = await buildSystemPrompt({
@@ -495,14 +495,14 @@ export class Agent {
 
   /**
    * Spec 模式入口 - 准备 Spec 专用配置后调用通用循环
-   * Spec 模式特点：结构化 4 阶段工作流（Requirements → Design → Tasks → Implementation）
+   * Spec 模式特点：结构化 4 阶段工作流（Requirements -> Design -> Tasks -> Implementation）
    */
   private async *runSpecLoop(
     message: UserMessageContent,
     context: ChatContext,
     options?: LoopOptions
   ): AsyncGenerator<import('./loop/types.js').LoopEvent, LoopResult, void> {
-    logger.debug('🔷 Processing Spec mode message...');
+    logger.debug('Processing Spec mode message...');
 
     // 1. 确保 SpecManager 已初始化
     const specManager = SpecManager.getInstance();
@@ -563,7 +563,7 @@ export class Agent {
     context: ChatContext,
     options?: LoopOptions
   ): AsyncGenerator<import('./loop/types.js').LoopEvent, LoopResult, void> {
-    logger.debug('💬 Processing enhanced chat message...');
+    logger.debug('Processing enhanced chat message...');
 
     // 无状态设计：优先使用 context.systemPrompt，否则按需构建
     const basePrompt = context.systemPrompt ?? (await this.buildSystemPromptOnDemand());
@@ -624,7 +624,7 @@ export class Agent {
       onSkillActivated: (ctx) => {
         this.activeSkillContext = ctx;
         logger.debug(
-          `🎯 Skill "${ctx.skillName}" activated` +
+          `Skill "${ctx.skillName}" activated` +
             (ctx.allowedTools
               ? ` with allowed tools: ${ctx.allowedTools.join(', ')}`
               : '')
@@ -718,7 +718,7 @@ export class Agent {
     }
 
     logger.debug(
-      `🔒 Applied tool whitelist: ${whitelist.join(', ')} (removed ${toolsToRemove.length} tools)`
+      `Applied tool whitelist: ${whitelist.join(', ')} (removed ${toolsToRemove.length} tools)`
     );
   }
 
@@ -833,12 +833,12 @@ export class Agent {
         sessionId: 'default',
         configDir: path.join(os.homedir(), '.blade'),
       });
-      logger.debug(`📦 Registering ${builtinTools.length} builtin tools...`);
+      logger.debug(`Registering ${builtinTools.length} builtin tools...`);
 
       this.executionPipeline.getRegistry().registerAll(builtinTools);
 
       const registeredCount = this.executionPipeline.getRegistry().getAll().length;
-      logger.debug(`✅ Builtin tools registered: ${registeredCount} tools`);
+      logger.debug(`Builtin tools registered: ${registeredCount} tools`);
       logger.debug(
         `[Tools] ${this.executionPipeline
           .getRegistry()
@@ -869,7 +869,7 @@ export class Agent {
       const mcpServers = getMcpServers();
 
       if (Object.keys(mcpServers).length === 0) {
-        logger.debug('📦 No MCP servers configured');
+        logger.debug('No MCP servers configured');
         return;
       }
 
@@ -878,11 +878,11 @@ export class Agent {
 
       for (const [name, config] of Object.entries(mcpServers)) {
         try {
-          logger.debug(`🔌 Connecting to MCP server: ${name}`);
+          logger.debug(`Connecting to MCP server: ${name}`);
           await registry.registerServer(name, config);
-          logger.debug(`✅ MCP server "${name}" connected`);
+          logger.debug(`MCP server "${name}" connected`);
         } catch (error) {
-          logger.warn(`⚠️  MCP server "${name}" connection failed:`, error);
+          logger.warn(`Warning: MCP server "${name}" connection failed:`, error);
           // 继续处理其他服务器，不抛出错误
         }
       }
@@ -893,7 +893,7 @@ export class Agent {
       if (mcpTools.length > 0) {
         // 5. 注册到工具注册表
         this.executionPipeline.getRegistry().registerAll(mcpTools);
-        logger.debug(`✅ Registered ${mcpTools.length} MCP tools`);
+        logger.debug(`Registered ${mcpTools.length} MCP tools`);
         logger.debug(`[MCP Tools] ${mcpTools.map((t) => t.name).join(', ')}`);
       }
     } catch (error) {
@@ -909,7 +909,7 @@ export class Agent {
     // 如果已经加载过，跳过（全局单例，只需加载一次）
     if (subagentRegistry.getAllNames().length > 0) {
       logger.debug(
-        `📦 Subagents already loaded: ${subagentRegistry.getAllNames().join(', ')}`
+        `Subagents already loaded: ${subagentRegistry.getAllNames().join(', ')}`
       );
       return;
     }
@@ -918,10 +918,10 @@ export class Agent {
       const loadedCount = subagentRegistry.loadFromStandardLocations();
       if (loadedCount > 0) {
         logger.debug(
-          `✅ Loaded ${loadedCount} subagents: ${subagentRegistry.getAllNames().join(', ')}`
+          `Loaded ${loadedCount} subagents: ${subagentRegistry.getAllNames().join(', ')}`
         );
       } else {
-        logger.debug('📦 No subagents configured');
+        logger.debug('No subagents configured');
       }
     } catch (error) {
       logger.warn('Failed to load subagents:', error);
@@ -941,15 +941,15 @@ export class Agent {
 
       if (result.skills.length > 0) {
         logger.debug(
-          `✅ Discovered ${result.skills.length} skills: ${result.skills.map((s) => s.name).join(', ')}`
+          `Discovered ${result.skills.length} skills: ${result.skills.map((s) => s.name).join(', ')}`
         );
       } else {
-        logger.debug('📦 No skills configured');
+        logger.debug('No skills configured');
       }
 
       // 记录发现过程中的错误（不阻塞初始化）
       for (const error of result.errors) {
-        logger.warn(`⚠️  Skill loading error at ${error.path}: ${error.error}`);
+        logger.warn(`Warning: Skill loading error at ${error.path}: ${error.error}`);
       }
     } catch (error) {
       logger.warn('Failed to discover skills:', error);
@@ -973,7 +973,7 @@ export class Agent {
     }
 
     const allowedTools = this.activeSkillContext.allowedTools;
-    logger.debug(`🔒 Applying Skill tool restrictions: ${allowedTools.join(', ')}`);
+    logger.debug(`Applying Skill tool restrictions: ${allowedTools.join(', ')}`);
 
     // 过滤工具列表，只保留 allowed-tools 中指定的工具
     const filteredTools = tools.filter((tool) => {
@@ -996,7 +996,7 @@ export class Agent {
     });
 
     logger.debug(
-      `🔒 Filtered tools: ${filteredTools.map((t) => t.name).join(', ')} (${filteredTools.length}/${tools.length})`
+      `Filtered tools: ${filteredTools.map((t) => t.name).join(', ')} (${filteredTools.length}/${tools.length})`
     );
 
     return filteredTools;
@@ -1008,7 +1008,7 @@ export class Agent {
    */
   public clearSkillContext(): void {
     if (this.activeSkillContext) {
-      logger.debug(`🎯 Skill "${this.activeSkillContext.skillName}" deactivated`);
+      logger.debug(`Skill "${this.activeSkillContext.skillName}" deactivated`);
       this.activeSkillContext = undefined;
     }
   }
@@ -1057,7 +1057,7 @@ export class Agent {
       }
 
       logger.debug(
-        `✅ Processed ${attachments.length} @ file mentions in multimodal message`
+        `Processed ${attachments.length} @ file mentions in multimodal message`
       );
 
       // 构建附件内容块
@@ -1119,7 +1119,7 @@ export class Agent {
     }
 
     if (errors.length > 0) {
-      result += '\n\n⚠️ Some files could not be loaded:\n';
+      result += '\n\nWarning: Some files could not be loaded:\n';
       result += errors.join('\n');
     }
 
@@ -1145,7 +1145,7 @@ export class Agent {
         return message;
       }
 
-      logger.debug(`✅ Processed ${attachments.length} @ file mentions`);
+      logger.debug(`Processed ${attachments.length} @ file mentions`);
 
       return this.appendAttachments(message, attachments);
     } catch (error) {
@@ -1200,7 +1200,7 @@ export class Agent {
 
     // 追加错误信息
     if (errors.length > 0) {
-      enhancedMessage += '\n\n⚠️ Some files could not be loaded:\n';
+      enhancedMessage += '\n\nWarning: Some files could not be loaded:\n';
       enhancedMessage += errors.join('\n');
     }
 

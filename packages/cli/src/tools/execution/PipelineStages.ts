@@ -52,7 +52,7 @@ export class PermissionStage implements PipelineStage {
   readonly name = 'permission';
   private permissionChecker: PermissionChecker;
   private readonly sessionApprovals: SessionApprovalStore;
-  // 🔧 重命名为 defaultPermissionMode，作为回退值
+  // 重命名为 defaultPermissionMode，作为回退值
   // 实际权限检查时优先使用 execution.context.permissionMode（动态值）
   private readonly defaultPermissionMode: PermissionMode;
 
@@ -431,7 +431,7 @@ export class ConfirmationStage implements PipelineStage {
       } else {
         // 如果没有提供 confirmationHandler,则自动通过确认（用于非交互式环境）
         logger.warn(
-          '⚠️ No ConfirmationHandler; auto-approving tool execution (non-interactive environment only)'
+          '[WARN] No ConfirmationHandler; auto-approving tool execution (non-interactive environment only)'
         );
       }
     } catch (error) {
@@ -549,32 +549,32 @@ export class ConfirmationStage implements PipelineStage {
       const command = (params.command as string) || '';
       const mainCommand = command.trim().split(/\s+/)[0];
 
-      // ⚠️ 检测使用了专用工具应该替代的命令
+      // [WARN] 检测使用了专用工具应该替代的命令
       if (mainCommand === 'cat' || mainCommand === 'head' || mainCommand === 'tail') {
         risks.push(
-          `💡 建议使用 Read 工具代替 ${mainCommand} 命令（性能更好，支持大文件分页）`
+          `建议使用 Read 工具代替 ${mainCommand} 命令（性能更好，支持大文件分页）`
         );
       } else if (mainCommand === 'grep' || mainCommand === 'rg') {
         risks.push(
-          '💡 建议使用 Grep 工具代替 grep/rg 命令（支持更强大的过滤和上下文）'
+          '建议使用 Grep 工具代替 grep/rg 命令（支持更强大的过滤和上下文）'
         );
       } else if (mainCommand === 'find') {
-        risks.push('💡 建议使用 Glob 工具代替 find 命令（更快，支持 glob 模式）');
+        risks.push('建议使用 Glob 工具代替 find 命令（更快，支持 glob 模式）');
       } else if (mainCommand === 'sed' || mainCommand === 'awk') {
         risks.push(
-          `💡 建议使用 Edit 工具代替 ${mainCommand} 命令（更安全，支持预览和回滚）`
+          `建议使用 Edit 工具代替 ${mainCommand} 命令（更安全，支持预览和回滚）`
         );
       }
 
-      // ⚠️ 危险命令警告
+      // [WARN] 危险命令警告
       if (command.includes('rm')) {
-        risks.push('⚠️ 此命令可能删除文件');
+        risks.push('[WARN] 此命令可能删除文件');
       }
       if (command.includes('sudo')) {
-        risks.push('⚠️ 此命令需要管理员权限');
+        risks.push('[WARN] 此命令需要管理员权限');
       }
       if (command.includes('git push')) {
-        risks.push('⚠️ 此命令将推送代码到远程仓库');
+        risks.push('[WARN] 此命令将推送代码到远程仓库');
       }
     } else if (tool.name === 'Write' || tool.name === 'Edit') {
       risks.push('此操作将修改文件内容');

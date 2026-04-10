@@ -89,7 +89,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
     if (savedTheme && themeManager.hasTheme(savedTheme)) {
       themeManager.setTheme(savedTheme);
       if (props.debug) {
-        console.log(`✓ 已加载主题: ${savedTheme}`);
+        console.log(`[OK] 已加载主题: ${savedTheme}`);
       }
     }
 
@@ -98,12 +98,12 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
       const loadedCount = subagentRegistry.loadFromStandardLocations();
       if (props.debug && loadedCount > 0) {
         console.log(
-          `✓ 已加载 ${loadedCount} 个 subagents: ${subagentRegistry.getAllNames().join(', ')}`
+          `[OK] 已加载 ${loadedCount} 个 subagents: ${subagentRegistry.getAllNames().join(', ')}`
         );
       }
     } catch (error) {
       if (props.debug) {
-        console.warn('⚠️ Subagents 加载失败:', formatErrorMessage(error));
+        console.warn('Subagents 加载失败:', formatErrorMessage(error));
       }
     }
 
@@ -112,7 +112,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
       const hookManager = HookManager.getInstance();
       hookManager.loadConfig(mergedConfig.hooks || {});
       if (props.debug && mergedConfig.hooks?.enabled) {
-        console.log('✓ Hooks 系统已启用');
+        console.log('[OK] Hooks 系统已启用');
       }
 
       // 获取当前 session ID 并设置到日志系统（每个 session 使用独立的日志文件）
@@ -141,19 +141,19 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
           }
           if (props.debug) {
             console.log(
-              '✓ SessionStart hooks 注入环境变量:',
+              '[OK] SessionStart hooks 注入环境变量:',
               Object.keys(sessionStartResult.env).join(', ')
             );
           }
         }
 
         if (sessionStartResult.warning && props.debug) {
-          console.warn('⚠️ SessionStart hooks 警告:', sessionStartResult.warning);
+          console.warn('SessionStart hooks 警告:', sessionStartResult.warning);
         }
       }
     } catch (error) {
       if (props.debug) {
-        console.warn('⚠️ Hooks 初始化失败:', formatErrorMessage(error));
+        console.warn('Hooks 初始化失败:', formatErrorMessage(error));
       }
     }
 
@@ -162,17 +162,17 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
       const skillsResult = await discoverSkills();
       if (props.debug && skillsResult.skills.length > 0) {
         console.log(
-          `✓ 已加载 ${skillsResult.skills.length} 个 skills: ${skillsResult.skills.map((s) => s.name).join(', ')}`
+          `[OK] 已加载 ${skillsResult.skills.length} 个 skills: ${skillsResult.skills.map((s) => s.name).join(', ')}`
         );
       }
       if (skillsResult.errors.length > 0 && props.debug) {
         for (const error of skillsResult.errors) {
-          console.warn(`⚠️ Skill 加载错误 (${error.path}): ${error.error}`);
+          console.warn(`Skill 加载错误 (${error.path}): ${error.error}`);
         }
       }
     } catch (error) {
       if (props.debug) {
-        console.warn('⚠️ Skills 初始化失败:', formatErrorMessage(error));
+        console.warn('Skills 初始化失败:', formatErrorMessage(error));
       }
     }
 
@@ -181,17 +181,17 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
       const customCommandsResult = await initializeCustomCommands(process.cwd());
       if (props.debug && customCommandsResult.commands.length > 0) {
         console.log(
-          `✓ 已加载 ${customCommandsResult.commands.length} 个自定义命令: ${customCommandsResult.commands.map((c) => c.name).join(', ')}`
+          `[OK] 已加载 ${customCommandsResult.commands.length} 个自定义命令: ${customCommandsResult.commands.map((c) => c.name).join(', ')}`
         );
       }
       if (customCommandsResult.errors.length > 0 && props.debug) {
         for (const error of customCommandsResult.errors) {
-          console.warn(`⚠️ 自定义命令加载错误 (${error.path}): ${error.error}`);
+          console.warn(`自定义命令加载错误 (${error.path}): ${error.error}`);
         }
       }
     } catch (error) {
       if (props.debug) {
-        console.warn('⚠️ 自定义命令初始化失败:', formatErrorMessage(error));
+        console.warn('自定义命令初始化失败:', formatErrorMessage(error));
       }
     }
 
@@ -205,7 +205,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
 
       if (props.debug && pluginResult.plugins.length > 0) {
         console.log(
-          `✓ 已加载 ${pluginResult.plugins.length} 个插件: ${pluginResult.plugins.map((p) => p.manifest.name).join(', ')}`
+          `[OK] 已加载 ${pluginResult.plugins.length} 个插件: ${pluginResult.plugins.map((p) => p.manifest.name).join(', ')}`
         );
       }
 
@@ -216,19 +216,19 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
           const { totalCommands, totalSkills, totalAgents, totalMcpServers } =
             integrationResult;
           console.log(
-            `  ✓ 已集成: ${totalCommands} 命令, ${totalSkills} 技能, ${totalAgents} 代理, ${totalMcpServers} MCP 服务器`
+            `  [OK] 已集成: ${totalCommands} 命令, ${totalSkills} 技能, ${totalAgents} 代理, ${totalMcpServers} MCP 服务器`
           );
         }
       }
 
       if (pluginResult.errors.length > 0 && props.debug) {
         for (const error of pluginResult.errors) {
-          console.warn(`⚠️ 插件加载错误 (${error.path}): ${error.error}`);
+          console.warn(`插件加载错误 (${error.path}): ${error.error}`);
         }
       }
     } catch (error) {
       if (props.debug) {
-        console.warn('⚠️ 插件系统初始化失败:', formatErrorMessage(error));
+        console.warn('插件系统初始化失败:', formatErrorMessage(error));
       }
     }
 

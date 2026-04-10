@@ -1,5 +1,5 @@
 import { useMemoizedFn } from 'ahooks';
-import { Box, useApp } from 'ink';
+import { Box } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import {
     type ModelConfig,
@@ -121,8 +121,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   }, [themeName]);
 
-  const { exit } = useApp();
-
   // ==================== Custom Hooks ====================
   // 从 status 派生布尔值
   const readyForChat = initializationStatus === 'ready';
@@ -156,7 +154,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const handlePermissionModeToggle = useMemoizedFn(async () => {
     const currentMode: PermissionMode = permissionMode;
 
-    // Shift+Tab 循环切换: DEFAULT → AUTO_EDIT → PLAN → SPEC → DEFAULT
+    // Shift+Tab 循环切换: DEFAULT -> AUTO_EDIT -> PLAN -> SPEC -> DEFAULT
     let nextMode: PermissionMode;
     if (currentMode === PermissionMode.DEFAULT) {
       nextMode = PermissionMode.AUTO_EDIT;
@@ -187,32 +185,32 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
             const recentSpec = specs[0];
             await specManager.loadSpec(recentSpec.name);
             sessionActions.addAssistantMessage(
-              `📋 **已进入 Spec 模式**\n\n` +
+              `**已进入 Spec 模式**\n\n` +
                 `检测到已存在的 Spec: **${recentSpec.name}**\n` +
                 `当前阶段: ${recentSpec.phase}\n\n` +
                 `继续之前的工作，或告诉我你想做什么。`
             );
           } else {
             sessionActions.addAssistantMessage(
-              '📋 **已进入 Spec 模式**\n\n' +
+              '**已进入 Spec 模式**\n\n' +
                 '请告诉我你想实现什么功能，我会引导你完成整个工作流：\n' +
-                '`提案 → 需求 → 设计 → 任务 → 实现`\n\n' +
+                '`提案 -> 需求 -> 设计 -> 任务 -> 实现`\n\n' +
                 '例如："实现用户认证功能" 或 "添加暗黑模式支持"'
             );
           }
         } catch (error) {
           logger.warn('Failed to initialize SpecManager:', error);
           sessionActions.addAssistantMessage(
-            '📋 **已进入 Spec 模式**\n\n' +
+            '**已进入 Spec 模式**\n\n' +
               '请告诉我你想实现什么功能，我会引导你完成整个工作流：\n' +
-              '`提案 → 需求 → 设计 → 任务 → 实现`\n\n' +
+              '`提案 -> 需求 -> 设计 -> 任务 -> 实现`\n\n' +
               '例如："实现用户认证功能" 或 "添加暗黑模式支持"'
           );
         }
       }
     } catch (error) {
       logger.error(
-        '❌ 权限模式切换失败:',
+        '权限模式切换失败:',
         error instanceof Error ? error.message : error
       );
     }
@@ -233,7 +231,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       appActions.setInitializationStatus('ready');
     } catch (error) {
       logger.error(
-        '❌ 初始化配置保存失败:',
+        '初始化配置保存失败:',
         error instanceof Error ? error.message : error
       );
       // 即使出错也继续，让用户可以进入主界面
@@ -377,7 +375,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   });
 
   const handleSetupCancel = useMemoizedFn(() => {
-    sessionActions.addAssistantMessage('❌ 设置已取消');
+    sessionActions.addAssistantMessage('设置已取消');
     sessionActions.addAssistantMessage('Blade 需要 API 配置才能正常工作。');
     sessionActions.addAssistantMessage('您可以稍后运行 Blade 重新进入设置向导。');
     safeExit(0); // 退出程序
@@ -413,7 +411,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   const handleSessionCancel = useMemoizedFn(() => {
     if (otherProps.resume) {
-      exit();
+      safeExit(0);
     } else {
       appActions.closeModal();
     }
@@ -425,13 +423,13 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   const handleModelAddComplete = useMemoizedFn((addedConfig: SetupConfig) => {
     sessionActions.addAssistantMessage(
-      `✅ 已添加模型配置: ${addedConfig.name}，并已切换到该模型`
+      `已添加模型配置: ${addedConfig.name}，并已切换到该模型`
     );
     closeModal();
   });
 
   const handleModelEditComplete = useMemoizedFn((updatedConfig: SetupConfig) => {
-    sessionActions.addAssistantMessage(`✅ 已更新模型配置: ${updatedConfig.name}`);
+    sessionActions.addAssistantMessage(`已更新模型配置: ${updatedConfig.name}`);
     closeModal();
   });
 
@@ -508,9 +506,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     lastInitializationError.current = initializationError;
 
     if (initializationStatus === 'error') {
-      sessionActions.addAssistantMessage(`❌ 初始化失败: ${initializationError}`);
+      sessionActions.addAssistantMessage(`初始化失败: ${initializationError}`);
     } else {
-      sessionActions.addAssistantMessage(`❌ ${initializationError}`);
+      sessionActions.addAssistantMessage(`${initializationError}`);
       sessionActions.addAssistantMessage('请重新尝试设置，或检查文件权限');
     }
   }, [initializationError, initializationStatus, sessionActions.addAssistantMessage]);
@@ -527,7 +525,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       });
     } catch (error) {
       const fallback = error instanceof Error ? error.message : '无法发送初始消息';
-      sessionActions.addAssistantMessage(`❌ 初始消息发送失败：${fallback}`);
+      sessionActions.addAssistantMessage(`初始消息发送失败：${fallback}`);
     }
   });
 
@@ -555,7 +553,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       await configActions().setPermissionMode(mode);
     } catch (error) {
       logger.error(
-        '❌ 权限模式初始化失败:',
+        '权限模式初始化失败:',
         error instanceof Error ? error.message : error
       );
     }

@@ -33,7 +33,7 @@ export const fetchModelsDevData = async (): Promise<ModelsDevData> => {
   }
 
   try {
-    logger.info('📡 Fetching models.dev data...');
+    logger.info('Fetching models.dev data...');
     const response = await fetch(MODELS_DEV_API, {
       headers: { 'User-Agent': 'Blade-CLI/1.0' },
     });
@@ -44,10 +44,10 @@ export const fetchModelsDevData = async (): Promise<ModelsDevData> => {
 
     const data = (await response.json()) as ModelsDevData;
     cache = { data, timestamp: Date.now() };
-    logger.info(`✅ Loaded ${Object.keys(data).length} providers from models.dev`);
+    logger.info(`Loaded ${Object.keys(data).length} providers from models.dev`);
     return data;
   } catch (error) {
-    logger.error('❌ Failed to fetch models.dev data:', error);
+    logger.error('Failed to fetch models.dev data:', error);
     throw error;
   }
 };
@@ -88,7 +88,7 @@ export const getModelsForProvider = async (providerId: string): Promise<ModelOpt
   const provider = data[providerId];
 
   if (!provider?.models) {
-    logger.warn(`⚠️ No models found for provider: ${providerId}`);
+    logger.warn(`No models found for provider: ${providerId}`);
     return [];
   }
 

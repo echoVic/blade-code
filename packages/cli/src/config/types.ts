@@ -16,31 +16,31 @@ export type ProviderType =
  * 权限模式枚举
  *
  * ## DEFAULT 模式（默认）
- * - ✅ 自动批准: ReadOnly 工具（Read/Glob/Grep/WebFetch/WebSearch/TaskOutput/TodoWrite/Plan）
- * - ❌ 需要确认: Write 工具（Edit/Write/NotebookEdit）、Execute 工具（Bash/Task/Skill/SlashCommand）
+ * - Auto-approve: ReadOnly 工具（Read/Glob/Grep/WebFetch/WebSearch/TaskOutput/TodoWrite/Plan）
+ * - Needs confirm: Write 工具（Edit/Write/NotebookEdit）、Execute 工具（Bash/Task/Skill/SlashCommand）
  *
  * ## AUTO_EDIT 模式
- * - ✅ 自动批准: ReadOnly + Write 工具
- * - ❌ 需要确认: Execute 工具（Bash/Task/Skill/SlashCommand）
+ * - Auto-approve: ReadOnly + Write 工具
+ * - Needs confirm: Execute 工具（Bash/Task/Skill/SlashCommand）
  * - 适用场景：频繁修改代码的开发任务
  *
  * ## YOLO 模式（危险）
- * - ✅ 自动批准: 所有工具（ReadOnly + Write + Execute）
- * - ⚠️  警告：完全信任 AI，跳过所有确认
+ * - Auto-approve: 所有工具（ReadOnly + Write + Execute）
+ * - WARNING: 完全信任 AI，跳过所有确认
  * - 适用场景：高度可控的环境或演示场景
  *
  * ## PLAN 模式
- * - ✅ 自动批准: ReadOnly 工具（只读操作，无副作用）
- * - ❌ 拦截所有修改: Write 和 Execute 工具
- * - 🔵 特殊工具: ExitPlanMode（用于提交方案）
+ * - Auto-approve: ReadOnly 工具（只读操作，无副作用）
+ * - Blocks all modifications: Write 和 Execute 工具
+ * - Special tools: ExitPlanMode（用于提交方案）
  * - 适用场景：调研阶段，生成实现方案，用户批准后退出 Plan 模式
  *
  * ## SPEC 模式（Spec-Driven Development）
- * - ✅ 自动批准: ReadOnly 工具 + Spec 专用工具
- * - ❌ 需要确认: Write 和 Execute 工具（除 Spec 工具外）
- * - 🔵 特殊工具: InitSpec, UpdateSpec, ValidateSpec, GetSpecContext, ExitSpecMode
- * - 📁 持久化: Spec 文件自动保存到 `.blade/specs/<feature>/` 或 `.blade/changes/<feature>/`
- * - 适用场景：复杂功能开发，需要结构化的 Requirements → Design → Tasks → Implementation 工作流
+ * - Auto-approve: ReadOnly 工具 + Spec 专用工具
+ * - Needs confirm: Write 和 Execute 工具（除 Spec 工具外）
+ * - Special tools: InitSpec, UpdateSpec, ValidateSpec, GetSpecContext, ExitSpecMode
+ * - Persistence: Spec 文件自动保存到 `.blade/specs/<feature>/` 或 `.blade/changes/<feature>/`
+ * - 适用场景：复杂功能开发，需要结构化的 Requirements -> Design -> Tasks -> Implementation 工作流
  * - 与 Plan Mode 共存：Plan Mode 用于简单任务，Spec Mode 用于复杂功能开发
  */
 export enum PermissionMode {

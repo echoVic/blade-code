@@ -53,7 +53,7 @@ export const validateSpecTool = createTool({
       return {
         success: false,
         llmContent: 'No active spec. Use EnterSpecMode or /spec load <name> first.',
-        displayContent: '❌ No active spec',
+        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
@@ -66,14 +66,14 @@ export const validateSpecTool = createTool({
       const parts: string[] = [];
 
       // Header
-      parts.push(`# 🔍 Spec Validation: ${currentSpec.name}`);
+      parts.push(`# Spec Validation: ${currentSpec.name}`);
       parts.push('');
       parts.push(`**Phase**: ${PHASE_DISPLAY_NAMES[validation.phase]}`);
-      parts.push(`**Status**: ${validation.valid ? '✅ Valid' : '⚠️ Has Issues'}`);
+      parts.push(`**Status**: ${validation.valid ? '[OK] Valid' : '[WARN] Has Issues'}`);
       parts.push('');
 
       // File completeness
-      parts.push('## 📄 File Completeness');
+      parts.push('## File Completeness');
       parts.push('');
       const fileStatus = [
         ['proposal.md', validation.completeness.proposal],
@@ -84,19 +84,19 @@ export const validateSpecTool = createTool({
       ];
 
       for (const [file, exists] of fileStatus) {
-        parts.push(`- ${exists ? '✅' : '❌'} ${file}`);
+        parts.push(`- ${exists ? '[OK] ' : '[FAIL] '} ${file}`);
       }
       parts.push('');
 
       // Issues
       if (validation.issues.length > 0) {
-        parts.push('## ⚠️ Issues');
+        parts.push('## [WARN] Issues');
         parts.push('');
         for (const issue of validation.issues) {
           const icon = {
-            error: '🔴',
-            warning: '🟡',
-            info: '🔵',
+            error: '[ERROR]',
+            warning: '[WARN]',
+            info: '[INFO]',
           }[issue.severity];
           parts.push(`- ${icon} **${issue.file}**: ${issue.message}`);
         }
@@ -105,7 +105,7 @@ export const validateSpecTool = createTool({
 
       // Suggestions
       if (validation.suggestions.length > 0) {
-        parts.push('## 💡 Suggestions');
+        parts.push('## Suggestions');
         parts.push('');
         for (const suggestion of validation.suggestions) {
           parts.push(`- ${suggestion}`);
@@ -116,7 +116,7 @@ export const validateSpecTool = createTool({
       // Task progress
       const progress = specManager.getTaskProgress();
       if (progress.total > 0) {
-        parts.push('## 📊 Task Progress');
+        parts.push('## Task Progress');
         parts.push('');
         parts.push(`- Total: ${progress.total}`);
         parts.push(`- Completed: ${progress.completed}`);
@@ -132,7 +132,7 @@ export const validateSpecTool = createTool({
 
       // Next steps
       parts.push('');
-      parts.push('## 🚀 Next Steps');
+      parts.push('## Next Steps');
       parts.push('');
       if (!validation.valid) {
         parts.push('1. Address the issues listed above');
@@ -156,8 +156,8 @@ export const validateSpecTool = createTool({
         success: true,
         llmContent: fullContent,
         displayContent: validation.valid
-          ? `✅ Spec valid: ${currentSpec.name}`
-          : `⚠️ Spec has ${validation.issues.length} issue(s)`,
+          ? `[OK] Spec valid: ${currentSpec.name}`
+          : `[WARN] Spec has ${validation.issues.length} issue(s)`,
         metadata: {
           valid: validation.valid,
           phase: validation.phase,
@@ -170,7 +170,7 @@ export const validateSpecTool = createTool({
       return {
         success: false,
         llmContent: `Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        displayContent: '❌ Validation failed',
+        displayContent: '[FAIL] Validation failed',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: error instanceof Error ? error.message : 'Validation error',

@@ -19,7 +19,7 @@ interface UseProvidersResult {
 const CUSTOM_PROVIDER: ProviderOption = {
   id: 'custom-openai-compatible',
   name: '自定义 OpenAI Compatible',
-  icon: '🔧',
+  icon: '',
   description: '使用自定义 Base URL 和 API Key',
   isOAuth: false,
   envVars: [],

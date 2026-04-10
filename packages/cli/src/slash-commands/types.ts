@@ -85,7 +85,7 @@ export interface AcpCallbacks {
  *
  * **旧方式**（仅 CLI，ACP 模式下 IDE 收不到输出）：
  * ```ts
- * // ❌ 不推荐：在 ACP 模式下会污染本地 store 但 IDE 看不到
+ * // [NOT RECOMMENDED]: 在 ACP 模式下会污染本地 store 但 IDE 看不到
  * sessionActions().addAssistantMessage('...');
  * ```
  *

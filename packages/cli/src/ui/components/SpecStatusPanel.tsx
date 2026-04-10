@@ -18,12 +18,12 @@ import {
  * 阶段进度图标
  */
 const PHASE_ICONS: Record<SpecPhase, string> = {
-  init: '📝',
-  requirements: '📋',
-  design: '🎨',
-  tasks: '📌',
-  implementation: '🔧',
-  done: '✅',
+  init: '',
+  requirements: '',
+  design: '',
+  tasks: '',
+  implementation: '',
+  done: '',
 };
 
 /**
@@ -42,10 +42,10 @@ const PHASE_ORDER: SpecPhase[] = [
  * 任务状态图标
  */
 const TASK_STATUS_ICONS: Record<string, string> = {
-  pending: '○',
-  in_progress: '◐',
-  completed: '●',
-  blocked: '✕',
+  pending: '-',
+  in_progress: '~',
+  completed: '*',
+  blocked: 'x',
 };
 
 /**
@@ -109,7 +109,7 @@ export const SpecStatusPanel: React.FC<SpecStatusPanelProps> = React.memo(
         {/* 标题行 */}
         <Box flexDirection="row" justifyContent="space-between">
           <Text color="blue" bold>
-            📋 Spec: {spec.name}
+            Spec: {spec.name}
           </Text>
           <Text color="gray">
             {PHASE_ICONS[spec.phase]} {PHASE_DISPLAY_NAMES[spec.phase]}
@@ -121,7 +121,7 @@ export const SpecStatusPanel: React.FC<SpecStatusPanelProps> = React.memo(
           {PHASE_ORDER.map((phase, index) => {
             const isCompleted = index < currentPhaseIndex;
             const isCurrent = index === currentPhaseIndex;
-            const icon = isCompleted ? '●' : isCurrent ? '◉' : '○';
+            const icon = isCompleted ? '*' : isCurrent ? '>' : '-';
             const color = isCompleted ? 'green' : isCurrent ? 'blue' : 'gray';
 
             return (

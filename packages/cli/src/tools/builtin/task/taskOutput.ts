@@ -93,7 +93,7 @@ export const taskOutputTool = createTool({
     return {
       success: false,
       llmContent: `Unknown task ID: ${task_id}.`,
-      displayContent: `❌ 未知的任务 ID: ${task_id}\n\n任务 ID 格式：\n- bash_xxx: 后台 shell\n- agent: 后台 agent`,
+      displayContent: `[FAIL] 未知的任务 ID: ${task_id}\n\n任务 ID 格式：\n- bash_xxx: 后台 shell\n- agent: 后台 agent`,
       error: {
         type: ToolErrorType.VALIDATION_ERROR,
         message: `Unknown task ID: ${task_id}`,
@@ -125,7 +125,7 @@ async function handleShellOutput(
     return {
       success: false,
       llmContent: `Shell not found: ${taskId}`,
-      displayContent: `❌ 未找到 Shell: ${taskId}`,
+      displayContent: `[FAIL] 未找到 Shell: ${taskId}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: 'Shell 会话不存在或已清理',
@@ -145,7 +145,7 @@ async function handleShellOutput(
     return {
       success: false,
       llmContent: `Failed to get output for shell: ${taskId}`,
-      displayContent: `❌ 获取 Shell 输出失败: ${taskId}`,
+      displayContent: `[FAIL] 获取 Shell 输出失败: ${taskId}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: 'Failed to consume output',
@@ -203,7 +203,7 @@ async function handleAgentOutput(
     return {
       success: false,
       llmContent: `Agent not found: ${taskId}`,
-      displayContent: `❌ 未找到 Agent: ${taskId}`,
+      displayContent: `[FAIL] 未找到 Agent: ${taskId}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: 'Agent 会话不存在或已清理',
@@ -218,7 +218,7 @@ async function handleAgentOutput(
       return {
         success: false,
         llmContent: `Failed to wait for agent: ${taskId}`,
-        displayContent: `❌ 等待 Agent 失败: ${taskId}`,
+        displayContent: `[FAIL] 等待 Agent 失败: ${taskId}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: 'Wait for completion failed',
@@ -306,22 +306,22 @@ async function waitForShellCompletion(taskId: string, timeout: number): Promise<
 }
 
 /**
- * 获取状态对应的 emoji
+ * 获取状态对应的标签
  */
 function getStatusEmoji(status: string): string {
   switch (status) {
     case 'running':
-      return '⏳';
+      return '[WAIT] ';
     case 'completed':
     case 'exited':
-      return '✅';
+      return '[OK] ';
     case 'failed':
     case 'error':
-      return '❌';
+      return '[FAIL] ';
     case 'killed':
     case 'cancelled':
-      return '✂️';
+      return '[STOP] ';
     default:
-      return '❓';
+      return '[?] ';
   }
 }

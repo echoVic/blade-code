@@ -88,9 +88,9 @@ export class AcpFileSystemService implements FileSystemService {
    * 策略：优先信任 ACP，宁可误判"存在"也不要误判"不存在"
    *
    * 1. 如果 IDE 支持 readTextFile，通过 ACP 判断：
-   *    - 读取成功 → 存在
-   *    - 错误明确是"not found/enoent" → 不存在
-   *    - 其他错误（权限、二进制、超时等）→ 假设存在
+   *    - 读取成功 -> 存在
+   *    - 错误明确是"not found/enoent" -> 不存在
+   *    - 其他错误（权限、二进制、超时等）-> 假设存在
    *      （让后续操作揭示真正问题，而非提前终止）
    *
    * 2. 如果 IDE 不支持 readTextFile，fallback 到本地

@@ -203,12 +203,12 @@ export class OutputTruncator {
       const parts: string[] = [];
       if (stdoutResult.truncated) {
         parts.push(
-          `stdout: ${stdoutResult.originalLines} lines → ${stdoutResult.content.split('\n').length} lines`
+          `stdout: ${stdoutResult.originalLines} lines -> ${stdoutResult.content.split('\n').length} lines`
         );
       }
       if (stderrResult.truncated) {
         parts.push(
-          `stderr: ${stderrResult.originalLines} lines → ${stderrResult.content.split('\n').length} lines`
+          `stderr: ${stderrResult.originalLines} lines -> ${stderrResult.content.split('\n').length} lines`
         );
       }
       truncationInfo = `Output truncated: ${parts.join(', ')}`;

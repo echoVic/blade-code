@@ -59,8 +59,8 @@ const initCommand: SlashCommand = {
       }
 
       if (exists && !isEmpty) {
-        ui.sendMessage('⚠️ BLADE.md 已存在。');
-        ui.sendMessage('💡 正在分析现有文件并提供改进建议...');
+        ui.sendMessage('[WARN] BLADE.md 已存在。');
+        ui.sendMessage('正在分析现有文件并提供改进建议...');
 
         // 创建 Agent 并分析现有文件
         const agent = await Agent.create();
@@ -165,15 +165,15 @@ const initCommand: SlashCommand = {
 
         return {
           success: true,
-          message: '✅ 分析完成',
+          message: '[OK] 分析完成',
         };
       }
 
       // 显示适当的提示消息
       if (isEmpty) {
-        ui.sendMessage('⚠️ 检测到空的 BLADE.md 文件，将重新生成...');
+        ui.sendMessage('[WARN] 检测到空的 BLADE.md 文件，将重新生成...');
       }
-      ui.sendMessage('🔍 正在分析项目结构...');
+      ui.sendMessage('正在分析项目结构...');
 
       // 创建 Agent 并生成内容
       const agent = await Agent.create();
@@ -293,12 +293,12 @@ const initCommand: SlashCommand = {
       }
 
       // 写入生成的内容
-      ui.sendMessage('✨ 正在写入 BLADE.md...');
+      ui.sendMessage('正在写入 BLADE.md...');
       await fs.writeFile(blademdPath, generatedContent, 'utf-8');
 
       return {
         success: true,
-        message: '✅ 已成功生成 BLADE.md 文件',
+        message: '[OK] 已成功生成 BLADE.md 文件',
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误';

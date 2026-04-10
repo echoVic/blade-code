@@ -484,7 +484,7 @@ export class ConfigService {
    * 追加权限规则（手动实现 append-dedupe 策略）
    * 默认 scope 为 'local'，与 FIELD_ROUTING_TABLE.permissions.defaultScope 一致
    *
-   * ⚠️ 并发安全：整个 Read-Modify-Write 在 per-file mutex 保护下执行
+   * NOTE: 并发安全：整个 Read-Modify-Write 在 per-file mutex 保护下执行
    */
   async appendPermissionRule(rule: string, options: SaveOptions = {}): Promise<void> {
     const scope = options.scope ?? 'local';

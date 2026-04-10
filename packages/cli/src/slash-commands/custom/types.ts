@@ -53,7 +53,7 @@ export interface CustomCommand {
 
   /**
    * 命名空间（子目录名）
-   * 例如 frontend/component.md → namespace: "frontend"
+   * 例如 frontend/component.md -> namespace: "frontend"
    */
   namespace?: string;
 
@@ -94,7 +94,7 @@ export interface CustomCommand {
 export interface CustomCommandExecutionContext {
   /**
    * 用户传入的参数
-   * 例如 "/commit fix bug" → ["fix", "bug"]
+   * 例如 "/commit fix bug" -> ["fix", "bug"]
    */
   args: string[];
 

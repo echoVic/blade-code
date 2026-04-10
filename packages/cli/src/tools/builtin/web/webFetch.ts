@@ -177,7 +177,7 @@ Usage notes:
           };
         } catch {
           // Jina Reader 失败，回退到直接获取
-          updateOutput?.(`⚠️ Jina Reader 失败，使用标准方式获取`);
+          updateOutput?.(`[WARN] Jina Reader 失败，使用标准方式获取`);
           // 继续执行下面的标准逻辑
         }
       }
@@ -247,7 +247,7 @@ Usage notes:
         return {
           success: false,
           llmContent: 'Request aborted',
-          displayContent: '⚠️ 请求被用户中止',
+          displayContent: '[WARN] 请求被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '操作被中止',
@@ -259,7 +259,7 @@ Usage notes:
       return {
         success: false,
         llmContent: `Network request failed: ${message}`,
-        displayContent: `❌ 网络请求失败: ${message}`,
+        displayContent: `[FAIL] 网络请求失败: ${message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message,
@@ -377,7 +377,7 @@ async function performRequest(options: {
     if (shouldFollow && location) {
       redirects++;
       const nextUrl = resolveRedirectUrl(location, currentUrl);
-      redirectChain.push(`${response.status} → ${nextUrl}`);
+      redirectChain.push(`${response.status} -> ${nextUrl}`);
 
       if (
         response.status === 303 ||
@@ -431,8 +431,8 @@ function formatDisplayMessage(
   const { url, method, status, response_time, content_length } = metadata;
 
   let message = isError
-    ? `❌ ${method} ${url} - ${status} ${response.status_text}`
-    : `✅ ${method} ${url} - ${status} ${response.status_text}`;
+    ? `[FAIL] ${method} ${url} - ${status} ${response.status_text}`
+    : `[OK] ${method} ${url} - ${status} ${response.status_text}`;
   message += `\n响应时间: ${response_time}ms`;
   message += `\n内容长度: ${content_length} 字节`;
 
@@ -590,7 +590,7 @@ async function fetchWithJinaReader(options: {
   // 构建 Jina Reader URL
   const jinaUrl = `https://r.jina.ai/${encodeURIComponent(url)}`;
 
-  updateOutput?.(`🔍 使用 Jina Reader 提取内容: ${url}`);
+  updateOutput?.(`使用 Jina Reader 提取内容: ${url}`);
 
   // 构建请求头
   const headers: Record<string, string> = {
@@ -628,7 +628,7 @@ async function fetchWithJinaReader(options: {
     // 解析 Jina Reader 响应
     const parsed = parseJinaResponse(markdownContent);
 
-    updateOutput?.(`✅ Jina Reader 成功提取内容 (${parsed.content.length} 字符)`);
+    updateOutput?.(`[OK] Jina Reader 成功提取内容 (${parsed.content.length} 字符)`);
 
     // 返回标准 WebResponse 格式
     return {
@@ -643,7 +643,7 @@ async function fetchWithJinaReader(options: {
       response_time: 0, // 将在外部设置
     };
   } catch (error) {
-    updateOutput?.(`⚠️ Jina Reader 失败，回退到直接获取`);
+    updateOutput?.(`[WARN] Jina Reader 失败，回退到直接获取`);
     throw error; // 让外层处理回退
   }
 }

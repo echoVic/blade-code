@@ -93,7 +93,7 @@ AddTask({
         llmContent:
           'No active spec. Use EnterSpecMode to start a new spec project, ' +
           'or use the /spec command to load an existing one.',
-        displayContent: '❌ No active spec',
+        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
@@ -112,7 +112,7 @@ AddTask({
       return {
         success: false,
         llmContent: `Failed to add task: ${result.message}`,
-        displayContent: `❌ Failed to add task: ${result.message}`,
+        displayContent: `[FAIL] Failed to add task: ${result.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: result.message,
@@ -126,14 +126,14 @@ AddTask({
     return {
       success: true,
       llmContent:
-        `✅ Task added: "${title}"\n\n` +
-        `📋 Task ID: ${task?.id}\n` +
-        `📊 Complexity: ${complexity}\n` +
-        `📁 Affected files: ${affectedFiles?.length ? affectedFiles.join(', ') : 'None specified'}\n` +
-        `🔗 Dependencies: ${dependencies?.length ? dependencies.join(', ') : 'None'}\n\n` +
-        `📈 Progress: ${progress.completed}/${progress.total} tasks (${progress.percentage}%)\n\n` +
-        '💡 Use AddTask to add more tasks, or use /spec apply to start implementation.',
-      displayContent: `✅ Added task: ${title} (ID: ${task?.id})`,
+        `[OK] Task added: "${title}"\n\n` +
+        `Task ID: ${task?.id}\n` +
+        `Complexity: ${complexity}\n` +
+        `Affected files: ${affectedFiles?.length ? affectedFiles.join(', ') : 'None specified'}\n` +
+        `Dependencies: ${dependencies?.length ? dependencies.join(', ') : 'None'}\n\n` +
+        `Progress: ${progress.completed}/${progress.total} tasks (${progress.percentage}%)\n\n` +
+        'Use AddTask to add more tasks, or use /spec apply to start implementation.',
+      displayContent: `[OK] Added task: ${title} (ID: ${task?.id})`,
       metadata: {
         taskId: task?.id,
         title,

@@ -53,13 +53,13 @@ When executing tasks autonomously:
 - **Report only when done**: Only output text when you have meaningful results to report or need user input
 
 <example-bad>
-// ❌ BAD: Wastes tokens
+// BAD: Wastes tokens
 [TodoWrite completed]
 "OK, I will continue with the next task. Let me now implement..."
 </example-bad>
 
 <example-good>
-// ✅ GOOD: Efficient execution
+// GOOD: Efficient execution
 [TodoWrite completed]
 [Immediately calls Read/Write/Edit tool]
 </example-good>
@@ -215,9 +215,9 @@ Each phase requires text output before proceeding:
 
 | Phase | Goal | Required Output |
 |-------|------|-----------------|
-| **1. Explore** | Understand codebase | Launch exploration subagents → Output findings summary (100+ words) |
-| **2. Design** | Plan approach | (Optional: launch planning subagent) → Output design decisions |
-| **3. Review** | Verify details | Read critical files → Output review summary with any questions |
+| **1. Explore** | Understand codebase | Launch exploration subagents -> Output findings summary (100+ words) |
+| **2. Design** | Plan approach | (Optional: launch planning subagent) -> Output design decisions |
+| **3. Review** | Verify details | Read critical files -> Output review summary with any questions |
 | **4. Present Plan** | Show complete plan | Output your complete implementation plan to the user |
 | **5. Exit** | Submit for approval | **MUST call ExitPlanMode tool** with your plan content |
 

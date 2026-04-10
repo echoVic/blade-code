@@ -50,7 +50,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
     if (permissionMode === PermissionMode.AUTO_EDIT) {
       return (
         <Text color="magenta">
-          ▶▶ auto edit on <Text color="gray">(shift+tab to cycle)</Text>
+          {'>> '}auto edit on <Text color="gray">(shift+tab to cycle)</Text>
         </Text>
       );
     }
@@ -66,7 +66,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
     if (permissionMode === PermissionMode.YOLO) {
       return (
         <Text color="red">
-          ⚡ yolo mode on <Text color="gray">(all tools auto-approved)</Text>
+          yolo mode on <Text color="gray">(all tools auto-approved)</Text>
         </Text>
       );
     }
@@ -86,7 +86,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
 
       return (
         <Text color="blue">
-          📋 spec: {phaseDisplay} <Text color="gray">(shift+tab to cycle)</Text>
+          spec: {phaseDisplay} <Text color="gray">(shift+tab to cycle)</Text>
         </Text>
       );
     }
@@ -100,7 +100,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   // 快捷键列表 - 紧凑三列布局
   const shortcutRows = [
     ['Enter:发送', 'Shift+Enter:换行', 'Esc:中止'],
-    ['Shift+Tab:切换模式', '↑/↓:历史', 'Tab:补全'],
+    ['Shift+Tab:切换模式', 'Up/Down:历史', 'Tab:补全'],
     ['Ctrl+A:行首', 'Ctrl+E:行尾', 'Ctrl+K:删到尾'],
     ['Ctrl+U:删到首', 'Ctrl+W:删单词', 'Ctrl+C:退出'],
   ];
@@ -142,7 +142,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
       )}
       <Box flexDirection="row" gap={1}>
         {!hasApiKey ? (
-          <Text color="red">⚠ API 密钥未配置</Text>
+          <Text color="red">[WARN] API 密钥未配置</Text>
         ) : (
           <>
             {/* Thinking 模式指示器（仅当模型支持时显示） */}

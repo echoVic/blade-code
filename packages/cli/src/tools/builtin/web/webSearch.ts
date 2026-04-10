@@ -44,7 +44,7 @@ const MAX_RESULTS = 8;
 /** 重试配置 */
 const RETRY_CONFIG = {
   maxRetries: 3,
-  baseDelay: 1000, // 1s → 2s → 4s
+  baseDelay: 1000, // 1s -> 2s -> 4s
   maxDelay: 8000,
 };
 
@@ -142,7 +142,7 @@ async function fetchWithRetry(
           RETRY_CONFIG.maxDelay
         );
         updateOutput?.(
-          `⏳ 请求失败，${delay / 1000}s 后重试 (${attempt + 1}/${RETRY_CONFIG.maxRetries})...`
+          `请求失败，${delay / 1000}s 后重试 (${attempt + 1}/${RETRY_CONFIG.maxRetries})...`
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
@@ -172,7 +172,7 @@ async function searchWithProvider(
   const cachedResults = cache.get(provider.name, query);
 
   if (cachedResults) {
-    updateOutput?.(`💾 使用缓存结果 (${provider.name})`);
+    updateOutput?.(`使用缓存结果 (${provider.name})`);
     return {
       results: cachedResults,
       providerName: `${provider.name} (cached)`,
@@ -182,7 +182,7 @@ async function searchWithProvider(
   // 如果提供商有 SDK 搜索函数，优先使用
   if (provider.searchFn) {
     try {
-      updateOutput?.(`🔍 搜索中 (${provider.name})...`);
+      updateOutput?.(`搜索中 (${provider.name})...`);
       const results = await provider.searchFn(query);
 
       // 写入缓存
@@ -196,7 +196,7 @@ async function searchWithProvider(
   }
 
   // 否则使用 HTTP 请求（兼容旧提供商）
-  updateOutput?.(`🔍 搜索中 (${provider.name})...`);
+  updateOutput?.(`搜索中 (${provider.name})...`);
 
   const url = provider.buildUrl(query);
   const method = provider.method || 'GET';
@@ -264,7 +264,7 @@ async function searchWithFallback(
     }
 
     try {
-      updateOutput?.(`🔎 使用 ${provider.name} 搜索...`);
+      updateOutput?.(`使用 ${provider.name} 搜索...`);
       return await searchWithProvider(
         provider,
         query,
@@ -277,7 +277,7 @@ async function searchWithFallback(
       const err = error as Error;
       const errorMsg = `${provider.name}: ${err.message}`;
       errors.push(errorMsg);
-      updateOutput?.(`⚠️ ${errorMsg}`);
+      updateOutput?.(`[WARN] ${errorMsg}`);
 
       // 如果是最后一个提供商，抛出错误
       if (i === providers.length - 1) {
@@ -358,10 +358,10 @@ function formatDisplayResults(
   total: number,
   providerName: string
 ): string {
-  const header = `🔎 WebSearch("${query}") via ${providerName} - 返回 ${results.length}/${total} 条结果`;
+  const header = `WebSearch("${query}") via ${providerName} - 返回 ${results.length}/${total} 条结果`;
   const lines = results.map(
     (result, index) =>
-      `${index + 1}. ${result.title}\n   ${result.display_url}\n   ${result.snippet}`
+      `${index + 1}. ${result.title}\n ${result.display_url}\n ${result.snippet}`
   );
   return [header, ...lines].join('\n');
 }
@@ -437,7 +437,7 @@ IMPORTANT - Use the correct year in search queries:
     const signal = context.signal ?? new AbortController().signal;
 
     updateOutput?.(
-      `🔎 Searching: "${query}" (${getProviderCount()} providers available)`
+      `Searching: "${query}" (${getProviderCount()} providers available)`
     );
 
     try {
@@ -479,7 +479,7 @@ IMPORTANT - Use the correct year in search queries:
         return {
           success: true,
           llmContent: resultPayload,
-          displayContent: `🔍 WebSearch("${query}") via ${providerName} - 未找到匹配结果`,
+          displayContent: `WebSearch("${query}") via ${providerName} - 未找到匹配结果`,
           metadata,
         };
       }
@@ -500,7 +500,7 @@ IMPORTANT - Use the correct year in search queries:
       return {
         success: false,
         llmContent: `WebSearch call failed: ${err.message}`,
-        displayContent: `❌ WebSearch 调用失败: ${err.message}`,
+        displayContent: `[FAIL] WebSearch 调用失败: ${err.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: err.message,

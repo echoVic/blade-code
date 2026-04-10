@@ -4,8 +4,8 @@
  * 在 LLM 流式输出过程中即开始执行工具，节省 RTT。
  *
  * 设计：
- * - STREAMING_PRELAUNCH_ALLOWLIST 中的工具 → 立即启动（流式预启动）
- * - 不在 allowlist 中的工具 → 排队等流结束后顺序执行
+ * - STREAMING_PRELAUNCH_ALLOWLIST 中的工具 -> 立即启动（流式预启动）
+ * - 不在 allowlist 中的工具 -> 排队等流结束后顺序执行
  * - discard() 用于流式降级到非流式时清理，递增 epoch 阻止旧世代结果
  *
  * 注意：流式预启动 allowlist 与 isConcurrencySafe 是独立概念：

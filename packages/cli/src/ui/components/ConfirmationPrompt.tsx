@@ -50,10 +50,10 @@ const ConfirmationContent = React.memo<ConfirmationContentProps>(
         >
           <Text bold color={headerColor}>
             {isPlanModeExit
-              ? '📋 Implementation Plan:'
+              ? 'Implementation Plan:'
               : isPlanModeEnter
-                ? '📝 Details:'
-                : '📄 Operation Details:'}
+                ? 'Details:'
+                : 'Operation Details:'}
           </Text>
           <Box marginTop={1}>
             <MessageRenderer
@@ -68,7 +68,7 @@ const ConfirmationContent = React.memo<ConfirmationContentProps>(
       {details.risks && details.risks.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
           <Text color="red" bold>
-            ⚠️ 风险提示:
+            [WARN] 风险提示:
           </Text>
           {details.risks.map((risk, index) => (
             <Box key={index} marginLeft={2}>
@@ -80,7 +80,7 @@ const ConfirmationContent = React.memo<ConfirmationContentProps>(
 
       {details.affectedFiles && details.affectedFiles.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
-          <Text color="yellow">📁 影响的文件:</Text>
+          <Text color="yellow">影响的文件:</Text>
           {details.affectedFiles.slice(0, 3).map((file, index) => (
             <Box key={index} marginLeft={2}>
               <Text>• {file}</Text>
@@ -277,16 +277,16 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
       if (isPlanModeExit) {
         return {
           color: 'cyan' as const,
-          title: '🔵 Plan Mode - Review Implementation Plan',
+          title: 'Plan Mode - Review Implementation Plan',
         };
       }
       if (isPlanModeEnter) {
-        return { color: 'magenta' as const, title: '🟣 Enter Plan Mode?' };
+        return { color: 'magenta' as const, title: 'Enter Plan Mode?' };
       }
       if (isMaxTurnsExceeded) {
-        return { color: 'yellow' as const, title: '⚡ Max Turns Exceeded' };
+        return { color: 'yellow' as const, title: 'Max Turns Exceeded' };
       }
-      return { color: 'yellow' as const, title: '🔔 Confirmation Required' };
+      return { color: 'yellow' as const, title: 'Confirmation Required' };
     }, [isPlanModeExit, isPlanModeEnter, isMaxTurnsExceeded]);
 
     return (
@@ -313,7 +313,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
 
         <Box flexDirection="column">
           <Text color="gray">
-            使用 ↑ ↓ 选择，回车确认（支持 Y/S/N 快捷键，ESC 取消）
+            使用 Up/Down 选择，回车确认（支持 Y/S/N 快捷键，ESC 取消）
           </Text>
           <SelectInput
             items={options}

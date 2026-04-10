@@ -80,12 +80,12 @@ For simpler planning needs, consider using EnterPlanMode instead.
 
 \`\`\`
 .blade/changes/<feature-name>/
-├── proposal.md        # Why this change is needed
-├── spec.md            # What the feature does
-├── requirements.md    # Detailed requirements (EARS format)
-├── design.md          # Technical design
-├── tasks.md           # Task breakdown
-└── .meta.json         # Metadata and progress
+├── proposal.md # Why this change is needed
+├── spec.md # What the feature does
+├── requirements.md # Detailed requirements (EARS format)
+├── design.md # Technical design
+├── tasks.md # Task breakdown
+└── .meta.json # Metadata and progress
 \`\`\`
 `,
   },
@@ -99,7 +99,7 @@ For simpler planning needs, consider using EnterPlanMode instead.
         success: false,
         llmContent:
           'Invalid feature name. Use only letters, numbers, underscores, and hyphens.',
-        displayContent: '❌ Invalid feature name',
+        displayContent: '[FAIL] Invalid feature name',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'Feature name must be alphanumeric with underscores/hyphens only',
@@ -116,7 +116,7 @@ For simpler planning needs, consider using EnterPlanMode instead.
             `Description: ${description}\n\n` +
             'In Spec mode, the assistant will:\n' +
             '1. Create structured specification documents\n' +
-            '2. Guide you through Requirements → Design → Tasks → Implementation\n' +
+            '2. Guide you through Requirements -> Design -> Tasks -> Implementation\n' +
             '3. Track progress and maintain documentation\n\n' +
             'Do you want to enter Spec mode?',
           details: `Will create: .blade/changes/${featureName}/`,
@@ -135,7 +135,7 @@ For simpler planning needs, consider using EnterPlanMode instead.
               return {
                 success: false,
                 llmContent: `Failed to create Spec: ${createResult.message}`,
-                displayContent: `❌ Failed to create Spec: ${createResult.message}`,
+                displayContent: `[FAIL] Failed to create Spec: ${createResult.message}`,
                 error: {
                   type: ToolErrorType.EXECUTION_ERROR,
                   message: createResult.message,
@@ -146,8 +146,8 @@ For simpler planning needs, consider using EnterPlanMode instead.
             return {
               success: true,
               llmContent:
-                `✅ Created Spec: "${featureName}"\n\n` +
-                `📁 Location: .blade/changes/${featureName}/\n\n` +
+                `[OK] Created Spec: "${featureName}"\n\n` +
+                `Location: .blade/changes/${featureName}/\n\n` +
                 'You are now in SPEC MODE. Your workflow:\n\n' +
                 '**Phase 1: Requirements** (current)\n' +
                 '- Define requirements using EARS format\n' +
@@ -164,7 +164,7 @@ For simpler planning needs, consider using EnterPlanMode instead.
                 '- Use UpdateTaskStatus to track progress\n' +
                 '- Call ExitSpecMode when done\n\n' +
                 'Start by asking the user for more details about their requirements.',
-              displayContent: `✅ Created Spec: ${featureName}`,
+              displayContent: `[OK] Created Spec: ${featureName}`,
               metadata: {
                 approved: true,
                 enterSpecMode: true,
@@ -177,7 +177,7 @@ For simpler planning needs, consider using EnterPlanMode instead.
             return {
               success: false,
               llmContent: `Failed to initialize Spec: ${error instanceof Error ? error.message : 'Unknown error'}`,
-              displayContent: '❌ Failed to initialize Spec',
+              displayContent: '[FAIL] Failed to initialize Spec',
               error: {
                 type: ToolErrorType.EXECUTION_ERROR,
                 message:
@@ -189,11 +189,11 @@ For simpler planning needs, consider using EnterPlanMode instead.
           return {
             success: true,
             llmContent:
-              '⚠️ User declined to enter Spec mode.\n\n' +
+              '[WARN] User declined to enter Spec mode.\n\n' +
               'Proceed with the task using regular workflow. ' +
               'You can use Plan mode for lighter planning, ' +
               'or implement directly if the task is straightforward.',
-            displayContent: '⚠️ Spec mode declined',
+            displayContent: '[WARN] Spec mode declined',
             metadata: {
               approved: false,
               enterSpecMode: false,
@@ -204,7 +204,7 @@ For simpler planning needs, consider using EnterPlanMode instead.
         return {
           success: false,
           llmContent: `Confirmation error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          displayContent: '❌ Confirmation failed',
+          displayContent: '[FAIL] Confirmation failed',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Confirmation flow error',
@@ -219,7 +219,7 @@ For simpler planning needs, consider using EnterPlanMode instead.
       llmContent:
         `Spec mode requested for "${featureName}" but no interactive confirmation available.\n\n` +
         'Proceeding with spec creation. Follow the structured workflow:\n' +
-        '1. Requirements → 2. Design → 3. Tasks → 4. Implementation',
+        '1. Requirements -> 2. Design -> 3. Tasks -> 4. Implementation',
       displayContent: `Spec mode: ${featureName} (non-interactive)`,
       metadata: {
         approved: null,

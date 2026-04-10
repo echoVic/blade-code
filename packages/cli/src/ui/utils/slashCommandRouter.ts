@@ -365,7 +365,7 @@ Remember: Follow the above instructions carefully to complete the user's request
 
   // 非 invoke_* 的 slash command，正常处理
   if (!slashResult.success && slashResult.error) {
-    sessionActions.addAssistantMessage(`❌ ${slashResult.error}`);
+    sessionActions.addAssistantMessage(`${slashResult.error}`);
     return {
       type: 'handled',
       commandResult: {

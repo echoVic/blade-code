@@ -41,10 +41,10 @@ export function getEnvironmentContext(): string {
 
 ## File Path Guidelines
 When using file tools (read, write, edit), provide **absolute paths**:
-- ✅ Correct: \`${env.workingDirectory}/package.json\`
-- ✅ Correct: \`${env.workingDirectory}/src/index.ts\`
-- ❌ Incorrect: \`/package.json\` (root directory)
-- ❌ Incorrect: \`package.json\` (relative path without context)
+- Correct: \`${env.workingDirectory}/package.json\`
+- Correct: \`${env.workingDirectory}/src/index.ts\`
+- Incorrect: \`/package.json\` (root directory)
+- Incorrect: \`package.json\` (relative path without context)
 
 **Always use** \`${env.workingDirectory}/\` as the base for file paths.`;
 }

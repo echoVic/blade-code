@@ -13,7 +13,7 @@ import { HookManager } from './HookManager.js';
  * Hook 阶段
  *
  * 插入到 Permission 和 Confirmation 之间:
- * Discovery → Permission → **Hook** → Confirmation → Execution → Formatting
+ * Discovery -> Permission -> **Hook** -> Confirmation -> Execution -> Formatting
  */
 export class HookStage implements PipelineStage {
   readonly name = 'hook';

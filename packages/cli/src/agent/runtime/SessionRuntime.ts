@@ -69,7 +69,7 @@ export class SessionRuntime {
     const models = getAllModels();
     if (models.length === 0) {
       throw new Error(
-        '❌ 没有可用的模型配置\n\n' +
+        '没有可用的模型配置\n\n' +
           '请先使用以下命令添加模型：\n' +
           '  /model add\n\n' +
           '或运行初始化向导：\n' +
@@ -79,7 +79,7 @@ export class SessionRuntime {
 
     const config = getConfig();
     if (!config) {
-      throw new Error('❌ 配置未初始化，请确保应用已正确启动');
+      throw new Error('配置未初始化，请确保应用已正确启动');
     }
 
     ConfigManager.getInstance().validateConfig(config);
@@ -126,7 +126,7 @@ export class SessionRuntime {
     await this.registerBuiltinTools();
     await this.loadSubagents();
     await this.discoverSkills();
-    await this.applyModelConfig(this.resolveModelConfig(this.options.modelId), '🚀 使用模型:');
+    await this.applyModelConfig(this.resolveModelConfig(this.options.modelId), '使用模型:');
 
     this.initialized = true;
     logger.debug(
@@ -147,7 +147,7 @@ export class SessionRuntime {
         ? options.modelId
         : getCurrentModel()?.id;
     if (nextModelId && nextModelId !== this.currentModelId) {
-      await this.applyModelConfig(this.resolveModelConfig(nextModelId), '🔁 切换模型');
+      await this.applyModelConfig(this.resolveModelConfig(nextModelId), '切换模型');
     }
   }
 
@@ -196,7 +196,7 @@ export class SessionRuntime {
       requestedModelId && requestedModelId !== 'inherit' ? requestedModelId : undefined;
     const modelConfig = modelId ? getModelById(modelId) : getCurrentModel();
     if (!modelConfig) {
-      throw new Error(`❌ 模型配置未找到: ${modelId ?? 'current'}`);
+      throw new Error(`模型配置未找到: ${modelId ?? 'current'}`);
     }
     return modelConfig;
   }
@@ -269,7 +269,7 @@ export class SessionRuntime {
         try {
           await registry.registerServer(name, config);
         } catch (error) {
-          logger.warn(`⚠️  MCP server "${name}" connection failed:`, error);
+          logger.warn(`Warning: MCP server "${name}" connection failed:`, error);
         }
       }
 

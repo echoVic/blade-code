@@ -49,7 +49,7 @@ const gitCommand: SlashCommand = {
     if (!(await isGitRepository(cwd))) {
       return {
         success: false,
-        error: '❌ 当前目录不在 Git 仓库中',
+        error: '当前目录不在 Git 仓库中',
       };
     }
 
@@ -101,7 +101,7 @@ async function handleStatus(context: SlashCommandContext): Promise<SlashCommandR
   if (statusText) {
     ui.sendMessage(`\`\`\`\n${statusText}\n\`\`\``);
   } else {
-    ui.sendMessage('📭 无法获取 Git 状态信息');
+    ui.sendMessage('无法获取 Git 状态信息');
   }
 
   return { success: true };
@@ -119,7 +119,7 @@ async function handleLog(
   const log = await getRecentCommitMessages(context.cwd, count);
 
   if (!log) {
-    ui.sendMessage('📭 暂无提交记录');
+    ui.sendMessage('暂无提交记录');
   } else {
     ui.sendMessage(`**最近 ${count} 条提交：**\n\`\`\`\n${log}\n\`\`\``);
   }
@@ -136,7 +136,7 @@ async function handleDiff(context: SlashCommandContext): Promise<SlashCommandRes
   const fileList = await getStagedFileList(cwd);
 
   if (!fileList) {
-    ui.sendMessage('📭 暂存区为空，没有待提交的改动');
+    ui.sendMessage('暂存区为空，没有待提交的改动');
     return { success: true };
   }
 
@@ -156,18 +156,18 @@ async function handleReview(context: SlashCommandContext): Promise<SlashCommandR
 
   // 检查是否有改动
   if (!(await hasUncommittedChanges(cwd))) {
-    ui.sendMessage('📭 没有未提交的改动，无需 Review');
+    ui.sendMessage('没有未提交的改动，无需 Review');
     return { success: true };
   }
 
-  ui.sendMessage('🔍 正在分析代码改动...');
+  ui.sendMessage('正在分析代码改动...');
 
   // 获取 diff
   const fileList = await getStagedFileList(cwd);
   const diff = await getStagedDiff(cwd);
 
   if (!diff && !fileList) {
-    ui.sendMessage('💡 请先使用 `git add` 暂存要 Review 的文件');
+    ui.sendMessage('请先使用 `git add` 暂存要 Review 的文件');
     return { success: true };
   }
 
@@ -226,12 +226,12 @@ async function handlePreCommit(
 
   // 检查是否有改动
   if (!(await hasUncommittedChanges(cwd))) {
-    ui.sendMessage('📭 没有未提交的改动');
+    ui.sendMessage('没有未提交的改动');
     return { success: true };
   }
 
   // 暂存所有改动
-  ui.sendMessage('📦 暂存所有改动...');
+  ui.sendMessage('暂存所有改动...');
   await stageAll(cwd);
 
   // 获取 diff
@@ -239,11 +239,11 @@ async function handlePreCommit(
   const diff = await getStagedDiff(cwd);
 
   if (!fileList) {
-    ui.sendMessage('📭 没有需要提交的改动');
+    ui.sendMessage('没有需要提交的改动');
     return { success: true };
   }
 
-  ui.sendMessage('🤖 正在生成 commit message...');
+  ui.sendMessage('正在生成 commit message...');
 
   // 获取最近的提交信息作为风格参考
   const recentCommits = await getRecentCommitMessages(cwd, 5);
@@ -278,7 +278,7 @@ async function handlePreCommit(
     .trim();
 
   ui.sendMessage(
-    `**生成的 Commit Message：**\n\`\`\`\n${cleanMessage}\n\`\`\`\n\n💡 使用以下命令提交：\n\`\`\`bash\ngit commit -m "${cleanMessage.split('\n')[0]}"\n\`\`\``
+    `**生成的 Commit Message：**\n\`\`\`\n${cleanMessage}\n\`\`\`\n\n使用以下命令提交：\n\`\`\`bash\ngit commit -m "${cleanMessage.split('\n')[0]}"\n\`\`\``
   );
 
   return { success: true };
@@ -293,12 +293,12 @@ async function handleCommit(context: SlashCommandContext): Promise<SlashCommandR
 
   // 检查是否有改动
   if (!(await hasUncommittedChanges(cwd))) {
-    ui.sendMessage('📭 没有未提交的改动');
+    ui.sendMessage('没有未提交的改动');
     return { success: true };
   }
 
   // 暂存所有改动
-  ui.sendMessage('📦 暂存所有改动...');
+  ui.sendMessage('暂存所有改动...');
   await stageAll(cwd);
 
   // 获取 diff
@@ -306,11 +306,11 @@ async function handleCommit(context: SlashCommandContext): Promise<SlashCommandR
   const diff = await getStagedDiff(cwd);
 
   if (!fileList) {
-    ui.sendMessage('📭 没有需要提交的改动');
+    ui.sendMessage('没有需要提交的改动');
     return { success: true };
   }
 
-  ui.sendMessage('🤖 正在生成 commit message...');
+  ui.sendMessage('正在生成 commit message...');
 
   // 获取最近的提交信息作为风格参考
   const recentCommits = await getRecentCommitMessages(cwd, 5);
@@ -349,10 +349,10 @@ async function handleCommit(context: SlashCommandContext): Promise<SlashCommandR
   // 执行提交
   try {
     await gitCommit(cwd, cleanMessage);
-    ui.sendMessage('✅ 提交成功！');
+    ui.sendMessage('[OK] 提交成功！');
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : '未知错误';
-    ui.sendMessage(`❌ 提交失败: ${errorMessage}`);
+    ui.sendMessage(`[FAIL] 提交失败: ${errorMessage}`);
     return { success: false, error: errorMessage };
   }
 
@@ -387,7 +387,7 @@ ${
 ${recentCommits}
 \`\`\`
 
-⚠️ 重要：请仔细分析上述历史提交的风格特征（语言、前缀、格式、长度等），生成的 commit message 必须与历史风格保持一致。`
+重要：请仔细分析上述历史提交的风格特征（语言、前缀、格式、长度等），生成的 commit message 必须与历史风格保持一致。`
     : `**无历史提交参考，请使用 Conventional Commits 格式。**`
 }
 

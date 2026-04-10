@@ -317,7 +317,7 @@ describe('processSlashCommand', () => {
       if (result.type !== 'handled') return;
       expect(result.commandResult.success).toBe(false);
       expect(sessionActions.addAssistantMessage).toHaveBeenCalledWith(
-        '❌ Unknown command: /foobar',
+        'Unknown command: /foobar',
       );
     });
 

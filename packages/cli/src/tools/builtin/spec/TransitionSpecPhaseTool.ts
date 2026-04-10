@@ -65,9 +65,7 @@ function getPhaseInstructions(phase: SpecPhase): string {
 5. Call ExitSpecMode or transition to "done" when finished`;
 
     case 'done':
-      return `## Spec Complete! 🎉
-
-The spec has been marked as complete. Next steps:
+      return `## Spec Complete! The spec has been marked as complete. Next steps:
 1. The spec will be archived to .blade/archive/
 2. Any spec deltas will be merged to .blade/specs/
 3. You can start a new spec or exit Spec mode`;
@@ -95,25 +93,25 @@ export const transitionSpecPhaseTool = createTool({
 
 ## Workflow Phases
 
-1. **init** → **requirements**: After creating proposal, define requirements
-2. **requirements** → **design** or **tasks**: After requirements, create design or jump to tasks
-3. **design** → **tasks**: After design, break down into tasks
-4. **tasks** → **implementation**: After task breakdown, start implementation
-5. **implementation** → **done**: After completing all tasks, finish
+1. **init** -> **requirements**: After creating proposal, define requirements
+2. **requirements** -> **design** or **tasks**: After requirements, create design or jump to tasks
+3. **design** -> **tasks**: After design, break down into tasks
+4. **tasks** -> **implementation**: After task breakdown, start implementation
+5. **implementation** -> **done**: After completing all tasks, finish
 
 ## Allowed Transitions
 
-- init → requirements
-- requirements → design, tasks
-- design → tasks
-- tasks → implementation
-- implementation → done, tasks (can go back to add more tasks)
+- init -> requirements
+- requirements -> design, tasks
+- design -> tasks
+- tasks -> implementation
+- implementation -> done, tasks (can go back to add more tasks)
 
 ## Prerequisites
 
 Before transitioning, ensure:
 - Current phase's primary document is complete
-- For implementation → done: All tasks should be completed
+- For implementation -> done: All tasks should be completed
 
 ## Example
 
@@ -133,7 +131,7 @@ TransitionSpecPhase({ targetPhase: "design" })
       return {
         success: false,
         llmContent: 'No active spec. Use EnterSpecMode or /spec load <name> first.',
-        displayContent: '❌ No active spec',
+        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
@@ -149,10 +147,10 @@ TransitionSpecPhase({ targetPhase: "design" })
         llmContent:
           `Cannot transition from "${currentSpec.phase}" to "${targetPhase}".\n\n` +
           `Allowed transitions from ${currentSpec.phase}: ${allowedTransitions.join(', ') || 'none'}`,
-        displayContent: '❌ Invalid phase transition',
+        displayContent: '[FAIL] Invalid phase transition',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
-          message: `Invalid transition: ${currentSpec.phase} → ${targetPhase}`,
+          message: `Invalid transition: ${currentSpec.phase} -> ${targetPhase}`,
         },
       };
     }
@@ -165,19 +163,19 @@ TransitionSpecPhase({ targetPhase: "design" })
         return {
           success: false,
           llmContent:
-            '❌ Cannot transition to implementation: No tasks defined!\n\n' +
+            '[FAIL] Cannot transition to implementation: No tasks defined!\n\n' +
             'You MUST use the **AddTask** tool to add tasks before starting implementation.\n\n' +
             'Example:\n' +
             '```\n' +
             'AddTask({\n' +
-            '  title: "Create User model",\n' +
-            '  description: "Create User entity with required fields",\n' +
-            '  complexity: "low",\n' +
-            '  affectedFiles: ["src/models/User.ts"]\n' +
+            ' title: "Create User model",\n' +
+            ' description: "Create User entity with required fields",\n' +
+            ' complexity: "low",\n' +
+            ' affectedFiles: ["src/models/User.ts"]\n' +
             '})\n' +
             '```\n\n' +
             'After adding tasks, try transitioning again.',
-          displayContent: '❌ No tasks defined - 我需要先添加任务',
+          displayContent: '[FAIL] No tasks defined - 我需要先添加任务',
           error: {
             type: ToolErrorType.VALIDATION_ERROR,
             message: 'No tasks defined. Use AddTask tool to add tasks first.',
@@ -194,7 +192,7 @@ TransitionSpecPhase({ targetPhase: "design" })
           const response = await context.confirmationHandler.requestConfirmation({
             title: 'Incomplete Tasks',
             message:
-              `⚠️ ${progress.total - progress.completed} tasks are not completed.\n\n` +
+              `[WARN] ${progress.total - progress.completed} tasks are not completed.\n\n` +
               'Are you sure you want to mark this spec as done?',
             details: `Completed: ${progress.completed}/${progress.total}`,
           });
@@ -203,7 +201,7 @@ TransitionSpecPhase({ targetPhase: "design" })
             return {
               success: false,
               llmContent: 'User cancelled transition to done phase.',
-              displayContent: '⚠️ Transition cancelled',
+              displayContent: '[WARN] Transition cancelled',
               error: {
                 type: ToolErrorType.VALIDATION_ERROR,
                 message: 'User cancelled',
@@ -221,7 +219,7 @@ TransitionSpecPhase({ targetPhase: "design" })
         return {
           success: false,
           llmContent: result.message,
-          displayContent: `❌ ${result.message}`,
+          displayContent: `[FAIL] ${result.message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: result.error || 'Transition failed',
@@ -235,9 +233,9 @@ TransitionSpecPhase({ targetPhase: "design" })
       return {
         success: true,
         llmContent:
-          `✅ Transitioned from "${fromDisplay}" to "${toDisplay}"\n\n` +
+          `[OK] Transitioned from "${fromDisplay}" to "${toDisplay}"\n\n` +
           getPhaseInstructions(targetPhase as SpecPhase),
-        displayContent: `✅ Phase: ${fromDisplay} → ${toDisplay}`,
+        displayContent: `[OK] Phase: ${fromDisplay} -> ${toDisplay}`,
         metadata: {
           fromPhase: currentSpec.phase,
           toPhase: targetPhase,
@@ -248,7 +246,7 @@ TransitionSpecPhase({ targetPhase: "design" })
       return {
         success: false,
         llmContent: `Transition failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        displayContent: '❌ Transition failed',
+        displayContent: '[FAIL] Transition failed',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: error instanceof Error ? error.message : 'Transition error',

@@ -94,7 +94,7 @@ export interface BuildSystemPromptResult {
 /**
  * 构建系统提示词（统一入口）
  *
- * 构建顺序：环境上下文 → 默认/replaceDefault → BLADE.md → Auto Memory → append → 模式特定
+ * 构建顺序：环境上下文 -> 默认/replaceDefault -> BLADE.md -> Auto Memory -> append -> 模式特定
  *
  * @example
  * // 普通模式

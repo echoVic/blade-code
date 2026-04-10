@@ -46,12 +46,12 @@ export const agentsCommand: SlashCommand = {
 
       if (allAgents.length === 0) {
         const message =
-          '📋 **Agents 管理**\n\n' +
-          '❌ 没有找到任何 agent 配置\n\n' +
+          '**Agents 管理**\n\n' +
+          '没有找到任何 agent 配置\n\n' +
           '**配置文件位置:**\n' +
           '- 项目级: `.blade/agents/`\n' +
           '- 用户级: `~/.blade/agents/`\n\n' +
-          '💡 使用 `/agents` 打开管理对话框';
+          '使用 `/agents` 打开管理对话框';
 
         ui.sendMessage(message);
         return { success: true, message: 'No agents found' };
@@ -66,7 +66,7 @@ export const agentsCommand: SlashCommand = {
       );
       const userAgents = allAgents.filter((a) => a.configPath?.startsWith(userPath));
 
-      let message = `📋 **Agents 管理**\n\n找到 **${allAgents.length}** 个 agent:\n\n`;
+      let message = `**Agents 管理**\n\n找到 **${allAgents.length}** 个 agent:\n\n`;
 
       // 项目级 agents
       if (projectAgents.length > 0) {
@@ -100,7 +100,7 @@ export const agentsCommand: SlashCommand = {
         message += '\n';
       }
 
-      message += '\n💡 使用 `/agents` 打开管理对话框';
+      message += '\n使用 `/agents` 打开管理对话框';
 
       ui.sendMessage(message);
       return { success: true, message: `Listed ${allAgents.length} agents` };
@@ -109,7 +109,7 @@ export const agentsCommand: SlashCommand = {
     // Help 子命令
     if (subcommand === 'help') {
       const message =
-        '📋 **Agents 管理帮助**\n\n' +
+        '**Agents 管理帮助**\n\n' +
         '**可用子命令:**\n' +
         '- `/agents list` - 列出所有已配置的 agents\n' +
         '- `/agents help` - 显示此帮助信息\n\n' +
@@ -141,7 +141,7 @@ export const agentsCommand: SlashCommand = {
         '- `Edit` - 编辑文件\n' +
         '- `Bash` - 执行命令\n' +
         '- 省略 `tools` 字段 = 继承所有工具\n\n' +
-        '💡 **提示:** 创建文件后,重启 Blade 使配置生效';
+        '**提示:** 创建文件后,重启 Blade 使配置生效';
 
       ui.sendMessage(message);
       return { success: true, message: 'Help displayed' };
@@ -158,7 +158,7 @@ export const agentsCommand: SlashCommand = {
 
     // 未知子命令
     const message =
-      `❌ 未知子命令: \`${subcommand}\`\n\n` + '使用 `/agents help` 查看可用命令';
+      `未知子命令: \`${subcommand}\`\n\n` + '使用 `/agents help` 查看可用命令';
 
     ui.sendMessage(message);
     return { success: false, error: `Unknown subcommand: ${subcommand}` };

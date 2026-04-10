@@ -212,7 +212,7 @@ const WITTY_LOADING_PHRASES = [
   '逃离回调地狱轮回...',
   'await 静待天时...',
   '捕获野生 Bug 妖兽...',
-  '喂养橡皮鸭灵兽 🦆...',
+  '喂养橡皮鸭灵兽...',
   '炼丹调参秘术...',
   '0xDEADBEEF 死亡凝视...',
   '递归无限轮回...',
@@ -250,9 +250,9 @@ const WITTY_LOADING_PHRASES = [
 const INFORMATIVE_TIPS = [
   // 快捷键 (12条)
   'Esc - 停止任务 / 隐藏建议 / 双击清空输入',
-  'Shift+Tab - 切换模式 (DEFAULT → AUTO_EDIT → PLAN → SPEC)',
+  'Shift+Tab - 切换模式 (DEFAULT -> AUTO_EDIT -> PLAN -> SPEC)',
   'Tab - 选中建议 / 切换 thinking 模式',
-  '↑↓ - 浏览建议或输入历史记录',
+  'Up/Down - 浏览建议或输入历史记录',
   '? - 显示快捷键帮助面板（输入框为空时）',
   'Ctrl+C - 停止任务（双击退出应用）',
   'Ctrl+L - 清屏（清除所有消息）',
