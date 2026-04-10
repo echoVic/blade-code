@@ -10,6 +10,7 @@
  * 6. content_delta 累加统计
  * 7. thinking_delta 受 thinkingModeEnabled 开关控制
  * 8. stream_end 幂等性（多次 stream_end 不会重复 finalize）
+ * 9. 多轮 turn stream_end 均正常 finalize（per-turn 重置）
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -349,6 +350,78 @@ describe('createLoopEventHandler', () => {
       handler({ kind: 'stream_end' } as LoopEvent);
       // 不应再次 finalize
       expect(deps.sessionActions.finalizeStreamingMessage).toHaveBeenCalledOnce();
+    });
+  });
+
+  // ==================== 场景 9: 多轮 turn stream_end 均正常 finalize ====================
+
+  describe('多轮 turn stream_end 均正常 finalize', () => {
+    it('同一 handler 跨多 turn，每个 turn 的 stream_end 都应该 finalize', () => {
+      const deps = createMockDeps();
+      (deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+        extraContent: 'turn content',
+        extraThinking: '',
+      });
+      const stats = createMockStats();
+      const handler = createLoopEventHandler(deps, stats);
+
+      // Turn 1
+      handler({ kind: 'turn_start', turn: 1, maxTurns: 10 } as LoopEvent);
+      handler({ kind: 'content_delta', delta: 'Turn 1 content' } as LoopEvent);
+      handler({ kind: 'stream_end' } as LoopEvent);
+
+      expect(deps.sessionActions.finalizeStreamingMessage).toHaveBeenCalledTimes(1);
+
+      // Turn 2
+      handler({ kind: 'turn_start', turn: 2, maxTurns: 10 } as LoopEvent);
+      handler({ kind: 'content_delta', delta: 'Turn 2 content' } as LoopEvent);
+      handler({ kind: 'stream_end' } as LoopEvent);
+
+      // 关键断言：finalizeStreamingMessage 被调用两次（每个 turn 一次）
+      expect(deps.sessionActions.finalizeStreamingMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('model_fallback 后新 turn 仍可正常 finalize', () => {
+      const deps = createMockDeps();
+      (deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+        extraContent: 'recovery content',
+        extraThinking: '',
+      });
+      const stats = createMockStats();
+      const handler = createLoopEventHandler(deps, stats);
+
+      // Turn 1: model_fallback → late stream_end（不应 finalize）
+      handler({ kind: 'turn_start', turn: 1, maxTurns: 10 } as LoopEvent);
+      handler({ kind: 'content_delta', delta: 'partial' } as LoopEvent);
+      handler({ kind: 'model_fallback' } as LoopEvent);
+      handler({ kind: 'stream_end' } as LoopEvent);
+
+      expect(deps.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
+
+      // Turn 2: 正常流（应 finalize）
+      handler({ kind: 'turn_start', turn: 2, maxTurns: 10 } as LoopEvent);
+      handler({ kind: 'content_delta', delta: 'Turn 2 content' } as LoopEvent);
+      handler({ kind: 'stream_end' } as LoopEvent);
+
+      // 关键断言：Turn 2 的 stream_end 正常 finalize
+      expect(deps.sessionActions.finalizeStreamingMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('turn_start 不影响同 turn 内的幂等保护', () => {
+      const deps = createMockDeps();
+      (deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+        extraContent: 'content',
+        extraThinking: '',
+      });
+      const stats = createMockStats();
+      const handler = createLoopEventHandler(deps, stats);
+
+      // 单 turn 内两次 stream_end 仍然幂等
+      handler({ kind: 'turn_start', turn: 1, maxTurns: 10 } as LoopEvent);
+      handler({ kind: 'stream_end' } as LoopEvent);
+      handler({ kind: 'stream_end' } as LoopEvent); // 同 turn 内的重复 stream_end
+
+      expect(deps.sessionActions.finalizeStreamingMessage).toHaveBeenCalledTimes(1);
     });
   });
 

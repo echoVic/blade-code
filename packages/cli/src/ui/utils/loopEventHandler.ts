@@ -3,8 +3,9 @@
  *
  * 将 LoopEvent 映射到对应的 Store actions 调用。
  * 每次 handleCommandSubmit 调用 createLoopEventHandler 都会产生新的闭包，
- * streamFinalized 是"单次 drainLoop 调用私有"的闭包状态，
- * 上一条命令的终结状态不会污染下一条命令的事件流。
+ * streamFinalized 是"per-turn"的闭包状态：
+ * - 每次 turn_start 事件会将其重置为 false，确保新 turn 的 stream_end 正常 finalize
+ * - 闭包隔离保证上一条命令的终结状态不会污染下一条命令的事件流。
  *
  * ## Finalize 协议
  *
@@ -17,9 +18,11 @@
  *   后续 late stream_end 命中守卫，不会复活已丢弃内容。
  */
 
+import type { LoopEvent } from '../../agent/loop/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { streamDebug } from '../../logging/StreamDebugLogger.js';
 import type { useAppActions, useSessionActions } from '../../store/selectors/index.js';
+import type { StreamingBufferAPI } from '../hooks/useStreamingBuffer.js';
 import {
   appendMarkdownDelta,
   finalizeMarkdownCache,
@@ -29,8 +32,6 @@ import {
   generateToolDetail,
   shouldShowToolDetail,
 } from '../utils/toolFormatters.js';
-import type { StreamingBufferAPI } from '../hooks/useStreamingBuffer.js';
-import type { LoopEvent } from '../../agent/loop/types.js';
 
 const logger = createLogger(LogCategory.UI);
 
@@ -63,14 +64,15 @@ export interface LoopEventStats {
 /**
  * 创建事件处理器
  *
- * 返回的闭包内部维护 streamFinalized 标记，生命周期与单次 drainLoop 调用绑定。
+ * 返回的闭包内部维护 streamFinalized 标记，生命周期 per-turn：
+ * 每次 turn_start 重置为 false，stream_end/model_fallback/abort 设为 true。
  */
 export function createLoopEventHandler(
   deps: LoopEventDeps,
   stats: LoopEventStats,
 ): (event: LoopEvent) => void {
-  // 本地标记：该流是否已被终结（discard 或 abort finalize）
-  // 一旦为 true，后续 stream_end 跳过 finalize
+  // Per-turn 标记：当前 turn 的流是否已被终结（stream_end / discard / abort finalize）
+  // 每次 turn_start 重置为 false；在同一 turn 内，一旦为 true，后续 stream_end 跳过 finalize
   let streamFinalized = false;
 
   return (event: LoopEvent) => {
@@ -191,6 +193,10 @@ export function createLoopEventHandler(
 
       // --- 系统事件和业务事件 ---
       case 'turn_start':
+        // 重置 per-turn 标记，确保新 turn 的 stream_end 可以正常 finalize
+        // 注意：如果 model_fallback 在本 turn 内已置 true，
+        // 本 turn 的 late stream_end 仍会被守卫；只有下一个 turn_start 才重置
+        streamFinalized = false;
         break;
       case 'todo_update':
         deps.appActions.setTodos(event.todos);

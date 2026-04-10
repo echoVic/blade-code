@@ -65,7 +65,7 @@ blade --debug "!chat,!loop"
 | `--continue` | `-c` | 继续最近的会话 |
 | `--resume [id]` | `-r` | 恢复指定会话（无参数时交互选择） |
 | `--fork-session` | | 恢复时创建新会话 ID |
-| `--session-id <id>` | | 指定会话 ID |
+| `--session-id <id>` | | 指定会话 ID（用于持久化文件名和会话标识） |
 
 ### AI 选项
 

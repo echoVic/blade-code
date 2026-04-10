@@ -16,7 +16,7 @@ import { registerCleanup } from '../services/GracefulShutdown.js';
 import type { VersionCheckResult } from '../services/VersionChecker.js';
 import { discoverSkills } from '../skills/index.js';
 import { initializeCustomCommands } from '../slash-commands/index.js';
-import { appActions, getState } from '../store/vanilla.js';
+import { appActions, getState, sessionActions } from '../store/vanilla.js';
 import { BackgroundShellManager } from '../tools/builtin/shell/BackgroundShellManager.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
@@ -78,6 +78,12 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
 
     // 3. 更新 Store 状态, 检查模型配置
     initializeStoreState(mergedConfig);
+
+    // 3.5 如果 --session-id 指定了会话 ID，覆盖 store 中的默认随机 ID
+    // 必须在 setLoggerSessionId 之前执行，确保日志也使用正确的 session ID
+    if (mergedConfig.resumeSessionId) {
+      sessionActions().restoreSession(mergedConfig.resumeSessionId, []);
+    }
 
     // 4. Debug 模式日志（Logger 已由 blade.tsx 早期初始化）
     if (mergedConfig.debug) {
