@@ -140,8 +140,12 @@ export class SessionRuntime {
       return;
     }
 
+    // 显式传入 modelId 时使用它；否则从 store 读取最新的 currentModelId
+    // 这确保了用户在 UI 中切换模型后，下一条命令能立即生效
     const nextModelId =
-      options.modelId && options.modelId !== 'inherit' ? options.modelId : undefined;
+      options.modelId && options.modelId !== 'inherit'
+        ? options.modelId
+        : getCurrentModel()?.id;
     if (nextModelId && nextModelId !== this.currentModelId) {
       await this.applyModelConfig(this.resolveModelConfig(nextModelId), '🔁 切换模型');
     }
