@@ -40,6 +40,10 @@ import type {
   ConfirmationResponse,
 } from '../tools/types/ExecutionTypes.js';
 import { AcpServiceContext } from './AcpServiceContext.js';
+import {
+  formatToolDisplay,
+  renderToolDisplayToString,
+} from '../ui/utils/toolFormatters.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -375,11 +379,12 @@ export class AcpSession {
                   oldText: metadata.oldContent,
                   newText: (metadata.newContent as string) ?? null,
                 });
-              } else if (result.displayContent) {
-                const displayText =
-                  typeof result.displayContent === 'string'
-                    ? result.displayContent
-                    : JSON.stringify(result.displayContent);
+              } else {
+                const toolName =
+                  'function' in toolCall ? toolCall.function.name : toolCall.type;
+                const displayText = renderToolDisplayToString(
+                  formatToolDisplay(toolName, result)
+                );
                 content.push({
                   type: 'content',
                   content: { type: 'text', text: displayText },

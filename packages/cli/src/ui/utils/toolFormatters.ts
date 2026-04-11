@@ -5,6 +5,7 @@
 
 import { basename } from 'node:path';
 import { isEditMetadata, isGlobMetadata } from '../../tools/types/index.js';
+import type { ToolDisplayOutput } from '../../tools/types/ToolTypes.js';
 
 /**
  * 格式化工具调用摘要（用于流式显示）
@@ -147,8 +148,8 @@ export function formatToolCallSummary(
 
 interface ToolResult {
   success?: boolean;
-  displayContent?: string;
   llmContent?: unknown;
+  error?: { message: string; type?: string };
   metadata?: Record<string, unknown>;
 }
 
@@ -156,7 +157,7 @@ interface ToolResult {
  * 判断是否显示工具详细内容
  */
 export function shouldShowToolDetail(toolName: string, result: ToolResult): boolean {
-  if (!result?.displayContent && !result?.success) return false;
+  if (!result?.success && !result?.metadata) return false;
 
   switch (toolName) {
     case 'Write':
@@ -302,9 +303,124 @@ export function generateToolDetail(
       return null;
     }
 
+    case 'WebFetch': {
+      const content = result.llmContent as
+        | { status?: number; url?: string; body?: string; status_text?: string }
+        | undefined;
+      if (!content) return null;
+      const parts: string[] = [];
+      if (content.url) {
+        parts.push(`${content.status || ''} ${content.url}`.trim());
+      }
+      if (content.body) {
+        const preview = content.body.slice(0, 800);
+        parts.push(
+          preview.length < content.body.length
+            ? `${preview}\n... (truncated)`
+            : preview
+        );
+      }
+      return parts.join('\n') || null;
+    }
+
+    case 'WebSearch': {
+      const results = result.llmContent as
+        | Array<{ title?: string; url?: string }>
+        | string
+        | undefined;
+      if (!results) return null;
+      if (typeof results === 'string') {
+        const lines = results.split('\n');
+        const maxShow = 5;
+        if (lines.length > maxShow) {
+          return (
+            lines.slice(0, maxShow).join('\n') +
+            `\n... (+${lines.length - maxShow} more)`
+          );
+        }
+        return results || null;
+      }
+      if (Array.isArray(results) && results.length > 0) {
+        const maxShow = 5;
+        const lines = results
+          .slice(0, maxShow)
+          .map((r) => r.title || r.url || '');
+        if (results.length > maxShow) {
+          lines.push(`... (+${results.length - maxShow} more)`);
+        }
+        return lines.join('\n');
+      }
+      return null;
+    }
+
+    case 'Task': {
+      const summary =
+        (result.metadata?.subagentSummary as string) ||
+        (typeof result.llmContent === 'string'
+          ? result.llmContent
+          : null);
+      if (!summary) return null;
+      return summary.length > 200
+        ? `${summary.slice(0, 200)}...`
+        : summary;
+    }
+
+    case 'TaskOutput': {
+      const content =
+        typeof result.llmContent === 'string'
+          ? result.llmContent
+          : null;
+      if (!content) return null;
+      return content.length > 200
+        ? `${content.slice(0, 200)}...`
+        : content;
+    }
+
+    case 'Skill': {
+      const skillName = result.metadata?.skillName as string | undefined;
+      return skillName ? `Skill: ${skillName}` : null;
+    }
+
     default: {
       const detail = result.metadata?.detail;
       return typeof detail === 'string' ? detail : null;
     }
   }
+}
+
+/**
+ * 统一工具展示格式化入口
+ * 所有面向用户的展示（CLI TUI / Web SSE / Headless / ACP）都应通过此函数
+ */
+export function formatToolDisplay(
+  toolName: string,
+  result: ToolResult
+): ToolDisplayOutput {
+  const status: ToolDisplayOutput['status'] = result.success
+    ? 'ok'
+    : result.error
+      ? 'fail'
+      : 'warn';
+  const summary =
+    (result.metadata?.summary as string | undefined) ||
+    (result.success ? '执行成功' : '执行失败');
+  const detail = shouldShowToolDetail(toolName, result)
+    ? generateToolDetail(toolName, result) || undefined
+    : undefined;
+  return { status, summary, detail };
+}
+
+/**
+ * 将 ToolDisplayOutput 渲染为纯文本字符串
+ * 用于 Web SSE、ACP、Headless 等需要单一字符串的消费者
+ */
+export function renderToolDisplayToString(
+  display: ToolDisplayOutput
+): string {
+  const prefix = { ok: '[OK]', fail: '[FAIL]', warn: '[WARN]' }[
+    display.status
+  ];
+  return display.detail
+    ? `${prefix} ${display.summary}\n${display.detail}`
+    : `${prefix} ${display.summary}`;
 }

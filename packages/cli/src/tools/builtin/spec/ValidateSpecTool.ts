@@ -53,11 +53,11 @@ export const validateSpecTool = createTool({
       return {
         success: false,
         llmContent: 'No active spec. Use EnterSpecMode or /spec load <name> first.',
-        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
         },
+        metadata: { summary: '无活跃 Spec' },
       };
     }
 
@@ -155,26 +155,26 @@ export const validateSpecTool = createTool({
       return {
         success: true,
         llmContent: fullContent,
-        displayContent: validation.valid
-          ? `[OK] Spec valid: ${currentSpec.name}`
-          : `[WARN] Spec has ${validation.issues.length} issue(s)`,
         metadata: {
           valid: validation.valid,
           phase: validation.phase,
           completeness: validation.completeness,
           issueCount: validation.issues.length,
           taskProgress: progress,
+          summary: validation.valid
+            ? `Spec 验证通过: ${currentSpec.name}`
+            : `Spec 有 ${validation.issues.length} 个问题`,
         },
       };
     } catch (error) {
       return {
         success: false,
         llmContent: `Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        displayContent: '[FAIL] Validation failed',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: error instanceof Error ? error.message : 'Validation error',
         },
+        metadata: { summary: '验证失败' },
       };
     }
   },

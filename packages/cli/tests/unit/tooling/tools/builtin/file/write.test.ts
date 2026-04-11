@@ -111,7 +111,6 @@ describe('WriteTool', () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.displayContent).toContain('成功写入文件');
       expect(result.metadata?.file_path).toBe(filePath);
       expect(result.metadata?.content_size).toBe(content.length);
 
@@ -260,7 +259,7 @@ describe('WriteTool', () => {
       );
 
       // 中止信号的处理可能在不同位置，验证至少有错误响应
-      expect(result.displayContent).toBeDefined();
+      expect(result).toBeDefined();
     });
   });
 

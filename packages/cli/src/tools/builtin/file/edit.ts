@@ -89,7 +89,6 @@ export const editTool = createTool({
           return {
             success: false,
             llmContent: `File not found: ${file_path}`,
-            displayContent: `[FAIL] 文件不存在: ${file_path}`,
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
               message: `文件不存在`,
@@ -112,7 +111,6 @@ export const editTool = createTool({
           return {
             success: false,
             llmContent: `You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.`,
-            displayContent: `我需要先读取文件内容，然后再进行编辑。`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File not read before edit',
@@ -129,7 +127,6 @@ export const editTool = createTool({
           return {
             success: false,
             llmContent: `The file has been modified by an external program since you last read it. You must use the Read tool again to see the current content before editing.\n\nDetails: ${externalModCheck.message}`,
-            displayContent: `[FAIL] 编辑失败：文件已被外部程序修改\n\n${externalModCheck.message}\n\n我需要重新读取文件内容后再编辑`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File modified externally',
@@ -156,7 +153,6 @@ export const editTool = createTool({
         return {
           success: false,
           llmContent: 'New string is identical; no replacement needed',
-          displayContent: '[WARN] 新字符串与旧字符串相同，无需进行替换',
           error: {
             type: ToolErrorType.VALIDATION_ERROR,
             message: '新旧字符串相同',
@@ -174,7 +170,6 @@ export const editTool = createTool({
         return {
           success: false,
           llmContent: errorDetails.llmContent,
-          displayContent: errorDetails.displayContent,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '未找到匹配内容',
@@ -246,29 +241,10 @@ export const editTool = createTool({
           `**Auto-retry expected** - This usually resolves in 1-2 attempts.`,
         ].join('\n');
 
-        // 用户友好的显示消息（清晰、鼓励性）
-        const displayMessage = [
-          `[WARN] 编辑暂停：需要更精确的定位`,
-          ``,
-          `在文件中找到 ${matches.length} 处相似代码：`,
-          ...matchLocations.map(
-            (loc, idx) => ` • 第 ${loc.line} 行 (匹配 ${idx + 1}/${matches.length})`
-          ),
-          ``,
-          `AI 正在自动调整，添加更多上下文以精确定位...`,
-          `通常需要 1-2 次尝试即可成功`,
-          ``,
-          `如果多次失败，可能需要：`,
-          ` • 包含函数/类名等独特标识符`,
-          ` • 添加目标代码前后 3-5 行完整上下文`,
-          ` • 或使用 replace_all=true 同时替换所有 ${matches.length} 处匹配`,
-        ].join('\n');
-
         // 直接失败（对齐 Claude Code 官方行为）
         return {
           success: false,
           llmContent: llmMessage,
-          displayContent: displayMessage,
           error: {
             type: ToolErrorType.VALIDATION_ERROR,
             message: 'old_string is not unique',
@@ -360,8 +336,6 @@ export const editTool = createTool({
         newContent: newContent,
       };
 
-      const displayMessage = formatDisplayMessage(metadata, diffSnippet);
-
       return {
         success: true,
         llmContent: {
@@ -369,7 +343,6 @@ export const editTool = createTool({
           replacements: replacedCount,
           total_matches: matches.length,
         },
-        displayContent: displayMessage,
         metadata,
       };
     } catch (error) {
@@ -378,7 +351,6 @@ export const editTool = createTool({
         return {
           success: false,
           llmContent: 'File edit aborted',
-          displayContent: '[WARN] 文件编辑被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '操作被中止',
@@ -389,7 +361,6 @@ export const editTool = createTool({
       return {
         success: false,
         llmContent: `File edit failed: ${nodeError.message}`,
-        displayContent: `[FAIL] 编辑文件失败: ${nodeError.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: nodeError.message,
@@ -522,37 +493,6 @@ function findMatchesWithActual(content: string, actualString: string): number[] 
 // diff 生成函数已移动到 diffUtils.ts，供 Edit 和 Write 工具共享
 
 /**
- * 格式化显示消息
- */
-function formatDisplayMessage(
-  metadata: EditMetadata,
-  diffSnippet?: string | null
-): string {
-  const { file_path, matches_found, replacements_made, replace_all, size_diff } =
-    metadata;
-
-  let message = `[OK] 成功编辑文件: ${file_path}`;
-  message += `\n替换了 ${replacements_made} 个匹配项`;
-
-  if (!replace_all && matches_found > 1) {
-    message += ` (共找到 ${matches_found} 个匹配项)`;
-  }
-
-  if (size_diff !== 0) {
-    const sizeChange =
-      size_diff > 0 ? `增加${size_diff}` : `减少${Math.abs(size_diff)}`;
-    message += `\n文件大小${sizeChange}个字符`;
-  }
-
-  // 添加差异片段
-  if (diffSnippet) {
-    message += diffSnippet;
-  }
-
-  return message;
-}
-
-/**
  * 生成富文本错误信息
  * 当 Edit 工具匹配失败时,提供详细的上下文和恢复建议
  */
@@ -562,7 +502,6 @@ function generateRichErrorMessage(
   filePath: string
 ): {
   llmContent: string;
-  displayContent: string;
   metadata: EditErrorMetadata;
 } {
   const lines = fileContent.split('\n');
@@ -637,31 +576,8 @@ Common issues:
 - Smart quotes: " " vs " (use straight quotes)
 - Outdated mental model: File may have changed since you last read it`;
 
-  // 4. 生成用户可读的显示信息
-  let displayContent = `[FAIL] Edit 失败: 未找到匹配的字符串
-
-文件: ${filePath}
-搜索字符串长度: ${searchString.length} 字符
-`;
-
-  if (fuzzyMatches.length > 0) {
-    displayContent += `\n找到 ${fuzzyMatches.length} 个相似匹配项:\n`;
-    fuzzyMatches.forEach((match, idx) => {
-      displayContent += ` ${idx + 1}. 第 ${match.lineNumber} 行 (相似度: ${Math.round(match.similarity * 100)}%)\n`;
-    });
-  } else {
-    displayContent += '\n[WARN] 未找到相似的匹配项\n';
-  }
-
-  displayContent += `\n文件内容摘录 (${excerptStartLine + 1}-${excerptEndLine} 行):\n${excerpt}\n`;
-  displayContent += `\n接下来我会:\n`;
-  displayContent += ` 1. 重新读取文件内容\n`;
-  displayContent += ` 2. 仔细核对空格、换行符、引号\n`;
-  displayContent += ` 3. 使用更多上下文代码确保唯一性`;
-
   return {
     llmContent,
-    displayContent,
     metadata: {
       searchStringLength: searchString.length,
       fuzzyMatches: fuzzyMatches.map((m) => ({

@@ -24,6 +24,10 @@ import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
 import { Bus } from '../bus.js';
 import { BadRequestError, NotFoundError } from '../error.js';
 import { getCwd } from '../../utils/cwd.js';
+import {
+  formatToolDisplay,
+  renderToolDisplayToString,
+} from '../../ui/utils/toolFormatters.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -628,7 +632,9 @@ async function executeRunAsync(
                 toolCallId: event.toolCall.id,
                 success: !event.result.error,
                 summary: event.result.metadata?.summary,
-                output: event.result.displayContent,
+                output: renderToolDisplayToString(
+                  formatToolDisplay(event.toolCall.function.name, event.result)
+                ),
                 metadata: sanitizeToolMetadata(event.result.metadata),
               });
             }

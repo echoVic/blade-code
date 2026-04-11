@@ -131,11 +131,11 @@ TransitionSpecPhase({ targetPhase: "design" })
       return {
         success: false,
         llmContent: 'No active spec. Use EnterSpecMode or /spec load <name> first.',
-        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
         },
+        metadata: { summary: '无活跃 Spec' },
       };
     }
 
@@ -147,11 +147,11 @@ TransitionSpecPhase({ targetPhase: "design" })
         llmContent:
           `Cannot transition from "${currentSpec.phase}" to "${targetPhase}".\n\n` +
           `Allowed transitions from ${currentSpec.phase}: ${allowedTransitions.join(', ') || 'none'}`,
-        displayContent: '[FAIL] Invalid phase transition',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: `Invalid transition: ${currentSpec.phase} -> ${targetPhase}`,
         },
+        metadata: { summary: `无效阶段转换: ${currentSpec.phase} -> ${targetPhase}` },
       };
     }
 
@@ -175,11 +175,11 @@ TransitionSpecPhase({ targetPhase: "design" })
             '})\n' +
             '```\n\n' +
             'After adding tasks, try transitioning again.',
-          displayContent: '[FAIL] No tasks defined - 我需要先添加任务',
           error: {
             type: ToolErrorType.VALIDATION_ERROR,
             message: 'No tasks defined. Use AddTask tool to add tasks first.',
           },
+          metadata: { summary: '未定义任务，无法转换' },
         };
       }
     }
@@ -201,11 +201,11 @@ TransitionSpecPhase({ targetPhase: "design" })
             return {
               success: false,
               llmContent: 'User cancelled transition to done phase.',
-              displayContent: '[WARN] Transition cancelled',
               error: {
                 type: ToolErrorType.VALIDATION_ERROR,
                 message: 'User cancelled',
               },
+              metadata: { summary: '转换已取消' },
             };
           }
         }
@@ -219,11 +219,11 @@ TransitionSpecPhase({ targetPhase: "design" })
         return {
           success: false,
           llmContent: result.message,
-          displayContent: `[FAIL] ${result.message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: result.error || 'Transition failed',
           },
+          metadata: { summary: `转换失败: ${result.message}` },
         };
       }
 
@@ -235,22 +235,22 @@ TransitionSpecPhase({ targetPhase: "design" })
         llmContent:
           `[OK] Transitioned from "${fromDisplay}" to "${toDisplay}"\n\n` +
           getPhaseInstructions(targetPhase as SpecPhase),
-        displayContent: `[OK] Phase: ${fromDisplay} -> ${toDisplay}`,
         metadata: {
           fromPhase: currentSpec.phase,
           toPhase: targetPhase,
           featureName: currentSpec.name,
+          summary: `阶段转换: ${fromDisplay} -> ${toDisplay}`,
         },
       };
     } catch (error) {
       return {
         success: false,
         llmContent: `Transition failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        displayContent: '[FAIL] Transition failed',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: error instanceof Error ? error.message : 'Transition error',
         },
+        metadata: { summary: '阶段转换失败' },
       };
     }
   },

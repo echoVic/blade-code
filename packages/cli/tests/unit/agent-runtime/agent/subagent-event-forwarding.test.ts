@@ -52,7 +52,7 @@ describe('SubagentExecutor event forwarding', () => {
       { kind: 'content_delta', delta: 'hello' },
       { kind: 'thinking_delta', delta: 'hmm' },
       { kind: 'tool_start', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } } },
-      { kind: 'tool_result', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } }, result: { success: true, llmContent: 'ok', displayContent: 'ok' } },
+      { kind: 'tool_result', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } }, result: { success: true, llmContent: 'ok' } },
       { kind: 'stream_end' },
       { kind: 'turn_start', turn: 1, maxTurns: 5 },
       { kind: 'token_usage', usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30, maxContextTokens: 128000 } },

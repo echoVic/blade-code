@@ -352,20 +352,6 @@ function applyDomainFilters(
 // 格式化
 // ============================================================================
 
-function formatDisplayResults(
-  query: string,
-  results: WebSearchResult[],
-  total: number,
-  providerName: string
-): string {
-  const header = `WebSearch("${query}") via ${providerName} - 返回 ${results.length}/${total} 条结果`;
-  const lines = results.map(
-    (result, index) =>
-      `${index + 1}. ${result.title}\n ${result.display_url}\n ${result.snippet}`
-  );
-  return [header, ...lines].join('\n');
-}
-
 function sanitizeQuery(query: string): string {
   const trimmed = query.trim().toLowerCase();
   return trimmed.length > 80 ? trimmed.slice(0, 80) : trimmed;
@@ -479,28 +465,26 @@ IMPORTANT - Use the correct year in search queries:
         return {
           success: true,
           llmContent: resultPayload,
-          displayContent: `WebSearch("${query}") via ${providerName} - 未找到匹配结果`,
-          metadata,
+          metadata: {
+            ...metadata,
+            summary: `搜索 "${query}" 找到 0 条结果`,
+          },
         };
       }
 
       return {
         success: true,
         llmContent: resultPayload,
-        displayContent: formatDisplayResults(
-          query,
-          limitedResults,
-          filteredResults.length,
-          providerName
-        ),
-        metadata,
+        metadata: {
+          ...metadata,
+          summary: `搜索 "${query}" 找到 ${limitedResults.length} 条结果`,
+        },
       };
     } catch (error) {
       const err = error as Error;
       return {
         success: false,
         llmContent: `WebSearch call failed: ${err.message}`,
-        displayContent: `[FAIL] WebSearch 调用失败: ${err.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: err.message,
@@ -509,6 +493,9 @@ IMPORTANT - Use the correct year in search queries:
             allowedDomains,
             blockedDomains,
           },
+        },
+        metadata: {
+          summary: `搜索失败: ${err.message}`,
         },
       };
     }

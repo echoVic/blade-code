@@ -189,7 +189,6 @@ export class ExecutionPipeline extends EventEmitter {
       let errorResult: ToolResult = {
         success: false,
         llmContent: `Tool execution failed: ${(error as Error).message}`,
-        displayContent: `错误: ${(error as Error).message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: (error as Error).message,

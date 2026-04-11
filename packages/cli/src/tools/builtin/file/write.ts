@@ -109,7 +109,6 @@ export const writeTool = createTool({
           return {
             success: false,
             llmContent: `If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.`,
-            displayContent: `我需要先读取文件内容，然后再进行写入。`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File not read before write',
@@ -126,7 +125,6 @@ export const writeTool = createTool({
           return {
             success: false,
             llmContent: `The file has been modified by an external program since you last read it. You must use the Read tool again to see the current content before writing.\n\nDetails: ${externalModCheck.message}`,
-            displayContent: `[FAIL] 写入失败：文件已被外部程序修改\n\n${externalModCheck.message}\n\n我需要重新读取文件内容后再写入`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File modified externally',
@@ -169,7 +167,6 @@ export const writeTool = createTool({
           return {
             success: false,
             llmContent: `Binary file writes are not supported in ACP mode. The IDE only supports text file operations. Please use encoding='utf8' for text files, or ask the user to write the file manually.`,
-            displayContent: `[FAIL] ACP 模式不支持二进制文件写入\n\n当前通过 IDE 执行文件操作，但 IDE 仅支持文本文件。\n\n如果是文本文件，我会使用 encoding='utf8' 重试；如果必须写入二进制文件，需要在本地终端执行`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'Binary writes not supported in ACP mode',
@@ -240,13 +237,6 @@ export const writeTool = createTool({
         newContent: encoding === 'utf8' ? content : undefined, // 仅文本文件
       };
 
-      const displayMessage = formatDisplayMessage(
-        file_path,
-        metadata,
-        content,
-        diffSnippet
-      );
-
       return {
         success: true,
         llmContent: {
@@ -255,7 +245,6 @@ export const writeTool = createTool({
           modified:
             stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
         },
-        displayContent: displayMessage,
         metadata,
       };
     } catch (error) {
@@ -264,7 +253,6 @@ export const writeTool = createTool({
         return {
           success: false,
           llmContent: 'File write aborted',
-          displayContent: '[WARN] 文件写入被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '操作被中止',
@@ -275,7 +263,6 @@ export const writeTool = createTool({
       return {
         success: false,
         llmContent: `File write failed: ${nodeError.message}`,
-        displayContent: `[FAIL] 写入文件失败: ${nodeError.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: nodeError.message,
@@ -302,127 +289,6 @@ export const writeTool = createTool({
     return ext ? `**/*${ext}` : '**/*';
   },
 });
-
-/**
- * 格式化显示消息
- */
-function formatDisplayMessage(
-  filePath: string,
-  metadata: WriteMetadata,
-  content?: string,
-  diffSnippet?: string | null
-): string {
-  let message = `[OK] 成功写入文件: ${filePath}`;
-
-  if (metadata.file_size !== undefined) {
-    message += ` (${formatFileSize(metadata.file_size as number)})`;
-  }
-
-  if (metadata.snapshot_created) {
-    message += `\n已创建快照 (可回滚)`;
-  }
-
-  if (metadata.encoding !== 'utf8') {
-    message += `\n使用编码: ${metadata.encoding}`;
-  }
-
-  // 优先显示 diff（如果有）
-  if (diffSnippet) {
-    message += diffSnippet;
-  }
-
-  // 添加内容预览（仅对文本文件且没有 diff 时才显示完整预览）
-  if (content && metadata.encoding === 'utf8' && !diffSnippet) {
-    const preview = generateContentPreview(filePath, content);
-    if (preview) {
-      message += '\n\n' + preview;
-    }
-  }
-
-  return message;
-}
-
-/**
- * 生成文件内容预览（Markdown 代码块格式）
- */
-function generateContentPreview(filePath: string, content: string): string | null {
-  // 获取文件扩展名，用于语法高亮
-  const ext = extname(filePath).toLowerCase();
-  const languageMap: Record<string, string> = {
-    '.ts': 'typescript',
-    '.tsx': 'tsx',
-    '.js': 'javascript',
-    '.jsx': 'jsx',
-    '.py': 'python',
-    '.go': 'go',
-    '.rs': 'rust',
-    '.java': 'java',
-    '.c': 'c',
-    '.cpp': 'cpp',
-    '.h': 'c',
-    '.hpp': 'cpp',
-    '.cs': 'csharp',
-    '.rb': 'ruby',
-    '.php': 'php',
-    '.swift': 'swift',
-    '.kt': 'kotlin',
-    '.scala': 'scala',
-    '.sh': 'bash',
-    '.bash': 'bash',
-    '.zsh': 'zsh',
-    '.json': 'json',
-    '.yaml': 'yaml',
-    '.yml': 'yaml',
-    '.toml': 'toml',
-    '.xml': 'xml',
-    '.html': 'html',
-    '.css': 'css',
-    '.scss': 'scss',
-    '.sass': 'sass',
-    '.less': 'less',
-    '.md': 'markdown',
-    '.sql': 'sql',
-    '.graphql': 'graphql',
-    '.proto': 'protobuf',
-  };
-
-  const language = languageMap[ext] || '';
-
-  // 限制预览长度（最多 100 行或 5000 字符）
-  const MAX_LINES = 100;
-  const MAX_CHARS = 5000;
-
-  let previewContent = content;
-  let truncated = false;
-
-  // 按行数截断
-  const lines = content.split('\n');
-  if (lines.length > MAX_LINES) {
-    previewContent = lines.slice(0, MAX_LINES).join('\n');
-    truncated = true;
-  }
-
-  // 按字符数截断
-  if (previewContent.length > MAX_CHARS) {
-    previewContent = previewContent.substring(0, MAX_CHARS);
-    truncated = true;
-  }
-
-  // 生成 Markdown 代码块
-  let preview = '文件内容:\n\n';
-  preview += '```' + language + '\n';
-  preview += previewContent;
-  if (!previewContent.endsWith('\n')) {
-    preview += '\n';
-  }
-  preview += '```';
-
-  if (truncated) {
-    preview += `\n\n[WARN] 内容已截断（完整文件共 ${lines.length} 行，${content.length} 字符）`;
-  }
-
-  return preview;
-}
 
 /**
  * 格式化文件大小

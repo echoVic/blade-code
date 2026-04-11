@@ -30,7 +30,6 @@ function makeSuccessResult(tag: string) {
   return {
     success: true,
     llmContent: tag,
-    displayContent: tag,
     error: undefined,
     metadata: undefined,
   };

@@ -29,8 +29,7 @@ import {
 } from '../utils/markdownIncremental.js';
 import {
   formatToolCallSummary,
-  generateToolDetail,
-  shouldShowToolDetail,
+  formatToolDisplay,
 } from '../utils/toolFormatters.js';
 
 const logger = createLogger(LogCategory.UI);
@@ -159,21 +158,12 @@ export function createLoopEventHandler(
       case 'tool_result': {
         const toolCall = event.toolCall;
         if (!('function' in toolCall)) break;
-        const summary = event.result.metadata?.summary;
-        if (!summary) break;
-
-        let detail: string | undefined;
-        if (shouldShowToolDetail(toolCall.function.name, event.result)) {
-          detail =
-            generateToolDetail(toolCall.function.name, event.result) ||
-            event.result.displayContent;
-        }
-
-        deps.sessionActions.addToolMessage(summary as string, {
+        const display = formatToolDisplay(toolCall.function.name, event.result);
+        deps.sessionActions.addToolMessage(display.summary, {
           toolName: toolCall.function.name,
           phase: 'complete',
-          summary: summary as string,
-          detail,
+          summary: display.summary,
+          detail: display.detail,
         });
         break;
       }

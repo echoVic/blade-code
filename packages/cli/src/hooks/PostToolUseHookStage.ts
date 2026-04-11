@@ -73,7 +73,9 @@ export class PostToolUseHookStage implements PipelineStage {
       // 1. 添加额外上下文给 LLM
       if (hookResult.additionalContext) {
         // 将额外上下文添加到 result.llmContent
-        const currentContent = result.llmContent || result.displayContent || '';
+        const currentContent = typeof result.llmContent === 'string'
+          ? result.llmContent
+          : (result.llmContent ? JSON.stringify(result.llmContent) : '');
         result.llmContent = `${currentContent}\n\n---\n**Hook Context:**\n${hookResult.additionalContext}`;
       }
 

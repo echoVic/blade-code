@@ -625,34 +625,6 @@ function parseContentLine(line: string): GrepMatch | null {
 }
 
 /**
- * 格式化显示消息
- */
-function formatDisplayMessage(metadata: GrepMetadata): string {
-  const { search_pattern, search_path, output_mode, total_matches, strategy } =
-    metadata;
-
-  let message = `[OK] 在 ${search_path} 中搜索 "${search_pattern}"`;
-
-  if (strategy) {
-    message += `\n使用策略: ${strategy}`;
-  }
-
-  switch (output_mode) {
-    case 'files_with_matches':
-      message += `\n找到 ${total_matches} 个包含匹配内容的文件`;
-      break;
-    case 'count':
-      message += `\n统计了 ${total_matches} 个文件的匹配数量`;
-      break;
-    case 'content':
-      message += `\n找到 ${total_matches} 个匹配行`;
-      break;
-  }
-
-  return message;
-}
-
-/**
  * GrepTool - 内容搜索工具
  * 支持多级降级策略：ripgrep -> git grep -> system grep -> JavaScript fallback
  */
@@ -904,7 +876,10 @@ export const grepTool = createTool({
         return {
           success: false,
           llmContent: `Search execution failed: ${result.stderr}`,
-          displayContent: `[FAIL] 搜索执行失败: ${result.stderr}`,
+          metadata: {
+            ...metadata,
+            summary: `搜索失败: ${result.stderr}`,
+          },
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: result.stderr,
@@ -912,13 +887,16 @@ export const grepTool = createTool({
         };
       }
 
-      const displayMessage = formatDisplayMessage(metadata);
-
       return {
         success: true,
         llmContent: matches,
-        displayContent: displayMessage,
-        metadata,
+        metadata: {
+          ...metadata,
+          summary:
+            matches.length > 0
+              ? `搜索 "${pattern}" 找到 ${matches.length} 个文件`
+              : `搜索 "${pattern}" 未找到匹配`,
+        },
       };
     } catch (error) {
       const err = error as Error;
@@ -926,7 +904,9 @@ export const grepTool = createTool({
         return {
           success: false,
           llmContent: 'Search aborted',
-          displayContent: '[WARN] 搜索被用户中止',
+          metadata: {
+            summary: `搜索失败: 操作被中止`,
+          },
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '操作被中止',
@@ -937,7 +917,9 @@ export const grepTool = createTool({
       return {
         success: false,
         llmContent: `Search failed: ${err.message}`,
-        displayContent: `[FAIL] 搜索失败: ${err.message}`,
+        metadata: {
+          summary: `搜索失败: ${err.message}`,
+        },
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: err.message,

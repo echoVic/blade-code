@@ -122,10 +122,10 @@ User: "What files handle routing?"
               '- When your research is complete, call ExitPlanMode with your implementation plan\n' +
               '- For pure research questions, answer directly without ExitPlanMode\n\n' +
               'Begin your research now.',
-            displayContent: '[OK] Entering Plan mode',
             metadata: {
               approved: true,
               enterPlanMode: true, // Signal to switch to Plan mode
+              summary: '进入 Plan 模式',
             },
           };
         } else {
@@ -136,10 +136,10 @@ User: "What files handle routing?"
               'Proceed with the task directly without planning phase. ' +
               'You can still use search tools to understand the codebase as needed, ' +
               'but implement the solution directly.',
-            displayContent: '[WARN] Plan mode declined, proceeding directly',
             metadata: {
               approved: false,
               enterPlanMode: false,
+              summary: 'Plan 模式被拒绝',
             },
           };
         }
@@ -147,11 +147,11 @@ User: "What files handle routing?"
         return {
           success: false,
           llmContent: `Confirmation flow error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          displayContent: '[FAIL] Failed to request confirmation',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Confirmation flow error',
           },
+          metadata: { summary: '确认流程出错' },
         };
       }
     }
@@ -163,8 +163,7 @@ User: "What files handle routing?"
         'Plan mode requested but no interactive confirmation available.\n\n' +
         'Proceeding with research phase. Use read-only tools to explore the codebase, ' +
         'then call ExitPlanMode with your implementation plan when ready.',
-      displayContent: 'Plan mode (non-interactive)',
-      metadata: { approved: null, enterPlanMode: true },
+      metadata: { approved: null, enterPlanMode: true, summary: 'Plan 模式（非交互）' },
     };
   },
 });

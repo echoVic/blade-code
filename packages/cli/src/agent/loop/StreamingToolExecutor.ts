@@ -234,7 +234,6 @@ export class StreamingToolExecutor {
       result: {
         success: false,
         llmContent: '',
-        displayContent: '',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message,
@@ -332,7 +331,6 @@ export class StreamingToolExecutor {
       const errorResult: ToolResult = {
         success: false,
         llmContent: '',
-        displayContent: '',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message:

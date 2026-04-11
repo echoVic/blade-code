@@ -114,12 +114,14 @@ export class ToolExecution {
     this.result = {
       success: false,
       llmContent: `Tool execution aborted: ${reason || 'Unknown reason'}`,
-      displayContent: `执行已中止: ${reason || '未知原因'}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: reason || 'Execution aborted',
       },
-      metadata: options?.shouldExitLoop ? { shouldExitLoop: true } : undefined,
+      metadata: {
+        summary: `执行已中止: ${reason || '未知原因'}`,
+        ...(options?.shouldExitLoop ? { shouldExitLoop: true } : {}),
+      },
     };
   }
 

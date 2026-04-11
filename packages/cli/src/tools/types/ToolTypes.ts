@@ -335,7 +335,6 @@ export function isEditMetadata(
  * return {
  * success: true,
  * llmContent: '...',
- * displayContent: '...',
  * metadata: { file_path: '...', matches_found: 1, ... }
  * };
  * }
@@ -343,9 +342,20 @@ export function isEditMetadata(
 interface TypedToolResult<TMetadata extends ToolResultMetadata = ToolResultMetadata> {
   success: boolean;
   llmContent: string | object;
-  displayContent: string;
   error?: ToolError;
   metadata?: TMetadata;
+}
+
+/**
+ * 工具展示输出（由格式化层生成，供所有 UI 消费者使用）
+ */
+export interface ToolDisplayOutput {
+  /** 状态：ok / fail / warn */
+  status: 'ok' | 'fail' | 'warn';
+  /** 一行摘要 */
+  summary: string;
+  /** 多行详情（diff、输出预览等），可选 */
+  detail?: string;
 }
 
 /**

@@ -126,11 +126,11 @@ UpdateSpec({
         llmContent:
           'No active spec. Use EnterSpecMode to start a new spec project, ' +
           'or use the /spec command to load an existing one.',
-        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
         },
+        metadata: { summary: '无活跃 Spec' },
       };
     }
 
@@ -155,24 +155,24 @@ UpdateSpec({
           `[OK] Updated ${fileType}.md for "${currentSpec.name}"\n\n` +
           `Stats: ${lines} lines, ${chars} characters\n\n` +
           getPhaseGuidance(fileType, currentSpec.phase),
-        displayContent: `[OK] Updated ${fileType}.md (${lines} lines)`,
         metadata: {
           featureName: currentSpec.name,
           fileType,
           lines,
           chars,
           append,
+          summary: `更新 ${fileType}.md (${lines} 行)`,
         },
       };
     } catch (error) {
       return {
         success: false,
         llmContent: `Failed to update ${fileType}.md: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        displayContent: `[FAIL] Failed to update ${fileType}.md`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: error instanceof Error ? error.message : 'Write error',
         },
+        metadata: { summary: `更新 ${fileType}.md 失败` },
       };
     }
   },

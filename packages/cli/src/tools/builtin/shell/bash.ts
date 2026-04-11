@@ -190,7 +190,6 @@ Before executing commands:
         return {
           success: false,
           llmContent: 'Command execution aborted',
-          displayContent: '[WARN] 命令执行被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Operation aborted',
@@ -201,7 +200,6 @@ Before executing commands:
       return {
         success: false,
         llmContent: `Command execution failed: ${err.message}`,
-        displayContent: `[FAIL] 命令执行失败: ${err.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: err.message,
@@ -304,12 +302,6 @@ function executeInBackground(
     summary,
   };
 
-  const displayMessage =
-    `[OK] 命令已在后台启动\n` +
-    `进程 ID: ${backgroundProcess.pid}\n` +
-    `Bash ID: ${backgroundProcess.id}\n` +
-    `[WARN] 使用 TaskOutput/KillShell 管理后台进程`;
-
   return {
     success: true,
     llmContent: {
@@ -319,7 +311,6 @@ function executeInBackground(
       bash_id: backgroundProcess.id,
       shell_id: backgroundProcess.id,
     },
-    displayContent: displayMessage,
     metadata,
   };
 }
@@ -361,7 +352,6 @@ async function executeWithAcpTerminal(
       return {
         success: false,
         llmContent: 'Command execution aborted by user',
-        displayContent: `[WARN] 命令执行被用户中止\n输出: ${result.stdout}\n错误: ${result.stderr}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: '操作被中止',
@@ -381,7 +371,6 @@ async function executeWithAcpTerminal(
       return {
         success: false,
         llmContent: `Command execution timed out (${timeout}ms)`,
-        displayContent: `命令执行超时 (${timeout}ms)\n输出: ${result.stdout}\n错误: ${result.stderr}`,
         error: {
           type: ToolErrorType.TIMEOUT_ERROR,
           message: '命令执行超时',
@@ -414,15 +403,6 @@ async function executeWithAcpTerminal(
       summary,
     };
 
-    const displayMessage = formatDisplayMessage({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      command,
-      execution_time: executionTime,
-      exit_code: result.exitCode,
-      signal: null,
-    });
-
     const truncated = OutputTruncator.truncateForLLM(
       result.stdout.trim(),
       result.stderr.trim(),
@@ -438,7 +418,6 @@ async function executeWithAcpTerminal(
         exit_code: result.exitCode,
         ...(truncated.truncationInfo && { truncation_info: truncated.truncationInfo }),
       },
-      displayContent: displayMessage,
       metadata,
     };
   } catch (error) {
@@ -448,7 +427,6 @@ async function executeWithAcpTerminal(
     return {
       success: false,
       llmContent: `Command execution failed: ${nodeError.message}`,
-      displayContent: `[FAIL] 命令执行失败: ${nodeError.message}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: nodeError.message,
@@ -540,7 +518,6 @@ async function executeWithTimeout(
         resolve({
           success: false,
           llmContent: `Command execution timed out (${timeout}ms)`,
-          displayContent: `命令执行超时 (${timeout}ms)\n输出: ${stdout}\n错误: ${stderr}`,
           error: {
             type: ToolErrorType.TIMEOUT_ERROR,
             message: '命令执行超时',
@@ -561,7 +538,6 @@ async function executeWithTimeout(
         resolve({
           success: false,
           llmContent: 'Command execution aborted by user',
-          displayContent: `[WARN] 命令执行被用户中止\n输出: ${stdout}\n错误: ${stderr}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '操作被中止',
@@ -597,15 +573,6 @@ async function executeWithTimeout(
         summary,
       };
 
-      const displayMessage = formatDisplayMessage({
-        stdout,
-        stderr,
-        command,
-        execution_time: executionTime,
-        exit_code: code,
-        signal: sig,
-      });
-
       const truncated = OutputTruncator.truncateForLLM(
         stdout.trim(),
         stderr.trim(),
@@ -624,7 +591,6 @@ async function executeWithTimeout(
             truncation_info: truncated.truncationInfo,
           }),
         },
-        displayContent: displayMessage,
         metadata,
       });
     });
@@ -642,7 +608,6 @@ async function executeWithTimeout(
       resolve({
         success: false,
         llmContent: `Command execution failed: ${error.message}`,
-        displayContent: `[FAIL] 命令执行失败: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: error.message,
@@ -651,36 +616,4 @@ async function executeWithTimeout(
       });
     });
   });
-}
-
-/**
- * 格式化显示消息
- */
-function formatDisplayMessage(result: {
-  stdout: string;
-  stderr: string;
-  command: string;
-  execution_time: number;
-  exit_code: number | null;
-  signal: NodeJS.Signals | null;
-}): string {
-  const { stdout, stderr, command, execution_time, exit_code, signal } = result;
-
-  let message = `[OK] Bash 命令执行完成: ${command}`;
-  message += `\n执行时间: ${execution_time}ms`;
-  message += `\n退出码: ${exit_code ?? 'N/A'}`;
-
-  if (signal) {
-    message += `\n信号: ${signal}`;
-  }
-
-  if (stdout && stdout.trim()) {
-    message += `\n输出:\n${stdout.trim()}`;
-  }
-
-  if (stderr && stderr.trim()) {
-    message += `\n[WARN] 错误输出:\n${stderr.trim()}`;
-  }
-
-  return message;
 }

@@ -887,7 +887,6 @@ export async function* executeLoopGenerator(
               result: {
                 success: false,
                 llmContent: '',
-                displayContent: '',
                 error: {
                   type: ToolErrorType.EXECUTION_ERROR,
                   message:
@@ -1002,7 +1001,7 @@ export async function* executeLoopGenerator(
 
         // 添加工具结果到消息历史
         let toolResultContent = result.success
-          ? result.llmContent || result.displayContent || ''
+          ? result.llmContent || ''
           : result.error?.message || '执行失败';
         if (
           typeof toolResultContent === 'object' &&

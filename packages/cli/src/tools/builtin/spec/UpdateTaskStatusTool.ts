@@ -85,11 +85,11 @@ UpdateTaskStatus({
         llmContent:
           'No active spec. Use EnterSpecMode to start a new spec project, ' +
           'or use the /spec command to load an existing one.',
-        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
         },
+        metadata: { summary: '无活跃 Spec' },
       };
     }
 
@@ -101,11 +101,11 @@ UpdateTaskStatus({
         llmContent:
           `Task "${taskId}" not found.\n\n` +
           `Available tasks:\n${currentSpec.tasks.map((t) => `- ${t.id}: ${t.title}`).join('\n') || 'No tasks'}`,
-        displayContent: `[FAIL] Task not found: ${taskId}`,
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'Task not found',
         },
+        metadata: { summary: `任务未找到: ${taskId}` },
       };
     }
 
@@ -116,11 +116,11 @@ UpdateTaskStatus({
       return {
         success: false,
         llmContent: `Failed to update task status: ${result.message}`,
-        displayContent: `[FAIL] Failed to update: ${result.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: result.message,
         },
+        metadata: { summary: `更新任务状态失败: ${taskId}` },
       };
     }
 
@@ -144,7 +144,6 @@ UpdateTaskStatus({
         (notes ? `Notes: ${notes}\n` : '') +
         `\nProgress: ${progress.completed}/${progress.total} tasks (${progress.percentage}%)` +
         nextTaskInfo,
-      displayContent: `[OK] ${task.title}: ${STATUS_DISPLAY[status as TaskStatus]}`,
       metadata: {
         taskId,
         title: task.title,
@@ -155,6 +154,7 @@ UpdateTaskStatus({
           total: progress.total,
           percentage: progress.percentage,
         },
+        summary: `更新任务: ${task.title} -> ${STATUS_DISPLAY[status as TaskStatus]}`,
       },
     };
   },

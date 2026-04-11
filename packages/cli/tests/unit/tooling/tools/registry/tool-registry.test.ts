@@ -16,7 +16,6 @@ function createMockTool(
   const executeSpy = vi.fn(async (_params: unknown, _context?: ExecutionContext) => ({
     success: true,
     llmContent: `${name} executed`,
-    displayContent: `${name} executed`,
   }));
 
   const tool: Tool & { executeSpy: ReturnType<typeof vi.fn> } = {

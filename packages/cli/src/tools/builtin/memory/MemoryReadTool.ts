@@ -57,21 +57,21 @@ export const memoryReadTool = createTool({
       const topics = await manager.listTopics();
       if (topics.length === 0) {
         const msg = 'No memory files found. Use MemoryWrite to save project knowledge.';
-        return { success: true, llmContent: msg, displayContent: msg };
+        return { success: true, llmContent: msg, metadata: { summary: '无记忆文件' } };
       }
       const list = topics
         .map((t) => `- ${t.name}.md (${t.size} bytes, updated ${t.lastModified.toISOString()})`)
         .join('\n');
       const msg = `Memory files:\n${list}`;
-      return { success: true, llmContent: msg, displayContent: msg };
+      return { success: true, llmContent: msg, metadata: { summary: `列出 ${topics.length} 个记忆文件` } };
     }
 
     const content = await manager.readTopic(topic);
     if (content === null) {
       const msg = `Memory topic "${topic}" not found. Use topic="_list" to see available topics.`;
-      return { success: true, llmContent: msg, displayContent: msg };
+      return { success: true, llmContent: msg, metadata: { summary: `记忆主题未找到: ${topic}` } };
     }
 
-    return { success: true, llmContent: content, displayContent: content };
+    return { success: true, llmContent: content, metadata: { summary: `读取记忆: ${topic}` } };
   },
 });

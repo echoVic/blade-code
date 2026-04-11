@@ -52,18 +52,14 @@ export function createMcpTool(
 
         // 处理 MCP 响应内容
         let llmContent = '';
-        let displayContent = '';
 
         if (result.content && Array.isArray(result.content)) {
           for (const item of result.content) {
             if (item.type === 'text' && item.text) {
               llmContent += item.text;
-              displayContent += item.text;
             } else if (item.type === 'image') {
-              displayContent += `[图片: ${item.mimeType || 'unknown'}]\n`;
               llmContent += `[image: ${item.mimeType || 'unknown'}]\n`;
             } else if (item.type === 'resource') {
-              displayContent += `[资源: ${item.mimeType || 'unknown'}]\n`;
               llmContent += `[resource: ${item.mimeType || 'unknown'}]\n`;
             }
           }
@@ -73,10 +69,14 @@ export function createMcpTool(
           return {
             success: false,
             llmContent: llmContent || 'MCP tool execution failed',
-            displayContent: `[FAIL] ${displayContent || 'MCP工具执行失败'}`,
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
               message: llmContent || 'MCP tool execution failed',
+            },
+            metadata: {
+              summary: `MCP ${toolDef.name} 执行失败`,
+              serverName,
+              toolName: toolDef.name,
             },
           };
         }
@@ -84,8 +84,8 @@ export function createMcpTool(
         return {
           success: true,
           llmContent: llmContent || 'Execution succeeded',
-          displayContent: `[OK] MCP工具 ${toolDef.name} 执行成功\n${displayContent}`,
           metadata: {
+            summary: `MCP ${toolDef.name} 执行成功`,
             serverName,
             toolName: toolDef.name,
             mcpResult: result,
@@ -95,10 +95,14 @@ export function createMcpTool(
         return {
           success: false,
           llmContent: `MCP tool execution failed: ${(error as Error).message}`,
-          displayContent: `[FAIL] ${(error as Error).message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: (error as Error).message,
+          },
+          metadata: {
+            summary: `MCP ${toolDef.name} 执行失败`,
+            serverName,
+            toolName: toolDef.name,
           },
         };
       }

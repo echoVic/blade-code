@@ -31,8 +31,7 @@ import {
 } from './headlessEvents.js';
 import {
   formatToolCallSummary,
-  generateToolDetail,
-  shouldShowToolDetail,
+  formatToolDisplay,
 } from '../ui/utils/toolFormatters.js';
 
 /** Minimal writable stream contract used by headless output sinks. */
@@ -491,17 +490,10 @@ export async function runHeadless(
           case 'tool_result': {
             const toolCall = event.toolCall;
             if (!('function' in toolCall)) break;
-            const summary = event.result.metadata?.summary;
-            if (summary) {
-              eventWriter.toolResult(toolCall.function.name, summary as string);
-            }
-            if (shouldShowToolDetail(toolCall.function.name, event.result)) {
-              const detail =
-                generateToolDetail(toolCall.function.name, event.result) ||
-                event.result.displayContent;
-              if (detail) {
-                eventWriter.toolDetail(toolCall.function.name, detail);
-              }
+            const display = formatToolDisplay(toolCall.function.name, event.result);
+            eventWriter.toolResult(toolCall.function.name, display.summary);
+            if (display.detail) {
+              eventWriter.toolDetail(toolCall.function.name, display.detail);
             }
             break;
           }

@@ -100,11 +100,11 @@ For simpler planning needs, consider using EnterPlanMode instead.
         success: false,
         llmContent:
           'Invalid feature name. Use only letters, numbers, underscores, and hyphens.',
-        displayContent: '[FAIL] Invalid feature name',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'Feature name must be alphanumeric with underscores/hyphens only',
         },
+        metadata: { summary: '无效的功能名称' },
       };
     }
 
@@ -136,11 +136,11 @@ For simpler planning needs, consider using EnterPlanMode instead.
               return {
                 success: false,
                 llmContent: `Failed to create Spec: ${createResult.message}`,
-                displayContent: `[FAIL] Failed to create Spec: ${createResult.message}`,
                 error: {
                   type: ToolErrorType.EXECUTION_ERROR,
                   message: createResult.message,
                 },
+                metadata: { summary: `创建 Spec 失败: ${featureName}` },
               };
             }
 
@@ -165,25 +165,25 @@ For simpler planning needs, consider using EnterPlanMode instead.
                 '- Use UpdateTaskStatus to track progress\n' +
                 '- Call ExitSpecMode when done\n\n' +
                 'Start by asking the user for more details about their requirements.',
-              displayContent: `[OK] Created Spec: ${featureName}`,
               metadata: {
                 approved: true,
                 enterSpecMode: true,
                 featureName,
                 description,
                 specPath: `.blade/changes/${featureName}/`,
+                summary: `创建 Spec: ${featureName}`,
               },
             };
           } catch (error) {
             return {
               success: false,
               llmContent: `Failed to initialize Spec: ${error instanceof Error ? error.message : 'Unknown error'}`,
-              displayContent: '[FAIL] Failed to initialize Spec',
               error: {
                 type: ToolErrorType.EXECUTION_ERROR,
                 message:
                   error instanceof Error ? error.message : 'Initialization failed',
               },
+              metadata: { summary: '初始化 Spec 失败' },
             };
           }
         } else {
@@ -194,10 +194,10 @@ For simpler planning needs, consider using EnterPlanMode instead.
               'Proceed with the task using regular workflow. ' +
               'You can use Plan mode for lighter planning, ' +
               'or implement directly if the task is straightforward.',
-            displayContent: '[WARN] Spec mode declined',
             metadata: {
               approved: false,
               enterSpecMode: false,
+              summary: 'Spec 模式被拒绝',
             },
           };
         }
@@ -205,11 +205,11 @@ For simpler planning needs, consider using EnterPlanMode instead.
         return {
           success: false,
           llmContent: `Confirmation error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          displayContent: '[FAIL] Confirmation failed',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Confirmation flow error',
           },
+          metadata: { summary: '确认流程出错' },
         };
       }
     }
@@ -221,12 +221,12 @@ For simpler planning needs, consider using EnterPlanMode instead.
         `Spec mode requested for "${featureName}" but no interactive confirmation available.\n\n` +
         'Proceeding with spec creation. Follow the structured workflow:\n' +
         '1. Requirements -> 2. Design -> 3. Tasks -> 4. Implementation',
-      displayContent: `Spec mode: ${featureName} (non-interactive)`,
       metadata: {
         approved: null,
         enterSpecMode: true,
         featureName,
         description,
+        summary: `Spec 模式: ${featureName}（非交互）`,
       },
     };
   },

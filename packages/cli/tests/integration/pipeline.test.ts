@@ -20,7 +20,6 @@ function createTestTool(name = 'TestTool') {
       return {
         success: true,
         llmContent: `executed:${(params as { value: string }).value}`,
-        displayContent: `executed:${(params as { value: string }).value}`,
       };
     },
     extractSignatureContent: (params: unknown) => {
@@ -43,7 +42,6 @@ function createTestBashTool() {
       return {
         success: true,
         llmContent: `executed:${(params as { command: string }).command}`,
-        displayContent: `executed:${(params as { command: string }).command}`,
       };
     },
     extractSignatureContent: (params: unknown) => {
@@ -75,7 +73,7 @@ describe('ExecutionPipeline 权限集成', () => {
     const result = await pipeline.execute('TestTool', { value: 'ok' } as any, context);
 
     expect(result.success).toBe(true);
-    expect(result.displayContent).toContain('executed:ok');
+    expect(String(result.llmContent)).toContain('executed:ok');
   });
 
   it('ASK 规则应触发确认并记住会话批准', async () => {

@@ -101,11 +101,11 @@ ${generateAvailableCommandsDescription()}`,
       return {
         success: false,
         llmContent: `Custom command system not initialized. Please wait for the application to fully initialize.`,
-        displayContent: '[FAIL] Custom command system not initialized',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: 'CustomCommandRegistry not initialized',
         },
+        metadata: { summary: '命令系统未初始化' },
       };
     }
 
@@ -119,11 +119,11 @@ ${generateAvailableCommandsDescription()}`,
       return {
         success: false,
         llmContent: `Command "/${command}" not found. Available commands: ${available || 'none'}`,
-        displayContent: `[FAIL] Command "/${command}" not found`,
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: `Command "/${command}" is not registered`,
         },
+        metadata: { summary: `命令未找到: /${command}` },
       };
     }
 
@@ -132,11 +132,11 @@ ${generateAvailableCommandsDescription()}`,
       return {
         success: false,
         llmContent: `Command "/${command}" has disabled model invocation. This command can only be executed by the user directly.`,
-        displayContent: `[FAIL] Command "/${command}" disabled for AI`,
         error: {
           type: ToolErrorType.PERMISSION_DENIED,
           message: `Command "/${command}" has disable-model-invocation: true`,
         },
+        metadata: { summary: `命令禁止 AI 调用: /${command}` },
       };
     }
 
@@ -145,11 +145,11 @@ ${generateAvailableCommandsDescription()}`,
       return {
         success: false,
         llmContent: `Command "/${command}" does not have a description and cannot be invoked by AI. Add a description in the command's frontmatter to enable AI invocation.`,
-        displayContent: `[FAIL] Command "/${command}" has no description`,
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: `Command "/${command}" missing description for AI invocation`,
         },
+        metadata: { summary: `命令缺少描述: /${command}` },
       };
     }
 
@@ -167,11 +167,11 @@ ${generateAvailableCommandsDescription()}`,
         return {
           success: false,
           llmContent: `Failed to execute command "/${command}"`,
-          displayContent: `[FAIL] Failed to execute "/${command}"`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: `Command execution returned null`,
           },
+          metadata: { summary: `执行命令失败: /${command}` },
         };
       }
 
@@ -187,9 +187,8 @@ ${generateAvailableCommandsDescription()}`,
         success: true,
         // llmContent: 完整的命令指令（发送给 LLM）
         llmContent: commandInstructions,
-        // displayContent: 可见的加载提示
-        displayContent: `<command-message>/${command} is running...</command-message>`,
         metadata: {
+          summary: `执行命令: /${command}`,
           commandName: command,
           // allowed-tools: 限制命令执行期间可用的工具
           allowedTools: cmd.config.allowedTools,
@@ -205,11 +204,11 @@ ${generateAvailableCommandsDescription()}`,
       return {
         success: false,
         llmContent: `Error executing command "/${command}": ${errorMessage}`,
-        displayContent: `[FAIL] Error executing "/${command}"`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: errorMessage,
         },
+        metadata: { summary: `命令执行出错: /${command}` },
       };
     }
   },

@@ -93,11 +93,11 @@ AddTask({
         llmContent:
           'No active spec. Use EnterSpecMode to start a new spec project, ' +
           'or use the /spec command to load an existing one.',
-        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
         },
+        metadata: { summary: '无活跃 Spec' },
       };
     }
 
@@ -112,11 +112,11 @@ AddTask({
       return {
         success: false,
         llmContent: `Failed to add task: ${result.message}`,
-        displayContent: `[FAIL] Failed to add task: ${result.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: result.message,
         },
+        metadata: { summary: `添加任务失败: ${title}` },
       };
     }
 
@@ -133,7 +133,6 @@ AddTask({
         `Dependencies: ${dependencies?.length ? dependencies.join(', ') : 'None'}\n\n` +
         `Progress: ${progress.completed}/${progress.total} tasks (${progress.percentage}%)\n\n` +
         'Use AddTask to add more tasks, or use /spec apply to start implementation.',
-      displayContent: `[OK] Added task: ${title} (ID: ${task?.id})`,
       metadata: {
         taskId: task?.id,
         title,
@@ -141,6 +140,7 @@ AddTask({
         affectedFiles,
         dependencies,
         totalTasks: progress.total,
+        summary: `添加任务: ${title}`,
       },
     };
   },

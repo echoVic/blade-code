@@ -27,6 +27,10 @@ import { vanillaStore } from '../../../store/vanilla.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
+import {
+  formatToolDisplay,
+  renderToolDisplayToString,
+} from '../../../ui/utils/toolFormatters.js';
 
 /**
  * 从错误中提取用户友好的错误信息
@@ -230,10 +234,12 @@ export const taskTool = createTool({
         return {
           success: false,
           llmContent: `Unknown subagent type: ${subagent_type}. Available types: ${registeredNames.join(', ') || 'none'}`,
-          displayContent: `[FAIL] 未知的 subagent 类型: ${subagent_type}\n\n可用类型: ${registeredNames.join(', ') || '无'}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: `Unknown subagent type: ${subagent_type}`,
+          },
+          metadata: {
+            summary: `未知的 subagent 类型: ${subagent_type}`,
           },
         };
       }
@@ -307,7 +313,9 @@ export const taskTool = createTool({
                 toolName: toolCall.function.name,
                 success: !event.result.error,
                 summary: event.result.metadata?.summary,
-                output: event.result.displayContent,
+                output: renderToolDisplayToString(
+                  formatToolDisplay(toolCall.function.name, event.result)
+                ),
                 metadata: event.result.metadata,
               });
               break;
@@ -400,24 +408,11 @@ export const taskTool = createTool({
 
       // 7. 返回结果
       if (result.success) {
-        const outputPreview =
-          result.message.length > 1000
-            ? result.message.slice(0, 1000) + '\n...(截断)'
-            : result.message;
-
         return {
           success: true,
           llmContent: result.message,
-          displayContent:
-            `[OK] Subagent 任务完成\n\n` +
-            `类型: ${subagent_type}\n` +
-            `任务: ${description}\n` +
-            `Agent ID: ${result.agentId || 'N/A'}\n` +
-            `耗时: ${duration}ms\n` +
-            `工具调用: ${result.stats?.toolCalls || 0} 次\n` +
-            `Token: ${result.stats?.tokens || 0}\n\n` +
-            `结果:\n${outputPreview}`,
           metadata: {
+            summary: `${subagent_type} 任务完成`,
             subagent_type,
             description,
             duration,
@@ -432,18 +427,12 @@ export const taskTool = createTool({
         return {
           success: false,
           llmContent: `Subagent execution failed: ${result.error}`,
-          displayContent:
-            `[WARN] Subagent 任务失败\n\n` +
-            `类型: ${subagent_type}\n` +
-            `任务: ${description}\n` +
-            `Agent ID: ${result.agentId || 'N/A'}\n` +
-            `耗时: ${duration}ms\n` +
-            `错误: ${result.error}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: result.error || 'Unknown error',
           },
           metadata: {
+            summary: `${subagent_type} 任务失败`,
             subagentSessionId,
             subagentType: subagent_type,
             subagentStatus: 'failed' as const,
@@ -460,11 +449,13 @@ export const taskTool = createTool({
       return {
         success: false,
         llmContent: `Subagent execution error: ${err.message}`,
-        displayContent: `[FAIL] Subagent 执行异常\n\n${errorMessage}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: err.message,
           details: error,
+        },
+        metadata: {
+          summary: `Subagent 执行异常: ${errorMessage}`,
         },
       };
     }
@@ -512,13 +503,8 @@ function handleBackgroundExecution(
       status: 'running',
       message: `Agent started in background. Use TaskOutput(task_id: "${agentId}") to retrieve results.`,
     },
-    displayContent:
-      `后台 Agent 已启动\n\n` +
-      `Agent ID: ${agentId}\n` +
-      `类型: ${subagentConfig.name}\n` +
-      `任务: ${description}\n\n` +
-      `使用 TaskOutput 工具获取结果`,
     metadata: {
+      summary: `后台 Agent 已启动: ${agentId}`,
       agent_id: agentId,
       subagent_type: subagentConfig.name,
       description,
@@ -553,10 +539,12 @@ function handleResume(
     return {
       success: false,
       llmContent: `Cannot resume agent ${agentId}: session not found`,
-      displayContent: `[FAIL] 无法恢复 Agent: ${agentId}\n\n会话不存在或已过期`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: `Agent session not found: ${agentId}`,
+      },
+      metadata: {
+        summary: `恢复 Agent 失败: 会话不存在 ${agentId}`,
       },
     };
   }
@@ -566,10 +554,12 @@ function handleResume(
     return {
       success: false,
       llmContent: `Cannot resume agent ${agentId}: still running`,
-      displayContent: `[FAIL] 无法恢复 Agent: ${agentId}\n\nAgent 仍在运行中，我会使用 TaskOutput 获取结果`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: `Agent is still running: ${agentId}`,
+      },
+      metadata: {
+        summary: `恢复 Agent 失败: 仍在运行 ${agentId}`,
       },
     };
   }
@@ -587,10 +577,12 @@ function handleResume(
     return {
       success: false,
       llmContent: `Failed to resume agent ${agentId}`,
-      displayContent: `[FAIL] 恢复 Agent 失败: ${agentId}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: `Failed to resume agent: ${agentId}`,
+      },
+      metadata: {
+        summary: `恢复 Agent 失败: ${agentId}`,
       },
     };
   }
@@ -603,14 +595,8 @@ function handleResume(
       resumed_from: agentId,
       message: `Agent resumed in background. Use TaskOutput(task_id: "${newAgentId}") to retrieve results.`,
     },
-    displayContent:
-      `Agent 已恢复执行\n\n` +
-      `Agent ID: ${newAgentId}\n` +
-      `恢复自: ${agentId}\n` +
-      `类型: ${subagentConfig.name}\n` +
-      `任务: ${description}\n\n` +
-      `使用 TaskOutput 工具获取结果`,
     metadata: {
+      summary: `恢复 Agent: ${newAgentId}`,
       agent_id: newAgentId,
       resumed_from: agentId,
       subagent_type: subagentConfig.name,

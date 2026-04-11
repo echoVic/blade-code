@@ -51,7 +51,7 @@ describe('headless runner', () => {
         function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
       }, result: {
         success: true,
-        displayContent: 'const demo = true;',
+        llmContent: 'const demo = true;',
         metadata: { summary: 'Read demo.ts', content_preview: 'const demo = true;' },
       }},
       { kind: 'todo_update', todos: [{

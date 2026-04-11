@@ -100,7 +100,6 @@ export const readTool = createTool({
         return {
           success: false,
           llmContent: `File not found: ${file_path}`,
-          displayContent: `[FAIL] 文件不存在: ${file_path}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: `File not found: ${file_path}`,
@@ -126,7 +125,6 @@ export const readTool = createTool({
         return {
           success: false,
           llmContent: `Cannot read a directory: ${file_path}`,
-          displayContent: `[FAIL] 无法读取目录: ${file_path}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Target is a directory, not a file',
@@ -226,12 +224,9 @@ export const readTool = createTool({
 
       metadata.summary = summary;
 
-      const displayMessage = formatDisplayMessage(file_path, metadata);
-
       return {
         success: true,
         llmContent: content,
-        displayContent: displayMessage,
         metadata,
       };
     } catch (error) {
@@ -240,7 +235,6 @@ export const readTool = createTool({
         return {
           success: false,
           llmContent: 'File read aborted',
-          displayContent: '[WARN] 文件读取被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Operation aborted',
@@ -251,7 +245,6 @@ export const readTool = createTool({
       return {
         success: false,
         llmContent: `File read failed: ${nodeError.message}`,
-        displayContent: `[FAIL] 读取文件失败: ${nodeError.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: nodeError.message,
@@ -375,27 +368,6 @@ function checkIsBinaryFile(ext: string): boolean {
     '.eot',
   ];
   return binaryExtensions.includes(ext);
-}
-
-/**
- * 格式化显示消息
- */
-function formatDisplayMessage(filePath: string, metadata: ReadMetadata): string {
-  let message = `[OK] 成功读取文件: ${filePath}`;
-
-  if (metadata.file_size !== undefined && typeof metadata.file_size === 'number') {
-    message += ` (${formatFileSize(metadata.file_size)})`;
-  }
-
-  if (metadata.lines_read !== undefined) {
-    message += `\n读取了 ${metadata.lines_read} 行 (第${metadata.start_line}-${metadata.end_line}行，共${metadata.total_lines}行)`;
-  }
-
-  if (metadata.is_binary) {
-    message += '\n文件以 base64 编码显示';
-  }
-
-  return message;
 }
 
 /**

@@ -623,10 +623,6 @@ export class FormattingStage implements PipelineStage {
         result.llmContent = 'Execution completed';
       }
 
-      if (!result.displayContent) {
-        result.displayContent = result.success ? '执行成功' : '执行失败';
-      }
-
       // 添加执行元数据
       if (!result.metadata) {
         result.metadata = {};

@@ -78,11 +78,11 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
       return {
         success: false,
         llmContent: 'No active spec to exit from.',
-        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
         },
+        metadata: { summary: '无活跃 Spec' },
       };
     }
 
@@ -112,10 +112,10 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
           return {
             success: true,
             llmContent: 'Archive cancelled. Still in Spec mode.',
-            displayContent: '[WARN] Archive cancelled',
             metadata: {
               archived: false,
               stillActive: true,
+              summary: '归档已取消',
             },
           };
         }
@@ -128,11 +128,11 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
           return {
             success: false,
             llmContent: `Failed to archive: ${result.message}`,
-            displayContent: '[FAIL] Archive failed',
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
               message: result.error || 'Archive failed',
             },
+            metadata: { summary: '归档失败' },
           };
         }
 
@@ -146,13 +146,13 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
             (summary ? `- Summary: ${summary}\n` : '') +
             `\nLocation: .blade/archive/${featureName}/\n\n` +
             'Exited Spec mode. You can start a new spec or continue with regular work.',
-          displayContent: `[OK] Archived: ${featureName}`,
           metadata: {
             archived: true,
             featureName,
             phase: currentPhase,
             taskProgress: progress,
-            summary,
+            summary: `已归档: ${featureName}`,
+            userSummary: summary,
             shouldExitSpecMode: true,
           },
         };
@@ -171,24 +171,24 @@ ExitSpecMode({ archive: true, summary: "Implemented OAuth2 authentication" })
           `Spec preserved at: .blade/changes/${featureName}/\n` +
           `Resume later with: /spec load ${featureName}\n\n` +
           'You can now work on other tasks or start a new spec.',
-        displayContent: `[OK] Exited: ${featureName} (preserved)`,
         metadata: {
           archived: false,
           featureName,
           phase: currentPhase,
           taskProgress: progress,
           shouldExitSpecMode: true,
+          summary: `退出 Spec: ${featureName}`,
         },
       };
     } catch (error) {
       return {
         success: false,
         llmContent: `Exit failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        displayContent: '[FAIL] Exit failed',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: error instanceof Error ? error.message : 'Exit error',
         },
+        metadata: { summary: '退出失败' },
       };
     }
   },

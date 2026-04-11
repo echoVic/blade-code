@@ -265,7 +265,6 @@ describe('executeLoopGenerator', () => {
       executeMock.mockResolvedValueOnce({
         success: true,
         llmContent: 'file content',
-        displayContent: 'file content',
         metadata: undefined,
       });
 

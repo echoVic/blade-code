@@ -103,7 +103,7 @@ describe('Event Protocol', () => {
         { kind: 'stream_end' },
         // Tool execution
         { kind: 'tool_start', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } } },
-        { kind: 'tool_result', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } }, result: { success: true, llmContent: 'ok', displayContent: 'ok' } },
+        { kind: 'tool_result', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } }, result: { success: true, llmContent: 'ok' } },
         // Turn 2: more content
         { kind: 'turn_start', turn: 2, maxTurns: 5 },
         { kind: 'content_delta', delta: 'done' },
@@ -147,7 +147,7 @@ describe('Event Protocol', () => {
         { kind: 'turn_start', turn: 1, maxTurns: 5 },
         // Tool-only turn: no content events
         { kind: 'tool_start', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } } },
-        { kind: 'tool_result', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } }, result: { success: true, llmContent: 'ok', displayContent: 'ok' } },
+        { kind: 'tool_result', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } }, result: { success: true, llmContent: 'ok' } },
         { kind: 'stream_end' },
       ];
 

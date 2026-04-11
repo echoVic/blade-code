@@ -71,11 +71,11 @@ Tasks: 3/8 completed (37%)
       return {
         success: false,
         llmContent: 'No active spec. Use EnterSpecMode or /spec load <name> first.',
-        displayContent: '[FAIL] No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
         },
+        metadata: { summary: '无活跃 Spec' },
       };
     }
 
@@ -179,24 +179,24 @@ Tasks: 3/8 completed (37%)
       return {
         success: true,
         llmContent: fullContent,
-        displayContent: `Spec context: ${currentSpec.name} (${currentSpec.phase})`,
         metadata: {
           featureName: currentSpec.name,
           phase: currentSpec.phase,
           taskProgress: progress,
           filesIncluded: includeFiles,
           steeringIncluded: includeSteering,
+          summary: `Spec 上下文: ${currentSpec.name} (${currentSpec.phase})`,
         },
       };
     } catch (error) {
       return {
         success: false,
         llmContent: `Failed to get spec context: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        displayContent: '[FAIL] Failed to get spec context',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: error instanceof Error ? error.message : 'Read error',
         },
+        metadata: { summary: '获取 Spec 上下文失败' },
       };
     }
   },
