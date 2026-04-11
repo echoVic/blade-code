@@ -6,6 +6,7 @@ import {
 } from '../../config/PermissionChecker.js';
 import type { PermissionConfig } from '../../config/types.js';
 import { getCwd } from '../../utils/cwd.js';
+import { isReadOnlyBashCommand } from '../../utils/shell/readOnlyValidation.js';
 import { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
@@ -100,6 +101,26 @@ export class PermissionStage implements PipelineStage {
 
       // 使用 PermissionChecker 进行权限检查
       let checkResult = this.permissionChecker.check(descriptor);
+
+      // 语义分析保底：仅当命令未匹配任何显式规则（默认 ASK）时，
+      // 才尝试通过只读分析自动放行。
+      // 如果用户显式配置了 ask 规则（matchedRule 存在），尊重用户意图，不覆盖。
+      // 位置：在 deny 规则之后（deny 已在 check() 中处理），在 applyModeOverrides 之前
+      if (
+        checkResult.result === PermissionResult.ASK &&
+        !checkResult.matchedRule &&
+        tool.name === 'Bash' &&
+        typeof execution.params.command === 'string'
+      ) {
+        if (isReadOnlyBashCommand(execution.params.command)) {
+          checkResult = {
+            result: PermissionResult.ALLOW,
+            matchedRule: 'builtin:read-only-command',
+            reason: 'Command classified as read-only, auto-approved',
+          };
+        }
+      }
+
       // 从 execution.context 动态读取 permissionMode（现在是强类型 PermissionMode）
       // 这样 Shift+Tab 切换模式或 approve 后切换模式都能正确生效
       const currentPermissionMode =

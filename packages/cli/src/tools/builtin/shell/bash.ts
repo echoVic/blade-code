@@ -2,6 +2,10 @@ import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { getCwd } from '../../../utils/cwd.js';
+import {
+  stripSafeEnvVars,
+  stripSafeWrappers,
+} from '../../../utils/shell/commandNormalizer.js';
 import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { createTool } from '../../core/createTool.js';
 import type {
@@ -238,7 +242,8 @@ Before executing commands:
    * 注意：使用空格而非冒号，避免被 parseParamPairs 误解析为键值对
    */
   abstractPermissionRule: (params) => {
-    const command = params.command.trim();
+    // 先规范化：剥离安全环境变量和 wrapper
+    const command = stripSafeEnvVars(stripSafeWrappers(params.command.trim()));
     const parts = command.split(/\s+/);
 
     if (parts.length === 1) {

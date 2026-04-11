@@ -64,12 +64,54 @@ export const DEFAULT_CONFIG: BladeConfig = {
       'Bash(tree *)',
 
       // Git 只读命令（无需确认）
+      // 注意：静态 allow 规则对原始命令串做 glob，不按 shell 语义拆分。
+      // 因此只能放行简单前缀（command + space + *），
+      // 复杂场景（env vars, -C, compound commands）由语义层兜底。
       'Bash(git status)',
+      'Bash(git status -*)',
       'Bash(git log *)',
       'Bash(git diff *)',
-      'Bash(git branch *)',
       'Bash(git show *)',
-      'Bash(git remote *)',
+      'Bash(git branch -* *)',
+      'Bash(git branch)',
+      'Bash(git tag -l *)',
+      'Bash(git tag --list *)',
+      'Bash(git stash list *)',
+      'Bash(git stash show *)',
+      'Bash(git rev-parse *)',
+      'Bash(git describe *)',
+      'Bash(git blame *)',
+      'Bash(git ls-files *)',
+      'Bash(git config --get *)',
+      'Bash(git config --list *)',
+      'Bash(git shortlog *)',
+      'Bash(git merge-base *)',
+      'Bash(git cat-file *)',
+      'Bash(git for-each-ref *)',
+      'Bash(git grep *)',
+      'Bash(git worktree list *)',
+      'Bash(git reflog show *)',
+      'Bash(git reflog)',
+      'Bash(git rev-list *)',
+      'Bash(git ls-remote *)',
+      'Bash(git remote -v)',
+      'Bash(git remote --verbose)',
+      'Bash(git remote)',
+
+      // gh CLI 只读命令（无需确认）
+      'Bash(gh pr view *)',
+      'Bash(gh pr list *)',
+      'Bash(gh pr diff *)',
+      'Bash(gh pr checks *)',
+      'Bash(gh pr status *)',
+      'Bash(gh issue view *)',
+      'Bash(gh issue list *)',
+      'Bash(gh issue status *)',
+      'Bash(gh run list *)',
+      'Bash(gh run view *)',
+      'Bash(gh repo view *)',
+      // gh auth status 不带 * — --show-token/-t 会泄露凭据
+      'Bash(gh auth status)',
 
       // 包管理器只读命令（无需确认）
       'Bash(npm list *)',
