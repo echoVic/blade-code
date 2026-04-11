@@ -34,6 +34,7 @@ import {
 } from '../../store/selectors/index.js';
 import { ensureStoreInitialized, getState } from '../../store/vanilla.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
+import { getCwd } from '../../utils/cwd.js';
 import {
   appendMarkdownDelta,
   finalizeMarkdownCache,
@@ -162,7 +163,7 @@ export const useCommandHandler = (
         const hookResult = await hookManager.executeUserPromptSubmitHooks(
           agentInput.text,
           {
-            projectDir: process.cwd(),
+            projectDir: getCwd(),
             sessionId: sessionId,
             permissionMode: permissionMode,
             hasImages: agentInput.images.length > 0,
@@ -222,7 +223,7 @@ export const useCommandHandler = (
           messages: contextMessages,
           userId: 'cli-user',
           sessionId: sessionId,
-          workspaceRoot: process.cwd(),
+          workspaceRoot: getCwd(),
           signal: abortController.signal,
           confirmationHandler,
           permissionMode: permissionMode,

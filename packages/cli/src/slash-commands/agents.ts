@@ -5,6 +5,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
+import { getCwd } from '../utils/cwd.js';
 import {
   getUI,
   type SlashCommand,
@@ -58,7 +59,7 @@ export const agentsCommand: SlashCommand = {
       }
 
       // 按位置分组
-      const projectPath = path.join(process.cwd(), '.blade', 'agents');
+      const projectPath = path.join(getCwd(), '.blade', 'agents');
       const userPath = path.join(os.homedir(), '.blade', 'agents');
 
       const projectAgents = allAgents.filter((a) =>

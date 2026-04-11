@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import type { PermissionConfig } from '../../config/types.js';
+import { getCwd } from '../../utils/cwd.js';
 import { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { HookStage } from '../../hooks/HookStage.js';
@@ -204,7 +205,7 @@ export class ExecutionPipeline extends EventEmitter {
           execution.params,
           (error as Error).message,
           {
-            projectDir: process.cwd(),
+            projectDir: getCwd(),
             sessionId: execution.context.sessionId || 'unknown',
             permissionMode:
               (execution.context.permissionMode as PermissionMode) ||

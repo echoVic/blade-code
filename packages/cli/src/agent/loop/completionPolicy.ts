@@ -10,6 +10,7 @@
  */
 
 import type { PermissionMode } from '../../config/index.js';
+import { getCwd } from '../../utils/cwd.js';
 import type { BudgetTracker } from '../../context/TokenBudget.js';
 import { checkTokenBudget } from '../../context/TokenBudget.js';
 import { HookManager } from '../../hooks/HookManager.js';
@@ -140,7 +141,7 @@ export async function checkStopHook(context: {
     const hookManager = HookManager.getInstance();
 
     const hookPromise = hookManager.executeStopHooks({
-      projectDir: process.cwd(),
+      projectDir: getCwd(),
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
       reason: context.reason,

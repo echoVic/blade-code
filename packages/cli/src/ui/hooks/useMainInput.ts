@@ -12,6 +12,7 @@ import {
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
+import { getCwd } from '../../utils/cwd.js';
 import { endsWithSeparator } from '../../utils/pathHelpers.js';
 import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
 import type { HistoryEntry, PasteMappings } from './useCommandHistory.js';
@@ -62,7 +63,7 @@ export const useMainInput = (
 
   // @ 文件自动补全（使用真实光标位置）
   const atCompletion = useAtCompletion(input, cursorPosition, {
-    cwd: process.cwd(),
+    cwd: getCwd(),
     maxSuggestions: 10,
   });
 

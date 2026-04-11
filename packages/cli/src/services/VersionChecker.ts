@@ -63,7 +63,6 @@ async function getCurrentVersion(): Promise<string> {
     const possiblePaths = [
       path.join(__dirname, '..', '..', 'package.json'), // src/services -> root
       path.join(__dirname, '..', 'package.json'), // dist -> root
-      path.join(process.cwd(), 'package.json'), // 当前工作目录
     ];
 
     for (const pkgPath of possiblePaths) {

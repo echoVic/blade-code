@@ -5,6 +5,7 @@
 import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 import { AutoMemoryManager } from '../memory/AutoMemoryManager.js';
+import { getCwd } from '../utils/cwd.js';
 import {
   getUI,
   type SlashCommand,
@@ -43,7 +44,7 @@ const memoryCommand: SlashCommand = {
     context: SlashCommandContext
   ): Promise<SlashCommandResult> {
     const ui = getUI(context);
-    const cwd = process.cwd();
+    const cwd = getCwd();
     const manager = new AutoMemoryManager(cwd);
     const subcommand = args[0] || 'list';
 

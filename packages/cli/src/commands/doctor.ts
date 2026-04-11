@@ -5,6 +5,7 @@
 import type { CommandModule } from 'yargs';
 import type { DoctorOptions } from '../cli/types.js';
 import { ConfigManager } from '../config/index.js';
+import { getCwd } from '../utils/cwd.js';
 
 export const doctorCommands: CommandModule<{}, DoctorOptions> = {
   command: 'doctor',
@@ -38,7 +39,7 @@ export const doctorCommands: CommandModule<{}, DoctorOptions> = {
     // 检查权限
     try {
       const fs = await import('fs/promises');
-      const testPath = process.cwd();
+      const testPath = getCwd();
       await fs.access(
         testPath,
         (await import('fs')).constants.R_OK | (await import('fs')).constants.W_OK

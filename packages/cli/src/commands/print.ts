@@ -1,6 +1,7 @@
 import type { Argv } from 'yargs';
 import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
+import { getCwd } from '../utils/cwd.js';
 import {
   initializeCliPlugins,
   normalizeCliInput,
@@ -106,7 +107,7 @@ function printCommand(yargs: Argv) {
               messages: [],
               userId: 'cli-user',
               sessionId: `print-${Date.now()}`,
-              workspaceRoot: process.cwd(),
+              workspaceRoot: getCwd(),
             })
           );
           response = loopResult.finalMessage || '';

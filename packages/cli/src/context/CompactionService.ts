@@ -5,6 +5,7 @@
 
 import { nanoid } from 'nanoid';
 import { PermissionMode } from '../config/types.js';
+import { getCwd } from '../utils/cwd.js';
 import { HookManager } from '../hooks/HookManager.js';
 import {
   createChatServiceAsync,
@@ -99,7 +100,7 @@ export class CompactionService {
     try {
       const hookManager = HookManager.getInstance();
       const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
-        projectDir: process.cwd(),
+        projectDir: getCwd(),
         sessionId: options.sessionId || 'unknown',
         permissionMode: options.permissionMode || PermissionMode.DEFAULT,
         messagesBefore: messages.length,

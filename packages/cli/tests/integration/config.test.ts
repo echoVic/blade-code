@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setCwdState } from '../../src/bootstrap/state.js';
 import { ConfigManager } from '../../src/config/ConfigManager.js';
 
 describe('ConfigManager 集成', () => {
@@ -17,12 +18,14 @@ describe('ConfigManager 集成', () => {
     tempProject = mkdtempSync(path.join(os.tmpdir(), 'blade-project-'));
     originalCwd = process.cwd();
     process.chdir(tempProject);
+    setCwdState(tempProject);
 
     homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
+    setCwdState(originalCwd);
     homedirSpy.mockRestore();
     rmSync(tempHome, { recursive: true, force: true });
     rmSync(tempProject, { recursive: true, force: true });

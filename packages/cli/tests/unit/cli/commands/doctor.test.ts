@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const accessMock = vi.hoisted(() => vi.fn());
@@ -8,6 +9,8 @@ vi.mock('fs/promises', () => ({
 
 vi.mock('fs', () => ({
   constants: { R_OK: 4, W_OK: 2 },
+  realpathSync: (p: string) => p,
+  existsSync: () => false,
 }));
 
 const setupDoctorCommand = async (

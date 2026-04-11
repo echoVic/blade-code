@@ -7,6 +7,7 @@
 
 import { nanoid } from 'nanoid';
 import { type PermissionMode } from '../../config/index.js';
+import { getCwd } from '../../utils/cwd.js';
 import { CompactionService } from '../../context/CompactionService.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { snipCompact } from '../../context/SnipCompaction.js';
@@ -506,7 +507,7 @@ export async function* executeLoopGenerator(
             {
               sessionId: context.sessionId,
               userId: context.userId || 'default',
-              workspaceRoot: context.workspaceRoot || process.cwd(),
+              workspaceRoot: context.workspaceRoot || getCwd(),
               signal: options?.signal,
               confirmationHandler: context.confirmationHandler,
               permissionMode: context.permissionMode,
@@ -869,7 +870,7 @@ export async function* executeLoopGenerator(
               {
                 sessionId: context.sessionId,
                 userId: context.userId || 'default',
-                workspaceRoot: context.workspaceRoot || process.cwd(),
+                workspaceRoot: context.workspaceRoot || getCwd(),
                 signal: options?.signal,
                 confirmationHandler: context.confirmationHandler,
                 permissionMode: context.permissionMode,

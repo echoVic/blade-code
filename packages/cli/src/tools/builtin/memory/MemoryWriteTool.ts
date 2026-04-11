@@ -4,6 +4,7 @@
 
 import { z } from 'zod';
 import { AutoMemoryManager } from '../../../memory/AutoMemoryManager.js';
+import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -69,7 +70,7 @@ export const memoryWriteTool = createTool({
 
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const { topic, content, mode } = params;
-    const projectPath = context.workspaceRoot || process.cwd();
+    const projectPath = context.workspaceRoot || getCwd();
 
     // 安全检查：拒绝写入敏感信息
     for (const pattern of SENSITIVE_PATTERNS) {

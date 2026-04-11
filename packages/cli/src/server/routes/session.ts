@@ -23,6 +23,7 @@ import type {
 import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
 import { Bus } from '../bus.js';
 import { BadRequestError, NotFoundError } from '../error.js';
+import { getCwd } from '../../utils/cwd.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -211,7 +212,7 @@ export const SessionRoutes = () => {
 
       const { title, projectPath } = parsed.data;
       const sessionId = nanoid(12);
-      const directory = projectPath || c.get('directory') || process.cwd();
+      const directory = projectPath || c.get('directory') || getCwd();
 
       const session: SessionInfo = {
         id: sessionId,
@@ -348,7 +349,7 @@ export const SessionRoutes = () => {
 
     let session = sessions.get(sessionId);
     if (!session) {
-      const directory = c.get('directory') || process.cwd();
+      const directory = c.get('directory') || getCwd();
       session = {
         id: sessionId,
         projectPath: directory,
@@ -422,7 +423,7 @@ export const SessionRoutes = () => {
 
     const { content, attachments, permissionMode: requestedMode } = parsed.data;
     const permissionMode = (requestedMode as PermissionMode) || PermissionMode.DEFAULT;
-    const directory = c.get('directory') || process.cwd();
+    const directory = c.get('directory') || getCwd();
     const userContent = buildUserMessageContent(content, attachments);
 
     let session = sessions.get(sessionId);

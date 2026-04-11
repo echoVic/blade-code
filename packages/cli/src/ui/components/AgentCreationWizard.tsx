@@ -25,6 +25,7 @@ import TextInput from 'ink-text-input';
 import { useEffect, useState } from 'react';
 import { Agent } from '../../agent/Agent.js';
 import type { SubagentColor } from '../../agent/subagents/types.js';
+import { getCwd } from '../../utils/cwd.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 interface AgentCreationWizardProps {
@@ -304,7 +305,7 @@ export function AgentCreationWizard({
       // 确定保存路径
       const baseDir =
         config.location === 'project'
-          ? path.join(process.cwd(), '.blade', 'agents')
+          ? path.join(getCwd(), '.blade', 'agents')
           : path.join(os.homedir(), '.blade', 'agents');
 
       // 确保目录存在

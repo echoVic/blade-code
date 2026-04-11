@@ -8,6 +8,7 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import React, { useState } from 'react';
 import { HookManager } from '../../hooks/HookManager.js';
+import { getCwd } from '../../utils/cwd.js';
 import {
   type CommandHook,
   HookEvent,
@@ -297,13 +298,13 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       switch (selectedLocation.location) {
         case 'local':
           settingsPath = pathModule.join(
-            process.cwd(),
+            getCwd(),
             '.blade',
             'settings.local.json'
           );
           break;
         case 'project':
-          settingsPath = pathModule.join(process.cwd(), '.blade', 'settings.json');
+          settingsPath = pathModule.join(getCwd(), '.blade', 'settings.json');
           break;
         case 'user':
           settingsPath = pathModule.join(os.homedir(), '.blade', 'settings.json');

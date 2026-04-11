@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { getCwd } from '../../../utils/cwd.js';
 import { CustomCommandRegistry } from '../../../slash-commands/custom/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
@@ -159,7 +160,7 @@ ${generateAvailableCommandsDescription()}`,
     try {
       const processedContent = await registry.executeCommand(command, {
         args: parsedArgs,
-        workspaceRoot: process.cwd(),
+        workspaceRoot: getCwd(),
       });
 
       if (!processedContent) {

@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from 'child_process';
 import { randomUUID } from 'crypto';
+import { getCwd } from '../../../utils/cwd.js';
 
 type BackgroundShellStatus = 'running' | 'exited' | 'killed' | 'error';
 
@@ -77,7 +78,7 @@ export class BackgroundShellManager {
     }
 
     const child = spawn('bash', ['-c', options.command], {
-      cwd: options.cwd || process.cwd(),
+      cwd: options.cwd || getCwd(),
       env: mergedEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

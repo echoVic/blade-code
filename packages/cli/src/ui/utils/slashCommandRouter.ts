@@ -6,6 +6,7 @@
  */
 
 import { safeExit } from '../../services/GracefulShutdown.js';
+import { getCwd } from '../../utils/cwd.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
 import {
   executeSlashCommand,
@@ -228,7 +229,7 @@ export async function processSlashCommand(
   }
 
   const slashContext: SlashCommandContext = {
-    cwd: process.cwd(),
+    cwd: getCwd(),
     signal,
   };
 

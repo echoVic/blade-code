@@ -14,6 +14,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { spawn } from 'child_process';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+import { getCwd } from '../utils/cwd.js';
 import {
   type FileSystemService,
   LocalFileSystemService,
@@ -75,7 +76,7 @@ class LocalTerminalService implements TerminalService {
         process.platform === 'win32' ? ['/c', command] : ['-c', command];
 
       const proc = spawn(shell, shellArgs, {
-        cwd: options?.cwd || process.cwd(),
+        cwd: options?.cwd || getCwd(),
         env: { ...process.env, ...options?.env },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -497,7 +498,7 @@ export class AcpServiceContext {
       connection,
       sessionId,
       clientCapabilities,
-      cwd || process.cwd()
+      cwd || getCwd()
     );
   }
 

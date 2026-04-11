@@ -26,6 +26,7 @@ import {
 import { FocusId } from '../../store/types.js';
 import { configActions, getMessages } from '../../store/vanilla.js';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
+import { getCwd } from '../../utils/cwd.js';
 import type { AppProps } from '../App.js';
 import { useCommandHandler } from '../hooks/useCommandHandler.js';
 import { useCommandHistory } from '../hooks/useCommandHistory.js';
@@ -176,7 +177,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       if (nextMode === PermissionMode.SPEC) {
         try {
           const specManager = SpecManager.getInstance();
-          await specManager.initialize(process.cwd());
+          await specManager.initialize(getCwd());
 
           // 检查是否有已存在的活跃 Spec
           const specs = await specManager.listSpecs();

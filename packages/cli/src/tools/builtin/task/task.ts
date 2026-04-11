@@ -11,6 +11,7 @@
 
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
+import { getCwd } from '../../../utils/cwd.js';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
 import { SubagentExecutor } from '../../../agent/subagents/SubagentExecutor.js';
 import { subagentRegistry } from '../../../agent/subagents/SubagentRegistry.js';
@@ -357,7 +358,7 @@ export const taskTool = createTool({
       try {
         const hookManager = HookManager.getInstance();
         const stopResult = await hookManager.executeSubagentStopHooks(subagent_type, {
-          projectDir: process.cwd(),
+          projectDir: getCwd(),
           sessionId: context.sessionId || 'unknown',
           permissionMode:
             (context.permissionMode as PermissionMode) || PermissionMode.DEFAULT,

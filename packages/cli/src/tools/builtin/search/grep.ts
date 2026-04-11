@@ -4,6 +4,7 @@ import { readdir, readFile } from 'fs/promises';
 import { join, relative } from 'path';
 import picomatch from 'picomatch';
 import { z } from 'zod';
+import { getCwd } from '../../../utils/cwd.js';
 import { DEFAULT_EXCLUDE_DIRS } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
 import type {
@@ -56,12 +57,6 @@ function getPlatformRipgrepPath(): string | null {
 
   if (!relativePath) {
     return null;
-  }
-
-  // 尝试从项目根目录的 vendor 目录查找
-  const vendorPath = join(process.cwd(), 'vendor', 'ripgrep', relativePath);
-  if (existsSync(vendorPath)) {
-    return vendorPath;
   }
 
   // 尝试从模块安装目录查找（用于 npm 包）
@@ -756,7 +751,7 @@ export const grepTool = createTool({
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const {
       pattern,
-      path = process.cwd(),
+      path = getCwd(),
       glob,
       type,
       output_mode,

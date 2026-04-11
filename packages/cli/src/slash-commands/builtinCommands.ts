@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TokenCounter } from '../context/TokenCounter.js';
 import { getConfig, getCurrentModel, getState } from '../store/vanilla.js';
+import { getCwd } from '../utils/cwd.js';
 import { getVersion } from '../utils/packageInfo.js';
 import { agentsCommand } from './agents.js';
 import compactCommand from './compact.js';
@@ -201,7 +202,7 @@ const statusCommand: SlashCommand = {
 - BLADE.md: ${hasBlademd ? '[OK] 已配置' : '[FAIL] 未配置 (使用 /init 创建)'}
 
 **环境信息:**
-- 工作目录: ${process.cwd()}
+- 工作目录: ${getCwd()} (process.cwd: ${process.cwd()})
 - Node.js: ${process.version}
 
 ${!hasBlademd ? '\n**建议:** 运行 `/init` 命令来创建项目配置文件' : ''}`;

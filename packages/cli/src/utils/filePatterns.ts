@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import fg from 'fast-glob';
 import { LRUCache } from 'lru-cache';
 import picomatch from 'picomatch';
+import { getCwd } from './cwd.js';
 import { splitPath } from './pathHelpers.js';
 
 export const DEFAULT_EXCLUDE_DIRS = [
@@ -191,7 +192,7 @@ export class FileFilter {
   static async create(options: FileFilterOptions = {}): Promise<FileFilter> {
     const inst = new FileFilter({ ...options, useGitignore: false });
     const {
-      cwd = process.cwd(),
+      cwd = getCwd(),
       useGitignore = true,
       gitignoreScanMode = 'root',
       customScanIgnore = [],
@@ -216,7 +217,7 @@ export class FileFilter {
 
   private initialize(options: FileFilterOptions): void {
     const {
-      cwd = process.cwd(),
+      cwd = getCwd(),
       useGitignore = true,
       useDefaults = true,
       customPatterns = [],

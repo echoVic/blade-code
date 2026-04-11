@@ -9,6 +9,7 @@
 
 import { nanoid } from 'nanoid';
 import type { PermissionMode } from '../../config/types.js';
+import { getCwd } from '../../utils/cwd.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { Agent } from '../Agent.js';
@@ -219,7 +220,7 @@ export class BackgroundAgentManager {
         messages: existingMessages || [],
         userId: 'subagent',
         sessionId: agentId,
-        workspaceRoot: process.cwd(),
+        workspaceRoot: getCwd(),
         permissionMode,
         subagentInfo: {
           parentSessionId: parentSessionId || '',

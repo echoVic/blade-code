@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
+import { getCwd } from '../../../utils/cwd.js';
 import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { createTool } from '../../core/createTool.js';
 import type {
@@ -281,7 +282,7 @@ function executeInBackground(
   const backgroundProcess = manager.startBackgroundProcess({
     command,
     sessionId: randomUUID(), // 每个后台进程使用唯一 ID
-    cwd: cwd || process.cwd(),
+    cwd: cwd || getCwd(),
     env,
   });
 
@@ -335,7 +336,7 @@ async function executeWithAcpTerminal(
   try {
     const terminalService = getTerminalService();
     const result = await terminalService.execute(command, {
-      cwd: cwd || process.cwd(),
+      cwd: cwd || getCwd(),
       env,
       timeout,
       signal,
@@ -476,7 +477,7 @@ async function executeWithTimeout(
 
     // 创建进程
     const bashProcess = spawn('bash', ['-c', command], {
-      cwd: cwd || process.cwd(),
+      cwd: cwd || getCwd(),
       env: { ...process.env, ...env, BLADE_CLI: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

@@ -6,6 +6,7 @@ import Fuse from 'fuse.js';
 import { getPluginRegistry } from '../plugins/index.js';
 import { discoverSkills, getSkillRegistry } from '../skills/index.js';
 import type { SkillMetadata } from '../skills/types.js';
+import { getCwd } from '../utils/cwd.js';
 import { builtinCommands } from './builtinCommands.js';
 import {
   type CustomCommandDiscoveryResult,
@@ -173,7 +174,7 @@ export async function executeSlashCommand(
     if (customRegistry.hasCommand(command)) {
       const customCommand = customRegistry.getCommand(command);
       if (customCommand) {
-        const workspaceRoot = context.workspaceRoot || process.cwd();
+        const workspaceRoot = context.workspaceRoot || getCwd();
 
         // 执行命令内容处理（参数插值、Bash 嵌入、文件引用）
         const processedContent = await customRegistry.executeCommand(command, {
@@ -202,7 +203,7 @@ export async function executeSlashCommand(
     const pluginRegistry = getPluginRegistry();
     const pluginCommand = pluginRegistry.findCommand(command);
     if (pluginCommand) {
-      const workspaceRoot = context.workspaceRoot || process.cwd();
+      const workspaceRoot = context.workspaceRoot || getCwd();
 
       // 执行插件命令
       const processedContent = await customRegistry.executePluginCommand(

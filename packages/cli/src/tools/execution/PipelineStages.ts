@@ -5,6 +5,7 @@ import {
   type ToolInvocationDescriptor,
 } from '../../config/PermissionChecker.js';
 import type { PermissionConfig } from '../../config/types.js';
+import { getCwd } from '../../utils/cwd.js';
 import { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
@@ -347,7 +348,7 @@ export class ConfirmationStage implements PipelineStage {
           execution.context.sessionId || 'unknown',
           execution.params,
           {
-            projectDir: process.cwd(),
+            projectDir: getCwd(),
             sessionId: execution.context.sessionId || 'unknown',
             permissionMode: execution.context.permissionMode || PermissionMode.DEFAULT,
           }

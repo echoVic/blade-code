@@ -20,6 +20,7 @@ import { promises as fs } from 'fs';
 import { merge } from 'lodash-es';
 import os from 'os';
 import path from 'path';
+import { getCwd } from '../utils/cwd.js';
 import type { GlobalOptions } from '../cli/types.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import { BladeConfig, PermissionMode, RuntimeConfig } from './types.js';
@@ -96,7 +97,7 @@ export class ConfigManager {
    */
   private async loadConfigFiles(): Promise<Partial<BladeConfig>> {
     const userConfigPath = path.join(os.homedir(), '.blade', 'config.json');
-    const projectConfigPath = path.join(process.cwd(), '.blade', 'config.json');
+    const projectConfigPath = path.join(getCwd(), '.blade', 'config.json');
 
     let config: Partial<BladeConfig> = {};
 
@@ -132,8 +133,8 @@ export class ConfigManager {
    */
   private async loadSettingsFiles(): Promise<Partial<BladeConfig>> {
     const userSettingsPath = path.join(os.homedir(), '.blade', 'settings.json');
-    const projectSettingsPath = path.join(process.cwd(), '.blade', 'settings.json');
-    const localSettingsPath = path.join(process.cwd(), '.blade', 'settings.local.json');
+    const projectSettingsPath = path.join(getCwd(), '.blade', 'settings.json');
+    const localSettingsPath = path.join(getCwd(), '.blade', 'settings.local.json');
 
     let settings: Partial<BladeConfig> = {};
 

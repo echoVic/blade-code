@@ -12,6 +12,7 @@
 
 import * as os from 'os';
 import * as path from 'path';
+import { getCwd } from '../utils/cwd.js';
 import {
   type BladeConfig,
   ConfigManager,
@@ -298,7 +299,7 @@ export class Agent {
 
       // 5. 初始化附件收集器（@ 文件提及）
       this.attachmentCollector = new AttachmentCollector({
-        cwd: process.cwd(),
+        cwd: getCwd(),
         maxFileSize: 1024 * 1024, // 1MB
         maxLines: 2000,
         maxTokens: 32000,
@@ -455,7 +456,7 @@ export class Agent {
 
     // Plan 模式差异 1: 使用统一入口构建 Plan 模式系统提示词
     const { prompt: systemPrompt } = await buildSystemPrompt({
-      projectPath: process.cwd(),
+      projectPath: getCwd(),
       mode: PermissionMode.PLAN,
       includeEnvironment: true,
       language: this.config.language,
@@ -506,7 +507,7 @@ export class Agent {
 
     // 1. 确保 SpecManager 已初始化
     const specManager = SpecManager.getInstance();
-    const workspaceRoot = context.workspaceRoot || process.cwd();
+    const workspaceRoot = context.workspaceRoot || getCwd();
 
     try {
       // 尝试初始化（如果已初始化会安全返回）
@@ -583,7 +584,7 @@ export class Agent {
     const appendPrompt = this.runtimeOptions.appendSystemPrompt;
 
     const result = await buildSystemPrompt({
-      projectPath: process.cwd(),
+      projectPath: getCwd(),
       replaceDefault: replacePrompt,
       append: appendPrompt,
       includeEnvironment: false,
@@ -801,7 +802,7 @@ export class Agent {
       const appendPrompt = this.runtimeOptions.appendSystemPrompt;
 
       const result = await buildSystemPrompt({
-        projectPath: process.cwd(),
+        projectPath: getCwd(),
         replaceDefault: replacePrompt,
         append: appendPrompt,
         includeEnvironment: false,
@@ -936,7 +937,7 @@ export class Agent {
   private async discoverSkills(): Promise<void> {
     try {
       const result = await discoverSkills({
-        cwd: process.cwd(),
+        cwd: getCwd(),
       });
 
       if (result.skills.length > 0) {

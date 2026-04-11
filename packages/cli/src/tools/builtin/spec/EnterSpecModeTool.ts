@@ -6,6 +6,7 @@
 
 import { z } from 'zod';
 import { SpecManager } from '../../../spec/SpecManager.js';
+import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
@@ -124,7 +125,7 @@ For simpler planning needs, consider using EnterPlanMode instead.
 
         if (response.approved) {
           // 初始化 SpecManager 并创建 Spec
-          const workspaceRoot = context.workspaceRoot || process.cwd();
+          const workspaceRoot = context.workspaceRoot || getCwd();
           const specManager = SpecManager.getInstance();
 
           try {

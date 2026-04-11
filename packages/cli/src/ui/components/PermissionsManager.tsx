@@ -12,6 +12,7 @@ import { useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { configActions } from '../../store/vanilla.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { getCwd } from '../../utils/cwd.js';
 
 type RuleSource = 'local' | 'project' | 'global';
 type PermissionType = 'allow' | 'ask' | 'deny';
@@ -158,11 +159,11 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({ onClose 
   const lockedAwaitRef = useRef(false);
 
   const localSettingsPath = useMemo(
-    () => path.join(process.cwd(), '.blade', 'settings.local.json'),
+    () => path.join(getCwd(), '.blade', 'settings.local.json'),
     []
   );
   const projectSettingsPath = useMemo(
-    () => path.join(process.cwd(), '.blade', 'settings.json'),
+    () => path.join(getCwd(), '.blade', 'settings.json'),
     []
   );
   const globalSettingsPath = useMemo(
@@ -232,7 +233,7 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({ onClose 
       try {
         // 读取当前本地 settings 文件
         const localSettingsPath = path.join(
-          process.cwd(),
+          getCwd(),
           '.blade',
           'settings.local.json'
         );

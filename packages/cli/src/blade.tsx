@@ -22,9 +22,14 @@ import { handlePrintMode } from './commands/print.js';
 import { serveCommand } from './commands/serve.js';
 import { updateCommands } from './commands/update.js';
 import { webCommand } from './commands/web.js';
+import {
+  setProjectRoot,
+} from './bootstrap/state.js';
 import { Logger } from './logging/Logger.js';
 import { initializeGracefulShutdown } from './services/GracefulShutdown.js';
 import { checkVersionOnStartup } from './services/VersionChecker.js';
+import { getCwd } from './utils/cwd.js';
+import { findProjectRoot, setCwd } from './utils/environment.js';
 import type { AppProps } from './ui/App.js';
 import { AppWrapper as BladeApp } from './ui/App.js';
 
@@ -40,6 +45,13 @@ if (debugIndex !== -1) {
 }
 
 export async function main() {
+  // 初始化工作区根目录（必须在所有依赖 cwd 的代码之前）
+  // originalCwd 保持为 process.cwd()（已在 bootstrap/state.ts initState 中设置），
+  // 用于解析 CLI 参数中的相对路径（如 --mcp-config ./mcp.json）
+  const detectedRoot = findProjectRoot(process.cwd());
+  setCwd(detectedRoot);
+  setProjectRoot(getCwd());
+
   // 防止使用 sudo 运行（避免创建 root 拥有的文件）
   // 但允许在容器/沙箱/CI 等天然 root 环境中运行
   if (process.getuid && process.getuid() === 0) {

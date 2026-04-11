@@ -10,6 +10,7 @@ import type { McpServerConfig } from '../config/types.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { McpConnectionStatus } from '../mcp/types.js';
 import { configActions, getMcpServers } from '../store/vanilla.js';
+import { getCwd } from '../utils/cwd.js';
 
 type AnyArgs = ArgumentsCamelCase<Record<string, unknown>>;
 
@@ -208,7 +209,7 @@ const mcpAddCommand: CommandModule = {
 
       const configPath = isGlobal
         ? path.join(os.homedir(), '.blade', 'config.json')
-        : path.join(process.cwd(), '.blade', 'config.json');
+        : path.join(getCwd(), '.blade', 'config.json');
       console.log(`MCP 服务器 "${nameStr}" 已添加`);
       console.log(`   配置文件: ${configPath}`);
     } catch (error) {
@@ -440,7 +441,7 @@ const mcpAddJsonCommand: CommandModule = {
 
       const configPath = isGlobal
         ? path.join(os.homedir(), '.blade', 'config.json')
-        : path.join(process.cwd(), '.blade', 'config.json');
+        : path.join(getCwd(), '.blade', 'config.json');
       console.log(`MCP 服务器 "${nameStr}" 已添加`);
       console.log(`   配置文件: ${configPath}`);
     } catch (error) {

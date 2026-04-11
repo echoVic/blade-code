@@ -14,6 +14,7 @@ import { HookManager } from '../hooks/HookManager.js';
 import type { SessionEndInput } from '../hooks/types/HookTypes.js';
 import { createLogger, LogCategory, shutdownLogger } from '../logging/Logger.js';
 import { getState } from '../store/vanilla.js';
+import { getCwd } from '../utils/cwd.js';
 
 /**
  * 恢复终端状态
@@ -213,7 +214,7 @@ class GracefulShutdownManager {
           state.config?.config?.permissionMode || PermissionMode.DEFAULT;
 
         await hookManager.executeSessionEndHooks(mapExitReasonToHookReason(reason), {
-          projectDir: process.cwd(),
+          projectDir: getCwd(),
           sessionId,
           permissionMode,
         });

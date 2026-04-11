@@ -14,6 +14,7 @@ import type { ChatContext } from '../agent/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { TodoItem } from '../tools/builtin/todo/types.js';
+import { getCwd } from '../utils/cwd.js';
 import type {
   ConfirmationDetails,
   ConfirmationResponse,
@@ -424,7 +425,7 @@ export async function runHeadless(
       messages: contextMessages,
       userId: 'cli-user',
       sessionId: validatedOptions.sessionId ?? `headless-${Date.now()}`,
-      workspaceRoot: process.cwd(),
+      workspaceRoot: getCwd(),
       permissionMode,
       confirmationHandler: createConfirmationHandler(),
     };

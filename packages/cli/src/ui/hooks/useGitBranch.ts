@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getCurrentBranch, isGitRepository } from '../../utils/git.js';
+import { getCwd } from '../../utils/cwd.js';
 
 export interface GitBranchInfo {
   /** 当前分支名，非 Git 仓库时为 null */
@@ -16,7 +17,7 @@ export interface GitBranchInfo {
  * @returns Git 分支信息
  */
 export function useGitBranch(
-  cwd: string = process.cwd(),
+  cwd: string = getCwd(),
   refreshInterval: number = 5000
 ): GitBranchInfo {
   const [branch, setBranch] = useState<string | null>(null);

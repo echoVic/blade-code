@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid';
+import { getCwd } from '../../utils/cwd.js';
 import { Agent } from '../Agent.js';
 import { drainLoop } from '../loop/index.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
@@ -58,7 +59,7 @@ export class SubagentExecutor {
             messages: [],
             userId: 'subagent',
             sessionId: agentId,
-            workspaceRoot: process.cwd(),
+            workspaceRoot: getCwd(),
             permissionMode: context.permissionMode,
             systemPrompt,
             subagentInfo,

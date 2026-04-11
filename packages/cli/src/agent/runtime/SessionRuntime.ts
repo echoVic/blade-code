@@ -1,5 +1,6 @@
 import * as os from 'os';
 import * as path from 'path';
+import { getCwd } from '../../utils/cwd.js';
 import { ConfigManager, type BladeConfig, type PermissionConfig } from '../../config/index.js';
 import { PermissionMode } from '../../config/index.js';
 import type { ModelConfig } from '../../config/types.js';
@@ -56,7 +57,7 @@ export class SessionRuntime {
     private readonly options: SessionRuntimeOptions
   ) {
     this.attachmentCollector = new AttachmentCollector({
-      cwd: process.cwd(),
+      cwd: getCwd(),
       maxFileSize: 1024 * 1024,
       maxLines: 2000,
       maxTokens: 32000,
@@ -231,7 +232,7 @@ export class SessionRuntime {
   private async validateSystemPromptConfig(): Promise<void> {
     try {
       await buildSystemPrompt({
-        projectPath: process.cwd(),
+        projectPath: getCwd(),
         includeEnvironment: false,
         language: this.config.language,
       });
@@ -297,7 +298,7 @@ export class SessionRuntime {
   private async discoverSkills(): Promise<void> {
     try {
       await discoverSkills({
-        cwd: process.cwd(),
+        cwd: getCwd(),
       });
     } catch (error) {
       logger.warn('Failed to discover skills:', error);

@@ -6,6 +6,7 @@ import { Readable } from 'node:stream';
 import { join, resolve } from 'path';
 import { z } from 'zod';
 
+import { getCwd } from '../../../utils/cwd.js';
 import { FileFilter } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
 import type {
@@ -80,7 +81,7 @@ export const globTool = createTool({
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const {
       pattern,
-      path = process.cwd(),
+      path = getCwd(),
       max_results,
       include_directories,
       case_sensitive,

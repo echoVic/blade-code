@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import yaml from 'yaml';
+import { getCwd } from '../../utils/cwd.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { builtinAgents } from './builtinAgents.js';
 import type { SubagentConfig, SubagentFrontmatter } from './types.js';
@@ -211,7 +212,7 @@ export class SubagentRegistry {
     this.loadFromDirectory(claudeCodeUserAgentsDir, 'claude-code-user');
 
     // 3. 加载 Claude Code 项目级配置（可覆盖用户级）
-    const claudeCodeProjectAgentsDir = path.join(process.cwd(), '.claude', 'agents');
+    const claudeCodeProjectAgentsDir = path.join(getCwd(), '.claude', 'agents');
     this.loadFromDirectory(claudeCodeProjectAgentsDir, 'claude-code-project');
 
     // 4. 加载 Blade 用户级配置（可覆盖 Claude Code）
@@ -219,7 +220,7 @@ export class SubagentRegistry {
     this.loadFromDirectory(bladeUserAgentsDir, 'blade-user');
 
     // 5. 加载 Blade 项目级配置（可覆盖所有）
-    const bladeProjectAgentsDir = path.join(process.cwd(), '.blade', 'agents');
+    const bladeProjectAgentsDir = path.join(getCwd(), '.blade', 'agents');
     this.loadFromDirectory(bladeProjectAgentsDir, 'blade-project');
 
     const count = this.getAllNames().length;
@@ -300,7 +301,7 @@ export class SubagentRegistry {
     if (type === 'user') {
       return path.join(os.homedir(), '.claude', 'agents');
     }
-    return path.join(process.cwd(), '.claude', 'agents');
+    return path.join(getCwd(), '.claude', 'agents');
   }
 
   /**
@@ -311,7 +312,7 @@ export class SubagentRegistry {
     if (type === 'user') {
       return path.join(os.homedir(), '.blade', 'agents');
     }
-    return path.join(process.cwd(), '.blade', 'agents');
+    return path.join(getCwd(), '.blade', 'agents');
   }
 }
 

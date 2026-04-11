@@ -9,6 +9,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { getOriginalCwd } from '../bootstrap/state.js';
 import type { McpServerConfig } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { getMcpServers, getState } from '../store/vanilla.js';
@@ -41,8 +42,8 @@ export async function loadMcpConfigFromCli(mcpConfigs: string[]): Promise<void> 
           configData = parsed;
         }
       } else {
-        // 作为文件路径处理
-        const filePath = path.resolve(process.cwd(), configArg);
+        // 作为文件路径处理 — CLI 参数应相对于用户的 shell 工作目录解析
+        const filePath = path.resolve(getOriginalCwd(), configArg);
         const content = await fs.readFile(filePath, 'utf-8');
         const parsed = JSON.parse(content);
 

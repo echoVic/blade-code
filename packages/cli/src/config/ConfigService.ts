@@ -16,6 +16,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import writeFileAtomic from 'write-file-atomic';
+import { getCwd } from '../utils/cwd.js';
 import type { BladeConfig, PermissionConfig } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 
@@ -579,19 +580,19 @@ export class ConfigService {
     if (target === 'config') {
       return scope === 'global'
         ? path.join(os.homedir(), '.blade', 'config.json')
-        : path.join(process.cwd(), '.blade', 'config.json');
+        : path.join(getCwd(), '.blade', 'config.json');
     }
 
     // settings
     switch (scope) {
       case 'local':
-        return path.join(process.cwd(), '.blade', 'settings.local.json');
+        return path.join(getCwd(), '.blade', 'settings.local.json');
       case 'project':
-        return path.join(process.cwd(), '.blade', 'settings.json');
+        return path.join(getCwd(), '.blade', 'settings.json');
       case 'global':
         return path.join(os.homedir(), '.blade', 'settings.json');
       default:
-        return path.join(process.cwd(), '.blade', 'settings.local.json');
+        return path.join(getCwd(), '.blade', 'settings.local.json');
     }
   }
 

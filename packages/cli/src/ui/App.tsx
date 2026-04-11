@@ -18,6 +18,7 @@ import { discoverSkills } from '../skills/index.js';
 import { initializeCustomCommands } from '../slash-commands/index.js';
 import { appActions, getState, sessionActions } from '../store/vanilla.js';
 import { BackgroundShellManager } from '../tools/builtin/shell/BackgroundShellManager.js';
+import { getCwd } from '../utils/cwd.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { UpdatePrompt } from './components/UpdatePrompt.js';
@@ -133,7 +134,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
         const isResume = !!props.resume;
 
         const sessionStartResult = await hookManager.executeSessionStartHooks({
-          projectDir: process.cwd(),
+          projectDir: getCwd(),
           sessionId,
           permissionMode,
           isResume,
@@ -184,7 +185,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
 
     // 9. 初始化自定义命令（发现并加载所有 .blade/commands/ 和 .claude/commands/ 下的命令）
     try {
-      const customCommandsResult = await initializeCustomCommands(process.cwd());
+      const customCommandsResult = await initializeCustomCommands(getCwd());
       if (props.debug && customCommandsResult.commands.length > 0) {
         console.log(
           `[OK] 已加载 ${customCommandsResult.commands.length} 个自定义命令: ${customCommandsResult.commands.map((c) => c.name).join(', ')}`
@@ -205,7 +206,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
     try {
       const pluginRegistry = getPluginRegistry();
       const pluginResult = await pluginRegistry.initialize(
-        process.cwd(),
+        getCwd(),
         props.pluginDir || []
       );
 
