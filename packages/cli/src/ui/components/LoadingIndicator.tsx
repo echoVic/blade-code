@@ -13,7 +13,7 @@ import { useLoadingIndicator } from '../hooks/useLoadingIndicator.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 
 interface LoadingIndicatorProps {
-  message?: string; // 自定义消息（向后兼容，优先级低于短语）
+  message?: string; // 自定义消息（中性/真实动作文案优先）
   /** 是否暂停动画（当被其他弹窗遮挡时，避免无意义的重渲染） */
   paused?: boolean;
 }
@@ -89,8 +89,8 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
       return null;
     }
 
-    // 显示优先级：currentPhrase（幽默短语）> message（自定义消息）
-    const displayMessage = currentPhrase || message || '正在思考中...';
+    // 显示优先级：message（中性/真实动作）> currentPhrase（趣味短语）
+    const displayMessage = message || currentPhrase || '正在思考中...';
 
     // 统一显示：短语 + 计时器 + 取消提示
     if (isWideScreen) {

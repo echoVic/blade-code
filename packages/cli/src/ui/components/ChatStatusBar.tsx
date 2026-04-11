@@ -1,5 +1,6 @@
 import { Box, Text } from 'ink';
 import React from 'react';
+import { getProjectRoot } from '../../bootstrap/state.js';
 import { PermissionMode } from '../../config/types.js';
 import {
   useActiveModal,
@@ -30,7 +31,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const activeModal = useActiveModal();
   const showShortcuts = activeModal === 'shortcuts';
   const awaitingSecondCtrlC = useAwaitingSecondCtrlC();
-  const { branch } = useGitBranch();
+  const { branch } = useGitBranch(getProjectRoot());
   const currentModel = useCurrentModel();
   const contextRemaining = useContextRemaining();
   const isCompacting = useIsCompacting();

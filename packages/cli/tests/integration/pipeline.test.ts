@@ -3,7 +3,10 @@ import { z } from 'zod';
 import { createTool } from '../../src/tools/core/createTool.js';
 import { ExecutionPipeline } from '../../src/tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../../src/tools/registry/ToolRegistry.js';
-import type { ExecutionContext } from '../../src/tools/types/ExecutionTypes.js';
+import type {
+  ConfirmationDetails,
+  ExecutionContext,
+} from '../../src/tools/types/ExecutionTypes.js';
 import { ToolKind } from '../../src/tools/types/ToolTypes.js';
 
 function createTestTool(name = 'TestTool') {
@@ -25,6 +28,29 @@ function createTestTool(name = 'TestTool') {
         return `integration tool with value: ${(params as { value: string }).value}`;
       }
       return 'integration tool';
+    },
+  });
+}
+
+function createTestBashTool() {
+  return createTool({
+    name: 'Bash',
+    displayName: 'Bash',
+    kind: ToolKind.Execute,
+    description: { short: 'bash tool' },
+    schema: z.object({ command: z.string() }),
+    async execute(params) {
+      return {
+        success: true,
+        llmContent: `executed:${(params as { command: string }).command}`,
+        displayContent: `executed:${(params as { command: string }).command}`,
+      };
+    },
+    extractSignatureContent: (params: unknown) => {
+      if (typeof params === 'object' && params !== null && 'command' in params) {
+        return String((params as { command: string }).command);
+      }
+      return 'bash';
     },
   });
 }
@@ -88,6 +114,130 @@ describe('ExecutionPipeline 权限集成', () => {
     );
     expect(second.success).toBe(true);
     expect(confirmation).toHaveBeenCalledTimes(1);
+  });
+
+  it('ASK 确认应把原因放在 message 而不是红色 risks 中', async () => {
+    const registry = new ToolRegistry();
+    registry.register(createTestTool() as any);
+
+    const pipeline = new ExecutionPipeline(registry, {
+      permissionConfig: {
+        allow: [],
+        ask: ['TestTool'],
+        deny: [],
+      },
+    });
+
+    let confirmationDetails: ConfirmationDetails | undefined;
+    const confirmation = vi.fn(async (details: ConfirmationDetails) => {
+      confirmationDetails = details;
+      return {
+        approved: true,
+        scope: 'once' as const,
+      };
+    });
+
+    const context: ExecutionContext = {
+      signal: new AbortController().signal,
+      confirmationHandler: {
+        requestConfirmation: confirmation,
+      },
+    };
+
+    const result = await pipeline.execute(
+      'TestTool',
+      { value: 'same' } as any,
+      context
+    );
+
+    expect(result.success).toBe(true);
+    expect(confirmation).toHaveBeenCalledTimes(1);
+    expect(confirmationDetails?.message).toContain('工具调用需要用户确认');
+    expect(confirmationDetails?.risks).toEqual([]);
+  });
+
+  it('低风险 Bash 确认不应把工具替代建议渲染成 risks', async () => {
+    const registry = new ToolRegistry();
+    registry.register(createTestBashTool() as any);
+
+    const pipeline = new ExecutionPipeline(registry, {
+      permissionConfig: {
+        allow: [],
+        ask: ['Bash(grep *)'],
+        deny: [],
+      },
+    });
+
+    let confirmationDetails: ConfirmationDetails | undefined;
+    const confirmation = vi.fn(async (details: ConfirmationDetails) => {
+      confirmationDetails = details;
+      return {
+        approved: true,
+        scope: 'once' as const,
+      };
+    });
+
+    const context: ExecutionContext = {
+      signal: new AbortController().signal,
+      confirmationHandler: {
+        requestConfirmation: confirmation,
+      },
+    };
+
+    const result = await pipeline.execute(
+      'Bash',
+      { command: 'grep TODO src/index.ts' } as any,
+      context
+    );
+
+    expect(result.success).toBe(true);
+    expect(confirmation).toHaveBeenCalledTimes(1);
+    expect(confirmationDetails?.message).toContain('工具调用需要用户确认');
+    expect(confirmationDetails?.risks).toEqual([]);
+  });
+
+  it('危险 Bash 命令应继续显示红色 risks', async () => {
+    const registry = new ToolRegistry();
+    registry.register(createTestBashTool() as any);
+
+    const pipeline = new ExecutionPipeline(registry, {
+      permissionConfig: {
+        allow: [],
+        ask: ['Bash(*)'],
+        deny: [],
+      },
+    });
+
+    let confirmationDetails: ConfirmationDetails | undefined;
+    const confirmation = vi.fn(async (details: ConfirmationDetails) => {
+      confirmationDetails = details;
+      return {
+        approved: true,
+        scope: 'once' as const,
+      };
+    });
+
+    const context: ExecutionContext = {
+      signal: new AbortController().signal,
+      confirmationHandler: {
+        requestConfirmation: confirmation,
+      },
+    };
+
+    const result = await pipeline.execute(
+      'Bash',
+      { command: 'sudo rm -rf /tmp/demo && git push origin main' } as any,
+      context
+    );
+
+    expect(result.success).toBe(true);
+    expect(confirmation).toHaveBeenCalledTimes(1);
+    expect(confirmationDetails?.message).toContain('工具调用需要用户确认');
+    expect(confirmationDetails?.risks).toEqual([
+      '[WARN] 此命令可能删除文件',
+      '[WARN] 此命令需要管理员权限',
+      '[WARN] 此命令将推送代码到远程仓库',
+    ]);
   });
 
   it('共享审批状态时应跨 turn 的 pipeline 复用 session 批准', async () => {

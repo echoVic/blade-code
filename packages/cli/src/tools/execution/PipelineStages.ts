@@ -5,20 +5,20 @@ import {
   type ToolInvocationDescriptor,
 } from '../../config/PermissionChecker.js';
 import type { PermissionConfig } from '../../config/types.js';
-import { getCwd } from '../../utils/cwd.js';
-import { isReadOnlyBashCommand } from '../../utils/shell/readOnlyValidation.js';
 import { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { configActions, getConfig } from '../../store/vanilla.js';
+import { getCwd } from '../../utils/cwd.js';
+import { isReadOnlyBashCommand } from '../../utils/shell/readOnlyValidation.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
-import type { SessionApprovalStore } from './SessionApprovalStore.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
 import { isReadOnlyKind, ToolKind } from '../types/index.js';
 import {
   SensitiveFileDetector,
   SensitivityLevel,
 } from '../validation/SensitiveFileDetector.js';
+import type { SessionApprovalStore } from './SessionApprovalStore.js';
 
 const logger = createLogger(LogCategory.EXECUTION);
 
@@ -336,13 +336,8 @@ export class ConfirmationStage implements PipelineStage {
   }
 
   async process(execution: ToolExecution): Promise<void> {
-    const {
-      tool,
-      invocation,
-      needsConfirmation,
-      confirmationReason,
-      permissionCheckResult,
-    } = execution._internal;
+    const { tool, invocation, needsConfirmation, confirmationReason } =
+      execution._internal;
 
     if (!tool || !invocation) {
       execution.abort('Pre-confirmation stage failed; cannot request user approval');
@@ -403,11 +398,7 @@ export class ConfirmationStage implements PipelineStage {
         message: confirmationReason || '此操作需要用户确认',
         kind: tool.kind, // 工具类型，用于 ACP 权限模式判断
         details: this.generatePreviewForTool(tool.name, execution.params),
-        risks: this.extractRisksFromPermissionCheck(
-          tool,
-          execution.params,
-          permissionCheckResult
-        ),
+        risks: this.extractRisksFromPermissionCheck(tool, execution.params),
         affectedFiles: invocation.getAffectedPaths() || [],
       };
 
@@ -424,7 +415,9 @@ export class ConfirmationStage implements PipelineStage {
         logger.info(`[ConfirmationStage] Requesting confirmation for ${tool.name}`);
         const response =
           await confirmationHandler.requestConfirmation(confirmationDetails);
-        logger.info(`[ConfirmationStage] Confirmation response: approved=${response.approved}`);
+        logger.info(
+          `[ConfirmationStage] Confirmation response: approved=${response.approved}`
+        );
 
         if (!response.approved) {
           execution.abort(
@@ -556,39 +549,15 @@ export class ConfirmationStage implements PipelineStage {
    */
   private extractRisksFromPermissionCheck(
     tool: { name: string },
-    params: Record<string, unknown>,
-    permissionCheckResult?: { reason?: string }
+    params: Record<string, unknown>
   ): string[] {
     const risks: string[] = [];
-
-    // 添加权限检查的原因作为风险
-    if (permissionCheckResult?.reason) {
-      risks.push(permissionCheckResult.reason);
-    }
 
     // 根据工具类型添加特定风险和改进建议
     if (tool.name === 'Bash') {
       const command = (params.command as string) || '';
-      const mainCommand = command.trim().split(/\s+/)[0];
 
-      // [WARN] 检测使用了专用工具应该替代的命令
-      if (mainCommand === 'cat' || mainCommand === 'head' || mainCommand === 'tail') {
-        risks.push(
-          `建议使用 Read 工具代替 ${mainCommand} 命令（性能更好，支持大文件分页）`
-        );
-      } else if (mainCommand === 'grep' || mainCommand === 'rg') {
-        risks.push(
-          '建议使用 Grep 工具代替 grep/rg 命令（支持更强大的过滤和上下文）'
-        );
-      } else if (mainCommand === 'find') {
-        risks.push('建议使用 Glob 工具代替 find 命令（更快，支持 glob 模式）');
-      } else if (mainCommand === 'sed' || mainCommand === 'awk') {
-        risks.push(
-          `建议使用 Edit 工具代替 ${mainCommand} 命令（更安全，支持预览和回滚）`
-        );
-      }
-
-      // [WARN] 危险命令警告
+      // 真正危险的 Bash 命令警告
       if (command.includes('rm')) {
         risks.push('[WARN] 此命令可能删除文件');
       }
