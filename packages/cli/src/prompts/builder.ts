@@ -2,11 +2,14 @@
  * 系统提示构建器 - 统一入口
  *
  * ## 构建顺序（固定）
- * 1. 默认提示（DEFAULT_SYSTEM_PROMPT）或 replaceDefault
+ * 1. 默认提示（buildDefaultPrompt() 模块化组装）或 replaceDefault
  * 2. 项目配置（BLADE.md）- 始终加载，不受 replaceDefault 影响
  * 3. Auto Memory（MEMORY.md 前 200 行）- 跨会话持久记忆
- * 4. 追加内容（append）
- * 5. 模式特定提示（Plan 模式等）
+ * 4. 环境上下文（getEnvironmentContext）
+ * 5. 追加内容（append）
+ * 6. 模式特定提示（Plan 模式等）
+ *
+ * 默认提示由 sections.ts 的 8 个模块化段函数组装
  *
  * ## 规则
  * - replaceDefault 仅替换默认提示，不影响 BLADE.md 和 append
@@ -94,7 +97,7 @@ export interface BuildSystemPromptResult {
 /**
  * 构建系统提示词（统一入口）
  *
- * 构建顺序：环境上下文 -> 默认/replaceDefault -> BLADE.md -> Auto Memory -> append -> 模式特定
+ * 构建顺序：默认/replaceDefault -> BLADE.md -> Auto Memory -> 环境上下文 -> append -> 模式特定
  *
  * @example
  * // 普通模式
@@ -126,16 +129,7 @@ export async function buildSystemPrompt(
   const parts: string[] = [];
   const sources: BuildSystemPromptResult['sources'] = [];
 
-  // 1. 环境上下文（始终在最前面）
-  if (includeEnvironment) {
-    const envContext = getEnvironmentContext();
-    if (envContext) {
-      parts.push(envContext);
-      sources.push({ name: 'environment', loaded: true, length: envContext.length });
-    }
-  }
-
-  // 2. 默认提示或替换内容
+  // 1. 默认提示或替换内容
   // Plan/Spec 模式使用独立的 system prompt
   const isPlanMode = mode === PermissionMode.PLAN;
   const isSpecMode = mode === PermissionMode.SPEC;
@@ -162,7 +156,7 @@ export async function buildSystemPrompt(
     length: basePrompt.length,
   });
 
-  // 3. 项目配置（BLADE.md）- 始终加载，不受 replaceDefault 影响
+  // 2. 项目配置（BLADE.md）- 始终加载，不受 replaceDefault 影响
   if (projectPath) {
     const bladeContent = await loadBladeConfig(projectPath);
     if (bladeContent) {
@@ -173,7 +167,7 @@ export async function buildSystemPrompt(
     }
   }
 
-  // 4. Auto Memory（MEMORY.md 前 N 行）- 跨会话持久记忆
+  // 3. Auto Memory（MEMORY.md 前 N 行）- 跨会话持久记忆
   if (projectPath && process.env.BLADE_AUTO_MEMORY !== '0') {
     try {
       const memoryManager = new AutoMemoryManager(projectPath);
@@ -186,6 +180,15 @@ export async function buildSystemPrompt(
       }
     } catch {
       sources.push({ name: 'auto_memory', loaded: false });
+    }
+  }
+
+  // 4. 环境上下文
+  if (includeEnvironment) {
+    const envContext = getEnvironmentContext();
+    if (envContext) {
+      parts.push(envContext);
+      sources.push({ name: 'environment', loaded: true, length: envContext.length });
     }
   }
 
@@ -243,9 +246,9 @@ const LANGUAGE_NAMES: Record<string, string> = {
 function injectLanguageInstruction(prompt: string, language?: string): string {
   const lang = language || 'zh-CN';
   const langName = LANGUAGE_NAMES[lang] || lang;
-  
+
   const instruction = `IMPORTANT: Always respond in ${langName}. All your responses must be in ${langName}.`;
-  
+
   return prompt.replace('{{LANGUAGE_INSTRUCTION}}', instruction);
 }
 

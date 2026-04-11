@@ -6,17 +6,29 @@ import {
   PLAN_MODE_SYSTEM_PROMPT,
 } from '../../../../src/prompts/default';
 
+const { readFileMock, accessMock, loadIndexMock } = vi.hoisted(() => ({
+  readFileMock: vi.fn(),
+  accessMock: vi.fn(),
+  loadIndexMock: vi.fn(),
+}));
+
 // Mock fs
 vi.mock('fs', async () => {
-  const actual = await vi.importActual('fs');
+  const actual = await vi.importActual<typeof import('fs')>('fs');
   return {
     ...actual,
     promises: {
-      readFile: vi.fn(),
-      access: vi.fn(),
+      readFile: readFileMock,
+      access: accessMock,
     },
   };
 });
+
+vi.mock('../../../../src/memory/AutoMemoryManager.js', () => ({
+  AutoMemoryManager: vi.fn().mockImplementation(() => ({
+    loadIndex: loadIndexMock,
+  })),
+}));
 
 // Mock environment
 vi.mock('../../../../src/utils/environment.js', () => ({
@@ -26,6 +38,9 @@ vi.mock('../../../../src/utils/environment.js', () => ({
 describe('buildSystemPrompt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    readFileMock.mockReset();
+    accessMock.mockReset();
+    loadIndexMock.mockReset();
   });
 
   describe('基础功能', () => {
@@ -134,19 +149,51 @@ describe('buildSystemPrompt', () => {
   });
 
   describe('构建顺序', () => {
-    it('顺序应该是: 环境 → 默认 → append', async () => {
+    it('顺序应该是: 默认 → BLADE.md → Auto Memory → 环境 → append', async () => {
+      readFileMock.mockResolvedValue('BLADE_MD_MARKER');
+      loadIndexMock.mockResolvedValue('AUTO_MEMORY_MARKER');
+
       const appendContent = 'APPEND_MARKER';
       const result = await buildSystemPrompt({
+        projectPath: '/mock/project',
         append: appendContent,
         includeEnvironment: true,
       });
 
-      const envIndex = result.prompt.indexOf('Mock Environment Context');
       const defaultIndex = result.prompt.indexOf('Blade Code');
+      const bladeIndex = result.prompt.indexOf('BLADE_MD_MARKER');
+      const autoMemoryIndex = result.prompt.indexOf('AUTO_MEMORY_MARKER');
+      const envIndex = result.prompt.indexOf('Mock Environment Context');
       const appendIndex = result.prompt.indexOf(appendContent);
 
-      expect(envIndex).toBeLessThan(defaultIndex);
-      expect(defaultIndex).toBeLessThan(appendIndex);
+      expect(defaultIndex).toBeLessThan(bladeIndex);
+      expect(bladeIndex).toBeLessThan(autoMemoryIndex);
+      expect(autoMemoryIndex).toBeLessThan(envIndex);
+      expect(envIndex).toBeLessThan(appendIndex);
+    });
+
+    it('顺序应该是: replaceDefault → BLADE.md → Auto Memory → 环境 → append', async () => {
+      readFileMock.mockResolvedValue('BLADE_MD_MARKER');
+      loadIndexMock.mockResolvedValue('AUTO_MEMORY_MARKER');
+
+      const appendContent = 'APPEND_MARKER';
+      const result = await buildSystemPrompt({
+        projectPath: '/mock/project',
+        replaceDefault: 'REPLACE_DEFAULT_MARKER',
+        append: appendContent,
+        includeEnvironment: true,
+      });
+
+      const replaceDefaultIndex = result.prompt.indexOf('REPLACE_DEFAULT_MARKER');
+      const bladeIndex = result.prompt.indexOf('BLADE_MD_MARKER');
+      const autoMemoryIndex = result.prompt.indexOf('AUTO_MEMORY_MARKER');
+      const envIndex = result.prompt.indexOf('Mock Environment Context');
+      const appendIndex = result.prompt.indexOf(appendContent);
+
+      expect(replaceDefaultIndex).toBeLessThan(bladeIndex);
+      expect(bladeIndex).toBeLessThan(autoMemoryIndex);
+      expect(autoMemoryIndex).toBeLessThan(envIndex);
+      expect(envIndex).toBeLessThan(appendIndex);
     });
   });
 });

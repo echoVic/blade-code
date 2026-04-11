@@ -12,6 +12,7 @@ vi.mock('child_process', () => ({
 describe('utils/environment', () => {
   let tempProjectRoot: string;
   let tempSubDir: string;
+  let originalShell: string | undefined;
 
   beforeEach(() => {
     vi.resetModules();
@@ -22,10 +23,20 @@ describe('utils/environment', () => {
     tempProjectRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-env-test-'));
     tempSubDir = path.join(tempProjectRoot, 'sub', 'dir');
     mkdirSync(tempSubDir, { recursive: true });
+    mkdirSync(path.join(tempProjectRoot, '.git'));
     writeFileSync(path.join(tempProjectRoot, 'package.json'), '{}');
+    writeFileSync(path.join(tempProjectRoot, 'tsconfig.json'), '{}');
+
+    originalShell = process.env.SHELL;
+    process.env.SHELL = '/bin/zsh';
   });
 
   afterEach(() => {
+    if (originalShell === undefined) {
+      delete process.env.SHELL;
+    } else {
+      process.env.SHELL = originalShell;
+    }
     rmSync(tempProjectRoot, { recursive: true, force: true });
   });
 
@@ -49,16 +60,49 @@ describe('utils/environment', () => {
     vi.useRealTimers();
   });
 
-  it('getEnvironmentContext 应包含目录和指引信息', async () => {
+  it('findProjectRoot 在 monorepo 子包内应优先返回 git 根目录', async () => {
+    const packageRoot = path.join(tempProjectRoot, 'packages', 'cli');
+    const nestedDir = path.join(packageRoot, 'src', 'prompts');
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(path.join(packageRoot, 'package.json'), '{}');
+
+    const { findProjectRoot } = await import('../../../../src/utils/environment.js');
+
+    expect(findProjectRoot(nestedDir)).toBe(tempProjectRoot);
+  });
+
+  it('getEnvironmentContext 应包含 git 快照、shell 和关键文件信息', async () => {
+    execSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === 'git rev-parse --abbrev-ref HEAD') {
+        return 'feat/upgrade-agent\n';
+      }
+      if (cmd === 'git status --short') {
+        return ' M packages/cli/src/prompts/builder.ts\n?? packages/cli/src/prompts/sections.ts\n';
+      }
+      if (cmd === 'git log --oneline -n 3') {
+        return '9e9371c feat(permission): 增强Bash命令权限检查的语义分析和规范化\n';
+      }
+      throw new Error(`unsupported command: ${cmd}`);
+    });
+
     const { setCwdState } = await import('../../../../src/bootstrap/state.js');
     setCwdState(tempSubDir);
 
     const { getEnvironmentContext } = await import('../../../../src/utils/environment.js');
     const context = getEnvironmentContext();
 
-    expect(context).toContain('## Working Directory');
-    expect(context).toContain(tempSubDir);
-    expect(context).toMatch(/\*\*Node\.js\*\*: v\d+\.\d+\.\d+/);
+    expect(context).toContain('# Environment');
+    expect(context).toContain(`Primary working directory: ${tempSubDir}`);
+    expect(context).toContain('Is a git repository: true');
+    expect(context).toContain('Current branch: feat/upgrade-agent');
+    expect(context).toContain('Working tree status:');
+    expect(context).toContain('M packages/cli/src/prompts/builder.ts');
+    expect(context).toContain('Recent commits:');
+    expect(context).toContain('9e9371c feat(permission): 增强Bash命令权限检查的语义分析和规范化');
+    expect(context).toContain('Shell: zsh');
+    expect(context).toContain(`- \`${tempProjectRoot}/package.json\``);
+    expect(context).toContain(`- \`${tempProjectRoot}/tsconfig.json\``);
+    expect(context).toContain(`When using file tools (read, write, edit), provide absolute paths based on: \`${tempSubDir}/\``);
   });
 
   it('getDirectoryStructure 应格式化 find 输出', async () => {

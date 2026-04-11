@@ -1,6 +1,6 @@
 import { execSync } from 'child_process';
 import { existsSync, realpathSync } from 'fs';
-import { isAbsolute, resolve } from 'path';
+import { basename, isAbsolute, resolve } from 'path';
 import * as os from 'os';
 import * as path from 'path';
 import { setCwdState } from '../bootstrap/state.js';
@@ -29,55 +29,91 @@ export function getEnvironmentInfo(): EnvironmentInfo {
   };
 }
 
+function getGitCommandOutput(projectRoot: string, command: string): string | null {
+  try {
+    return execSync(command, {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
 export function getEnvironmentContext(): string {
   const env = getEnvironmentInfo();
+  const isGitRepository = existsSync(path.join(env.projectRoot, '.git'));
+  const shell = basename(process.env.SHELL || 'unknown');
+  const keyFiles = ['package.json', 'tsconfig.json', 'BLADE.md', '.env.example']
+    .filter((file) => existsSync(path.join(env.projectRoot, file)))
+    .map((file) => `- \`${path.join(env.projectRoot, file)}\``);
 
-  return `# Environment Context
+  let context = `# Environment
+You have been invoked in the following environment:
+ - Primary working directory: ${env.workingDirectory}
+  - Is a git repository: ${isGitRepository ? 'true' : 'false'}
+ - Platform: ${env.platform}
+ - Shell: ${shell}
+ - Node.js: ${env.nodeVersion}`;
 
-## Working Directory
-**Current**: \`${env.workingDirectory}\`
-**Project Root**: \`${env.projectRoot}\`
+  if (isGitRepository) {
+    const branch = getGitCommandOutput(env.projectRoot, 'git rev-parse --abbrev-ref HEAD');
+    const status = getGitCommandOutput(env.projectRoot, 'git status --short');
+    const recentCommits = getGitCommandOutput(
+      env.projectRoot,
+      'git log --oneline -n 3'
+    );
 
-## System Information
-- **Platform**: ${env.platform}
-- **Node.js**: ${env.nodeVersion}
-- **Date**: ${env.currentDate}
+    if (branch) {
+      context += `\n - Current branch: ${branch}`;
+    }
 
-## File Path Guidelines
-When using file tools (read, write, edit), provide **absolute paths**:
-- Correct: \`${env.workingDirectory}/package.json\`
-- Correct: \`${env.workingDirectory}/src/index.ts\`
-- Incorrect: \`/package.json\` (root directory)
-- Incorrect: \`package.json\` (relative path without context)
+    if (status) {
+      context += `\n\nWorking tree status:\n${status}`;
+    }
 
-**Always use** \`${env.workingDirectory}/\` as the base for file paths.`;
+    if (recentCommits) {
+      context += `\n\nRecent commits:\n${recentCommits}`;
+    }
+  }
+
+  context += `
+
+When using file tools (read, write, edit), provide absolute paths based on: \`${env.workingDirectory}/\``;
+
+  if (keyFiles.length > 0) {
+    context += `\n\nKey project files at root for quick reference:\n${keyFiles.join('\n')}`;
+  }
+
+  return context;
 }
 
 /**
  * 向上遍历目录树查找项目根目录
- * 识别标记（按优先级）：.git、package.json、.blade/、.claude/
+ * 优先级：.git/.blade/.claude（仓库/工作区根）> package.json（兜底）
  */
 export function findProjectRoot(startDir: string): string {
   let currentDir = startDir;
+  let packageJsonCandidate: string | null = null;
 
   while (currentDir !== path.dirname(currentDir)) {
     if (existsSync(path.join(currentDir, '.git'))) {
       return currentDir;
     }
-    if (existsSync(path.join(currentDir, 'package.json'))) {
-      return currentDir;
-    }
-    // Blade / Claude 配置目录也是项目根标记
     if (existsSync(path.join(currentDir, '.blade'))) {
       return currentDir;
     }
     if (existsSync(path.join(currentDir, '.claude'))) {
       return currentDir;
     }
+    if (!packageJsonCandidate && existsSync(path.join(currentDir, 'package.json'))) {
+      packageJsonCandidate = currentDir;
+    }
     currentDir = path.dirname(currentDir);
   }
 
-  return startDir;
+  return packageJsonCandidate ?? startDir;
 }
 
 /**
