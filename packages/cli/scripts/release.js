@@ -104,6 +104,68 @@ function checkWorkingDirectory() {
   console.log(chalk.green('✅ 工作目录干净'));
 }
 
+function getCurrentBranch() {
+  return exec('git branch --show-current', { allowInDryRun: true }) || 'HEAD';
+}
+
+/**
+ * 同步远程分支和 tags
+ */
+function syncRemoteState() {
+  const branch = getCurrentBranch();
+
+  console.log(chalk.yellow('🔄 同步远程分支和 tags...'));
+  try {
+    exec(`git fetch origin ${branch} --tags`, { allowInDryRun: true });
+    console.log(chalk.green(`✅ 已同步 origin/${branch} 和 tags`));
+  } catch (error) {
+    console.log(chalk.yellow('⚠️ 无法同步远程分支，回退为仅同步 tags'));
+    exec('git fetch --tags', { allowInDryRun: true });
+    console.log(chalk.green('✅ Tags 已同步'));
+  }
+}
+
+/**
+ * 检查当前分支是否可安全发布
+ */
+function checkReleaseBranchState() {
+  const branch = getCurrentBranch();
+  const upstream = exec('git rev-parse --abbrev-ref --symbolic-full-name @{upstream}', {
+    allowFailure: true,
+    allowInDryRun: true,
+  });
+
+  if (!upstream) {
+    console.log(chalk.yellow(`⚠️ 当前分支 ${branch} 没有上游分支，跳过远端同步校验`));
+    return;
+  }
+
+  console.log(chalk.yellow(`🌿 校验分支同步状态 (${branch} vs ${upstream})...`));
+
+  const head = exec('git rev-parse HEAD', { allowInDryRun: true });
+  const upstreamHead = exec(`git rev-parse ${upstream}`, { allowInDryRun: true });
+  const mergeBase = exec(`git merge-base HEAD ${upstream}`, { allowInDryRun: true });
+
+  if (head === upstreamHead) {
+    console.log(chalk.green('✅ 当前分支与上游一致'));
+    return;
+  }
+
+  if (mergeBase === head) {
+    const message = `当前分支落后于 ${upstream}。请先执行 git pull --rebase origin ${branch}，确认同步后再重新发布。`;
+    console.log(chalk.red(`❌ ${message}`));
+    throw new Error(message);
+  }
+
+  if (mergeBase !== upstreamHead) {
+    const message = `当前分支与 ${upstream} 已分叉。请先执行 git pull --rebase origin ${branch} 或手动整理提交后再发布。`;
+    console.log(chalk.red(`❌ ${message}`));
+    throw new Error(message);
+  }
+
+  console.log(chalk.green('✅ 当前分支领先上游，可继续发布'));
+}
+
 /**
  * 检查代码质量
  */
@@ -125,19 +187,6 @@ function checkCodeQuality() {
   } catch (error) {
     console.log(chalk.red('❌ 代码质量检查失败'));
     throw error;
-  }
-}
-
-/**
- * 同步远程 tags
- */
-function fetchTags() {
-  console.log(chalk.yellow('🔄 同步远程 tags...'));
-  try {
-    exec('git fetch --tags', { allowInDryRun: true });
-    console.log(chalk.green('✅ Tags 已同步'));
-  } catch (error) {
-    console.log(chalk.yellow('⚠️ 无法同步远程 tags，使用本地 tags'));
   }
 }
 
@@ -490,11 +539,12 @@ function pushToRemote() {
   console.log(chalk.yellow('🚀 推送到远程仓库...'));
   
   try {
+    const branch = getCurrentBranch();
     if (config.publish?.gitConfig?.pushBranch !== false) {
-      exec('git push', { cwd: monorepoRoot });
+      exec(`git push origin ${branch}`, { cwd: monorepoRoot });
     }
     if (config.publish?.gitConfig?.pushTags !== false) {
-      exec('git push --tags', { cwd: monorepoRoot });
+      exec('git push origin --tags', { cwd: monorepoRoot });
     }
     
     console.log(chalk.green('✅ 已推送到远程仓库'));
@@ -774,7 +824,8 @@ async function main() {
   try {
     preReleaseCheck();
     checkWorkingDirectory();
-    fetchTags();
+    syncRemoteState();
+    checkReleaseBranchState();
     checkCodeQuality();
 
     newVersion = await determineNewVersion();
