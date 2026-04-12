@@ -84,14 +84,14 @@ export class CopilotAuth {
    * 执行登录流程 (Device Flow OAuth)
    */
   async login(): Promise<void> {
-    logger.info('🔐 Starting GitHub Copilot OAuth login...');
+    logger.info('Starting GitHub Copilot OAuth login...');
 
     // Step 1: 请求 device code
-    console.log('\n🔐 开始 GitHub Copilot 认证...');
+    console.log('\nStarting GitHub Copilot authentication...');
     const deviceCode = await this.requestDeviceCode();
 
     // Step 2: 显示用户码，让用户在浏览器中授权
-    console.log('\n📋 请在浏览器中完成授权：');
+    console.log('\nPlease complete authorization in your browser:');
     console.log(`   1. 打开 ${deviceCode.verification_uri}`);
     console.log(`   2. 输入代码: ${deviceCode.user_code}`);
     console.log('');
@@ -99,12 +99,12 @@ export class CopilotAuth {
     // 尝试打开浏览器
     try {
       await this.openBrowser(deviceCode.verification_uri);
-      console.log('🌐 已自动打开浏览器，请输入上面的代码完成授权');
+      console.log('Browser opened automatically, please enter the code above to complete authorization');
     } catch {
-      console.log('⚠️ 无法自动打开浏览器，请手动打开上述链接');
+      console.log('Unable to open browser automatically, please open the link above manually');
     }
 
-    console.log('\n⏳ 等待授权中...');
+    console.log('\nWaiting for authorization...');
 
     // Step 3: 轮询获取 access token
     const githubToken = await this.pollForAccessToken(
@@ -113,8 +113,8 @@ export class CopilotAuth {
       deviceCode.expires_in
     );
 
-    console.log('✅ GitHub 授权成功！');
-    console.log('🔄 正在获取 Copilot token...');
+    console.log('GitHub authorization successful!');
+    console.log('Obtaining Copilot token...');
 
     // Step 4: 用 GitHub token 换取 Copilot token
     const copilotTokenResponse = await this.exchangeForCopilotToken(githubToken);
@@ -129,7 +129,7 @@ export class CopilotAuth {
     await this.saveToken(token);
     this.cachedToken = token;
 
-    console.log('✅ GitHub Copilot 登录成功！');
+    console.log('GitHub Copilot login successful!');
     logger.info('GitHub Copilot OAuth login completed');
   }
 
@@ -141,7 +141,7 @@ export class CopilotAuth {
     try {
       await fs.unlink(tokenPath);
       this.cachedToken = null;
-      console.log('✅ 已登出 GitHub Copilot');
+      console.log('Logged out from GitHub Copilot');
       logger.info('GitHub Copilot logout completed');
     } catch (error) {
       // 文件不存在也算登出成功
@@ -192,7 +192,7 @@ export class CopilotAuth {
       throw new Error('No GitHub token available');
     }
 
-    logger.info('🔄 Refreshing Copilot token...');
+    logger.info('Refreshing Copilot token...');
 
     // 用 GitHub token 重新换取 Copilot token
     const copilotTokenResponse = await this.exchangeForCopilotToken(token.githubToken);
@@ -206,7 +206,7 @@ export class CopilotAuth {
     await this.saveToken(newToken);
     this.cachedToken = newToken;
 
-    logger.info('✅ Copilot token refreshed successfully');
+    logger.info('Copilot token refreshed successfully');
   }
 
   /**

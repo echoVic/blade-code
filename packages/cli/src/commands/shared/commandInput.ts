@@ -1,5 +1,6 @@
 import { getPluginRegistry, integrateAllPlugins } from '../../plugins/index.js';
 import { executeSlashCommand, isSlashCommand } from '../../slash-commands/index.js';
+import { getCwd } from '../../utils/cwd.js';
 
 interface MessageLikeOptions {
   message?: string;
@@ -13,7 +14,7 @@ interface ReadCliInputOptions extends MessageLikeOptions {
 
 export async function initializeCliPlugins(): Promise<void> {
   const pluginRegistry = getPluginRegistry();
-  const pluginResult = await pluginRegistry.initialize(process.cwd(), []);
+  const pluginResult = await pluginRegistry.initialize(getCwd(), []);
   if (pluginResult.plugins.length > 0) {
     await integrateAllPlugins();
   }
@@ -51,8 +52,8 @@ export async function normalizeCliInput(input: string): Promise<{
   }
 
   const result = await executeSlashCommand(input, {
-    cwd: process.cwd(),
-    workspaceRoot: process.cwd(),
+    cwd: getCwd(),
+    workspaceRoot: getCwd(),
   });
 
   if (!result.success) {

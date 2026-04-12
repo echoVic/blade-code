@@ -11,6 +11,7 @@ export const enterPlanModeTool = createTool({
   name: 'EnterPlanMode',
   displayName: 'Enter Plan Mode',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: false, // 模式切换，改变状态
 
   schema: z.object({}),
 
@@ -100,45 +101,39 @@ User: "What files handle routing?"
       try {
         const response = await context.confirmationHandler.requestConfirmation({
           type: 'enterPlanMode',
-          message:
-            'The assistant requests to enter Plan mode for this complex task. In Plan mode, the assistant will:\n\n' +
-            '1. Research the codebase thoroughly (read-only)\n' +
-            '2. Understand existing patterns and architecture\n' +
-            '3. Design an implementation approach\n' +
-            '4. Present a detailed plan for your approval\n\n' +
-            'Do you want to enter Plan mode?',
-          details: 'Plan mode enables systematic research before implementation',
+          message: '助手建议先制定实施方案再执行。',
+          details: '规划模式下仅使用只读工具进行调研，完成后提交方案供审核。',
         });
 
         if (response.approved) {
           return {
             success: true,
             llmContent:
-              '✅ User approved entering Plan mode.\n\n' +
+              '[OK] User approved entering Plan mode.\n\n' +
               'You are now in PLAN MODE. Remember:\n' +
               '- Use ONLY read-only tools: Read, Glob, Grep, WebFetch, WebSearch, Task\n' +
               '- DO NOT use Edit, Write, Bash, or any file-modifying tools\n' +
               '- When your research is complete, call ExitPlanMode with your implementation plan\n' +
               '- For pure research questions, answer directly without ExitPlanMode\n\n' +
               'Begin your research now.',
-            displayContent: '✅ Entering Plan mode',
             metadata: {
               approved: true,
               enterPlanMode: true, // Signal to switch to Plan mode
+              summary: '进入 Plan 模式',
             },
           };
         } else {
           return {
             success: true, // Rejection is not an error
             llmContent:
-              '⚠️ User declined to enter Plan mode.\n\n' +
+              '[WARN] User declined to enter Plan mode.\n\n' +
               'Proceed with the task directly without planning phase. ' +
               'You can still use search tools to understand the codebase as needed, ' +
               'but implement the solution directly.',
-            displayContent: '⚠️ Plan mode declined, proceeding directly',
             metadata: {
               approved: false,
               enterPlanMode: false,
+              summary: 'Plan 模式被拒绝',
             },
           };
         }
@@ -146,11 +141,11 @@ User: "What files handle routing?"
         return {
           success: false,
           llmContent: `Confirmation flow error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          displayContent: '❌ Failed to request confirmation',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Confirmation flow error',
           },
+          metadata: { summary: '确认流程出错' },
         };
       }
     }
@@ -162,8 +157,7 @@ User: "What files handle routing?"
         'Plan mode requested but no interactive confirmation available.\n\n' +
         'Proceeding with research phase. Use read-only tools to explore the codebase, ' +
         'then call ExitPlanMode with your implementation plan when ready.',
-      displayContent: 'Plan mode (non-interactive)',
-      metadata: { approved: null, enterPlanMode: true },
+      metadata: { approved: null, enterPlanMode: true, summary: 'Plan 模式（非交互）' },
     };
   },
 });

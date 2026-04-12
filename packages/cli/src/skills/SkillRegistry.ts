@@ -9,10 +9,15 @@ import * as fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import type { PluginSkill } from '../plugins/types.js';
+import { getCwd } from '../utils/cwd.js';
 import {
   getSkillCreatorContent,
   skillCreatorMetadata,
 } from './builtin/skill-creator.js';
+import {
+  getUpdateConfigContent,
+  updateConfigMetadata,
+} from './builtin/update-config.js';
 import { getSkillInstaller } from './SkillInstaller.js';
 import { hasSkillFile, loadSkillContent, loadSkillMetadata } from './SkillLoader.js';
 import type {
@@ -24,14 +29,15 @@ import type {
 
 /**
  * 默认配置
+ * 注意：cwd 不在这里求值，而是在构造函数中延迟求值，
+ * 因为此常量在模块加载阶段就会被执行，那时 setCwd() 可能尚未调用。
  */
-const DEFAULT_CONFIG: Required<SkillRegistryConfig> = {
+const DEFAULT_CONFIG_BASE = {
   userSkillsDir: path.join(homedir(), '.blade', 'skills'),
   projectSkillsDir: '.blade/skills',
   // Claude Code 兼容路径
   claudeUserSkillsDir: path.join(homedir(), '.claude', 'skills'),
   claudeProjectSkillsDir: '.claude/skills',
-  cwd: process.cwd(),
 };
 
 /**
@@ -50,7 +56,7 @@ export class SkillRegistry {
   private initialized = false;
 
   constructor(config?: SkillRegistryConfig) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { ...DEFAULT_CONFIG_BASE, cwd: getCwd(), ...config };
   }
 
   /**
@@ -157,6 +163,11 @@ export class SkillRegistry {
   private loadBuiltinSkills(): void {
     // 注册 skill-creator
     this.skills.set(skillCreatorMetadata.name, skillCreatorMetadata);
+    // 注册 update-config
+    this.skills.set(
+      updateConfigMetadata.name,
+      updateConfigMetadata
+    );
   }
 
   /**
@@ -254,6 +265,8 @@ export class SkillRegistry {
     switch (name) {
       case 'skill-creator':
         return getSkillCreatorContent();
+      case 'update-config':
+        return getUpdateConfigContent();
       default:
         return null;
     }

@@ -48,18 +48,18 @@ function formatDuration(ms: number): string {
 function getStatusIcon(status: string): string {
   switch (status) {
     case 'running':
-      return '⏳';
+      return '[RUNNING]';
     case 'completed':
     case 'exited':
-      return '✅';
+      return '[OK]';
     case 'failed':
     case 'error':
-      return '❌';
+      return '[FAIL]';
     case 'killed':
     case 'cancelled':
-      return '✂️';
+      return '[STOPPED]';
     default:
-      return '❓';
+      return '[?]';
   }
 }
 
@@ -88,12 +88,12 @@ async function tasksHandler(
   // 子命令：clean（清理已完成的任务）
   if (subcommand === 'clean') {
     const cleaned = agentManager.cleanupExpiredSessions(0); // 清理所有已完成
-    ui.sendMessage(`🧹 已清理 ${cleaned} 个已完成的 Agent 会话`);
+    ui.sendMessage(`已清理 ${cleaned} 个已完成的 Agent 会话`);
     return { success: true, message: `Cleaned ${cleaned} agent sessions` };
   }
 
   // 默认：列出所有任务
-  const output: string[] = ['📋 **后台任务列表**\n'];
+  const output: string[] = ['**后台任务列表**\n'];
 
   const shellProcesses = (
     shellManager as unknown as { processes?: Map<string, ShellRow> }
@@ -101,7 +101,7 @@ async function tasksHandler(
   const shells = Array.from(shellProcesses?.values() || []);
 
   if (shells.length > 0) {
-    output.push('### 🐚 Shells\n');
+    output.push('### Shells\n');
     output.push('| ID | 状态 | 命令 | PID | 运行时间 |');
     output.push('|:---|:-----|:-----|:----|:---------|');
 
@@ -122,7 +122,7 @@ async function tasksHandler(
   const agents = agentManager.listAll();
 
   if (agents.length > 0) {
-    output.push('### 🤖 Agents\n');
+    output.push('### Agents\n');
     output.push('| ID | 状态 | 类型 | 描述 | 运行时间 |');
     output.push('|:---|:-----|:-----|:-----|:---------|');
 
@@ -152,7 +152,7 @@ async function tasksHandler(
   }
 
   output.push('\n---');
-  output.push('💡 **命令**:');
+  output.push('**命令**:');
   output.push('- `/tasks` - 列出所有后台任务');
   output.push('- `/tasks clean` - 清理已完成的 Agent 会话');
 

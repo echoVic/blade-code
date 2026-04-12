@@ -106,10 +106,10 @@ We regularly audit dependencies for vulnerabilities:
 
 ```bash
 # Check for vulnerabilities
-pnpm audit
+bun audit
 
 # Update dependencies
-pnpm update
+bun outdated
 ```
 
 ## Changelog

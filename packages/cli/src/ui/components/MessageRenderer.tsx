@@ -22,6 +22,7 @@ import {
 } from '../utils/markdownParser.js';
 import { CodeHighlighter } from './CodeHighlighter.js';
 import { DiffRenderer } from './DiffRenderer.js';
+import { BlockquoteRenderer } from './BlockquoteRenderer.js';
 import { InlineRenderer } from './InlineRenderer.js';
 import { ListItem } from './ListItem.js';
 import { TableRenderer } from './TableRenderer.js';
@@ -57,7 +58,7 @@ const getRoleStyle = (
     case 'assistant':
       return { color: colors.success, prefix: '• ' };
     case 'system':
-      return { color: colors.warning, prefix: '⚙ ' };
+      return { color: colors.warning, prefix: '  ' };
     case 'tool': {
       // 根据 phase 控制前缀（流式显示风格）
       const phase =
@@ -201,7 +202,7 @@ const CommandMessage: React.FC<{ content: string }> = React.memo(({ content }) =
   const theme = useTheme();
   return (
     <Box flexDirection="row" gap={1}>
-      <Text color={theme.colors.info}>⏳</Text>
+      <Text color={theme.colors.info}> </Text>
       <Text color={theme.colors.text.muted} italic>
         {content}
       </Text>
@@ -321,7 +322,7 @@ const ToolDetailRenderer: React.FC<{
  *
  * 只在 pending 状态下截断，避免流式输出时内容超过终端高度导致闪烁
  *
- * 🆕 优化：使用字符级快速截断，避免遍历所有行
+ * NEW: 优化：使用字符级快速截断，避免遍历所有行
  * - 直接从末尾截取估算的字符数
  * - 大幅减少长内容的计算开销
  */
@@ -340,7 +341,7 @@ function truncateContentForHeight(
   const RESERVED_LINES = 8;
   const maxDisplayLines = Math.max(1, availableHeight - RESERVED_LINES);
 
-  // 🆕 快速路径：估算最大字符数，直接从末尾截取
+  // NEW: 快速路径：估算最大字符数，直接从末尾截取
   // 假设每行平均 terminalWidth * 0.8 个字符（考虑换行和短行）
   const avgCharsPerLine = Math.max(40, terminalWidth * 0.8);
   const estimatedMaxChars = maxDisplayLines * avgCharsPerLine;
@@ -446,7 +447,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
             <Box flexDirection="row" flexShrink={0}>
               <Box width={prefixIndent} flexShrink={0} />
               <Text color={theme.colors.text.muted} dimColor>
-                ↑ {hiddenLines} lines above (streaming...)
+                ^ {hiddenLines} lines above (streaming...)
               </Text>
             </Box>
           )}
@@ -669,7 +670,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
           <Box flexDirection="row" flexShrink={0}>
             <Box width={prefixIndent} flexShrink={0} />
             <Text color={theme.colors.text.muted} dimColor>
-              ↑ {hiddenLines} lines above (streaming...)
+              ^ {hiddenLines} lines above (streaming...)
             </Text>
           </Box>
         )}
@@ -729,6 +730,11 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
                   />
                 ) : block.type === 'command-message' ? (
                   <CommandMessage content={block.content} />
+                ) : block.type === 'blockquote' && block.blockquoteLines ? (
+                  <BlockquoteRenderer
+                    lines={block.blockquoteLines}
+                    level={block.blockquoteLevel || 1}
+                  />
                 ) : (
                   <TextBlock content={block.content} />
                 )}

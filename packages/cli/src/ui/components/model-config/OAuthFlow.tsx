@@ -73,7 +73,7 @@ export const OAuthLogin: React.FC<OAuthLoginProps> = ({
 
       {isLoggingIn && (
         <Box marginTop={1}>
-          <Text color="yellow">⏳ 正在启动登录流程...</Text>
+          <Text color="yellow">正在启动登录流程...</Text>
         </Box>
       )}
     </Box>
@@ -88,7 +88,7 @@ interface OAuthModelSelectProps {
 
 const SelectIndicator: React.FC<{ isSelected?: boolean }> = ({ isSelected }) => (
   <Box marginRight={1}>
-    <Text color={isSelected ? 'yellow' : 'gray'}>{isSelected ? '▶' : ' '}</Text>
+    <Text color={isSelected ? 'yellow' : 'gray'}>{isSelected ? '>' : ' '}</Text>
   </Box>
 );
 
@@ -150,7 +150,7 @@ export const OAuthModelSelect: React.FC<OAuthModelSelectProps> = ({
   if (isLoading) {
     return (
       <Box flexDirection="column">
-        <Text color="yellow">⏳ 加载 {provider.name} 模型列表...</Text>
+        <Text color="yellow">加载 {provider.name} 模型列表...</Text>
       </Box>
     );
   }
@@ -159,7 +159,7 @@ export const OAuthModelSelect: React.FC<OAuthModelSelectProps> = ({
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold color="blue">
-          🤖 选择 {provider.name} 模型
+          选择 {provider.name} 模型
         </Text>
       </Box>
 

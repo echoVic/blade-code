@@ -102,9 +102,9 @@ export class CustomCommandParser {
    * 从文件路径提取命令名和命名空间
    *
    * 示例:
-   * - commands/commit.md → { name: 'commit', namespace: undefined }
-   * - commands/frontend/component.md → { name: 'component', namespace: 'frontend' }
-   * - commands/backend/api/handler.md → { name: 'handler', namespace: 'backend/api' }
+   * - commands/commit.md -> { name: 'commit', namespace: undefined }
+   * - commands/frontend/component.md -> { name: 'component', namespace: 'frontend' }
+   * - commands/backend/api/handler.md -> { name: 'handler', namespace: 'backend/api' }
    */
   private extractNameAndNamespace(
     filePath: string,

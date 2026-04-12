@@ -15,6 +15,7 @@ export const getSpecContextTool = createTool({
   name: 'GetSpecContext',
   displayName: 'Get Spec Context',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   schema: z.object({
     includeFiles: z
@@ -50,10 +51,10 @@ export const getSpecContextTool = createTool({
 ## Example Output
 
 \`\`\`
-📋 Spec: user-authentication
-📝 Description: Implement OAuth2 user authentication
-📊 Phase: design (2/4)
-📈 Tasks: 3/8 completed (37%)
+Spec: user-authentication
+Description: Implement OAuth2 user authentication
+Phase: design (2/4)
+Tasks: 3/8 completed (37%)
 
 [File contents and steering docs follow...]
 \`\`\`
@@ -70,11 +71,11 @@ export const getSpecContextTool = createTool({
       return {
         success: false,
         llmContent: 'No active spec. Use EnterSpecMode or /spec load <name> first.',
-        displayContent: '❌ No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
         },
+        metadata: { summary: '无活跃 Spec' },
       };
     }
 
@@ -83,7 +84,7 @@ export const getSpecContextTool = createTool({
       const parts: string[] = [];
 
       // Header
-      parts.push(`# 📋 Spec: ${currentSpec.name}`);
+      parts.push(`# Spec: ${currentSpec.name}`);
       parts.push(`**Description**: ${currentSpec.description}`);
       parts.push(
         `**Phase**: ${PHASE_DISPLAY_NAMES[currentSpec.phase]} (${currentSpec.phase})`
@@ -111,7 +112,7 @@ export const getSpecContextTool = createTool({
         // Blocked tasks
         const blockedTasks = currentSpec.tasks.filter((t) => t.status === 'blocked');
         if (blockedTasks.length > 0) {
-          parts.push(`**⚠️ Blocked**: ${blockedTasks.map((t) => t.title).join(', ')}`);
+          parts.push(`**[WARN] Blocked**: ${blockedTasks.map((t) => t.title).join(', ')}`);
         }
       }
 
@@ -122,7 +123,7 @@ export const getSpecContextTool = createTool({
         const steeringContext = await specManager.getSteeringContextString();
         if (steeringContext) {
           parts.push('---');
-          parts.push('## 📖 Steering Documents');
+          parts.push('## Steering Documents');
           parts.push('');
           parts.push(steeringContext);
           parts.push('');
@@ -143,7 +144,7 @@ export const getSpecContextTool = createTool({
           const content = await fileManager.readSpecFile(currentSpec.name, fileType);
           if (content) {
             parts.push('---');
-            parts.push(`## 📄 ${fileType}.md`);
+            parts.push(`## ${fileType}.md`);
             parts.push('');
             parts.push(content);
             parts.push('');
@@ -154,21 +155,21 @@ export const getSpecContextTool = createTool({
       // Task list summary
       if (currentSpec.tasks.length > 0) {
         parts.push('---');
-        parts.push('## 📝 Task List');
+        parts.push('## Task List');
         parts.push('');
         for (const task of currentSpec.tasks) {
           const statusEmoji = {
-            pending: '⏳',
-            in_progress: '🔄',
-            completed: '✅',
-            blocked: '🚫',
-            skipped: '⏭️',
+            pending: '[WAIT]',
+            in_progress: '[WIP]',
+            completed: '[OK]',
+            blocked: '[BLOCKED]',
+            skipped: '[SKIP]',
           }[task.status];
           parts.push(
             `- ${statusEmoji} **${task.title}** (${task.complexity}) - ${task.status}`
           );
           if (task.description) {
-            parts.push(`  ${task.description}`);
+            parts.push(` ${task.description}`);
           }
         }
       }
@@ -178,24 +179,24 @@ export const getSpecContextTool = createTool({
       return {
         success: true,
         llmContent: fullContent,
-        displayContent: `📋 Spec context: ${currentSpec.name} (${currentSpec.phase})`,
         metadata: {
           featureName: currentSpec.name,
           phase: currentSpec.phase,
           taskProgress: progress,
           filesIncluded: includeFiles,
           steeringIncluded: includeSteering,
+          summary: `Spec 上下文: ${currentSpec.name} (${currentSpec.phase})`,
         },
       };
     } catch (error) {
       return {
         success: false,
         llmContent: `Failed to get spec context: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        displayContent: '❌ Failed to get spec context',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: error instanceof Error ? error.message : 'Read error',
         },
+        metadata: { summary: '获取 Spec 上下文失败' },
       };
     }
   },

@@ -6,7 +6,6 @@ import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
-import type { TodoItem } from '../tools/builtin/todo/types.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../tools/types/ToolTypes.js';
 
@@ -85,12 +84,13 @@ export interface AgentResponse {
 /**
  * Agentic Loop 选项
  *
- * 职责：控制循环行为和监听循环事件
+ * 职责：控制循环行为
  * - 循环控制参数（maxTurns, autoCompact 等）
- * - 循环过程中的事件回调（onTurnStart, onToolResult 等）
+ * - 行为回调（onToolApprove, onToolResult, onTurnLimitReached）
  *
  * 设计原则：
- * - 所有循环相关的回调统一放在这里，保持语义一致性
+ * - Phase 4 完成：事件通知回调已移除，消费者通过 chatStream() + LoopEvent 获取事件
+ * - 保留的回调都是 behavioral（影响循环控制流），不是 notification
  * - 和 ChatContext 职责分离：LoopOptions = 行为控制，ChatContext = 数据状态
  */
 export interface LoopOptions {
@@ -100,40 +100,15 @@ export interface LoopOptions {
   signal?: AbortSignal;
   stream?: boolean;
 
-  // 循环事件回调（监听循环过程）
-  onTurnStart?: (data: { turn: number; maxTurns: number }) => void;
+  // 行为回调（影响循环控制流，不是事件通知）
+  /** 工具审批门控 - 返回 false 阻止工具执行 */
   onToolApprove?: (toolCall: ChatCompletionMessageToolCall) => Promise<boolean>;
+  /** 工具结果后处理 - 可修改/替换工具结果 */
   onToolResult?: (
     toolCall: ChatCompletionMessageToolCall,
     result: ToolResult
   ) => Promise<ToolResult | void>;
-
-  // 🆕 流式信息显示回调
-  onContentDelta?: (delta: string) => void; // 流式文本片段
-  onThinkingDelta?: (delta: string) => void; // 流式推理内容片段（Thinking 模型）
-  onStreamEnd?: () => void; // 流式输出结束信号（用于 finalize 流式消息）
-  onContent?: (content: string) => void; // 完整的 LLM 输出内容（仅非流式模式）
-  onThinking?: (content: string) => void; // LLM 推理过程(深度推理模型)
-  onToolStart?: (
-    toolCall: ChatCompletionMessageToolCall,
-    toolKind?: 'readonly' | 'write' | 'execute'
-  ) => void; // 工具调用开始，toolKind 表示工具类型
-
-  // Token 使用量回调
-  onTokenUsage?: (usage: {
-    inputTokens: number; // 当前轮 prompt tokens
-    outputTokens: number; // 当前轮 completion tokens
-    totalTokens: number; // 累计总 tokens
-    maxContextTokens: number; // 上下文窗口大小
-  }) => void;
-
-  // 压缩状态回调
-  onCompacting?: (isCompacting: boolean) => void;
-
-  // Todo 列表更新回调（用于 ACP plan 更新）
-  onTodoUpdate?: (todos: TodoItem[]) => void;
-
-  // 轮次限制回调（100 轮后询问用户是否继续）
+  /** 轮次限制决策 - 达到上限时询问是否继续 */
   onTurnLimitReached?: (data: { turnsCount: number }) => Promise<TurnLimitResponse>;
 }
 
@@ -170,5 +145,6 @@ export interface LoopResult {
     shouldExitLoop?: boolean; // ExitPlanMode 或用户拒绝时设置此标记以退出循环
     targetMode?: PermissionMode; // Plan 模式批准后的目标权限模式
     planContent?: string; // Plan 模式批准后的方案内容
+    outputTruncated?: boolean; // finishReason === 'length' 且 recovery 达上限时标记截断
   };
 }

@@ -25,6 +25,7 @@ import TextInput from 'ink-text-input';
 import { useEffect, useState } from 'react';
 import { Agent } from '../../agent/Agent.js';
 import type { SubagentColor } from '../../agent/subagents/types.js';
+import { getCwd } from '../../utils/cwd.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 interface AgentCreationWizardProps {
@@ -59,26 +60,26 @@ type WizardStep =
 
 // 可用工具列表
 const AVAILABLE_TOOLS = [
-  { label: '🔍 Glob - 文件搜索', value: 'Glob' },
-  { label: '🔎 Grep - 内容搜索', value: 'Grep' },
-  { label: '📖 Read - 读取文件', value: 'Read' },
-  { label: '✍️  Write - 写入文件', value: 'Write' },
-  { label: '✏️  Edit - 编辑文件', value: 'Edit' },
-  { label: '💻 Bash - 执行命令', value: 'Bash' },
-  { label: '✅ 所有工具 (不限制)', value: 'all' },
+  { label: 'Glob - 文件搜索', value: 'Glob' },
+  { label: 'Grep - 内容搜索', value: 'Grep' },
+  { label: 'Read - 读取文件', value: 'Read' },
+  { label: 'Write - 写入文件', value: 'Write' },
+  { label: 'Edit - 编辑文件', value: 'Edit' },
+  { label: 'Bash - 执行命令', value: 'Bash' },
+  { label: '所有工具 (不限制)', value: 'all' },
 ];
 
 // 可用颜色
 const AVAILABLE_COLORS: Array<{ label: string; value: SubagentColor | 'none' }> = [
-  { label: '🔴 红色 (red)', value: 'red' },
-  { label: '🔵 蓝色 (blue)', value: 'blue' },
-  { label: '🟢 绿色 (green)', value: 'green' },
-  { label: '🟡 黄色 (yellow)', value: 'yellow' },
-  { label: '🟣 紫色 (purple)', value: 'purple' },
-  { label: '🟠 橙色 (orange)', value: 'orange' },
-  { label: '🩷 粉色 (pink)', value: 'pink' },
-  { label: '🩵 青色 (cyan)', value: 'cyan' },
-  { label: '⚪ 不设置颜色', value: 'none' },
+  { label: '红色 (red)', value: 'red' },
+  { label: '蓝色 (blue)', value: 'blue' },
+  { label: '绿色 (green)', value: 'green' },
+  { label: '黄色 (yellow)', value: 'yellow' },
+  { label: '紫色 (purple)', value: 'purple' },
+  { label: '橙色 (orange)', value: 'orange' },
+  { label: '粉色 (pink)', value: 'pink' },
+  { label: '青色 (cyan)', value: 'cyan' },
+  { label: '不设置颜色', value: 'none' },
 ];
 
 /**
@@ -304,7 +305,7 @@ export function AgentCreationWizard({
       // 确定保存路径
       const baseDir =
         config.location === 'project'
-          ? path.join(process.cwd(), '.blade', 'agents')
+          ? path.join(getCwd(), '.blade', 'agents')
           : path.join(os.homedir(), '.blade', 'agents');
 
       // 确保目录存在
@@ -375,7 +376,7 @@ export function AgentCreationWizard({
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            🎯 选择创建方式
+            选择创建方式
           </Text>
         </Box>
         <Box marginBottom={1}>
@@ -384,10 +385,10 @@ export function AgentCreationWizard({
         <SelectInput
           items={[
             {
-              label: '🤖 AI 智能生成 - 根据描述自动生成完整配置',
+              label: 'AI 智能生成 - 根据描述自动生成完整配置',
               value: 'ai',
             },
-            { label: '✍️  手动配置 - 逐步配置每个选项', value: 'manual' },
+            { label: '手动配置 - 逐步配置每个选项', value: 'manual' },
           ]}
           onSelect={(item) => {
             if (item.value === 'ai') {
@@ -412,7 +413,7 @@ export function AgentCreationWizard({
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            🤖 AI 智能生成
+            AI 智能生成
           </Text>
         </Box>
         <Box marginBottom={1}>
@@ -448,7 +449,7 @@ export function AgentCreationWizard({
         <Box flexDirection="column" paddingY={1}>
           <Box marginBottom={1}>
             <Text bold color="red">
-              ❌ AI 生成失败
+              AI 生成失败
             </Text>
           </Box>
           <Box marginBottom={1}>
@@ -486,7 +487,7 @@ export function AgentCreationWizard({
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            📝 Step 1/7: {isEditMode ? 'Agent 名称（不可修改）' : '输入 Agent 名称'}
+            Step 1/7: {isEditMode ? 'Agent 名称（不可修改）' : '输入 Agent 名称'}
           </Text>
         </Box>
         <Box marginBottom={1}>
@@ -541,7 +542,7 @@ export function AgentCreationWizard({
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            📝 Step 2/7: 输入描述信息
+            Step 2/7: 输入描述信息
           </Text>
         </Box>
         <Box marginBottom={1}>
@@ -587,7 +588,7 @@ export function AgentCreationWizard({
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            🎨 Step 4/7: 选择背景颜色
+            Step 4/7: 选择背景颜色
           </Text>
         </Box>
         <Box marginBottom={1}>
@@ -617,7 +618,7 @@ export function AgentCreationWizard({
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            📂 Step 5/7: 选择保存位置
+            Step 5/7: 选择保存位置
           </Text>
         </Box>
         <Box marginBottom={1}>
@@ -626,11 +627,11 @@ export function AgentCreationWizard({
         <SelectInput
           items={[
             {
-              label: '📁 项目级 (.blade/agents/) - 仅当前项目',
+              label: '项目级 (.blade/agents/) - 仅当前项目',
               value: 'project',
             },
             {
-              label: '🏠 用户级 (~/.blade/agents/) - 全局可用',
+              label: '用户级 (~/.blade/agents/) - 全局可用',
               value: 'user',
             },
           ]}
@@ -652,7 +653,7 @@ export function AgentCreationWizard({
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            💬 Step 6/7: 输入系统提示词
+            Step 6/7: 输入系统提示词
           </Text>
         </Box>
         <Box marginBottom={1}>
@@ -679,7 +680,7 @@ export function AgentCreationWizard({
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            ✅ Step 7/7: 确认配置
+            Step 7/7: 确认配置
           </Text>
         </Box>
 
@@ -728,9 +729,9 @@ export function AgentCreationWizard({
 
         <SelectInput
           items={[
-            { label: '✅ 确认并保存', value: 'save' },
-            { label: '⬅️  返回上一步', value: 'back' },
-            { label: '❌ 取消', value: 'cancel' },
+            { label: '确认并保存', value: 'save' },
+            { label: '返回上一步', value: 'back' },
+            { label: '取消', value: 'cancel' },
           ]}
           onSelect={(item) => {
             if (item.value === 'save') {
@@ -792,7 +793,7 @@ function ToolsSelectionStep({
     <Box flexDirection="column" paddingY={1}>
       <Box marginBottom={1}>
         <Text bold color="cyan">
-          🔧 Step 3/7: 选择可用工具
+          Step 3/7: 选择可用工具
         </Text>
       </Box>
       <Box marginBottom={1}>

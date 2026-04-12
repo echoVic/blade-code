@@ -89,7 +89,6 @@ export const editTool = createTool({
           return {
             success: false,
             llmContent: `File not found: ${file_path}`,
-            displayContent: `❌ 文件不存在: ${file_path}`,
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
               message: `文件不存在`,
@@ -112,7 +111,6 @@ export const editTool = createTool({
           return {
             success: false,
             llmContent: `You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.`,
-            displayContent: `📖 我需要先读取文件内容，然后再进行编辑。`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File not read before edit',
@@ -123,13 +121,12 @@ export const editTool = createTool({
           };
         }
 
-        // 🔴 检查文件是否被外部程序修改
+        // 检查文件是否被外部程序修改
         const externalModCheck = await tracker.checkExternalModification(file_path);
         if (externalModCheck.isExternal) {
           return {
             success: false,
             llmContent: `The file has been modified by an external program since you last read it. You must use the Read tool again to see the current content before editing.\n\nDetails: ${externalModCheck.message}`,
-            displayContent: `❌ 编辑失败：文件已被外部程序修改\n\n${externalModCheck.message}\n\n💡 我需要重新读取文件内容后再编辑`,
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'File modified externally',
@@ -156,7 +153,6 @@ export const editTool = createTool({
         return {
           success: false,
           llmContent: 'New string is identical; no replacement needed',
-          displayContent: '⚠️ 新字符串与旧字符串相同，无需进行替换',
           error: {
             type: ToolErrorType.VALIDATION_ERROR,
             message: '新旧字符串相同',
@@ -168,13 +164,12 @@ export const editTool = createTool({
       const matchResult = smartMatch(content, old_string);
 
       if (!matchResult.matched) {
-        // 🔥 生成富文本错误信息,帮助 LLM 快速恢复
+        // 生成富文本错误信息,帮助 LLM 快速恢复
         const errorDetails = generateRichErrorMessage(content, old_string, file_path);
 
         return {
           success: false,
           llmContent: errorDetails.llmContent,
-          displayContent: errorDetails.displayContent,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '未找到匹配内容',
@@ -193,7 +188,7 @@ export const editTool = createTool({
       // 使用实际匹配的字符串查找所有位置（传入已匹配的字符串，避免重复 smartMatch）
       const matches = findMatchesWithActual(content, actualString);
 
-      // 🔴 对齐 Claude Code 官方：多重匹配时直接失败
+      // 对齐 Claude Code 官方：多重匹配时直接失败
       if (matches.length > 1 && !replace_all) {
         // 计算每个匹配项的行号和上下文预览
         const lines = content.split('\n');
@@ -230,10 +225,10 @@ export const editTool = createTool({
 
         // LLM 友好的错误消息（引导性、鼓励重试）
         const llmMessage = [
-          `⚠️  EDIT PAUSED: old_string matches ${matches.length} locations (must be unique).`,
+          `[WARN] EDIT PAUSED: old_string matches ${matches.length} locations (must be unique).`,
           ``,
           `**Matches found at:**`,
-          ...matchLocations.map((loc, idx) => `  ${idx + 1}. Line ${loc.line}`),
+          ...matchLocations.map((loc, idx) => ` ${idx + 1}. Line ${loc.line}`),
           ``,
           `**Action Required:** Add 3-5 lines of surrounding context to make old_string unique.`,
           ``,
@@ -243,32 +238,13 @@ export const editTool = createTool({
           `• Include unique comments or variable names nearby`,
           `• Or use replace_all=true to change all ${matches.length} occurrences`,
           ``,
-          `🤖 **Auto-retry expected** - This usually resolves in 1-2 attempts.`,
-        ].join('\n');
-
-        // 用户友好的显示消息（清晰、鼓励性）
-        const displayMessage = [
-          `⚠️  编辑暂停：需要更精确的定位`,
-          ``,
-          `在文件中找到 ${matches.length} 处相似代码：`,
-          ...matchLocations.map(
-            (loc, idx) => `  • 第 ${loc.line} 行 (匹配 ${idx + 1}/${matches.length})`
-          ),
-          ``,
-          `AI 正在自动调整，添加更多上下文以精确定位...`,
-          `通常需要 1-2 次尝试即可成功`,
-          ``,
-          `💡 如果多次失败，可能需要：`,
-          `   • 包含函数/类名等独特标识符`,
-          `   • 添加目标代码前后 3-5 行完整上下文`,
-          `   • 或使用 replace_all=true 同时替换所有 ${matches.length} 处匹配`,
+          `**Auto-retry expected** - This usually resolves in 1-2 attempts.`,
         ].join('\n');
 
         // 直接失败（对齐 Claude Code 官方行为）
         return {
           success: false,
           llmContent: llmMessage,
-          displayContent: displayMessage,
           error: {
             type: ToolErrorType.VALIDATION_ERROR,
             message: 'old_string is not unique',
@@ -313,7 +289,7 @@ export const editTool = createTool({
       }
       await fsService.writeTextFile(file_path, newContent);
 
-      // 🔴 更新文件访问记录（记录编辑操作）
+      // 更新文件访问记录（记录编辑操作）
       if (sessionId) {
         const tracker = FileAccessTracker.getInstance();
         await tracker.recordFileEdit(file_path, sessionId, 'edit');
@@ -360,8 +336,6 @@ export const editTool = createTool({
         newContent: newContent,
       };
 
-      const displayMessage = formatDisplayMessage(metadata, diffSnippet);
-
       return {
         success: true,
         llmContent: {
@@ -369,7 +343,6 @@ export const editTool = createTool({
           replacements: replacedCount,
           total_matches: matches.length,
         },
-        displayContent: displayMessage,
         metadata,
       };
     } catch (error) {
@@ -378,7 +351,6 @@ export const editTool = createTool({
         return {
           success: false,
           llmContent: 'File edit aborted',
-          displayContent: '⚠️ 文件编辑被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '操作被中止',
@@ -389,7 +361,6 @@ export const editTool = createTool({
       return {
         success: false,
         llmContent: `File edit failed: ${nodeError.message}`,
-        displayContent: `❌ 编辑文件失败: ${nodeError.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: nodeError.message,
@@ -426,10 +397,10 @@ export const editTool = createTool({
  */
 function normalizeQuotes(text: string): string {
   return text
-    .replaceAll('\u2018', "'") // ' → '
-    .replaceAll('\u2019', "'") // ' → '
-    .replaceAll('\u201c', '"') // " → "
-    .replaceAll('\u201d', '"'); // " → "
+    .replaceAll('\u2018', "'") // ' -> '
+    .replaceAll('\u2019', "'") // ' -> '
+    .replaceAll('\u201c', '"') // " -> "
+    .replaceAll('\u201d', '"'); // " -> "
 }
 
 /**
@@ -522,37 +493,6 @@ function findMatchesWithActual(content: string, actualString: string): number[] 
 // diff 生成函数已移动到 diffUtils.ts，供 Edit 和 Write 工具共享
 
 /**
- * 格式化显示消息
- */
-function formatDisplayMessage(
-  metadata: EditMetadata,
-  diffSnippet?: string | null
-): string {
-  const { file_path, matches_found, replacements_made, replace_all, size_diff } =
-    metadata;
-
-  let message = `✅ 成功编辑文件: ${file_path}`;
-  message += `\n📝 替换了 ${replacements_made} 个匹配项`;
-
-  if (!replace_all && matches_found > 1) {
-    message += ` (共找到 ${matches_found} 个匹配项)`;
-  }
-
-  if (size_diff !== 0) {
-    const sizeChange =
-      size_diff > 0 ? `增加${size_diff}` : `减少${Math.abs(size_diff)}`;
-    message += `\n📊 文件大小${sizeChange}个字符`;
-  }
-
-  // 添加差异片段
-  if (diffSnippet) {
-    message += diffSnippet;
-  }
-
-  return message;
-}
-
-/**
  * 生成富文本错误信息
  * 当 Edit 工具匹配失败时,提供详细的上下文和恢复建议
  */
@@ -562,7 +502,6 @@ function generateRichErrorMessage(
   filePath: string
 ): {
   llmContent: string;
-  displayContent: string;
   metadata: EditErrorMetadata;
 } {
   const lines = fileContent.split('\n');
@@ -586,7 +525,7 @@ function generateRichErrorMessage(
   const excerpt = excerptLines
     .map((line, idx) => {
       const lineNum = excerptStartLine + idx + 1;
-      return `    ${lineNum.toString().padStart(4)}: ${line}`;
+      return ` ${lineNum.toString().padStart(4)}: ${line}`;
     })
     .join('\n');
 
@@ -619,7 +558,7 @@ Total lines: ${totalLines}
     fuzzyMatches.forEach((match, idx) => {
       const preview =
         match.text.length > 100 ? match.text.substring(0, 100) + '...' : match.text;
-      llmContent += `  ${idx + 1}. Line ${match.lineNumber} (similarity: ${Math.round(match.similarity * 100)}%)\n     ${preview.replace(/\n/g, '\\n')}\n`;
+      llmContent += ` ${idx + 1}. Line ${match.lineNumber} (similarity: ${Math.round(match.similarity * 100)}%)\n ${preview.replace(/\n/g, '\\n')}\n`;
     });
     llmContent += '\n';
   }
@@ -637,31 +576,8 @@ Common issues:
 - Smart quotes: " " vs " (use straight quotes)
 - Outdated mental model: File may have changed since you last read it`;
 
-  // 4. 生成用户可读的显示信息
-  let displayContent = `❌ Edit 失败: 未找到匹配的字符串
-
-文件: ${filePath}
-搜索字符串长度: ${searchString.length} 字符
-`;
-
-  if (fuzzyMatches.length > 0) {
-    displayContent += `\n💡 找到 ${fuzzyMatches.length} 个相似匹配项:\n`;
-    fuzzyMatches.forEach((match, idx) => {
-      displayContent += `  ${idx + 1}. 第 ${match.lineNumber} 行 (相似度: ${Math.round(match.similarity * 100)}%)\n`;
-    });
-  } else {
-    displayContent += '\n⚠️ 未找到相似的匹配项\n';
-  }
-
-  displayContent += `\n📄 文件内容摘录 (${excerptStartLine + 1}-${excerptEndLine} 行):\n${excerpt}\n`;
-  displayContent += `\n🔧 接下来我会:\n`;
-  displayContent += `  1. 重新读取文件内容\n`;
-  displayContent += `  2. 仔细核对空格、换行符、引号\n`;
-  displayContent += `  3. 使用更多上下文代码确保唯一性`;
-
   return {
     llmContent,
-    displayContent,
     metadata: {
       searchStringLength: searchString.length,
       fuzzyMatches: fuzzyMatches.map((m) => ({
@@ -732,9 +648,9 @@ function calculateSimilarity(str1: string, str2: string): number {
     s
       .trim()
       .replace(/\s+/g, ' ')
-      // 统一智能双引号 (\u201c \u201d) 和直引号 (") → "
+      // 统一智能双引号 (\u201c \u201d) 和直引号 (") -> "
       .replace(/[\u201c\u201d"]/g, '"')
-      // 统一智能单引号 (\u2018 \u2019) 和直引号 (') → '
+      // 统一智能单引号 (\u2018 \u2019) 和直引号 (') -> '
       .replace(/[\u2018\u2019']/g, "'");
 
   const s1 = normalize(str1);

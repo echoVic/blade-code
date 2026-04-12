@@ -23,7 +23,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.11
 
       - name: Verify Bun runtime
         run: bun --version
@@ -33,41 +33,26 @@ jobs:
         with:
           node-version: "20.x"
 
-      - name: Install pnpm
-        run: npm install -g pnpm@9
-
-      - name: Get pnpm store directory
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build CLI package
-        run: pnpm build:cli
+        run: bun run build:cli
 
       - name: Run CLI type check
-        run: pnpm type-check
+        run: bun run type-check
 
       - name: Run web type check
-        run: pnpm type-check:web
+        run: bun run type-check:web
 
       - name: Run web session lint
-        run: pnpm lint:web
+        run: bun run lint:web
 
       - name: Run web regression tests
-        run: pnpm test:web
+        run: bun run test:web
 
       - name: Build all packages
-        run: pnpm build
+        run: bun run build
 
   core-headless-gate:
     name: Headless Core Gate
@@ -80,7 +65,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.11
 
       - name: Verify Bun runtime
         run: bun --version
@@ -90,29 +75,14 @@ jobs:
         with:
           node-version: "20.x"
 
-      - name: Install pnpm
-        run: npm install -g pnpm@9
-
-      - name: Get pnpm store directory
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build CLI package
-        run: pnpm build:cli
+        run: bun run build:cli
 
       - name: Run headless core regression suite
-        run: pnpm test:headless-core
+        run: bun run test:headless-core
 
   coverage:
     name: Test Coverage
@@ -126,7 +96,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.11
 
       - name: Verify Bun runtime
         run: bun --version
@@ -136,29 +106,14 @@ jobs:
         with:
           node-version: "20.x"
 
-      - name: Install pnpm
-        run: npm install -g pnpm@9
-
-      - name: Get pnpm store directory
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build CLI package
-        run: pnpm build:cli
+        run: bun run build:cli
 
       - name: Run tests with coverage
-        run: pnpm --filter blade-code test:coverage
+        run: bun run --filter blade-code test:coverage
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -189,7 +144,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.11
 
       - name: Verify Bun runtime
         run: bun --version
@@ -199,32 +154,17 @@ jobs:
         with:
           node-version: "20.x"
 
-      - name: Install pnpm
-        run: npm install -g pnpm@9
-
-      - name: Get pnpm store directory
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build CLI package
-        run: pnpm build:cli
+        run: bun run build:cli
 
       - name: Run security tests
-        run: pnpm --filter blade-code test:security
+        run: bun run --filter blade-code test:security
 
-      - name: Run npm audit
-        run: pnpm audit --audit-level=high || true
+      - name: Run Bun audit
+        run: bun audit --audit-level=high || true
 
   cross-platform-smoke:
     name: Cross Platform Smoke (${{ matrix.os }})
@@ -240,7 +180,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.11
 
       - name: Verify Bun runtime
         run: bun --version
@@ -250,29 +190,14 @@ jobs:
         with:
           node-version: "20.x"
 
-      - name: Install pnpm
-        run: npm install -g pnpm@9
-
-      - name: Get pnpm store directory
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build all packages
-        run: pnpm build
+        run: bun run build
 
       - name: Test CLI help
-        run: pnpm --filter blade-code start -- --help
+        run: bun run --filter blade-code start -- --help
 
       - name: Test headless help
-        run: pnpm --filter blade-code start -- --headless /help
+        run: bun run --filter blade-code start -- --headless /help

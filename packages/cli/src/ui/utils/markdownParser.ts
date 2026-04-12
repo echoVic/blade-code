@@ -6,6 +6,7 @@
 export const MARKDOWN_PATTERNS = {
   codeBlock: /^```(\w+)?\s*$/,
   heading: /^ *(#{1,4}) +(.+)/,
+  blockquote: /^(>+)\s?(.*)/,
   ulItem: /^([ \t]*)([-*+]) +(.+)/,
   olItem: /^([ \t]*)(\d+)\. +(.+)/,
   hr: /^ *([-*_] *){3,} *$/,
@@ -26,7 +27,8 @@ export interface ParsedBlock {
     | 'hr'
     | 'empty'
     | 'diff'
-    | 'command-message';
+    | 'command-message'
+    | 'blockquote';
   content: string;
   language?: string;
   level?: number;
@@ -42,6 +44,8 @@ export interface ParsedBlock {
     startLine: number;
     matchLine: number;
   };
+  blockquoteLevel?: number;
+  blockquoteLines?: string[];
 }
 
 /**
@@ -50,7 +54,6 @@ export interface ParsedBlock {
  * 嵌套代码块处理策略：
  * - 使用嵌套深度计数器跟踪代码块层级
  * - 只有当深度归零时才真正结束代码块
- * - `markdown` 语言的代码块会被"解包"，其内容作为普通 markdown 重新解析
  */
 export function parseMarkdown(content: string): ParsedBlock[] {
   const blocks: ParsedBlock[] = [];
@@ -67,6 +70,10 @@ export function parseMarkdown(content: string): ParsedBlock[] {
 
   let inDiff = false;
   let diffContent: string[] = [];
+
+  let inBlockquote = false;
+  let blockquoteLines: string[] = [];
+  let blockquoteLevel = 0;
 
   let lastLineEmpty = true;
 
@@ -131,20 +138,11 @@ export function parseMarkdown(content: string): ParsedBlock[] {
           // 最外层代码块结束
           const codeContent = codeBlockContent.join('\n');
 
-          // 特殊处理 markdown 语言的代码块：解包并递归解析
-          if (
-            codeBlockLang?.toLowerCase() === 'markdown' ||
-            codeBlockLang?.toLowerCase() === 'md'
-          ) {
-            const innerBlocks = parseMarkdown(codeContent);
-            blocks.push(...innerBlocks);
-          } else {
-            blocks.push({
-              type: 'code',
-              content: codeContent,
-              language: codeBlockLang || undefined,
-            });
-          }
+          blocks.push({
+            type: 'code',
+            content: codeContent,
+            language: codeBlockLang || undefined,
+          });
 
           inCodeBlock = false;
           codeBlockContent = [];
@@ -225,6 +223,46 @@ export function parseMarkdown(content: string): ParsedBlock[] {
       inTable = false;
       tableHeaders = [];
       tableRows = [];
+    }
+
+    // Blockquote 处理
+    const blockquoteMatch = line.match(MARKDOWN_PATTERNS.blockquote);
+    if (blockquoteMatch) {
+      const level = blockquoteMatch[1].length;
+      const text = blockquoteMatch[2] || '';
+
+      if (inBlockquote && level === blockquoteLevel) {
+        // 同一层级，继续收集
+        blockquoteLines.push(text);
+      } else {
+        // 层级变化或新 blockquote：先关闭旧的
+        if (inBlockquote) {
+          blocks.push({
+            type: 'blockquote',
+            content: blockquoteLines.join('\n'),
+            blockquoteLevel,
+            blockquoteLines: [...blockquoteLines],
+          });
+        }
+        inBlockquote = true;
+        blockquoteLevel = level;
+        blockquoteLines = [text];
+      }
+      lastLineEmpty = false;
+      continue;
+    }
+
+    // 非 blockquote 行：关闭之前的 blockquote
+    if (inBlockquote) {
+      blocks.push({
+        type: 'blockquote',
+        content: blockquoteLines.join('\n'),
+        blockquoteLevel,
+        blockquoteLines: [...blockquoteLines],
+      });
+      inBlockquote = false;
+      blockquoteLines = [];
+      blockquoteLevel = 0;
     }
 
     // 标题
@@ -313,20 +351,11 @@ export function parseMarkdown(content: string): ParsedBlock[] {
   if (inCodeBlock) {
     const codeContent = codeBlockContent.join('\n');
 
-    // 特殊处理 markdown 语言的代码块：解包并递归解析
-    if (
-      codeBlockLang?.toLowerCase() === 'markdown' ||
-      codeBlockLang?.toLowerCase() === 'md'
-    ) {
-      const innerBlocks = parseMarkdown(codeContent);
-      blocks.push(...innerBlocks);
-    } else {
-      blocks.push({
-        type: 'code',
-        content: codeContent,
-        language: codeBlockLang || undefined,
-      });
-    }
+    blocks.push({
+      type: 'code',
+      content: codeContent,
+      language: codeBlockLang || undefined,
+    });
   }
 
   // 处理未闭合的表格
@@ -335,6 +364,16 @@ export function parseMarkdown(content: string): ParsedBlock[] {
       type: 'table',
       content: '',
       tableData: { headers: tableHeaders, rows: tableRows },
+    });
+  }
+
+  // 处理未闭合的 blockquote
+  if (inBlockquote && blockquoteLines.length > 0) {
+    blocks.push({
+      type: 'blockquote',
+      content: blockquoteLines.join('\n'),
+      blockquoteLevel,
+      blockquoteLines: [...blockquoteLines],
     });
   }
 

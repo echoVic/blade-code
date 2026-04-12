@@ -9,14 +9,16 @@ import { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { configActions, getConfig } from '../../store/vanilla.js';
+import { getCwd } from '../../utils/cwd.js';
+import { isReadOnlyBashCommand } from '../../utils/shell/readOnlyValidation.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
-import type { SessionApprovalStore } from './SessionApprovalStore.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
-import { isReadOnlyKind, ToolKind } from '../types/index.js';
+import { isReadOnlyKind, ToolErrorType, ToolKind } from '../types/index.js';
 import {
   SensitiveFileDetector,
   SensitivityLevel,
 } from '../validation/SensitiveFileDetector.js';
+import type { SessionApprovalStore } from './SessionApprovalStore.js';
 
 const logger = createLogger(LogCategory.EXECUTION);
 
@@ -52,7 +54,7 @@ export class PermissionStage implements PipelineStage {
   readonly name = 'permission';
   private permissionChecker: PermissionChecker;
   private readonly sessionApprovals: SessionApprovalStore;
-  // 🔧 重命名为 defaultPermissionMode，作为回退值
+  // 重命名为 defaultPermissionMode，作为回退值
   // 实际权限检查时优先使用 execution.context.permissionMode（动态值）
   private readonly defaultPermissionMode: PermissionMode;
 
@@ -99,6 +101,26 @@ export class PermissionStage implements PipelineStage {
 
       // 使用 PermissionChecker 进行权限检查
       let checkResult = this.permissionChecker.check(descriptor);
+
+      // 语义分析保底：仅当命令未匹配任何显式规则（默认 ASK）时，
+      // 才尝试通过只读分析自动放行。
+      // 如果用户显式配置了 ask 规则（matchedRule 存在），尊重用户意图，不覆盖。
+      // 位置：在 deny 规则之后（deny 已在 check() 中处理），在 applyModeOverrides 之前
+      if (
+        checkResult.result === PermissionResult.ASK &&
+        !checkResult.matchedRule &&
+        tool.name === 'Bash' &&
+        typeof execution.params.command === 'string'
+      ) {
+        if (isReadOnlyBashCommand(execution.params.command)) {
+          checkResult = {
+            result: PermissionResult.ALLOW,
+            matchedRule: 'builtin:read-only-command',
+            reason: 'Command classified as read-only, auto-approved',
+          };
+        }
+      }
+
       // 从 execution.context 动态读取 permissionMode（现在是强类型 PermissionMode）
       // 这样 Shift+Tab 切换模式或 approve 后切换模式都能正确生效
       const currentPermissionMode =
@@ -314,13 +336,8 @@ export class ConfirmationStage implements PipelineStage {
   }
 
   async process(execution: ToolExecution): Promise<void> {
-    const {
-      tool,
-      invocation,
-      needsConfirmation,
-      confirmationReason,
-      permissionCheckResult,
-    } = execution._internal;
+    const { tool, invocation, needsConfirmation, confirmationReason } =
+      execution._internal;
 
     if (!tool || !invocation) {
       execution.abort('Pre-confirmation stage failed; cannot request user approval');
@@ -347,7 +364,7 @@ export class ConfirmationStage implements PipelineStage {
           execution.context.sessionId || 'unknown',
           execution.params,
           {
-            projectDir: process.cwd(),
+            projectDir: getCwd(),
             sessionId: execution.context.sessionId || 'unknown',
             permissionMode: execution.context.permissionMode || PermissionMode.DEFAULT,
           }
@@ -377,15 +394,11 @@ export class ConfirmationStage implements PipelineStage {
 
       // 从权限检查结果构建确认详情
       const confirmationDetails = {
-        title: `权限确认: ${signature}`,
+        title: signature,
         message: confirmationReason || '此操作需要用户确认',
         kind: tool.kind, // 工具类型，用于 ACP 权限模式判断
         details: this.generatePreviewForTool(tool.name, execution.params),
-        risks: this.extractRisksFromPermissionCheck(
-          tool,
-          execution.params,
-          permissionCheckResult
-        ),
+        risks: this.extractRisksFromPermissionCheck(tool, execution.params),
         affectedFiles: invocation.getAffectedPaths() || [],
       };
 
@@ -402,13 +415,17 @@ export class ConfirmationStage implements PipelineStage {
         logger.info(`[ConfirmationStage] Requesting confirmation for ${tool.name}`);
         const response =
           await confirmationHandler.requestConfirmation(confirmationDetails);
-        logger.info(`[ConfirmationStage] Confirmation response: approved=${response.approved}`);
+        logger.info(
+          `[ConfirmationStage] Confirmation response: approved=${response.approved}`
+        );
 
         if (!response.approved) {
-          execution.abort(
-            `User rejected execution: ${response.reason || 'No reason provided'}`,
-            { shouldExitLoop: true }
-          );
+          execution.abort(response.reason || '用户拒绝授权', {
+            shouldExitLoop: true,
+            llmContent: '已取消工具执行',
+            summary: '已取消工具执行',
+            errorType: ToolErrorType.PERMISSION_DENIED,
+          });
           return;
         }
         logger.info(`[ConfirmationStage] User approved, continuing to execution stage`);
@@ -431,7 +448,7 @@ export class ConfirmationStage implements PipelineStage {
       } else {
         // 如果没有提供 confirmationHandler,则自动通过确认（用于非交互式环境）
         logger.warn(
-          '⚠️ No ConfirmationHandler; auto-approving tool execution (non-interactive environment only)'
+          '[WARN] No ConfirmationHandler; auto-approving tool execution (non-interactive environment only)'
         );
       }
     } catch (error) {
@@ -534,47 +551,23 @@ export class ConfirmationStage implements PipelineStage {
    */
   private extractRisksFromPermissionCheck(
     tool: { name: string },
-    params: Record<string, unknown>,
-    permissionCheckResult?: { reason?: string }
+    params: Record<string, unknown>
   ): string[] {
     const risks: string[] = [];
-
-    // 添加权限检查的原因作为风险
-    if (permissionCheckResult?.reason) {
-      risks.push(permissionCheckResult.reason);
-    }
 
     // 根据工具类型添加特定风险和改进建议
     if (tool.name === 'Bash') {
       const command = (params.command as string) || '';
-      const mainCommand = command.trim().split(/\s+/)[0];
 
-      // ⚠️ 检测使用了专用工具应该替代的命令
-      if (mainCommand === 'cat' || mainCommand === 'head' || mainCommand === 'tail') {
-        risks.push(
-          `💡 建议使用 Read 工具代替 ${mainCommand} 命令（性能更好，支持大文件分页）`
-        );
-      } else if (mainCommand === 'grep' || mainCommand === 'rg') {
-        risks.push(
-          '💡 建议使用 Grep 工具代替 grep/rg 命令（支持更强大的过滤和上下文）'
-        );
-      } else if (mainCommand === 'find') {
-        risks.push('💡 建议使用 Glob 工具代替 find 命令（更快，支持 glob 模式）');
-      } else if (mainCommand === 'sed' || mainCommand === 'awk') {
-        risks.push(
-          `💡 建议使用 Edit 工具代替 ${mainCommand} 命令（更安全，支持预览和回滚）`
-        );
-      }
-
-      // ⚠️ 危险命令警告
+      // 真正危险的 Bash 命令警告
       if (command.includes('rm')) {
-        risks.push('⚠️ 此命令可能删除文件');
+        risks.push('[WARN] 此命令可能删除文件');
       }
       if (command.includes('sudo')) {
-        risks.push('⚠️ 此命令需要管理员权限');
+        risks.push('[WARN] 此命令需要管理员权限');
       }
       if (command.includes('git push')) {
-        risks.push('⚠️ 此命令将推送代码到远程仓库');
+        risks.push('[WARN] 此命令将推送代码到远程仓库');
       }
     } else if (tool.name === 'Write' || tool.name === 'Edit') {
       risks.push('此操作将修改文件内容');
@@ -630,10 +623,6 @@ export class FormattingStage implements PipelineStage {
       // 确保结果格式正确
       if (!result.llmContent) {
         result.llmContent = 'Execution completed';
-      }
-
-      if (!result.displayContent) {
-        result.displayContent = result.success ? '执行成功' : '执行失败';
       }
 
       // 添加执行元数据

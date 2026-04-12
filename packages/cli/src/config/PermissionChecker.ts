@@ -5,6 +5,11 @@
  */
 
 import picomatch from 'picomatch';
+import {
+  stripAllEnvVars,
+  stripSafeEnvVars,
+  stripSafeWrappers,
+} from '../utils/shell/commandNormalizer.js';
 import type { PermissionConfig } from './types.js';
 
 /**
@@ -62,39 +67,73 @@ export class PermissionChecker {
   check(descriptor: ToolInvocationDescriptor): PermissionCheckResult {
     const signature = PermissionChecker.buildSignature(descriptor);
 
+    // 对 Bash 工具生成规范化签名变体
+    const isBash = descriptor.toolName === 'Bash' && typeof descriptor.params.command === 'string';
+    const command = isBash ? String(descriptor.params.command).trim() : '';
+
+    // 保守规范化（allow 规则用）：仅剥离安全环境变量 + 安全 wrapper
+    let normalizedSignature: string | null = null;
+    if (isBash) {
+      const normalized = stripSafeEnvVars(stripSafeWrappers(command));
+      if (normalized !== command) {
+        normalizedSignature = `Bash(${normalized})`;
+      }
+    }
+
+    // 激进规范化（deny/ask 规则用）：剥离所有环境变量（防 FOO=bar 绕过 deny）
+    let aggressiveSignature: string | null = null;
+    if (isBash) {
+      const aggressive = stripAllEnvVars(stripSafeWrappers(command));
+      if (aggressive !== command) {
+        aggressiveSignature = `Bash(${aggressive})`;
+      }
+    }
+
     // 优先级: deny > allow > ask > 默认(ask)
 
-    // 1. 检查 deny 规则 (最高优先级)
-    const denyMatch = this.matchRules(signature, this.config.deny);
-    if (denyMatch) {
-      return {
-        result: PermissionResult.DENY,
-        matchedRule: denyMatch.rule,
-        matchType: denyMatch.type,
-        reason: `工具调用被拒绝规则阻止: ${denyMatch.rule}`,
-      };
+    // 1. 检查 deny 规则 (最高优先级) — 使用激进规范化
+    const denySignatures = [signature];
+    if (aggressiveSignature) denySignatures.push(aggressiveSignature);
+    for (const sig of denySignatures) {
+      const denyMatch = this.matchRules(sig, this.config.deny);
+      if (denyMatch) {
+        return {
+          result: PermissionResult.DENY,
+          matchedRule: denyMatch.rule,
+          matchType: denyMatch.type,
+          reason: `工具调用被拒绝规则阻止: ${denyMatch.rule}`,
+        };
+      }
     }
 
-    // 2. 检查 allow 规则
-    const allowMatch = this.matchRules(signature, this.config.allow);
-    if (allowMatch) {
-      return {
-        result: PermissionResult.ALLOW,
-        matchedRule: allowMatch.rule,
-        matchType: allowMatch.type,
-        reason: `工具调用符合允许规则: ${allowMatch.rule}`,
-      };
+    // 2. 检查 allow 规则 — 使用保守规范化
+    const allowSignatures = [signature];
+    if (normalizedSignature) allowSignatures.push(normalizedSignature);
+    for (const sig of allowSignatures) {
+      const allowMatch = this.matchRules(sig, this.config.allow);
+      if (allowMatch) {
+        return {
+          result: PermissionResult.ALLOW,
+          matchedRule: allowMatch.rule,
+          matchType: allowMatch.type,
+          reason: `工具调用符合允许规则: ${allowMatch.rule}`,
+        };
+      }
     }
 
-    // 3. 检查 ask 规则
-    const askMatch = this.matchRules(signature, this.config.ask);
-    if (askMatch) {
-      return {
-        result: PermissionResult.ASK,
-        matchedRule: askMatch.rule,
-        matchType: askMatch.type,
-        reason: `工具调用需要用户确认: ${askMatch.rule}`,
-      };
+    // 3. 检查 ask 规则 — 使用激进规范化
+    const askSignatures = [signature];
+    if (aggressiveSignature) askSignatures.push(aggressiveSignature);
+    for (const sig of askSignatures) {
+      const askMatch = this.matchRules(sig, this.config.ask);
+      if (askMatch) {
+        return {
+          result: PermissionResult.ASK,
+          matchedRule: askMatch.rule,
+          matchType: askMatch.type,
+          reason: `工具调用需要用户确认: ${askMatch.rule}`,
+        };
+      }
     }
 
     // 4. 默认策略: 需要确认

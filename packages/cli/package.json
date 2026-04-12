@@ -29,6 +29,7 @@
     "test:security": "node scripts/test.js security",
     "test:coverage": "node scripts/test.js all --coverage",
     "test:watch": "vitest --watch --config vitest.config.ts",
+    "benchmark:repo": "node scripts/run-bun.js run scripts/run-real-repo-benchmark.ts",
     "test:update-snapshots": "node scripts/test.js snapshot --update",
     "lint": "biome lint src tests",
     "lint:fix": "biome lint --write src tests",

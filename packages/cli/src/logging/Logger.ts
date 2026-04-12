@@ -76,7 +76,7 @@ function getLogDir(): string | null {
     const stats = statSync(logDir);
     if (stats.uid === 0 && process.getuid && process.getuid() !== 0) {
       console.error('');
-      console.error('❌ 权限错误：~/.blade/logs 目录属于 root 用户');
+      console.error('[FAIL] 权限错误：~/.blade/logs 目录属于 root 用户');
       console.error('');
       console.error('这通常是因为您曾经使用 sudo 运行过 blade。');
       console.error('');

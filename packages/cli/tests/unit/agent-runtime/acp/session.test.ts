@@ -17,10 +17,14 @@ const runtimeState = vi.hoisted(() => ({
 // Mock Agent
 vi.mock('../../../../src/agent/Agent.js', () => {
   let mockAgentInstance: any = null;
+  const mockChatGen = async function* () {
+    yield { type: 'turn_start', turn: 1, maxTurns: 1 };
+    return { success: true, finalMessage: 'Mock response', metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 } };
+  };
   const MockAgentClass = Object.assign(
     vi.fn().mockImplementation(() => {
       const mockAgent = createMockAgent();
-      mockAgent.chat = vi.fn().mockResolvedValue('Mock response');
+      mockAgent.chat = vi.fn().mockImplementation(mockChatGen);
       mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
       mockAgentInstance = mockAgent;
       return mockAgent;
@@ -28,14 +32,14 @@ vi.mock('../../../../src/agent/Agent.js', () => {
     {
       create: vi.fn().mockImplementation(async () => {
         const mockAgent = createMockAgent();
-        mockAgent.chat = vi.fn().mockResolvedValue('Mock response');
+        mockAgent.chat = vi.fn().mockImplementation(mockChatGen);
         mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
         mockAgentInstance = mockAgent;
         return mockAgent;
       }),
       createWithRuntime: vi.fn().mockImplementation(async () => {
         const mockAgent = createMockAgent();
-        mockAgent.chat = vi.fn().mockResolvedValue('Mock response');
+        mockAgent.chat = vi.fn().mockImplementation(mockChatGen);
         mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
         mockAgentInstance = mockAgent;
         return mockAgent;

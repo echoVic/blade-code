@@ -9,14 +9,13 @@ import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
  * Execute a skill within the main conversation
  *
  * Skills 是动态 Prompt 扩展机制，允许 AI 根据用户请求自动调用专业能力。
- * 执行 Skill 时，返回双消息：
- * - displayContent: 可见的加载提示（用户看到）
- * - llmContent: 完整的 Skill 指令（发送给 LLM）
+ * 执行 Skill 时，返回完整的 Skill 指令（发送给 LLM）。
  */
 export const skillTool = createTool({
   name: 'Skill',
   displayName: 'Skill',
   kind: ToolKind.Execute,
+  isConcurrencySafe: false, // 执行技能，可能有副作用
 
   schema: z.object({
     skill: z
@@ -65,11 +64,11 @@ Important:
             .map((s) => s.name)
             .join(', ') || 'none'
         }`,
-        displayContent: `❌ Skill "${skill}" not found`,
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: `Skill "${skill}" is not registered`,
         },
+        metadata: { summary: `Skill 未找到: ${skill}` },
       };
     }
 
@@ -79,11 +78,11 @@ Important:
       return {
         success: false,
         llmContent: `Failed to load skill "${skill}" content`,
-        displayContent: `❌ Failed to load skill "${skill}"`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: `Could not read SKILL.md for "${skill}"`,
         },
+        metadata: { summary: `加载 Skill 失败: ${skill}` },
       };
     }
 
@@ -105,9 +104,8 @@ Important:
       success: true,
       // llmContent: 完整的 Skill 指令（发送给 LLM，用户不可见）
       llmContent: skillInstructions,
-      // displayContent: 可见的加载提示（用户看到）
-      displayContent: `<command-message>The "${skill}" skill is loading</command-message>`,
       metadata: {
+        summary: `加载 Skill: ${skill}`,
         skillName: skill,
         basePath: content.metadata.basePath,
         version: content.metadata.version,

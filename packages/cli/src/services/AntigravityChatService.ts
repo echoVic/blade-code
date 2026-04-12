@@ -213,8 +213,8 @@ export class AntigravityChatService implements IChatService {
     // 生成会话 ID
     this.sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
-    logger.debug('🚀 [AntigravityChatService] Initializing');
-    logger.debug('⚙️ [AntigravityChatService] Config:', {
+    logger.debug('[AntigravityChatService] Initializing');
+    logger.debug('[AntigravityChatService] Config:', {
       model: config.model,
       temperature: config.temperature,
       maxOutputTokens: config.maxOutputTokens,
@@ -242,9 +242,9 @@ export class AntigravityChatService implements IChatService {
       const configType = await this.auth.getConfigType();
       this.configType = configType || 'antigravity';
       logger.debug(
-        `🔄 [AntigravityChatService] Using OAuth config: ${this.configType}`
+        `[AntigravityChatService] Using OAuth config: ${this.configType}`
       );
-      logger.debug('🔄 [AntigravityChatService] Setting up user via loadCodeAssist...');
+      logger.debug('[AntigravityChatService] Setting up user via loadCodeAssist...');
 
       const accessToken = await this.auth.getAccessToken();
 
@@ -262,7 +262,7 @@ export class AntigravityChatService implements IChatService {
         if (loadRes.cloudaicompanionProject) {
           this.projectId = loadRes.cloudaicompanionProject;
           logger.debug(
-            `✅ [AntigravityChatService] User already setup: tier=${this.userTier}, project=${this.projectId}`
+            `[AntigravityChatService] User already setup: tier=${this.userTier}, project=${this.projectId}`
           );
           this.projectIdInitialized = true;
           return;
@@ -274,7 +274,7 @@ export class AntigravityChatService implements IChatService {
         if (envProjectId) {
           this.projectId = envProjectId;
           logger.debug(
-            `✅ [AntigravityChatService] Using env project: ${this.projectId}`
+            `[AntigravityChatService] Using env project: ${this.projectId}`
           );
           this.projectIdInitialized = true;
           return;
@@ -282,14 +282,14 @@ export class AntigravityChatService implements IChatService {
 
         // 需要通过 onboardUser 获取 projectId
         logger.debug(
-          '⚠️ [AntigravityChatService] Has tier but no project, need onboarding...'
+          '[AntigravityChatService] Has tier but no project, need onboarding...'
         );
       }
 
       // Step 3: 获取默认 tier 并调用 onboardUser
       const defaultTier = this.getDefaultTier(loadRes);
       logger.debug(
-        `🔄 [AntigravityChatService] Onboarding user with tier: ${defaultTier.id}`
+        `[AntigravityChatService] Onboarding user with tier: ${defaultTier.id}`
       );
 
       const result = await this.callOnboardUser(accessToken, defaultTier.id);
@@ -297,7 +297,7 @@ export class AntigravityChatService implements IChatService {
       this.userTier = defaultTier.id;
 
       logger.debug(
-        `✅ [AntigravityChatService] User setup complete: tier=${this.userTier}, project=${this.projectId || '(managed)'}`
+        `[AntigravityChatService] User setup complete: tier=${this.userTier}, project=${this.projectId || '(managed)'}`
       );
     } catch (error) {
       logger.warn('Failed to setup user:', error);
@@ -639,8 +639,8 @@ export class AntigravityChatService implements IChatService {
     signal?: AbortSignal
   ): Promise<ChatResponse> {
     const startTime = Date.now();
-    logger.debug('🚀 [AntigravityChatService] Starting chat request');
-    logger.debug('📝 [AntigravityChatService] Messages count:', messages.length);
+    logger.debug('[AntigravityChatService] Starting chat request');
+    logger.debug('[AntigravityChatService] Messages count:', messages.length);
 
     // 确保有有效的项目 ID
     await this.ensureProjectId();
@@ -677,7 +677,7 @@ export class AntigravityChatService implements IChatService {
       },
     };
 
-    logger.debug('📤 [AntigravityChatService] Request:', {
+    logger.debug('[AntigravityChatService] Request:', {
       model: this.config.model,
       contentsCount: contents.length,
       hasSystemInstruction: !!systemInstruction,
@@ -695,7 +695,7 @@ export class AntigravityChatService implements IChatService {
 
       const requestDuration = Date.now() - startTime;
       logger.debug(
-        '📥 [AntigravityChatService] Response received in',
+        '[AntigravityChatService] Response received in',
         requestDuration,
         'ms'
       );
@@ -735,7 +735,7 @@ export class AntigravityChatService implements IChatService {
         },
       };
 
-      logger.debug('✅ [AntigravityChatService] Chat completed:', {
+      logger.debug('[AntigravityChatService] Chat completed:', {
         contentLength: result.content.length,
         toolCallsCount: result.toolCalls?.length || 0,
         usage: result.usage,
@@ -745,11 +745,11 @@ export class AntigravityChatService implements IChatService {
     } catch (error) {
       const requestDuration = Date.now() - startTime;
       logger.error(
-        '❌ [AntigravityChatService] Chat failed after',
+        '[AntigravityChatService] Chat failed after',
         requestDuration,
         'ms'
       );
-      logger.error('❌ [AntigravityChatService] Error:', error);
+      logger.error('[AntigravityChatService] Error:', error);
       throw error;
     }
   }
@@ -760,7 +760,7 @@ export class AntigravityChatService implements IChatService {
     signal?: AbortSignal
   ): AsyncGenerator<StreamChunk, void, unknown> {
     const startTime = Date.now();
-    logger.debug('🚀 [AntigravityChatService] Starting stream request');
+    logger.debug('[AntigravityChatService] Starting stream request');
 
     // 确保有有效的项目 ID
     await this.ensureProjectId();
@@ -824,7 +824,7 @@ export class AntigravityChatService implements IChatService {
 
       const requestDuration = Date.now() - startTime;
       logger.debug(
-        '📥 [AntigravityChatService] Stream started in',
+        '[AntigravityChatService] Stream started in',
         requestDuration,
         'ms'
       );
@@ -903,18 +903,18 @@ export class AntigravityChatService implements IChatService {
         }
       }
 
-      logger.debug('✅ [AntigravityChatService] Stream completed:', {
+      logger.debug('[AntigravityChatService] Stream completed:', {
         eventCount,
         duration: Date.now() - startTime + 'ms',
       });
     } catch (error) {
       const requestDuration = Date.now() - startTime;
       logger.error(
-        '❌ [AntigravityChatService] Stream failed after',
+        '[AntigravityChatService] Stream failed after',
         requestDuration,
         'ms'
       );
-      logger.error('❌ [AntigravityChatService] Error:', error);
+      logger.error('[AntigravityChatService] Error:', error);
       throw error;
     }
   }
@@ -924,8 +924,8 @@ export class AntigravityChatService implements IChatService {
   }
 
   updateConfig(newConfig: Partial<ChatConfig>): void {
-    logger.debug('🔄 [AntigravityChatService] Updating configuration');
+    logger.debug('[AntigravityChatService] Updating configuration');
     this.config = { ...this.config, ...newConfig };
-    logger.debug('✅ [AntigravityChatService] Configuration updated');
+    logger.debug('[AntigravityChatService] Configuration updated');
   }
 }

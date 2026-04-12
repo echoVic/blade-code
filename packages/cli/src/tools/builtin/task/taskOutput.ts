@@ -24,6 +24,7 @@ export const taskOutputTool = createTool({
   name: 'TaskOutput',
   displayName: 'Task Output',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   schema: z.object({
     task_id: z.string().min(1).describe('The task ID to get output from'),
@@ -92,10 +93,12 @@ export const taskOutputTool = createTool({
     return {
       success: false,
       llmContent: `Unknown task ID: ${task_id}.`,
-      displayContent: `❌ 未知的任务 ID: ${task_id}\n\n任务 ID 格式：\n- bash_xxx: 后台 shell\n- agent: 后台 agent`,
       error: {
         type: ToolErrorType.VALIDATION_ERROR,
         message: `Unknown task ID: ${task_id}`,
+      },
+      metadata: {
+        summary: `获取任务输出: ${task_id} (未知ID)`,
       },
     };
   },
@@ -124,10 +127,12 @@ async function handleShellOutput(
     return {
       success: false,
       llmContent: `Shell not found: ${taskId}`,
-      displayContent: `❌ 未找到 Shell: ${taskId}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: 'Shell 会话不存在或已清理',
+      },
+      metadata: {
+        summary: `获取任务输出: ${taskId} (未找到)`,
       },
     };
   }
@@ -144,10 +149,12 @@ async function handleShellOutput(
     return {
       success: false,
       llmContent: `Failed to get output for shell: ${taskId}`,
-      displayContent: `❌ 获取 Shell 输出失败: ${taskId}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: 'Failed to consume output',
+      },
+      metadata: {
+        summary: `获取任务输出: ${taskId} (失败)`,
       },
     };
   }
@@ -168,21 +175,13 @@ async function handleShellOutput(
     stderr: snapshot.stderr,
   };
 
-  const statusEmoji = getStatusEmoji(snapshot.status);
-  const displayContent =
-    `${statusEmoji} TaskOutput(${taskId}) - Shell\n` +
-    `状态: ${snapshot.status}\n` +
-    `命令: ${snapshot.command}\n` +
-    (snapshot.pid ? `PID: ${snapshot.pid}\n` : '') +
-    (snapshot.exitCode !== undefined ? `退出码: ${snapshot.exitCode}\n` : '') +
-    (snapshot.stdout ? `\nstdout:\n${snapshot.stdout}` : '') +
-    (snapshot.stderr ? `\nstderr:\n${snapshot.stderr}` : '');
-
   return {
     success: true,
     llmContent: payload,
-    displayContent,
-    metadata: payload,
+    metadata: {
+      summary: `获取任务输出: ${taskId}`,
+      ...payload,
+    },
   };
 }
 
@@ -202,10 +201,12 @@ async function handleAgentOutput(
     return {
       success: false,
       llmContent: `Agent not found: ${taskId}`,
-      displayContent: `❌ 未找到 Agent: ${taskId}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: 'Agent 会话不存在或已清理',
+      },
+      metadata: {
+        summary: `获取任务输出: ${taskId} (未找到)`,
       },
     };
   }
@@ -217,10 +218,12 @@ async function handleAgentOutput(
       return {
         success: false,
         llmContent: `Failed to wait for agent: ${taskId}`,
-        displayContent: `❌ 等待 Agent 失败: ${taskId}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: 'Wait for completion failed',
+        },
+        metadata: {
+          summary: `获取任务输出: ${taskId} (等待失败)`,
         },
       };
     }
@@ -248,22 +251,11 @@ async function handleAgentOutput(
         ? 'failed'
         : 'running';
 
-  const statusEmoji = getStatusEmoji(session.status);
-  const displayContent =
-    `${statusEmoji} TaskOutput(${taskId}) - Agent\n` +
-    `状态: ${session.status}\n` +
-    `类型: ${session.subagentType}\n` +
-    `描述: ${session.description}\n` +
-    (session.stats?.duration ? `耗时: ${session.stats.duration}ms\n` : '') +
-    (session.stats?.toolCalls ? `工具调用: ${session.stats.toolCalls} 次\n` : '') +
-    (session.result?.message ? `\n结果:\n${session.result.message}` : '') +
-    (session.result?.error ? `\n错误: ${session.result.error}` : '');
-
   return {
     success: true,
     llmContent: payload,
-    displayContent,
     metadata: {
+      summary: `获取任务输出: ${taskId}`,
       ...payload,
       subagentSessionId: session.id,
       subagentType: session.subagentType,
@@ -302,25 +294,4 @@ async function waitForShellCompletion(taskId: string, timeout: number): Promise<
       }
     }, 100); // 每 100ms 检查一次
   });
-}
-
-/**
- * 获取状态对应的 emoji
- */
-function getStatusEmoji(status: string): string {
-  switch (status) {
-    case 'running':
-      return '⏳';
-    case 'completed':
-    case 'exited':
-      return '✅';
-    case 'failed':
-    case 'error':
-      return '❌';
-    case 'killed':
-    case 'cancelled':
-      return '✂️';
-    default:
-      return '❓';
-  }
 }

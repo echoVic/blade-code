@@ -37,7 +37,7 @@ const modelCommand: SlashCommand = {
       if (models.length === 0) {
         return {
           success: false,
-          message: '❌ 没有可用的模型配置\n\n使用 /model add 添加模型',
+          message: '没有可用的模型配置\n\n使用 /model add 添加模型',
         };
       }
 
@@ -62,7 +62,7 @@ const modelCommand: SlashCommand = {
         if (!nameQuery) {
           return {
             success: false,
-            message: '❌ 请指定要删除的模型名称\n用法: /model remove <名称>',
+            message: '请指定要删除的模型名称\n用法: /model remove <名称>',
           };
         }
 
@@ -74,7 +74,7 @@ const modelCommand: SlashCommand = {
         if (!matchedModel) {
           return {
             success: false,
-            message: `❌ 未找到匹配的模型配置: ${nameQuery}`,
+            message: `未找到匹配的模型配置: ${nameQuery}`,
           };
         }
 
@@ -82,10 +82,10 @@ const modelCommand: SlashCommand = {
           await configActions().removeModel(matchedModel.id);
           return {
             success: true,
-            message: `✅ 已删除模型配置: ${matchedModel.name}`,
+            message: `[OK] 已删除模型配置: ${matchedModel.name}`,
           };
         } catch (error) {
-          return { success: false, message: `❌ ${(error as Error).message}` };
+          return { success: false, message: `${(error as Error).message}` };
         }
       }
       case 'once': {
@@ -94,7 +94,7 @@ const modelCommand: SlashCommand = {
         if (!modelQuery || !prompt) {
           return {
             success: false,
-            message: '❌ 用法: /model once <模型> <内容>',
+            message: '用法: /model once <模型> <内容>',
           };
         }
         const models = getAllModels();
@@ -104,7 +104,7 @@ const modelCommand: SlashCommand = {
         if (!matched) {
           return {
             success: false,
-            message: `❌ 未找到匹配的模型配置: ${modelQuery}`,
+            message: `未找到匹配的模型配置: ${modelQuery}`,
           };
         }
         return {
@@ -120,7 +120,7 @@ const modelCommand: SlashCommand = {
       default:
         return {
           success: false,
-          message: `❌ 未知的子命令: ${subcommand}\n使用 /model 查看可用操作`,
+          message: `未知的子命令: ${subcommand}\n使用 /model 查看可用操作`,
         };
     }
   },

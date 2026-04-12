@@ -6,18 +6,19 @@
  * while the exported JSONL contract remains snake_case and versioned.
  */
 import type { Argv } from 'yargs';
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { z } from 'zod';
 import { Agent } from '../agent/Agent.js';
-import type { ChatContext, LoopOptions } from '../agent/types.js';
+import { drainLoop } from '../agent/loop/index.js';
+import type { LoopEvent } from '../agent/loop/types.js';
+import type { ChatContext } from '../agent/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { TodoItem } from '../tools/builtin/todo/types.js';
+import { getCwd } from '../utils/cwd.js';
 import type {
   ConfirmationDetails,
   ConfirmationResponse,
 } from '../tools/types/ExecutionTypes.js';
-import type { ToolResult } from '../tools/types/index.js';
 import {
   initializeCliPlugins,
   normalizeCliInput,
@@ -30,8 +31,7 @@ import {
 } from './headlessEvents.js';
 import {
   formatToolCallSummary,
-  generateToolDetail,
-  shouldShowToolDetail,
+  formatToolDisplay,
 } from '../ui/utils/toolFormatters.js';
 
 /** Minimal writable stream contract used by headless output sinks. */
@@ -102,6 +102,25 @@ type ValidatedHeadlessOptions = z.infer<typeof HeadlessOptionsSchema>;
 interface HeadlessStreamSnapshot {
   openedThinking: boolean;
   wroteAssistantContent: boolean;
+}
+
+interface HeadlessPhaseContext {
+  turn?: number;
+  toolName?: string;
+  target?: string;
+}
+
+type HeadlessPhaseName =
+  | 'turn'
+  | 'searching'
+  | 'inspecting'
+  | 'target_hit'
+  | 'executing'
+  | 'completed';
+type HeadlessPhaseStatus = 'ongoing' | 'hit' | 'done';
+
+interface HeadlessPhaseState {
+  targetLocked: boolean;
 }
 
 class HeadlessStreamState {
@@ -245,6 +264,113 @@ function resolveOutputFormat(outputFormat?: string): HeadlessOutputFormat {
   return outputFormat === 'jsonl' ? 'jsonl' : 'text';
 }
 
+function extractToolTarget(
+  toolName: string,
+  params: Record<string, unknown>
+): string | undefined {
+  const stringParam = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = params[key];
+      if (typeof value === 'string' && value.trim() !== '') {
+        return value;
+      }
+    }
+    return undefined;
+  };
+
+  switch (toolName) {
+    case 'Read':
+    case 'Edit':
+    case 'Write':
+    case 'UndoEdit':
+      return stringParam('file_path');
+    case 'NotebookEdit':
+      return stringParam('notebook_path');
+    case 'Grep':
+      return stringParam('path', 'pattern');
+    case 'Glob':
+      return stringParam('pattern');
+    case 'WebFetch':
+      return stringParam('url');
+    case 'WebSearch':
+      return stringParam('query');
+    case 'Bash':
+      return stringParam('description', 'command');
+    case 'Task':
+      return stringParam('description');
+    case 'LSP':
+      return stringParam('filePath', 'operation');
+    default:
+      return undefined;
+  }
+}
+
+function getPhaseForTool(
+  toolName: string,
+  summary: string,
+  target: string | undefined,
+  state: HeadlessPhaseState
+): {
+  phase: HeadlessPhaseName;
+  status: HeadlessPhaseStatus;
+  message: string;
+  shouldLockTarget: boolean;
+} {
+  const searchTools = new Set(['Glob', 'Grep', 'WebSearch', 'LS']);
+  const readTools = new Set(['Read', 'WebFetch']);
+  const actionTools = new Set([
+    'Edit',
+    'Write',
+    'NotebookEdit',
+    'Bash',
+    'LSP',
+    'UndoEdit',
+  ]);
+
+  if (actionTools.has(toolName) && !state.targetLocked) {
+    return {
+      phase: 'target_hit',
+      status: 'hit',
+      message: `Target locked: ${summary}`,
+      shouldLockTarget: true,
+    };
+  }
+
+  if (state.targetLocked) {
+    return {
+      phase: 'executing',
+      status: 'hit',
+      message: target ? `Working within target: ${summary}` : `Executing: ${summary}`,
+      shouldLockTarget: false,
+    };
+  }
+
+  if (searchTools.has(toolName)) {
+    return {
+      phase: 'searching',
+      status: 'ongoing',
+      message: `Still searching: ${summary}`,
+      shouldLockTarget: false,
+    };
+  }
+
+  if (readTools.has(toolName)) {
+    return {
+      phase: 'inspecting',
+      status: 'ongoing',
+      message: `Inspecting candidate: ${summary}`,
+      shouldLockTarget: false,
+    };
+  }
+
+  return {
+    phase: 'executing',
+    status: state.targetLocked ? 'hit' : 'ongoing',
+    message: `Executing: ${summary}`,
+    shouldLockTarget: false,
+  };
+}
+
 function createEventWriter(
   io: HeadlessIO,
   outputFormat: HeadlessOutputFormat
@@ -303,19 +429,58 @@ function createEventWriter(
       }
       writeLine(io.stdout, content);
     },
-    toolStart(toolName: string, summary: string) {
+    toolStart(
+      toolName: string,
+      summary: string,
+      target?: string,
+      toolKind?: 'readonly' | 'write' | 'execute'
+    ) {
       if (outputFormat === 'jsonl') {
-        writeJsonl('tool_start', { tool_name: toolName, summary });
+        writeJsonl('tool_start', {
+          tool_name: toolName,
+          summary,
+          target,
+          tool_kind: toolKind,
+        });
         return;
       }
       writeLine(io.stderr, `[tool:start] ${summary}`);
     },
-    toolResult(toolName: string, summary: string) {
+    toolResult(
+      toolName: string,
+      summary: string,
+      target?: string,
+      toolKind?: 'readonly' | 'write' | 'execute'
+    ) {
       if (outputFormat === 'jsonl') {
-        writeJsonl('tool_result', { tool_name: toolName, summary });
+        writeJsonl('tool_result', {
+          tool_name: toolName,
+          summary,
+          target,
+          tool_kind: toolKind,
+        });
         return;
       }
       writeLine(io.stderr, `[tool:result] ${summary}`);
+    },
+    phase(
+      phase: HeadlessPhaseName,
+      status: HeadlessPhaseStatus,
+      message: string,
+      context: HeadlessPhaseContext = {}
+    ) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('phase', {
+          phase,
+          status,
+          message,
+          turn: context.turn,
+          tool_name: context.toolName,
+          target: context.target,
+        });
+        return;
+      }
+      writeLine(io.stderr, `[phase:${phase}] ${message}`);
     },
     toolDetail(toolName: string, detail: string) {
       if (outputFormat === 'jsonl') {
@@ -399,6 +564,7 @@ export async function runHeadless(
   let outputFormat: HeadlessOutputFormat = 'text';
   let eventWriter = createEventWriter(io, outputFormat);
   const streamState = new HeadlessStreamState();
+  const phaseState: HeadlessPhaseState = { targetLocked: false };
 
   try {
     const validatedOptions = validateHeadlessOptions(options);
@@ -424,84 +590,9 @@ export async function runHeadless(
       messages: contextMessages,
       userId: 'cli-user',
       sessionId: validatedOptions.sessionId ?? `headless-${Date.now()}`,
-      workspaceRoot: process.cwd(),
+      workspaceRoot: getCwd(),
       permissionMode,
       confirmationHandler: createConfirmationHandler(),
-    };
-
-    const loopOptions: LoopOptions = {
-      stream: true,
-      maxTurns: validatedOptions.maxTurns,
-      onContentDelta: (delta: string) => {
-        streamState.markAssistantContent();
-        eventWriter.contentDelta(delta);
-      },
-      onThinkingDelta: (delta: string) => {
-        streamState.setThinkingOpened(
-          eventWriter.thinkingDelta(delta, streamState.hasOpenThinking())
-        );
-      },
-      onThinking: (content: string) => {
-        if (!content) return;
-        eventWriter.thinking(content);
-      },
-      onStreamEnd: () => {
-        const snapshot = streamState.completeStream();
-        eventWriter.streamEnd(
-          snapshot.wroteAssistantContent,
-          snapshot.openedThinking
-        );
-      },
-      onContent: (content: string) => {
-        if (!content.trim()) return;
-        eventWriter.content(content);
-        streamState.markAssistantContent();
-      },
-      onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
-        if (toolCall.type !== 'function') return;
-        // TodoWrite 由 onTodoUpdate 处理，避免重复输出
-        if (toolCall.function.name === 'TodoWrite') return;
-        try {
-          const params = JSON.parse(toolCall.function.arguments);
-          const summary = formatToolCallSummary(toolCall.function.name, params);
-          eventWriter.toolStart(toolCall.function.name, summary);
-        } catch {
-          // JSON 解析失败，使用工具名作为 fallback
-          eventWriter.toolStart(toolCall.function.name, toolCall.function.name);
-        }
-      },
-      onToolResult: async (
-        toolCall: ChatCompletionMessageToolCall,
-        result: ToolResult
-      ) => {
-        if (toolCall.type !== 'function') return;
-        const summary = result.metadata?.summary;
-        if (summary) {
-          eventWriter.toolResult(toolCall.function.name, summary);
-        }
-
-        if (shouldShowToolDetail(toolCall.function.name, result)) {
-          const detail =
-            generateToolDetail(toolCall.function.name, result) ||
-            result.displayContent;
-          if (detail) {
-            eventWriter.toolDetail(toolCall.function.name, detail);
-          }
-        }
-      },
-      onTodoUpdate: (todos: TodoItem[]) => {
-        eventWriter.todoUpdate(todos);
-      },
-      onTokenUsage: (usage) => {
-        eventWriter.tokenUsage(usage);
-      },
-      onCompacting: (isCompacting: boolean) => {
-        eventWriter.compacting(isCompacting);
-      },
-      onTurnLimitReached: async (data) => {
-        eventWriter.turnLimit(data.turnsCount);
-        return { continue: true, reason: 'headless-auto-continue' };
-      },
     };
 
     const agent = await Agent.create({
@@ -514,7 +605,159 @@ export async function runHeadless(
       strictMcpConfig: validatedOptions.strictMcpConfig,
     });
 
-    await agent.chat(normalized.content, chatContext, loopOptions);
+    // Phase 4: 使用 chatStream() + onEvent 事件驱动消费
+    const loopResult = await drainLoop(
+      agent.chatStream(normalized.content, chatContext, {
+        stream: true,
+        maxTurns: validatedOptions.maxTurns,
+        onTurnLimitReached: async (data) => {
+          eventWriter.turnLimit(data.turnsCount);
+          return { continue: true, reason: 'headless-auto-continue' };
+        },
+      }),
+      async (event: LoopEvent) => {
+        switch (event.kind) {
+          // --- 流式增量 ---
+          case 'content_delta':
+            streamState.markAssistantContent();
+            eventWriter.contentDelta(event.delta);
+            break;
+          case 'thinking_delta':
+            streamState.setThinkingOpened(
+              eventWriter.thinkingDelta(event.delta, streamState.hasOpenThinking())
+            );
+            break;
+
+          // --- 流结束 flush ---
+          case 'stream_end': {
+            const snapshot = streamState.completeStream();
+            eventWriter.streamEnd(
+              snapshot.wroteAssistantContent,
+              snapshot.openedThinking
+            );
+            break;
+          }
+
+          // --- 工具事件 ---
+          case 'tool_start': {
+            const toolCall = event.toolCall;
+            if (!('function' in toolCall)) break;
+            // TodoWrite 由 todo_update 处理，避免重复输出
+            if (toolCall.function.name === 'TodoWrite') break;
+            try {
+              const params = JSON.parse(toolCall.function.arguments);
+              const summary = formatToolCallSummary(toolCall.function.name, params);
+              const target = extractToolTarget(toolCall.function.name, params);
+              const phaseInfo = getPhaseForTool(
+                toolCall.function.name,
+                summary,
+                target,
+                phaseState
+              );
+              if (phaseInfo.shouldLockTarget) {
+                phaseState.targetLocked = true;
+              }
+              eventWriter.phase(phaseInfo.phase, phaseInfo.status, phaseInfo.message, {
+                toolName: toolCall.function.name,
+                target,
+              });
+              eventWriter.toolStart(
+                toolCall.function.name,
+                summary,
+                target,
+                event.toolKind
+              );
+            } catch {
+              eventWriter.phase(
+                phaseState.targetLocked ? 'executing' : 'searching',
+                phaseState.targetLocked ? 'hit' : 'ongoing',
+                phaseState.targetLocked
+                  ? `Working within target: ${toolCall.function.name}`
+                  : `Still searching: ${toolCall.function.name}`,
+                { toolName: toolCall.function.name }
+              );
+              eventWriter.toolStart(
+                toolCall.function.name,
+                toolCall.function.name,
+                undefined,
+                event.toolKind
+              );
+            }
+            break;
+          }
+          case 'tool_result': {
+            const toolCall = event.toolCall;
+            if (!('function' in toolCall)) break;
+            let target: string | undefined;
+            try {
+              const params = JSON.parse(toolCall.function.arguments);
+              target = extractToolTarget(toolCall.function.name, params);
+            } catch {
+              target = undefined;
+            }
+            const display = formatToolDisplay(toolCall.function.name, event.result);
+            eventWriter.toolResult(
+              toolCall.function.name,
+              display.summary,
+              target,
+              undefined
+            );
+            if (display.detail) {
+              eventWriter.toolDetail(toolCall.function.name, display.detail);
+            }
+            break;
+          }
+
+          // --- Token 使用 ---
+          case 'token_usage':
+            eventWriter.tokenUsage(event.usage);
+            break;
+
+          // --- 压缩 ---
+          case 'compaction':
+            eventWriter.compacting(event.phase === 'start');
+            break;
+
+          // --- 业务事件 ---
+          case 'todo_update':
+            eventWriter.todoUpdate(event.todos);
+            break;
+
+          // --- 模型降级 ---
+          case 'model_fallback':
+            // 在 headless 模式下不需要特殊处理
+            break;
+
+          // --- 系统事件 ---
+          case 'turn_start':
+            if (event.turn === 1) {
+              phaseState.targetLocked = false;
+            }
+            eventWriter.phase(
+              'turn',
+              phaseState.targetLocked ? 'hit' : 'ongoing',
+              `Turn ${event.turn} started`,
+              { turn: event.turn }
+            );
+            break;
+
+          default: {
+            const _exhaustive: never = event;
+            void _exhaustive;
+          }
+        }
+      }
+    );
+
+    // 输出截断告警
+    if (loopResult.metadata?.outputTruncated) {
+      eventWriter.error(
+        '[warning] 输出因达到 token 上限被截断，部分内容可能不完整。',
+      );
+    }
+
+    eventWriter.phase('completed', 'done', 'Headless run completed');
+
     return 0;
   } catch (error) {
     if (streamState.hasOpenThinking() && outputFormat === 'text') {

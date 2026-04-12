@@ -224,7 +224,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
       {mode === 'setup' && (
         <>
           <Box marginBottom={1}>
-            <Text bold color="blue">🚀 欢迎使用 Blade Code</Text>
+            <Text bold color="blue">欢迎使用 Blade Code</Text>
           </Box>
           <Box marginBottom={1}>
             <Text>AI 驱动的代码助手 - 让我们开始配置您的助手</Text>
@@ -312,13 +312,13 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
 
       {error && step !== 'apiKey' && step !== 'baseUrl' && (
         <Box marginTop={1} borderStyle="round" borderColor="red" paddingX={1}>
-          <Text color="red">❌ {error}</Text>
+          <Text color="red">{error}</Text>
         </Box>
       )}
 
       {isSaving && (
         <Box marginTop={1}>
-          <Text color="yellow">⏳ 正在保存配置...</Text>
+          <Text color="yellow">正在保存配置...</Text>
         </Box>
       )}
 
@@ -356,7 +356,7 @@ const BaseUrlInput: React.FC<BaseUrlInputProps> = ({
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold color="blue">
-          🌐 输入 Base URL
+          输入 Base URL
         </Text>
       </Box>
 
@@ -379,7 +379,7 @@ const BaseUrlInput: React.FC<BaseUrlInputProps> = ({
       </Box>
 
       <Box>
-        <Text bold color="cyan">▶ </Text>
+        <Text bold color="cyan">{'> '}</Text>
         <TextInput
           value={value}
           onChange={onChange}
@@ -390,13 +390,13 @@ const BaseUrlInput: React.FC<BaseUrlInputProps> = ({
 
       {error && (
         <Box marginTop={1}>
-          <Text color="red">❌ {error}</Text>
+          <Text color="red">{error}</Text>
         </Box>
       )}
 
       <Box marginTop={1}>
         <Text dimColor>
-          💡 输入完成后按 <Text bold>Enter</Text>，<Text bold>Esc</Text> 返回
+          输入完成后按 <Text bold>Enter</Text>，<Text bold>Esc</Text> 返回
         </Text>
       </Box>
     </Box>

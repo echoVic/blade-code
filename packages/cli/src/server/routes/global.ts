@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { getCwd } from '../../utils/cwd.js';
 import { getVersion } from '../../utils/packageInfo.js';
 
 type Variables = {
@@ -21,7 +22,7 @@ export const GlobalRoutes = (): Hono<{ Variables: Variables }> => {
       platform: process.platform,
       arch: process.arch,
       nodeVersion: process.version,
-      cwd: process.cwd(),
+      cwd: getCwd(),
     });
   });
 

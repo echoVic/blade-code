@@ -6,9 +6,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "pnpm -C .. exec vitest run --config web/vitest.config.ts",
+    "test": "vitest run --config vitest.config.ts",
     "type-check": "tsc --noEmit -p tsconfig.json",
-    "lint": "pnpm -C .. exec biome lint web/src web/tests web/vitest.config.ts"
+    "lint": "biome lint src tests vitest.config.ts"
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",
@@ -34,11 +34,15 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.2.4",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
+    "jsdom": "^26.0.0",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
-    "vite": "^5.0.8"
+    "typescript": "^5.9.2",
+    "vite": "^5.0.8",
+    "vitest": "^3.0.0"
   }
 }

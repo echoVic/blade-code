@@ -4,12 +4,11 @@
  */
 
 import { promises as fs } from 'fs';
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import * as path from 'path';
 import { Agent } from '../agent/Agent.js';
+import { drainLoop } from '../agent/loop/index.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { getState } from '../store/vanilla.js';
-import type { ToolResult } from '../tools/types/index.js';
 import { formatToolCallSummary } from '../ui/utils/toolFormatters.js';
 import {
   getUI,
@@ -60,8 +59,8 @@ const initCommand: SlashCommand = {
       }
 
       if (exists && !isEmpty) {
-        ui.sendMessage('⚠️ BLADE.md 已存在。');
-        ui.sendMessage('💡 正在分析现有文件并提供改进建议...');
+        ui.sendMessage('[WARN] BLADE.md 已存在。');
+        ui.sendMessage('正在分析现有文件并提供改进建议...');
 
         // 创建 Agent 并分析现有文件
         const agent = await Agent.create();
@@ -113,42 +112,49 @@ const initCommand: SlashCommand = {
 
 **Final output**: Return your analysis and suggestions as plain text. Do NOT use Write tool.`;
 
-        // 使用 chat 方法让 Agent 可以调用工具
-        logger.info(`[/init] Starting agent.chat, signal.aborted: ${signal?.aborted}`);
-        const result = await agent.chat(
-          analysisPrompt,
-          {
-            messages: [],
-            userId: 'cli-user',
-            sessionId: sessionId || 'init-session',
-            workspaceRoot: cwd,
-            signal,
-          },
-          {
-            // 注意：abort 检查已在 Agent 内部统一处理
-            onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
-              if (toolCall.type !== 'function') return;
-              try {
-                const params = JSON.parse(toolCall.function.arguments);
-                const summary = formatToolCallSummary(toolCall.function.name, params);
-                sendToolMessage(summary);
-              } catch {
-                // 静默处理解析错误
+        // 使用 chatStream 方法让 Agent 可以调用工具
+        logger.info(`[/init] Starting agent.chatStream, signal.aborted: ${signal?.aborted}`);
+        const loopResult = await drainLoop(
+          agent.chatStream(
+            analysisPrompt,
+            {
+              messages: [],
+              userId: 'cli-user',
+              sessionId: sessionId || 'init-session',
+              workspaceRoot: cwd,
+              signal,
+            }
+          ),
+          async (event) => {
+            switch (event.kind) {
+              case 'tool_start': {
+                const toolCall = event.toolCall;
+                if (!('function' in toolCall)) return;
+                try {
+                  const params = JSON.parse(toolCall.function.arguments);
+                  const summary = formatToolCallSummary(toolCall.function.name, params);
+                  sendToolMessage(summary);
+                } catch {
+                  // 静默处理解析错误
+                }
+                break;
               }
-            },
-            onToolResult: async (
-              toolCall: ChatCompletionMessageToolCall,
-              result: ToolResult
-            ) => {
-              if (toolCall.type !== 'function') return;
-              const summary = result.metadata?.summary;
-              if (summary) {
-                sendToolMessage(summary);
+              case 'tool_result': {
+                const toolCall = event.toolCall;
+                if (!('function' in toolCall)) return;
+                const summary = event.result.metadata?.summary;
+                if (summary) {
+                  sendToolMessage(summary as string);
+                }
+                break;
               }
-            },
+              default:
+                break;
+            }
           }
         );
-        logger.info(`[/init] agent.chat completed, signal.aborted: ${signal?.aborted}`);
+        const result = loopResult.finalMessage || '';
+        logger.info(`[/init] agent.chatStream completed, signal.aborted: ${signal?.aborted}`);
 
         if (signal?.aborted) {
           logger.info('[/init] Returning cancelled after agent.chat');
@@ -159,15 +165,15 @@ const initCommand: SlashCommand = {
 
         return {
           success: true,
-          message: '✅ 分析完成',
+          message: '[OK] 分析完成',
         };
       }
 
       // 显示适当的提示消息
       if (isEmpty) {
-        ui.sendMessage('⚠️ 检测到空的 BLADE.md 文件，将重新生成...');
+        ui.sendMessage('[WARN] 检测到空的 BLADE.md 文件，将重新生成...');
       }
-      ui.sendMessage('🔍 正在分析项目结构...');
+      ui.sendMessage('正在分析项目结构...');
 
       // 创建 Agent 并生成内容
       const agent = await Agent.create();
@@ -226,46 +232,54 @@ const initCommand: SlashCommand = {
 
 **Final output**: Return ONLY the complete BLADE.md content (markdown format), ready to be written to the file.`;
 
-      // 使用 chat 方法让 Agent 可以调用工具
+      // 使用 chatStream 方法让 Agent 可以调用工具
       logger.info(
-        `[/init] Starting agent.chat for new BLADE.md, signal.aborted: ${signal?.aborted}`
+        `[/init] Starting agent.chatStream for new BLADE.md, signal.aborted: ${signal?.aborted}`
       );
-      const generatedContent = await agent.chat(
-        analysisPrompt,
-        {
-          messages: [],
-          userId: 'cli-user',
-          sessionId: sessionId || 'init-session',
-          workspaceRoot: cwd,
-          signal,
-        },
-        {
-          // 注意：abort 检查已在 Agent 内部统一处理
-          onToolStart: (toolCall: ChatCompletionMessageToolCall) => {
-            if (toolCall.type !== 'function') return;
-            try {
-              const params = JSON.parse(toolCall.function.arguments);
-              const summary = formatToolCallSummary(toolCall.function.name, params);
-              sendToolMessage(summary);
-            } catch {
-              // 静默处理解析错误
-            }
-          },
-          onToolResult: async (
-            toolCall: ChatCompletionMessageToolCall,
-            result: ToolResult
-          ) => {
-            if (toolCall.type !== 'function') return;
-            if (result?.metadata?.summary) {
-              if (typeof result.metadata.summary === 'string') {
-                sendToolMessage(result.metadata.summary);
+      const generatedLoopResult = await drainLoop(
+        agent.chatStream(
+          analysisPrompt,
+          {
+            messages: [],
+            userId: 'cli-user',
+            sessionId: sessionId || 'init-session',
+            workspaceRoot: cwd,
+            signal,
+          }
+        ),
+        async (event) => {
+          switch (event.kind) {
+            case 'tool_start': {
+              const toolCall = event.toolCall;
+              if (!('function' in toolCall)) return;
+              try {
+                const params = JSON.parse(toolCall.function.arguments);
+                const summary = formatToolCallSummary(toolCall.function.name, params);
+                sendToolMessage(summary);
+              } catch {
+                // 静默处理解析错误
               }
+              break;
             }
-          },
+            case 'tool_result': {
+              const toolCall = event.toolCall;
+              if (!('function' in toolCall)) return;
+              const resultMeta = event.result?.metadata;
+              if (resultMeta?.summary) {
+                if (typeof resultMeta.summary === 'string') {
+                  sendToolMessage(resultMeta.summary);
+                }
+              }
+              break;
+            }
+            default:
+              break;
+          }
         }
       );
+      const generatedContent = generatedLoopResult.finalMessage || '';
       logger.info(
-        `[/init] agent.chat completed for new BLADE.md, signal.aborted: ${signal?.aborted}`
+        `[/init] agent.chatStream completed for new BLADE.md, signal.aborted: ${signal?.aborted}`
       );
 
       if (signal?.aborted) {
@@ -279,12 +293,12 @@ const initCommand: SlashCommand = {
       }
 
       // 写入生成的内容
-      ui.sendMessage('✨ 正在写入 BLADE.md...');
+      ui.sendMessage('正在写入 BLADE.md...');
       await fs.writeFile(blademdPath, generatedContent, 'utf-8');
 
       return {
         success: true,
-        message: '✅ 已成功生成 BLADE.md 文件',
+        message: '[OK] 已成功生成 BLADE.md 文件',
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误';

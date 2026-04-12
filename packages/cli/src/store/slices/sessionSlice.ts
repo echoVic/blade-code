@@ -66,11 +66,11 @@ const initialSessionState: SessionState = {
   expandedMessageCount: 100, // 默认显示最近 100 条消息完整内容
   // 流式消息相关
   currentStreamingMessageId: null, // 当前正在流式接收的助手消息 ID
-  currentStreamingChunks: [], // 🆕 原始增量片段
-  currentStreamingLines: [], // 🆕 已完成行缓冲
-  currentStreamingTail: '', // 🆕 当前未完成的行片段
-  currentStreamingLineCount: 0, // 🆕 已完成行总数
-  currentStreamingVersion: 0, // 🆕 流式缓冲版本号
+  currentStreamingChunks: [], // NEW: 原始增量片段
+  currentStreamingLines: [], // NEW: 已完成行缓冲
+  currentStreamingTail: '', // NEW: 当前未完成的行片段
+  currentStreamingLineCount: 0, // NEW: 已完成行总数
+  currentStreamingVersion: 0, // NEW: 流式缓冲版本号
   finalizingStreamingMessageId: null, // 流式转最终渲染中的消息 ID
 };
 
@@ -513,6 +513,37 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     clearFinalizingStreamingMessageId: () => {
       set((state) => ({
         session: { ...state.session, finalizingStreamingMessageId: null },
+      }));
+    },
+
+    /**
+     * 丢弃流式消息（不提交到消息列表）
+     *
+     * 用于模型降级（model_fallback）场景：丢弃 store 层的
+     * streamingChunksBuffer + currentStreaming* 字段，但不将
+     * 已累积的 chunks 提交为最终消息。
+     *
+     * UI 两层缓冲清理契约（Item 15）：
+     * - hook 层: contentBufferRef / thinkingBufferRef + flush timer
+     *   由 useCommandHandler 的 resetStreamingBuffers() 清理
+     * - store 层: streamingChunksBuffer + currentStreaming* 字段
+     *   由本方法 discardStreamingMessage() 清理
+     */
+    discardStreamingMessage: () => {
+      // 丢弃模块级 chunks 缓冲区（不消费，直接清空）
+      streamingChunksBuffer = [];
+      set((state) => ({
+        session: {
+          ...state.session,
+          currentStreamingMessageId: null,
+          currentStreamingChunks: [],
+          currentStreamingLines: [],
+          currentStreamingTail: '',
+          currentStreamingLineCount: 0,
+          currentStreamingVersion: 0,
+          // 注意：不清理 currentThinkingContent，由调用方按需清理
+          finalizingStreamingMessageId: null,
+        },
       }));
     },
   },

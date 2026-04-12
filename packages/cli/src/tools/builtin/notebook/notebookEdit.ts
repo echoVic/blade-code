@@ -12,6 +12,7 @@ export const notebookEditTool = createTool({
   name: 'NotebookEdit',
   displayName: 'Notebook Edit',
   kind: ToolKind.Write,
+  isConcurrencySafe: false, // 文件写入操作
 
   schema: z.object({
     notebook_path: z
@@ -65,11 +66,11 @@ export const notebookEditTool = createTool({
         return {
           success: false,
           llmContent: 'Invalid notebook format: no cells array found',
-          displayContent: 'Invalid notebook format',
           error: {
             type: ToolErrorType.VALIDATION_ERROR,
             message: 'Invalid notebook format',
           },
+          metadata: { summary: '无效的 Notebook 格式' },
         };
       }
 
@@ -83,11 +84,11 @@ export const notebookEditTool = createTool({
           return {
             success: false,
             llmContent: `Cell with ID "${cell_id}" not found`,
-            displayContent: 'Cell not found',
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: `Cell ID "${cell_id}" not found`,
             },
+            metadata: { summary: `Cell 未找到: ${cell_id}` },
           };
         }
       }
@@ -98,11 +99,11 @@ export const notebookEditTool = createTool({
             return {
               success: false,
               llmContent: 'Cell ID required for replace operation',
-              displayContent: 'Cell ID required',
               error: {
                 type: ToolErrorType.VALIDATION_ERROR,
                 message: 'Cell ID required for replace',
               },
+              metadata: { summary: '替换操作需要 Cell ID' },
             };
           }
           const cell = notebook.cells[cellIndex];
@@ -120,11 +121,11 @@ export const notebookEditTool = createTool({
             return {
               success: false,
               llmContent: 'cell_type is required for insert operation',
-              displayContent: 'cell_type required',
               error: {
                 type: ToolErrorType.VALIDATION_ERROR,
                 message: 'cell_type required for insert',
               },
+              metadata: { summary: '插入操作需要 cell_type' },
             };
           }
           const newCell = {
@@ -145,11 +146,11 @@ export const notebookEditTool = createTool({
             return {
               success: false,
               llmContent: 'Cell ID required for delete operation',
-              displayContent: 'Cell ID required',
               error: {
                 type: ToolErrorType.VALIDATION_ERROR,
                 message: 'Cell ID required for delete',
               },
+              metadata: { summary: '删除操作需要 Cell ID' },
             };
           }
           notebook.cells.splice(cellIndex, 1);
@@ -170,11 +171,11 @@ export const notebookEditTool = createTool({
       return {
         success: true,
         llmContent: `Successfully ${actionMsg} cell in ${notebook_path}`,
-        displayContent: `Cell ${actionMsg} in notebook`,
         metadata: {
           notebook_path,
           edit_mode,
           cell_id,
+          summary: `Notebook cell ${actionMsg}: ${notebook_path}`,
         },
       };
     } catch (error) {
@@ -182,11 +183,11 @@ export const notebookEditTool = createTool({
       return {
         success: false,
         llmContent: `Failed to edit notebook: ${message}`,
-        displayContent: 'Notebook edit failed',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message,
         },
+        metadata: { summary: '编辑 Notebook 失败' },
       };
     }
   },

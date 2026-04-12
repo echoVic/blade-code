@@ -5,6 +5,7 @@
 import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 import { AutoMemoryManager } from '../memory/AutoMemoryManager.js';
+import { getCwd } from '../utils/cwd.js';
 import {
   getUI,
   type SlashCommand,
@@ -43,7 +44,7 @@ const memoryCommand: SlashCommand = {
     context: SlashCommandContext
   ): Promise<SlashCommandResult> {
     const ui = getUI(context);
-    const cwd = process.cwd();
+    const cwd = getCwd();
     const manager = new AutoMemoryManager(cwd);
     const subcommand = args[0] || 'list';
 
@@ -52,8 +53,8 @@ const memoryCommand: SlashCommand = {
         const topics = await manager.listTopics();
         if (topics.length === 0) {
           ui.sendMessage(
-            '📭 暂无记忆文件。Agent 在工作过程中会自动记录有价值的项目知识。\n\n' +
-              `📁 记忆目录: ${manager.getMemoryDir()}`
+            '暂无记忆文件。Agent 在工作过程中会自动记录有价值的项目知识。\n\n' +
+              `记忆目录: ${manager.getMemoryDir()}`
           );
         } else {
           const list = topics
@@ -61,13 +62,13 @@ const memoryCommand: SlashCommand = {
               const sizeKB = (t.size / 1024).toFixed(1);
               const date = t.lastModified.toLocaleDateString('zh-CN');
               const isIndex = t.name === 'MEMORY';
-              return `${isIndex ? '📌' : '📄'} **${t.name}.md** — ${sizeKB}KB, ${date}`;
+              return `${isIndex ? '[INDEX]' : '[FILE]'} **${t.name}.md** — ${sizeKB}KB, ${date}`;
             })
             .join('\n');
           ui.sendMessage(
-            `🧠 **项目记忆文件:**\n\n${list}\n\n` +
-              `💡 使用 \`/memory edit [topic]\` 编辑，\`/memory show [topic]\` 查看\n` +
-              `📁 ${manager.getMemoryDir()}`
+            `**项目记忆文件:**\n\n${list}\n\n` +
+              `使用 \`/memory edit [topic]\` 编辑，\`/memory show [topic]\` 查看\n` +
+              `${manager.getMemoryDir()}`
           );
         }
         return { success: true, message: '记忆列表已显示' };
@@ -77,9 +78,9 @@ const memoryCommand: SlashCommand = {
         const topic = args[1] || 'MEMORY';
         const content = await manager.readTopic(topic);
         if (content === null) {
-          ui.sendMessage(`❌ 记忆文件 "${topic}.md" 不存在`);
+          ui.sendMessage(`记忆文件 "${topic}.md" 不存在`);
         } else {
-          ui.sendMessage(`📄 **${topic}.md:**\n\n${content}`);
+          ui.sendMessage(`**${topic}.md:**\n\n${content}`);
         }
         return { success: true, message: '记忆内容已显示' };
       }
@@ -97,15 +98,15 @@ const memoryCommand: SlashCommand = {
         }
 
         const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
-        ui.sendMessage(`📝 正在用 ${editor} 打开 ${topic}.md ...`);
+        ui.sendMessage(`正在用 ${editor} 打开 ${topic}.md ...`);
 
         const success = await openInEditor(filePath);
         if (success) {
-          ui.sendMessage(`✅ ${topic}.md 编辑完成`);
+          ui.sendMessage(`[OK] ${topic}.md 编辑完成`);
         } else {
           ui.sendMessage(
-            `⚠️ 编辑器退出异常。你可以手动编辑:\n${filePath}\n\n` +
-              `💡 设置 EDITOR 环境变量来指定编辑器（如 export EDITOR=code）`
+            `[WARN] 编辑器退出异常。你可以手动编辑:\n${filePath}\n\n` +
+              `设置 EDITOR 环境变量来指定编辑器（如 export EDITOR=code）`
           );
         }
         return { success: true, message: '编辑完成' };
@@ -113,13 +114,13 @@ const memoryCommand: SlashCommand = {
 
       case 'clear': {
         const count = await manager.clearAll();
-        ui.sendMessage(`🗑️ 已清除 ${count} 个记忆文件`);
+        ui.sendMessage(`已清除 ${count} 个记忆文件`);
         return { success: true, message: `已清除 ${count} 个记忆文件` };
       }
 
       default: {
         ui.sendMessage(
-          `🧠 **Auto Memory 命令:**\n\n` +
+          `**Auto Memory 命令:**\n\n` +
             `/memory list — 列出所有记忆文件\n` +
             `/memory show [topic] — 查看记忆内容（默认 MEMORY）\n` +
             `/memory edit [topic] — 用编辑器打开记忆文件（默认 MEMORY）\n` +

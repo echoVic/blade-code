@@ -7,7 +7,7 @@ const formatToolOutput = (toolName: string, result: unknown): string => {
 };
 
 const formatFileReadOutput = (filePath: string, content: string, lineCount: number): string => {
-  return `📄 ${filePath} (${lineCount} lines)\n${'─'.repeat(40)}\n${content}`;
+  return `${filePath} (${lineCount} lines)\n${'─'.repeat(40)}\n${content}`;
 };
 
 const formatGrepOutput = (
@@ -28,7 +28,7 @@ const formatCommandOutput = (
   exitCode: number,
   duration: number
 ): string => {
-  const status = exitCode === 0 ? '✓' : '✗';
+  const status = exitCode === 0 ? '[OK]' : '[FAIL]';
   return `${status} $ ${command}\n${output}\n[Exit: ${exitCode}] [Duration: ${duration}ms]`;
 };
 

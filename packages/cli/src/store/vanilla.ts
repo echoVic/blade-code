@@ -42,8 +42,8 @@ import type { BladeStore } from './types.js';
  * 注意：
  * - CLI 程序不需要 persist 中间件（每次启动都是新进程）
  * - 持久化通过专门系统处理：
- *   - 会话数据 → ContextManager + JSONL
- *   - 配置数据 → ConfigService + config.json
+ *   - 会话数据 -> ContextManager + JSONL
+ *   - 配置数据 -> ConfigService + config.json
  */
 export const vanillaStore = createStore<BladeStore>()(
   devtools(
@@ -138,7 +138,7 @@ export async function ensureStoreInitialized(): Promise<void> {
       // 初始化失败：清除共享 Promise，允许下次重试
       initializationPromise = null;
       throw new Error(
-        `❌ Store 未初始化且无法自动初始化\n\n` +
+        `[FAIL] Store 未初始化且无法自动初始化\n\n` +
           `原因: ${error instanceof Error ? error.message : '未知错误'}\n\n` +
           `请确保：\n` +
           `1. 配置文件格式正确 (~/.blade/config.json)\n` +

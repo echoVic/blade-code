@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import type { PermissionConfig } from '../../config/types.js';
+import { getCwd } from '../../utils/cwd.js';
 import { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { HookStage } from '../../hooks/HookStage.js';
@@ -25,10 +26,11 @@ import {
   FormattingStage,
   PermissionStage,
 } from './PipelineStages.js';
+import { AutoVerifyStage } from './AutoVerifyStage.js';
 
 /**
- * 7阶段执行管道
- * Discovery → Permission → Hook(Pre) → Confirmation → Execution → PostHook → Formatting
+ * 8阶段执行管道
+ * Discovery -> Permission -> Hook(Pre) -> Confirmation -> Execution -> PostHook -> AutoVerify -> Formatting
  */
 export class ExecutionPipeline extends EventEmitter {
   private stages: PipelineStage[];
@@ -53,7 +55,7 @@ export class ExecutionPipeline extends EventEmitter {
     };
     const permissionMode = config.permissionMode ?? PermissionMode.DEFAULT;
 
-    // 初始化7个执行阶段
+    // 初始化8个执行阶段
     const permissionStage = new PermissionStage(
       permissionConfig,
       this.sessionApprovals,
@@ -70,6 +72,7 @@ export class ExecutionPipeline extends EventEmitter {
       ), // 用户确认
       new ExecutionStage(), // 实际执行
       new PostToolUseHookStage(), // PostToolUse hooks
+      new AutoVerifyStage(), // 自动类型检查验证
       new FormattingStage(), // 结果格式化
     ];
   }
@@ -188,7 +191,6 @@ export class ExecutionPipeline extends EventEmitter {
       let errorResult: ToolResult = {
         success: false,
         llmContent: `Tool execution failed: ${(error as Error).message}`,
-        displayContent: `错误: ${(error as Error).message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: (error as Error).message,
@@ -204,7 +206,7 @@ export class ExecutionPipeline extends EventEmitter {
           execution.params,
           (error as Error).message,
           {
-            projectDir: process.cwd(),
+            projectDir: getCwd(),
             sessionId: execution.context.sessionId || 'unknown',
             permissionMode:
               (execution.context.permissionMode as PermissionMode) ||

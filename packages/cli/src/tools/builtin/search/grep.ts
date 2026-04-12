@@ -4,6 +4,7 @@ import { readdir, readFile } from 'fs/promises';
 import { join, relative } from 'path';
 import picomatch from 'picomatch';
 import { z } from 'zod';
+import { getCwd } from '../../../utils/cwd.js';
 import { DEFAULT_EXCLUDE_DIRS } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
 import type {
@@ -56,12 +57,6 @@ function getPlatformRipgrepPath(): string | null {
 
   if (!relativePath) {
     return null;
-  }
-
-  // 尝试从项目根目录的 vendor 目录查找
-  const vendorPath = join(process.cwd(), 'vendor', 'ripgrep', relativePath);
-  if (existsSync(vendorPath)) {
-    return vendorPath;
   }
 
   // 尝试从模块安装目录查找（用于 npm 包）
@@ -630,34 +625,6 @@ function parseContentLine(line: string): GrepMatch | null {
 }
 
 /**
- * 格式化显示消息
- */
-function formatDisplayMessage(metadata: GrepMetadata): string {
-  const { search_pattern, search_path, output_mode, total_matches, strategy } =
-    metadata;
-
-  let message = `✅ 在 ${search_path} 中搜索 "${search_pattern}"`;
-
-  if (strategy) {
-    message += `\n🔧 使用策略: ${strategy}`;
-  }
-
-  switch (output_mode) {
-    case 'files_with_matches':
-      message += `\n📁 找到 ${total_matches} 个包含匹配内容的文件`;
-      break;
-    case 'count':
-      message += `\n🔢 统计了 ${total_matches} 个文件的匹配数量`;
-      break;
-    case 'content':
-      message += `\n📝 找到 ${total_matches} 个匹配行`;
-      break;
-  }
-
-  return message;
-}
-
-/**
  * GrepTool - 内容搜索工具
  * 支持多级降级策略：ripgrep -> git grep -> system grep -> JavaScript fallback
  */
@@ -665,6 +632,7 @@ export const grepTool = createTool({
   name: 'Grep',
   displayName: '内容搜索',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   // Zod Schema 定义
   schema: z.object({
@@ -755,7 +723,7 @@ export const grepTool = createTool({
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const {
       pattern,
-      path = process.cwd(),
+      path = getCwd(),
       glob,
       type,
       output_mode,
@@ -782,7 +750,7 @@ export const grepTool = createTool({
       const rgPath = getRipgrepPath();
       if (rgPath) {
         try {
-          updateOutput?.(`🚀 使用 ripgrep (${rgPath})`);
+          updateOutput?.(`使用 ripgrep (${rgPath})`);
 
           const args = buildRipgrepArgs({
             pattern,
@@ -803,7 +771,7 @@ export const grepTool = createTool({
           result = await executeRipgrep(args, output_mode, signal, updateOutput);
           strategy = SearchStrategy.RIPGREP;
         } catch {
-          updateOutput?.(`⚠️ ripgrep 失败，尝试降级策略...`);
+          updateOutput?.(`[WARN] ripgrep 失败，尝试降级策略...`);
           result = null;
         }
       }
@@ -811,7 +779,7 @@ export const grepTool = createTool({
       // 策略 2: 降级到 git grep (如果在 git 仓库中)
       if (!result && (await isGitRepository(path))) {
         try {
-          updateOutput?.(`📦 使用 git grep`);
+          updateOutput?.(`使用 git grep`);
 
           result = await executeGitGrep(
             pattern,
@@ -825,7 +793,7 @@ export const grepTool = createTool({
           );
           strategy = SearchStrategy.GIT_GREP;
         } catch {
-          updateOutput?.(`⚠️ git grep 失败，继续尝试其他策略...`);
+          updateOutput?.(`[WARN] git grep 失败，继续尝试其他策略...`);
           result = null;
         }
       }
@@ -833,7 +801,7 @@ export const grepTool = createTool({
       // 策略 3: 降级到系统 grep
       if (!result && isSystemGrepAvailable()) {
         try {
-          updateOutput?.(`🔧 使用系统 grep`);
+          updateOutput?.(`使用系统 grep`);
 
           result = await executeSystemGrep(
             pattern,
@@ -846,14 +814,14 @@ export const grepTool = createTool({
           );
           strategy = SearchStrategy.SYSTEM_GREP;
         } catch {
-          updateOutput?.(`⚠️ 系统 grep 失败，使用纯 JavaScript 实现...`);
+          updateOutput?.(`[WARN] 系统 grep 失败，使用纯 JavaScript 实现...`);
           result = null;
         }
       }
 
       // 策略 4: 最终降级到纯 JavaScript 实现
       if (!result) {
-        updateOutput?.(`💡 使用纯 JavaScript 搜索实现`);
+        updateOutput?.(`使用纯 JavaScript 搜索实现`);
 
         const fallbackResult = await executeFallbackGrep(
           pattern,
@@ -908,7 +876,10 @@ export const grepTool = createTool({
         return {
           success: false,
           llmContent: `Search execution failed: ${result.stderr}`,
-          displayContent: `❌ 搜索执行失败: ${result.stderr}`,
+          metadata: {
+            ...metadata,
+            summary: `搜索失败: ${result.stderr}`,
+          },
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: result.stderr,
@@ -916,13 +887,16 @@ export const grepTool = createTool({
         };
       }
 
-      const displayMessage = formatDisplayMessage(metadata);
-
       return {
         success: true,
         llmContent: matches,
-        displayContent: displayMessage,
-        metadata,
+        metadata: {
+          ...metadata,
+          summary:
+            matches.length > 0
+              ? `搜索 "${pattern}" 找到 ${matches.length} 个文件`
+              : `搜索 "${pattern}" 未找到匹配`,
+        },
       };
     } catch (error) {
       const err = error as Error;
@@ -930,7 +904,9 @@ export const grepTool = createTool({
         return {
           success: false,
           llmContent: 'Search aborted',
-          displayContent: '⚠️ 搜索被用户中止',
+          metadata: {
+            summary: `搜索失败: 操作被中止`,
+          },
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '操作被中止',
@@ -941,7 +917,9 @@ export const grepTool = createTool({
       return {
         success: false,
         llmContent: `Search failed: ${err.message}`,
-        displayContent: `❌ 搜索失败: ${err.message}`,
+        metadata: {
+          summary: `搜索失败: ${err.message}`,
+        },
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: err.message,

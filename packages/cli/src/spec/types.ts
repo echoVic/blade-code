@@ -9,7 +9,7 @@
 /**
  * Spec Workflow Phase
  *
- * Four-phase workflow: Requirements → Design → Tasks → Implementation
+ * Four-phase workflow: Requirements -> Design -> Tasks -> Implementation
  */
 export type SpecPhase =
   | 'init' // Initialize: create proposal skeleton

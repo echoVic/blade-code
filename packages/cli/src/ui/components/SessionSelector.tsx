@@ -52,7 +52,7 @@ function formatProjectPath(projectPath: string): string {
  */
 const Indicator = ({ isSelected }: { isSelected?: boolean }) => (
   <Box marginRight={1}>
-    <Text color={isSelected ? 'cyan' : 'gray'}>{isSelected ? '❯' : ' '}</Text>
+    <Text color={isSelected ? 'cyan' : 'gray'}>{isSelected ? '>' : ' '}</Text>
   </Box>
 );
 
@@ -152,11 +152,11 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
       const projectName = formatProjectPath(session.projectPath);
       const timeStr = formatTimestamp(session.lastMessageTime);
       const branchStr = session.gitBranch ? ` (${session.gitBranch})` : '';
-      const errorStr = session.hasErrors ? ' ⚠️' : '';
+      const errorStr = session.hasErrors ? ' [!]' : '';
       const relationStr = session.relationType === 'subagent' ? ' ↳ subagent' : '';
 
       return {
-        label: `📅 ${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${errorStr}${relationStr}`,
+        label: `${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${errorStr}${relationStr}`,
         value: session.sessionId,
       };
     });
@@ -193,7 +193,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   if (loading) {
     return (
       <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Text>⏳ 正在加载会话列表...</Text>
+        <Text>正在加载会话列表...</Text>
       </Box>
     );
   }
@@ -201,7 +201,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   if (sessions.length === 0) {
     return (
       <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Text color="yellow">⚠️ 没有找到历史会话</Text>
+        <Text color="yellow">没有找到历史会话</Text>
         <Text dimColor>
           {'\n'}提示: 开始一次对话后，会话历史将保存到 ~/.blade/projects/
         </Text>
@@ -212,10 +212,10 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Text bold color="cyan">
-        📂 选择要恢复的会话:
+        选择要恢复的会话:
       </Text>
       <Text dimColor>
-        {'\n'}(←→ 翻页 | ↑↓ 选择 | Enter 确认 | Esc 取消){'\n'}
+        {'\n'}(Left/Right to page | Up/Down to select | Enter to confirm | Esc to cancel){'\n'}
       </Text>
 
       <SelectInput
@@ -236,11 +236,11 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
         {totalPages > 1 && (
           <Box marginTop={1}>
             <Text color={currentPage > 0 ? 'cyan' : 'gray'}>
-              {currentPage > 0 ? '◀ ← 上一页' : '        '}
+              {currentPage > 0 ? '<< 上一页' : '        '}
             </Text>
             <Text> </Text>
             <Text color={currentPage < totalPages - 1 ? 'cyan' : 'gray'}>
-              {currentPage < totalPages - 1 ? '下一页 → ▶' : ''}
+              {currentPage < totalPages - 1 ? '下一页 >>' : ''}
             </Text>
           </Box>
         )}

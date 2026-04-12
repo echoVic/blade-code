@@ -37,7 +37,7 @@ const resumeCommand: SlashCommand = {
         const messages = await SessionService.loadSession(sessionId);
 
         if (messages.length === 0) {
-          ui.sendMessage(`❌ 会话 \`${sessionId}\` 为空或无法加载`);
+          ui.sendMessage(`[FAIL] 会话 \`${sessionId}\` 为空或无法加载`);
           return {
             success: false,
             error: '会话为空',
@@ -60,7 +60,7 @@ const resumeCommand: SlashCommand = {
         restoreSession(sessionId, sessionMessages);
 
         ui.sendMessage(
-          `✅ 已恢复会话 \`${sessionId}\`\n\n共 ${sessionMessages.length} 条消息已加载，可以继续对话`
+          `[OK] 已恢复会话 \`${sessionId}\`\n\n共 ${sessionMessages.length} 条消息已加载，可以继续对话`
         );
 
         return {
@@ -73,7 +73,7 @@ const resumeCommand: SlashCommand = {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : '未知错误';
-        ui.sendMessage(`❌ 加载会话失败: ${errorMessage}`);
+        ui.sendMessage(`[FAIL] 加载会话失败: ${errorMessage}`);
         return {
           success: false,
           error: `加载会话失败: ${errorMessage}`,
@@ -87,7 +87,7 @@ const resumeCommand: SlashCommand = {
 
       if (sessions.length === 0) {
         ui.sendMessage(
-          '📭 **没有找到历史会话**\n\n开始一次对话后,会话历史将自动保存到 `~/.blade/projects/`'
+          '**没有找到历史会话**\n\n开始一次对话后,会话历史将自动保存到 `~/.blade/projects/`'
         );
         return {
           success: true,
@@ -105,7 +105,7 @@ const resumeCommand: SlashCommand = {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误';
-      ui.sendMessage(`❌ 获取会话列表失败: ${errorMessage}`);
+      ui.sendMessage(`获取会话列表失败: ${errorMessage}`);
       return {
         success: false,
         error: `获取会话列表失败: ${errorMessage}`,

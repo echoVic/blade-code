@@ -221,7 +221,7 @@ const testUtils = {
 beforeAll(() => {
   // 测试开始前的全局设置
   if (process.env.DEBUG_TESTS === 'true') {
-    console.log('🧪 Starting test suite with debug mode enabled');
+    console.log('Starting test suite with debug mode enabled');
   }
 });
 

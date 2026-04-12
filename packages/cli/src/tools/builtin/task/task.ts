@@ -11,6 +11,7 @@
 
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
+import { getCwd } from '../../../utils/cwd.js';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
 import { SubagentExecutor } from '../../../agent/subagents/SubagentExecutor.js';
 import { subagentRegistry } from '../../../agent/subagents/SubagentRegistry.js';
@@ -18,6 +19,7 @@ import type {
   SubagentContext,
   SubagentResult,
 } from '../../../agent/subagents/types.js';
+import type { LoopEvent } from '../../../agent/loop/types.js';
 import { PermissionMode } from '../../../config/types.js';
 import { HookManager } from '../../../hooks/HookManager.js';
 import { Bus } from '../../../server/bus.js';
@@ -25,6 +27,10 @@ import { vanillaStore } from '../../../store/vanilla.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
+import {
+  formatToolDisplay,
+  renderToolDisplayToString,
+} from '../../../ui/utils/toolFormatters.js';
 
 /**
  * 从错误中提取用户友好的错误信息
@@ -129,6 +135,7 @@ export const taskTool = createTool({
   displayName: 'Subagent Scheduler',
   kind: ToolKind.ReadOnly, // Plan 模式下允许：子 Agent 的工具使用受各自模式限制
   isReadOnly: true,
+  isConcurrencySafe: false, // 开子代理，有副作用
 
   // Zod Schema 定义
   // 注意：使用 z.string() + refine 而非 z.enum()，因为 enum 在模块加载时求值，
@@ -227,10 +234,12 @@ export const taskTool = createTool({
         return {
           success: false,
           llmContent: `Unknown subagent type: ${subagent_type}. Available types: ${registeredNames.join(', ') || 'none'}`,
-          displayContent: `❌ 未知的 subagent 类型: ${subagent_type}\n\n可用类型: ${registeredNames.join(', ') || '无'}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: `Unknown subagent type: ${subagent_type}`,
+          },
+          metadata: {
+            summary: `未知的 subagent 类型: ${subagent_type}`,
           },
         };
       }
@@ -252,7 +261,7 @@ export const taskTool = createTool({
       }
 
       // 4. 同步执行模式（原有逻辑）
-      updateOutput?.(`🚀 启动 ${subagent_type} subagent: ${description}`);
+      updateOutput?.(`启动 ${subagent_type} subagent: ${description}`);
 
       // 创建执行器
       const executor = new SubagentExecutor(subagentConfig);
@@ -264,70 +273,88 @@ export const taskTool = createTool({
         .app.actions.startSubagentProgress(subagentId, subagent_type, description);
 
       // 构建执行上下文
+      // Phase 4: 使用统一 onEvent 回调收敛 Bus 发布逻辑
       const subagentContext: SubagentContext = {
         prompt,
         parentSessionId: context.sessionId,
         permissionMode: context.permissionMode, // 继承父 Agent 的权限模式
         subagentSessionId,
-        onToolStart: (toolCall, toolKind) => {
-          const toolName =
-            toolCall.type === 'function' ? toolCall.function.name : 'Unknown';
-          vanillaStore.getState().app.actions.updateSubagentTool(toolName);
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.update', {
-              subagentSessionId,
-              toolName,
-            });
-            if (toolCall.type === 'function') {
-              Bus.publish(parentSessionId, 'subagent.tool.start', {
+        onEvent: (event: LoopEvent) => {
+          switch (event.kind) {
+            case 'tool_start': {
+              const toolCall = event.toolCall;
+              const toolName =
+                'function' in toolCall ? toolCall.function.name : 'Unknown';
+              vanillaStore.getState().app.actions.updateSubagentTool(toolName);
+              if (parentSessionId) {
+                Bus.publish(parentSessionId, 'subagent.update', {
+                  subagentSessionId,
+                  toolName,
+                });
+                if ('function' in toolCall) {
+                  Bus.publish(parentSessionId, 'subagent.tool.start', {
+                    subagentSessionId,
+                    toolCallId: toolCall.id,
+                    toolName,
+                    arguments: toolCall.function.arguments,
+                    toolKind: event.toolKind,
+                  });
+                }
+              }
+              break;
+            }
+            case 'tool_result': {
+              if (!parentSessionId) break;
+              const toolCall = event.toolCall;
+              if (!('function' in toolCall)) break;
+              Bus.publish(parentSessionId, 'subagent.tool.result', {
                 subagentSessionId,
                 toolCallId: toolCall.id,
-                toolName,
-                arguments: toolCall.function.arguments,
-                toolKind,
+                toolName: toolCall.function.name,
+                success: !event.result.error,
+                summary: event.result.metadata?.summary,
+                output: renderToolDisplayToString(
+                  formatToolDisplay(toolCall.function.name, event.result)
+                ),
+                metadata: event.result.metadata,
               });
+              break;
             }
-          }
-        },
-        onToolResult: (toolCall, result) => {
-          if (!parentSessionId) return;
-          if (toolCall.type !== 'function') return;
-          Bus.publish(parentSessionId, 'subagent.tool.result', {
-            subagentSessionId,
-            toolCallId: toolCall.id,
-            toolName: toolCall.function.name,
-            success: !result.error,
-            summary: result.metadata?.summary,
-            output: result.displayContent,
-            metadata: result.metadata,
-          });
-        },
-        onContentDelta: (delta) => {
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.delta', {
-              subagentSessionId,
-              delta,
-            });
-          }
-        },
-        onThinkingDelta: (delta) => {
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.thinking.delta', {
-              subagentSessionId,
-              delta,
-            });
-          }
-        },
-        onStreamEnd: () => {
-          if (parentSessionId) {
-            Bus.publish(parentSessionId, 'subagent.stream.end', {
-              subagentSessionId,
-            });
+            case 'content_delta': {
+              if (parentSessionId) {
+                Bus.publish(parentSessionId, 'subagent.delta', {
+                  subagentSessionId,
+                  delta: event.delta,
+                });
+              }
+              break;
+            }
+            case 'thinking_delta': {
+              if (parentSessionId) {
+                Bus.publish(parentSessionId, 'subagent.thinking.delta', {
+                  subagentSessionId,
+                  delta: event.delta,
+                });
+              }
+              break;
+            }
+            case 'stream_end': {
+              // stream_end 是 per-turn 语义，映射到 subagent.stream.end
+              if (parentSessionId) {
+                Bus.publish(parentSessionId, 'subagent.stream.end', {
+                  subagentSessionId,
+                });
+              }
+              break;
+            }
+            // 系统事件静默忽略（turn_start, compaction, token_usage, model_fallback 等）
+            default:
+              break;
           }
         },
       };
 
-      updateOutput?.(`⚙️  执行任务中...`);
+      updateOutput?.(`执行任务中...`);
 
       // 4. 执行 subagent
       const startTime = Date.now();
@@ -339,7 +366,7 @@ export const taskTool = createTool({
       try {
         const hookManager = HookManager.getInstance();
         const stopResult = await hookManager.executeSubagentStopHooks(subagent_type, {
-          projectDir: process.cwd(),
+          projectDir: getCwd(),
           sessionId: context.sessionId || 'unknown',
           permissionMode:
             (context.permissionMode as PermissionMode) || PermissionMode.DEFAULT,
@@ -381,24 +408,11 @@ export const taskTool = createTool({
 
       // 7. 返回结果
       if (result.success) {
-        const outputPreview =
-          result.message.length > 1000
-            ? result.message.slice(0, 1000) + '\n...(截断)'
-            : result.message;
-
         return {
           success: true,
           llmContent: result.message,
-          displayContent:
-            `✅ Subagent 任务完成\n\n` +
-            `类型: ${subagent_type}\n` +
-            `任务: ${description}\n` +
-            `Agent ID: ${result.agentId || 'N/A'}\n` +
-            `耗时: ${duration}ms\n` +
-            `工具调用: ${result.stats?.toolCalls || 0} 次\n` +
-            `Token: ${result.stats?.tokens || 0}\n\n` +
-            `结果:\n${outputPreview}`,
           metadata: {
+            summary: `${subagent_type} 任务完成`,
             subagent_type,
             description,
             duration,
@@ -413,18 +427,12 @@ export const taskTool = createTool({
         return {
           success: false,
           llmContent: `Subagent execution failed: ${result.error}`,
-          displayContent:
-            `⚠️ Subagent 任务失败\n\n` +
-            `类型: ${subagent_type}\n` +
-            `任务: ${description}\n` +
-            `Agent ID: ${result.agentId || 'N/A'}\n` +
-            `耗时: ${duration}ms\n` +
-            `错误: ${result.error}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: result.error || 'Unknown error',
           },
           metadata: {
+            summary: `${subagent_type} 任务失败`,
             subagentSessionId,
             subagentType: subagent_type,
             subagentStatus: 'failed' as const,
@@ -441,11 +449,13 @@ export const taskTool = createTool({
       return {
         success: false,
         llmContent: `Subagent execution error: ${err.message}`,
-        displayContent: `❌ Subagent 执行异常\n\n${errorMessage}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: err.message,
           details: error,
+        },
+        metadata: {
+          summary: `Subagent 执行异常: ${errorMessage}`,
         },
       };
     }
@@ -493,13 +503,8 @@ function handleBackgroundExecution(
       status: 'running',
       message: `Agent started in background. Use TaskOutput(task_id: "${agentId}") to retrieve results.`,
     },
-    displayContent:
-      `🚀 后台 Agent 已启动\n\n` +
-      `Agent ID: ${agentId}\n` +
-      `类型: ${subagentConfig.name}\n` +
-      `任务: ${description}\n\n` +
-      `💡 使用 TaskOutput 工具获取结果`,
     metadata: {
+      summary: `后台 Agent 已启动: ${agentId}`,
       agent_id: agentId,
       subagent_type: subagentConfig.name,
       description,
@@ -534,10 +539,12 @@ function handleResume(
     return {
       success: false,
       llmContent: `Cannot resume agent ${agentId}: session not found`,
-      displayContent: `❌ 无法恢复 Agent: ${agentId}\n\n会话不存在或已过期`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: `Agent session not found: ${agentId}`,
+      },
+      metadata: {
+        summary: `恢复 Agent 失败: 会话不存在 ${agentId}`,
       },
     };
   }
@@ -547,10 +554,12 @@ function handleResume(
     return {
       success: false,
       llmContent: `Cannot resume agent ${agentId}: still running`,
-      displayContent: `❌ 无法恢复 Agent: ${agentId}\n\nAgent 仍在运行中，我会使用 TaskOutput 获取结果`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: `Agent is still running: ${agentId}`,
+      },
+      metadata: {
+        summary: `恢复 Agent 失败: 仍在运行 ${agentId}`,
       },
     };
   }
@@ -568,10 +577,12 @@ function handleResume(
     return {
       success: false,
       llmContent: `Failed to resume agent ${agentId}`,
-      displayContent: `❌ 恢复 Agent 失败: ${agentId}`,
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
         message: `Failed to resume agent: ${agentId}`,
+      },
+      metadata: {
+        summary: `恢复 Agent 失败: ${agentId}`,
       },
     };
   }
@@ -584,14 +595,8 @@ function handleResume(
       resumed_from: agentId,
       message: `Agent resumed in background. Use TaskOutput(task_id: "${newAgentId}") to retrieve results.`,
     },
-    displayContent:
-      `🔄 Agent 已恢复执行\n\n` +
-      `Agent ID: ${newAgentId}\n` +
-      `恢复自: ${agentId}\n` +
-      `类型: ${subagentConfig.name}\n` +
-      `任务: ${description}\n\n` +
-      `💡 使用 TaskOutput 工具获取结果`,
     metadata: {
+      summary: `恢复 Agent: ${newAgentId}`,
       agent_id: newAgentId,
       resumed_from: agentId,
       subagent_type: subagentConfig.name,

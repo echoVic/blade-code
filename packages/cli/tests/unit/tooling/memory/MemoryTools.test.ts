@@ -72,7 +72,7 @@ describe('MemoryWriteTool', () => {
 
   it('should write to MEMORY.md index', async () => {
     const result = await memoryWriteTool.execute(
-      { topic: 'MEMORY', content: '# Project Memory\n- Build: pnpm build', mode: 'overwrite' },
+      { topic: 'MEMORY', content: '# Project Memory\n- Build: bun run build', mode: 'overwrite' },
       undefined, context
     );
     expect(result.success).toBe(true);
@@ -178,7 +178,7 @@ describe('MemoryReadTool', () => {
   });
 
   it('should read MEMORY.md index', async () => {
-    await manager.writeTopic('MEMORY', '# Project Memory\n- Build: pnpm build', 'overwrite');
+    await manager.writeTopic('MEMORY', '# Project Memory\n- Build: bun run build', 'overwrite');
 
     const result = await memoryReadTool.execute({ topic: 'MEMORY' }, undefined, context);
     expect(result.success).toBe(true);

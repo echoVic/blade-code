@@ -29,17 +29,17 @@ export const installCommands: CommandModule<{}, InstallOptions> = {
       ]);
   },
   handler: async (argv) => {
-    console.log(`📦 Installing Blade ${argv.target}...`);
+    console.log(`Installing Blade ${argv.target}...`);
 
     try {
       if (argv.force) {
-        console.log('🔄 Force reinstall enabled');
+        console.log('Force reinstall enabled');
       }
 
       // 模拟安装过程
-      console.log('⬇️  Downloading...');
-      console.log('🔧 Installing...');
-      console.log('✅ Installation completed successfully');
+      console.log('Downloading...');
+      console.log('Installing...');
+      console.log('Installation completed successfully');
 
       // 实际实现时可以添加：
       // 1. 下载指定版本的二进制文件
@@ -48,7 +48,7 @@ export const installCommands: CommandModule<{}, InstallOptions> = {
       // 4. 更新符号链接
     } catch (error) {
       console.error(
-        `❌ Installation failed: ${error instanceof Error ? error.message : '未知错误'}`
+        `Error: Installation failed: ${error instanceof Error ? error.message : '未知错误'}`
       );
       process.exit(1);
     }

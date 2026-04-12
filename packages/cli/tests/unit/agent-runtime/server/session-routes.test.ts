@@ -16,7 +16,7 @@ const runtimeState = vi.hoisted(() => ({
 }));
 
 const agentState = vi.hoisted(() => ({
-  chat: vi.fn().mockResolvedValue('assistant reply'),
+  chatStream: vi.fn(),
 }));
 
 vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
@@ -28,7 +28,7 @@ vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
 vi.mock('../../../../src/agent/Agent.js', () => ({
   Agent: {
     createWithRuntime: vi.fn(async () => ({
-      chat: agentState.chat,
+      chatStream: agentState.chatStream,
     })),
   },
 }));
@@ -69,7 +69,12 @@ describe('SessionRoutes runtime reuse', () => {
     vi.clearAllMocks();
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.refresh.mockClear();
-    agentState.chat.mockResolvedValue('assistant reply');
+    agentState.chatStream.mockImplementation(async function* () {
+      if (Date.now() < 0) {
+        yield undefined;
+      }
+      return { success: true, finalMessage: 'assistant reply', metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 } };
+    });
   });
 
   afterEach(() => {
@@ -127,7 +132,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(response.status).toBe(202);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(agentState.chat).toHaveBeenCalledWith(
+    expect(agentState.chatStream).toHaveBeenCalledWith(
       [
         { type: 'text', text: 'describe this image' },
         { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
@@ -154,7 +159,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(response.status).toBe(202);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(agentState.chat).toHaveBeenCalledWith(
+    expect(agentState.chatStream).toHaveBeenCalledWith(
       [{ type: 'image_url', image_url: { url: 'data:image/png;base64,image-only' } }],
       expect.any(Object),
       expect.any(Object)
@@ -184,7 +189,7 @@ describe('SessionRoutes runtime reuse', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(SessionService.loadSession).toHaveBeenCalledWith('persisted-session');
-    expect(agentState.chat.mock.calls[0]?.[1]).toMatchObject({
+    expect(agentState.chatStream.mock.calls[0]?.[1]).toMatchObject({
       messages: [
         { role: 'user', content: 'earlier question' },
         { role: 'assistant', content: 'earlier answer' },

@@ -9,7 +9,6 @@
 import {
   MARKDOWN_PATTERNS,
   type ParsedBlock,
-  parseMarkdown,
 } from './markdownParser.js';
 
 interface IncrementalState {
@@ -22,6 +21,9 @@ interface IncrementalState {
   tableRows: string[][];
   inDiff: boolean;
   diffContent: string[];
+  inBlockquote: boolean;
+  blockquoteLines: string[];
+  blockquoteLevel: number;
   lastLineEmpty: boolean;
   pendingTableHeader: string | null;
 }
@@ -46,6 +48,9 @@ function createState(): IncrementalState {
     tableRows: [],
     inDiff: false,
     diffContent: [],
+    inBlockquote: false,
+    blockquoteLines: [],
+    blockquoteLevel: 0,
     lastLineEmpty: true,
     pendingTableHeader: null,
   };
@@ -81,20 +86,27 @@ function closeOpenTable(state: IncrementalState, blocks: ParsedBlock[]): void {
   state.tableRows = [];
 }
 
-function closeOpenCodeBlock(state: IncrementalState, blocks: ParsedBlock[]): void {
-  const codeContent = state.codeBlockContent.join('\n');
-  if (
-    state.codeBlockLang?.toLowerCase() === 'markdown' ||
-    state.codeBlockLang?.toLowerCase() === 'md'
-  ) {
-    blocks.push(...parseMarkdown(codeContent));
-  } else {
+function closeOpenBlockquote(state: IncrementalState, blocks: ParsedBlock[]): void {
+  if (state.blockquoteLines.length > 0) {
     blocks.push({
-      type: 'code',
-      content: codeContent,
-      language: state.codeBlockLang || undefined,
+      type: 'blockquote',
+      content: state.blockquoteLines.join('\n'),
+      blockquoteLevel: state.blockquoteLevel,
+      blockquoteLines: [...state.blockquoteLines],
     });
   }
+  state.inBlockquote = false;
+  state.blockquoteLines = [];
+  state.blockquoteLevel = 0;
+}
+
+function closeOpenCodeBlock(state: IncrementalState, blocks: ParsedBlock[]): void {
+  const codeContent = state.codeBlockContent.join('\n');
+  blocks.push({
+    type: 'code',
+    content: codeContent,
+    language: state.codeBlockLang || undefined,
+  });
 
   state.inCodeBlock = false;
   state.codeBlockContent = [];
@@ -236,6 +248,31 @@ function processLine(line: string, entry: CacheEntry, allowReprocess: boolean = 
     }
   }
 
+  // Blockquote 处理
+  const blockquoteMatch = line.match(MARKDOWN_PATTERNS.blockquote);
+  if (blockquoteMatch) {
+    const level = blockquoteMatch[1].length;
+    const text = blockquoteMatch[2] || '';
+
+    if (state.inBlockquote && level === state.blockquoteLevel) {
+      state.blockquoteLines.push(text);
+    } else {
+      if (state.inBlockquote) {
+        closeOpenBlockquote(state, blocks);
+      }
+      state.inBlockquote = true;
+      state.blockquoteLevel = level;
+      state.blockquoteLines = [text];
+    }
+    state.lastLineEmpty = false;
+    return;
+  }
+
+  // 非 blockquote 行：关闭之前的 blockquote
+  if (state.inBlockquote) {
+    closeOpenBlockquote(state, blocks);
+  }
+
   // 标题
   const headingMatch = line.match(MARKDOWN_PATTERNS.heading);
   if (headingMatch) {
@@ -359,6 +396,10 @@ export function finalizeMarkdownCache(messageId: string): void {
     closeOpenTable(entry.state, entry.blocks);
   }
 
+  if (entry.state.inBlockquote) {
+    closeOpenBlockquote(entry.state, entry.blocks);
+  }
+
   if (entry.state.inDiff) {
     entry.blocks.push({
       type: 'text',
@@ -411,6 +452,11 @@ function getMarkdownTailLines(messageId: string): string[] | null {
       for (const row of state.tableRows) {
         lines.push(`| ${row.join(' | ')} |`);
       }
+    }
+  } else if (state.inBlockquote) {
+    const prefix = '>'.repeat(state.blockquoteLevel) + ' ';
+    for (const bqLine of state.blockquoteLines) {
+      lines.push(prefix + bqLine);
     }
   } else if (state.pendingTableHeader) {
     lines.push(state.pendingTableHeader);

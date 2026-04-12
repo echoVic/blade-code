@@ -68,7 +68,7 @@ function safeJsonParse(str: string, fallback: unknown = {}): unknown {
   try {
     return JSON.parse(str);
   } catch {
-    logger.warn('⚠️ [VercelAIChatService] Failed to parse JSON, using fallback', { str });
+    logger.warn('[VercelAIChatService] Failed to parse JSON, using fallback', { str });
     return fallback;
   }
 }
@@ -80,7 +80,7 @@ export class VercelAIChatService implements IChatService {
   constructor(config: ChatConfig) {
     this.config = config;
     this.model = this.createModel(config);
-    logger.debug('🚀 [VercelAIChatService] Initialized', {
+    logger.debug('[VercelAIChatService] Initialized', {
       provider: config.provider,
       model: config.model,
       providerId: config.providerId,
@@ -334,13 +334,24 @@ export class VercelAIChatService implements IChatService {
     return result;
   }
 
+
+  private isFallbackableError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    const msg = error.message.toLowerCase();
+    const statusMatch = msg.match(/status[:\s]*(\d{3})/);
+    const status = statusMatch
+      ? parseInt(statusMatch[1], 10)
+      : (error as Error & { status?: number }).status;
+    return [429, 529, 503].includes(status);
+  }
+
   async chat(
     messages: Message[],
     tools?: Array<{ name: string; description: string; parameters: unknown }>,
     signal?: AbortSignal
   ): Promise<ChatResponse> {
     const startTime = Date.now();
-    logger.debug('🚀 [VercelAIChatService] Starting chat request');
+    logger.debug('[VercelAIChatService] Starting chat request');
 
     const filteredMessages = filterOrphanToolMessages(messages);
     const coreMessages = this.convertMessages(filteredMessages);
@@ -357,7 +368,7 @@ export class VercelAIChatService implements IChatService {
       });
 
       const duration = Date.now() - startTime;
-      logger.debug('📥 [VercelAIChatService] Response received in', duration, 'ms');
+      logger.debug('[VercelAIChatService] Response received in', duration, 'ms');
 
       const toolCalls =
         result.toolCalls && result.toolCalls.length > 0
@@ -378,10 +389,53 @@ export class VercelAIChatService implements IChatService {
             anthropic?: { cacheCreationInputTokens?: number; cacheReadInputTokens?: number };
           }
         ),
+        finishReason: result.finishReason,
       };
     } catch (error) {
       const duration = Date.now() - startTime;
-      logger.error('❌ [VercelAIChatService] Chat failed after', duration, 'ms');
+      logger.error('[VercelAIChatService] Chat failed after', duration, 'ms');
+      // Model fallback on 429/529/503
+      if (this.isFallbackableError(error) && this.config.fallbackModel) {
+        logger.warn(
+          `[VercelAIChatService] Switching to fallback model (non-stream): ${this.config.fallbackModel}`
+        );
+        const fallbackConfig = { ...this.config, model: this.config.fallbackModel };
+        const fallbackModel = this.createModel(fallbackConfig);
+        try {
+          const result = await generateText({
+            model: fallbackModel,
+            messages: coreMessages as never,
+            tools: coreTools as never,
+            maxOutputTokens: this.config.maxOutputTokens,
+            temperature: this.config.temperature ?? 0,
+            abortSignal: signal,
+          });
+          const fallbackToolCalls =
+            result.toolCalls && result.toolCalls.length > 0
+              ? this.convertToolCalls(result.toolCalls as Array<{ toolCallId: string; toolName: string; args?: unknown }>)
+              : undefined;
+          const fallbackReasoning = Array.isArray(result.reasoning)
+            ? result.reasoning.map((r: { text: string }) => r.text).join('')
+            : undefined;
+          return {
+            content: result.text || '',
+            reasoningContent: fallbackReasoning,
+            toolCalls: fallbackToolCalls,
+            usage: this.convertUsage(
+              result.usage as { promptTokens?: number; completionTokens?: number; totalTokens?: number },
+              result.providerMetadata as {
+                anthropic?: { cacheCreationInputTokens?: number; cacheReadInputTokens?: number };
+              }
+            ),
+            finishReason: result.finishReason,
+          };
+        } catch (fallbackError) {
+          throw new Error(
+            `Fallback model (${this.config.fallbackModel}) also failed: ${fallbackError instanceof Error ? fallbackError.message : fallbackError}`,
+            { cause: error }
+          );
+        }
+      }
       throw error;
     }
   }
@@ -392,7 +446,7 @@ export class VercelAIChatService implements IChatService {
     signal?: AbortSignal
   ): AsyncGenerator<StreamChunk, void, unknown> {
     const startTime = Date.now();
-    logger.debug('🚀 [VercelAIChatService] Starting stream request');
+    logger.debug('[VercelAIChatService] Starting stream request');
 
     const filteredMessages = filterOrphanToolMessages(messages);
     const coreMessages = this.convertMessages(filteredMessages);
@@ -408,7 +462,7 @@ export class VercelAIChatService implements IChatService {
         abortSignal: signal,
       });
 
-      logger.debug('📥 [VercelAIChatService] Stream started');
+      logger.debug('[VercelAIChatService] Stream started');
 
       let toolCallIndex = 0;
       for await (const part of result.fullStream) {
@@ -450,10 +504,71 @@ export class VercelAIChatService implements IChatService {
       }
 
       const duration = Date.now() - startTime;
-      logger.debug('✅ [VercelAIChatService] Stream completed in', duration, 'ms');
+      logger.debug('[VercelAIChatService] Stream completed in', duration, 'ms');
     } catch (error) {
       const duration = Date.now() - startTime;
-      logger.error('❌ [VercelAIChatService] Stream failed after', duration, 'ms');
+      logger.error('[VercelAIChatService] Stream failed after', duration, 'ms');
+      // Model fallback on 429/529/503
+      if (this.isFallbackableError(error) && this.config.fallbackModel) {
+        logger.warn(
+          `[VercelAIChatService] Switching to fallback model: ${this.config.fallbackModel}`
+        );
+        yield { modelFallback: true };
+        const fallbackConfig = { ...this.config, model: this.config.fallbackModel };
+        const fallbackModel = this.createModel(fallbackConfig);
+        try {
+          const fallbackResult = streamText({
+            model: fallbackModel,
+            messages: coreMessages as never,
+            tools: coreTools as never,
+            maxOutputTokens: this.config.maxOutputTokens,
+            temperature: this.config.temperature ?? 0,
+            abortSignal: signal,
+          });
+
+          let toolCallIndex = 0;
+          for await (const part of fallbackResult.fullStream) {
+            switch (part.type) {
+              case 'text-delta':
+                yield { content: (part as { text?: string; textDelta?: string }).text ?? (part as { textDelta?: string }).textDelta };
+                break;
+              case 'reasoning-delta':
+                yield { reasoningContent: (part as { textDelta?: string }).textDelta };
+                break;
+              case 'tool-call':
+                yield {
+                  toolCalls: [
+                    {
+                      index: toolCallIndex++,
+                      id: (part as { toolCallId: string }).toolCallId,
+                      type: 'function' as const,
+                      function: {
+                        name: (part as { toolName: string }).toolName,
+                        arguments: JSON.stringify((part as { args?: unknown; input?: unknown }).args ?? (part as { input?: unknown }).input ?? {}),
+                      },
+                    },
+                  ],
+                };
+                break;
+              case 'finish':
+                yield {
+                  finishReason: (part as { finishReason?: string }).finishReason,
+                  usage: this.convertUsage(
+                    (part as { totalUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }).totalUsage,
+                    (part as { providerMetadata?: { anthropic?: { cacheCreationInputTokens?: number; cacheReadInputTokens?: number } } }).providerMetadata
+                  ),
+                };
+                break;
+            }
+          }
+          return;
+        } catch (fallbackError) {
+          throw new Error(
+            `Fallback model (${this.config.fallbackModel}) also failed: ${fallbackError instanceof Error ? fallbackError.message : fallbackError}`,
+            { cause: error }
+          );
+        }
+      }
       throw error;
     }
   }
@@ -463,9 +578,9 @@ export class VercelAIChatService implements IChatService {
   }
 
   updateConfig(newConfig: Partial<ChatConfig>): void {
-    logger.debug('🔄 [VercelAIChatService] Updating configuration');
+    logger.debug('[VercelAIChatService] Updating configuration');
     this.config = { ...this.config, ...newConfig };
     this.model = this.createModel(this.config);
-    logger.debug('✅ [VercelAIChatService] Configuration updated');
+    logger.debug('[VercelAIChatService] Configuration updated');
   }
 }

@@ -1,5 +1,7 @@
 import { nanoid } from 'nanoid';
+import { getCwd } from '../../utils/cwd.js';
 import { Agent } from '../Agent.js';
+import { drainLoop } from '../loop/index.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
 
 /**
@@ -44,29 +46,26 @@ export class SubagentExecutor {
         subagentType: this.config.name,
         isSidechain: false,
       };
-      
-      const loopResult = await agent.runAgenticLoop(
-        context.prompt,
-        {
-          messages: [],
-          userId: 'subagent',
-          sessionId: agentId,
-          workspaceRoot: process.cwd(),
-          permissionMode: context.permissionMode,
-          systemPrompt,
-          subagentInfo,
-        },
-        {
-          onToolStart: context.onToolStart,
-          onToolResult: context.onToolResult
-            ? async (toolCall, result) => {
-                context.onToolResult?.(toolCall, result);
-              }
-            : undefined,
-          onContentDelta: context.onContentDelta,
-          onThinkingDelta: context.onThinkingDelta,
-          onStreamEnd: context.onStreamEnd,
-        }
+
+      /**
+       * Phase 4: 统一通过 onEvent 转发所有 LoopEvent
+       */
+      const onEvent = context.onEvent;
+
+      const loopResult = await drainLoop(
+        agent.chatStream(
+          context.prompt,
+          {
+            messages: [],
+            userId: 'subagent',
+            sessionId: agentId,
+            workspaceRoot: getCwd(),
+            permissionMode: context.permissionMode,
+            systemPrompt,
+            subagentInfo,
+          }
+        ),
+        onEvent
       );
 
       if (loopResult.success) {

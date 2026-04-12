@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const accessMock = vi.hoisted(() => vi.fn());
@@ -8,6 +9,8 @@ vi.mock('fs/promises', () => ({
 
 vi.mock('fs', () => ({
   constants: { R_OK: 4, W_OK: 2 },
+  realpathSync: (p: string) => p,
+  existsSync: () => false,
 }));
 
 const setupDoctorCommand = async (
@@ -93,7 +96,7 @@ describe('commands/doctor', () => {
     await doctorCommands.handler({} as any);
 
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith('🎉 All checks passed! Blade is ready to use.');
+    expect(logSpy).toHaveBeenCalledWith('All checks passed! Blade is ready to use.');
   });
 
   it('检查失败时应记录问题并退出', async () => {
@@ -107,13 +110,13 @@ describe('commands/doctor', () => {
     await doctorCommands.handler({} as any);
 
     expect(logSpy).toHaveBeenCalledWith(
-      expect.stringContaining('❌ Configuration: FAILED')
+      expect.stringContaining('[FAIL] Configuration: FAILED')
     );
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('⚠️  Node.js version'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[WARN] Node.js version'));
     expect(logSpy).toHaveBeenCalledWith(
-      expect.stringContaining('❌ File system permissions')
+      expect.stringContaining('[FAIL] File system permissions')
     );
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('❌ Dependencies'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[FAIL] Dependencies'));
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

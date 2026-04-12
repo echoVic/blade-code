@@ -90,7 +90,6 @@ describe('ReadTool', () => {
 
       expect(result.success).toBe(true);
       expect(result.llmContent).toBe(content);
-      expect(result.displayContent).toContain('成功读取文件');
       // updateOutput 可能被调用也可能不被调用，取决于实现
       // 只验证结果是否正确
     });
@@ -170,7 +169,6 @@ describe('ReadTool', () => {
 
       expect(result.success).toBe(false);
       expect(result.llmContent).toContain('File not found');
-      expect(result.displayContent).toContain('文件不存在');
       expect(result.error?.type).toBe('execution_error');
     });
 
@@ -193,7 +191,6 @@ describe('ReadTool', () => {
 
       expect(result.success).toBe(false);
       expect(result.llmContent).toContain('Cannot read a directory');
-      expect(result.displayContent).toContain('无法读取目录');
     });
 
     it('应该处理中止信号', async () => {
@@ -222,7 +219,6 @@ describe('ReadTool', () => {
       // 如果在之后检查，可能已经成功读取
       // 只要有响应即可
       expect(result.llmContent).toBeDefined();
-      expect(result.displayContent).toBeDefined();
     });
   });
 

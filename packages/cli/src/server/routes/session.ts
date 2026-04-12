@@ -4,10 +4,11 @@ import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { Agent } from '../../agent/Agent.js';
+import { drainLoop } from '../../agent/loop/index.js';
+import type { LoopEvent } from '../../agent/loop/types.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type {
   ChatContext,
-  LoopOptions,
   UserMessageContent,
 } from '../../agent/types.js';
 import { PermissionMode } from '../../config/types.js';
@@ -22,6 +23,11 @@ import type {
 import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
 import { Bus } from '../bus.js';
 import { BadRequestError, NotFoundError } from '../error.js';
+import { getCwd } from '../../utils/cwd.js';
+import {
+  formatToolDisplay,
+  renderToolDisplayToString,
+} from '../../ui/utils/toolFormatters.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -210,7 +216,7 @@ export const SessionRoutes = () => {
 
       const { title, projectPath } = parsed.data;
       const sessionId = nanoid(12);
-      const directory = projectPath || c.get('directory') || process.cwd();
+      const directory = projectPath || c.get('directory') || getCwd();
 
       const session: SessionInfo = {
         id: sessionId,
@@ -347,7 +353,7 @@ export const SessionRoutes = () => {
 
     let session = sessions.get(sessionId);
     if (!session) {
-      const directory = c.get('directory') || process.cwd();
+      const directory = c.get('directory') || getCwd();
       session = {
         id: sessionId,
         projectPath: directory,
@@ -421,7 +427,7 @@ export const SessionRoutes = () => {
 
     const { content, attachments, permissionMode: requestedMode } = parsed.data;
     const permissionMode = (requestedMode as PermissionMode) || PermissionMode.DEFAULT;
-    const directory = c.get('directory') || process.cwd();
+    const directory = c.get('directory') || getCwd();
     const userContent = buildUserMessageContent(content, attachments);
 
     let session = sessions.get(sessionId);
@@ -591,57 +597,81 @@ async function executeRunAsync(
       confirmationHandler: { requestConfirmation },
     };
 
-    const loopOptions: LoopOptions = {
-      stream: true,
-      onContentDelta: async (delta: string) => {
-        emit('message.delta', { messageId: assistantMessageId, delta });
-      },
-      onThinkingDelta: async (delta: string) => {
-        emit('thinking.delta', { delta });
-      },
-      onStreamEnd: async () => {
-        emit('message.complete', { messageId: assistantMessageId });
-        emit('thinking.completed', {});
-      },
-      onToolStart: async (toolCall, toolKind) => {
-        if (toolCall.type !== 'function') return;
-        emit('tool.start', {
-          messageId: assistantMessageId,
-          toolName: toolCall.function.name,
-          toolCallId: toolCall.id,
-          arguments: toolCall.function.arguments,
-          toolKind,
-        });
-      },
-      onToolResult: async (toolCall, result) => {
-        if (toolCall.type !== 'function') return;
-        emit('tool.result', {
-          messageId: assistantMessageId,
-          toolName: toolCall.function.name,
-          toolCallId: toolCall.id,
-          success: !result.error,
-          summary: result.metadata?.summary,
-          output: result.displayContent,
-          metadata: sanitizeToolMetadata(result.metadata),
-        });
-      },
-      onTokenUsage: async (usage) => {
-        emit('token.usage', usage);
-      },
-      onTodoUpdate: async (todos) => {
-        emit('todo.updated', { todos });
-      },
-    };
+    // Phase 4: 使用 chatStream() + onEvent 事件驱动消费
+    // message.complete 只在整个 run 结束时发一次（run-level 语义）
+    // stream_end 不外发给客户端（内部 per-turn 信号）
+    const loopResult = await drainLoop(
+      agent.chatStream(content, chatContext, { stream: true }),
+      async (event: LoopEvent) => {
+        switch (event.kind) {
+          // --- 流式增量 ---
+          case 'content_delta':
+            emit('message.delta', { messageId: assistantMessageId, delta: event.delta });
+            break;
+          case 'thinking_delta':
+            emit('thinking.delta', { delta: event.delta });
+            break;
 
-    const response = await agent.chat(content, chatContext, loopOptions);
+          // --- 工具事件 ---
+          case 'tool_start':
+            if ('function' in event.toolCall) {
+              emit('tool.start', {
+                messageId: assistantMessageId,
+                toolName: event.toolCall.function.name,
+                toolCallId: event.toolCall.id,
+                arguments: event.toolCall.function.arguments,
+                toolKind: event.toolKind,
+              });
+            }
+            break;
+          case 'tool_result':
+            if ('function' in event.toolCall) {
+              emit('tool.result', {
+                messageId: assistantMessageId,
+                toolName: event.toolCall.function.name,
+                toolCallId: event.toolCall.id,
+                success: !event.result.error,
+                summary: event.result.metadata?.summary,
+                output: renderToolDisplayToString(
+                  formatToolDisplay(event.toolCall.function.name, event.result)
+                ),
+                metadata: sanitizeToolMetadata(event.result.metadata),
+              });
+            }
+            break;
 
-    session.messages.push(
-      { role: 'user', content },
-      { role: 'assistant', content: response }
+          // --- Token 使用 ---
+          case 'token_usage':
+            emit('token.usage', { ...event.usage });
+            break;
+
+          // --- 业务事件 ---
+          case 'todo_update':
+            emit('todo.updated', { todos: event.todos });
+            break;
+
+          // --- 系统事件和内部信号不外发 ---
+          // stream_end: per-turn 内部信号，不外发
+          // compaction, model_fallback, turn_start: 内部事件
+          default:
+            break;
+        }
+      }
     );
 
+    // Phase 4: 使用 chatContext.messages 作为完整历史（不再手工构造）
+    session.messages = [...chatContext.messages];
+
+    // message.complete 只在整个 run 结束时发一次（run-level 语义）
+    emit('message.complete', { messageId: assistantMessageId });
+    // 保持 thinking.completed 向后兼容（Web 客户端注册了该事件，虽然当前是 no-op）
+    emit('thinking.completed', {});
+
     run.status = 'completed';
-    emit('session.completed', { runId });
+    emit('session.completed', {
+      runId,
+      outputTruncated: loopResult.metadata?.outputTruncated ?? false,
+    });
     emit('session.status', { status: 'idle' });
   } catch (error) {
     logger.error('[SessionRoutes] Agent execution error:', error);

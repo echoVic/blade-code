@@ -1,4 +1,6 @@
 import { PermissionMode } from '../../config/types.js';
+import type { DeferredToolManager } from '../registry/DeferredToolManager.js';
+import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { Tool, ToolInvocation, ToolResult } from './ToolTypes.js';
 import { ToolErrorType, ToolKind } from './ToolTypes.js';
 
@@ -26,11 +28,11 @@ export interface ConfirmationDetails {
   args?: Record<string, unknown>;
   title?: string;
   message: string;
-  details?: string; // 🆕 Plan 方案内容或其他详细信息
+  details?: string; // NEW: Plan 方案内容或其他详细信息
   risks?: string[];
   affectedFiles?: string[];
   planContent?: string; // Plan 模式的完整计划内容（Markdown 格式）
-  questions?: Question[]; // 🆕 AskUserQuestion 的问题列表
+  questions?: Question[]; // NEW: AskUserQuestion 的问题列表
 }
 
 type PermissionApprovalScope = 'once' | 'session';
@@ -40,8 +42,8 @@ export interface ConfirmationResponse {
   reason?: string;
   scope?: PermissionApprovalScope;
   targetMode?: PermissionMode; // Plan 模式退出后的目标权限模式
-  feedback?: string; // 🆕 用户拒绝时的反馈意见（用于 Plan 模式调整）
-  answers?: Record<string, string | string[]>; // 🆕 AskUserQuestion 的用户答案
+  feedback?: string; // NEW: 用户拒绝时的反馈意见（用于 Plan 模式调整）
+  answers?: Record<string, string | string[]>; // NEW: AskUserQuestion 的用户答案
 }
 
 /**
@@ -72,6 +74,12 @@ export interface ExecutionContext {
 
   // 权限模式（用于 Plan 模式判断）
   permissionMode?: PermissionMode;
+
+  // 工具注册表（用于 ToolSearch 等需要访问注册表的工具）
+  toolRegistry?: ToolRegistry;
+
+  // 延迟加载管理器（用于 ToolSearch 标记工具为已加载）
+  deferredToolManager?: DeferredToolManager;
 }
 
 interface ToolExecutionInternalState {
@@ -109,17 +117,27 @@ export class ToolExecution {
     return this.aborted || (this.context.signal?.aborted ?? false);
   }
 
-  abort(reason?: string, options?: { shouldExitLoop?: boolean }): void {
+  abort(
+    reason?: string,
+    options?: {
+      shouldExitLoop?: boolean;
+      llmContent?: string;
+      summary?: string;
+      errorType?: ToolErrorType;
+    }
+  ): void {
     this.aborted = true;
     this.result = {
       success: false,
-      llmContent: `Tool execution aborted: ${reason || 'Unknown reason'}`,
-      displayContent: `执行已中止: ${reason || '未知原因'}`,
+      llmContent: options?.llmContent || `Tool execution aborted: ${reason || 'Unknown reason'}`,
       error: {
-        type: ToolErrorType.EXECUTION_ERROR,
+        type: options?.errorType || ToolErrorType.EXECUTION_ERROR,
         message: reason || 'Execution aborted',
       },
-      metadata: options?.shouldExitLoop ? { shouldExitLoop: true } : undefined,
+      metadata: {
+        summary: options?.summary || `执行已中止: ${reason || '未知原因'}`,
+        ...(options?.shouldExitLoop ? { shouldExitLoop: true } : {}),
+      },
     };
   }
 

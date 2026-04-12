@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { nanoid } from 'nanoid';
+import { getCwd } from '../../utils/cwd.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import type { JsonValue, MessageRole } from '../../store/types.js';
 import type {
@@ -29,7 +30,7 @@ export class PersistentStore {
   private readonly version: string;
 
   constructor(
-    projectPath: string = process.cwd(),
+    projectPath: string = getCwd(),
     maxSessions: number = 100,
     version: string = '0.0.10'
   ) {

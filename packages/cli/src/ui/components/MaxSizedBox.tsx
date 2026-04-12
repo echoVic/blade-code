@@ -3,7 +3,7 @@
  *
  * 提供内容感知的截断和智能换行功能。
  *
- * ⚠️ 使用限制：
+ * WARNING: 使用限制：
  * - 专为 CodeHighlighter 设计，期望的子元素结构是 `<Box><Text>...</Text></Box>`
  * - 每个 Box 代表一行，Box 内的 Text 元素会被提取样式并智能换行
  * - 顶层直接 Text 会丢失嵌套子 Text 的样式（仅保留顶层 props）

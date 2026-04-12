@@ -44,7 +44,7 @@ export function SkillsManager({ onCancel }: SkillsManagerProps) {
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            📚 所有 Skills
+            所有 Skills
           </Text>
         </Box>
         <Box paddingLeft={2}>
@@ -64,7 +64,7 @@ export function SkillsManager({ onCancel }: SkillsManagerProps) {
     <Box flexDirection="column" paddingY={1}>
       <Box marginBottom={1}>
         <Text bold color="cyan">
-          📚 所有 Skills
+          所有 Skills
         </Text>
         <Text color="gray"> (找到 {skills.length} 个)</Text>
       </Box>

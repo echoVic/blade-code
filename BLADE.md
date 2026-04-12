@@ -4,17 +4,17 @@ always respond in Chinese
 
 ## 项目概述
 
-**Blade Code** 是一个基于 React + Ink 构建的智能 AI 编程助手 CLI 工具，使用 TypeScript 开发。项目采用 **pnpm workspace monorepo** 架构。
+**Blade Code** 是一个基于 React + Ink 构建的智能 AI 编程助手 CLI 工具，使用 TypeScript 开发。项目采用 **Bun workspace monorepo** 架构。
 
 - **项目类型**: CLI 工具（TUI 应用）+ Web UI + VSCode 扩展
 - **主要语言**: TypeScript
-- **运行时**: Node.js >=20.0.0（开发使用 Bun）
+- **运行时**: Node.js >=20.0.0（开发使用 Bun 1.3.11）
 - **UI 框架**: React 19 + Ink（终端 UI）/ React 19 + Vite（Web UI）
 - **状态管理**: Zustand
 - **配置管理**: 支持 JSON 配置和环境变量插值
 - **测试框架**: Vitest
 - **代码质量**: Biome（Lint + Format）
-- **包管理**: pnpm workspace
+- **包管理**: Bun workspaces
 - **当前版本**: 0.2.0
 
 ## 核心特性
@@ -32,9 +32,9 @@ always respond in Chinese
 
 ### 开发命令
 ```bash
-pnpm dev              # 启动 CLI 开发模式（watch）
-pnpm dev:serve        # 启动 CLI 开发模式 + Web 服务器
-pnpm build            # 构建 CLI
+bun run dev           # 启动 CLI 开发模式（watch）
+bun run dev:web       # 启动 CLI 开发模式 + Web 服务器
+bun run build         # 构建 CLI
 ```
 
 ### 运行命令
@@ -47,18 +47,18 @@ blade serve --port 3000 --hostname 0.0.0.0  # 指定端口和主机
 
 ### 测试命令
 ```bash
-pnpm test             # 运行测试
-pnpm test:all         # 运行所有测试
-pnpm test:unit        # 运行单元测试
-pnpm test:cli         # 运行 CLI 测试
-pnpm test:coverage    # 带覆盖率测试
+bun run test          # 运行测试
+bun run test:all      # 运行所有测试
+bun run test:unit     # 运行单元测试
+bun run test:cli      # 运行 CLI 测试
+bun run test:coverage # 带覆盖率测试
 ```
 
 ### 代码质量
 ```bash
-pnpm lint             # Lint 检查
-pnpm lint:fix         # Lint 并自动修复
-pnpm type-check       # 类型检查
+bun run lint          # Lint 检查
+bun run lint:fix      # Lint 并自动修复
+bun run type-check    # 类型检查
 ```
 
 ## 架构概览

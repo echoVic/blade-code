@@ -63,7 +63,6 @@ async function getCurrentVersion(): Promise<string> {
     const possiblePaths = [
       path.join(__dirname, '..', '..', 'package.json'), // src/services -> root
       path.join(__dirname, '..', 'package.json'), // dist -> root
-      path.join(process.cwd(), 'package.json'), // 当前工作目录
     ];
 
     for (const pkgPath of possiblePaths) {
@@ -251,12 +250,12 @@ export async function performUpgrade(): Promise<{ success: boolean; message: str
       if (code === 0) {
         resolve({
           success: true,
-          message: '✅ 升级成功！请重新启动 blade。',
+          message: 'Upgrade successful! Please restart blade.',
         });
       } else {
         resolve({
           success: false,
-          message: `❌ 升级失败 (exit code: ${code})`,
+          message: `Upgrade failed (exit code: ${code})`,
         });
       }
     });
@@ -264,7 +263,7 @@ export async function performUpgrade(): Promise<{ success: boolean; message: str
     child.on('error', (error) => {
       resolve({
         success: false,
-        message: `❌ 升级失败: ${error.message}`,
+        message: `Upgrade failed: ${error.message}`,
       });
     });
   });

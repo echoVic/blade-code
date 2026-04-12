@@ -3,8 +3,8 @@ import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { TodoManager } from './TodoManager.js';
-import type { TodoItem, TodoStats } from './types.js';
-import { TodoItemSchema } from './types.js';
+import type { TodoStats } from './types.js';
+import { type TodoItem, TodoItemSchema } from './types.js';
 
 /**
  * Create TodoWrite tool
@@ -16,6 +16,7 @@ export function createTodoWriteTool(opts: { sessionId: string; configDir: string
     name: 'TodoWrite',
     displayName: 'Todo Write',
     kind: ToolKind.ReadOnly,
+    isConcurrencySafe: false, // 写入 Todo 状态
 
     schema: z.object({
       todos: z.array(TodoItemSchema).min(1, 'At least one task is required'),
@@ -104,10 +105,8 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
         const sortedTodos = manager.getTodos();
         const stats = calculateStats(sortedTodos);
 
-        const displayContent = formatTodoList(sortedTodos, stats);
-
         updateOutput?.(
-          `✅ TODO list updated (${stats.completed}/${stats.total} completed)`
+          `[OK] TODO list updated (${stats.completed}/${stats.total} completed)`
         );
 
         return {
@@ -116,20 +115,19 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
             todos: sortedTodos,
             stats,
           },
-          displayContent,
-          metadata: { stats },
+          metadata: { stats, summary: `更新 TODO (${stats.completed}/${stats.total} 完成)` },
         };
       } catch (error) {
         const err = error as Error;
         return {
           success: false,
           llmContent: `Update failed: ${err.message}`,
-          displayContent: `❌ 更新 TODO 列表失败: ${err.message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: err.message,
             details: error,
           },
+          metadata: { summary: '更新 TODO 失败' },
         };
       }
     },
@@ -160,38 +158,4 @@ function calculateStats(todos: TodoItem[]): TodoStats {
     inProgress: todos.filter((t) => t.status === 'in_progress').length,
     pending: todos.filter((t) => t.status === 'pending').length,
   };
-}
-
-/**
- * 格式化 TODO 列表显示
- */
-function formatTodoList(todos: TodoItem[], stats: TodoStats): string {
-  const lines: string[] = [];
-
-  const percentage =
-    stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0;
-
-  lines.push(`📋 TODO 列表 (${stats.completed}/${stats.total} 完成，${percentage}%)`);
-  lines.push('');
-
-  if (todos.length === 0) {
-    lines.push('  (暂无任务)');
-    return lines.join('\n');
-  }
-
-  for (const todo of todos) {
-    const icon = todo.status === 'completed' ? '☑' : '☐';
-
-    const priorityLabel = `(P${todo.priority === 'high' ? 0 : todo.priority === 'medium' ? 1 : 2})`;
-
-    const statusFlag = todo.status === 'in_progress' ? ' ⚡' : '';
-
-    const strikethrough = todo.status === 'completed' ? '~~' : '';
-
-    lines.push(
-      `  ${icon} ${priorityLabel} ${strikethrough}${todo.content}${strikethrough}${statusFlag}`
-    );
-  }
-
-  return lines.join('\n');
 }

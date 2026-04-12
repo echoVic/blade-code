@@ -16,9 +16,9 @@ describe('commands/install', () => {
     const { installCommands } = await import('../../../../src/commands/install.js');
     await installCommands.handler({ target: 'latest', force: true } as any);
 
-    expect(logSpy).toHaveBeenCalledWith('📦 Installing Blade latest...');
-    expect(logSpy).toHaveBeenCalledWith('🔄 Force reinstall enabled');
-    expect(logSpy).toHaveBeenCalledWith('✅ Installation completed successfully');
+    expect(logSpy).toHaveBeenCalledWith('Installing Blade latest...');
+    expect(logSpy).toHaveBeenCalledWith('Force reinstall enabled');
+    expect(logSpy).toHaveBeenCalledWith('Installation completed successfully');
     expect(errorSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
   });
@@ -43,8 +43,8 @@ describe('commands/install', () => {
     const { installCommands } = await import('../../../../src/commands/install.js');
     await installCommands.handler({ target: 'stable', force: false } as any);
 
-    expect(logSpy).toHaveBeenCalledWith('📦 Installing Blade stable...');
-    expect(errorSpy).toHaveBeenCalledWith('❌ Installation failed: network error');
+    expect(logSpy).toHaveBeenCalledWith('Installing Blade stable...');
+    expect(errorSpy).toHaveBeenCalledWith('Error: Installation failed: network error');
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

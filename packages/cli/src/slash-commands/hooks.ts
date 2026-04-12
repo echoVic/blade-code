@@ -51,13 +51,13 @@ const hooksCommand: SlashCommand = {
 
       case 'enable': {
         hookManager.enable();
-        sessionActions().addAssistantMessage('✅ Hooks 已启用（当前会话）');
+        sessionActions().addAssistantMessage('[OK] Hooks 已启用（当前会话）');
         return { success: true, message: 'Hooks enabled' };
       }
 
       case 'disable': {
         hookManager.disable();
-        sessionActions().addAssistantMessage('⏸️ Hooks 已禁用（当前会话）');
+        sessionActions().addAssistantMessage('Hooks 已禁用（当前会话）');
         return { success: true, message: 'Hooks disabled' };
       }
 
@@ -67,7 +67,7 @@ const hooksCommand: SlashCommand = {
 
       default: {
         sessionActions().addAssistantMessage(
-          `❌ 未知子命令: ${subcommand}\n使用 /hooks 查看帮助`
+          `未知子命令: ${subcommand}\n使用 /hooks 查看帮助`
         );
         return { success: false, error: `Unknown subcommand: ${subcommand}` };
       }
@@ -97,7 +97,7 @@ function showHooksStatus(hookManager: HookManager): SlashCommandResult {
   const lines: string[] = [
     '## Hooks 状态',
     '',
-    `**状态**: ${isEnabled ? '✅ 启用' : '⏸️ 禁用'}`,
+    `**状态**: ${isEnabled ? '[OK] 启用' : '禁用'}`,
     '',
   ];
 

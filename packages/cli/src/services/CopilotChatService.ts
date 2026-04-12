@@ -66,8 +66,8 @@ export class CopilotChatService implements IChatService {
     signal?: AbortSignal
   ): Promise<ChatResponse> {
     const startTime = Date.now();
-    logger.debug('🚀 [CopilotChatService] Starting chat request');
-    logger.debug(`📝 [CopilotChatService] Messages count: ${messages.length}`);
+    logger.debug('[CopilotChatService] Starting chat request');
+    logger.debug(`[CopilotChatService] Messages count: ${messages.length}`);
 
     try {
       // 获取 Copilot token
@@ -80,13 +80,13 @@ export class CopilotChatService implements IChatService {
       const response = await this.makeRequest(copilotToken, request, signal);
 
       const elapsed = Date.now() - startTime;
-      logger.debug(`✅ [CopilotChatService] Chat completed in ${elapsed} ms`);
+      logger.debug(`[CopilotChatService] Chat completed in ${elapsed} ms`);
 
       return this.parseResponse(response);
     } catch (error) {
       const elapsed = Date.now() - startTime;
-      logger.error(`❌ [CopilotChatService] Chat failed after ${elapsed} ms`);
-      logger.error(`❌ [CopilotChatService] Error: ${error}`);
+      logger.error(`[CopilotChatService] Chat failed after ${elapsed} ms`);
+      logger.error(`[CopilotChatService] Error: ${error}`);
       throw error;
     }
   }
@@ -104,8 +104,8 @@ export class CopilotChatService implements IChatService {
     signal?: AbortSignal
   ): AsyncGenerator<StreamChunk, void, unknown> {
     const startTime = Date.now();
-    logger.debug('🚀 [CopilotChatService] Starting stream chat request');
-    logger.debug(`📝 [CopilotChatService] Messages count: ${messages.length}`);
+    logger.debug('[CopilotChatService] Starting stream chat request');
+    logger.debug(`[CopilotChatService] Messages count: ${messages.length}`);
 
     try {
       // 获取 Copilot token
@@ -225,11 +225,11 @@ export class CopilotChatService implements IChatService {
       }
 
       const elapsed = Date.now() - startTime;
-      logger.debug(`✅ [CopilotChatService] Stream completed in ${elapsed} ms`);
+      logger.debug(`[CopilotChatService] Stream completed in ${elapsed} ms`);
     } catch (error) {
       const elapsed = Date.now() - startTime;
-      logger.error(`❌ [CopilotChatService] Stream failed after ${elapsed} ms`);
-      logger.error(`❌ [CopilotChatService] Error: ${error}`);
+      logger.error(`[CopilotChatService] Stream failed after ${elapsed} ms`);
+      logger.error(`[CopilotChatService] Error: ${error}`);
       throw error;
     }
   }

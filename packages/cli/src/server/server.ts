@@ -7,6 +7,7 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+import { getCwd } from '../utils/cwd.js';
 import { getVersion } from '../utils/packageInfo.js';
 import { BladeServerError } from './error.js';
 import { ConfigRoutes } from './routes/config.js';
@@ -41,8 +42,8 @@ function getWebDistPath(): string | null {
   
   const possiblePaths = [
     join(currentDir, 'web'),
-    join(process.cwd(), 'dist/web'),
-    join(process.cwd(), 'packages/cli/dist/web'),
+    join(getCwd(), 'dist/web'),
+    join(getCwd(), 'packages/cli/dist/web'),
   ];
 
   for (const p of possiblePaths) {
@@ -136,7 +137,7 @@ function createApp(): Hono<{ Variables: Variables }> {
   );
 
   app.use(async (c, next) => {
-    let directory = c.req.query('directory') || c.req.header('x-blade-directory') || process.cwd();
+    let directory = c.req.query('directory') || c.req.header('x-blade-directory') || getCwd();
     try {
       directory = decodeURIComponent(directory);
     } catch {
@@ -224,14 +225,14 @@ function createApp(): Hono<{ Variables: Variables }> {
       return c.html(html);
     });
   } else {
-    logger.warn('[Server] Web UI not found. Run "cd web && pnpm build" to enable web interface.');
+    logger.warn('[Server] Web UI not found. Run "cd packages/cli/web && bun run build" to enable web interface.');
     
     app.get('/', (c) => {
       return c.json({
         message: 'Blade API Server',
         version: getVersion(),
         webUI: false,
-        hint: 'Web UI not built. Run "cd web && pnpm build" to enable.',
+        hint: 'Web UI not built. Run "cd packages/cli/web && bun run build" to enable.',
         endpoints: {
           health: '/health',
           sessions: '/sessions',
@@ -404,7 +405,7 @@ function startWithNode(
 
     // Set up WebSocket server for terminal (noServer mode for manual upgrade handling)
     const wss = new WebSocketServer({ noServer: true });
-    const currentDirectory = process.cwd();
+    const currentDirectory = getCwd();
     setupNodeWebSocket(wss, () => currentDirectory);
 
     // Handle WebSocket upgrade requests

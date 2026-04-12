@@ -14,6 +14,7 @@ export const exitPlanModeTool = createTool({
   name: 'ExitPlanMode',
   displayName: 'Exit Plan Mode',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: false, // 模式切换，改变状态
 
   schema: z.object({
     plan: z.string().describe('The complete implementation plan in markdown format'),
@@ -25,16 +26,16 @@ export const exitPlanModeTool = createTool({
       'Use this tool when you are in plan mode and have finished creating your plan and are ready for user approval',
     long: `Use this tool when you are in plan mode and have finished creating your implementation plan and are ready for user approval.
 
-## 🚨 PREREQUISITES (MUST be satisfied before calling)
+## PREREQUISITES (MUST be satisfied before calling)
 
-1. ✅ You have created a complete implementation plan
-2. ✅ You have OUTPUT TEXT to explain your plan to the user (not just tool calls)
-3. ✅ The plan includes: summary, implementation steps, affected files, testing method
+1. [OK] You have created a complete implementation plan
+2. [OK] You have OUTPUT TEXT to explain your plan to the user (not just tool calls)
+3. [OK] The plan includes: summary, implementation steps, affected files, testing method
 
 **DO NOT call this tool if**:
-- ❌ You only called tools (Glob/Grep/Read) without outputting any text summary
-- ❌ You haven't created a complete plan
-- ❌ The plan is empty or incomplete
+- [FAIL] You only called tools (Glob/Grep/Read) without outputting any text summary
+- [FAIL] You haven't created a complete plan
+- [FAIL] The plan is empty or incomplete
 
 ## How This Tool Works
 - Pass your complete implementation plan as the 'plan' parameter
@@ -83,30 +84,22 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
       try {
         const response = await context.confirmationHandler.requestConfirmation({
           type: 'exitPlanMode',
-          message:
-            'The assistant has finished planning and is ready for your review.\n\n' +
-            '⚠️ Before approving, please verify:\n' +
-            '1. The assistant has written a detailed plan to the plan file\n' +
-            '2. The plan includes implementation steps, affected files, and testing methods\n' +
-            '3. You have seen text explanations from the assistant (not just tool calls)\n\n' +
-            'If the assistant only made tool calls without presenting a plan summary,\n' +
-            'please reject and ask for a proper plan.',
-          details:
-            'After approval, the assistant will exit Plan mode and begin implementation.',
-          planContent: planContent || undefined, // 传递 plan 内容给 UI
+          message: '助手已完成方案规划，请审核后选择执行方式。',
+          details: '批准后将退出规划模式，开始实施。',
+          planContent: planContent || undefined,
         });
 
         if (response.approved) {
           return {
             success: true,
             llmContent:
-              '✅ Plan approved by user. Plan mode exited; you can proceed to code changes.',
-            displayContent: '✅ Plan approved, exiting Plan mode',
+              '[OK] Plan approved by user. Plan mode exited; you can proceed to code changes.',
             metadata: {
               approved: true,
               shouldExitLoop: true,
               targetMode: response.targetMode, // 目标权限模式 PermissionMode.DEFAULT/AUTO_EDIT
               planContent: planContent, // 传递 plan 内容给 Agent
+              summary: '方案已批准，退出 Plan 模式',
             },
           };
         } else {
@@ -114,16 +107,16 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
           return {
             success: true, // 拒绝不是错误，是正常的用户交互
             llmContent:
-              '⚠️ Plan rejected by user. Awaiting user feedback.\n\n' +
+              '[WARN] Plan rejected by user. Awaiting user feedback.\n\n' +
               (response.feedback || 'No specific feedback provided.') +
               '\n\nThe agent has stopped and control is returned to the user. ' +
               'The user can now provide additional information or clarification.',
-            displayContent: '⚠️ 方案被拒绝，等待用户补充信息',
             metadata: {
               approved: false,
               shouldExitLoop: true,
               feedback: response.feedback,
               awaitingUserInput: true,
+              summary: '方案被拒绝，等待用户反馈',
             },
           };
         }
@@ -131,11 +124,11 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
         return {
           success: false,
           llmContent: `Confirmation flow error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          displayContent: '❌ Confirmation failed',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Confirmation flow error',
           },
+          metadata: { summary: '确认流程出错' },
         };
       }
     }
@@ -144,10 +137,9 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
     return {
       success: true,
       llmContent:
-        '✅ Plan mode exit requested. No interactive confirmation available.\n' +
+        '[OK] Plan mode exit requested. No interactive confirmation available.\n' +
         'Proceeding with implementation.',
-      displayContent: 'Plan mode exit (non-interactive)',
-      metadata: { approved: null },
+      metadata: { approved: null, summary: '退出 Plan 模式（非交互）' },
     };
   },
 });

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getFileSystemService } from '../../services/FileSystemService.js';
 import { getFuzzyCommandSuggestions } from '../../slash-commands/index.js';
+import { getCwd } from '../../utils/cwd.js';
 import {
   DEFAULT_EXCLUDE_DIRS,
   DEFAULT_EXCLUDE_FILE_PATTERNS,
@@ -67,7 +68,7 @@ export const SuggestionsRoutes = () => {
   app.get('/files', async (c) => {
     try {
       const query = c.req.query('q') || '';
-      const directory = c.get('directory') || process.cwd();
+      const directory = c.get('directory') || getCwd();
       const limit = Math.min(Number(c.req.query('limit')) || 100, 1000);
 
       const files = await fg('**/*', {
@@ -100,7 +101,7 @@ export const SuggestionsRoutes = () => {
 
   app.get('/files/tree', async (c) => {
     try {
-      const directory = c.get('directory') || process.cwd();
+      const directory = c.get('directory') || getCwd();
       const subPath = c.req.query('path') || '';
       const targetDir = subPath ? path.join(directory, subPath) : directory;
 
@@ -142,7 +143,7 @@ export const SuggestionsRoutes = () => {
         return c.json({ error: 'Missing file path' }, 400);
       }
 
-      const directory = c.get('directory') || process.cwd();
+      const directory = c.get('directory') || getCwd();
       const resolvedPath = path.resolve(directory, rawPath);
       const relative = path.relative(directory, resolvedPath);
       if (relative.startsWith('..') || path.isAbsolute(relative)) {
@@ -173,7 +174,7 @@ export const SuggestionsRoutes = () => {
 
   app.get('/git-info', async (c) => {
     try {
-      const directory = c.get('directory') || process.cwd();
+      const directory = c.get('directory') || getCwd();
       const branch = getGitBranch(directory);
       return c.json({ branch });
     } catch (error) {

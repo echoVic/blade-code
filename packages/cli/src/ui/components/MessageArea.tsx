@@ -239,7 +239,7 @@ export const MessageArea: React.FC = React.memo(() => {
           hidePrefix={hidePrefix}
           noMargin={true}
           blocksOverride={blocksToRender}
-          renderCodeBlocksAsPlainText={true}
+          renderCodeBlocksAsPlainText={false}
         />
       </Box>,
     ]);

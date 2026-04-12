@@ -1,20 +1,17 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
+    "types": ["node"],
     "baseUrl": ".",
     "paths": {
       "@blade/cli/*": ["./packages/cli/src/*"],
-      "@blade/web/*": ["./packages/web/src/*"],
-      "@blade/shared/*": ["./packages/shared/src/*"],
       "@blade/vscode/*": ["./packages/vscode/src/*"]
     }
   },
   "references": [
     { "path": "./packages/cli" },
-    { "path": "./packages/web" },
-    { "path": "./packages/shared" },
     { "path": "./packages/vscode" }
   ],
-  "include": [],
+  "files": [],
   "exclude": ["node_modules", "dist", "packages"]
 }

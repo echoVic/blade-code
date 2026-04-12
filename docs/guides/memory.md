@@ -69,7 +69,7 @@ topic: "_list"         → 列出所有记忆文件
 
 ```
 topic: "patterns"
-content: "## Build\npnpm build"
+content: "## Build\nbun run build"
 mode: "append"         → 追加到 patterns.md
 mode: "overwrite"      → 覆盖 patterns.md
 ```

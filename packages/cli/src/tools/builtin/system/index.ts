@@ -3,3 +3,4 @@
 export { askUserQuestionTool } from './askUserQuestion.js';
 export { skillTool } from './skill.js';
 export { slashCommandTool } from './slashCommand.js';
+export { toolSearchTool } from './ToolSearchTool.js';

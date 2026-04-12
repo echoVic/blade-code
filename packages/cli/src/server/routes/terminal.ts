@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { getCwd } from '../../utils/cwd.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -199,7 +200,7 @@ export function setupNodeWebSocket(
       return;
     }
 
-    const cwd = url.searchParams.get('cwd') || getDirectory() || process.cwd();
+    const cwd = url.searchParams.get('cwd') || getDirectory() || getCwd();
 
     try {
       const { session, cleanup } = await handleTerminalConnection(cwd, {
@@ -260,7 +261,7 @@ export const TerminalRoutes = () => {
     app.get(
       '/ws',
       upgradeWebSocket((c) => {
-        const cwd = c.req.query('cwd') || c.get('directory') || process.cwd();
+        const cwd = c.req.query('cwd') || c.get('directory') || getCwd();
         let sessionData: Awaited<ReturnType<typeof handleTerminalConnection>> | undefined;
 
         return {

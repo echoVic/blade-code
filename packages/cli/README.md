@@ -109,7 +109,7 @@ blade serve --port 3000      # 无头服务器模式
 
 ```bash
 git clone https://github.com/echoVic/blade-code.git
-cd blade-code && pnpm install && pnpm dev
+cd blade-code && bun install && bun run dev
 ```
 
 ---

@@ -7,6 +7,7 @@
 import { nanoid } from 'nanoid';
 import { PermissionMode } from '../config/types.js';
 import type { PipelineStage, ToolExecution } from '../tools/types/index.js';
+import { getCwd } from '../utils/cwd.js';
 import { HookManager } from './HookManager.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -17,7 +18,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * PostToolUse Hook 阶段
  *
  * 插入到 Execution 和 Formatting 之间:
- * Discovery → Permission → Hook(Pre) → Confirmation → Execution → **PostHook** → Formatting
+ * Discovery -> Permission -> Hook(Pre) -> Confirmation -> Execution -> **PostHook** -> Formatting
  */
 export class PostToolUseHookStage implements PipelineStage {
   readonly name = 'post-hook';
@@ -53,7 +54,7 @@ export class PostToolUseHookStage implements PipelineStage {
         execution._internal.hookToolUseId ||
         execution.context.messageId ||
         `tool_${nanoid()}`;
-      const projectDir = execution.context.workspaceRoot || process.cwd();
+      const projectDir = execution.context.workspaceRoot || getCwd();
 
       const hookResult = await this.hookManager.executePostToolHooks(
         tool.name,
@@ -72,7 +73,9 @@ export class PostToolUseHookStage implements PipelineStage {
       // 1. 添加额外上下文给 LLM
       if (hookResult.additionalContext) {
         // 将额外上下文添加到 result.llmContent
-        const currentContent = result.llmContent || result.displayContent || '';
+        const currentContent = typeof result.llmContent === 'string'
+          ? result.llmContent
+          : (result.llmContent ? JSON.stringify(result.llmContent) : '');
         result.llmContent = `${currentContent}\n\n---\n**Hook Context:**\n${hookResult.additionalContext}`;
       }
 

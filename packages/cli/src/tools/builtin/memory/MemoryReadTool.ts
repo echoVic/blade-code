@@ -4,6 +4,7 @@
 
 import { z } from 'zod';
 import { AutoMemoryManager } from '../../../memory/AutoMemoryManager.js';
+import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolKind } from '../../types/index.js';
@@ -12,6 +13,7 @@ export const memoryReadTool = createTool({
   name: 'MemoryRead',
   displayName: 'Memory Read',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   schema: z.object({
     topic: z
@@ -47,7 +49,7 @@ export const memoryReadTool = createTool({
 
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const { topic } = params;
-    const projectPath = context.workspaceRoot || process.cwd();
+    const projectPath = context.workspaceRoot || getCwd();
     const manager = new AutoMemoryManager(projectPath);
 
     // 列出所有主题
@@ -55,21 +57,21 @@ export const memoryReadTool = createTool({
       const topics = await manager.listTopics();
       if (topics.length === 0) {
         const msg = 'No memory files found. Use MemoryWrite to save project knowledge.';
-        return { success: true, llmContent: msg, displayContent: msg };
+        return { success: true, llmContent: msg, metadata: { summary: '无记忆文件' } };
       }
       const list = topics
         .map((t) => `- ${t.name}.md (${t.size} bytes, updated ${t.lastModified.toISOString()})`)
         .join('\n');
       const msg = `Memory files:\n${list}`;
-      return { success: true, llmContent: msg, displayContent: msg };
+      return { success: true, llmContent: msg, metadata: { summary: `列出 ${topics.length} 个记忆文件` } };
     }
 
     const content = await manager.readTopic(topic);
     if (content === null) {
       const msg = `Memory topic "${topic}" not found. Use topic="_list" to see available topics.`;
-      return { success: true, llmContent: msg, displayContent: msg };
+      return { success: true, llmContent: msg, metadata: { summary: `记忆主题未找到: ${topic}` } };
     }
 
-    return { success: true, llmContent: content, displayContent: content };
+    return { success: true, llmContent: content, metadata: { summary: `读取记忆: ${topic}` } };
   },
 });

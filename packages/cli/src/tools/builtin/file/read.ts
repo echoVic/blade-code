@@ -21,6 +21,7 @@ export const readTool = createTool({
   name: 'Read',
   displayName: 'File Read',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   // Zod Schema 定义
   schema: z.object({
@@ -99,7 +100,6 @@ export const readTool = createTool({
         return {
           success: false,
           llmContent: `File not found: ${file_path}`,
-          displayContent: `❌ 文件不存在: ${file_path}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: `File not found: ${file_path}`,
@@ -125,7 +125,6 @@ export const readTool = createTool({
         return {
           success: false,
           llmContent: `Cannot read a directory: ${file_path}`,
-          displayContent: `❌ 无法读取目录: ${file_path}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Target is a directory, not a file',
@@ -151,9 +150,9 @@ export const readTool = createTool({
 
       // 处理二进制文件
       if (isBinaryFile && encoding === 'utf8') {
-        // ⚠️ ACP 模式下二进制读取会 fallback 到本地
+        // [WARN] ACP 模式下二进制读取会 fallback 到本地
         if (useAcp) {
-          updateOutput?.('⚠️ 二进制文件通过本地读取（ACP 不支持）...');
+          updateOutput?.('[WARN] 二进制文件通过本地读取（ACP 不支持）...');
           metadata.acp_fallback = true;
         } else {
           updateOutput?.('检测到二进制文件，使用 base64 编码...');
@@ -170,7 +169,7 @@ export const readTool = createTool({
         content = await fsService.readTextFile(file_path);
       } else {
         // 其他文件：使用二进制读取
-        // ⚠️ ACP 模式下会 fallback 到本地
+        // [WARN] ACP 模式下会 fallback 到本地
         if (useAcp) {
           metadata.acp_fallback = true;
         }
@@ -206,7 +205,7 @@ export const readTool = createTool({
             // 截断过长的行
             const truncatedLine =
               line.length > 2000 ? `${line.substring(0, 2000)}...` : line;
-            return `${lineNumber.toString().padStart(6)}→${truncatedLine}`;
+            return `${lineNumber.toString().padStart(6)}|${truncatedLine}`;
           })
           .join('\n');
 
@@ -225,12 +224,9 @@ export const readTool = createTool({
 
       metadata.summary = summary;
 
-      const displayMessage = formatDisplayMessage(file_path, metadata);
-
       return {
         success: true,
         llmContent: content,
-        displayContent: displayMessage,
         metadata,
       };
     } catch (error) {
@@ -239,7 +235,6 @@ export const readTool = createTool({
         return {
           success: false,
           llmContent: 'File read aborted',
-          displayContent: '⚠️ 文件读取被用户中止',
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Operation aborted',
@@ -250,7 +245,6 @@ export const readTool = createTool({
       return {
         success: false,
         llmContent: `File read failed: ${nodeError.message}`,
-        displayContent: `❌ 读取文件失败: ${nodeError.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: nodeError.message,
@@ -374,41 +368,4 @@ function checkIsBinaryFile(ext: string): boolean {
     '.eot',
   ];
   return binaryExtensions.includes(ext);
-}
-
-/**
- * 格式化显示消息
- */
-function formatDisplayMessage(filePath: string, metadata: ReadMetadata): string {
-  let message = `✅ 成功读取文件: ${filePath}`;
-
-  if (metadata.file_size !== undefined && typeof metadata.file_size === 'number') {
-    message += ` (${formatFileSize(metadata.file_size)})`;
-  }
-
-  if (metadata.lines_read !== undefined) {
-    message += `\n📄 读取了 ${metadata.lines_read} 行 (第${metadata.start_line}-${metadata.end_line}行，共${metadata.total_lines}行)`;
-  }
-
-  if (metadata.is_binary) {
-    message += '\n🔐 文件以 base64 编码显示';
-  }
-
-  return message;
-}
-
-/**
- * 格式化文件大小
- */
-function formatFileSize(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let size = bytes;
-  let unitIndex = 0;
-
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex++;
-  }
-
-  return `${size.toFixed(1)}${units[unitIndex]}`;
 }

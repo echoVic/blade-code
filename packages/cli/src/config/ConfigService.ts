@@ -16,6 +16,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import writeFileAtomic from 'write-file-atomic';
+import { getCwd } from '../utils/cwd.js';
 import type { BladeConfig, PermissionConfig } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 
@@ -484,7 +485,7 @@ export class ConfigService {
    * 追加权限规则（手动实现 append-dedupe 策略）
    * 默认 scope 为 'local'，与 FIELD_ROUTING_TABLE.permissions.defaultScope 一致
    *
-   * ⚠️ 并发安全：整个 Read-Modify-Write 在 per-file mutex 保护下执行
+   * NOTE: 并发安全：整个 Read-Modify-Write 在 per-file mutex 保护下执行
    */
   async appendPermissionRule(rule: string, options: SaveOptions = {}): Promise<void> {
     const scope = options.scope ?? 'local';
@@ -579,19 +580,19 @@ export class ConfigService {
     if (target === 'config') {
       return scope === 'global'
         ? path.join(os.homedir(), '.blade', 'config.json')
-        : path.join(process.cwd(), '.blade', 'config.json');
+        : path.join(getCwd(), '.blade', 'config.json');
     }
 
     // settings
     switch (scope) {
       case 'local':
-        return path.join(process.cwd(), '.blade', 'settings.local.json');
+        return path.join(getCwd(), '.blade', 'settings.local.json');
       case 'project':
-        return path.join(process.cwd(), '.blade', 'settings.json');
+        return path.join(getCwd(), '.blade', 'settings.json');
       case 'global':
         return path.join(os.homedir(), '.blade', 'settings.json');
       default:
-        return path.join(process.cwd(), '.blade', 'settings.local.json');
+        return path.join(getCwd(), '.blade', 'settings.local.json');
     }
   }
 

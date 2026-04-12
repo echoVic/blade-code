@@ -2,7 +2,7 @@
  * Edit Corrector - 编辑纠错工具
  *
  * 提供多种策略自动修复 LLM 在调用 Edit 工具时的常见错误：
- * - 转义字符过多（\\n → \n）
+ * - 转义字符过多（\\n -> \n）
  * - 缩进不匹配（2 空格 vs 4 空格）
  * - 引号类型差异（智能引号 vs 普通引号）
  */
@@ -34,9 +34,9 @@ export interface MatchResult {
  * @returns 反转义后的字符串
  *
  * @example
- * unescapeString('line1\\nline2') // → 'line1\nline2'
- * unescapeString('say \\"hello\\"') // → 'say "hello"'
- * unescapeString('\\`template\\`') // → '`template`'
+ * unescapeString('line1\\nline2') // -> 'line1\nline2'
+ * unescapeString('say \\"hello\\"') // -> 'say "hello"'
+ * unescapeString('\\`template\\`') // -> '`template`'
  */
 export function unescapeString(input: string): string {
   // 正则说明：
@@ -83,7 +83,7 @@ export function unescapeString(input: string): string {
  * @example
  * const content = '  function foo() {\n    return 1;\n  }';
  * const search = '    function foo() {\n      return 1;\n    }';
- * flexibleMatch(content, search) // → '  function foo() {\n    return 1;\n  }'
+ * flexibleMatch(content, search) // -> '  function foo() {\n    return 1;\n  }'
  */
 export function flexibleMatch(content: string, searchString: string): string | null {
   const searchLines = searchString.split('\n');

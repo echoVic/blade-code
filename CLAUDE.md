@@ -12,9 +12,9 @@ Blade Code is a modern AI-powered coding assistant with CLI + Web UI, built with
 
 ```bash
 # Development
-pnpm dev              # Start CLI dev mode (watch)
-pnpm dev:serve        # Start CLI + Web server
-pnpm build            # Build CLI
+bun run dev           # Start CLI dev mode (watch)
+bun run dev:web       # Start CLI + Web server
+bun run build         # Build CLI
 
 # Running
 blade                 # Start interactive CLI
@@ -22,9 +22,9 @@ blade web             # Start Web UI (opens browser)
 blade serve           # Start headless server
 
 # Testing & Quality
-pnpm test:all         # Run all tests
-pnpm lint             # Run linter
-pnpm type-check       # TypeScript type checking
+bun run test:all      # Run all tests
+bun run lint          # Run linter
+bun run type-check    # TypeScript type checking
 ```
 
 ## Architecture
@@ -75,11 +75,17 @@ Blade/
 
 - Test framework: Vitest
 - Tests location: `packages/cli/tests/`
-- Run tests: `pnpm test:all`
+- Run tests: `bun run test:all`
 
 ## Documentation
 
 - User docs: `docs/`
+
+## gstack
+
+Use the /browse skill from gstack for all web browsing, never use mcp__claude-in-chrome__* tools.
+
+Available skills: /office-hours, /plan-ceo-review, /plan-eng-review, /plan-design-review, /design-consultation, /design-shotgun, /design-html, /review, /ship, /land-and-deploy, /canary, /benchmark, /browse, /connect-chrome, /qa, /qa-only, /design-review, /setup-browser-cookies, /setup-deploy, /retro, /investigate, /document-release, /codex, /cso, /autoplan, /plan-devex-review, /devex-review, /careful, /freeze, /guard, /unfreeze, /gstack-upgrade, /learn.
 
 ## More Information
 

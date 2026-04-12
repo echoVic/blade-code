@@ -96,11 +96,11 @@ export function AgentsManager({
 
   // 主菜单选项
   const menuItems: MenuItem[] = [
-    { key: 'list', label: '📋 查看所有 Agents', value: 'list' },
-    { key: 'create', label: '➕ 创建新 Agent', value: 'create' },
-    { key: 'edit', label: '✏️  编辑 Agent', value: 'edit' },
-    { key: 'delete', label: '🗑️  删除 Agent', value: 'delete' },
-    { key: 'cancel', label: '❌ 取消', value: 'cancel' },
+    { key: 'list', label: '查看所有 Agents', value: 'list' },
+    { key: 'create', label: '创建新 Agent', value: 'create' },
+    { key: 'edit', label: '编辑 Agent', value: 'edit' },
+    { key: 'delete', label: '删除 Agent', value: 'delete' },
+    { key: 'cancel', label: '取消', value: 'cancel' },
   ];
 
   // 主菜单选择处理
@@ -154,7 +154,7 @@ export function AgentsManager({
 
   // ESC 键处理：返回上一步或取消
   // Ctrl+C 处理：智能退出
-  // ← → 键处理：列表视图翻页
+  // Left/Right key handling: list view pagination
   // 注意：create 和 editWizard 模式下不拦截 ESC，让向导组件自己处理
   useInput(
     (input, key) => {
@@ -191,7 +191,7 @@ export function AgentsManager({
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            📋 Agents 管理
+            Agents 管理
           </Text>
         </Box>
         <SelectInput items={menuItems} onSelect={handleMenuSelect} />
@@ -209,15 +209,15 @@ export function AgentsManager({
         <Box flexDirection="column" paddingY={1}>
           <Box marginBottom={1}>
             <Text bold color="cyan">
-              📋 所有 Agents
+              所有 Agents
             </Text>
           </Box>
           <Box paddingLeft={2}>
-            <Text color="gray">❌ 没有找到任何 agent 配置</Text>
+            <Text color="gray">没有找到任何 agent 配置</Text>
           </Box>
           <Box marginTop={1} paddingLeft={2}>
             <Text color="gray">
-              💡 配置文件位置: .blade/agents/ 或 ~/.blade/agents/
+              配置文件位置: .blade/agents/ 或 ~/.blade/agents/
             </Text>
           </Box>
           <Box marginTop={1} paddingLeft={2}>
@@ -231,7 +231,7 @@ export function AgentsManager({
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">
-            📋 所有 Agents
+            所有 Agents
           </Text>
           <Text color="gray"> (共 {allAgents.length} 个)</Text>
           {totalPages > 1 && (
@@ -269,7 +269,7 @@ export function AgentsManager({
 
         <Box marginTop={1} paddingLeft={2}>
           {totalPages > 1 ? (
-            <Text dimColor>← → 翻页 | ESC 返回菜单</Text>
+            <Text dimColor>Left/Right to page | ESC 返回菜单</Text>
           ) : (
             <Text dimColor>按 ESC 返回菜单</Text>
           )}
@@ -289,7 +289,7 @@ export function AgentsManager({
             </Text>
           </Box>
           <Box paddingLeft={2}>
-            <Text color="gray">❌ 没有找到任何 agent 配置</Text>
+            <Text color="gray">没有找到任何 agent 配置</Text>
           </Box>
           <Box marginTop={1} paddingLeft={2}>
             <Text dimColor>按 ESC 返回菜单</Text>
@@ -334,7 +334,7 @@ export function AgentsManager({
 
   // 编辑视图 - 选择要编辑的 Agent
   if (mode === 'edit') {
-    return renderAgentSelector('✏️  编辑 Agent');
+    return renderAgentSelector('编辑 Agent');
   }
 
   // 编辑向导 - 使用 AgentCreationWizard 编辑选中的 Agent
@@ -365,7 +365,7 @@ export function AgentsManager({
 
   // 删除视图 - 选择要删除的 Agent
   if (mode === 'delete') {
-    return renderAgentSelector('🗑️  删除 Agent');
+    return renderAgentSelector('删除 Agent');
   }
 
   // 删除确认 - 确认删除选中的 Agent
@@ -374,7 +374,7 @@ export function AgentsManager({
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="red">
-            ⚠️ 确认删除
+            确认删除
           </Text>
         </Box>
         <Box marginBottom={1} paddingLeft={2}>
@@ -394,8 +394,8 @@ export function AgentsManager({
         </Box>
         <SelectInput
           items={[
-            { label: '🗑️  确认删除', value: 'confirm' },
-            { label: '❌ 取消', value: 'cancel' },
+            { label: '确认删除', value: 'confirm' },
+            { label: '取消', value: 'cancel' },
           ]}
           onSelect={(item) => {
             if (item.value === 'confirm') {

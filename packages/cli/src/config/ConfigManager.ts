@@ -8,10 +8,10 @@
  * - 验证配置完整性
  * - 返回完整的 BladeConfig 供 Store 使用
  *
- * ⚠️ 注意：
+ * NOTE:
  * - 运行时配置管理由 Store（vanilla.ts）负责
  * - 配置持久化由 ConfigService 负责
- * - ConfigManager 只在启动时调用一次：ConfigManager.initialize() → Store.setConfig()
+ * - ConfigManager 只在启动时调用一次：ConfigManager.initialize() -> Store.setConfig()
  *
  * 单例模式：避免重复加载配置文件
  */
@@ -20,6 +20,7 @@ import { promises as fs } from 'fs';
 import { merge } from 'lodash-es';
 import os from 'os';
 import path from 'path';
+import { getCwd } from '../utils/cwd.js';
 import type { GlobalOptions } from '../cli/types.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import { BladeConfig, PermissionMode, RuntimeConfig } from './types.js';
@@ -96,7 +97,7 @@ export class ConfigManager {
    */
   private async loadConfigFiles(): Promise<Partial<BladeConfig>> {
     const userConfigPath = path.join(os.homedir(), '.blade', 'config.json');
-    const projectConfigPath = path.join(process.cwd(), '.blade', 'config.json');
+    const projectConfigPath = path.join(getCwd(), '.blade', 'config.json');
 
     let config: Partial<BladeConfig> = {};
 
@@ -132,8 +133,8 @@ export class ConfigManager {
    */
   private async loadSettingsFiles(): Promise<Partial<BladeConfig>> {
     const userSettingsPath = path.join(os.homedir(), '.blade', 'settings.json');
-    const projectSettingsPath = path.join(process.cwd(), '.blade', 'settings.json');
-    const localSettingsPath = path.join(process.cwd(), '.blade', 'settings.local.json');
+    const projectSettingsPath = path.join(getCwd(), '.blade', 'settings.json');
+    const localSettingsPath = path.join(getCwd(), '.blade', 'settings.local.json');
 
     let settings: Partial<BladeConfig> = {};
 
@@ -370,6 +371,9 @@ export function mergeRuntimeConfig(
   result.appendSystemPrompt = cliOptions.appendSystemPrompt;
 
   // 5. CLI 专属字段 - 会话管理
+  // --session-id 在交互模式下由 App.tsx initializeApp() 消费：
+  // 调用 sessionActions().restoreSession(resumeSessionId, []) 覆盖 store 的默认随机 ID。
+  // Headless 模式（commands/headless.ts）直接使用该值设置 chatContext.sessionId。
   result.resumeSessionId = cliOptions.sessionId;
   result.forkSession = cliOptions.forkSession;
 

@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TokenCounter } from '../context/TokenCounter.js';
 import { getConfig, getCurrentModel, getState } from '../store/vanilla.js';
+import { getCwd } from '../utils/cwd.js';
 import { getVersion } from '../utils/packageInfo.js';
 import { agentsCommand } from './agents.js';
 import compactCommand from './compact.js';
@@ -33,7 +34,7 @@ const helpCommand: SlashCommand = {
   ): Promise<SlashCommandResult> {
     const ui = getUI(context);
 
-    let helpText = `🔧 **可用的 Slash Commands:**
+    let helpText = `**可用的 Slash Commands:**
 
 **/init** - 分析当前项目并生成 BLADE.md 配置文件
 **/git** - Git 仓库查询和 AI 辅助 (status/log/diff/review/commit)
@@ -53,7 +54,7 @@ const helpCommand: SlashCommand = {
     if (customRegistry.isInitialized()) {
       const customCommands = customRegistry.getAllCommands();
       if (customCommands.length > 0) {
-        helpText += `\n\n📁 **自定义命令:**\n`;
+        helpText += `\n\n**自定义命令:**\n`;
 
         // 按来源分组
         const { project, user } = customRegistry.getCommandsBySource();
@@ -82,7 +83,7 @@ const helpCommand: SlashCommand = {
 
     helpText += `
 
-💡 **使用提示:**
+**使用提示:**
 - 在命令前加上 \`/\` 即可执行 slash command
 - 普通消息会发送给 AI 助手处理
 - 按 Ctrl+C 退出程序
@@ -128,7 +129,7 @@ const versionCommand: SlashCommand = {
     const ui = getUI(context);
     const version = getVersion();
 
-    const versionInfo = `🗡️ **Blade Code v${version}**
+    const versionInfo = `**Blade Code v${version}**
 
 **构建信息:**
 - Node.js: ${process.version}
@@ -136,10 +137,10 @@ const versionCommand: SlashCommand = {
 - 架构: ${process.arch}
 
 **功能特性:**
-- 🤖 智能 AI 对话
-- 🔧 项目自动分析
-- 📝 自定义系统提示
-- 🎯 多工具集成支持`;
+- 智能 AI 对话
+- 项目自动分析
+- 自定义系统提示
+- 多工具集成支持`;
 
     ui.sendMessage(versionInfo);
 
@@ -190,7 +191,7 @@ const statusCommand: SlashCommand = {
         // 无法读取 package.json
       }
 
-      const statusText = `📊 **当前状态**
+      const statusText = `**当前状态**
 
 **项目信息:**
 - 名称: ${projectName}
@@ -198,13 +199,13 @@ const statusCommand: SlashCommand = {
 - 路径: ${cwd}
 
 **配置状态:**
-- BLADE.md: ${hasBlademd ? '✅ 已配置' : '❌ 未配置 (使用 /init 创建)'}
+- BLADE.md: ${hasBlademd ? '[OK] 已配置' : '[FAIL] 未配置 (使用 /init 创建)'}
 
 **环境信息:**
-- 工作目录: ${process.cwd()}
+- 工作目录: ${getCwd()} (process.cwd: ${process.cwd()})
 - Node.js: ${process.version}
 
-${!hasBlademd ? '\n💡 **建议:** 运行 `/init` 命令来创建项目配置文件' : ''}`;
+${!hasBlademd ? '\n**建议:** 运行 `/init` 命令来创建项目配置文件' : ''}`;
 
       ui.sendMessage(statusText);
 
@@ -274,14 +275,14 @@ const contextCommand: SlashCommand = {
     const usageNum = parseFloat(usagePercent);
     let statusIndicator: string;
     if (usageNum < 50) {
-      statusIndicator = '🟢 正常';
+      statusIndicator = '[OK] 正常';
     } else if (usageNum < 80) {
-      statusIndicator = '🟡 中等';
+      statusIndicator = '[WARN] 中等';
     } else {
-      statusIndicator = '🔴 高负载';
+      statusIndicator = '[CRITICAL] 高负载';
     }
 
-    const contextText = `📊 **上下文使用情况**
+    const contextText = `**上下文使用情况**
 
 **当前会话:**
 - 消息数量: ${sessionMessages.length}
@@ -295,7 +296,7 @@ const contextCommand: SlashCommand = {
 
 **状态:** ${statusIndicator}
 
-💡 使用 \`/compact\` 可手动压缩上下文`;
+使用 \`/compact\` 可手动压缩上下文`;
 
     ui.sendMessage(contextText);
 

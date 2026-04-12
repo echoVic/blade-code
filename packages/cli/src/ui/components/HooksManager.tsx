@@ -8,6 +8,7 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import React, { useState } from 'react';
 import { HookManager } from '../../hooks/HookManager.js';
+import { getCwd } from '../../utils/cwd.js';
 import {
   type CommandHook,
   HookEvent,
@@ -199,7 +200,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       }
     }
 
-    const lines: string[] = [`Status: ${isEnabled ? '✅ Enabled' : '⏸️ Disabled'}`, ''];
+    const lines: string[] = [`Status: ${isEnabled ? 'Enabled' : 'Disabled'}`, ''];
 
     if (Object.keys(hookCounts).length > 0) {
       lines.push('Configured hooks:');
@@ -242,7 +243,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
         lines.push(`  [${matcherDesc}]`);
         for (const hook of matcher.hooks || []) {
           if (hook.type === 'command') {
-            lines.push(`    → ${hook.command}`);
+            lines.push(`    -> ${hook.command}`);
           }
         }
       }
@@ -297,13 +298,13 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       switch (selectedLocation.location) {
         case 'local':
           settingsPath = pathModule.join(
-            process.cwd(),
+            getCwd(),
             '.blade',
             'settings.local.json'
           );
           break;
         case 'project':
-          settingsPath = pathModule.join(process.cwd(), '.blade', 'settings.json');
+          settingsPath = pathModule.join(getCwd(), '.blade', 'settings.json');
           break;
         case 'user':
           settingsPath = pathModule.join(os.homedir(), '.blade', 'settings.json');
@@ -371,7 +372,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       {/* 警告信息 */}
       <Box marginBottom={1}>
         <Text color={theme.colors.warning}>
-          ⚠ Hooks execute shell commands with your full user permissions. Only use hooks
+          [WARN] Hooks execute shell commands with your full user permissions. Only use hooks
           from trusted sources.
         </Text>
       </Box>
@@ -398,7 +399,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
                   }
                   bold={index === selectedActionIndex}
                 >
-                  {index === selectedActionIndex ? '❯ ' : '  '}
+                  {index === selectedActionIndex ? '> ' : '  '}
                   {item.action}
                 </Text>
                 <Text color={theme.colors.muted}> - {item.description}</Text>
@@ -407,7 +408,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
           </Box>
           <Box marginTop={1}>
             <Text color={theme.colors.muted}>
-              ↑/↓ to select · Enter to continue · Esc to close
+              Up/Down to select · Enter to continue · Esc to close
             </Text>
           </Box>
         </Box>
@@ -426,7 +427,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
                   }
                   bold={index === selectedEventIndex}
                 >
-                  {index === selectedEventIndex ? '❯ ' : '  '}
+                  {index === selectedEventIndex ? '> ' : '  '}
                   {item.event}
                 </Text>
                 <Text color={theme.colors.muted}> - {item.description}</Text>
@@ -435,7 +436,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
           </Box>
           <Box marginTop={1}>
             <Text color={theme.colors.muted}>
-              ↑/↓ to select · Enter to continue · Esc to go back
+              Up/Down to select · Enter to continue · Esc to go back
             </Text>
           </Box>
         </Box>
@@ -571,7 +572,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
                   }
                   bold={index === selectedLocationIndex}
                 >
-                  {index === selectedLocationIndex ? '❯ ' : '  '}
+                  {index === selectedLocationIndex ? '> ' : '  '}
                   {index + 1}. {item.name}
                 </Text>
                 <Text color={theme.colors.muted}> {item.description}</Text>
@@ -612,7 +613,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       {/* 错误信息 */}
       {error && (
         <Box marginTop={1}>
-          <Text color={theme.colors.error}>❌ {error}</Text>
+          <Text color={theme.colors.error}>{error}</Text>
         </Box>
       )}
     </Box>

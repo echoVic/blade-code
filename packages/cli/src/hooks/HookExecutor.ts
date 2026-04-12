@@ -19,12 +19,37 @@ import {
   type PostToolHookResult,
   type PostToolUseFailureHookResult,
   type PreToolHookResult,
+  type PromptHook,
   type SessionEndHookResult,
   type SessionStartHookResult,
   type StopHookResult,
   type SubagentStopHookResult,
   type UserPromptSubmitHookResult,
 } from './types/HookTypes.js';
+import type { IChatService } from '../services/ChatServiceInterface.js';
+import { createLogger, LogCategory } from '../logging/Logger.js';
+
+const promptHookLogger = createLogger(LogCategory.EXECUTION);
+
+/**
+ * 事件类型对应的 hookSpecificOutput 字段说明
+ */
+const EVENT_SCHEMA_HINTS: Record<string, string> = {
+  PreToolUse:
+    '{ "permissionDecision": "approve" | "deny" | "ask", "permissionDecisionReason": "...", "updatedInput": { ... } }',
+  PostToolUse:
+    '{ "additionalContext": "注入到工具结果的额外信息", "updatedOutput": "修改后的工具输出" }',
+  Stop:
+    '{ "continue": true, "continueReason": "继续执行的原因" }  // continue: true 表示阻止停止',
+  SubagentStop:
+    '{ "continue": true, "continueReason": "...", "additionalContext": "..." }',
+  PermissionRequest:
+    '{ "permissionDecision": "approve" | "deny" | "ask", "permissionDecisionReason": "..." }',
+  UserPromptSubmit:
+    '{ "updatedPrompt": "修改后的提示词", "contextInjection": "注入的上下文" }',
+  Compaction:
+    '{ "blockCompaction": true, "blockReason": "阻止压缩的原因" }',
+};
 
 /**
  * Hook 执行器
@@ -32,6 +57,7 @@ import {
 export class HookExecutor {
   private processExecutor = new SecureProcessExecutor();
   private outputParser = new OutputParser();
+  private chatServiceCache = new Map<string, IChatService>();
 
   /**
    * 执行 PreToolUse Hooks (串行)
@@ -656,8 +682,11 @@ export class HookExecutor {
       return this.executeCommandHook(hook, input, context);
     }
 
-    // Prompt hooks 未来实现
-    throw new Error(`Hook type ${hook.type} not yet implemented`);
+    if (hook.type === HookType.Prompt) {
+      return this.executePromptHook(hook, input, context);
+    }
+
+    throw new Error(`Hook type ${(hook as Hook).type} not supported`);
   }
 
   /**
@@ -690,6 +719,195 @@ export class HookExecutor {
         hook,
       };
     }
+  }
+
+  /**
+   * 执行提示词 Hook（推理型传感器）
+   *
+   * 发起一次轻量 LLM 调用，将 HookInput 作为上下文传给 LLM，
+   * LLM 输出 JSON 格式的 HookOutput，复用 OutputParser 解析。
+   */
+  private async executePromptHook(
+    hook: PromptHook,
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<HookExecutionResult> {
+    const timeoutMs = (hook.timeout ?? context.config.defaultTimeout ?? 60) * 1000;
+
+    try {
+      // 1. 解析模型配置
+      const chatService = await this.getOrCreateChatService(hook.model);
+
+      // 2. 构建 messages
+      const eventType =
+        'hook_event_name' in input
+          ? String(input.hook_event_name)
+          : 'Unknown';
+      const systemMessage = this.buildPromptHookSystemMessage(
+        hook,
+        eventType,
+      );
+      const userMessage = JSON.stringify(input, null, 2);
+
+      // 3. 调用 LLM（带超时）
+      const abortController = new AbortController();
+      const timer = setTimeout(
+        () => abortController.abort(),
+        timeoutMs,
+      );
+
+      let llmResponse: string;
+      try {
+        const response = await chatService.chat(
+          [
+            { role: 'system', content: systemMessage },
+            { role: 'user', content: userMessage },
+          ],
+          undefined,
+          abortController.signal,
+        );
+        llmResponse = response.content;
+      } catch (err) {
+        // 区分超时和其他错误
+        if (
+          abortController.signal.aborted ||
+          (err instanceof Error && err.name === 'AbortError')
+        ) {
+          return this.outputParser.parse(
+            {
+              stdout: '',
+              stderr: '',
+              exitCode: 0,
+              timedOut: true,
+            },
+            hook,
+            {
+              timeoutBehavior: context.config.timeoutBehavior,
+              failureBehavior: context.config.failureBehavior,
+            },
+          );
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
+
+      // 4. 从 LLM 响应中提取 JSON
+      const cleanedResponse = this.extractJsonFromLLMResponse(llmResponse);
+
+      // 5. 构造 ProcessResult 并复用 OutputParser
+      return this.outputParser.parse(
+        {
+          stdout: cleanedResponse,
+          stderr: '',
+          exitCode: 0,
+          timedOut: false,
+        },
+        hook,
+        {
+          timeoutBehavior: context.config.timeoutBehavior,
+          failureBehavior: context.config.failureBehavior,
+        },
+      );
+    } catch (err) {
+      promptHookLogger.warn(
+        `[PromptHook] 执行失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return {
+        success: false,
+        blocking: false,
+        error: err instanceof Error ? err.message : String(err),
+        hook,
+      };
+    }
+  }
+
+  /**
+   * 获取或创建 ChatService 实例（按 modelId 缓存）
+   */
+  private async getOrCreateChatService(
+    modelId?: string,
+  ): Promise<IChatService> {
+    const cacheKey = modelId || '__default__';
+
+    const cached = this.chatServiceCache.get(cacheKey);
+    if (cached) return cached;
+
+    // 延迟导入避免启动时加载开销
+    const { ensureStoreInitialized, getCurrentModel, getModelById } =
+      await import('../store/vanilla.js');
+    const { createChatServiceAsync } = await import(
+      '../services/ChatServiceInterface.js'
+    );
+
+    await ensureStoreInitialized();
+
+    const modelConfig = modelId
+      ? getModelById(modelId) || getCurrentModel()
+      : getCurrentModel();
+
+    if (!modelConfig) {
+      throw new Error(
+        'PromptHook: 无法获取模型配置。请确保至少配置了一个模型。',
+      );
+    }
+
+    const chatService = await createChatServiceAsync({
+      provider: modelConfig.provider,
+      apiKey: modelConfig.apiKey,
+      baseUrl: modelConfig.baseUrl,
+      model: modelConfig.model,
+      temperature: modelConfig.temperature,
+      maxContextTokens: modelConfig.maxContextTokens,
+      maxOutputTokens: modelConfig.maxOutputTokens,
+    });
+
+    this.chatServiceCache.set(cacheKey, chatService);
+    return chatService;
+  }
+
+  /**
+   * 构建 PromptHook 的系统提示
+   */
+  private buildPromptHookSystemMessage(
+    hook: PromptHook,
+    eventType: string,
+  ): string {
+    const schemaHint =
+      EVENT_SCHEMA_HINTS[eventType] || '{ ... 根据事件类型返回相应字段 }';
+
+    return (
+      `你是一个代码质量评估器，作为 Hook 在 ${eventType} 事件中被触发。\n\n` +
+      `## 评估指令\n${hook.prompt}\n\n` +
+      `## 输出格式\n` +
+      `必须返回一个 JSON 对象（不要包含任何其他文本）：\n` +
+      `{\n` +
+      `  "decision": { "behavior": "approve" | "block" },\n` +
+      `  "systemMessage": "可选的说明信息",\n` +
+      `  "hookSpecificOutput": ${schemaHint}\n` +
+      `}\n\n` +
+      `重要规则：\n` +
+      `- 只输出 JSON，不要包含 markdown 代码块或其他文本\n` +
+      `- 如果没有发现问题，使用 "approve"\n` +
+      `- 只在发现严重问题时使用 "block"`
+    );
+  }
+
+  /**
+   * 从 LLM 响应中提取 JSON（去除 markdown code block 包装）
+   */
+  private extractJsonFromLLMResponse(text: string): string {
+    const trimmed = text.trim();
+
+    // 去除 ```json ... ``` 或 ``` ... ``` 包装
+    const codeBlockMatch = trimmed.match(
+      /^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/,
+    );
+    if (codeBlockMatch) {
+      return codeBlockMatch[1].trim();
+    }
+
+    return trimmed;
   }
 
   /**

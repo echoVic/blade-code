@@ -12,6 +12,7 @@ import {
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
+import { getCwd } from '../../utils/cwd.js';
 import { endsWithSeparator } from '../../utils/pathHelpers.js';
 import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
 import type { HistoryEntry, PasteMappings } from './useCommandHistory.js';
@@ -62,7 +63,7 @@ export const useMainInput = (
 
   // @ 文件自动补全（使用真实光标位置）
   const atCompletion = useAtCompletion(input, cursorPosition, {
-    cwd: process.cwd(),
+    cwd: getCwd(),
     maxSuggestions: 10,
   });
 
@@ -284,31 +285,9 @@ export const useMainInput = (
         // 如果模型不支持 thinking，Tab 键无效果（静默忽略）
         return;
       }
-      // Enter - 选中建议或提交命令
+      // Enter - 提交命令（建议通过 Tab 接受）
       if (key.return) {
-        if (showSuggestions && suggestions.length > 0) {
-          const selectedCommand = suggestions[selectedSuggestionIndex].command;
-          if (
-            atCompletion.hasQuery &&
-            atCompletion.suggestions.includes(selectedCommand)
-          ) {
-            const { newInput, newCursorPos } = applySuggestion(
-              input,
-              atCompletion,
-              selectedCommand
-            );
-            setInput(newInput);
-            buffer.setCursorPosition(newCursorPos);
-          } else {
-            const newInput = selectedCommand + ' ';
-            setInput(newInput);
-            buffer.setCursorPosition(newInput.length);
-          }
-          setShowSuggestions(false);
-          setSuggestions([]);
-        } else {
-          handleSubmit();
-        }
+        handleSubmit();
         return;
       }
       // 上下箭头 - 建议导航或历史命令

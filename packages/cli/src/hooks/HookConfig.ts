@@ -4,7 +4,7 @@
  * 默认配置和配置加载逻辑
  */
 
-import type { HookConfig } from './types/HookTypes.js';
+import { HookType, type HookConfig } from './types/HookTypes.js';
 
 /**
  * 默认 Hook 配置
@@ -18,7 +18,26 @@ export const DEFAULT_HOOK_CONFIG: Required<HookConfig> = {
   maxConcurrentHooks: 5, // 最多 5 个并发 hook
   // 工具执行类
   PreToolUse: [],
-  PostToolUse: [],
+  PostToolUse: [
+    {
+      name: 'builtin:code-review-sensor',
+      matcher: { tools: 'Edit|Write' },
+      hooks: [
+        {
+          type: HookType.Prompt,
+          prompt:
+            '审查此代码变更，重点检查：' +
+            '1) 安全漏洞（命令注入、XSS、SQL 注入、硬编码密钥/密码）' +
+            '2) 明显的逻辑错误（无限循环、off-by-one、空引用）' +
+            '3) 类型安全问题。' +
+            '如果发现严重问题，将问题描述放在 hookSpecificOutput.additionalContext 中。' +
+            '如果没有严重问题，返回 approve。',
+          model: undefined,
+          timeout: 15,
+        },
+      ],
+    },
+  ],
   PostToolUseFailure: [],
   PermissionRequest: [],
   // 会话生命周期类

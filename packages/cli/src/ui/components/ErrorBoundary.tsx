@@ -46,7 +46,7 @@ export class ErrorBoundary extends React.Component<
     if (this.state.hasError) {
       return (
         <Box flexDirection="column" padding={1} borderStyle="round" borderColor="red">
-          <Text color="red">💥 应用发生错误</Text>
+          <Text color="red">应用发生错误</Text>
           <Text> </Text>
           <Text color="red">{this.state.error?.message}</Text>
           <Text> </Text>

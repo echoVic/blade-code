@@ -8,6 +8,8 @@ import { McpRegistry } from '../../mcp/McpRegistry.js';
 import type { Tool } from '../types/index.js';
 // 文件操作工具
 import { editTool, readTool, writeTool } from './file/index.js';
+// Config 工具
+import { configTool } from './config/index.js';
 // Memory 工具
 import { memoryReadTool, memoryWriteTool } from './memory/index.js';
 // Notebook 工具
@@ -21,7 +23,12 @@ import { bashTool, killShellTool } from './shell/index.js';
 // Spec 工具
 import { specTools } from './spec/index.js';
 // System 工具
-import { askUserQuestionTool, skillTool, slashCommandTool } from './system/index.js';
+import {
+  askUserQuestionTool,
+  skillTool,
+  slashCommandTool,
+  toolSearchTool,
+} from './system/index.js';
 // 任务管理工具
 import { taskOutputTool, taskTool } from './task/index.js';
 // Todo 工具
@@ -82,14 +89,18 @@ export async function getBuiltinTools(opts?: {
     // Spec 模式: EnterSpecMode, UpdateSpec, GetSpecContext, TransitionSpecPhase, ValidateSpec, ExitSpecMode
     ...specTools,
 
-    // System: AskUserQuestion, Skill, SlashCommand
+    // System: AskUserQuestion, Skill, SlashCommand, ToolSearch
     askUserQuestionTool,
     skillTool,
     slashCommandTool,
+    toolSearchTool,
 
     // Memory: MemoryRead, MemoryWrite
     memoryReadTool,
     memoryWriteTool,
+
+    // Config: ConfigTool
+    configTool,
   ] as Tool[];
 
   // 添加 MCP 协议工具

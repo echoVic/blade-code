@@ -8,6 +8,7 @@ export const killShellTool = createTool({
   name: 'KillShell',
   displayName: '终止后台 Shell',
   kind: ToolKind.Execute,
+  isConcurrencySafe: false, // 终止进程，有副作用
 
   schema: z.object({
     shell_id: z.string().min(1).describe('Background Shell ID to terminate'),
@@ -33,11 +34,11 @@ export const killShellTool = createTool({
       return {
         success: false,
         llmContent: `Shell not found: ${params.shell_id}`,
-        displayContent: `❌ 未找到 Shell: ${params.shell_id}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: 'Shell ID 不存在或已清理',
         },
+        metadata: { summary: `未找到 Shell: ${params.shell_id}` },
       };
     }
 
@@ -45,18 +46,13 @@ export const killShellTool = createTool({
       return {
         success: false,
         llmContent: `Failed to terminate Shell: ${params.shell_id}`,
-        displayContent: `❌ 无法终止 Shell (${params.shell_id})`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: '发送终止信号失败',
         },
-        metadata: { ...result },
+        metadata: { ...result, summary: `终止 Shell 失败: ${params.shell_id}` },
       };
     }
-
-    const statusText = result.alreadyExited
-      ? `Shell ${params.shell_id} 已经处于 ${result.status} 状态`
-      : `已向 Shell ${params.shell_id} 发送终止信号`;
 
     return {
       success: true,
@@ -68,8 +64,7 @@ export const killShellTool = createTool({
         exit_code: result.exitCode,
         signal: result.signal,
       },
-      displayContent: result.alreadyExited ? `ℹ️ ${statusText}` : `✂️ ${statusText}`,
-      metadata: { ...result },
+      metadata: { ...result, summary: `终止 Shell: ${params.shell_id}` },
     };
   },
 

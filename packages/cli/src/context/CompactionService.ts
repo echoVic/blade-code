@@ -3,13 +3,16 @@
  * 负责协调整个压缩流程：分析文件、生成总结、创建压缩消息
  */
 
+import { promises as fs } from 'node:fs';
 import { nanoid } from 'nanoid';
 import { PermissionMode } from '../config/types.js';
+import { getCwd } from '../utils/cwd.js';
 import { HookManager } from '../hooks/HookManager.js';
 import {
   createChatServiceAsync,
   type Message,
 } from '../services/ChatServiceInterface.js';
+import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
 import { TokenCounter } from './TokenCounter.js';
 
@@ -59,6 +62,9 @@ export interface CompactionResult {
   error?: string;
 }
 
+const sessionFailures = new Map<string, number>();
+const MAX_CONSECUTIVE_FAILURES = 3;
+
 /**
  * Compaction Service - 上下文压缩服务
  */
@@ -96,7 +102,7 @@ export class CompactionService {
     try {
       const hookManager = HookManager.getInstance();
       const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
-        projectDir: process.cwd(),
+        projectDir: getCwd(),
         sessionId: options.sessionId || 'unknown',
         permissionMode: options.permissionMode || PermissionMode.DEFAULT,
         messagesBefore: messages.length,
@@ -130,6 +136,13 @@ export class CompactionService {
     } catch (hookError) {
       // Hook 执行失败不应阻止压缩
       console.warn('[CompactionService] Compaction hook execution failed:', hookError);
+    }
+
+    const sessionKey = options.sessionId ?? '_default';
+    const failures = sessionFailures.get(sessionKey) ?? 0;
+    if (failures >= MAX_CONSECUTIVE_FAILURES) {
+      console.warn(`[CompactionService] Circuit breaker open (${failures} consecutive failures for session ${sessionKey}), using fallback`);
+      return this.fallbackCompact(messages, options, preTokens, new Error('Circuit breaker open'));
     }
 
     try {
@@ -186,16 +199,29 @@ export class CompactionService {
 
       // 5. 构建新消息列表（用于发送给 LLM）
       const compactedMessages = [summaryMessage, ...retainedMessages];
-      const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
+
+      // === Post-Compact 上下文恢复 ===
+      const restorationMessage =
+        await this.buildFileRestorationMessage();
+      if (restorationMessage) {
+        compactedMessages.push(restorationMessage);
+      }
+
+      const postTokens = TokenCounter.countTokens(
+        compactedMessages,
+        options.modelName
+      );
 
       console.log('[CompactionService] 压缩完成！');
       console.log(
         '[CompactionService] Token 变化:',
         preTokens,
-        '→',
+        '->',
         postTokens,
         `(-${((1 - postTokens / preTokens) * 100).toFixed(1)}%)`
       );
+
+      sessionFailures.delete(sessionKey);
 
       return {
         success: true,
@@ -208,6 +234,7 @@ export class CompactionService {
         summaryMessage,
       };
     } catch (error) {
+      sessionFailures.set(sessionKey, (sessionFailures.get(sessionKey) ?? 0) + 1);
       console.error('[CompactionService] 压缩失败，使用降级策略', error);
       return this.fallbackCompact(messages, options, preTokens, error);
     }
@@ -388,6 +415,88 @@ Please provide your summary following the structure specified above, with both <
   }
 
   /**
+   * 获取最近访问的文件路径
+   * 从 FileAccessTracker 中获取按访问时间降序排列的文件
+   *
+   * @param limit - 最多返回的文件数量
+   * @returns 去重的文件路径列表
+   */
+  private static getRecentlyAccessedFiles(limit: number): string[] {
+    const tracker = FileAccessTracker.getInstance();
+    const trackedFiles = tracker.getTrackedFiles();
+
+    // 按最后访问时间降序排序
+    const sorted = trackedFiles
+      .map((filePath) => ({
+        filePath,
+        record: tracker.getFileRecord(filePath)!,
+      }))
+      .filter((entry) => entry.record !== undefined)
+      .sort((a, b) => b.record.accessTime - a.record.accessTime);
+
+    return sorted.slice(0, limit).map((entry) => entry.filePath);
+  }
+
+  /**
+   * 构建文件恢复消息
+   * 读取最近访问的文件内容，构建 system-reminder 格式的恢复消息
+   *
+   * @returns 恢复消息，如果没有可恢复的文件则返回 null
+   */
+  private static async buildFileRestorationMessage(): Promise<Message | null> {
+    const recentFiles = this.getRecentlyAccessedFiles(5);
+    if (recentFiles.length === 0) {
+      return null;
+    }
+
+    const fileRestorations: string[] = [];
+
+    for (const filePath of recentFiles) {
+      try {
+        const content = await fs.readFile(filePath, 'utf-8');
+        const lines = content.split('\n');
+        const preview = lines.slice(0, 200).join('\n');
+        const truncated =
+          lines.length > 200
+            ? `\n... (${lines.length - 200} more lines)`
+            : '';
+        fileRestorations.push(
+          `<file path="${filePath}" lines="${lines.length}">\n${preview}${truncated}\n</file>`
+        );
+      } catch {
+        // 文件可能已被删除，静默跳过
+      }
+    }
+
+    if (fileRestorations.length === 0) {
+      return null;
+    }
+
+    const restorationContent = [
+      '<system-reminder>',
+      'Post-compaction file restoration.'
+        + ' These files were recently accessed'
+        + ' in the conversation:',
+      ...fileRestorations,
+      '</system-reminder>',
+    ].join('\n');
+
+    console.log(
+      '[CompactionService] Post-compact 恢复文件:',
+      recentFiles.length
+    );
+
+    return {
+      id: nanoid(),
+      role: 'user',
+      content: restorationContent,
+      metadata: {
+        isPostCompactRestoration: true,
+      },
+    } as Message;
+  }
+
+  /**
    * 降级策略：简单截断
    *
    * @param messages - 消息列表
@@ -457,5 +566,13 @@ Please provide your summary following the structure specified above, with both <
       summaryMessage,
       error: errorMsg,
     };
+  }
+}
+
+export function resetCompactionCircuitBreaker(sessionId?: string): void {
+  if (sessionId) {
+    sessionFailures.delete(sessionId);
+  } else {
+    sessionFailures.clear();
   }
 }

@@ -50,8 +50,8 @@ export const SubagentProgress: React.FC = React.memo(() => {
     progress.status === 'running'
       ? SPINNER_FRAMES[spinnerFrame]
       : progress.status === 'completed'
-        ? '✓'
-        : '✗';
+        ? '[OK]'
+        : '[X]';
 
   const statusColor =
     progress.status === 'running'

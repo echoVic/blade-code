@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const agentState = vi.hoisted(() => ({
   create: vi.fn(),
-  chat: vi.fn(),
+  chatStream: vi.fn(),
 }));
 
 vi.mock('../../../src/agent/Agent.js', () => ({
@@ -12,11 +12,24 @@ vi.mock('../../../src/agent/Agent.js', () => ({
 }));
 
 describe('headless runner', () => {
+  /** Helper: create a mock async generator that yields events and returns a LoopResult */
+  function mockChatGenerator(
+    events: Array<Record<string, unknown>>,
+    finalMessage = 'final response'
+  ) {
+    return async function* () {
+      for (const event of events) {
+        yield event;
+      }
+      return { success: true, finalMessage, metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 } };
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
-    agentState.chat.mockResolvedValue('final response');
+    agentState.chatStream.mockImplementation(mockChatGenerator([]));
     agentState.create.mockResolvedValue({
-      chat: agentState.chat,
+      chatStream: agentState.chatStream,
     });
   });
 
@@ -24,54 +37,39 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockImplementationOnce(async (_input, _context, loopOptions) => {
-      loopOptions?.onThinkingDelta?.('reasoning');
-      loopOptions?.onContentDelta?.('hello');
-      loopOptions?.onToolStart?.({
+    agentState.chatStream.mockImplementationOnce(mockChatGenerator([
+      { kind: 'thinking_delta', delta: 'reasoning' },
+      { kind: 'content_delta', delta: 'hello' },
+      { kind: 'tool_start', toolCall: {
         id: 'tool-1',
         type: 'function',
-        function: {
-          name: 'Read',
-          arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }),
-        },
-      });
-      await loopOptions?.onToolResult?.(
-        {
-          id: 'tool-1',
-          type: 'function',
-          function: {
-            name: 'Read',
-            arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }),
-          },
-        },
-        {
-          success: true,
-          displayContent: 'const demo = true;',
-          metadata: {
-            summary: 'Read demo.ts',
-            content_preview: 'const demo = true;',
-          },
-        }
-      );
-      loopOptions?.onTodoUpdate?.([
-        {
-          id: 'todo-1',
-          content: 'Ship headless mode',
-          status: 'in_progress',
-          activeForm: 'Shipping headless mode',
-          priority: 'high',
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      loopOptions?.onTokenUsage?.({
+        function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
+      }},
+      { kind: 'tool_result', toolCall: {
+        id: 'tool-1',
+        type: 'function',
+        function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
+      }, result: {
+        success: true,
+        llmContent: 'const demo = true;',
+        metadata: { summary: 'Read demo.ts', content_preview: 'const demo = true;' },
+      }},
+      { kind: 'todo_update', todos: [{
+        id: 'todo-1',
+        content: 'Ship headless mode',
+        status: 'in_progress',
+        activeForm: 'Shipping headless mode',
+        priority: 'high',
+        createdAt: new Date().toISOString(),
+      }]},
+      { kind: 'token_usage', usage: {
         inputTokens: 10,
         outputTokens: 20,
         totalTokens: 30,
         maxContextTokens: 1000,
-      });
-      loopOptions?.onStreamEnd?.();
-      return 'final response';
-    });
+      }},
+      { kind: 'stream_end' },
+    ]));
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
 
@@ -104,29 +102,23 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockImplementationOnce(async (_input, _context, loopOptions) => {
-      loopOptions?.onContentDelta?.('hello');
-      loopOptions?.onToolStart?.({
+    agentState.chatStream.mockImplementationOnce(mockChatGenerator([
+      { kind: 'content_delta', delta: 'hello' },
+      { kind: 'tool_start', toolCall: {
         id: 'tool-2',
         type: 'function',
-        function: {
-          name: 'Read',
-          arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }),
-        },
-      });
-      loopOptions?.onTodoUpdate?.([
-        {
-          id: 'todo-2',
-          content: 'Capture jsonl',
-          status: 'pending',
-          activeForm: 'Capturing jsonl',
-          priority: 'medium',
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      loopOptions?.onStreamEnd?.();
-      return 'final response';
-    });
+        function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
+      }},
+      { kind: 'todo_update', todos: [{
+        id: 'todo-2',
+        content: 'Capture jsonl',
+        status: 'pending',
+        activeForm: 'Capturing jsonl',
+        priority: 'medium',
+        createdAt: new Date().toISOString(),
+      }]},
+      { kind: 'stream_end' },
+    ]));
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
     const { HeadlessJsonlEventSchema } = await import(
@@ -155,6 +147,14 @@ describe('headless runner', () => {
     expect(lines).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          type: 'phase',
+          event_version: 1,
+          phase: 'inspecting',
+          status: 'ongoing',
+          tool_name: 'Read',
+          target: '/tmp/demo.ts',
+        }),
+        expect.objectContaining({
           type: 'content_delta',
           event_version: 1,
           delta: 'hello',
@@ -163,6 +163,7 @@ describe('headless runner', () => {
           type: 'tool_start',
           event_version: 1,
           tool_name: 'Read',
+          target: '/tmp/demo.ts',
         }),
         expect.objectContaining({
           type: 'todo_update',
@@ -204,16 +205,15 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockImplementationOnce(async (_input, _context, loopOptions) => {
-      loopOptions?.onThinkingDelta?.('first');
-      loopOptions?.onContentDelta?.('hello');
-      loopOptions?.onStreamEnd?.();
-      loopOptions?.onCompacting?.(true);
-      loopOptions?.onCompacting?.(false);
-      loopOptions?.onThinkingDelta?.('second');
-      loopOptions?.onStreamEnd?.();
-      return 'final response';
-    });
+    agentState.chatStream.mockImplementationOnce(mockChatGenerator([
+      { kind: 'thinking_delta', delta: 'first' },
+      { kind: 'content_delta', delta: 'hello' },
+      { kind: 'stream_end' },
+      { kind: 'compaction', phase: 'start' },
+      { kind: 'compaction', phase: 'end' },
+      { kind: 'thinking_delta', delta: 'second' },
+      { kind: 'stream_end' },
+    ]));
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
 
@@ -244,7 +244,10 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chat.mockRejectedValueOnce(new Error('boom'));
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
+      throw new Error('boom');
+    });
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
     const { HeadlessJsonlEventSchema } = await import(
@@ -270,12 +273,98 @@ describe('headless runner', () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.write).not.toHaveBeenCalled();
-    expect(lines).toEqual([
-      expect.objectContaining({
-        type: 'error',
-        event_version: 1,
-        message: 'Error: boom',
-      }),
-    ]);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'phase',
+          event_version: 1,
+          phase: 'turn',
+          status: 'ongoing',
+        }),
+        expect.objectContaining({
+          type: 'error',
+          event_version: 1,
+          message: 'Error: boom',
+        }),
+      ])
+    );
+  });
+
+  it('emits stronger phase events so consumers can distinguish searching vs target-hit', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'tool_start',
+          toolCall: {
+            id: 'tool-search',
+            type: 'function',
+            function: {
+              name: 'Grep',
+              arguments: JSON.stringify({
+                pattern: 'phase',
+                path: '/tmp',
+              }),
+            },
+          },
+        },
+        {
+          kind: 'tool_start',
+          toolCall: {
+            id: 'tool-edit',
+            type: 'function',
+            function: {
+              name: 'Edit',
+              arguments: JSON.stringify({
+                file_path: '/tmp/demo.ts',
+              }),
+            },
+          },
+        },
+      ])
+    );
+
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const { HeadlessJsonlEventSchema } = await import(
+      '../../../src/commands/headlessEvents.js'
+    );
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        outputFormat: 'jsonl',
+        message: 'inspect this repo',
+      },
+      { stdout, stderr }
+    );
+
+    const lines = stdout.write.mock.calls
+      .map((call) => String(call[0] ?? ''))
+      .join('')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+
+    expect(exitCode).toBe(0);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'phase',
+          phase: 'searching',
+          status: 'ongoing',
+          tool_name: 'Grep',
+        }),
+        expect.objectContaining({
+          type: 'phase',
+          phase: 'target_hit',
+          status: 'hit',
+          tool_name: 'Edit',
+          target: '/tmp/demo.ts',
+        }),
+      ])
+    );
   });
 });

@@ -39,19 +39,19 @@ function getPhaseGuidance(fileType: string, currentPhase: SpecPhase): string {
 
   // If updating a file for a later phase, suggest transitioning
   if (targetIndex > currentIndex) {
-    return `\n💡 Consider transitioning to "${targetPhase}" phase using TransitionSpecPhase tool.`;
+    return `\nConsider transitioning to "${targetPhase}" phase using TransitionSpecPhase tool.`;
   }
 
   // Phase-specific guidance
   switch (fileType) {
     case 'proposal':
-      return '\n📝 Next: Define requirements in requirements.md using EARS format.';
+      return '\nNext: Define requirements in requirements.md using EARS format.';
     case 'requirements':
-      return '\n📝 Next: Create technical design in design.md (diagrams, API contracts).';
+      return '\nNext: Create technical design in design.md (diagrams, API contracts).';
     case 'design':
-      return '\n📝 Next: Break down into tasks in tasks.md (atomic, with dependencies).';
+      return '\nNext: Break down into tasks in tasks.md (atomic, with dependencies).';
     case 'tasks':
-      return '\n📝 Next: Start implementation. Update task status as you progress.';
+      return '\nNext: Start implementation. Update task status as you progress.';
     default:
       return '';
   }
@@ -61,6 +61,7 @@ export const updateSpecTool = createTool({
   name: 'UpdateSpec',
   displayName: 'Update Spec',
   kind: ToolKind.Write,
+  isConcurrencySafe: false, // 写入 Spec 状态
 
   schema: z.object({
     fileType: z
@@ -125,11 +126,11 @@ UpdateSpec({
         llmContent:
           'No active spec. Use EnterSpecMode to start a new spec project, ' +
           'or use the /spec command to load an existing one.',
-        displayContent: '❌ No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
         },
+        metadata: { summary: '无活跃 Spec' },
       };
     }
 
@@ -151,27 +152,27 @@ UpdateSpec({
       return {
         success: true,
         llmContent:
-          `✅ Updated ${fileType}.md for "${currentSpec.name}"\n\n` +
-          `📊 Stats: ${lines} lines, ${chars} characters\n\n` +
+          `[OK] Updated ${fileType}.md for "${currentSpec.name}"\n\n` +
+          `Stats: ${lines} lines, ${chars} characters\n\n` +
           getPhaseGuidance(fileType, currentSpec.phase),
-        displayContent: `✅ Updated ${fileType}.md (${lines} lines)`,
         metadata: {
           featureName: currentSpec.name,
           fileType,
           lines,
           chars,
           append,
+          summary: `更新 ${fileType}.md (${lines} 行)`,
         },
       };
     } catch (error) {
       return {
         success: false,
         llmContent: `Failed to update ${fileType}.md: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        displayContent: `❌ Failed to update ${fileType}.md`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: error instanceof Error ? error.message : 'Write error',
         },
+        metadata: { summary: `更新 ${fileType}.md 失败` },
       };
     }
   },

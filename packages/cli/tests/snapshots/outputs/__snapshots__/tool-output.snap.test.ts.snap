@@ -9,7 +9,7 @@ tests/config.test.ts:5: describe("config", () => {"
 exports[`工具输出快照测试 > Grep 工具输出 > 应该正确格式化无匹配结果 1`] = `"No matches found."`;
 
 exports[`工具输出快照测试 > Read 工具输出 > 应该正确格式化大文件输出 1`] = `
-"📄 /src/large.ts (100 lines)
+"/src/large.ts (100 lines)
 ────────────────────────────────────────
 Line 1
 Line 2
@@ -114,7 +114,7 @@ Line 100"
 `;
 
 exports[`工具输出快照测试 > Read 工具输出 > 应该正确格式化文件读取输出 1`] = `
-"📄 /src/index.ts (3 lines)
+"/src/index.ts (3 lines)
 ────────────────────────────────────────
 export const main = () => {
   console.log("Hello");
@@ -122,20 +122,20 @@ export const main = () => {
 `;
 
 exports[`工具输出快照测试 > Read 工具输出 > 应该正确格式化空文件输出 1`] = `
-"📄 /src/empty.ts (0 lines)
+"/src/empty.ts (0 lines)
 ────────────────────────────────────────
 "
 `;
 
 exports[`工具输出快照测试 > RunCommand 工具输出 > 应该正确格式化失败的命令输出 1`] = `
-"✗ $ npm run test
+"[FAIL] $ npm run test
 Error: Test failed
   at src/index.test.ts:10:5
 [Exit: 1] [Duration: 567ms]"
 `;
 
 exports[`工具输出快照测试 > RunCommand 工具输出 > 应该正确格式化成功的命令输出 1`] = `
-"✓ $ npm run build
+"[OK] $ npm run build
 Build completed successfully.
 Output: dist/bundle.js
 [Exit: 0] [Duration: 1234ms]"

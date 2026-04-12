@@ -18,15 +18,16 @@ export function createTool<TSchema extends z.ZodSchema>(
     displayName: config.displayName,
     kind: config.kind,
 
-    // 🆕 isReadOnly 字段
+    // isReadOnly 字段
     // 优先使用 config 中的显式设置，否则根据 kind 推断
     isReadOnly: config.isReadOnly ?? isReadOnlyKind(config.kind),
 
-    // 🆕 isConcurrencySafe 字段
-    // 优先使用 config 中的显式设置，否则默认 true
-    isConcurrencySafe: config.isConcurrencySafe ?? true,
+    // isConcurrencySafe 字段
+    // 优先使用 config 中的显式设置，否则默认 false
+    // 仅控制 ExecutionPipeline 中的文件锁语义，与流式预启动 allowlist 无关
+    isConcurrencySafe: config.isConcurrencySafe ?? false,
 
-    // 🆕 strict 字段（OpenAI Structured Outputs）
+    // strict 字段（OpenAI Structured Outputs）
     // 优先使用 config 中的显式设置，否则默认 false
     strict: config.strict ?? false,
 
@@ -53,7 +54,7 @@ export function createTool<TSchema extends z.ZodSchema>(
       }
 
       if (config.description.important && config.description.important.length > 0) {
-        fullDescription += `\n\nImportant:\n${config.description.important.map((note) => `⚠️ ${note}`).join('\n')}`;
+        fullDescription += `\n\nImportant:\n${config.description.important.map((note) => `[WARN] ${note}`).join('\n')}`;
       }
 
       return {
@@ -102,14 +103,14 @@ export function createTool<TSchema extends z.ZodSchema>(
     },
 
     /**
-     * ✅ 签名内容提取器（从 config 传递或提供默认实现）
+     * [OK] 签名内容提取器（从 config 传递或提供默认实现）
      */
     extractSignatureContent: config.extractSignatureContent
       ? (params: TParams) => config.extractSignatureContent!(params)
       : undefined,
 
     /**
-     * ✅ 权限规则抽象器（从 config 传递或提供默认实现）
+     * [OK] 权限规则抽象器（从 config 传递或提供默认实现）
      */
     abstractPermissionRule: config.abstractPermissionRule
       ? (params: TParams) => config.abstractPermissionRule!(params)

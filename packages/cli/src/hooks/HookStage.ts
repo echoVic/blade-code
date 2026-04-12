@@ -7,13 +7,14 @@
 import { nanoid } from 'nanoid';
 import { PermissionMode } from '../config/types.js';
 import type { PipelineStage, ToolExecution } from '../tools/types/index.js';
+import { getCwd } from '../utils/cwd.js';
 import { HookManager } from './HookManager.js';
 
 /**
  * Hook 阶段
  *
  * 插入到 Permission 和 Confirmation 之间:
- * Discovery → Permission → **Hook** → Confirmation → Execution → Formatting
+ * Discovery -> Permission -> **Hook** -> Confirmation -> Execution -> Formatting
  */
 export class HookStage implements PipelineStage {
   readonly name = 'hook';
@@ -42,7 +43,7 @@ export class HookStage implements PipelineStage {
       const toolUseId = execution.context.messageId || `tool_${nanoid()}`;
       execution._internal.hookToolUseId = toolUseId;
 
-      const projectDir = execution.context.workspaceRoot || process.cwd();
+      const projectDir = execution.context.workspaceRoot || getCwd();
 
       const result = await this.hookManager.executePreToolHooks(
         tool.name,

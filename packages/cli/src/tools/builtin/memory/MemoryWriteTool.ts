@@ -4,6 +4,7 @@
 
 import { z } from 'zod';
 import { AutoMemoryManager } from '../../../memory/AutoMemoryManager.js';
+import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -21,6 +22,7 @@ export const memoryWriteTool = createTool({
   name: 'MemoryWrite',
   displayName: 'Memory Write',
   kind: ToolKind.Write,
+  isConcurrencySafe: false, // 写入操作
 
   schema: z.object({
     topic: z
@@ -59,7 +61,7 @@ export const memoryWriteTool = createTool({
         params: {
           topic: 'MEMORY',
           content:
-            '# Project Memory\n\n- Build: `pnpm build`\n- Test: `pnpm test`\n- See debugging.md for common issues',
+            '# Project Memory\n\n- Build: `bun run build`\n- Test: `bun run test`\n- See debugging.md for common issues',
           mode: 'overwrite',
         },
       },
@@ -68,7 +70,7 @@ export const memoryWriteTool = createTool({
 
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const { topic, content, mode } = params;
-    const projectPath = context.workspaceRoot || process.cwd();
+    const projectPath = context.workspaceRoot || getCwd();
 
     // 安全检查：拒绝写入敏感信息
     for (const pattern of SENSITIVE_PATTERNS) {
@@ -77,8 +79,8 @@ export const memoryWriteTool = createTool({
         return {
           success: false,
           llmContent: msg,
-          displayContent: msg,
           error: { message: msg, type: ToolErrorType.VALIDATION_ERROR },
+          metadata: { summary: '拒绝写入敏感信息' },
         };
       }
     }
@@ -93,6 +95,6 @@ export const memoryWriteTool = createTool({
 
     const action = mode === 'overwrite' ? 'Written' : 'Appended';
     const msg = `${action} to memory/${topic}.md (${content.length} chars)`;
-    return { success: true, llmContent: msg, displayContent: msg };
+    return { success: true, llmContent: msg, metadata: { summary: `写入记忆: ${topic}` } };
   },
 });

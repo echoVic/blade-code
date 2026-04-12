@@ -6,6 +6,7 @@
 
 import { nanoid } from 'nanoid';
 import type { PermissionMode } from '../config/types.js';
+import { getCwd } from '../utils/cwd.js';
 import { DEFAULT_HOOK_CONFIG, mergeHookConfig, parseEnvConfig } from './HookConfig.js';
 import { HookExecutionGuard } from './HookExecutionGuard.js';
 import { HookExecutor } from './HookExecutor.js';
@@ -128,7 +129,7 @@ export class HookManager {
     try {
       // 读取本地 settings 文件
       const localSettingsPath = path.join(
-        process.cwd(),
+        getCwd(),
         '.blade',
         'settings.local.json'
       );

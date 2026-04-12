@@ -15,6 +15,7 @@ export const addTaskTool = createTool({
   name: 'AddTask',
   displayName: 'Add Task',
   kind: ToolKind.Write,
+  isConcurrencySafe: false, // 写入 Spec 状态
 
   schema: z.object({
     title: z.string().min(1).describe('Brief title of the task'),
@@ -92,11 +93,11 @@ AddTask({
         llmContent:
           'No active spec. Use EnterSpecMode to start a new spec project, ' +
           'or use the /spec command to load an existing one.',
-        displayContent: '❌ No active spec',
         error: {
           type: ToolErrorType.VALIDATION_ERROR,
           message: 'No active spec project',
         },
+        metadata: { summary: '无活跃 Spec' },
       };
     }
 
@@ -111,11 +112,11 @@ AddTask({
       return {
         success: false,
         llmContent: `Failed to add task: ${result.message}`,
-        displayContent: `❌ Failed to add task: ${result.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: result.message,
         },
+        metadata: { summary: `添加任务失败: ${title}` },
       };
     }
 
@@ -125,14 +126,13 @@ AddTask({
     return {
       success: true,
       llmContent:
-        `✅ Task added: "${title}"\n\n` +
-        `📋 Task ID: ${task?.id}\n` +
-        `📊 Complexity: ${complexity}\n` +
-        `📁 Affected files: ${affectedFiles?.length ? affectedFiles.join(', ') : 'None specified'}\n` +
-        `🔗 Dependencies: ${dependencies?.length ? dependencies.join(', ') : 'None'}\n\n` +
-        `📈 Progress: ${progress.completed}/${progress.total} tasks (${progress.percentage}%)\n\n` +
-        '💡 Use AddTask to add more tasks, or use /spec apply to start implementation.',
-      displayContent: `✅ Added task: ${title} (ID: ${task?.id})`,
+        `[OK] Task added: "${title}"\n\n` +
+        `Task ID: ${task?.id}\n` +
+        `Complexity: ${complexity}\n` +
+        `Affected files: ${affectedFiles?.length ? affectedFiles.join(', ') : 'None specified'}\n` +
+        `Dependencies: ${dependencies?.length ? dependencies.join(', ') : 'None'}\n\n` +
+        `Progress: ${progress.completed}/${progress.total} tasks (${progress.percentage}%)\n\n` +
+        'Use AddTask to add more tasks, or use /spec apply to start implementation.',
       metadata: {
         taskId: task?.id,
         title,
@@ -140,6 +140,7 @@ AddTask({
         affectedFiles,
         dependencies,
         totalTasks: progress.total,
+        summary: `添加任务: ${title}`,
       },
     };
   },

@@ -6,6 +6,7 @@ import { Readable } from 'node:stream';
 import { join, resolve } from 'path';
 import { z } from 'zod';
 
+import { getCwd } from '../../../utils/cwd.js';
 import { FileFilter } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
 import type {
@@ -45,6 +46,7 @@ export const globTool = createTool({
   name: 'Glob',
   displayName: 'File Pattern Match',
   kind: ToolKind.ReadOnly,
+  isConcurrencySafe: true, // 纯读操作，无副作用
 
   // Zod Schema 定义
   schema: z.object({
@@ -79,7 +81,7 @@ export const globTool = createTool({
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const {
       pattern,
-      path = process.cwd(),
+      path = getCwd(),
       max_results,
       include_directories,
       case_sensitive,
@@ -98,7 +100,9 @@ export const globTool = createTool({
           return {
             success: false,
             llmContent: `Search path must be a directory: ${searchPath}`,
-            displayContent: `❌ 搜索路径必须是目录: ${searchPath}`,
+            metadata: {
+              summary: `搜索失败: 搜索路径必须是目录`,
+            },
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: '搜索路径必须是目录',
@@ -111,7 +115,9 @@ export const globTool = createTool({
           return {
             success: false,
             llmContent: `Search path does not exist: ${searchPath}`,
-            displayContent: `❌ 搜索路径不存在: ${searchPath}`,
+            metadata: {
+              summary: `搜索失败: 搜索路径不存在`,
+            },
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
               message: '搜索路径不存在',
@@ -161,8 +167,6 @@ export const globTool = createTool({
         truncated: wasTruncated, // 是否因达到 max_results 而截断
       };
 
-      const displayMessage = formatDisplayMessage(metadata);
-
       // 为 LLM 生成更友好的文本格式
       let llmFriendlyText: string;
       if (sortedMatches.length > 0) {
@@ -181,10 +185,10 @@ export const globTool = createTool({
       return {
         success: true,
         llmContent: llmFriendlyText,
-        displayContent: displayMessage,
         metadata: {
           ...metadata,
           matches: sortedMatches, // 保留原始数据在 metadata 中
+          summary: `找到 ${matches.length} 个匹配 "${pattern}" 的文件`,
         },
       };
     } catch (error) {
@@ -193,7 +197,9 @@ export const globTool = createTool({
         return {
           success: false,
           llmContent: 'File search aborted',
-          displayContent: '⚠️ 文件搜索被用户中止',
+          metadata: {
+            summary: `搜索失败: 操作被中止`,
+          },
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: '操作被中止',
@@ -204,7 +210,9 @@ export const globTool = createTool({
       return {
         success: false,
         llmContent: `Search failed: ${err.message}`,
-        displayContent: `❌ 搜索失败: ${err.message}`,
+        metadata: {
+          summary: `搜索失败: ${err.message}`,
+        },
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: err.message,
@@ -397,24 +405,4 @@ function sortMatches(matches: FileMatch[]): FileMatch[] {
     // 最后按路径名排序
     return a.relative_path.localeCompare(b.relative_path);
   });
-}
-
-/**
- * 格式化显示消息
- */
-function formatDisplayMessage(metadata: GlobMetadata): string {
-  const { search_path, pattern, total_matches, returned_matches, truncated } = metadata;
-
-  let message: string;
-
-  if (truncated) {
-    // 截断时使用"至少 N 个"避免误导
-    message = `✅ 在 ${search_path} 中找到至少 ${total_matches} 个匹配 "${pattern}" 的文件（已截断）`;
-    message += `\n📋 显示前 ${returned_matches} 个结果`;
-  } else {
-    // 未截断时显示准确数量
-    message = `✅ 在 ${search_path} 中找到 ${total_matches} 个匹配 "${pattern}" 的文件`;
-  }
-
-  return message;
 }

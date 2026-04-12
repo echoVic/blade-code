@@ -11,6 +11,7 @@ import {
   DEFAULT_EXCLUDE_DIRS,
   DEFAULT_EXCLUDE_FILE_PATTERNS,
 } from '../../utils/filePatterns.js';
+import { getCwd } from '../../utils/cwd.js';
 
 // 全局文件列表缓存，避免重复加载
 let globalFileCache: {
@@ -138,7 +139,7 @@ export function useAtCompletion(
   options: UseAtCompletionOptions = {}
 ): AtCompletionResult {
   const {
-    cwd = process.cwd(),
+    cwd = getCwd(),
     maxSuggestions = 15,
     ignorePatterns = DEFAULT_IGNORE_PATTERNS,
     debounceDelay = 300,
