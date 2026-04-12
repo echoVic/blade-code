@@ -3,6 +3,7 @@
  */
 
 import stringWidth from 'string-width';
+import wrapAnsi from 'wrap-ansi';
 
 /**
  * 计算去除 Markdown 标记后的真实显示宽度
@@ -98,6 +99,71 @@ export const truncateText = (
 export const hasMarkdownFormat = (text: string): boolean => {
   // 快速检测常见的 Markdown 标记
   return /[*_~`<[\]https?:]/.test(text);
+};
+
+// ==================== 表格文本换行 ====================
+
+/**
+ * 获取文本中最长单词的显示宽度
+ * 用于计算表格列的最小宽度（避免断词）
+ */
+export const getLongestWordWidth = (text: string): number => {
+  const cleanText = text
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/_(.*?)_/g, '$1')
+    .replace(/~~(.*?)~~/g, '$1')
+    .replace(/`(.*?)`/g, '$1')
+    .replace(/<u>(.*?)<\/u>/g, '$1')
+    .replace(/\[(.*?)\]\(.*?\)/g, '$1');
+  const words = cleanText.split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 0) return 0;
+  return Math.max(...words.map((w) => stringWidth(w)));
+};
+
+/**
+ * ANSI 感知的文本换行
+ * 使用 wrap-ansi 将文本换行到指定宽度
+ *
+ * @param text 要换行的文本
+ * @param width 最大宽度
+ * @param hard 是否强制断词（当列宽比最长单词还窄时需要）
+ * @returns 换行后的行数组
+ */
+export const wrapCellText = (
+  text: string,
+  width: number,
+  hard = false
+): string[] => {
+  if (width <= 0) return [text];
+  const trimmed = text.trimEnd();
+  const wrapped = wrapAnsi(trimmed, width, {
+    hard,
+    trim: false,
+    wordWrap: true,
+  });
+  const lines = wrapped.split('\n').filter((line) => line.length > 0);
+  return lines.length > 0 ? lines : [''];
+};
+
+/**
+ * 填充文本到指定宽度（支持对齐方式）
+ */
+export const padAligned = (
+  content: string,
+  displayWidth: number,
+  targetWidth: number,
+  align: 'left' | 'center' | 'right' | null | undefined
+): string => {
+  const padding = Math.max(0, targetWidth - displayWidth);
+  if (align === 'center') {
+    const leftPad = Math.floor(padding / 2);
+    return ' '.repeat(leftPad) + content + ' '.repeat(padding - leftPad);
+  }
+  if (align === 'right') {
+    return ' '.repeat(padding) + content;
+  }
+  return content + ' '.repeat(padding);
 };
 
 // ==================== 流式消息分割 ====================

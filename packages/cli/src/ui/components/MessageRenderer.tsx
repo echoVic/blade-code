@@ -22,6 +22,7 @@ import {
 } from '../utils/markdownParser.js';
 import { CodeHighlighter } from './CodeHighlighter.js';
 import { DiffRenderer } from './DiffRenderer.js';
+import { BlockquoteRenderer } from './BlockquoteRenderer.js';
 import { InlineRenderer } from './InlineRenderer.js';
 import { ListItem } from './ListItem.js';
 import { TableRenderer } from './TableRenderer.js';
@@ -729,6 +730,11 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
                   />
                 ) : block.type === 'command-message' ? (
                   <CommandMessage content={block.content} />
+                ) : block.type === 'blockquote' && block.blockquoteLines ? (
+                  <BlockquoteRenderer
+                    lines={block.blockquoteLines}
+                    level={block.blockquoteLevel || 1}
+                  />
                 ) : (
                   <TextBlock content={block.content} />
                 )}

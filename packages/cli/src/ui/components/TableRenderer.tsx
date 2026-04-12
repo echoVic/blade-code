@@ -1,17 +1,23 @@
 /**
- * 表格渲染器 - 优化版
+ * 表格渲染器
  *
- * 主要改进：
- * - 使用 getPlainTextLength() 计算真实显示宽度（考虑 Markdown 格式）
- * - 自动缩放表格以适应终端宽度
- * - 二分搜索智能截断（保留 Markdown 格式完整性）
- * - 支持内联 Markdown 渲染
+ * 特性：
+ * - 三层宽度策略（理想宽度 / 按比例收缩 / 强制断词）
+ * - 多行单元格换行（非截断），保留 Markdown 格式完整性
+ * - 窄终端垂直格式降级（key-value 格式）
+ * - Unicode 边框 + 安全余量防闪烁
  */
 
-import { Box, Text } from 'ink';
-import React from 'react';
+import { Text } from 'ink';
+import React, { useMemo } from 'react';
+import stringWidth from 'string-width';
 import { useTheme } from '../../store/selectors/index.js';
-import { getPlainTextLength, truncateText } from '../utils/markdown.js';
+import {
+  getPlainTextLength,
+  getLongestWordWidth,
+  wrapCellText,
+  padAligned,
+} from '../utils/markdown.js';
 import { InlineRenderer } from './InlineRenderer.js';
 
 interface TableRendererProps {
@@ -20,141 +26,259 @@ interface TableRendererProps {
   terminalWidth: number;
 }
 
+const SAFETY_MARGIN = 4;
+const MIN_COLUMN_WIDTH = 3;
+const MAX_ROW_LINES = 4;
+
 /**
  * 表格渲染器组件
- *
- * 特性：
- * - 使用 React.memo 避免不必要的重渲染
- * - 自动计算列宽（考虑 Markdown 格式后的真实显示宽度）
- * - 自动缩放以适应终端宽度
- * - 智能截断单元格内容（保留 Markdown 格式）
- * - 美观的 Unicode 边框
- * - 表头特殊样式
  */
 export const TableRenderer: React.FC<TableRendererProps> = React.memo(
   ({ headers, rows, terminalWidth }) => {
-    // 从 Store 获取主题（响应式）
     const theme = useTheme();
 
-    if (headers.length === 0 || rows.length === 0) {
+    const tableOutput = useMemo(() => {
+      if (headers.length === 0 || rows.length === 0) {
+        return null;
+      }
+
+      const numCols = headers.length;
+
+      // Step 1: 计算每列的最小宽度（最长单词）和理想宽度（完整内容）
+      const minWidths = headers.map((header, colIndex) => {
+        let maxMin = Math.max(getLongestWordWidth(header), MIN_COLUMN_WIDTH);
+        for (const row of rows) {
+          maxMin = Math.max(maxMin, getLongestWordWidth(row[colIndex] || ''));
+        }
+        return maxMin;
+      });
+
+      const idealWidths = headers.map((header, colIndex) => {
+        let maxIdeal = Math.max(getPlainTextLength(header), MIN_COLUMN_WIDTH);
+        for (const row of rows) {
+          maxIdeal = Math.max(
+            maxIdeal,
+            getPlainTextLength(row[colIndex] || '')
+          );
+        }
+        return maxIdeal;
+      });
+
+      // Step 2: 计算可用空间
+      // 边框开销: │ content │ content │ = 1 + (width + 3) per column
+      const borderOverhead = 1 + numCols * 3;
+      const availableWidth = Math.max(
+        terminalWidth - borderOverhead - SAFETY_MARGIN,
+        numCols * MIN_COLUMN_WIDTH
+      );
+
+      // Step 3: 三层宽度策略
+      const totalMin = minWidths.reduce((sum, w) => sum + w, 0);
+      const totalIdeal = idealWidths.reduce((sum, w) => sum + w, 0);
+
+      let needsHardWrap = false;
+      let columnWidths: number[];
+
+      if (totalIdeal <= availableWidth) {
+        columnWidths = idealWidths;
+      } else if (totalMin <= availableWidth) {
+        const extraSpace = availableWidth - totalMin;
+        const overflows = idealWidths.map(
+          (ideal, i) => ideal - minWidths[i]
+        );
+        const totalOverflow = overflows.reduce((sum, o) => sum + o, 0);
+        columnWidths = minWidths.map((min, i) => {
+          if (totalOverflow === 0) return min;
+          const extra = Math.floor(
+            (overflows[i] / totalOverflow) * extraSpace
+          );
+          return min + extra;
+        });
+      } else {
+        needsHardWrap = true;
+        const scaleFactor = availableWidth / totalMin;
+        columnWidths = minWidths.map((w) =>
+          Math.max(Math.floor(w * scaleFactor), MIN_COLUMN_WIDTH)
+        );
+      }
+
+      // Step 4: 检查是否需要垂直格式降级
+      function calculateMaxRowLines(): number {
+        let maxLines = 1;
+        for (let i = 0; i < headers.length; i++) {
+          const wrapped = wrapCellText(
+            headers[i],
+            columnWidths[i],
+            needsHardWrap
+          );
+          maxLines = Math.max(maxLines, wrapped.length);
+        }
+        for (const row of rows) {
+          for (let i = 0; i < row.length; i++) {
+            const wrapped = wrapCellText(
+              row[i] || '',
+              columnWidths[i],
+              needsHardWrap
+            );
+            maxLines = Math.max(maxLines, wrapped.length);
+          }
+        }
+        return maxLines;
+      }
+
+      const maxRowLines = calculateMaxRowLines();
+      const useVerticalFormat = maxRowLines > MAX_ROW_LINES;
+
+      if (useVerticalFormat) {
+        return { type: 'vertical' as const, columnWidths, needsHardWrap };
+      }
+
+      return {
+        type: 'horizontal' as const,
+        columnWidths,
+        needsHardWrap,
+      };
+    }, [headers, rows, terminalWidth]);
+
+    if (!tableOutput) {
       return null;
     }
 
-    // 1. 计算列宽（使用真实显示宽度）
-    const columnWidths = headers.map((header, index) => {
-      const headerWidth = getPlainTextLength(header);
-      const maxRowWidth = Math.max(
-        ...rows.map((row) => getPlainTextLength(row[index] || ''))
-      );
-      return Math.max(headerWidth, maxRowWidth) + 2; // 加 2 作为内边距
-    });
-
-    // 2. 计算总宽度并应用缩放因子
-    const borderWidth = headers.length + 1; // 左右边框 + 分隔符
-    const totalWidth = columnWidths.reduce((sum, w) => sum + w, 0) + borderWidth;
-    const scaleFactor = totalWidth > terminalWidth ? terminalWidth / totalWidth : 1;
-    const adjustedWidths = columnWidths.map((w) => Math.floor(w * scaleFactor));
-
-    /**
-     * 渲染单元格（支持内联 Markdown）
-     */
-    const renderCell = (
-      content: string,
-      width: number,
-      isHeader = false
-    ): React.ReactNode => {
-      const contentWidth = Math.max(0, width - 2); // 减去内边距
-      const displayWidth = getPlainTextLength(content);
-
-      // 截断过长的内容（保留 Markdown 格式）
-      let cellContent = content;
-      if (displayWidth > contentWidth) {
-        cellContent = truncateText(content, contentWidth);
-      }
-
-      // 计算需要的填充空格
-      const actualDisplayWidth = getPlainTextLength(cellContent);
-      const paddingNeeded = Math.max(0, contentWidth - actualDisplayWidth);
+    // 垂直格式降级：key-value 格式
+    if (tableOutput.type === 'vertical') {
+      const separatorWidth = Math.min(terminalWidth - 1, 40);
+      const separator = '─'.repeat(separatorWidth);
 
       return (
         <Text>
-          {isHeader ? (
-            <Text bold color={theme.colors.primary}>
-              <InlineRenderer text={cellContent} />
-            </Text>
-          ) : (
-            <InlineRenderer text={cellContent} />
-          )}
-          {' '.repeat(paddingNeeded)}
+          {rows
+            .map((row, rowIndex) => {
+              const rowLines: string[] = [];
+              if (rowIndex > 0) {
+                rowLines.push(separator);
+              }
+              row.forEach((cell, colIndex) => {
+                const label = headers[colIndex] || `Column ${colIndex + 1}`;
+                const value = (cell || '').replace(/\n+/g, ' ').trim();
+                rowLines.push(`\x1b[1m${label}:\x1b[22m ${value}`);
+              });
+              return rowLines.join('\n');
+            })
+            .join('\n')}
         </Text>
       );
-    };
+    }
 
-    /**
-     * 渲染边框
-     */
-    const renderBorder = (type: 'top' | 'middle' | 'bottom'): React.ReactNode => {
+    // 水平格式：Unicode 边框表格
+    const { columnWidths, needsHardWrap } = tableOutput;
+
+    function renderBorderLine(
+      type: 'top' | 'middle' | 'bottom'
+    ): string {
       const chars = {
-        top: { left: '┌', middle: '┬', right: '┐', horizontal: '─' },
-        middle: { left: '├', middle: '┼', right: '┤', horizontal: '─' },
-        bottom: { left: '└', middle: '┴', right: '┘', horizontal: '─' },
+        top: { left: '┌', mid: '┬', right: '┐', h: '─' },
+        middle: { left: '├', mid: '┼', right: '┤', h: '─' },
+        bottom: { left: '└', mid: '┴', right: '┘', h: '─' },
       };
+      const c = chars[type];
+      let line = c.left;
+      columnWidths.forEach((w, i) => {
+        line += c.h.repeat(w + 2);
+        line += i < columnWidths.length - 1 ? c.mid : c.right;
+      });
+      return line;
+    }
 
-      const char = chars[type];
-      const borderParts = adjustedWidths.map((w) => char.horizontal.repeat(w));
-      const border = char.left + borderParts.join(char.middle) + char.right;
-
-      return (
-        <Text color={theme.colors.text.muted} dimColor>
-          {border}
-        </Text>
-      );
-    };
-
-    /**
-     * 渲染表格行
-     */
-    const renderRow = (cells: string[], isHeader = false): React.ReactNode => {
-      const renderedCells = cells.map((cell, index) => {
-        const width = adjustedWidths[index] || 0;
-        return renderCell(cell || '', width, isHeader);
+    function renderRowLines(
+      cells: string[],
+      isHeader: boolean
+    ): string[] {
+      const cellLines = cells.map((cell, colIndex) => {
+        const width = columnWidths[colIndex] || MIN_COLUMN_WIDTH;
+        return wrapCellText(cell || '', width, needsHardWrap);
       });
 
+      const maxLines = Math.max(
+        ...cellLines.map((lines) => lines.length),
+        1
+      );
+
+      // 单元格内容垂直居中
+      const verticalOffsets = cellLines.map((lines) =>
+        Math.floor((maxLines - lines.length) / 2)
+      );
+
+      const result: string[] = [];
+      for (let lineIdx = 0; lineIdx < maxLines; lineIdx++) {
+        let line = '│';
+        for (let colIndex = 0; colIndex < cells.length; colIndex++) {
+          const lines = cellLines[colIndex];
+          const offset = verticalOffsets[colIndex];
+          const contentLineIdx = lineIdx - offset;
+          const lineText =
+            contentLineIdx >= 0 && contentLineIdx < lines.length
+              ? lines[contentLineIdx]
+              : '';
+          const width = columnWidths[colIndex] || MIN_COLUMN_WIDTH;
+          const displayWidth = stringWidth(lineText);
+          const aligned = padAligned(
+            isHeader ? `\x1b[1m${lineText}\x1b[22m` : lineText,
+            displayWidth,
+            width,
+            isHeader ? 'center' : 'left'
+          );
+          line += ` ${aligned} │`;
+        }
+        result.push(line);
+      }
+      return result;
+    }
+
+    // 构建完整表格
+    const tableLines: string[] = [];
+    tableLines.push(renderBorderLine('top'));
+    tableLines.push(...renderRowLines(headers, true));
+    tableLines.push(renderBorderLine('middle'));
+    rows.forEach((row, rowIndex) => {
+      tableLines.push(...renderRowLines(row, false));
+      if (rowIndex < rows.length - 1) {
+        tableLines.push(renderBorderLine('middle'));
+      }
+    });
+    tableLines.push(renderBorderLine('bottom'));
+
+    // 安全检查：如果最大行宽超出终端宽度，降级为垂直格式
+    const maxLineWidth = Math.max(
+      ...tableLines.map((line) => stringWidth(line))
+    );
+    if (maxLineWidth > terminalWidth - SAFETY_MARGIN) {
+      const separatorWidth = Math.min(terminalWidth - 1, 40);
+      const separator = '─'.repeat(separatorWidth);
+
       return (
         <Text>
-          <Text color={theme.colors.text.muted}>│ </Text>
-          {renderedCells.map((cell, index) => (
-            <React.Fragment key={index}>
-              {cell}
-              {index < renderedCells.length - 1 && (
-                <Text color={theme.colors.text.muted}> │ </Text>
-              )}
-            </React.Fragment>
-          ))}
-          <Text color={theme.colors.text.muted}> │</Text>
+          {rows
+            .map((row, rowIndex) => {
+              const rowLines: string[] = [];
+              if (rowIndex > 0) {
+                rowLines.push(separator);
+              }
+              row.forEach((cell, colIndex) => {
+                const label = headers[colIndex] || `Column ${colIndex + 1}`;
+                const value = (cell || '').replace(/\n+/g, ' ').trim();
+                rowLines.push(`\x1b[1m${label}:\x1b[22m ${value}`);
+              });
+              return rowLines.join('\n');
+            })
+            .join('\n')}
         </Text>
       );
-    };
+    }
 
     return (
-      <Box flexDirection="column" marginY={1}>
-        {/* 顶部边框 */}
-        {renderBorder('top')}
-
-        {/* 表头行 */}
-        {renderRow(headers, true)}
-
-        {/* 中间边框 */}
-        {renderBorder('middle')}
-
-        {/* 数据行 */}
-        {rows.map((row, index) => (
-          <React.Fragment key={index}>{renderRow(row)}</React.Fragment>
-        ))}
-
-        {/* 底部边框 */}
-        {renderBorder('bottom')}
-      </Box>
+      <Text color={theme.colors.text.primary}>
+        {tableLines.join('\n')}
+      </Text>
     );
   }
 );
