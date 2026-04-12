@@ -1,4 +1,6 @@
 import { PermissionMode } from '../../config/types.js';
+import type { DeferredToolManager } from '../registry/DeferredToolManager.js';
+import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { Tool, ToolInvocation, ToolResult } from './ToolTypes.js';
 import { ToolErrorType, ToolKind } from './ToolTypes.js';
 
@@ -72,6 +74,12 @@ export interface ExecutionContext {
 
   // 权限模式（用于 Plan 模式判断）
   permissionMode?: PermissionMode;
+
+  // 工具注册表（用于 ToolSearch 等需要访问注册表的工具）
+  toolRegistry?: ToolRegistry;
+
+  // 延迟加载管理器（用于 ToolSearch 标记工具为已加载）
+  deferredToolManager?: DeferredToolManager;
 }
 
 interface ToolExecutionInternalState {

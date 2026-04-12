@@ -495,13 +495,18 @@ export interface CommandHook {
 }
 
 /**
- * 提示词 Hook (未来实现)
+ * 提示词 Hook — 推理型传感器
+ *
+ * 在 Hook 事件触发时发起 LLM 调用，用于代码质量评估、安全审查等需要推理的场景。
  */
-interface PromptHook {
+export interface PromptHook {
   type: HookType.Prompt;
 
-  /** 提示词内容 */
+  /** 评估指令（发送给 LLM 的 prompt） */
   prompt: string;
+
+  /** 可选模型 ID（如 'haiku'）。默认使用当前配置的模型。 */
+  model?: string;
 
   /** 超时时间 (秒) */
   timeout?: number;

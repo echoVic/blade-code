@@ -192,6 +192,19 @@ export const useCommandHandler = (
           hookContextInjection = hookResult.contextInjection;
         }
 
+        // --- 2b. Spec 进度自动注入（Session Bootstrap） ---
+        try {
+          const { SpecManager } = await import('../../spec/SpecManager.js');
+          const specProgress = SpecManager.getInstance().buildProgressContext();
+          if (specProgress) {
+            hookContextInjection = hookContextInjection
+              ? `${hookContextInjection}\n\n${specProgress}`
+              : specProgress;
+          }
+        } catch {
+          // SpecManager 未初始化时静默跳过
+        }
+
         // --- 3. 添加用户消息（如果 slash 路由阶段未添加） ---
         if (!userMessageAlreadyAdded) {
           sessionActions.addUserMessage(agentInput.displayText);

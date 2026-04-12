@@ -14,6 +14,10 @@ import {
   getSkillCreatorContent,
   skillCreatorMetadata,
 } from './builtin/skill-creator.js';
+import {
+  getUpdateConfigContent,
+  updateConfigMetadata,
+} from './builtin/update-config.js';
 import { getSkillInstaller } from './SkillInstaller.js';
 import { hasSkillFile, loadSkillContent, loadSkillMetadata } from './SkillLoader.js';
 import type {
@@ -159,6 +163,11 @@ export class SkillRegistry {
   private loadBuiltinSkills(): void {
     // 注册 skill-creator
     this.skills.set(skillCreatorMetadata.name, skillCreatorMetadata);
+    // 注册 update-config
+    this.skills.set(
+      updateConfigMetadata.name,
+      updateConfigMetadata
+    );
   }
 
   /**
@@ -256,6 +265,8 @@ export class SkillRegistry {
     switch (name) {
       case 'skill-creator':
         return getSkillCreatorContent();
+      case 'update-config':
+        return getUpdateConfigContent();
       default:
         return null;
     }

@@ -26,10 +26,11 @@ import {
   FormattingStage,
   PermissionStage,
 } from './PipelineStages.js';
+import { AutoVerifyStage } from './AutoVerifyStage.js';
 
 /**
- * 7阶段执行管道
- * Discovery -> Permission -> Hook(Pre) -> Confirmation -> Execution -> PostHook -> Formatting
+ * 8阶段执行管道
+ * Discovery -> Permission -> Hook(Pre) -> Confirmation -> Execution -> PostHook -> AutoVerify -> Formatting
  */
 export class ExecutionPipeline extends EventEmitter {
   private stages: PipelineStage[];
@@ -54,7 +55,7 @@ export class ExecutionPipeline extends EventEmitter {
     };
     const permissionMode = config.permissionMode ?? PermissionMode.DEFAULT;
 
-    // 初始化7个执行阶段
+    // 初始化8个执行阶段
     const permissionStage = new PermissionStage(
       permissionConfig,
       this.sessionApprovals,
@@ -71,6 +72,7 @@ export class ExecutionPipeline extends EventEmitter {
       ), // 用户确认
       new ExecutionStage(), // 实际执行
       new PostToolUseHookStage(), // PostToolUse hooks
+      new AutoVerifyStage(), // 自动类型检查验证
       new FormattingStage(), // 结果格式化
     ];
   }

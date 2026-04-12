@@ -27,6 +27,12 @@ vi.mock('../../../../src/context/SnipCompaction.js', () => ({
 
 vi.mock('../../../../src/context/ToolResultBudget.js', () => ({
   applyToolResultBudget: vi.fn((content: unknown) => content),
+  MessageBudgetTracker: class MessageBudgetTracker {
+    track() { /* noop */ }
+    remaining() { return 200000; }
+    isExhausted() { return false; }
+    reset() { /* noop */ }
+  },
 }));
 
 vi.mock('../../../../src/context/TokenBudget.js', () => ({
@@ -80,6 +86,8 @@ function createMockDeps(overrides: Partial<LoopDependencies> = {}): LoopDependen
     get: vi.fn().mockReturnValue({ isConcurrencySafe: true, kind: 'readonly' }),
     getFunctionDeclarationsByMode: vi.fn().mockReturnValue([]),
     getAll: vi.fn().mockReturnValue([]),
+    getDeferredToolsListing: vi.fn().mockReturnValue(''),
+    deferredToolManager: undefined,
   };
 
   return {
@@ -170,7 +178,7 @@ describe('executeLoopGenerator', () => {
         'You are a helpful assistant.',
       );
 
-      const { result } = await drainGenerator(gen);
+      const { result, events } = await drainGenerator(gen);
 
       // Verify events
       const turnStartEvents = events.filter((e) => e.kind === 'turn_start');
@@ -218,7 +226,7 @@ describe('executeLoopGenerator', () => {
         undefined,
       );
 
-      const { result } = await drainGenerator(gen);
+      const { result, events } = await drainGenerator(gen);
 
       expect(events.length).toBe(0);
       expect(result.success).toBe(false);
@@ -276,7 +284,7 @@ describe('executeLoopGenerator', () => {
         'You are a helpful assistant.',
       );
 
-      const { result } = await drainGenerator(gen);
+      const { result, events } = await drainGenerator(gen);
 
       // Verify turn_start events (two turns)
       const turnStartEvents = events.filter((e) => e.kind === 'turn_start');

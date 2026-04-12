@@ -6,6 +6,7 @@
  */
 
 import type { SubagentConfig } from './types.js';
+import { verificationAgentConfig } from './builtinVerificationAgent.js';
 
 /**
  * 内置 Subagent 列表（4 个核心 agent）
@@ -105,6 +106,7 @@ Be thorough but concise. Focus on actionable steps.`,
       "Use this agent to configure the user's Claude Code status line setting.",
     tools: ['Read', 'Edit'],
   },
+  verificationAgentConfig,
 ];
 
 

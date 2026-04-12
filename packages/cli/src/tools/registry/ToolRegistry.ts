@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { PermissionMode } from '../../config/types.js';
 import type { FunctionDeclaration, Tool } from '../types/index.js';
+import { DeferredToolManager } from './DeferredToolManager.js';
 
 /**
  * 工具注册表
@@ -11,9 +12,17 @@ export class ToolRegistry extends EventEmitter {
   private mcpTools = new Map<string, Tool>();
   private categories = new Map<string, Set<string>>();
   private tags = new Map<string, Set<string>>();
+  private _deferredManager = new DeferredToolManager();
 
   constructor() {
     super();
+  }
+
+  /**
+   * 获取延迟加载管理器
+   */
+  get deferredToolManager(): DeferredToolManager {
+    return this._deferredManager;
   }
 
   /**
@@ -26,6 +35,7 @@ export class ToolRegistry extends EventEmitter {
 
     this.tools.set(tool.name, tool);
     this.updateIndexes(tool);
+    this._deferredManager.register(tool.name);
 
     this.emit('toolRegistered', {
       type: 'builtin',
@@ -200,9 +210,12 @@ export class ToolRegistry extends EventEmitter {
       return this.getSpecModeFunctionDeclarations();
     }
 
-    // 其他模式（default/autoEdit/yolo）：暴露全量工具
-    // 执行阶段由 PermissionStage 根据 permissionMode 进行细粒度控制
-    return this.getFunctionDeclarations();
+    // 其他模式（default/autoEdit/yolo）：使用 DeferredToolManager 过滤
+    // 已加载的工具返回完整 schema，deferred 工具通过系统提示列出名称
+    return this._deferredManager.filterDeclarations(
+      this.getAll(),
+      mode,
+    );
   }
 
   /**
@@ -277,6 +290,13 @@ export class ToolRegistry extends EventEmitter {
   }
 
   /**
+   * 获取 deferred tools 的系统提示列表
+   */
+  getDeferredToolsListing(): string {
+    return this._deferredManager.getDeferredToolsListing();
+  }
+
+  /**
    * 克隆注册表（共享工具实例，但隔离注册表状态）
    */
   clone(): ToolRegistry {
@@ -301,6 +321,7 @@ export class ToolRegistry extends EventEmitter {
 
     this.mcpTools.set(tool.name, tool);
     this.updateIndexes(tool);
+    this._deferredManager.register(tool.name);
 
     this.emit('toolRegistered', {
       type: 'mcp',

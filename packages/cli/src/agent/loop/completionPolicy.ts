@@ -5,6 +5,7 @@
  * 1. checkOutputRecovery — finishReason === 'length' 时的恢复/截断判断
  * 2. checkIncompleteIntent — 检测 LLM "说了要做但没做"的模式
  * 3. checkStopHook — 执行 stop hook 并加超时保护
+ * 4. checkRalphLoop — Spec 未完成任务时自动继续（Ralph Loop 模式）
  *
  * 所有函数返回 action descriptors，不执行副作用。
  */
@@ -179,5 +180,87 @@ export async function checkStopHook(context: {
     logger.warn('[Loop] Stop hook execution failed:', hookError);
     // hook 执行失败时按 stop 处理（保守策略）
     return { action: 'stop' };
+  }
+}
+
+// ===== Ralph Loop (Spec-Aware Auto-Continue) =====
+
+/** Ralph Loop 安全阈值：当轮次超过最大轮次的 90% 时停止，防止无限循环 */
+const RALPH_LOOP_SAFETY_RATIO = 0.9;
+
+export type RalphLoopAction =
+  | { action: 'continue'; reason: string }
+  | { action: 'none' };
+
+/**
+ * Ralph Loop：当 Spec 处于 implementation 阶段且有未完成任务时，
+ * 自动继续执行而不停止。
+ *
+ * 触发条件（全部满足）：
+ * 1. Spec 模式活跃且处于 implementation 阶段
+ * 2. 存在未完成任务
+ * 3. 轮次未超出安全阈值（防止无限循环）
+ */
+export async function checkRalphLoop(context: {
+  turnsCount: number;
+  maxTurns: number;
+}): Promise<RalphLoopAction> {
+  try {
+    // 延迟导入避免循环依赖
+    const { SpecManager } = await import('../../spec/SpecManager.js');
+    const specManager = SpecManager.getInstance();
+
+    if (!specManager.isActive()) {
+      return { action: 'none' };
+    }
+
+    const spec = specManager.getCurrentSpec();
+    if (!spec || spec.phase !== 'implementation') {
+      return { action: 'none' };
+    }
+
+    // 安全阈值检查
+    if (
+      context.maxTurns > 0 &&
+      context.turnsCount >= context.maxTurns * RALPH_LOOP_SAFETY_RATIO
+    ) {
+      logger.info(
+        `[RalphLoop] 轮次接近上限 (${context.turnsCount}/${context.maxTurns})，停止自动继续`,
+      );
+      return { action: 'none' };
+    }
+
+    const tasks = spec.tasks ?? [];
+    const completed = tasks.filter(
+      (t: { status: string }) =>
+        t.status === 'completed' || t.status === 'skipped',
+    ).length;
+    const total = tasks.length;
+
+    if (completed >= total) {
+      return { action: 'none' };
+    }
+
+    // 找到下一个待执行任务
+    const nextTask = tasks.find(
+      (t: { status: string }) =>
+        t.status === 'pending' || t.status === 'in_progress',
+    );
+
+    const reason =
+      `[Ralph Loop] Spec "${spec.name}" 仍有未完成任务。\n` +
+      `进度: ${completed}/${total} 任务已完成。\n` +
+      (nextTask
+        ? `下一个任务: ${nextTask.title}${nextTask.description ? ` — ${nextTask.description}` : ''}\n`
+        : '') +
+      '请继续执行下一个未完成的任务，不要停止。';
+
+    logger.info(
+      `[RalphLoop] Spec "${spec.name}" 进度 ${completed}/${total}，自动继续`,
+    );
+    return { action: 'continue', reason };
+  } catch {
+    // SpecManager 不可用时（如未初始化），静默跳过
+    return { action: 'none' };
   }
 }

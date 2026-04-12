@@ -85,3 +85,4 @@ packages/vscode/*.vsix
 # Web 构建缓存
 packages/web/.vite/
 packages/cli/web/.vite/
+.gstack/

@@ -12,7 +12,10 @@ import { CompactionService } from '../../context/CompactionService.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { snipCompact } from '../../context/SnipCompaction.js';
 import { createBudgetTracker, recordOutput } from '../../context/TokenBudget.js';
-import { applyToolResultBudget } from '../../context/ToolResultBudget.js';
+import {
+  applyToolResultBudget,
+  MessageBudgetTracker,
+} from '../../context/ToolResultBudget.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type {
   ChatResponse,
@@ -34,6 +37,7 @@ import {
   checkOutputRecovery,
   checkIncompleteIntent,
   checkStopHook,
+  checkRalphLoop,
 } from './completionPolicy.js';
 import {
   saveUserMessage,
@@ -415,8 +419,20 @@ export async function* executeLoopGenerator(
     rawTools = injectSkillsMetadata(rawTools);
     const tools = deps.applySkillToolRestrictions(rawTools);
 
+    // 1.5 注入 deferred tools listing 到系统提示
+    let finalSystemPrompt = systemPrompt;
+    if (
+      typeof registry.getDeferredToolsListing === 'function'
+    ) {
+      const deferredListing = registry.getDeferredToolsListing();
+      if (deferredListing && finalSystemPrompt) {
+        finalSystemPrompt =
+          `${finalSystemPrompt}\n\n${deferredListing}`;
+      }
+    }
+
     // 2. 构建消息历史 — 使用 ConversationState 单一消息源
-    const state = new ConversationState(context, systemPrompt);
+    const state = new ConversationState(context, finalSystemPrompt);
     state.appendUser({ role: 'user', content: message });
 
     // 保存用户消息到 JSONL
@@ -511,6 +527,9 @@ export async function* executeLoopGenerator(
               signal: options?.signal,
               confirmationHandler: context.confirmationHandler,
               permissionMode: context.permissionMode,
+              toolRegistry: registry,
+              deferredToolManager:
+                registry.deferredToolManager,
             },
             deps.executionPipeline.getRegistry(),
             deps.executionEngine?.getContextManager(),
@@ -715,6 +734,37 @@ export async function* executeLoopGenerator(
         // 正常完成时归零 incompleteIntentRetryCount
         incompleteIntentRetryCount = 0;
 
+        // Ralph Loop: Spec 未完成任务时自动继续
+        const ralphAction = await checkRalphLoop({
+          turnsCount,
+          maxTurns,
+        });
+        if (ralphAction.action === 'continue') {
+          state.appendAssistant({
+            role: 'assistant',
+            content: turnResult.content || '',
+            reasoningContent: turnResult.reasoningContent,
+          });
+
+          const ralphAssistantUuid = await saveAssistantMessage(
+            deps, context, turnResult.content || '', lastMessageUuid,
+          );
+          if (ralphAssistantUuid) lastMessageUuid = ralphAssistantUuid;
+
+          const ralphMsg: Message = {
+            role: 'user',
+            content: `\n\n<system-reminder>\n${ralphAction.reason}\n</system-reminder>`,
+          };
+          state.appendControl('user', ralphMsg);
+
+          const ralphUserUuid = await saveUserMessage(
+            deps, context, ralphMsg.content as string, lastMessageUuid,
+          );
+          if (ralphUserUuid) lastMessageUuid = ralphUserUuid;
+
+          continue;
+        }
+
         // Stop Hook (via completionPolicy, with timeout)
         const stopAction = await checkStopHook({
           sessionId: context.sessionId,
@@ -874,6 +924,9 @@ export async function* executeLoopGenerator(
                 signal: options?.signal,
                 confirmationHandler: context.confirmationHandler,
                 permissionMode: context.permissionMode,
+                toolRegistry: registry,
+                deferredToolManager:
+                  registry.deferredToolManager,
               }
             );
             return { toolCall, result, toolUseUuid };
@@ -906,6 +959,7 @@ export async function* executeLoopGenerator(
       }
 
       // 8. 处理执行结果
+      const messageBudget = new MessageBudgetTracker();
       for (const { toolCall: rawToolCall, result, toolUseUuid } of executionResults) {
         // 安全断言：所有 toolCall 都是 function 类型
         const toolCall = rawToolCall as {
@@ -991,11 +1045,12 @@ export async function* executeLoopGenerator(
           toolResultContent = JSON.stringify(toolResultContent, null, 2);
         }
 
-        // Apply tool result budget — truncate oversized results
-        if (typeof toolResultContent === 'string' && toolResultContent.length > 100_000) {
+        // Apply tool result budget — per-tool + per-message 截断
+        if (typeof toolResultContent === 'string') {
           toolResultContent = applyToolResultBudget(
             toolResultContent,
-            toolCall.function.name
+            toolCall.function.name,
+            { messageBudget },
           ) as string;
         }
 

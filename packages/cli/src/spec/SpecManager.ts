@@ -710,6 +710,66 @@ export class SpecManager {
   }
 
   // =====================================
+  // 进度上下文（Harness Engineering — Session Bootstrap）
+  // =====================================
+
+  /**
+   * 构建 Spec 进度上下文字符串（用于 UserPromptSubmit 自动注入）
+   *
+   * 仅在 Spec 活跃且处于 implementation 阶段时返回非 null。
+   */
+  buildProgressContext(): string | null {
+    if (!this.isActive()) return null;
+
+    const spec = this.getCurrentSpec();
+    if (!spec || spec.phase !== 'implementation') return null;
+
+    const tasks = spec.tasks;
+    if (tasks.length === 0) return null;
+
+    const completed = tasks.filter((t) => t.status === 'completed').length;
+    const skipped = tasks.filter((t) => t.status === 'skipped').length;
+    const total = tasks.length;
+
+    // 找到当前正在执行的任务
+    const currentTask = spec.currentTaskId
+      ? tasks.find((t) => t.id === spec.currentTaskId)
+      : tasks.find((t) => t.status === 'in_progress');
+
+    // 找到下一个待执行任务
+    const nextTask = tasks.find((t) => {
+      if (t.status !== 'pending') return false;
+      return t.dependencies.every((depId) => {
+        const dep = tasks.find((d) => d.id === depId);
+        return dep?.status === 'completed';
+      });
+    });
+
+    const lines: string[] = [
+      `当前正在执行 Spec: ${spec.name} (${spec.phase} 阶段)`,
+      `进度: ${completed}/${total} 任务已完成${skipped > 0 ? `，${skipped} 个已跳过` : ''}`,
+    ];
+
+    if (currentTask) {
+      lines.push(
+        `当前任务: #${tasks.indexOf(currentTask) + 1} - ${currentTask.title}${currentTask.description ? ` (${currentTask.description})` : ''}`,
+      );
+    }
+
+    if (nextTask && nextTask !== currentTask) {
+      lines.push(
+        `下一个任务: #${tasks.indexOf(nextTask) + 1} - ${nextTask.title}`,
+      );
+    }
+
+    if (completed + skipped >= total) {
+      lines.push('所有任务已完成，可以进入验证和归档阶段。');
+    }
+
+    return lines.join('\n');
+  }
+
+  // =====================================
   // 私有辅助方法
   // =====================================
 

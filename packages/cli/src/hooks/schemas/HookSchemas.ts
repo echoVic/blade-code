@@ -230,6 +230,7 @@ const CommandHookSchema = z.object({
 const PromptHookSchema = z.object({
   type: z.literal(HookType.Prompt),
   prompt: z.string(),
+  model: z.string().optional(),
   timeout: z.number().positive().optional(),
 });
 
