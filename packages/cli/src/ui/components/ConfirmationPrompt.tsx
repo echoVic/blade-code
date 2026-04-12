@@ -101,6 +101,15 @@ const ConfirmationContent = React.memo<ConfirmationContentProps>(
   )
 );
 
+function getShortcutHint(
+  isPlanModeEnter: boolean,
+  isMaxTurnsExceeded: boolean
+): string {
+  const shortcutText =
+    isPlanModeEnter || isMaxTurnsExceeded ? 'Y/N' : 'Y/S/N';
+  return `使用 ↑↓ 选择，回车确认 · ${shortcutText} 快捷键 · Esc 取消`;
+}
+
 /**
  * ConfirmationPrompt Props
  */
@@ -312,7 +321,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
 
         <Box flexDirection="column">
           <Text color="gray">
-            使用 ↑↓ 选择，回车确认 · Y/S/N 快捷键 · Esc 取消
+            {getShortcutHint(isPlanModeEnter, isMaxTurnsExceeded)}
           </Text>
           <SelectInput
             items={options}

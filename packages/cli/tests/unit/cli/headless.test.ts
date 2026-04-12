@@ -147,6 +147,14 @@ describe('headless runner', () => {
     expect(lines).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          type: 'phase',
+          event_version: 1,
+          phase: 'inspecting',
+          status: 'ongoing',
+          tool_name: 'Read',
+          target: '/tmp/demo.ts',
+        }),
+        expect.objectContaining({
           type: 'content_delta',
           event_version: 1,
           delta: 'hello',
@@ -155,6 +163,7 @@ describe('headless runner', () => {
           type: 'tool_start',
           event_version: 1,
           tool_name: 'Read',
+          target: '/tmp/demo.ts',
         }),
         expect.objectContaining({
           type: 'todo_update',
@@ -264,12 +273,98 @@ describe('headless runner', () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.write).not.toHaveBeenCalled();
-    expect(lines).toEqual([
-      expect.objectContaining({
-        type: 'error',
-        event_version: 1,
-        message: 'Error: boom',
-      }),
-    ]);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'phase',
+          event_version: 1,
+          phase: 'turn',
+          status: 'ongoing',
+        }),
+        expect.objectContaining({
+          type: 'error',
+          event_version: 1,
+          message: 'Error: boom',
+        }),
+      ])
+    );
+  });
+
+  it('emits stronger phase events so consumers can distinguish searching vs target-hit', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'tool_start',
+          toolCall: {
+            id: 'tool-search',
+            type: 'function',
+            function: {
+              name: 'Grep',
+              arguments: JSON.stringify({
+                pattern: 'phase',
+                path: '/tmp',
+              }),
+            },
+          },
+        },
+        {
+          kind: 'tool_start',
+          toolCall: {
+            id: 'tool-edit',
+            type: 'function',
+            function: {
+              name: 'Edit',
+              arguments: JSON.stringify({
+                file_path: '/tmp/demo.ts',
+              }),
+            },
+          },
+        },
+      ])
+    );
+
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const { HeadlessJsonlEventSchema } = await import(
+      '../../../src/commands/headlessEvents.js'
+    );
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        outputFormat: 'jsonl',
+        message: 'inspect this repo',
+      },
+      { stdout, stderr }
+    );
+
+    const lines = stdout.write.mock.calls
+      .map((call) => String(call[0] ?? ''))
+      .join('')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+
+    expect(exitCode).toBe(0);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'phase',
+          phase: 'searching',
+          status: 'ongoing',
+          tool_name: 'Grep',
+        }),
+        expect.objectContaining({
+          type: 'phase',
+          phase: 'target_hit',
+          status: 'hit',
+          tool_name: 'Edit',
+          target: '/tmp/demo.ts',
+        }),
+      ])
+    );
   });
 });

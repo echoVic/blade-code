@@ -41,12 +41,33 @@ const ToolStartEventSchema = HeadlessEventBaseSchema.extend({
   type: z.literal('tool_start'),
   tool_name: z.string(),
   summary: z.string(),
+  target: z.string().optional(),
+  tool_kind: z.enum(['readonly', 'write', 'execute']).optional(),
 });
 
 const ToolResultEventSchema = HeadlessEventBaseSchema.extend({
   type: z.literal('tool_result'),
   tool_name: z.string(),
   summary: z.string(),
+  target: z.string().optional(),
+  tool_kind: z.enum(['readonly', 'write', 'execute']).optional(),
+});
+
+const PhaseEventSchema = HeadlessEventBaseSchema.extend({
+  type: z.literal('phase'),
+  phase: z.enum([
+    'turn',
+    'searching',
+    'inspecting',
+    'target_hit',
+    'executing',
+    'completed',
+  ]),
+  status: z.enum(['ongoing', 'hit', 'done']),
+  message: z.string(),
+  turn: z.number().optional(),
+  tool_name: z.string().optional(),
+  target: z.string().optional(),
 });
 
 const ToolDetailEventSchema = HeadlessEventBaseSchema.extend({
@@ -98,6 +119,7 @@ export const HeadlessJsonlEventSchema = z.discriminatedUnion('type', [
   ContentEventSchema,
   ToolStartEventSchema,
   ToolResultEventSchema,
+  PhaseEventSchema,
   ToolDetailEventSchema,
   TodoUpdateEventSchema,
   TokenUsageEventSchema,

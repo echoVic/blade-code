@@ -70,6 +70,9 @@ describe('Agent runLoop system prompt injection', () => {
       _options: unknown,
       systemPrompt?: string
     ) {
+      if (Date.now() < 0) {
+        yield undefined;
+      }
       receivedSystemPrompt = systemPrompt;
       return {
         success: true,

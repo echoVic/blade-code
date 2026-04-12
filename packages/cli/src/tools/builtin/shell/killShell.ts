@@ -54,10 +54,6 @@ export const killShellTool = createTool({
       };
     }
 
-    const statusText = result.alreadyExited
-      ? `Shell ${params.shell_id} 已经处于 ${result.status} 状态`
-      : `已向 Shell ${params.shell_id} 发送终止信号`;
-
     return {
       success: true,
       llmContent: {

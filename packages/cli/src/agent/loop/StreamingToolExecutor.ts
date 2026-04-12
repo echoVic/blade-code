@@ -50,8 +50,11 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
   if (validSignals.length === 1) return validSignals[0];
 
   // Use AbortSignal.any if available (Node 20+)
-  if ('any' in AbortSignal && typeof (AbortSignal as any).any === 'function') {
-    return (AbortSignal as any).any(validSignals);
+  const abortSignalWithAny = AbortSignal as typeof AbortSignal & {
+    any?: (signals: AbortSignal[]) => AbortSignal;
+  };
+  if (typeof abortSignalWithAny.any === 'function') {
+    return abortSignalWithAny.any(validSignals);
   }
   // Fallback: manual composite
   for (const s of validSignals) {

@@ -339,7 +339,9 @@ export class VercelAIChatService implements IChatService {
     if (!(error instanceof Error)) return false;
     const msg = error.message.toLowerCase();
     const statusMatch = msg.match(/status[:\s]*(\d{3})/);
-    const status = statusMatch ? parseInt(statusMatch[1], 10) : (error as any).status;
+    const status = statusMatch
+      ? parseInt(statusMatch[1], 10)
+      : (error as Error & { status?: number }).status;
     return [429, 529, 503].includes(status);
   }
 

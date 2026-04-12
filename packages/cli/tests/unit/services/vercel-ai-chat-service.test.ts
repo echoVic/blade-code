@@ -157,7 +157,7 @@ describe('VercelAIChatService', () => {
 
       try {
         await service.chat(simpleMessages);
-      } catch (e) {
+      } catch {
         // reset mocks for the retry above; the first assertion already verified
       }
 
@@ -212,6 +212,9 @@ describe('VercelAIChatService', () => {
       streamText
         .mockReturnValueOnce({
           fullStream: (async function* () {
+            if (Date.now() < 0) {
+              yield undefined;
+            }
             throw error429;
           })(),
         })
@@ -238,11 +241,17 @@ describe('VercelAIChatService', () => {
       streamText
         .mockReturnValueOnce({
           fullStream: (async function* () {
+            if (Date.now() < 0) {
+              yield undefined;
+            }
             throw make503Error();
           })(),
         })
         .mockReturnValueOnce({
           fullStream: (async function* () {
+            if (Date.now() < 0) {
+              yield undefined;
+            }
             throw new Error('fallback-stream-error');
           })(),
         });

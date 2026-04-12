@@ -71,6 +71,7 @@ blade-context/
 
 # Local settings
 .blade/settings.local.json
+.blade/benchmarks/
 .claude/settings.local.json
 
 # Monorepo - 各包的构建输出

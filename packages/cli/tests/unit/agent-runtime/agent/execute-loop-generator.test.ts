@@ -170,7 +170,7 @@ describe('executeLoopGenerator', () => {
         'You are a helpful assistant.',
       );
 
-      const { events, result } = await drainGenerator(gen);
+      const { result } = await drainGenerator(gen);
 
       // Verify events
       const turnStartEvents = events.filter((e) => e.kind === 'turn_start');
@@ -218,7 +218,7 @@ describe('executeLoopGenerator', () => {
         undefined,
       );
 
-      const { events, result } = await drainGenerator(gen);
+      const { result } = await drainGenerator(gen);
 
       expect(events.length).toBe(0);
       expect(result.success).toBe(false);
@@ -276,7 +276,7 @@ describe('executeLoopGenerator', () => {
         'You are a helpful assistant.',
       );
 
-      const { events, result } = await drainGenerator(gen);
+      const { result } = await drainGenerator(gen);
 
       // Verify turn_start events (two turns)
       const turnStartEvents = events.filter((e) => e.kind === 'turn_start');
@@ -395,7 +395,7 @@ describe('executeLoopGenerator', () => {
         undefined,
       );
 
-      const { events, result } = await drainGenerator(gen);
+      const { result } = await drainGenerator(gen);
 
       expect(result.success).toBe(false);
       expect(result.error?.type).toBe('aborted');

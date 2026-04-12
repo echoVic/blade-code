@@ -70,6 +70,9 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.refresh.mockClear();
     agentState.chatStream.mockImplementation(async function* () {
+      if (Date.now() < 0) {
+        yield undefined;
+      }
       return { success: true, finalMessage: 'assistant reply', metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 } };
     });
   });
