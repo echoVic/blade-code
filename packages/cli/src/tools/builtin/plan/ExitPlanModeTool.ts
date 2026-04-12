@@ -84,17 +84,9 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
       try {
         const response = await context.confirmationHandler.requestConfirmation({
           type: 'exitPlanMode',
-          message:
-            'The assistant has finished planning and is ready for your review.\n\n' +
-            '[WARN] Before approving, please verify:\n' +
-            '1. The assistant has written a detailed plan to the plan file\n' +
-            '2. The plan includes implementation steps, affected files, and testing methods\n' +
-            '3. You have seen text explanations from the assistant (not just tool calls)\n\n' +
-            'If the assistant only made tool calls without presenting a plan summary,\n' +
-            'please reject and ask for a proper plan.',
-          details:
-            'After approval, the assistant will exit Plan mode and begin implementation.',
-          planContent: planContent || undefined, // 传递 plan 内容给 UI
+          message: '助手已完成方案规划，请审核后选择执行方式。',
+          details: '批准后将退出规划模式，开始实施。',
+          planContent: planContent || undefined,
         });
 
         if (response.approved) {

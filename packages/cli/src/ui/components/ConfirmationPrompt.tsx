@@ -30,9 +30,10 @@ interface ConfirmationContentProps {
 const ConfirmationContent = React.memo<ConfirmationContentProps>(
   ({ details, headerColor, isPlanModeExit, isPlanModeEnter, terminalWidth }) => (
     <>
+      {/* 副标题：显示工具签名等上下文信息（如 "Bash(git status)"） */}
       {details.title && (
         <Box marginBottom={1}>
-          <Text bold>{details.title}</Text>
+          <Text dimColor>{details.title}</Text>
         </Box>
       )}
 
@@ -40,7 +41,8 @@ const ConfirmationContent = React.memo<ConfirmationContentProps>(
         <Text>{details.message}</Text>
       </Box>
 
-      {(details.planContent || details.details) && (
+      {/* 方案审核：保留 bordered box */}
+      {details.planContent && (
         <Box
           flexDirection="column"
           marginBottom={1}
@@ -49,15 +51,11 @@ const ConfirmationContent = React.memo<ConfirmationContentProps>(
           padding={1}
         >
           <Text bold color={headerColor}>
-            {isPlanModeExit
-              ? 'Implementation Plan:'
-              : isPlanModeEnter
-                ? 'Details:'
-                : 'Operation Details:'}
+            实施方案
           </Text>
           <Box marginTop={1}>
             <MessageRenderer
-              content={details.planContent || details.details || ''}
+              content={details.planContent}
               role="assistant"
               terminalWidth={terminalWidth - 4}
             />
@@ -65,10 +63,21 @@ const ConfirmationContent = React.memo<ConfirmationContentProps>(
         </Box>
       )}
 
+      {/* 普通操作详情：无边框，轻量渲染 */}
+      {!details.planContent && details.details && (
+        <Box flexDirection="column" marginBottom={1}>
+          <MessageRenderer
+            content={details.details}
+            role="assistant"
+            terminalWidth={terminalWidth}
+          />
+        </Box>
+      )}
+
       {details.risks && details.risks.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
           <Text color="red" bold>
-            [WARN] 风险提示:
+            风险提示:
           </Text>
           {details.risks.map((risk, index) => (
             <Box key={index} marginLeft={2}>
@@ -207,17 +216,17 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
         return [
           {
             key: 'approve-auto',
-            label: '[Y] Yes, execute with auto-edit mode',
+            label: '[Y] 批准，自动执行',
             value: { approved: true, targetMode: PermissionMode.AUTO_EDIT },
           },
           {
             key: 'approve-default',
-            label: '[S] Yes, execute with default mode (ask for each operation)',
+            label: '[S] 批准，逐步确认',
             value: { approved: true, targetMode: PermissionMode.DEFAULT },
           },
           {
             key: 'reject',
-            label: '[N] No, keep planning',
+            label: '[N] 继续优化方案',
             value: { approved: false, reason: '方案需要改进' },
           },
         ];
@@ -227,12 +236,12 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
         return [
           {
             key: 'approve',
-            label: '[Y] Yes, enter Plan mode',
+            label: '[Y] 进入规划模式',
             value: { approved: true },
           },
           {
             key: 'reject',
-            label: '[N] No, proceed directly',
+            label: '[N] 直接执行',
             value: { approved: false, reason: '用户拒绝进入 Plan 模式' },
           },
         ];
@@ -242,12 +251,12 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
         return [
           {
             key: 'continue',
-            label: '[Y] Yes, continue',
+            label: '[Y] 继续执行',
             value: { approved: true },
           },
           {
             key: 'stop',
-            label: '[N] No, stop here',
+            label: '[N] 停止',
             value: { approved: false, reason: '用户选择停止' },
           },
         ];
@@ -256,17 +265,17 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
       return [
         {
           key: 'approve-once',
-          label: '[Y] Yes (once only)',
+          label: '[Y] 允许（仅本次）',
           value: { approved: true, scope: 'once' },
         },
         {
           key: 'approve-session',
-          label: '[S] Yes, remember for this project (Shift+Tab)',
+          label: '[S] 允许（记住本项目）',
           value: { approved: true, scope: 'session' },
         },
         {
           key: 'reject',
-          label: '[N] No',
+          label: '[N] 拒绝',
           value: { approved: false, reason: '用户拒绝' },
         },
       ];
@@ -275,18 +284,15 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
     // Header 样式（memo 化）
     const headerStyle = useMemo(() => {
       if (isPlanModeExit) {
-        return {
-          color: 'cyan' as const,
-          title: 'Plan Mode - Review Implementation Plan',
-        };
+        return { color: 'cyan' as const, title: '方案审核' };
       }
       if (isPlanModeEnter) {
-        return { color: 'magenta' as const, title: 'Enter Plan Mode?' };
+        return { color: 'magenta' as const, title: '进入规划模式' };
       }
       if (isMaxTurnsExceeded) {
-        return { color: 'yellow' as const, title: 'Max Turns Exceeded' };
+        return { color: 'yellow' as const, title: '已达最大轮次' };
       }
-      return { color: 'yellow' as const, title: 'Confirmation Required' };
+      return { color: 'yellow' as const, title: '操作确认' };
     }, [isPlanModeExit, isPlanModeEnter, isMaxTurnsExceeded]);
 
     return (
@@ -313,7 +319,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
 
         <Box flexDirection="column">
           <Text color="gray">
-            使用 Up/Down 选择，回车确认（支持 Y/S/N 快捷键，ESC 取消）
+            使用 ↑↓ 选择，回车确认 · Y/S/N 快捷键 · Esc 取消
           </Text>
           <SelectInput
             items={options}

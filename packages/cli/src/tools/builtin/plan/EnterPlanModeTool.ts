@@ -101,14 +101,8 @@ User: "What files handle routing?"
       try {
         const response = await context.confirmationHandler.requestConfirmation({
           type: 'enterPlanMode',
-          message:
-            'The assistant requests to enter Plan mode for this complex task. In Plan mode, the assistant will:\n\n' +
-            '1. Research the codebase thoroughly (read-only)\n' +
-            '2. Understand existing patterns and architecture\n' +
-            '3. Design an implementation approach\n' +
-            '4. Present a detailed plan for your approval\n\n' +
-            'Do you want to enter Plan mode?',
-          details: 'Plan mode enables systematic research before implementation',
+          message: '助手建议先制定实施方案再执行。',
+          details: '规划模式下仅使用只读工具进行调研，完成后提交方案供审核。',
         });
 
         if (response.approved) {
