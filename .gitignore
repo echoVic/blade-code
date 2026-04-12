@@ -56,6 +56,7 @@ coverage/
 
 # 临时文件
 .tmp/
+.worktrees/
 *.tmp
 *.temp
 
