@@ -3,6 +3,72 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.3.1] - 2026-04-12
+
+### ✨ 新功能
+
+- 实现渐进式工具披露、自动验证传感器和内置验证Agent (618ecae)
+- 添加真实仓库基准测试工具和更详细的无头事件 (d4e5ad3)
+- 改进代码块和确认提示的显示效果 (deabaee)
+- 支持 Markdown 引用块渲染并改进表格显示 (150a48f)
+- 重构系统提示构建顺序并模块化默认提示 (7711103)
+- 增强Bash命令权限检查的语义分析和规范化 (56d703a)
+- 引入统一的 CWD 管理系统 (4b779c6)
+- 新增多模态消息处理、错误分类、流式缓冲和slash命令路由功能 (9de54d5)
+- 确保恢复分支消息的持久化和正确顺序 (07276fa)
+- 流式工具安全与 fallback 事务边界 (Phase 1) (e26212d)
+- 添加模型降级处理逻辑 (6d5407d)
+- 添加 token 预算递减收益检测功能 (28915fa)
+- 添加模型降级和输出恢复功能 (70c77a2)
+- 添加上下文压缩和工具结果预算功能 (4024f51)
+- 重构 agent 循环为 AsyncGenerator 模式并实现 drainLoop 工具 (b7e6a7b)
+
+### 🐛 问题修复
+
+- 改进发布脚本的远程同步和分支校验逻辑 (c1a8b2c)
+- 修复 Enter 键行为，仅用于提交而非接受建议 (0df82e5)
+- 修复分支显示和加载文案优先级问题 (98d2730)
+- 修复多轮对话中stream_end的finalize问题 (30e7688)
+- 修复模型切换后未立即生效的问题 (aafce51)
+- 事件协议收敛 + 接口定型 + continue 分支状态修复 (aeccc85)
+- 修复最终 code review 发现的三个问题 (6f48b1f)
+- 修复 code review 发现的两个问题 (336a46d)
+- 删除 SubagentContext 旧命名回调，完成 onEvent 收敛 (99c201a)
+- 修复 setTimeout 泄漏并删除不可达类型 (dacb2bc)
+- 修复 appendBoth 导致消息重复的 bug (cad0a77)
+- 修复工具执行中的信号处理和恢复计数器问题 (d0a4e69)
+
+### 💄 代码格式
+
+- 替换表情符号和箭头为文本标记 (80370a4)
+
+### ♻️ 代码重构
+
+- 重做确认弹窗信息架构，添加 Diff 展开/折叠 (6786a77)
+- 简化加载短语列表并更新提示概率 (ca2a234)
+- 移除 displayContent 字段并统一工具输出格式 (805ef7a)
+- 删除所有 deprecated 代码 (9544bc8)
+- 消费者迁移到 chatStream() 统一事件协议 (Phase 4) (6fe4799)
+- 删除未使用的 drainLoop 导入 (db5ea8b)
+- 接口分层 — chatStream() 成为唯一事件流入口 (Phase 3) (e6657c4)
+- 策略提取与语义 bug 修复 (Phase 2) (cb13993)
+- 清理 code review 问题 (d9244b4)
+- 消除消息双源，统一走 ConversationState (02ad9d7)
+- 重构事件类型系统并统一事件处理逻辑 (e52dc3a)
+- 修改package.json中的dev脚本路径 (4968015)
+
+### ✅ 测试相关
+
+- 添加多个单元测试文件 (a83ddee)
+
+### 🔧 其他更改
+
+- release v0.3.0 (c2fe9e5)
+- ignore project-local worktrees (ffee334)
+- 配置 npm 使用官方注册表 (8cbfe8f)
+- 迁移项目从pnpm到bun包管理器 (9533cea)
+
+
 ## [0.2.9] - 2026-03-31
 
 ### ✨ 新功能
