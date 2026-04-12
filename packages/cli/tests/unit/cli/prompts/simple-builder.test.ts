@@ -55,7 +55,7 @@ describe('buildSystemPrompt', () => {
       });
     });
 
-    it('应该包含环境上下文（默认）', async () => {
+    it('默认环境上下文应为最小环境信息', async () => {
       const result = await buildSystemPrompt();
 
       expect(result.prompt).toContain('Mock Environment Context');
@@ -65,6 +65,12 @@ describe('buildSystemPrompt', () => {
         loaded: true,
         length: expect.any(Number),
       });
+    });
+
+    it('普通模式按需构建时应通过 builder 注入 environment，而不是由调用方手工 prepend', async () => {
+      const result = await buildSystemPrompt({ includeEnvironment: true });
+
+      expect(result.prompt.match(/Mock Environment Context/g)).toHaveLength(1);
     });
 
     it('应该使用分隔符连接各部分', async () => {

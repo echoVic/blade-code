@@ -301,6 +301,43 @@ describe('ExecutionPipeline 权限集成', () => {
     expect(confirmation).toHaveBeenCalledTimes(1);
   });
 
+  it('ASK 确认被拒绝时应返回人类可读的取消回执', async () => {
+    const registry = new ToolRegistry();
+    registry.register(createTestTool() as any);
+
+    const pipeline = new ExecutionPipeline(registry, {
+      permissionConfig: {
+        allow: [],
+        ask: ['TestTool'],
+        deny: [],
+      },
+    });
+
+    const confirmation = vi.fn(async () => ({
+      approved: false,
+      reason: '用户拒绝授权',
+    }));
+
+    const context: ExecutionContext = {
+      signal: new AbortController().signal,
+      confirmationHandler: {
+        requestConfirmation: confirmation,
+      },
+    };
+
+    const result = await pipeline.execute(
+      'TestTool',
+      { value: 'same' } as any,
+      context
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.metadata?.shouldExitLoop).toBe(true);
+    expect(String(result.llmContent)).toBe('已取消工具执行');
+    expect(result.metadata?.summary).toBe('已取消工具执行');
+    expect(result.error?.message).toBe('用户拒绝授权');
+  });
+
   it('DENY 规则应直接拒绝执行', async () => {
     const registry = new ToolRegistry();
     registry.register(createTestTool() as any);

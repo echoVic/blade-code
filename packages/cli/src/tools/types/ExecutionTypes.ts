@@ -109,17 +109,25 @@ export class ToolExecution {
     return this.aborted || (this.context.signal?.aborted ?? false);
   }
 
-  abort(reason?: string, options?: { shouldExitLoop?: boolean }): void {
+  abort(
+    reason?: string,
+    options?: {
+      shouldExitLoop?: boolean;
+      llmContent?: string;
+      summary?: string;
+      errorType?: ToolErrorType;
+    }
+  ): void {
     this.aborted = true;
     this.result = {
       success: false,
-      llmContent: `Tool execution aborted: ${reason || 'Unknown reason'}`,
+      llmContent: options?.llmContent || `Tool execution aborted: ${reason || 'Unknown reason'}`,
       error: {
-        type: ToolErrorType.EXECUTION_ERROR,
+        type: options?.errorType || ToolErrorType.EXECUTION_ERROR,
         message: reason || 'Execution aborted',
       },
       metadata: {
-        summary: `执行已中止: ${reason || '未知原因'}`,
+        summary: options?.summary || `执行已中止: ${reason || '未知原因'}`,
         ...(options?.shouldExitLoop ? { shouldExitLoop: true } : {}),
       },
     };

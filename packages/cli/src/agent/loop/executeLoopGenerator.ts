@@ -915,25 +915,6 @@ export async function* executeLoopGenerator(
         };
         allToolResults.push(result);
 
-        // shouldExitLoop 检查
-        if (result.metadata?.shouldExitLoop) {
-          const finalMessage =
-            typeof result.llmContent === 'string'
-              ? result.llmContent
-              : '循环已退出';
-          return {
-            success: result.success,
-            finalMessage,
-            metadata: {
-              turnsCount,
-              toolCallsCount: allToolResults.length,
-              duration: Date.now() - startTime,
-              shouldExitLoop: true,
-              targetMode: result.metadata?.targetMode,
-            },
-          };
-        }
-
         // Yield tool_result 事件
         yield {
           kind: 'tool_result',
@@ -1028,6 +1009,25 @@ export async function* executeLoopGenerator(
           name: toolCall.function.name,
           content: finalContent,
         });
+
+        // shouldExitLoop 检查
+        if (result.metadata?.shouldExitLoop) {
+          const finalMessage =
+            typeof result.llmContent === 'string'
+              ? result.llmContent
+              : '循环已退出';
+          return {
+            success: result.success,
+            finalMessage,
+            metadata: {
+              turnsCount,
+              toolCallsCount: allToolResults.length,
+              duration: Date.now() - startTime,
+              shouldExitLoop: true,
+              targetMode: result.metadata?.targetMode,
+            },
+          };
+        }
       }
 
       // 检查工具执行后的中断信号

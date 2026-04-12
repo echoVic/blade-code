@@ -51,7 +51,6 @@ import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { Tool } from '../tools/types/index.js';
-import { getEnvironmentContext } from '../utils/environment.js';
 import { isThinkingModel } from '../utils/modelDetection.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import { executeLoopGenerator } from './loop/index.js';
@@ -567,11 +566,7 @@ export class Agent {
     logger.debug('Processing enhanced chat message...');
 
     // 无状态设计：优先使用 context.systemPrompt，否则按需构建
-    const basePrompt = context.systemPrompt ?? (await this.buildSystemPromptOnDemand());
-    const envContext = getEnvironmentContext();
-    const systemPrompt = basePrompt
-      ? `${envContext}\n\n---\n\n${basePrompt}`
-      : envContext;
+    const systemPrompt = context.systemPrompt ?? (await this.buildSystemPromptOnDemand());
 
     return yield* this.executeLoop(message, context, options, systemPrompt);
   }
@@ -587,7 +582,7 @@ export class Agent {
       projectPath: getCwd(),
       replaceDefault: replacePrompt,
       append: appendPrompt,
-      includeEnvironment: false,
+      includeEnvironment: true,
       language: this.config.language,
     });
 

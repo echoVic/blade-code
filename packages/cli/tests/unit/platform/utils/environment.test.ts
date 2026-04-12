@@ -71,7 +71,39 @@ describe('utils/environment', () => {
     expect(findProjectRoot(nestedDir)).toBe(tempProjectRoot);
   });
 
-  it('getEnvironmentContext 应包含 git 快照、shell 和关键文件信息', async () => {
+  it('getEnvironmentContext 默认应只包含最小环境信息，不包含 git 快照', async () => {
+    execSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === 'git rev-parse --abbrev-ref HEAD') {
+        return 'feat/upgrade-agent\n';
+      }
+      if (cmd === 'git status --short') {
+        return ' M packages/cli/src/prompts/builder.ts\n';
+      }
+      if (cmd === 'git log --oneline -n 3') {
+        return '9e9371c feat(permission): 增强Bash命令权限检查的语义分析和规范化\n';
+      }
+      throw new Error(`unsupported command: ${cmd}`);
+    });
+
+    const { setCwdState } = await import('../../../../src/bootstrap/state.js');
+    setCwdState(tempSubDir);
+
+    const { getEnvironmentContext } = await import('../../../../src/utils/environment.js');
+    const context = getEnvironmentContext();
+
+    expect(context).toContain('# Environment');
+    expect(context).toContain(`Primary working directory: ${tempSubDir}`);
+    expect(context).toContain('Is a git repository: true');
+    expect(context).toContain('Shell: zsh');
+    expect(context).toContain(`- \`${tempProjectRoot}/package.json\``);
+    expect(context).toContain(`- \`${tempProjectRoot}/tsconfig.json\``);
+    expect(context).toContain(`When using file tools (read, write, edit), provide absolute paths based on: \`${tempSubDir}/\``);
+    expect(context).not.toContain('Current branch: feat/upgrade-agent');
+    expect(context).not.toContain('Working tree status:');
+    expect(context).not.toContain('Recent commits:');
+  });
+
+  it('getEnvironmentContext 在显式启用 git snapshot 时应包含 git 快照', async () => {
     execSyncMock.mockImplementation((cmd: string) => {
       if (cmd === 'git rev-parse --abbrev-ref HEAD') {
         return 'feat/upgrade-agent\n';
@@ -89,12 +121,7 @@ describe('utils/environment', () => {
     setCwdState(tempSubDir);
 
     const { getEnvironmentContext } = await import('../../../../src/utils/environment.js');
-    const context = getEnvironmentContext();
-
-    expect(context).toContain('# Environment');
-    expect(context).toContain(`Primary working directory: ${tempSubDir}`);
-    expect(context).toContain('Is a git repository: true');
-    expect(context).toContain('Current branch: feat/upgrade-agent');
+    const context = getEnvironmentContext({ includeGitSnapshot: true });
     expect(context).toContain('Working tree status:');
     expect(context).toContain('M packages/cli/src/prompts/builder.ts');
     expect(context).toContain('Recent commits:');

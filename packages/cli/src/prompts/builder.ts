@@ -23,7 +23,7 @@ import { PermissionMode } from '../config/types.js';
 import { AutoMemoryManager } from '../memory/AutoMemoryManager.js';
 import { getSkillRegistry } from '../skills/index.js';
 import type { SpecMetadata } from '../spec/types.js';
-import { getEnvironmentContext } from '../utils/environment.js';
+import { getEnvironmentContext, type EnvironmentContextOptions } from '../utils/environment.js';
 import { DEFAULT_SYSTEM_PROMPT, PLAN_MODE_SYSTEM_PROMPT } from './default.js';
 import { buildSpecModePrompt } from './spec.js';
 
@@ -58,6 +58,11 @@ export interface BuildSystemPromptOptions {
    * 是否包含环境上下文（默认 true）
    */
   includeEnvironment?: boolean;
+
+  /**
+   * 环境上下文选项
+   */
+  environmentOptions?: EnvironmentContextOptions;
 
   /**
    * Spec 模式专用：当前 Spec 元数据
@@ -121,6 +126,7 @@ export async function buildSystemPrompt(
     append,
     mode,
     includeEnvironment = true,
+    environmentOptions,
     currentSpec,
     steeringContext,
     language,
@@ -185,7 +191,7 @@ export async function buildSystemPrompt(
 
   // 4. 环境上下文
   if (includeEnvironment) {
-    const envContext = getEnvironmentContext();
+    const envContext = getEnvironmentContext(environmentOptions);
     if (envContext) {
       parts.push(envContext);
       sources.push({ name: 'environment', loaded: true, length: envContext.length });

@@ -13,7 +13,7 @@ import { getCwd } from '../../utils/cwd.js';
 import { isReadOnlyBashCommand } from '../../utils/shell/readOnlyValidation.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
-import { isReadOnlyKind, ToolKind } from '../types/index.js';
+import { isReadOnlyKind, ToolErrorType, ToolKind } from '../types/index.js';
 import {
   SensitiveFileDetector,
   SensitivityLevel,
@@ -420,10 +420,12 @@ export class ConfirmationStage implements PipelineStage {
         );
 
         if (!response.approved) {
-          execution.abort(
-            `User rejected execution: ${response.reason || 'No reason provided'}`,
-            { shouldExitLoop: true }
-          );
+          execution.abort(response.reason || '用户拒绝授权', {
+            shouldExitLoop: true,
+            llmContent: '已取消工具执行',
+            summary: '已取消工具执行',
+            errorType: ToolErrorType.PERMISSION_DENIED,
+          });
           return;
         }
         logger.info(`[ConfirmationStage] User approved, continuing to execution stage`);

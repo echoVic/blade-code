@@ -320,6 +320,63 @@ describe('executeLoopGenerator', () => {
         expect.objectContaining({ sessionId: 'test-session' }),
       );
     });
+
+    it('should persist and write back the tool result before returning when tool requests loop exit', async () => {
+      const contextManager = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: vi.fn().mockReturnValue(contextManager),
+        } as any,
+      });
+      const context = createMockContext();
+
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'tc1',
+            type: 'function',
+            function: { name: 'Edit', arguments: '{"file_path":"/tmp/demo.ts"}' },
+          },
+        ],
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'tool_calls',
+      });
+
+      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockResolvedValueOnce({
+        success: false,
+        llmContent: '已取消工具执行',
+        error: {
+          type: 'execution_error',
+          message: '用户拒绝授权',
+        },
+        metadata: {
+          summary: '已取消工具执行',
+          shouldExitLoop: true,
+        },
+      });
+
+      const gen = executeLoopGenerator(
+        deps,
+        'Edit the file',
+        context,
+        { stream: false } as LoopOptions,
+        'You are a helpful assistant.',
+      );
+
+      const { result } = await drainGenerator(gen);
+
+      expect(result.success).toBe(false);
+      expect(contextManager.saveToolResult).toHaveBeenCalledTimes(1);
+      expect(context.messages).toContainEqual({
+        role: 'tool',
+        tool_call_id: 'tc1',
+        name: 'Edit',
+        content: '用户拒绝授权',
+      });
+    });
   });
 
   // ------------------------------------------------------------------
