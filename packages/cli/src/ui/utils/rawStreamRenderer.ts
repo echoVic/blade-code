@@ -100,6 +100,7 @@ export function renderTail(
   const outputLines: string[] = [];
   const theme = themeManager.getTheme();
   const indent = ' '.repeat(state.prefixIndent);
+  const borderColor = chalk.dim.hex(theme.colors.border.light);
 
   // 隐藏行提示
   if (hiddenLines > 0) {
@@ -108,27 +109,74 @@ export function renderTail(
     );
   }
 
+  // 代码块模式：从 lines 中分离 fence 行和实际代码
+  const isCodeMode = mode === 'code';
+  const isDiffMode = mode === 'diff';
+  let codeLang = '';
+  let contentLines = lines;
+
+  if (isCodeMode && lines.length > 0) {
+    // 第一行是 fence（如 "```typescript"），解析语言并跳过
+    const fenceMatch = lines[0].match(/^```(\w+)?/);
+    codeLang = fenceMatch?.[1] || '';
+    contentLines = lines.slice(1);
+  } else if (isDiffMode && lines.length > 0 && lines[0] === '<<<DIFF>>>') {
+    contentLines = lines.slice(1);
+  }
+
+  const visibleLines = contentLines.slice(-maxDisplayLines);
+
+  // 代码块：渲染顶部边框 + 语言标签
+  if (isCodeMode && hiddenLines === 0) {
+    const langLabel = codeLang
+      ? ` ${chalk.hex(theme.colors.text.secondary)(codeLang)}`
+      : '';
+    outputLines.push(`${indent}${borderColor('╭─')}${langLabel}`);
+  }
+
   // 内容行
-  const visibleLines = lines.slice(-maxDisplayLines);
   for (let i = 0; i < visibleLines.length; i++) {
     const line = visibleLines[i];
     let prefix = indent;
 
-    // 首行前缀
-    if (i === 0 && !hidePrefix && state.isFirstRender) {
+    // 首行前缀（仅 text 模式使用 bullet）
+    if (i === 0 && !hidePrefix && state.isFirstRender && !isCodeMode && !isDiffMode) {
       prefix = chalk.bold.hex(theme.colors.success)('• ') + ' ';
       state.isFirstRender = false;
     }
 
     // 截断超宽行
-    const maxContentWidth = state.terminalWidth - state.prefixIndent - 2;
+    const borderExtra = isCodeMode ? 4 : 0; // "│ " 占 2 字符 + 2 边距
+    const maxContentWidth = state.terminalWidth - state.prefixIndent - 2 - borderExtra;
     let displayLine = line;
     if (stringWidth(line) > maxContentWidth) {
       // 简单截断（不处理 ANSI，因为 tail 是纯文本）
       displayLine = line.slice(0, maxContentWidth);
     }
 
-    outputLines.push(`${prefix}${displayLine}`);
+    if (isCodeMode) {
+      // 代码块行：添加左边框
+      outputLines.push(`${indent}${borderColor('│')} ${displayLine}`);
+    } else if (isDiffMode) {
+      // Diff 行：按前缀着色
+      const trimmed = displayLine;
+      if (trimmed.startsWith('+')) {
+        outputLines.push(`${prefix}${chalk.green(displayLine)}`);
+      } else if (trimmed.startsWith('-')) {
+        outputLines.push(`${prefix}${chalk.red(displayLine)}`);
+      } else if (trimmed.startsWith('@@')) {
+        outputLines.push(`${prefix}${chalk.dim(displayLine)}`);
+      } else {
+        outputLines.push(`${prefix}${displayLine}`);
+      }
+    } else {
+      outputLines.push(`${prefix}${displayLine}`);
+    }
+
+    // 首次渲染标记（代码块和 diff 模式在首行已输出边框，此处仍需标记）
+    if (i === 0 && !hidePrefix && state.isFirstRender) {
+      state.isFirstRender = false;
+    }
   }
 
   // 差量渲染：对比上一帧，只更新变化的行

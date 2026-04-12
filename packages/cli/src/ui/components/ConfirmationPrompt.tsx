@@ -30,13 +30,6 @@ interface ConfirmationContentProps {
 const ConfirmationContent = React.memo<ConfirmationContentProps>(
   ({ details, headerColor, isPlanModeExit, isPlanModeEnter, terminalWidth }) => (
     <>
-      {/* 副标题：显示工具签名等上下文信息（如 "Bash(git status)"） */}
-      {details.title && (
-        <Box marginBottom={1}>
-          <Text dimColor>{details.title}</Text>
-        </Box>
-      )}
-
       <Box marginBottom={1}>
         <Text>{details.message}</Text>
       </Box>
@@ -292,8 +285,8 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
       if (isMaxTurnsExceeded) {
         return { color: 'yellow' as const, title: '已达最大轮次' };
       }
-      return { color: 'yellow' as const, title: '操作确认' };
-    }, [isPlanModeExit, isPlanModeEnter, isMaxTurnsExceeded]);
+      return { color: 'yellow' as const, title: details.title || '操作确认' };
+    }, [isPlanModeExit, isPlanModeEnter, isMaxTurnsExceeded, details.title]);
 
     return (
       <Box

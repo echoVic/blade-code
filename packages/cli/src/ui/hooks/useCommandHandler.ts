@@ -250,7 +250,6 @@ export const useCommandHandler = (
               ? async (data: { turnsCount: number }) => {
                   const response = await confirmationHandler.requestConfirmation({
                     type: 'maxTurnsExceeded',
-                    title: '对话轮次上限',
                     message: `已进行 ${data.turnsCount} 轮对话。是否继续？`,
                     risks: ['继续执行可能导致更长的等待时间', '可能产生更多的 API 费用'],
                   });
