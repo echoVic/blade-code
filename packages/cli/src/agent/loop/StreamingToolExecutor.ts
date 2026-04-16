@@ -21,6 +21,7 @@ import type { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
 import type { ExecutionContext } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
 import { ToolErrorType } from '../../tools/types/index.js';
+import { combineAbortSignals } from '../../utils/abort.js';
 import type { ToolExecResult } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -41,38 +42,6 @@ export const STREAMING_PRELAUNCH_ALLOWLIST: ReadonlySet<string> = new Set([
   'ValidateSpec',
   'TaskOutput',
 ]);
-
-/** Combine multiple AbortSignals — aborts when any fires */
-function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
-  // Filter out undefined/null
-  const validSignals = signals.filter(Boolean);
-  if (validSignals.length === 0) return new AbortController().signal;
-  if (validSignals.length === 1) return validSignals[0];
-
-  // Use AbortSignal.any if available (Node 20+)
-  const abortSignalWithAny = AbortSignal as typeof AbortSignal & {
-    any?: (signals: AbortSignal[]) => AbortSignal;
-  };
-  if (typeof abortSignalWithAny.any === 'function') {
-    return abortSignalWithAny.any(validSignals);
-  }
-  // Fallback: manual composite
-  for (const s of validSignals) {
-    if (s.aborted) return s;
-  }
-  const controller = new AbortController();
-  const onAbort = () => {
-    controller.abort();
-    // 清理所有 signal 上的 listener，防止长生命周期 signal 上累积 listener
-    for (const s of validSignals) {
-      s.removeEventListener('abort', onAbort);
-    }
-  };
-  for (const s of validSignals) {
-    s.addEventListener('abort', onAbort, { once: true });
-  }
-  return controller.signal;
-}
 
 /** 仅处理 function 类型的 tool call */
 type FunctionToolCall = {
@@ -169,6 +138,16 @@ export class StreamingToolExecutor {
       if (queuedIdx !== -1) {
         const { toolCall, params } = this.queued[queuedIdx];
         this.queued.splice(queuedIdx, 1);
+
+        // Guard: 如果 user signal 已 aborted，不启动尚未开始的排队工具
+        if (this.execContext.signal?.aborted) {
+          logger.debug(
+            `[StreamingToolExecutor] Signal aborted, 跳过排队工具: ${toolCall.function.name} (${toolCall.id})`
+          );
+          yield this.makeAbortResult(toolCall, 'Tool execution skipped: task aborted before launch');
+          continue;
+        }
+
         const result = await this.executeOne(toolCall, params);
         yield result;
       }
@@ -241,7 +220,9 @@ export class StreamingToolExecutor {
           type: ToolErrorType.EXECUTION_ERROR,
           message,
         },
-        metadata: undefined,
+        metadata: {
+          abortedBeforeLaunch: true,
+        },
       },
       toolUseUuid: null,
     };

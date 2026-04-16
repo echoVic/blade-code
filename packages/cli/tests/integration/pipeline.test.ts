@@ -338,6 +338,37 @@ describe('ExecutionPipeline 权限集成', () => {
     expect(result.error?.message).toBe('用户拒绝授权');
   });
 
+  it('已中止 signal 在进入首个 stage 前应标记 abortedBeforeLaunch', async () => {
+    const registry = new ToolRegistry();
+    registry.register(createTestTool() as any);
+
+    const pipeline = new ExecutionPipeline(registry, {
+      permissionConfig: {
+        allow: ['TestTool'],
+        ask: [],
+        deny: [],
+      },
+    });
+
+    const controller = new AbortController();
+    controller.abort('user-cancel');
+
+    const context: ExecutionContext = {
+      signal: controller.signal,
+    };
+
+    const result = await pipeline.execute(
+      'TestTool',
+      { value: 'same' } as any,
+      context
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.metadata?.shouldExitLoop).toBe(true);
+    expect(result.metadata?.abortedBeforeLaunch).toBe(true);
+    expect(result.error?.message).toBe('任务已被用户中止');
+  });
+
   it('DENY 规则应直接拒绝执行', async () => {
     const registry = new ToolRegistry();
     registry.register(createTestTool() as any);

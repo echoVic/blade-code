@@ -11,6 +11,7 @@
  * 7. thinking_delta 受 thinkingModeEnabled 开关控制
  * 8. stream_end 幂等性（多次 stream_end 不会重复 finalize）
  * 9. 多轮 turn stream_end 均正常 finalize（per-turn 重置）
+ * 10. abort 后 late content_delta/thinking_delta 不污染缓冲区
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -198,8 +199,8 @@ describe('createLoopEventHandler', () => {
       // 晚到的 stream_end
       handler({ kind: 'stream_end' } as LoopEvent);
 
-      // 仍应调用 drain 清理缓冲区
-      expect(deps.streamingBuffer.drainPendingBuffers).toHaveBeenCalled();
+      // 不应 drain 缓冲区（abort 路径已完成 drain+finalize，此时缓冲区可能属于新任务）
+      expect(deps.streamingBuffer.drainPendingBuffers).not.toHaveBeenCalled();
       // 不应调用 finalize（handleAbort 已经 finalize 过了）
       expect(deps.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
     });
@@ -216,8 +217,8 @@ describe('createLoopEventHandler', () => {
       handler({ kind: 'stream_end' } as LoopEvent);
 
       expect(deps.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
-      // drain 应该被调用两次（每次 stream_end 都清理缓冲区）
-      expect(deps.streamingBuffer.drainPendingBuffers).toHaveBeenCalledTimes(2);
+      // 不应 drain（abort 守卫直接跳过，防止误清新任务内容）
+      expect(deps.streamingBuffer.drainPendingBuffers).not.toHaveBeenCalled();
     });
   });
 
@@ -247,7 +248,7 @@ describe('createLoopEventHandler', () => {
       expect(deps.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
     });
 
-    it('model_fallback 后 stream_end 仍然 drain 清理', () => {
+    it('model_fallback 后 stream_end 不 drain（防止误清新任务内容）', () => {
       const deps = createMockDeps();
       const stats = createMockStats();
       const handler = createLoopEventHandler(deps, stats);
@@ -255,8 +256,8 @@ describe('createLoopEventHandler', () => {
       handler({ kind: 'model_fallback' } as LoopEvent);
       handler({ kind: 'stream_end' } as LoopEvent);
 
-      // drain 应被调用（清理内部状态）
-      expect(deps.streamingBuffer.drainPendingBuffers).toHaveBeenCalled();
+      // 不应 drain（streamFinalized 守卫直接跳过）
+      expect(deps.streamingBuffer.drainPendingBuffers).not.toHaveBeenCalled();
     });
   });
 
@@ -455,6 +456,51 @@ describe('createLoopEventHandler', () => {
       );
       // handler1 不应 finalize
       expect(deps1.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  // ==================== 场景 10: abort 后 late delta 不污染缓冲区 ====================
+
+  describe('abort 后 late content_delta/thinking_delta 不污染缓冲区', () => {
+    it('signal.aborted 后 content_delta 不写入缓冲区', () => {
+      const controller = new AbortController();
+      const deps = createMockDeps({ signal: controller.signal });
+      const stats = createMockStats();
+      const handler = createLoopEventHandler(deps, stats);
+
+      // 正常 delta
+      handler({ kind: 'content_delta', delta: 'before' } as LoopEvent);
+      expect(deps.streamingBuffer.batchAppendContent).toHaveBeenCalledTimes(1);
+
+      // abort
+      controller.abort();
+
+      // late delta — 不应写入缓冲区
+      handler({ kind: 'content_delta', delta: 'after abort' } as LoopEvent);
+      expect(deps.streamingBuffer.batchAppendContent).toHaveBeenCalledTimes(1);
+      // 统计也不应累加
+      expect(stats.contentDeltaCount).toBe(1);
+    });
+
+    it('signal.aborted 后 thinking_delta 不写入缓冲区', () => {
+      const controller = new AbortController();
+      const deps = createMockDeps({
+        signal: controller.signal,
+        thinkingModeEnabled: true,
+      });
+      const stats = createMockStats();
+      const handler = createLoopEventHandler(deps, stats);
+
+      // 正常 thinking delta
+      handler({ kind: 'thinking_delta', delta: 'thinking before' } as LoopEvent);
+      expect(deps.streamingBuffer.batchAppendThinking).toHaveBeenCalledTimes(1);
+
+      // abort
+      controller.abort();
+
+      // late thinking delta — 不应写入缓冲区
+      handler({ kind: 'thinking_delta', delta: 'thinking after abort' } as LoopEvent);
+      expect(deps.streamingBuffer.batchAppendThinking).toHaveBeenCalledTimes(1);
     });
   });
 

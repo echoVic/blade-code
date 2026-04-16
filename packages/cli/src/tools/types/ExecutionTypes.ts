@@ -124,6 +124,7 @@ export class ToolExecution {
       llmContent?: string;
       summary?: string;
       errorType?: ToolErrorType;
+      abortedBeforeLaunch?: boolean;
     }
   ): void {
     this.aborted = true;
@@ -137,6 +138,7 @@ export class ToolExecution {
       metadata: {
         summary: options?.summary || `执行已中止: ${reason || '未知原因'}`,
         ...(options?.shouldExitLoop ? { shouldExitLoop: true } : {}),
+        ...(options?.abortedBeforeLaunch ? { abortedBeforeLaunch: true } : {}),
       },
     };
   }

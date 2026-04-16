@@ -82,6 +82,24 @@ export const useConfirmation = () => {
   });
 
   /**
+   * 中止所有 pending 确认
+   * Esc 取消任务时调用：用特殊 reason 标记与正常用户拒绝区分，
+   * 让 ConfirmationStage 能通过 signal.aborted 走 abort 通道而非 PERMISSION_DENIED。
+   */
+  const dismissAll = useMemoizedFn(() => {
+    // resolve 当前活跃的确认
+    if (activeRef.current) {
+      activeRef.current.resolve({ approved: false, reason: '__aborted__' });
+    }
+    // resolve 队列中所有 pending 确认
+    for (const entry of queueRef.current) {
+      entry.resolve({ approved: false, reason: '__aborted__' });
+    }
+    queueRef.current = [];
+    showActive(null);
+  });
+
+  /**
    * 创建 ConfirmationHandler 实例
    * 使用 useMemo 确保引用稳定性，避免 React 闭包捕获过时引用
    */
@@ -96,5 +114,6 @@ export const useConfirmation = () => {
     confirmationState,
     confirmationHandler,
     handleResponse,
+    dismissAll,
   };
 };

@@ -15,6 +15,7 @@ import {
 import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
 import { TokenCounter } from './TokenCounter.js';
+import { isAbortError } from '../utils/abort.js';
 
 /**
  * 压缩选项
@@ -36,6 +37,8 @@ export interface CompactionOptions {
   sessionId?: string;
   /** 权限模式（用于 hooks） */
   permissionMode?: PermissionMode;
+  /** 中止信号：abort 时抛 AbortError，让调用方知道是"被取消"而非"压缩失败" */
+  signal?: AbortSignal;
 }
 
 /**
@@ -89,6 +92,11 @@ export class CompactionService {
     messages: Message[],
     options: CompactionOptions
   ): Promise<CompactionResult> {
+    // 快速路径：如果 signal 已 aborted，立即抛出 AbortError
+    if (options.signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+
     // 优先使用传入的真实 preTokens（来自 LLM usage），否则使用估算
     const preTokens =
       options.actualPreTokens ?? TokenCounter.countTokens(messages, options.modelName);
@@ -234,6 +242,10 @@ export class CompactionService {
         summaryMessage,
       };
     } catch (error) {
+      // AbortError（宽口径）: 用户取消/interrupt，不应计入失败次数也不应走 fallback
+      if (isAbortError(error)) {
+        throw error;
+      }
       sessionFailures.set(sessionKey, (sessionFailures.get(sessionKey) ?? 0) + 1);
       console.error('[CompactionService] 压缩失败，使用降级策略', error);
       return this.fallbackCompact(messages, options, preTokens, error);
@@ -257,6 +269,11 @@ export class CompactionService {
 
     console.log('[CompactionService] 使用压缩模型:', options.modelName);
 
+    // 预检查：如果 signal 已 aborted，不发起 LLM 调用
+    if (options.signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+
     // 创建 ChatService
     const chatService = await createChatServiceAsync({
       apiKey: options.apiKey || process.env.BLADE_API_KEY || '',
@@ -270,8 +287,9 @@ export class CompactionService {
     });
 
     const response = await chatService.chat(
-      [{ role: 'user', content: prompt }]
-      // 不传递工具参数（使用默认空数组）
+      [{ role: 'user', content: prompt }],
+      [], // 不传递工具参数
+      options.signal // 传递 abort signal
     );
 
     // 提取 <summary> 标签内容

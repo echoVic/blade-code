@@ -1,9 +1,10 @@
+import { nanoid } from 'nanoid';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { nanoid } from 'nanoid';
-import { getCwd } from '../../utils/cwd.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import type { JsonValue, MessageRole } from '../../store/types.js';
+import { getCwd } from '../../utils/cwd.js';
+import { getVersion } from '../../utils/packageInfo.js';
 import type {
   ConversationContext,
   MessageInfo,
@@ -32,7 +33,7 @@ export class PersistentStore {
   constructor(
     projectPath: string = getCwd(),
     maxSessions: number = 100,
-    version: string = '0.0.10'
+    version: string = getVersion()
   ) {
     this.projectPath = projectPath;
     this.maxSessions = maxSessions;

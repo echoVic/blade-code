@@ -419,6 +419,20 @@ export class ConfirmationStage implements PipelineStage {
           `[ConfirmationStage] Confirmation response: approved=${response.approved}`
         );
 
+        // abort 优先于 denial：如果 signal 已 aborted，说明是 Esc/interrupt 取消任务，
+        // 设置 abort result 后 return，让外层 pipeline shouldAbort() 检测并 break。
+        // 必须调用 execution.abort() 设置 result，否则 getResult() 会抛异常。
+        if (execution.context.signal?.aborted) {
+          logger.info(`[ConfirmationStage] Signal aborted, setting abort result`);
+          execution.abort('任务已被用户中止', {
+            shouldExitLoop: true,
+            llmContent: '任务已被用户中止',
+            summary: '任务已被用户中止',
+            abortedBeforeLaunch: true,
+          });
+          return;
+        }
+
         if (!response.approved) {
           execution.abort(response.reason || '用户拒绝授权', {
             shouldExitLoop: true,

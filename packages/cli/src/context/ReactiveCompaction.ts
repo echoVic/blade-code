@@ -6,6 +6,7 @@
  */
 
 import type { Message } from '../services/ChatServiceInterface.js';
+import { isAbortError } from '../utils/abort.js';
 import { CompactionService } from './CompactionService.js';
 import { snipCompact } from './SnipCompaction.js';
 
@@ -14,6 +15,7 @@ export interface ReactiveCompactOptions {
   maxContextTokens: number;
   apiKey: string;
   baseURL?: string;
+  signal?: AbortSignal;
 }
 
 export class ReactiveCompaction {
@@ -48,6 +50,7 @@ export class ReactiveCompaction {
         maxContextTokens: options.maxContextTokens,
         apiKey: options.apiKey,
         baseURL: options.baseURL,
+        signal: options.signal,
       });
 
       if (compactResult.success) {
@@ -57,7 +60,11 @@ export class ReactiveCompaction {
         return { success: true, messages: currentMessages };
       }
       return { success: false, messages };
-    } catch {
+    } catch (error) {
+      // AbortError（宽口径）: 不吞掉，re-throw 让外层知道是"被取消"而非"压缩失败"
+      if (isAbortError(error)) {
+        throw error;
+      }
       // 如果 snip 至少释放了一些空间，也算部分成功
       if (snipResult.snippedCount > 0) {
         return { success: true, messages: currentMessages };

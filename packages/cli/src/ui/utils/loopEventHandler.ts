@@ -78,6 +78,8 @@ export function createLoopEventHandler(
     switch (event.kind) {
       // --- 流式增量（批处理减少渲染频率） ---
       case 'content_delta':
+        // abort/interrupt 后或 model_fallback 已终结该流的 late delta 不写入缓冲区
+        if (streamFinalized || deps.signal.aborted) break;
         stats.contentDeltaCount++;
         stats.contentDeltaTotalLen += event.delta.length;
         streamDebug('loopEventHandler', 'onContentDelta', {
@@ -89,6 +91,8 @@ export function createLoopEventHandler(
         break;
 
       case 'thinking_delta':
+        // abort/interrupt 后或 model_fallback 已终结该流的 late delta 不写入缓冲区
+        if (streamFinalized || deps.signal.aborted) break;
         if (deps.thinkingModeEnabled) {
           deps.streamingBuffer.batchAppendThinking(event.delta);
         }
@@ -105,8 +109,9 @@ export function createLoopEventHandler(
 
         // 幂等守卫：abort 或 model_fallback 已终结该流
         if (streamFinalized || deps.signal.aborted) {
-          // 仍然 drain 缓冲区以清理内部状态，但不提交到 store
-          deps.streamingBuffer.drainPendingBuffers();
+          // 不 drain 缓冲区：abort/interrupt 路径已在 abort 前完成了 drain+finalize，
+          // 此时缓冲区可能已属于新任务（interrupt 会立即开始新命令），
+          // drain 会误清新任务的内容导致丢字。
           streamFinalized = true;
           break;
         }

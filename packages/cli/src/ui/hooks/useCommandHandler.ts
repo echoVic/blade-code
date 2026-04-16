@@ -58,6 +58,7 @@ export const useCommandHandler = (
   appendSystemPrompt?: string,
   confirmationHandler?: ConfirmationHandler,
   maxTurns?: number,
+  onDismissConfirmations?: () => void,
 ) => {
   // ==================== Store 选择器 ====================
   const isProcessing = useIsProcessing();
@@ -102,12 +103,17 @@ export const useCommandHandler = (
   const handleAbort = useMemoizedFn(() => {
     if (!isProcessing) return;
 
+    // 0. dismiss 确认框（如果有）：先释放阻塞的 Promise，再 abort signal
+    //    顺序重要：dismissAll 使 ConfirmationStage 的 await 返回，
+    //    然后 abort signal 让 ConfirmationStage 检测到 signal.aborted 直接 return
+    onDismissConfirmations?.();
+
     // 1. drain 缓冲区，保留已接收内容
     const { extraContent, extraThinking } = streamingBuffer.drainPendingBuffers();
 
-    // 2. 先触发 abort signal，阻止后续回调
+    // 2. 先触发 abort signal（reason='user-cancel'），阻止后续回调
     //    此后 loopEventHandler 中的 stream_end 检查 signal.aborted 会跳过 finalize
-    commandActions.abort();
+    commandActions.abort('user-cancel');
     appActions.setTodos([]);
 
     // 3. 用 drain 结果 finalize，确保已收内容提交到 store
@@ -286,7 +292,9 @@ export const useCommandHandler = (
         const output = loopResult.finalMessage || '';
 
         if (!output || output.trim() === '') {
-          if (!abortMessageSentRef.current && stats.contentDeltaCount === 0) {
+          // interrupt 时不显示"已取消"（紧接着就有新任务开始）
+          const abortReason = loopResult.metadata?.abortReason;
+          if (!abortMessageSentRef.current && stats.contentDeltaCount === 0 && abortReason !== 'interrupt') {
             sessionActions.addAssistantMessage('已取消');
             return { success: true, output: '已取消' };
           }
@@ -312,15 +320,23 @@ export const useCommandHandler = (
       return;
     }
 
-    // 如果正在处理，静默加入队列
+    // 中断模型：运行中提交新消息 = abort 当前任务 + 立即执行新消息
     if (isProcessing) {
-      commandActions.enqueueCommand({
-        displayText: resolved.displayText,
-        text: resolved.text,
-        images: resolved.images,
-        parts: resolved.parts,
-      });
-      return;
+      // 1. dismiss 确认框（如果有）
+      onDismissConfirmations?.();
+      // 2. drain 缓冲区，保留旧任务已接收内容（必须在 abort 之前）
+      const { extraContent, extraThinking } = streamingBuffer.drainPendingBuffers();
+      // 3. abort 当前任务，传 reason='interrupt'
+      commandActions.abort('interrupt');
+      // 4. 用 drain 结果 finalize 旧任务的流式消息
+      const streamingId = getState().session.currentStreamingMessageId;
+      if (streamingId) {
+        if (extraContent) appendMarkdownDelta(streamingId, extraContent);
+        finalizeMarkdownCache(streamingId);
+      }
+      sessionActions.finalizeStreamingMessage(extraContent, extraThinking);
+      // 5. 不 return，继续往下走正常的 executeCommand 流程
+      //    旧任务的 finally 中 isOurTask 检查会阻止它干扰新任务
     }
 
     // 清空上一轮对话的 todos
@@ -365,22 +381,6 @@ export const useCommandHandler = (
         commandActions.setProcessing(false);
         commandActions.clearAbortController(taskAbortController);
         sessionActions.setCurrentThinkingContent(null);
-
-        // 处理队列中的下一个命令
-        // NOTE: 队列调度也必须在 isOurTask 内，防止旧任务并行启动新任务
-        const nextCommand = commandActions.dequeueCommand();
-        if (nextCommand) {
-          setTimeout(
-            () =>
-              executeCommand({
-                displayText: nextCommand.displayText,
-                text: nextCommand.text,
-                images: nextCommand.images,
-                parts: nextCommand.parts,
-              }),
-            100
-          );
-        }
       }
     }
   });

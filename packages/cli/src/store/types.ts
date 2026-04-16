@@ -330,7 +330,7 @@ export interface CommandActions {
    * 用于防止新任务的 controller 被旧任务的 finally 块误清
    */
   clearAbortController: (expectedController?: AbortController) => void;
-  abort: () => void;
+  abort: (reason?: string) => void;
   enqueueCommand: (command: PendingCommand) => void;
   dequeueCommand: () => PendingCommand | undefined;
   clearQueue: () => void;

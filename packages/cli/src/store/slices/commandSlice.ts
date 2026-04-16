@@ -91,19 +91,21 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
 
     /**
      * 中止当前任务
-     * - 发送 abort signal
+     * - 发送 abort signal（携带 reason）
      * - 重置 isProcessing（乐观更新，立即响应用户）
      * - 清空待处理队列
+     *
+     * @param reason - abort 原因：'user-cancel'（Esc）或 'interrupt'（新消息中断），默认 'user-cancel'
      *
      * 注意：不清空 abortController，让后续代码能通过 signal.aborted 检测到中止状态
      * abortController 会在 clearAbortController() 中清理
      */
-    abort: () => {
+    abort: (reason?: string) => {
       const { abortController } = get().command;
 
-      // 发送 abort signal
+      // 发送 abort signal，携带 reason
       if (abortController && !abortController.signal.aborted) {
-        abortController.abort();
+        abortController.abort(reason ?? 'user-cancel');
       }
 
       // 重置 command 状态并清空队列（保留 abortController 供后续检测）

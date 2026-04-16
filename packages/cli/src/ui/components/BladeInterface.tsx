@@ -132,13 +132,15 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     confirmationState,
     confirmationHandler,
     handleResponse: handleResponseRaw,
+    dismissAll,
   } = useConfirmation();
 
   const { executeCommand, handleAbort } = useCommandHandler(
     otherProps.systemPrompt,
     otherProps.appendSystemPrompt,
     confirmationHandler,
-    otherProps.maxTurns
+    otherProps.maxTurns,
+    dismissAll,
   );
 
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();

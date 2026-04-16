@@ -385,6 +385,118 @@ describe('executeLoopGenerator', () => {
         content: '用户拒绝授权',
       });
     });
+
+    it('should skip tool_result persistence when tool aborts before launch', async () => {
+      const contextManager = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: vi.fn().mockReturnValue(contextManager),
+        } as any,
+      });
+      const context = createMockContext();
+      const controller = new AbortController();
+
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'tc1',
+            type: 'function',
+            function: { name: 'Edit', arguments: '{"file_path":"/tmp/demo.ts"}' },
+          },
+        ],
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'tool_calls',
+      });
+
+      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockImplementationOnce(async () => {
+        controller.abort('user-cancel');
+        return {
+          success: false,
+          llmContent: '任务已被用户中止',
+          error: {
+            type: 'execution_error',
+            message: '任务已被用户中止',
+          },
+          metadata: {
+            summary: '任务已被用户中止',
+            shouldExitLoop: true,
+            abortedBeforeLaunch: true,
+          },
+        };
+      });
+
+      const gen = executeLoopGenerator(
+        deps,
+        'Edit the file',
+        context,
+        { signal: controller.signal, stream: false } as LoopOptions,
+        'You are a helpful assistant.',
+      );
+
+      const { result, events } = await drainGenerator(gen);
+
+      expect(result.success).toBe(false);
+      expect(result.error?.type).toBe('aborted');
+      expect(events.some((event) => event.kind === 'tool_result')).toBe(false);
+      expect(contextManager.saveToolResult).not.toHaveBeenCalled();
+      expect(
+        context.messages.some(
+          (message) =>
+            message.role === 'tool' &&
+            'tool_call_id' in message &&
+            message.tool_call_id === 'tc1',
+        ),
+      ).toBe(false);
+    });
+
+    it('should preserve planContent when a tool exits the loop successfully', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'tc1',
+            type: 'function',
+            function: { name: 'ExitPlanMode', arguments: '{"plan":"approved"}' },
+          },
+        ],
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'tool_calls',
+      });
+
+      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockResolvedValueOnce({
+        success: true,
+        llmContent: 'plan approved',
+        metadata: {
+          summary: '方案已批准，退出 Plan 模式',
+          shouldExitLoop: true,
+          targetMode: 'autoEdit',
+          planContent: '# approved plan',
+        },
+      });
+
+      const gen = executeLoopGenerator(
+        deps,
+        'Approve the plan',
+        context,
+        { stream: false } as LoopOptions,
+        'You are a helpful assistant.',
+      );
+
+      const { result } = await drainGenerator(gen);
+
+      expect(result.success).toBe(true);
+      expect(result.metadata?.shouldExitLoop).toBe(true);
+      expect(result.metadata?.targetMode).toBe('autoEdit');
+      expect(result.metadata?.planContent).toBe('# approved plan');
+    });
   });
 
   // ------------------------------------------------------------------

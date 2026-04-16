@@ -146,5 +146,6 @@ export interface LoopResult {
     targetMode?: PermissionMode; // Plan 模式批准后的目标权限模式
     planContent?: string; // Plan 模式批准后的方案内容
     outputTruncated?: boolean; // finishReason === 'length' 且 recovery 达上限时标记截断
+    abortReason?: string; // abort 原因：'user-cancel' | 'interrupt'
   };
 }

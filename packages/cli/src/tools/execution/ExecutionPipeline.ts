@@ -134,7 +134,12 @@ export class ExecutionPipeline extends EventEmitter {
       for (const stage of this.stages) {
         // 检查取消信号
         if (execution.context.signal?.aborted) {
-          execution.abort('任务已被用户中止');
+          execution.abort('任务已被用户中止', {
+            shouldExitLoop: true,
+            llmContent: '任务已被用户中止',
+            summary: '任务已被用户中止',
+            abortedBeforeLaunch: true,
+          });
           break;
         }
 

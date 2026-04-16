@@ -7,7 +7,6 @@
 
 import { nanoid } from 'nanoid';
 import { type PermissionMode } from '../../config/index.js';
-import { getCwd } from '../../utils/cwd.js';
 import { CompactionService } from '../../context/CompactionService.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { snipCompact } from '../../context/SnipCompaction.js';
@@ -25,29 +24,32 @@ import type {
 import { injectSkillsMetadata } from '../../skills/index.js';
 import type { JsonValue } from '../../store/types.js';
 import { ToolErrorType } from '../../tools/types/index.js';
+import { isAbortError } from '../../utils/abort.js';
+import { getAbortReason } from '../../utils/abortReason.js';
+import { getCwd } from '../../utils/cwd.js';
 import type {
   ChatContext,
   LoopOptions,
   LoopResult,
   UserMessageContent,
 } from '../types.js';
-import { ConversationState } from './ConversationState.js';
-import { StreamingToolExecutor } from './StreamingToolExecutor.js';
 import {
-  checkOutputRecovery,
   checkIncompleteIntent,
-  checkStopHook,
+  checkOutputRecovery,
   checkRalphLoop,
+  checkStopHook,
 } from './completionPolicy.js';
 import {
-  saveUserMessage,
+  saveCompaction as persistCompaction,
+  saveToolResult as persistToolResult,
   saveAssistantMessage,
   saveToolUse,
-  saveToolResult as persistToolResult,
-  saveCompaction as persistCompaction,
+  saveUserMessage,
 } from './conversationPersistence.js';
-import { applyToolDomainEffects } from './toolDomainPolicy.js';
+import { ConversationState } from './ConversationState.js';
+import { StreamingToolExecutor } from './StreamingToolExecutor.js';
 import type { FunctionToolCallRef } from './toolDomainPolicy.js';
+import { applyToolDomainEffects } from './toolDomainPolicy.js';
 import type { LoopDependencies, LoopEvent, ToolCallRef } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -291,7 +293,8 @@ export async function checkAndCompactInLoop(
   deps: LoopDependencies,
   context: ChatContext,
   currentTurn: number,
-  actualPromptTokens?: number
+  actualPromptTokens?: number,
+  signal?: AbortSignal,
 ): Promise<CompactResult> {
   if (actualPromptTokens === undefined) {
     logger.debug(
@@ -301,10 +304,11 @@ export async function checkAndCompactInLoop(
   }
 
   // Level 1: Snip compaction — 轻量截断旧工具调用，无 LLM 调用
+  // 延迟写入：先保存 snip 结果，等确认不需要 LLM compaction 或 LLM compaction 完成后再写入
+  // 防止 LLM compaction abort 时 context.messages 处于半 snip 状态
   const snipResult = snipCompact(context.messages);
   let didSnip = false;
   if (snipResult.snippedCount > 0) {
-    context.messages = snipResult.messages;
     didSnip = true;
     logger.debug(
       `[Loop] [轮次 ${currentTurn}] Snip 压缩: 移除 ${snipResult.snippedCount} 轮旧工具调用，释放约 ${snipResult.estimatedTokensFreed} tokens`
@@ -339,7 +343,13 @@ export async function checkAndCompactInLoop(
     shouldCompact: actualPromptTokens >= threshold,
   });
 
-  if (actualPromptTokens < threshold) return didSnip ? 'snipped' : 'none';
+  if (actualPromptTokens < threshold) {
+    // 不需要 LLM compaction，安全写入 snip 结果
+    if (didSnip) {
+      context.messages = snipResult.messages;
+    }
+    return didSnip ? 'snipped' : 'none';
+  }
 
   logger.debug(
     currentTurn === 0
@@ -348,13 +358,16 @@ export async function checkAndCompactInLoop(
   );
 
   try {
-    const result = await CompactionService.compact(context.messages, {
+    // LLM compaction 使用 snip 后的消息（如有），但不提前写入 context.messages
+    const messagesForCompact = didSnip ? snipResult.messages : context.messages;
+    const result = await CompactionService.compact(messagesForCompact, {
       trigger: 'auto',
       modelName,
       maxContextTokens,
       apiKey: chatConfig.apiKey,
       baseURL: chatConfig.baseUrl,
       actualPreTokens: actualPromptTokens,
+      signal,
     });
 
     context.messages = result.compactedMessages;
@@ -378,6 +391,16 @@ export async function checkAndCompactInLoop(
 
     return 'compacted';
   } catch (error) {
+    // AbortError（宽口径）: 返回 'none' 让控制流回到主循环的下一个 signal 检查点
+    // 注意：abort 时不写入 snip 结果到 context.messages，保持原始状态
+    if (isAbortError(error)) {
+      logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩被中止`);
+      return 'none';
+    }
+    // 非 abort 错误：snip 是安全的确定性操作，可以保留
+    if (didSnip) {
+      context.messages = snipResult.messages;
+    }
     logger.error(`[Loop] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
     return didSnip ? 'snipped' : 'none';
   }
@@ -390,14 +413,22 @@ function makeAbortResult(
   turnsCount: number,
   toolCallsCount: number,
   startTime: number,
+  signal?: AbortSignal,
 ): LoopResult {
+  const reason = signal ? getAbortReason(signal) : 'user-cancel';
+  // interrupt 不显示"任务已停止"（紧接着就有新任务开始），只有 user-cancel 显示
+  const message = reason === 'interrupt'
+    ? undefined
+    : '任务已被用户中止';
+
   return {
     success: false,
-    error: { type: 'aborted', message: '任务已被用户中止' },
+    error: { type: 'aborted', message: message ?? '任务已中断' },
     metadata: {
       turnsCount,
       toolCallsCount,
       duration: Date.now() - startTime,
+      abortReason: reason,
     },
   };
 }
@@ -410,6 +441,9 @@ export async function* executeLoopGenerator(
   systemPrompt: string | undefined
 ): AsyncGenerator<LoopEvent, LoopResult, void> {
   const startTime = Date.now();
+  // 提到 try 外，使 catch 中的 makeAbortResult 能拿到真实进度
+  let turnsCount = 0;
+  const allToolResults: import('../../tools/types/index.js').ToolResult[] = [];
 
   try {
     // 1. 获取可用工具定义
@@ -459,8 +493,6 @@ export async function* executeLoopGenerator(
         ? SAFETY_LIMIT
         : Math.min(configuredMaxTurns, SAFETY_LIMIT);
 
-    let turnsCount = 0;
-    const allToolResults: import('../../tools/types/index.js').ToolResult[] = [];
     let totalTokens = 0;
     let lastPromptTokens: number | undefined;
     let maxOutputRecoveryCount = 0;
@@ -479,7 +511,7 @@ export async function* executeLoopGenerator(
     while (true) {
       // 1. 检查中断信号
       if (options?.signal?.aborted) {
-        return makeAbortResult(turnsCount, allToolResults.length, startTime);
+        return makeAbortResult(turnsCount, allToolResults.length, startTime, options.signal);
       }
 
       // 2. 上下文压缩检查
@@ -490,7 +522,8 @@ export async function* executeLoopGenerator(
         deps,
         context,
         turnsCount,
-        lastPromptTokens
+        lastPromptTokens,
+        options?.signal,
       );
 
       if (compactResult !== 'none') {
@@ -508,7 +541,7 @@ export async function* executeLoopGenerator(
       yield { kind: 'turn_start', turn: turnsCount, maxTurns };
 
       if (options?.signal?.aborted) {
-        return makeAbortResult(turnsCount - 1, allToolResults.length, startTime);
+        return makeAbortResult(turnsCount - 1, allToolResults.length, startTime, options.signal);
       }
 
       // 4. 调用 LLM
@@ -564,6 +597,7 @@ export async function* executeLoopGenerator(
               maxContextTokens: chatConfig.maxContextTokens ?? deps.config.maxContextTokens,
               apiKey: chatConfig.apiKey,
               baseURL: chatConfig.baseUrl,
+              signal: options?.signal,
             }
           );
           if (result.success) {
@@ -600,7 +634,7 @@ export async function* executeLoopGenerator(
       budgetTracker = recordOutput(budgetTracker, outputTokens, maxOutputRecoveryCount > 0);
 
       if (options?.signal?.aborted) {
-        return makeAbortResult(turnsCount - 1, allToolResults.length, startTime);
+        return makeAbortResult(turnsCount - 1, allToolResults.length, startTime, options.signal);
       }
 
       // Content 通知 — delta 是唯一内容信号
@@ -843,7 +877,7 @@ export async function* executeLoopGenerator(
 
       // 7. 执行工具
       if (options?.signal?.aborted) {
-        return makeAbortResult(turnsCount, allToolResults.length, startTime);
+        return makeAbortResult(turnsCount, allToolResults.length, startTime, options.signal);
       }
 
       const functionCalls = turnResult.toolCalls.filter(
@@ -969,6 +1003,14 @@ export async function* executeLoopGenerator(
         };
         allToolResults.push(result);
 
+        // 如果工具未实际执行就被 abort（如排队工具 skip、确认阶段 abort），
+        // 跳过 yield/持久化/appendToolResult，避免在历史中留下无意义的失败记录。
+        // 注意：只检查 abortedBeforeLaunch，不会误伤正常的 shouldExitLoop 结果
+        // （如 ExitPlanModeTool 带 targetMode/planContent 的合法退出）。
+        if (result.metadata?.abortedBeforeLaunch) {
+          return makeAbortResult(turnsCount, allToolResults.length, startTime, options?.signal);
+        }
+
         // Yield tool_result 事件
         yield {
           kind: 'tool_result',
@@ -1080,6 +1122,10 @@ export async function* executeLoopGenerator(
               duration: Date.now() - startTime,
               shouldExitLoop: true,
               targetMode: result.metadata?.targetMode,
+              planContent:
+                typeof result.metadata?.planContent === 'string'
+                  ? result.metadata.planContent
+                  : undefined,
             },
           };
         }
@@ -1087,7 +1133,7 @@ export async function* executeLoopGenerator(
 
       // 检查工具执行后的中断信号
       if (options?.signal?.aborted) {
-        return makeAbortResult(turnsCount, allToolResults.length, startTime);
+        return makeAbortResult(turnsCount, allToolResults.length, startTime, options.signal);
       }
 
       // 9. 检查轮次上限
@@ -1113,6 +1159,7 @@ export async function* executeLoopGenerator(
                   apiKey: chatConfig.apiKey,
                   baseURL: chatConfig.baseUrl,
                   actualPreTokens: lastPromptTokens,
+                  signal: options?.signal,
                 }
               );
 
@@ -1185,22 +1232,15 @@ export async function* executeLoopGenerator(
       state.writeback();
     }
   } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.name === 'AbortError' || error.message.includes('aborted'))
-    ) {
-      return {
-        success: false,
-        error: { type: 'aborted', message: '任务已被用户中止' },
-        metadata: { turnsCount: 0, toolCallsCount: 0, duration: Date.now() - startTime },
-      };
+    if (isAbortError(error)) {
+      return makeAbortResult(turnsCount, allToolResults.length, startTime, options?.signal);
     }
     const friendlyMessage = extractApiErrorMessage(error);
     logger.error(`API 调用失败: ${friendlyMessage}`);
     return {
       success: false,
       error: { type: 'api_error', message: friendlyMessage, details: error },
-      metadata: { turnsCount: 0, toolCallsCount: 0, duration: Date.now() - startTime },
+      metadata: { turnsCount, toolCallsCount: allToolResults.length, duration: Date.now() - startTime },
     };
   }
 }
