@@ -90,7 +90,7 @@ export async function normalizeCliInput(input: string): Promise<{
 
   return {
     mode: 'output',
-    content: result.message || '',
+    content: result.content || result.message || '',
     exitCode: 0,
   };
 }

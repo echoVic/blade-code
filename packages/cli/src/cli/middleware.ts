@@ -83,6 +83,20 @@ export const validateOutput: MiddlewareFunction = (argv) => {
     throw new Error('--output-format can only be used with --print or --headless');
   }
 
+  // 验证 headless 模式下的输出格式（仅支持 text | jsonl）
+  if (argv.headless && argv.outputFormat && !['text', 'jsonl'].includes(argv.outputFormat as string)) {
+    throw new Error(
+      `--headless only supports --output-format text|jsonl, but got "${argv.outputFormat}". Use --print for json|stream-json support.`
+    );
+  }
+
+  // 验证 print 模式下的输出格式（仅支持 text | json | stream-json）
+  if (argv.print && argv.outputFormat && !['text', 'json', 'stream-json'].includes(argv.outputFormat as string)) {
+    throw new Error(
+      `--print only supports --output-format text|json|stream-json, but got "${argv.outputFormat}". Use --headless for jsonl support.`
+    );
+  }
+
   // 验证输入格式
   if (argv.inputFormat === 'stream-json' && argv.print) {
     logger.warn(

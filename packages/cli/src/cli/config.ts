@@ -34,7 +34,8 @@ export const globalOptions = {
     type: 'string',
     choices: ['text', 'json', 'stream-json', 'jsonl'],
     default: 'text',
-    describe: 'Output format (works with --print and --headless)',
+    describe:
+      'Output format: --print supports text|json|stream-json; --headless supports text|jsonl',
     group: 'Output Options:',
   },
   'include-partial-messages': {

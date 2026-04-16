@@ -94,6 +94,7 @@ const helpCommand: SlashCommand = {
     return {
       success: true,
       message: '帮助信息已显示',
+      content: helpText,
     };
   },
 };

@@ -460,10 +460,31 @@ export class ConfirmationStage implements PipelineStage {
           await this.persistSessionApproval(signature, descriptor);
         }
       } else {
-        // 如果没有提供 confirmationHandler,则自动通过确认（用于非交互式环境）
-        logger.warn(
-          '[WARN] No ConfirmationHandler; auto-approving tool execution (non-interactive environment only)'
-        );
+        // 非交互式环境：没有 confirmationHandler，无法向用户确认
+        const ctxPermMode =
+          execution.context.permissionMode || PermissionMode.DEFAULT;
+
+        if (ctxPermMode === PermissionMode.YOLO) {
+          // YOLO 模式下自动放行
+          logger.warn(
+            '[WARN] No ConfirmationHandler; auto-approving in YOLO mode (non-interactive environment)'
+          );
+        } else {
+          // 非 YOLO 模式下，拒绝需要确认的操作以保护用户信任边界
+          logger.warn(
+            `[WARN] No ConfirmationHandler in "${ctxPermMode}" mode; denying tool "${tool.name}" (non-interactive environment). Use --permission-mode yolo to auto-approve.`
+          );
+          execution.abort(
+            `Non-interactive mode with "${ctxPermMode}" permission: tool "${tool.name}" requires user confirmation but no interactive handler is available. Use --permission-mode yolo to allow all operations.`,
+            {
+              shouldExitLoop: false,
+              llmContent: `工具 "${tool.name}" 需要用户确认，但当前为非交互模式且权限模式为 "${ctxPermMode}"。请使用 --permission-mode yolo 来允许所有操作。`,
+              summary: '非交互模式下拒绝需要确认的操作',
+              errorType: ToolErrorType.PERMISSION_DENIED,
+            }
+          );
+          return;
+        }
       }
     } catch (error) {
       execution.abort(`User confirmation failed: ${(error as Error).message}`);
