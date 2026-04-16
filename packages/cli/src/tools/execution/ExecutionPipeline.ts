@@ -59,7 +59,9 @@ export class ExecutionPipeline extends EventEmitter {
     const permissionStage = new PermissionStage(
       permissionConfig,
       this.sessionApprovals,
-      permissionMode
+      permissionMode,
+      config.toolWhitelist,
+      config.toolBlacklist
     );
 
     this.stages = [
@@ -448,6 +450,8 @@ export interface ExecutionPipelineConfig {
   permissionConfig?: PermissionConfig;
   permissionMode?: PermissionMode;
   approvalStore?: SessionApprovalStore;
+  toolWhitelist?: readonly string[];
+  toolBlacklist?: readonly string[];
 }
 
 /**

@@ -160,6 +160,24 @@ describe('command input helpers', () => {
     });
   });
 
+  it('prefers slash command content over short status messages', async () => {
+    slashState.isSlashCommand.mockReturnValue(true);
+    slashState.executeSlashCommand.mockResolvedValue({
+      success: true,
+      message: '帮助信息已显示',
+      content: 'full help text',
+    });
+
+    const { normalizeCliInput } = await import('../../../src/commands/shared/commandInput.js');
+    const result = await normalizeCliInput('/help');
+
+    expect(result).toEqual({
+      mode: 'output',
+      content: 'full help text',
+      exitCode: 0,
+    });
+  });
+
   it('accepts slash suggestion on Tab', async () => {
     const { useMainInput } = await import('../../../src/ui/hooks/useMainInput.js');
 

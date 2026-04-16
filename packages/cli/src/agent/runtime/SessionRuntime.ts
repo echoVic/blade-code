@@ -155,13 +155,16 @@ export class SessionRuntime {
   createExecutionPipeline(options: AgentOptions = {}): ExecutionPipeline {
     const registry = new ToolRegistry();
     const allowed = options.toolWhitelist ? new Set(options.toolWhitelist) : null;
+    const blocked = options.toolBlacklist ? new Set(options.toolBlacklist) : null;
 
     for (const tool of this.baseRegistry.getBuiltinTools()) {
+      if (blocked?.has(tool.name)) continue;
       if (!allowed || allowed.has(tool.name)) {
         registry.register(tool);
       }
     }
     for (const tool of this.baseRegistry.getMcpTools()) {
+      if (blocked?.has(tool.name)) continue;
       if (!allowed || allowed.has(tool.name)) {
         registry.registerMcpTool(tool);
       }
@@ -179,6 +182,8 @@ export class SessionRuntime {
       permissionMode,
       approvalStore: this.approvalStore,
       maxHistorySize: 1000,
+      toolWhitelist: options.toolWhitelist,
+      toolBlacklist: options.toolBlacklist,
     });
   }
 

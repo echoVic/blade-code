@@ -1,14 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const agentState = vi.hoisted(() => ({
-  create: vi.fn(),
+  createWithRuntime: vi.fn(),
   chatStream: vi.fn(),
+}));
+
+const runtimeState = vi.hoisted(() => ({
+  create: vi.fn(),
+  dispose: vi.fn(),
+}));
+
+const sessionState = vi.hoisted(() => ({
+  resolveNonInteractiveSession: vi.fn(),
 }));
 
 vi.mock('../../../src/agent/Agent.js', () => ({
   Agent: {
-    create: agentState.create,
+    createWithRuntime: agentState.createWithRuntime,
   },
+}));
+
+vi.mock('../../../src/agent/runtime/SessionRuntime.js', () => ({
+  SessionRuntime: {
+    create: runtimeState.create,
+  },
+}));
+
+vi.mock('../../../src/commands/shared/sessionContext.js', () => ({
+  resolveNonInteractiveSession: sessionState.resolveNonInteractiveSession,
 }));
 
 describe('headless runner', () => {
@@ -27,8 +46,16 @@ describe('headless runner', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionState.resolveNonInteractiveSession.mockResolvedValue({
+      sessionId: 'headless-session',
+      messages: [],
+    });
+    runtimeState.dispose.mockResolvedValue(undefined);
+    runtimeState.create.mockResolvedValue({
+      dispose: runtimeState.dispose,
+    });
     agentState.chatStream.mockImplementation(mockChatGenerator([]));
-    agentState.create.mockResolvedValue({
+    agentState.createWithRuntime.mockResolvedValue({
       chatStream: agentState.chatStream,
     });
   });
@@ -85,8 +112,10 @@ describe('headless runner', () => {
       .join('');
 
     expect(exitCode).toBe(0);
-    expect(agentState.create).toHaveBeenCalledWith(
+    expect(agentState.createWithRuntime).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
+        sessionId: 'headless-session',
         permissionMode: 'yolo',
       })
     );
@@ -177,6 +206,59 @@ describe('headless runner', () => {
     );
   });
 
+  it('reuses resolved sessions and forwards tool filters to runtime-backed agents', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    sessionState.resolveNonInteractiveSession.mockResolvedValueOnce({
+      sessionId: 'resume-session',
+      messages: [{ role: 'assistant', content: 'previous answer' }],
+    });
+    agentState.chatStream.mockImplementationOnce(mockChatGenerator([{ kind: 'stream_end' }]));
+
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'continue from here',
+        allowedTools: ['Read'],
+        disallowedTools: ['Write'],
+        continue: true,
+      },
+      { stdout, stderr }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(sessionState.resolveNonInteractiveSession).toHaveBeenCalledWith({
+      sessionId: undefined,
+      continue: true,
+      resume: undefined,
+      fallbackSessionPrefix: 'headless',
+    });
+    expect(runtimeState.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'resume-session',
+      })
+    );
+    expect(agentState.createWithRuntime).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        sessionId: 'resume-session',
+        toolWhitelist: ['Read'],
+        toolBlacklist: ['Write'],
+      })
+    );
+    expect(agentState.chatStream).toHaveBeenCalledWith(
+      'continue from here',
+      expect.objectContaining({
+        sessionId: 'resume-session',
+        messages: [{ role: 'assistant', content: 'previous answer' }],
+      }),
+      expect.anything()
+    );
+  });
+
   it('rejects invalid runtime options before creating the agent', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
@@ -197,7 +279,7 @@ describe('headless runner', () => {
       .join('');
 
     expect(exitCode).toBe(1);
-    expect(agentState.create).not.toHaveBeenCalled();
+    expect(agentState.createWithRuntime).not.toHaveBeenCalled();
     expect(stderrOutput).toContain('outputFormat');
   });
 

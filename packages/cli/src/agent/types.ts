@@ -58,6 +58,7 @@ export interface AgentOptions {
   permissionMode?: PermissionMode;
   maxTurns?: number; // 最大对话轮次 (-1=无限制, 0=禁用对话, N>0=限制轮次)
   toolWhitelist?: string[]; // 工具白名单（仅允许指定工具）
+  toolBlacklist?: string[]; // 工具黑名单（禁止指定工具）
   modelId?: string;
 
   // MCP 配置

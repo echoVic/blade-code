@@ -6,33 +6,43 @@
  * while the exported JSONL contract remains snake_case and versioned.
  */
 import type { Argv } from 'yargs';
+import yargs from 'yargs';
+import { hideBin } from 'yargs/helpers';
 import { z } from 'zod';
 import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
 import type { LoopEvent } from '../agent/loop/types.js';
+import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
 import type { ChatContext } from '../agent/types.js';
+import { globalOptions } from '../cli/config.js';
+import {
+  loadConfiguration,
+  validateOutput,
+  validatePermissions,
+} from '../cli/middleware.js';
 import { PermissionMode } from '../config/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { TodoItem } from '../tools/builtin/todo/types.js';
-import { getCwd } from '../utils/cwd.js';
 import type {
   ConfirmationDetails,
   ConfirmationResponse,
 } from '../tools/types/ExecutionTypes.js';
 import {
+  formatToolCallSummary,
+  formatToolDisplay,
+} from '../ui/utils/toolFormatters.js';
+import { getCwd } from '../utils/cwd.js';
+import {
+  createHeadlessJsonlEvent,
+  type HeadlessJsonlEventPayload,
+  type HeadlessJsonlEventType,
+} from './headlessEvents.js';
+import {
   initializeCliPlugins,
   normalizeCliInput,
   readCliInput,
 } from './shared/commandInput.js';
-import {
-  type HeadlessJsonlEventPayload,
-  type HeadlessJsonlEventType,
-  createHeadlessJsonlEvent,
-} from './headlessEvents.js';
-import {
-  formatToolCallSummary,
-  formatToolDisplay,
-} from '../ui/utils/toolFormatters.js';
+import { resolveNonInteractiveSession } from './shared/sessionContext.js';
 
 /** Minimal writable stream contract used by headless output sinks. */
 interface WritableLike {
@@ -67,6 +77,10 @@ export const HeadlessOptionsSchema = z.object({
   mcpConfig: z.array(z.string()).optional(),
   strictMcpConfig: z.boolean().optional(),
   sessionId: z.string().optional(),
+  allowedTools: z.array(z.string()).optional(),
+  disallowedTools: z.array(z.string()).optional(),
+  continue: z.boolean().optional(),
+  resume: z.union([z.string(), z.boolean()]).optional(),
   outputFormat: HeadlessOutputFormatSchema.optional(),
 });
 
@@ -93,6 +107,14 @@ export interface HeadlessOptions {
   strictMcpConfig?: boolean;
   /** Session identifier used in the chat context. */
   sessionId?: string;
+  /** Tool whitelist for this run. */
+  allowedTools?: string[];
+  /** Tool blacklist for this run. */
+  disallowedTools?: string[];
+  /** Continue the most recent conversation. */
+  continue?: boolean;
+  /** Resume a specific conversation. */
+  resume?: string | boolean;
   /** Terminal output format. */
   outputFormat?: string;
 }
@@ -565,6 +587,7 @@ export async function runHeadless(
   let eventWriter = createEventWriter(io, outputFormat);
   const streamState = new HeadlessStreamState();
   const phaseState: HeadlessPhaseState = { targetLocked: false };
+  let runtime: SessionRuntime | undefined;
 
   try {
     const validatedOptions = validateHeadlessOptions(options);
@@ -585,22 +608,38 @@ export async function runHeadless(
     const permissionMode =
       (validatedOptions.permissionMode as PermissionMode | undefined) ??
       PermissionMode.YOLO;
-    const contextMessages: Message[] = [];
+    const { sessionId, messages } = await resolveNonInteractiveSession({
+      sessionId: validatedOptions.sessionId,
+      continue: validatedOptions.continue,
+      resume: validatedOptions.resume,
+      fallbackSessionPrefix: 'headless',
+    });
+    const contextMessages: Message[] = [...messages];
     const chatContext: ChatContext = {
       messages: contextMessages,
       userId: 'cli-user',
-      sessionId: validatedOptions.sessionId ?? `headless-${Date.now()}`,
+      sessionId,
       workspaceRoot: getCwd(),
       permissionMode,
       confirmationHandler: createConfirmationHandler(),
     };
 
-    const agent = await Agent.create({
+    runtime = await SessionRuntime.create({
+      sessionId,
+      modelId: validatedOptions.model,
+      mcpConfig: validatedOptions.mcpConfig,
+      strictMcpConfig: validatedOptions.strictMcpConfig,
+    });
+
+    const agent = await Agent.createWithRuntime(runtime, {
+      sessionId,
       systemPrompt: validatedOptions.systemPrompt,
       appendSystemPrompt: validatedOptions.appendSystemPrompt,
       maxTurns: validatedOptions.maxTurns,
       modelId: validatedOptions.model,
       permissionMode,
+      toolWhitelist: validatedOptions.allowedTools,
+      toolBlacklist: validatedOptions.disallowedTools,
       mcpConfig: validatedOptions.mcpConfig,
       strictMcpConfig: validatedOptions.strictMcpConfig,
     });
@@ -765,6 +804,8 @@ export async function runHeadless(
     }
     eventWriter.error(`Error: ${extractHeadlessErrorMessage(error)}`);
     return 1;
+  } finally {
+    await runtime?.dispose();
   }
 }
 
@@ -775,19 +816,19 @@ export async function handleHeadlessMode(): Promise<boolean> {
     return false;
   }
 
-  const yargs = (await import('yargs')).default;
-  const { hideBin } = await import('yargs/helpers');
-  const { globalOptions } = await import('../cli/config.js');
   const {
-    loadConfiguration,
-    validateOutput,
-    validatePermissions,
-  } = await import('../cli/middleware.js');
+    headless: _h,
+    'output-format': _of,
+    'system-prompt': _sp,
+    'append-system-prompt': _asp,
+    'max-turns': _mt,
+    ...cliOptions
+  } = globalOptions;
 
   const cli = yargs(hideBin(process.argv))
     .scriptName('blade')
     .strict(false)
-    .options(globalOptions)
+    .options(cliOptions)
     .middleware([validatePermissions, loadConfiguration, validateOutput]);
 
   headlessCommand(cli);

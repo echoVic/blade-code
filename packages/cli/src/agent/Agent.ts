@@ -12,7 +12,6 @@
 
 import * as os from 'os';
 import * as path from 'path';
-import { getCwd } from '../utils/cwd.js';
 import {
   type BladeConfig,
   ConfigManager,
@@ -34,7 +33,6 @@ import {
   type IChatService,
   type Message,
 } from '../services/ChatServiceInterface.js';
-
 import { discoverSkills } from '../skills/index.js';
 import { SpecManager } from '../spec/SpecManager.js';
 import {
@@ -51,6 +49,7 @@ import { getBuiltinTools } from '../tools/builtin/index.js';
 import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { Tool } from '../tools/types/index.js';
+import { getCwd } from '../utils/cwd.js';
 import { isThinkingModel } from '../utils/modelDetection.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import { executeLoopGenerator } from './loop/index.js';
@@ -132,6 +131,8 @@ export class Agent {
       permissionConfig: permissions,
       permissionMode,
       maxHistorySize: 1000,
+      toolWhitelist: this.runtimeOptions.toolWhitelist,
+      toolBlacklist: this.runtimeOptions.toolBlacklist,
     });
   }
 
@@ -231,14 +232,28 @@ export class Agent {
     const configManager = ConfigManager.getInstance();
     configManager.validateConfig(config);
 
+    // 3.5. 从 RuntimeConfig 继承 CLI 工具约束（allowedTools / disallowedTools）
+    const mergedOptions = { ...options };
+    if (!mergedOptions.toolWhitelist && config.allowedTools?.length) {
+      mergedOptions.toolWhitelist = config.allowedTools;
+    }
+    if (!mergedOptions.toolBlacklist && config.disallowedTools?.length) {
+      mergedOptions.toolBlacklist = config.disallowedTools;
+    }
+
     // 4. 创建并初始化 Agent
     // 将 options 作为运行时参数传递
-    const agent = new Agent(config, options);
+    const agent = new Agent(config, mergedOptions);
     await agent.initialize();
 
     // 5. 应用工具白名单（如果指定）
-    if (options.toolWhitelist && options.toolWhitelist.length > 0) {
-      agent.applyToolWhitelist(options.toolWhitelist);
+    if (mergedOptions.toolWhitelist && mergedOptions.toolWhitelist.length > 0) {
+      agent.applyToolWhitelist(mergedOptions.toolWhitelist);
+    }
+
+    // 6. 应用工具黑名单（如果指定）
+    if (mergedOptions.toolBlacklist && mergedOptions.toolBlacklist.length > 0) {
+      agent.applyToolBlacklist(mergedOptions.toolBlacklist);
     }
 
     return agent;
@@ -248,10 +263,19 @@ export class Agent {
     runtime: SessionRuntime,
     options: AgentOptions = {}
   ): Promise<Agent> {
+    const storeConfig = getConfig();
+    const mergedOptions = { ...options };
+    if (!mergedOptions.toolWhitelist && storeConfig?.allowedTools?.length) {
+      mergedOptions.toolWhitelist = storeConfig.allowedTools;
+    }
+    if (!mergedOptions.toolBlacklist && storeConfig?.disallowedTools?.length) {
+      mergedOptions.toolBlacklist = storeConfig.disallowedTools;
+    }
+
     const agent = new Agent(
       runtime.getConfig(),
-      options,
-      runtime.createExecutionPipeline(options),
+      mergedOptions,
+      runtime.createExecutionPipeline(mergedOptions),
       runtime
     );
     await agent.initialize();
@@ -706,7 +730,6 @@ export class Agent {
     const registry = this.executionPipeline.getRegistry();
     const allTools = registry.getAll();
 
-    // 过滤掉不在白名单中的工具
     const toolsToRemove = allTools.filter((tool) => !whitelist.includes(tool.name));
 
     for (const tool of toolsToRemove) {
@@ -716,6 +739,19 @@ export class Agent {
     logger.debug(
       `Applied tool whitelist: ${whitelist.join(', ')} (removed ${toolsToRemove.length} tools)`
     );
+  }
+
+  public applyToolBlacklist(blacklist: string[]): void {
+    const registry = this.executionPipeline.getRegistry();
+    const blacklistSet = new Set(blacklist);
+
+    for (const tool of registry.getAll()) {
+      if (blacklistSet.has(tool.name)) {
+        registry.unregister(tool.name);
+      }
+    }
+
+    logger.debug(`Applied tool blacklist: ${blacklist.join(', ')}`);
   }
 
   /**

@@ -54,18 +54,22 @@ export class PermissionStage implements PipelineStage {
   readonly name = 'permission';
   private permissionChecker: PermissionChecker;
   private readonly sessionApprovals: SessionApprovalStore;
-  // 重命名为 defaultPermissionMode，作为回退值
-  // 实际权限检查时优先使用 execution.context.permissionMode（动态值）
   private readonly defaultPermissionMode: PermissionMode;
+  private readonly toolWhitelist: ReadonlySet<string> | null;
+  private readonly toolBlacklist: ReadonlySet<string> | null;
 
   constructor(
     permissionConfig: PermissionConfig,
     sessionApprovals: SessionApprovalStore,
-    permissionMode: PermissionMode
+    permissionMode: PermissionMode,
+    toolWhitelist?: readonly string[],
+    toolBlacklist?: readonly string[]
   ) {
     this.permissionChecker = new PermissionChecker(permissionConfig);
     this.sessionApprovals = sessionApprovals;
     this.defaultPermissionMode = permissionMode;
+    this.toolWhitelist = toolWhitelist?.length ? new Set(toolWhitelist) : null;
+    this.toolBlacklist = toolBlacklist?.length ? new Set(toolBlacklist) : null;
   }
 
   /**
@@ -79,6 +83,19 @@ export class PermissionStage implements PipelineStage {
     const tool = execution._internal.tool;
     if (!tool) {
       execution.abort('Discovery stage failed; cannot perform permission check');
+      return;
+    }
+
+    if (this.toolBlacklist?.has(tool.name)) {
+      execution.abort(
+        `Tool "${tool.name}" is blocked by --disallowed-tools`
+      );
+      return;
+    }
+    if (this.toolWhitelist && !this.toolWhitelist.has(tool.name)) {
+      execution.abort(
+        `Tool "${tool.name}" is not in --allowed-tools whitelist`
+      );
       return;
     }
 
