@@ -82,19 +82,56 @@ export interface ExecutionContext {
   deferredToolManager?: DeferredToolManager;
 }
 
+/**
+ * 权限行为
+ */
+export type PermissionBehavior = 'allow' | 'ask' | 'deny';
+
+/**
+ * 决策来源
+ * - rule: 来自 PermissionChecker 规则库 / 权限模式 / 会话批准 / 敏感文件调整
+ * - hook: 来自用户 PreToolUse Hook
+ * - default: 兜底(无规则匹配 & 无 Hook 决策)
+ */
+export type PermissionDecisionSource = 'rule' | 'hook' | 'default';
+
+/**
+ * 权限决策
+ *
+ * 不变量:
+ *   Rule \ Hook   | deny | ask  | allow | (none)
+ *   --------------|------|------|-------|--------
+ *   deny          | deny | deny | deny  | deny
+ *   ask           | ask  | ask  | ask   | ask
+ *   allow         | deny | ask  | allow | allow
+ *   (none=ask)    | deny | ask  | allow | ask
+ *
+ * Hook 只能收紧规则库,不能放宽。
+ */
+export interface PermissionDecision {
+  behavior: PermissionBehavior;
+  source: PermissionDecisionSource;
+  reason?: string;
+  matchedRule?: string;
+}
+
 interface ToolExecutionInternalState {
-  // DiscoveryStage 设置
+  // DiscoveryStage / ValidationStage 设置
   tool?: Tool;
 
-  // PermissionStage 设置 (含 Zod 验证和默认值处理)
+  // ValidationStage 设置 (Zod 验证和默认值处理完成后的调用实例)
   invocation?: ToolInvocation<unknown>;
-  permissionCheckResult?: { reason?: string };
-  needsConfirmation?: boolean;
-  confirmationReason?: string;
-  permissionSignature?: string;
 
-  // HookStage 设置
+  // RuleBasedPermissionStage 设置
+  permissionSignature?: string; // 供会话级批准持久化使用
+  ruleDecision?: PermissionDecision; // 规则库 + 模式 + 敏感文件调整后的决策
+
+  // PreToolUseHookStage 设置
+  hookDecision?: PermissionDecision; // Hook 返回的决策 (若 Hook 未表态则缺席)
   hookToolUseId?: string; // 用于关联 PreToolUse 和 PostToolUse 事件
+
+  // ResolveDecisionStage 设置
+  effectiveDecision?: PermissionDecision; // 仲裁后的最终决策;下游 Stage 只读此字段
 }
 
 /**

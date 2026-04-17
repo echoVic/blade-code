@@ -24,13 +24,16 @@ import {
   DiscoveryStage,
   ExecutionStage,
   FormattingStage,
-  PermissionStage,
 } from './PipelineStages.js';
 import { AutoVerifyStage } from './AutoVerifyStage.js';
+import { ValidationStage } from './stages/ValidationStage.js';
+import { RuleBasedPermissionStage } from './stages/RuleBasedPermissionStage.js';
+import { ResolveDecisionStage } from './stages/ResolveDecisionStage.js';
 
 /**
- * 8阶段执行管道
- * Discovery -> Permission -> Hook(Pre) -> Confirmation -> Execution -> PostHook -> AutoVerify -> Formatting
+ * 10阶段执行管道
+ * Discovery -> Validation -> RulePermission -> Hook(Pre) -> ResolveDecision
+ *   -> Confirmation -> Execution -> PostHook -> AutoVerify -> Formatting
  */
 export class ExecutionPipeline extends EventEmitter {
   private stages: PipelineStage[];
@@ -55,23 +58,23 @@ export class ExecutionPipeline extends EventEmitter {
     };
     const permissionMode = config.permissionMode ?? PermissionMode.DEFAULT;
 
-    // 初始化8个执行阶段
-    const permissionStage = new PermissionStage(
+    // 拆分原 PermissionStage 为三个独立 Stage + 新增决策仲裁 Stage
+    const rulePermissionStage = new RuleBasedPermissionStage(
       permissionConfig,
       this.sessionApprovals,
-      permissionMode,
-      config.toolWhitelist,
-      config.toolBlacklist
+      permissionMode
     );
 
     this.stages = [
       new DiscoveryStage(this.registry), // 工具发现
-      permissionStage, // 权限检查（含 Zod 验证和默认值处理）
-      new HookStage(), // Hook 检查（PreToolUse hooks）
+      new ValidationStage(config.toolWhitelist, config.toolBlacklist), // 黑白名单 + Zod 验证
+      rulePermissionStage, // 规则库权限检查 + 模式 + 会话批准 + 安全检查 → ruleDecision
+      new HookStage(), // PreToolUse hooks → hookDecision
+      new ResolveDecisionStage(), // 仲裁 ruleDecision ⊕ hookDecision → effectiveDecision
       new ConfirmationStage(
         this.sessionApprovals,
-        permissionStage.getPermissionChecker()
-      ), // 用户确认
+        rulePermissionStage.getPermissionChecker()
+      ), // 用户确认 (仅当 effectiveDecision = ask)
       new ExecutionStage(), // 实际执行
       new PostToolUseHookStage(), // PostToolUse hooks
       new AutoVerifyStage(), // 自动类型检查验证
