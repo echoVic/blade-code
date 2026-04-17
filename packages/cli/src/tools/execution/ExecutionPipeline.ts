@@ -13,8 +13,12 @@ import type {
   PipelineStage,
   ToolResult,
 } from '../types/index.js';
-import { ToolErrorType } from '../types/ToolTypes.js';
+import { ToolErrorType, ToolKind } from '../types/ToolTypes.js';
 import { FileLockManager } from './FileLockManager.js';
+import {
+  ConcurrencyScheduler,
+  type ConcurrencyLimits,
+} from './ConcurrencyScheduler.js';
 import {
   InMemorySessionApprovalStore,
   type SessionApprovalStore,
@@ -40,6 +44,7 @@ export class ExecutionPipeline extends EventEmitter {
   private executionHistory: ExecutionHistoryEntry[] = [];
   private readonly maxHistorySize: number;
   private readonly sessionApprovals: SessionApprovalStore;
+  private readonly scheduler: ConcurrencyScheduler;
 
   constructor(
     private registry: ToolRegistry,
@@ -48,7 +53,17 @@ export class ExecutionPipeline extends EventEmitter {
     super();
 
     this.maxHistorySize = config.maxHistorySize || 1000;
-    this.sessionApprovals = config.approvalStore || new InMemorySessionApprovalStore();
+    this.sessionApprovals =
+      config.approvalStore || new InMemorySessionApprovalStore();
+    // scheduler 选择策略:
+    // - 显式传 scheduler: 完全尊重调用方
+    // - 传 concurrencyLimits: 建立本 pipeline 独立实例 (opt-in 隔离)
+    // - 什么都不传: 默认用进程级单例, 多 pipeline/多 agent 共享限流配额
+    this.scheduler =
+      config.scheduler ??
+      (config.concurrencyLimits
+        ? new ConcurrencyScheduler(config.concurrencyLimits)
+        : ConcurrencyScheduler.getInstance());
 
     // 使用提供的权限配置或默认配置
     const permissionConfig: PermissionConfig = config.permissionConfig || {
@@ -113,16 +128,19 @@ export class ExecutionPipeline extends EventEmitter {
     const filePath =
       needsFileLock && params.file_path ? String(params.file_path) : null;
 
-    // 如果需要文件锁，使用 FileLockManager
-    if (needsFileLock && filePath) {
-      const lockManager = FileLockManager.getInstance();
-      return lockManager.acquireLock(filePath, () =>
-        this.executeWithPipeline(execution, executionId, startTime)
-      );
-    }
+    // 运行策略:
+    // 1. FileLockManager: 同文件写操作串行 (独立于桶配额)
+    // 2. ConcurrencyScheduler: 按 ToolKind 桶限流 (readonly ∞ / execute 限 3)
+    // 先过 scheduler,再在桶内走 file lock 或直接执行
+    const kind = tool?.kind ?? ToolKind.ReadOnly;
+    const runPipeline = () =>
+      this.executeWithPipeline(execution, executionId, startTime);
+    const runWithLock =
+      needsFileLock && filePath
+        ? () => FileLockManager.getInstance().acquireLock(filePath, runPipeline)
+        : runPipeline;
 
-    // 否则直接执行
-    return this.executeWithPipeline(execution, executionId, startTime);
+    return this.scheduler.schedule(kind, runWithLock);
   }
 
   /**
@@ -289,7 +307,14 @@ export class ExecutionPipeline extends EventEmitter {
   }
 
   /**
-   * 并行执行工具（带并发控制）
+   * 并行执行工具
+   *
+   * 两层并发控制 (正交):
+   * 1. 本批次上限 `maxConcurrency`: batch-level 信号量, 限制同时派发的请求数
+   * 2. 桶配额: ConcurrencyScheduler 按 ToolKind 分桶限流 + FileLockManager 同文件串行
+   *
+   * 即使本批次派发过去, 仍会在 scheduler 桶内排队。
+   * `maxConcurrency <= 0` 视为无上限。
    */
   async executeParallel(
     requests: Array<{
@@ -299,24 +324,39 @@ export class ExecutionPipeline extends EventEmitter {
     }>,
     maxConcurrency: number = 5
   ): Promise<ToolResult[]> {
-    const results: ToolResult[] = [];
-    const executing: Promise<ToolResult>[] = [];
+    const limit =
+      maxConcurrency > 0 ? maxConcurrency : Number.POSITIVE_INFINITY;
 
-    for (let i = 0; i < requests.length; i++) {
-      const request = requests[i];
-      const promise = this.execute(request.toolName, request.params, request.context);
-
-      executing.push(promise);
-
-      // 控制并发数量
-      if (executing.length >= maxConcurrency || i === requests.length - 1) {
-        const batchResults = await Promise.all(executing);
-        results.push(...batchResults);
-        executing.length = 0; // 清空数组
-      }
+    // 无上限: 直接全部派发
+    if (!Number.isFinite(limit) || limit >= requests.length) {
+      return Promise.all(
+        requests.map((r) => this.execute(r.toolName, r.params, r.context))
+      );
     }
 
+    // 有上限: FIFO 信号量, 结果按原始顺序返回
+    const results: ToolResult[] = new Array(requests.length);
+    let nextIdx = 0;
+
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const i = nextIdx++;
+        if (i >= requests.length) return;
+        const r = requests[i];
+        results[i] = await this.execute(r.toolName, r.params, r.context);
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(limit, requests.length) }, () => worker())
+    );
+
     return results;
+  }
+
+  /** 获取 scheduler 状态(用于监控/测试) */
+  getSchedulerStats() {
+    return this.scheduler.getStats();
   }
 
   /**
@@ -455,6 +495,10 @@ export interface ExecutionPipelineConfig {
   approvalStore?: SessionApprovalStore;
   toolWhitelist?: readonly string[];
   toolBlacklist?: readonly string[];
+  /** 自定义并发调度器; 不传则创建新实例 */
+  scheduler?: ConcurrencyScheduler;
+  /** 并发桶配额覆盖; 仅在未提供 scheduler 时生效 */
+  concurrencyLimits?: ConcurrencyLimits;
 }
 
 /**
