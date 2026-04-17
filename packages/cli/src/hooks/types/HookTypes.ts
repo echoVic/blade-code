@@ -476,6 +476,8 @@ export interface HookOutput {
 export enum HookType {
   Command = 'command',
   Prompt = 'prompt',
+  Function = 'function',
+  Http = 'http',
 }
 
 /**
@@ -513,9 +515,100 @@ export interface PromptHook {
 }
 
 /**
+ * Function Hook — 进程内函数 Hook (SDK / 插件扩展用)
+ *
+ * 通过 JS/TS 函数直接介入 Hook 链,无需 shell IPC,适合:
+ * - SDK 使用者把自定义逻辑注入到 Hook 事件
+ * - 插件/扩展注册即时决策回调
+ * - 单元测试场景
+ *
+ * 注意: handler 必须是可调用引用,因此不能通过配置文件序列化注册。
+ *   通过 `HookManager.registerFunction(...)` 在代码里注册。
+ */
+export interface FunctionHook {
+  type: HookType.Function;
+
+  /**
+   * Hook 处理函数。
+   * - 接收 HookInput (与 shell hook stdin 相同的数据结构)
+   * - 接收 HookExecutionContext (projectDir/sessionId/permissionMode/abortSignal)
+   * - 返回 HookOutput 或 undefined (视作无决策,等价于 allow/pass-through)
+   * - 抛异常视作 non-blocking error,记录日志但继续流程
+   */
+  handler: (
+    input: HookInput,
+    ctx: HookExecutionContext
+  ) => Promise<HookOutput | undefined> | HookOutput | undefined;
+
+  /** 超时时间 (秒), 默认 10s */
+  timeout?: number;
+}
+
+/**
  * Hook 联合类型
  */
-export type Hook = CommandHook | PromptHook;
+export type Hook = CommandHook | PromptHook | FunctionHook | HttpHook;
+
+/**
+ * HTTP Hook — 远程 Webhook
+ *
+ * 把 Hook 事件转发到外部 HTTP 服务,用于企业级审批、集中化审计、
+ * 第三方安全扫描等场景。
+ *
+ * 固定语义:
+ * - 方法: POST
+ * - 请求体: JSON (HookInput 结构, 与 shell hook stdin 相同)
+ * - 响应: JSON (HookOutput 结构),非 JSON 按错误处理
+ *
+ * 安全默认 (见 HttpHookPolicy):
+ * - 默认拒绝 loopback (127.0.0.1) 和私有 IP 段 (10/172.16-31/192.168/169.254)
+ * - 默认要求 HTTPS (本地例外需显式 allowedHosts)
+ * - 不跟随 redirect (防 allowlist 绕过)
+ */
+export interface HttpHook {
+  type: HookType.Http;
+
+  /** 完整 URL (必须是 http:// 或 https://) */
+  url: string;
+
+  /**
+   * 自定义请求头; value 支持 ${ENV_VAR} 替换。
+   * 例: { Authorization: 'Bearer ${SECURITY_HOOK_TOKEN}' }
+   */
+  headers?: Record<string, string>;
+
+  /** 超时时间 (秒), 默认 10s */
+  timeout?: number;
+
+  /** 重试次数, 默认 0 (不重试); 指数退避 */
+  retries?: number;
+
+  /** 跳过 TLS 证书校验 (仅 dev/自签名), 默认 false */
+  allowInsecureTLS?: boolean;
+
+  /** 响应体最大字节数, 默认 256 KB */
+  maxResponseBytes?: number;
+}
+
+/**
+ * HTTP Hook 全局安全策略 (进程级)
+ */
+export interface HttpHookPolicy {
+  /**
+   * 白名单 hostname (精确匹配或 *.example.com 通配).
+   * 匹配成功时跳过 loopback/private 检查以及 HTTPS 强制。
+   */
+  allowedHosts?: string[];
+
+  /** 允许访问 loopback (127.x / ::1 / localhost), 默认 false */
+  allowLoopback?: boolean;
+
+  /** 允许访问 RFC1918 私有 IP 段, 默认 false */
+  allowPrivateRanges?: boolean;
+
+  /** 允许 http:// (非 HTTPS), 默认 false */
+  allowHttp?: boolean;
+}
 
 /**
  * Matcher 配置
@@ -564,6 +657,9 @@ export interface HookConfig {
 
   /** 最大并发 Hook 数 */
   maxConcurrentHooks?: number;
+
+  /** HTTP Hook 全局安全策略 */
+  httpPolicy?: HttpHookPolicy;
 
   // ========== 工具执行类 ==========
   /** PreToolUse Hooks */

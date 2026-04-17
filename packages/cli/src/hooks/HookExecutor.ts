@@ -7,18 +7,25 @@
 import { OutputParser } from './OutputParser.js';
 import { SecureProcessExecutor } from './SecureProcessExecutor.js';
 import {
+  substituteEnvVars,
+  validateHookUrl,
+} from './HttpHookSecurity.js';
+import {
   type CommandHook,
   type CompactionHookResult,
+  type FunctionHook,
   type Hook,
   type HookExecutionContext,
   type HookExecutionResult,
   type HookInput,
   HookType,
+  type HttpHook,
   type NotificationHookResult,
   type PermissionRequestHookResult,
   type PostToolHookResult,
   type PostToolUseFailureHookResult,
   type PreToolHookResult,
+  type ProcessResult,
   type PromptHook,
   type SessionEndHookResult,
   type SessionStartHookResult,
@@ -686,6 +693,14 @@ export class HookExecutor {
       return this.executePromptHook(hook, input, context);
     }
 
+    if (hook.type === HookType.Function) {
+      return this.executeFunctionHook(hook, input, context);
+    }
+
+    if (hook.type === HookType.Http) {
+      return this.executeHttpHook(hook, input, context);
+    }
+
     throw new Error(`Hook type ${(hook as Hook).type} not supported`);
   }
 
@@ -823,6 +838,244 @@ export class HookExecutor {
   }
 
   /**
+   * 执行 Function Hook
+   *
+   * 直接调用 handler,支持超时/AbortSignal,复用 OutputParser 产出与
+   * Command/Prompt 一致的 HookExecutionResult。
+   */
+  private async executeFunctionHook(
+    hook: FunctionHook,
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<HookExecutionResult> {
+    const timeoutMs = (hook.timeout ?? 10) * 1000;
+
+    try {
+      const output = await this.runFunctionWithTimeout(
+        hook.handler,
+        input,
+        context,
+        timeoutMs
+      );
+
+      // undefined / null → 视作 success, 无决策 (pass-through)
+      if (output === undefined || output === null) {
+        return { success: true, hook };
+      }
+
+      // 复用 OutputParser: 合成 ProcessResult 走 JSON 验证 + decision 解析
+      const synthesized: ProcessResult = {
+        stdout: JSON.stringify(output),
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+      };
+      return this.outputParser.parse(synthesized, hook, {
+        timeoutBehavior: context.config.timeoutBehavior,
+        failureBehavior: context.config.failureBehavior,
+      });
+    } catch (err) {
+      if ((err as { isTimeout?: boolean }).isTimeout) {
+        const timeoutResult: ProcessResult = {
+          stdout: '',
+          stderr: `Function hook timeout after ${timeoutMs}ms`,
+          exitCode: 124,
+          timedOut: true,
+        };
+        return this.outputParser.parse(timeoutResult, hook, {
+          timeoutBehavior: context.config.timeoutBehavior,
+          failureBehavior: context.config.failureBehavior,
+        });
+      }
+      return {
+        success: false,
+        blocking: false,
+        error: err instanceof Error ? err.message : String(err),
+        hook,
+      };
+    }
+  }
+
+  /**
+   * 带超时地执行 function handler。
+   * handler 本身不可被强制中止,超时后调用方立即拿到错误,handler 自行清理。
+   */
+  private runFunctionWithTimeout(
+    handler: FunctionHook['handler'],
+    input: HookInput,
+    context: HookExecutionContext,
+    timeoutMs: number
+  ): Promise<ReturnType<FunctionHook['handler']>> {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const err = Object.assign(
+          new Error(`Function hook timed out after ${timeoutMs}ms`),
+          { isTimeout: true }
+        );
+        reject(err);
+      }, timeoutMs);
+
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error('Function hook aborted'));
+      };
+      context.abortSignal?.addEventListener('abort', onAbort, { once: true });
+
+      Promise.resolve()
+        .then(() => handler(input, context))
+        .then(
+          (value) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            context.abortSignal?.removeEventListener('abort', onAbort);
+            resolve(value);
+          },
+          (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            context.abortSignal?.removeEventListener('abort', onAbort);
+            reject(err);
+          }
+        );
+    });
+  }
+
+  /**
+   * 执行 HTTP Hook
+   *
+   * - 安全检查: validateHookUrl (loopback/私网/TLS/白名单)
+   * - POST + JSON body (HookInput 原样)
+   * - 响应 JSON 复用 OutputParser
+   * - 失败/重试: 指数退避 (2^i * 200ms)
+   * - 响应大小上限: 默认 256KB
+   */
+  private async executeHttpHook(
+    hook: HttpHook,
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<HookExecutionResult> {
+    const timeoutMs = (hook.timeout ?? 10) * 1000;
+    const maxBytes = hook.maxResponseBytes ?? 256 * 1024;
+    const maxAttempts = Math.max(1, (hook.retries ?? 0) + 1);
+
+    try {
+      validateHookUrl(hook.url, context.config.httpPolicy);
+    } catch (err) {
+      // 安全检查失败: 视作阻塞错误, 拒绝继续
+      return {
+        success: false,
+        blocking: true,
+        error: err instanceof Error ? err.message : String(err),
+        hook,
+      };
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      ...substituteEnvVars(hook.headers),
+    };
+    const body = JSON.stringify(input);
+
+    let lastError: Error | undefined;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        const delayMs = Math.min(2 ** attempt * 200, 5000);
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const externalAbort = () => controller.abort();
+      context.abortSignal?.addEventListener('abort', externalAbort, {
+        once: true,
+      });
+
+      try {
+        const response = await fetch(hook.url, {
+          method: 'POST',
+          headers,
+          body,
+          redirect: 'manual', // 不跟随 redirect
+          signal: controller.signal,
+        });
+
+        // redirect 视为配置错误
+        if (response.status >= 300 && response.status < 400) {
+          lastError = new Error(
+            `HTTP hook received redirect (${response.status}); redirects are disabled`
+          );
+          continue;
+        }
+
+        if (!response.ok) {
+          lastError = new Error(
+            `HTTP hook returned ${response.status} ${response.statusText}`
+          );
+          // 4xx 不重试 (客户端错误); 5xx 重试
+          if (response.status >= 400 && response.status < 500) break;
+          continue;
+        }
+
+        // 读取响应 (限大小)
+        const bodyText = await readBodyWithLimit(response, maxBytes);
+        const synthesized: ProcessResult = {
+          stdout: bodyText,
+          stderr: '',
+          exitCode: 0,
+          timedOut: false,
+        };
+        return this.outputParser.parse(synthesized, hook, {
+          timeoutBehavior: context.config.timeoutBehavior,
+          failureBehavior: context.config.failureBehavior,
+        });
+      } catch (err) {
+        const isAbort =
+          (err as Error).name === 'AbortError' ||
+          (err as { code?: string }).code === 'ABORT_ERR';
+        if (isAbort && context.abortSignal?.aborted) {
+          lastError = new Error('HTTP hook aborted by caller');
+          break;
+        }
+        if (isAbort) {
+          // 超时: 按 timeoutBehavior 走
+          const timeoutResult: ProcessResult = {
+            stdout: '',
+            stderr: `HTTP hook timeout after ${timeoutMs}ms`,
+            exitCode: 124,
+            timedOut: true,
+          };
+          if (attempt === maxAttempts - 1) {
+            return this.outputParser.parse(timeoutResult, hook, {
+              timeoutBehavior: context.config.timeoutBehavior,
+              failureBehavior: context.config.failureBehavior,
+            });
+          }
+          lastError = new Error(`HTTP hook timeout attempt ${attempt + 1}`);
+          continue;
+        }
+        lastError = err as Error;
+      } finally {
+        clearTimeout(timer);
+        context.abortSignal?.removeEventListener('abort', externalAbort);
+      }
+    }
+
+    return {
+      success: false,
+      blocking: false,
+      error: lastError?.message ?? 'HTTP hook failed',
+      hook,
+    };
+  }
+
+  /**
    * 获取或创建 ChatService 实例（按 modelId 缓存）
    */
   private async getOrCreateChatService(
@@ -953,4 +1206,37 @@ export class HookExecutor {
     // 等待所有剩余的 hooks 完成
     return Promise.all(results);
   }
+}
+
+
+/**
+ * 读取 fetch Response body, 超过 maxBytes 时截断并附加警告注释
+ */
+async function readBodyWithLimit(
+  response: Response,
+  maxBytes: number
+): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+
+  const decoder = new TextDecoder();
+  let received = 0;
+  let text = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > maxBytes) {
+      try {
+        reader.cancel();
+      } catch {
+        // ignore
+      }
+      text += decoder.decode(value.slice(0, maxBytes - (received - value.byteLength)));
+      break;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  text += decoder.decode();
+  return text;
 }

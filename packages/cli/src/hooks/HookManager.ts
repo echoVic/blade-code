@@ -14,11 +14,15 @@ import { Matcher } from './Matcher.js';
 import {
   type CompactionHookResult,
   type CompactionInput,
+  type FunctionHook,
   type Hook,
   type HookConfig,
   HookEvent,
   type HookExecutionContext,
+  type HookMatcher,
+  HookType,
   type MatchContext,
+  type MatcherConfig,
   type NotificationHookResult,
   type NotificationInput,
   type PermissionRequestHookResult,
@@ -117,6 +121,63 @@ export class HookManager {
    */
   getConfig(): Readonly<HookConfig> {
     return this.config;
+  }
+
+  /**
+   * 注册一个内存 Function Hook
+   *
+   * 适用场景:
+   * - SDK / 插件以代码方式注入 Hook (无需 shell 脚本)
+   * - 单元测试中快速注入行为
+   * - 进程内扩展 (如 lint 集成)
+   *
+   * @param event     Hook 事件 (PreToolUse / PostToolUse / ...)
+   * @param matcher   可选 matcher 配置; 不传则匹配所有工具
+   * @param handler   async 处理函数, 返回 HookOutput | undefined
+   * @param options   name 用于日志; timeout 覆盖默认超时
+   * @returns 取消注册函数
+   *
+   * @example
+   * const off = HookManager.getInstance().registerFunction(
+   *   HookEvent.PreToolUse,
+   *   { tools: ['Edit', 'Write'] },
+   *   async (input) => ({
+   *     decision: { behavior: 'block' },
+   *     systemMessage: 'Writes are disabled in read-only mode',
+   *   })
+   * );
+   * // 后续: off();
+   */
+  registerFunction(
+    event: HookEvent,
+    matcher: MatcherConfig | undefined,
+    handler: FunctionHook['handler'],
+    options?: { name?: string; timeout?: number }
+  ): () => void {
+    const hookEntry: FunctionHook = {
+      type: HookType.Function,
+      handler,
+      timeout: options?.timeout,
+    };
+    const matcherEntry: HookMatcher = {
+      name: options?.name ?? `inline-${event}-${Date.now()}`,
+      matcher,
+      hooks: [hookEntry],
+    };
+
+    // 不要 push 进现有数组 — 它可能是 DEFAULT_HOOK_CONFIG 的共享引用
+    // (mergeHookConfig 只做浅合并),push 会污染全局默认值。
+    // 始终用新数组替换,保证 registerFunction 的修改局限在本 instance。
+    const existing = (this.config[event] ?? []) as HookMatcher[];
+    (this.config[event] as HookMatcher[]) = [...existing, matcherEntry];
+
+    return () => {
+      const current = this.config[event] as HookMatcher[] | undefined;
+      if (!current) return;
+      (this.config[event] as HookMatcher[]) = current.filter(
+        (m) => m !== matcherEntry
+      );
+    };
   }
 
   /**
