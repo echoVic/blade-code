@@ -338,7 +338,7 @@ const solarizedLight: Theme = {
     secondary: '#2aa198',
     accent: '#d33682',
     success: '#859900',
-    warning: '#b58900',
+    warning: '#cb4b16', // 从 #b58900 改为更深的橙色，提高对比度
     error: '#dc322f',
     info: '#268bd2',
     light: '#fdf6e3',
@@ -583,7 +583,7 @@ const github: Theme = {
     secondary: '#8250df',
     accent: '#bc4c00',
     success: '#1a7f37',
-    warning: '#9a6700',
+    warning: '#bc4c00', // 从 #9a6700 改为更深的橙色，提高对比度
     error: '#d1242f',
     info: '#0969da',
     light: '#f6f8fa',

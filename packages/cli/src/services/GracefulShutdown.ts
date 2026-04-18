@@ -83,6 +83,8 @@ class GracefulShutdownManager {
   private cleanupHandlers: CleanupHandler[] = [];
   private isShuttingDown = false;
   private initialized = false;
+  private lastSigintTime = 0; // 记录上次 SIGINT 的时间戳
+  private readonly SIGINT_DOUBLE_CLICK_WINDOW = 3000; // 3 秒内的第二次 SIGINT 才退出
 
   private constructor() {}
 
@@ -120,14 +122,23 @@ class GracefulShutdownManager {
       this.shutdown('SIGTERM', 0);
     });
 
-    // 注意：SIGINT 由 useCtrlCHandler 处理，这里不重复处理
-    // 但如果是非 UI 模式（如 print 模式），需要处理 SIGINT
-    if (process.env.BLADE_NON_INTERACTIVE === 'true') {
-      process.on('SIGINT', () => {
-        logger.info('[GracefulShutdown] 收到 SIGINT 信号（非交互模式）');
+    // 处理 SIGINT（Ctrl+C 或 kill -2）
+    // 在交互模式下实现双击退出逻辑，与键盘 Ctrl+C 行为一致
+    process.on('SIGINT', () => {
+      const now = Date.now();
+      const isDoubleClick = now - this.lastSigintTime < this.SIGINT_DOUBLE_CLICK_WINDOW;
+
+      if (isDoubleClick) {
+        // 第二次 SIGINT，执行退出
+        logger.info('[GracefulShutdown] 收到第二次 SIGINT 信号，执行退出');
         this.shutdown('SIGINT', 0);
-      });
-    }
+      } else {
+        // 第一次 SIGINT，记录时间并提示
+        logger.info('[GracefulShutdown] 收到第一次 SIGINT 信号，再按一次退出');
+        this.lastSigintTime = now;
+        console.log('\n再按一次 Ctrl+C 退出\n');
+      }
+    });
 
     this.initialized = true;
     logger.debug('[GracefulShutdown] 全局错误处理器已初始化');

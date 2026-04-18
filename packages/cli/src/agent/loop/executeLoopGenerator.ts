@@ -623,7 +623,7 @@ export async function* executeLoopGenerator(
           usage: {
             inputTokens: turnResult.usage.promptTokens ?? 0,
             outputTokens: turnResult.usage.completionTokens ?? 0,
-            totalTokens,
+            totalTokens: turnResult.usage.totalTokens ?? 0,
             maxContextTokens: deps.currentModelMaxContextTokens,
           },
         };

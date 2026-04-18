@@ -392,17 +392,33 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     try {
       const messages = await SessionService.loadSession(sessionId);
 
-      const sessionMessages = messages.map((msg, index) => ({
-        id: `restored-${Date.now()}-${index}`,
-        role: msg.role,
-        content:
-          typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-        timestamp: Date.now() - (messages.length - index) * 1000,
-        metadata:
-          msg.metadata && typeof msg.metadata === 'object'
-            ? (msg.metadata as Record<string, unknown>)
-            : undefined,
-      }));
+      const sessionMessages = messages.map((msg, index) => {
+        // 提取消息内容：如果是 ContentPart[] 数组，只提取文本部分
+        let content: string;
+        if (typeof msg.content === 'string') {
+          content = msg.content;
+        } else if (Array.isArray(msg.content)) {
+          // 从 ContentPart[] 中提取文本
+          content = msg.content
+            .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+            .map((part) => part.text)
+            .join('');
+        } else {
+          // 其他情况（不应该发生）
+          content = '';
+        }
+
+        return {
+          id: `restored-${Date.now()}-${index}`,
+          role: msg.role,
+          content,
+          timestamp: Date.now() - (messages.length - index) * 1000,
+          metadata:
+            msg.metadata && typeof msg.metadata === 'object'
+              ? (msg.metadata as Record<string, unknown>)
+              : undefined,
+        };
+      });
 
       sessionActions.restoreSession(sessionId, sessionMessages);
       appActions.closeModal();

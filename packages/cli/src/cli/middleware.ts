@@ -27,6 +27,18 @@ export const validatePermissions: MiddlewareFunction = (argv) => {
     argv.permissionMode = 'yolo';
   }
 
+  // 处理逗号分隔的工具列表
+  if (Array.isArray(argv.allowedTools)) {
+    argv.allowedTools = argv.allowedTools.flatMap((tool: string) =>
+      tool.split(',').map((t) => t.trim()).filter((t) => t.length > 0)
+    );
+  }
+  if (Array.isArray(argv.disallowedTools)) {
+    argv.disallowedTools = argv.disallowedTools.flatMap((tool: string) =>
+      tool.split(',').map((t) => t.trim()).filter((t) => t.length > 0)
+    );
+  }
+
   // 验证工具列表冲突
   if (Array.isArray(argv.allowedTools) && Array.isArray(argv.disallowedTools)) {
     const intersection = argv.allowedTools.filter((tool: string) =>

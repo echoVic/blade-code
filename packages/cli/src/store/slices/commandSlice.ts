@@ -52,9 +52,9 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
      */
     createAbortController: () => {
       const existing = get().command.abortController;
-      // 如果已有未被中止的 controller，直接返回
+      // 如果已有未被中止的 controller，先中止它（用户提交新消息时中断旧任务）
       if (existing && !existing.signal.aborted) {
-        return existing;
+        existing.abort('interrupted-by-new-command');
       }
       // 创建新的 controller
       const controller = new AbortController();

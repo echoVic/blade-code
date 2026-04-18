@@ -306,6 +306,8 @@ export class VercelAIChatService implements IChatService {
       promptTokens?: number;
       completionTokens?: number;
       totalTokens?: number;
+      inputTokens?: number;
+      outputTokens?: number;
     },
     providerMetadata?: {
       anthropic?: {
@@ -315,8 +317,9 @@ export class VercelAIChatService implements IChatService {
     }
   ): UsageInfo | undefined {
     if (!usage) return undefined;
-    const prompt = usage.promptTokens ?? 0;
-    const completion = usage.completionTokens ?? 0;
+    // Vercel AI SDK 可能返回 inputTokens/outputTokens 或 promptTokens/completionTokens
+    const prompt = usage.promptTokens ?? usage.inputTokens ?? 0;
+    const completion = usage.completionTokens ?? usage.outputTokens ?? 0;
     const result: UsageInfo = {
       promptTokens: prompt,
       completionTokens: completion,
@@ -342,7 +345,7 @@ export class VercelAIChatService implements IChatService {
     const status = statusMatch
       ? parseInt(statusMatch[1], 10)
       : (error as Error & { status?: number }).status;
-    return [429, 529, 503].includes(status);
+    return status !== undefined && [429, 529, 503].includes(status);
   }
 
   async chat(
@@ -495,7 +498,7 @@ export class VercelAIChatService implements IChatService {
             yield {
               finishReason: (part as { finishReason?: string }).finishReason,
               usage: this.convertUsage(
-                (part as { totalUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }).totalUsage,
+                (part as { totalUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number; inputTokens?: number; outputTokens?: number } }).totalUsage,
                 (part as { providerMetadata?: { anthropic?: { cacheCreationInputTokens?: number; cacheReadInputTokens?: number } } }).providerMetadata
               ),
             };

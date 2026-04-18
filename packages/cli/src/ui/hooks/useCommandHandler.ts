@@ -143,7 +143,27 @@ export const useCommandHandler = (
         // ensureStoreInitialized 是唯一的初始化点，必须在 processSlashCommand 前调用
         await ensureStoreInitialized();
 
+        // 检查是否有正在运行的任务
+        const wasProcessing = isProcessing;
+
         const abortController = commandActions.createAbortController();
+
+        // 如果之前有任务在运行，显示中断消息
+        if (wasProcessing) {
+          // drain 缓冲区，保留已接收内容
+          const { extraContent, extraThinking } = streamingBuffer.drainPendingBuffers();
+
+          // 用 drain 结果 finalize，确保已收内容提交到 store
+          const streamingId = getState().session.currentStreamingMessageId;
+          if (streamingId) {
+            if (extraContent) appendMarkdownDelta(streamingId, extraContent);
+            finalizeMarkdownCache(streamingId);
+          }
+          sessionActions.finalizeStreamingMessage(extraContent, extraThinking);
+
+          // 显示中断消息
+          sessionActions.addAssistantMessage('上一条消息已中断');
+        }
 
         const slashResult = await processSlashCommand(
           resolved,
