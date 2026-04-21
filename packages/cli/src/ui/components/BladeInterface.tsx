@@ -283,19 +283,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       const mostRecentSession = sessions[0];
       const messages = await SessionService.loadSession(mostRecentSession.sessionId);
 
-      const sessionMessages = messages.map((msg, index) => ({
-        id: `restored-${Date.now()}-${index}`,
-        role: msg.role,
-        content:
-          typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-        timestamp: Date.now() - (messages.length - index) * 1000,
-        metadata:
-          msg.metadata && typeof msg.metadata === 'object'
-            ? (msg.metadata as Record<string, unknown>)
-            : undefined,
-      }));
+      const sessionMessages = SessionService.toUISafeMessages(messages);
 
-      sessionActions.restoreSession(mostRecentSession.sessionId, sessionMessages);
+      sessionActions.restoreSession(mostRecentSession.sessionId, sessionMessages, messages);
     } catch (error) {
       logger.error('[BladeInterface] 继续会话失败:', error);
       sessionActions.addAssistantMessage('继续会话失败，开始新对话。');
@@ -308,19 +298,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       if (typeof otherProps.resume === 'string' && otherProps.resume !== 'true') {
         const messages = await SessionService.loadSession(otherProps.resume);
 
-        const sessionMessages = messages.map((msg, index) => ({
-          id: `restored-${Date.now()}-${index}`,
-          role: msg.role,
-          content:
-            typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-          timestamp: Date.now() - (messages.length - index) * 1000,
-          metadata:
-            msg.metadata && typeof msg.metadata === 'object'
-              ? (msg.metadata as Record<string, unknown>)
-              : undefined,
-        }));
+        const sessionMessages = SessionService.toUISafeMessages(messages);
 
-        sessionActions.restoreSession(otherProps.resume, sessionMessages);
+        sessionActions.restoreSession(otherProps.resume, sessionMessages, messages);
         return;
       }
 
@@ -392,38 +372,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     try {
       const messages = await SessionService.loadSession(sessionId);
 
-      // 过滤并转换消息：只保留用户和助手的消息，过滤掉 tool 和 system 消息
-      const sessionMessages = messages
-        .filter((msg) => msg.role === 'user' || msg.role === 'assistant')
-        .map((msg, index) => {
-          // 提取消息内容：如果是 ContentPart[] 数组，只提取文本部分
-          let content: string;
-          if (typeof msg.content === 'string') {
-            content = msg.content;
-          } else if (Array.isArray(msg.content)) {
-            // 从 ContentPart[] 中提取文本
-            content = msg.content
-              .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
-              .map((part) => part.text)
-              .join('');
-          } else {
-            // 其他情况（不应该发生）
-            content = '';
-          }
+      const sessionMessages = SessionService.toUISafeMessages(messages);
 
-          return {
-            id: `restored-${Date.now()}-${index}`,
-            role: msg.role,
-            content,
-            timestamp: Date.now() - (messages.length - index) * 1000,
-            metadata:
-              msg.metadata && typeof msg.metadata === 'object'
-                ? (msg.metadata as Record<string, unknown>)
-                : undefined,
-          };
-        });
-
-      sessionActions.restoreSession(sessionId, sessionMessages);
+      sessionActions.restoreSession(sessionId, sessionMessages, messages);
       appActions.closeModal();
     } catch (error) {
       logger.error('[BladeInterface] Failed to restore session:', error);

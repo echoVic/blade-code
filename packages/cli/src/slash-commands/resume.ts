@@ -44,20 +44,10 @@ const resumeCommand: SlashCommand = {
           };
         }
 
-        // 转换为 SessionMessage 格式并恢复会话
-        const sessionMessages = messages
-          .filter((msg) => msg.role !== 'tool')
-          .map((msg, index) => ({
-            id: `restored-${Date.now()}-${index}`,
-            role: msg.role,
-            content:
-              typeof msg.content === 'string'
-                ? msg.content
-                : JSON.stringify(msg.content),
-            timestamp: Date.now() - (messages.length - index) * 1000,
-          }));
+        // 转换为 SessionMessage 格式并恢复会话（共用 UI-safe 归一化，过滤 tool/system 等内部消息）
+        const sessionMessages = SessionService.toUISafeMessages(messages);
 
-        restoreSession(sessionId, sessionMessages);
+        restoreSession(sessionId, sessionMessages, messages);
 
         ui.sendMessage(
           `[OK] 已恢复会话 \`${sessionId}\`\n\n共 ${sessionMessages.length} 条消息已加载，可以继续对话`

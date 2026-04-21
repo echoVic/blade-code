@@ -10,6 +10,7 @@
 
 import type { ModelConfig, RuntimeConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
+import type { Message } from '../services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../services/SessionService.js';
 import type { TodoItem } from '../tools/builtin/todo/types.js';
 import type { SpecSlice } from './slices/specSlice.js';
@@ -68,6 +69,8 @@ export interface TokenUsage {
 export interface SessionState {
   sessionId: string;
   messages: SessionMessage[];
+  restoredContextMessages: Message[] | null; // resume 时保留的原始上下文（含 summary / multimodal）
+  restoredVisibleMessageCount: number; // messages 中来自 restoreSession 的可见消息数
   isCompacting: boolean; // 是否正在压缩上下文
   currentCommand: string | null;
   error: string | null;
@@ -104,7 +107,11 @@ export interface SessionActions {
   setError: (error: string | null) => void;
   clearMessages: () => void;
   resetSession: () => void;
-  restoreSession: (sessionId: string, messages: SessionMessage[]) => void;
+  restoreSession: (
+    sessionId: string,
+    messages: SessionMessage[],
+    restoredContextMessages?: Message[]
+  ) => void;
   updateTokenUsage: (usage: Partial<TokenUsage>) => void;
   resetTokenUsage: () => void;
   // Thinking 相关 actions

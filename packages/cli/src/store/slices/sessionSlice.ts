@@ -11,6 +11,7 @@
 
 import { nanoid } from 'nanoid';
 import type { StateCreator } from 'zustand';
+import type { Message } from '../../services/ChatServiceInterface.js';
 import { clearAllMarkdownCache } from '../../ui/utils/markdownIncremental.js';
 import type {
   BladeStore,
@@ -53,6 +54,8 @@ const initialTokenUsage: TokenUsage = {
 const initialSessionState: SessionState = {
   sessionId: nanoid(),
   messages: [],
+  restoredContextMessages: null,
+  restoredVisibleMessageCount: 0,
   isCompacting: false,
   currentCommand: null,
   error: null,
@@ -203,6 +206,8 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
         session: {
           ...state.session,
           messages: [],
+          restoredContextMessages: null,
+          restoredVisibleMessageCount: 0,
           error: null,
           clearCount: state.session.clearCount + 1,
         },
@@ -227,13 +232,19 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     /**
      * 恢复会话
      */
-    restoreSession: (sessionId: string, messages: SessionMessage[]) => {
+    restoreSession: (
+      sessionId: string,
+      messages: SessionMessage[],
+      restoredContextMessages?: Message[]
+    ) => {
       clearAllMarkdownCache();
       set((state) => ({
         session: {
           ...state.session,
           sessionId,
           messages,
+          restoredContextMessages: restoredContextMessages ?? null,
+          restoredVisibleMessageCount: restoredContextMessages ? messages.length : 0,
           error: null,
           isActive: true,
         },

@@ -26,7 +26,6 @@ import {
   useAppActions,
   useCommandActions,
   useIsProcessing,
-  useMessages,
   usePermissionMode,
   useSessionActions,
   useSessionId,
@@ -41,6 +40,7 @@ import {
 } from '../utils/markdownIncremental.js';
 import { classifyError } from '../utils/errorExtractor.js';
 import { buildUserMessageContent } from '../utils/messageContent.js';
+import { buildContextMessagesFromSession } from '../utils/sessionContext.js';
 import { processSlashCommand, type CommandResult } from '../utils/slashCommandRouter.js';
 import { createLoopEventHandler } from '../utils/loopEventHandler.js';
 import { useAgent } from './useAgent.js';
@@ -62,7 +62,6 @@ export const useCommandHandler = (
 ) => {
   // ==================== Store 选择器 ====================
   const isProcessing = useIsProcessing();
-  const messages = useMessages();
   const sessionId = useSessionId();
   const permissionMode = usePermissionMode();
   const thinkingModeEnabled = useThinkingModeEnabled();
@@ -230,10 +229,7 @@ export const useCommandHandler = (
           return { success: false, error: 'aborted' };
         }
 
-        const contextMessages = messages.map((msg) => ({
-          role: msg.role,
-          content: msg.content,
-        }));
+        const contextMessages = buildContextMessagesFromSession(getState().session);
 
         if (hookContextInjection) {
           contextMessages.push({

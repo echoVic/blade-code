@@ -12,7 +12,7 @@ import {
 } from '../context/storage/pathUtils.js';
 import type { SessionEvent } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import type { JsonValue } from '../store/types.js';
+import type { JsonValue, SessionMessage } from '../store/types.js';
 import type { ContentPart, Message } from './ChatServiceInterface.js';
 
 const logger = createLogger(LogCategory.SERVICE);
@@ -40,6 +40,53 @@ export interface SessionMetadata {
  * 会话管理服务
  */
 export class SessionService {
+  /**
+   * 将加载到的会话消息转换为 UI 安全的 SessionMessage。
+   * 过滤掉 tool / system 等内部消息，仅从 ContentPart[] 中提取文本，
+   * 避免把 </functions>、工具调用 JSON、summary 等内部内容泄露给用户或污染历史。
+   */
+  static toUISafeMessages(messages: Message[]): SessionMessage[] {
+    const now = Date.now();
+    const total = messages.length;
+    const result: SessionMessage[] = [];
+
+    messages.forEach((msg, index) => {
+      if (msg.role !== 'user' && msg.role !== 'assistant') return;
+
+      let content: string;
+      if (typeof msg.content === 'string') {
+        content = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        content = (msg.content as ContentPart[])
+          .map((part) => (part.type === 'text' ? part.text : '[Image]'))
+          .join('');
+      } else {
+        content = '';
+      }
+
+      const normalizedContent = content.trim();
+      if (!normalizedContent) return;
+
+      const previous = result[result.length - 1];
+      if (previous && previous.role === msg.role && previous.content === normalizedContent) {
+        return;
+      }
+
+      result.push({
+        id: `restored-${now}-${index}`,
+        role: msg.role,
+        content: normalizedContent,
+        timestamp: now - (total - index) * 1000,
+        metadata:
+          msg.metadata && typeof msg.metadata === 'object'
+            ? (msg.metadata as Record<string, unknown>)
+            : undefined,
+      });
+    });
+
+    return result;
+  }
+
   /**
    * 列出所有可用会话
    * 扫描 ~/.blade/projects/ 目录下的所有 JSONL 文件
