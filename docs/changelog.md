@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.3.3] - 2026-04-21
+
+### 🐛 问题修复
+
+- 修复重复创建 abortController 导致任务状态错误的问题 (189152a)
+
+
 ## [0.3.2] - 2026-04-18
 
 ### ✨ 新功能
