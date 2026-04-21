@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.3.5] - 2026-04-21
+
+### ✨ 新功能
+
+- 实现会话恢复时保留原始上下文消息 (d80631f)
+
+
 ## [0.3.4] - 2026-04-21
 
 ### ♻️ 代码重构
