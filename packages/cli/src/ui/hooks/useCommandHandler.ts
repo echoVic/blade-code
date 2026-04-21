@@ -143,27 +143,11 @@ export const useCommandHandler = (
         // ensureStoreInitialized 是唯一的初始化点，必须在 processSlashCommand 前调用
         await ensureStoreInitialized();
 
-        // 检查是否有正在运行的任务
-        const wasProcessing = isProcessing;
-
-        const abortController = commandActions.createAbortController();
-
-        // 如果之前有任务在运行，显示中断消息
-        if (wasProcessing) {
-          // drain 缓冲区，保留已接收内容
-          const { extraContent, extraThinking } = streamingBuffer.drainPendingBuffers();
-
-          // 用 drain 结果 finalize，确保已收内容提交到 store
-          const streamingId = getState().session.currentStreamingMessageId;
-          if (streamingId) {
-            if (extraContent) appendMarkdownDelta(streamingId, extraContent);
-            finalizeMarkdownCache(streamingId);
-          }
-          sessionActions.finalizeStreamingMessage(extraContent, extraThinking);
-
-          // 显示中断消息
-          sessionActions.addAssistantMessage('上一条消息已中断');
-        }
+        // 复用 executeCommand 中已创建的 controller。
+        // 不能再次调用 createAbortController()：它会中止并替换上层的 controller，
+        // 导致 executeCommand 的 finally 中 isOurTask 检查失败，isProcessing 永远不被重置。
+        const abortController =
+          commandActions.getAbortController() ?? commandActions.createAbortController();
 
         const slashResult = await processSlashCommand(
           resolved,
