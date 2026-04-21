@@ -9,7 +9,7 @@
  */
 
 import { useMemoizedFn } from 'ahooks';
-import { Box, Text, useFocusManager, useInput } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import React, { useState } from 'react';
 import type { SetupConfig } from '../../../config/types.js';
@@ -18,7 +18,6 @@ import { useCtrlCHandler } from '../../hooks/useCtrlCHandler.js';
 import { ApiKeyInput } from './ApiKeyInput.js';
 import { useModels, useProviders } from './hooks/useModelsDev.js';
 import { ModelSelector } from './ModelSelector.js';
-import { checkOAuthStatus, OAuthLogin, OAuthModelSelect, performOAuthLogin } from './OAuthFlow.js';
 import { ProviderSelector } from './ProviderSelector.js';
 import { DEFAULT_BASE_URLS, type ModelConfigWizardProps, type ModelOption, type ProviderOption, type WizardStep } from './types.js';
 
@@ -38,34 +37,16 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   const [customModel] = useState(isEditMode ? initialConfig?.model || '' : '');
   const [error, setError] = useState<string | undefined>();
   const [isSaving, setIsSaving] = useState(false);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const { providers, isLoading: providersLoading, error: providersError } = useProviders();
-  const { models, isLoading: modelsLoading, error: modelsError } = useModels(
-    provider?.isOAuth ? undefined : provider?.id
-  );
+  const { models, isLoading: modelsLoading, error: modelsError } = useModels(provider?.id);
 
   const handleCtrlC = useCtrlCHandler(false);
-  const { focus } = useFocusManager();
 
   useInput((input, key) => {
     if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
       mode === 'setup' ? handleCtrlC() : onCancel();
     }
-  });
-
-  const focusOAuthStep = useMemoizedFn((wizardStep: WizardStep) => {
-    const focusMap: Record<WizardStep, string> = {
-      provider: '',
-      apiKey: '',
-      baseUrl: '',
-      model: '',
-      oauthLogin: 'oauth-login',
-      oauthModelSelect: 'oauth-model-select',
-      confirm: '',
-    };
-    const focusId = focusMap[wizardStep];
-    if (focusId) focus(focusId);
   });
 
   const getDefaultBaseUrl = useMemoizedFn((p: ProviderOption): string => {
@@ -81,14 +62,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
       setBaseUrl(defaultUrl);
     }
 
-    if (selected.isOAuth) {
-      const isLoggedIn = await checkOAuthStatus(selected.id);
-      const nextStep = isLoggedIn ? 'oauthModelSelect' : 'oauthLogin';
-      setStep(nextStep);
-      focusOAuthStep(nextStep);
-    } else {
-      setStep('apiKey');
-    }
+    setStep('apiKey');
   });
 
   const handleApiKeySubmit = useMemoizedFn(() => {
@@ -136,7 +110,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
         name: configName,
         provider: provider?.bladeProvider || initialConfig?.provider || 'openai-compatible',
         baseUrl: finalBaseUrl,
-        apiKey: provider?.isOAuth ? 'oauth' : apiKey,
+        apiKey: apiKey,
         model: selected.id,
         ...(selected.contextWindow && { maxContextTokens: selected.contextWindow }),
         ...(selected.maxOutput && { maxOutputTokens: selected.maxOutput }),
@@ -159,22 +133,6 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
     }
   });
 
-  const handleOAuthLogin = useMemoizedFn(async () => {
-    if (!provider) return;
-    setIsLoggingIn(true);
-    setError(undefined);
-
-    const success = await performOAuthLogin(provider.id);
-    setIsLoggingIn(false);
-
-    if (success) {
-      setStep('oauthModelSelect');
-      focusOAuthStep('oauthModelSelect');
-    } else {
-      setError('登录失败，请重试');
-    }
-  });
-
   const handleBack = useMemoizedFn(() => {
     setError(undefined);
     switch (step) {
@@ -193,10 +151,6 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
         }
         break;
       }
-      case 'oauthLogin':
-      case 'oauthModelSelect':
-        setStep('provider');
-        break;
     }
   });
 
@@ -205,7 +159,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   });
 
   const stepNumber = step === 'provider' ? 1
-    : step === 'apiKey' || step === 'oauthLogin' ? 2
+    : step === 'apiKey' ? 2
     : step === 'baseUrl' ? 2.5
     : 3;
   const totalSteps = 3;
@@ -290,23 +244,6 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
           onSelect={handleModelSelect}
           onCancel={handleBack}
           initialModel={isEditMode ? customModel : undefined}
-        />
-      )}
-
-      {step === 'oauthLogin' && provider && (
-        <OAuthLogin
-          provider={provider}
-          onLogin={handleOAuthLogin}
-          onCancel={handleBack}
-          isLoggingIn={isLoggingIn}
-        />
-      )}
-
-      {step === 'oauthModelSelect' && provider && (
-        <OAuthModelSelect
-          provider={provider}
-          onSelect={handleModelSelect}
-          onCancel={handleBack}
         />
       )}
 

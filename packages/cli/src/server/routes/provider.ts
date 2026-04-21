@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getModelsForProvider, getProviders } from '../../services/ModelsDevService.js';
-import { OAUTH_PROVIDERS } from '../../ui/components/model-config/types.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -11,18 +10,7 @@ export const ProviderRoutes = () => {
   app.get('/', async (c) => {
     try {
       const apiProviders = await getProviders();
-
-      const oauthProviders = Object.entries(OAUTH_PROVIDERS).map(([id, config]) => ({
-        id,
-        name: id.charAt(0).toUpperCase() + id.slice(1),
-        icon: config.icon,
-        description: config.description,
-        isOAuth: true,
-        envVars: [],
-        bladeProvider: config.bladeProvider,
-      }));
-
-      return c.json([...apiProviders, ...oauthProviders]);
+      return c.json(apiProviders);
     } catch (error) {
       logger.error('[ProviderRoutes] Failed to list providers:', error);
       return c.json([]);

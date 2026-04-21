@@ -76,8 +76,6 @@ Step 3: 选择模型（从内置列表选择）
 Step 1: 选择 "🔧 自定义 OpenAI Compatible"
         ┌─────────────────────────────────────┐
         │  📡 选择 Provider          [搜索]   │
-        │    🚀 Google Antigravity            │
-        │    🐙 GitHub Copilot                │
         │  ▶ 🔧 自定义 OpenAI Compatible      │
         │    🤖 Anthropic                     │
         │    ... 更多                         │
@@ -166,8 +164,6 @@ Blade 支持配置多个模型，通过 `currentModelId` 指定当前使用的�
 | `anthropic` | Anthropic Claude | apiKey, model |
 | `gemini` | Google Gemini | apiKey, model |
 | `azure-openai` | Azure OpenAI Service | baseUrl, apiKey, model, apiVersion |
-| `copilot` | GitHub Copilot（OAuth 认证） | - |
-| `antigravity` | Google Antigravity（OAuth 认证） | projectId |
 
 ### Provider 与 Service 映射
 

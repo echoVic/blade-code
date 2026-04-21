@@ -132,7 +132,6 @@ const INFORMATIVE_TIPS = [
   '/plugins - 管理插件',
   '/memory - 管理项目记忆',
   '/ide - 管理 IDE 集成',
-  '/login - 登录 OAuth 服务',
 
   // 高级功能
   '@ 文件路径 - 附加文件到上下文',

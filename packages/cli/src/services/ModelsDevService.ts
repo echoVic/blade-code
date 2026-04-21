@@ -65,7 +65,6 @@ export const getProviders = async (): Promise<ProviderOption[]> => {
       name: provider.name || id,
       icon: PROVIDER_ICONS[id] || PROVIDER_ICONS.default,
       description: `${modelCount} 个模型`,
-      isOAuth: false,
       envVars: provider.env || [],
       docUrl: provider.doc,
       defaultBaseUrl: DEFAULT_BASE_URLS[id],

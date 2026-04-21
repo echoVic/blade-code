@@ -90,7 +90,6 @@ const initCommand: SlashCommand = {
 
 3. Check for existing AI rule files and note any useful guidance:
    - .cursorrules or .cursor/rules/
-   - .github/copilot-instructions.md
 
 4. Explore the codebase (use Glob/Grep tools) to identify:
    - Missing architectural information
@@ -198,7 +197,6 @@ const initCommand: SlashCommand = {
 
 2. Check for existing AI rule files and incorporate useful guidance:
    - .cursorrules or .cursor/rules/
-   - .github/copilot-instructions.md
    - README.md (extract non-obvious insights only)
 
 3. Explore the project structure and note:

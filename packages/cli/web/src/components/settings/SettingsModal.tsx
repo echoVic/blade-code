@@ -15,9 +15,7 @@ const PROVIDER_ICONS: Record<string, { bg: string; label: string }> = {
   'anthropic': { bg: '#d97757', label: 'A' },
   'gemini': { bg: '#4285f4', label: 'G' },
   'azure-openai': { bg: '#0078d4', label: 'Az' },
-  'copilot': { bg: '#6e40c9', label: 'CP' },
   'gpt-openai-platform': { bg: '#10a37f', label: 'GP' },
-  'antigravity': { bg: '#8b5cf6', label: 'AG' },
 }
 
 export function SettingsModal() {

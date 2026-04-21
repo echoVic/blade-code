@@ -8,9 +8,7 @@ export type ProviderType =
   | 'openai-compatible'
   | 'anthropic'
   | 'gemini'
-  | 'azure-openai'
-  | 'antigravity'
-  | 'copilot';
+  | 'azure-openai';
 
 /**
  * 权限模式枚举

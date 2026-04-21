@@ -71,8 +71,6 @@ npx blade "帮我分析代码"
 | `anthropic` | Anthropic Claude | Claude 3.5/4 系列 |
 | `gemini` | Google Gemini | Gemini 1.5/2.0 系列 |
 | `azure-openai` | Azure OpenAI Service | GPT-4o 等 |
-| `copilot` | GitHub Copilot | OAuth 认证 |
-| `antigravity` | Google Antigravity | OAuth 认证 |
 
 ### 手动配置示例
 

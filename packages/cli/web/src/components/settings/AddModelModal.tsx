@@ -22,7 +22,6 @@ interface ProviderOption {
   name: string
   icon: string
   description: string
-  isOAuth: boolean
   envVars: string[]
   defaultBaseUrl?: string
   bladeProvider: string
@@ -39,7 +38,6 @@ const CUSTOM_PROVIDER: ProviderOption = {
   name: 'Custom (OpenAI Compatible)',
   icon: '🔌',
   description: 'Any OpenAI-compatible API',
-  isOAuth: false,
   envVars: [],
   bladeProvider: 'openai-compatible',
 }

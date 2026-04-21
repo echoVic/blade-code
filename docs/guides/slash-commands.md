@@ -115,29 +115,6 @@ Git 仓库查询和 AI 辅助：
 
 可通过环境变量 `BLADE_AUTO_MEMORY=0` 禁用自动记忆功能。
 
-### /login
-
-登录 OAuth 服务（Antigravity / Copilot）：
-
-```bash
-/login              # 默认登录 Google Antigravity
-/login copilot      # 登录 GitHub Copilot
-/login gemini       # 登录 Gemini CLI
-```
-
-支持的服务：
-- **Google Antigravity** - 通过 Google OAuth 认证，支持 Claude、Gemini 模型（需 Code Assist 订阅）
-- **GitHub Copilot** - 通过 GitHub OAuth 认证，支持 GPT、Claude、Gemini 模型（需 Copilot 订阅）
-
-### /logout
-
-登出 OAuth 服务：
-
-```bash
-/logout             # 默认登出 Google Antigravity
-/logout copilot     # 登出 GitHub Copilot
-```
-
 ### /permissions
 
 打开权限管理器，编辑 `.blade/settings.local.json`：

@@ -28,7 +28,6 @@ export interface ProviderOption {
   name: string;
   icon: string;
   description: string;
-  isOAuth: boolean;
   envVars: string[];
   docUrl?: string;
   defaultBaseUrl?: string;
@@ -50,8 +49,6 @@ export type WizardStep =
   | 'apiKey'
   | 'baseUrl'
   | 'model'
-  | 'oauthLogin'
-  | 'oauthModelSelect'
   | 'confirm';
 
 export interface ModelConfigWizardProps {
@@ -70,22 +67,6 @@ export const POPULAR_PROVIDERS = [
   'groq',
   'openrouter',
 ] as const;
-
-export const OAUTH_PROVIDERS: Record<
-  string,
-  { bladeProvider: ProviderType; icon: string; description: string }
-> = {
-  antigravity: {
-    bladeProvider: 'antigravity',
-    icon: '',
-    description: 'OAuth 登录使用 Claude/Gemini (需 Code Assist 订阅)',
-  },
-  copilot: {
-    bladeProvider: 'copilot',
-    icon: '',
-    description: 'OAuth 登录使用 GPT/Claude/Gemini (需 Copilot 订阅)',
-  },
-};
 
 export const PROVIDER_ICONS: Record<string, string> = {
   anthropic: '',

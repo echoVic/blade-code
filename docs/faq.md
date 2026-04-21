@@ -28,8 +28,6 @@ A: 支持以下提供商：
 - Anthropic（Claude 系列）
 - Google Gemini
 - Azure OpenAI
-- GitHub Copilot（需 OAuth 登录）
-- Antigravity（需 OAuth 登录）
 
 **Q: 如何配置多个模型？**  
 A: 在 `config.json` 的 `models` 数组中添加多个配置，通过 `/model` 命令切换。

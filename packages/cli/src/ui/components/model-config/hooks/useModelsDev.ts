@@ -8,7 +8,6 @@ import {
   getProviders,
 } from '../../../../services/ModelsDevService.js';
 import type { ModelOption, ProviderOption } from '../types.js';
-import { OAUTH_PROVIDERS } from '../types.js';
 
 interface UseProvidersResult {
   providers: ProviderOption[];
@@ -21,7 +20,6 @@ const CUSTOM_PROVIDER: ProviderOption = {
   name: '自定义 OpenAI Compatible',
   icon: '',
   description: '使用自定义 Base URL 和 API Key',
-  isOAuth: false,
   envVars: [],
   bladeProvider: 'openai-compatible',
   isCustom: true,
@@ -36,20 +34,7 @@ export const useProviders = (): UseProvidersResult => {
     const load = async () => {
       try {
         const apiProviders = await getProviders();
-
-        const oauthProviders: ProviderOption[] = Object.entries(OAUTH_PROVIDERS).map(
-          ([id, info]) => ({
-            id,
-            name: id === 'antigravity' ? 'Google Antigravity' : 'GitHub Copilot',
-            icon: info.icon,
-            description: info.description,
-            isOAuth: true,
-            envVars: [],
-            bladeProvider: info.bladeProvider,
-          })
-        );
-
-        setProviders([...oauthProviders, CUSTOM_PROVIDER, ...apiProviders]);
+        setProviders([CUSTOM_PROVIDER, ...apiProviders]);
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载 Provider 列表失败');
       } finally {
