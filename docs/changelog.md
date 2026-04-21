@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.3.4] - 2026-04-21
+
+### ♻️ 代码重构
+
+- 移除 GitHub Copilot 和 Google Antigravity 相关代码 (91cdcdc)
+
+
 ## [0.3.3] - 2026-04-21
 
 ### 🐛 问题修复
