@@ -368,6 +368,7 @@ export class VercelAIChatService implements IChatService {
         maxOutputTokens: this.config.maxOutputTokens,
         temperature: this.config.temperature ?? 0,
         abortSignal: signal,
+        ...({ allowSystemInMessages: true } as Record<string, unknown>),
       });
 
       const duration = Date.now() - startTime;
@@ -412,6 +413,7 @@ export class VercelAIChatService implements IChatService {
             maxOutputTokens: this.config.maxOutputTokens,
             temperature: this.config.temperature ?? 0,
             abortSignal: signal,
+            ...({ allowSystemInMessages: true } as Record<string, unknown>),
           });
           const fallbackToolCalls =
             result.toolCalls && result.toolCalls.length > 0
@@ -463,6 +465,7 @@ export class VercelAIChatService implements IChatService {
         maxOutputTokens: this.config.maxOutputTokens,
         temperature: this.config.temperature ?? 0,
         abortSignal: signal,
+        ...({ allowSystemInMessages: true } as Record<string, unknown>),
       });
 
       logger.debug('[VercelAIChatService] Stream started');
@@ -527,6 +530,7 @@ export class VercelAIChatService implements IChatService {
             maxOutputTokens: this.config.maxOutputTokens,
             temperature: this.config.temperature ?? 0,
             abortSignal: signal,
+            ...({ allowSystemInMessages: true } as Record<string, unknown>),
           });
 
           let toolCallIndex = 0;

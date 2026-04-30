@@ -291,6 +291,13 @@ export const useCommandHandler = (
 
         const output = loopResult.finalMessage || '';
 
+        // API 错误（非 abort）时显示友好错误信息，而非"已取消"
+        if (!loopResult.success && loopResult.error?.type === 'api_error') {
+          const errorMsg = loopResult.error.message || '请求失败，请检查网络连接和 API 配置';
+          sessionActions.addAssistantMessage(errorMsg);
+          return { success: false, error: errorMsg };
+        }
+
         if (!output || output.trim() === '') {
           // interrupt 时不显示"已取消"（紧接着就有新任务开始）
           const abortReason = loopResult.metadata?.abortReason;
