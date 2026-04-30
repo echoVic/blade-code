@@ -1,6 +1,7 @@
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { createEventDispatcher } from '../../../src/store/session/handlers/eventHandlers'
+import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer'
 import type { Message, SessionStoreState, ToolCallInfo } from '../../../src/store/session/types'
 
 function createEmptyAgentContent() {
@@ -69,7 +70,26 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
         message.id === id ? { ...message, ...updates } : message
       )
     }),
-    appendDelta: vi.fn(),
+    appendDelta: vi.fn((messageId: string, delta: string, position: 'before' | 'after') => {
+      state.messages = state.messages.map((message) => {
+        if (message.id !== messageId) return message
+        const agentContent = message.agentContent ?? createEmptyAgentContent()
+        return {
+          ...message,
+          agentContent: {
+            ...agentContent,
+            textBefore:
+              position === 'before'
+                ? agentContent.textBefore + delta
+                : agentContent.textBefore,
+            textAfter:
+              position === 'after'
+                ? agentContent.textAfter + delta
+                : agentContent.textAfter,
+          },
+        }
+      })
+    }),
     appendToolCall: vi.fn((messageId: string, toolCall: ToolCallInfo) => {
       state.messages = state.messages.map((message) =>
         message.id === messageId
@@ -124,6 +144,11 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
 }
 
 describe('eventHandlers', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    globalStreamingBuffer.reset()
+  })
+
   test('creates stable fallback tool ids for repeated tool.start events with the same payload', () => {
     const state = createState()
     const get = () => state
@@ -191,5 +216,64 @@ describe('eventHandlers', () => {
     nowSpy.mockRestore()
 
     expect(secondId).toBe(firstId)
+  })
+
+  test('drains buffered message deltas before message.complete updates message content', () => {
+    vi.useFakeTimers()
+    const state = createState()
+    const dispatch = createEventDispatcher(() => state, vi.fn())
+
+    dispatch({
+      type: 'message.delta',
+      properties: { sessionId: 'session-1', messageId: 'assistant-1', delta: 'hel' },
+    })
+    dispatch({
+      type: 'message.delta',
+      properties: { sessionId: 'session-1', messageId: 'assistant-1', delta: 'lo' },
+    })
+
+    expect(state.messages[0]?.agentContent?.textBefore).toBe('')
+
+    dispatch({
+      type: 'message.complete',
+      properties: { sessionId: 'session-1', messageId: 'assistant-1' },
+    })
+
+    expect(state.messages[0]?.content).toBe('hello')
+  })
+
+  test('flushes buffered message deltas to the message that received them', () => {
+    vi.useFakeTimers()
+    const state = createState({
+      messages: [
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: '',
+          timestamp: 1700000000000,
+          agentContent: createEmptyAgentContent(),
+        },
+        {
+          id: 'assistant-2',
+          role: 'assistant',
+          content: '',
+          timestamp: 1700000000001,
+          agentContent: createEmptyAgentContent(),
+        },
+      ],
+      currentAssistantMessageId: 'assistant-1',
+    })
+    const dispatch = createEventDispatcher(() => state, vi.fn())
+
+    dispatch({
+      type: 'message.delta',
+      properties: { sessionId: 'session-1', messageId: 'assistant-1', delta: 'from one' },
+    })
+    state.currentAssistantMessageId = 'assistant-2'
+
+    vi.advanceTimersByTime(150)
+
+    expect(state.messages[0]?.agentContent?.textBefore).toBe('from one')
+    expect(state.messages[1]?.agentContent?.textBefore).toBe('')
   })
 })

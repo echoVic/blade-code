@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils'
 import { useIsDark } from '@/store/SettingsStore'
 import { Check, Copy } from 'lucide-react'
-import { useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneLight, vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
@@ -10,12 +10,15 @@ import remarkGfm from 'remark-gfm'
 interface MarkdownRendererProps {
   content: string
   className?: string
+  syntaxHighlight?: boolean
 }
 
-export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
+const remarkPlugins = [remarkGfm]
+
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, className, syntaxHighlight = true }: MarkdownRendererProps) {
   const isDark = useIsDark()
 
-  const components: Components = {
+  const components: Components = useMemo(() => ({
     code({ className, children, ...props }) {
       const match = /language-(\w+)/.exec(className || '')
       const isInline = !match
@@ -27,6 +30,16 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
           <code className={cn("bg-[#F3F4F6] dark:bg-[#27272a] px-1.5 py-0.5 rounded text-[#111827] dark:text-[#E5E5E5] font-mono text-[13px]", className)} {...props}>
             {children}
           </code>
+        )
+      }
+
+      if (!syntaxHighlight) {
+        return (
+          <pre className="my-4 overflow-x-auto rounded-lg border border-[#E5E7EB] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1e1e1e] p-4 text-[13px] leading-normal">
+            <code className={className} {...props}>
+              {codeString}
+            </code>
+          </pre>
         )
       }
 
@@ -111,19 +124,19 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
     hr() {
       return <hr className="my-6 border-[#E5E7EB] dark:border-[#27272a]" />
     }
-  }
+  }), [isDark, syntaxHighlight])
 
   return (
     <div className={cn("text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono break-words min-w-0 w-full", className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={remarkPlugins}
         components={components}
       >
         {content}
       </ReactMarkdown>
     </div>
   )
-}
+})
 
 function CopyButton({ content }: { content: string }) {
   const [copied, setCopied] = useState(false)

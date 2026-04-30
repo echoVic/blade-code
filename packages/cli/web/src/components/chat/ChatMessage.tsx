@@ -601,11 +601,14 @@ function AgentMessageContent({ message }: { message: Message }) {
     toolCalls.length > 0 &&
     toolCalls.every((tc) => tc.status === 'success' || tc.status === 'error');
   const showChangedFiles = allToolsCompleted && (!isCurrentMessage || !isStreaming);
+  const syntaxHighlight = !isCurrentMessage || !isStreaming;
 
   return (
     <div className="space-y-3">
       {thinkingContent && <ThinkingSection content={thinkingContent} />}
-      {textBefore && <MarkdownRenderer content={textBefore} />}
+      {textBefore && (
+        <MarkdownRenderer content={textBefore} syntaxHighlight={syntaxHighlight} />
+      )}
       {todos.length > 0 && <TodoSection todos={todos} />}
       {subagent && <SubagentSection subagent={subagent} />}
       <ToolCallsList toolCalls={toolCalls} />
@@ -614,7 +617,9 @@ function AgentMessageContent({ message }: { message: Message }) {
       )}
       {question && <QuestionSection question={question} />}
       {showChangedFiles && <ChangedFilesSection toolCalls={toolCalls} />}
-      {textAfter && <MarkdownRenderer content={textAfter} />}
+      {textAfter && (
+        <MarkdownRenderer content={textAfter} syntaxHighlight={syntaxHighlight} />
+      )}
     </div>
   );
 }

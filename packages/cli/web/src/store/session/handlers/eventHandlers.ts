@@ -8,6 +8,7 @@ import type {
   ToolCallInfo,
 } from '../types'
 import { makeSubagentId, makeToolCallId } from '../utils/messageIdentity'
+import { globalStreamingBuffer } from './streamingBuffer'
 
 type GetState = () => SessionStoreState
 type SetState = {
@@ -740,9 +741,199 @@ const eventHandlers: Record<string, EventHandler> = {
   'run.cancelled': handleRunCancelled,
 }
 
+// 需要缓冲的高频 delta 事件
+const BUFFERED_EVENTS = new Set([
+  'message.delta',
+  'thinking.delta',
+  'subagent.delta',
+  'subagent.thinking.delta',
+])
+
+// 流结束事件（需要先 drain buffer）
+const STREAM_END_EVENTS = new Set([
+  'message.complete',
+  'thinking.completed',
+  'session.completed',
+  'session.error',
+  'run.cancelled',
+])
+
+const resolveSubagentTargetMessageId = (
+  messages: Message[],
+  currentAssistantMessageId: string | null,
+  subagentSessionId: string
+): string | undefined => {
+  if (subagentSessionId) {
+    return messages.find((m) => m.agentContent?.subagent?.sessionId === subagentSessionId)?.id ||
+      messages.find((m) => m.agentContent?.subagent?.status === 'running')?.id
+  }
+
+  return currentAssistantMessageId ||
+    [...messages].reverse().find((m) => m.agentContent?.subagent)?.id
+}
+
 export const createEventDispatcher = (get: GetState, set: SetState) => {
   return (event: StreamEvent) => {
-    console.log('[SSE Event]', event.type, event.properties)
+    // delta 事件不打印日志，避免大量 console.log 阻塞主线程
+    if (!BUFFERED_EVENTS.has(event.type)) {
+      console.log('[SSE Event]', event.type, event.properties)
+    }
+
+    // 流结束事件：先 drain buffer 确保内容不丢失，再执行 handler
+    if (STREAM_END_EVENTS.has(event.type)) {
+      globalStreamingBuffer.drainAll()
+      const handler = eventHandlers[event.type]
+      if (handler) {
+        handler(event.properties, get, set)
+      }
+      return
+    }
+
+    // message.delta 走 buffer
+    if (event.type === 'message.delta') {
+      const props = event.properties
+      const { currentSessionId, currentAssistantMessageId, hasToolCalls } = get()
+      if (props.sessionId !== currentSessionId) return
+
+      const targetMessageId = (props.messageId as string) || currentAssistantMessageId
+      const delta = props.delta as string
+
+      // 首次收到 delta 且无 assistant message：需立即创建消息，直接透传
+      if (!currentAssistantMessageId) {
+        const handler = eventHandlers['message.delta']
+        if (handler) handler(props, get, set)
+        return
+      }
+
+      const position = hasToolCalls ? 'after' : 'before'
+      const channelKey = `content:${targetMessageId}:${position}`
+
+      globalStreamingBuffer.append(channelKey, delta, (bufferedDelta) => {
+        const { appendDelta } = get()
+        if (targetMessageId) {
+          appendDelta(targetMessageId, bufferedDelta, position)
+        }
+      })
+      return
+    }
+
+    // thinking.delta 走 buffer
+    if (event.type === 'thinking.delta') {
+      const props = event.properties
+      const { currentSessionId, currentAssistantMessageId } = get()
+      if (props.sessionId !== currentSessionId) return
+      if (!currentAssistantMessageId) return
+
+      const delta = props.delta as string
+      const targetMessageId = currentAssistantMessageId
+      const channelKey = `thinking:${targetMessageId}`
+
+      globalStreamingBuffer.append(channelKey, delta, (bufferedDelta) => {
+        const { appendThinking } = get()
+        if (targetMessageId) {
+          appendThinking(targetMessageId, bufferedDelta)
+        }
+      })
+      return
+    }
+
+    // subagent.delta 走 buffer
+    if (event.type === 'subagent.delta') {
+      const props = event.properties
+      const { currentSessionId } = get()
+      if (props.sessionId !== currentSessionId) return
+
+      const delta = props.delta as string
+      if (!delta) return
+
+      const subagentSessionId = (props.subagentSessionId as string) || ''
+      const channelKey = `subagent:${subagentSessionId}`
+      const {
+        currentAssistantMessageId: targetCurrentAssistantMessageId,
+        messages: targetMessages,
+      } = get()
+      const targetMessageIdAtAppend = resolveSubagentTargetMessageId(
+        targetMessages,
+        targetCurrentAssistantMessageId,
+        subagentSessionId
+      )
+
+      globalStreamingBuffer.append(channelKey, delta, (bufferedDelta) => {
+        const { currentAssistantMessageId, messages } = get()
+        const targetMessageId = targetMessageIdAtAppend ||
+          resolveSubagentTargetMessageId(messages, currentAssistantMessageId, subagentSessionId)
+
+        if (!targetMessageId) return
+        set((state) => ({
+          messages: state.messages.map((m) => {
+            if (m.id !== targetMessageId) return m
+            if (!m.agentContent?.subagent) return m
+            return {
+              ...m,
+              agentContent: {
+                ...m.agentContent,
+                subagent: {
+                  ...m.agentContent.subagent,
+                  sessionId: m.agentContent.subagent.sessionId || subagentSessionId,
+                  output: (m.agentContent.subagent.output || '') + bufferedDelta,
+                },
+              },
+            }
+          }),
+        }))
+      })
+      return
+    }
+
+    // subagent.thinking.delta 走 buffer
+    if (event.type === 'subagent.thinking.delta') {
+      const props = event.properties
+      const { currentSessionId } = get()
+      if (props.sessionId !== currentSessionId) return
+
+      const delta = props.delta as string
+      if (!delta) return
+
+      const subagentSessionId = (props.subagentSessionId as string) || ''
+      const channelKey = `subagent-thinking:${subagentSessionId}`
+      const {
+        currentAssistantMessageId: targetCurrentAssistantMessageId,
+        messages: targetMessages,
+      } = get()
+      const targetMessageIdAtAppend = resolveSubagentTargetMessageId(
+        targetMessages,
+        targetCurrentAssistantMessageId,
+        subagentSessionId
+      )
+
+      globalStreamingBuffer.append(channelKey, delta, (bufferedDelta) => {
+        const { currentAssistantMessageId, messages } = get()
+        const targetMessageId = targetMessageIdAtAppend ||
+          resolveSubagentTargetMessageId(messages, currentAssistantMessageId, subagentSessionId)
+
+        if (!targetMessageId) return
+        set((state) => ({
+          messages: state.messages.map((m) => {
+            if (m.id !== targetMessageId) return m
+            if (!m.agentContent?.subagent) return m
+            return {
+              ...m,
+              agentContent: {
+                ...m.agentContent,
+                subagent: {
+                  ...m.agentContent.subagent,
+                  sessionId: m.agentContent.subagent.sessionId || subagentSessionId,
+                  thinking: (m.agentContent.subagent.thinking || '') + bufferedDelta,
+                },
+              },
+            }
+          }),
+        }))
+      })
+      return
+    }
+
+    // 其它事件直通
     const handler = eventHandlers[event.type]
     if (handler) {
       handler(event.properties, get, set)

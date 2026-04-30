@@ -1,5 +1,6 @@
 import { sessionService } from '@/services'
 import { createEventDispatcher } from '../handlers/eventHandlers'
+import { globalStreamingBuffer } from '../handlers/streamingBuffer'
 import type { SliceCreator, StreamingSlice } from '../types'
 
 export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => ({
@@ -26,6 +27,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
   },
 
   endAgentResponse: () => {
+    globalStreamingBuffer.drainAll()
     set({
       currentAssistantMessageId: null,
       hasToolCalls: false,
@@ -40,6 +42,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
       eventUnsubscribe()
     }
 
+    globalStreamingBuffer.reset()
     const dispatch = createEventDispatcher(get, set)
     const unsubscribe = sessionService.subscribeEvents(sessionId, dispatch)
     set({ eventUnsubscribe: unsubscribe })
@@ -48,6 +51,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
   unsubscribeFromEvents: () => {
     const { eventUnsubscribe } = get()
     if (eventUnsubscribe) {
+      globalStreamingBuffer.drainAll()
       eventUnsubscribe()
       set({ eventUnsubscribe: null })
     }
