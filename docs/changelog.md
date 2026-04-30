@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.3.6] - 2026-04-30
+
+### ✨ 新功能
+
+- 添加消息流缓冲机制优化高频事件处理 (7fe7f95)
+
+### 🐛 问题修复
+
+- 处理API错误时显示友好错误信息并允许系统消息 (80bcdd8)
+
+
 ## [0.3.5] - 2026-04-21
 
 ### ✨ 新功能
