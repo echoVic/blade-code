@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.4.1] - 2026-05-06
+
+### ✨ 新功能
+
+- 重构配置向导流程并改进用户提示 (700ff07)
+
+### 🐛 问题修复
+
+- 确保空对象模式显式输出 required 数组 (68f0273)
+
+
 ## [0.4.0] - 2026-05-06
 
 ### ✨ 新功能
