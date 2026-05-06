@@ -8,8 +8,18 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
  * @returns JSONSchema7 对象
  */
 export function zodToFunctionSchema<T extends z.ZodSchema>(schema: T): JSONSchema7 {
-  return zodToJsonSchema(schema, {
+  const jsonSchema = zodToJsonSchema(schema, {
     target: 'jsonSchema7',
     $refStrategy: 'none',
   }) as JSONSchema7;
+
+  if (
+    jsonSchema.type === 'object' &&
+    jsonSchema.properties &&
+    !Array.isArray(jsonSchema.required)
+  ) {
+    jsonSchema.required = [];
+  }
+
+  return jsonSchema;
 }

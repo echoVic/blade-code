@@ -268,6 +268,70 @@ describe('VercelAIChatService', () => {
       // modelFallback chunk should have been yielded before the fallback failure
       expect(chunks[0]).toEqual({ modelFallback: true });
     });
+
+    it('preserves assistant reasoning content when replaying tool calls in stream mode', async () => {
+      streamText.mockReturnValueOnce({
+        fullStream: toAsyncIterable([
+          { type: 'text-delta', textDelta: 'ok' },
+          {
+            type: 'finish',
+            finishReason: 'stop',
+            totalUsage: { promptTokens: 1, completionTokens: 1 },
+          },
+        ]),
+      });
+
+      const service = await createService({
+        provider: 'openai-compatible',
+        providerId: 'deepseek',
+        model: 'deepseek-v4-pro',
+        baseUrl: 'https://api.deepseek.com/v1',
+      });
+
+      const messages = [
+        { role: 'user' as const, content: '查看当前目录' },
+        {
+          role: 'assistant' as const,
+          content: '',
+          reasoningContent: '先思考再调用工具。',
+          tool_calls: [
+            {
+              id: 'tc-1',
+              type: 'function' as const,
+              function: { name: 'Bash', arguments: '{"command":"pwd"}' },
+            },
+          ],
+        },
+        {
+          role: 'tool' as const,
+          content: '/tmp/project',
+          tool_call_id: 'tc-1',
+          name: 'Bash',
+        },
+      ];
+
+      for await (const _chunk of service.streamChat(messages)) {
+        // drain stream
+      }
+
+      const call = streamText.mock.calls[0][0];
+      const assistantMessage = call.messages.find(
+        (message: { role: string }) => message.role === 'assistant'
+      );
+
+      expect(assistantMessage).toEqual({
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: '先思考再调用工具。' },
+          {
+            type: 'tool-call',
+            toolCallId: 'tc-1',
+            toolName: 'Bash',
+            input: { command: 'pwd' },
+          },
+        ],
+      });
+    });
   });
 
   // ─── filterOrphanToolMessages (indirect) ──────────────────────────────
@@ -326,6 +390,66 @@ describe('VercelAIChatService', () => {
       expect(toolMessages).toHaveLength(1);
       // The single tool message should correspond to tc-1
       expect(toolMessages[0].content[0].toolCallId).toBe('tc-1');
+    });
+
+    it('preserves assistant reasoning content when replaying tool calls', async () => {
+      generateText.mockResolvedValueOnce({
+        text: 'ok',
+        toolCalls: [],
+        usage: { promptTokens: 1, completionTokens: 1 },
+        finishReason: 'stop',
+        reasoning: undefined,
+        providerMetadata: undefined,
+      });
+
+      const service = await createService({
+        provider: 'openai-compatible',
+        providerId: 'deepseek',
+        model: 'deepseek-v4-pro',
+        baseUrl: 'https://api.deepseek.com/v1',
+      });
+
+      const messages = [
+        { role: 'user' as const, content: '列出当前目录' },
+        {
+          role: 'assistant' as const,
+          content: '',
+          reasoningContent: '需要先调用工具查看目录内容。',
+          tool_calls: [
+            {
+              id: 'tc-1',
+              type: 'function' as const,
+              function: { name: 'Bash', arguments: '{"command":"pwd"}' },
+            },
+          ],
+        },
+        {
+          role: 'tool' as const,
+          content: '/tmp/project',
+          tool_call_id: 'tc-1',
+          name: 'Bash',
+        },
+      ];
+
+      await service.chat(messages);
+
+      const call = generateText.mock.calls[0][0];
+      const assistantMessage = call.messages.find(
+        (message: { role: string }) => message.role === 'assistant'
+      );
+
+      expect(assistantMessage).toEqual({
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: '需要先调用工具查看目录内容。' },
+          {
+            type: 'tool-call',
+            toolCallId: 'tc-1',
+            toolName: 'Bash',
+            input: { command: 'pwd' },
+          },
+        ],
+      });
     });
   });
 

@@ -109,6 +109,7 @@ export function AddModelModal({ open, onOpenChange, onSave }: AddModelModalProps
   const selectedProvider = providers.find(p => p.id === selectedProviderId)
   const selectedModel = models.find(m => m.id === formData.modelId)
   const isCustom = selectedProviderId === 'custom'
+  const hasBuiltInModels = !isCustom && models.length > 0
   const canSubmit = formData.modelId && formData.apiKey
 
   return (
@@ -204,7 +205,7 @@ export function AddModelModal({ open, onOpenChange, onSave }: AddModelModalProps
 
             <div className="flex flex-col gap-2">
               <label className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">Model ID</label>
-              {!isCustom && models.length > 0 ? (
+              {hasBuiltInModels && (
                 <div className="relative">
                   <button
                     type="button"
@@ -240,14 +241,18 @@ export function AddModelModal({ open, onOpenChange, onSave }: AddModelModalProps
                     </>
                   )}
                 </div>
-              ) : (
-                <input
-                  type="text"
-                  value={formData.modelId}
-                  onChange={(e) => setFormData({ ...formData, modelId: e.target.value })}
-                  placeholder="gpt-4o, claude-3-opus, deepseek-chat, etc."
-                  className="w-full bg-[#F3F4F6] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-md px-3 py-2.5 text-sm text-[#111827] dark:text-[#E5E5E5] font-mono placeholder:text-[#9CA3AF] dark:placeholder:text-[#71717a] focus:outline-none focus:ring-1 focus:ring-[#D1D5DB] dark:focus:ring-zinc-600"
-                />
+              )}
+              <input
+                type="text"
+                value={formData.modelId}
+                onChange={(e) => setFormData({ ...formData, modelId: e.target.value, name: e.target.value })}
+                placeholder="gpt-4o, claude-3-opus, deepseek-chat, etc."
+                className="w-full bg-[#F3F4F6] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-md px-3 py-2.5 text-sm text-[#111827] dark:text-[#E5E5E5] font-mono placeholder:text-[#9CA3AF] dark:placeholder:text-[#71717a] focus:outline-none focus:ring-1 focus:ring-[#D1D5DB] dark:focus:ring-zinc-600"
+              />
+              {hasBuiltInModels && (
+                <p className="text-[12px] text-[#9CA3AF] dark:text-[#71717a] font-mono">
+                  You can select a listed model or type a custom model ID.
+                </p>
               )}
             </div>
           </div>

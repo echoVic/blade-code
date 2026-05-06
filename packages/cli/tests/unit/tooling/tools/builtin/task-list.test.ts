@@ -309,4 +309,25 @@ describe('builtin task list tool registration', () => {
       await fs.rm(configDir, { recursive: true, force: true });
     }
   });
+
+  it('exports an explicit empty required array for TaskList parameters', async () => {
+    const configDir = await createTempConfigDir();
+
+    try {
+      const taskListTool = createTaskListTools({
+        sessionId: 'session-a',
+        configDir,
+      }).find((tool) => tool.name === 'TaskList');
+
+      expect(taskListTool).toBeDefined();
+      expect(taskListTool?.getFunctionDeclaration().parameters).toMatchObject({
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+        required: [],
+      });
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
 });

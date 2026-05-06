@@ -53,10 +53,25 @@ type AITextPart = {
   providerOptions?: AIProviderOptions;
 };
 
+type AIReasoningPart = {
+  type: 'reasoning';
+  text: string;
+  providerOptions?: AIProviderOptions;
+};
+
 type AIMessage =
   | { role: 'system'; content: string; providerOptions?: AIProviderOptions }
   | { role: 'user'; content: string | Array<AITextPart | { type: 'image'; image: string }> }
-  | { role: 'assistant'; content: string | Array<{ type: 'text'; text: string } | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }> }
+  | {
+      role: 'assistant';
+      content:
+        | string
+        | Array<
+            | { type: 'text'; text: string }
+            | AIReasoningPart
+            | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
+          >;
+    }
   | { role: 'tool'; content: Array<{ type: 'tool-result'; toolCallId: string; toolName: string; output: { type: 'text'; value: string } }> };
 
 type AITool = {
@@ -244,14 +259,28 @@ export class VercelAIChatService implements IChatService {
             };
           });
           const text = getTextContent(msg.content);
+          const reasoningParts = msg.reasoningContent?.trim()
+            ? [{ type: 'reasoning' as const, text: msg.reasoningContent }]
+            : [];
           if (text) {
             result.push({
               role: 'assistant',
-              content: [{ type: 'text', text }, ...toolCalls],
+              content: [...reasoningParts, { type: 'text', text }, ...toolCalls],
             });
+          } else if (reasoningParts.length > 0) {
+            result.push({ role: 'assistant', content: [...reasoningParts, ...toolCalls] });
           } else {
             result.push({ role: 'assistant', content: toolCalls });
           }
+        } else if (msg.reasoningContent?.trim()) {
+          const text = getTextContent(msg.content);
+          const content: Array<{ type: 'text'; text: string } | AIReasoningPart> = [
+            { type: 'reasoning', text: msg.reasoningContent },
+          ];
+          if (text) {
+            content.push({ type: 'text', text });
+          }
+          result.push({ role: 'assistant', content });
         } else {
           result.push({ role: 'assistant', content: getTextContent(msg.content) });
         }
