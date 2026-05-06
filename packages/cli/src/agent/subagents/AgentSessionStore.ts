@@ -67,6 +67,9 @@ export interface AgentSession {
 
   /** 父会话 ID（可选） */
   parentSessionId?: string;
+
+  /** 共享任务列表 ID（用于 Agent Team 协作） */
+  taskListId?: string;
 }
 
 /**

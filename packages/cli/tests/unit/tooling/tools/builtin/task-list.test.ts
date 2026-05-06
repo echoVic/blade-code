@@ -85,6 +85,38 @@ describe('task list tools persistence', () => {
     }
   });
 
+  it('can share tasks across sessions with a taskListId context', async () => {
+    const configDir = await createTempConfigDir();
+
+    try {
+      await getTool('agent-a', configDir, 'TaskCreate')
+        .build({ subject: 'Shared task', description: 'Visible to the team' })
+        .execute(createAbortSignal(), undefined, {
+          sessionId: 'agent-a',
+          taskListId: 'team-a',
+        });
+
+      const listResult = await getTool('agent-b', configDir, 'TaskList')
+        .build({})
+        .execute(createAbortSignal(), undefined, {
+          sessionId: 'agent-b',
+          taskListId: 'team-a',
+        });
+      const listContent = listResult.llmContent as {
+        tasks: Array<{ subject: string }>;
+      };
+
+      expect(listContent.tasks).toEqual([
+        expect.objectContaining({ subject: 'Shared task' }),
+      ]);
+      await expect(
+        fs.readFile(path.join(configDir, 'tasks', 'team-a-agent-team-a.json'), 'utf-8')
+      ).resolves.toContain('Shared task');
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
   it('updates and lists current tasks', async () => {
     const configDir = await createTempConfigDir();
 

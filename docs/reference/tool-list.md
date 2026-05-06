@@ -226,6 +226,51 @@
 
 **类型**: ReadOnly
 
+### TeamCreate
+
+创建 Agent Team，并可一次性启动多个后台 teammate subagents。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `team_name` | string | ✅ | 团队名称，会被规范化为安全目录名 |
+| `description` | string | | 团队目标说明 |
+| `agent_type` | string | | team lead 的角色标签 |
+| `members` | array | | 初始 teammate 列表 |
+
+`members` 项字段：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | ✅ | teammate 名称 |
+| `subagent_type` | string | ✅ | 已注册的 subagent 类型 |
+| `description` | string | | 简短任务说明 |
+| `prompt` | string | ✅ | 详细任务指令 |
+
+**类型**: ReadOnly  
+**存储**: `~/.blade/teams/<team-name>/config.json`  
+**特性**: 基于后台 Task agent 启动 teammate，成员共享 team name 作用域的任务列表，可通过 `TaskOutput` 读取成员输出
+
+### TeamStatus
+
+列出 Agent Teams，或查看指定团队的成员状态。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `team_name` | string | | 团队名称；省略时列出全部团队 |
+
+**类型**: ReadOnly
+
+### TeamDelete
+
+标记团队结束，并可取消运行中的 teammate agents。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `team_name` | string | ✅ | 团队名称 |
+| `kill_running` | boolean | | 是否取消运行中的成员（默认 true） |
+
+**类型**: ReadOnly
+
 ## Plan 模式工具
 
 ### EnterPlanMode

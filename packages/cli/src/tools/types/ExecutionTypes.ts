@@ -65,6 +65,7 @@ export interface ConfirmationHandler {
 export interface ExecutionContext {
   userId?: string;
   sessionId?: string;
+  taskListId?: string; // Optional shared task-list scope (used by agent teams)
   messageId?: string; // 对话消息 ID（用于快照管理）
   workspaceRoot?: string;
   signal?: AbortSignal;
@@ -167,7 +168,8 @@ export class ToolExecution {
     this.aborted = true;
     this.result = {
       success: false,
-      llmContent: options?.llmContent || `Tool execution aborted: ${reason || 'Unknown reason'}`,
+      llmContent:
+        options?.llmContent || `Tool execution aborted: ${reason || 'Unknown reason'}`,
       error: {
         type: options?.errorType || ToolErrorType.EXECUTION_ERROR,
         message: reason || 'Execution aborted',

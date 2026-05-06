@@ -9,9 +9,9 @@
 
 import { nanoid } from 'nanoid';
 import type { PermissionMode } from '../../config/types.js';
-import { getCwd } from '../../utils/cwd.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
+import { getCwd } from '../../utils/cwd.js';
 import { Agent } from '../Agent.js';
 import { drainLoop } from '../loop/index.js';
 import { SessionRuntime } from '../runtime/SessionRuntime.js';
@@ -65,6 +65,9 @@ export interface StartBackgroundAgentOptions {
 
   /** 恢复时的初始消息（用于 resume） */
   existingMessages?: Message[];
+
+  /** Shared task-list scope for coordinated agent teams */
+  taskListId?: string;
 }
 
 /**
@@ -129,6 +132,7 @@ export class BackgroundAgentManager {
       permissionMode,
       agentId,
       existingMessages,
+      taskListId,
     } = options;
 
     // 生成或使用已有的 agent ID
@@ -148,6 +152,7 @@ export class BackgroundAgentManager {
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
       parentSessionId,
+      taskListId,
     };
 
     // 保存会话
@@ -162,7 +167,8 @@ export class BackgroundAgentManager {
       parentSessionId,
       permissionMode,
       abortController.signal,
-      existingMessages
+      existingMessages,
+      taskListId
     );
 
     // 记录运行时信息
@@ -192,7 +198,8 @@ export class BackgroundAgentManager {
     parentSessionId: string | undefined,
     permissionMode: PermissionMode | undefined,
     signal: AbortSignal,
-    existingMessages?: Message[]
+    existingMessages?: Message[],
+    taskListId?: string
   ): Promise<SubagentResult> {
     const startTime = Date.now();
     let runtime: SessionRuntime | undefined;
@@ -220,6 +227,7 @@ export class BackgroundAgentManager {
         messages: existingMessages || [],
         userId: 'subagent',
         sessionId: agentId,
+        taskListId,
         workspaceRoot: getCwd(),
         permissionMode,
         subagentInfo: {
@@ -387,6 +395,7 @@ export class BackgroundAgentManager {
       permissionMode,
       agentId, // 复用原 ID
       existingMessages: session.messages,
+      taskListId: session.taskListId,
     });
   }
 

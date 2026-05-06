@@ -31,6 +31,8 @@ import {
 } from './system/index.js';
 // 任务管理工具
 import { createTaskListTools, taskOutputTool, taskTool } from './task/index.js';
+// Agent Team 工具
+import { createTeamTools } from './team/index.js';
 // 网络工具
 import { webFetchTool, webSearchTool } from './web/index.js';
 
@@ -79,6 +81,9 @@ export async function getBuiltinTools(opts?: {
 
     // 会话任务列表: TaskCreate, TaskGet, TaskUpdate, TaskList
     ...createTaskListTools({ sessionId, configDir }),
+
+    // Agent Teams: TeamCreate, TeamStatus, TeamDelete
+    ...createTeamTools({ sessionId, configDir }),
 
     // Plan 模式: EnterPlanMode, ExitPlanMode
     enterPlanModeTool,

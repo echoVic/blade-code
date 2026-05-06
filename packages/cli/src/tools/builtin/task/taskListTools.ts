@@ -303,7 +303,10 @@ function getManager(
   fallbackSessionId: string,
   configDir: string
 ): TaskListManager {
-  return TaskListManager.getInstance(context.sessionId || fallbackSessionId, configDir);
+  return TaskListManager.getInstance(
+    context.taskListId || context.sessionId || fallbackSessionId,
+    configDir
+  );
 }
 
 function taskResult(input: {
