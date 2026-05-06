@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.4.0] - 2026-05-06
+
+### ✨ 新功能
+
+- 添加 TeamCreate, TeamStatus 和 TeamDelete 到预加载工具集 (bfe79ac)
+- 新增 Agent Team 协作功能 (08dceef)
+
+### ♻️ 代码重构
+
+- 重构任务管理工具，将TodoWrite替换为TaskCreate/TaskGet/TaskUpdate/TaskList (f499b80)
+
+
 ## [0.3.6] - 2026-04-30
 
 ### ✨ 新功能
