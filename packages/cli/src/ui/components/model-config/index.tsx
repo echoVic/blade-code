@@ -4,7 +4,7 @@
  * 简化流程：
  * Step 1: 选择 Provider（80+ 选项，支持搜索）
  * Step 2: 输入 API Key
- * Step 2.5: 输入 Base URL（仅当无默认值时）
+ * Step 2.5: 确认或修改 Base URL
  * Step 3: 选择模型（从内置列表选择或自定义）
  */
 
@@ -20,6 +20,7 @@ import { useModels, useProviders } from './hooks/useModelsDev.js';
 import { ModelSelector } from './ModelSelector.js';
 import { ProviderSelector } from './ProviderSelector.js';
 import { DEFAULT_BASE_URLS, type ModelConfigWizardProps, type ModelOption, type ProviderOption, type WizardStep } from './types.js';
+import { getPreviousWizardStep, getStepAfterApiKeySubmit } from './wizardFlow.js';
 
 export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   mode,
@@ -71,14 +72,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
       return;
     }
     setError(undefined);
-
-    const defaultUrl = provider ? getDefaultBaseUrl(provider) : '';
-    const isCustomProvider = provider?.isCustom;
-    if (isCustomProvider || (!defaultUrl && !baseUrl)) {
-      setStep('baseUrl');
-    } else {
-      setStep('model');
-    }
+    setStep(getStepAfterApiKeySubmit());
   });
 
   const handleBaseUrlSubmit = useMemoizedFn(() => {
@@ -135,22 +129,9 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
 
   const handleBack = useMemoizedFn(() => {
     setError(undefined);
-    switch (step) {
-      case 'apiKey':
-        setStep('provider');
-        break;
-      case 'baseUrl':
-        setStep('apiKey');
-        break;
-      case 'model': {
-        const defaultUrl = provider ? getDefaultBaseUrl(provider) : '';
-        if (!defaultUrl) {
-          setStep('baseUrl');
-        } else {
-          setStep('apiKey');
-        }
-        break;
-      }
+    const previousStep = getPreviousWizardStep(step);
+    if (previousStep) {
+      setStep(previousStep);
     }
   });
 
@@ -275,7 +256,7 @@ interface BaseUrlInputProps {
   error?: string;
 }
 
-const BaseUrlInput: React.FC<BaseUrlInputProps> = ({
+export const BaseUrlInput: React.FC<BaseUrlInputProps> = ({
   provider,
   value,
   onChange,
@@ -293,7 +274,7 @@ const BaseUrlInput: React.FC<BaseUrlInputProps> = ({
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold color="blue">
-          输入 Base URL
+          Step 2.5: 确认 Base URL
         </Text>
       </Box>
 
@@ -305,7 +286,7 @@ const BaseUrlInput: React.FC<BaseUrlInputProps> = ({
 
       <Box marginBottom={1}>
         <Text dimColor>
-          此 Provider 没有默认的 API 端点，请输入完整的 Base URL
+          默认值已预填，可直接回车继续，也可以手动修改为自定义网关地址
         </Text>
       </Box>
 

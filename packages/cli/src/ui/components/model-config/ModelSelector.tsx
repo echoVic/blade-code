@@ -145,9 +145,12 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           <Box marginBottom={1}>
             <Text dimColor>
               {isCustomProvider
-                ? '输入模型名称：'
-                : '输入自定义模型名称（按 Esc 返回列表）：'}
+                ? '输入 Model ID：'
+                : '输入自定义 Model ID（按 Esc 返回列表）：'}
             </Text>
+          </Box>
+          <Box marginBottom={1}>
+            <Text dimColor>例如: deepseek-v4-pro</Text>
           </Box>
           <Box>
             <Text bold color="cyan">{'> '}</Text>
@@ -155,7 +158,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               value={customModel}
               onChange={setCustomModel}
               onSubmit={handleCustomSubmit}
-              placeholder="例如: gpt-4o-mini"
+              placeholder="例如: deepseek-v4-pro"
             />
           </Box>
         </Box>
@@ -166,8 +169,12 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             <TextInput
               value={searchQuery}
               onChange={setSearchQuery}
-              placeholder={`搜索 ${models.length} 个模型，按 + 自定义...`}
+              placeholder={`搜索 ${models.length} 个模型，按 + 手动输入 Model ID...`}
             />
+          </Box>
+
+          <Box marginBottom={1}>
+            <Text dimColor>按 + 手动输入 Model ID，例如: deepseek-v4-pro</Text>
           </Box>
 
           <Box flexDirection="column" height={12}>
