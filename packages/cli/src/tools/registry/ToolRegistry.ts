@@ -176,7 +176,7 @@ export class ToolRegistry extends EventEmitter {
 
   /**
    * 获取只读工具的函数声明（用于 Plan 模式）
-   * Plan 模式下只允许使用只读工具：Read, Glob, Grep, WebFetch, WebSearch, Task, EnterPlanMode, ExitPlanMode, TodoWrite
+   * Plan 模式下只允许使用只读工具：Read, Glob, Grep, WebFetch, WebSearch, Task, TaskCreate/TaskGet/TaskUpdate/TaskList, EnterPlanMode, ExitPlanMode
    */
   getReadOnlyFunctionDeclarations(): FunctionDeclaration[] {
     return this.getAll()

@@ -81,7 +81,7 @@ export const sessionActions = () => getState().session.actions;
 /**
  * App Actions
  * @example
- * appActions().setTodos(newTodos);
+ * appActions().setTasks(newTasks);
  */
 export const appActions = () => getState().app.actions;
 

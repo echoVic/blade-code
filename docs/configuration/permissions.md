@@ -19,7 +19,7 @@ Blade 提供五种权限模式，可通过 `Shift+Tab` 循环切换（UI 中）�
 ### DEFAULT 模式（默认）
 
 ```
-✅ 自动批准: 只读工具（Read、Glob、Grep、WebFetch、WebSearch、TodoWrite、Task、Plan 工具）
+✅ 自动批准: 只读工具（Read、Glob、Grep、WebFetch、WebSearch、TaskCreate/TaskGet/TaskUpdate/TaskList、Task、Plan 工具）
 ❌ 需要确认: Write 工具（Edit、Write、NotebookEdit）、Execute 工具（Bash、Skill、SlashCommand）
 ```
 

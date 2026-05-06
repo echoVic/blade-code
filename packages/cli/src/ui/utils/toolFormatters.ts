@@ -73,9 +73,23 @@ export function formatToolCallSummary(
         query && query.length > 40 ? query.substring(0, 40) + '...' : query;
       return `Searching: "${truncatedQuery}"`;
     }
-    case 'TodoWrite': {
-      const todos = params.todos as unknown[];
-      return `Updating tasks (${todos?.length || 0} items)`;
+    case 'TaskCreate': {
+      const subject = params.subject as string;
+      return `Creating task: ${subject || 'task'}`;
+    }
+    case 'TaskGet': {
+      const taskId = params.taskId as string;
+      return `Reading task ${taskId || ''}`.trim();
+    }
+    case 'TaskUpdate': {
+      const status = params.status as string | undefined;
+      const taskId = params.taskId as string;
+      return status
+        ? `Updating task ${taskId || ''}: ${status}`.trim()
+        : `Updating task ${taskId || ''}`.trim();
+    }
+    case 'TaskList': {
+      return `Listing tasks`;
     }
     case 'UndoEdit': {
       const filePath = params.file_path as string;
@@ -174,7 +188,10 @@ export function shouldShowToolDetail(toolName: string, result: ToolResult): bool
       // 网络请求显示结果
       return true;
 
-    case 'TodoWrite':
+    case 'TaskCreate':
+    case 'TaskGet':
+    case 'TaskUpdate':
+    case 'TaskList':
       // 不显示详细内容
       return false;
 

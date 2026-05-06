@@ -12,7 +12,7 @@ import type { ModelConfig, RuntimeConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../services/SessionService.js';
-import type { TodoItem } from '../tools/builtin/todo/types.js';
+import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import type { SpecSlice } from './slices/specSlice.js';
 
 // ==================== Session Types ====================
@@ -184,7 +184,7 @@ export type ActiveModal =
   | 'themeSelector'
   | 'permissionsManager'
   | 'sessionSelector'
-  | 'todoPanel'
+  | 'taskPanel'
   | 'shortcuts'
   | 'modelSelector'
   | 'modelAddWizard'
@@ -216,7 +216,7 @@ export interface AppState {
   activeModal: ActiveModal;
   sessionSelectorData: SessionMetadata[] | undefined;
   modelEditorTarget: ModelConfig | null;
-  todos: TodoItem[];
+  tasks: TaskListItem[];
   awaitingSecondCtrlC: boolean; // 是否等待第二次 Ctrl+C 退出
   thinkingModeEnabled: boolean; // Thinking 模式是否启用（Tab 切换）
   subagentProgress: SubagentProgress | null; // 当前 subagent 执行进度
@@ -232,8 +232,8 @@ export interface AppActions {
   showSessionSelector: (sessions?: SessionMetadata[]) => void;
   showModelEditWizard: (model: ModelConfig) => void;
   closeModal: () => void;
-  setTodos: (todos: TodoItem[]) => void;
-  updateTodo: (todo: TodoItem) => void;
+  setTasks: (tasks: TaskListItem[]) => void;
+  updateTask: (task: TaskListItem) => void;
   setAwaitingSecondCtrlC: (awaiting: boolean) => void;
   // Thinking 模式相关
   setThinkingModeEnabled: (enabled: boolean) => void;

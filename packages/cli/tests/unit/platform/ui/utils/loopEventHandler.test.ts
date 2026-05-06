@@ -65,7 +65,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
       resetTokenUsage: vi.fn(),
     } as any,
     appActions: {
-      setTodos: vi.fn(),
+      setTasks: vi.fn(),
     } as any,
     streamingBuffer: {
       batchAppendContent: vi.fn(),
@@ -539,15 +539,26 @@ describe('createLoopEventHandler', () => {
       expect(deps.sessionActions.resetTokenUsage).toHaveBeenCalled();
     });
 
-    it('todo_update 应该更新 todos', () => {
+    it('task_update 应该更新 tasks', () => {
       const deps = createMockDeps();
       const stats = createMockStats();
       const handler = createLoopEventHandler(deps, stats);
 
-      const todos = [{ id: '1', content: 'todo1', status: 'pending' }];
-      handler({ kind: 'todo_update', todos } as LoopEvent);
+      const tasks = [
+        {
+          id: '1',
+          subject: 'task1',
+          description: 'task1',
+          status: 'pending',
+          priority: 'medium',
+          blocks: [],
+          blockedBy: [],
+          createdAt: new Date().toISOString(),
+        },
+      ];
+      handler({ kind: 'task_update', tasks } as LoopEvent);
 
-      expect(deps.appActions.setTodos).toHaveBeenCalledWith(todos);
+      expect(deps.appActions.setTasks).toHaveBeenCalledWith(tasks);
     });
   });
 });

@@ -12,7 +12,7 @@ export interface NodeError extends Error {
 /**
  * 工具类型枚举（简化为 3 种）
  *
- * - ReadOnly: 只读操作，无副作用（Read, Glob, Grep, WebFetch, WebSearch, TaskOutput, TodoWrite, Plan 工具等）
+ * - ReadOnly: 只读操作，无副作用（Read, Glob, Grep, WebFetch, WebSearch, TaskOutput, TaskCreate/TaskGet/TaskUpdate/TaskList, Plan 工具等）
  * - Write: 文件写入操作（Edit, Write, NotebookEdit）
  * - Execute: 命令执行，可能有副作用（Bash, KillShell, Task, Skill, SlashCommand）
  */

@@ -66,8 +66,11 @@ export const toolCallTemplates = {
   webSearch: (query: string) =>
     createToolCall('WebSearch', { query }),
 
-  todoWrite: (todos: Array<{ id: string; content: string; status: string; priority: string }>) =>
-    createToolCall('TodoWrite', { todos }),
+  taskCreate: (subject: string, description: string) =>
+    createToolCall('TaskCreate', { subject, description }),
+
+  taskUpdate: (taskId: string, status: string) =>
+    createToolCall('TaskUpdate', { taskId, status }),
 
   askUserQuestion: (questions: Array<{ question: string; options: Array<{ label: string }> }>) =>
     createToolCall('AskUserQuestion', { questions }),
@@ -155,7 +158,10 @@ export const builtinToolNames = [
   'StopCommand',
   'DeleteFile',
   'WebSearch',
-  'TodoWrite',
+  'TaskCreate',
+  'TaskGet',
+  'TaskUpdate',
+  'TaskList',
   'AskUserQuestion',
   'Task',
   'Skill',

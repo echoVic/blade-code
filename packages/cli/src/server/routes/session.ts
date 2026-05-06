@@ -646,8 +646,8 @@ async function executeRunAsync(
             break;
 
           // --- 业务事件 ---
-          case 'todo_update':
-            emit('todo.updated', { todos: event.todos });
+          case 'task_update':
+            emit('task.updated', { tasks: event.tasks });
             break;
 
           // --- 系统事件和内部信号不外发 ---

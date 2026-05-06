@@ -14,7 +14,7 @@ export type ProviderType =
  * 权限模式枚举
  *
  * ## DEFAULT 模式（默认）
- * - Auto-approve: ReadOnly 工具（Read/Glob/Grep/WebFetch/WebSearch/TaskOutput/TodoWrite/Plan）
+ * - Auto-approve: ReadOnly 工具（Read/Glob/Grep/WebFetch/WebSearch/TaskOutput/TaskCreate/TaskGet/TaskUpdate/TaskList/Plan）
  * - Needs confirm: Write 工具（Edit/Write/NotebookEdit）、Execute 工具（Bash/Task/Skill/SlashCommand）
  *
  * ## AUTO_EDIT 模式

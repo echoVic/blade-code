@@ -34,7 +34,7 @@ import {
   getRegisteredCommands,
   isSlashCommand,
 } from '../slash-commands/index.js';
-import type { TodoItem } from '../tools/builtin/todo/types.js';
+import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import type {
   ConfirmationDetails,
   ConfirmationResponse,
@@ -402,8 +402,8 @@ export class AcpSession {
             }
 
             // --- 业务事件 ---
-            case 'todo_update':
-              this.sendPlanUpdate(event.todos);
+            case 'task_update':
+              this.sendPlanUpdate(event.tasks);
               break;
 
             // --- 系统事件不外发 ---
@@ -603,19 +603,19 @@ export class AcpSession {
   }
 
   /**
-   * 发送 Plan 更新（Todo 列表）
+   * 发送 Plan 更新（Task 列表）
    *
-   * 将 Blade TodoItem 转换为 ACP PlanEntry 格式发送给 IDE。
+   * 将 Blade TaskListItem 转换为 ACP PlanEntry 格式发送给 IDE。
    * IDE 会在 UI 中渲染为任务列表，显示进度和状态。
    *
-   * @param todos - Blade Todo 列表
+   * @param tasks - Blade Task 列表
    */
-  private sendPlanUpdate(todos: TodoItem[]): void {
-    // 将 Blade TodoItem 转换为 ACP PlanEntry
-    const entries: PlanEntry[] = todos.map((todo) => ({
-      content: todo.content,
-      priority: todo.priority as PlanEntryPriority,
-      status: todo.status, // pending | in_progress | completed 与 ACP 一致
+  private sendPlanUpdate(tasks: TaskListItem[]): void {
+    // 将 Blade TaskListItem 转换为 ACP PlanEntry
+    const entries: PlanEntry[] = tasks.map((task) => ({
+      content: task.subject,
+      priority: task.priority as PlanEntryPriority,
+      status: task.status, // pending | in_progress | completed 与 ACP 一致
     }));
 
     logger.debug(

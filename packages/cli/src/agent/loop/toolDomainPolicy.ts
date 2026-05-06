@@ -2,14 +2,14 @@
  * toolDomainPolicy — 工具结果的领域副作用处理
  *
  * 从 executeLoopGenerator 中提取的 domain side effects：
- * - TodoWrite -> 更新 todo 列表
+ * - TaskCreate/TaskUpdate/TaskList -> 更新任务列表
  * - Skill -> 激活 skill context
  * - ModelSwitch -> 触发模型切换
  *
  * 纯函数 / 薄封装，返回 action descriptors 或直接调用 deps 回调。
  */
 
-import type { TodoItem } from '../../tools/builtin/todo/types.js';
+import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
 import type { LoopDependencies } from './types.js';
 
@@ -23,38 +23,38 @@ export interface FunctionToolCallRef {
   function: { name: string; arguments: string };
 }
 
-// ===== TodoWrite =====
+// ===== Task list updates =====
 
-export interface TodoUpdateAction {
-  kind: 'todo_update';
-  todos: TodoItem[];
+export interface TaskUpdateAction {
+  kind: 'task_update';
+  tasks: TaskListItem[];
 }
 
 /**
- * 处理 TodoWrite 工具结果，提取 todo 列表。
- * 返回 TodoUpdateAction 或 null。
+ * 处理任务列表工具结果，提取任务列表。
+ * 返回 TaskUpdateAction 或 null。
  */
-export function handleTodoWrite(
+export function handleTaskListUpdate(
   toolCall: FunctionToolCallRef,
-  result: ToolResult,
-): TodoUpdateAction | null {
+  result: ToolResult
+): TaskUpdateAction | null {
   if (
-    toolCall.function.name !== 'TodoWrite' ||
+    !['TaskCreate', 'TaskUpdate', 'TaskList'].includes(toolCall.function.name) ||
     !result.success ||
-    !result.llmContent
+    (!result.llmContent && !result.metadata)
   ) {
     return null;
   }
 
-  const content =
-    typeof result.llmContent === 'object' ? result.llmContent : {};
-  const todos = Array.isArray(content)
-    ? content
-    : ((content as Record<string, unknown>).todos as unknown[]) || [];
+  const content = typeof result.llmContent === 'object' ? result.llmContent : {};
+  const rawTasks =
+    ((result.metadata as Record<string, unknown> | undefined)?.tasks as unknown[]) ||
+    ((content as Record<string, unknown>).tasks as unknown[]) ||
+    [];
 
   return {
-    kind: 'todo_update',
-    todos: todos as TodoItem[],
+    kind: 'task_update',
+    tasks: rawTasks as TaskListItem[],
   };
 }
 
@@ -66,13 +66,9 @@ export function handleTodoWrite(
 export function handleSkillActivation(
   toolCall: FunctionToolCallRef,
   result: ToolResult,
-  deps: LoopDependencies,
+  deps: LoopDependencies
 ): void {
-  if (
-    toolCall.function.name !== 'Skill' ||
-    !result.success ||
-    !result.metadata
-  ) {
+  if (toolCall.function.name !== 'Skill' || !result.success || !result.metadata) {
     return;
   }
 
@@ -92,9 +88,7 @@ export function handleSkillActivation(
  * 处理工具结果中的模型切换请求。
  * 返回 modelId 或 undefined。
  */
-export function extractModelSwitch(
-  result: ToolResult,
-): string | undefined {
+export function extractModelSwitch(result: ToolResult): string | undefined {
   const metadata = result.metadata as Record<string, unknown> | undefined;
   if (!metadata) return undefined;
 
@@ -108,15 +102,15 @@ export function extractModelSwitch(
 
 /**
  * 处理所有工具结果的领域副作用。
- * 返回 TodoUpdateAction（如果有）并触发 skill/model 回调。
+ * 返回 TaskUpdateAction（如果有）并触发 skill/model 回调。
  */
 export async function applyToolDomainEffects(
   toolCall: FunctionToolCallRef,
   result: ToolResult,
-  deps: LoopDependencies,
-): Promise<TodoUpdateAction | null> {
-  // TodoWrite
-  const todoAction = handleTodoWrite(toolCall, result);
+  deps: LoopDependencies
+): Promise<TaskUpdateAction | null> {
+  // Task list updates
+  const taskAction = handleTaskListUpdate(toolCall, result);
 
   // Skill activation
   handleSkillActivation(toolCall, result, deps);
@@ -127,5 +121,5 @@ export async function applyToolDomainEffects(
     await deps.onModelSwitch?.(modelId);
   }
 
-  return todoAction;
+  return taskAction;
 }

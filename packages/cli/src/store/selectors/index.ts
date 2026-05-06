@@ -77,9 +77,9 @@ export const useInitializationError = () =>
 export const useActiveModal = () => useBladeStore((state) => state.app.activeModal);
 
 /**
- * 获取 Todos
+ * 获取 Tasks
  */
-export const useTodos = () => useBladeStore((state) => state.app.todos);
+export const useTaskList = () => useBladeStore((state) => state.app.tasks);
 
 /**
  * 获取模型编辑目标
@@ -111,10 +111,10 @@ export const useIsReady = () =>
   useBladeStore((state) => state.app.initializationStatus === 'ready');
 
 /**
- * 派生选择器：是否显示 Todo 面板
+ * 派生选择器：是否显示 Task 面板
  */
-export const useShowTodoPanel = () =>
-  useBladeStore((state) => state.app.todos.length > 0);
+export const useShowTaskPanel = () =>
+  useBladeStore((state) => state.app.tasks.length > 0);
 
 // ==================== Config 选择器 ====================
 

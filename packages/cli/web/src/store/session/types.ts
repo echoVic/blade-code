@@ -28,9 +28,11 @@ export interface TokenUsage {
   isDefaultMaxTokens: boolean;
 }
 
-export interface TodoItem {
+export interface TaskItem {
   id: string;
-  content: string;
+  subject: string;
+  description?: string;
+  activeForm?: string;
   status: 'pending' | 'in_progress' | 'completed';
   priority: 'high' | 'medium' | 'low';
 }
@@ -65,7 +67,7 @@ export interface AgentResponseContent {
   toolCalls: ToolCallInfo[];
   textAfter: string;
   thinkingContent: string;
-  todos: TodoItem[];
+  tasks: TaskItem[];
   subagent: SubagentProgress | null;
   confirmation: ConfirmationInfo | null;
   question: QuestionInfo | null;
@@ -136,7 +138,7 @@ export interface MessageSlice {
   setConfirmation: (id: string, confirmation: ConfirmationInfo | null) => void;
   setQuestion: (id: string, question: QuestionInfo | null) => void;
   setSubagent: (id: string, subagent: SubagentProgress | null) => void;
-  setTodos: (id: string, todos: TodoItem[]) => void;
+  setTasks: (id: string, tasks: TaskItem[]) => void;
   replaceTemp: (content: MessageContent, message: Message) => void;
 }
 

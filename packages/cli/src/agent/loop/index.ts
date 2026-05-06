@@ -20,11 +20,11 @@ export {
 } from './conversationPersistence.js';
 export {
   applyToolDomainEffects,
-  handleTodoWrite,
+  handleTaskListUpdate,
   handleSkillActivation,
   extractModelSwitch,
 } from './toolDomainPolicy.js';
-export type { FunctionToolCallRef, TodoUpdateAction } from './toolDomainPolicy.js';
+export type { FunctionToolCallRef, TaskUpdateAction } from './toolDomainPolicy.js';
 export { checkAndCompactInLoop, executeLoopGenerator } from './executeLoopGenerator.js';
 export type { CompactResult } from './executeLoopGenerator.js';
 export { StreamingToolExecutor } from './StreamingToolExecutor.js';
@@ -45,4 +45,3 @@ export type {
   ToolExecResult,
   ToolKindStr
 } from './types.js';
-

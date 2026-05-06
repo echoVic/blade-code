@@ -935,14 +935,6 @@ export async function* executeLoopGenerator(
                   ? params.resume
                   : nanoid();
             }
-            if (params.todos && typeof params.todos === 'string') {
-              try {
-                params.todos = JSON.parse(params.todos);
-              } catch {
-                // 由验证层处理
-              }
-            }
-
             let toolUseUuid: string | null = null;
             toolUseUuid = await saveToolUse(
               deps, context, toolCall.function.name, params, lastMessageUuid,
@@ -1067,13 +1059,13 @@ export async function* executeLoopGenerator(
         }
 
         // 领域副作用 (via toolDomainPolicy)
-        const todoAction = await applyToolDomainEffects(
+        const taskAction = await applyToolDomainEffects(
           toolCall as FunctionToolCallRef,
           result,
           deps,
         );
-        if (todoAction) {
-          yield todoAction;
+        if (taskAction) {
+          yield taskAction;
         }
 
         // 添加工具结果到消息历史

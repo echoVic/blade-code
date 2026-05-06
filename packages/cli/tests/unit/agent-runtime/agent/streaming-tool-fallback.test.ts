@@ -246,7 +246,7 @@ describe('StreamingToolExecutor — fallback & epoch guard', () => {
       const nonAllowlisted = [
         'Edit', 'Write', 'Bash', 'NotebookEdit',
         'Task', 'Skill', 'SlashCommand', 'AskUserQuestion',
-        'EnterPlanMode', 'ExitPlanMode', 'TodoWrite',
+        'EnterPlanMode', 'ExitPlanMode', 'TaskCreate', 'TaskUpdate',
         'MemoryWrite', 'AddTask', 'EnterSpecMode',
         'ExitSpecMode', 'TransitionSpecPhase', 'UpdateSpec',
         'UpdateTaskStatus', 'KillShell',

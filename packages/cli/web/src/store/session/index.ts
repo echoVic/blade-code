@@ -30,7 +30,7 @@ export type {
   SessionStoreState,
   StreamEvent,
   SubagentProgress,
-  TodoItem,
+  TaskItem,
   TokenUsage,
   ToolCallInfo,
 } from './types';

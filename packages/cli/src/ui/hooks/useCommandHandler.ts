@@ -113,7 +113,7 @@ export const useCommandHandler = (
     // 2. 先触发 abort signal（reason='user-cancel'），阻止后续回调
     //    此后 loopEventHandler 中的 stream_end 检查 signal.aborted 会跳过 finalize
     commandActions.abort('user-cancel');
-    appActions.setTodos([]);
+    appActions.setTasks([]);
 
     // 3. 用 drain 结果 finalize，确保已收内容提交到 store
     const streamingId = getState().session.currentStreamingMessageId;
@@ -346,8 +346,8 @@ export const useCommandHandler = (
       //    旧任务的 finally 中 isOurTask 检查会阻止它干扰新任务
     }
 
-    // 清空上一轮对话的 todos
-    appActions.setTodos([]);
+    // 清空上一轮对话的 tasks
+    appActions.setTasks([]);
 
     // 重置中止提示标记
     abortMessageSentRef.current = false;

@@ -178,17 +178,53 @@
 
 **类型**: ReadOnly
 
-### TodoWrite
+### TaskCreate
 
-管理会话内的 TODO 列表。
+创建会话内任务。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `todos` | array | ✅ | TODO 项目列表 |
-| `summary` | string | | 完成摘要 |
+| `subject` | string | ✅ | 任务标题 |
+| `description` | string | ✅ | 任务描述 |
+| `activeForm` | string | | 进行中展示文案 |
+| `owner` | string | | 任务负责人 |
+| `priority` | string | | 优先级 |
 
 **类型**: ReadOnly  
-**存储**: `~/.blade/todos/<session>-agent-<session>.json`
+**存储**: `~/.blade/tasks/<session>-agent-<session>.json`
+
+### TaskGet
+
+读取单个任务。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `taskId` | string | ✅ | 任务 ID |
+
+**类型**: ReadOnly
+
+### TaskUpdate
+
+更新任务状态、内容或依赖。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `taskId` | string | ✅ | 任务 ID |
+| `status` | string | | `pending` / `in_progress` / `completed` / `deleted` |
+| `subject` | string | | 新标题 |
+| `description` | string | | 新描述 |
+| `activeForm` | string | | 进行中展示文案 |
+| `owner` | string | | 任务负责人 |
+| `addBlocks` | array | | 当前任务阻塞的任务 ID |
+| `addBlockedBy` | array | | 阻塞当前任务的任务 ID |
+
+**类型**: ReadOnly
+
+### TaskList
+
+列出当前会话任务。
+
+**类型**: ReadOnly
 
 ## Plan 模式工具
 
@@ -376,7 +412,10 @@ blade mcp list
 | 网络 | WebSearch | ReadOnly | 网络搜索（Exa/DuckDuckGo/SearXNG） |
 | 任务 | Task | ReadOnly | 启动子代理执行任务 |
 | 任务 | TaskOutput | ReadOnly | 获取后台任务输出 |
-| 任务 | TodoWrite | ReadOnly | 管理会话内 TODO 列表 |
+| 任务 | TaskCreate | ReadOnly | 创建会话任务 |
+| 任务 | TaskGet | ReadOnly | 读取单个任务 |
+| 任务 | TaskUpdate | ReadOnly | 更新任务状态或内容 |
+| 任务 | TaskList | ReadOnly | 列出当前任务 |
 | Plan | EnterPlanMode | ReadOnly | 进入只读调研模式 |
 | Plan | ExitPlanMode | ReadOnly | 退出并提交方案 |
 | Spec | EnterSpecMode | Write | 进入 Spec 驱动开发模式 |

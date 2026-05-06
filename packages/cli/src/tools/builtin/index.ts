@@ -30,9 +30,7 @@ import {
   toolSearchTool,
 } from './system/index.js';
 // 任务管理工具
-import { taskOutputTool, taskTool } from './task/index.js';
-// Todo 工具
-import { createTodoWriteTool } from './todo/index.js';
+import { createTaskListTools, taskOutputTool, taskTool } from './task/index.js';
 // 网络工具
 import { webFetchTool, webSearchTool } from './web/index.js';
 
@@ -75,12 +73,12 @@ export async function getBuiltinTools(opts?: {
     webFetchTool,
     webSearchTool,
 
-    // 任务管理: Task, TaskOutput
+    // 子代理任务: Task, TaskOutput
     taskTool,
     taskOutputTool,
 
-    // Todo: TodoWrite
-    createTodoWriteTool({ sessionId, configDir }),
+    // 会话任务列表: TaskCreate, TaskGet, TaskUpdate, TaskList
+    ...createTaskListTools({ sessionId, configDir }),
 
     // Plan 模式: EnterPlanMode, ExitPlanMode
     enterPlanModeTool,

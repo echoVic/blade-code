@@ -4,7 +4,7 @@ import type {
   Message,
   SessionStoreState,
   SubagentProgress,
-  TodoItem,
+  TaskItem,
   ToolCallInfo,
 } from '../types'
 import { makeSubagentId, makeToolCallId } from '../utils/messageIdentity'
@@ -23,7 +23,7 @@ const createEmptyAgentContent = (): AgentResponseContent => ({
   toolCalls: [],
   textAfter: '',
   thinkingContent: '',
-  todos: [],
+  tasks: [],
   subagent: null,
   confirmation: null,
   question: null,
@@ -355,13 +355,13 @@ const handleTokenUsage: EventHandler = (props, get) => {
   }
 }
 
-const handleTodoUpdate: EventHandler = (props, get) => {
-  const { currentSessionId, setTodos, currentAssistantMessageId } = get()
+const handleTaskUpdate: EventHandler = (props, get) => {
+  const { currentSessionId, setTasks, currentAssistantMessageId } = get()
   if (props.sessionId !== currentSessionId) return
   if (!currentAssistantMessageId) return
 
-  const todos = (props.todos as TodoItem[]) || []
-  setTodos(currentAssistantMessageId, todos)
+  const tasks = (props.tasks as TaskItem[]) || []
+  setTasks(currentAssistantMessageId, tasks)
 }
 
 const handleSubagentStart: EventHandler = (props, get) => {
@@ -725,7 +725,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'tool.start': handleToolStart,
   'tool.result': handleToolResult,
   'token.usage': handleTokenUsage,
-  'todo.update': handleTodoUpdate,
+  'task.updated': handleTaskUpdate,
   'subagent.start': handleSubagentStart,
   'subagent.update': handleSubagentUpdate,
   'subagent.delta': handleSubagentDelta,

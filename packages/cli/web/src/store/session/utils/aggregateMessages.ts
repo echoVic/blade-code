@@ -17,7 +17,7 @@ const createEmptyAgentContent = (): AgentResponseContent => ({
   toolCalls: [],
   textAfter: '',
   thinkingContent: '',
-  todos: [],
+  tasks: [],
   subagent: null,
   confirmation: null,
   question: null,

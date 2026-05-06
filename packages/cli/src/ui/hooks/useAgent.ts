@@ -20,8 +20,8 @@ export interface AgentOptions {
  * Agent 管理 Hook
  * 提供创建和清理 Agent 的方法
  *
- * 注意：Agent 现在直接通过 vanilla store 更新 todos，
- * 不再需要 onTodoUpdate 回调
+ * 注意：Agent 现在直接通过 vanilla store 更新 tasks，
+ * 不再需要 onTaskUpdate 回调
  *
  * @param options - Agent 配置选项
  * @returns Agent ref 和创建/清理方法

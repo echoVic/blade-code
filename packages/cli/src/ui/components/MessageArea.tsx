@@ -13,9 +13,9 @@ import {
   useMessages,
   usePendingCommands,
   useSessionActions,
-  useShowTodoPanel,
+  useShowTaskPanel,
+  useTaskList,
   useThinkingExpanded,
-  useTodos,
 } from '../../store/selectors/index.js';
 import { useTerminalHeight } from '../hooks/useTerminalHeight.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
@@ -32,7 +32,7 @@ import { CollapsedHistorySummary } from './CollapsedHistorySummary.js';
 import { Header } from './Header.js';
 import { MessageRenderer } from './MessageRenderer.js';
 import { ThinkingBlock } from './ThinkingBlock.js';
-import { TodoPanel } from './TodoPanel.js';
+import { TaskPanel } from './TaskPanel.js';
 
 /**
  * 消息区域组件
@@ -48,8 +48,8 @@ export const MessageArea: React.FC = React.memo(() => {
   const currentStreamingBuffer = useCurrentStreamingBuffer();
   const finalizingStreamingMessageId = useFinalizingStreamingMessageId();
   const isProcessing = useIsProcessing();
-  const todos = useTodos();
-  const showTodoPanel = useShowTodoPanel();
+  const tasks = useTaskList();
+  const showTaskPanel = useShowTaskPanel();
   const pendingCommands = usePendingCommands();
   const currentThinkingContent = useCurrentThinkingContent();
   const thinkingExpanded = useThinkingExpanded();
@@ -345,11 +345,11 @@ export const MessageArea: React.FC = React.memo(() => {
     sessionActions,
   ]);
 
-  const hasActiveTodos = useMemo(() => {
-    return todos.some(
-      (todo) => todo.status === 'pending' || todo.status === 'in_progress'
+  const hasActiveTasks = useMemo(() => {
+    return tasks.some(
+      (task) => task.status === 'pending' || task.status === 'in_progress'
     );
-  }, [todos]);
+  }, [tasks]);
 
   const collapsePoint = historyExpanded ? 0 : (collapsePointState ?? 0);
   const collapsedCount = collapsePoint;
@@ -435,9 +435,9 @@ export const MessageArea: React.FC = React.memo(() => {
         {/* tail viewport 已由 rawStreamRenderer 直接通过 stdout.write 渲染，
             不再通过 React/Ink 渲染，避免高频 re-render */}
 
-        {showTodoPanel && hasActiveTodos && (
+        {showTaskPanel && hasActiveTasks && (
           <Box marginTop={1}>
-            <TodoPanel todos={todos} visible={true} compact={false} />
+            <TaskPanel tasks={tasks} visible={true} compact={false} />
           </Box>
         )}
 

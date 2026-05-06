@@ -22,7 +22,7 @@ import {
 } from '../cli/middleware.js';
 import { PermissionMode } from '../config/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
-import type { TodoItem } from '../tools/builtin/todo/types.js';
+import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import type {
   ConfirmationDetails,
   ConfirmationResponse,
@@ -238,8 +238,8 @@ function writeLine(writer: WritableLike, line = ''): void {
   writer.write(`${line}\n`);
 }
 
-function formatTodo(todo: TodoItem): string {
-  return `[todo] [${todo.status}] ${todo.content}`;
+function formatTask(task: TaskListItem): string {
+  return `[task] [${task.status}] ${task.subject}`;
 }
 
 function createConfirmationHandler() {
@@ -511,13 +511,13 @@ function createEventWriter(
       }
       writeLine(io.stderr, detail);
     },
-    todoUpdate(todos: TodoItem[]) {
+    taskUpdate(tasks: TaskListItem[]) {
       if (outputFormat === 'jsonl') {
-        writeJsonl('todo_update', { todos });
+        writeJsonl('task_update', { tasks });
         return;
       }
-      for (const todo of todos) {
-        writeLine(io.stderr, formatTodo(todo));
+      for (const task of tasks) {
+        writeLine(io.stderr, formatTask(task));
       }
     },
     tokenUsage(usage: {
@@ -681,8 +681,12 @@ export async function runHeadless(
           case 'tool_start': {
             const toolCall = event.toolCall;
             if (!('function' in toolCall)) break;
-            // TodoWrite 由 todo_update 处理，避免重复输出
-            if (toolCall.function.name === 'TodoWrite') break;
+            // 任务列表工具由 task_update 处理，避免重复输出
+            if (
+              ['TaskCreate', 'TaskUpdate', 'TaskList'].includes(
+                toolCall.function.name
+              )
+            ) break;
             try {
               const params = JSON.parse(toolCall.function.arguments);
               const summary = formatToolCallSummary(toolCall.function.name, params);
@@ -758,8 +762,8 @@ export async function runHeadless(
             break;
 
           // --- 业务事件 ---
-          case 'todo_update':
-            eventWriter.todoUpdate(event.todos);
+          case 'task_update':
+            eventWriter.taskUpdate(event.tasks);
             break;
 
           // --- 模型降级 ---

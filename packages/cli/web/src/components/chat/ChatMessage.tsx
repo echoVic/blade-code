@@ -220,17 +220,17 @@ function ThinkingSection({ content }: { content: string }) {
   );
 }
 
-function TodoSection({ todos }: { todos: AgentResponseContent['todos'] }) {
-  if (todos.length === 0) return null;
+function TaskSection({ tasks }: { tasks: AgentResponseContent['tasks'] }) {
+  if (tasks.length === 0) return null;
 
-  const completedCount = todos.filter((t) => t.status === 'completed').length;
-  const allDone = completedCount === todos.length;
+  const completedCount = tasks.filter((t) => t.status === 'completed').length;
+  const allDone = completedCount === tasks.length;
 
   return (
     <div className="bg-[#F9FAFB] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-lg px-3 py-2">
       <div className="flex gap-2 items-center">
         <span className="text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono">
-          {allDone ? '✓ All todos done' : `Todos: ${completedCount}/${todos.length}`}
+          {allDone ? '✓ All tasks done' : `Tasks: ${completedCount}/${tasks.length}`}
         </span>
       </div>
     </div>
@@ -573,7 +573,7 @@ function AgentMessageContent({ message }: { message: Message }) {
     toolCalls,
     textAfter,
     thinkingContent,
-    todos,
+    tasks,
     subagent,
     confirmation,
     question,
@@ -583,7 +583,7 @@ function AgentMessageContent({ message }: { message: Message }) {
     toolCalls.length > 0 ||
     textAfter ||
     thinkingContent ||
-    todos.length > 0 ||
+    tasks.length > 0 ||
     subagent ||
     confirmation ||
     question;
@@ -609,7 +609,7 @@ function AgentMessageContent({ message }: { message: Message }) {
       {textBefore && (
         <MarkdownRenderer content={textBefore} syntaxHighlight={syntaxHighlight} />
       )}
-      {todos.length > 0 && <TodoSection todos={todos} />}
+      {tasks.length > 0 && <TaskSection tasks={tasks} />}
       {subagent && <SubagentSection subagent={subagent} />}
       <ToolCallsList toolCalls={toolCalls} />
       {confirmation && (

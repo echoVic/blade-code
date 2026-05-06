@@ -5,7 +5,7 @@
  * integrations can consume it without depending on internal TypeScript naming.
  */
 import { z } from 'zod';
-import { TodoItemSchema } from '../tools/builtin/todo/types.js';
+import { TaskListItemSchema } from '../tools/builtin/task/taskListTypes.js';
 
 export const HEADLESS_EVENT_VERSION = 1 as const;
 
@@ -76,9 +76,9 @@ const ToolDetailEventSchema = HeadlessEventBaseSchema.extend({
   detail: z.string(),
 });
 
-const TodoUpdateEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('todo_update'),
-  todos: z.array(TodoItemSchema),
+const TaskUpdateEventSchema = HeadlessEventBaseSchema.extend({
+  type: z.literal('task_update'),
+  tasks: z.array(TaskListItemSchema),
 });
 
 const TokenUsageEventSchema = HeadlessEventBaseSchema.extend({
@@ -121,7 +121,7 @@ export const HeadlessJsonlEventSchema = z.discriminatedUnion('type', [
   ToolResultEventSchema,
   PhaseEventSchema,
   ToolDetailEventSchema,
-  TodoUpdateEventSchema,
+  TaskUpdateEventSchema,
   TokenUsageEventSchema,
   CompactingEventSchema,
   TurnLimitEventSchema,

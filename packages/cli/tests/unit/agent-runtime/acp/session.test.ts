@@ -87,7 +87,7 @@ vi.mock('../../../../src/slash-commands/index.js', () => ({
   isSlashCommand: vi.fn((msg) => msg.startsWith('/')),
 }));
 
-// Mock TodoItem type
+// Mock task item type
 
 describe('AcpSession', () => {
   let mockConnection: ReturnType<typeof createMockACPClient>;
@@ -499,7 +499,7 @@ describe('AcpSession', () => {
     });
   });
 
-  describe('Todo 列表更新', () => {
+  describe('Task 列表更新', () => {
     beforeEach(async () => {
       await session.initialize();
     });

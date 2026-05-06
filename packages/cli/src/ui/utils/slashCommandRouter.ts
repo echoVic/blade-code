@@ -188,7 +188,7 @@ function handleSlashMessage(
       sessionActions.clearMessages();
       sessionActions.setError(null);
       sessionActions.resetTokenUsage();
-      appActions.setTodos([]);
+      appActions.setTasks([]);
       return true;
     case 'compact_completed':
     case 'compact_fallback': {

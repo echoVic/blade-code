@@ -6,7 +6,7 @@ Plan 模式是一种只读权限模式，用于调研和规划阶段。AI 只能
 
 在 Plan 模式下：
 
-- ✅ **允许**：Read、Glob、Grep、WebFetch、WebSearch、TodoWrite 等只读工具
+- ✅ **允许**：Read、Glob、Grep、WebFetch、WebSearch、TaskCreate/TaskGet/TaskUpdate/TaskList 等只读工具
 - ❌ **拒绝**：Write、Edit、Bash 等修改工具
 - 🔵 **特殊**：ExitPlanMode 工具用于提交方案
 

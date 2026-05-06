@@ -145,7 +145,10 @@ export function createLoopEventHandler(
       case 'tool_start': {
         const toolCall = event.toolCall;
         if (!('function' in toolCall)) break;
-        if (toolCall.function.name === 'TodoWrite') break;
+        if (
+          ['TaskCreate', 'TaskUpdate', 'TaskList'].includes(toolCall.function.name)
+        )
+          break;
         try {
           const params = JSON.parse(toolCall.function.arguments);
           const summary = formatToolCallSummary(toolCall.function.name, params);
@@ -193,8 +196,8 @@ export function createLoopEventHandler(
         // 本 turn 的 late stream_end 仍会被守卫；只有下一个 turn_start 才重置
         streamFinalized = false;
         break;
-      case 'todo_update':
-        deps.appActions.setTodos(event.todos);
+      case 'task_update':
+        deps.appActions.setTasks(event.tasks);
         break;
 
       default: {

@@ -81,12 +81,15 @@ describe('headless runner', () => {
         llmContent: 'const demo = true;',
         metadata: { summary: 'Read demo.ts', content_preview: 'const demo = true;' },
       }},
-      { kind: 'todo_update', todos: [{
-        id: 'todo-1',
-        content: 'Ship headless mode',
+      { kind: 'task_update', tasks: [{
+        id: 'task-1',
+        subject: 'Ship headless mode',
+        description: 'Ship headless mode',
         status: 'in_progress',
         activeForm: 'Shipping headless mode',
         priority: 'high',
+        blocks: [],
+        blockedBy: [],
         createdAt: new Date().toISOString(),
       }]},
       { kind: 'token_usage', usage: {
@@ -123,7 +126,7 @@ describe('headless runner', () => {
     expect(stderrOutput).toContain('[thinking] reasoning');
     expect(stderrOutput).toContain('Reading demo.ts');
     expect(stderrOutput).toContain('Read demo.ts');
-    expect(stderrOutput).toContain('[todo] [in_progress] Ship headless mode');
+    expect(stderrOutput).toContain('[task] [in_progress] Ship headless mode');
     expect(stderrOutput).toContain('[tokens] in=10 out=20 total=30 / 1000');
   });
 
@@ -138,12 +141,15 @@ describe('headless runner', () => {
         type: 'function',
         function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
       }},
-      { kind: 'todo_update', todos: [{
-        id: 'todo-2',
-        content: 'Capture jsonl',
+      { kind: 'task_update', tasks: [{
+        id: 'task-2',
+        subject: 'Capture jsonl',
+        description: 'Capture jsonl',
         status: 'pending',
         activeForm: 'Capturing jsonl',
         priority: 'medium',
+        blocks: [],
+        blockedBy: [],
         createdAt: new Date().toISOString(),
       }]},
       { kind: 'stream_end' },
@@ -195,10 +201,10 @@ describe('headless runner', () => {
           target: '/tmp/demo.ts',
         }),
         expect.objectContaining({
-          type: 'todo_update',
+          type: 'task_update',
           event_version: 1,
-          todos: expect.arrayContaining([
-            expect.objectContaining({ content: 'Capture jsonl' }),
+          tasks: expect.arrayContaining([
+            expect.objectContaining({ subject: 'Capture jsonl' }),
           ]),
         }),
         expect.objectContaining({ type: 'stream_end', event_version: 1 }),

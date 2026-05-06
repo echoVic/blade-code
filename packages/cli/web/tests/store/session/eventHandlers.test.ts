@@ -1,8 +1,12 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import { createEventDispatcher } from '../../../src/store/session/handlers/eventHandlers'
-import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer'
-import type { Message, SessionStoreState, ToolCallInfo } from '../../../src/store/session/types'
+import { createEventDispatcher } from '../../../src/store/session/handlers/eventHandlers';
+import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer';
+import type {
+  Message,
+  SessionStoreState,
+  ToolCallInfo,
+} from '../../../src/store/session/types';
 
 function createEmptyAgentContent() {
   return {
@@ -10,11 +14,11 @@ function createEmptyAgentContent() {
     toolCalls: [] as ToolCallInfo[],
     textAfter: '',
     thinkingContent: '',
-    todos: [],
+    tasks: [],
     subagent: null,
     confirmation: null,
     question: null,
-  }
+  };
 }
 
 function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreState {
@@ -26,7 +30,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
       timestamp: 1700000000000,
       agentContent: createEmptyAgentContent(),
     },
-  ]
+  ];
 
   const state = {
     sessions: [],
@@ -63,33 +67,35 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     abortSession: vi.fn(),
     setMessages: vi.fn(),
     addMessage: vi.fn((message: Message) => {
-      state.messages.push(message)
+      state.messages.push(message);
     }),
     updateMessage: vi.fn((id: string, updates: Partial<Message>) => {
       state.messages = state.messages.map((message) =>
         message.id === id ? { ...message, ...updates } : message
-      )
+      );
     }),
-    appendDelta: vi.fn((messageId: string, delta: string, position: 'before' | 'after') => {
-      state.messages = state.messages.map((message) => {
-        if (message.id !== messageId) return message
-        const agentContent = message.agentContent ?? createEmptyAgentContent()
-        return {
-          ...message,
-          agentContent: {
-            ...agentContent,
-            textBefore:
-              position === 'before'
-                ? agentContent.textBefore + delta
-                : agentContent.textBefore,
-            textAfter:
-              position === 'after'
-                ? agentContent.textAfter + delta
-                : agentContent.textAfter,
-          },
-        }
-      })
-    }),
+    appendDelta: vi.fn(
+      (messageId: string, delta: string, position: 'before' | 'after') => {
+        state.messages = state.messages.map((message) => {
+          if (message.id !== messageId) return message;
+          const agentContent = message.agentContent ?? createEmptyAgentContent();
+          return {
+            ...message,
+            agentContent: {
+              ...agentContent,
+              textBefore:
+                position === 'before'
+                  ? agentContent.textBefore + delta
+                  : agentContent.textBefore,
+              textAfter:
+                position === 'after'
+                  ? agentContent.textAfter + delta
+                  : agentContent.textAfter,
+            },
+          };
+        });
+      }
+    ),
     appendToolCall: vi.fn((messageId: string, toolCall: ToolCallInfo) => {
       state.messages = state.messages.map((message) =>
         message.id === messageId
@@ -101,7 +107,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
               },
             }
           : message
-      )
+      );
     }),
     updateToolCall: vi.fn(),
     appendThinking: vi.fn(),
@@ -118,9 +124,21 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
               },
             }
           : message
-      )
+      );
     }),
-    setTodos: vi.fn(),
+    setTasks: vi.fn((messageId, tasks) => {
+      state.messages = state.messages.map((message) =>
+        message.id === messageId
+          ? {
+              ...message,
+              agentContent: {
+                ...(message.agentContent ?? createEmptyAgentContent()),
+                tasks,
+              },
+            }
+          : message
+      );
+    }),
     replaceTemp: vi.fn(),
     setStreaming: vi.fn(),
     setRunId: vi.fn(),
@@ -129,64 +147,62 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     handleEvent: vi.fn(),
     setCurrentAssistantMessageId: vi.fn(),
     setHasToolCalls: vi.fn((has: boolean) => {
-      state.hasToolCalls = has
+      state.hasToolCalls = has;
     }),
     startAgentResponse: vi.fn((id: string) => {
-      state.currentAssistantMessageId = id
+      state.currentAssistantMessageId = id;
     }),
     endAgentResponse: vi.fn(),
     updateTokenUsage: vi.fn(),
     setMaxContextTokens: vi.fn(),
     ...overrides,
-  } satisfies SessionStoreState
+  } satisfies SessionStoreState;
 
-  return state
+  return state;
 }
 
 describe('eventHandlers', () => {
   afterEach(() => {
-    vi.useRealTimers()
-    globalStreamingBuffer.reset()
-  })
+    vi.useRealTimers();
+    globalStreamingBuffer.reset();
+  });
 
   test('creates stable fallback tool ids for repeated tool.start events with the same payload', () => {
-    const state = createState()
-    const get = () => state
-    const set = vi.fn()
-    const dispatch = createEventDispatcher(get, set)
+    const state = createState();
+    const get = () => state;
+    const set = vi.fn();
+    const dispatch = createEventDispatcher(get, set);
     const payload = {
       sessionId: 'session-1',
       messageId: 'assistant-1',
       toolName: 'Read',
       arguments: '{"file_path":"/tmp/demo.ts"}',
-    }
+    };
 
-    const nowSpy = vi.spyOn(Date, 'now')
-    nowSpy
-      .mockReturnValueOnce(1700000000001)
-      .mockReturnValueOnce(1700000001001)
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy.mockReturnValueOnce(1700000000001).mockReturnValueOnce(1700000001001);
 
-    dispatch({ type: 'tool.start', properties: payload })
-    const firstId = state.messages[0]?.agentContent?.toolCalls[0]?.toolCallId
+    dispatch({ type: 'tool.start', properties: payload });
+    const firstId = state.messages[0]?.agentContent?.toolCalls[0]?.toolCallId;
 
     state.messages[0] = {
       ...state.messages[0],
       agentContent: createEmptyAgentContent(),
-    }
+    };
 
-    dispatch({ type: 'tool.start', properties: payload })
-    const secondId = state.messages[0]?.agentContent?.toolCalls[0]?.toolCallId
+    dispatch({ type: 'tool.start', properties: payload });
+    const secondId = state.messages[0]?.agentContent?.toolCalls[0]?.toolCallId;
 
-    nowSpy.mockRestore()
+    nowSpy.mockRestore();
 
-    expect(secondId).toBe(firstId)
-  })
+    expect(secondId).toBe(firstId);
+  });
 
   test('creates stable fallback subagent ids for repeated Task tool.start events with the same payload', () => {
-    const state = createState()
-    const get = () => state
-    const set = vi.fn()
-    const dispatch = createEventDispatcher(get, set)
+    const state = createState();
+    const get = () => state;
+    const set = vi.fn();
+    const dispatch = createEventDispatcher(get, set);
     const payload = {
       sessionId: 'session-1',
       messageId: 'assistant-1',
@@ -195,55 +211,104 @@ describe('eventHandlers', () => {
         subagent_type: 'researcher',
         description: 'Inspect logs',
       }),
-    }
+    };
 
-    const nowSpy = vi.spyOn(Date, 'now')
-    nowSpy
-      .mockReturnValueOnce(1700000000001)
-      .mockReturnValueOnce(1700000001001)
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy.mockReturnValueOnce(1700000000001).mockReturnValueOnce(1700000001001);
 
-    dispatch({ type: 'tool.start', properties: payload })
-    const firstId = state.messages[0]?.agentContent?.subagent?.id
+    dispatch({ type: 'tool.start', properties: payload });
+    const firstId = state.messages[0]?.agentContent?.subagent?.id;
 
     state.messages[0] = {
       ...state.messages[0],
       agentContent: createEmptyAgentContent(),
-    }
+    };
 
-    dispatch({ type: 'tool.start', properties: payload })
-    const secondId = state.messages[0]?.agentContent?.subagent?.id
+    dispatch({ type: 'tool.start', properties: payload });
+    const secondId = state.messages[0]?.agentContent?.subagent?.id;
 
-    nowSpy.mockRestore()
+    nowSpy.mockRestore();
 
-    expect(secondId).toBe(firstId)
-  })
+    expect(secondId).toBe(firstId);
+  });
 
   test('drains buffered message deltas before message.complete updates message content', () => {
-    vi.useFakeTimers()
-    const state = createState()
-    const dispatch = createEventDispatcher(() => state, vi.fn())
+    vi.useFakeTimers();
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
 
     dispatch({
       type: 'message.delta',
       properties: { sessionId: 'session-1', messageId: 'assistant-1', delta: 'hel' },
-    })
+    });
     dispatch({
       type: 'message.delta',
       properties: { sessionId: 'session-1', messageId: 'assistant-1', delta: 'lo' },
-    })
+    });
 
-    expect(state.messages[0]?.agentContent?.textBefore).toBe('')
+    expect(state.messages[0]?.agentContent?.textBefore).toBe('');
 
     dispatch({
       type: 'message.complete',
       properties: { sessionId: 'session-1', messageId: 'assistant-1' },
-    })
+    });
 
-    expect(state.messages[0]?.content).toBe('hello')
-  })
+    expect(state.messages[0]?.content).toBe('hello');
+  });
+
+  test('applies task.updated events to the current assistant message', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+    const tasks = [
+      {
+        id: '1',
+        subject: 'Run tests',
+        description: 'Run targeted tests',
+        status: 'in_progress' as const,
+        priority: 'high' as const,
+      },
+      {
+        id: '2',
+        subject: 'Update docs',
+        status: 'pending' as const,
+        priority: 'medium' as const,
+      },
+    ];
+
+    dispatch({
+      type: 'task.updated',
+      properties: { sessionId: 'session-1', tasks },
+    });
+
+    expect(state.setTasks).toHaveBeenCalledWith('assistant-1', tasks);
+    expect(state.messages[0]?.agentContent?.tasks).toEqual(tasks);
+  });
+
+  test('ignores task.updated events for other sessions', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'task.updated',
+      properties: {
+        sessionId: 'other-session',
+        tasks: [
+          {
+            id: '1',
+            subject: 'Ignore this',
+            status: 'completed',
+            priority: 'low',
+          },
+        ],
+      },
+    });
+
+    expect(state.setTasks).not.toHaveBeenCalled();
+    expect(state.messages[0]?.agentContent?.tasks).toEqual([]);
+  });
 
   test('flushes buffered message deltas to the message that received them', () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers();
     const state = createState({
       messages: [
         {
@@ -262,18 +327,22 @@ describe('eventHandlers', () => {
         },
       ],
       currentAssistantMessageId: 'assistant-1',
-    })
-    const dispatch = createEventDispatcher(() => state, vi.fn())
+    });
+    const dispatch = createEventDispatcher(() => state, vi.fn());
 
     dispatch({
       type: 'message.delta',
-      properties: { sessionId: 'session-1', messageId: 'assistant-1', delta: 'from one' },
-    })
-    state.currentAssistantMessageId = 'assistant-2'
+      properties: {
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        delta: 'from one',
+      },
+    });
+    state.currentAssistantMessageId = 'assistant-2';
 
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(150);
 
-    expect(state.messages[0]?.agentContent?.textBefore).toBe('from one')
-    expect(state.messages[1]?.agentContent?.textBefore).toBe('')
-  })
-})
+    expect(state.messages[0]?.agentContent?.textBefore).toBe('from one');
+    expect(state.messages[1]?.agentContent?.textBefore).toBe('');
+  });
+});

@@ -51,7 +51,7 @@ function createMockAppActions() {
   return {
     setActiveModal: vi.fn(),
     showSessionSelector: vi.fn(),
-    setTodos: vi.fn(),
+    setTasks: vi.fn(),
   } as any;
 }
 
@@ -292,7 +292,7 @@ describe('processSlashCommand', () => {
       expect(sessionActions.clearMessages).toHaveBeenCalled();
       expect(sessionActions.setError).toHaveBeenCalledWith(null);
       expect(sessionActions.resetTokenUsage).toHaveBeenCalled();
-      expect(appActions.setTodos).toHaveBeenCalledWith([]);
+      expect(appActions.setTasks).toHaveBeenCalledWith([]);
     });
   });
 

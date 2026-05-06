@@ -196,25 +196,25 @@ describe('Event Protocol', () => {
   });
 
   describe('domain events', () => {
-    it('todo_update events carry the full todo list', async () => {
-      const todos = [
-        { id: '1', content: 'task one', status: 'completed' as const, activeForm: 'Completing task one', priority: 'high' as const, createdAt: new Date().toISOString() },
-        { id: '2', content: 'task two', status: 'in_progress' as const, activeForm: 'Working on task two', priority: 'medium' as const, createdAt: new Date().toISOString() },
+    it('task_update events carry the full task list', async () => {
+      const tasks = [
+        { id: '1', subject: 'task one', description: 'task one', status: 'completed' as const, activeForm: 'Completing task one', priority: 'high' as const, blocks: [], blockedBy: [], createdAt: new Date().toISOString() },
+        { id: '2', subject: 'task two', description: 'task two', status: 'in_progress' as const, activeForm: 'Working on task two', priority: 'medium' as const, blocks: [], blockedBy: [], createdAt: new Date().toISOString() },
       ];
 
       const events: LoopEvent[] = [
-        { kind: 'todo_update', todos },
+        { kind: 'task_update', tasks },
       ];
 
-      let receivedTodos: unknown[] = [];
+      let receivedTasks: unknown[] = [];
       await drainLoop(mockGenerator(events), (event) => {
-        if (event.kind === 'todo_update') {
-          receivedTodos = event.todos;
+        if (event.kind === 'task_update') {
+          receivedTasks = event.tasks;
         }
       });
 
-      expect(receivedTodos).toHaveLength(2);
-      expect(receivedTodos[0]).toMatchObject({ id: '1', status: 'completed' });
+      expect(receivedTasks).toHaveLength(2);
+      expect(receivedTasks[0]).toMatchObject({ id: '1', status: 'completed' });
     });
   });
 });

@@ -5,7 +5,7 @@ import type {
   QuestionInfo,
   SliceCreator,
   SubagentProgress,
-  TodoItem
+  TaskItem
 } from '../types'
 
 const createEmptyAgentContent = (): AgentResponseContent => ({
@@ -13,7 +13,7 @@ const createEmptyAgentContent = (): AgentResponseContent => ({
   toolCalls: [],
   textAfter: '',
   thinkingContent: '',
-  todos: [],
+  tasks: [],
   subagent: null,
   confirmation: null,
   question: null,
@@ -122,12 +122,12 @@ export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
       }),
     })),
 
-  setTodos: (id, todos: TodoItem[]) =>
+  setTasks: (id, tasks: TaskItem[]) =>
     set((state) => ({
       messages: state.messages.map((m) => {
         if (m.id !== id) return m
         const agentContent = m.agentContent || createEmptyAgentContent()
-        return { ...m, agentContent: { ...agentContent, todos } }
+        return { ...m, agentContent: { ...agentContent, tasks } }
       }),
     })),
 

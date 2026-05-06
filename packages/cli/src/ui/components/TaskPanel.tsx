@@ -1,30 +1,30 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import { useTheme } from '../../store/selectors/index.js';
-import type { TodoItem } from '../../tools/builtin/todo/types.js';
+import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 
-interface TodoPanelProps {
-  todos: TodoItem[];
+interface TaskPanelProps {
+  tasks: TaskListItem[];
   visible?: boolean;
   compact?: boolean;
 }
 
 /**
- * TODO 任务面板组件
+ * Task 任务面板组件
  * 极简设计,清晰的层次感,最少的视觉干扰
  */
-export const TodoPanel: React.FC<TodoPanelProps> = React.memo(
-  ({ todos, visible = true, compact = false }) => {
+export const TaskPanel: React.FC<TaskPanelProps> = React.memo(
+  ({ tasks, visible = true, compact = false }) => {
     const { colors } = useTheme();
 
-    if (!visible || todos.length === 0) {
+    if (!visible || tasks.length === 0) {
       return null;
     }
 
     const stats = {
-      total: todos.length,
-      completed: todos.filter((t) => t.status === 'completed').length,
-      inProgress: todos.filter((t) => t.status === 'in_progress').length,
+      total: tasks.length,
+      completed: tasks.filter((t) => t.status === 'completed').length,
+      inProgress: tasks.filter((t) => t.status === 'in_progress').length,
     };
 
     return (
@@ -46,8 +46,8 @@ export const TodoPanel: React.FC<TodoPanelProps> = React.memo(
 
         {/* 任务列表 */}
         <Box flexDirection="column">
-          {todos.map((todo, index) => (
-            <TodoRow key={todo.id || index} todo={todo} compact={compact} />
+          {tasks.map((task, index) => (
+            <TaskRow key={task.id || index} task={task} compact={compact} />
           ))}
         </Box>
       </Box>
@@ -55,33 +55,33 @@ export const TodoPanel: React.FC<TodoPanelProps> = React.memo(
   }
 );
 
-interface TodoRowProps {
-  todo: TodoItem;
+interface TaskRowProps {
+  task: TaskListItem;
   compact?: boolean;
 }
 
-const TodoRow: React.FC<TodoRowProps> = React.memo(({ todo, compact }) => {
+const TaskRow: React.FC<TaskRowProps> = React.memo(({ task, compact }) => {
   // Symbols: [OK] (completed), > (in progress), - (pending)
   let icon: string;
   let dimmed = false;
   let text: string;
 
-  switch (todo.status) {
+  switch (task.status) {
     case 'completed':
       icon = '[OK]';
       dimmed = true;
-      text = todo.content;
+      text = task.subject;
       break;
     case 'in_progress':
       icon = '>';
       dimmed = false;
-      text = todo.activeForm;
+      text = task.activeForm || task.subject;
       break;
     case 'pending':
     default:
       icon = '-';
       dimmed = true;
-      text = todo.content;
+      text = task.subject;
       break;
   }
 

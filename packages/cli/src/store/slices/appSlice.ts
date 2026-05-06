@@ -4,7 +4,7 @@
  * 职责：
  * - 初始化状态
  * - 模态框管理
- * - Todo 列表管理
+ * - Task 列表管理
  *
  * 注意：配置管理已迁移到独立的 Config Slice
  */
@@ -12,7 +12,7 @@
 import type { StateCreator } from 'zustand';
 import type { ModelConfig } from '../../config/types.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
-import type { TodoItem } from '../../tools/builtin/todo/types.js';
+import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type {
   ActiveModal,
   AppSlice,
@@ -30,7 +30,7 @@ const initialAppState: AppState = {
   activeModal: 'none',
   sessionSelectorData: undefined,
   modelEditorTarget: null,
-  todos: [],
+  tasks: [],
   awaitingSecondCtrlC: false,
   thinkingModeEnabled: false, // Thinking 模式默认关闭
   subagentProgress: null, // 当前无 subagent 执行
@@ -111,22 +111,22 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
     },
 
     /**
-     * 设置 Todo 列表
+     * 设置 Task 列表
      */
-    setTodos: (todos: TodoItem[]) => {
+    setTasks: (tasks: TaskListItem[]) => {
       set((state) => ({
-        app: { ...state.app, todos },
+        app: { ...state.app, tasks },
       }));
     },
 
     /**
-     * 更新单个 Todo
+     * 更新单个 Task
      */
-    updateTodo: (todo: TodoItem) => {
+    updateTask: (task: TaskListItem) => {
       set((state) => ({
         app: {
           ...state.app,
-          todos: state.app.todos.map((t) => (t.id === todo.id ? todo : t)),
+          tasks: state.app.tasks.map((t) => (t.id === task.id ? task : t)),
         },
       }));
     },
