@@ -24,6 +24,9 @@ const ALWAYS_LOADED_TOOLS = new Set([
   'TaskGet',
   'TaskUpdate',
   'TaskList',
+  'TeamCreate',
+  'TeamStatus',
+  'TeamDelete',
   'AskUserQuestion',
   'Skill',
   'SlashCommand',
@@ -71,10 +74,7 @@ export class DeferredToolManager {
    * - loaded 工具：返回完整 schema
    * - deferred 工具：不返回（通过系统提示单独列出名称）
    */
-  filterDeclarations(
-    allTools: Tool[],
-    _mode?: PermissionMode,
-  ): FunctionDeclaration[] {
+  filterDeclarations(allTools: Tool[], _mode?: PermissionMode): FunctionDeclaration[] {
     return allTools
       .filter((tool) => this.isLoaded(tool.name))
       .map((tool) => tool.getFunctionDeclaration());
@@ -93,11 +93,9 @@ export class DeferredToolManager {
   getDeferredToolsListing(): string {
     const names = this.getDeferredToolNames();
     if (names.length === 0) return '';
-    return [
-      '<available-deferred-tools>',
-      ...names,
-      '</available-deferred-tools>',
-    ].join('\n');
+    return ['<available-deferred-tools>', ...names, '</available-deferred-tools>'].join(
+      '\n'
+    );
   }
 
   /** 重置（用于测试） */
