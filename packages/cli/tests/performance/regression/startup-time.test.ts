@@ -1,22 +1,33 @@
-import { describe, it, expect } from 'vitest';
-import { execSync } from 'child_process';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { describe, expect, it } from 'vitest';
 
 describe('启动时间回归测试', () => {
-  const cliPath = path.resolve(__dirname, '../../../dist/blade.js');
+  const cliPath = path.resolve(process.cwd(), 'dist/blade.js');
+
+  function runCli(args: string[]) {
+    expect(existsSync(cliPath), 'dist/blade.js 不存在，请先运行构建').toBe(true);
+
+    const result = spawnSync(process.execPath, [cliPath, ...args], {
+      timeout: 5000,
+      encoding: 'utf-8',
+      env: {
+        ...process.env,
+        BLADE_TELEMETRY_DISABLED: '1',
+      },
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    return result;
+  }
 
   describe('CLI 启动性能', () => {
     it('--version 命令应在 2 秒内完成', () => {
       const start = performance.now();
 
-      try {
-        execSync(`node ${cliPath} --version`, {
-          timeout: 5000,
-          encoding: 'utf-8',
-        });
-      } catch {
-        // CLI may not be built, ignore errors
-      }
+      runCli(['--version']);
 
       const duration = performance.now() - start;
       expect(duration).toBeLessThan(2000);
@@ -25,14 +36,7 @@ describe('启动时间回归测试', () => {
     it('--help 命令应在 2 秒内完成', () => {
       const start = performance.now();
 
-      try {
-        execSync(`node ${cliPath} --help`, {
-          timeout: 5000,
-          encoding: 'utf-8',
-        });
-      } catch {
-        // CLI may not be built, ignore errors
-      }
+      runCli(['--help']);
 
       const duration = performance.now() - start;
       expect(duration).toBeLessThan(2000);
@@ -59,14 +63,7 @@ describe('启动时间回归测试', () => {
 
       for (let i = 0; i < 3; i++) {
         const start = performance.now();
-        try {
-          execSync(`node ${cliPath} --version`, {
-            timeout: 5000,
-            encoding: 'utf-8',
-          });
-        } catch {
-          // CLI may not be built, ignore errors
-        }
+        runCli(['--version']);
         runs.push(performance.now() - start);
       }
 

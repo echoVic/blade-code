@@ -3,48 +3,57 @@
  * Blade Code CLI
  */
 
-import { render } from 'ink';
-import React from 'react';
-import yargs from 'yargs';
-import { hideBin } from 'yargs/helpers';
-import { cliConfig, globalOptions } from './cli/config.js';
-import {
-  loadConfiguration,
-  validateOutput,
-  validatePermissions,
-} from './cli/middleware.js';
-// 导入命令处理器
-import { doctorCommands } from './commands/doctor.js';
-import { handleHeadlessMode } from './commands/headless.js';
-import { installCommands } from './commands/install.js';
-import { mcpCommands } from './commands/mcp.js';
-import { handlePrintMode } from './commands/print.js';
-import { serveCommand } from './commands/serve.js';
-import { updateCommands } from './commands/update.js';
-import { webCommand } from './commands/web.js';
-import {
-  setProjectRoot,
-} from './bootstrap/state.js';
+import { setProjectRoot } from './bootstrap/state.js';
 import { Logger } from './logging/Logger.js';
 import { initializeGracefulShutdown } from './services/GracefulShutdown.js';
-import { checkVersionOnStartup } from './services/VersionChecker.js';
+import type { AppProps } from './ui/App.js';
 import { getCwd } from './utils/cwd.js';
 import { findProjectRoot, setCwd } from './utils/environment.js';
-import type { AppProps } from './ui/App.js';
-import { AppWrapper as BladeApp } from './ui/App.js';
 
 // NOTE: 关键：在创建任何 logger 之前，先解析 --debug 参数并设置全局配置
 // 这样可以确保所有 logger（包括 middleware、commands 中的）都能正确输出到终端
-const rawArgs = hideBin(process.argv);
-const debugIndex = rawArgs.indexOf('--debug');
-if (debugIndex !== -1) {
-  // --debug 可能带参数（分类过滤）或不带（启用全部）
-  const nextArg = rawArgs[debugIndex + 1];
-  const debugValue = nextArg && !nextArg.startsWith('-') ? nextArg : true;
+const rawArgs = process.argv.slice(2);
+const debugValue = getDebugValue(rawArgs);
+const isDebugCli = debugValue !== null;
+if (debugValue !== null) {
   Logger.setGlobalDebug(debugValue);
 }
 
+function getDebugValue(args: string[]): string | boolean | null {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === '--debug' || arg === '-d') {
+      // --debug 可能带参数（分类过滤）或不带（启用全部）
+      const nextArg = args[index + 1];
+      return nextArg && !nextArg.startsWith('-') ? nextArg : true;
+    }
+
+    if (arg.startsWith('--debug=')) {
+      return arg.slice('--debug='.length) || true;
+    }
+  }
+
+  return null;
+}
+
+function isPlainVersionRequest(args: string[]): boolean {
+  return args.length === 1 && (args[0] === '--version' || args[0] === '-V');
+}
+
+function hasFlag(args: string[], ...flags: string[]): boolean {
+  return args.some((arg) =>
+    flags.some((flag) => arg === flag || arg.startsWith(`${flag}=`))
+  );
+}
+
 export async function main() {
+  if (isPlainVersionRequest(rawArgs)) {
+    const { getVersion } = await import('./utils/packageInfo.js');
+    console.log(getVersion());
+    return;
+  }
+
   // 初始化工作区根目录（必须在所有依赖 cwd 的代码之前）
   // originalCwd 保持为 process.cwd()（已在 bootstrap/state.ts initState 中设置），
   // 用于解析 CLI 参数中的相对路径（如 --mcp-config ./mcp.json）
@@ -83,18 +92,20 @@ export async function main() {
   // 初始化优雅退出处理器（捕获 uncaughtException/unhandledRejection/SIGTERM）
   initializeGracefulShutdown();
 
-  // 尽早启动版本检查（不 await，与后续初始化并行）
-  // 版本检查不依赖任何配置状态，可以立即开始网络请求
-  const versionCheckPromise = checkVersionOnStartup();
-
-  // 首先检查是否是 print 模式
-  if (await handleHeadlessMode()) {
-    return;
+  // 首先检查是否是 headless 模式
+  if (hasFlag(rawArgs, '--headless')) {
+    const { handleHeadlessMode } = await import('./commands/headless.js');
+    if (await handleHeadlessMode()) {
+      return;
+    }
   }
 
   // 首先检查是否是 print 模式
-  if (await handlePrintMode()) {
-    return;
+  if (hasFlag(rawArgs, '--print', '-p')) {
+    const { handlePrintMode } = await import('./commands/print.js');
+    if (await handlePrintMode()) {
+      return;
+    }
   }
 
   // 检查是否是 ACP 模式
@@ -103,6 +114,30 @@ export async function main() {
     await runAcpIntegration();
     return;
   }
+
+  const [
+    { default: yargs },
+    { hideBin },
+    { cliConfig, globalOptions },
+    { loadConfiguration, validateOutput, validatePermissions },
+    { doctorCommands },
+    { installCommands },
+    { mcpCommands },
+    { serveCommand },
+    { updateCommands },
+    { webCommand },
+  ] = await Promise.all([
+    import('yargs'),
+    import('yargs/helpers'),
+    import('./cli/config.js'),
+    import('./cli/middleware.js'),
+    import('./commands/doctor.js'),
+    import('./commands/install.js'),
+    import('./commands/mcp.js'),
+    import('./commands/serve.js'),
+    import('./commands/update.js'),
+    import('./commands/web.js'),
+  ]);
 
   const cli = yargs(hideBin(process.argv))
     .scriptName(cliConfig.scriptName)
@@ -143,9 +178,12 @@ export async function main() {
         // CLI 错误输出直接使用 console.error（总是可见，不依赖 debug 模式）
         console.error('An error occurred:');
         console.error(err.message);
-        // 总是显示堆栈信息（用于调试）
-        console.error('\nStack trace:');
-        console.error(err.stack);
+        if (isDebugCli && err.stack) {
+          console.error('\nStack trace:');
+          console.error(err.stack);
+        } else {
+          console.error('\nRun with --debug to show the stack trace.');
+        }
         process.exit(1);
       }
 
@@ -172,6 +210,14 @@ export async function main() {
         const initialMessage =
           nonOptionArgs.length > 0 ? nonOptionArgs.join(' ') : undefined;
 
+        // TUI 依赖较重，仅在进入默认交互界面时加载，避免拖慢 --help/--version
+        // 和非交互命令。版本检查只影响 TUI 更新提示，与 UI 模块加载并行启动。
+        const versionCheckPromise = import('./services/VersionChecker.js').then(
+          ({ checkVersionOnStartup }) => checkVersionOnStartup()
+        );
+        const [{ render }, { createElement }, { AppWrapper: BladeApp }] =
+          await Promise.all([import('ink'), import('react'), import('./ui/App.js')]);
+
         // 启动 React UI - 传递所有选项
         const appProps = {
           ...argv,
@@ -179,7 +225,7 @@ export async function main() {
           // 确保某些字段是正确的类型
           debug: argv.debug,
           print: Boolean(argv.print),
-          // 传递版本检查 Promise（已在 main() 开头启动）
+          // 传递版本检查 Promise（与 UI 模块加载并行启动）
           versionCheckPromise,
         } as unknown as AppProps & Record<string, unknown>;
 
@@ -188,7 +234,7 @@ export async function main() {
         delete appProps.$0;
         delete appProps.message;
 
-        render(React.createElement(BladeApp, appProps), {
+        render(createElement(BladeApp, appProps), {
           patchConsole: true,
           exitOnCtrlC: false, // 由 useCtrlCHandler 处理（支持智能双击退出）
           // 不使用 alternateBuffer，以支持终端原生滚动

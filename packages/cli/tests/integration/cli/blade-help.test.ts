@@ -49,6 +49,32 @@ describe('Blade CLI 基本行为', () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
     const combinedOutput = `${result.stdout}\n${result.stderr}`;
-    expect(combinedOutput).toContain('帮助信息已显示');
+    expect(combinedOutput).toContain('可用的 Slash Commands');
+    expect(combinedOutput).toContain('**/help**');
+  });
+
+  it('普通参数错误不应默认打印堆栈', () => {
+    if (!existsSync(CLI_ENTRY)) {
+      console.warn(
+        '[cli] dist/blade.js 不存在，跳过 CLI 测试（请先运行 npm run build）'
+      );
+      return;
+    }
+
+    const result = spawnSync('node', [CLI_ENTRY, '--output-format', 'json'], {
+      encoding: 'utf-8',
+      env: {
+        ...process.env,
+        BLADE_TELEMETRY_DISABLED: '1',
+      },
+    });
+
+    expect(result.status).toBe(1);
+    const combinedOutput = `${result.stdout}\n${result.stderr}`;
+    expect(combinedOutput).toContain(
+      '--output-format can only be used with --print or --headless'
+    );
+    expect(combinedOutput).toContain('Run with --debug to show the stack trace.');
+    expect(combinedOutput).not.toContain('Stack trace:');
   });
 });

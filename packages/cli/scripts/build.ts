@@ -20,6 +20,8 @@ const result = await Bun.build({
   entrypoints: ["src/blade.tsx"],
   outdir: "dist",
   target: "node",
+  format: "esm",
+  splitting: true,
   minify: true,
   external: externals
 });
