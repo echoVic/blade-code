@@ -4,8 +4,8 @@
  */
 
 import type {
-    ChatCompletionChunk,
-    ChatCompletionMessageToolCall,
+  ChatCompletionChunk,
+  ChatCompletionMessageToolCall,
 } from 'openai/resources/chat';
 import type { ProviderType } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
@@ -86,7 +86,6 @@ export interface ChatConfig {
   apiVersion?: string; // GPT OpenAI Platform 专用：API 版本（如 '2024-03-01-preview'）
   supportsThinking?: boolean; // 是否支持 thinking 模式（DeepSeek Reasoner 等）
   customHeaders?: Record<string, string>; // Provider 特定的自定义 HTTP Headers
-  providerId?: string; // models.dev 中的 Provider ID（用于获取特定配置）
   fallbackModel?: string; // 备用模型 ID（429/529/503 时自动切换）
 }
 
@@ -186,8 +185,8 @@ export async function createChatServiceAsync(
   let resolvedConfig = config;
 
   // 自动注入 Provider 特定的 Headers
-  if (resolvedConfig.providerId) {
-    const providerHeaders = getProviderHeaders(resolvedConfig.providerId);
+  if (resolvedConfig.provider) {
+    const providerHeaders = getProviderHeaders(resolvedConfig.provider);
     if (Object.keys(providerHeaders).length > 0) {
       resolvedConfig = {
         ...resolvedConfig,
@@ -196,7 +195,10 @@ export async function createChatServiceAsync(
           ...resolvedConfig.customHeaders, // 用户配置优先
         },
       };
-      logger.debug(`Injected ${resolvedConfig.providerId} specific headers:`, Object.keys(providerHeaders));
+      logger.debug(
+        `Injected ${resolvedConfig.provider} specific headers:`,
+        Object.keys(providerHeaders)
+      );
     }
   }
 

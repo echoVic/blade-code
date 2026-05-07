@@ -8,7 +8,8 @@ export type ProviderType =
   | 'openai-compatible'
   | 'anthropic'
   | 'gemini'
-  | 'azure-openai';
+  | 'azure-openai'
+  | string;
 
 /**
  * 权限模式枚举
@@ -65,7 +66,6 @@ export interface ModelConfig {
   thinkingBudget?: number;
   apiVersion?: string;
   projectId?: string;
-  providerId?: string;
 }
 
 import { UiTheme } from '@/api/schemas.js';
@@ -232,5 +232,4 @@ export interface SetupConfig {
   model: string;
   maxContextTokens?: number;
   maxOutputTokens?: number;
-  providerId?: string;
 }

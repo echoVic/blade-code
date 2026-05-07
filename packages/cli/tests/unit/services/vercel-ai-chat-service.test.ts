@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatConfig } from '../../../src/services/ChatServiceInterface.js';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
@@ -93,6 +93,41 @@ describe('VercelAIChatService', () => {
   // ─── chat() ────────────────────────────────────────────────────────────
 
   describe('chat()', () => {
+    it('uses the native DeepSeek provider when provider is deepseek', async () => {
+      const { createDeepSeek } = await import('@ai-sdk/deepseek');
+
+      await createService({
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
+        baseUrl: 'https://api.deepseek.com/v1',
+      });
+
+      expect(createDeepSeek).toHaveBeenCalledWith(
+        expect.objectContaining({
+          apiKey: 'test-key',
+          baseURL: 'https://api.deepseek.com/v1',
+        })
+      );
+    });
+
+    it('falls back to OpenAI-compatible for providers without a native SDK adapter', async () => {
+      const { createOpenAICompatible } = await import('@ai-sdk/openai-compatible');
+
+      await createService({
+        provider: 'groq',
+        model: 'llama-3.3-70b-versatile',
+        baseUrl: 'https://api.groq.com/openai/v1',
+      });
+
+      expect(createOpenAICompatible).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'groq',
+          apiKey: 'test-key',
+          baseURL: 'https://api.groq.com/openai/v1',
+        })
+      );
+    });
+
     it('returns correct response on normal success', async () => {
       generateText.mockResolvedValueOnce({
         text: 'hello',
@@ -117,16 +152,14 @@ describe('VercelAIChatService', () => {
     });
 
     it('falls back on 429 when fallbackModel is configured', async () => {
-      generateText
-        .mockRejectedValueOnce(make429Error())
-        .mockResolvedValueOnce({
-          text: 'fallback-response',
-          toolCalls: [],
-          usage: { promptTokens: 8, completionTokens: 3 },
-          finishReason: 'stop',
-          reasoning: undefined,
-          providerMetadata: undefined,
-        });
+      generateText.mockRejectedValueOnce(make429Error()).mockResolvedValueOnce({
+        text: 'fallback-response',
+        toolCalls: [],
+        usage: { promptTokens: 8, completionTokens: 3 },
+        finishReason: 'stop',
+        reasoning: undefined,
+        providerMetadata: undefined,
+      });
 
       const service = await createService({ fallbackModel: 'fallback-model' });
       const response = await service.chat(simpleMessages);
@@ -151,9 +184,7 @@ describe('VercelAIChatService', () => {
 
       const service = await createService({ fallbackModel: 'fallback-model' });
 
-      await expect(service.chat(simpleMessages)).rejects.toThrow(
-        /Fallback model/
-      );
+      await expect(service.chat(simpleMessages)).rejects.toThrow(/Fallback model/);
 
       try {
         await service.chat(simpleMessages);
@@ -191,7 +222,11 @@ describe('VercelAIChatService', () => {
       streamText.mockReturnValueOnce({
         fullStream: toAsyncIterable([
           { type: 'text-delta', textDelta: 'hi' },
-          { type: 'finish', finishReason: 'stop', totalUsage: { promptTokens: 5, completionTokens: 2 } },
+          {
+            type: 'finish',
+            finishReason: 'stop',
+            totalUsage: { promptTokens: 5, completionTokens: 2 },
+          },
         ]),
       });
 
@@ -221,7 +256,11 @@ describe('VercelAIChatService', () => {
         .mockReturnValueOnce({
           fullStream: toAsyncIterable([
             { type: 'text-delta', textDelta: 'fallback-content' },
-            { type: 'finish', finishReason: 'stop', totalUsage: { promptTokens: 3, completionTokens: 1 } },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              totalUsage: { promptTokens: 3, completionTokens: 1 },
+            },
           ]),
         });
 
@@ -269,7 +308,7 @@ describe('VercelAIChatService', () => {
       expect(chunks[0]).toEqual({ modelFallback: true });
     });
 
-    it('preserves assistant reasoning content when replaying tool calls in stream mode', async () => {
+    it('flattens DeepSeek thinking tool history in stream mode', async () => {
       streamText.mockReturnValueOnce({
         fullStream: toAsyncIterable([
           { type: 'text-delta', textDelta: 'ok' },
@@ -282,8 +321,7 @@ describe('VercelAIChatService', () => {
       });
 
       const service = await createService({
-        provider: 'openai-compatible',
-        providerId: 'deepseek',
+        provider: 'deepseek',
         model: 'deepseek-v4-pro',
         baseUrl: 'https://api.deepseek.com/v1',
       });
@@ -318,19 +356,102 @@ describe('VercelAIChatService', () => {
       const assistantMessage = call.messages.find(
         (message: { role: string }) => message.role === 'assistant'
       );
+      const flattenedToolResult = call.messages.find(
+        (message: { role: string; content: string }) =>
+          message.role === 'user' && message.content.includes('Tool result for Bash')
+      );
 
       expect(assistantMessage).toEqual({
         role: 'assistant',
-        content: [
-          { type: 'reasoning', text: '先思考再调用工具。' },
+        content: 'I will use the requested tool and continue from its result.',
+      });
+      expect(flattenedToolResult.content).toContain('/tmp/project');
+    });
+
+    it('flattens system messages for DeepSeek thinking tool history', async () => {
+      streamText.mockReturnValueOnce({
+        fullStream: toAsyncIterable([
+          {
+            type: 'finish',
+            finishReason: 'stop',
+            totalUsage: { promptTokens: 1, completionTokens: 1 },
+          },
+        ]),
+      });
+
+      const service = await createService({
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
+        baseUrl: 'https://api.deepseek.com/v1',
+      });
+
+      const messages = [
+        { role: 'system' as const, content: 'follow policy' },
+        { role: 'user' as const, content: 'hi' },
+      ];
+
+      for await (const _chunk of service.streamChat(messages)) {
+        // drain stream
+      }
+
+      const call = streamText.mock.calls[0][0];
+      expect(call.messages[0]).toEqual({
+        role: 'user',
+        content: '<system>\nfollow policy\n</system>',
+      });
+    });
+
+    it('captures AI SDK v6 reasoning-delta text for DeepSeek thinking replay', async () => {
+      streamText.mockReturnValueOnce({
+        fullStream: toAsyncIterable([
+          { type: 'reasoning-delta', text: '需要先读文件。' },
           {
             type: 'tool-call',
             toolCallId: 'tc-1',
-            toolName: 'Bash',
-            input: { command: 'pwd' },
+            toolName: 'Read',
+            input: { file_path: 'src/math.js' },
           },
-        ],
+          {
+            type: 'finish',
+            finishReason: 'tool-calls',
+            totalUsage: { promptTokens: 1, completionTokens: 1 },
+          },
+        ]),
       });
+
+      const service = await createService({
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
+        baseUrl: 'https://api.deepseek.com/v1',
+      });
+
+      const chunks: unknown[] = [];
+      for await (const chunk of service.streamChat(simpleMessages, [
+        {
+          name: 'Read',
+          description: 'Read a file',
+          parameters: { type: 'object', properties: {} },
+        },
+      ])) {
+        chunks.push(chunk);
+      }
+
+      expect(chunks).toEqual(
+        expect.arrayContaining([
+          { reasoningContent: '需要先读文件。' },
+          expect.objectContaining({
+            toolCalls: [
+              expect.objectContaining({
+                id: 'tc-1',
+                function: {
+                  name: 'Read',
+                  arguments: '{"file_path":"src/math.js"}',
+                },
+              }),
+            ],
+          }),
+        ])
+      );
     });
   });
 
@@ -392,7 +513,7 @@ describe('VercelAIChatService', () => {
       expect(toolMessages[0].content[0].toolCallId).toBe('tc-1');
     });
 
-    it('preserves assistant reasoning content when replaying tool calls', async () => {
+    it('flattens DeepSeek thinking tool history', async () => {
       generateText.mockResolvedValueOnce({
         text: 'ok',
         toolCalls: [],
@@ -403,8 +524,7 @@ describe('VercelAIChatService', () => {
       });
 
       const service = await createService({
-        provider: 'openai-compatible',
-        providerId: 'deepseek',
+        provider: 'deepseek',
         model: 'deepseek-v4-pro',
         baseUrl: 'https://api.deepseek.com/v1',
       });
@@ -437,19 +557,16 @@ describe('VercelAIChatService', () => {
       const assistantMessage = call.messages.find(
         (message: { role: string }) => message.role === 'assistant'
       );
+      const flattenedToolResult = call.messages.find(
+        (message: { role: string; content: string }) =>
+          message.role === 'user' && message.content.includes('Tool result for Bash')
+      );
 
       expect(assistantMessage).toEqual({
         role: 'assistant',
-        content: [
-          { type: 'reasoning', text: '需要先调用工具查看目录内容。' },
-          {
-            type: 'tool-call',
-            toolCallId: 'tc-1',
-            toolName: 'Bash',
-            input: { command: 'pwd' },
-          },
-        ],
+        content: 'I will use the requested tool and continue from its result.',
       });
+      expect(flattenedToolResult.content).toContain('/tmp/project');
     });
   });
 

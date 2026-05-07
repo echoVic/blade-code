@@ -16,12 +16,11 @@ interface UseProvidersResult {
 }
 
 const CUSTOM_PROVIDER: ProviderOption = {
-  id: 'custom-openai-compatible',
+  id: 'openai-compatible',
   name: '自定义 OpenAI Compatible',
   icon: '',
   description: '使用自定义 Base URL 和 API Key',
   envVars: [],
-  bladeProvider: 'openai-compatible',
   isCustom: true,
 };
 
@@ -54,13 +53,13 @@ interface UseModelsResult {
   error: string | null;
 }
 
-export const useModels = (providerId: string | undefined): UseModelsResult => {
+export const useModels = (provider: string | undefined): UseModelsResult => {
   const [models, setModels] = useState<ModelOption[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!providerId) {
+    if (!provider) {
       setModels([]);
       return;
     }
@@ -69,7 +68,7 @@ export const useModels = (providerId: string | undefined): UseModelsResult => {
       setIsLoading(true);
       setError(null);
       try {
-        const result = await getModelsForProvider(providerId);
+        const result = await getModelsForProvider(provider);
         setModels(result);
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载模型列表失败');
@@ -79,7 +78,7 @@ export const useModels = (providerId: string | undefined): UseModelsResult => {
     };
 
     load();
-  }, [providerId]);
+  }, [provider]);
 
   return { models, isLoading, error };
 };

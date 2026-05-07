@@ -17,11 +17,11 @@ export const ProviderRoutes = () => {
     }
   });
 
-  app.get('/:providerId/models', async (c) => {
-    const providerId = c.req.param('providerId');
+  app.get('/:provider/models', async (c) => {
+    const provider = c.req.param('provider');
 
     try {
-      const models = await getModelsForProvider(providerId);
+      const models = await getModelsForProvider(provider);
       return c.json(models);
     } catch (error) {
       logger.error('[ProviderRoutes] Failed to list models:', error);

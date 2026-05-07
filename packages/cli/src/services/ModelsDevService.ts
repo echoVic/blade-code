@@ -7,11 +7,10 @@ import { createLogger, LogCategory } from '../logging/Logger.js';
 import type {
   ModelOption,
   ModelsDevData,
-  ProviderOption
+  ProviderOption,
 } from '../ui/components/model-config/types.js';
 import {
   DEFAULT_BASE_URLS,
-  getBladeProvider,
   POPULAR_PROVIDERS,
   PROVIDER_ICONS,
 } from '../ui/components/model-config/types.js';
@@ -68,13 +67,16 @@ export const getProviders = async (): Promise<ProviderOption[]> => {
       envVars: provider.env || [],
       docUrl: provider.doc,
       defaultBaseUrl: DEFAULT_BASE_URLS[id],
-      bladeProvider: getBladeProvider(id),
     });
   }
 
   return providers.sort((a, b) => {
-    const aPopular = POPULAR_PROVIDERS.indexOf(a.id as (typeof POPULAR_PROVIDERS)[number]);
-    const bPopular = POPULAR_PROVIDERS.indexOf(b.id as (typeof POPULAR_PROVIDERS)[number]);
+    const aPopular = POPULAR_PROVIDERS.indexOf(
+      a.id as (typeof POPULAR_PROVIDERS)[number]
+    );
+    const bPopular = POPULAR_PROVIDERS.indexOf(
+      b.id as (typeof POPULAR_PROVIDERS)[number]
+    );
     if (aPopular !== -1 && bPopular !== -1) return aPopular - bPopular;
     if (aPopular !== -1) return -1;
     if (bPopular !== -1) return 1;
@@ -82,12 +84,14 @@ export const getProviders = async (): Promise<ProviderOption[]> => {
   });
 };
 
-export const getModelsForProvider = async (providerId: string): Promise<ModelOption[]> => {
+export const getModelsForProvider = async (
+  providerName: string
+): Promise<ModelOption[]> => {
   const data = await fetchModelsDevData();
-  const provider = data[providerId];
+  const provider = data[providerName];
 
   if (!provider?.models) {
-    logger.warn(`No models found for provider: ${providerId}`);
+    logger.warn(`No models found for provider: ${providerName}`);
     return [];
   }
 
@@ -100,5 +104,3 @@ export const getModelsForProvider = async (providerId: string): Promise<ModelOpt
     outputCost: model.cost?.output,
   }));
 };
-
-

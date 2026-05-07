@@ -23,13 +23,7 @@ vi.mock('ink', () => ({
 }));
 
 vi.mock('ink-text-input', () => ({
-  default: ({
-    value,
-    placeholder,
-  }: {
-    value?: string;
-    placeholder?: string;
-  }) =>
+  default: ({ value, placeholder }: { value?: string; placeholder?: string }) =>
     React.createElement('text-input', {
       value,
       placeholder,
@@ -37,11 +31,7 @@ vi.mock('ink-text-input', () => ({
 }));
 
 vi.mock('ink-select-input', () => ({
-  default: ({
-    items,
-  }: {
-    items: Array<{ key: string; label: string }>;
-  }) =>
+  default: ({ items }: { items: Array<{ key: string; label: string }> }) =>
     React.createElement('select-input', {
       'data-items': items.map((item) => item.label).join('|'),
     }),
@@ -53,7 +43,6 @@ const provider = {
   icon: '',
   description: 'Reasoning models',
   envVars: ['DEEPSEEK_API_KEY'],
-  bladeProvider: 'openai-compatible' as const,
 };
 
 describe('model config wizard flow', () => {

@@ -3,7 +3,7 @@
  * 基于 models.dev API 数据结构
  */
 
-import type { ProviderType, SetupConfig } from '../../../config/types.js';
+import type { SetupConfig } from '../../../config/types.js';
 
 export interface ModelsDevModel {
   id: string;
@@ -31,7 +31,6 @@ export interface ProviderOption {
   envVars: string[];
   docUrl?: string;
   defaultBaseUrl?: string;
-  bladeProvider: ProviderType;
   isCustom?: boolean;
 }
 
@@ -44,12 +43,7 @@ export interface ModelOption {
   outputCost?: number;
 }
 
-export type WizardStep =
-  | 'provider'
-  | 'apiKey'
-  | 'baseUrl'
-  | 'model'
-  | 'confirm';
+export type WizardStep = 'provider' | 'apiKey' | 'baseUrl' | 'model' | 'confirm';
 
 export interface ModelConfigWizardProps {
   mode: 'setup' | 'add' | 'edit';
@@ -104,20 +98,8 @@ export const DEFAULT_BASE_URLS: Record<string, string> = {
   nvidia: 'https://integrate.api.nvidia.com/v1',
 };
 
-export const PROVIDER_TO_BLADE: Record<string, ProviderType> = {
-  anthropic: 'anthropic',
-  google: 'gemini',
-  'google-vertex': 'gemini',
-  'google-vertex-anthropic': 'anthropic',
-  azure: 'azure-openai',
-};
-
-export const getBladeProvider = (providerId: string): ProviderType => {
-  return PROVIDER_TO_BLADE[providerId] || 'openai-compatible';
-};
-
 /**
- * Provider 特定的 HTTP Headers 
+ * Provider 特定的 HTTP Headers
  */
 export const PROVIDER_HEADERS: Record<string, Record<string, string>> = {
   anthropic: {
@@ -144,6 +126,6 @@ export const PROVIDER_HEADERS: Record<string, Record<string, string>> = {
 /**
  * 获取 Provider 特定的 Headers
  */
-export const getProviderHeaders = (providerId: string): Record<string, string> => {
-  return PROVIDER_HEADERS[providerId] || {};
+export const getProviderHeaders = (provider: string): Record<string, string> => {
+  return PROVIDER_HEADERS[provider] || {};
 };

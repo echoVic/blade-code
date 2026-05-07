@@ -61,23 +61,49 @@ type AIReasoningPart = {
 
 type AIMessage =
   | { role: 'system'; content: string; providerOptions?: AIProviderOptions }
-  | { role: 'user'; content: string | Array<AITextPart | { type: 'image'; image: string }> }
+  | {
+      role: 'user';
+      content: string | Array<AITextPart | { type: 'image'; image: string }>;
+    }
   | {
       role: 'assistant';
+      providerOptions?: AIProviderOptions;
       content:
         | string
         | Array<
             | { type: 'text'; text: string }
             | AIReasoningPart
-            | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
+            | {
+                type: 'tool-call';
+                toolCallId: string;
+                toolName: string;
+                input: unknown;
+              }
           >;
     }
-  | { role: 'tool'; content: Array<{ type: 'tool-result'; toolCallId: string; toolName: string; output: { type: 'text'; value: string } }> };
+  | {
+      role: 'tool';
+      content: Array<{
+        type: 'tool-result';
+        toolCallId: string;
+        toolName: string;
+        output: { type: 'text'; value: string };
+      }>;
+    };
 
 type AITool = {
   description?: string;
   inputSchema: unknown;
 };
+
+function getDeltaText(part: unknown): string | undefined {
+  const candidate = part as {
+    text?: string;
+    textDelta?: string;
+    delta?: string;
+  };
+  return candidate.text ?? candidate.textDelta ?? candidate.delta;
+}
 
 function safeJsonParse(str: string, fallback: unknown = {}): unknown {
   try {
@@ -98,12 +124,11 @@ export class VercelAIChatService implements IChatService {
     logger.debug('[VercelAIChatService] Initialized', {
       provider: config.provider,
       model: config.model,
-      providerId: config.providerId,
     });
   }
 
   private createModel(config: ChatConfig): LanguageModel {
-    const { provider, apiKey, baseUrl, model, customHeaders, providerId, apiVersion } = config;
+    const { provider, apiKey, baseUrl, model, customHeaders, apiVersion } = config;
 
     switch (provider) {
       case 'openai': {
@@ -128,6 +153,25 @@ export class VercelAIChatService implements IChatService {
         if (baseUrl && !this.isGeminiOfficialUrl(baseUrl)) {
           const compatible = createOpenAICompatible({
             name: 'gemini',
+            apiKey,
+            baseURL: baseUrl,
+            headers: customHeaders,
+          });
+          return compatible(model);
+        }
+        const google = createGoogleGenerativeAI({
+          apiKey,
+          baseURL: baseUrl || undefined,
+        });
+        return google(model);
+      }
+
+      case 'google':
+      case 'google-generative-ai':
+      case 'google-vertex': {
+        if (baseUrl && !this.isGeminiOfficialUrl(baseUrl)) {
+          const compatible = createOpenAICompatible({
+            name: provider,
             apiKey,
             baseURL: baseUrl,
             headers: customHeaders,
@@ -167,18 +211,44 @@ export class VercelAIChatService implements IChatService {
         return compatible(model);
       }
 
-      default: {
-        if (providerId === 'deepseek') {
-          const deepseek = createDeepSeek({
+      case 'azure': {
+        const resourceName = this.extractAzureResourceName(baseUrl);
+        if (resourceName) {
+          const azure = createAzure({
             apiKey,
-            baseURL: baseUrl || undefined,
-            headers: customHeaders,
+            resourceName,
+            apiVersion: apiVersion || '2024-08-01-preview',
           });
-          return deepseek(model);
+          return azure(model);
         }
-
+        const azureBaseUrl = this.buildAzureBaseUrl(baseUrl, model);
         const compatible = createOpenAICompatible({
-          name: providerId || 'custom',
+          name: 'azure-openai',
+          apiKey,
+          baseURL: azureBaseUrl,
+          headers: {
+            ...customHeaders,
+            'api-key': apiKey,
+          },
+          queryParams: {
+            'api-version': apiVersion || '2024-08-01-preview',
+          },
+        });
+        return compatible(model);
+      }
+
+      case 'deepseek': {
+        const deepseek = createDeepSeek({
+          apiKey,
+          baseURL: baseUrl || undefined,
+          headers: customHeaders,
+        });
+        return deepseek(model);
+      }
+
+      default: {
+        const compatible = createOpenAICompatible({
+          name: provider,
           apiKey,
           baseURL: baseUrl,
           headers: customHeaders,
@@ -190,7 +260,9 @@ export class VercelAIChatService implements IChatService {
 
   private extractAzureResourceName(baseUrl?: string): string | undefined {
     if (!baseUrl) return undefined;
-    const match = baseUrl.match(/https:\/\/([^.]+)\.openai\.azure(?:\.com|\.us|\.cn|\.de)/);
+    const match = baseUrl.match(
+      /https:\/\/([^.]+)\.openai\.azure(?:\.com|\.us|\.cn|\.de)/
+    );
     return match ? match[1] : undefined;
   }
 
@@ -204,13 +276,100 @@ export class VercelAIChatService implements IChatService {
   }
 
   private isGeminiOfficialUrl(baseUrl: string): boolean {
-    return baseUrl.includes('generativelanguage.googleapis.com') || baseUrl.includes('aiplatform.googleapis.com');
+    return (
+      baseUrl.includes('generativelanguage.googleapis.com') ||
+      baseUrl.includes('aiplatform.googleapis.com')
+    );
+  }
+
+  private needsThinkingReplayMetadata(): boolean {
+    return /deepseek/i.test(
+      [this.config.provider, this.config.model, this.config.baseUrl].join(' ')
+    );
+  }
+
+  private getThinkingReplayProviderOptions(
+    reasoningContent?: string
+  ): AIProviderOptions | undefined {
+    const thinking = reasoningContent?.trim();
+    if (!thinking || !this.needsThinkingReplayMetadata()) return undefined;
+    return {
+      openaiCompatible: {
+        reasoning_content: thinking,
+      },
+    };
+  }
+
+  private shouldFlattenDeepSeekThinkingToolHistory(): boolean {
+    return this.needsThinkingReplayMetadata();
+  }
+
+  private flattenDeepSeekThinkingToolHistory(messages: Message[]): Message[] {
+    const result: Message[] = [];
+    let pendingAssistant: Message | undefined;
+
+    const flushAssistant = () => {
+      if (!pendingAssistant) return;
+      result.push({
+        role: 'assistant',
+        content:
+          getTextContent(pendingAssistant.content).trim() ||
+          'I will use the requested tool and continue from its result.',
+      });
+      pendingAssistant = undefined;
+    };
+
+    for (const msg of messages) {
+      if (msg.role === 'system') {
+        flushAssistant();
+        result.push({
+          role: 'user',
+          content: `<system>\n${getTextContent(msg.content)}\n</system>`,
+        });
+        continue;
+      }
+
+      if (
+        msg.role === 'assistant' &&
+        msg.tool_calls &&
+        msg.tool_calls.length > 0 &&
+        msg.reasoningContent?.trim()
+      ) {
+        flushAssistant();
+        pendingAssistant = msg;
+        continue;
+      }
+
+      if (msg.role === 'tool' && pendingAssistant) {
+        const toolCall = pendingAssistant.tool_calls?.find(
+          (tc) => tc.id === msg.tool_call_id
+        );
+        const fn = toolCall?.type === 'function' ? toolCall.function : undefined;
+        result.push({
+          role: 'user',
+          content:
+            `Tool result for ${msg.name || fn?.name || 'tool'}${fn?.arguments ? `(${fn.arguments})` : ''}:\n` +
+            `${getTextContent(msg.content)}\n\nContinue from this tool result.`,
+        });
+        continue;
+      }
+
+      flushAssistant();
+      result.push(msg);
+    }
+
+    flushAssistant();
+    return result;
   }
 
   private convertMessages(messages: Message[]): AIMessage[] {
     const result: AIMessage[] = [];
 
-    for (const msg of messages) {
+    const sourceMessages = this.shouldFlattenDeepSeekThinkingToolHistory()
+      ? this.flattenDeepSeekThinkingToolHistory(messages)
+      : messages;
+
+    for (const msg of sourceMessages) {
       if (msg.role === 'system') {
         // 处理 system 消息的 providerOptions（用于 Anthropic Prompt Caching）
         if (Array.isArray(msg.content)) {
@@ -250,7 +409,8 @@ export class VercelAIChatService implements IChatService {
       } else if (msg.role === 'assistant') {
         if (msg.tool_calls && msg.tool_calls.length > 0) {
           const toolCalls = msg.tool_calls.map((tc) => {
-            const fn = (tc as { function?: { name: string; arguments?: string } }).function;
+            const fn = (tc as { function?: { name: string; arguments?: string } })
+              .function;
             return {
               type: 'tool-call' as const,
               toolCallId: tc.id,
@@ -262,13 +422,27 @@ export class VercelAIChatService implements IChatService {
           const reasoningParts = msg.reasoningContent?.trim()
             ? [{ type: 'reasoning' as const, text: msg.reasoningContent }]
             : [];
+          const providerOptions = this.getThinkingReplayProviderOptions(
+            msg.reasoningContent
+          );
           if (text) {
-            result.push({
+            const assistantMsg: AIMessage = {
               role: 'assistant',
               content: [...reasoningParts, { type: 'text', text }, ...toolCalls],
-            });
+            };
+            if (providerOptions) {
+              assistantMsg.providerOptions = providerOptions;
+            }
+            result.push(assistantMsg);
           } else if (reasoningParts.length > 0) {
-            result.push({ role: 'assistant', content: [...reasoningParts, ...toolCalls] });
+            const assistantMsg: AIMessage = {
+              role: 'assistant',
+              content: [...reasoningParts, ...toolCalls],
+            };
+            if (providerOptions) {
+              assistantMsg.providerOptions = providerOptions;
+            }
+            result.push(assistantMsg);
           } else {
             result.push({ role: 'assistant', content: toolCalls });
           }
@@ -280,7 +454,14 @@ export class VercelAIChatService implements IChatService {
           if (text) {
             content.push({ type: 'text', text });
           }
-          result.push({ role: 'assistant', content });
+          const assistantMsg: AIMessage = { role: 'assistant', content };
+          const providerOptions = this.getThinkingReplayProviderOptions(
+            msg.reasoningContent
+          );
+          if (providerOptions) {
+            assistantMsg.providerOptions = providerOptions;
+          }
+          result.push(assistantMsg);
         } else {
           result.push({ role: 'assistant', content: getTextContent(msg.content) });
         }
@@ -318,7 +499,12 @@ export class VercelAIChatService implements IChatService {
   }
 
   private convertToolCalls(
-    toolCalls: Array<{ toolCallId: string; toolName: string; args?: unknown; input?: unknown }>
+    toolCalls: Array<{
+      toolCallId: string;
+      toolName: string;
+      args?: unknown;
+      input?: unknown;
+    }>
   ): ChatCompletionMessageToolCall[] {
     return toolCalls.map((tc) => ({
       id: tc.toolCallId,
@@ -357,7 +543,8 @@ export class VercelAIChatService implements IChatService {
     // 添加 Anthropic 缓存统计（如果有）
     if (providerMetadata?.anthropic) {
       if (providerMetadata.anthropic.cacheCreationInputTokens !== undefined) {
-        result.cacheCreationInputTokens = providerMetadata.anthropic.cacheCreationInputTokens;
+        result.cacheCreationInputTokens =
+          providerMetadata.anthropic.cacheCreationInputTokens;
       }
       if (providerMetadata.anthropic.cacheReadInputTokens !== undefined) {
         result.cacheReadInputTokens = providerMetadata.anthropic.cacheReadInputTokens;
@@ -365,7 +552,6 @@ export class VercelAIChatService implements IChatService {
     }
     return result;
   }
-
 
   private isFallbackableError(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
@@ -405,7 +591,13 @@ export class VercelAIChatService implements IChatService {
 
       const toolCalls =
         result.toolCalls && result.toolCalls.length > 0
-          ? this.convertToolCalls(result.toolCalls as Array<{ toolCallId: string; toolName: string; args?: unknown }>)
+          ? this.convertToolCalls(
+              result.toolCalls as Array<{
+                toolCallId: string;
+                toolName: string;
+                args?: unknown;
+              }>
+            )
           : undefined;
 
       const reasoningText = Array.isArray(result.reasoning)
@@ -417,9 +609,16 @@ export class VercelAIChatService implements IChatService {
         reasoningContent: reasoningText,
         toolCalls,
         usage: this.convertUsage(
-          result.usage as { promptTokens?: number; completionTokens?: number; totalTokens?: number },
+          result.usage as {
+            promptTokens?: number;
+            completionTokens?: number;
+            totalTokens?: number;
+          },
           result.providerMetadata as {
-            anthropic?: { cacheCreationInputTokens?: number; cacheReadInputTokens?: number };
+            anthropic?: {
+              cacheCreationInputTokens?: number;
+              cacheReadInputTokens?: number;
+            };
           }
         ),
         finishReason: result.finishReason,
@@ -446,7 +645,13 @@ export class VercelAIChatService implements IChatService {
           });
           const fallbackToolCalls =
             result.toolCalls && result.toolCalls.length > 0
-              ? this.convertToolCalls(result.toolCalls as Array<{ toolCallId: string; toolName: string; args?: unknown }>)
+              ? this.convertToolCalls(
+                  result.toolCalls as Array<{
+                    toolCallId: string;
+                    toolName: string;
+                    args?: unknown;
+                  }>
+                )
               : undefined;
           const fallbackReasoning = Array.isArray(result.reasoning)
             ? result.reasoning.map((r: { text: string }) => r.text).join('')
@@ -456,9 +661,16 @@ export class VercelAIChatService implements IChatService {
             reasoningContent: fallbackReasoning,
             toolCalls: fallbackToolCalls,
             usage: this.convertUsage(
-              result.usage as { promptTokens?: number; completionTokens?: number; totalTokens?: number },
+              result.usage as {
+                promptTokens?: number;
+                completionTokens?: number;
+                totalTokens?: number;
+              },
               result.providerMetadata as {
-                anthropic?: { cacheCreationInputTokens?: number; cacheReadInputTokens?: number };
+                anthropic?: {
+                  cacheCreationInputTokens?: number;
+                  cacheReadInputTokens?: number;
+                };
               }
             ),
             finishReason: result.finishReason,
@@ -503,11 +715,11 @@ export class VercelAIChatService implements IChatService {
       for await (const part of result.fullStream) {
         switch (part.type) {
           case 'text-delta':
-            yield { content: (part as { text?: string; textDelta?: string }).text ?? (part as { textDelta?: string }).textDelta };
+            yield { content: getDeltaText(part) };
             break;
 
           case 'reasoning-delta':
-            yield { reasoningContent: (part as { textDelta?: string }).textDelta };
+            yield { reasoningContent: getDeltaText(part) };
             break;
 
           case 'tool-call':
@@ -519,7 +731,11 @@ export class VercelAIChatService implements IChatService {
                   type: 'function' as const,
                   function: {
                     name: (part as { toolName: string }).toolName,
-                    arguments: JSON.stringify((part as { args?: unknown; input?: unknown }).args ?? (part as { input?: unknown }).input ?? {}),
+                    arguments: JSON.stringify(
+                      (part as { args?: unknown; input?: unknown }).args ??
+                        (part as { input?: unknown }).input ??
+                        {}
+                    ),
                   },
                 },
               ],
@@ -530,8 +746,27 @@ export class VercelAIChatService implements IChatService {
             yield {
               finishReason: (part as { finishReason?: string }).finishReason,
               usage: this.convertUsage(
-                (part as { totalUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number; inputTokens?: number; outputTokens?: number } }).totalUsage,
-                (part as { providerMetadata?: { anthropic?: { cacheCreationInputTokens?: number; cacheReadInputTokens?: number } } }).providerMetadata
+                (
+                  part as {
+                    totalUsage?: {
+                      promptTokens?: number;
+                      completionTokens?: number;
+                      totalTokens?: number;
+                      inputTokens?: number;
+                      outputTokens?: number;
+                    };
+                  }
+                ).totalUsage,
+                (
+                  part as {
+                    providerMetadata?: {
+                      anthropic?: {
+                        cacheCreationInputTokens?: number;
+                        cacheReadInputTokens?: number;
+                      };
+                    };
+                  }
+                ).providerMetadata
               ),
             };
             break;
@@ -566,10 +801,10 @@ export class VercelAIChatService implements IChatService {
           for await (const part of fallbackResult.fullStream) {
             switch (part.type) {
               case 'text-delta':
-                yield { content: (part as { text?: string; textDelta?: string }).text ?? (part as { textDelta?: string }).textDelta };
+                yield { content: getDeltaText(part) };
                 break;
               case 'reasoning-delta':
-                yield { reasoningContent: (part as { textDelta?: string }).textDelta };
+                yield { reasoningContent: getDeltaText(part) };
                 break;
               case 'tool-call':
                 yield {
@@ -580,7 +815,11 @@ export class VercelAIChatService implements IChatService {
                       type: 'function' as const,
                       function: {
                         name: (part as { toolName: string }).toolName,
-                        arguments: JSON.stringify((part as { args?: unknown; input?: unknown }).args ?? (part as { input?: unknown }).input ?? {}),
+                        arguments: JSON.stringify(
+                          (part as { args?: unknown; input?: unknown }).args ??
+                            (part as { input?: unknown }).input ??
+                            {}
+                        ),
                       },
                     },
                   ],
@@ -590,8 +829,25 @@ export class VercelAIChatService implements IChatService {
                 yield {
                   finishReason: (part as { finishReason?: string }).finishReason,
                   usage: this.convertUsage(
-                    (part as { totalUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }).totalUsage,
-                    (part as { providerMetadata?: { anthropic?: { cacheCreationInputTokens?: number; cacheReadInputTokens?: number } } }).providerMetadata
+                    (
+                      part as {
+                        totalUsage?: {
+                          promptTokens?: number;
+                          completionTokens?: number;
+                          totalTokens?: number;
+                        };
+                      }
+                    ).totalUsage,
+                    (
+                      part as {
+                        providerMetadata?: {
+                          anthropic?: {
+                            cacheCreationInputTokens?: number;
+                            cacheReadInputTokens?: number;
+                          };
+                        };
+                      }
+                    ).providerMetadata
                   ),
                 };
                 break;

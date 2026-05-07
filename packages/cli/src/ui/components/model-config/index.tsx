@@ -19,7 +19,13 @@ import { ApiKeyInput } from './ApiKeyInput.js';
 import { useModels, useProviders } from './hooks/useModelsDev.js';
 import { ModelSelector } from './ModelSelector.js';
 import { ProviderSelector } from './ProviderSelector.js';
-import { DEFAULT_BASE_URLS, type ModelConfigWizardProps, type ModelOption, type ProviderOption, type WizardStep } from './types.js';
+import {
+  DEFAULT_BASE_URLS,
+  type ModelConfigWizardProps,
+  type ModelOption,
+  type ProviderOption,
+  type WizardStep,
+} from './types.js';
 import { getPreviousWizardStep, getStepAfterApiKeySubmit } from './wizardFlow.js';
 
 export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
@@ -34,13 +40,23 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   const [step, setStep] = useState<WizardStep>('provider');
   const [provider, setProvider] = useState<ProviderOption | undefined>();
   const [apiKey, setApiKey] = useState(isEditMode ? initialConfig?.apiKey || '' : '');
-  const [baseUrl, setBaseUrl] = useState(isEditMode ? initialConfig?.baseUrl || '' : '');
+  const [baseUrl, setBaseUrl] = useState(
+    isEditMode ? initialConfig?.baseUrl || '' : ''
+  );
   const [customModel] = useState(isEditMode ? initialConfig?.model || '' : '');
   const [error, setError] = useState<string | undefined>();
   const [isSaving, setIsSaving] = useState(false);
 
-  const { providers, isLoading: providersLoading, error: providersError } = useProviders();
-  const { models, isLoading: modelsLoading, error: modelsError } = useModels(provider?.id);
+  const {
+    providers,
+    isLoading: providersLoading,
+    error: providersError,
+  } = useProviders();
+  const {
+    models,
+    isLoading: modelsLoading,
+    error: modelsError,
+  } = useModels(provider?.id);
 
   const handleCtrlC = useCtrlCHandler(false);
 
@@ -96,19 +112,19 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
 
     try {
       const finalBaseUrl = baseUrl || (provider ? getDefaultBaseUrl(provider) : '');
-      const configName = isEditMode && initialConfig?.name
-        ? initialConfig.name
-        : `${provider?.name || 'Model'} - ${selected.name}`;
+      const configName =
+        isEditMode && initialConfig?.name
+          ? initialConfig.name
+          : `${provider?.name || 'Model'} - ${selected.name}`;
 
       const setupConfig: SetupConfig = {
         name: configName,
-        provider: provider?.bladeProvider || initialConfig?.provider || 'openai-compatible',
+        provider: provider?.id || initialConfig?.provider || 'openai-compatible',
         baseUrl: finalBaseUrl,
         apiKey: apiKey,
         model: selected.id,
         ...(selected.contextWindow && { maxContextTokens: selected.contextWindow }),
         ...(selected.maxOutput && { maxOutputTokens: selected.maxOutput }),
-        ...(provider?.id && { providerId: provider.id }),
       };
 
       if (mode === 'setup') {
@@ -139,36 +155,43 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
     setStep('apiKey');
   });
 
-  const stepNumber = step === 'provider' ? 1
-    : step === 'apiKey' ? 2
-    : step === 'baseUrl' ? 2.5
-    : 3;
+  const stepNumber =
+    step === 'provider' ? 1 : step === 'apiKey' ? 2 : step === 'baseUrl' ? 2.5 : 3;
   const totalSteps = 3;
 
-  const containerProps = mode === 'setup'
-    ? { flexDirection: 'column' as const, padding: 1 }
-    : {
-        flexDirection: 'column' as const,
-        borderStyle: 'round' as const,
-        borderColor: mode === 'edit' ? 'yellow' : 'blue',
-        padding: 1,
-      };
+  const containerProps =
+    mode === 'setup'
+      ? { flexDirection: 'column' as const, padding: 1 }
+      : {
+          flexDirection: 'column' as const,
+          borderStyle: 'round' as const,
+          borderColor: mode === 'edit' ? 'yellow' : 'blue',
+          padding: 1,
+        };
 
   return (
     <Box {...containerProps}>
       {mode === 'setup' && (
         <>
           <Box marginBottom={1}>
-            <Text bold color="blue">欢迎使用 Blade Code</Text>
+            <Text bold color="blue">
+              欢迎使用 Blade Code
+            </Text>
           </Box>
           <Box marginBottom={1}>
             <Text>AI 驱动的代码助手 - 让我们开始配置您的助手</Text>
           </Box>
           <Box marginBottom={1}>
-            <Text bold color="blue">{'█'.repeat(Math.floor(((stepNumber - 1) / (totalSteps - 1)) * 40))}</Text>
-            <Text dimColor>{'░'.repeat(40 - Math.floor(((stepNumber - 1) / (totalSteps - 1)) * 40))}</Text>
+            <Text bold color="blue">
+              {'█'.repeat(Math.floor(((stepNumber - 1) / (totalSteps - 1)) * 40))}
+            </Text>
+            <Text dimColor>
+              {'░'.repeat(40 - Math.floor(((stepNumber - 1) / (totalSteps - 1)) * 40))}
+            </Text>
             <Text> </Text>
-            <Text bold color="cyan">{Math.ceil(stepNumber)}/{totalSteps}</Text>
+            <Text bold color="cyan">
+              {Math.ceil(stepNumber)}/{totalSteps}
+            </Text>
           </Box>
           <Box marginBottom={1}>
             <Text dimColor>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</Text>
@@ -190,7 +213,13 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
           isLoading={providersLoading}
           error={providersError}
           onSelect={handleProviderSelect}
-          onCancel={mode === 'setup' ? () => { /* setup 模式第一步不允许取消 */ } : onCancel}
+          onCancel={
+            mode === 'setup'
+              ? () => {
+                  /* setup 模式第一步不允许取消 */
+                }
+              : onCancel
+          }
         />
       )}
 
@@ -291,13 +320,13 @@ export const BaseUrlInput: React.FC<BaseUrlInputProps> = ({
       </Box>
 
       <Box marginBottom={1}>
-        <Text dimColor>
-          示例: https://api.example.com/v1
-        </Text>
+        <Text dimColor>示例: https://api.example.com/v1</Text>
       </Box>
 
       <Box>
-        <Text bold color="cyan">{'> '}</Text>
+        <Text bold color="cyan">
+          {'> '}
+        </Text>
         <TextInput
           value={value}
           onChange={onChange}
