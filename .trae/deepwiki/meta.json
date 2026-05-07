@@ -1,0 +1,632 @@
+{
+  "current_version_id": 1,
+  "versions": [
+    {
+      "version_id": 1,
+      "status": {
+        "session_id": "69fc5f4fa366e4253720c6b6",
+        "commit_id": "14d19777c10844f5d82429d532fca86d0d3d30d5",
+        "generate_type": "full"
+      },
+      "catalogs": {
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/ACP 协议与 Agent 运行时环境.md": {
+          "content_hash": "7e69c17828e88273fa30976641e3bb7e02536f5d6b2467359b9c045793666113",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/ACP 协议与 Agent 运行时环境.md",
+          "chapter_number": "8.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/构建、发布与版本管理机制.md": {
+          "content_hash": "49afc769f54b4d315226b58122d045b29eee162c69643f106a21aa95411e229a",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/构建、发布与版本管理机制.md",
+          "chapter_number": "9.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/环境要求与健康检查.md": {
+          "content_hash": "20a056a031f8f40c1bb7846a29649bce82088b18d4279b92f7d5c016a3ca4f1b",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/环境要求与健康检查.md",
+          "chapter_number": "2.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/模型提供商与 AI 服务集成.md": {
+          "content_hash": "10c874504b7fbe6acbcc60ea1950d6b293d7196efc58cc5e2da60dfa395fd117",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/模型提供商与 AI 服务集成.md",
+          "chapter_number": "4.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/常见问题解答.md": {
+          "content_hash": "ca4280f55abc112aab2a92e4fd89d6f3d5ff7fade4ca11ca3e5005772cbfa6aa",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/常见问题解答.md",
+          "chapter_number": "10.3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/消息渲染与 UI 组件库.md": {
+          "content_hash": "3e666ca950fdc76b5ae6337e8f3b35c17e0fe3fea1d808abe1a4ce146e36c718",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/消息渲染与 UI 组件库.md",
+          "chapter_number": "5.1.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/终端交互 Hooks.md": {
+          "content_hash": "4dbe6940e1661cb22429df1e6209ca6dda085e304b62094c891f8fa6be352311",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/终端交互 Hooks.md",
+          "chapter_number": "5.1.3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构.md": {
+          "content_hash": "21cfd6ea6807a24f3475a696c6f24f33451365ff1b836d03c61c0f229172628a",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构.md",
+          "chapter_number": "5.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/快速上手与首个任务.md": {
+          "content_hash": "cd81793b30d02505014b679821e97c18bf209d62b504e676df855331a5ef2ae9",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/快速上手与首个任务.md",
+          "chapter_number": "2.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端.md": {
+          "content_hash": "794dcee464c8c698173057d72bf48c8eee2a9a98e6f8c841eb673c1a6da69eaf",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端.md",
+          "chapter_number": "5.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件.md": {
+          "content_hash": "c7612ff396e81fd6a791020b8c96776b355cc5800a16c93b9d1e5f6b607cbf34",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件.md",
+          "chapter_number": "7"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/任务跟踪与结果验证.md": {
+          "content_hash": "1ae4d40e390e8f2e733d1dc90dccaf3eef78ad92e66896eb8ebd8d3604839ad3",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/任务跟踪与结果验证.md",
+          "chapter_number": "3.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理.md": {
+          "content_hash": "8164d05830ad8e108d9c2e34af2335018661a963be6fc686a79744c4e80af8a6",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理.md",
+          "chapter_number": "4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/规格模式与工程化工作流.md": {
+          "content_hash": "576fbae0a25171485b440ba3ee37b61b682aa89e2b18e3105912dfbaac65ef7d",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/规格模式与工程化工作流.md",
+          "chapter_number": "3.3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/渲染工具与主题系统.md": {
+          "content_hash": "847f9001d9c96e40d27ee7a8a94bb72281354f1800008b23857b6ed6c84df10a",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/渲染工具与主题系统.md",
+          "chapter_number": "5.1.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/测试框架与质量保证实践.md": {
+          "content_hash": "7f57273da6b13e13c8764802a71d6d68b81164d00baf00be46a587d616951e5b",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/测试框架与质量保证实践.md",
+          "chapter_number": "9.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/安装与更新指南.md": {
+          "content_hash": "da5fd18a69183a4c6dc60df825b8d4695a718fd6bd2fab36b19ebed619860ffb",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/安装与更新指南.md",
+          "chapter_number": "2.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/团队协作与子代理架构.md": {
+          "content_hash": "e737c691ff331dc56dc7ffff60f70a01c905f6a83d6ff5c5a7880e35ab388744",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/团队协作与子代理架构.md",
+          "chapter_number": "6.5"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理.md": {
+          "content_hash": "2b574f59dc04f12a51bf93b2e0de60265cd3181dd2c4ba25db0010680d164015",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理.md",
+          "chapter_number": "8"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/上下文提及与 @-mentions.md": {
+          "content_hash": "5f7483a2c910f66cf38e31ce6d76a0959b149d258693b74b7e743e5f22a76442",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/上下文提及与 @-mentions.md",
+          "chapter_number": "5.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/更新日志.md": {
+          "content_hash": "cafb02226c21f05203ffb66510044a48997fd3039b2905e919ecde2492bdf85d",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/更新日志.md",
+          "chapter_number": "10.5"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/核心配置与模型设置.md": {
+          "content_hash": "eab3d820b63236d27ae91bb884eee3040ef610df739e1be7924b33fa3074531d",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/核心配置与模型设置.md",
+          "chapter_number": "2.3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/基于 Redux 的全局状态管理.md": {
+          "content_hash": "63222aa8dc4340d8378ab9f0b3ff41ab1633b6fcac512c346ae9c5df921e3511",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/基于 Redux 的全局状态管理.md",
+          "chapter_number": "8.3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/核心布局与 App 容器.md": {
+          "content_hash": "56a42e1478769ed7cdc304ad6ad758064aa5ef0ac2cdc771d30a8fd964ce9cb9",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/核心布局与 App 容器.md",
+          "chapter_number": "5.1.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/MCP 协议集成与配置.md": {
+          "content_hash": "17dc12de3bbd9d4b99da34e276ae84329a3a7f57a08553cb72c03d93a8775c7b",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/MCP 协议集成与配置.md",
+          "chapter_number": "7.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Hono 服务端架构与 API 设计.md": {
+          "content_hash": "90b96c4129479ad0e7f26b594557233b7ec0abc76091227dcb885282fc1333b7",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Hono 服务端架构与 API 设计.md",
+          "chapter_number": "5.2.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介.md": {
+          "content_hash": "6cad43b14e99df150072682abd6be3760f16a0e6d52af669411d42f41564c1c9",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介.md",
+          "chapter_number": "1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/配置管理系统架构.md": {
+          "content_hash": "b5887cbf391e3720636b9b4c7c8002124292c10457866711344cc62993a4cd73",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/配置管理系统架构.md",
+          "chapter_number": "4.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/Agent 运行循环机制.md": {
+          "content_hash": "7dcd9779ac390300c0ab774cd7401a366b4f4a0ed4474cc12b23f58691d690c1",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/Agent 运行循环机制.md",
+          "chapter_number": "3.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/权限校验与安全策略.md": {
+          "content_hash": "455ed63785039b9091ca05335475a926474cb72a6d302246e425ccaf2faba712",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/权限校验与安全策略.md",
+          "chapter_number": "4.3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/规划模式与任务拆解.md": {
+          "content_hash": "47a963c757a573e2046e673a2dd35715bc1b793e22fecd435bd60a12591249b2",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/规划模式与任务拆解.md",
+          "chapter_number": "3.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/多维搜索与信息获取.md": {
+          "content_hash": "6f0dfee09f241e0f83f5827fcbcf171d38a04034f5b1b0c95b70d55643a531c4",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/多维搜索与信息获取.md",
+          "chapter_number": "6.3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明.md": {
+          "content_hash": "e9f642daedffaedb1c1c523dded44c1ff08340662fd61c06ad5755721b670865",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明.md",
+          "chapter_number": "9"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/仓库结构说明.md": {
+          "content_hash": "66d8d4fbaf153e4e31377c9ebb019e4550a162a39a9b444e19aef19be0e9332d",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/仓库结构说明.md",
+          "chapter_number": "1.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南.md": {
+          "content_hash": "389fdac620a9deca918a36e4f82f511850ea00e19906cb4d9e1aff991cf2df69",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南.md",
+          "chapter_number": "5"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/Shell 执行与安全沙箱.md": {
+          "content_hash": "0490dea73f3f5e17f6ec0b50bf93b5c9abd203578a3076ec7034db1ecfd45360",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/Shell 执行与安全沙箱.md",
+          "chapter_number": "6.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/主题管理与样式自定义.md": {
+          "content_hash": "3de995d1c928cae7929d942832af1138767829f1b1b60beca661398ee667ba67",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/主题管理与样式自定义.md",
+          "chapter_number": "5.5"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除.md": {
+          "content_hash": "6974e3f6a7800bf5edb8cd120e674f18c45a5c6af759f869143bdd0df601fdae",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除.md",
+          "chapter_number": "10"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/技术栈解析.md": {
+          "content_hash": "d6ec3e877ce15837f720f54ca826832ac16319b9505fcd586d2103d95a740595",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/技术栈解析.md",
+          "chapter_number": "1.3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/自动记忆管理与上下文优化.md": {
+          "content_hash": "e2085ef8317bd69a50fa53a4e18b9471af0c25fd171727ceaef32693e131e4e6",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/自动记忆管理与上下文优化.md",
+          "chapter_number": "6.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/敏感文件检测与安全审计.md": {
+          "content_hash": "fd292c86ad221f7835dd0be19afd035bb2c3db415dfe37ba1371c1c7b78da97b",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/敏感文件检测与安全审计.md",
+          "chapter_number": "4.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流.md": {
+          "content_hash": "c76e4300857490227b6a94826bc673b2c9b17b0c8d22372bbf62bebf4c3baeb5",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流.md",
+          "chapter_number": "3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/Skills 系统开发.md": {
+          "content_hash": "a7f21ff9565a3da930700d8670bb824f96fe51eaaba974e972d09869734d1509",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/Skills 系统开发.md",
+          "chapter_number": "7.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/开发环境搭建与工作流.md": {
+          "content_hash": "4c573048c3674669c68eeaa1bba4ce26080c93bbe5d31999b1d4697b1ea0e7bf",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/开发环境搭建与工作流.md",
+          "chapter_number": "9.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/实时通信与 WebSocket 机制完成.md": {
+          "content_hash": "b0a70a8a66743160ca698ecc8da27592d181bf58a68a2dc3d10577a49fae707b",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/实时通信与 WebSocket 机制完成.md",
+          "chapter_number": "5.2.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/内置工具参考.md": {
+          "content_hash": "36ed858f8e83bfa52f779b70b67a82aff7250f7aae5b46be5c8362aee16a6e98",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/内置工具参考.md",
+          "chapter_number": "10.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/代码风格、规范与贡献流程.md": {
+          "content_hash": "b3577a53e48ca627480f5447f9ebd1f85310ada855c3dad06d518eb6866bdddd",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/代码风格、规范与贡献流程.md",
+          "chapter_number": "9.3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力.md": {
+          "content_hash": "0a684c3a106da5c2338619e91dc11669e9f7baadcb5ac71cad2b964d4a365580",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力.md",
+          "chapter_number": "6"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/CLI 命令完整参考.md": {
+          "content_hash": "3cb8a67897e7a3dbe5db2139163a1802c47038d8a87661b962c196f92fac2583",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/CLI 命令完整参考.md",
+          "chapter_number": "10.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/故障排除手册.md": {
+          "content_hash": "1d4763ce434dd06c8409d8b5b94b25dbe8d5e1f74bc41f6915408b2fc3b4c49d",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/故障排除手册.md",
+          "chapter_number": "10.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/Hook 钩子机制与行为拦截.md": {
+          "content_hash": "29fa1a814835246afc684bf3618d2ef5e7e14c97bc6edd1f63ea29ccc2577a45",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/Hook 钩子机制与行为拦截.md",
+          "chapter_number": "7.4"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Web 前端架构与状态管理完成.md": {
+          "content_hash": "c40834d8dd9fbb1362b6f5b9b50377659b21ade21c11b23f525f25b8537769d1",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Web 前端架构与状态管理完成.md",
+          "chapter_number": "5.2.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南.md": {
+          "content_hash": "da572334c2c3d5828b138359a6152a6dd8dc4cc29e82728142d902ab0230276a",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南.md",
+          "chapter_number": "2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/文件系统操作与 Diff 引擎.md": {
+          "content_hash": "fe61f08ced8df301d430b9f8b0ebc8aa8de57229f6633012668089329f7b889c",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/文件系统操作与 Diff 引擎.md",
+          "chapter_number": "6.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/Agent Loop 核心运行机制.md": {
+          "content_hash": "879f9efea2a8a6abcc8a2a5a9284831b2657df6aab37214e1e10d9fff64b4fc1",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/Agent Loop 核心运行机制.md",
+          "chapter_number": "8.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/核心特性概览.md": {
+          "content_hash": "c890e580cde9d124edc1d24a46c76f14b9f662dd2533892ffcb5b16184ee1428",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/核心特性概览.md",
+          "chapter_number": "1.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/斜杠命令系统.md": {
+          "content_hash": "72d7b421e3136b606c6ef0056b40559523e540501cae31d1cb3ef3afebeafdea",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/斜杠命令系统.md",
+          "chapter_number": "5.3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/项目愿景与定位.md": {
+          "content_hash": "3d35b6945d72ea4586467ab335fd07a035468c9179f0ad8e7ad5b958bf9ef487",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/项目愿景与定位.md",
+          "chapter_number": "1.1"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/插件系统架构.md": {
+          "content_hash": "59a724f07eafe7ce46adb9336f0f6085a14a636526a3c1dce760c875d15b94e5",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/插件系统架构.md",
+          "chapter_number": "7.3"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/智能上下文管理与令牌优化.md": {
+          "content_hash": "d9f5a44b9f0425de9957873fd8c8f96ae676f600f10ffa579a851d21b42f24df",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/智能上下文管理与令牌优化.md",
+          "chapter_number": "8.2"
+        },
+        "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Web UI 组件库与交互实现.md": {
+          "content_hash": "b1dd52e8b1182a0ce505342da4af5474a33b4bf545ec41ca8a80e705bc0da575",
+          "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Web UI 组件库与交互实现.md",
+          "chapter_number": "5.2.3"
+        }
+      }
+    }
+  ],
+  "status": {
+    "session_id": "69fc5f4fa366e4253720c6b6",
+    "commit_id": "14d19777c10844f5d82429d532fca86d0d3d30d5",
+    "generate_type": "full"
+  },
+  "catalogs": {
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/ACP 协议与 Agent 运行时环境.md": {
+      "content_hash": "7e69c17828e88273fa30976641e3bb7e02536f5d6b2467359b9c045793666113",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/ACP 协议与 Agent 运行时环境.md",
+      "chapter_number": "8.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/构建、发布与版本管理机制.md": {
+      "content_hash": "49afc769f54b4d315226b58122d045b29eee162c69643f106a21aa95411e229a",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/构建、发布与版本管理机制.md",
+      "chapter_number": "9.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/环境要求与健康检查.md": {
+      "content_hash": "20a056a031f8f40c1bb7846a29649bce82088b18d4279b92f7d5c016a3ca4f1b",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/环境要求与健康检查.md",
+      "chapter_number": "2.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/模型提供商与 AI 服务集成.md": {
+      "content_hash": "10c874504b7fbe6acbcc60ea1950d6b293d7196efc58cc5e2da60dfa395fd117",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/模型提供商与 AI 服务集成.md",
+      "chapter_number": "4.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/常见问题解答.md": {
+      "content_hash": "ca4280f55abc112aab2a92e4fd89d6f3d5ff7fade4ca11ca3e5005772cbfa6aa",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/常见问题解答.md",
+      "chapter_number": "10.3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/消息渲染与 UI 组件库.md": {
+      "content_hash": "3e666ca950fdc76b5ae6337e8f3b35c17e0fe3fea1d808abe1a4ce146e36c718",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/消息渲染与 UI 组件库.md",
+      "chapter_number": "5.1.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/终端交互 Hooks.md": {
+      "content_hash": "4dbe6940e1661cb22429df1e6209ca6dda085e304b62094c891f8fa6be352311",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/终端交互 Hooks.md",
+      "chapter_number": "5.1.3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构.md": {
+      "content_hash": "21cfd6ea6807a24f3475a696c6f24f33451365ff1b836d03c61c0f229172628a",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构.md",
+      "chapter_number": "5.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/快速上手与首个任务.md": {
+      "content_hash": "cd81793b30d02505014b679821e97c18bf209d62b504e676df855331a5ef2ae9",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/快速上手与首个任务.md",
+      "chapter_number": "2.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端.md": {
+      "content_hash": "794dcee464c8c698173057d72bf48c8eee2a9a98e6f8c841eb673c1a6da69eaf",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端.md",
+      "chapter_number": "5.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件.md": {
+      "content_hash": "c7612ff396e81fd6a791020b8c96776b355cc5800a16c93b9d1e5f6b607cbf34",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件.md",
+      "chapter_number": "7"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/任务跟踪与结果验证.md": {
+      "content_hash": "1ae4d40e390e8f2e733d1dc90dccaf3eef78ad92e66896eb8ebd8d3604839ad3",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/任务跟踪与结果验证.md",
+      "chapter_number": "3.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理.md": {
+      "content_hash": "8164d05830ad8e108d9c2e34af2335018661a963be6fc686a79744c4e80af8a6",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理.md",
+      "chapter_number": "4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/规格模式与工程化工作流.md": {
+      "content_hash": "576fbae0a25171485b440ba3ee37b61b682aa89e2b18e3105912dfbaac65ef7d",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/规格模式与工程化工作流.md",
+      "chapter_number": "3.3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/渲染工具与主题系统.md": {
+      "content_hash": "847f9001d9c96e40d27ee7a8a94bb72281354f1800008b23857b6ed6c84df10a",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/渲染工具与主题系统.md",
+      "chapter_number": "5.1.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/测试框架与质量保证实践.md": {
+      "content_hash": "7f57273da6b13e13c8764802a71d6d68b81164d00baf00be46a587d616951e5b",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/测试框架与质量保证实践.md",
+      "chapter_number": "9.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/安装与更新指南.md": {
+      "content_hash": "da5fd18a69183a4c6dc60df825b8d4695a718fd6bd2fab36b19ebed619860ffb",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/安装与更新指南.md",
+      "chapter_number": "2.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/团队协作与子代理架构.md": {
+      "content_hash": "e737c691ff331dc56dc7ffff60f70a01c905f6a83d6ff5c5a7880e35ab388744",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/团队协作与子代理架构.md",
+      "chapter_number": "6.5"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理.md": {
+      "content_hash": "2b574f59dc04f12a51bf93b2e0de60265cd3181dd2c4ba25db0010680d164015",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理.md",
+      "chapter_number": "8"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/上下文提及与 @-mentions.md": {
+      "content_hash": "5f7483a2c910f66cf38e31ce6d76a0959b149d258693b74b7e743e5f22a76442",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/上下文提及与 @-mentions.md",
+      "chapter_number": "5.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/更新日志.md": {
+      "content_hash": "cafb02226c21f05203ffb66510044a48997fd3039b2905e919ecde2492bdf85d",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/更新日志.md",
+      "chapter_number": "10.5"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/核心配置与模型设置.md": {
+      "content_hash": "eab3d820b63236d27ae91bb884eee3040ef610df739e1be7924b33fa3074531d",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南/核心配置与模型设置.md",
+      "chapter_number": "2.3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/基于 Redux 的全局状态管理.md": {
+      "content_hash": "63222aa8dc4340d8378ab9f0b3ff41ab1633b6fcac512c346ae9c5df921e3511",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/基于 Redux 的全局状态管理.md",
+      "chapter_number": "8.3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/核心布局与 App 容器.md": {
+      "content_hash": "56a42e1478769ed7cdc304ad6ad758064aa5ef0ac2cdc771d30a8fd964ce9cb9",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/TUI 终端界面架构/核心布局与 App 容器.md",
+      "chapter_number": "5.1.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/MCP 协议集成与配置.md": {
+      "content_hash": "17dc12de3bbd9d4b99da34e276ae84329a3a7f57a08553cb72c03d93a8775c7b",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/MCP 协议集成与配置.md",
+      "chapter_number": "7.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Hono 服务端架构与 API 设计.md": {
+      "content_hash": "90b96c4129479ad0e7f26b594557233b7ec0abc76091227dcb885282fc1333b7",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Hono 服务端架构与 API 设计.md",
+      "chapter_number": "5.2.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介.md": {
+      "content_hash": "6cad43b14e99df150072682abd6be3760f16a0e6d52af669411d42f41564c1c9",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介.md",
+      "chapter_number": "1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/配置管理系统架构.md": {
+      "content_hash": "b5887cbf391e3720636b9b4c7c8002124292c10457866711344cc62993a4cd73",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/配置管理系统架构.md",
+      "chapter_number": "4.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/Agent 运行循环机制.md": {
+      "content_hash": "7dcd9779ac390300c0ab774cd7401a366b4f4a0ed4474cc12b23f58691d690c1",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/Agent 运行循环机制.md",
+      "chapter_number": "3.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/权限校验与安全策略.md": {
+      "content_hash": "455ed63785039b9091ca05335475a926474cb72a6d302246e425ccaf2faba712",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/权限校验与安全策略.md",
+      "chapter_number": "4.3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/规划模式与任务拆解.md": {
+      "content_hash": "47a963c757a573e2046e673a2dd35715bc1b793e22fecd435bd60a12591249b2",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流/规划模式与任务拆解.md",
+      "chapter_number": "3.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/多维搜索与信息获取.md": {
+      "content_hash": "6f0dfee09f241e0f83f5827fcbcf171d38a04034f5b1b0c95b70d55643a531c4",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/多维搜索与信息获取.md",
+      "chapter_number": "6.3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明.md": {
+      "content_hash": "e9f642daedffaedb1c1c523dded44c1ff08340662fd61c06ad5755721b670865",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明.md",
+      "chapter_number": "9"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/仓库结构说明.md": {
+      "content_hash": "66d8d4fbaf153e4e31377c9ebb019e4550a162a39a9b444e19aef19be0e9332d",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/仓库结构说明.md",
+      "chapter_number": "1.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南.md": {
+      "content_hash": "389fdac620a9deca918a36e4f82f511850ea00e19906cb4d9e1aff991cf2df69",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南.md",
+      "chapter_number": "5"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/Shell 执行与安全沙箱.md": {
+      "content_hash": "0490dea73f3f5e17f6ec0b50bf93b5c9abd203578a3076ec7034db1ecfd45360",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/Shell 执行与安全沙箱.md",
+      "chapter_number": "6.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/主题管理与样式自定义.md": {
+      "content_hash": "3de995d1c928cae7929d942832af1138767829f1b1b60beca661398ee667ba67",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/主题管理与样式自定义.md",
+      "chapter_number": "5.5"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除.md": {
+      "content_hash": "6974e3f6a7800bf5edb8cd120e674f18c45a5c6af759f869143bdd0df601fdae",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除.md",
+      "chapter_number": "10"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/技术栈解析.md": {
+      "content_hash": "d6ec3e877ce15837f720f54ca826832ac16319b9505fcd586d2103d95a740595",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/技术栈解析.md",
+      "chapter_number": "1.3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/自动记忆管理与上下文优化.md": {
+      "content_hash": "e2085ef8317bd69a50fa53a4e18b9471af0c25fd171727ceaef32693e131e4e6",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/自动记忆管理与上下文优化.md",
+      "chapter_number": "6.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/敏感文件检测与安全审计.md": {
+      "content_hash": "fd292c86ad221f7835dd0be19afd035bb2c3db415dfe37ba1371c1c7b78da97b",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/配置系统与安全权限管理/敏感文件检测与安全审计.md",
+      "chapter_number": "4.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流.md": {
+      "content_hash": "c76e4300857490227b6a94826bc673b2c9b17b0c8d22372bbf62bebf4c3baeb5",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/核心概念与结构化工作流.md",
+      "chapter_number": "3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/Skills 系统开发.md": {
+      "content_hash": "a7f21ff9565a3da930700d8670bb824f96fe51eaaba974e972d09869734d1509",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/Skills 系统开发.md",
+      "chapter_number": "7.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/开发环境搭建与工作流.md": {
+      "content_hash": "4c573048c3674669c68eeaa1bba4ce26080c93bbe5d31999b1d4697b1ea0e7bf",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/开发环境搭建与工作流.md",
+      "chapter_number": "9.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/实时通信与 WebSocket 机制完成.md": {
+      "content_hash": "b0a70a8a66743160ca698ecc8da27592d181bf58a68a2dc3d10577a49fae707b",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/实时通信与 WebSocket 机制完成.md",
+      "chapter_number": "5.2.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/内置工具参考.md": {
+      "content_hash": "36ed858f8e83bfa52f779b70b67a82aff7250f7aae5b46be5c8362aee16a6e98",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/内置工具参考.md",
+      "chapter_number": "10.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/代码风格、规范与贡献流程.md": {
+      "content_hash": "b3577a53e48ca627480f5447f9ebd1f85310ada855c3dad06d518eb6866bdddd",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/开发、测试与贡献指南说明/代码风格、规范与贡献流程.md",
+      "chapter_number": "9.3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力.md": {
+      "content_hash": "0a684c3a106da5c2338619e91dc11669e9f7baadcb5ac71cad2b964d4a365580",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力.md",
+      "chapter_number": "6"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/CLI 命令完整参考.md": {
+      "content_hash": "3cb8a67897e7a3dbe5db2139163a1802c47038d8a87661b962c196f92fac2583",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/CLI 命令完整参考.md",
+      "chapter_number": "10.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/故障排除手册.md": {
+      "content_hash": "1d4763ce434dd06c8409d8b5b94b25dbe8d5e1f74bc41f6915408b2fc3b4c49d",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/参考手册、常见问题与故障排除/故障排除手册.md",
+      "chapter_number": "10.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/Hook 钩子机制与行为拦截.md": {
+      "content_hash": "29fa1a814835246afc684bf3618d2ef5e7e14c97bc6edd1f63ea29ccc2577a45",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/Hook 钩子机制与行为拦截.md",
+      "chapter_number": "7.4"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Web 前端架构与状态管理完成.md": {
+      "content_hash": "c40834d8dd9fbb1362b6f5b9b50377659b21ade21c11b23f525f25b8537769d1",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Web 前端架构与状态管理完成.md",
+      "chapter_number": "5.2.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南.md": {
+      "content_hash": "da572334c2c3d5828b138359a6152a6dd8dc4cc29e82728142d902ab0230276a",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/快速开始与安装指南.md",
+      "chapter_number": "2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/文件系统操作与 Diff 引擎.md": {
+      "content_hash": "fe61f08ced8df301d430b9f8b0ebc8aa8de57229f6633012668089329f7b889c",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/内置工具与 AI 核心能力/文件系统操作与 Diff 引擎.md",
+      "chapter_number": "6.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/Agent Loop 核心运行机制.md": {
+      "content_hash": "879f9efea2a8a6abcc8a2a5a9284831b2657df6aab37214e1e10d9fff64b4fc1",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/Agent Loop 核心运行机制.md",
+      "chapter_number": "8.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/核心特性概览.md": {
+      "content_hash": "c890e580cde9d124edc1d24a46c76f14b9f662dd2533892ffcb5b16184ee1428",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/核心特性概览.md",
+      "chapter_number": "1.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/斜杠命令系统.md": {
+      "content_hash": "72d7b421e3136b606c6ef0056b40559523e540501cae31d1cb3ef3afebeafdea",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/斜杠命令系统.md",
+      "chapter_number": "5.3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/项目愿景与定位.md": {
+      "content_hash": "3d35b6945d72ea4586467ab335fd07a035468c9179f0ad8e7ad5b958bf9ef487",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/项目概览与技术架构简介/项目愿景与定位.md",
+      "chapter_number": "1.1"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/插件系统架构.md": {
+      "content_hash": "59a724f07eafe7ce46adb9336f0f6085a14a636526a3c1dce760c875d15b94e5",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/扩展性开发与自定义插件/插件系统架构.md",
+      "chapter_number": "7.3"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/智能上下文管理与令牌优化.md": {
+      "content_hash": "d9f5a44b9f0425de9957873fd8c8f96ae676f600f10ffa579a851d21b42f24df",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/架构深度解析与内部原理/智能上下文管理与令牌优化.md",
+      "chapter_number": "8.2"
+    },
+    "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Web UI 组件库与交互实现.md": {
+      "content_hash": "b1dd52e8b1182a0ce505342da4af5474a33b4bf545ec41ca8a80e705bc0da575",
+      "file_path": "/Users/bytedance/Documents/GitHub/Blade/.trae/deepwiki/交互界面与命令系统指南/Web UI 与 Hono 服务端/Web UI 组件库与交互实现.md",
+      "chapter_number": "5.2.3"
+    }
+  }
+}
