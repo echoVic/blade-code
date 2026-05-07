@@ -109,10 +109,12 @@ export const MessageArea: React.FC = React.memo(() => {
     if (isRawRendererActive()) {
       clearRawRenderer();
     }
-    // 同步执行清理，不再延迟 50ms（消除闪屏的关键）
-    // 使用 eraseScreen 而非 clearTerminal，避免清除滚回历史导致更大的视觉闪烁
+    // 同步执行清理，不再延迟 50ms（消除闪屏的关键）。
+    // eraseScreen 不移动光标；流式 tail 清理后光标通常停在 raw 区域起点。
+    // 重挂 Static 前必须显式回到左上角，否则最终消息会从旧光标位置开始渲染，
+    // 终端顶部就会留下大段空白。
     if (stdout) {
-      stdout.write(ansiEscapes.eraseScreen);
+      stdout.write(ansiEscapes.eraseScreen + ansiEscapes.cursorTo(0, 0));
     }
     streamingToolMessageIdsRef.current = new Set();
     streamingToolBaselineIdsRef.current = new Set(
