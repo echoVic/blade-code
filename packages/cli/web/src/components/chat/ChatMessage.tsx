@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, FileText, Loader2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { sessionService } from '@/services';
 import { useAppStore } from '@/store/AppStore';
@@ -11,7 +11,6 @@ import type {
 } from '@/store/session';
 import { useSessionStore } from '@/store/session';
 import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
-import { MarkdownRenderer } from './MarkdownRenderer';
 
 export type { Message };
 
@@ -19,6 +18,12 @@ interface ChatMessageProps {
   message: Message;
   showAvatar?: boolean;
 }
+
+const MarkdownRenderer = lazy(() =>
+  import('./MarkdownRenderer').then((module) => ({
+    default: module.MarkdownRenderer,
+  }))
+);
 
 function AIAvatar() {
   return (
@@ -77,6 +82,26 @@ function getTextContent(content: MessageContent): string {
     )
     .map((part) => part.text)
     .join('\n');
+}
+
+function MarkdownBlock({
+  content,
+  syntaxHighlight = true,
+}: {
+  content: string;
+  syntaxHighlight?: boolean;
+}) {
+  return (
+    <Suspense
+      fallback={
+        <pre className="text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono whitespace-pre-wrap">
+          {content}
+        </pre>
+      }
+    >
+      <MarkdownRenderer content={content} syntaxHighlight={syntaxHighlight} />
+    </Suspense>
+  );
 }
 
 function StatusPill({
@@ -565,7 +590,7 @@ function AgentMessageContent({ message }: { message: Message }) {
 
   if (!agentContent) {
     const content = getTextContent(message.content);
-    return content ? <MarkdownRenderer content={content} /> : null;
+    return content ? <MarkdownBlock content={content} /> : null;
   }
 
   const {
@@ -607,7 +632,7 @@ function AgentMessageContent({ message }: { message: Message }) {
     <div className="space-y-3">
       {thinkingContent && <ThinkingSection content={thinkingContent} />}
       {textBefore && (
-        <MarkdownRenderer content={textBefore} syntaxHighlight={syntaxHighlight} />
+        <MarkdownBlock content={textBefore} syntaxHighlight={syntaxHighlight} />
       )}
       {tasks.length > 0 && <TaskSection tasks={tasks} />}
       {subagent && <SubagentSection subagent={subagent} />}
@@ -618,13 +643,13 @@ function AgentMessageContent({ message }: { message: Message }) {
       {question && <QuestionSection question={question} />}
       {showChangedFiles && <ChangedFilesSection toolCalls={toolCalls} />}
       {textAfter && (
-        <MarkdownRenderer content={textAfter} syntaxHighlight={syntaxHighlight} />
+        <MarkdownBlock content={textAfter} syntaxHighlight={syntaxHighlight} />
       )}
     </div>
   );
 }
 
-export function ChatMessage({ message, showAvatar = true }: ChatMessageProps) {
+function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
 
@@ -686,3 +711,5 @@ export function ChatMessage({ message, showAvatar = true }: ChatMessageProps) {
     </div>
   );
 }
+
+export const ChatMessage = memo(ChatMessageComponent);

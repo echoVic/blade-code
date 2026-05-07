@@ -1,21 +1,49 @@
-import { ScrollArea } from '@/components/ui/ScrollArea'
-import type { Message } from '@/services'
-import { useEffect, useRef } from 'react'
-import { ChatMessage } from './ChatMessage'
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ScrollArea } from '@/components/ui/ScrollArea';
+import type { Message } from '@/services';
+import { ChatMessage } from './ChatMessage';
 
 interface ChatListProps {
-  messages: Message[]
-  isLoading?: boolean
+  messages: Message[];
+  isLoading?: boolean;
 }
 
+const INITIAL_RENDERED_MESSAGES = 120;
+const RENDER_MORE_MESSAGES = 80;
+
 export function ChatList({ messages, isLoading }: ChatListProps) {
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const previousMessageCountRef = useRef(messages.length);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_RENDERED_MESSAGES);
 
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: 'smooth' })
+      scrollRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages])
+  }, [messages]);
+
+  useEffect(() => {
+    const previousMessageCount = previousMessageCountRef.current;
+    previousMessageCountRef.current = messages.length;
+
+    setVisibleCount((current) => {
+      if (current >= previousMessageCount && messages.length > previousMessageCount) {
+        return messages.length;
+      }
+
+      return Math.min(
+        Math.max(current, INITIAL_RENDERED_MESSAGES),
+        messages.length || INITIAL_RENDERED_MESSAGES
+      );
+    });
+  }, [messages.length]);
+
+  const hiddenCount = Math.max(messages.length - visibleCount, 0);
+  const firstVisibleIndex = hiddenCount;
+  const visibleMessages = useMemo(
+    () => messages.slice(firstVisibleIndex),
+    [messages, firstVisibleIndex]
+  );
 
   if (messages.length === 0 && !isLoading) {
     return (
@@ -26,22 +54,41 @@ export function ChatList({ messages, isLoading }: ChatListProps) {
           <div className="text-sm mt-1">Start a conversation to begin</div>
         </div>
       </div>
-    )
+    );
   }
 
   return (
     <ScrollArea className="flex-1 h-full">
       <div className="flex flex-col pb-4 w-full px-4 md:px-6">
-        {messages.map((message, index) => {
-          const prevMessage = index > 0 ? messages[index - 1] : null
-          const showAvatar = !prevMessage || prevMessage.role !== message.role || prevMessage.role === 'user'
+        {hiddenCount > 0 && (
+          <div className="flex justify-center py-3">
+            <button
+              type="button"
+              onClick={() =>
+                setVisibleCount((count) =>
+                  Math.min(messages.length, count + RENDER_MORE_MESSAGES)
+                )
+              }
+              className="rounded-md border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] font-mono text-[#6B7280] transition-colors hover:bg-[#F3F4F6] hover:text-[#111827] dark:border-[#27272a] dark:bg-[#111113] dark:text-[#a1a1aa] dark:hover:bg-[#18181b] dark:hover:text-[#E5E5E5]"
+            >
+              Show {Math.min(hiddenCount, RENDER_MORE_MESSAGES)} earlier messages
+            </button>
+          </div>
+        )}
+        {visibleMessages.map((message, visibleIndex) => {
+          const index = firstVisibleIndex + visibleIndex;
+          const prevMessage = index > 0 ? messages[index - 1] : null;
+          const showAvatar =
+            !prevMessage ||
+            prevMessage.role !== message.role ||
+            prevMessage.role === 'user';
           return (
-            <ChatMessage 
-              key={message.id || `msg-${index}`} 
-              message={message} 
+            <ChatMessage
+              key={message.id || `msg-${index}`}
+              message={message}
               showAvatar={showAvatar}
             />
-          )
+          );
         })}
         {isLoading && (
           <div className="flex w-full gap-4 p-4 justify-start">
@@ -58,5 +105,5 @@ export function ChatList({ messages, isLoading }: ChatListProps) {
         <div ref={scrollRef} />
       </div>
     </ScrollArea>
-  )
+  );
 }

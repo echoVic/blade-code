@@ -11,6 +11,48 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: '../dist/web',
       emptyOutDir: true,
+      modulePreload: false,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined
+
+            if (id.includes('/react/') || id.includes('/react-dom/')) {
+              return 'vendor-react'
+            }
+
+            if (id.includes('/@xterm/')) {
+              return 'vendor-xterm'
+            }
+
+            if (id.includes('/@monaco-editor/') || id.includes('/monaco-editor/')) {
+              return 'vendor-monaco'
+            }
+
+            if (
+              id.includes('/react-markdown/') ||
+              id.includes('/react-syntax-highlighter/') ||
+              id.includes('/remark-') ||
+              id.includes('/rehype-') ||
+              id.includes('/micromark') ||
+              id.includes('/unified/') ||
+              id.includes('/prismjs/')
+            ) {
+              return 'vendor-markdown'
+            }
+
+            if (id.includes('/@radix-ui/')) {
+              return 'vendor-radix'
+            }
+
+            if (id.includes('/lucide-react/')) {
+              return 'vendor-icons'
+            }
+
+            return undefined
+          },
+        },
+      },
     },
     resolve: {
       alias: {
