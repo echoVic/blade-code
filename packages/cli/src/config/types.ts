@@ -171,6 +171,7 @@ export interface RuntimeConfig extends BladeConfig {
   strictMcpConfig?: boolean; // 仅使用 CLI 指定的 MCP 服务器
 
   // CLI 专属字段 - 其他
+  model?: string; // 当前运行覆盖模型（模型配置 ID）
   addDirs?: string[]; // 额外允许访问的目录
   outputFormat?: 'text' | 'json' | 'stream-json' | 'jsonl'; // 输出格式
   inputFormat?: 'text' | 'stream-json'; // 输入格式

@@ -100,6 +100,12 @@ export function createLoopEventHandler(
 
       // --- stream_end：原子提交（flush 缓冲区 + finalize 消息）---
       case 'stream_end': {
+        logger.debug('[loopEventHandler] stream_end', {
+          contentDeltaCount: stats.contentDeltaCount,
+          contentDeltaTotalLen: stats.contentDeltaTotalLen,
+          streamFinalized,
+          signalAborted: deps.signal.aborted,
+        });
         streamDebug('loopEventHandler', 'onStreamEnd', {
           contentDeltaCallCount: stats.contentDeltaCount,
           contentDeltaTotalLen: stats.contentDeltaTotalLen,
@@ -145,6 +151,10 @@ export function createLoopEventHandler(
       case 'tool_start': {
         const toolCall = event.toolCall;
         if (!('function' in toolCall)) break;
+        logger.debug('[loopEventHandler] tool_start', {
+          toolName: toolCall.function.name,
+          toolKind: event.toolKind,
+        });
         if (
           ['TaskCreate', 'TaskUpdate', 'TaskList'].includes(toolCall.function.name)
         )
@@ -166,6 +176,10 @@ export function createLoopEventHandler(
       case 'tool_result': {
         const toolCall = event.toolCall;
         if (!('function' in toolCall)) break;
+        logger.debug('[loopEventHandler] tool_result', {
+          toolName: toolCall.function.name,
+          success: event.result.success,
+        });
         const display = formatToolDisplay(toolCall.function.name, event.result);
         deps.sessionActions.addToolMessage(display.summary, {
           toolName: toolCall.function.name,
@@ -191,6 +205,10 @@ export function createLoopEventHandler(
 
       // --- 系统事件和业务事件 ---
       case 'turn_start':
+        logger.debug('[loopEventHandler] turn_start', {
+          turn: event.turn,
+          maxTurns: event.maxTurns,
+        });
         // 重置 per-turn 标记，确保新 turn 的 stream_end 可以正常 finalize
         // 注意：如果 model_fallback 在本 turn 内已置 true，
         // 本 turn 的 late stream_end 仍会被守卫；只有下一个 turn_start 才重置

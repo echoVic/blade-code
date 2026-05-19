@@ -354,6 +354,15 @@ export function mergeRuntimeConfig(
     result.debug = cliOptions.debug === '' ? true : cliOptions.debug;
   }
 
+  // 1.5 模型覆盖（CLI 优先，仅当前会话生效）
+  if (cliOptions.model) {
+    const modelExists = baseConfig.models.some((model) => model.id === cliOptions.model);
+    if (!modelExists) {
+      throw new Error(`模型配置未找到: ${cliOptions.model}`);
+    }
+    result.currentModelId = cliOptions.model;
+  }
+
   // 2. 权限模式 (CLI 优先，yolo 快捷方式)
   if (cliOptions.yolo === true) {
     result.permissionMode = PermissionMode.YOLO;
@@ -369,6 +378,7 @@ export function mergeRuntimeConfig(
   // 4. CLI 专属字段 - 系统提示
   result.systemPrompt = cliOptions.systemPrompt;
   result.appendSystemPrompt = cliOptions.appendSystemPrompt;
+  result.model = cliOptions.model;
 
   // 5. CLI 专属字段 - 会话管理
   // --session-id 在交互模式下由 App.tsx initializeApp() 消费：

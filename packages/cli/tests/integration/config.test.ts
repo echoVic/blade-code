@@ -192,4 +192,45 @@ describe('ConfigManager 集成', () => {
 
     expect(written.permissions.allow).toEqual(['Read(file_path:package.json)']);
   });
+
+  it('mergeRuntimeConfig should reject invalid model overrides', async () => {
+    const { mergeRuntimeConfig } = await import('../../src/config/ConfigManager.js');
+
+    const baseConfig = {
+      currentModelId: 'test-model',
+      models: [
+        {
+          id: 'test-model',
+          name: 'Test Model',
+          provider: 'openai-compatible',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.com',
+          model: 'gpt-4',
+        },
+      ],
+      temperature: 0.7,
+      maxContextTokens: 8000,
+      maxOutputTokens: 4000,
+      stream: true,
+      topP: 1,
+      topK: 0,
+      timeout: 30000,
+      theme: 'GitHub',
+      language: 'en',
+      fontSize: 14,
+      debug: false,
+      mcpEnabled: false,
+      mcpServers: {},
+      permissions: { allow: [], ask: [], deny: [] },
+      permissionMode: 'DEFAULT',
+      hooks: {},
+      env: {},
+      disableAllHooks: false,
+      maxTurns: 10,
+    };
+
+    expect(() =>
+      mergeRuntimeConfig(baseConfig as any, { model: 'missing-model' })
+    ).toThrow('模型配置未找到: missing-model');
+  });
 });

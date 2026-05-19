@@ -4,6 +4,7 @@
 
 export interface GlobalOptions {
   debug?: string;
+  model?: string;
   print?: boolean;
   headless?: boolean;
   outputFormat?: 'text' | 'json' | 'stream-json' | 'jsonl';

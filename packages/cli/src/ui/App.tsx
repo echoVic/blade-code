@@ -69,184 +69,199 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
   const [versionInfo, setVersionInfo] = useState<VersionCheckResult | null>(null);
   const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
 
+  const handleInitializationError = useMemoizedFn(
+    (error: unknown, debug?: boolean): void => {
+      const message = error instanceof Error ? error.message : String(error);
+      appActions().setInitializationError(message);
+      appActions().setInitializationStatus('error');
+      setIsReady(true);
+      if (debug) {
+        console.error('[FAIL] 应用初始化失败:', message);
+      }
+    }
+  );
+
   // 应用初始化（主题、subagents、hooks、skills 等）
   const initializeApp = useMemoizedFn(async () => {
-    // 1. 从 Store 读取配置（已由中间件初始化）
-    const baseConfig = getState().config.config ?? DEFAULT_CONFIG;
-
-    // 2. 合并 CLI 参数生成 RuntimeConfig
-    const mergedConfig = mergeRuntimeConfig(baseConfig, props);
-
-    // 3. 更新 Store 状态, 检查模型配置
-    initializeStoreState(mergedConfig);
-
-    // 3.5 如果 --session-id 指定了会话 ID，覆盖 store 中的默认随机 ID
-    // 必须在 setLoggerSessionId 之前执行，确保日志也使用正确的 session ID
-    if (mergedConfig.resumeSessionId) {
-      sessionActions().restoreSession(mergedConfig.resumeSessionId, []);
-    }
-
-    // 4. Debug 模式日志（Logger 已由 blade.tsx 早期初始化）
-    if (mergedConfig.debug) {
-      console.error('[Debug] 运行时配置:', mergedConfig);
-    }
-
-    // 5. 加载主题
-    const savedTheme = mergedConfig.theme;
-    if (savedTheme && themeManager.hasTheme(savedTheme)) {
-      themeManager.setTheme(savedTheme);
-      if (props.debug) {
-        console.log(`[OK] 已加载主题: ${savedTheme}`);
-      }
-    }
-
-    // 6. 预加载 subagents 配置
     try {
-      const loadedCount = subagentRegistry.loadFromStandardLocations();
-      if (props.debug && loadedCount > 0) {
-        console.log(
-          `[OK] 已加载 ${loadedCount} 个 subagents: ${subagentRegistry.getAllNames().join(', ')}`
-        );
-      }
-    } catch (error) {
-      if (props.debug) {
-        console.warn('Subagents 加载失败:', formatErrorMessage(error));
-      }
-    }
+      // 1. 从 Store 读取配置（已由中间件初始化）
+      const baseConfig = getState().config.config ?? DEFAULT_CONFIG;
 
-    // 7. 初始化 HookManager 并执行 SessionStart hooks
-    try {
-      const hookManager = HookManager.getInstance();
-      hookManager.loadConfig(mergedConfig.hooks || {});
-      if (props.debug && mergedConfig.hooks?.enabled) {
-        console.log('[OK] Hooks 系统已启用');
+      // 2. 合并 CLI 参数生成 RuntimeConfig
+      const mergedConfig = mergeRuntimeConfig(baseConfig, props);
+
+      // 3. 更新 Store 状态, 检查模型配置
+      initializeStoreState(mergedConfig);
+      // 3.5 如果 --session-id 指定了会话 ID，覆盖 store 中的默认随机 ID
+      // 必须在 setLoggerSessionId 之前执行，确保日志也使用正确的 session ID
+      if (mergedConfig.resumeSessionId) {
+        sessionActions().restoreSession(mergedConfig.resumeSessionId, []);
       }
 
-      // 获取当前 session ID 并设置到日志系统（每个 session 使用独立的日志文件）
-      const state = getState();
-      const sessionId = state.session.sessionId;
-      setLoggerSessionId(sessionId);
+      // 4. Debug 模式日志（Logger 已由 blade.tsx 早期初始化）
+      if (mergedConfig.debug) {
+        console.error('[Debug] 运行时配置:', mergedConfig);
+      }
 
-      // 执行 SessionStart hooks
-      if (hookManager.isEnabled()) {
-        const permissionMode =
-          state.config.config?.permissionMode || PermissionMode.DEFAULT;
-        const isResume = !!props.resume;
+      // 5. 加载主题
+      const savedTheme = mergedConfig.theme;
+      if (savedTheme && themeManager.hasTheme(savedTheme)) {
+        themeManager.setTheme(savedTheme);
+        if (props.debug) {
+          console.log(`[OK] 已加载主题: ${savedTheme}`);
+        }
+      }
 
-        const sessionStartResult = await hookManager.executeSessionStartHooks({
-          projectDir: getCwd(),
-          sessionId,
-          permissionMode,
-          isResume,
-          resumeSessionId: typeof props.resume === 'string' ? props.resume : undefined,
-        });
+      // 6. 预加载 subagents 配置
+      try {
+        const loadedCount = subagentRegistry.loadFromStandardLocations();
+        if (props.debug && loadedCount > 0) {
+          console.log(
+            `[OK] 已加载 ${loadedCount} 个 subagents: ${subagentRegistry.getAllNames().join(', ')}`
+          );
+        }
+      } catch (error) {
+        if (props.debug) {
+          console.warn('Subagents 加载失败:', formatErrorMessage(error));
+        }
+      }
 
-        // 应用环境变量
-        if (sessionStartResult.env) {
-          for (const [key, value] of Object.entries(sessionStartResult.env)) {
-            process.env[key] = value;
+      // 7. 初始化 HookManager 并执行 SessionStart hooks
+      try {
+        const hookManager = HookManager.getInstance();
+        hookManager.loadConfig(mergedConfig.hooks || {});
+        if (props.debug && mergedConfig.hooks?.enabled) {
+          console.log('[OK] Hooks 系统已启用');
+        }
+
+        // 获取当前 session ID 并设置到日志系统（每个 session 使用独立的日志文件）
+        const state = getState();
+        const sessionId = state.session.sessionId;
+        setLoggerSessionId(sessionId);
+
+        // 执行 SessionStart hooks
+        if (hookManager.isEnabled()) {
+          const permissionMode =
+            state.config.config?.permissionMode || PermissionMode.DEFAULT;
+          const isResume = !!props.resume;
+
+          const sessionStartResult = await hookManager.executeSessionStartHooks({
+            projectDir: getCwd(),
+            sessionId,
+            permissionMode,
+            isResume,
+            resumeSessionId: typeof props.resume === 'string' ? props.resume : undefined,
+          });
+
+          // 应用环境变量
+          if (sessionStartResult.env) {
+            for (const [key, value] of Object.entries(sessionStartResult.env)) {
+              process.env[key] = value;
+            }
+            if (props.debug) {
+              console.log(
+                '[OK] SessionStart hooks 注入环境变量:',
+                Object.keys(sessionStartResult.env).join(', ')
+              );
+            }
           }
+
+          if (sessionStartResult.warning && props.debug) {
+            console.warn('SessionStart hooks 警告:', sessionStartResult.warning);
+          }
+        }
+      } catch (error) {
+        if (props.debug) {
+          console.warn('Hooks 初始化失败:', formatErrorMessage(error));
+        }
+      }
+
+      // 8. 初始化 Skills（发现并加载所有可用的 Skills）
+      try {
+        const skillsResult = await discoverSkills();
+        if (props.debug && skillsResult.skills.length > 0) {
+          console.log(
+            `[OK] 已加载 ${skillsResult.skills.length} 个 skills: ${skillsResult.skills.map((s) => s.name).join(', ')}`
+          );
+        }
+        if (skillsResult.errors.length > 0 && props.debug) {
+          for (const error of skillsResult.errors) {
+            console.warn(`Skill 加载错误 (${error.path}): ${error.error}`);
+          }
+        }
+      } catch (error) {
+        if (props.debug) {
+          console.warn('Skills 初始化失败:', formatErrorMessage(error));
+        }
+      }
+
+      // 9. 初始化自定义命令（发现并加载所有 .blade/commands/ 和 .claude/commands/ 下的命令）
+      try {
+        const customCommandsResult = await initializeCustomCommands(getCwd());
+        if (props.debug && customCommandsResult.commands.length > 0) {
+          console.log(
+            `[OK] 已加载 ${customCommandsResult.commands.length} 个自定义命令: ${customCommandsResult.commands.map((c) => c.name).join(', ')}`
+          );
+        }
+        if (customCommandsResult.errors.length > 0 && props.debug) {
+          for (const error of customCommandsResult.errors) {
+            console.warn(`自定义命令加载错误 (${error.path}): ${error.error}`);
+          }
+        }
+      } catch (error) {
+        if (props.debug) {
+          console.warn('自定义命令初始化失败:', formatErrorMessage(error));
+        }
+      }
+
+      // 10. 初始化插件系统（加载 --plugin-dir 指定的插件和默认目录插件）
+      try {
+        const pluginRegistry = getPluginRegistry();
+        const pluginResult = await pluginRegistry.initialize(
+          getCwd(),
+          props.pluginDir || []
+        );
+
+        if (props.debug && pluginResult.plugins.length > 0) {
+          console.log(
+            `[OK] 已加载 ${pluginResult.plugins.length} 个插件: ${pluginResult.plugins.map((p) => p.manifest.name).join(', ')}`
+          );
+        }
+
+        // 将插件集成到各子系统
+        if (pluginResult.plugins.length > 0) {
+          const integrationResult = await integrateAllPlugins();
           if (props.debug) {
+            const { totalCommands, totalSkills, totalAgents, totalMcpServers } =
+              integrationResult;
             console.log(
-              '[OK] SessionStart hooks 注入环境变量:',
-              Object.keys(sessionStartResult.env).join(', ')
+              `  [OK] 已集成: ${totalCommands} 命令, ${totalSkills} 技能, ${totalAgents} 代理, ${totalMcpServers} MCP 服务器`
             );
           }
         }
 
-        if (sessionStartResult.warning && props.debug) {
-          console.warn('SessionStart hooks 警告:', sessionStartResult.warning);
+        if (pluginResult.errors.length > 0 && props.debug) {
+          for (const error of pluginResult.errors) {
+            console.warn(`插件加载错误 (${error.path}): ${error.error}`);
+          }
         }
-      }
-    } catch (error) {
-      if (props.debug) {
-        console.warn('Hooks 初始化失败:', formatErrorMessage(error));
-      }
-    }
-
-    // 8. 初始化 Skills（发现并加载所有可用的 Skills）
-    try {
-      const skillsResult = await discoverSkills();
-      if (props.debug && skillsResult.skills.length > 0) {
-        console.log(
-          `[OK] 已加载 ${skillsResult.skills.length} 个 skills: ${skillsResult.skills.map((s) => s.name).join(', ')}`
-        );
-      }
-      if (skillsResult.errors.length > 0 && props.debug) {
-        for (const error of skillsResult.errors) {
-          console.warn(`Skill 加载错误 (${error.path}): ${error.error}`);
-        }
-      }
-    } catch (error) {
-      if (props.debug) {
-        console.warn('Skills 初始化失败:', formatErrorMessage(error));
-      }
-    }
-
-    // 9. 初始化自定义命令（发现并加载所有 .blade/commands/ 和 .claude/commands/ 下的命令）
-    try {
-      const customCommandsResult = await initializeCustomCommands(getCwd());
-      if (props.debug && customCommandsResult.commands.length > 0) {
-        console.log(
-          `[OK] 已加载 ${customCommandsResult.commands.length} 个自定义命令: ${customCommandsResult.commands.map((c) => c.name).join(', ')}`
-        );
-      }
-      if (customCommandsResult.errors.length > 0 && props.debug) {
-        for (const error of customCommandsResult.errors) {
-          console.warn(`自定义命令加载错误 (${error.path}): ${error.error}`);
-        }
-      }
-    } catch (error) {
-      if (props.debug) {
-        console.warn('自定义命令初始化失败:', formatErrorMessage(error));
-      }
-    }
-
-    // 10. 初始化插件系统（加载 --plugin-dir 指定的插件和默认目录插件）
-    try {
-      const pluginRegistry = getPluginRegistry();
-      const pluginResult = await pluginRegistry.initialize(
-        getCwd(),
-        props.pluginDir || []
-      );
-
-      if (props.debug && pluginResult.plugins.length > 0) {
-        console.log(
-          `[OK] 已加载 ${pluginResult.plugins.length} 个插件: ${pluginResult.plugins.map((p) => p.manifest.name).join(', ')}`
-        );
-      }
-
-      // 将插件集成到各子系统
-      if (pluginResult.plugins.length > 0) {
-        const integrationResult = await integrateAllPlugins();
+      } catch (error) {
         if (props.debug) {
-          const { totalCommands, totalSkills, totalAgents, totalMcpServers } =
-            integrationResult;
-          console.log(
-            `  [OK] 已集成: ${totalCommands} 命令, ${totalSkills} 技能, ${totalAgents} 代理, ${totalMcpServers} MCP 服务器`
-          );
+          console.warn('插件系统初始化失败:', formatErrorMessage(error));
         }
       }
 
-      if (pluginResult.errors.length > 0 && props.debug) {
-        for (const error of pluginResult.errors) {
-          console.warn(`插件加载错误 (${error.path}): ${error.error}`);
-        }
-      }
+      // 11. 注册退出清理函数
+      registerCleanup(async () => {
+        BackgroundShellManager.getInstance().killAll();
+        await McpRegistry.getInstance().disconnectAll();
+        HookManager.getInstance().cleanup();
+      });
+
+      setIsReady(true);
     } catch (error) {
-      if (props.debug) {
-        console.warn('插件系统初始化失败:', formatErrorMessage(error));
-      }
+      handleInitializationError(error, !!props.debug);
     }
-
-    // 11. 注册退出清理函数
-    registerCleanup(async () => {
-      BackgroundShellManager.getInstance().killAll();
-      await McpRegistry.getInstance().disconnectAll();
-      HookManager.getInstance().cleanup();
-    });
-
-    setIsReady(true);
   });
 
   // 启动流程：先检查版本，再决定是否初始化应用

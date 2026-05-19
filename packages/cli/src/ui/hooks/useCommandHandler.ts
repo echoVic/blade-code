@@ -290,6 +290,12 @@ export const useCommandHandler = (
         }
 
         const output = loopResult.finalMessage || '';
+        logger.debug('[handleCommandSubmit] final reply', {
+          success: loopResult.success,
+          outputLength: output.length,
+          turnsCount: loopResult.metadata?.turnsCount,
+          toolCallsCount: loopResult.metadata?.toolCallsCount,
+        });
 
         // API 错误（非 abort）时显示友好错误信息，而非"已取消"
         if (!loopResult.success && loopResult.error?.type === 'api_error') {

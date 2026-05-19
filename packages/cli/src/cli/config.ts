@@ -18,6 +18,12 @@ export const globalOptions = {
     // 负向过滤：--debug "!chat,!loop" 排除 Chat 和 Loop 类别
     // 支持的分类：agent, ui, tool, service, config, context, execution, loop, chat, general
   },
+  model: {
+    type: 'string',
+    describe:
+      'Override the current run model using a model config ID (TUI / print / headless)',
+    group: 'AI Options:',
+  },
   print: {
     alias: 'p',
     type: 'boolean',
