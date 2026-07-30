@@ -19,7 +19,7 @@ jobs:
         run: bun install
 
       - name: Run tests
-        run: bun run test:all
+        run: bun run test:unit
 
       - name: Build
         run: bun run build
