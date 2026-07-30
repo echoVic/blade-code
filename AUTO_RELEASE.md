@@ -30,12 +30,31 @@ bash scripts/get-npm-token.sh
 
 ### 2️⃣ 添加 GitHub Secret
 
+**方法一：使用 GitHub CLI（推荐，最快）**
+
+```bash
+# 前提：已安装 gh CLI
+# brew install gh  # macOS
+# gh auth login    # 登录
+
+# 运行配置脚本，选择 'y' 自动添加
+bash scripts/get-npm-token.sh
+
+# 或者手动命令
+echo "YOUR_TOKEN" | gh secret set NPM_TOKEN
+```
+
+**方法二：通过网页添加**
+
 1. 访问仓库设置: `Settings` → `Secrets and variables` → `Actions`
 2. 点击 "New repository secret"
 3. 添加 secret:
    - **Name**: `NPM_TOKEN`
    - **Value**: 粘贴你的 npm token
 4. 点击 "Add secret"
+
+> 💡 提示：GitHub CLI 方法无需打开浏览器，更快更安全！  
+> 📚 详细指南：[GitHub CLI 使用指南](docs/GitHub_CLI使用指南.md)
 
 ### 3️⃣ 提交配置文件
 
