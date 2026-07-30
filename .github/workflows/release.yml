@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write
 
 jobs:
   release-please:
@@ -15,6 +16,8 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # 如果创建了新版本，则发布到 npm
       - uses: actions/checkout@v4
