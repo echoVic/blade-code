@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 如果创建了新版本，则发布到 npm
+      - uses: actions/checkout@v4
+        if: ${{ steps.release.outputs.release_created }}
+
+      - uses: oven-sh/setup-bun@v1
+        if: ${{ steps.release.outputs.release_created }}
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        if: ${{ steps.release.outputs.release_created }}
+        run: bun install
+
+      - name: Build
+        if: ${{ steps.release.outputs.release_created }}
+        run: bun run build
+
+      - name: Publish to npm
+        if: ${{ steps.release.outputs.release_created }}
+        run: |
+          cd packages/cli
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+          npm publish --access public
