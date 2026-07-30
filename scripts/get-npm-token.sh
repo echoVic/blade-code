@@ -33,6 +33,44 @@ if [ -f ~/.npmrc ]; then
     echo ""
     echo "📋 下一步操作："
     echo ""
+
+    # 检查是否安装了 gh CLI
+    if command -v gh &> /dev/null; then
+      echo "✅ 检测到 GitHub CLI (gh)"
+      echo ""
+      echo "🚀 方式一：使用命令行添加（推荐）"
+      echo ""
+      echo "运行以下命令："
+      echo "  echo \"$TOKEN\" | gh secret set NPM_TOKEN"
+      echo ""
+
+      # 询问是否立即添加
+      read -p "是否立即添加到 GitHub Secrets? (y/n) " -n 1 -r
+      echo ""
+      if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if echo "$TOKEN" | gh secret set NPM_TOKEN; then
+          echo ""
+          echo "✅ NPM_TOKEN 已成功添加到 GitHub Secrets！"
+          echo ""
+          echo "🎉 配置完成！现在可以使用自动发版了："
+          echo "   git commit -m \"feat: your feature\""
+          echo "   git push origin main"
+          echo ""
+          exit 0
+        else
+          echo ""
+          echo "❌ 添加失败，请检查 gh 是否已登录"
+          echo "   运行: gh auth login"
+          echo ""
+        fi
+      fi
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+    fi
+
+    echo "🌐 方式二：通过网页添加"
+    echo ""
     echo "1. 复制完整的 Token:"
     echo "   $TOKEN"
     echo ""
