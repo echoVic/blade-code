@@ -10,6 +10,19 @@ bash scripts/setup-auto-release.sh
 
 ### 1️⃣ 获取 NPM Token
 
+**方法一：使用自动化脚本（推荐）**
+
+```bash
+# 1. 登录 npm
+npm login
+
+# 2. 运行配置脚本（自动提取 token）
+bash scripts/get-npm-token.sh
+# Token 会自动复制到剪贴板（Mac）并显示配置步骤
+```
+
+**方法二：手动创建**
+
 1. 登录 npm: `npm login`
 2. 访问: https://www.npmjs.com/settings/YOUR_USERNAME/tokens
 3. 点击 "Generate New Token" → 选择 "Automation"
