@@ -40,11 +40,15 @@ export default defineConfig({
       NODE_ENV: 'test',
       TEST_MODE: 'true',
     },
+    pool: process.env.CI === 'true' ? 'forks' : 'threads',
     poolOptions: {
       threads: {
         singleThread: process.env.CI === 'true',
         maxThreads: process.env.CI === 'true' ? 1 : 4,
         minThreads: 1,
+      },
+      forks: {
+        singleFork: true,
       },
     },
     projects: [
