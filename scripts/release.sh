@@ -38,6 +38,15 @@ if [ "$CONFIRM" != "y" ]; then
     exit 0
 fi
 
+# 运行测试
+echo ""
+echo "🧪 运行测试..."
+if ! bun run ready; then
+    echo ""
+    echo "❌ 测试失败！请修复问题后再发布。"
+    exit 1
+fi
+
 # 更新版本号
 echo ""
 echo "📝 更新版本号..."
