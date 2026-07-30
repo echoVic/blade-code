@@ -6,16 +6,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SubagentRegistry } from '../../../../src/agent/subagents/SubagentRegistry.js';
 
 // Mock fs and path
-vi.mock('node:fs', () => ({
-  default: {
-    existsSync: vi.fn(),
-    readdirSync: vi.fn(),
-    readFileSync: vi.fn(),
-  },
-  existsSync: vi.fn(),
-  readdirSync: vi.fn(),
-  readFileSync: vi.fn(),
-}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const existsSync = vi.fn();
+  const readdirSync = vi.fn();
+  const readFileSync = vi.fn();
+
+  return {
+    ...actual,
+    default: {
+      ...actual,
+      existsSync,
+      readdirSync,
+      readFileSync,
+    },
+    existsSync,
+    readdirSync,
+    readFileSync,
+  };
+});
 
 import fs from 'node:fs';
 

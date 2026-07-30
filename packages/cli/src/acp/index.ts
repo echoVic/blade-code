@@ -18,7 +18,7 @@ import { BladeAgent } from './BladeAgent.js';
 export async function runAcpIntegration(): Promise<void> {
   // 使用 Web Streams API 包装 Node.js streams
   const stdout = Writable.toWeb(process.stdout) as WritableStream<Uint8Array>;
-  const stdin = Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>;
+  const stdin = Readable.toWeb(process.stdin) as unknown as ReadableStream<Uint8Array>;
 
   // 创建 ndJSON 流（换行分隔的 JSON）
   const stream = acp.ndJsonStream(stdout, stdin);

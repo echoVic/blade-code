@@ -765,7 +765,7 @@ describe('executeLoopGenerator', () => {
       expect(contextMgr.saveMessage.mock.calls).toHaveLength(4);
       expect(
         contextMgr.saveMessage.mock.calls.map(
-          ([sessionId, role, content, parentUuid]: [string, string, unknown, string | null]) => ({
+          ([sessionId, role, content, parentUuid]) => ({
             sessionId,
             role,
             content,
@@ -844,7 +844,7 @@ describe('executeLoopGenerator', () => {
       expect(contextMgr.saveMessage.mock.calls).toHaveLength(4);
       expect(
         contextMgr.saveMessage.mock.calls.map(
-          ([sessionId, role, content, parentUuid]: [string, string, unknown, string | null]) => ({
+          ([sessionId, role, content, parentUuid]) => ({
             sessionId,
             role,
             content,
@@ -919,7 +919,7 @@ describe('executeLoopGenerator', () => {
       expect(contextMgr.saveMessage.mock.calls).toHaveLength(4);
       expect(
         contextMgr.saveMessage.mock.calls.map(
-          ([sessionId, role, content, parentUuid]: [string, string, unknown, string | null]) => ({
+          ([sessionId, role, content, parentUuid]) => ({
             sessionId,
             role,
             content,

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BackgroundTaskManager } from '../../src/utils/backgroundTaskManager';
 
 describe('BackgroundTaskManager - 后台任务管理器', () => {
@@ -14,6 +14,8 @@ describe('BackgroundTaskManager - 后台任务管理器', () => {
 		for (const task of tasks) {
 			manager.deleteTask(task.id);
 		}
+		vi.useRealTimers();
+		vi.restoreAllMocks();
 	});
 
 	describe('createTask - 创建任务', () => {
@@ -201,17 +203,25 @@ describe('BackgroundTaskManager - 后台任务管理器', () => {
 
 	describe('killTask - 终止任务', () => {
 		it('应该标记正在运行的任务为已终止', async () => {
+			vi.useFakeTimers();
+			const killSpy = vi
+				.spyOn(process, 'kill')
+				.mockImplementation(() => true);
 			const taskId = manager.createTask({
 				command: 'sleep 1000',
-				pid: process.pid, // 使用当前进程 pid 进行测试
+				pid: process.pid,
 			});
 
-			const killed = await manager.killTask(taskId);
+			const killPromise = manager.killTask(taskId);
+			await vi.advanceTimersByTimeAsync(200);
+			const killed = await killPromise;
 
-			// 在测试环境中可能无法真正终止进程
-			// 但应该标记状态
 			const task = manager.getTask(taskId);
-			expect(task?.status).toMatch(/killed|failed/);
+			expect(killed).toBe(true);
+			expect(task?.status).toBe('killed');
+			expect(killSpy).toHaveBeenCalledWith(-process.pid, 'SIGTERM');
+			expect(killSpy).toHaveBeenCalledWith(process.pid, 0);
+			expect(killSpy).toHaveBeenCalledWith(-process.pid, 'SIGKILL');
 		});
 
 		it('非运行状态的任务不应该被终止', async () => {

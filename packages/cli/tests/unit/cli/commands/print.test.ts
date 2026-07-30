@@ -93,7 +93,7 @@ describe('print command runner', () => {
         disallowedTools: ['Write'],
         permissionMode: 'default',
       },
-      { stdout, stderr } as typeof process
+      { stdout, stderr } as unknown as Pick<typeof process, 'stdout' | 'stderr'>
     );
 
     expect(exitCode).toBe(0);
@@ -145,7 +145,7 @@ describe('print command runner', () => {
         print: true,
         message: '/help',
       },
-      { stdout, stderr } as typeof process
+      { stdout, stderr } as unknown as Pick<typeof process, 'stdout' | 'stderr'>
     );
 
     expect(exitCode).toBe(0);
@@ -169,7 +169,7 @@ describe('print command runner', () => {
         message: 'hello',
         resume: true,
       },
-      { stdout, stderr } as typeof process
+      { stdout, stderr } as unknown as Pick<typeof process, 'stdout' | 'stderr'>
     );
 
     expect(exitCode).toBe(1);
