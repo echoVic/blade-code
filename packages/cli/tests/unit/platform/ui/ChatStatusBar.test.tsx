@@ -1,3 +1,5 @@
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockUseGitBranch = vi.fn((_projectRoot?: string) => ({
@@ -5,6 +7,13 @@ const mockUseGitBranch = vi.fn((_projectRoot?: string) => ({
   loading: false,
 }));
 const mockGetProjectRoot = vi.fn(() => '/repo-root');
+
+vi.mock('ink', () => ({
+  Box: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement('div', null, children),
+  Text: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement('span', null, children),
+}));
 
 vi.mock('../../../../src/store/selectors/index.js', () => ({
   useActiveModal: () => null,
@@ -37,8 +46,7 @@ describe('ChatStatusBar', () => {
       '../../../../src/ui/components/ChatStatusBar.js'
     );
 
-    const render = (ChatStatusBar as unknown as { type: () => unknown }).type;
-    render();
+    renderToStaticMarkup(React.createElement(ChatStatusBar));
 
     expect(mockGetProjectRoot).toHaveBeenCalledTimes(1);
     expect(mockUseGitBranch).toHaveBeenCalledWith('/repo-root');
