@@ -51,6 +51,8 @@ export default defineConfig({
         singleFork: true,
       },
     },
+    fileParallelism: process.env.CI === 'true' ? false : true,
+    isolate: process.env.CI === 'true' ? false : true,
     projects: [
       {
         test: {
