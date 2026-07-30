@@ -1,14 +1,9 @@
 {
   "packages": {
-    "packages/cli": {
+    ".": {
       "release-type": "node",
       "package-name": "blade-code",
-      "changelog-path": "CHANGELOG.md",
-      "bump-minor-pre-major": true,
-      "bump-patch-for-minor-pre-major": false
+      "changelog-path": "CHANGELOG.md"
     }
-  },
-  "release-search-depth": 500,
-  "draft": false,
-  "prerelease": false
+  }
 }
