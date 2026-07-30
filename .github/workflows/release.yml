@@ -17,7 +17,8 @@ jobs:
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          release-type: node
+          config-file: .github/release-please-config.json
+          manifest-file: .github/.release-please-manifest.json
 
       # 如果创建了新版本，则发布到 npm
       - uses: actions/checkout@v4
