@@ -21,6 +21,12 @@
   * [@ 文件提及](guides/at-file-mentions.md)
   * [Markdown 支持](guides/markdown-support.md)
 
+* 开发者文档
+  * [架构设计](architecture.md)
+  * [API 文档](api/README.md)
+  * [故障排查](troubleshooting.md)
+  * [贡献指南](../CONTRIBUTING.md)
+
 * 参考
   * [CLI 命令](reference/cli-commands.md)
   * [工具列表](reference/tool-list.md)
