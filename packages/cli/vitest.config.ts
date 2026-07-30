@@ -1,6 +1,30 @@
 import { resolve } from 'path';
 import { defineConfig } from 'vitest/config';
 
+const isCI = process.env.CI === 'true';
+const threadPool = {
+  pool: 'threads' as const,
+  fileParallelism: !isCI,
+  poolOptions: {
+    threads: {
+      singleThread: isCI,
+      maxThreads: isCI ? 1 : 4,
+      minThreads: 1,
+    },
+  },
+};
+const forkPool = {
+  pool: 'forks' as const,
+  fileParallelism: !isCI,
+  poolOptions: {
+    forks: {
+      singleFork: isCI,
+      maxForks: isCI ? 1 : 4,
+      minForks: 1,
+    },
+  },
+};
+
 export default defineConfig({
   test: {
     globals: true,
@@ -40,23 +64,13 @@ export default defineConfig({
       NODE_ENV: 'test',
       TEST_MODE: 'true',
     },
-    pool: process.env.CI === 'true' ? 'forks' : 'threads',
-    poolOptions: {
-      threads: {
-        singleThread: process.env.CI === 'true',
-        maxThreads: process.env.CI === 'true' ? 1 : 4,
-        minThreads: 1,
-      },
-      forks: {
-        singleFork: true,
-      },
-    },
-    fileParallelism: process.env.CI === 'true' ? false : true,
+    ...threadPool,
     isolate: true,
     projects: [
       {
         test: {
           name: 'unit',
+          ...threadPool,
           include: ['tests/unit/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/support/setup.ts'],
           typecheck: {
@@ -69,62 +83,47 @@ export default defineConfig({
       {
         test: {
           name: 'integration',
+          ...forkPool,
           include: ['tests/integration/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/support/setup.ts'],
           testTimeout: 30000,
           hookTimeout: 30000,
-          poolOptions: {
-            threads: {
-              singleThread: true,
-            },
-          },
         },
       },
       {
         test: {
           name: 'cli',
+          ...threadPool,
           include: ['tests/integration/cli/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/support/setup.ts'],
           testTimeout: 30000,
           hookTimeout: 30000,
-          poolOptions: {
-            threads: {
-              singleThread: true,
-            },
-          },
         },
       },
       {
         test: {
           name: 'e2e',
+          ...forkPool,
           include: ['tests/e2e/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/support/setup.ts', './tests/support/setup.e2e.ts'],
           testTimeout: 60000,
           hookTimeout: 60000,
-          poolOptions: {
-            threads: {
-              singleThread: true,
-            },
-          },
         },
       },
       {
         test: {
           name: 'performance',
+          ...threadPool,
           include: ['tests/performance/**/*.{test,spec,bench}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/support/setup.ts'],
           testTimeout: 120000,
           hookTimeout: 120000,
-          poolOptions: {
-            threads: {
-              singleThread: true,
-            },
-          },
         },
       },
       {
         test: {
           name: 'snapshot',
+          ...threadPool,
           include: ['tests/snapshots/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/support/setup.ts'],
           testTimeout: 15000,
@@ -134,15 +133,11 @@ export default defineConfig({
       {
         test: {
           name: 'security',
+          ...forkPool,
           include: ['tests/security/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/support/setup.ts'],
           testTimeout: 30000,
           hookTimeout: 30000,
-          poolOptions: {
-            threads: {
-              singleThread: true,
-            },
-          },
         },
       },
     ],
