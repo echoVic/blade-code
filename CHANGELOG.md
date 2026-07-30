@@ -2,6 +2,16 @@
 
 ## ✅ 已完成功能（4/4）
 
+## [0.5.0](https://github.com/echoVic/blade-code/compare/v0.4.2...v0.5.0) (2026-07-30)
+
+
+### Features
+
+* **ci:** 支持使用 GitHub CLI 一键添加 NPM Token ([cb4221e](https://github.com/echoVic/blade-code/commit/cb4221e249781d07edd1d230aefcb96bbe4ba256))
+* **ci:** 添加 NPM Token 配置助手脚本 ([d21a6f4](https://github.com/echoVic/blade-code/commit/d21a6f4842eadd3a1fc8d1eca69b846c8c8bdc84))
+* **cli:** add model override CLI option and related handling ([6b2e737](https://github.com/echoVic/blade-code/commit/6b2e737923e3b0a57b0d5c87824d2bef8cbf991d))
+* 实现高优先级和中优先级功能 ([047486c](https://github.com/echoVic/blade-code/commit/047486ceb58cd5f8c9aef84dea85ea3c8b3ac34c))
+
 ### 1. 📎 @ 文件引用功能
 让用户可以通过 `@src/utils.ts:10-20` 快速引用代码片段
 
