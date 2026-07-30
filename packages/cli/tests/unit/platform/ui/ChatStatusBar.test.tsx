@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockUseGitBranch = vi.fn(() => ({ branch: 'main', loading: false }));
+const mockUseGitBranch = vi.fn((_projectRoot?: string) => ({
+  branch: 'main',
+  loading: false,
+}));
 const mockGetProjectRoot = vi.fn(() => '/repo-root');
 
 vi.mock('../../../../src/store/selectors/index.js', () => ({
@@ -16,7 +19,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
 }));
 
 vi.mock('../../../../src/ui/hooks/useGitBranch.js', () => ({
-  useGitBranch: (...args: unknown[]) => mockUseGitBranch(...args),
+  useGitBranch: (projectRoot?: string) => mockUseGitBranch(projectRoot),
 }));
 
 vi.mock('../../../../src/bootstrap/state.js', () => ({
@@ -31,7 +34,7 @@ describe('ChatStatusBar', () => {
 
   it('应该使用稳定 projectRoot 获取分支', async () => {
     const { ChatStatusBar } = await import(
-      '../../../../src/ui/components/ChatStatusBar.tsx'
+      '../../../../src/ui/components/ChatStatusBar.js'
     );
 
     const render = (ChatStatusBar as unknown as { type: () => unknown }).type;

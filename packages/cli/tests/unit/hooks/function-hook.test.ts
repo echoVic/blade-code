@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PermissionMode } from '../../../src/config/types.js';
 import { HookManager } from '../../../src/hooks/HookManager.js';
 import {
+  DecisionBehavior,
   HookEvent,
   HookType,
 } from '../../../src/hooks/types/HookTypes.js';
@@ -51,7 +52,7 @@ describe('Function Hook', () => {
         HookEvent.PreToolUse,
         { tools: 'Edit' },
         async () => ({
-          decision: { behavior: 'block' },
+          decision: { behavior: DecisionBehavior.Block },
           systemMessage: 'nope',
         })
       );

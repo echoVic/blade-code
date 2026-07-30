@@ -125,9 +125,13 @@ describe('SubagentExecutor event forwarding', () => {
   });
 
   it('returns failure result when generator throws', async () => {
-    mockChatStream.mockImplementation(async function* () {
+    mockChatStream.mockImplementation(async function* (): AsyncGenerator<
+      LoopEvent,
+      LoopResult,
+      void
+    > {
       if (Date.now() < 0) {
-        yield undefined;
+        yield { kind: 'stream_end' };
       }
       throw new Error('model overloaded');
     });

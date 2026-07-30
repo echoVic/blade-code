@@ -4,7 +4,7 @@
  * 默认配置和配置加载逻辑
  */
 
-import { HookType, type HookConfig } from './types/HookTypes.js';
+import { type HookConfig, HookType } from './types/HookTypes.js';
 
 /**
  * 默认 Hook 配置
@@ -16,6 +16,7 @@ export const DEFAULT_HOOK_CONFIG: Required<HookConfig> = {
   timeoutBehavior: 'ignore', // 超时时忽略,继续执行
   failureBehavior: 'ignore', // 失败时忽略,继续执行
   maxConcurrentHooks: 5, // 最多 5 个并发 hook
+  httpPolicy: {},
   // 工具执行类
   PreToolUse: [],
   PostToolUse: [

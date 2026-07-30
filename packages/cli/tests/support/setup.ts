@@ -12,7 +12,7 @@ import { afterEach, beforeAll, vi } from 'vitest';
 
 // 模拟 Node.js 的 fetch API
 if (!global.fetch) {
-  global.fetch = vi.fn();
+  global.fetch = vi.fn() as unknown as typeof fetch;
 }
 
 // 测试环境配置

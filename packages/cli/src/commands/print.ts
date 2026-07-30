@@ -32,7 +32,7 @@ interface PrintOptions {
   maxTurns?: number;
   sessionId?: string;
   continue?: boolean;
-  resume?: string;
+  resume?: string | boolean;
   allowedTools?: string[];
   disallowedTools?: string[];
   mcpConfig?: string[];

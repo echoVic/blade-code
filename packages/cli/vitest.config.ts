@@ -52,7 +52,7 @@ export default defineConfig({
       },
     },
     fileParallelism: process.env.CI === 'true' ? false : true,
-    isolate: process.env.CI === 'true' ? false : true,
+    isolate: true,
     projects: [
       {
         test: {

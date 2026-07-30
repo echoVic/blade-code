@@ -2,10 +2,12 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockUseLoadingIndicator = vi.fn(() => ({
-  currentPhrase: '炼化代码灵气...',
-  elapsedTime: 0,
-}));
+const mockUseLoadingIndicator = vi.fn(
+  (_isProcessing?: boolean, _isWaiting?: boolean, _paused?: boolean) => ({
+    currentPhrase: '炼化代码灵气...',
+    elapsedTime: 0,
+  })
+);
 const mockUseTerminalWidth = vi.fn(() => 120);
 
 vi.mock('ink', () => ({
@@ -30,7 +32,11 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
 }));
 
 vi.mock('../../../../src/ui/hooks/useLoadingIndicator.js', () => ({
-  useLoadingIndicator: (...args: unknown[]) => mockUseLoadingIndicator(...args),
+  useLoadingIndicator: (
+    isProcessing?: boolean,
+    isWaiting?: boolean,
+    paused?: boolean
+  ) => mockUseLoadingIndicator(isProcessing, isWaiting, paused),
 }));
 
 vi.mock('../../../../src/ui/hooks/useTerminalWidth.js', () => ({
@@ -50,7 +56,7 @@ describe('LoadingIndicator', () => {
 
   it('短时间加载时应该优先显示中性文案而不是趣味短语', async () => {
     const { LoadingIndicator } = await import(
-      '../../../../src/ui/components/LoadingIndicator.tsx'
+      '../../../../src/ui/components/LoadingIndicator.js'
     );
 
     const html = renderToStaticMarkup(
