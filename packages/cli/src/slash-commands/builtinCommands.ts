@@ -45,6 +45,7 @@ const helpCommand: SlashCommand = {
 **/resume** - 恢复历史会话
 **/compact** - 手动压缩上下文，生成总结并节省 token
 **/cost** - 显示当前会话 token 消耗和费用估算
+**/doctor** - 诊断 API 连通性和配置健康状况
 **/memory** - 管理项目 Auto Memory（list/show/edit/clear）
 **/version** - 显示 Blade Code 版本信息
 **/status** - 显示当前配置状态
@@ -365,6 +366,60 @@ const costCommand: SlashCommand = {
   },
 };
 
+const doctorCommand: SlashCommand = {
+  name: 'doctor',
+  description: 'Diagnose API connectivity and configuration health',
+  fullDescription: '诊断 API 连通性和配置健康状况',
+  usage: '/doctor',
+  aliases: [],
+  async handler(
+    _args: string[],
+    context: SlashCommandContext
+  ): Promise<SlashCommandResult> {
+    const ui = getUI(context);
+    const config = getConfig();
+    const models = config?.models ?? [];
+
+    if (models.length === 0) {
+      ui.sendMessage('❌ 没有配置任何模型。请先运行 `/init` 或编辑 `~/.blade/config.json`');
+      return { success: false, message: 'No models configured' };
+    }
+
+    const results: string[] = ['**API Connectivity Diagnosis**\n'];
+
+    for (const model of models) {
+      const startTime = Date.now();
+      try {
+        const { createChatServiceAsync } = await import('../services/ChatServiceInterface.js');
+        const service = await createChatServiceAsync({
+          provider: model.provider,
+          apiKey: model.apiKey,
+          baseUrl: model.baseUrl,
+          model: model.model,
+          maxOutputTokens: 10,
+          temperature: 0,
+          timeout: 10000,
+        });
+        const response = await service.chat(
+          [{ role: 'user', content: 'hi' }],
+          undefined,
+          AbortSignal.timeout(10000)
+        );
+        const latency = Date.now() - startTime;
+        const hasContent = !!response.content;
+        results.push(`✅ **${model.name}** (${model.model}) — ${latency}ms${hasContent ? '' : ' ⚠️ empty response'}`);
+      } catch (error) {
+        const latency = Date.now() - startTime;
+        const msg = error instanceof Error ? error.message.slice(0, 80) : 'Unknown error';
+        results.push(`❌ **${model.name}** (${model.model}) — ${latency}ms — ${msg}`);
+      }
+    }
+
+    ui.sendMessage(results.join('\n'));
+    return { success: true, message: 'Doctor diagnosis complete' };
+  },
+};
+
 export const builtinCommands = {
   help: helpCommand,
   clear: clearCommand,
@@ -373,6 +428,7 @@ export const builtinCommands = {
   exit: exitCommand,
   context: contextCommand,
   cost: costCommand,
+  doctor: doctorCommand,
   permissions: permissionsCommand,
   resume: resumeCommand,
   compact: compactCommand,
