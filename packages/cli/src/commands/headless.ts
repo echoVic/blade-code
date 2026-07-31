@@ -476,7 +476,12 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
       toolName: string,
       summary: string,
       target?: string,
-      toolKind?: 'readonly' | 'write' | 'execute'
+      toolKind?: 'readonly' | 'write' | 'execute',
+      result?: {
+        success: boolean;
+        errorType?: string;
+        errorMessage?: string;
+      }
     ) {
       if (outputFormat === 'jsonl') {
         writeJsonl('tool_result', {
@@ -484,6 +489,9 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
           summary,
           target,
           tool_kind: toolKind,
+          success: result?.success,
+          error_type: result?.errorType,
+          error_message: result?.errorMessage,
         });
         return;
       }
@@ -746,7 +754,12 @@ export async function runHeadless(
               toolCall.function.name,
               display.summary,
               target,
-              undefined
+              undefined,
+              {
+                success: event.result.success,
+                errorType: event.result.error?.type,
+                errorMessage: event.result.error?.message,
+              }
             );
             if (display.detail) {
               eventWriter.toolDetail(toolCall.function.name, display.detail);

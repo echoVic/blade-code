@@ -179,6 +179,26 @@ describe('headless runner', () => {
           },
         },
         {
+          kind: 'tool_result',
+          toolCall: {
+            id: 'tool-2',
+            type: 'function',
+            function: {
+              name: 'Bash',
+              arguments: JSON.stringify({ command: 'npm test' }),
+            },
+          },
+          result: {
+            success: false,
+            llmContent: 'command failed',
+            error: {
+              type: 'execution_error',
+              message: 'Command exited with code 1',
+            },
+            metadata: { summary: 'npm test failed' },
+          },
+        },
+        {
           kind: 'task_update',
           tasks: [
             {
@@ -242,6 +262,14 @@ describe('headless runner', () => {
           event_version: 1,
           tool_name: 'Read',
           target: '/tmp/demo.ts',
+        }),
+        expect.objectContaining({
+          type: 'tool_result',
+          event_version: 1,
+          tool_name: 'Bash',
+          success: false,
+          error_type: 'execution_error',
+          error_message: 'Command exited with code 1',
         }),
         expect.objectContaining({
           type: 'task_update',

@@ -51,6 +51,9 @@ const ToolResultEventSchema = HeadlessEventBaseSchema.extend({
   summary: z.string(),
   target: z.string().optional(),
   tool_kind: z.enum(['readonly', 'write', 'execute']).optional(),
+  success: z.boolean().optional(),
+  error_type: z.string().optional(),
+  error_message: z.string().optional(),
 });
 
 const PhaseEventSchema = HeadlessEventBaseSchema.extend({
