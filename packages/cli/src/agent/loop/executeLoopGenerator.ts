@@ -82,6 +82,25 @@ When facing complex multi-step tasks:
 
 // ===== Helper Functions (extracted from Agent.ts) =====
 
+function tryRepairJson(raw: string): Record<string, unknown> | null {
+  let fixed = raw.trim();
+  // Remove trailing commas before } or ]
+  fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+  // Try adding missing closing braces
+  if (fixed.startsWith('{') && !fixed.endsWith('}')) {
+    fixed += '}';
+  }
+  try {
+    const parsed = JSON.parse(fixed);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function toJsonValue(value: string | object): JsonValue {
   if (typeof value === 'string') return value;
   try {
@@ -1105,9 +1124,30 @@ export async function* executeLoopGenerator(
           }
 
           // 并行执行所有工具
-          const executeToolCall = async (toolCall: (typeof functionCalls)[0]) => {
+        const executeToolCall = async (toolCall: (typeof functionCalls)[0]) => {
+          try {
+            let params: Record<string, unknown>;
             try {
-              const params = JSON.parse(toolCall.function.arguments);
+              params = JSON.parse(toolCall.function.arguments);
+            } catch (parseError) {
+              const repaired = tryRepairJson(toolCall.function.arguments);
+              if (repaired === null) {
+                return {
+                  toolCall,
+                  result: {
+                    success: false,
+                    llmContent: '',
+                    error: {
+                      type: ToolErrorType.VALIDATION_ERROR,
+                      message: `Invalid JSON in tool arguments: ${(parseError as Error).message}. Raw: ${toolCall.function.arguments.slice(0, 200)}`,
+                    },
+                    metadata: undefined,
+                  } as import('../../tools/types/index.js').ToolResult,
+                  toolUseUuid: null,
+                };
+              }
+              params = repaired;
+            }
               if (
                 toolCall.function.name === 'Task' &&
                 (typeof params.subagent_session_id !== 'string' ||
@@ -1123,7 +1163,7 @@ export async function* executeLoopGenerator(
                 deps,
                 context,
                 toolCall.function.name,
-                params,
+                params as unknown as JsonValue,
                 lastMessageUuid
               );
 
