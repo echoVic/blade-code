@@ -71,7 +71,7 @@ describe('utils/environment', () => {
     expect(findProjectRoot(nestedDir)).toBe(tempProjectRoot);
   });
 
-  it('getEnvironmentContext 默认应只包含最小环境信息，不包含 git 快照', async () => {
+  it('getEnvironmentContext 默认应包含项目 Git 快照和目录概览', async () => {
     execSyncMock.mockImplementation((cmd: string) => {
       if (cmd === 'git rev-parse --abbrev-ref HEAD') {
         return 'feat/upgrade-agent\n';
@@ -82,6 +82,9 @@ describe('utils/environment', () => {
       if (cmd === 'git log --oneline -n 3') {
         return '9e9371c feat(permission): 增强Bash命令权限检查的语义分析和规范化\n';
       }
+      if (cmd === 'ls -1 | head -30') {
+        return 'package.json\nsrc\ntsconfig.json\n';
+      }
       throw new Error(`unsupported command: ${cmd}`);
     });
 
@@ -91,7 +94,7 @@ describe('utils/environment', () => {
     const { getEnvironmentContext } = await import(
       '../../../../src/utils/environment.js'
     );
-    const context = getEnvironmentContext({ includeGitSnapshot: false });
+    const context = getEnvironmentContext();
 
     expect(context).toContain('# Environment');
     expect(context).toContain(`Primary working directory: ${tempSubDir}`);
@@ -102,9 +105,11 @@ describe('utils/environment', () => {
     expect(context).toContain(
       `When using file tools (read, write, edit), provide absolute paths based on: \`${tempSubDir}/\``
     );
-    expect(context).not.toContain('Current branch: feat/upgrade-agent');
-    expect(context).not.toContain('Working tree status:');
-    expect(context).not.toContain('Recent commits:');
+    expect(context).toContain('Current branch: feat/upgrade-agent');
+    expect(context).toContain('Working tree status:');
+    expect(context).toContain('Recent commits:');
+    expect(context).toContain('Project root directory listing:');
+    expect(context).toContain('src');
   });
 
   it('getEnvironmentContext 在显式启用 git snapshot 时应包含 git 快照', async () => {

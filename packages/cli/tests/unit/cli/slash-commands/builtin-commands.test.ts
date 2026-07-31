@@ -23,8 +23,15 @@ vi.mock('../../../../src/slash-commands/types.js', async () => {
 
 // Mock dependencies
 vi.mock('../../../../src/store/vanilla.js', () => ({
-  getConfig: vi.fn().mockReturnValue({}),
-  getCurrentModel: vi.fn().mockReturnValue({ id: 'test-model' }),
+  getConfig: vi.fn().mockReturnValue({
+    models: [{ id: 'test-model' }],
+  }),
+  getCurrentModel: vi.fn().mockReturnValue({
+    id: 'test-model',
+    name: 'Test Model',
+    model: 'test-model-v1',
+    provider: 'test-provider',
+  }),
   getState: vi.fn().mockReturnValue({
     config: { config: {} },
     session: {
@@ -90,6 +97,8 @@ describe('Builtin Slash Commands', () => {
       const message = mockSendMessage.mock.calls[0][0];
       expect(message).toContain('当前状态');
       expect(message).toContain('项目信息');
+      expect(message).toContain('模型配置');
+      expect(message).toContain('会话统计');
       expect(message).toContain('配置状态');
     });
   });

@@ -1,10 +1,10 @@
+import { readFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';
-import { readFileSync } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 
 export type ModelId = 'deepseek' | 'claude' | 'gpt' | 'domestic';
 
@@ -110,7 +110,7 @@ const deepseekSettings = resolveModelSettings(
   'deepseek',
   'DEEPSEEK',
   'deepseek-chat',
-  'https://api.deepseek.com/v1'
+  'https://api.deepseek.com'
 );
 
 const deepseekConfig: TestModelConfig = {
