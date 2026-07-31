@@ -90,6 +90,8 @@ function tryRepairJson(raw: string): Record<string, unknown> | null {
   if (fixed.startsWith('{') && !fixed.endsWith('}')) {
     fixed += '}';
   }
+  // Remove trailing commas again (handles case where comma was at end before added brace)
+  fixed = fixed.replace(/,\s*([}\]])/g, '$1');
   try {
     const parsed = JSON.parse(fixed);
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
