@@ -99,6 +99,34 @@ describe('VerifyQueue', () => {
       expect(runCommand).toHaveBeenCalledTimes(1); // 只跑一次
     });
 
+    it('检查运行中文件变化时会排队执行最新检查', async () => {
+      const ws = makeTempWorkspace();
+      const file = path.join(ws, 'a.ts');
+      fs.writeFileSync(file, 'export const value = 1;\n');
+
+      let releaseFirst!: () => void;
+      const firstCheck = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const runCommand = vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          await firstCheck;
+          return { stdout: '', stderr: '', exitCode: 0, timedOut: false };
+        })
+        .mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, timedOut: false });
+      const q = new VerifyQueue({ runCommand, cacheMs: 5000 });
+
+      const first = q.verify(file, ws);
+      await Promise.resolve();
+      fs.writeFileSync(file, 'export const value = missingSymbol;\n');
+      const second = q.verify(file, ws);
+      releaseFirst();
+
+      await Promise.all([first, second]);
+      expect(runCommand).toHaveBeenCalledTimes(2);
+    });
+
     it('缓存窗口内复用结果', async () => {
       const ws = makeTempWorkspace();
       const file = path.join(ws, 'a.ts');
@@ -112,6 +140,39 @@ describe('VerifyQueue', () => {
       await q.verify(file, ws);
       await q.verify(file, ws);
       expect(runCommand).toHaveBeenCalledTimes(1);
+    });
+
+    it('文件内容变化时不复用 workspace 缓存', async () => {
+      const ws = makeTempWorkspace();
+      const file = path.join(ws, 'a.ts');
+      fs.writeFileSync(file, 'export const value = 1;\n');
+      const runCommand = vi
+        .fn()
+        .mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, timedOut: false });
+      const q = new VerifyQueue({ runCommand, cacheMs: 5000 });
+
+      await q.verify(file, ws);
+      fs.writeFileSync(file, 'export const value = missingSymbol;\n');
+      await q.verify(file, ws);
+
+      expect(runCommand).toHaveBeenCalledTimes(2);
+    });
+
+    it('同 workspace 的不同文件不复用缓存', async () => {
+      const ws = makeTempWorkspace();
+      const firstFile = path.join(ws, 'a.ts');
+      const secondFile = path.join(ws, 'b.ts');
+      fs.writeFileSync(firstFile, 'export const first = 1;\n');
+      fs.writeFileSync(secondFile, 'export const second = 2;\n');
+      const runCommand = vi
+        .fn()
+        .mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, timedOut: false });
+      const q = new VerifyQueue({ runCommand, cacheMs: 5000 });
+
+      await q.verify(firstFile, ws);
+      await q.verify(secondFile, ws);
+
+      expect(runCommand).toHaveBeenCalledTimes(2);
     });
 
     it('缓存过期后重新跑', async () => {

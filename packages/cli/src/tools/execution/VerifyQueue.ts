@@ -5,10 +5,11 @@
  * Agent 连续多次 Edit 会触发多次 tsc 全量扫描,重复工作且互相推迟。
  *
  * 对策:
- * 1. **并发合并**: 同 workspace 的 verify 请求共享一个正在跑的 tsc Promise
- * 2. **短期缓存**: 最近 500ms 内的结果可复用 (连续多次 Edit 的场景)
- * 3. **增量 tsc**: 自动追加 --incremental + tsBuildInfoFile
- * 4. **Monorepo 感知**: workspace = 从文件向上找最近 tsconfig.json
+ * 1. **并发合并**: 同 workspace、同文件版本的 verify 请求共享一个 tsc Promise
+ * 2. **短期缓存**: 最近 500ms 内且输入未变化的结果可复用
+ * 3. **变更排队**: 检查运行中再次编辑时，在旧检查结束后验证最新输入
+ * 4. **增量 tsc**: 自动追加 --incremental + tsBuildInfoFile
+ * 5. **Monorepo 感知**: workspace = 从文件向上找最近 tsconfig.json
  *
  * 不做:
  * - 不做 debounce 延迟 (调用方期望立即��到结果; agent 下一步才能消费)
@@ -16,7 +17,8 @@
  */
 
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -53,6 +55,12 @@ export interface VerifyQueueOptions {
 interface CacheEntry {
   result: VerifyResult;
   at: number;
+  inputFingerprint: string;
+}
+
+interface RunningEntry {
+  inputFingerprint: string;
+  promise: Promise<VerifyResult>;
 }
 
 export class VerifyQueue {
@@ -61,7 +69,7 @@ export class VerifyQueue {
   private readonly timeoutMs: number;
   private readonly runCommand: NonNullable<VerifyQueueOptions['runCommand']>;
 
-  private running = new Map<string, Promise<VerifyResult>>();
+  private running = new Map<string, RunningEntry>();
   private cache = new Map<string, CacheEntry>();
 
   constructor(options: VerifyQueueOptions = {}) {
@@ -84,8 +92,9 @@ export class VerifyQueue {
 
   /**
    * 对文件所属的 workspace 跑类型检查
-   * - 并发合并: 同 workspace 已有跑中的请求 → 共享
-   * - 缓存窗口: 最近 cacheMs 内的结果 → 直接复用
+   * - 并发合并: 同 workspace 且输入 fingerprint 相同 → 共享
+   * - 变更排队: 同 workspace 但输入不同 → 等待当前检查后重新执行
+   * - 缓存窗口: 最近 cacheMs 内且输入相同 → 直接复用
    *
    * @returns VerifyResult; 若检测不到类型检查环境 → null
    */
@@ -94,25 +103,44 @@ export class VerifyQueue {
     if (!workspace) return null;
 
     const now = Date.now();
+    const inputFingerprint = getInputFingerprint(filePath, searchRoot);
     const cached = this.cache.get(workspace);
-    if (cached && now - cached.at < this.cacheMs) {
+    if (
+      cached &&
+      cached.inputFingerprint === inputFingerprint &&
+      now - cached.at < this.cacheMs
+    ) {
       logger.debug(`[VerifyQueue] cache hit: ${workspace}`);
       return cached.result;
     }
 
-    let pending = this.running.get(workspace);
-    if (!pending) {
-      pending = this.runTypeCheck(workspace).finally(() => {
-        this.running.delete(workspace);
-      });
-      this.running.set(workspace, pending);
-    } else {
+    const running = this.running.get(workspace);
+    if (running?.inputFingerprint === inputFingerprint) {
       logger.debug(`[VerifyQueue] coalescing into running check: ${workspace}`);
+      return running.promise;
     }
 
-    const result = await pending;
-    this.cache.set(workspace, { result, at: Date.now() });
-    return result;
+    const run = async (): Promise<VerifyResult> => {
+      const result = await this.runTypeCheck(workspace);
+      this.cache.set(workspace, {
+        result,
+        at: Date.now(),
+        inputFingerprint,
+      });
+      return result;
+    };
+    const previous = running?.promise;
+    const pending = (previous ? previous.then(run, run) : run()).finally(() => {
+      if (this.running.get(workspace)?.promise === pending) {
+        this.running.delete(workspace);
+      }
+    });
+    const entry: RunningEntry = {
+      inputFingerprint,
+      promise: pending,
+    };
+    this.running.set(workspace, entry);
+    return pending;
   }
 
   /** 手动清空缓存 (测试用) */
@@ -137,6 +165,19 @@ export class VerifyQueue {
       timedOut,
       workspaceRoot,
     };
+  }
+}
+
+function getInputFingerprint(filePath: string, searchRoot: string): string {
+  const absPath = path.isAbsolute(filePath)
+    ? path.normalize(filePath)
+    : path.resolve(searchRoot, filePath);
+
+  try {
+    const digest = createHash('sha256').update(readFileSync(absPath)).digest('hex');
+    return `${absPath}\0${digest}`;
+  } catch {
+    return `${absPath}\0missing`;
   }
 }
 
