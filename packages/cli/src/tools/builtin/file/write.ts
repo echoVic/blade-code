@@ -239,12 +239,9 @@ export const writeTool = createTool({
 
       return {
         success: true,
-        llmContent: {
-          file_path,
-          size: stats?.size,
-          modified:
-            stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
-        },
+        llmContent: oldContent
+          ? `Wrote ${file_path} (${content.length} chars, updated existing file)`
+          : `Created ${file_path} (${content.length} chars, new file)`,
         metadata,
       };
     } catch (error) {
