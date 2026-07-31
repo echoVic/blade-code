@@ -92,6 +92,93 @@ function createCodingTaskWorkspace(): string {
   return workspace;
 }
 
+function createMultiFileTaskWorkspace(): string {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-multi-'));
+  mkdirSync(path.join(workspace, 'src'), { recursive: true });
+  mkdirSync(path.join(workspace, 'test'), { recursive: true });
+  mkdirSync(path.join(workspace, 'scripts'), { recursive: true });
+  writeFileSync(
+    path.join(workspace, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'blade-real-api-multi-file-task',
+        private: true,
+        type: 'module',
+        scripts: {
+          test: 'node --test',
+          'type-check': 'node scripts/type-check.mjs',
+        },
+      },
+      null,
+      2
+    )
+  );
+  writeFileSync(path.join(workspace, 'tsconfig.json'), '{}\n');
+  writeFileSync(
+    path.join(workspace, 'src', 'discount.js'),
+    [
+      'export function discountRate(tier) {',
+      "  return tier === 'pro' ? 0.1 : 0;",
+      '}',
+      '',
+    ].join('\n')
+  );
+  writeFileSync(
+    path.join(workspace, 'src', 'checkout.js'),
+    [
+      "import { discountRate } from './discount.js';",
+      '',
+      'export function checkout(subtotal, tier) {',
+      '  return subtotal * (1 - discountRate(tier));',
+      '}',
+      '',
+    ].join('\n')
+  );
+  writeFileSync(
+    path.join(workspace, 'scripts', 'type-check.mjs'),
+    [
+      "import { readFileSync } from 'node:fs';",
+      '',
+      "const discount = readFileSync(new URL('../src/discount.js', import.meta.url), 'utf8');",
+      "const checkout = readFileSync(new URL('../src/checkout.js', import.meta.url), 'utf8');",
+      "const exportReady = discount.includes('export function discountPercent');",
+      'const importReady = checkout.includes("import { discountPercent } from \'./discount.js\';");',
+      "const conversionReady = checkout.includes('discountPercent(tier) / 100');",
+      'if (!exportReady || !importReady || !conversionReady) {',
+      "  console.error('src/discount.js(1,1): error TS2305: expected discountPercent export.');",
+      "  console.error('src/checkout.js(1,1): error TS2305: caller must import and convert discountPercent.');",
+      '  process.exit(1);',
+      '}',
+      '',
+    ].join('\n')
+  );
+  writeFileSync(
+    path.join(workspace, 'test', 'checkout.test.js'),
+    [
+      "import test from 'node:test';",
+      "import assert from 'node:assert/strict';",
+      "import { discountPercent } from '../src/discount.js';",
+      "import { checkout } from '../src/checkout.js';",
+      '',
+      "test('discountPercent exposes whole-number percentages', () => {",
+      "  assert.equal(discountPercent('pro'), 10);",
+      "  assert.equal(discountPercent('free'), 0);",
+      '});',
+      '',
+      "test('checkout applies the percentage contract', () => {",
+      "  assert.equal(checkout(250, 'pro'), 225);",
+      "  assert.equal(checkout(250, 'free'), 250);",
+      '});',
+      '',
+    ].join('\n')
+  );
+
+  runGit(workspace, ['init', '-q']);
+  runGit(workspace, ['add', '.']);
+  runGit(workspace, ['commit', '-qm', 'fixture']);
+  return workspace;
+}
+
 interface CommandResult {
   status: number | null;
   stdout: string;
@@ -214,6 +301,19 @@ function createContinuationPrompt(): string {
   ].join('\n');
 }
 
+function createMultiFileTaskPrompt(): string {
+  return [
+    'Work on this repository as a coding agent.',
+    'Inspect the source files, package scripts, and tests before editing.',
+    'Migrate the discount API from discountRate (a decimal fraction) to discountPercent (a whole-number percentage).',
+    'Update both the API implementation and every production caller so the tests pass.',
+    'Modify only src/discount.js and src/checkout.js.',
+    'Run npm run type-check and npm test after the edits; do not finish until both pass.',
+    'Do not modify package.json, scripts, tests, or add generated files.',
+    'In your final response, summarize both changed files and both verification commands.',
+  ].join('\n');
+}
+
 const enabled = isRealApiTestEnabled() && apiKey.length > 0;
 
 describe.skipIf(!enabled)('Blade coding task (real API)', () => {
@@ -326,6 +426,76 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         expect(
           `${inspection.stdout}\n${inspection.stderr}\n${continuation.stdout}`
         ).not.toContain(apiKey);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 420_000);
+
+    it('completes a coordinated multi-file migration and verifies the repository', async () => {
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          'Missing built CLI; run "bun run build:cli" before real API tests'
+        );
+      }
+
+      const workspace = createMultiFileTaskWorkspace();
+      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-multi-home-'));
+
+      try {
+        const result = await runBladeInvocation(workspace, home, model, {
+          prompt: createMultiFileTaskPrompt(),
+          maxTurns: 16,
+        });
+        const parsed = parseHeadlessJsonl(result.stdout);
+        const editTargets = parsed.events.flatMap((event) =>
+          event.type === 'tool_start' && event.tool_name === 'Edit'
+            ? [event.target]
+            : []
+        );
+        const bashStarts = parsed.events.filter(
+          (event) => event.type === 'tool_start' && event.tool_name === 'Bash'
+        );
+        const diffNames = execFileSync('git', ['diff', '--name-only'], {
+          cwd: workspace,
+          encoding: 'utf8',
+        })
+          .trim()
+          .split(/\r?\n/)
+          .filter(Boolean);
+
+        expect(result.error).toBeUndefined();
+        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(parsed.nonJsonLines).toEqual([]);
+        expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
+        expect(editTargets.some((target) => target?.endsWith('src/discount.js'))).toBe(
+          true
+        );
+        expect(editTargets.some((target) => target?.endsWith('src/checkout.js'))).toBe(
+          true
+        );
+        expect(bashStarts.length).toBeGreaterThanOrEqual(2);
+        expect(diffNames).toEqual(['src/checkout.js', 'src/discount.js']);
+        expect(
+          readFileSync(path.join(workspace, 'src', 'discount.js'), 'utf8')
+        ).toContain('function discountPercent');
+        expect(
+          readFileSync(path.join(workspace, 'src', 'checkout.js'), 'utf8')
+        ).toContain('discountPercent(tier) / 100');
+
+        for (const args of [
+          ['run', 'type-check'],
+          ['test', '--', '--test-reporter=dot'],
+        ]) {
+          const verification = spawnSync('npm', args, {
+            cwd: workspace,
+            encoding: 'utf8',
+          });
+          expect(verification.status, verification.stderr || verification.stdout).toBe(
+            0
+          );
+        }
+        expect(result.stdout + '\n' + result.stderr).not.toContain(apiKey);
       } finally {
         rmSync(workspace, { recursive: true, force: true });
         rmSync(home, { recursive: true, force: true });
