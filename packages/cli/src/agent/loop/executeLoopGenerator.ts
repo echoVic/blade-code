@@ -132,7 +132,7 @@ function isStreamingNotSupportedError(error: unknown): boolean {
 }
 
 function formatToolError(
-  _toolName: string,
+  toolName: string,
   error?: { type: string; message?: string; code?: string; details?: unknown }
 ): string {
   if (!error) return 'Tool execution failed (no details).';
@@ -146,10 +146,15 @@ function formatToolError(
   } else if (error.type === 'timeout_error') {
     parts.push('Hint: The operation timed out. Consider breaking it into smaller steps or increasing timeout.');
   } else if (error.type === 'execution_error') {
-    if (error.message?.includes('ENOENT') || error.message?.includes('no such file')) {
+    const msg = error.message ?? '';
+    if (msg.includes('ENOENT') || msg.includes('no such file')) {
       parts.push('Hint: File or directory not found. Use Glob or Grep to find the correct path first.');
-    } else if (error.message?.includes('EACCES') || error.message?.includes('permission')) {
+    } else if (msg.includes('EACCES') || msg.includes('permission')) {
       parts.push('Hint: Permission denied. The file may be read-only or owned by another user.');
+    } else if (msg.includes('not found in file') || msg.includes('old_string')) {
+      parts.push(`Hint: The target text was not found. Use Read to view the current file content, then retry ${toolName} with the exact text.`);
+    } else if (msg.includes('ENOTDIR')) {
+      parts.push('Hint: A path component is not a directory. Verify the full path with Glob.');
     }
   }
 

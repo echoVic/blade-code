@@ -342,6 +342,10 @@ export class ConfirmationStage implements PipelineStage {
 export class ExecutionStage implements PipelineStage {
   readonly name = 'execution';
 
+  private static readonly TRANSIENT_ERRORS = ['EBUSY', 'EAGAIN', 'EMFILE', 'ENFILE'];
+  private static readonly MAX_TRANSIENT_RETRIES = 2;
+  private static readonly RETRY_DELAY_MS = 200;
+
   async process(execution: ToolExecution): Promise<void> {
     const invocation = execution._internal.invocation;
 
@@ -350,18 +354,45 @@ export class ExecutionStage implements PipelineStage {
       return;
     }
 
-    try {
-      // 执行工具，传递完整的执行上下文
-      const result = await invocation.execute(
-        execution.context.signal ?? new AbortController().signal,
-        execution.context.onProgress,
-        execution.context // 传递完整 context（包含 confirmationHandler、permissionMode 等）
-      );
+    const startTime = Date.now();
+    let lastError: Error | undefined;
 
-      execution.setResult(result);
-    } catch (error) {
-      execution.abort(`Tool execution failed: ${(error as Error).message}`);
+    for (let attempt = 0; attempt <= ExecutionStage.MAX_TRANSIENT_RETRIES; attempt++) {
+      try {
+        const result = await invocation.execute(
+          execution.context.signal ?? new AbortController().signal,
+          execution.context.onProgress,
+          execution.context
+        );
+
+        if (!result.metadata) result.metadata = {};
+        result.metadata.duration = Date.now() - startTime;
+        if (attempt > 0) result.metadata.retriedAttempts = attempt;
+
+        execution.setResult(result);
+        return;
+      } catch (error) {
+        lastError = error as Error;
+        if (
+          attempt < ExecutionStage.MAX_TRANSIENT_RETRIES &&
+          this.isTransientError(lastError)
+        ) {
+          logger.debug(
+            `[ExecutionStage] Transient error (${lastError.message}), retry ${attempt + 1}/${ExecutionStage.MAX_TRANSIENT_RETRIES}`
+          );
+          await new Promise((r) => setTimeout(r, ExecutionStage.RETRY_DELAY_MS * (attempt + 1)));
+          continue;
+        }
+        break;
+      }
     }
+
+    execution.abort(`Tool execution failed: ${lastError!.message}`);
+  }
+
+  private isTransientError(error: Error): boolean {
+    const msg = error.message;
+    return ExecutionStage.TRANSIENT_ERRORS.some((code) => msg.includes(code));
   }
 }
 
