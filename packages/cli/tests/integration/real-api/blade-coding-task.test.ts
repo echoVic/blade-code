@@ -99,10 +99,18 @@ interface CommandResult {
   error?: Error;
 }
 
-function runBladeTask(
+interface BladeInvocationOptions {
+  prompt: string;
+  maxTurns?: number;
+  sessionId?: string;
+  permissionMode?: 'plan' | 'yolo';
+}
+
+function runBladeInvocation(
   workspace: string,
   home: string,
-  model: string
+  model: string,
+  options: BladeInvocationOptions
 ): Promise<CommandResult> {
   const configDir = path.join(home, '.blade');
   mkdirSync(configDir, { recursive: true });
@@ -111,44 +119,35 @@ function runBladeTask(
     JSON.stringify(buildRealApiConfig({ modelId: model, model, baseUrl }), null, 2)
   );
 
-  const prompt = [
-    'Work on this repository as a coding agent.',
-    'Inspect src/math.js and the existing tests before editing.',
-    'Fix the implementation bug so add(left, right) returns the mathematical sum.',
-    'Use the file tools to make the smallest change possible: modify only src/math.js.',
-    'Run npm test after the change and only finish when it passes.',
-    'Do not modify package.json, test files, or add generated files.',
-    'In your final response, summarize the changed file and test result.',
-  ].join('\n');
+  const args = [
+    cliEntry,
+    '--headless',
+    '--output-format',
+    'jsonl',
+    '--permission-mode',
+    options.permissionMode ?? 'yolo',
+    '--max-turns',
+    String(options.maxTurns ?? 12),
+    '--model',
+    model,
+  ];
+  if (options.sessionId) {
+    args.push('--session-id', options.sessionId);
+  }
+  args.push(options.prompt);
 
   return new Promise((resolve) => {
-    const child = realSpawn(
-      'node',
-      [
-        cliEntry,
-        '--headless',
-        '--output-format',
-        'jsonl',
-        '--permission-mode',
-        'yolo',
-        '--max-turns',
-        '12',
-        '--model',
-        model,
-        prompt,
-      ],
-      {
-        cwd: workspace,
-        env: {
-          ...process.env,
-          HOME: home,
-          BLADE_API_KEY: apiKey,
-          BLADE_TELEMETRY_DISABLED: '1',
-          BLADE_ALLOW_ROOT: '1',
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }
-    );
+    const child = realSpawn('node', args, {
+      cwd: workspace,
+      env: {
+        ...process.env,
+        HOME: home,
+        BLADE_API_KEY: apiKey,
+        BLADE_TELEMETRY_DISABLED: '1',
+        BLADE_ALLOW_ROOT: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
     let stdout = '';
     let stderr = '';
@@ -184,6 +183,37 @@ function runBladeTask(
   });
 }
 
+function createCodingTaskPrompt(): string {
+  return [
+    'Work on this repository as a coding agent.',
+    'Inspect src/math.js and the existing tests before editing.',
+    'Fix the implementation bug so add(left, right) returns the mathematical sum.',
+    'Use the file tools to make the smallest change possible: modify only src/math.js.',
+    'Run npm test after the change and only finish when it passes.',
+    'Do not modify package.json, test files, or add generated files.',
+    'In your final response, summarize the changed file and test result.',
+  ].join('\n');
+}
+
+function createInspectionPrompt(): string {
+  return [
+    'Inspect this repository as a coding agent.',
+    'Read src/math.js and the existing tests to diagnose the bug.',
+    'Do not edit any files and do not run commands that modify files.',
+    'Explain the exact fix needed, then stop and wait for the next instruction.',
+  ].join('\n');
+}
+
+function createContinuationPrompt(): string {
+  return [
+    'Continue the same repository task from the previous turn.',
+    'The user has approved implementation for this turn and the permission mode is yolo.',
+    'Do not call ExitPlanMode or produce another plan; edit the file and run the test now.',
+    'Apply the minimal fix you diagnosed so add(left, right) returns the mathematical sum.',
+    'Modify only src/math.js, run npm test, and finish only when it passes.',
+  ].join('\n');
+}
+
 const enabled = isRealApiTestEnabled() && apiKey.length > 0;
 
 describe.skipIf(!enabled)('Blade coding task (real API)', () => {
@@ -199,7 +229,9 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
       const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-home-'));
 
       try {
-        const result = await runBladeTask(workspace, home, model);
+        const result = await runBladeInvocation(workspace, home, model, {
+          prompt: createCodingTaskPrompt(),
+        });
         const parsed = parseHeadlessJsonl(result.stdout);
         const toolStarts = parsed.events
           .filter((event) => event.type === 'tool_start')
@@ -238,5 +270,66 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         rmSync(home, { recursive: true, force: true });
       }
     }, 300_000);
+
+    it('resumes a read-only diagnosis in a second CLI process', async () => {
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          `Missing ${cliEntry}; run "bun run build:cli" before real API tests`
+        );
+      }
+
+      const workspace = createCodingTaskWorkspace();
+      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-resume-home-'));
+      const sessionId = `real-api-resume-${model}`;
+
+      try {
+        const inspection = await runBladeInvocation(workspace, home, model, {
+          prompt: createInspectionPrompt(),
+          maxTurns: 4,
+          sessionId,
+          permissionMode: 'plan',
+        });
+        expect(inspection.error).toBeUndefined();
+        expect(inspection.status, redactSecrets(inspection.stderr, [apiKey])).toBe(0);
+        expect(
+          execFileSync('git', ['diff', '--name-only'], {
+            cwd: workspace,
+            encoding: 'utf8',
+          }).trim()
+        ).toBe('');
+
+        const continuation = await runBladeInvocation(workspace, home, model, {
+          prompt: createContinuationPrompt(),
+          sessionId,
+        });
+        const parsed = parseHeadlessJsonl(continuation.stdout);
+        const toolStarts = parsed.events
+          .filter((event) => event.type === 'tool_start')
+          .map((event) => event.tool_name);
+        expect(continuation.error).toBeUndefined();
+        expect(continuation.status, redactSecrets(continuation.stderr, [apiKey])).toBe(
+          0
+        );
+        expect(parsed.nonJsonLines).toEqual([]);
+        expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
+        expect(toolStarts).toContain('Edit');
+        expect(toolStarts).toContain('Bash');
+        expect(readFileSync(path.join(workspace, 'src', 'math.js'), 'utf8')).toContain(
+          'return left + right;'
+        );
+
+        const testResult = spawnSync('npm', ['test', '--', '--test-reporter=dot'], {
+          cwd: workspace,
+          encoding: 'utf8',
+        });
+        expect(testResult.status, testResult.stderr || testResult.stdout).toBe(0);
+        expect(
+          `${inspection.stdout}\n${inspection.stderr}\n${continuation.stdout}`
+        ).not.toContain(apiKey);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 420_000);
   });
 });
