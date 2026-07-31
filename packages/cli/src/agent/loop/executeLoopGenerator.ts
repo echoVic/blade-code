@@ -113,6 +113,31 @@ function isStreamingNotSupportedError(error: unknown): boolean {
   );
 }
 
+function formatToolError(
+  _toolName: string,
+  error?: { type: string; message?: string; code?: string; details?: unknown }
+): string {
+  if (!error) return 'Tool execution failed (no details).';
+
+  const parts: string[] = [`Error: ${error.message || 'Unknown error'}`];
+
+  if (error.type === 'validation_error') {
+    parts.push('Hint: Check the tool parameters — a required field may be missing or have the wrong type.');
+  } else if (error.type === 'permission_denied') {
+    parts.push('Hint: This operation requires user approval. Try a different approach or ask the user.');
+  } else if (error.type === 'timeout_error') {
+    parts.push('Hint: The operation timed out. Consider breaking it into smaller steps or increasing timeout.');
+  } else if (error.type === 'execution_error') {
+    if (error.message?.includes('ENOENT') || error.message?.includes('no such file')) {
+      parts.push('Hint: File or directory not found. Use Glob or Grep to find the correct path first.');
+    } else if (error.message?.includes('EACCES') || error.message?.includes('permission')) {
+      parts.push('Hint: Permission denied. The file may be read-only or owned by another user.');
+    }
+  }
+
+  return parts.join('\n');
+}
+
 function isPromptTooLongError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const msg = error.message.toLowerCase();
@@ -1071,7 +1096,7 @@ export async function* executeLoopGenerator(
         // 添加工具结果到消息历史
         let toolResultContent = result.success
           ? result.llmContent || ''
-          : result.error?.message || '执行失败';
+          : formatToolError(toolCall.function.name, result.error);
         if (
           typeof toolResultContent === 'object' &&
           toolResultContent !== null
