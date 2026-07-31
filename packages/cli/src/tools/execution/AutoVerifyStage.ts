@@ -12,6 +12,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
@@ -62,6 +63,34 @@ async function runLintCheck(filePath: string, cwd: string): Promise<string | nul
   }
 }
 
+/**
+ * Find a related test file for the given source file.
+ * Common patterns: foo.ts -> foo.test.ts, foo.spec.ts, __tests__/foo.test.ts
+ */
+function findRelatedTestFile(filePath: string): string | null {
+  if (filePath.includes('.test.') || filePath.includes('.spec.') || filePath.includes('__tests__')) {
+    return null;
+  }
+
+  const dir = path.dirname(filePath);
+  const ext = path.extname(filePath);
+  const base = path.basename(filePath, ext);
+
+  const candidates = [
+    path.join(dir, `${base}.test${ext}`),
+    path.join(dir, `${base}.spec${ext}`),
+    path.join(dir, '__tests__', `${base}.test${ext}`),
+    path.join(dir, '..', 'tests', `${base}.test${ext}`),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 export class AutoVerifyStage implements PipelineStage {
   readonly name = 'auto-verify';
 
@@ -108,6 +137,12 @@ export class AutoVerifyStage implements PipelineStage {
         const lines = lintOutput.split('\n').slice(0, 5);
         diagnostics.push(`Lint errors:\n${lines.join('\n')}`);
       }
+    }
+
+    // 3. Suggest related test file
+    const testHint = findRelatedTestFile(filePath);
+    if (testHint) {
+      diagnostics.push(`Related test: ${testHint}`);
     }
 
     if (diagnostics.length === 0) return;
