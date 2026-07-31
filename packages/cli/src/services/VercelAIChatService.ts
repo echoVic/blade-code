@@ -810,33 +810,46 @@ export class VercelAIChatService implements IChatService {
       }
     };
 
-    try {
-      yield* streamFrom(this, this.model);
-      const duration = Date.now() - startTime;
-      logger.debug('[VercelAIChatService] Stream completed in', duration, 'ms');
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      logger.error('[VercelAIChatService] Stream failed after', duration, 'ms');
+    const maxRetries = this.config.maxRetries ?? 2;
+    let lastError: unknown;
 
-      if (!this.isFallbackableError(error)) throw error;
-
-      const fallbackIds = this.getFallbackModelIds();
-      if (fallbackIds.length === 0) throw error;
-
-      for (const modelId of fallbackIds) {
-        logger.warn(`[VercelAIChatService] Stream fallback: ${modelId}`);
-        yield { modelFallback: true };
-        const fallbackModel = this.createModel({ ...this.config, model: modelId });
-        try {
-          yield* streamFrom(this, fallbackModel);
-          return;
-        } catch (fallbackError) {
-          logger.warn(`[VercelAIChatService] Stream fallback ${modelId} failed`);
-          if (!this.isFallbackableError(fallbackError)) throw fallbackError;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        yield* streamFrom(this, this.model);
+        const duration = Date.now() - startTime;
+        logger.debug('[VercelAIChatService] Stream completed in', duration, 'ms');
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!this.isFallbackableError(error)) throw error;
+        if (attempt < maxRetries) {
+          const delay = 1000 * Math.pow(2, attempt);
+          logger.debug(`[VercelAIChatService] Stream retry ${attempt + 1}/${maxRetries} after ${delay}ms`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
         }
       }
-      throw error;
     }
+
+    const duration = Date.now() - startTime;
+    logger.error('[VercelAIChatService] Stream failed after', duration, 'ms');
+
+    const fallbackIds = this.getFallbackModelIds();
+    if (fallbackIds.length === 0) throw lastError;
+
+    for (const modelId of fallbackIds) {
+      logger.warn(`[VercelAIChatService] Stream fallback: ${modelId}`);
+      yield { modelFallback: true };
+      const fallbackModel = this.createModel({ ...this.config, model: modelId });
+      try {
+        yield* streamFrom(this, fallbackModel);
+        return;
+      } catch (fallbackError) {
+        logger.warn(`[VercelAIChatService] Stream fallback ${modelId} failed`);
+        if (!this.isFallbackableError(fallbackError)) throw fallbackError;
+      }
+    }
+    throw lastError;
   }
 
   getConfig(): ChatConfig {

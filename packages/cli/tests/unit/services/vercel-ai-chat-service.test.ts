@@ -230,17 +230,18 @@ describe('VercelAIChatService', () => {
     });
 
     it('yields modelFallback then fallback stream on 429 with fallbackModel', async () => {
-      // First streamText: fullStream throws 429 during iteration
+      // First streamText: fullStream throws 429 during iteration (3 attempts with retry)
       const error429 = make429Error();
+      const make429Stream = () => ({
+        fullStream: (async function* () {
+          if (Date.now() < 0) { yield undefined; }
+          throw error429;
+        })(),
+      });
       streamText
-        .mockReturnValueOnce({
-          fullStream: (async function* () {
-            if (Date.now() < 0) {
-              yield undefined;
-            }
-            throw error429;
-          })(),
-        })
+        .mockReturnValueOnce(make429Stream())
+        .mockReturnValueOnce(make429Stream())
+        .mockReturnValueOnce(make429Stream())
         .mockReturnValueOnce({
           fullStream: toAsyncIterable([
             { type: 'text-delta', textDelta: 'fallback-content' },
@@ -261,24 +262,23 @@ describe('VercelAIChatService', () => {
       expect(chunks[0]).toEqual({ modelFallback: true });
       expect(chunks[1]).toEqual({ content: 'fallback-content' });
       expect(chunks[2]).toMatchObject({ finishReason: 'stop' });
-      expect(streamText).toHaveBeenCalledTimes(2);
+      expect(streamText).toHaveBeenCalledTimes(4);
     });
 
     it('throws fallback error directly when fallback stream also fails with non-retryable error', async () => {
+      const make503Stream = () => ({
+        fullStream: (async function* () {
+          if (Date.now() < 0) { yield undefined; }
+          throw make503Error();
+        })(),
+      });
       streamText
+        .mockReturnValueOnce(make503Stream())
+        .mockReturnValueOnce(make503Stream())
+        .mockReturnValueOnce(make503Stream())
         .mockReturnValueOnce({
           fullStream: (async function* () {
-            if (Date.now() < 0) {
-              yield undefined;
-            }
-            throw make503Error();
-          })(),
-        })
-        .mockReturnValueOnce({
-          fullStream: (async function* () {
-            if (Date.now() < 0) {
-              yield undefined;
-            }
+            if (Date.now() < 0) { yield undefined; }
             throw new Error('fallback-stream-error');
           })(),
         });
