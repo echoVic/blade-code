@@ -7,11 +7,7 @@ import { z } from 'zod';
 import { getCwd } from '../../../utils/cwd.js';
 import { DEFAULT_EXCLUDE_DIRS } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
-import type {
-  ExecutionContext,
-  GrepMetadata,
-  ToolResult,
-} from '../../types/index.js';
+import type { ExecutionContext, GrepMetadata, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 

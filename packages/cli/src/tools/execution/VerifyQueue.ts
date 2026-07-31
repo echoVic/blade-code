@@ -42,8 +42,12 @@ export interface VerifyQueueOptions {
   /** tsc 超时 (ms), 默认 10_000 */
   timeoutMs?: number;
   /** 覆盖命令 (测试用) */
-  runCommand?: (cmd: string, args: string[], cwd: string, timeoutMs: number)
-    => Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }>;
+  runCommand?: (
+    cmd: string,
+    args: string[],
+    cwd: string,
+    timeoutMs: number
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }>;
 }
 
 interface CacheEntry {

@@ -26,11 +26,7 @@ type FunctionToolCall = {
   function: { name: string; arguments: string };
 };
 
-function makeToolCall(
-  id: string,
-  name: string,
-  args = '{}'
-): FunctionToolCall {
+function makeToolCall(id: string, name: string, args = '{}'): FunctionToolCall {
   return { id, type: 'function', function: { name, arguments: args } };
 }
 
@@ -73,7 +69,7 @@ describe('StreamingToolExecutor — fallback & epoch guard', () => {
     executor = new StreamingToolExecutor(
       pipeline as unknown as ExecutionPipeline,
       execContext,
-      registry as unknown as ToolRegistry,
+      registry as unknown as ToolRegistry
     );
   });
 
@@ -244,19 +240,33 @@ describe('StreamingToolExecutor — fallback & epoch guard', () => {
   describe('non-allowlisted tool queuing', () => {
     it('tools not in STREAMING_PRELAUNCH_ALLOWLIST are queued', () => {
       const nonAllowlisted = [
-        'Edit', 'Write', 'Bash', 'NotebookEdit',
-        'Task', 'Skill', 'SlashCommand', 'AskUserQuestion',
-        'EnterPlanMode', 'ExitPlanMode', 'TaskCreate', 'TaskUpdate',
-        'MemoryWrite', 'AddTask', 'EnterSpecMode',
-        'ExitSpecMode', 'TransitionSpecPhase', 'UpdateSpec',
-        'UpdateTaskStatus', 'KillShell',
+        'Edit',
+        'Write',
+        'Bash',
+        'NotebookEdit',
+        'Task',
+        'Skill',
+        'SlashCommand',
+        'AskUserQuestion',
+        'EnterPlanMode',
+        'ExitPlanMode',
+        'TaskCreate',
+        'TaskUpdate',
+        'MemoryWrite',
+        'AddTask',
+        'EnterSpecMode',
+        'ExitSpecMode',
+        'TransitionSpecPhase',
+        'UpdateSpec',
+        'UpdateTaskStatus',
+        'KillShell',
       ];
 
       for (const name of nonAllowlisted) {
         const exec = new StreamingToolExecutor(
           pipeline as unknown as ExecutionPipeline,
           execContext,
-          registry as unknown as ToolRegistry,
+          registry as unknown as ToolRegistry
         );
         exec.addTool(makeToolCall(`id-${name}`, name), {});
       }

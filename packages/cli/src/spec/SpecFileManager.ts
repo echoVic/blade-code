@@ -103,7 +103,10 @@ export class SpecFileManager {
     await fs.mkdir(changePath, { recursive: true, mode: 0o755 });
 
     // 创建 specs delta 子目录
-    await fs.mkdir(path.join(changePath, SPEC_DIRS.SPEC_DELTA), { recursive: true, mode: 0o755 });
+    await fs.mkdir(path.join(changePath, SPEC_DIRS.SPEC_DELTA), {
+      recursive: true,
+      mode: 0o755,
+    });
 
     return changePath;
   }

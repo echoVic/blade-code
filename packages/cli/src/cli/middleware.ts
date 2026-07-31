@@ -30,12 +30,18 @@ export const validatePermissions: MiddlewareFunction = (argv) => {
   // 处理逗号分隔的工具列表
   if (Array.isArray(argv.allowedTools)) {
     argv.allowedTools = argv.allowedTools.flatMap((tool: string) =>
-      tool.split(',').map((t) => t.trim()).filter((t) => t.length > 0)
+      tool
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0)
     );
   }
   if (Array.isArray(argv.disallowedTools)) {
     argv.disallowedTools = argv.disallowedTools.flatMap((tool: string) =>
-      tool.split(',').map((t) => t.trim()).filter((t) => t.length > 0)
+      tool
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0)
     );
   }
 
@@ -91,19 +97,32 @@ export const loadConfiguration: MiddlewareFunction = async (argv) => {
  */
 export const validateOutput: MiddlewareFunction = (argv) => {
   // 验证输出格式组合
-  if (argv.outputFormat && argv.outputFormat !== 'text' && !argv.print && !argv.headless) {
+  if (
+    argv.outputFormat &&
+    argv.outputFormat !== 'text' &&
+    !argv.print &&
+    !argv.headless
+  ) {
     throw new Error('--output-format can only be used with --print or --headless');
   }
 
   // 验证 headless 模式下的输出格式（仅支持 text | jsonl）
-  if (argv.headless && argv.outputFormat && !['text', 'jsonl'].includes(argv.outputFormat as string)) {
+  if (
+    argv.headless &&
+    argv.outputFormat &&
+    !['text', 'jsonl'].includes(argv.outputFormat as string)
+  ) {
     throw new Error(
       `--headless only supports --output-format text|jsonl, but got "${argv.outputFormat}". Use --print for json|stream-json support.`
     );
   }
 
   // 验证 print 模式下的输出格式（仅支持 text | json | stream-json）
-  if (argv.print && argv.outputFormat && !['text', 'json', 'stream-json'].includes(argv.outputFormat as string)) {
+  if (
+    argv.print &&
+    argv.outputFormat &&
+    !['text', 'json', 'stream-json'].includes(argv.outputFormat as string)
+  ) {
     throw new Error(
       `--print only supports --output-format text|json|stream-json, but got "${argv.outputFormat}". Use --headless for jsonl support.`
     );

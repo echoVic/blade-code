@@ -29,9 +29,7 @@ export function formatDuration(ms: number): string {
   return `${mins}m ${secs}s`;
 }
 
-export function buildExecutionSummary(
-  stats: ExecutionStats,
-): FormattedSummary {
+export function buildExecutionSummary(stats: ExecutionStats): FormattedSummary {
   const lines: string[] = [];
 
   lines.push(`Duration: ${formatDuration(stats.duration)}`);

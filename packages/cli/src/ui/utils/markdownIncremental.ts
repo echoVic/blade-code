@@ -6,10 +6,7 @@
  * - 平摊最终渲染的解析开销
  */
 
-import {
-  MARKDOWN_PATTERNS,
-  type ParsedBlock,
-} from './markdownParser.js';
+import { MARKDOWN_PATTERNS, type ParsedBlock } from './markdownParser.js';
 
 interface IncrementalState {
   inCodeBlock: boolean;

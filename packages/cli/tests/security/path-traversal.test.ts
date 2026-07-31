@@ -102,10 +102,7 @@ describe('路径遍历攻击防护', () => {
 
   describe('符号链接攻击防护', () => {
     it('应该检测可能的符号链接路径', () => {
-      const suspiciousPaths = [
-        '/proc/self/root/etc/passwd',
-        '/dev/fd/0',
-      ];
+      const suspiciousPaths = ['/proc/self/root/etc/passwd', '/dev/fd/0'];
 
       for (const suspiciousPath of suspiciousPaths) {
         const isSuspicious =

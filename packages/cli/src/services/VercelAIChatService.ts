@@ -578,7 +578,11 @@ export class VercelAIChatService implements IChatService {
   private isFallbackableError(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
     const msg = error.message.toLowerCase();
-    if (msg.includes('timeout') || msg.includes('econnrefused') || msg.includes('enotfound')) {
+    if (
+      msg.includes('timeout') ||
+      msg.includes('econnrefused') ||
+      msg.includes('enotfound')
+    ) {
       return true;
     }
     const statusMatch = msg.match(/status[:\s]*(\d{3})/);
@@ -604,7 +608,9 @@ export class VercelAIChatService implements IChatService {
         if (!this.isFallbackableError(error)) throw error;
         if (signal?.aborted) throw error;
         const delay = baseDelayMs * Math.pow(2, attempt);
-        logger.debug(`[VercelAIChatService] Retry ${attempt + 1}/${maxRetries} after ${delay}ms`);
+        logger.debug(
+          `[VercelAIChatService] Retry ${attempt + 1}/${maxRetries} after ${delay}ms`
+        );
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
@@ -737,7 +743,11 @@ export class VercelAIChatService implements IChatService {
     };
 
     try {
-      return await this.retryWithBackoff(() => attempt(this.model), signal, this.config.maxRetries);
+      return await this.retryWithBackoff(
+        () => attempt(this.model),
+        signal,
+        this.config.maxRetries
+      );
     } catch (error) {
       const duration = Date.now() - startTime;
       logger.error('[VercelAIChatService] Chat failed after', duration, 'ms');
@@ -753,7 +763,9 @@ export class VercelAIChatService implements IChatService {
         try {
           return await attempt(fallbackModel);
         } catch (fallbackError) {
-          logger.warn(`[VercelAIChatService] Fallback ${modelId} failed: ${fallbackError instanceof Error ? fallbackError.message : fallbackError}`);
+          logger.warn(
+            `[VercelAIChatService] Fallback ${modelId} failed: ${fallbackError instanceof Error ? fallbackError.message : fallbackError}`
+          );
           if (!this.isFallbackableError(fallbackError)) throw fallbackError;
         }
       }
@@ -813,8 +825,27 @@ export class VercelAIChatService implements IChatService {
             yield {
               finishReason: (part as { finishReason?: string }).finishReason,
               usage: self.convertUsage(
-                (part as { totalUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number; inputTokens?: number; outputTokens?: number } }).totalUsage,
-                (part as { providerMetadata?: { anthropic?: { cacheCreationInputTokens?: number; cacheReadInputTokens?: number } } }).providerMetadata
+                (
+                  part as {
+                    totalUsage?: {
+                      promptTokens?: number;
+                      completionTokens?: number;
+                      totalTokens?: number;
+                      inputTokens?: number;
+                      outputTokens?: number;
+                    };
+                  }
+                ).totalUsage,
+                (
+                  part as {
+                    providerMetadata?: {
+                      anthropic?: {
+                        cacheCreationInputTokens?: number;
+                        cacheReadInputTokens?: number;
+                      };
+                    };
+                  }
+                ).providerMetadata
               ),
             };
             break;
@@ -836,7 +867,9 @@ export class VercelAIChatService implements IChatService {
         if (!this.isFallbackableError(error)) throw error;
         if (attempt < maxRetries) {
           const delay = 1000 * Math.pow(2, attempt);
-          logger.debug(`[VercelAIChatService] Stream retry ${attempt + 1}/${maxRetries} after ${delay}ms`);
+          logger.debug(
+            `[VercelAIChatService] Stream retry ${attempt + 1}/${maxRetries} after ${delay}ms`
+          );
           await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }

@@ -94,7 +94,7 @@ describe('applyToolResultBudget', () => {
       expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
         expectedFilePath,
         longString,
-        'utf-8',
+        'utf-8'
       );
     });
 
@@ -178,7 +178,7 @@ describe('applyToolResultBudget', () => {
       expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
         expectedPath,
         expectedJson,
-        'utf-8',
+        'utf-8'
       );
 
       expect(typeof result).toBe('string');
@@ -247,7 +247,7 @@ describe('applyToolResultBudget', () => {
       });
 
       expect(typeof result).toBe('string');
-      expect((result as string)).toContain('Result too large');
+      expect(result as string).toContain('Result too large');
     });
 
     it('should respect custom previewChars', () => {
@@ -286,7 +286,7 @@ describe('applyToolResultBudget', () => {
       expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
         expectedPath,
         longString,
-        'utf-8',
+        'utf-8'
       );
     });
 

@@ -30,7 +30,9 @@ export const CollapsedHistorySummary: React.FC<CollapsedHistorySummaryProps> =
 
     return (
       <Box flexDirection="row" marginBottom={1}>
-        <Text color={mutedColor}>{'>'} {collapsedCount} 条历史消息</Text>
+        <Text color={mutedColor}>
+          {'>'} {collapsedCount} 条历史消息
+        </Text>
         <Text color={mutedColor}> [Ctrl+O 展开]</Text>
       </Box>
     );

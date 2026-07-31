@@ -68,7 +68,11 @@ export class SessionService {
       if (!normalizedContent) return;
 
       const previous = result[result.length - 1];
-      if (previous && previous.role === msg.role && previous.content === normalizedContent) {
+      if (
+        previous &&
+        previous.role === msg.role &&
+        previous.content === normalizedContent
+      ) {
         return;
       }
 

@@ -26,7 +26,7 @@ export async function saveUserMessage(
   deps: LoopDependencies,
   context: ChatContext,
   message: UserMessageContent,
-  parentUuid: string | null = null,
+  parentUuid: string | null = null
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
@@ -43,7 +43,7 @@ export async function saveUserMessage(
         message,
         parentUuid,
         undefined,
-        context.subagentInfo,
+        context.subagentInfo
       );
     }
   } catch (error) {
@@ -60,7 +60,7 @@ export async function saveAssistantMessage(
   deps: LoopDependencies,
   context: ChatContext,
   content: string,
-  parentUuid: string | null,
+  parentUuid: string | null
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
@@ -71,7 +71,7 @@ export async function saveAssistantMessage(
         content,
         parentUuid,
         undefined,
-        context.subagentInfo,
+        context.subagentInfo
       );
     }
   } catch (error) {
@@ -88,7 +88,7 @@ export async function saveToolUse(
   context: ChatContext,
   toolName: string,
   params: JsonValue,
-  parentUuid: string | null,
+  parentUuid: string | null
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
@@ -98,7 +98,7 @@ export async function saveToolUse(
         toolName,
         params,
         parentUuid,
-        context.subagentInfo,
+        context.subagentInfo
       );
     }
   } catch (error) {
@@ -123,7 +123,7 @@ export async function saveToolResult(
     subagentType: string;
     subagentStatus: 'running' | 'completed' | 'failed' | 'cancelled';
     subagentSummary?: string;
-  },
+  }
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
@@ -136,7 +136,7 @@ export async function saveToolResult(
         parentUuid,
         error,
         context.subagentInfo,
-        subagentRef,
+        subagentRef
       );
     }
   } catch (error_) {
@@ -157,7 +157,7 @@ export async function saveCompaction(
     preTokens: number;
     postTokens?: number;
     filesIncluded?: string[];
-  },
+  }
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
@@ -166,7 +166,7 @@ export async function saveCompaction(
         context.sessionId,
         summary,
         metadata,
-        null,
+        null
       );
     }
   } catch (error) {

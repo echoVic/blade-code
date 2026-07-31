@@ -38,7 +38,7 @@ export type OutputRecoveryAction =
 export function checkOutputRecovery(
   finishReason: string | undefined,
   recoveryCount: number,
-  budgetTracker: BudgetTracker,
+  budgetTracker: BudgetTracker
 ): OutputRecoveryAction {
   if (finishReason !== 'length') {
     return { action: 'none' };
@@ -49,9 +49,7 @@ export function checkOutputRecovery(
   }
 
   if (checkTokenBudget(budgetTracker) === 'stop') {
-    logger.info(
-      '[Loop] Token budget: diminishing returns detected, skipping recovery',
-    );
+    logger.info('[Loop] Token budget: diminishing returns detected, skipping recovery');
     return { action: 'budget_stop' };
   }
 
@@ -75,7 +73,8 @@ const INCOMPLETE_INTENT_PATTERNS = [
 
 const CODE_BLOCK_WITHOUT_TOOL_PATTERN = /```[\s\S]{50,}```/;
 
-const RETRY_PROMPT = '请执行你提到的操作，不要只是描述。使用 Edit/Write/Bash 工具来实际修改文件。';
+const RETRY_PROMPT =
+  '请执行你提到的操作，不要只是描述。使用 Edit/Write/Bash 工具来实际修改文件。';
 
 /** 最大重试次数 */
 const MAX_INCOMPLETE_INTENT_RETRIES = 2;
@@ -95,7 +94,7 @@ export type IncompleteIntentAction =
 export function checkIncompleteIntent(
   content: string | undefined,
   retryCount: number,
-  hadToolCalls = true,
+  hadToolCalls = true
 ): IncompleteIntentAction {
   if (!content || retryCount >= MAX_INCOMPLETE_INTENT_RETRIES) {
     return { action: 'none' };
@@ -115,9 +114,7 @@ export function checkIncompleteIntent(
     return { action: 'none' };
   }
 
-  const isIncompleteIntent = INCOMPLETE_INTENT_PATTERNS.some((p) =>
-    p.test(tail),
-  );
+  const isIncompleteIntent = INCOMPLETE_INTENT_PATTERNS.some((p) => p.test(tail));
 
   if (isIncompleteIntent) {
     return { action: 'retry', prompt: RETRY_PROMPT };
@@ -169,7 +166,7 @@ export async function checkStopHook(context: {
 
       if (raceResult === 'timeout') {
         logger.warn(
-          `[Loop] Stop hook 超时 (${STOP_HOOK_TIMEOUT}ms)，按 shouldStop: true 处理`,
+          `[Loop] Stop hook 超时 (${STOP_HOOK_TIMEOUT}ms)，按 shouldStop: true 处理`
         );
         return { action: 'stop' };
       }
@@ -235,15 +232,14 @@ export async function checkRalphLoop(context: {
       context.turnsCount >= context.maxTurns * RALPH_LOOP_SAFETY_RATIO
     ) {
       logger.info(
-        `[RalphLoop] 轮次接近上限 (${context.turnsCount}/${context.maxTurns})，停止自动继续`,
+        `[RalphLoop] 轮次接近上限 (${context.turnsCount}/${context.maxTurns})，停止自动继续`
       );
       return { action: 'none' };
     }
 
     const tasks = spec.tasks ?? [];
     const completed = tasks.filter(
-      (t: { status: string }) =>
-        t.status === 'completed' || t.status === 'skipped',
+      (t: { status: string }) => t.status === 'completed' || t.status === 'skipped'
     ).length;
     const total = tasks.length;
 
@@ -253,8 +249,7 @@ export async function checkRalphLoop(context: {
 
     // 找到下一个待执行任务
     const nextTask = tasks.find(
-      (t: { status: string }) =>
-        t.status === 'pending' || t.status === 'in_progress',
+      (t: { status: string }) => t.status === 'pending' || t.status === 'in_progress'
     );
 
     const reason =
@@ -265,9 +260,7 @@ export async function checkRalphLoop(context: {
         : '') +
       '请继续执行下一个未完成的任务，不要停止。';
 
-    logger.info(
-      `[RalphLoop] Spec "${spec.name}" 进度 ${completed}/${total}，自动继续`,
-    );
+    logger.info(`[RalphLoop] Spec "${spec.name}" 进度 ${completed}/${total}，自动继续`);
     return { action: 'continue', reason };
   } catch {
     // SpecManager 不可用时（如未初始化），静默跳过

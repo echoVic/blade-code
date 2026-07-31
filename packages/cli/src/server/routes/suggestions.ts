@@ -56,8 +56,9 @@ export const SuggestionsRoutes = () => {
   app.get('/commands', async (c) => {
     try {
       const query = c.req.query('q') || '';
-      const suggestions = getFuzzyCommandSuggestions(query)
-        .filter((s) => !WEB_EXCLUDED_COMMANDS.has(s.command));
+      const suggestions = getFuzzyCommandSuggestions(query).filter(
+        (s) => !WEB_EXCLUDED_COMMANDS.has(s.command)
+      );
       return c.json(suggestions);
     } catch (error) {
       logger.error('[SuggestionsRoutes] Failed to get command suggestions:', error);
@@ -106,12 +107,13 @@ export const SuggestionsRoutes = () => {
       const targetDir = subPath ? path.join(directory, subPath) : directory;
 
       const entries = await readdir(targetDir, { withFileTypes: true });
-      
-      const items: Array<{ name: string; path: string; type: 'dir' | 'file' }> = entries.map((entry) => ({
-        name: entry.name,
-        path: subPath ? `${subPath}/${entry.name}` : entry.name,
-        type: entry.isDirectory() ? 'dir' : 'file',
-      }));
+
+      const items: Array<{ name: string; path: string; type: 'dir' | 'file' }> =
+        entries.map((entry) => ({
+          name: entry.name,
+          path: subPath ? `${subPath}/${entry.name}` : entry.name,
+          type: entry.isDirectory() ? 'dir' : 'file',
+        }));
 
       items.sort((a, b) => {
         if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;

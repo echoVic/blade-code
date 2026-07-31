@@ -66,7 +66,8 @@ const COMMAND_PATTERNS: Array<{
   {
     pattern: /^(npm|pnpm|yarn|bun)\s+(install|i|add|remove|uninstall)/i,
     config: AGGRESSIVE_TRUNCATION,
-    summaryTemplate: (lines) => `Package operation completed (${lines} lines of output)`,
+    summaryTemplate: (lines) =>
+      `Package operation completed (${lines} lines of output)`,
   },
   {
     pattern: /^(npm|pnpm|yarn|bun)\s+(run|exec)\s+(build|compile|bundle)/i,
@@ -123,9 +124,10 @@ const COMMAND_PATTERNS: Array<{
 ];
 
 export class OutputTruncator {
-  private static getConfigForCommand(
-    command: string
-  ): { config: TruncationConfig; summaryTemplate?: (lines: number, chars: number) => string } {
+  private static getConfigForCommand(command: string): {
+    config: TruncationConfig;
+    summaryTemplate?: (lines: number, chars: number) => string;
+  } {
     for (const { pattern, config, summaryTemplate } of COMMAND_PATTERNS) {
       if (pattern.test(command)) {
         return { config, summaryTemplate };
@@ -172,9 +174,10 @@ export class OutputTruncator {
       truncatedContent = `${head}\n\n... (content truncated to ${config.maxChars} chars) ...\n\n${tail}`;
     }
 
-    const summary = config.summarize && summaryTemplate
-      ? summaryTemplate(originalLines, originalChars)
-      : undefined;
+    const summary =
+      config.summarize && summaryTemplate
+        ? summaryTemplate(originalLines, originalChars)
+        : undefined;
 
     if (summary) {
       truncatedContent += `\n\n[Summary: ${summary}]`;

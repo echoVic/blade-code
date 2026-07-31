@@ -13,7 +13,7 @@ import {
   splitCompoundCommand,
   stripSafeEnvVars,
   stripSafeWrappers,
-  tokenize
+  tokenize,
 } from './commandNormalizer.js';
 
 // ============================================================
@@ -372,7 +372,7 @@ export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
     },
     isDangerousCallback: (_raw, args) => {
       // Must have exactly one alphanumeric remote name
-      const nonFlags = args.filter(a => !a.startsWith('-'));
+      const nonFlags = args.filter((a) => !a.startsWith('-'));
       if (nonFlags.length !== 1) return true;
       return !/^[a-zA-Z0-9_.-]+$/.test(nonFlags[0]);
     },
@@ -386,7 +386,7 @@ export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
     isDangerousCallback: (_raw, args) => {
       // Only bare `git remote` or `git remote -v` is safe
       // Any positional arg (add/remove/rename/set-url) is dangerous
-      const nonFlags = args.filter(a => !a.startsWith('-'));
+      const nonFlags = args.filter((a) => !a.startsWith('-'));
       return nonFlags.length > 0;
     },
   },
@@ -599,10 +599,10 @@ export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
     },
     isDangerousCallback: (_raw, args) => {
       // Safe only with -l/--list flag or no positional args
-      const hasListFlag = args.some(a => a === '-l' || a === '--list');
+      const hasListFlag = args.some((a) => a === '-l' || a === '--list');
       if (hasListFlag) return false;
       // Without --list, any positional arg = creating a tag
-      const nonFlags = args.filter(a => !a.startsWith('-'));
+      const nonFlags = args.filter((a) => !a.startsWith('-'));
       return nonFlags.length > 0;
     },
   },
@@ -635,14 +635,34 @@ export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
     },
     isDangerousCallback: (_raw, args) => {
       // Safe with --list, -a, -r, --show-current, or bare git branch
-      const listFlags = new Set(['-l', '--list', '-a', '--all', '-r', '--remotes', '--show-current']);
-      const hasListFlag = args.some(a => listFlags.has(a));
+      const listFlags = new Set([
+        '-l',
+        '--list',
+        '-a',
+        '--all',
+        '-r',
+        '--remotes',
+        '--show-current',
+      ]);
+      const hasListFlag = args.some((a) => listFlags.has(a));
       if (hasListFlag) return false;
       // Dangerous flags: -d, -D, -m, -M, -c, --copy, --delete, --move, --set-upstream-to, --unset-upstream
-      const dangerousFlags = new Set(['-d', '-D', '-m', '-M', '-c', '--copy', '--delete', '--move', '--set-upstream-to', '--unset-upstream', '--edit-description']);
-      if (args.some(a => dangerousFlags.has(a.split('=')[0]))) return true;
+      const dangerousFlags = new Set([
+        '-d',
+        '-D',
+        '-m',
+        '-M',
+        '-c',
+        '--copy',
+        '--delete',
+        '--move',
+        '--set-upstream-to',
+        '--unset-upstream',
+        '--edit-description',
+      ]);
+      if (args.some((a) => dangerousFlags.has(a.split('=')[0]))) return true;
       // Without list flag, any positional arg = creating a branch
-      const nonFlags = args.filter(a => !a.startsWith('-'));
+      const nonFlags = args.filter((a) => !a.startsWith('-'));
       return nonFlags.length > 0;
     },
   },
@@ -679,34 +699,208 @@ const GH_COMMON_FLAGS: Record<string, FlagArgType> = {
 };
 
 export const GH_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
-  'gh pr view': { safeFlags: { ...GH_COMMON_FLAGS }, isDangerousCallback: ghIsDangerousCallback },
-  'gh pr list': { safeFlags: { ...GH_COMMON_FLAGS, '--state': 'string', '-s': 'string', '--author': 'string', '--label': 'string', '--base': 'string', '--head': 'string', '--search': 'string', '--assignee': 'string', '--draft': 'none' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh pr diff': { safeFlags: { ...GH_COMMON_FLAGS, '--color': 'string', '--patch': 'none', '--name-only': 'none' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh pr checks': { safeFlags: { ...GH_COMMON_FLAGS, '--watch': 'none', '--fail-fast': 'none', '--required': 'none' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh pr status': { safeFlags: { ...GH_COMMON_FLAGS }, isDangerousCallback: ghIsDangerousCallback },
-  'gh issue view': { safeFlags: { ...GH_COMMON_FLAGS }, isDangerousCallback: ghIsDangerousCallback },
-  'gh issue list': { safeFlags: { ...GH_COMMON_FLAGS, '--state': 'string', '-s': 'string', '--author': 'string', '--label': 'string', '--search': 'string', '--assignee': 'string', '--milestone': 'string' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh issue status': { safeFlags: { ...GH_COMMON_FLAGS }, isDangerousCallback: ghIsDangerousCallback },
-  'gh repo view': { safeFlags: { ...GH_COMMON_FLAGS }, isDangerousCallback: ghIsDangerousCallback },
-  'gh run list': { safeFlags: { ...GH_COMMON_FLAGS, '--workflow': 'string', '-w': 'string', '--branch': 'string', '-b': 'string', '--status': 'string', '-s': 'string', '--user': 'string', '-u': 'string', '--event': 'string', '-e': 'string' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh run view': { safeFlags: { ...GH_COMMON_FLAGS, '--log': 'none', '--log-failed': 'none', '--exit-status': 'none', '--verbose': 'none', '-v': 'none', '--job': 'string', '-j': 'string' }, isDangerousCallback: ghIsDangerousCallback },
+  'gh pr view': {
+    safeFlags: { ...GH_COMMON_FLAGS },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh pr list': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--state': 'string',
+      '-s': 'string',
+      '--author': 'string',
+      '--label': 'string',
+      '--base': 'string',
+      '--head': 'string',
+      '--search': 'string',
+      '--assignee': 'string',
+      '--draft': 'none',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh pr diff': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--color': 'string',
+      '--patch': 'none',
+      '--name-only': 'none',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh pr checks': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--watch': 'none',
+      '--fail-fast': 'none',
+      '--required': 'none',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh pr status': {
+    safeFlags: { ...GH_COMMON_FLAGS },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh issue view': {
+    safeFlags: { ...GH_COMMON_FLAGS },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh issue list': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--state': 'string',
+      '-s': 'string',
+      '--author': 'string',
+      '--label': 'string',
+      '--search': 'string',
+      '--assignee': 'string',
+      '--milestone': 'string',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh issue status': {
+    safeFlags: { ...GH_COMMON_FLAGS },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh repo view': {
+    safeFlags: { ...GH_COMMON_FLAGS },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh run list': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--workflow': 'string',
+      '-w': 'string',
+      '--branch': 'string',
+      '-b': 'string',
+      '--status': 'string',
+      '-s': 'string',
+      '--user': 'string',
+      '-u': 'string',
+      '--event': 'string',
+      '-e': 'string',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh run view': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--log': 'none',
+      '--log-failed': 'none',
+      '--exit-status': 'none',
+      '--verbose': 'none',
+      '-v': 'none',
+      '--job': 'string',
+      '-j': 'string',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
   'gh auth status': {
     safeFlags: { '--hostname': 'string', '-h': 'string', '--active': 'none' },
     isDangerousCallback: (_raw, args) => {
       // Block --show-token / -t (leaks credentials)
-      return args.some(a => a === '--show-token' || a === '-t');
+      return args.some((a) => a === '--show-token' || a === '-t');
     },
   },
-  'gh release list': { safeFlags: { ...GH_COMMON_FLAGS, '--exclude-drafts': 'none', '--exclude-pre-releases': 'none' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh release view': { safeFlags: { ...GH_COMMON_FLAGS }, isDangerousCallback: ghIsDangerousCallback },
-  'gh workflow list': { safeFlags: { ...GH_COMMON_FLAGS, '--all': 'none', '-a': 'none' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh workflow view': { safeFlags: { ...GH_COMMON_FLAGS, '--yaml': 'none', '-y': 'none', '--ref': 'string', '-r': 'string' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh label list': { safeFlags: { ...GH_COMMON_FLAGS, '--search': 'string', '--sort': 'string', '--order': 'string' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh search repos': { safeFlags: { ...GH_COMMON_FLAGS, '--language': 'string', '--topic': 'string', '--sort': 'string', '--order': 'string', '--match': 'string', '--owner': 'string', '--visibility': 'string' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh search issues': { safeFlags: { ...GH_COMMON_FLAGS, '--sort': 'string', '--order': 'string', '--match': 'string', '--state': 'string', '--label': 'string', '--language': 'string', '--author': 'string', '--assignee': 'string', '--repo': 'string' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh search prs': { safeFlags: { ...GH_COMMON_FLAGS, '--sort': 'string', '--order': 'string', '--match': 'string', '--state': 'string', '--label': 'string', '--language': 'string', '--author': 'string', '--assignee': 'string', '--repo': 'string' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh search commits': { safeFlags: { ...GH_COMMON_FLAGS, '--sort': 'string', '--order': 'string', '--author': 'string', '--committer': 'string', '--repo': 'string' }, isDangerousCallback: ghIsDangerousCallback },
-  'gh search code': { safeFlags: { ...GH_COMMON_FLAGS, '--language': 'string', '--filename': 'string', '--extension': 'string', '--repo': 'string', '--match': 'string' }, isDangerousCallback: ghIsDangerousCallback },
+  'gh release list': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--exclude-drafts': 'none',
+      '--exclude-pre-releases': 'none',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh release view': {
+    safeFlags: { ...GH_COMMON_FLAGS },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh workflow list': {
+    safeFlags: { ...GH_COMMON_FLAGS, '--all': 'none', '-a': 'none' },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh workflow view': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--yaml': 'none',
+      '-y': 'none',
+      '--ref': 'string',
+      '-r': 'string',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh label list': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--search': 'string',
+      '--sort': 'string',
+      '--order': 'string',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh search repos': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--language': 'string',
+      '--topic': 'string',
+      '--sort': 'string',
+      '--order': 'string',
+      '--match': 'string',
+      '--owner': 'string',
+      '--visibility': 'string',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh search issues': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--sort': 'string',
+      '--order': 'string',
+      '--match': 'string',
+      '--state': 'string',
+      '--label': 'string',
+      '--language': 'string',
+      '--author': 'string',
+      '--assignee': 'string',
+      '--repo': 'string',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh search prs': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--sort': 'string',
+      '--order': 'string',
+      '--match': 'string',
+      '--state': 'string',
+      '--label': 'string',
+      '--language': 'string',
+      '--author': 'string',
+      '--assignee': 'string',
+      '--repo': 'string',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh search commits': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--sort': 'string',
+      '--order': 'string',
+      '--author': 'string',
+      '--committer': 'string',
+      '--repo': 'string',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
+  'gh search code': {
+    safeFlags: {
+      ...GH_COMMON_FLAGS,
+      '--language': 'string',
+      '--filename': 'string',
+      '--extension': 'string',
+      '--repo': 'string',
+      '--match': 'string',
+    },
+    isDangerousCallback: ghIsDangerousCallback,
+  },
 };
 
 // ============================================================
@@ -716,17 +910,24 @@ export const GH_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
 export const DOCKER_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
   'docker logs': {
     safeFlags: {
-      '--follow': 'none', '-f': 'none',
-      '--tail': 'number', '-n': 'number',
-      '--timestamps': 'none', '-t': 'none',
-      '--since': 'string', '--until': 'string',
+      '--follow': 'none',
+      '-f': 'none',
+      '--tail': 'number',
+      '-n': 'number',
+      '--timestamps': 'none',
+      '-t': 'none',
+      '--since': 'string',
+      '--until': 'string',
       '--details': 'none',
     },
   },
   'docker inspect': {
     safeFlags: {
-      '--format': 'string', '-f': 'string',
-      '--type': 'string', '--size': 'none', '-s': 'none',
+      '--format': 'string',
+      '-f': 'string',
+      '--type': 'string',
+      '--size': 'none',
+      '-s': 'none',
     },
   },
 };
@@ -735,74 +936,114 @@ export const RIPGREP_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
   rg: {
     safeFlags: {
       // Pattern flags
-      '-e': 'string', '--regexp': 'string',
-      '-F': 'none', '--fixed-strings': 'none',
-      '-i': 'none', '--ignore-case': 'none',
-      '-S': 'none', '--smart-case': 'none',
-      '-s': 'none', '--case-sensitive': 'none',
-      '-v': 'none', '--invert-match': 'none',
-      '-w': 'none', '--word-regexp': 'none',
-      '-x': 'none', '--line-regexp': 'none',
-      '-P': 'none', '--pcre2': 'none',
+      '-e': 'string',
+      '--regexp': 'string',
+      '-F': 'none',
+      '--fixed-strings': 'none',
+      '-i': 'none',
+      '--ignore-case': 'none',
+      '-S': 'none',
+      '--smart-case': 'none',
+      '-s': 'none',
+      '--case-sensitive': 'none',
+      '-v': 'none',
+      '--invert-match': 'none',
+      '-w': 'none',
+      '--word-regexp': 'none',
+      '-x': 'none',
+      '--line-regexp': 'none',
+      '-P': 'none',
+      '--pcre2': 'none',
       '--engine': 'string',
       // Search options
-      '-m': 'number', '--max-count': 'number',
-      '--max-depth': 'number', '--maxdepth': 'number',
-      '-d': 'number', '--max-filesize': 'string',
-      '--mmap': 'none', '--no-mmap': 'none',
-      '-U': 'none', '--multiline': 'none',
+      '-m': 'number',
+      '--max-count': 'number',
+      '--max-depth': 'number',
+      '--maxdepth': 'number',
+      '-d': 'number',
+      '--max-filesize': 'string',
+      '--mmap': 'none',
+      '--no-mmap': 'none',
+      '-U': 'none',
+      '--multiline': 'none',
       '--multiline-dotall': 'none',
-      '--crlf': 'none', '--no-crlf': 'none',
+      '--crlf': 'none',
+      '--no-crlf': 'none',
       // Output options
-      '-c': 'none', '--count': 'none',
+      '-c': 'none',
+      '--count': 'none',
       '--count-matches': 'none',
-      '-l': 'none', '--files-with-matches': 'none',
+      '-l': 'none',
+      '--files-with-matches': 'none',
       '--files-without-match': 'none',
-      '-o': 'none', '--only-matching': 'none',
+      '-o': 'none',
+      '--only-matching': 'none',
       '--vimgrep': 'none',
-      '-r': 'string', '--replace': 'string',
+      '-r': 'string',
+      '--replace': 'string',
       // File filtering
-      '-t': 'string', '--type': 'string',
-      '-T': 'string', '--type-not': 'string',
-      '-g': 'string', '--glob': 'string',
+      '-t': 'string',
+      '--type': 'string',
+      '-T': 'string',
+      '--type-not': 'string',
+      '-g': 'string',
+      '--glob': 'string',
       '--iglob': 'string',
       '--type-add': 'string',
       '--type-clear': 'string',
       // Display
-      '-A': 'number', '--after-context': 'number',
-      '-B': 'number', '--before-context': 'number',
-      '-C': 'number', '--context': 'number',
-      '--color': 'string', '--colors': 'string',
-      '-n': 'none', '--line-number': 'none',
-      '-N': 'none', '--no-line-number': 'none',
-      '-H': 'none', '--with-filename': 'none',
+      '-A': 'number',
+      '--after-context': 'number',
+      '-B': 'number',
+      '--before-context': 'number',
+      '-C': 'number',
+      '--context': 'number',
+      '--color': 'string',
+      '--colors': 'string',
+      '-n': 'none',
+      '--line-number': 'none',
+      '-N': 'none',
+      '--no-line-number': 'none',
+      '-H': 'none',
+      '--with-filename': 'none',
       '--no-filename': 'none',
-      '-p': 'none', '--pretty': 'none',
-      '--heading': 'none', '--no-heading': 'none',
-      '--column': 'none', '--no-column': 'none',
+      '-p': 'none',
+      '--pretty': 'none',
+      '--heading': 'none',
+      '--no-heading': 'none',
+      '--column': 'none',
+      '--no-column': 'none',
       '--byte-offset': 'none',
       '--trim': 'none',
       // Misc
-      '-j': 'number', '--threads': 'number',
-      '--sort': 'string', '--sortr': 'string',
+      '-j': 'number',
+      '--threads': 'number',
+      '--sort': 'string',
+      '--sortr': 'string',
       '--stats': 'none',
       '--no-ignore': 'none',
       '--no-ignore-vcs': 'none',
       '--no-ignore-parent': 'none',
       '--no-ignore-global': 'none',
-      '--hidden': 'none', '--no-hidden': 'none',
-      '-L': 'none', '--follow': 'none',
+      '--hidden': 'none',
+      '--no-hidden': 'none',
+      '-L': 'none',
+      '--follow': 'none',
       '--one-file-system': 'none',
-      '--null': 'none', '-0': 'none',
+      '--null': 'none',
+      '-0': 'none',
       '--path-separator': 'string',
       '--no-config': 'none',
       '--no-ignore-dot': 'none',
       '--no-ignore-exclude': 'none',
       '--no-unicode': 'none',
       '--pcre2-version': 'none',
-      '-q': 'none', '--quiet': 'none',
-      '--help': 'none', '-h': 'none',
-      '--version': 'none', '-V': 'none',
+      '-q': 'none',
+      '--quiet': 'none',
+      '--help': 'none',
+      '-h': 'none',
+      '--version': 'none',
+      '-V': 'none',
       '--': 'none',
       '--json': 'none',
       '--auto-hybrid-regex': 'none',
@@ -811,12 +1052,15 @@ export const RIPGREP_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
       '--line-buffered': 'none',
       '--debug': 'none',
       '--dfa-size-limit': 'string',
-      '--encoding': 'string', '-E': 'string',
+      '--encoding': 'string',
+      '-E': 'string',
       '--no-messages': 'none',
       '--regex-size-limit': 'string',
-      '--search-zip': 'none', '-z': 'none',
+      '--search-zip': 'none',
+      '-z': 'none',
       '--type-list': 'none',
-      '--unrestricted': 'none', '-u': 'none',
+      '--unrestricted': 'none',
+      '-u': 'none',
     },
   },
 };
@@ -833,17 +1077,215 @@ const COMMAND_ALLOWLIST: Record<string, CommandConfig> = {
   ...RIPGREP_READ_ONLY_COMMANDS,
 
   // Additional safe commands with flag validation
-  file: { safeFlags: { '-b': 'none', '--brief': 'none', '-i': 'none', '--mime': 'none', '--mime-type': 'none', '--mime-encoding': 'none', '-L': 'none', '-h': 'none', '--no-dereference': 'none', '-z': 'none' } },
-  sort: { safeFlags: { '-r': 'none', '--reverse': 'none', '-n': 'none', '--numeric-sort': 'none', '-u': 'none', '--unique': 'none', '-k': 'string', '--key': 'string', '-t': 'string', '--field-separator': 'string', '-f': 'none', '--ignore-case': 'none', '-s': 'none', '--stable': 'none', '-h': 'none', '--human-numeric-sort': 'none', '-V': 'none', '--version-sort': 'none', '-g': 'none', '--general-numeric-sort': 'none', '-M': 'none', '--month-sort': 'none' } },
-  grep: { safeFlags: { '-i': 'none', '--ignore-case': 'none', '-v': 'none', '--invert-match': 'none', '-c': 'none', '--count': 'none', '-l': 'none', '--files-with-matches': 'none', '-L': 'none', '--files-without-match': 'none', '-n': 'none', '--line-number': 'none', '-H': 'none', '--with-filename': 'none', '-h': 'none', '--no-filename': 'none', '-r': 'none', '-R': 'none', '--recursive': 'none', '-E': 'none', '--extended-regexp': 'none', '-F': 'none', '--fixed-strings': 'none', '-P': 'none', '--perl-regexp': 'none', '-w': 'none', '--word-regexp': 'none', '-x': 'none', '--line-regexp': 'none', '-A': 'number', '--after-context': 'number', '-B': 'number', '--before-context': 'number', '-C': 'number', '--context': 'number', '-m': 'number', '--max-count': 'number', '--color': 'string', '--colour': 'string', '-e': 'string', '--regexp': 'string', '--include': 'string', '--exclude': 'string', '--exclude-dir': 'string', '-o': 'none', '--only-matching': 'none', '-q': 'none', '--quiet': 'none', '--silent': 'none', '-s': 'none', '--no-messages': 'none', '-Z': 'none', '--null': 'none' } },
-  tree: { safeFlags: { '-L': 'number', '-d': 'none', '-a': 'none', '-f': 'none', '-i': 'none', '-l': 'none', '-s': 'none', '-h': 'none', '-p': 'none', '-u': 'none', '-g': 'none', '-D': 'none', '-r': 'none', '-t': 'none', '--noreport': 'none', '--dirsfirst': 'none', '-C': 'none', '--color': 'none', '-n': 'none', '-I': 'string', '-P': 'string', '--charset': 'string', '-o': 'string', '--prune': 'none', '-J': 'none', '-X': 'none', '-H': 'string' } },
-  date: { safeFlags: { '-u': 'none', '--utc': 'none', '-d': 'string', '--date': 'string', '-I': 'none', '--iso-8601': 'none', '-R': 'none', '--rfc-2822': 'none', '--rfc-3339': 'string' } },
-  ps: { safeFlags: { '-e': 'none', '-f': 'none', '-l': 'none', '-a': 'none', '-u': 'none', '-x': 'none', '-o': 'string', '--sort': 'string', '-p': 'string', '--pid': 'string', '-C': 'string', '--forest': 'none', '-H': 'none', '--headers': 'none', '--no-headers': 'none', '-w': 'none', '--width': 'number' } },
-  lsof: { safeFlags: { '-i': 'string', '-p': 'string', '-n': 'none', '-P': 'none', '-t': 'none', '-c': 'string', '-u': 'string', '-d': 'string', '-a': 'none' } },
-  netstat: { safeFlags: { '-t': 'none', '-u': 'none', '-l': 'none', '-n': 'none', '-p': 'none', '-a': 'none', '-r': 'none', '-s': 'none', '-e': 'none', '-o': 'none', '-i': 'none' } },
-  man: { safeFlags: { '-k': 'string', '--apropos': 'string', '-f': 'string', '--whatis': 'string' } },
+  file: {
+    safeFlags: {
+      '-b': 'none',
+      '--brief': 'none',
+      '-i': 'none',
+      '--mime': 'none',
+      '--mime-type': 'none',
+      '--mime-encoding': 'none',
+      '-L': 'none',
+      '-h': 'none',
+      '--no-dereference': 'none',
+      '-z': 'none',
+    },
+  },
+  sort: {
+    safeFlags: {
+      '-r': 'none',
+      '--reverse': 'none',
+      '-n': 'none',
+      '--numeric-sort': 'none',
+      '-u': 'none',
+      '--unique': 'none',
+      '-k': 'string',
+      '--key': 'string',
+      '-t': 'string',
+      '--field-separator': 'string',
+      '-f': 'none',
+      '--ignore-case': 'none',
+      '-s': 'none',
+      '--stable': 'none',
+      '-h': 'none',
+      '--human-numeric-sort': 'none',
+      '-V': 'none',
+      '--version-sort': 'none',
+      '-g': 'none',
+      '--general-numeric-sort': 'none',
+      '-M': 'none',
+      '--month-sort': 'none',
+    },
+  },
+  grep: {
+    safeFlags: {
+      '-i': 'none',
+      '--ignore-case': 'none',
+      '-v': 'none',
+      '--invert-match': 'none',
+      '-c': 'none',
+      '--count': 'none',
+      '-l': 'none',
+      '--files-with-matches': 'none',
+      '-L': 'none',
+      '--files-without-match': 'none',
+      '-n': 'none',
+      '--line-number': 'none',
+      '-H': 'none',
+      '--with-filename': 'none',
+      '-h': 'none',
+      '--no-filename': 'none',
+      '-r': 'none',
+      '-R': 'none',
+      '--recursive': 'none',
+      '-E': 'none',
+      '--extended-regexp': 'none',
+      '-F': 'none',
+      '--fixed-strings': 'none',
+      '-P': 'none',
+      '--perl-regexp': 'none',
+      '-w': 'none',
+      '--word-regexp': 'none',
+      '-x': 'none',
+      '--line-regexp': 'none',
+      '-A': 'number',
+      '--after-context': 'number',
+      '-B': 'number',
+      '--before-context': 'number',
+      '-C': 'number',
+      '--context': 'number',
+      '-m': 'number',
+      '--max-count': 'number',
+      '--color': 'string',
+      '--colour': 'string',
+      '-e': 'string',
+      '--regexp': 'string',
+      '--include': 'string',
+      '--exclude': 'string',
+      '--exclude-dir': 'string',
+      '-o': 'none',
+      '--only-matching': 'none',
+      '-q': 'none',
+      '--quiet': 'none',
+      '--silent': 'none',
+      '-s': 'none',
+      '--no-messages': 'none',
+      '-Z': 'none',
+      '--null': 'none',
+    },
+  },
+  tree: {
+    safeFlags: {
+      '-L': 'number',
+      '-d': 'none',
+      '-a': 'none',
+      '-f': 'none',
+      '-i': 'none',
+      '-l': 'none',
+      '-s': 'none',
+      '-h': 'none',
+      '-p': 'none',
+      '-u': 'none',
+      '-g': 'none',
+      '-D': 'none',
+      '-r': 'none',
+      '-t': 'none',
+      '--noreport': 'none',
+      '--dirsfirst': 'none',
+      '-C': 'none',
+      '--color': 'none',
+      '-n': 'none',
+      '-I': 'string',
+      '-P': 'string',
+      '--charset': 'string',
+      '-o': 'string',
+      '--prune': 'none',
+      '-J': 'none',
+      '-X': 'none',
+      '-H': 'string',
+    },
+  },
+  date: {
+    safeFlags: {
+      '-u': 'none',
+      '--utc': 'none',
+      '-d': 'string',
+      '--date': 'string',
+      '-I': 'none',
+      '--iso-8601': 'none',
+      '-R': 'none',
+      '--rfc-2822': 'none',
+      '--rfc-3339': 'string',
+    },
+  },
+  ps: {
+    safeFlags: {
+      '-e': 'none',
+      '-f': 'none',
+      '-l': 'none',
+      '-a': 'none',
+      '-u': 'none',
+      '-x': 'none',
+      '-o': 'string',
+      '--sort': 'string',
+      '-p': 'string',
+      '--pid': 'string',
+      '-C': 'string',
+      '--forest': 'none',
+      '-H': 'none',
+      '--headers': 'none',
+      '--no-headers': 'none',
+      '-w': 'none',
+      '--width': 'number',
+    },
+  },
+  lsof: {
+    safeFlags: {
+      '-i': 'string',
+      '-p': 'string',
+      '-n': 'none',
+      '-P': 'none',
+      '-t': 'none',
+      '-c': 'string',
+      '-u': 'string',
+      '-d': 'string',
+      '-a': 'none',
+    },
+  },
+  netstat: {
+    safeFlags: {
+      '-t': 'none',
+      '-u': 'none',
+      '-l': 'none',
+      '-n': 'none',
+      '-p': 'none',
+      '-a': 'none',
+      '-r': 'none',
+      '-s': 'none',
+      '-e': 'none',
+      '-o': 'none',
+      '-i': 'none',
+    },
+  },
+  man: {
+    safeFlags: {
+      '-k': 'string',
+      '--apropos': 'string',
+      '-f': 'string',
+      '--whatis': 'string',
+    },
+  },
   sed: {
-    safeFlags: { '-n': 'none', '--quiet': 'none', '--silent': 'none', '-E': 'none', '-r': 'none', '--regexp-extended': 'none', '-e': 'string', '--expression': 'string' },
+    safeFlags: {
+      '-n': 'none',
+      '--quiet': 'none',
+      '--silent': 'none',
+      '-E': 'none',
+      '-r': 'none',
+      '--regexp-extended': 'none',
+      '-e': 'string',
+      '--expression': 'string',
+    },
     isDangerousCallback: (_raw, args) => {
       // sed is read-only only with -n (suppress output) and p/d/s patterns
       // Reject -i (in-place edit) and w command
@@ -855,15 +1297,181 @@ const COMMAND_ALLOWLIST: Record<string, CommandConfig> = {
       return false;
     },
   },
-  base64: { safeFlags: { '-d': 'none', '--decode': 'none', '-w': 'number', '--wrap': 'number', '-i': 'none', '--ignore-garbage': 'none' } },
-  sha256sum: { safeFlags: { '-c': 'none', '--check': 'none', '-b': 'none', '--binary': 'none', '-t': 'none', '--text': 'none', '--tag': 'none', '--status': 'none', '-w': 'none', '--warn': 'none', '--strict': 'none', '--quiet': 'none' } },
-  sha1sum: { safeFlags: { '-c': 'none', '--check': 'none', '-b': 'none', '--binary': 'none', '--tag': 'none', '--status': 'none' } },
-  md5sum: { safeFlags: { '-c': 'none', '--check': 'none', '-b': 'none', '--binary': 'none', '--tag': 'none', '--status': 'none' } },
-  hostname: { safeFlags: { '-s': 'none', '-f': 'none', '--fqdn': 'none', '-d': 'none', '-i': 'none', '-I': 'none', '-a': 'none' } },
-  pgrep: { safeFlags: { '-l': 'none', '-a': 'none', '-f': 'none', '-x': 'none', '-n': 'none', '-o': 'none', '-c': 'none', '-d': 'string', '-u': 'string', '-U': 'string', '-P': 'string', '-G': 'string', '-t': 'string' } },
-  ss: { safeFlags: { '-t': 'none', '-u': 'none', '-l': 'none', '-n': 'none', '-p': 'none', '-a': 'none', '-r': 'none', '-s': 'none', '-e': 'none', '-o': 'none', '-i': 'none', '-4': 'none', '-6': 'none', '-m': 'none', '-Z': 'none', '-K': 'none' } },
-  fd: { safeFlags: { '-t': 'string', '--type': 'string', '-e': 'string', '--extension': 'string', '-E': 'string', '--exclude': 'string', '-d': 'number', '--max-depth': 'number', '-H': 'none', '--hidden': 'none', '-I': 'none', '--no-ignore': 'none', '-s': 'none', '--case-sensitive': 'none', '-i': 'none', '--ignore-case': 'none', '-a': 'none', '--absolute-path': 'none', '-l': 'none', '--list-details': 'none', '-L': 'none', '--follow': 'none', '-p': 'none', '--full-path': 'none', '-0': 'none', '--print0': 'none', '-1': 'none', '--color': 'string', '--glob': 'none', '-g': 'none', '-F': 'none', '--fixed-strings': 'none', '--prune': 'none', '-u': 'none', '--unrestricted': 'none', '-S': 'string', '--size': 'string', '--changed-within': 'string', '--changed-before': 'string', '-j': 'number', '--threads': 'number' } },
-  fdfind: { safeFlags: { '-t': 'string', '--type': 'string', '-e': 'string', '--extension': 'string', '-E': 'string', '--exclude': 'string', '-d': 'number', '--max-depth': 'number', '-H': 'none', '--hidden': 'none', '-I': 'none', '--no-ignore': 'none', '-s': 'none', '--case-sensitive': 'none', '-i': 'none', '--ignore-case': 'none', '-a': 'none', '--absolute-path': 'none', '-l': 'none', '--list-details': 'none', '-L': 'none', '--follow': 'none', '-p': 'none', '--full-path': 'none', '-0': 'none', '--print0': 'none', '-1': 'none', '--color': 'string', '--glob': 'none', '-g': 'none', '-F': 'none', '--fixed-strings': 'none' } },
+  base64: {
+    safeFlags: {
+      '-d': 'none',
+      '--decode': 'none',
+      '-w': 'number',
+      '--wrap': 'number',
+      '-i': 'none',
+      '--ignore-garbage': 'none',
+    },
+  },
+  sha256sum: {
+    safeFlags: {
+      '-c': 'none',
+      '--check': 'none',
+      '-b': 'none',
+      '--binary': 'none',
+      '-t': 'none',
+      '--text': 'none',
+      '--tag': 'none',
+      '--status': 'none',
+      '-w': 'none',
+      '--warn': 'none',
+      '--strict': 'none',
+      '--quiet': 'none',
+    },
+  },
+  sha1sum: {
+    safeFlags: {
+      '-c': 'none',
+      '--check': 'none',
+      '-b': 'none',
+      '--binary': 'none',
+      '--tag': 'none',
+      '--status': 'none',
+    },
+  },
+  md5sum: {
+    safeFlags: {
+      '-c': 'none',
+      '--check': 'none',
+      '-b': 'none',
+      '--binary': 'none',
+      '--tag': 'none',
+      '--status': 'none',
+    },
+  },
+  hostname: {
+    safeFlags: {
+      '-s': 'none',
+      '-f': 'none',
+      '--fqdn': 'none',
+      '-d': 'none',
+      '-i': 'none',
+      '-I': 'none',
+      '-a': 'none',
+    },
+  },
+  pgrep: {
+    safeFlags: {
+      '-l': 'none',
+      '-a': 'none',
+      '-f': 'none',
+      '-x': 'none',
+      '-n': 'none',
+      '-o': 'none',
+      '-c': 'none',
+      '-d': 'string',
+      '-u': 'string',
+      '-U': 'string',
+      '-P': 'string',
+      '-G': 'string',
+      '-t': 'string',
+    },
+  },
+  ss: {
+    safeFlags: {
+      '-t': 'none',
+      '-u': 'none',
+      '-l': 'none',
+      '-n': 'none',
+      '-p': 'none',
+      '-a': 'none',
+      '-r': 'none',
+      '-s': 'none',
+      '-e': 'none',
+      '-o': 'none',
+      '-i': 'none',
+      '-4': 'none',
+      '-6': 'none',
+      '-m': 'none',
+      '-Z': 'none',
+      '-K': 'none',
+    },
+  },
+  fd: {
+    safeFlags: {
+      '-t': 'string',
+      '--type': 'string',
+      '-e': 'string',
+      '--extension': 'string',
+      '-E': 'string',
+      '--exclude': 'string',
+      '-d': 'number',
+      '--max-depth': 'number',
+      '-H': 'none',
+      '--hidden': 'none',
+      '-I': 'none',
+      '--no-ignore': 'none',
+      '-s': 'none',
+      '--case-sensitive': 'none',
+      '-i': 'none',
+      '--ignore-case': 'none',
+      '-a': 'none',
+      '--absolute-path': 'none',
+      '-l': 'none',
+      '--list-details': 'none',
+      '-L': 'none',
+      '--follow': 'none',
+      '-p': 'none',
+      '--full-path': 'none',
+      '-0': 'none',
+      '--print0': 'none',
+      '-1': 'none',
+      '--color': 'string',
+      '--glob': 'none',
+      '-g': 'none',
+      '-F': 'none',
+      '--fixed-strings': 'none',
+      '--prune': 'none',
+      '-u': 'none',
+      '--unrestricted': 'none',
+      '-S': 'string',
+      '--size': 'string',
+      '--changed-within': 'string',
+      '--changed-before': 'string',
+      '-j': 'number',
+      '--threads': 'number',
+    },
+  },
+  fdfind: {
+    safeFlags: {
+      '-t': 'string',
+      '--type': 'string',
+      '-e': 'string',
+      '--extension': 'string',
+      '-E': 'string',
+      '--exclude': 'string',
+      '-d': 'number',
+      '--max-depth': 'number',
+      '-H': 'none',
+      '--hidden': 'none',
+      '-I': 'none',
+      '--no-ignore': 'none',
+      '-s': 'none',
+      '--case-sensitive': 'none',
+      '-i': 'none',
+      '--ignore-case': 'none',
+      '-a': 'none',
+      '--absolute-path': 'none',
+      '-l': 'none',
+      '--list-details': 'none',
+      '-L': 'none',
+      '--follow': 'none',
+      '-p': 'none',
+      '--full-path': 'none',
+      '-0': 'none',
+      '--print0': 'none',
+      '-1': 'none',
+      '--color': 'string',
+      '--glob': 'none',
+      '-g': 'none',
+      '-F': 'none',
+      '--fixed-strings': 'none',
+    },
+  },
   tput: { safeFlags: { '-S': 'none' } },
   help: { safeFlags: {} },
   info: { safeFlags: {} },
@@ -885,19 +1493,56 @@ function makeRegexForSafeCommand(command: string): RegExp {
 
 /** Simple commands validated only by regex (no flag parsing needed) */
 const SIMPLE_READONLY_COMMANDS = [
-  'docker ps', 'docker images',
-  'cal', 'uptime',
-  'cat', 'head', 'tail', 'wc', 'stat',
-  'strings', 'hexdump', 'od', 'nl',
-  'id', 'uname', 'free', 'df', 'du',
-  'locale', 'groups', 'nproc',
-  'basename', 'dirname', 'realpath',
-  'cut', 'paste', 'tr', 'column',
-  'tac', 'rev', 'fold', 'expand', 'unexpand', 'fmt',
-  'comm', 'cmp', 'numfmt', 'readlink',
-  'diff', 'true', 'false', 'sleep',
-  'which', 'type', 'expr', 'test',
-  'getconf', 'seq', 'tsort', 'pr',
+  'docker ps',
+  'docker images',
+  'cal',
+  'uptime',
+  'cat',
+  'head',
+  'tail',
+  'wc',
+  'stat',
+  'strings',
+  'hexdump',
+  'od',
+  'nl',
+  'id',
+  'uname',
+  'free',
+  'df',
+  'du',
+  'locale',
+  'groups',
+  'nproc',
+  'basename',
+  'dirname',
+  'realpath',
+  'cut',
+  'paste',
+  'tr',
+  'column',
+  'tac',
+  'rev',
+  'fold',
+  'expand',
+  'unexpand',
+  'fmt',
+  'comm',
+  'cmp',
+  'numfmt',
+  'readlink',
+  'diff',
+  'true',
+  'false',
+  'sleep',
+  'which',
+  'type',
+  'expr',
+  'test',
+  'getconf',
+  'seq',
+  'tsort',
+  'pr',
 ];
 
 // ============================================================
@@ -952,9 +1597,12 @@ const READONLY_COMMAND_REGEXES: RegExp[] = [
  */
 function validateFlagArgument(value: string, argType: FlagArgType): boolean {
   switch (argType) {
-    case 'none': return false; // Should not be called
-    case 'number': return /^\d+$/.test(value);
-    case 'string': return true;
+    case 'none':
+      return false; // Should not be called
+    case 'number':
+      return /^\d+$/.test(value);
+    case 'string':
+      return true;
   }
 }
 
@@ -973,7 +1621,7 @@ function validateFlagArgument(value: string, argType: FlagArgType): boolean {
 export function validateFlags(
   tokens: string[],
   startIndex: number,
-  config: CommandConfig,
+  config: CommandConfig
 ): boolean {
   let i = startIndex;
   const respectsDoubleDash = config.respectsDoubleDash !== false;
@@ -1060,7 +1708,8 @@ export function validateFlags(
       const shortFlagType = config.safeFlags[shortFlagName];
       if (shortFlagType === undefined) return false;
       const value = flag.substring(shortEqIdx + 1);
-      if (shortFlagType !== 'none' && !validateFlagArgument(value, shortFlagType)) return false;
+      if (shortFlagType !== 'none' && !validateFlagArgument(value, shortFlagType))
+        return false;
       i++;
       continue;
     }
@@ -1109,7 +1758,7 @@ export function validateFlags(
  * Returns [matchKey, config, remainingTokens] or null.
  */
 function matchCommandAllowlist(
-  tokens: string[],
+  tokens: string[]
 ): [string, CommandConfig, number] | null {
   // Try longest prefix first (3 tokens, then 2, then 1)
   for (let len = Math.min(3, tokens.length); len >= 1; len--) {
@@ -1153,7 +1802,8 @@ export function isCommandSafeViaFlagParsing(command: string): boolean {
   if (config.regex && !config.regex.test(command)) return false;
 
   // Check isDangerousCallback
-  if (config.isDangerousCallback && config.isDangerousCallback(command, args)) return false;
+  if (config.isDangerousCallback && config.isDangerousCallback(command, args))
+    return false;
 
   // Special: block newline/carriage return in grep/rg commands
   if (commandName === 'grep' || commandName === 'rg') {
@@ -1257,7 +1907,11 @@ export function isCommandReadOnly(command: string): boolean {
     // Post-regex safety: block dangerous git global options
     // that regex patterns might not catch
     if (/\bgit\b/.test(cleaned)) {
-      if (/\s-c\s/.test(cleaned) || /--exec-path/.test(cleaned) || /--config-env/.test(cleaned)) {
+      if (
+        /\s-c\s/.test(cleaned) ||
+        /--exec-path/.test(cleaned) ||
+        /--config-env/.test(cleaned)
+      ) {
         return false;
       }
     }

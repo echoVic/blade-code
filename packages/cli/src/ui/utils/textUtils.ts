@@ -54,8 +54,6 @@ export function toCodePoints(str: string): string[] {
   return result;
 }
 
-
-
 // =========================================================================
 // 字符串宽度计算（带缓存）
 // =========================================================================
@@ -87,8 +85,6 @@ export function getCachedStringWidth(str: string): number {
 
   return width;
 }
-
-
 
 /**
  * 样式化文本片段

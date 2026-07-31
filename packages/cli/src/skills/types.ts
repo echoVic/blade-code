@@ -78,7 +78,6 @@ export interface SkillContent {
   instructions: string;
 }
 
-
 /**
  * SKILL.md 解析结果
  */

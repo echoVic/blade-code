@@ -39,7 +39,12 @@ const executeWrite = async (
     encoding?: 'utf8' | 'base64' | 'binary';
     create_directories?: boolean;
   },
-  context: { sessionId: string; messageId: string; updateOutput: ReturnType<typeof vi.fn>; signal: AbortSignal }
+  context: {
+    sessionId: string;
+    messageId: string;
+    updateOutput: ReturnType<typeof vi.fn>;
+    signal: AbortSignal;
+  }
 ) => {
   const invocation = writeTool.build({
     encoding: 'utf8',
@@ -80,7 +85,9 @@ describe('WriteTool', () => {
 
   afterEach(async () => {
     // 重置文件系统服务为默认实现
-    const { resetFileSystemService } = await import('../../../../../../src/services/FileSystemService.js');
+    const { resetFileSystemService } = await import(
+      '../../../../../../src/services/FileSystemService.js'
+    );
     resetFileSystemService();
 
     // 清理 mock

@@ -131,8 +131,7 @@ UpdateTaskStatus({
     if (status === 'completed' && nextTask) {
       nextTaskInfo = `\n\nNext task: "${nextTask.title}" (${nextTask.id})`;
     } else if (status === 'completed' && progress.completed === progress.total) {
-      nextTaskInfo =
-        '\n\nAll tasks completed! Use /spec archive to archive this spec.';
+      nextTaskInfo = '\n\nAll tasks completed! Use /spec archive to archive this spec.';
     }
 
     return {

@@ -56,10 +56,7 @@ export const TableRenderer: React.FC<TableRendererProps> = React.memo(
       const idealWidths = headers.map((header, colIndex) => {
         let maxIdeal = Math.max(getPlainTextLength(header), MIN_COLUMN_WIDTH);
         for (const row of rows) {
-          maxIdeal = Math.max(
-            maxIdeal,
-            getPlainTextLength(row[colIndex] || '')
-          );
+          maxIdeal = Math.max(maxIdeal, getPlainTextLength(row[colIndex] || ''));
         }
         return maxIdeal;
       });
@@ -83,15 +80,11 @@ export const TableRenderer: React.FC<TableRendererProps> = React.memo(
         columnWidths = idealWidths;
       } else if (totalMin <= availableWidth) {
         const extraSpace = availableWidth - totalMin;
-        const overflows = idealWidths.map(
-          (ideal, i) => ideal - minWidths[i]
-        );
+        const overflows = idealWidths.map((ideal, i) => ideal - minWidths[i]);
         const totalOverflow = overflows.reduce((sum, o) => sum + o, 0);
         columnWidths = minWidths.map((min, i) => {
           if (totalOverflow === 0) return min;
-          const extra = Math.floor(
-            (overflows[i] / totalOverflow) * extraSpace
-          );
+          const extra = Math.floor((overflows[i] / totalOverflow) * extraSpace);
           return min + extra;
         });
       } else {
@@ -106,20 +99,12 @@ export const TableRenderer: React.FC<TableRendererProps> = React.memo(
       function calculateMaxRowLines(): number {
         let maxLines = 1;
         for (let i = 0; i < headers.length; i++) {
-          const wrapped = wrapCellText(
-            headers[i],
-            columnWidths[i],
-            needsHardWrap
-          );
+          const wrapped = wrapCellText(headers[i], columnWidths[i], needsHardWrap);
           maxLines = Math.max(maxLines, wrapped.length);
         }
         for (const row of rows) {
           for (let i = 0; i < row.length; i++) {
-            const wrapped = wrapCellText(
-              row[i] || '',
-              columnWidths[i],
-              needsHardWrap
-            );
+            const wrapped = wrapCellText(row[i] || '', columnWidths[i], needsHardWrap);
             maxLines = Math.max(maxLines, wrapped.length);
           }
         }
@@ -172,9 +157,7 @@ export const TableRenderer: React.FC<TableRendererProps> = React.memo(
     // 水平格式：Unicode 边框表格
     const { columnWidths, needsHardWrap } = tableOutput;
 
-    function renderBorderLine(
-      type: 'top' | 'middle' | 'bottom'
-    ): string {
+    function renderBorderLine(type: 'top' | 'middle' | 'bottom'): string {
       const chars = {
         top: { left: '┌', mid: '┬', right: '┐', h: '─' },
         middle: { left: '├', mid: '┼', right: '┤', h: '─' },
@@ -189,19 +172,13 @@ export const TableRenderer: React.FC<TableRendererProps> = React.memo(
       return line;
     }
 
-    function renderRowLines(
-      cells: string[],
-      isHeader: boolean
-    ): string[] {
+    function renderRowLines(cells: string[], isHeader: boolean): string[] {
       const cellLines = cells.map((cell, colIndex) => {
         const width = columnWidths[colIndex] || MIN_COLUMN_WIDTH;
         return wrapCellText(cell || '', width, needsHardWrap);
       });
 
-      const maxLines = Math.max(
-        ...cellLines.map((lines) => lines.length),
-        1
-      );
+      const maxLines = Math.max(...cellLines.map((lines) => lines.length), 1);
 
       // 单元格内容垂直居中
       const verticalOffsets = cellLines.map((lines) =>
@@ -248,9 +225,7 @@ export const TableRenderer: React.FC<TableRendererProps> = React.memo(
     tableLines.push(renderBorderLine('bottom'));
 
     // 安全检查：如果最大行宽超出终端宽度，降级为垂直格式
-    const maxLineWidth = Math.max(
-      ...tableLines.map((line) => stringWidth(line))
-    );
+    const maxLineWidth = Math.max(...tableLines.map((line) => stringWidth(line)));
     if (maxLineWidth > terminalWidth - SAFETY_MARGIN) {
       const separatorWidth = Math.min(terminalWidth - 1, 40);
       const separator = '─'.repeat(separatorWidth);
@@ -275,10 +250,6 @@ export const TableRenderer: React.FC<TableRendererProps> = React.memo(
       );
     }
 
-    return (
-      <Text color={theme.colors.text.primary}>
-        {tableLines.join('\n')}
-      </Text>
-    );
+    return <Text color={theme.colors.text.primary}>{tableLines.join('\n')}</Text>;
   }
 );

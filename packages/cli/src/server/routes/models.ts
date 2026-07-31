@@ -1,10 +1,6 @@
 import { Hono } from 'hono';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
-import {
-    configActions,
-    getAllModels,
-    getCurrentModel,
-} from '../../store/vanilla.js';
+import { configActions, getAllModels, getCurrentModel } from '../../store/vanilla.js';
 import { BadRequestError } from '../error.js';
 
 const logger = createLogger(LogCategory.SERVICE);
@@ -16,7 +12,7 @@ export const ModelsRoutes = () => {
     try {
       const models = getAllModels();
       const current = getCurrentModel();
-      
+
       return c.json({
         configured: models,
         current,

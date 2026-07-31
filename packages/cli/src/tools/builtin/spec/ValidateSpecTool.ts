@@ -69,7 +69,9 @@ export const validateSpecTool = createTool({
       parts.push(`# Spec Validation: ${currentSpec.name}`);
       parts.push('');
       parts.push(`**Phase**: ${PHASE_DISPLAY_NAMES[validation.phase]}`);
-      parts.push(`**Status**: ${validation.valid ? '[OK] Valid' : '[WARN] Has Issues'}`);
+      parts.push(
+        `**Status**: ${validation.valid ? '[OK] Valid' : '[WARN] Has Issues'}`
+      );
       parts.push('');
 
       // File completeness

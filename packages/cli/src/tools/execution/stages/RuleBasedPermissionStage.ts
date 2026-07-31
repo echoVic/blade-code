@@ -61,9 +61,7 @@ export class RuleBasedPermissionStage implements PipelineStage {
   async process(execution: ToolExecution): Promise<void> {
     const { tool, invocation } = execution._internal;
     if (!tool || !invocation) {
-      execution.abort(
-        'Validation stage failed; cannot perform permission check'
-      );
+      execution.abort('Validation stage failed; cannot perform permission check');
       return;
     }
 
@@ -119,11 +117,7 @@ export class RuleBasedPermissionStage implements PipelineStage {
       }
 
       // 危险路径硬拒绝 + 敏感文件调整
-      checkResult = this.applySafetyOverrides(
-        affectedPaths,
-        checkResult,
-        execution
-      );
+      checkResult = this.applySafetyOverrides(affectedPaths, checkResult, execution);
 
       // 若 applySafetyOverrides 已 abort,直接返回
       if (execution.shouldAbort()) {
@@ -171,10 +165,7 @@ export class RuleBasedPermissionStage implements PipelineStage {
       };
     }
 
-    if (
-      permissionMode === PermissionMode.AUTO_EDIT &&
-      toolKind === ToolKind.Write
-    ) {
+    if (permissionMode === PermissionMode.AUTO_EDIT && toolKind === ToolKind.Write) {
       return {
         result: PermissionResult.ALLOW,
         matchedRule: 'mode:autoEdit:write',
@@ -230,8 +221,7 @@ export class RuleBasedPermissionStage implements PipelineStage {
     if (sensitiveFiles.length === 0) return checkResult;
 
     const warnings = sensitiveFiles.map(
-      ({ path: filePath, result }) =>
-        `${filePath} (${result.level}: ${result.reason})`
+      ({ path: filePath, result }) => `${filePath} (${result.level}: ${result.reason})`
     );
 
     const highSensitiveFiles = sensitiveFiles.filter(
@@ -264,9 +254,7 @@ export class RuleBasedPermissionStage implements PipelineStage {
 }
 
 /** 将 PermissionCheckResult 转为 PermissionDecision */
-function toPermissionDecision(
-  result: PermissionCheckResult
-): PermissionDecision {
+function toPermissionDecision(result: PermissionCheckResult): PermissionDecision {
   return {
     behavior:
       result.result === PermissionResult.ALLOW

@@ -34,7 +34,11 @@ describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
       const result = await generateText({
         model,
         messages: [
-          { role: 'system', content: 'You are a helpful assistant. Use the calculate tool when asked math questions.' },
+          {
+            role: 'system',
+            content:
+              'You are a helpful assistant. Use the calculate tool when asked math questions.',
+          },
           { role: 'user', content: 'What is 15 * 23?' },
         ],
         tools: { calculate: calculatorTool },
@@ -53,7 +57,11 @@ describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
       const result = streamText({
         model,
         messages: [
-          { role: 'system', content: 'You are a helpful assistant. Use the getWeather tool when asked about weather.' },
+          {
+            role: 'system',
+            content:
+              'You are a helpful assistant. Use the getWeather tool when asked about weather.',
+          },
           { role: 'user', content: 'What is the weather in Beijing?' },
         ],
         tools: { getWeather: weatherTool },
@@ -86,8 +94,15 @@ describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
       const result = await generateText({
         model,
         messages: [
-          { role: 'system', content: 'You are a helpful assistant. Use the appropriate tool for each question.' },
-          { role: 'user', content: 'What is 15 * 23 and what is the weather in Shanghai?' },
+          {
+            role: 'system',
+            content:
+              'You are a helpful assistant. Use the appropriate tool for each question.',
+          },
+          {
+            role: 'user',
+            content: 'What is 15 * 23 and what is the weather in Shanghai?',
+          },
         ],
         tools: { calculate: calculatorTool, getWeather: weatherTool },
         maxOutputTokens: 300,
@@ -97,7 +112,9 @@ describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
       expect(result.toolCalls).toBeDefined();
       expect(result.toolCalls!.length).toBeGreaterThanOrEqual(1);
       const toolNames = result.toolCalls!.map((tc) => tc.toolName);
-      expect(toolNames.includes('calculate') || toolNames.includes('getWeather')).toBe(true);
+      expect(toolNames.includes('calculate') || toolNames.includes('getWeather')).toBe(
+        true
+      );
     }, 120000);
   });
 });

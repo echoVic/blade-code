@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 
 vi.mock('../../../../src/store/vanilla.js', () => ({
-  ensureStoreInitialized: vi.fn(async () => { /* noop */ }),
+  ensureStoreInitialized: vi.fn(async () => {
+    /* noop */
+  }),
   getAllModels: vi.fn(() => [{ id: 'model-1' }]),
   getConfig: vi.fn(() => ({
     permissionMode: 'default',
@@ -78,7 +80,9 @@ describe('SessionRuntime', () => {
 
   it('disposes the chat service when it supports disposal', async () => {
     const runtime = new SessionRuntime({} as any, { sessionId: 'session-1' });
-    const chatDispose = vi.fn(async () => { /* noop */ });
+    const chatDispose = vi.fn(async () => {
+      /* noop */
+    });
 
     (runtime as any).chatService = {
       dispose: chatDispose,

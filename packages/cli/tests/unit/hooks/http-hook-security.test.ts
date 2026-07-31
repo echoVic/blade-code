@@ -67,9 +67,7 @@ describe('HttpHookSecurity', () => {
       'https://192.168.1.1/hook',
       'https://169.254.169.254/hook', // 云 metadata
     ])('默认拒绝 %s', (url) => {
-      expect(() => validateHookUrl(url)).toThrow(
-        /Private\/link-local address blocked/
-      );
+      expect(() => validateHookUrl(url)).toThrow(/Private\/link-local address blocked/);
     });
 
     it('172.32+ / 172.0-15 不属于私网段', () => {

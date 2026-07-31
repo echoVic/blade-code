@@ -422,9 +422,7 @@ IMPORTANT - Use the correct year in search queries:
     const { updateOutput } = context;
     const signal = context.signal ?? new AbortController().signal;
 
-    updateOutput?.(
-      `Searching: "${query}" (${getProviderCount()} providers available)`
-    );
+    updateOutput?.(`Searching: "${query}" (${getProviderCount()} providers available)`);
 
     try {
       // 使用多提供商故障转移搜索

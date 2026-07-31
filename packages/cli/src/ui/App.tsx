@@ -150,7 +150,8 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
             sessionId,
             permissionMode,
             isResume,
-            resumeSessionId: typeof props.resume === 'string' ? props.resume : undefined,
+            resumeSessionId:
+              typeof props.resume === 'string' ? props.resume : undefined,
           });
 
           // 应用环境变量

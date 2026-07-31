@@ -50,10 +50,7 @@ export class ConversationState {
   /** 原始 context 引用（用于 writeback） */
   private readonly context: ChatContext;
 
-  constructor(
-    context: ChatContext,
-    systemPrompt: string | undefined,
-  ) {
+  constructor(context: ChatContext, systemPrompt: string | undefined) {
     this.context = context;
 
     // 从 context.messages 中提取已有的根系统提示
@@ -66,18 +63,20 @@ export class ConversationState {
       this.systemMessages = [existingRootPrompt];
     } else if (systemPrompt) {
       // 没有现有的根系统提示，注入新的
-      this.systemMessages = [{
-        role: 'system',
-        content: [
-          {
-            type: 'text',
-            text: systemPrompt,
-            providerOptions: {
-              anthropic: { cacheControl: { type: 'ephemeral' } },
+      this.systemMessages = [
+        {
+          role: 'system',
+          content: [
+            {
+              type: 'text',
+              text: systemPrompt,
+              providerOptions: {
+                anthropic: { cacheControl: { type: 'ephemeral' } },
+              },
             },
-          },
-        ],
-      }];
+          ],
+        },
+      ];
     } else {
       this.systemMessages = [];
     }
@@ -149,7 +148,9 @@ export class ConversationState {
    */
   appendControl(role: string, msg: Message): void {
     if (role === 'system') {
-      throw new Error('Cannot append system control message via appendControl. Use constructor for root system prompt.');
+      throw new Error(
+        'Cannot append system control message via appendControl. Use constructor for root system prompt.'
+      );
     }
     this._pending.push(msg);
   }

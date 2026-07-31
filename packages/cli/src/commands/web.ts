@@ -30,8 +30,12 @@ export const webCommand: CommandModule<object, WebArgs> = {
     await ensureStoreInitialized();
 
     if (!process.env.BLADE_SERVER_PASSWORD) {
-      console.log(chalk.yellow('[WARN] BLADE_SERVER_PASSWORD is not set; server is unsecured.'));
-      console.log(chalk.gray('   Set this environment variable to enable Basic Auth.\n'));
+      console.log(
+        chalk.yellow('[WARN] BLADE_SERVER_PASSWORD is not set; server is unsecured.')
+      );
+      console.log(
+        chalk.gray('   Set this environment variable to enable Basic Auth.\n')
+      );
     }
 
     const server = await BladeServer.listenAsync(opts);
@@ -45,7 +49,10 @@ export const webCommand: CommandModule<object, WebArgs> = {
 
       const networkIPs = getNetworkIPs();
       for (const ip of networkIPs) {
-        console.log(chalk.blue.bold('  Network access:    '), chalk.white(`http://${ip}:${server.port}`));
+        console.log(
+          chalk.blue.bold('  Network access:    '),
+          chalk.white(`http://${ip}:${server.port}`)
+        );
       }
 
       open(localhostUrl).catch(() => {

@@ -8,7 +8,9 @@ describe('buildContextMessagesFromSession', () => {
       { role: 'system', content: 'compressed summary' },
       {
         role: 'user',
-        content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } }],
+        content: [
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+        ],
       },
       { role: 'assistant', content: 'I see the image' },
     ];

@@ -216,9 +216,7 @@ export function AgentsManager({
             <Text color="gray">没有找到任何 agent 配置</Text>
           </Box>
           <Box marginTop={1} paddingLeft={2}>
-            <Text color="gray">
-              配置文件位置: .blade/agents/ 或 ~/.blade/agents/
-            </Text>
+            <Text color="gray">配置文件位置: .blade/agents/ 或 ~/.blade/agents/</Text>
           </Box>
           <Box marginTop={1} paddingLeft={2}>
             <Text dimColor>按 ESC 返回菜单</Text>

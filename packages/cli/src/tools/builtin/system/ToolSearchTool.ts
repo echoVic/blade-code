@@ -21,13 +21,16 @@ export const toolSearchTool = createTool({
   isConcurrencySafe: true,
 
   schema: z.object({
-    query: z.string().describe(
-      'Search query. Use "select:Read,Edit,Grep" for exact'
-        + ' selection, or keywords for fuzzy search.',
-    ),
-    max_results: z.number().default(5).describe(
-      'Maximum results to return (default 5)',
-    ),
+    query: z
+      .string()
+      .describe(
+        'Search query. Use "select:Read,Edit,Grep" for exact' +
+          ' selection, or keywords for fuzzy search.'
+      ),
+    max_results: z
+      .number()
+      .default(5)
+      .describe('Maximum results to return (default 5)'),
   }),
 
   description: {
@@ -58,7 +61,7 @@ export const toolSearchTool = createTool({
 
   async execute(
     params: { query: string; max_results: number },
-    context: ExecutionContext,
+    context: ExecutionContext
   ): Promise<ToolResult> {
     const { query, max_results } = params;
     const registry = context.toolRegistry;
@@ -66,8 +69,7 @@ export const toolSearchTool = createTool({
     if (!registry) {
       return {
         success: false,
-        llmContent:
-          'Tool registry not available in execution context.',
+        llmContent: 'Tool registry not available in execution context.',
       };
     }
 
@@ -116,10 +118,7 @@ export const toolSearchTool = createTool({
 
     // 格式化为 <functions> 块
     const functionsBlock = matchedTools
-      .map(
-        ({ declaration }) =>
-          `<function>${JSON.stringify(declaration)}</function>`,
-      )
+      .map(({ declaration }) => `<function>${JSON.stringify(declaration)}</function>`)
       .join('\n');
 
     return {

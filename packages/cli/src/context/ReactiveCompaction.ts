@@ -1,6 +1,6 @@
 /**
  * ReactiveCompaction — 反应式紧急压缩
- * 
+ *
  * 当 LLM 返回 413 (prompt_too_long) 错误时触发的紧急压缩。
  * 每轮最多尝试一次，作为最后一道防线。
  */

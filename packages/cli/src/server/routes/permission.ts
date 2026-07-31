@@ -23,8 +23,10 @@ export const PermissionRoutes = () => {
   app.post('/:permissionId', async (c) => {
     const permissionId = c.req.param('permissionId');
     const sessionId = c.req.query('sessionId');
-    
-    logger.info(`[PermissionRoutes] Received permission response: permissionId=${permissionId}, sessionId=${sessionId}`);
+
+    logger.info(
+      `[PermissionRoutes] Received permission response: permissionId=${permissionId}, sessionId=${sessionId}`
+    );
 
     try {
       const body = await c.req.json();
@@ -35,7 +37,7 @@ export const PermissionRoutes = () => {
       }
 
       const { approved, remember, scope, targetMode, feedback, answers } = parsed.data;
-      
+
       if (!sessionId) {
         throw new BadRequestError('sessionId query parameter is required');
       }
@@ -50,12 +52,14 @@ export const PermissionRoutes = () => {
       };
 
       const success = respondToPermission(sessionId, permissionId, response);
-      
+
       if (!success) {
         throw new NotFoundError('Permission request', permissionId);
       }
 
-      logger.info(`[PermissionRoutes] Permission ${permissionId} ${approved ? 'approved' : 'denied'}`);
+      logger.info(
+        `[PermissionRoutes] Permission ${permissionId} ${approved ? 'approved' : 'denied'}`
+      );
 
       return c.json({ success: true, approved, remember });
     } catch (error) {

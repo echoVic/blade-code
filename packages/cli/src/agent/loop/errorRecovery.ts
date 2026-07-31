@@ -28,11 +28,17 @@ export function recordToolFailure(tracker: ToolFailureTracker, toolName: string)
   tracker.lastFailedTool = toolName;
 }
 
-export function isToolCircuitBroken(tracker: ToolFailureTracker, toolName: string): boolean {
+export function isToolCircuitBroken(
+  tracker: ToolFailureTracker,
+  toolName: string
+): boolean {
   return (tracker.consecutiveFailures.get(toolName) ?? 0) >= MAX_CONSECUTIVE_FAILURES;
 }
 
-export function getCircuitBreakerHint(tracker: ToolFailureTracker, toolName: string): string | undefined {
+export function getCircuitBreakerHint(
+  tracker: ToolFailureTracker,
+  toolName: string
+): string | undefined {
   if (!isToolCircuitBroken(tracker, toolName)) return undefined;
   const count = tracker.consecutiveFailures.get(toolName) ?? 0;
   return (
@@ -52,7 +58,7 @@ export function getReflectionPrompt(turnCount: number, totalFailures: number): s
     'Before continuing, briefly assess:',
     '1. Are you making progress toward the goal?',
     '2. Have any approaches failed repeatedly that you should abandon?',
-    '3. Is there a simpler path you haven\'t tried?',
+    "3. Is there a simpler path you haven't tried?",
   ];
 
   if (totalFailures > 3) {

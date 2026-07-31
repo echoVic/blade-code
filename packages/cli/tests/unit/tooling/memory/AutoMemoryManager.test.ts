@@ -60,7 +60,11 @@ describe('AutoMemoryManager', () => {
     });
 
     it('should truncate content beyond maxIndexLines', async () => {
-      const smallManager = new AutoMemoryManager(tmpDir, { enabled: true, maxIndexLines: 3 }, memDir);
+      const smallManager = new AutoMemoryManager(
+        tmpDir,
+        { enabled: true, maxIndexLines: 3 },
+        memDir
+      );
       await smallManager.initialize();
       const lines = Array.from({ length: 10 }, (_, i) => `Line ${i + 1}`);
       await fs.writeFile(path.join(memDir, 'MEMORY.md'), lines.join('\n'), 'utf-8');
@@ -74,7 +78,11 @@ describe('AutoMemoryManager', () => {
     });
 
     it('should return null when disabled', async () => {
-      const disabledManager = new AutoMemoryManager(tmpDir, { enabled: false, maxIndexLines: 200 }, memDir);
+      const disabledManager = new AutoMemoryManager(
+        tmpDir,
+        { enabled: false, maxIndexLines: 200 },
+        memDir
+      );
       await disabledManager.initialize();
       await fs.writeFile(path.join(memDir, 'MEMORY.md'), '# Memory', 'utf-8');
       const result = await disabledManager.loadIndex();
@@ -89,7 +97,11 @@ describe('AutoMemoryManager', () => {
     });
 
     it('should write and read a topic (overwrite)', async () => {
-      await manager.writeTopic('debugging', '## Redis issue\nNeed local Redis.', 'overwrite');
+      await manager.writeTopic(
+        'debugging',
+        '## Redis issue\nNeed local Redis.',
+        'overwrite'
+      );
       const result = await manager.readTopic('debugging');
       expect(result).toBe('## Redis issue\nNeed local Redis.');
     });

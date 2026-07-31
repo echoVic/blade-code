@@ -5,7 +5,10 @@
  * 注意：这是一个简化的 mock，只实现了测试所需的基本功能
  */
 
-import type { SessionNotification, RequestPermissionRequest } from '@agentclientprotocol/sdk';
+import type {
+  SessionNotification,
+  RequestPermissionRequest,
+} from '@agentclientprotocol/sdk';
 
 export interface MockPermissionResponse {
   outcome: {
@@ -42,7 +45,9 @@ export class MockACPClient implements MockACPClientInterface {
     return Promise.resolve();
   }
 
-  async requestPermission(params: RequestPermissionRequest): Promise<MockPermissionResponse> {
+  async requestPermission(
+    params: RequestPermissionRequest
+  ): Promise<MockPermissionResponse> {
     this.permissionRequests.push(params);
 
     const toolCallId = params.toolCall.toolCallId;

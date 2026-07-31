@@ -105,8 +105,7 @@ function getShortcutHint(
   isPlanModeEnter: boolean,
   isMaxTurnsExceeded: boolean
 ): string {
-  const shortcutText =
-    isPlanModeEnter || isMaxTurnsExceeded ? 'Y/N' : 'Y/S/N';
+  const shortcutText = isPlanModeEnter || isMaxTurnsExceeded ? 'Y/N' : 'Y/S/N';
   return `使用 ↑↓ 选择，回车确认 · ${shortcutText} 快捷键 · Esc 取消`;
 }
 

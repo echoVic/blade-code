@@ -29,7 +29,10 @@ export interface FileSystemService {
   // 扩展操作
   readBinaryFile(filePath: string): Promise<Buffer>;
   stat(filePath: string): Promise<FileStat | null>;
-  mkdir(dirPath: string, options?: { recursive?: boolean; mode?: number }): Promise<void>;
+  mkdir(
+    dirPath: string,
+    options?: { recursive?: boolean; mode?: number }
+  ): Promise<void>;
 }
 
 /**
@@ -71,10 +74,13 @@ export class LocalFileSystemService implements FileSystemService {
     }
   }
 
-  async mkdir(dirPath: string, options?: { recursive?: boolean; mode?: number }): Promise<void> {
+  async mkdir(
+    dirPath: string,
+    options?: { recursive?: boolean; mode?: number }
+  ): Promise<void> {
     await fs.mkdir(dirPath, {
       recursive: options?.recursive ?? false,
-      mode: options?.mode ?? 0o755
+      mode: options?.mode ?? 0o755,
     });
   }
 }

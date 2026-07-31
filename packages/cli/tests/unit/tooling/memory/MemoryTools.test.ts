@@ -44,11 +44,13 @@ describe('MemoryWriteTool', () => {
   it('should append to existing topic', async () => {
     await memoryWriteTool.execute(
       { topic: 'patterns', content: 'Pattern 1\n', mode: 'overwrite' },
-      undefined, context
+      undefined,
+      context
     );
     await memoryWriteTool.execute(
       { topic: 'patterns', content: 'Pattern 2\n', mode: 'append' },
-      undefined, context
+      undefined,
+      context
     );
 
     const content = await manager.readTopic('patterns');
@@ -59,11 +61,13 @@ describe('MemoryWriteTool', () => {
   it('should overwrite existing topic', async () => {
     await memoryWriteTool.execute(
       { topic: 'test', content: 'old content', mode: 'overwrite' },
-      undefined, context
+      undefined,
+      context
     );
     await memoryWriteTool.execute(
       { topic: 'test', content: 'new content', mode: 'overwrite' },
-      undefined, context
+      undefined,
+      context
     );
 
     const content = await manager.readTopic('test');
@@ -72,8 +76,13 @@ describe('MemoryWriteTool', () => {
 
   it('should write to MEMORY.md index', async () => {
     const result = await memoryWriteTool.execute(
-      { topic: 'MEMORY', content: '# Project Memory\n- Build: bun run build', mode: 'overwrite' },
-      undefined, context
+      {
+        topic: 'MEMORY',
+        content: '# Project Memory\n- Build: bun run build',
+        mode: 'overwrite',
+      },
+      undefined,
+      context
     );
     expect(result.success).toBe(true);
 
@@ -84,7 +93,8 @@ describe('MemoryWriteTool', () => {
   it('should reject content with password', async () => {
     const result = await memoryWriteTool.execute(
       { topic: 'secrets', content: 'password = abc123', mode: 'overwrite' },
-      undefined, context
+      undefined,
+      context
     );
     expect(result.success).toBe(false);
     expect(result.llmContent).toContain('sensitive data');
@@ -93,7 +103,8 @@ describe('MemoryWriteTool', () => {
   it('should reject content with api_key', async () => {
     const result = await memoryWriteTool.execute(
       { topic: 'config', content: 'api_key = sk-1234567890', mode: 'overwrite' },
-      undefined, context
+      undefined,
+      context
     );
     expect(result.success).toBe(false);
   });
@@ -101,7 +112,8 @@ describe('MemoryWriteTool', () => {
   it('should reject content with token', async () => {
     const result = await memoryWriteTool.execute(
       { topic: 'auth', content: 'token = ghp_abc123', mode: 'overwrite' },
-      undefined, context
+      undefined,
+      context
     );
     expect(result.success).toBe(false);
   });
@@ -109,7 +121,8 @@ describe('MemoryWriteTool', () => {
   it('should reject content with secret', async () => {
     const result = await memoryWriteTool.execute(
       { topic: 'env', content: 'secret: my-secret-value', mode: 'overwrite' },
-      undefined, context
+      undefined,
+      context
     );
     expect(result.success).toBe(false);
   });
@@ -117,15 +130,21 @@ describe('MemoryWriteTool', () => {
   it('should reject content with private_key', async () => {
     const result = await memoryWriteTool.execute(
       { topic: 'keys', content: 'private_key content here', mode: 'overwrite' },
-      undefined, context
+      undefined,
+      context
     );
     expect(result.success).toBe(false);
   });
 
   it('should allow content mentioning password in context', async () => {
     const result = await memoryWriteTool.execute(
-      { topic: 'notes', content: 'The user forgot their password reset flow', mode: 'overwrite' },
-      undefined, context
+      {
+        topic: 'notes',
+        content: 'The user forgot their password reset flow',
+        mode: 'overwrite',
+      },
+      undefined,
+      context
     );
     expect(result.success).toBe(true);
   });
@@ -150,13 +169,21 @@ describe('MemoryReadTool', () => {
   it('should read existing topic', async () => {
     await manager.writeTopic('debugging', '## Debug notes', 'overwrite');
 
-    const result = await memoryReadTool.execute({ topic: 'debugging' }, undefined, context);
+    const result = await memoryReadTool.execute(
+      { topic: 'debugging' },
+      undefined,
+      context
+    );
     expect(result.success).toBe(true);
     expect(result.llmContent).toContain('Debug notes');
   });
 
   it('should return not found for missing topic', async () => {
-    const result = await memoryReadTool.execute({ topic: 'nonexistent' }, undefined, context);
+    const result = await memoryReadTool.execute(
+      { topic: 'nonexistent' },
+      undefined,
+      context
+    );
     expect(result.success).toBe(true);
     expect(result.llmContent).toContain('not found');
   });
@@ -178,9 +205,17 @@ describe('MemoryReadTool', () => {
   });
 
   it('should read MEMORY.md index', async () => {
-    await manager.writeTopic('MEMORY', '# Project Memory\n- Build: bun run build', 'overwrite');
+    await manager.writeTopic(
+      'MEMORY',
+      '# Project Memory\n- Build: bun run build',
+      'overwrite'
+    );
 
-    const result = await memoryReadTool.execute({ topic: 'MEMORY' }, undefined, context);
+    const result = await memoryReadTool.execute(
+      { topic: 'MEMORY' },
+      undefined,
+      context
+    );
     expect(result.success).toBe(true);
     expect(result.llmContent).toContain('# Project Memory');
   });

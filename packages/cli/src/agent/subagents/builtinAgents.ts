@@ -108,5 +108,3 @@ Be thorough but concise. Focus on actionable steps.`,
   },
   verificationAgentConfig,
 ];
-
-

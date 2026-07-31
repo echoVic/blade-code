@@ -20,7 +20,9 @@ export const serveCommand: CommandModule<object, ServeArgs> = {
     await ensureStoreInitialized();
 
     if (!process.env.BLADE_SERVER_PASSWORD) {
-      console.log(chalk.yellow('Warning: BLADE_SERVER_PASSWORD is not set; server is unsecured.'));
+      console.log(
+        chalk.yellow('Warning: BLADE_SERVER_PASSWORD is not set; server is unsecured.')
+      );
     }
 
     const server = await BladeServer.listenAsync(opts);

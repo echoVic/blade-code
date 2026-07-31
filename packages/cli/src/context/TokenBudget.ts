@@ -78,8 +78,6 @@ export function recordOutput(
     ...tracker,
     usage: tracker.usage + outputTokens,
     lastOutputDelta: outputTokens,
-    consecutiveContinuations: isContinuation
-      ? tracker.consecutiveContinuations + 1
-      : 0,
+    consecutiveContinuations: isContinuation ? tracker.consecutiveContinuations + 1 : 0,
   };
 }

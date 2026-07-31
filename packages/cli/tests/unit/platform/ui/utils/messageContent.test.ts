@@ -60,7 +60,11 @@ describe('buildUserMessageContent', () => {
       const result = buildUserMessageContent(resolved);
 
       expect(Array.isArray(result)).toBe(true);
-      const parts = result as Array<{ type: string; text?: string; image_url?: { url: string } }>;
+      const parts = result as Array<{
+        type: string;
+        text?: string;
+        image_url?: { url: string };
+      }>;
       expect(parts).toHaveLength(2);
 
       expect(parts[0]).toEqual({ type: 'text', text: 'describe this ' });
@@ -90,7 +94,11 @@ describe('buildUserMessageContent', () => {
       const result = buildUserMessageContent(resolved);
 
       expect(Array.isArray(result)).toBe(true);
-      const parts = result as Array<{ type: string; text?: string; image_url?: { url: string } }>;
+      const parts = result as Array<{
+        type: string;
+        text?: string;
+        image_url?: { url: string };
+      }>;
       expect(parts).toHaveLength(5);
 
       expect(parts[0]).toEqual({ type: 'text', text: 'before ' });
@@ -111,9 +119,7 @@ describe('buildUserMessageContent', () => {
         displayText: '[Image #1]',
         text: '',
         images: [{ id: 1, base64: 'onlyimg', mimeType: 'image/webp' }],
-        parts: [
-          { type: 'image', id: 1, base64: 'onlyimg', mimeType: 'image/webp' },
-        ],
+        parts: [{ type: 'image', id: 1, base64: 'onlyimg', mimeType: 'image/webp' }],
       };
 
       const result = buildUserMessageContent(resolved);

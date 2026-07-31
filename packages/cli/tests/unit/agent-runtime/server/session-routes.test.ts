@@ -73,7 +73,11 @@ describe('SessionRoutes runtime reuse', () => {
       if (Date.now() < 0) {
         yield undefined;
       }
-      return { success: true, finalMessage: 'assistant reply', metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 } };
+      return {
+        success: true,
+        finalMessage: 'assistant reply',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
     });
   });
 

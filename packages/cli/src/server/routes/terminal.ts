@@ -54,7 +54,8 @@ async function spawnPty(
       resize: (cols: number, rows: number) => ptyProcess.resize(cols, rows),
       kill: () => ptyProcess.kill(),
       onData: (callback: (data: string) => void) => ptyProcess.onData(callback),
-      onExit: (callback: (exitInfo: { exitCode: number }) => void) => ptyProcess.onExit(callback),
+      onExit: (callback: (exitInfo: { exitCode: number }) => void) =>
+        ptyProcess.onExit(callback),
     };
   }
   // Use node-pty in Node.js runtime
@@ -84,7 +85,9 @@ async function spawnPty(
 export let terminalWebSocket: unknown = undefined;
 
 // Initialize Bun WebSocket support if in Bun runtime
-let upgradeWebSocket: ReturnType<typeof import('hono/bun').createBunWebSocket>['upgradeWebSocket'] | undefined;
+let upgradeWebSocket:
+  | ReturnType<typeof import('hono/bun').createBunWebSocket>['upgradeWebSocket']
+  | undefined;
 
 if (isBunRuntime()) {
   try {
@@ -108,9 +111,8 @@ async function handleTerminalConnection(
   const terminalId = `term-${Date.now()}`;
   logger.info(`[Terminal] New connection: ${terminalId}, cwd: ${cwd}`);
 
-  const shell = process.platform === 'win32'
-    ? 'powershell.exe'
-    : process.env.SHELL || '/bin/zsh';
+  const shell =
+    process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh';
   const shellArgs = shell.endsWith('sh') ? ['-l'] : [];
 
   const ptyProcess = await spawnPty(shell, shellArgs, {
@@ -262,13 +264,16 @@ export const TerminalRoutes = () => {
       '/ws',
       upgradeWebSocket((c) => {
         const cwd = c.req.query('cwd') || c.get('directory') || getCwd();
-        let sessionData: Awaited<ReturnType<typeof handleTerminalConnection>> | undefined;
+        let sessionData:
+          | Awaited<ReturnType<typeof handleTerminalConnection>>
+          | undefined;
 
         return {
           async onOpen(_event, ws) {
             try {
               sessionData = await handleTerminalConnection(cwd, {
-                send: (data: string) => (ws as unknown as { send: (d: string) => void }).send(data),
+                send: (data: string) =>
+                  (ws as unknown as { send: (d: string) => void }).send(data),
                 close: () => (ws as unknown as { close: () => void }).close(),
               });
             } catch (err) {

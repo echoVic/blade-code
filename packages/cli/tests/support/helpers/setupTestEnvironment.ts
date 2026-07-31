@@ -61,7 +61,11 @@ export const setupTestEnvironment = (options: SetupOptions = {}): TestEnvironmen
     const gitDir = path.join(projectDir, '.git');
     mkdirSync(gitDir, { recursive: true });
     writeFileSync(path.join(gitDir, 'HEAD'), 'ref: refs/heads/main\n', 'utf-8');
-    writeFileSync(path.join(gitDir, 'config'), '[core]\n\trepositoryformatversion = 0\n', 'utf-8');
+    writeFileSync(
+      path.join(gitDir, 'config'),
+      '[core]\n\trepositoryformatversion = 0\n',
+      'utf-8'
+    );
   }
 
   if (options.withPackageJson) {

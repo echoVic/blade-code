@@ -13,10 +13,7 @@ import type { LoopEvent } from '../../../../src/agent/loop/types.js';
 import type { LoopResult } from '../../../../src/agent/types.js';
 
 /** 创建一个 mock async generator，yield 给定事件后返回 LoopResult */
-function createMockGenerator(
-  events: LoopEvent[],
-  result?: Partial<LoopResult>
-) {
+function createMockGenerator(events: LoopEvent[], result?: Partial<LoopResult>) {
   const defaultResult: LoopResult = {
     success: true,
     finalMessage: 'done',
@@ -51,11 +48,34 @@ describe('SubagentExecutor event forwarding', () => {
     const events: LoopEvent[] = [
       { kind: 'content_delta', delta: 'hello' },
       { kind: 'thinking_delta', delta: 'hmm' },
-      { kind: 'tool_start', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } } },
-      { kind: 'tool_result', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } }, result: { success: true, llmContent: 'ok' } },
+      {
+        kind: 'tool_start',
+        toolCall: {
+          id: 't1',
+          type: 'function',
+          function: { name: 'Read', arguments: '{}' },
+        },
+      },
+      {
+        kind: 'tool_result',
+        toolCall: {
+          id: 't1',
+          type: 'function',
+          function: { name: 'Read', arguments: '{}' },
+        },
+        result: { success: true, llmContent: 'ok' },
+      },
       { kind: 'stream_end' },
       { kind: 'turn_start', turn: 1, maxTurns: 5 },
-      { kind: 'token_usage', usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30, maxContextTokens: 128000 } },
+      {
+        kind: 'token_usage',
+        usage: {
+          inputTokens: 10,
+          outputTokens: 20,
+          totalTokens: 30,
+          maxContextTokens: 128000,
+        },
+      },
     ];
 
     mockChatStream.mockImplementation(createMockGenerator(events));
@@ -78,9 +98,7 @@ describe('SubagentExecutor event forwarding', () => {
     expect(result.success).toBe(true);
     expect(onEvent).toHaveBeenCalledTimes(events.length);
     // Verify each event was forwarded in order
-    expect(receivedEvents.map((e) => e.kind)).toEqual(
-      events.map((e) => e.kind)
-    );
+    expect(receivedEvents.map((e) => e.kind)).toEqual(events.map((e) => e.kind));
   });
 
   it('silently drops events when no onEvent is provided', async () => {
@@ -107,7 +125,12 @@ describe('SubagentExecutor event forwarding', () => {
       createMockGenerator([], {
         success: true,
         finalMessage: 'task complete',
-        metadata: { turnsCount: 3, toolCallsCount: 5, duration: 2000, tokensUsed: 1500 },
+        metadata: {
+          turnsCount: 3,
+          toolCallsCount: 5,
+          duration: 2000,
+          tokensUsed: 1500,
+        },
       })
     );
 
@@ -194,12 +217,12 @@ describe('Subagent Bus topic stability', () => {
     // These topics are published by task.ts onEvent handler and consumed
     // by UI and other subscribers. Changing them is a breaking change.
     const CANONICAL_TOPICS = [
-      'subagent.update',        // tool_start → store update + topic
-      'subagent.tool.start',    // tool_start → detailed tool info
-      'subagent.tool.result',   // tool_result → result info
-      'subagent.delta',         // content_delta → text delta
-      'subagent.thinking.delta',// thinking_delta → reasoning delta
-      'subagent.stream.end',    // stream_end → per-turn end signal
+      'subagent.update', // tool_start → store update + topic
+      'subagent.tool.start', // tool_start → detailed tool info
+      'subagent.tool.result', // tool_result → result info
+      'subagent.delta', // content_delta → text delta
+      'subagent.thinking.delta', // thinking_delta → reasoning delta
+      'subagent.stream.end', // stream_end → per-turn end signal
     ];
 
     // Static assertion: if someone renames a topic in task.ts,

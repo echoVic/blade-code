@@ -212,10 +212,7 @@ export class ToolRegistry extends EventEmitter {
 
     // 其他模式（default/autoEdit/yolo）：使用 DeferredToolManager 过滤
     // 已加载的工具返回完整 schema，deferred 工具通过系统提示列出名称
-    return this._deferredManager.filterDeclarations(
-      this.getAll(),
-      mode,
-    );
+    return this._deferredManager.filterDeclarations(this.getAll(), mode);
   }
 
   /**

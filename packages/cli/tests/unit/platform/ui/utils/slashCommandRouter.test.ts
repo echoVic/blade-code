@@ -84,7 +84,7 @@ describe('processSlashCommand', () => {
         createResolvedInput('hello world'),
         createMockAppActions(),
         createMockSessionActions(),
-        new AbortController().signal,
+        new AbortController().signal
       );
 
       expect(result.type).toBe('not_slash');
@@ -110,7 +110,7 @@ describe('processSlashCommand', () => {
         createResolvedInput('/deploy staging'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal,
+        new AbortController().signal
       );
 
       expect(result.type).toBe('continue_as_agent');
@@ -148,7 +148,7 @@ describe('processSlashCommand', () => {
         createResolvedInput('/lint src/'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal,
+        new AbortController().signal
       );
 
       expect(result.type).toBe('continue_as_agent');
@@ -161,7 +161,9 @@ describe('processSlashCommand', () => {
       // Agent 收到展开后的 prompt
       expect(result.result.agentInput.text).toContain('Plugin Command: /lint');
       expect(result.result.agentInput.text).toContain('plugin "code-quality"');
-      expect(result.result.agentInput.text).toContain('Run ESLint on all TypeScript files');
+      expect(result.result.agentInput.text).toContain(
+        'Run ESLint on all TypeScript files'
+      );
     });
   });
 
@@ -183,14 +185,15 @@ describe('processSlashCommand', () => {
         createResolvedInput('/code-review review the last commit'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal,
+        new AbortController().signal
       );
 
       expect(result.type).toBe('continue_as_agent');
       if (result.type !== 'continue_as_agent') return;
 
       // UI 显示和 Agent 输入都是改写后的 skill prompt
-      const expectedPrompt = 'Please use the "code-review" skill to help me with: review the last commit';
+      const expectedPrompt =
+        'Please use the "code-review" skill to help me with: review the last commit';
       expect(result.result.userDisplayMessage).toBe(expectedPrompt);
       expect(result.result.agentInput.text).toBe(expectedPrompt);
       expect(sessionActions.addUserMessage).toHaveBeenCalledWith(expectedPrompt);
@@ -211,7 +214,7 @@ describe('processSlashCommand', () => {
         createResolvedInput('/tdd'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal,
+        new AbortController().signal
       );
 
       expect(result.type).toBe('continue_as_agent');
@@ -240,7 +243,7 @@ describe('processSlashCommand', () => {
         createResolvedInput('/model gpt-4o explain this code'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal,
+        new AbortController().signal
       );
 
       expect(result.type).toBe('continue_as_agent');
@@ -266,7 +269,7 @@ describe('processSlashCommand', () => {
         createResolvedInput('/model'),
         appActions,
         createMockSessionActions(),
-        new AbortController().signal,
+        new AbortController().signal
       );
 
       expect(result.type).toBe('handled');
@@ -285,7 +288,7 @@ describe('processSlashCommand', () => {
         createResolvedInput('/clear'),
         appActions,
         sessionActions,
-        new AbortController().signal,
+        new AbortController().signal
       );
 
       expect(result.type).toBe('handled');
@@ -310,14 +313,14 @@ describe('processSlashCommand', () => {
         createResolvedInput('/foobar'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal,
+        new AbortController().signal
       );
 
       expect(result.type).toBe('handled');
       if (result.type !== 'handled') return;
       expect(result.commandResult.success).toBe(false);
       expect(sessionActions.addAssistantMessage).toHaveBeenCalledWith(
-        'Unknown command: /foobar',
+        'Unknown command: /foobar'
       );
     });
 
@@ -332,11 +335,13 @@ describe('processSlashCommand', () => {
         createResolvedInput('/help'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal,
+        new AbortController().signal
       );
 
       expect(result.type).toBe('handled');
-      expect(sessionActions.addAssistantMessage).toHaveBeenCalledWith('Help content displayed');
+      expect(sessionActions.addAssistantMessage).toHaveBeenCalledWith(
+        'Help content displayed'
+      );
     });
   });
 });
@@ -346,11 +351,13 @@ describe('processSlashCommand', () => {
 describe('类型守卫函数', () => {
   describe('isInvokeSkillAction', () => {
     it('有效的 invoke_skill 数据应该返回 true', () => {
-      expect(isInvokeSkillAction({
-        action: 'invoke_skill',
-        skillName: 'tdd',
-        skillArgs: 'arg',
-      })).toBe(true);
+      expect(
+        isInvokeSkillAction({
+          action: 'invoke_skill',
+          skillName: 'tdd',
+          skillArgs: 'arg',
+        })
+      ).toBe(true);
     });
 
     it('null 应该返回 false', () => {
@@ -364,55 +371,67 @@ describe('类型守卫函数', () => {
 
   describe('isInvokeCustomCommandAction', () => {
     it('有效数据应该返回 true', () => {
-      expect(isInvokeCustomCommandAction({
-        action: 'invoke_custom_command',
-        commandName: 'deploy',
-        processedContent: 'content',
-        config: {},
-      })).toBe(true);
+      expect(
+        isInvokeCustomCommandAction({
+          action: 'invoke_custom_command',
+          commandName: 'deploy',
+          processedContent: 'content',
+          config: {},
+        })
+      ).toBe(true);
     });
 
     it('缺少 processedContent 应该返回 false', () => {
-      expect(isInvokeCustomCommandAction({
-        action: 'invoke_custom_command',
-        commandName: 'deploy',
-      })).toBe(false);
+      expect(
+        isInvokeCustomCommandAction({
+          action: 'invoke_custom_command',
+          commandName: 'deploy',
+        })
+      ).toBe(false);
     });
   });
 
   describe('isInvokePluginCommandAction', () => {
     it('有效数据应该返回 true', () => {
-      expect(isInvokePluginCommandAction({
-        action: 'invoke_plugin_command',
-        commandName: 'lint',
-        processedContent: 'content',
-        config: {},
-      })).toBe(true);
+      expect(
+        isInvokePluginCommandAction({
+          action: 'invoke_plugin_command',
+          commandName: 'lint',
+          processedContent: 'content',
+          config: {},
+        })
+      ).toBe(true);
     });
 
     it('action 不匹配应该返回 false', () => {
-      expect(isInvokePluginCommandAction({
-        action: 'invoke_skill',
-        commandName: 'lint',
-        processedContent: 'content',
-      })).toBe(false);
+      expect(
+        isInvokePluginCommandAction({
+          action: 'invoke_skill',
+          commandName: 'lint',
+          processedContent: 'content',
+        })
+      ).toBe(false);
     });
   });
 
   describe('isInvokeOnceModelAction', () => {
     it('有效数据应该返回 true', () => {
-      expect(isInvokeOnceModelAction({
-        action: 'invoke_once_model',
-        modelId: 'gpt-4o',
-        prompt: 'hello',
-      })).toBe(true);
+      expect(
+        isInvokeOnceModelAction({
+          action: 'invoke_once_model',
+          modelId: 'gpt-4o',
+          prompt: 'hello',
+        })
+      ).toBe(true);
     });
 
     it('缺少 prompt 应该返回 false', () => {
-      expect(isInvokeOnceModelAction({
-        action: 'invoke_once_model',
-        modelId: 'gpt-4o',
-      })).toBe(false);
+      expect(
+        isInvokeOnceModelAction({
+          action: 'invoke_once_model',
+          modelId: 'gpt-4o',
+        })
+      ).toBe(false);
     });
   });
 });

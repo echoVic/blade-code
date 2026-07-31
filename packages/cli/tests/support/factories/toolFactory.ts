@@ -39,32 +39,31 @@ export const createToolResult = (
 });
 
 export const toolCallTemplates = {
-  read: (filePath: string) =>
-    createToolCall('Read', { file_path: filePath }),
+  read: (filePath: string) => createToolCall('Read', { file_path: filePath }),
 
   write: (filePath: string, content: string) =>
     createToolCall('Write', { file_path: filePath, content }),
 
   edit: (filePath: string, oldStr: string, newStr: string) =>
-    createToolCall('SearchReplace', { file_path: filePath, old_str: oldStr, new_str: newStr }),
+    createToolCall('SearchReplace', {
+      file_path: filePath,
+      old_str: oldStr,
+      new_str: newStr,
+    }),
 
-  glob: (pattern: string, path?: string) =>
-    createToolCall('Glob', { pattern, path }),
+  glob: (pattern: string, path?: string) => createToolCall('Glob', { pattern, path }),
 
-  grep: (pattern: string, path?: string) =>
-    createToolCall('Grep', { pattern, path }),
+  grep: (pattern: string, path?: string) => createToolCall('Grep', { pattern, path }),
 
   runCommand: (command: string, blocking = true) =>
     createToolCall('RunCommand', { command, blocking, requires_approval: false }),
 
-  ls: (path: string) =>
-    createToolCall('LS', { path }),
+  ls: (path: string) => createToolCall('LS', { path }),
 
   deleteFile: (filePaths: string[]) =>
     createToolCall('DeleteFile', { file_paths: filePaths }),
 
-  webSearch: (query: string) =>
-    createToolCall('WebSearch', { query }),
+  webSearch: (query: string) => createToolCall('WebSearch', { query }),
 
   taskCreate: (subject: string, description: string) =>
     createToolCall('TaskCreate', { subject, description }),
@@ -72,8 +71,9 @@ export const toolCallTemplates = {
   taskUpdate: (taskId: string, status: string) =>
     createToolCall('TaskUpdate', { taskId, status }),
 
-  askUserQuestion: (questions: Array<{ question: string; options: Array<{ label: string }> }>) =>
-    createToolCall('AskUserQuestion', { questions }),
+  askUserQuestion: (
+    questions: Array<{ question: string; options: Array<{ label: string }> }>
+  ) => createToolCall('AskUserQuestion', { questions }),
 };
 
 export const toolResultTemplates = {

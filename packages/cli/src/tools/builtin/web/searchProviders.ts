@@ -364,10 +364,7 @@ function createExaProvider(): SearchProvider {
       };
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(
-        () => controller.abort(),
-        EXA_MCP_CONFIG.TIMEOUT
-      );
+      const timeoutId = setTimeout(() => controller.abort(), EXA_MCP_CONFIG.TIMEOUT);
 
       try {
         const response = await fetch(
@@ -396,11 +393,7 @@ function createExaProvider(): SearchProvider {
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const data: McpSearchResponse = JSON.parse(line.substring(6));
-            if (
-              data.result &&
-              data.result.content &&
-              data.result.content.length > 0
-            ) {
+            if (data.result && data.result.content && data.result.content.length > 0) {
               return parseExaMcpResponse(data.result.content[0].text);
             }
           }

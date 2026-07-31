@@ -53,8 +53,7 @@ export class ExecutionPipeline extends EventEmitter {
     super();
 
     this.maxHistorySize = config.maxHistorySize || 1000;
-    this.sessionApprovals =
-      config.approvalStore || new InMemorySessionApprovalStore();
+    this.sessionApprovals = config.approvalStore || new InMemorySessionApprovalStore();
     // scheduler 选择策略:
     // - 显式传 scheduler: 完全尊重调用方
     // - 传 concurrencyLimits: 建立本 pipeline 独立实例 (opt-in 隔离)
@@ -324,8 +323,7 @@ export class ExecutionPipeline extends EventEmitter {
     }>,
     maxConcurrency: number = 5
   ): Promise<ToolResult[]> {
-    const limit =
-      maxConcurrency > 0 ? maxConcurrency : Number.POSITIVE_INFINITY;
+    const limit = maxConcurrency > 0 ? maxConcurrency : Number.POSITIVE_INFINITY;
 
     // 无上限: 直接全部派发
     if (!Number.isFinite(limit) || limit >= requests.length) {

@@ -8,18 +8,21 @@ import type { SessionEvent } from '../../../src/context/types.js';
 
 // Helper: 创建基础事件字段
 const base = (
-	type: string,
-	sessionId = 'sess-1',
-	timestamp = '2026-02-21T10:00:00.000Z'
+  type: string,
+  sessionId = 'sess-1',
+  timestamp = '2026-02-21T10:00:00.000Z'
 ): Omit<SessionEvent, 'type' | 'data'> => ({
-	id: `evt-${Math.random().toString(36).slice(2, 8)}`,
-	sessionId,
-	timestamp,
-	cwd: '/tmp/test',
-	version: '1.0.0',
+  id: `evt-${Math.random().toString(36).slice(2, 8)}`,
+  sessionId,
+  timestamp,
+  cwd: '/tmp/test',
+  version: '1.0.0',
 });
 
-function sessionCreatedEvent(sessionId = 'sess-1', ts = '2026-02-21T10:00:00.000Z'): SessionEvent {
+function sessionCreatedEvent(
+  sessionId = 'sess-1',
+  ts = '2026-02-21T10:00:00.000Z'
+): SessionEvent {
   return {
     ...base('session_created', sessionId, ts),
     type: 'session_created',
@@ -44,7 +47,11 @@ function messageCreatedEvent(
   } as SessionEvent;
 }
 
-function textPartEvent(messageId: string, text: string, ts = '2026-02-21T10:01:01.000Z'): SessionEvent {
+function textPartEvent(
+  messageId: string,
+  text: string,
+  ts = '2026-02-21T10:01:01.000Z'
+): SessionEvent {
   return {
     ...base('part_created', 'sess-1', ts),
     type: 'part_created',
@@ -58,7 +65,11 @@ function textPartEvent(messageId: string, text: string, ts = '2026-02-21T10:01:0
   } as SessionEvent;
 }
 
-function summaryPartEvent(messageId: string, text: string, ts = '2026-02-21T10:05:00.000Z'): SessionEvent {
+function summaryPartEvent(
+  messageId: string,
+  text: string,
+  ts = '2026-02-21T10:05:00.000Z'
+): SessionEvent {
   return {
     ...base('part_created', 'sess-1', ts),
     type: 'part_created',
@@ -113,7 +124,11 @@ function toolResultPartEvent(
   } as SessionEvent;
 }
 
-function partUpdatedEvent(messageId: string, text: string, ts = '2026-02-21T10:03:00.000Z'): SessionEvent {
+function partUpdatedEvent(
+  messageId: string,
+  text: string,
+  ts = '2026-02-21T10:03:00.000Z'
+): SessionEvent {
   return {
     ...base('part_updated', 'sess-1', ts),
     type: 'part_updated',
@@ -127,7 +142,10 @@ function partUpdatedEvent(messageId: string, text: string, ts = '2026-02-21T10:0
   } as SessionEvent;
 }
 
-function sessionUpdatedEvent(data: Record<string, unknown>, ts = '2026-02-21T10:04:00.000Z'): SessionEvent {
+function sessionUpdatedEvent(
+  data: Record<string, unknown>,
+  ts = '2026-02-21T10:04:00.000Z'
+): SessionEvent {
   return {
     ...base('session_updated', 'sess-1', ts),
     type: 'session_updated',
@@ -177,12 +195,19 @@ describe('ContextAssembler', () => {
     it('should preserve model metadata on messages', () => {
       const events: SessionEvent[] = [
         sessionCreatedEvent(),
-        messageCreatedEvent('msg-1', 'assistant', '2026-02-21T10:01:00.000Z', 'claude-3-opus'),
+        messageCreatedEvent(
+          'msg-1',
+          'assistant',
+          '2026-02-21T10:01:00.000Z',
+          'claude-3-opus'
+        ),
         textPartEvent('msg-1', 'Hello'),
       ];
 
       const result = assembler.assemble(events)!;
-      expect(result.conversation.messages[0].metadata).toEqual({ model: 'claude-3-opus' });
+      expect(result.conversation.messages[0].metadata).toEqual({
+        model: 'claude-3-opus',
+      });
     });
 
     it('should not add metadata when model is undefined', () => {
@@ -205,7 +230,9 @@ describe('ContextAssembler', () => {
 
       const result = assembler.assemble(events)!;
       expect(result.session.sessionId).toBe('my-session');
-      expect(result.session.startTime).toBe(new Date('2026-02-21T08:00:00.000Z').getTime());
+      expect(result.session.startTime).toBe(
+        new Date('2026-02-21T08:00:00.000Z').getTime()
+      );
     });
 
     it('should fallback to first event when no session_created', () => {
@@ -246,7 +273,9 @@ describe('ContextAssembler', () => {
       ];
 
       const result = assembler.assemble(events)!;
-      expect(result.conversation.summary).toBe('This is a summary of the conversation.');
+      expect(result.conversation.summary).toBe(
+        'This is a summary of the conversation.'
+      );
     });
 
     it('should use latest summary when multiple exist', () => {
@@ -349,10 +378,36 @@ describe('ContextAssembler', () => {
       const events: SessionEvent[] = [
         sessionCreatedEvent(),
         messageCreatedEvent('msg-1', 'assistant'),
-        toolCallPartEvent('msg-1', 'tc-1', 'ReadFile', { path: 'a.ts' }, '2026-02-21T10:02:00.000Z'),
-        toolCallPartEvent('msg-1', 'tc-2', 'ReadFile', { path: 'b.ts' }, '2026-02-21T10:02:01.000Z'),
-        toolResultPartEvent('msg-1', 'tc-1', 'ReadFile', 'content-a', undefined, '2026-02-21T10:02:02.000Z'),
-        toolResultPartEvent('msg-1', 'tc-2', 'ReadFile', 'content-b', undefined, '2026-02-21T10:02:03.000Z'),
+        toolCallPartEvent(
+          'msg-1',
+          'tc-1',
+          'ReadFile',
+          { path: 'a.ts' },
+          '2026-02-21T10:02:00.000Z'
+        ),
+        toolCallPartEvent(
+          'msg-1',
+          'tc-2',
+          'ReadFile',
+          { path: 'b.ts' },
+          '2026-02-21T10:02:01.000Z'
+        ),
+        toolResultPartEvent(
+          'msg-1',
+          'tc-1',
+          'ReadFile',
+          'content-a',
+          undefined,
+          '2026-02-21T10:02:02.000Z'
+        ),
+        toolResultPartEvent(
+          'msg-1',
+          'tc-2',
+          'ReadFile',
+          'content-b',
+          undefined,
+          '2026-02-21T10:02:03.000Z'
+        ),
       ];
 
       const result = assembler.assemble(events)!;

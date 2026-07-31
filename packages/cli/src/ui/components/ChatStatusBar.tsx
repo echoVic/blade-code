@@ -3,16 +3,16 @@ import React from 'react';
 import { getProjectRoot } from '../../bootstrap/state.js';
 import { PermissionMode } from '../../config/types.js';
 import {
-    useActiveModal,
-    useAwaitingSecondCtrlC,
-    useContextRemaining,
-    useCurrentModel,
-    useIsCompacting,
-    useIsReady,
-    usePermissionMode,
-    useSessionCost,
-    useSpecProgress,
-    useThinkingModeEnabled,
+  useActiveModal,
+  useAwaitingSecondCtrlC,
+  useContextRemaining,
+  useCurrentModel,
+  useIsCompacting,
+  useIsReady,
+  usePermissionMode,
+  useSessionCost,
+  useSpecProgress,
+  useThinkingModeEnabled,
 } from '../../store/selectors/index.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
 import { useGitBranch } from '../hooks/useGitBranch.js';
@@ -179,7 +179,10 @@ export const ChatStatusBar: React.FC = React.memo(() => {
             {sessionCost > 0.001 && (
               <>
                 <Text color="gray">·</Text>
-                <Text color="green">${sessionCost < 0.01 ? sessionCost.toFixed(4) : sessionCost.toFixed(3)}</Text>
+                <Text color="green">
+                  $
+                  {sessionCost < 0.01 ? sessionCost.toFixed(4) : sessionCost.toFixed(3)}
+                </Text>
               </>
             )}
 

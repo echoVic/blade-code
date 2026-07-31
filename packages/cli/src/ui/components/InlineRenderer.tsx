@@ -65,9 +65,7 @@ const InlineRendererInternal: React.FC<InlineRendererProps> = ({ text }) => {
     // 添加匹配前的普通文本
     if (match.index > lastIndex) {
       const plainText = text.slice(lastIndex, match.index);
-      nodes.push(
-        <Text key={stableKey('text', textSeq++)}>{plainText}</Text>
-      );
+      nodes.push(<Text key={stableKey('text', textSeq++)}>{plainText}</Text>);
     }
 
     const fullMatch = match[0];
@@ -183,9 +181,7 @@ const InlineRendererInternal: React.FC<InlineRendererProps> = ({ text }) => {
   // 添加最后剩余的普通文本
   if (lastIndex < text.length) {
     const remaining = text.slice(lastIndex);
-    nodes.push(
-      <Text key={stableKey('text', textSeq++)}>{remaining}</Text>
-    );
+    nodes.push(<Text key={stableKey('text', textSeq++)}>{remaining}</Text>);
   }
 
   return <>{nodes.filter((node) => node !== null)}</>;

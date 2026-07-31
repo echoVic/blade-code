@@ -264,17 +264,29 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     updateTokenUsage: (usage: Partial<TokenUsage>) => {
       set((state) => {
         const prev = state.session.tokenUsage;
-        const inputDelta = (usage.inputTokens ?? 0) - (usage.inputTokens !== undefined ? prev.inputTokens : 0);
-        const outputDelta = (usage.outputTokens ?? 0) - (usage.outputTokens !== undefined ? prev.outputTokens : 0);
+        const inputDelta =
+          (usage.inputTokens ?? 0) -
+          (usage.inputTokens !== undefined ? prev.inputTokens : 0);
+        const outputDelta =
+          (usage.outputTokens ?? 0) -
+          (usage.outputTokens !== undefined ? prev.outputTokens : 0);
         const newTotalInput = prev.totalInputTokens + Math.max(0, inputDelta);
         const newTotalOutput = prev.totalOutputTokens + Math.max(0, outputDelta);
         const newCacheRead = prev.cacheReadTokens + (usage.cacheReadTokens ?? 0);
         const newCacheWrite = prev.cacheWriteTokens + (usage.cacheWriteTokens ?? 0);
 
         const config = state.config?.config;
-        const currentModel = config?.models?.find((m) => m.id === config.currentModelId);
+        const currentModel = config?.models?.find(
+          (m) => m.id === config.currentModelId
+        );
         const modelName = currentModel?.model ?? '';
-        const cost = estimateCostUsd(modelName, newTotalInput, newTotalOutput, newCacheRead, newCacheWrite);
+        const cost = estimateCostUsd(
+          modelName,
+          newTotalInput,
+          newTotalOutput,
+          newCacheRead,
+          newCacheWrite
+        );
 
         return {
           session: {

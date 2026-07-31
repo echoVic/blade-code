@@ -3,7 +3,9 @@ import type { ExecutionContext, ToolInvocation, ToolResult } from '../types/inde
 /**
  * 统一的工具调用实现
  */
-export class UnifiedToolInvocation<TParams = unknown> implements ToolInvocation<TParams> {
+export class UnifiedToolInvocation<TParams = unknown>
+  implements ToolInvocation<TParams>
+{
   constructor(
     public readonly toolName: string,
     public readonly params: TParams,

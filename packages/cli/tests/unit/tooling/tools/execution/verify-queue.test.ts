@@ -84,8 +84,7 @@ describe('VerifyQueue', () => {
         async () =>
           new Promise((resolve) => {
             setTimeout(
-              () =>
-                resolve({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+              () => resolve({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
               20
             );
           })
@@ -153,14 +152,12 @@ describe('VerifyQueue', () => {
       const ws = makeTempWorkspace();
       const file = path.join(ws, 'a.ts');
       fs.writeFileSync(file, '');
-      const runCommand = vi
-        .fn()
-        .mockResolvedValue({
-          stdout: '',
-          stderr: '',
-          exitCode: 1,
-          timedOut: true,
-        });
+      const runCommand = vi.fn().mockResolvedValue({
+        stdout: '',
+        stderr: '',
+        exitCode: 1,
+        timedOut: true,
+      });
       const q = new VerifyQueue({ runCommand });
 
       const r = await q.verify(file, ws);

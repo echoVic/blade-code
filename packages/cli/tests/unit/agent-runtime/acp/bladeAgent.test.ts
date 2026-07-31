@@ -261,7 +261,10 @@ describe('BladeAgent', () => {
   describe('prompt', () => {
     it('应该处理提示请求', async () => {
       // 先创建会话
-      const newSessionResponse = await agent.newSession({ cwd: '/tmp/test', mcpServers: [] });
+      const newSessionResponse = await agent.newSession({
+        cwd: '/tmp/test',
+        mcpServers: [],
+      });
       const sessionId = newSessionResponse.sessionId;
 
       const promptParams = {
@@ -298,7 +301,10 @@ describe('BladeAgent', () => {
   describe('cancel', () => {
     it('应该取消指定会话的操作', async () => {
       // 先创建会话
-      const newSessionResponse = await agent.newSession({ cwd: '/tmp/test', mcpServers: [] });
+      const newSessionResponse = await agent.newSession({
+        cwd: '/tmp/test',
+        mcpServers: [],
+      });
       const sessionId = newSessionResponse.sessionId;
 
       const cancelParams = {
@@ -326,7 +332,10 @@ describe('BladeAgent', () => {
   describe('setSessionMode', () => {
     it('应该设置会话模式', async () => {
       // 先创建会话
-      const newSessionResponse = await agent.newSession({ cwd: '/tmp/test', mcpServers: [] });
+      const newSessionResponse = await agent.newSession({
+        cwd: '/tmp/test',
+        mcpServers: [],
+      });
       const sessionId = newSessionResponse.sessionId;
 
       const params = {
@@ -359,7 +368,10 @@ describe('BladeAgent', () => {
   describe('unstable_setSessionModel', () => {
     it('应该设置会话模型', async () => {
       // 先创建会话
-      const newSessionResponse = await agent.newSession({ cwd: '/tmp/test', mcpServers: [] });
+      const newSessionResponse = await agent.newSession({
+        cwd: '/tmp/test',
+        mcpServers: [],
+      });
       const sessionId = newSessionResponse.sessionId;
 
       const params = {

@@ -130,11 +130,7 @@ export const getLongestWordWidth = (text: string): number => {
  * @param hard 是否强制断词（当列宽比最长单词还窄时需要）
  * @returns 换行后的行数组
  */
-export const wrapCellText = (
-  text: string,
-  width: number,
-  hard = false
-): string[] => {
+export const wrapCellText = (text: string, width: number, hard = false): string[] => {
   if (width <= 0) return [text];
   const trimmed = text.trimEnd();
   const wrapped = wrapAnsi(trimmed, width, {

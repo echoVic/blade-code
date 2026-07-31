@@ -170,7 +170,10 @@ export class AcpFileSystemService implements FileSystemService {
    * ACP 协议暂不支持 mkdir 操作，回退到本地。
    * 注：writeTextFile 通常会自动创建父目录。
    */
-  async mkdir(dirPath: string, options?: { recursive?: boolean; mode?: number }): Promise<void> {
+  async mkdir(
+    dirPath: string,
+    options?: { recursive?: boolean; mode?: number }
+  ): Promise<void> {
     // ACP 协议暂无 mkdir 方法，使用本地
     logger.debug(`[AcpFileSystem] mkdir fallback: ${dirPath}`);
     return this.fallback.mkdir(dirPath, options);
@@ -197,8 +200,6 @@ export class AcpFileSystemService implements FileSystemService {
     return this.capabilities.writeTextFile ?? false;
   }
 }
-
-
 
 /**
  * 对错误信息进行分类，便于诊断

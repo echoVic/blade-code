@@ -6,14 +6,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  test,
-  vi,
-} from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
 
@@ -209,9 +202,7 @@ describe('CompactionService - Post-Compact 文件恢复', () => {
     FileAccessTracker.resetInstance();
 
     // 创建临时目录和测试文件
-    tmpDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'compaction-restore-')
-    );
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'compaction-restore-'));
     testFiles = [];
     for (let i = 0; i < 7; i++) {
       const filePath = path.join(tmpDir, `test-file-${i}.ts`);
@@ -293,20 +284,18 @@ describe('CompactionService - Post-Compact 文件恢复', () => {
       const lines = content.split('\n');
       const preview = lines.slice(0, 200).join('\n');
       const truncated =
-        lines.length > 200
-          ? `\n... (${lines.length - 200} more lines)`
-          : '';
+        lines.length > 200 ? `\n... (${lines.length - 200} more lines)` : '';
       fileRestorations.push(
-        `<file path="${filePath}" lines="${lines.length}">`
-          + `\n${preview}${truncated}\n</file>`
+        `<file path="${filePath}" lines="${lines.length}">` +
+          `\n${preview}${truncated}\n</file>`
       );
     }
 
     const restorationContent = [
       '<system-reminder>',
-      'Post-compaction file restoration.'
-        + ' These files were recently accessed'
-        + ' in the conversation:',
+      'Post-compaction file restoration.' +
+        ' These files were recently accessed' +
+        ' in the conversation:',
       ...fileRestorations,
       '</system-reminder>',
     ].join('\n');
@@ -314,9 +303,7 @@ describe('CompactionService - Post-Compact 文件恢复', () => {
     // 验证格式
     expect(restorationContent).toContain('<system-reminder>');
     expect(restorationContent).toContain('</system-reminder>');
-    expect(restorationContent).toContain(
-      'Post-compaction file restoration.'
-    );
+    expect(restorationContent).toContain('Post-compaction file restoration.');
     expect(restorationContent).toContain(`<file path="${testFiles[0]}"`);
     expect(restorationContent).toContain('// line 1 of test-file-0');
   });
@@ -324,19 +311,14 @@ describe('CompactionService - Post-Compact 文件恢复', () => {
   test('超过 200 行的文件应被截断', async () => {
     // 创建一个超过 200 行的文件
     const longFilePath = path.join(tmpDir, 'long-file.ts');
-    const longLines = Array.from(
-      { length: 300 },
-      (_, ln) => `// line ${ln + 1}`
-    );
+    const longLines = Array.from({ length: 300 }, (_, ln) => `// line ${ln + 1}`);
     await fs.writeFile(longFilePath, longLines.join('\n'));
 
     const content = await fs.readFile(longFilePath, 'utf-8');
     const lines = content.split('\n');
     const preview = lines.slice(0, 200).join('\n');
     const truncated =
-      lines.length > 200
-        ? `\n... (${lines.length - 200} more lines)`
-        : '';
+      lines.length > 200 ? `\n... (${lines.length - 200} more lines)` : '';
 
     // 验证截断
     expect(lines.length).toBe(300);
@@ -364,8 +346,7 @@ describe('CompactionService - Post-Compact 文件恢复', () => {
         const lines = content.split('\n');
         const preview = lines.slice(0, 200).join('\n');
         fileRestorations.push(
-          `<file path="${filePath}" lines="${lines.length}">`
-            + `\n${preview}\n</file>`
+          `<file path="${filePath}" lines="${lines.length}">` + `\n${preview}\n</file>`
         );
       } catch {
         // 文件可能已被删除，静默跳过

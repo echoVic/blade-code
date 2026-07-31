@@ -132,9 +132,7 @@ export class StreamingToolExecutor {
       }
 
       // 排队中的（顺序执行）
-      const queuedIdx = this.queued.findIndex(
-        (q) => q.toolCall.id === id
-      );
+      const queuedIdx = this.queued.findIndex((q) => q.toolCall.id === id);
       if (queuedIdx !== -1) {
         const { toolCall, params } = this.queued[queuedIdx];
         this.queued.splice(queuedIdx, 1);
@@ -144,7 +142,10 @@ export class StreamingToolExecutor {
           logger.debug(
             `[StreamingToolExecutor] Signal aborted, 跳过排队工具: ${toolCall.function.name} (${toolCall.id})`
           );
-          yield this.makeAbortResult(toolCall, 'Tool execution skipped: task aborted before launch');
+          yield this.makeAbortResult(
+            toolCall,
+            'Tool execution skipped: task aborted before launch'
+          );
           continue;
         }
 
@@ -207,10 +208,7 @@ export class StreamingToolExecutor {
   }
 
   /** 构建 abort/discard 结果 */
-  private makeAbortResult(
-    toolCall: FunctionToolCall,
-    message: string
-  ): ToolExecResult {
+  private makeAbortResult(toolCall: FunctionToolCall, message: string): ToolExecResult {
     return {
       toolCall,
       result: {
@@ -286,7 +284,10 @@ export class StreamingToolExecutor {
         logger.debug(
           `[StreamingToolExecutor] 丢弃旧世代工具结果: ${toolCall.function.name} (startEpoch=${startEpoch}, currentEpoch=${this.epoch})`
         );
-        return this.makeAbortResult(toolCall, 'Tool execution aborted due to epoch mismatch (discard)');
+        return this.makeAbortResult(
+          toolCall,
+          'Tool execution aborted due to epoch mismatch (discard)'
+        );
       }
 
       const execResult: ToolExecResult = {
@@ -305,7 +306,10 @@ export class StreamingToolExecutor {
     } catch (error) {
       // Epoch guard: 异常路径也检查 epoch
       if (startEpoch !== this.epoch) {
-        return this.makeAbortResult(toolCall, 'Tool execution aborted due to epoch mismatch (discard)');
+        return this.makeAbortResult(
+          toolCall,
+          'Tool execution aborted due to epoch mismatch (discard)'
+        );
       }
 
       logger.error(
@@ -317,8 +321,7 @@ export class StreamingToolExecutor {
         llmContent: '',
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
-          message:
-            error instanceof Error ? error.message : 'Unknown error',
+          message: error instanceof Error ? error.message : 'Unknown error',
         },
         metadata: undefined,
       };

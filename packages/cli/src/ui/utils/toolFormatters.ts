@@ -145,7 +145,11 @@ export function formatToolCallSummary(
       const status = params.status as string;
       const taskId = params.taskId as string;
       const statusIcon =
-        status === 'completed' ? '[done]' : status === 'in_progress' ? '[in progress]' : '[paused]';
+        status === 'completed'
+          ? '[done]'
+          : status === 'in_progress'
+            ? '[in progress]'
+            : '[paused]';
       return `${statusIcon} Task ${taskId?.substring(0, 8) || ''}: ${status}`;
     }
     case 'ValidateSpec': {
@@ -332,9 +336,7 @@ export function generateToolDetail(
       if (content.body) {
         const preview = content.body.slice(0, 800);
         parts.push(
-          preview.length < content.body.length
-            ? `${preview}\n... (truncated)`
-            : preview
+          preview.length < content.body.length ? `${preview}\n... (truncated)` : preview
         );
       }
       return parts.join('\n') || null;
@@ -359,9 +361,7 @@ export function generateToolDetail(
       }
       if (Array.isArray(results) && results.length > 0) {
         const maxShow = 5;
-        const lines = results
-          .slice(0, maxShow)
-          .map((r) => r.title || r.url || '');
+        const lines = results.slice(0, maxShow).map((r) => r.title || r.url || '');
         if (results.length > maxShow) {
           lines.push(`... (+${results.length - maxShow} more)`);
         }
@@ -373,24 +373,15 @@ export function generateToolDetail(
     case 'Task': {
       const summary =
         (result.metadata?.subagentSummary as string) ||
-        (typeof result.llmContent === 'string'
-          ? result.llmContent
-          : null);
+        (typeof result.llmContent === 'string' ? result.llmContent : null);
       if (!summary) return null;
-      return summary.length > 200
-        ? `${summary.slice(0, 200)}...`
-        : summary;
+      return summary.length > 200 ? `${summary.slice(0, 200)}...` : summary;
     }
 
     case 'TaskOutput': {
-      const content =
-        typeof result.llmContent === 'string'
-          ? result.llmContent
-          : null;
+      const content = typeof result.llmContent === 'string' ? result.llmContent : null;
       if (!content) return null;
-      return content.length > 200
-        ? `${content.slice(0, 200)}...`
-        : content;
+      return content.length > 200 ? `${content.slice(0, 200)}...` : content;
     }
 
     case 'Skill': {
@@ -431,12 +422,8 @@ export function formatToolDisplay(
  * 将 ToolDisplayOutput 渲染为纯文本字符串
  * 用于 Web SSE、ACP、Headless 等需要单一字符串的消费者
  */
-export function renderToolDisplayToString(
-  display: ToolDisplayOutput
-): string {
-  const prefix = { ok: '[OK]', fail: '[FAIL]', warn: '[WARN]' }[
-    display.status
-  ];
+export function renderToolDisplayToString(display: ToolDisplayOutput): string {
+  const prefix = { ok: '[OK]', fail: '[FAIL]', warn: '[WARN]' }[display.status];
   return display.detail
     ? `${prefix} ${display.summary}\n${display.detail}`
     : `${prefix} ${display.summary}`;

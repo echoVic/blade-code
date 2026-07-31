@@ -27,8 +27,7 @@ function needsFileLock(
   params: Record<string, unknown>
 ): { needsLock: boolean; filePath: string | null } {
   const needs = toolDef != null && !toolDef.isConcurrencySafe;
-  const filePath =
-    needs && params.file_path ? String(params.file_path) : null;
+  const filePath = needs && params.file_path ? String(params.file_path) : null;
   return {
     needsLock: needs && filePath !== null,
     filePath,
@@ -187,12 +186,7 @@ describe('ExecutionPipeline — file lock logic', () => {
       expect(r1).toBe('result1');
       expect(r2).toBe('result2');
       // op2 should start after op1 ends
-      expect(executionOrder).toEqual([
-        'op1-start',
-        'op1-end',
-        'op2-start',
-        'op2-end',
-      ]);
+      expect(executionOrder).toEqual(['op1-start', 'op1-end', 'op2-start', 'op2-end']);
     });
 
     it('Write calls to DIFFERENT files can run concurrently', async () => {

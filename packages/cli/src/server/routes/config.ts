@@ -8,10 +8,12 @@ const logger = createLogger(LogCategory.SERVICE);
 
 const UpdateConfigSchema = z.object({
   updates: z.record(z.any()),
-  options: z.object({
-    scope: z.enum(['local', 'project', 'global']).optional(),
-    immediate: z.boolean().optional(),
-  }).optional(),
+  options: z
+    .object({
+      scope: z.enum(['local', 'project', 'global']).optional(),
+      immediate: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const ConfigRoutes = () => {
@@ -31,7 +33,7 @@ export const ConfigRoutes = () => {
     try {
       const body = await c.req.json();
       const parsed = UpdateConfigSchema.safeParse(body);
-      
+
       if (!parsed.success) {
         throw new BadRequestError('Invalid config update format');
       }

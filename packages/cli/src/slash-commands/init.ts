@@ -112,18 +112,17 @@ const initCommand: SlashCommand = {
 **Final output**: Return your analysis and suggestions as plain text. Do NOT use Write tool.`;
 
         // 使用 chatStream 方法让 Agent 可以调用工具
-        logger.info(`[/init] Starting agent.chatStream, signal.aborted: ${signal?.aborted}`);
+        logger.info(
+          `[/init] Starting agent.chatStream, signal.aborted: ${signal?.aborted}`
+        );
         const loopResult = await drainLoop(
-          agent.chatStream(
-            analysisPrompt,
-            {
-              messages: [],
-              userId: 'cli-user',
-              sessionId: sessionId || 'init-session',
-              workspaceRoot: cwd,
-              signal,
-            }
-          ),
+          agent.chatStream(analysisPrompt, {
+            messages: [],
+            userId: 'cli-user',
+            sessionId: sessionId || 'init-session',
+            workspaceRoot: cwd,
+            signal,
+          }),
           async (event) => {
             switch (event.kind) {
               case 'tool_start': {
@@ -153,7 +152,9 @@ const initCommand: SlashCommand = {
           }
         );
         const result = loopResult.finalMessage || '';
-        logger.info(`[/init] agent.chatStream completed, signal.aborted: ${signal?.aborted}`);
+        logger.info(
+          `[/init] agent.chatStream completed, signal.aborted: ${signal?.aborted}`
+        );
 
         if (signal?.aborted) {
           logger.info('[/init] Returning cancelled after agent.chat');
@@ -235,16 +236,13 @@ const initCommand: SlashCommand = {
         `[/init] Starting agent.chatStream for new BLADE.md, signal.aborted: ${signal?.aborted}`
       );
       const generatedLoopResult = await drainLoop(
-        agent.chatStream(
-          analysisPrompt,
-          {
-            messages: [],
-            userId: 'cli-user',
-            sessionId: sessionId || 'init-session',
-            workspaceRoot: cwd,
-            signal,
-          }
-        ),
+        agent.chatStream(analysisPrompt, {
+          messages: [],
+          userId: 'cli-user',
+          sessionId: sessionId || 'init-session',
+          workspaceRoot: cwd,
+          signal,
+        }),
         async (event) => {
           switch (event.kind) {
             case 'tool_start': {

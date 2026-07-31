@@ -181,7 +181,9 @@ function formatValidationIssues(error: z.ZodError): string {
 function validateHeadlessOptions(options: HeadlessOptions): ValidatedHeadlessOptions {
   const result = HeadlessOptionsSchema.safeParse(options);
   if (!result.success) {
-    throw new Error(`Invalid headless options: ${formatValidationIssues(result.error)}`);
+    throw new Error(
+      `Invalid headless options: ${formatValidationIssues(result.error)}`
+    );
   }
   return result.data;
 }
@@ -198,7 +200,8 @@ function headlessCommand(yargs: Argv) {
         })
         .option('headless', {
           type: 'boolean',
-          describe: 'Run full agent loop without Ink UI and print events to the terminal',
+          describe:
+            'Run full agent loop without Ink UI and print events to the terminal',
         })
         .option('model', {
           describe: 'Model ID for this run',
@@ -393,17 +396,12 @@ function getPhaseForTool(
   };
 }
 
-function createEventWriter(
-  io: HeadlessIO,
-  outputFormat: HeadlessOutputFormat
-) {
+function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
   const writeJsonl = <TType extends HeadlessJsonlEventType>(
     type: TType,
     payload: HeadlessJsonlEventPayload<TType>
   ) => {
-    io.stdout.write(
-      `${JSON.stringify(createHeadlessJsonlEvent(type, payload))}\n`
-    );
+    io.stdout.write(`${JSON.stringify(createHeadlessJsonlEvent(type, payload))}\n`);
   };
 
   return {
@@ -683,10 +681,9 @@ export async function runHeadless(
             if (!('function' in toolCall)) break;
             // 任务列表工具由 task_update 处理，避免重复输出
             if (
-              ['TaskCreate', 'TaskUpdate', 'TaskList'].includes(
-                toolCall.function.name
-              )
-            ) break;
+              ['TaskCreate', 'TaskUpdate', 'TaskList'].includes(toolCall.function.name)
+            )
+              break;
             try {
               const params = JSON.parse(toolCall.function.arguments);
               const summary = formatToolCallSummary(toolCall.function.name, params);
@@ -798,9 +795,7 @@ export async function runHeadless(
 
     // 输出截断告警
     if (loopResult.metadata?.outputTruncated) {
-      eventWriter.error(
-        '[warning] 输出因达到 token 上限被截断，部分内容可能不完整。',
-      );
+      eventWriter.error('[warning] 输出因达到 token 上限被截断，部分内容可能不完整。');
     }
 
     eventWriter.phase('completed', 'done', 'Headless run completed');

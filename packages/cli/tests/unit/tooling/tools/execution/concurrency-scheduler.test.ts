@@ -104,10 +104,7 @@ describe('ConcurrencyScheduler', () => {
       expect(scheduler.getStats()[ToolKind.Execute].inFlight).toBe(0);
 
       // 下一个任务应能立即获得配额
-      const result = await scheduler.schedule(
-        ToolKind.Execute,
-        async () => 'ok'
-      );
+      const result = await scheduler.schedule(ToolKind.Execute, async () => 'ok');
       expect(result).toBe('ok');
     });
   });

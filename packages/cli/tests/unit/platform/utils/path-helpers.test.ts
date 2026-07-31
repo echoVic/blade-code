@@ -33,18 +33,42 @@ describe('pathHelpers', () => {
   describe('splitPath', () => {
     it('应该正确分割 Unix 风格路径', () => {
       expect(splitPath('/Users/john/file.txt')).toEqual(['Users', 'john', 'file.txt']);
-      expect(splitPath('/home/user/docs/project')).toEqual(['home', 'user', 'docs', 'project']);
+      expect(splitPath('/home/user/docs/project')).toEqual([
+        'home',
+        'user',
+        'docs',
+        'project',
+      ]);
       expect(splitPath('/')).toEqual([]);
     });
 
     it('应该正确分割 Windows 风格路径', () => {
-      expect(splitPath('C:\\Users\\HP\\file.txt')).toEqual(['C:', 'Users', 'HP', 'file.txt']);
-      expect(splitPath('D:\\Projects\\blade-code\\src')).toEqual(['D:', 'Projects', 'blade-code', 'src']);
+      expect(splitPath('C:\\Users\\HP\\file.txt')).toEqual([
+        'C:',
+        'Users',
+        'HP',
+        'file.txt',
+      ]);
+      expect(splitPath('D:\\Projects\\blade-code\\src')).toEqual([
+        'D:',
+        'Projects',
+        'blade-code',
+        'src',
+      ]);
     });
 
     it('应该处理混合分隔符', () => {
-      expect(splitPath('C:\\Users/john\\file.txt')).toEqual(['C:', 'Users', 'john', 'file.txt']);
-      expect(splitPath('/Users\\john\\file.txt')).toEqual(['Users', 'john', 'file.txt']);
+      expect(splitPath('C:\\Users/john\\file.txt')).toEqual([
+        'C:',
+        'Users',
+        'john',
+        'file.txt',
+      ]);
+      expect(splitPath('/Users\\john\\file.txt')).toEqual([
+        'Users',
+        'john',
+        'file.txt',
+      ]);
     });
 
     it('应该处理相对路径', () => {
@@ -58,7 +82,11 @@ describe('pathHelpers', () => {
     });
 
     it('应该过滤掉空的部分', () => {
-      expect(splitPath('/Users//john///file.txt')).toEqual(['Users', 'john', 'file.txt']);
+      expect(splitPath('/Users//john///file.txt')).toEqual([
+        'Users',
+        'john',
+        'file.txt',
+      ]);
     });
   });
 });

@@ -53,18 +53,15 @@ export class SubagentExecutor {
       const onEvent = context.onEvent;
 
       const loopResult = await drainLoop(
-        agent.chatStream(
-          context.prompt,
-          {
-            messages: [],
-            userId: 'subagent',
-            sessionId: agentId,
-            workspaceRoot: getCwd(),
-            permissionMode: context.permissionMode,
-            systemPrompt,
-            subagentInfo,
-          }
-        ),
+        agent.chatStream(context.prompt, {
+          messages: [],
+          userId: 'subagent',
+          sessionId: agentId,
+          workspaceRoot: getCwd(),
+          permissionMode: context.permissionMode,
+          systemPrompt,
+          subagentInfo,
+        }),
         onEvent
       );
 

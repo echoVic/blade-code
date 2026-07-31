@@ -68,7 +68,8 @@ export class PermissionChecker {
     const signature = PermissionChecker.buildSignature(descriptor);
 
     // 对 Bash 工具生成规范化签名变体
-    const isBash = descriptor.toolName === 'Bash' && typeof descriptor.params.command === 'string';
+    const isBash =
+      descriptor.toolName === 'Bash' && typeof descriptor.params.command === 'string';
     const command = isBash ? String(descriptor.params.command).trim() : '';
 
     // 保守规范化（allow 规则用）：仅剥离安全环境变量 + 安全 wrapper

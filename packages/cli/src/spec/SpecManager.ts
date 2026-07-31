@@ -752,14 +752,12 @@ export class SpecManager {
 
     if (currentTask) {
       lines.push(
-        `当前任务: #${tasks.indexOf(currentTask) + 1} - ${currentTask.title}${currentTask.description ? ` (${currentTask.description})` : ''}`,
+        `当前任务: #${tasks.indexOf(currentTask) + 1} - ${currentTask.title}${currentTask.description ? ` (${currentTask.description})` : ''}`
       );
     }
 
     if (nextTask && nextTask !== currentTask) {
-      lines.push(
-        `下一个任务: #${tasks.indexOf(nextTask) + 1} - ${nextTask.title}`,
-      );
+      lines.push(`下一个任务: #${tasks.indexOf(nextTask) + 1} - ${nextTask.title}`);
     }
 
     if (completed + skipped >= total) {

@@ -80,7 +80,9 @@ export const webFetchTool = createTool({
           .describe('Wait for specific CSS selector to load'),
       })
       .optional()
-      .describe('Jina Reader advanced options (only used when extract_content is true)'),
+      .describe(
+        'Jina Reader advanced options (only used when extract_content is true)'
+      ),
     headers: z.record(z.string()).optional().describe('Request headers (optional)'),
     body: z.string().optional().describe('Request body (optional)'),
     timeout: ToolSchemas.timeout(1000, 120000, 30000),

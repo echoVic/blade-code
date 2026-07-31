@@ -19,7 +19,10 @@ import {
 } from '../../store/selectors/index.js';
 import { useTerminalHeight } from '../hooks/useTerminalHeight.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
-import { getMarkdownBlocksSnapshot, getMarkdownTailSnapshot } from '../utils/markdownIncremental.js';
+import {
+  getMarkdownBlocksSnapshot,
+  getMarkdownTailSnapshot,
+} from '../utils/markdownIncremental.js';
 import type { ParsedBlock } from '../utils/markdownParser.js';
 import {
   activateRawRenderer,
@@ -316,10 +319,16 @@ export const MessageArea: React.FC = React.memo(() => {
     const maxDisplayLines = Math.max(1, terminalHeight - RESERVED_LINES);
     const hiddenLines = Math.max(0, tailSnapshot.lines.length - maxDisplayLines);
     const visibleLines = tailSnapshot.lines.slice(-maxDisplayLines);
-    const hasBlocks = (getMarkdownBlocksSnapshot(activeStreamingMessageId)?.length ?? 0) > 0;
+    const hasBlocks =
+      (getMarkdownBlocksSnapshot(activeStreamingMessageId)?.length ?? 0) > 0;
 
     renderTail(visibleLines, hiddenLines, tailSnapshot.mode, hasBlocks);
-  }, [activeStreamingMessageId, currentStreamingBuffer.version, terminalHeight, terminalWidth]);
+  }, [
+    activeStreamingMessageId,
+    currentStreamingBuffer.version,
+    terminalHeight,
+    terminalWidth,
+  ]);
 
   // 在 finalization 清理时也清除 raw renderer
   useEffect(() => {
@@ -378,10 +387,7 @@ export const MessageArea: React.FC = React.memo(() => {
       if (msg.role === 'tool' && streamingToolMessageIdsRef.current.has(msg.id)) {
         continue;
       }
-      if (
-        msg.role === 'assistant' &&
-        streamedAssistantMessageIds.has(msg.id)
-      ) {
+      if (msg.role === 'assistant' && streamedAssistantMessageIds.has(msg.id)) {
         continue;
       }
       items.push(
@@ -426,10 +432,7 @@ export const MessageArea: React.FC = React.memo(() => {
         )}
 
         {streamingStaticItems.length > 0 && (
-          <Static
-            key={`streaming-${clearCount}`}
-            items={streamingStaticItems}
-          >
+          <Static key={`streaming-${clearCount}`} items={streamingStaticItems}>
             {(item) => item}
           </Static>
         )}

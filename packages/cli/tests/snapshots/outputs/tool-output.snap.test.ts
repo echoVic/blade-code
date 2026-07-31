@@ -6,7 +6,11 @@ const formatToolOutput = (toolName: string, result: unknown): string => {
   return `${header}\n${content}`;
 };
 
-const formatFileReadOutput = (filePath: string, content: string, lineCount: number): string => {
+const formatFileReadOutput = (
+  filePath: string,
+  content: string,
+  lineCount: number
+): string => {
   return `${filePath} (${lineCount} lines)\n${'─'.repeat(40)}\n${content}`;
 };
 
@@ -17,9 +21,7 @@ const formatGrepOutput = (
     return 'No matches found.';
   }
 
-  return matches
-    .map((m) => `${m.file}:${m.line}: ${m.content}`)
-    .join('\n');
+  return matches.map((m) => `${m.file}:${m.line}: ${m.content}`).join('\n');
 };
 
 const formatCommandOutput = (
@@ -60,7 +62,11 @@ describe('工具输出快照测试', () => {
       const matches = [
         { file: 'src/index.ts', line: 10, content: 'const config = loadConfig();' },
         { file: 'src/utils.ts', line: 25, content: 'export function config() {}' },
-        { file: 'tests/config.test.ts', line: 5, content: 'describe("config", () => {' },
+        {
+          file: 'tests/config.test.ts',
+          line: 5,
+          content: 'describe("config", () => {',
+        },
       ];
       const output = formatGrepOutput(matches);
       expect(output).toMatchSnapshot();

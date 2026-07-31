@@ -45,7 +45,12 @@ export type SystemEvent =
 export type DomainEvent =
   | { kind: 'task_update'; tasks: TaskListItem[] }
   | { kind: 'subagent_spawned'; sessionId: string; type: string; prompt: string }
-  | { kind: 'subagent_completed'; sessionId: string; success: boolean; summary?: string };
+  | {
+      kind: 'subagent_completed';
+      sessionId: string;
+      success: boolean;
+      summary?: string;
+    };
 
 // ===== Tool Call Reference =====
 

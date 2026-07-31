@@ -129,7 +129,9 @@ export function handleSubagentLifecycle(
     try {
       const args = JSON.parse(toolCall.function.arguments);
       prompt = args.prompt || '';
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return {
       kind: 'subagent_spawned',
       sessionId,

@@ -57,7 +57,10 @@ const SHOW_CURSOR = `${ESC}[?25h`;
 /**
  * 激活 raw renderer
  */
-export function activateRawRenderer(terminalWidth: number, terminalHeight: number): void {
+export function activateRawRenderer(
+  terminalWidth: number,
+  terminalHeight: number
+): void {
   state.active = true;
   state.renderedLineCount = 0;
   state.lastRenderedLines = [];

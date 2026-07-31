@@ -46,9 +46,7 @@ function getGitCommandOutput(projectRoot: string, command: string): string | nul
   }
 }
 
-export function getEnvironmentContext(
-  options: EnvironmentContextOptions = {}
-): string {
+export function getEnvironmentContext(options: EnvironmentContextOptions = {}): string {
   const { includeGitSnapshot = true, includeDirectoryListing = true } = options;
   const env = getEnvironmentInfo();
   const isGitRepository = existsSync(path.join(env.projectRoot, '.git'));
@@ -66,7 +64,10 @@ You have been invoked in the following environment:
  - Node.js: ${env.nodeVersion}`;
 
   if (includeGitSnapshot && isGitRepository) {
-    const branch = getGitCommandOutput(env.projectRoot, 'git rev-parse --abbrev-ref HEAD');
+    const branch = getGitCommandOutput(
+      env.projectRoot,
+      'git rev-parse --abbrev-ref HEAD'
+    );
     const status = getGitCommandOutput(env.projectRoot, 'git status --short');
     const recentCommits = getGitCommandOutput(
       env.projectRoot,

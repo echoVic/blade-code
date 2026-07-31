@@ -131,7 +131,11 @@ Usage notes:
             'The question was approved but no answers were collected. ' +
             'This typically happens in IDE/ACP sessions where structured question UI is not available. ' +
             'Please ask the user directly in your response or make reasonable assumptions based on context.',
-          metadata: { acpMode: true, noAnswersCollected: true, summary: 'ACP 模式：无法收集答案' },
+          metadata: {
+            acpMode: true,
+            noAnswersCollected: true,
+            summary: 'ACP 模式：无法收集答案',
+          },
         };
       } catch (error) {
         return {

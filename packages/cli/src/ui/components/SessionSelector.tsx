@@ -215,7 +215,8 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
         选择要恢复的会话:
       </Text>
       <Text dimColor>
-        {'\n'}(Left/Right to page | Up/Down to select | Enter to confirm | Esc to cancel){'\n'}
+        {'\n'}(Left/Right to page | Up/Down to select | Enter to confirm | Esc to
+        cancel){'\n'}
       </Text>
 
       <SelectInput

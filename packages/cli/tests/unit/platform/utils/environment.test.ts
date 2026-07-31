@@ -88,7 +88,9 @@ describe('utils/environment', () => {
     const { setCwdState } = await import('../../../../src/bootstrap/state.js');
     setCwdState(tempSubDir);
 
-    const { getEnvironmentContext } = await import('../../../../src/utils/environment.js');
+    const { getEnvironmentContext } = await import(
+      '../../../../src/utils/environment.js'
+    );
     const context = getEnvironmentContext();
 
     expect(context).toContain('# Environment');
@@ -97,7 +99,9 @@ describe('utils/environment', () => {
     expect(context).toContain('Shell: zsh');
     expect(context).toContain(`- \`${tempProjectRoot}/package.json\``);
     expect(context).toContain(`- \`${tempProjectRoot}/tsconfig.json\``);
-    expect(context).toContain(`When using file tools (read, write, edit), provide absolute paths based on: \`${tempSubDir}/\``);
+    expect(context).toContain(
+      `When using file tools (read, write, edit), provide absolute paths based on: \`${tempSubDir}/\``
+    );
     expect(context).not.toContain('Current branch: feat/upgrade-agent');
     expect(context).not.toContain('Working tree status:');
     expect(context).not.toContain('Recent commits:');
@@ -120,16 +124,22 @@ describe('utils/environment', () => {
     const { setCwdState } = await import('../../../../src/bootstrap/state.js');
     setCwdState(tempSubDir);
 
-    const { getEnvironmentContext } = await import('../../../../src/utils/environment.js');
+    const { getEnvironmentContext } = await import(
+      '../../../../src/utils/environment.js'
+    );
     const context = getEnvironmentContext({ includeGitSnapshot: true });
     expect(context).toContain('Working tree status:');
     expect(context).toContain('M packages/cli/src/prompts/builder.ts');
     expect(context).toContain('Recent commits:');
-    expect(context).toContain('9e9371c feat(permission): 增强Bash命令权限检查的语义分析和规范化');
+    expect(context).toContain(
+      '9e9371c feat(permission): 增强Bash命令权限检查的语义分析和规范化'
+    );
     expect(context).toContain('Shell: zsh');
     expect(context).toContain(`- \`${tempProjectRoot}/package.json\``);
     expect(context).toContain(`- \`${tempProjectRoot}/tsconfig.json\``);
-    expect(context).toContain(`When using file tools (read, write, edit), provide absolute paths based on: \`${tempSubDir}/\``);
+    expect(context).toContain(
+      `When using file tools (read, write, edit), provide absolute paths based on: \`${tempSubDir}/\``
+    );
   });
 
   it('getDirectoryStructure 应格式化 find 输出', async () => {
@@ -141,7 +151,9 @@ describe('utils/environment', () => {
       throw new Error('unsupported command');
     });
 
-    const { getDirectoryStructure } = await import('../../../../src/utils/environment.js');
+    const { getDirectoryStructure } = await import(
+      '../../../../src/utils/environment.js'
+    );
 
     const tree = getDirectoryStructure(tempDir, 2);
     expect(tree).toContain('.');
@@ -156,7 +168,9 @@ describe('utils/environment', () => {
       throw new Error('command failed');
     });
 
-    const { getDirectoryStructure } = await import('../../../../src/utils/environment.js');
+    const { getDirectoryStructure } = await import(
+      '../../../../src/utils/environment.js'
+    );
 
     expect(getDirectoryStructure('/missing')).toBe('.');
   });

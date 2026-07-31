@@ -78,12 +78,7 @@ describe('Agent compaction threshold fallback', () => {
       executionEngine: undefined,
     } as unknown as LoopDependencies;
 
-    const didCompact = await checkAndCompactInLoop(
-      deps,
-      createContext(),
-      2,
-      148000
-    );
+    const didCompact = await checkAndCompactInLoop(deps, createContext(), 2, 148000);
 
     expect(didCompact).toBe('compacted');
     expect(compactSpy).toHaveBeenCalledOnce();

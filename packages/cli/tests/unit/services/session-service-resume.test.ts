@@ -15,7 +15,9 @@ describe('SessionService.toUISafeMessages', () => {
       },
       {
         role: 'assistant',
-        content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,def' } }],
+        content: [
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,def' } },
+        ],
       },
       { role: 'tool', content: '{"secret":"tool-json"}' },
       { role: 'assistant', content: 'Done' },

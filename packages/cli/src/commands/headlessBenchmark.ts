@@ -81,7 +81,10 @@ function average(values: number[]): number {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function matchesSuccess(output: string, successMatchers: Array<string | RegExp>): boolean {
+function matchesSuccess(
+  output: string,
+  successMatchers: Array<string | RegExp>
+): boolean {
   return successMatchers.every((matcher) => {
     if (typeof matcher === 'string') {
       return output.includes(matcher);
@@ -99,15 +102,21 @@ export function collectBenchmarkCaseMetrics(input: {
   const { benchmarkCase, durationMs, exitCode, events } = input;
   const totalTokens =
     events
-      .filter((event): event is Extract<HeadlessJsonlEvent, { type: 'token_usage' }> =>
-        event.type === 'token_usage'
+      .filter(
+        (event): event is Extract<HeadlessJsonlEvent, { type: 'token_usage' }> =>
+          event.type === 'token_usage'
       )
       .at(-1)?.total_tokens ?? 0;
 
   const readFiles = new Set(
     events
       .filter(
-        (event): event is Extract<HeadlessJsonlEvent, { type: 'tool_start' | 'tool_result' }> =>
+        (
+          event
+        ): event is Extract<
+          HeadlessJsonlEvent,
+          { type: 'tool_start' | 'tool_result' }
+        > =>
           (event.type === 'tool_start' || event.type === 'tool_result') &&
           event.tool_name === 'Read' &&
           typeof event.target === 'string'
@@ -117,7 +126,9 @@ export function collectBenchmarkCaseMetrics(input: {
 
   const output = events
     .filter(
-      (event): event is Extract<HeadlessJsonlEvent, { type: 'content' | 'content_delta' }> =>
+      (
+        event
+      ): event is Extract<HeadlessJsonlEvent, { type: 'content' | 'content_delta' }> =>
         event.type === 'content' || event.type === 'content_delta'
     )
     .map((event) => (event.type === 'content' ? event.content : event.delta))
@@ -132,9 +143,7 @@ export function collectBenchmarkCaseMetrics(input: {
 
   const targetHitEvents = events.filter(
     (event) =>
-      event.type === 'phase' &&
-      event.phase === 'target_hit' &&
-      event.status === 'hit'
+      event.type === 'phase' && event.phase === 'target_hit' && event.status === 'hit'
   ).length;
 
   return {
@@ -187,11 +196,13 @@ export async function appendBenchmarkHistory(
   await writeFile(historyPath, JSON.stringify(history, null, 2));
 }
 
-export async function runRealRepoBenchmark(options: {
-  benchmarkCases?: RealRepoBenchmarkCase[];
-  historyPath?: string;
-  model?: string;
-} = {}): Promise<{
+export async function runRealRepoBenchmark(
+  options: {
+    benchmarkCases?: RealRepoBenchmarkCase[];
+    historyPath?: string;
+    model?: string;
+  } = {}
+): Promise<{
   historyPath: string;
   results: BenchmarkCaseMetrics[];
   summary: BenchmarkRunSummary;

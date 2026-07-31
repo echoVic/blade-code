@@ -11,8 +11,6 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, isAbsolute } from 'node:path';
 
-
-
 /**
  * 基于二进制头检测图片类型（比 base64 前缀更可靠）
  */

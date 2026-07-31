@@ -2,10 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 describe('headless real repo benchmark helpers', () => {
   it('聚合耗时、token、读取文件数和成功率', async () => {
-    const {
-      collectBenchmarkCaseMetrics,
-      summarizeBenchmarkRun,
-    } = await import('../../../src/commands/headlessBenchmark.js');
+    const { collectBenchmarkCaseMetrics, summarizeBenchmarkRun } = await import(
+      '../../../src/commands/headlessBenchmark.js'
+    );
 
     const metrics = collectBenchmarkCaseMetrics({
       benchmarkCase: {

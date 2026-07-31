@@ -234,7 +234,9 @@ describe('VercelAIChatService', () => {
       const error429 = make429Error();
       const make429Stream = () => ({
         fullStream: (async function* () {
-          if (Date.now() < 0) { yield undefined; }
+          if (Date.now() < 0) {
+            yield undefined;
+          }
           throw error429;
         })(),
       });
@@ -268,7 +270,9 @@ describe('VercelAIChatService', () => {
     it('throws fallback error directly when fallback stream also fails with non-retryable error', async () => {
       const make503Stream = () => ({
         fullStream: (async function* () {
-          if (Date.now() < 0) { yield undefined; }
+          if (Date.now() < 0) {
+            yield undefined;
+          }
           throw make503Error();
         })(),
       });
@@ -278,7 +282,9 @@ describe('VercelAIChatService', () => {
         .mockReturnValueOnce(make503Stream())
         .mockReturnValueOnce({
           fullStream: (async function* () {
-            if (Date.now() < 0) { yield undefined; }
+            if (Date.now() < 0) {
+              yield undefined;
+            }
             throw new Error('fallback-stream-error');
           })(),
         });

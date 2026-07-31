@@ -1,6 +1,11 @@
 import { nanoid } from 'nanoid';
 import { PermissionMode } from '../../../src/config/types.js';
-import type { BladeConfig, ModelConfig, ProviderType, McpServerConfig } from '../../../src/config/types.js';
+import type {
+  BladeConfig,
+  ModelConfig,
+  ProviderType,
+  McpServerConfig,
+} from '../../../src/config/types.js';
 
 export const createModelConfig = (overrides?: Partial<ModelConfig>): ModelConfig => ({
   id: overrides?.id || nanoid(),
@@ -152,11 +157,7 @@ export const configPresets = {
 
   multiModel: (): BladeConfig =>
     createBladeConfig({
-      models: [
-        modelPresets.openai(),
-        modelPresets.anthropic(),
-        modelPresets.gemini(),
-      ],
+      models: [modelPresets.openai(), modelPresets.anthropic(), modelPresets.gemini()],
       currentModelId: 'openai-gpt4',
     }),
 

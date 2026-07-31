@@ -7,30 +7,30 @@
 
 const MODEL_ALIASES: Record<string, string> = {
   // Anthropic
-  'sonnet': 'claude-sonnet-4-20250514',
-  'opus': 'claude-opus-4-20250514',
-  'haiku': 'claude-3-5-haiku-20241022',
-  'claude': 'claude-sonnet-4-20250514',
+  sonnet: 'claude-sonnet-4-20250514',
+  opus: 'claude-opus-4-20250514',
+  haiku: 'claude-3-5-haiku-20241022',
+  claude: 'claude-sonnet-4-20250514',
 
   // OpenAI
-  'gpt4o': 'gpt-4o',
-  'gpt4': 'gpt-4o',
-  'o1': 'o1',
-  'o3': 'o3',
+  gpt4o: 'gpt-4o',
+  gpt4: 'gpt-4o',
+  o1: 'o1',
+  o3: 'o3',
   'o4-mini': 'o4-mini',
 
   // DeepSeek
-  'deepseek': 'deepseek-chat',
+  deepseek: 'deepseek-chat',
   'deepseek-v3': 'deepseek-chat',
   'deepseek-r1': 'deepseek-reasoner',
   'deepseek-v4': 'deepseek-v4-0324',
 
   // Google
-  'gemini': 'gemini-2.5-pro',
-  'flash': 'gemini-2.5-flash',
+  gemini: 'gemini-2.5-pro',
+  flash: 'gemini-2.5-flash',
 
   // Qwen
-  'qwen': 'qwen3-235b-a22b',
+  qwen: 'qwen3-235b-a22b',
   'qwen-max': 'qwen-max',
   'qwen-plus': 'qwen-plus',
 };

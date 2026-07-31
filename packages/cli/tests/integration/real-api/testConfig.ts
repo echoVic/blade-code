@@ -20,7 +20,7 @@ function getRequiredEnv(key: string): string {
   if (!value) {
     throw new Error(
       `Missing required environment variable: ${key}. ` +
-      `Set it in your shell or create a .env file before running real API tests.`
+        `Set it in your shell or create a .env file before running real API tests.`
     );
   }
   return value;

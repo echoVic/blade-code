@@ -46,7 +46,8 @@ export class MockTerminal extends EventEmitter {
     this.isRunning = true;
     this.currentCommand = command;
 
-    const mockResponse = this.mockResponses.get(command) || this.getDefaultResponse(command);
+    const mockResponse =
+      this.mockResponses.get(command) || this.getDefaultResponse(command);
 
     await new Promise((resolve) => setTimeout(resolve, 10));
 

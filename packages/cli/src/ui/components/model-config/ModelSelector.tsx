@@ -30,11 +30,12 @@ const formatModelLabel = (model: ModelOption): string => {
   const parts = [model.name];
 
   if (model.contextWindow) {
-    const ctx = model.contextWindow >= 1000000
-      ? `${(model.contextWindow / 1000000).toFixed(1)}M`
-      : model.contextWindow >= 1000
-        ? `${Math.round(model.contextWindow / 1000)}K`
-        : `${model.contextWindow}`;
+    const ctx =
+      model.contextWindow >= 1000000
+        ? `${(model.contextWindow / 1000000).toFixed(1)}M`
+        : model.contextWindow >= 1000
+          ? `${Math.round(model.contextWindow / 1000)}K`
+          : `${model.contextWindow}`;
     parts.push(`[${ctx} ctx]`);
   }
 
@@ -153,7 +154,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             <Text dimColor>例如: deepseek-v4-pro</Text>
           </Box>
           <Box>
-            <Text bold color="cyan">{'> '}</Text>
+            <Text bold color="cyan">
+              {'> '}
+            </Text>
             <TextInput
               value={customModel}
               onChange={setCustomModel}

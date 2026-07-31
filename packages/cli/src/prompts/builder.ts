@@ -23,7 +23,10 @@ import { PermissionMode } from '../config/types.js';
 import { AutoMemoryManager } from '../memory/AutoMemoryManager.js';
 import { getSkillRegistry } from '../skills/index.js';
 import type { SpecMetadata } from '../spec/types.js';
-import { getEnvironmentContext, type EnvironmentContextOptions } from '../utils/environment.js';
+import {
+  getEnvironmentContext,
+  type EnvironmentContextOptions,
+} from '../utils/environment.js';
 import { DEFAULT_SYSTEM_PROMPT, PLAN_MODE_SYSTEM_PROMPT } from './default.js';
 import { buildSpecModePrompt } from './spec.js';
 
@@ -180,7 +183,11 @@ export async function buildSystemPrompt(
       const memoryContent = await memoryManager.loadIndex();
       if (memoryContent) {
         parts.push(`<auto-memory>\n${memoryContent}\n</auto-memory>`);
-        sources.push({ name: 'auto_memory', loaded: true, length: memoryContent.length });
+        sources.push({
+          name: 'auto_memory',
+          loaded: true,
+          length: memoryContent.length,
+        });
       } else {
         sources.push({ name: 'auto_memory', loaded: false });
       }

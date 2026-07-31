@@ -32,10 +32,10 @@ async function* mockGenerator(
 describe('Event Protocol', () => {
   describe('drainLoop consumption', () => {
     it('returns LoopResult from the generator return value', async () => {
-      const gen = mockGenerator(
-        [{ kind: 'content_delta', delta: 'hello' }],
-        { success: true, finalMessage: 'final answer' }
-      );
+      const gen = mockGenerator([{ kind: 'content_delta', delta: 'hello' }], {
+        success: true,
+        finalMessage: 'final answer',
+      });
 
       const result = await drainLoop(gen);
 
@@ -102,8 +102,23 @@ describe('Event Protocol', () => {
         { kind: 'content_delta', delta: 'analyzing' },
         { kind: 'stream_end' },
         // Tool execution
-        { kind: 'tool_start', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } } },
-        { kind: 'tool_result', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } }, result: { success: true, llmContent: 'ok' } },
+        {
+          kind: 'tool_start',
+          toolCall: {
+            id: 't1',
+            type: 'function',
+            function: { name: 'Read', arguments: '{}' },
+          },
+        },
+        {
+          kind: 'tool_result',
+          toolCall: {
+            id: 't1',
+            type: 'function',
+            function: { name: 'Read', arguments: '{}' },
+          },
+          result: { success: true, llmContent: 'ok' },
+        },
         // Turn 2: more content
         { kind: 'turn_start', turn: 2, maxTurns: 5 },
         { kind: 'content_delta', delta: 'done' },
@@ -146,8 +161,23 @@ describe('Event Protocol', () => {
       const events: LoopEvent[] = [
         { kind: 'turn_start', turn: 1, maxTurns: 5 },
         // Tool-only turn: no content events
-        { kind: 'tool_start', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } } },
-        { kind: 'tool_result', toolCall: { id: 't1', type: 'function', function: { name: 'Read', arguments: '{}' } }, result: { success: true, llmContent: 'ok' } },
+        {
+          kind: 'tool_start',
+          toolCall: {
+            id: 't1',
+            type: 'function',
+            function: { name: 'Read', arguments: '{}' },
+          },
+        },
+        {
+          kind: 'tool_result',
+          toolCall: {
+            id: 't1',
+            type: 'function',
+            function: { name: 'Read', arguments: '{}' },
+          },
+          result: { success: true, llmContent: 'ok' },
+        },
         { kind: 'stream_end' },
       ];
 
@@ -183,9 +213,7 @@ describe('Event Protocol', () => {
     });
 
     it('propagates errors thrown in onEvent callback', async () => {
-      const gen = mockGenerator([
-        { kind: 'content_delta', delta: 'hello' },
-      ]);
+      const gen = mockGenerator([{ kind: 'content_delta', delta: 'hello' }]);
 
       await expect(
         drainLoop(gen, () => {
@@ -198,13 +226,31 @@ describe('Event Protocol', () => {
   describe('domain events', () => {
     it('task_update events carry the full task list', async () => {
       const tasks = [
-        { id: '1', subject: 'task one', description: 'task one', status: 'completed' as const, activeForm: 'Completing task one', priority: 'high' as const, blocks: [], blockedBy: [], createdAt: new Date().toISOString() },
-        { id: '2', subject: 'task two', description: 'task two', status: 'in_progress' as const, activeForm: 'Working on task two', priority: 'medium' as const, blocks: [], blockedBy: [], createdAt: new Date().toISOString() },
+        {
+          id: '1',
+          subject: 'task one',
+          description: 'task one',
+          status: 'completed' as const,
+          activeForm: 'Completing task one',
+          priority: 'high' as const,
+          blocks: [],
+          blockedBy: [],
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: '2',
+          subject: 'task two',
+          description: 'task two',
+          status: 'in_progress' as const,
+          activeForm: 'Working on task two',
+          priority: 'medium' as const,
+          blocks: [],
+          blockedBy: [],
+          createdAt: new Date().toISOString(),
+        },
       ];
 
-      const events: LoopEvent[] = [
-        { kind: 'task_update', tasks },
-      ];
+      const events: LoopEvent[] = [{ kind: 'task_update', tasks }];
 
       let receivedTasks: unknown[] = [];
       await drainLoop(mockGenerator(events), (event) => {

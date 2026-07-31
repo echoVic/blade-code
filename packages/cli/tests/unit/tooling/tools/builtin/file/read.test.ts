@@ -32,11 +32,22 @@ vi.mock('node:fs', async () => {
 });
 
 const executeRead = async (
-  params: { file_path: string; encoding?: 'utf8' | 'base64' | 'binary'; offset?: number; limit?: number },
-  context: { sessionId: string; updateOutput: ReturnType<typeof vi.fn>; signal: AbortSignal }
+  params: {
+    file_path: string;
+    encoding?: 'utf8' | 'base64' | 'binary';
+    offset?: number;
+    limit?: number;
+  },
+  context: {
+    sessionId: string;
+    updateOutput: ReturnType<typeof vi.fn>;
+    signal: AbortSignal;
+  }
 ) => {
   const invocation = readTool.build({ encoding: 'utf8', ...params });
-  return invocation.execute(context.signal, context.updateOutput, { sessionId: context.sessionId });
+  return invocation.execute(context.signal, context.updateOutput, {
+    sessionId: context.sessionId,
+  });
 };
 
 describe('ReadTool', () => {
@@ -59,7 +70,9 @@ describe('ReadTool', () => {
 
   afterEach(async () => {
     // 重置文件系统服务为默认实现
-    const { resetFileSystemService } = await import('../../../../../../src/services/FileSystemService.js');
+    const { resetFileSystemService } = await import(
+      '../../../../../../src/services/FileSystemService.js'
+    );
     resetFileSystemService();
 
     // 清理 mock

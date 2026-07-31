@@ -24,9 +24,7 @@ export function isAbortError(error: unknown): boolean {
  * - 子 abort 时自动从父移除 listener，防止内存泄漏
  * - 传播 abort reason
  */
-export function createChildAbortController(
-  parentSignal: AbortSignal,
-): AbortController {
+export function createChildAbortController(parentSignal: AbortSignal): AbortController {
   const child = new AbortController();
 
   // 快速路径：父已 aborted
@@ -47,7 +45,7 @@ export function createChildAbortController(
     () => {
       parentSignal.removeEventListener('abort', onParentAbort);
     },
-    { once: true },
+    { once: true }
   );
 
   return child;
@@ -108,7 +106,7 @@ export function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
 export function abortableSleep(
   ms: number,
   signal?: AbortSignal,
-  options?: { throwOnAbort?: boolean },
+  options?: { throwOnAbort?: boolean }
 ): Promise<void> {
   const throwOnAbort = options?.throwOnAbort ?? false;
 

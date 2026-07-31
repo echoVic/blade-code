@@ -31,11 +31,7 @@ describe('Function Hook', () => {
   describe('registerFunction API', () => {
     it('返回的取消函数可以删除 hook', async () => {
       const handler = vi.fn().mockResolvedValue(undefined);
-      const off = hm.registerFunction(
-        HookEvent.PreToolUse,
-        { tools: 'Edit' },
-        handler
-      );
+      const off = hm.registerFunction(HookEvent.PreToolUse, { tools: 'Edit' }, handler);
 
       await hm.executePreToolHooks('Edit', 'id1', { file_path: '/x.ts' }, execContext);
       expect(handler).toHaveBeenCalledTimes(1);
@@ -48,14 +44,10 @@ describe('Function Hook', () => {
 
   describe('决策传递', () => {
     it('handler 返回 decision.behavior=block → deny', async () => {
-      hm.registerFunction(
-        HookEvent.PreToolUse,
-        { tools: 'Edit' },
-        async () => ({
-          decision: { behavior: DecisionBehavior.Block },
-          systemMessage: 'nope',
-        })
-      );
+      hm.registerFunction(HookEvent.PreToolUse, { tools: 'Edit' }, async () => ({
+        decision: { behavior: DecisionBehavior.Block },
+        systemMessage: 'nope',
+      }));
 
       const result = await hm.executePreToolHooks(
         'Edit',
@@ -86,13 +78,9 @@ describe('Function Hook', () => {
     });
 
     it('handler 抛异常 → allow (非阻塞错误)', async () => {
-      hm.registerFunction(
-        HookEvent.PreToolUse,
-        { tools: 'Edit' },
-        async () => {
-          throw new Error('boom');
-        }
-      );
+      hm.registerFunction(HookEvent.PreToolUse, { tools: 'Edit' }, async () => {
+        throw new Error('boom');
+      });
 
       const result = await hm.executePreToolHooks(
         'Edit',

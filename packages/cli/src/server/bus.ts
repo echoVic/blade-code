@@ -19,7 +19,13 @@ class GlobalBus extends EventEmitter {
     this.emit('event', { sessionId, type, properties });
   }
 
-  subscribe(callback: (event: { sessionId: string; type: string; properties: Record<string, unknown> }) => void) {
+  subscribe(
+    callback: (event: {
+      sessionId: string;
+      type: string;
+      properties: Record<string, unknown>;
+    }) => void
+  ) {
     this.on('event', callback);
     return () => this.off('event', callback);
   }

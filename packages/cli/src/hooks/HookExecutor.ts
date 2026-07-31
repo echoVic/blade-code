@@ -6,10 +6,7 @@
 
 import { OutputParser } from './OutputParser.js';
 import { SecureProcessExecutor } from './SecureProcessExecutor.js';
-import {
-  substituteEnvVars,
-  validateHookUrl,
-} from './HttpHookSecurity.js';
+import { substituteEnvVars, validateHookUrl } from './HttpHookSecurity.js';
 import {
   type CommandHook,
   type CompactionHookResult,
@@ -46,16 +43,14 @@ const EVENT_SCHEMA_HINTS: Record<string, string> = {
     '{ "permissionDecision": "approve" | "deny" | "ask", "permissionDecisionReason": "...", "updatedInput": { ... } }',
   PostToolUse:
     '{ "additionalContext": "注入到工具结果的额外信息", "updatedOutput": "修改后的工具输出" }',
-  Stop:
-    '{ "continue": true, "continueReason": "继续执行的原因" }  // continue: true 表示阻止停止',
+  Stop: '{ "continue": true, "continueReason": "继续执行的原因" }  // continue: true 表示阻止停止',
   SubagentStop:
     '{ "continue": true, "continueReason": "...", "additionalContext": "..." }',
   PermissionRequest:
     '{ "permissionDecision": "approve" | "deny" | "ask", "permissionDecisionReason": "..." }',
   UserPromptSubmit:
     '{ "updatedPrompt": "修改后的提示词", "contextInjection": "注入的上下文" }',
-  Compaction:
-    '{ "blockCompaction": true, "blockReason": "阻止压缩的原因" }',
+  Compaction: '{ "blockCompaction": true, "blockReason": "阻止压缩的原因" }',
 };
 
 /**
@@ -755,21 +750,13 @@ export class HookExecutor {
 
       // 2. 构建 messages
       const eventType =
-        'hook_event_name' in input
-          ? String(input.hook_event_name)
-          : 'Unknown';
-      const systemMessage = this.buildPromptHookSystemMessage(
-        hook,
-        eventType,
-      );
+        'hook_event_name' in input ? String(input.hook_event_name) : 'Unknown';
+      const systemMessage = this.buildPromptHookSystemMessage(hook, eventType);
       const userMessage = JSON.stringify(input, null, 2);
 
       // 3. 调用 LLM（带超时）
       const abortController = new AbortController();
-      const timer = setTimeout(
-        () => abortController.abort(),
-        timeoutMs,
-      );
+      const timer = setTimeout(() => abortController.abort(), timeoutMs);
 
       let llmResponse: string;
       try {
@@ -779,7 +766,7 @@ export class HookExecutor {
             { role: 'user', content: userMessage },
           ],
           undefined,
-          abortController.signal,
+          abortController.signal
         );
         llmResponse = response.content;
       } catch (err) {
@@ -799,7 +786,7 @@ export class HookExecutor {
             {
               timeoutBehavior: context.config.timeoutBehavior,
               failureBehavior: context.config.failureBehavior,
-            },
+            }
           );
         }
         throw err;
@@ -822,11 +809,11 @@ export class HookExecutor {
         {
           timeoutBehavior: context.config.timeoutBehavior,
           failureBehavior: context.config.failureBehavior,
-        },
+        }
       );
     } catch (err) {
       promptHookLogger.warn(
-        `[PromptHook] 执行失败: ${err instanceof Error ? err.message : String(err)}`,
+        `[PromptHook] 执行失败: ${err instanceof Error ? err.message : String(err)}`
       );
       return {
         success: false,
@@ -1078,17 +1065,16 @@ export class HookExecutor {
   /**
    * 获取或创建 ChatService 实例（按 modelId 缓存）
    */
-  private async getOrCreateChatService(
-    modelId?: string,
-  ): Promise<IChatService> {
+  private async getOrCreateChatService(modelId?: string): Promise<IChatService> {
     const cacheKey = modelId || '__default__';
 
     const cached = this.chatServiceCache.get(cacheKey);
     if (cached) return cached;
 
     // 延迟导入避免启动时加载开销
-    const { ensureStoreInitialized, getCurrentModel, getModelById } =
-      await import('../store/vanilla.js');
+    const { ensureStoreInitialized, getCurrentModel, getModelById } = await import(
+      '../store/vanilla.js'
+    );
     const { createChatServiceAsync } = await import(
       '../services/ChatServiceInterface.js'
     );
@@ -1100,9 +1086,7 @@ export class HookExecutor {
       : getCurrentModel();
 
     if (!modelConfig) {
-      throw new Error(
-        'PromptHook: 无法获取模型配置。请确保至少配置了一个模型。',
-      );
+      throw new Error('PromptHook: 无法获取模型配置。请确保至少配置了一个模型。');
     }
 
     const chatService = await createChatServiceAsync({
@@ -1122,10 +1106,7 @@ export class HookExecutor {
   /**
    * 构建 PromptHook 的系统提示
    */
-  private buildPromptHookSystemMessage(
-    hook: PromptHook,
-    eventType: string,
-  ): string {
+  private buildPromptHookSystemMessage(hook: PromptHook, eventType: string): string {
     const schemaHint =
       EVENT_SCHEMA_HINTS[eventType] || '{ ... 根据事件类型返回相应字段 }';
 
@@ -1153,9 +1134,7 @@ export class HookExecutor {
     const trimmed = text.trim();
 
     // 去除 ```json ... ``` 或 ``` ... ``` 包装
-    const codeBlockMatch = trimmed.match(
-      /^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/,
-    );
+    const codeBlockMatch = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
     if (codeBlockMatch) {
       return codeBlockMatch[1].trim();
     }
@@ -1207,7 +1186,6 @@ export class HookExecutor {
     return Promise.all(results);
   }
 }
-
 
 /**
  * 读取 fetch Response body, 超过 maxBytes 时截断并附加警告注释

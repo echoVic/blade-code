@@ -164,10 +164,7 @@ export class SkillRegistry {
     // 注册 skill-creator
     this.skills.set(skillCreatorMetadata.name, skillCreatorMetadata);
     // 注册 update-config
-    this.skills.set(
-      updateConfigMetadata.name,
-      updateConfigMetadata
-    );
+    this.skills.set(updateConfigMetadata.name, updateConfigMetadata);
   }
 
   /**

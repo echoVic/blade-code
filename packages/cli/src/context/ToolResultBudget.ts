@@ -57,17 +57,12 @@ export class MessageBudgetTracker {
 
   /** 返回剩余可用字符数 */
   remaining(): number {
-    return Math.max(
-      0,
-      MAX_TOOL_RESULTS_PER_MESSAGE_CHARS - this.currentChars,
-    );
+    return Math.max(0, MAX_TOOL_RESULTS_PER_MESSAGE_CHARS - this.currentChars);
   }
 
   /** 是否已超出预算 */
   isExhausted(): boolean {
-    return (
-      this.currentChars >= MAX_TOOL_RESULTS_PER_MESSAGE_CHARS
-    );
+    return this.currentChars >= MAX_TOOL_RESULTS_PER_MESSAGE_CHARS;
   }
 
   /** 每轮开始时重置 */
@@ -98,17 +93,14 @@ export interface BudgetOptions {
 export function applyToolResultBudget(
   content: string | object,
   toolName: string,
-  options?: BudgetOptions,
+  options?: BudgetOptions
 ): string | object {
-  const maxChars =
-    options?.maxCharsPerResult ?? DEFAULT_MAX_RESULT_CHARS;
+  const maxChars = options?.maxCharsPerResult ?? DEFAULT_MAX_RESULT_CHARS;
   const previewChars = options?.previewChars ?? PREVIEW_CHARS;
   const messageBudget = options?.messageBudget;
 
   const contentStr =
-    typeof content === 'string'
-      ? content
-      : JSON.stringify(content, null, 2);
+    typeof content === 'string' ? content : JSON.stringify(content, null, 2);
 
   // --- per-tool 预算检查 ---
   if (contentStr.length <= maxChars) {
@@ -119,14 +111,13 @@ export function applyToolResultBudget(
       toolName,
       previewChars,
       messageBudget,
-      options,
+      options
     );
   }
 
   // 超出 per-tool 预算，持久化完整内容到磁盘
   const outputDir =
-    options?.outputDir ??
-    path.join(os.homedir(), '.blade', 'tool-results');
+    options?.outputDir ?? path.join(os.homedir(), '.blade', 'tool-results');
 
   const fileName = `${toolName}-${nanoid(8)}.txt`;
   const filePath = path.join(outputDir, fileName);
@@ -169,7 +160,7 @@ function applyMessageBudget(
   toolName: string,
   previewChars: number,
   messageBudget: MessageBudgetTracker | undefined,
-  options: BudgetOptions | undefined,
+  options: BudgetOptions | undefined
 ): string | object {
   if (!messageBudget) {
     return original; // 无消息预算追踪，原样返回
@@ -185,11 +176,9 @@ function applyMessageBudget(
       truncated,
       toolName,
       options,
-      '[Message budget exhausted. Full output saved to disk.]',
+      '[Message budget exhausted. Full output saved to disk.]'
     );
-    messageBudget.track(
-      typeof result === 'string' ? result.length : previewChars,
-    );
+    messageBudget.track(typeof result === 'string' ? result.length : previewChars);
     return result;
   }
 
@@ -202,12 +191,9 @@ function applyMessageBudget(
       truncated,
       toolName,
       options,
-      `... (truncated by message budget,` +
-        ` ${contentStr.length} total chars)`,
+      `... (truncated by message budget,` + ` ${contentStr.length} total chars)`
     );
-    messageBudget.track(
-      typeof result === 'string' ? result.length : allowed,
-    );
+    messageBudget.track(typeof result === 'string' ? result.length : allowed);
     return result;
   }
 
@@ -224,21 +210,17 @@ function persistAndSummarize(
   truncated: string,
   toolName: string,
   options: BudgetOptions | undefined,
-  suffix: string,
+  suffix: string
 ): string {
   const outputDir =
-    options?.outputDir ??
-    path.join(os.homedir(), '.blade', 'tool-results');
+    options?.outputDir ?? path.join(os.homedir(), '.blade', 'tool-results');
   const fileName = `${toolName}-${nanoid(8)}.txt`;
   const filePath = path.join(outputDir, fileName);
 
   try {
     fs.mkdirSync(outputDir, { recursive: true });
     fs.writeFileSync(filePath, fullContent, 'utf-8');
-    return (
-      `${truncated}\n\n${suffix}` +
-      `\nFull output saved to: ${filePath}`
-    );
+    return `${truncated}\n\n${suffix}` + `\nFull output saved to: ${filePath}`;
   } catch {
     return `${truncated}\n\n${suffix}`;
   }

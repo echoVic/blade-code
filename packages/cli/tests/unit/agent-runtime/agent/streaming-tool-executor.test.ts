@@ -66,7 +66,7 @@ describe('StreamingToolExecutor', () => {
     executor = new StreamingToolExecutor(
       pipeline as unknown as ExecutionPipeline,
       execContext,
-      registry as unknown as ToolRegistry,
+      registry as unknown as ToolRegistry
     );
   });
 
@@ -76,8 +76,15 @@ describe('StreamingToolExecutor', () => {
   describe('STREAMING_PRELAUNCH_ALLOWLIST', () => {
     it('contains the expected tools', () => {
       const expected = [
-        'Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch',
-        'MemoryRead', 'GetSpecContext', 'ValidateSpec', 'TaskOutput',
+        'Read',
+        'Glob',
+        'Grep',
+        'WebFetch',
+        'WebSearch',
+        'MemoryRead',
+        'GetSpecContext',
+        'ValidateSpec',
+        'TaskOutput',
       ];
       for (const name of expected) {
         expect(STREAMING_PRELAUNCH_ALLOWLIST.has(name)).toBe(true);
@@ -87,8 +94,14 @@ describe('StreamingToolExecutor', () => {
 
     it('does not contain write/execute tools', () => {
       const excluded = [
-        'Edit', 'Write', 'Bash', 'NotebookEdit', 'Task',
-        'Skill', 'SlashCommand', 'AskUserQuestion',
+        'Edit',
+        'Write',
+        'Bash',
+        'NotebookEdit',
+        'Task',
+        'Skill',
+        'SlashCommand',
+        'AskUserQuestion',
       ];
       for (const name of excluded) {
         expect(STREAMING_PRELAUNCH_ALLOWLIST.has(name)).toBe(false);
@@ -110,7 +123,7 @@ describe('StreamingToolExecutor', () => {
       expect(pipeline.execute).toHaveBeenCalledWith(
         'Read',
         { file_path: '/tmp' },
-        expect.objectContaining({ signal: expect.any(Object) }),
+        expect.objectContaining({ signal: expect.any(Object) })
       );
       expect(executor.hasTools()).toBe(true);
     });
@@ -210,8 +223,8 @@ describe('StreamingToolExecutor', () => {
     it('yields mixed allowlisted + queued tools in insertion order', async () => {
       // A = allowlisted (Read), B = non-allowlisted (Edit), C = allowlisted (Glob)
       pipeline.execute
-        .mockResolvedValueOnce(makeSuccessResult('resA'))  // A (immediate)
-        .mockResolvedValueOnce(makeSuccessResult('resC'))  // C (immediate, second call)
+        .mockResolvedValueOnce(makeSuccessResult('resA')) // A (immediate)
+        .mockResolvedValueOnce(makeSuccessResult('resC')) // C (immediate, second call)
         .mockResolvedValueOnce(makeSuccessResult('resB')); // B (queued, executed on drain)
 
       executor.addTool(makeToolCall('A', 'Read'), {});
@@ -394,7 +407,7 @@ describe('StreamingToolExecutor', () => {
         registry as unknown as ToolRegistry,
         mockContextMgr as any,
         'session-1',
-        'msg-uuid',
+        'msg-uuid'
       );
 
       pipeline.execute.mockResolvedValue(makeSuccessResult('ctx'));
@@ -408,7 +421,7 @@ describe('StreamingToolExecutor', () => {
         'Read',
         { file_path: '/a' },
         'msg-uuid',
-        undefined,
+        undefined
       );
       expect(collected[0].toolUseUuid).toBe('uuid-123');
     });
@@ -423,7 +436,7 @@ describe('StreamingToolExecutor', () => {
         execContext,
         registry as unknown as ToolRegistry,
         mockContextMgr as any,
-        'session-2',
+        'session-2'
       );
 
       pipeline.execute.mockResolvedValue(makeSuccessResult('ok'));

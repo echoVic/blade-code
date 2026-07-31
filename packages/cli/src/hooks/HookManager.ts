@@ -174,9 +174,7 @@ export class HookManager {
     return () => {
       const current = this.config[event] as HookMatcher[] | undefined;
       if (!current) return;
-      (this.config[event] as HookMatcher[]) = current.filter(
-        (m) => m !== matcherEntry
-      );
+      (this.config[event] as HookMatcher[]) = current.filter((m) => m !== matcherEntry);
     };
   }
 
@@ -189,11 +187,7 @@ export class HookManager {
 
     try {
       // 读取本地 settings 文件
-      const localSettingsPath = path.join(
-        getCwd(),
-        '.blade',
-        'settings.local.json'
-      );
+      const localSettingsPath = path.join(getCwd(), '.blade', 'settings.local.json');
       const content = await fs.readFile(localSettingsPath, 'utf-8');
       const settings = JSON.parse(content);
 

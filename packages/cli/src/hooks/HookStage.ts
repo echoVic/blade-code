@@ -57,8 +57,7 @@ export class HookStage implements PipelineStage {
         {
           projectDir,
           sessionId: execution.context.sessionId || 'unknown',
-          permissionMode:
-            execution.context.permissionMode ?? PermissionMode.DEFAULT,
+          permissionMode: execution.context.permissionMode ?? PermissionMode.DEFAULT,
           abortSignal: execution.context.signal,
         }
       );

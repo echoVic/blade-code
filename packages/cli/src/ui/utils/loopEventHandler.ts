@@ -27,10 +27,7 @@ import {
   appendMarkdownDelta,
   finalizeMarkdownCache,
 } from '../utils/markdownIncremental.js';
-import {
-  formatToolCallSummary,
-  formatToolDisplay,
-} from '../utils/toolFormatters.js';
+import { formatToolCallSummary, formatToolDisplay } from '../utils/toolFormatters.js';
 
 const logger = createLogger(LogCategory.UI);
 
@@ -68,7 +65,7 @@ export interface LoopEventStats {
  */
 export function createLoopEventHandler(
   deps: LoopEventDeps,
-  stats: LoopEventStats,
+  stats: LoopEventStats
 ): (event: LoopEvent) => void {
   // Per-turn 标记：当前 turn 的流是否已被终结（stream_end / discard / abort finalize）
   // 每次 turn_start 重置为 false；在同一 turn 内，一旦为 true，后续 stream_end 跳过 finalize
@@ -125,7 +122,8 @@ export function createLoopEventHandler(
         // 正常完成路径 — 不检查 streamingId 是否为 null
         // finalizeStreamingMessage 在 streamingId 为 null 时会自动生成新 ID
         // （短回复从未触发过 flush，所有内容都在 extraContent 中）
-        const { extraContent, extraThinking } = deps.streamingBuffer.drainPendingBuffers();
+        const { extraContent, extraThinking } =
+          deps.streamingBuffer.drainPendingBuffers();
         const streamingId = deps.getStreamingMessageId();
         if (streamingId) {
           if (extraContent) {
@@ -155,9 +153,7 @@ export function createLoopEventHandler(
           toolName: toolCall.function.name,
           toolKind: event.toolKind,
         });
-        if (
-          ['TaskCreate', 'TaskUpdate', 'TaskList'].includes(toolCall.function.name)
-        )
+        if (['TaskCreate', 'TaskUpdate', 'TaskList'].includes(toolCall.function.name))
           break;
         try {
           const params = JSON.parse(toolCall.function.arguments);

@@ -40,7 +40,11 @@ describe('headless runner', () => {
       for (const event of events) {
         yield event;
       }
-      return { success: true, finalMessage, metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 } };
+      return {
+        success: true,
+        finalMessage,
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
     };
   }
 
@@ -64,42 +68,68 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chatStream.mockImplementationOnce(mockChatGenerator([
-      { kind: 'thinking_delta', delta: 'reasoning' },
-      { kind: 'content_delta', delta: 'hello' },
-      { kind: 'tool_start', toolCall: {
-        id: 'tool-1',
-        type: 'function',
-        function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
-      }},
-      { kind: 'tool_result', toolCall: {
-        id: 'tool-1',
-        type: 'function',
-        function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
-      }, result: {
-        success: true,
-        llmContent: 'const demo = true;',
-        metadata: { summary: 'Read demo.ts', content_preview: 'const demo = true;' },
-      }},
-      { kind: 'task_update', tasks: [{
-        id: 'task-1',
-        subject: 'Ship headless mode',
-        description: 'Ship headless mode',
-        status: 'in_progress',
-        activeForm: 'Shipping headless mode',
-        priority: 'high',
-        blocks: [],
-        blockedBy: [],
-        createdAt: new Date().toISOString(),
-      }]},
-      { kind: 'token_usage', usage: {
-        inputTokens: 10,
-        outputTokens: 20,
-        totalTokens: 30,
-        maxContextTokens: 1000,
-      }},
-      { kind: 'stream_end' },
-    ]));
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        { kind: 'thinking_delta', delta: 'reasoning' },
+        { kind: 'content_delta', delta: 'hello' },
+        {
+          kind: 'tool_start',
+          toolCall: {
+            id: 'tool-1',
+            type: 'function',
+            function: {
+              name: 'Read',
+              arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }),
+            },
+          },
+        },
+        {
+          kind: 'tool_result',
+          toolCall: {
+            id: 'tool-1',
+            type: 'function',
+            function: {
+              name: 'Read',
+              arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }),
+            },
+          },
+          result: {
+            success: true,
+            llmContent: 'const demo = true;',
+            metadata: {
+              summary: 'Read demo.ts',
+              content_preview: 'const demo = true;',
+            },
+          },
+        },
+        {
+          kind: 'task_update',
+          tasks: [
+            {
+              id: 'task-1',
+              subject: 'Ship headless mode',
+              description: 'Ship headless mode',
+              status: 'in_progress',
+              activeForm: 'Shipping headless mode',
+              priority: 'high',
+              blocks: [],
+              blockedBy: [],
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        {
+          kind: 'token_usage',
+          usage: {
+            inputTokens: 10,
+            outputTokens: 20,
+            totalTokens: 30,
+            maxContextTokens: 1000,
+          },
+        },
+        { kind: 'stream_end' },
+      ])
+    );
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
 
@@ -134,26 +164,39 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chatStream.mockImplementationOnce(mockChatGenerator([
-      { kind: 'content_delta', delta: 'hello' },
-      { kind: 'tool_start', toolCall: {
-        id: 'tool-2',
-        type: 'function',
-        function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }) },
-      }},
-      { kind: 'task_update', tasks: [{
-        id: 'task-2',
-        subject: 'Capture jsonl',
-        description: 'Capture jsonl',
-        status: 'pending',
-        activeForm: 'Capturing jsonl',
-        priority: 'medium',
-        blocks: [],
-        blockedBy: [],
-        createdAt: new Date().toISOString(),
-      }]},
-      { kind: 'stream_end' },
-    ]));
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        { kind: 'content_delta', delta: 'hello' },
+        {
+          kind: 'tool_start',
+          toolCall: {
+            id: 'tool-2',
+            type: 'function',
+            function: {
+              name: 'Read',
+              arguments: JSON.stringify({ file_path: '/tmp/demo.ts' }),
+            },
+          },
+        },
+        {
+          kind: 'task_update',
+          tasks: [
+            {
+              id: 'task-2',
+              subject: 'Capture jsonl',
+              description: 'Capture jsonl',
+              status: 'pending',
+              activeForm: 'Capturing jsonl',
+              priority: 'medium',
+              blocks: [],
+              blockedBy: [],
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        { kind: 'stream_end' },
+      ])
+    );
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
     const { HeadlessJsonlEventSchema } = await import(
@@ -220,7 +263,9 @@ describe('headless runner', () => {
       sessionId: 'resume-session',
       messages: [{ role: 'assistant', content: 'previous answer' }],
     });
-    agentState.chatStream.mockImplementationOnce(mockChatGenerator([{ kind: 'stream_end' }]));
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([{ kind: 'stream_end' }])
+    );
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
 
@@ -293,15 +338,17 @@ describe('headless runner', () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
 
-    agentState.chatStream.mockImplementationOnce(mockChatGenerator([
-      { kind: 'thinking_delta', delta: 'first' },
-      { kind: 'content_delta', delta: 'hello' },
-      { kind: 'stream_end' },
-      { kind: 'compaction', phase: 'start' },
-      { kind: 'compaction', phase: 'end' },
-      { kind: 'thinking_delta', delta: 'second' },
-      { kind: 'stream_end' },
-    ]));
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        { kind: 'thinking_delta', delta: 'first' },
+        { kind: 'content_delta', delta: 'hello' },
+        { kind: 'stream_end' },
+        { kind: 'compaction', phase: 'start' },
+        { kind: 'compaction', phase: 'end' },
+        { kind: 'thinking_delta', delta: 'second' },
+        { kind: 'stream_end' },
+      ])
+    );
 
     const { runHeadless } = await import('../../../src/commands/headless.js');
 

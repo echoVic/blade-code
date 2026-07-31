@@ -22,21 +22,39 @@
  */
 const SAFE_ENV_VARS = new Set([
   // Go
-  'GOEXPERIMENT', 'GOOS', 'GOARCH', 'CGO_ENABLED', 'GO111MODULE',
+  'GOEXPERIMENT',
+  'GOOS',
+  'GOARCH',
+  'CGO_ENABLED',
+  'GO111MODULE',
   // Rust
-  'RUST_BACKTRACE', 'RUST_LOG',
+  'RUST_BACKTRACE',
+  'RUST_LOG',
   // Node
   'NODE_ENV',
   // Python
-  'PYTHONUNBUFFERED', 'PYTHONDONTWRITEBYTECODE',
+  'PYTHONUNBUFFERED',
+  'PYTHONDONTWRITEBYTECODE',
   // Git (only non-executable env vars; GIT_PAGER and GIT_SSH_COMMAND
   // are deliberately excluded — they execute external binaries)
   'GIT_TERMINAL_PROMPT',
   // Locale/Terminal
-  'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'LC_TIME', 'CHARSET',
-  'TERM', 'COLORTERM', 'NO_COLOR', 'FORCE_COLOR', 'TZ',
+  'LANG',
+  'LANGUAGE',
+  'LC_ALL',
+  'LC_CTYPE',
+  'LC_TIME',
+  'CHARSET',
+  'TERM',
+  'COLORTERM',
+  'NO_COLOR',
+  'FORCE_COLOR',
+  'TZ',
   // Colors
-  'LS_COLORS', 'LSCOLORS', 'GREP_COLOR', 'GREP_COLORS',
+  'LS_COLORS',
+  'LSCOLORS',
+  'GREP_COLOR',
+  'GREP_COLORS',
 ]);
 
 /**
@@ -350,10 +368,10 @@ export function containsUnsafePatterns(command: string): boolean {
 
 /** Git safe global options (can be stripped) */
 const GIT_SAFE_GLOBAL_FLAGS: Record<string, 'none' | 'string'> = {
-  '-C': 'string',             // change directory
-  '--no-pager': 'none',       // disable pager
+  '-C': 'string', // change directory
+  '--no-pager': 'none', // disable pager
   '--no-optional-locks': 'none',
-  '-P': 'none',               // --paginate alias
+  '-P': 'none', // --paginate alias
   '--paginate': 'none',
   '--literal-pathspecs': 'none',
   '--glob-pathspecs': 'none',
@@ -363,11 +381,11 @@ const GIT_SAFE_GLOBAL_FLAGS: Record<string, 'none' | 'string'> = {
 
 /** Git dangerous global options (reject if found) */
 const GIT_DANGEROUS_GLOBAL_FLAGS = new Set([
-  '-c',              // modify config
-  '--exec-path',     // binary hijack
-  '--config-env',    // read config from env
-  '--git-dir',       // switch .git dir (escape)
-  '--work-tree',     // switch work dir
+  '-c', // modify config
+  '--exec-path', // binary hijack
+  '--config-env', // read config from env
+  '--git-dir', // switch .git dir (escape)
+  '--work-tree', // switch work dir
 ]);
 
 /**

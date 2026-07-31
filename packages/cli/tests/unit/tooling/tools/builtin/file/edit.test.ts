@@ -33,8 +33,18 @@ vi.mock('node:fs', async () => {
 });
 
 const executeEdit = async (
-  params: { file_path: string; old_string: string; new_string: string; replace_all?: boolean },
-  context: { sessionId: string; messageId: string; updateOutput: ReturnType<typeof vi.fn>; signal: AbortSignal }
+  params: {
+    file_path: string;
+    old_string: string;
+    new_string: string;
+    replace_all?: boolean;
+  },
+  context: {
+    sessionId: string;
+    messageId: string;
+    updateOutput: ReturnType<typeof vi.fn>;
+    signal: AbortSignal;
+  }
 ) => {
   const invocation = editTool.build({ replace_all: false, ...params });
   return invocation.execute(context.signal, context.updateOutput, {
@@ -71,7 +81,9 @@ describe('EditTool', () => {
 
   afterEach(async () => {
     // 重置文件系统服务为默认实现
-    const { resetFileSystemService } = await import('../../../../../../src/services/FileSystemService.js');
+    const { resetFileSystemService } = await import(
+      '../../../../../../src/services/FileSystemService.js'
+    );
     resetFileSystemService();
 
     // 清理 mock

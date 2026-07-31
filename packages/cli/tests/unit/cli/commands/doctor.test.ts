@@ -112,7 +112,9 @@ describe('commands/doctor', () => {
     expect(logSpy).toHaveBeenCalledWith(
       expect.stringContaining('[FAIL] Configuration: FAILED')
     );
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[WARN] Node.js version'));
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[WARN] Node.js version')
+    );
     expect(logSpy).toHaveBeenCalledWith(
       expect.stringContaining('[FAIL] File system permissions')
     );

@@ -158,9 +158,7 @@ async function showServerDetails(
   const config = servers[serverName];
 
   if (!config) {
-    ui.sendMessage(
-      `服务器 "${serverName}" 不存在\n\n使用 \`/mcp\` 查看所有可用服务器`
-    );
+    ui.sendMessage(`服务器 "${serverName}" 不存在\n\n使用 \`/mcp\` 查看所有可用服务器`);
     return;
   }
 

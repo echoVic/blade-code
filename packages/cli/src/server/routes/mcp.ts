@@ -14,22 +14,23 @@ export const McpRoutes = () => {
     try {
       const registry = McpRegistry.getInstance();
       const serversMap = registry.getAllServers();
-      
+
       const result = Array.from(serversMap.entries()).map(([name, info]) => ({
         id: name,
         name,
-        status: info.status === McpConnectionStatus.CONNECTED 
-          ? 'connected' 
-          : info.status === McpConnectionStatus.CONNECTING 
-            ? 'connecting'
-            : info.lastError 
-              ? 'error' 
-              : 'offline',
-        endpoint: info.config.command 
+        status:
+          info.status === McpConnectionStatus.CONNECTED
+            ? 'connected'
+            : info.status === McpConnectionStatus.CONNECTING
+              ? 'connecting'
+              : info.lastError
+                ? 'error'
+                : 'offline',
+        endpoint: info.config.command
           ? `${info.config.command} ${(info.config.args || []).join(' ')}`.trim()
           : info.config.url || 'Unknown',
         description: `MCP server: ${name}`,
-        tools: info.tools.map(t => t.name),
+        tools: info.tools.map((t) => t.name),
         connectedAt: info.connectedAt?.toISOString(),
         error: info.lastError?.message,
       }));
@@ -70,13 +71,13 @@ export const McpRoutes = () => {
       const name = c.req.param('name');
       const registry = McpRegistry.getInstance();
       await registry.unregisterServer(name);
-      
+
       const config = getConfig();
       if (config?.mcpServers) {
         const { [name]: _, ...rest } = config.mcpServers;
         await configActions().updateConfig({ mcpServers: rest });
       }
-      
+
       return c.json({ success: true });
     } catch (error) {
       logger.error('[McpRoutes] Failed to delete MCP server:', error);
@@ -86,16 +87,16 @@ export const McpRoutes = () => {
 
   app.post('/', async (c) => {
     try {
-      const body = await c.req.json() as { name: string; config: McpServerConfig };
+      const body = (await c.req.json()) as { name: string; config: McpServerConfig };
       const { name, config: serverConfig } = body;
-      
+
       if (!name || !serverConfig) {
         return c.json({ success: false, error: 'Missing name or config' }, 400);
       }
 
       const registry = McpRegistry.getInstance();
       await registry.registerServer(name, serverConfig);
-      
+
       const currentConfig = getConfig();
       await configActions().updateConfig({
         mcpServers: {

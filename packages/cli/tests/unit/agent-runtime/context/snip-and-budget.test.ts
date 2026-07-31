@@ -3,12 +3,22 @@ import { snipCompact } from '../../../../src/context/SnipCompaction.js';
 import { computeAdaptiveBudget } from '../../../../src/context/ToolResultBudget.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 
-function makeToolTurn(toolName: string, resultContent: string, toolCallId: string): Message[] {
+function makeToolTurn(
+  toolName: string,
+  resultContent: string,
+  toolCallId: string
+): Message[] {
   return [
     {
       role: 'assistant',
       content: '',
-      tool_calls: [{ id: toolCallId, type: 'function', function: { name: toolName, arguments: '{}' } }],
+      tool_calls: [
+        {
+          id: toolCallId,
+          type: 'function',
+          function: { name: toolName, arguments: '{}' },
+        },
+      ],
     },
     { role: 'tool', tool_call_id: toolCallId, content: resultContent },
   ];
@@ -76,8 +86,14 @@ describe('computeAdaptiveBudget', () => {
   });
 
   it('returns defaults for zero/negative context window', () => {
-    expect(computeAdaptiveBudget(0)).toEqual({ maxCharsPerResult: 100_000, maxCharsPerMessage: 200_000 });
-    expect(computeAdaptiveBudget(-1)).toEqual({ maxCharsPerResult: 100_000, maxCharsPerMessage: 200_000 });
+    expect(computeAdaptiveBudget(0)).toEqual({
+      maxCharsPerResult: 100_000,
+      maxCharsPerMessage: 200_000,
+    });
+    expect(computeAdaptiveBudget(-1)).toEqual({
+      maxCharsPerResult: 100_000,
+      maxCharsPerMessage: 200_000,
+    });
   });
 
   it('scales down for small context windows (8K tokens)', () => {

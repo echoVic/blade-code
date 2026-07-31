@@ -44,9 +44,12 @@ describe('classifyError', () => {
   describe('RetryError 解包', () => {
     it('应该从 RetryError 的 lastError 中提取消息', () => {
       const rootCause = new Error('Connection refused');
-      const retryError = Object.assign(new Error('Retry failed 3 times. Last error: Connection refused'), {
-        lastError: rootCause,
-      });
+      const retryError = Object.assign(
+        new Error('Retry failed 3 times. Last error: Connection refused'),
+        {
+          lastError: rootCause,
+        }
+      );
 
       const result = classifyError(retryError);
 
@@ -88,9 +91,12 @@ describe('classifyError', () => {
         }),
         statusCode: 401,
       });
-      const retryError = Object.assign(new Error('Retry failed. Last error: API call failed'), {
-        lastError: innerError,
-      });
+      const retryError = Object.assign(
+        new Error('Retry failed. Last error: API call failed'),
+        {
+          lastError: innerError,
+        }
+      );
 
       const result = classifyError(retryError);
 

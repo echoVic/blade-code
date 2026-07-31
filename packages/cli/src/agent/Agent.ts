@@ -408,7 +408,11 @@ export class Agent {
       }
 
       // Plan 模式批准后切换模式并重新执行
-      if (result.success && result.metadata?.targetMode && context.permissionMode === 'plan') {
+      if (
+        result.success &&
+        result.metadata?.targetMode &&
+        context.permissionMode === 'plan'
+      ) {
         const targetMode = result.metadata.targetMode as PermissionMode;
         const planContent = result.metadata.planContent as string | undefined;
         logger.debug(`Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
@@ -596,7 +600,8 @@ export class Agent {
     logger.debug('Processing enhanced chat message...');
 
     // 无状态设计：优先使用 context.systemPrompt，否则按需构建
-    const systemPrompt = context.systemPrompt ?? (await this.buildSystemPromptOnDemand());
+    const systemPrompt =
+      context.systemPrompt ?? (await this.buildSystemPromptOnDemand());
 
     return yield* this.executeLoop(message, context, options, systemPrompt);
   }
@@ -657,11 +662,9 @@ export class Agent {
         );
       },
       onModelSwitch: (modelId) => this.switchModelIfNeeded(modelId),
-      applySkillToolRestrictions: (tools) =>
-        this.applySkillToolRestrictions(tools),
+      applySkillToolRestrictions: (tools) => this.applySkillToolRestrictions(tools),
     };
   }
-
 
   /**
    * 带系统提示的聊天接口

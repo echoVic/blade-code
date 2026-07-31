@@ -181,7 +181,9 @@ describe('E2E: 完整对话流程', () => {
       mockLLM.setError(true, 'Stream interrupted');
 
       await expect(async () => {
-        for await (const _chunk of mockLLM.streamChat([{ role: 'user', content: 'Hello' }])) {
+        for await (const _chunk of mockLLM.streamChat([
+          { role: 'user', content: 'Hello' },
+        ])) {
           // Consume stream
         }
       }).rejects.toThrow('Stream interrupted');

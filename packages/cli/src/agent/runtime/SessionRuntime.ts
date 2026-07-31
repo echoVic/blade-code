@@ -1,6 +1,11 @@
 import * as os from 'os';
 import * as path from 'path';
-import { type BladeConfig, ConfigManager, type PermissionConfig, PermissionMode } from '../../config/index.js';
+import {
+  type BladeConfig,
+  ConfigManager,
+  type PermissionConfig,
+  PermissionMode,
+} from '../../config/index.js';
 import type { ModelConfig } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { loadMcpConfigFromCli } from '../../mcp/loadMcpConfig.js';
@@ -126,7 +131,10 @@ export class SessionRuntime {
     await this.registerBuiltinTools();
     await this.loadSubagents();
     await this.discoverSkills();
-    await this.applyModelConfig(this.resolveModelConfig(this.options.modelId), '使用模型:');
+    await this.applyModelConfig(
+      this.resolveModelConfig(this.options.modelId),
+      '使用模型:'
+    );
 
     this.initialized = true;
     logger.debug(
@@ -206,7 +214,10 @@ export class SessionRuntime {
     return modelConfig;
   }
 
-  private async applyModelConfig(modelConfig: ModelConfig, label: string): Promise<void> {
+  private async applyModelConfig(
+    modelConfig: ModelConfig,
+    label: string
+  ): Promise<void> {
     logger.debug(`${label} ${modelConfig.name} (${modelConfig.model})`);
 
     const modelSupportsThinking = isThinkingModel(modelConfig);
@@ -247,7 +258,10 @@ export class SessionRuntime {
         language: this.config.language,
       });
     } catch (error) {
-      logger.warn('[SessionRuntime] Failed to validate system prompt configuration:', error);
+      logger.warn(
+        '[SessionRuntime] Failed to validate system prompt configuration:',
+        error
+      );
     }
   }
 

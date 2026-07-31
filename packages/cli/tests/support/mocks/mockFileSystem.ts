@@ -132,7 +132,10 @@ export class MockFileSystem implements FileSystemService {
   /**
    * 创建目录
    */
-  async mkdir(path: string, options?: { recursive?: boolean; mode?: number }): Promise<void> {
+  async mkdir(
+    path: string,
+    options?: { recursive?: boolean; mode?: number }
+  ): Promise<void> {
     if (options?.recursive) {
       // 确保所有父目录存在
       const parts = path.split('/').filter(Boolean);

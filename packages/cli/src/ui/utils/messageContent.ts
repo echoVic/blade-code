@@ -13,7 +13,9 @@ import type { ResolvedInput } from '../hooks/useInputBuffer.js';
  * 如果包含图片，则返回多模态 ContentPart[]（保留文本和图片的相对顺序）
  * 否则返回纯文本 string
  */
-export function buildUserMessageContent(resolved: ResolvedInput): string | ContentPart[] {
+export function buildUserMessageContent(
+  resolved: ResolvedInput
+): string | ContentPart[] {
   const { text, images, parts: resolvedParts } = resolved;
 
   // 无图片时返回纯文本

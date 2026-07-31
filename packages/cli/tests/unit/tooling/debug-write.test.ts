@@ -32,14 +32,10 @@ describe('Debug WriteTool', () => {
       encoding: 'utf8',
       create_directories: false,
     });
-    const result = await invocation.execute(
-      context.signal,
-      context.updateOutput,
-      {
-        sessionId: context.sessionId,
-        messageId: context.messageId,
-      }
-    );
+    const result = await invocation.execute(context.signal, context.updateOutput, {
+      sessionId: context.sessionId,
+      messageId: context.messageId,
+    });
 
     console.log('Result:', JSON.stringify(result, null, 2));
     console.log('Success:', result.success);

@@ -14,7 +14,12 @@
  */
 export type AbortReason = 'user-cancel' | 'interrupt' | 'sibling-error' | 'timeout';
 
-const VALID_REASONS = new Set<string>(['user-cancel', 'interrupt', 'sibling-error', 'timeout']);
+const VALID_REASONS = new Set<string>([
+  'user-cancel',
+  'interrupt',
+  'sibling-error',
+  'timeout',
+]);
 
 /**
  * 从 AbortSignal 中提取 reason。

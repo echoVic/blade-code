@@ -21,13 +21,19 @@ export const assertFileNotExists = async (filePath: string): Promise<void> => {
   }
 };
 
-export const assertFileContains = async (filePath: string, content: string): Promise<void> => {
+export const assertFileContains = async (
+  filePath: string,
+  content: string
+): Promise<void> => {
   const fs = await import('node:fs/promises');
   const fileContent = await fs.readFile(filePath, 'utf-8');
   expect(fileContent).toContain(content);
 };
 
-export const assertFileEquals = async (filePath: string, expectedContent: string): Promise<void> => {
+export const assertFileEquals = async (
+  filePath: string,
+  expectedContent: string
+): Promise<void> => {
   const fs = await import('node:fs/promises');
   const fileContent = await fs.readFile(filePath, 'utf-8');
   expect(fileContent).toBe(expectedContent);
@@ -98,13 +104,19 @@ export const assertArrayContainsNone = <T>(actual: T[], excluded: T[]): void => 
   }
 };
 
-export const assertObjectHasKeys = (obj: Record<string, unknown>, keys: string[]): void => {
+export const assertObjectHasKeys = (
+  obj: Record<string, unknown>,
+  keys: string[]
+): void => {
   for (const key of keys) {
     expect(obj).toHaveProperty(key);
   }
 };
 
-export const assertObjectMissingKeys = (obj: Record<string, unknown>, keys: string[]): void => {
+export const assertObjectMissingKeys = (
+  obj: Record<string, unknown>,
+  keys: string[]
+): void => {
   for (const key of keys) {
     expect(obj).not.toHaveProperty(key);
   }

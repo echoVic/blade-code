@@ -35,13 +35,16 @@ export const waitForValue = async <T>(
   expectedValue: T,
   options: WaitForOptions = {}
 ): Promise<void> => {
-  await waitFor(async () => {
-    const value = await getValue();
-    return value === expectedValue;
-  }, {
-    ...options,
-    message: options.message || `Value did not become ${expectedValue}`,
-  });
+  await waitFor(
+    async () => {
+      const value = await getValue();
+      return value === expectedValue;
+    },
+    {
+      ...options,
+      message: options.message || `Value did not become ${expectedValue}`,
+    }
+  );
 };
 
 export const waitForTruthy = async <T>(
@@ -58,13 +61,16 @@ export const waitForFalsy = async <T>(
   getValue: () => T | Promise<T>,
   options: WaitForOptions = {}
 ): Promise<void> => {
-  await waitFor(async () => {
-    const value = await getValue();
-    return !value;
-  }, {
-    ...options,
-    message: options.message || 'Value did not become falsy',
-  });
+  await waitFor(
+    async () => {
+      const value = await getValue();
+      return !value;
+    },
+    {
+      ...options,
+      message: options.message || 'Value did not become falsy',
+    }
+  );
 };
 
 export const waitForArrayLength = async <T>(
@@ -72,60 +78,72 @@ export const waitForArrayLength = async <T>(
   expectedLength: number,
   options: WaitForOptions = {}
 ): Promise<T[]> => {
-  return waitFor(async () => {
-    const arr = await getArray();
-    return arr.length === expectedLength ? arr : null;
-  }, {
-    ...options,
-    message: options.message || `Array length did not become ${expectedLength}`,
-  }) as Promise<T[]>;
+  return waitFor(
+    async () => {
+      const arr = await getArray();
+      return arr.length === expectedLength ? arr : null;
+    },
+    {
+      ...options,
+      message: options.message || `Array length did not become ${expectedLength}`,
+    }
+  ) as Promise<T[]>;
 };
 
 export const waitForArrayNotEmpty = async <T>(
   getArray: () => T[] | Promise<T[]>,
   options: WaitForOptions = {}
 ): Promise<T[]> => {
-  return waitFor(async () => {
-    const arr = await getArray();
-    return arr.length > 0 ? arr : null;
-  }, {
-    ...options,
-    message: options.message || 'Array did not become non-empty',
-  }) as Promise<T[]>;
+  return waitFor(
+    async () => {
+      const arr = await getArray();
+      return arr.length > 0 ? arr : null;
+    },
+    {
+      ...options,
+      message: options.message || 'Array did not become non-empty',
+    }
+  ) as Promise<T[]>;
 };
 
 export const waitForNoThrow = async (
   fn: () => unknown | Promise<unknown>,
   options: WaitForOptions = {}
 ): Promise<void> => {
-  await waitFor(async () => {
-    try {
-      await fn();
-      return true;
-    } catch {
-      return false;
+  await waitFor(
+    async () => {
+      try {
+        await fn();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    {
+      ...options,
+      message: options.message || 'Function continued to throw',
     }
-  }, {
-    ...options,
-    message: options.message || 'Function continued to throw',
-  });
+  );
 };
 
 export const waitForThrow = async (
   fn: () => unknown | Promise<unknown>,
   options: WaitForOptions = {}
 ): Promise<Error> => {
-  return waitFor(async () => {
-    try {
-      await fn();
-      return null;
-    } catch (error) {
-      return error as Error;
+  return waitFor(
+    async () => {
+      try {
+        await fn();
+        return null;
+      } catch (error) {
+        return error as Error;
+      }
+    },
+    {
+      ...options,
+      message: options.message || 'Function did not throw',
     }
-  }, {
-    ...options,
-    message: options.message || 'Function did not throw',
-  }) as Promise<Error>;
+  ) as Promise<Error>;
 };
 
 export const retryAsync = async <T>(

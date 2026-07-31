@@ -12,14 +12,21 @@ import { getState } from '../store/vanilla.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 import { getUI } from './types.js';
 
-async function listSnapshots(sessionId: string): Promise<Array<{
-  filePath: string;
-  version: number;
-  snapshotPath: string;
-  mtime: Date;
-}>> {
+async function listSnapshots(sessionId: string): Promise<
+  Array<{
+    filePath: string;
+    version: number;
+    snapshotPath: string;
+    mtime: Date;
+  }>
+> {
   const snapshotDir = path.join(getBladeStorageRoot(), 'file-history', sessionId);
-  const results: Array<{ filePath: string; version: number; snapshotPath: string; mtime: Date }> = [];
+  const results: Array<{
+    filePath: string;
+    version: number;
+    snapshotPath: string;
+    mtime: Date;
+  }> = [];
 
   try {
     const files = await fs.readdir(snapshotDir);
@@ -45,12 +52,13 @@ async function listSnapshots(sessionId: string): Promise<Array<{
 const rewindCommand: SlashCommand = {
   name: 'rewind',
   description: 'Revert files to their state before the last edit',
-  fullDescription: '回退文件到编辑前的快照状态。不带参数列出可回退的文件，带文件路径则执行回退。',
+  fullDescription:
+    '回退文件到编辑前的快照状态。不带参数列出可回退的文件，带文件路径则执行回退。',
   usage: '/rewind [file_path]',
   aliases: ['undo'],
   async handler(
     args: string[],
-    context: SlashCommandContext,
+    context: SlashCommandContext
   ): Promise<SlashCommandResult> {
     const ui = getUI(context);
     const state = getState();
@@ -87,7 +95,11 @@ const rewindCommand: SlashCommand = {
 
     const targetPath = args[0];
     const matching = snapshots.filter((s) => {
-      return s.filePath === targetPath || targetPath.endsWith(s.filePath) || s.filePath.endsWith(targetPath);
+      return (
+        s.filePath === targetPath ||
+        targetPath.endsWith(s.filePath) ||
+        s.filePath.endsWith(targetPath)
+      );
     });
 
     if (matching.length === 0) {
@@ -100,7 +112,9 @@ const rewindCommand: SlashCommand = {
     try {
       const snapshotContent = await fs.readFile(latest.snapshotPath, 'utf-8');
       await fs.writeFile(targetPath, snapshotContent, 'utf-8');
-      ui.sendMessage(`已回退 \`${targetPath}\` 到 v${latest.version} (${latest.mtime.toLocaleTimeString()})`);
+      ui.sendMessage(
+        `已回退 \`${targetPath}\` 到 v${latest.version} (${latest.mtime.toLocaleTimeString()})`
+      );
       return { success: true, message: `Reverted ${targetPath}` };
     } catch (error) {
       ui.sendMessage(`回退失败: ${(error as Error).message}`);

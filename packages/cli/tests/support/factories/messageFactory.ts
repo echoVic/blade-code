@@ -12,7 +12,17 @@ export interface UserMessage {
 
 export interface AssistantMessage {
   role: 'assistant';
-  content: string | Array<{ type: 'text'; text: string } | { type: 'tool-call'; toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+  content:
+    | string
+    | Array<
+        | { type: 'text'; text: string }
+        | {
+            type: 'tool-call';
+            toolCallId: string;
+            toolName: string;
+            args: Record<string, unknown>;
+          }
+      >;
 }
 
 export interface ToolMessage {
@@ -123,7 +133,9 @@ export const createToolCallConversation = (
   );
 
   for (let i = 0; i < toolCalls.length; i++) {
-    messages.push(createToolResultMessage(toolCallsFormatted[i].toolCallId, toolCalls[i].result));
+    messages.push(
+      createToolResultMessage(toolCallsFormatted[i].toolCallId, toolCalls[i].result)
+    );
   }
 
   messages.push(createAssistantMessage(finalResponse));

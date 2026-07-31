@@ -156,7 +156,9 @@ describe('print command runner', () => {
 
   it('returns a clear error when interactive resume is requested in print mode', async () => {
     sessionState.resolveNonInteractiveSession.mockRejectedValueOnce(
-      new Error('--resume without a session ID is only supported in interactive UI mode')
+      new Error(
+        '--resume without a session ID is only supported in interactive UI mode'
+      )
     );
 
     const { runPrint } = await import('../../../../src/commands/print.js');

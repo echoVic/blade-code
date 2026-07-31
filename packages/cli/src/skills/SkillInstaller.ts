@@ -164,10 +164,9 @@ export class SkillInstaller {
 
       await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
 
-      await execAsync(
-        `git clone --depth 1 "${repoUrl}" "${tempDir}"`,
-        { timeout: 60000 }
-      );
+      await execAsync(`git clone --depth 1 "${repoUrl}" "${tempDir}"`, {
+        timeout: 60000,
+      });
 
       const skillMdPath = path.join(tempDir, 'SKILL.md');
       try {
@@ -208,13 +207,17 @@ export class SkillInstaller {
    * @param skillName 可选的 skill 名称，默认从路径提取
    * @param symlink 是否使用符号链接（默认 true，方便开发）
    */
-  async installFromLocal(localSourcePath: string, skillName?: string, symlink = true): Promise<boolean> {
+  async installFromLocal(
+    localSourcePath: string,
+    skillName?: string,
+    symlink = true
+  ): Promise<boolean> {
     const name = skillName || path.basename(localSourcePath);
     const targetPath = path.join(this.skillsDir, name);
 
     try {
       const sourcePath = path.resolve(localSourcePath);
-      
+
       try {
         await fs.access(sourcePath);
       } catch {
@@ -343,5 +346,3 @@ export function getSkillInstaller(skillsDir?: string): SkillInstaller {
   }
   return installerInstance;
 }
-
-

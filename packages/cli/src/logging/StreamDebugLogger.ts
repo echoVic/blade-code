@@ -35,5 +35,3 @@ export function streamDebug(
   const line = `[${timestamp}] [${source}] ${message}${dataStr}\n`;
   appendFileSync(LOG_FILE, line);
 }
-
-

@@ -52,7 +52,11 @@ export class MockMCPClient extends EventEmitter {
     this.tools = config.tools || [];
     this.resources = config.resources || [];
     this.prompts = config.prompts || [];
-    this.capabilities = config.capabilities || { tools: true, resources: true, prompts: true };
+    this.capabilities = config.capabilities || {
+      tools: true,
+      resources: true,
+      prompts: true,
+    };
   }
 
   async connect(): Promise<void> {
@@ -184,7 +188,9 @@ export class MockMCPClient extends EventEmitter {
   }
 }
 
-export const createMockMCPClient = (config?: Partial<MockMCPServerConfig>): MockMCPClient => {
+export const createMockMCPClient = (
+  config?: Partial<MockMCPServerConfig>
+): MockMCPClient => {
   return new MockMCPClient({
     name: config?.name || 'mock-mcp-server',
     tools: config?.tools || [
@@ -254,7 +260,9 @@ export class MockMCPRegistry {
   }
 
   async connectAll(): Promise<void> {
-    const connectPromises = Array.from(this.clients.values()).map((client) => client.connect());
+    const connectPromises = Array.from(this.clients.values()).map((client) =>
+      client.connect()
+    );
     await Promise.all(connectPromises);
   }
 

@@ -20,7 +20,9 @@ describe('stripSafeEnvVars', () => {
   });
 
   it('strips multiple safe env vars', () => {
-    expect(stripSafeEnvVars('NODE_ENV=production RUST_LOG=info git log')).toBe('git log');
+    expect(stripSafeEnvVars('NODE_ENV=production RUST_LOG=info git log')).toBe(
+      'git log'
+    );
   });
 
   it('does NOT strip unsafe env vars', () => {
@@ -30,12 +32,18 @@ describe('stripSafeEnvVars', () => {
 
   it('does NOT strip binary hijack vars', () => {
     expect(stripSafeEnvVars('PATH=/evil git log')).toBe('PATH=/evil git log');
-    expect(stripSafeEnvVars('LD_PRELOAD=evil.so git log')).toBe('LD_PRELOAD=evil.so git log');
+    expect(stripSafeEnvVars('LD_PRELOAD=evil.so git log')).toBe(
+      'LD_PRELOAD=evil.so git log'
+    );
   });
 
   it('does NOT strip executable Git env vars (they run external binaries)', () => {
-    expect(stripSafeEnvVars('GIT_PAGER=/tmp/evil git log')).toBe('GIT_PAGER=/tmp/evil git log');
-    expect(stripSafeEnvVars('GIT_SSH_COMMAND=/tmp/evil git ls-remote')).toBe('GIT_SSH_COMMAND=/tmp/evil git ls-remote');
+    expect(stripSafeEnvVars('GIT_PAGER=/tmp/evil git log')).toBe(
+      'GIT_PAGER=/tmp/evil git log'
+    );
+    expect(stripSafeEnvVars('GIT_SSH_COMMAND=/tmp/evil git ls-remote')).toBe(
+      'GIT_SSH_COMMAND=/tmp/evil git ls-remote'
+    );
   });
 
   it('returns command unchanged if no env vars', () => {
@@ -60,8 +68,12 @@ describe('stripAllEnvVars', () => {
 
   it('does NOT strip binary hijack vars', () => {
     expect(stripAllEnvVars('PATH=/evil git log')).toBe('PATH=/evil git log');
-    expect(stripAllEnvVars('LD_PRELOAD=evil.so rm -rf /')).toBe('LD_PRELOAD=evil.so rm -rf /');
-    expect(stripAllEnvVars('DYLD_LIBRARY_PATH=/bad git log')).toBe('DYLD_LIBRARY_PATH=/bad git log');
+    expect(stripAllEnvVars('LD_PRELOAD=evil.so rm -rf /')).toBe(
+      'LD_PRELOAD=evil.so rm -rf /'
+    );
+    expect(stripAllEnvVars('DYLD_LIBRARY_PATH=/bad git log')).toBe(
+      'DYLD_LIBRARY_PATH=/bad git log'
+    );
   });
 
   it('strips non-hijack vars but stops at hijack vars', () => {
@@ -111,15 +123,24 @@ describe('stripSafeWrappers', () => {
 
 describe('splitCompoundCommand', () => {
   it('splits on &&', () => {
-    expect(splitCompoundCommand('git status && git log')).toEqual(['git status', 'git log']);
+    expect(splitCompoundCommand('git status && git log')).toEqual([
+      'git status',
+      'git log',
+    ]);
   });
 
   it('splits on ||', () => {
-    expect(splitCompoundCommand('git status || echo failed')).toEqual(['git status', 'echo failed']);
+    expect(splitCompoundCommand('git status || echo failed')).toEqual([
+      'git status',
+      'echo failed',
+    ]);
   });
 
   it('splits on ;', () => {
-    expect(splitCompoundCommand('git status; git log')).toEqual(['git status', 'git log']);
+    expect(splitCompoundCommand('git status; git log')).toEqual([
+      'git status',
+      'git log',
+    ]);
   });
 
   it('returns null for pipe', () => {
@@ -209,7 +230,9 @@ describe('normalizeGitCommand', () => {
   });
 
   it('strips multiple safe options', () => {
-    const result = normalizeGitCommand('git -C /path --no-pager --no-optional-locks log --oneline');
+    const result = normalizeGitCommand(
+      'git -C /path --no-pager --no-optional-locks log --oneline'
+    );
     expect(result).toEqual({ subcommand: 'log', args: ['--oneline'] });
   });
 
@@ -265,6 +288,11 @@ describe('tokenize', () => {
   });
 
   it('handles mixed quotes', () => {
-    expect(tokenize('git commit -m "fix: don\'t break"')).toEqual(['git', 'commit', '-m', "fix: don't break"]);
+    expect(tokenize('git commit -m "fix: don\'t break"')).toEqual([
+      'git',
+      'commit',
+      '-m',
+      "fix: don't break",
+    ]);
   });
 });

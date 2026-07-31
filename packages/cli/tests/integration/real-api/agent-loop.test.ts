@@ -15,7 +15,10 @@ const calculatorTool = {
   inputSchema: jsonSchema({
     type: 'object' as const,
     properties: {
-      expression: { type: 'string', description: 'A math expression to evaluate, e.g. "2+3"' },
+      expression: {
+        type: 'string',
+        description: 'A math expression to evaluate, e.g. "2+3"',
+      },
     },
     required: ['expression'],
   }),
@@ -56,10 +59,17 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
     const result = await generateText({
       model,
       messages: [
-        { role: 'system', content: 'You are a coding assistant. Use available tools to complete tasks.' },
+        {
+          role: 'system',
+          content: 'You are a coding assistant. Use available tools to complete tasks.',
+        },
         { role: 'user', content: 'Calculate 99 * 101' },
       ],
-      tools: { calculate: calculatorTool, read_file: readFileTool, edit_file: editFileTool },
+      tools: {
+        calculate: calculatorTool,
+        read_file: readFileTool,
+        edit_file: editFileTool,
+      },
       maxOutputTokens: 200,
       temperature: 0,
     });
@@ -76,7 +86,10 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
     const result = await generateText({
       model,
       messages: [
-        { role: 'system', content: 'You are a coding assistant. Use the read_file tool to read files.' },
+        {
+          role: 'system',
+          content: 'You are a coding assistant. Use the read_file tool to read files.',
+        },
         { role: 'user', content: 'Read the file at /Users/test/src/index.ts' },
       ],
       tools: { read_file: readFileTool },
@@ -96,8 +109,15 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
     const result = await generateText({
       model,
       messages: [
-        { role: 'system', content: 'You are a coding assistant. Use the edit_file tool to make changes.' },
-        { role: 'user', content: 'In the file /tmp/app.ts, replace "console.log" with "logger.info"' },
+        {
+          role: 'system',
+          content:
+            'You are a coding assistant. Use the edit_file tool to make changes.',
+        },
+        {
+          role: 'user',
+          content: 'In the file /tmp/app.ts, replace "console.log" with "logger.info"',
+        },
       ],
       tools: { edit_file: editFileTool },
       maxOutputTokens: 300,
@@ -107,7 +127,11 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
     expect(result.toolCalls).toBeDefined();
     expect(result.toolCalls!.length).toBe(1);
     expect(result.toolCalls![0].toolName).toBe('edit_file');
-    const input = result.toolCalls![0].input as { file_path: string; old_string: string; new_string: string };
+    const input = result.toolCalls![0].input as {
+      file_path: string;
+      old_string: string;
+      new_string: string;
+    };
     expect(input.file_path).toContain('app.ts');
     expect(input.old_string).toContain('console.log');
     expect(input.new_string).toContain('logger.info');
@@ -118,7 +142,11 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
     const result = await generateText({
       model,
       messages: [
-        { role: 'system', content: 'You are a coding assistant. When you cannot use tools, respond with a JSON object: {"action": "explain", "content": "..."}' },
+        {
+          role: 'system',
+          content:
+            'You are a coding assistant. When you cannot use tools, respond with a JSON object: {"action": "explain", "content": "..."}',
+        },
         { role: 'user', content: 'Explain what a closure is in JavaScript.' },
       ],
       tools: {},

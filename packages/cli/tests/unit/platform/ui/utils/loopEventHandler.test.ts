@@ -89,13 +89,14 @@ function createMockStats(): LoopEventStats {
 // ==================== 测试 ====================
 
 describe('createLoopEventHandler', () => {
-
   // ==================== 场景 1: 正常 stream_end ====================
 
   describe('正常 stream_end 提交', () => {
     it('stream_end 应该 drain 缓冲区并 finalize', () => {
       const deps = createMockDeps();
-      (deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+      (
+        deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>
+      ).mockReturnValue({
         extraContent: 'remaining content',
         extraThinking: 'remaining thinking',
       });
@@ -109,7 +110,7 @@ describe('createLoopEventHandler', () => {
       // 应该调用 finalizeStreamingMessage
       expect(deps.sessionActions.finalizeStreamingMessage).toHaveBeenCalledWith(
         'remaining content',
-        'remaining thinking',
+        'remaining thinking'
       );
     });
 
@@ -119,7 +120,9 @@ describe('createLoopEventHandler', () => {
       );
 
       const deps = createMockDeps();
-      (deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+      (
+        deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>
+      ).mockReturnValue({
         extraContent: 'extra',
         extraThinking: '',
       });
@@ -139,7 +142,9 @@ describe('createLoopEventHandler', () => {
       vi.mocked(appendMarkdownDelta).mockClear();
 
       const deps = createMockDeps();
-      (deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+      (
+        deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>
+      ).mockReturnValue({
         extraContent: '',
         extraThinking: '',
       });
@@ -160,7 +165,9 @@ describe('createLoopEventHandler', () => {
         // 短回复时 streamingId 为 null（从未 flush 过）
         getStreamingMessageId: vi.fn(() => null),
       });
-      (deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+      (
+        deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>
+      ).mockReturnValue({
         extraContent: 'short reply',
         extraThinking: '',
       });
@@ -175,7 +182,7 @@ describe('createLoopEventHandler', () => {
       // finalizeStreamingMessage 在 streamingId 为 null 时会自动生成新 ID
       expect(deps.sessionActions.finalizeStreamingMessage).toHaveBeenCalledWith(
         'short reply',
-        '',
+        ''
       );
     });
   });
@@ -317,7 +324,9 @@ describe('createLoopEventHandler', () => {
 
       handler({ kind: 'thinking_delta', delta: 'reasoning...' } as LoopEvent);
 
-      expect(deps.streamingBuffer.batchAppendThinking).toHaveBeenCalledWith('reasoning...');
+      expect(deps.streamingBuffer.batchAppendThinking).toHaveBeenCalledWith(
+        'reasoning...'
+      );
     });
 
     it('thinkingModeEnabled=false 时应该忽略 thinking_delta', () => {
@@ -336,7 +345,9 @@ describe('createLoopEventHandler', () => {
   describe('stream_end 幂等性', () => {
     it('正常 stream_end 后再次 stream_end 不应重复 finalize', () => {
       const deps = createMockDeps();
-      (deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+      (
+        deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>
+      ).mockReturnValue({
         extraContent: 'content',
         extraThinking: '',
       });
@@ -359,7 +370,9 @@ describe('createLoopEventHandler', () => {
   describe('多轮 turn stream_end 均正常 finalize', () => {
     it('同一 handler 跨多 turn，每个 turn 的 stream_end 都应该 finalize', () => {
       const deps = createMockDeps();
-      (deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+      (
+        deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>
+      ).mockReturnValue({
         extraContent: 'turn content',
         extraThinking: '',
       });
@@ -384,7 +397,9 @@ describe('createLoopEventHandler', () => {
 
     it('model_fallback 后新 turn 仍可正常 finalize', () => {
       const deps = createMockDeps();
-      (deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+      (
+        deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>
+      ).mockReturnValue({
         extraContent: 'recovery content',
         extraThinking: '',
       });
@@ -410,7 +425,9 @@ describe('createLoopEventHandler', () => {
 
     it('turn_start 不影响同 turn 内的幂等保护', () => {
       const deps = createMockDeps();
-      (deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+      (
+        deps.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>
+      ).mockReturnValue({
         extraContent: 'content',
         extraThinking: '',
       });
@@ -432,11 +449,15 @@ describe('createLoopEventHandler', () => {
     it('不同 handler 实例的 streamFinalized 互不影响', () => {
       const deps1 = createMockDeps();
       const deps2 = createMockDeps();
-      (deps1.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+      (
+        deps1.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>
+      ).mockReturnValue({
         extraContent: 'content1',
         extraThinking: '',
       });
-      (deps2.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>).mockReturnValue({
+      (
+        deps2.streamingBuffer.drainPendingBuffers as ReturnType<typeof vi.fn>
+      ).mockReturnValue({
         extraContent: 'content2',
         extraThinking: '',
       });
@@ -452,7 +473,7 @@ describe('createLoopEventHandler', () => {
 
       expect(deps2.sessionActions.finalizeStreamingMessage).toHaveBeenCalledWith(
         'content2',
-        '',
+        ''
       );
       // handler1 不应 finalize
       expect(deps1.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
@@ -512,7 +533,12 @@ describe('createLoopEventHandler', () => {
       const stats = createMockStats();
       const handler = createLoopEventHandler(deps, stats);
 
-      const usage = { inputTokens: 100, outputTokens: 50, totalTokens: 150, maxContextTokens: 4096 };
+      const usage = {
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+        maxContextTokens: 4096,
+      };
       handler({ kind: 'token_usage', usage } as LoopEvent);
 
       expect(deps.sessionActions.updateTokenUsage).toHaveBeenCalledWith(usage);

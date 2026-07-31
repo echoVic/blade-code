@@ -15,7 +15,10 @@ function toContextMessage(message: SessionMessage): Message {
  *   再拼接恢复后新增的 UI 消息，避免丢上下文或重复历史
  */
 export function buildContextMessagesFromSession(
-  session: Pick<SessionState, 'messages' | 'restoredContextMessages' | 'restoredVisibleMessageCount'>
+  session: Pick<
+    SessionState,
+    'messages' | 'restoredContextMessages' | 'restoredVisibleMessageCount'
+  >
 ): Message[] {
   if (!session.restoredContextMessages || session.restoredVisibleMessageCount <= 0) {
     return session.messages.map(toContextMessage);

@@ -109,7 +109,9 @@ describe('isReadOnlyBashCommand', () => {
     // After stripping, the env var remains, containsUnsafePatterns won't flag it,
     // but the env var prefix makes it not match any known command pattern
     expect(isReadOnlyBashCommand('GIT_PAGER=/tmp/evil git log')).toBe(false);
-    expect(isReadOnlyBashCommand('GIT_SSH_COMMAND=/tmp/evil git ls-remote')).toBe(false);
+    expect(isReadOnlyBashCommand('GIT_SSH_COMMAND=/tmp/evil git ls-remote')).toBe(
+      false
+    );
   });
 
   it('allows git with timeout wrapper', () => {
@@ -306,7 +308,9 @@ describe('validateFlags', () => {
   });
 
   it('handles -- separator', () => {
-    expect(validateFlags(['--oneline', '--', '--unknown-but-positional'], 0, config)).toBe(true);
+    expect(
+      validateFlags(['--oneline', '--', '--unknown-but-positional'], 0, config)
+    ).toBe(true);
   });
 
   it('handles combined short flags', () => {

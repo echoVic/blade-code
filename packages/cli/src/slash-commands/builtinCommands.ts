@@ -342,13 +342,15 @@ const costCommand: SlashCommand = {
     const usage = state.session.tokenUsage;
     const model = getCurrentModel();
 
-    const costStr = usage.estimatedCostUsd > 0
-      ? `$${usage.estimatedCostUsd < 0.01 ? usage.estimatedCostUsd.toFixed(6) : usage.estimatedCostUsd.toFixed(4)}`
-      : 'N/A (unknown model pricing)';
+    const costStr =
+      usage.estimatedCostUsd > 0
+        ? `$${usage.estimatedCostUsd < 0.01 ? usage.estimatedCostUsd.toFixed(6) : usage.estimatedCostUsd.toFixed(4)}`
+        : 'N/A (unknown model pricing)';
 
-    const cacheInfo = (usage.cacheReadTokens > 0 || usage.cacheWriteTokens > 0)
-      ? `\n- Cache read: ${usage.cacheReadTokens.toLocaleString()} tokens\n- Cache write: ${usage.cacheWriteTokens.toLocaleString()} tokens`
-      : '';
+    const cacheInfo =
+      usage.cacheReadTokens > 0 || usage.cacheWriteTokens > 0
+        ? `\n- Cache read: ${usage.cacheReadTokens.toLocaleString()} tokens\n- Cache write: ${usage.cacheWriteTokens.toLocaleString()} tokens`
+        : '';
 
     const info = `**Session Cost Summary**
 
@@ -382,7 +384,9 @@ const doctorCommand: SlashCommand = {
     const models = config?.models ?? [];
 
     if (models.length === 0) {
-      ui.sendMessage('❌ 没有配置任何模型。请先运行 `/init` 或编辑 `~/.blade/config.json`');
+      ui.sendMessage(
+        '❌ 没有配置任何模型。请先运行 `/init` 或编辑 `~/.blade/config.json`'
+      );
       return { success: false, message: 'No models configured' };
     }
 
@@ -391,7 +395,9 @@ const doctorCommand: SlashCommand = {
     for (const model of models) {
       const startTime = Date.now();
       try {
-        const { createChatServiceAsync } = await import('../services/ChatServiceInterface.js');
+        const { createChatServiceAsync } = await import(
+          '../services/ChatServiceInterface.js'
+        );
         const service = await createChatServiceAsync({
           provider: model.provider,
           apiKey: model.apiKey,
@@ -408,10 +414,13 @@ const doctorCommand: SlashCommand = {
         );
         const latency = Date.now() - startTime;
         const hasContent = !!response.content;
-        results.push(`✅ **${model.name}** (${model.model}) — ${latency}ms${hasContent ? '' : ' ⚠️ empty response'}`);
+        results.push(
+          `✅ **${model.name}** (${model.model}) — ${latency}ms${hasContent ? '' : ' ⚠️ empty response'}`
+        );
       } catch (error) {
         const latency = Date.now() - startTime;
-        const msg = error instanceof Error ? error.message.slice(0, 80) : 'Unknown error';
+        const msg =
+          error instanceof Error ? error.message.slice(0, 80) : 'Unknown error';
         results.push(`❌ **${model.name}** (${model.model}) — ${latency}ms — ${msg}`);
       }
     }

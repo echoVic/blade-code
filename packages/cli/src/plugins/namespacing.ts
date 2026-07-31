@@ -45,6 +45,3 @@ export function getNamespacedName(pluginName: string, resourceName: string): str
 export function getMcpNamespacedName(pluginName: string, serverName: string): string {
   return `${pluginName}${MCP_NAMESPACE_SEPARATOR}${serverName}`;
 }
-
-
-

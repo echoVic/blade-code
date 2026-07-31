@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExecutionStage } from '../../../../../src/tools/execution/PipelineStages.js';
 import type { ToolExecution } from '../../../../../src/tools/types/index.js';
 
-function createMockExecution(overrides: Partial<{
-  invocation: { execute: ReturnType<typeof vi.fn> };
-  signal: AbortSignal;
-}> = {}): ToolExecution {
+function createMockExecution(
+  overrides: Partial<{
+    invocation: { execute: ReturnType<typeof vi.fn> };
+    signal: AbortSignal;
+  }> = {}
+): ToolExecution {
   const mockInvocation = overrides.invocation ?? {
     execute: vi.fn().mockResolvedValue({
       success: true,
@@ -56,11 +58,14 @@ describe('ExecutionStage', () => {
     (execution._internal as any).invocation = undefined;
     await stage.process(execution);
 
-    expect(execution.abort).toHaveBeenCalledWith('Pre-execution stage failed; cannot run tool');
+    expect(execution.abort).toHaveBeenCalledWith(
+      'Pre-execution stage failed; cannot run tool'
+    );
   });
 
   it('retries on transient EBUSY error', async () => {
-    const executeFn = vi.fn()
+    const executeFn = vi
+      .fn()
       .mockRejectedValueOnce(new Error('EBUSY: resource busy'))
       .mockResolvedValueOnce({ success: true, llmContent: 'ok', metadata: undefined });
 
@@ -74,7 +79,8 @@ describe('ExecutionStage', () => {
   });
 
   it('retries on EAGAIN error up to max retries', async () => {
-    const executeFn = vi.fn()
+    const executeFn = vi
+      .fn()
       .mockRejectedValueOnce(new Error('EAGAIN: try again'))
       .mockRejectedValueOnce(new Error('EAGAIN: try again'))
       .mockRejectedValueOnce(new Error('EAGAIN: try again'));
@@ -83,17 +89,22 @@ describe('ExecutionStage', () => {
     await stage.process(execution);
 
     expect(executeFn).toHaveBeenCalledTimes(3);
-    expect(execution.abort).toHaveBeenCalledWith('Tool execution failed: EAGAIN: try again');
+    expect(execution.abort).toHaveBeenCalledWith(
+      'Tool execution failed: EAGAIN: try again'
+    );
   });
 
   it('does not retry on non-transient errors', async () => {
-    const executeFn = vi.fn()
+    const executeFn = vi
+      .fn()
       .mockRejectedValueOnce(new Error('TypeError: cannot read property'));
 
     const execution = createMockExecution({ invocation: { execute: executeFn } });
     await stage.process(execution);
 
     expect(executeFn).toHaveBeenCalledTimes(1);
-    expect(execution.abort).toHaveBeenCalledWith('Tool execution failed: TypeError: cannot read property');
+    expect(execution.abort).toHaveBeenCalledWith(
+      'Tool execution failed: TypeError: cannot read property'
+    );
   });
 });

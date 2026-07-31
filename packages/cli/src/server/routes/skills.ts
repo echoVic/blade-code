@@ -31,7 +31,7 @@ async function saveSkillsConfig(config: SkillsConfig): Promise<void> {
 async function setSkillEnabled(name: string, enabled: boolean): Promise<void> {
   const config = await loadSkillsConfig();
   if (enabled) {
-    config.disabled = config.disabled.filter(n => n !== name);
+    config.disabled = config.disabled.filter((n) => n !== name);
   } else {
     if (!config.disabled.includes(name)) {
       config.disabled.push(name);
@@ -66,7 +66,7 @@ async function fetchOfficialSkillsCatalog(): Promise<CatalogSkill[]> {
       'https://api.github.com/repos/anthropics/skills/contents/skills',
       {
         headers: {
-          'Accept': 'application/vnd.github.v3+json',
+          Accept: 'application/vnd.github.v3+json',
           'User-Agent': 'Blade-Skills-Catalog',
         },
       }
@@ -125,8 +125,8 @@ export const SkillsRoutes = () => {
       await registry.initialize();
       const skills = registry.getAll();
       const config = await loadSkillsConfig();
-      
-      const result = skills.map(skill => ({
+
+      const result = skills.map((skill) => ({
         id: skill.name,
         name: skill.name,
         enabled: !config.disabled.includes(skill.name),
@@ -148,10 +148,10 @@ export const SkillsRoutes = () => {
   app.post('/:name/toggle', async (c) => {
     try {
       const name = c.req.param('name');
-      const body = await c.req.json() as { enabled: boolean };
-      
+      const body = (await c.req.json()) as { enabled: boolean };
+
       await setSkillEnabled(name, body.enabled);
-      
+
       return c.json({ success: true, enabled: body.enabled });
     } catch (error) {
       logger.error('[SkillsRoutes] Failed to toggle skill:', error);
@@ -163,12 +163,12 @@ export const SkillsRoutes = () => {
     try {
       const name = c.req.param('name');
       const skillPath = `${process.env.HOME}/.blade/skills/${name}`;
-      
+
       await fs.rm(skillPath, { recursive: true, force: true });
-      
+
       const registry = getSkillRegistry();
       await registry.refresh();
-      
+
       return c.json({ success: true });
     } catch (error) {
       logger.error('[SkillsRoutes] Failed to uninstall skill:', error);
@@ -178,13 +178,13 @@ export const SkillsRoutes = () => {
 
   app.post('/install', async (c) => {
     try {
-      const body = await c.req.json() as { 
+      const body = (await c.req.json()) as {
         source: 'catalog' | 'repo' | 'local';
         url?: string;
         path?: string;
         name?: string;
       };
-      
+
       const installer = getSkillInstaller();
       const registry = getSkillRegistry();
       let success = false;
@@ -192,20 +192,44 @@ export const SkillsRoutes = () => {
       if (body.source === 'catalog' && body.name) {
         success = await installer.installOfficialSkill(body.name);
         if (!success) {
-          return c.json({ success: false, error: 'Failed to install skill from catalog' }, 500);
+          return c.json(
+            { success: false, error: 'Failed to install skill from catalog' },
+            500
+          );
         }
       } else if (body.source === 'repo' && body.url) {
         success = await installer.installFromRepo(body.url, body.name);
         if (!success) {
-          return c.json({ success: false, error: 'Failed to install skill from repository. Make sure the repo contains a SKILL.md file.' }, 500);
+          return c.json(
+            {
+              success: false,
+              error:
+                'Failed to install skill from repository. Make sure the repo contains a SKILL.md file.',
+            },
+            500
+          );
         }
       } else if (body.source === 'local' && body.path) {
         success = await installer.installFromLocal(body.path, body.name);
         if (!success) {
-          return c.json({ success: false, error: 'Failed to install skill from local path. Make sure the path exists and contains a SKILL.md file.' }, 500);
+          return c.json(
+            {
+              success: false,
+              error:
+                'Failed to install skill from local path. Make sure the path exists and contains a SKILL.md file.',
+            },
+            500
+          );
         }
       } else {
-        return c.json({ success: false, error: 'Invalid install parameters. Required: source with corresponding url/path/name' }, 400);
+        return c.json(
+          {
+            success: false,
+            error:
+              'Invalid install parameters. Required: source with corresponding url/path/name',
+          },
+          400
+        );
       }
 
       await registry.refresh();

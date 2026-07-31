@@ -13,9 +13,15 @@ describe('OutputTruncator', () => {
     });
 
     it('should truncate long output for git rm command', () => {
-      const lines = Array.from({ length: 100 }, (_, i) => `rm 'node_modules/file${i}.js'`);
+      const lines = Array.from(
+        { length: 100 },
+        (_, i) => `rm 'node_modules/file${i}.js'`
+      );
       const output = lines.join('\n');
-      const result = OutputTruncator.truncate(output, 'git rm -r --cached node_modules');
+      const result = OutputTruncator.truncate(
+        output,
+        'git rm -r --cached node_modules'
+      );
 
       expect(result.truncated).toBe(true);
       expect(result.originalLines).toBe(100);
@@ -58,7 +64,11 @@ describe('OutputTruncator', () => {
       const stdout = Array.from({ length: 100 }, (_, i) => `out-${i}`).join('\n');
       const stderr = Array.from({ length: 50 }, (_, i) => `err-${i}`).join('\n');
 
-      const result = OutputTruncator.truncateForLLM(stdout, stderr, 'git rm -r --cached test');
+      const result = OutputTruncator.truncateForLLM(
+        stdout,
+        stderr,
+        'git rm -r --cached test'
+      );
 
       expect(result.truncationInfo).toContain('stdout:');
       expect(result.stdout).toContain('... (');

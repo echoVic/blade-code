@@ -41,7 +41,10 @@ import {
 import { classifyError } from '../utils/errorExtractor.js';
 import { buildUserMessageContent } from '../utils/messageContent.js';
 import { buildContextMessagesFromSession } from '../utils/sessionContext.js';
-import { processSlashCommand, type CommandResult } from '../utils/slashCommandRouter.js';
+import {
+  processSlashCommand,
+  type CommandResult,
+} from '../utils/slashCommandRouter.js';
 import { createLoopEventHandler } from '../utils/loopEventHandler.js';
 import { useAgent } from './useAgent.js';
 import type { ResolvedInput } from './useInputBuffer.js';
@@ -58,7 +61,7 @@ export const useCommandHandler = (
   appendSystemPrompt?: string,
   confirmationHandler?: ConfirmationHandler,
   maxTurns?: number,
-  onDismissConfirmations?: () => void,
+  onDismissConfirmations?: () => void
 ) => {
   // ==================== Store 选择器 ====================
   const isProcessing = useIsProcessing();
@@ -152,7 +155,7 @@ export const useCommandHandler = (
           resolved,
           appActions,
           sessionActions,
-          abortController.signal,
+          abortController.signal
         );
 
         if (slashResult.type === 'handled') {
@@ -222,7 +225,9 @@ export const useCommandHandler = (
         // --- 4. 构建 Agent + ChatContext ---
         const userMessageContent = buildUserMessageContent(agentInput);
 
-        const agent = await createAgent(onceModelId ? { modelId: onceModelId } : undefined);
+        const agent = await createAgent(
+          onceModelId ? { modelId: onceModelId } : undefined
+        );
 
         if (abortController.signal.aborted) {
           logger.info('[handleCommandSubmit] Agent 创建期间已被中止');
@@ -259,7 +264,7 @@ export const useCommandHandler = (
             getStreamingMessageId: () => getState().session.currentStreamingMessageId,
             signal: abortController.signal,
           },
-          stats,
+          stats
         );
 
         const loopResult = await drainLoop(
@@ -270,7 +275,10 @@ export const useCommandHandler = (
                   const response = await confirmationHandler.requestConfirmation({
                     type: 'maxTurnsExceeded',
                     message: `已进行 ${data.turnsCount} 轮对话。是否继续？`,
-                    risks: ['继续执行可能导致更长的等待时间', '可能产生更多的 API 费用'],
+                    risks: [
+                      '继续执行可能导致更长的等待时间',
+                      '可能产生更多的 API 费用',
+                    ],
                   });
                   return {
                     continue: response.approved,
@@ -279,13 +287,13 @@ export const useCommandHandler = (
                 }
               : undefined,
           }),
-          eventHandler,
+          eventHandler
         );
 
         // --- 6. 后处理 ---
         if (loopResult.metadata?.outputTruncated) {
           sessionActions.addAssistantMessage(
-            '输出因达到 token 上限被截断，部分内容可能不完整。',
+            '输出因达到 token 上限被截断，部分内容可能不完整。'
           );
         }
 
@@ -299,7 +307,8 @@ export const useCommandHandler = (
 
         // API 错误（非 abort）时显示友好错误信息，而非"已取消"
         if (!loopResult.success && loopResult.error?.type === 'api_error') {
-          const errorMsg = loopResult.error.message || '请求失败，请检查网络连接和 API 配置';
+          const errorMsg =
+            loopResult.error.message || '请求失败，请检查网络连接和 API 配置';
           sessionActions.addAssistantMessage(errorMsg);
           return { success: false, error: errorMsg };
         }
@@ -307,7 +316,11 @@ export const useCommandHandler = (
         if (!output || output.trim() === '') {
           // interrupt 时不显示"已取消"（紧接着就有新任务开始）
           const abortReason = loopResult.metadata?.abortReason;
-          if (!abortMessageSentRef.current && stats.contentDeltaCount === 0 && abortReason !== 'interrupt') {
+          if (
+            !abortMessageSentRef.current &&
+            stats.contentDeltaCount === 0 &&
+            abortReason !== 'interrupt'
+          ) {
             sessionActions.addAssistantMessage('已取消');
             return { success: true, output: '已取消' };
           }

@@ -159,8 +159,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = React.memo(
               ? `已展开 ${displayLines.length}/${totalLines} 行`
               : `显示前 ${maxLines} 行，共 ${totalLines} 行`}
             {' · '}
-            <Text color={theme.colors.success}>+{addedCount}</Text>
-            {' '}
+            <Text color={theme.colors.success}>+{addedCount}</Text>{' '}
             <Text color={theme.colors.error}>-{removedCount}</Text>
           </Text>
         )}
@@ -232,8 +231,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = React.memo(
               </Text>
             ) : (
               <Text color={theme.colors.info} dimColor>
-                已隐藏剩余 {hiddenLines} 行
-                {isFocused ? ' · 按 E 展开全部' : ''}
+                已隐藏剩余 {hiddenLines} 行{isFocused ? ' · 按 E 展开全部' : ''}
               </Text>
             )}
           </Box>

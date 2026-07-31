@@ -5,11 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockUseInput = vi.fn();
 const mockUseStdout = vi.fn(() => ({ stdout: { columns: 120 } }));
 const mockSelectInput = vi.fn(
-  ({
-    items,
-  }: {
-    items: Array<{ label: string; key: string }>;
-  }) =>
+  ({ items }: { items: Array<{ label: string; key: string }> }) =>
     React.createElement(
       'select-input',
       { 'data-items': items.map((item) => item.label).join('|') },

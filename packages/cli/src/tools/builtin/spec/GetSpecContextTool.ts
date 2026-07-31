@@ -112,7 +112,9 @@ Tasks: 3/8 completed (37%)
         // Blocked tasks
         const blockedTasks = currentSpec.tasks.filter((t) => t.status === 'blocked');
         if (blockedTasks.length > 0) {
-          parts.push(`**[WARN] Blocked**: ${blockedTasks.map((t) => t.title).join(', ')}`);
+          parts.push(
+            `**[WARN] Blocked**: ${blockedTasks.map((t) => t.title).join(', ')}`
+          );
         }
       }
 

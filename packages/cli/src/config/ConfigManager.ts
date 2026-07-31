@@ -87,7 +87,13 @@ export class ConfigManager {
       // 5. 环境变量覆盖
       if (process.env.BLADE_MODEL && config.models?.length > 0) {
         const resolvedModel = resolveModelAlias(process.env.BLADE_MODEL);
-        const envModel = config.models.find((m) => m.id === resolvedModel || m.model === resolvedModel || m.id === process.env.BLADE_MODEL || m.model === process.env.BLADE_MODEL);
+        const envModel = config.models.find(
+          (m) =>
+            m.id === resolvedModel ||
+            m.model === resolvedModel ||
+            m.id === process.env.BLADE_MODEL ||
+            m.model === process.env.BLADE_MODEL
+        );
         if (envModel) {
           config.currentModelId = envModel.id;
         }
@@ -108,7 +114,10 @@ export class ConfigManager {
       }
 
       if (process.env.BLADE_DEBUG) {
-        config.debug = process.env.BLADE_DEBUG === '1' || process.env.BLADE_DEBUG === 'true' || process.env.BLADE_DEBUG;
+        config.debug =
+          process.env.BLADE_DEBUG === '1' ||
+          process.env.BLADE_DEBUG === 'true' ||
+          process.env.BLADE_DEBUG;
       }
 
       if (config.debug) {
@@ -390,7 +399,9 @@ export class ConfigManager {
     }
 
     if (warnings.length > 0) {
-      console.warn(`[ConfigManager] 配置警告:\n${warnings.map((w) => `  ⚠ ${w}`).join('\n')}`);
+      console.warn(
+        `[ConfigManager] 配置警告:\n${warnings.map((w) => `  ⚠ ${w}`).join('\n')}`
+      );
     }
 
     if (errors.length > 0) {
@@ -444,7 +455,9 @@ export function mergeRuntimeConfig(
 
   // 1.5 模型覆盖（CLI 优先，仅当前会话生效）
   if (cliOptions.model) {
-    const modelExists = baseConfig.models.some((model) => model.id === cliOptions.model);
+    const modelExists = baseConfig.models.some(
+      (model) => model.id === cliOptions.model
+    );
     if (!modelExists) {
       throw new Error(`模型配置未找到: ${cliOptions.model}`);
     }

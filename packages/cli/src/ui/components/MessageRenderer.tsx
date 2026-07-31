@@ -764,14 +764,20 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
             <Box width={prefixIndent} flexShrink={0} />
             <Box flexDirection="column" flexGrow={1} flexShrink={0}>
               <Text color={theme.colors.text.muted}>
-                Subtask {typeof subtaskRef.agentType === 'string' ? `@${subtaskRef.agentType}` : ''}
+                Subtask{' '}
+                {typeof subtaskRef.agentType === 'string'
+                  ? `@${subtaskRef.agentType}`
+                  : ''}
                 {typeof subtaskRef.status === 'string' ? ` · ${subtaskRef.status}` : ''}
               </Text>
-              {typeof subtaskRef.summary === 'string' && subtaskRef.summary.trim() !== '' && (
-                <Text wrap="wrap">{subtaskRef.summary}</Text>
-              )}
+              {typeof subtaskRef.summary === 'string' &&
+                subtaskRef.summary.trim() !== '' && (
+                  <Text wrap="wrap">{subtaskRef.summary}</Text>
+                )}
               {typeof subtaskRef.childSessionId === 'string' && (
-                <Text color={theme.colors.text.muted}>Session {subtaskRef.childSessionId}</Text>
+                <Text color={theme.colors.text.muted}>
+                  Session {subtaskRef.childSessionId}
+                </Text>
               )}
             </Box>
           </Box>

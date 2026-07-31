@@ -2,26 +2,26 @@ import { useMemoizedFn } from 'ahooks';
 import { Box } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import {
-    type ModelConfig,
-    PermissionMode,
-    type SetupConfig,
+  type ModelConfig,
+  PermissionMode,
+  type SetupConfig,
 } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
 import { SessionService } from '../../services/SessionService.js';
 import { SpecManager } from '../../spec/SpecManager.js';
 import {
-    useActiveModal,
-    useAppActions,
-    useFocusActions,
-    useInitializationError,
-    useInitializationStatus,
-    useIsProcessing,
-    useModelEditorTarget,
-    usePermissionMode,
-    useSessionActions,
-    useSessionSelectorData,
-    useThemeName,
+  useActiveModal,
+  useAppActions,
+  useFocusActions,
+  useInitializationError,
+  useInitializationStatus,
+  useIsProcessing,
+  useModelEditorTarget,
+  usePermissionMode,
+  useSessionActions,
+  useSessionSelectorData,
+  useThemeName,
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { configActions, getMessages } from '../../store/vanilla.js';
@@ -140,7 +140,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     otherProps.appendSystemPrompt,
     confirmationHandler,
     otherProps.maxTurns,
-    dismissAll,
+    dismissAll
   );
 
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
@@ -212,10 +212,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         }
       }
     } catch (error) {
-      logger.error(
-        '权限模式切换失败:',
-        error instanceof Error ? error.message : error
-      );
+      logger.error('权限模式切换失败:', error instanceof Error ? error.message : error);
     }
   });
 
@@ -285,7 +282,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
       const sessionMessages = SessionService.toUISafeMessages(messages);
 
-      sessionActions.restoreSession(mostRecentSession.sessionId, sessionMessages, messages);
+      sessionActions.restoreSession(
+        mostRecentSession.sessionId,
+        sessionMessages,
+        messages
+      );
     } catch (error) {
       logger.error('[BladeInterface] 继续会话失败:', error);
       sessionActions.addAssistantMessage('继续会话失败，开始新对话。');

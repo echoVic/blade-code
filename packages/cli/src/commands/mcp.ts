@@ -316,7 +316,8 @@ const mcpListCommand: CommandModule = {
       // 显示结果
       for (const { name, config, serverInfo, error } of results) {
         const status = serverInfo?.status || McpConnectionStatus.DISCONNECTED;
-        const statusSymbol = status === McpConnectionStatus.CONNECTED ? '[OK]' : '[FAIL]';
+        const statusSymbol =
+          status === McpConnectionStatus.CONNECTED ? '[OK]' : '[FAIL]';
         const statusText =
           status === McpConnectionStatus.CONNECTED ? 'Connected' : 'Failed';
 

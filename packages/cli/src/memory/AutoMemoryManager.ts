@@ -14,7 +14,11 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { getProjectStoragePath } from '../context/storage/pathUtils.js';
-import { AutoMemoryConfig, DEFAULT_AUTO_MEMORY_CONFIG, MemoryTopicInfo } from './types.js';
+import {
+  AutoMemoryConfig,
+  DEFAULT_AUTO_MEMORY_CONFIG,
+  MemoryTopicInfo,
+} from './types.js';
 
 const MEMORY_DIR = 'memory';
 const INDEX_FILE = 'MEMORY.md';
@@ -24,7 +28,11 @@ export class AutoMemoryManager {
   private readonly config: AutoMemoryConfig;
   private initialized = false;
 
-  constructor(projectPath: string, config?: Partial<AutoMemoryConfig>, memoryDirOverride?: string) {
+  constructor(
+    projectPath: string,
+    config?: Partial<AutoMemoryConfig>,
+    memoryDirOverride?: string
+  ) {
     if (memoryDirOverride) {
       this.memoryDir = memoryDirOverride;
     } else {
@@ -61,12 +69,20 @@ export class AutoMemoryManager {
       const result = truncated.join('\n').trim();
 
       if (lines.length > this.config.maxIndexLines) {
-        return result + `\n\n<!-- ${lines.length - this.config.maxIndexLines} more lines in MEMORY.md, use MemoryRead to access -->`;
+        return (
+          result +
+          `\n\n<!-- ${lines.length - this.config.maxIndexLines} more lines in MEMORY.md, use MemoryRead to access -->`
+        );
       }
 
       return result || null;
     } catch (err: unknown) {
-      if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      if (
+        err instanceof Error &&
+        'code' in err &&
+        (err as NodeJS.ErrnoException).code === 'ENOENT'
+      )
+        return null;
       throw err;
     }
   }
@@ -82,7 +98,12 @@ export class AutoMemoryManager {
       const content = await fs.readFile(filePath, 'utf-8');
       return content || null;
     } catch (err: unknown) {
-      if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      if (
+        err instanceof Error &&
+        'code' in err &&
+        (err as NodeJS.ErrnoException).code === 'ENOENT'
+      )
+        return null;
       throw err;
     }
   }
@@ -90,7 +111,11 @@ export class AutoMemoryManager {
   /**
    * 写入主题文件
    */
-  async writeTopic(topic: string, content: string, mode: 'overwrite' | 'append' = 'append'): Promise<void> {
+  async writeTopic(
+    topic: string,
+    content: string,
+    mode: 'overwrite' | 'append' = 'append'
+  ): Promise<void> {
     await this.initialize();
     const filePath = this.resolveTopicPath(topic);
 
@@ -111,7 +136,10 @@ export class AutoMemoryManager {
   /**
    * 更新 MEMORY.md 索引
    */
-  async updateIndex(content: string, mode: 'overwrite' | 'append' = 'overwrite'): Promise<void> {
+  async updateIndex(
+    content: string,
+    mode: 'overwrite' | 'append' = 'overwrite'
+  ): Promise<void> {
     await this.initialize();
     const indexPath = path.join(this.memoryDir, INDEX_FILE);
 

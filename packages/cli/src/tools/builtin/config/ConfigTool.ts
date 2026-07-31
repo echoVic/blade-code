@@ -12,10 +12,7 @@
 
 import { z } from 'zod';
 import { getConfigService } from '../../../config/index.js';
-import {
-  configActions,
-  getConfig,
-} from '../../../store/vanilla.js';
+import { configActions, getConfig } from '../../../store/vanilla.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -77,20 +74,16 @@ const configToolSchema = z.object({
     .string()
     .optional()
     .describe(
-      '配置键名，支持点号嵌套（如 hooks.PreToolUse）。'
-      + ' get 时用 "*" 获取全部配置'
+      '配置键名，支持点号嵌套（如 hooks.PreToolUse）。' + ' get 时用 "*" 获取全部配置'
     ),
-  value: z
-    .unknown()
-    .optional()
-    .describe('要设置的值（仅 set 操作需要）'),
+  value: z.unknown().optional().describe('要设置的值（仅 set 操作需要）'),
   scope: z
     .enum(['local', 'project', 'global'])
     .optional()
     .describe(
-      '持久化范围: local（.blade/settings.local.json）'
-      + '/ project（.blade/settings.json）'
-      + '/ global（~/.blade/）'
+      '持久化范围: local（.blade/settings.local.json）' +
+        '/ project（.blade/settings.json）' +
+        '/ global（~/.blade/）'
     ),
 });
 
@@ -101,21 +94,15 @@ const configToolSchema = z.object({
 /**
  * 脱敏 models 数组中的 apiKey 字段
  */
-function sanitizeConfig(
-  config: Record<string, unknown>
-): Record<string, unknown> {
+function sanitizeConfig(config: Record<string, unknown>): Record<string, unknown> {
   const result = { ...config };
   if (Array.isArray(result.models)) {
-    result.models = (
-      result.models as Array<Record<string, unknown>>
-    ).map((m) => {
+    result.models = (result.models as Array<Record<string, unknown>>).map((m) => {
       const sanitized = { ...m };
       if (typeof sanitized.apiKey === 'string' && sanitized.apiKey) {
         const key = sanitized.apiKey as string;
         sanitized.apiKey =
-          key.length > 8
-            ? `${key.slice(0, 4)}...${key.slice(-4)}`
-            : '****';
+          key.length > 8 ? `${key.slice(0, 4)}...${key.slice(-4)}` : '****';
       }
       return sanitized;
     });
@@ -127,18 +114,11 @@ function sanitizeConfig(
  * 按点号路径从对象中取值
  * 例如 getNestedValue(config, 'hooks.PreToolUse') -> config.hooks.PreToolUse
  */
-function getNestedValue(
-  obj: Record<string, unknown>,
-  keyPath: string
-): unknown {
+function getNestedValue(obj: Record<string, unknown>, keyPath: string): unknown {
   const parts = keyPath.split('.');
   let current: unknown = obj;
   for (const part of parts) {
-    if (
-      current === null ||
-      current === undefined ||
-      typeof current !== 'object'
-    ) {
+    if (current === null || current === undefined || typeof current !== 'object') {
       return undefined;
     }
     current = (current as Record<string, unknown>)[part];
@@ -149,21 +129,14 @@ function getNestedValue(
 /**
  * 生成可配置项列表
  */
-function generateSettableKeysList(
-  config: Record<string, unknown>
-): string {
+function generateSettableKeysList(config: Record<string, unknown>): string {
   const lines: string[] = ['可配置项列表（白名单）：', ''];
   for (const key of SETTABLE_KEYS) {
     const currentValue = config[key];
     const display =
-      currentValue === undefined
-        ? '(未设置)'
-        : JSON.stringify(currentValue, null, 2);
+      currentValue === undefined ? '(未设置)' : JSON.stringify(currentValue, null, 2);
     // 截断过长的值
-    const truncated =
-      display.length > 200
-        ? `${display.slice(0, 197)}...`
-        : display;
+    const truncated = display.length > 200 ? `${display.slice(0, 197)}...` : display;
     lines.push(`- ${key}: ${truncated}`);
   }
   return lines.join('\n');
@@ -184,9 +157,9 @@ export const configTool = createTool({
   description: {
     short: 'Read, update, or list Blade configuration',
     long:
-      'Manage Blade configuration: get reads a config value, '
-      + 'set updates a whitelisted config field (with persistence), '
-      + 'list enumerates all settable keys and their current values.',
+      'Manage Blade configuration: get reads a config value, ' +
+      'set updates a whitelisted config field (with persistence), ' +
+      'list enumerates all settable keys and their current values.',
     usageNotes: [
       'Use operation="get" with key="*" to dump all config',
       'Use operation="get" with a dotted key like "hooks.PreToolUse"',
@@ -245,8 +218,8 @@ export const configTool = createTool({
           return {
             success: false,
             llmContent:
-              'Missing "key" parameter for get operation. '
-              + 'Use key="*" to get all config.',
+              'Missing "key" parameter for get operation. ' +
+              'Use key="*" to get all config.',
             error: {
               message: 'Missing key',
               type: ToolErrorType.VALIDATION_ERROR,
@@ -335,9 +308,9 @@ export const configTool = createTool({
           return {
             success: false,
             llmContent:
-              'Refused: "models" and "currentModelId" cannot be '
-              + 'modified via ConfigTool to protect API keys. '
-              + 'Use the /model slash command instead.',
+              'Refused: "models" and "currentModelId" cannot be ' +
+              'modified via ConfigTool to protect API keys. ' +
+              'Use the /model slash command instead.',
             error: {
               message: 'Forbidden key: models',
               type: ToolErrorType.PERMISSION_DENIED,
@@ -351,8 +324,8 @@ export const configTool = createTool({
           return {
             success: false,
             llmContent:
-              `Refused: "${topKey}" is a runtime-only field and `
-              + 'cannot be persisted via ConfigTool.',
+              `Refused: "${topKey}" is a runtime-only field and ` +
+              'cannot be persisted via ConfigTool.',
             error: {
               message: `Forbidden runtime key: ${topKey}`,
               type: ToolErrorType.PERMISSION_DENIED,
@@ -366,8 +339,8 @@ export const configTool = createTool({
           return {
             success: false,
             llmContent:
-              `Key "${topKey}" is not in the settable whitelist. `
-              + 'Use operation="list" to see all allowed keys.',
+              `Key "${topKey}" is not in the settable whitelist. ` +
+              'Use operation="list" to see all allowed keys.',
             error: {
               message: `Key not settable: ${topKey}`,
               type: ToolErrorType.VALIDATION_ERROR,
@@ -387,13 +360,10 @@ export const configTool = createTool({
 
           // 对于 hooks 等深度合并字段，构造嵌套结构
           if (parts.length === 2) {
-            const currentTopValue = (
-              config as unknown as Record<string, unknown>
-            )[parts[0]];
-            if (
-              typeof currentTopValue === 'object' &&
-              currentTopValue !== null
-            ) {
+            const currentTopValue = (config as unknown as Record<string, unknown>)[
+              parts[0]
+            ];
+            if (typeof currentTopValue === 'object' && currentTopValue !== null) {
               updates = {
                 [parts[0]]: {
                   ...currentTopValue,
@@ -412,9 +382,7 @@ export const configTool = createTool({
 
         try {
           await configActions().updateConfig(
-            updates as Partial<
-              import('../../../config/types.js').BladeConfig
-            >,
+            updates as Partial<import('../../../config/types.js').BladeConfig>,
             scope ? { scope } : {}
           );
 
@@ -426,17 +394,14 @@ export const configTool = createTool({
           return {
             success: true,
             llmContent:
-              `Config updated: ${key} = ${displayValue}`
-              + (scope ? ` (scope: ${scope})` : ''),
+              `Config updated: ${key} = ${displayValue}` +
+              (scope ? ` (scope: ${scope})` : ''),
             metadata: {
               summary: `配置已更新: ${key}`,
             },
           };
         } catch (error) {
-          const msg =
-            error instanceof Error
-              ? error.message
-              : String(error);
+          const msg = error instanceof Error ? error.message : String(error);
           return {
             success: false,
             llmContent: `Failed to update config: ${msg}`,
@@ -453,8 +418,7 @@ export const configTool = createTool({
       // LIST 操作
       // ========================
       case 'list': {
-        const configObj =
-          config as unknown as Record<string, unknown>;
+        const configObj = config as unknown as Record<string, unknown>;
         const listContent = generateSettableKeysList(configObj);
         return {
           success: true,

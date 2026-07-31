@@ -16,19 +16,42 @@ interface ToolTurn {
   priority: number;
 }
 
-const READ_ONLY_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Search', 'WebSearch', 'WebFetch', 'ToolSearch']);
+const READ_ONLY_TOOLS = new Set([
+  'Read',
+  'Grep',
+  'Glob',
+  'Search',
+  'WebSearch',
+  'WebFetch',
+  'ToolSearch',
+]);
 
-function computeTurnPriority(messages: Message[], turn: Omit<ToolTurn, 'priority'>): number {
+function computeTurnPriority(
+  messages: Message[],
+  turn: Omit<ToolTurn, 'priority'>
+): number {
   const assistantMsg = messages[turn.assistantIdx];
   const toolNames = (assistantMsg.tool_calls ?? [])
-    .filter((tc): tc is { type: 'function'; id: string; function: { name: string; arguments: string } } => tc.type === 'function')
+    .filter(
+      (
+        tc
+      ): tc is {
+        type: 'function';
+        id: string;
+        function: { name: string; arguments: string };
+      } => tc.type === 'function'
+    )
     .map((tc) => tc.function.name);
 
   const hasWriteTool = toolNames.some((name) => !READ_ONLY_TOOLS.has(name));
   const hasError = turn.toolResultIdxs.some((idx) => {
     const content = messages[idx]?.content;
     if (typeof content !== 'string') return false;
-    return content.startsWith('Error:') || content.includes('failed') || content.includes('ENOENT');
+    return (
+      content.startsWith('Error:') ||
+      content.includes('failed') ||
+      content.includes('ENOENT')
+    );
   });
 
   if (hasError) return 3;
@@ -52,7 +75,7 @@ export function snipCompact(
     keepRecentTurns?: number;
     /** 最少需要多少条消息才触发 snip（默认 30） */
     minMessagesForSnip?: number;
-  },
+  }
 ): SnipResult {
   const keepRecentTurns = options?.keepRecentTurns ?? 10;
   const minMessages = options?.minMessagesForSnip ?? 30;
@@ -67,11 +90,7 @@ export function snipCompact(
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
-    if (
-      msg.role === 'assistant' &&
-      msg.tool_calls &&
-      msg.tool_calls.length > 0
-    ) {
+    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
       const callIds = new Set(msg.tool_calls.map((tc) => tc.id));
       const toolResultIdxs: number[] = [];
 
@@ -105,7 +124,7 @@ export function snipCompact(
   // Remove oldest turns, but prefer removing low-priority (read-only success) first.
   const candidatesForRemoval = toolTurns.slice(
     0,
-    Math.max(0, toolTurns.length - keepRecentTurns),
+    Math.max(0, toolTurns.length - keepRecentTurns)
   );
 
   // Sort by priority ascending (low priority removed first), stable for same priority
@@ -130,9 +149,7 @@ export function snipCompact(
   for (const idx of removeSet) {
     const msg = messages[idx];
     const content =
-      typeof msg.content === 'string'
-        ? msg.content
-        : JSON.stringify(msg.content);
+      typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
     charsRemoved += content.length;
     if (msg.tool_calls) {
       charsRemoved += JSON.stringify(msg.tool_calls).length;
@@ -182,7 +199,7 @@ const MICRO_KEEP_TURNS = 3;
  */
 export function microCompact(
   messages: Message[],
-  lastApiCallTime: number | undefined,
+  lastApiCallTime: number | undefined
 ): SnipResult | null {
   if (!lastApiCallTime) return null;
 

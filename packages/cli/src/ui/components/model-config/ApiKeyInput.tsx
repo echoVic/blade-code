@@ -64,7 +64,9 @@ export const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
       )}
 
       <Box marginBottom={1}>
-        <Text dimColor>您的 API 密钥将被安全存储在 ~/.blade/config.json (权限 600)</Text>
+        <Text dimColor>
+          您的 API 密钥将被安全存储在 ~/.blade/config.json (权限 600)
+        </Text>
       </Box>
 
       <Box>

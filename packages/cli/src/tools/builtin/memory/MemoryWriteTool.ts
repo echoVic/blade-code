@@ -34,7 +34,9 @@ export const memoryWriteTool = createTool({
     mode: z
       .enum(['overwrite', 'append'])
       .default('append')
-      .describe('Write mode: "append" adds to existing content, "overwrite" replaces it'),
+      .describe(
+        'Write mode: "append" adds to existing content, "overwrite" replaces it'
+      ),
   }),
 
   description: {
@@ -95,6 +97,10 @@ export const memoryWriteTool = createTool({
 
     const action = mode === 'overwrite' ? 'Written' : 'Appended';
     const msg = `${action} to memory/${topic}.md (${content.length} chars)`;
-    return { success: true, llmContent: msg, metadata: { summary: `写入记忆: ${topic}` } };
+    return {
+      success: true,
+      llmContent: msg,
+      metadata: { summary: `写入记忆: ${topic}` },
+    };
   },
 });

@@ -33,9 +33,7 @@ function filterErrorsForFile(output: string, filePath: string): string[] {
   const fileName = path.basename(filePath);
   const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
 
-  return lines.filter(
-    (line) => line.includes(fileName) || line.includes(absPath)
-  );
+  return lines.filter((line) => line.includes(fileName) || line.includes(absPath));
 }
 
 export class AutoVerifyStage implements PipelineStage {
@@ -53,8 +51,7 @@ export class AutoVerifyStage implements PipelineStage {
 
     // 3. 提取文件路径
     const filePath =
-      (execution.params.file_path as string) ||
-      (execution.params.path as string);
+      (execution.params.file_path as string) || (execution.params.path as string);
     if (!filePath) return;
 
     // 4. 跑类型检查 (通过 queue 合并 + 缓存)
@@ -71,9 +68,7 @@ export class AutoVerifyStage implements PipelineStage {
     if (!verify) return; // 无 tsconfig
 
     if (verify.timedOut) {
-      logger.info(
-        `[AutoVerify] type-check timed out in ${verify.workspaceRoot}`
-      );
+      logger.info(`[AutoVerify] type-check timed out in ${verify.workspaceRoot}`);
       return;
     }
     if (!verify.hasErrors || !verify.rawOutput.trim()) return;

@@ -13,7 +13,11 @@ function makeToolCall(name: string, args = '{}'): FunctionToolCallRef {
 describe('toolDomainPolicy', () => {
   describe('handleSubagentLifecycle', () => {
     it('returns null for non-Task tools', () => {
-      const result: ToolResult = { success: true, llmContent: 'ok', metadata: { subagentSessionId: 's1', subagentStatus: 'completed' } };
+      const result: ToolResult = {
+        success: true,
+        llmContent: 'ok',
+        metadata: { subagentSessionId: 's1', subagentStatus: 'completed' },
+      };
       expect(handleSubagentLifecycle(makeToolCall('Read'), result)).toBeNull();
     });
 
@@ -62,7 +66,10 @@ describe('toolDomainPolicy', () => {
     });
 
     it('returns subagent_spawned for running status', () => {
-      const args = JSON.stringify({ prompt: 'Search for utils', subagent_type: 'Explore' });
+      const args = JSON.stringify({
+        prompt: 'Search for utils',
+        subagent_type: 'Explore',
+      });
       const result: ToolResult = {
         success: true,
         llmContent: '',

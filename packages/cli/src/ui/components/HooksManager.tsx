@@ -297,11 +297,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       let settingsPath: string;
       switch (selectedLocation.location) {
         case 'local':
-          settingsPath = pathModule.join(
-            getCwd(),
-            '.blade',
-            'settings.local.json'
-          );
+          settingsPath = pathModule.join(getCwd(), '.blade', 'settings.local.json');
           break;
         case 'project':
           settingsPath = pathModule.join(getCwd(), '.blade', 'settings.json');
@@ -372,8 +368,8 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       {/* 警告信息 */}
       <Box marginBottom={1}>
         <Text color={theme.colors.warning}>
-          [WARN] Hooks execute shell commands with your full user permissions. Only use hooks
-          from trusted sources.
+          [WARN] Hooks execute shell commands with your full user permissions. Only use
+          hooks from trusted sources.
         </Text>
       </Box>
 

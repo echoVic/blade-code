@@ -134,11 +134,11 @@ Be thorough. Be skeptical. Find the bugs.`;
 export const verificationAgentConfig: SubagentConfig = {
   name: 'verification',
   description:
-    'Independent verification agent that validates implementation'
-    + ' by running builds, tests, linters, and adversarial'
-    + ' probes. Strictly read-only — cannot modify code. Use'
-    + ' after completing implementation to get an independent'
-    + ' quality assessment.',
+    'Independent verification agent that validates implementation' +
+    ' by running builds, tests, linters, and adversarial' +
+    ' probes. Strictly read-only — cannot modify code. Use' +
+    ' after completing implementation to get an independent' +
+    ' quality assessment.',
   tools: ['Read', 'Glob', 'Grep', 'Bash'],
   systemPrompt: VERIFICATION_SYSTEM_PROMPT,
   source: 'builtin',

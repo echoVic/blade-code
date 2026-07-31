@@ -150,7 +150,9 @@ export class MockLLMService {
   }
 }
 
-export const createMockLLMService = (options?: MockLLMServiceOptions): MockLLMService => {
+export const createMockLLMService = (
+  options?: MockLLMServiceOptions
+): MockLLMService => {
   return new MockLLMService(options);
 };
 

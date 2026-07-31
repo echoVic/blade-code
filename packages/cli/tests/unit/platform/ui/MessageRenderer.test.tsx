@@ -41,13 +41,7 @@ vi.mock('../../../../src/ui/utils/markdownIncremental.js', () => ({
 }));
 
 vi.mock('../../../../src/ui/components/CodeHighlighter.js', () => ({
-  CodeHighlighter: ({
-    content,
-    language,
-  }: {
-    content: string;
-    language?: string;
-  }) =>
+  CodeHighlighter: ({ content, language }: { content: string; language?: string }) =>
     React.createElement(
       'code-highlighter',
       { 'data-language': language ?? 'plain' },
@@ -73,13 +67,7 @@ vi.mock('../../../../src/ui/components/DiffRenderer.js', () => ({
 }));
 
 vi.mock('../../../../src/ui/components/BlockquoteRenderer.js', () => ({
-  BlockquoteRenderer: ({
-    lines,
-    level,
-  }: {
-    lines: string[];
-    level: number;
-  }) =>
+  BlockquoteRenderer: ({ lines, level }: { lines: string[]; level: number }) =>
     React.createElement(
       'blockquote-renderer',
       { 'data-level': String(level) },
@@ -116,13 +104,7 @@ vi.mock('../../../../src/ui/components/ListItem.js', () => ({
 }));
 
 vi.mock('../../../../src/ui/components/TableRenderer.js', () => ({
-  TableRenderer: ({
-    headers,
-    rows,
-  }: {
-    headers: string[];
-    rows: string[][];
-  }) =>
+  TableRenderer: ({ headers, rows }: { headers: string[]; rows: string[][] }) =>
     React.createElement(
       'table-renderer',
       {
@@ -150,9 +132,13 @@ describe('MessageRenderer', () => {
 
   it('为 heading 和 nested list 提供稳定结构快照', async () => {
     const html = await renderMessage(
-      ['## Release Plan', '- top item', '  - nested item', '1. first step', '   1. child step'].join(
-        '\n'
-      )
+      [
+        '## Release Plan',
+        '- top item',
+        '  - nested item',
+        '1. first step',
+        '   1. child step',
+      ].join('\n')
     );
 
     expect(html).toMatchInlineSnapshot(

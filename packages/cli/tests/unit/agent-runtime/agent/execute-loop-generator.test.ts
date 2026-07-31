@@ -29,10 +29,18 @@ vi.mock('../../../../src/context/SnipCompaction.js', () => ({
 vi.mock('../../../../src/context/ToolResultBudget.js', () => ({
   applyToolResultBudget: vi.fn((content: unknown) => content),
   MessageBudgetTracker: class MessageBudgetTracker {
-    track() { /* noop */ }
-    remaining() { return 200000; }
-    isExhausted() { return false; }
-    reset() { /* noop */ }
+    track() {
+      /* noop */
+    }
+    remaining() {
+      return 200000;
+    }
+    isExhausted() {
+      return false;
+    }
+    reset() {
+      /* noop */
+    }
   },
 }));
 
@@ -78,7 +86,11 @@ vi.mock('../../../../src/agent/loop/StreamingToolExecutor.js', () => ({
 
 import { executeLoopGenerator } from '../../../../src/agent/loop/executeLoopGenerator.js';
 import type { LoopDependencies, LoopEvent } from '../../../../src/agent/loop/types.js';
-import type { ChatContext, LoopOptions, LoopResult } from '../../../../src/agent/types.js';
+import type {
+  ChatContext,
+  LoopOptions,
+  LoopResult,
+} from '../../../../src/agent/types.js';
 
 // ===== Helpers =====
 
@@ -136,7 +148,7 @@ function createMockContext(overrides: Partial<ChatContext> = {}): ChatContext {
 }
 
 async function drainGenerator(
-  gen: AsyncGenerator<LoopEvent, LoopResult, void>,
+  gen: AsyncGenerator<LoopEvent, LoopResult, void>
 ): Promise<{ events: LoopEvent[]; result: LoopResult }> {
   const events: LoopEvent[] = [];
   let iterResult: IteratorResult<LoopEvent, LoopResult>;
@@ -149,7 +161,9 @@ async function drainGenerator(
 function createMockContextManager() {
   const ids = ['msg-user-1', 'msg-assistant-1', 'msg-user-2', 'msg-assistant-2'];
   return {
-    saveMessage: vi.fn().mockImplementation(async () => ids.shift() ?? `msg-${Date.now()}`),
+    saveMessage: vi
+      .fn()
+      .mockImplementation(async () => ids.shift() ?? `msg-${Date.now()}`),
     saveToolUse: vi.fn(),
     saveToolResult: vi.fn(),
     saveCompaction: vi.fn(),
@@ -176,7 +190,7 @@ describe('executeLoopGenerator', () => {
         'Hello',
         context,
         { stream: false } as LoopOptions,
-        'You are a helpful assistant.',
+        'You are a helpful assistant.'
       );
 
       const { result, events } = await drainGenerator(gen);
@@ -219,13 +233,7 @@ describe('executeLoopGenerator', () => {
       });
       const context = createMockContext();
 
-      const gen = executeLoopGenerator(
-        deps,
-        'Hello',
-        context,
-        undefined,
-        undefined,
-      );
+      const gen = executeLoopGenerator(deps, 'Hello', context, undefined, undefined);
 
       const { result, events } = await drainGenerator(gen);
 
@@ -282,7 +290,7 @@ describe('executeLoopGenerator', () => {
         'Read the file foo',
         context,
         { stream: false } as LoopOptions,
-        'You are a helpful assistant.',
+        'You are a helpful assistant.'
       );
 
       const { result, events } = await drainGenerator(gen);
@@ -296,7 +304,10 @@ describe('executeLoopGenerator', () => {
       // Verify tool_start event
       const toolStartEvents = events.filter((e) => e.kind === 'tool_start');
       expect(toolStartEvents.length).toBe(1);
-      if (toolStartEvents[0].kind === 'tool_start' && toolStartEvents[0].toolCall.type === 'function') {
+      if (
+        toolStartEvents[0].kind === 'tool_start' &&
+        toolStartEvents[0].toolCall.type === 'function'
+      ) {
         expect(toolStartEvents[0].toolCall.function.name).toBe('Read');
       }
 
@@ -326,7 +337,7 @@ describe('executeLoopGenerator', () => {
       expect(executeMock).toHaveBeenCalledWith(
         'Read',
         { path: 'foo' },
-        expect.objectContaining({ sessionId: 'test-session' }),
+        expect.objectContaining({ sessionId: 'test-session' })
       );
     });
 
@@ -372,7 +383,7 @@ describe('executeLoopGenerator', () => {
         'Edit the file',
         context,
         { stream: false } as LoopOptions,
-        'You are a helpful assistant.',
+        'You are a helpful assistant.'
       );
 
       const { result } = await drainGenerator(gen);
@@ -434,7 +445,7 @@ describe('executeLoopGenerator', () => {
         'Edit the file',
         context,
         { signal: controller.signal, stream: false } as LoopOptions,
-        'You are a helpful assistant.',
+        'You are a helpful assistant.'
       );
 
       const { result, events } = await drainGenerator(gen);
@@ -448,8 +459,8 @@ describe('executeLoopGenerator', () => {
           (message) =>
             message.role === 'tool' &&
             'tool_call_id' in message &&
-            message.tool_call_id === 'tc1',
-        ),
+            message.tool_call_id === 'tc1'
+        )
       ).toBe(false);
     });
 
@@ -488,7 +499,7 @@ describe('executeLoopGenerator', () => {
         'Approve the plan',
         context,
         { stream: false } as LoopOptions,
-        'You are a helpful assistant.',
+        'You are a helpful assistant.'
       );
 
       const { result } = await drainGenerator(gen);
@@ -513,7 +524,7 @@ describe('executeLoopGenerator', () => {
         'Hello',
         context,
         { signal: AbortSignal.abort(), stream: false } as LoopOptions,
-        undefined,
+        undefined
       );
 
       const { result } = await drainGenerator(gen);
@@ -540,7 +551,7 @@ describe('executeLoopGenerator', () => {
         'Hello',
         context,
         { stream: false } as LoopOptions,
-        undefined,
+        undefined
       );
 
       const { result } = await drainGenerator(gen);
@@ -567,7 +578,13 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
 
       const { events } = await drainGenerator(
-        executeLoopGenerator(deps, 'Hi', context, { stream: false } as LoopOptions, undefined),
+        executeLoopGenerator(
+          deps,
+          'Hi',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
       );
 
       // delta 应存在
@@ -594,7 +611,13 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
 
       const { events } = await drainGenerator(
-        executeLoopGenerator(deps, 'Hi', context, { stream: false } as LoopOptions, undefined),
+        executeLoopGenerator(
+          deps,
+          'Hi',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
       );
 
       expect(events.filter((e) => e.kind === 'content_delta')).toHaveLength(0);
@@ -612,7 +635,13 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
 
       const { events } = await drainGenerator(
-        executeLoopGenerator(deps, 'Hi', context, { stream: false } as LoopOptions, undefined),
+        executeLoopGenerator(
+          deps,
+          'Hi',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
       );
 
       const kinds = events.map((e) => e.kind);
@@ -651,13 +680,19 @@ describe('executeLoopGenerator', () => {
 
       const context = createMockContext();
       const { result } = await drainGenerator(
-        executeLoopGenerator(deps, 'Fix the bug', context, { stream: false } as LoopOptions, undefined),
+        executeLoopGenerator(
+          deps,
+          'Fix the bug',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
       );
 
       expect(result.success).toBe(true);
       // context.messages 应包含 turn 1 的 assistant 消息
       const assistantMessages = context.messages.filter(
-        (m: { role: string }) => m.role === 'assistant',
+        (m: { role: string }) => m.role === 'assistant'
       );
       expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
       // 第一�� assistant 消息是 incomplete-intent 那轮的输出
@@ -667,7 +702,7 @@ describe('executeLoopGenerator', () => {
       const allMessages = context.messages;
       const firstAssistantIdx = allMessages.findIndex(
         (m: { role: string; content: unknown }) =>
-          m.role === 'assistant' && m.content === '让我先查看一下文件',
+          m.role === 'assistant' && m.content === '让我先查看一下文件'
       );
       expect(firstAssistantIdx).toBeGreaterThanOrEqual(0);
       // 下一条消息应该是 retry 控制消息（user role）
@@ -704,13 +739,19 @@ describe('executeLoopGenerator', () => {
 
       const context = createMockContext();
       const { result } = await drainGenerator(
-        executeLoopGenerator(deps, 'Do the work', context, { stream: false } as LoopOptions, undefined),
+        executeLoopGenerator(
+          deps,
+          'Do the work',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
       );
 
       expect(result.success).toBe(true);
       // context.messages 应包含 turn 1 的 assistant 消息
       const assistantMessages = context.messages.filter(
-        (m: { role: string }) => m.role === 'assistant',
+        (m: { role: string }) => m.role === 'assistant'
       );
       expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
       expect(assistantMessages[0].content).toBe('First part of work');
@@ -719,7 +760,7 @@ describe('executeLoopGenerator', () => {
       const allMessages = context.messages;
       const firstAssistantIdx = allMessages.findIndex(
         (m: { role: string; content: unknown }) =>
-          m.role === 'assistant' && m.content === 'First part of work',
+          m.role === 'assistant' && m.content === 'First part of work'
       );
       expect(firstAssistantIdx).toBeGreaterThanOrEqual(0);
       // 下一条消息应该是 continue 控制消息（user role）
@@ -758,8 +799,8 @@ describe('executeLoopGenerator', () => {
           'Fix the bug',
           context,
           { stream: false } as LoopOptions,
-          undefined,
-        ),
+          undefined
+        )
       );
 
       expect(result.success).toBe(true);
@@ -771,8 +812,8 @@ describe('executeLoopGenerator', () => {
             role,
             content,
             parentUuid,
-          }),
-        ),
+          })
+        )
       ).toEqual([
         {
           sessionId: 'test-session',
@@ -789,7 +830,8 @@ describe('executeLoopGenerator', () => {
         {
           sessionId: 'test-session',
           role: 'user',
-          content: '请执行你提到的操作，不要只是描述。使用 Edit/Write/Bash 工具来实际修改文件。',
+          content:
+            '请执行你提到的操作，不要只是描述。使用 Edit/Write/Bash 工具来实际修改文件。',
           parentUuid: 'msg-assistant-1',
         },
         {
@@ -837,8 +879,8 @@ describe('executeLoopGenerator', () => {
           'Do the work',
           context,
           { stream: false } as LoopOptions,
-          undefined,
-        ),
+          undefined
+        )
       );
 
       expect(result.success).toBe(true);
@@ -850,8 +892,8 @@ describe('executeLoopGenerator', () => {
             role,
             content,
             parentUuid,
-          }),
-        ),
+          })
+        )
       ).toEqual([
         {
           sessionId: 'test-session',
@@ -912,8 +954,8 @@ describe('executeLoopGenerator', () => {
           'Write the answer',
           context,
           { stream: false } as LoopOptions,
-          undefined,
-        ),
+          undefined
+        )
       );
 
       expect(result.success).toBe(true);
@@ -925,8 +967,8 @@ describe('executeLoopGenerator', () => {
             role,
             content,
             parentUuid,
-          }),
-        ),
+          })
+        )
       ).toEqual([
         {
           sessionId: 'test-session',

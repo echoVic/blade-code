@@ -182,8 +182,7 @@ export class ConfirmationStage implements PipelineStage {
         }
       } else {
         // 非交互式环境：没有 confirmationHandler，无法向用户确认
-        const ctxPermMode =
-          execution.context.permissionMode || PermissionMode.DEFAULT;
+        const ctxPermMode = execution.context.permissionMode || PermissionMode.DEFAULT;
 
         if (ctxPermMode === PermissionMode.YOLO) {
           // YOLO 模式下自动放行
@@ -380,7 +379,9 @@ export class ExecutionStage implements PipelineStage {
           logger.debug(
             `[ExecutionStage] Transient error (${lastError.message}), retry ${attempt + 1}/${ExecutionStage.MAX_TRANSIENT_RETRIES}`
           );
-          await new Promise((r) => setTimeout(r, ExecutionStage.RETRY_DELAY_MS * (attempt + 1)));
+          await new Promise((r) =>
+            setTimeout(r, ExecutionStage.RETRY_DELAY_MS * (attempt + 1))
+          );
           continue;
         }
         break;

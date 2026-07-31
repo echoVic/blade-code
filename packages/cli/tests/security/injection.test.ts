@@ -1,7 +1,21 @@
 import { describe, it, expect } from 'vitest';
 
 describe('命令注入防护', () => {
-  const dangerousShellChars = ['|', '&', ';', '$', '`', '(', ')', '{', '}', '<', '>', '\n', '\r'];
+  const dangerousShellChars = [
+    '|',
+    '&',
+    ';',
+    '$',
+    '`',
+    '(',
+    ')',
+    '{',
+    '}',
+    '<',
+    '>',
+    '\n',
+    '\r',
+  ];
 
   const containsDangerousChars = (input: string): boolean => {
     return dangerousShellChars.some((char) => input.includes(char));
@@ -39,10 +53,7 @@ describe('命令注入防护', () => {
     });
 
     it('应该检测换行注入', () => {
-      const maliciousInputs = [
-        'file.txt\nrm -rf /',
-        'input\r\nmalicious',
-      ];
+      const maliciousInputs = ['file.txt\nrm -rf /', 'input\r\nmalicious'];
 
       for (const input of maliciousInputs) {
         expect(containsDangerousChars(input)).toBe(true);
@@ -98,7 +109,7 @@ describe('命令注入防护', () => {
         "' OR ''='",
         "admin'--",
         "'; DROP TABLE users;--",
-        "1; DELETE FROM users",
+        '1; DELETE FROM users',
         "' UNION SELECT * FROM passwords--",
       ];
 
@@ -108,12 +119,7 @@ describe('命令注入防护', () => {
     });
 
     it('应该允许正常输入', () => {
-      const safeInputs = [
-        'john_doe',
-        'user@example.com',
-        'My Project Name',
-        '12345',
-      ];
+      const safeInputs = ['john_doe', 'user@example.com', 'My Project Name', '12345'];
 
       for (const input of safeInputs) {
         expect(containsSQLInjection(input)).toBe(false);
@@ -162,10 +168,7 @@ describe('命令注入防护', () => {
     });
 
     it('应该检测 javascript: 协议', () => {
-      const maliciousInputs = [
-        'javascript:alert(1)',
-        '<a href="javascript:void(0)">',
-      ];
+      const maliciousInputs = ['javascript:alert(1)', '<a href="javascript:void(0)">'];
 
       for (const input of maliciousInputs) {
         expect(containsXSS(input)).toBe(true);
@@ -193,11 +196,7 @@ describe('命令注入防护', () => {
     };
 
     it('应该检测 LDAP 特殊字符', () => {
-      const maliciousInputs = [
-        '*)(uid=*))(|(uid=*',
-        'admin)(|(password=*)',
-        '\\00',
-      ];
+      const maliciousInputs = ['*)(uid=*))(|(uid=*', 'admin)(|(password=*)', '\\00'];
 
       for (const input of maliciousInputs) {
         expect(containsLDAPInjection(input)).toBe(true);
@@ -206,12 +205,7 @@ describe('命令注入防护', () => {
   });
 
   describe('模板注入检测', () => {
-    const templateInjectionPatterns = [
-      /\{\{.*\}\}/,
-      /\$\{.*\}/,
-      /<%.*%>/,
-      /#\{.*\}/,
-    ];
+    const templateInjectionPatterns = [/\{\{.*\}\}/, /\$\{.*\}/, /<%.*%>/, /#\{.*\}/];
 
     const containsTemplateInjection = (input: string): boolean => {
       return templateInjectionPatterns.some((pattern) => pattern.test(input));
@@ -231,11 +225,7 @@ describe('命令注入防护', () => {
     });
 
     it('应该允许正常文本', () => {
-      const safeInputs = [
-        'Hello World',
-        'user@example.com',
-        'My Project',
-      ];
+      const safeInputs = ['Hello World', 'user@example.com', 'My Project'];
 
       for (const input of safeInputs) {
         expect(containsTemplateInjection(input)).toBe(false);

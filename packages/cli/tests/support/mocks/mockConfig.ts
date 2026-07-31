@@ -1,6 +1,10 @@
 import { vi } from 'vitest';
 import { PermissionMode } from '../../../src/config/types.js';
-import type { BladeConfig, ModelConfig, McpServerConfig } from '../../../src/config/types.js';
+import type {
+  BladeConfig,
+  ModelConfig,
+  McpServerConfig,
+} from '../../../src/config/types.js';
 
 export interface MockConfigOptions {
   currentModelId?: string;
@@ -19,7 +23,9 @@ export interface MockConfigOptions {
   debug?: boolean;
 }
 
-export const createDefaultMockConfig = (overrides?: Partial<BladeConfig>): BladeConfig => ({
+export const createDefaultMockConfig = (
+  overrides?: Partial<BladeConfig>
+): BladeConfig => ({
   currentModelId: 'mock-model',
   models: [
     {
@@ -124,7 +130,9 @@ export class MockConfigManager {
   }
 
   getCurrentModel(): ModelConfig | undefined {
-    return this.config.models.find((m: ModelConfig) => m.id === this.config.currentModelId);
+    return this.config.models.find(
+      (m: ModelConfig) => m.id === this.config.currentModelId
+    );
   }
 
   addModel(model: ModelConfig): void {
@@ -132,7 +140,9 @@ export class MockConfigManager {
   }
 
   removeModel(modelId: string): void {
-    this.config.models = this.config.models.filter((m: ModelConfig) => m.id !== modelId);
+    this.config.models = this.config.models.filter(
+      (m: ModelConfig) => m.id !== modelId
+    );
   }
 
   setCurrentModel(modelId: string): void {
@@ -140,7 +150,9 @@ export class MockConfigManager {
   }
 }
 
-export const createMockConfigManager = (options?: MockConfigOptions): MockConfigManager => {
+export const createMockConfigManager = (
+  options?: MockConfigOptions
+): MockConfigManager => {
   return new MockConfigManager(options);
 };
 

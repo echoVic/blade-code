@@ -60,18 +60,33 @@ export const memoryReadTool = createTool({
         return { success: true, llmContent: msg, metadata: { summary: '无记忆文件' } };
       }
       const list = topics
-        .map((t) => `- ${t.name}.md (${t.size} bytes, updated ${t.lastModified.toISOString()})`)
+        .map(
+          (t) =>
+            `- ${t.name}.md (${t.size} bytes, updated ${t.lastModified.toISOString()})`
+        )
         .join('\n');
       const msg = `Memory files:\n${list}`;
-      return { success: true, llmContent: msg, metadata: { summary: `列出 ${topics.length} 个记忆文件` } };
+      return {
+        success: true,
+        llmContent: msg,
+        metadata: { summary: `列出 ${topics.length} 个记忆文件` },
+      };
     }
 
     const content = await manager.readTopic(topic);
     if (content === null) {
       const msg = `Memory topic "${topic}" not found. Use topic="_list" to see available topics.`;
-      return { success: true, llmContent: msg, metadata: { summary: `记忆主题未找到: ${topic}` } };
+      return {
+        success: true,
+        llmContent: msg,
+        metadata: { summary: `记忆主题未找到: ${topic}` },
+      };
     }
 
-    return { success: true, llmContent: content, metadata: { summary: `读取记忆: ${topic}` } };
+    return {
+      success: true,
+      llmContent: content,
+      metadata: { summary: `读取记忆: ${topic}` },
+    };
   },
 });

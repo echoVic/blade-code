@@ -13,7 +13,14 @@
  * - 终端：手动 console.error 输出（应用分类过滤）
  */
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -104,7 +111,10 @@ function cleanOldLogs(logDir: string, maxAgeDays: number): void {
     const maxAge = maxAgeDays * 24 * 60 * 60 * 1000;
 
     for (const file of files) {
-      if (!file.startsWith('blade-') || (!file.endsWith('.log') && !file.endsWith('.jsonl'))) {
+      if (
+        !file.startsWith('blade-') ||
+        (!file.endsWith('.log') && !file.endsWith('.jsonl'))
+      ) {
         continue;
       }
 
@@ -218,7 +228,10 @@ export class Logger {
     };
   }
 
-  private shouldLogCategory(filter?: { mode: 'include' | 'exclude'; categories: string[] }): boolean {
+  private shouldLogCategory(filter?: {
+    mode: 'include' | 'exclude';
+    categories: string[];
+  }): boolean {
     if (!filter) {
       return true;
     }
@@ -281,7 +294,10 @@ export class Logger {
   }
 }
 
-export function createLogger(category: LogCategory, options?: Omit<LoggerOptions, 'category'>): Logger {
+export function createLogger(
+  category: LogCategory,
+  options?: Omit<LoggerOptions, 'category'>
+): Logger {
   return new Logger({ ...options, category });
 }
 

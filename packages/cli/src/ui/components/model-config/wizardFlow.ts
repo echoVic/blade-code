@@ -2,9 +2,7 @@ import type { WizardStep } from './types.js';
 
 export const getStepAfterApiKeySubmit = (): WizardStep => 'baseUrl';
 
-export const getPreviousWizardStep = (
-  step: WizardStep
-): WizardStep | undefined => {
+export const getPreviousWizardStep = (step: WizardStep): WizardStep | undefined => {
   switch (step) {
     case 'apiKey':
       return 'provider';

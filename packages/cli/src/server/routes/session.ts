@@ -7,10 +7,7 @@ import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
-import type {
-  ChatContext,
-  UserMessageContent,
-} from '../../agent/types.js';
+import type { ChatContext, UserMessageContent } from '../../agent/types.js';
 import { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
@@ -606,7 +603,10 @@ async function executeRunAsync(
         switch (event.kind) {
           // --- 流式增量 ---
           case 'content_delta':
-            emit('message.delta', { messageId: assistantMessageId, delta: event.delta });
+            emit('message.delta', {
+              messageId: assistantMessageId,
+              delta: event.delta,
+            });
             break;
           case 'thinking_delta':
             emit('thinking.delta', { delta: event.delta });

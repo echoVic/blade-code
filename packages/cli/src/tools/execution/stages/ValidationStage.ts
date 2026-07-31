@@ -15,10 +15,7 @@ export class ValidationStage implements PipelineStage {
   private readonly toolWhitelist: ReadonlySet<string> | null;
   private readonly toolBlacklist: ReadonlySet<string> | null;
 
-  constructor(
-    toolWhitelist?: readonly string[],
-    toolBlacklist?: readonly string[]
-  ) {
+  constructor(toolWhitelist?: readonly string[], toolBlacklist?: readonly string[]) {
     this.toolWhitelist = toolWhitelist?.length ? new Set(toolWhitelist) : null;
     this.toolBlacklist = toolBlacklist?.length ? new Set(toolBlacklist) : null;
   }
@@ -44,9 +41,7 @@ export class ValidationStage implements PipelineStage {
       const invocation = tool.build(execution.params);
       execution._internal.invocation = invocation;
     } catch (error) {
-      execution.abort(
-        `Parameter validation failed: ${(error as Error).message}`
-      );
+      execution.abort(`Parameter validation failed: ${(error as Error).message}`);
     }
   }
 }

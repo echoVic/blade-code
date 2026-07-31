@@ -14,9 +14,7 @@ const mainInputState = {
   useInputHandler: undefined as
     | ((input: string, key: Record<string, boolean>) => void)
     | undefined,
-  suggestions: [
-    { command: '/help', description: 'Show help', matchScore: 1 },
-  ],
+  suggestions: [{ command: '/help', description: 'Show help', matchScore: 1 }],
 };
 
 const atCompletionState = {
@@ -130,7 +128,9 @@ describe('command input helpers', () => {
   });
 
   it('initializes plugins and only integrates when plugins are present', async () => {
-    const { initializeCliPlugins } = await import('../../../src/commands/shared/commandInput.js');
+    const { initializeCliPlugins } = await import(
+      '../../../src/commands/shared/commandInput.js'
+    );
 
     await initializeCliPlugins();
     expect(pluginState.integrateAllPlugins).not.toHaveBeenCalled();
@@ -151,7 +151,9 @@ describe('command input helpers', () => {
       },
     });
 
-    const { normalizeCliInput } = await import('../../../src/commands/shared/commandInput.js');
+    const { normalizeCliInput } = await import(
+      '../../../src/commands/shared/commandInput.js'
+    );
     const result = await normalizeCliInput('/brainstorming design a runner');
 
     expect(result).toEqual({
@@ -168,7 +170,9 @@ describe('command input helpers', () => {
       content: 'full help text',
     });
 
-    const { normalizeCliInput } = await import('../../../src/commands/shared/commandInput.js');
+    const { normalizeCliInput } = await import(
+      '../../../src/commands/shared/commandInput.js'
+    );
     const result = await normalizeCliInput('/help');
 
     expect(result).toEqual({
@@ -201,7 +205,13 @@ describe('command input helpers', () => {
       })),
     };
 
-    useMainInput(buffer as any, onSubmit, () => null, () => null, onAddToHistory);
+    useMainInput(
+      buffer as any,
+      onSubmit,
+      () => null,
+      () => null,
+      onAddToHistory
+    );
 
     expect(mainInputState.useInputHandler).toBeTypeOf('function');
 
@@ -254,7 +264,13 @@ describe('command input helpers', () => {
       })),
     };
 
-    useMainInput(buffer as any, onSubmit, () => null, () => null, onAddToHistory);
+    useMainInput(
+      buffer as any,
+      onSubmit,
+      () => null,
+      () => null,
+      onAddToHistory
+    );
 
     mainInputState.useInputHandler?.('', { tab: true });
 
@@ -310,7 +326,13 @@ describe('command input helpers', () => {
       })),
     };
 
-    useMainInput(buffer as any, onSubmit, () => null, () => null, onAddToHistory);
+    useMainInput(
+      buffer as any,
+      onSubmit,
+      () => null,
+      () => null,
+      onAddToHistory
+    );
 
     mainInputState.useInputHandler?.('', { return: true });
 
@@ -345,7 +367,13 @@ describe('command input helpers', () => {
       })),
     };
 
-    useMainInput(buffer as any, onSubmit, () => null, () => null, onAddToHistory);
+    useMainInput(
+      buffer as any,
+      onSubmit,
+      () => null,
+      () => null,
+      onAddToHistory
+    );
 
     expect(mainInputState.useInputHandler).toBeTypeOf('function');
 

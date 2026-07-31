@@ -98,7 +98,9 @@ describe('敏感文件检测', () => {
 
     it('应该检测 API 密钥', () => {
       expect(containsSensitiveContent('API_KEY=sk-1234567890abcdefghij')).toBe(true);
-      expect(containsSensitiveContent('api-key: "abcdefghijklmnopqrstuvwxyz"')).toBe(true);
+      expect(containsSensitiveContent('api-key: "abcdefghijklmnopqrstuvwxyz"')).toBe(
+        true
+      );
     });
 
     it('应该检测密码', () => {
@@ -107,7 +109,11 @@ describe('敏感文件检测', () => {
     });
 
     it('应该检测 Bearer Token', () => {
-      expect(containsSensitiveContent('Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9')).toBe(true);
+      expect(
+        containsSensitiveContent(
+          'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'
+        )
+      ).toBe(true);
     });
 
     it('应该检测私钥内容', () => {
@@ -116,8 +122,14 @@ describe('敏感文件检测', () => {
     });
 
     it('应该检测 AWS 凭证', () => {
-      expect(containsSensitiveContent('aws_access_key_id = AKIAIOSFODNN7EXAMPLE')).toBe(true);
-      expect(containsSensitiveContent('aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY')).toBe(true);
+      expect(containsSensitiveContent('aws_access_key_id = AKIAIOSFODNN7EXAMPLE')).toBe(
+        true
+      );
+      expect(
+        containsSensitiveContent(
+          'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+        )
+      ).toBe(true);
     });
 
     it('应该允许非敏感内容', () => {

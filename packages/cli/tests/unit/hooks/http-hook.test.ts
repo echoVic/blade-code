@@ -1,17 +1,10 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PermissionMode } from '../../../src/config/types.js';
 import { HookManager } from '../../../src/hooks/HookManager.js';
 import {
   type HookConfig,
   type HookMatcher,
-  HookType
+  HookType,
 } from '../../../src/hooks/types/HookTypes.js';
 
 const execContext = {
@@ -41,9 +34,7 @@ function registerHttpHook(
 ) {
   hm.loadConfig({
     enabled: true,
-    httpPolicy: opts?.allowedHosts
-      ? { allowedHosts: opts.allowedHosts }
-      : undefined,
+    httpPolicy: opts?.allowedHosts ? { allowedHosts: opts.allowedHosts } : undefined,
   });
   const cfg = hm.getConfig() as HookConfig;
   (cfg.PreToolUse as HookMatcher[]) = [
@@ -200,9 +191,7 @@ describe('HTTP Hook', () => {
     });
 
     it('4xx 不重试', async () => {
-      fetchMock.mockResolvedValueOnce(
-        makeResponse('bad request', { status: 400 })
-      );
+      fetchMock.mockResolvedValueOnce(makeResponse('bad request', { status: 400 }));
       registerHttpHook(hm, 'https://api.example.com/hook', { retries: 3 });
 
       const result = await hm.executePreToolHooks(

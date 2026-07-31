@@ -19,7 +19,11 @@ vi.mock('../../../../src/agent/Agent.js', () => {
   let mockAgentInstance: any = null;
   const mockChatGen = async function* () {
     yield { type: 'turn_start', turn: 1, maxTurns: 1 };
-    return { success: true, finalMessage: 'Mock response', metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 } };
+    return {
+      success: true,
+      finalMessage: 'Mock response',
+      metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+    };
   };
   const MockAgentClass = Object.assign(
     vi.fn().mockImplementation(() => {
@@ -122,7 +126,9 @@ describe('AcpSession', () => {
       await session.initialize();
 
       // 验证 ACP 服务上下文已初始化
-      const { AcpServiceContext } = await import('../../../../src/acp/AcpServiceContext.js');
+      const { AcpServiceContext } = await import(
+        '../../../../src/acp/AcpServiceContext.js'
+      );
       expect(AcpServiceContext.initializeSession).toHaveBeenCalledWith(
         mockConnection,
         'test-session-id',
@@ -134,9 +140,13 @@ describe('AcpSession', () => {
     it('应该创建 SessionRuntime 并注入 Agent 实例', async () => {
       await session.initialize();
 
-      const { SessionRuntime } = await import('../../../../src/agent/runtime/SessionRuntime.js');
+      const { SessionRuntime } = await import(
+        '../../../../src/agent/runtime/SessionRuntime.js'
+      );
       const { Agent } = await import('../../../../src/agent/Agent.js');
-      expect(SessionRuntime.create).toHaveBeenCalledWith({ sessionId: 'test-session-id' });
+      expect(SessionRuntime.create).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+      });
       expect(Agent.createWithRuntime).toHaveBeenCalledWith(runtimeState.runtime, {
         sessionId: 'test-session-id',
       });
@@ -181,8 +191,13 @@ describe('AcpSession', () => {
       expect(response.stopReason).toBe('end_turn');
 
       // 验证执行了 slash command
-      const { executeSlashCommand } = await import('../../../../src/slash-commands/index.js');
-      expect(executeSlashCommand).toHaveBeenCalledWith('/test command', expect.any(Object));
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      expect(executeSlashCommand).toHaveBeenCalledWith(
+        '/test command',
+        expect.any(Object)
+      );
     });
 
     it('应该发送文本消息给 IDE', async () => {
@@ -315,7 +330,9 @@ describe('AcpSession', () => {
       await session.destroy();
 
       // 验证 ACP 服务上下文已销毁
-      const { AcpServiceContext } = await import('../../../../src/acp/AcpServiceContext.js');
+      const { AcpServiceContext } = await import(
+        '../../../../src/acp/AcpServiceContext.js'
+      );
       expect(AcpServiceContext.destroySession).toHaveBeenCalledWith('test-session-id');
       expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
     });
@@ -493,7 +510,17 @@ describe('AcpSession', () => {
       // 验证工具调用类型映射正确
       for (const update of toolCallUpdates) {
         const kind = (update.update as any).kind;
-        const validKinds = ['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other'];
+        const validKinds = [
+          'read',
+          'edit',
+          'delete',
+          'move',
+          'search',
+          'execute',
+          'think',
+          'fetch',
+          'other',
+        ];
         expect(validKinds).toContain(kind);
       }
     });

@@ -149,8 +149,15 @@ export class CompactionService {
     const sessionKey = options.sessionId ?? '_default';
     const failures = sessionFailures.get(sessionKey) ?? 0;
     if (failures >= MAX_CONSECUTIVE_FAILURES) {
-      console.warn(`[CompactionService] Circuit breaker open (${failures} consecutive failures for session ${sessionKey}), using fallback`);
-      return this.fallbackCompact(messages, options, preTokens, new Error('Circuit breaker open'));
+      console.warn(
+        `[CompactionService] Circuit breaker open (${failures} consecutive failures for session ${sessionKey}), using fallback`
+      );
+      return this.fallbackCompact(
+        messages,
+        options,
+        preTokens,
+        new Error('Circuit breaker open')
+      );
     }
 
     try {
@@ -209,16 +216,12 @@ export class CompactionService {
       const compactedMessages = [summaryMessage, ...retainedMessages];
 
       // === Post-Compact 上下文恢复 ===
-      const restorationMessage =
-        await this.buildFileRestorationMessage();
+      const restorationMessage = await this.buildFileRestorationMessage();
       if (restorationMessage) {
         compactedMessages.push(restorationMessage);
       }
 
-      const postTokens = TokenCounter.countTokens(
-        compactedMessages,
-        options.modelName
-      );
+      const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
 
       console.log('[CompactionService] 压缩完成！');
       console.log(
@@ -475,9 +478,7 @@ Please provide your summary following the structure specified above, with both <
         const lines = content.split('\n');
         const preview = lines.slice(0, 200).join('\n');
         const truncated =
-          lines.length > 200
-            ? `\n... (${lines.length - 200} more lines)`
-            : '';
+          lines.length > 200 ? `\n... (${lines.length - 200} more lines)` : '';
         fileRestorations.push(
           `<file path="${filePath}" lines="${lines.length}">\n${preview}${truncated}\n</file>`
         );
@@ -492,17 +493,14 @@ Please provide your summary following the structure specified above, with both <
 
     const restorationContent = [
       '<system-reminder>',
-      'Post-compaction file restoration.'
-        + ' These files were recently accessed'
-        + ' in the conversation:',
+      'Post-compaction file restoration.' +
+        ' These files were recently accessed' +
+        ' in the conversation:',
       ...fileRestorations,
       '</system-reminder>',
     ].join('\n');
 
-    console.log(
-      '[CompactionService] Post-compact 恢复文件:',
-      recentFiles.length
-    );
+    console.log('[CompactionService] Post-compact 恢复文件:', recentFiles.length);
 
     return {
       id: nanoid(),

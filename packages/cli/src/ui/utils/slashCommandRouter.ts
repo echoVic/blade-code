@@ -103,7 +103,9 @@ export function isInvokeSkillAction(data: unknown): data is InvokeSkillData {
   );
 }
 
-export function isInvokeCustomCommandAction(data: unknown): data is InvokeCustomCommandData {
+export function isInvokeCustomCommandAction(
+  data: unknown
+): data is InvokeCustomCommandData {
   return (
     typeof data === 'object' &&
     data !== null &&
@@ -113,7 +115,9 @@ export function isInvokeCustomCommandAction(data: unknown): data is InvokeCustom
   );
 }
 
-export function isInvokePluginCommandAction(data: unknown): data is InvokePluginCommandData {
+export function isInvokePluginCommandAction(
+  data: unknown
+): data is InvokePluginCommandData {
   return (
     typeof data === 'object' &&
     data !== null &&
@@ -220,7 +224,7 @@ export async function processSlashCommand(
   resolved: ResolvedInput,
   appActions: AppActions,
   sessionActions: SessionActions,
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<SlashRouteResult> {
   const { text: command } = resolved;
 

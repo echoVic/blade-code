@@ -104,9 +104,7 @@ function extractApiErrorMessage(error: unknown): string {
       const body = JSON.parse(apiError.responseBody);
       const msg = body?.error?.message;
       if (msg) {
-        const statusHint = apiError.statusCode
-          ? ` (HTTP ${apiError.statusCode})`
-          : '';
+        const statusHint = apiError.statusCode ? ` (HTTP ${apiError.statusCode})` : '';
         return `${msg}${statusHint}`;
       }
     } catch {
@@ -143,21 +141,35 @@ function formatToolError(
   const parts: string[] = [`Error: ${error.message || 'Unknown error'}`];
 
   if (error.type === 'validation_error') {
-    parts.push('Hint: Check the tool parameters — a required field may be missing or have the wrong type.');
+    parts.push(
+      'Hint: Check the tool parameters — a required field may be missing or have the wrong type.'
+    );
   } else if (error.type === 'permission_denied') {
-    parts.push('Hint: This operation requires user approval. Try a different approach or ask the user.');
+    parts.push(
+      'Hint: This operation requires user approval. Try a different approach or ask the user.'
+    );
   } else if (error.type === 'timeout_error') {
-    parts.push('Hint: The operation timed out. Consider breaking it into smaller steps or increasing timeout.');
+    parts.push(
+      'Hint: The operation timed out. Consider breaking it into smaller steps or increasing timeout.'
+    );
   } else if (error.type === 'execution_error') {
     const msg = error.message ?? '';
     if (msg.includes('ENOENT') || msg.includes('no such file')) {
-      parts.push('Hint: File or directory not found. Use Glob or Grep to find the correct path first.');
+      parts.push(
+        'Hint: File or directory not found. Use Glob or Grep to find the correct path first.'
+      );
     } else if (msg.includes('EACCES') || msg.includes('permission')) {
-      parts.push('Hint: Permission denied. The file may be read-only or owned by another user.');
+      parts.push(
+        'Hint: Permission denied. The file may be read-only or owned by another user.'
+      );
     } else if (msg.includes('not found in file') || msg.includes('old_string')) {
-      parts.push(`Hint: The target text was not found. Use Read to view the current file content, then retry ${toolName} with the exact text.`);
+      parts.push(
+        `Hint: The target text was not found. Use Read to view the current file content, then retry ${toolName} with the exact text.`
+      );
     } else if (msg.includes('ENOTDIR')) {
-      parts.push('Hint: A path component is not a directory. Verify the full path with Glob.');
+      parts.push(
+        'Hint: A path component is not a directory. Verify the full path with Glob.'
+      );
     }
   }
 
@@ -187,7 +199,11 @@ function accumulateToolCall(
   };
   const index = tc.index ?? 0;
   if (!accumulator.has(index)) {
-    accumulator.set(index, { id: tc.id || '', name: tc.function?.name || '', arguments: '' });
+    accumulator.set(index, {
+      id: tc.id || '',
+      name: tc.function?.name || '',
+      arguments: '',
+    });
   }
   const entry = accumulator.get(index)!;
   if (tc.id && !entry.id) entry.id = tc.id;
@@ -288,7 +304,11 @@ async function* processStreamResponse(
                   function: { name: entry.name, arguments: entry.arguments },
                 };
                 const toolDef = deps.executionPipeline.getRegistry().get(entry.name);
-                const toolKind = toolDef?.kind as 'readonly' | 'write' | 'execute' | undefined;
+                const toolKind = toolDef?.kind as
+                  | 'readonly'
+                  | 'write'
+                  | 'execute'
+                  | undefined;
                 // 先启动工具执行，再 yield 事件通知消费者
                 executor.addTool(toolCall, params);
                 yield { kind: 'tool_start', toolCall, toolKind };
@@ -346,12 +366,10 @@ export async function checkAndCompactInLoop(
   currentTurn: number,
   actualPromptTokens?: number,
   signal?: AbortSignal,
-  lastApiCallTime?: number,
+  lastApiCallTime?: number
 ): Promise<CompactResult> {
   if (actualPromptTokens === undefined) {
-    logger.debug(
-      `[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`
-    );
+    logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`);
     return 'none';
   }
 
@@ -379,8 +397,7 @@ export async function checkAndCompactInLoop(
   // Level 2: LLM compaction — 80% 阈值触发 LLM 摘要压缩
   const chatConfig = deps.chatService.getConfig();
   const modelName = chatConfig.model;
-  const maxContextTokens =
-    chatConfig.maxContextTokens ?? deps.config.maxContextTokens;
+  const maxContextTokens = chatConfig.maxContextTokens ?? deps.config.maxContextTokens;
   const maxOutputTokens =
     chatConfig.maxOutputTokens ??
     deps.config.maxOutputTokens ??
@@ -474,13 +491,11 @@ function makeAbortResult(
   turnsCount: number,
   toolCallsCount: number,
   startTime: number,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): LoopResult {
   const reason = signal ? getAbortReason(signal) : 'user-cancel';
   // interrupt 不显示"任务已停止"（紧接着就有新任务开始），只有 user-cancel 显示
-  const message = reason === 'interrupt'
-    ? undefined
-    : '任务已被用户中止';
+  const message = reason === 'interrupt' ? undefined : '任务已被用户中止';
 
   return {
     success: false,
@@ -518,13 +533,10 @@ export async function* executeLoopGenerator(
 
     // 1.5 注入 deferred tools listing 到系统提示
     let finalSystemPrompt = systemPrompt;
-    if (
-      typeof registry.getDeferredToolsListing === 'function'
-    ) {
+    if (typeof registry.getDeferredToolsListing === 'function') {
       const deferredListing = registry.getDeferredToolsListing();
       if (deferredListing && finalSystemPrompt) {
-        finalSystemPrompt =
-          `${finalSystemPrompt}\n\n${deferredListing}`;
+        finalSystemPrompt = `${finalSystemPrompt}\n\n${deferredListing}`;
       }
     }
 
@@ -576,471 +588,75 @@ export async function* executeLoopGenerator(
     const reactiveCompaction = new ReactiveCompaction();
 
     try {
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      // 1. 检查中断信号
-      if (options?.signal?.aborted) {
-        return makeAbortResult(turnsCount, allToolResults.length, startTime, options.signal);
-      }
-
-      // 2. 上下文压缩检查
-      // writeback 确保 context.messages 与 state.history 同步，
-      // 因为 checkAndCompactInLoop 直接读取 context.messages
-      state.writeback();
-      const compactResult = await checkAndCompactInLoop(
-        deps,
-        context,
-        turnsCount,
-        lastPromptTokens,
-        options?.signal,
-        lastApiCallTime,
-      );
-
-      if (compactResult !== 'none') {
-        if (compactResult === 'compacted') {
-          yield { kind: 'compaction', phase: 'start' as const };
-          yield { kind: 'compaction', phase: 'end' as const };
-        }
-        // checkAndCompactInLoop 已更新 context.messages，同步到 state
-        state.replaceHistory(context.messages);
-      }
-
-      // 3. 轮次计数
-      turnsCount++;
-      reactiveCompaction.reset();
-      yield { kind: 'turn_start', turn: turnsCount, maxTurns };
-
-      if (options?.signal?.aborted) {
-        return makeAbortResult(turnsCount - 1, allToolResults.length, startTime, options.signal);
-      }
-
-      // 3.5 Self-reflection injection (every N turns)
-      if (shouldInjectReflection(turnsCount) && turnsCount > 1) {
-        const reflectionPrompt = getReflectionPrompt(turnsCount, failureTracker.totalFailures);
-        state.appendControl('user', {
-          role: 'user',
-          content: `\n\n<system-reminder>\n${reflectionPrompt}\n</system-reminder>`,
-        });
-      }
-
-      // 4. 调用 LLM
-      const isStreamEnabled = options?.stream !== false;
-      let turnResult: StreamResponseResult;
-      let streamingExecutor: StreamingToolExecutor | undefined;
-
-      try {
-        if (isStreamEnabled) {
-          streamingExecutor = new StreamingToolExecutor(
-            deps.executionPipeline,
-            {
-              sessionId: context.sessionId,
-              userId: context.userId || 'default',
-              workspaceRoot: context.workspaceRoot || getCwd(),
-              signal: options?.signal,
-              confirmationHandler: context.confirmationHandler,
-              permissionMode: context.permissionMode,
-              toolRegistry: registry,
-              deferredToolManager:
-                registry.deferredToolManager,
-            },
-            deps.executionPipeline.getRegistry(),
-            deps.executionEngine?.getContextManager(),
-            context.sessionId,
-            lastMessageUuid,
-            context.subagentInfo
-          );
-
-          turnResult = yield* processStreamResponse(
-            deps,
-            state.toLLMMessages(),
-            tools,
-            options?.signal,
-            streamingExecutor
-          );
-        } else {
-          turnResult = await deps.chatService.chat(
-            state.toLLMMessages(),
-            tools,
-            options?.signal
-          );
-        }
-      } catch (llmError) {
-        // Check if it's a 413 / prompt_too_long error
-        if (isPromptTooLongError(llmError)) {
-          logger.warn('[Loop] 检测到 prompt_too_long 错误，尝试反应式压缩');
-          const chatConfig = deps.chatService.getConfig();
-          const result = await reactiveCompaction.tryReactiveCompact(
-            context.messages,
-            {
-              modelName: chatConfig.model,
-              maxContextTokens: chatConfig.maxContextTokens ?? deps.config.maxContextTokens,
-              apiKey: chatConfig.apiKey,
-              baseURL: chatConfig.baseUrl,
-              signal: options?.signal,
-            }
-          );
-          if (result.success) {
-            context.messages = result.messages;
-            // 同步到 state（此时 pending 已被 writeback() commit，为空）
-            state.replaceHistory(context.messages);
-            logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
-            turnsCount--;
-            continue; // Retry the turn
-          }
-        }
-        throw llmError; // Re-throw if not recoverable
-      }
-
-      // Token 使用量
-      lastApiCallTime = Date.now();
-      if (turnResult.usage) {
-        if (turnResult.usage.totalTokens) {
-          totalTokens += turnResult.usage.totalTokens;
-        }
-        lastPromptTokens = turnResult.usage.promptTokens;
-        yield {
-          kind: 'token_usage',
-          usage: {
-            inputTokens: turnResult.usage.promptTokens ?? 0,
-            outputTokens: turnResult.usage.completionTokens ?? 0,
-            totalTokens: turnResult.usage.totalTokens ?? 0,
-            maxContextTokens: deps.currentModelMaxContextTokens,
-          },
-        };
-      }
-
-      // Record output for token budget tracking
-      const outputTokens = turnResult.usage?.completionTokens ?? 0;
-      budgetTracker = recordOutput(budgetTracker, outputTokens, maxOutputRecoveryCount > 0);
-
-      if (options?.signal?.aborted) {
-        return makeAbortResult(turnsCount - 1, allToolResults.length, startTime, options.signal);
-      }
-
-      // Content 通知 — delta 是唯一内容信号
-      // - 正常流式：delta 已在 processStreamResponse 中逐 chunk yield
-      // - 非流式 fallback / 纯非流式：补发单个完整内容的 delta
-      const needsDelta = !isStreamEnabled || !!(turnResult as StreamResponseResult)._nonStreamingFallback;
-      if (needsDelta) {
-        if (turnResult.reasoningContent && turnResult.reasoningContent.trim()) {
-          yield { kind: 'thinking_delta', delta: turnResult.reasoningContent };
-        }
-        if (turnResult.content && turnResult.content.trim()) {
-          yield { kind: 'content_delta', delta: turnResult.content };
-        }
-      }
-      // stream_end 作为 per-turn 无条件终止信号，即使 content 和 thinking 都为空
-      // （例如空 content + tool_calls 场景），消费者依赖此信号结束 turn 渲染
-      yield { kind: 'stream_end' };
-
-
-      // Max output tokens recovery (via completionPolicy)
-      const recoveryAction = checkOutputRecovery(
-        turnResult.finishReason,
-        maxOutputRecoveryCount,
-        budgetTracker,
-      );
-
-      if (recoveryAction.action === 'recover') {
-        maxOutputRecoveryCount++;
-        logger.warn(
-          `[Loop] Max output tokens hit (recovery ${maxOutputRecoveryCount}/3)`
-        );
-
-        // Add the truncated assistant message to history
-        const truncatedAssistantMsg: Message = {
-          role: 'assistant',
-          content: turnResult.content || '',
-          reasoningContent: turnResult.reasoningContent,
-          tool_calls: turnResult.toolCalls,
-        };
-        state.appendToHistory(truncatedAssistantMsg);
-
-        // JSONL 持久化：确保 resume 时能恢复此 assistant 消息
-        const recoveryAssistantUuid = await saveAssistantMessage(
-          deps, context, turnResult.content || '', lastMessageUuid,
-        );
-        if (recoveryAssistantUuid) lastMessageUuid = recoveryAssistantUuid;
-
-        // Inject recovery prompt
-        const recoveryMsg: Message = {
-          role: 'user',
-          content:
-            'Output token limit hit. Resume directly — no apology, no recap. ' +
-            'Pick up mid-thought if that is where the cut happened. ' +
-            'Break remaining work into smaller pieces.',
-        };
-        state.appendToHistory(recoveryMsg);
-
-        // JSONL 持久化：确保 resume 时能恢复此 recovery prompt
-        const recoveryUserUuid = await saveUserMessage(deps, context, recoveryMsg.content as string, lastMessageUuid);
-        if (recoveryUserUuid) lastMessageUuid = recoveryUserUuid;
-
-        continue; // Retry the turn
-      }
-
-      if (recoveryAction.action === 'truncated' || recoveryAction.action === 'budget_stop') {
-        // 截断：recovery 达上限或 budget 递减收益，标记截断并正常结束
-        // 必须将最终 assistant 消息写入 state，确保 writeback 时 context.messages 包含它
-        state.appendAssistant({
-          role: 'assistant',
-          content: turnResult.content || '',
-          reasoningContent: turnResult.reasoningContent,
-          tool_calls: turnResult.toolCalls,
-        });
-
-        const uuid = await saveAssistantMessage(
-          deps, context, turnResult.content || '', lastMessageUuid,
-        );
-        if (uuid) lastMessageUuid = uuid;
-
-        return {
-          success: true,
-          finalMessage: turnResult.content,
-          metadata: {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        // 1. 检查中断信号
+        if (options?.signal?.aborted) {
+          return makeAbortResult(
             turnsCount,
-            toolCallsCount: allToolResults.length,
-            duration: Date.now() - startTime,
-            tokensUsed: totalTokens,
-            outputTruncated: true,
-          },
-        };
-      }
+            allToolResults.length,
+            startTime,
+            options.signal
+          );
+        }
 
-      if (turnResult.finishReason !== 'length') {
-        // Reset recovery counter on normal completion to prevent drift
-        maxOutputRecoveryCount = 0;
-      }
+        // 2. 上下文压缩检查
+        // writeback 确保 context.messages 与 state.history 同步，
+        // 因为 checkAndCompactInLoop 直接读取 context.messages
+        state.writeback();
+        const compactResult = await checkAndCompactInLoop(
+          deps,
+          context,
+          turnsCount,
+          lastPromptTokens,
+          options?.signal,
+          lastApiCallTime
+        );
 
-      // 5. 检查是否需要工具调用
-      if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
-        // Stale loop detection: if model repeats same output 3 times, inject warning
-        if (turnResult.content && recordStaleOutput(staleDetector, turnResult.content)) {
-          state.appendAssistant({
-            role: 'assistant',
-            content: turnResult.content || '',
-            reasoningContent: turnResult.reasoningContent,
-          });
+        if (compactResult !== 'none') {
+          if (compactResult === 'compacted') {
+            yield { kind: 'compaction', phase: 'start' as const };
+            yield { kind: 'compaction', phase: 'end' as const };
+          }
+          // checkAndCompactInLoop 已更新 context.messages，同步到 state
+          state.replaceHistory(context.messages);
+        }
+
+        // 3. 轮次计数
+        turnsCount++;
+        reactiveCompaction.reset();
+        yield { kind: 'turn_start', turn: turnsCount, maxTurns };
+
+        if (options?.signal?.aborted) {
+          return makeAbortResult(
+            turnsCount - 1,
+            allToolResults.length,
+            startTime,
+            options.signal
+          );
+        }
+
+        // 3.5 Self-reflection injection (every N turns)
+        if (shouldInjectReflection(turnsCount) && turnsCount > 1) {
+          const reflectionPrompt = getReflectionPrompt(
+            turnsCount,
+            failureTracker.totalFailures
+          );
           state.appendControl('user', {
             role: 'user',
-            content: `\n\n<system-reminder>\n${getStaleLoopHint()}\n</system-reminder>`,
+            content: `\n\n<system-reminder>\n${reflectionPrompt}\n</system-reminder>`,
           });
-          continue;
         }
 
-        // 意图未完成检测 (via completionPolicy)
-        const intentAction = checkIncompleteIntent(
-          turnResult.content,
-          incompleteIntentRetryCount,
-        );
+        // 4. 调用 LLM
+        const isStreamEnabled = options?.stream !== false;
+        let turnResult: StreamResponseResult;
+        let streamingExecutor: StreamingToolExecutor | undefined;
 
-        if (intentAction.action === 'retry') {
-          incompleteIntentRetryCount++;
-          // assistant 输出与 retry 控制消息必须走同一条 pending 队列，保证下一轮看到的时序正确
-          state.appendAssistant({
-            role: 'assistant',
-            content: turnResult.content || '',
-            reasoningContent: turnResult.reasoningContent,
-          });
-
-          // JSONL 持久化：确保 resume 时能恢复此 assistant 消息
-          const retryAssistantUuid = await saveAssistantMessage(
-            deps, context, turnResult.content || '', lastMessageUuid,
-          );
-          if (retryAssistantUuid) lastMessageUuid = retryAssistantUuid;
-
-          const retryMsg: Message = { role: 'user', content: intentAction.prompt };
-          state.appendControl('user', retryMsg);
-
-          // JSONL 持久化：确保 resume 时能恢复此 retry prompt
-          const retryUserUuid = await saveUserMessage(deps, context, retryMsg.content as string, lastMessageUuid);
-          if (retryUserUuid) lastMessageUuid = retryUserUuid;
-
-          continue;
-        }
-
-        // 正常完成时归零 incompleteIntentRetryCount
-        incompleteIntentRetryCount = 0;
-
-        // Ralph Loop: Spec 未完成任务时自动继续
-        const ralphAction = await checkRalphLoop({
-          turnsCount,
-          maxTurns,
-        });
-        if (ralphAction.action === 'continue') {
-          state.appendAssistant({
-            role: 'assistant',
-            content: turnResult.content || '',
-            reasoningContent: turnResult.reasoningContent,
-          });
-
-          const ralphAssistantUuid = await saveAssistantMessage(
-            deps, context, turnResult.content || '', lastMessageUuid,
-          );
-          if (ralphAssistantUuid) lastMessageUuid = ralphAssistantUuid;
-
-          const ralphMsg: Message = {
-            role: 'user',
-            content: `\n\n<system-reminder>\n${ralphAction.reason}\n</system-reminder>`,
-          };
-          state.appendControl('user', ralphMsg);
-
-          const ralphUserUuid = await saveUserMessage(
-            deps, context, ralphMsg.content as string, lastMessageUuid,
-          );
-          if (ralphUserUuid) lastMessageUuid = ralphUserUuid;
-
-          continue;
-        }
-
-        // Stop Hook (via completionPolicy, with timeout)
-        const stopAction = await checkStopHook({
-          sessionId: context.sessionId,
-          permissionMode: context.permissionMode as PermissionMode,
-          reason: turnResult.content,
-          abortSignal: options?.signal,
-        });
-
-        if (stopAction.action === 'continue') {
-          // assistant 输出与 continue 控制消息必须走同一条 pending 队列，保证下一轮看到的时序正确
-          state.appendAssistant({
-            role: 'assistant',
-            content: turnResult.content || '',
-            reasoningContent: turnResult.reasoningContent,
-          });
-
-          // JSONL 持久化：确保 resume 时能恢复此 assistant 消息
-          const continueAssistantUuid = await saveAssistantMessage(
-            deps, context, turnResult.content || '', lastMessageUuid,
-          );
-          if (continueAssistantUuid) lastMessageUuid = continueAssistantUuid;
-
-          const continueMessage = stopAction.reason
-            ? `\n\n<system-reminder>\n${stopAction.reason}\n</system-reminder>`
-            : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
-          const continueMsg: Message = { role: 'user', content: continueMessage };
-          state.appendControl('user', continueMsg);
-
-          // JSONL 持久化：确保 resume 时能恢复此 continue prompt
-          const continueUserUuid = await saveUserMessage(deps, context, continueMsg.content as string, lastMessageUuid);
-          if (continueUserUuid) lastMessageUuid = continueUserUuid;
-
-          continue;
-        }
-
-        // 保存助手最终响应到 JSONL
-        // 必须将最终 assistant 消息写入 state，确保 writeback 时 context.messages 包含它
-        state.appendAssistant({
-          role: 'assistant',
-          content: turnResult.content || '',
-          reasoningContent: turnResult.reasoningContent,
-        });
-
-        const uuid = await saveAssistantMessage(
-          deps, context, turnResult.content || '', lastMessageUuid,
-        );
-        if (uuid) lastMessageUuid = uuid;
-
-        return {
-          success: true,
-          finalMessage: turnResult.content,
-          metadata: {
-            turnsCount,
-            toolCallsCount: allToolResults.length,
-            duration: Date.now() - startTime,
-            tokensUsed: totalTokens,
-            toolSuccessRate: allToolResults.length > 0
-              ? allToolResults.filter((r) => r.success).length / allToolResults.length
-              : undefined,
-            totalToolFailures: failureTracker.totalFailures || undefined,
-          },
-        };
-      }
-
-      // 6. 添加 LLM 响应到消息历史
-      state.appendAssistant({
-        role: 'assistant',
-        content: turnResult.content || '',
-        reasoningContent: turnResult.reasoningContent,
-        tool_calls: turnResult.toolCalls,
-      });
-
-      // 保存助手工具调用请求到 JSONL
-      {
-        const uuid = await saveAssistantMessage(
-          deps, context, turnResult.content || '', lastMessageUuid,
-        );
-        if (uuid) lastMessageUuid = uuid;
-      }
-
-      // 7. 执行工具
-      if (options?.signal?.aborted) {
-        return makeAbortResult(turnsCount, allToolResults.length, startTime, options.signal);
-      }
-
-      const functionCalls = turnResult.toolCalls.filter(
-        (tc) => tc.type === 'function'
-      );
-
-      // 使用 StreamingToolExecutor 或 Promise.all 执行工具
-      let executionResults: Array<{
-        toolCall: ToolCallRef;
-        result: import('../../tools/types/index.js').ToolResult;
-        toolUseUuid: string | null;
-        error?: Error;
-      }>;
-
-      if (streamingExecutor?.hasTools()) {
-        // 流式模式：工具已在流式中开始执行，收集结果
-        // tool_start 事件已在 processStreamResponse 中 yield
-        logger.debug(
-          `[Loop] 使用 StreamingToolExecutor 收集 ${functionCalls.length} 个工具结果`
-        );
-        executionResults = [];
-        for await (const execResult of streamingExecutor.getRemainingResults()) {
-          executionResults.push(execResult);
-        }
-      } else {
-        // 非流式模式或 fallback：传统 Promise.all 执行
-        // Yield tool_start 事件
-        for (const toolCall of functionCalls) {
-          const toolDef = registry.get(toolCall.function.name);
-          const toolKind = toolDef?.kind as
-            | 'readonly'
-            | 'write'
-            | 'execute'
-            | undefined;
-          yield {
-            kind: 'tool_start',
-            toolCall: toolCall as ToolCallRef,
-            toolKind,
-          };
-        }
-
-        // 并行执行所有工具
-        const executeToolCall = async (
-          toolCall: (typeof functionCalls)[0]
-        ) => {
-          try {
-            const params = JSON.parse(toolCall.function.arguments);
-            if (
-              toolCall.function.name === 'Task' &&
-              (typeof params.subagent_session_id !== 'string' ||
-                params.subagent_session_id.length === 0)
-            ) {
-              params.subagent_session_id =
-                typeof params.resume === 'string' && params.resume.length > 0
-                  ? params.resume
-                  : nanoid();
-            }
-            let toolUseUuid: string | null = null;
-            toolUseUuid = await saveToolUse(
-              deps, context, toolCall.function.name, params, lastMessageUuid,
-            );
-
-            const result = await deps.executionPipeline.execute(
-              toolCall.function.name,
-              params,
+        try {
+          if (isStreamEnabled) {
+            streamingExecutor = new StreamingToolExecutor(
+              deps.executionPipeline,
               {
                 sessionId: context.sessionId,
                 userId: context.userId || 'default',
@@ -1049,260 +665,748 @@ export async function* executeLoopGenerator(
                 confirmationHandler: context.confirmationHandler,
                 permissionMode: context.permissionMode,
                 toolRegistry: registry,
-                deferredToolManager:
-                  registry.deferredToolManager,
+                deferredToolManager: registry.deferredToolManager,
+              },
+              deps.executionPipeline.getRegistry(),
+              deps.executionEngine?.getContextManager(),
+              context.sessionId,
+              lastMessageUuid,
+              context.subagentInfo
+            );
+
+            turnResult = yield* processStreamResponse(
+              deps,
+              state.toLLMMessages(),
+              tools,
+              options?.signal,
+              streamingExecutor
+            );
+          } else {
+            turnResult = await deps.chatService.chat(
+              state.toLLMMessages(),
+              tools,
+              options?.signal
+            );
+          }
+        } catch (llmError) {
+          // Check if it's a 413 / prompt_too_long error
+          if (isPromptTooLongError(llmError)) {
+            logger.warn('[Loop] 检测到 prompt_too_long 错误，尝试反应式压缩');
+            const chatConfig = deps.chatService.getConfig();
+            const result = await reactiveCompaction.tryReactiveCompact(
+              context.messages,
+              {
+                modelName: chatConfig.model,
+                maxContextTokens:
+                  chatConfig.maxContextTokens ?? deps.config.maxContextTokens,
+                apiKey: chatConfig.apiKey,
+                baseURL: chatConfig.baseUrl,
+                signal: options?.signal,
               }
             );
-            return { toolCall, result, toolUseUuid };
-          } catch (error) {
-            logger.error(
-              `Tool execution failed for ${toolCall.function.name}:`,
-              error
-            );
-            return {
-              toolCall,
-              result: {
-                success: false,
-                llmContent: '',
-                error: {
-                  type: ToolErrorType.EXECUTION_ERROR,
-                  message:
-                    error instanceof Error ? error.message : 'Unknown error',
-                },
-                metadata: undefined,
-              } as import('../../tools/types/index.js').ToolResult,
-              toolUseUuid: null,
-              error: error instanceof Error ? error : new Error('Unknown error'),
-            };
+            if (result.success) {
+              context.messages = result.messages;
+              // 同步到 state（此时 pending 已被 writeback() commit，为空）
+              state.replaceHistory(context.messages);
+              logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
+              turnsCount--;
+              continue; // Retry the turn
+            }
           }
-        };
-
-        executionResults = await Promise.all(
-          functionCalls.map(executeToolCall)
-        );
-      }
-
-      // 8. 处理执行结果
-      const messageBudget = new MessageBudgetTracker();
-      for (const { toolCall: rawToolCall, result, toolUseUuid } of executionResults) {
-        // 安全断言：所有 toolCall 都是 function 类型
-        const toolCall = rawToolCall as {
-          id: string;
-          type: 'function';
-          function: { name: string; arguments: string };
-        };
-        allToolResults.push(result);
-
-        // 如果工具未实际执行就被 abort（如排队工具 skip、确认阶段 abort），
-        // 跳过 yield/持久化/appendToolResult，避免在历史中留下无意义的失败记录。
-        // 注意：只检查 abortedBeforeLaunch，不会误伤正常的 shouldExitLoop 结果
-        // （如 ExitPlanModeTool 带 targetMode/planContent 的合法退出）。
-        if (result.metadata?.abortedBeforeLaunch) {
-          return makeAbortResult(turnsCount, allToolResults.length, startTime, options?.signal);
+          throw llmError; // Re-throw if not recoverable
         }
 
-        // Yield tool_result 事件
-        yield {
-          kind: 'tool_result',
-          toolCall: toolCall as ToolCallRef,
-          result,
-        };
+        // Token 使用量
+        lastApiCallTime = Date.now();
+        if (turnResult.usage) {
+          if (turnResult.usage.totalTokens) {
+            totalTokens += turnResult.usage.totalTokens;
+          }
+          lastPromptTokens = turnResult.usage.promptTokens;
+          yield {
+            kind: 'token_usage',
+            usage: {
+              inputTokens: turnResult.usage.promptTokens ?? 0,
+              outputTokens: turnResult.usage.completionTokens ?? 0,
+              totalTokens: turnResult.usage.totalTokens ?? 0,
+              maxContextTokens: deps.currentModelMaxContextTokens,
+            },
+          };
+        }
 
-        // 保存 tool_result 到 JSONL (via conversationPersistence)
-        {
-          const metadata =
-            result.metadata && typeof result.metadata === 'object'
-              ? (result.metadata as Record<string, unknown>)
-              : undefined;
-          const isSubagentStatus = (
-            value: unknown
-          ): value is
-            | 'running'
-            | 'completed'
-            | 'failed'
-            | 'cancelled' =>
-            value === 'running' ||
-            value === 'completed' ||
-            value === 'failed' ||
-            value === 'cancelled';
-          const subagentStatus = isSubagentStatus(metadata?.subagentStatus)
-            ? metadata.subagentStatus
-            : 'completed';
-          const subagentRef =
-            metadata && typeof metadata.subagentSessionId === 'string'
-              ? {
-                  subagentSessionId: metadata.subagentSessionId,
-                  subagentType:
-                    typeof metadata.subagentType === 'string'
-                      ? metadata.subagentType
-                      : toolCall.function.name,
-                  subagentStatus,
-                  subagentSummary:
-                    typeof metadata.subagentSummary === 'string'
-                      ? metadata.subagentSummary
-                      : undefined,
-                }
-              : undefined;
-          const uuid = await persistToolResult(
+        // Record output for token budget tracking
+        const outputTokens = turnResult.usage?.completionTokens ?? 0;
+        budgetTracker = recordOutput(
+          budgetTracker,
+          outputTokens,
+          maxOutputRecoveryCount > 0
+        );
+
+        if (options?.signal?.aborted) {
+          return makeAbortResult(
+            turnsCount - 1,
+            allToolResults.length,
+            startTime,
+            options.signal
+          );
+        }
+
+        // Content 通知 — delta 是唯一内容信号
+        // - 正常流式：delta 已在 processStreamResponse 中逐 chunk yield
+        // - 非流式 fallback / 纯非流式：补发单个完整内容的 delta
+        const needsDelta =
+          !isStreamEnabled ||
+          !!(turnResult as StreamResponseResult)._nonStreamingFallback;
+        if (needsDelta) {
+          if (turnResult.reasoningContent && turnResult.reasoningContent.trim()) {
+            yield { kind: 'thinking_delta', delta: turnResult.reasoningContent };
+          }
+          if (turnResult.content && turnResult.content.trim()) {
+            yield { kind: 'content_delta', delta: turnResult.content };
+          }
+        }
+        // stream_end 作为 per-turn 无条件终止信号，即使 content 和 thinking 都为空
+        // （例如空 content + tool_calls 场景），消费者依赖此信号结束 turn 渲染
+        yield { kind: 'stream_end' };
+
+        // Max output tokens recovery (via completionPolicy)
+        const recoveryAction = checkOutputRecovery(
+          turnResult.finishReason,
+          maxOutputRecoveryCount,
+          budgetTracker
+        );
+
+        if (recoveryAction.action === 'recover') {
+          maxOutputRecoveryCount++;
+          logger.warn(
+            `[Loop] Max output tokens hit (recovery ${maxOutputRecoveryCount}/3)`
+          );
+
+          // Add the truncated assistant message to history
+          const truncatedAssistantMsg: Message = {
+            role: 'assistant',
+            content: turnResult.content || '',
+            reasoningContent: turnResult.reasoningContent,
+            tool_calls: turnResult.toolCalls,
+          };
+          state.appendToHistory(truncatedAssistantMsg);
+
+          // JSONL 持久化：确保 resume 时能恢复此 assistant 消息
+          const recoveryAssistantUuid = await saveAssistantMessage(
             deps,
             context,
-            toolCall.id,
-            toolCall.function.name,
-            result.success ? toJsonValue(result.llmContent) : null,
-            toolUseUuid,
-            result.success ? undefined : result.error?.message,
-            subagentRef,
+            turnResult.content || '',
+            lastMessageUuid
+          );
+          if (recoveryAssistantUuid) lastMessageUuid = recoveryAssistantUuid;
+
+          // Inject recovery prompt
+          const recoveryMsg: Message = {
+            role: 'user',
+            content:
+              'Output token limit hit. Resume directly — no apology, no recap. ' +
+              'Pick up mid-thought if that is where the cut happened. ' +
+              'Break remaining work into smaller pieces.',
+          };
+          state.appendToHistory(recoveryMsg);
+
+          // JSONL 持久化：确保 resume 时能恢复此 recovery prompt
+          const recoveryUserUuid = await saveUserMessage(
+            deps,
+            context,
+            recoveryMsg.content as string,
+            lastMessageUuid
+          );
+          if (recoveryUserUuid) lastMessageUuid = recoveryUserUuid;
+
+          continue; // Retry the turn
+        }
+
+        if (
+          recoveryAction.action === 'truncated' ||
+          recoveryAction.action === 'budget_stop'
+        ) {
+          // 截断：recovery 达上限或 budget 递减收益，标记截断并正常结束
+          // 必须将最终 assistant 消息写入 state，确保 writeback 时 context.messages 包含它
+          state.appendAssistant({
+            role: 'assistant',
+            content: turnResult.content || '',
+            reasoningContent: turnResult.reasoningContent,
+            tool_calls: turnResult.toolCalls,
+          });
+
+          const uuid = await saveAssistantMessage(
+            deps,
+            context,
+            turnResult.content || '',
+            lastMessageUuid
           );
           if (uuid) lastMessageUuid = uuid;
-        }
 
-        // 领域副作用 (via toolDomainPolicy)
-        const taskAction = await applyToolDomainEffects(
-          toolCall as FunctionToolCallRef,
-          result,
-          deps,
-        );
-        if (taskAction) {
-          yield taskAction;
-        }
-
-        // 添加工具结果到消息历史
-        if (result.success) {
-          recordToolSuccess(failureTracker, toolCall.function.name);
-        } else {
-          recordToolFailure(failureTracker, toolCall.function.name);
-        }
-
-        let toolResultContent = result.success
-          ? result.llmContent || ''
-          : formatToolError(toolCall.function.name, result.error);
-
-        if (!result.success) {
-          const cbHint = getCircuitBreakerHint(failureTracker, toolCall.function.name);
-          if (cbHint && typeof toolResultContent === 'string') {
-            toolResultContent = `${toolResultContent}\n\n${cbHint}`;
-          }
-        }
-        if (
-          typeof toolResultContent === 'object' &&
-          toolResultContent !== null
-        ) {
-          toolResultContent = JSON.stringify(toolResultContent, null, 2);
-        }
-
-        // Apply tool result budget — per-tool + per-message 截断
-        if (typeof toolResultContent === 'string') {
-          toolResultContent = applyToolResultBudget(
-            toolResultContent,
-            toolCall.function.name,
-            { messageBudget },
-          ) as string;
-        }
-
-        const finalContent =
-          typeof toolResultContent === 'string'
-            ? toolResultContent
-            : JSON.stringify(toolResultContent);
-        state.appendToolResult({
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          name: toolCall.function.name,
-          content: finalContent,
-        });
-
-        // shouldExitLoop 检查
-        if (result.metadata?.shouldExitLoop) {
-          const finalMessage =
-            typeof result.llmContent === 'string'
-              ? result.llmContent
-              : '循环已退出';
           return {
-            success: result.success,
-            finalMessage,
+            success: true,
+            finalMessage: turnResult.content,
             metadata: {
               turnsCount,
               toolCallsCount: allToolResults.length,
               duration: Date.now() - startTime,
-              shouldExitLoop: true,
-              targetMode: result.metadata?.targetMode,
-              planContent:
-                typeof result.metadata?.planContent === 'string'
-                  ? result.metadata.planContent
-                  : undefined,
+              tokensUsed: totalTokens,
+              outputTruncated: true,
             },
           };
         }
-      }
 
-      // 检查工具执行后的中断信号
-      if (options?.signal?.aborted) {
-        return makeAbortResult(turnsCount, allToolResults.length, startTime, options.signal);
-      }
+        if (turnResult.finishReason !== 'length') {
+          // Reset recovery counter on normal completion to prevent drift
+          maxOutputRecoveryCount = 0;
+        }
 
-      // 9. 检查轮次上限
-      if (turnsCount >= maxTurns && !isYoloMode) {
-        logger.info(`Warning: 达到轮次上限 ${maxTurns} 轮`);
-
-        if (options?.onTurnLimitReached) {
-          const response = await options.onTurnLimitReached({ turnsCount });
-
-          if (response?.continue) {
-            // 用户选择继续，压缩上下文
-            // 先同步 state 到 context，确保压缩读取到完整历史
-            state.writeback();
-            try {
-              const chatConfig = deps.chatService.getConfig();
-              const compactResult = await CompactionService.compact(
-                context.messages,
-                {
-                  trigger: 'auto',
-                  modelName: chatConfig.model,
-                  maxContextTokens:
-                    chatConfig.maxContextTokens ?? deps.config.maxContextTokens,
-                  apiKey: chatConfig.apiKey,
-                  baseURL: chatConfig.baseUrl,
-                  actualPreTokens: lastPromptTokens,
-                  signal: options?.signal,
-                }
-              );
-
-              context.messages = compactResult.compactedMessages;
-              state.replaceHistory(context.messages);
-
-              const continueMessage: Message = {
-                role: 'user',
-                content:
-                  'This session is being continued from a previous conversation. ' +
-                  'The conversation is summarized above.\n\n' +
-                  'Please continue the conversation from where we left it off without asking the user any further questions. ' +
-                  'Continue with the last task that you were asked to work on.',
-              };
-              state.appendToHistory(continueMessage);
-
-              // 保存压缩数据到 JSONL
-              await persistCompaction(deps, context, compactResult.summary, {
-                trigger: 'auto',
-                preTokens: compactResult.preTokens,
-                postTokens: compactResult.postTokens,
-                filesIncluded: compactResult.filesIncluded,
-              });
-            } catch (compactError) {
-              // 降级处理：保留最近 80 条消息
-              logger.error('[Loop] 压缩失败，使用降级策略:', compactError);
-              const currentHistory = state.getHistory();
-              const recentHistory = currentHistory.slice(-80);
-              state.replaceHistory(recentHistory);
-            }
-
-            turnsCount = 0;
+        // 5. 检查是否需要工具调用
+        if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
+          // Stale loop detection: if model repeats same output 3 times, inject warning
+          if (
+            turnResult.content &&
+            recordStaleOutput(staleDetector, turnResult.content)
+          ) {
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+            state.appendControl('user', {
+              role: 'user',
+              content: `\n\n<system-reminder>\n${getStaleLoopHint()}\n</system-reminder>`,
+            });
             continue;
           }
 
-          // 用户选择停止
+          // 意图未完成检测 (via completionPolicy)
+          const intentAction = checkIncompleteIntent(
+            turnResult.content,
+            incompleteIntentRetryCount
+          );
+
+          if (intentAction.action === 'retry') {
+            incompleteIntentRetryCount++;
+            // assistant 输出与 retry 控制消息必须走同一条 pending 队列，保证下一轮看到的时序正确
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+
+            // JSONL 持久化：确保 resume 时能恢复此 assistant 消息
+            const retryAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid
+            );
+            if (retryAssistantUuid) lastMessageUuid = retryAssistantUuid;
+
+            const retryMsg: Message = { role: 'user', content: intentAction.prompt };
+            state.appendControl('user', retryMsg);
+
+            // JSONL 持久化：确保 resume 时能恢复此 retry prompt
+            const retryUserUuid = await saveUserMessage(
+              deps,
+              context,
+              retryMsg.content as string,
+              lastMessageUuid
+            );
+            if (retryUserUuid) lastMessageUuid = retryUserUuid;
+
+            continue;
+          }
+
+          // 正常完成时归零 incompleteIntentRetryCount
+          incompleteIntentRetryCount = 0;
+
+          // Ralph Loop: Spec 未完成任务时自动继续
+          const ralphAction = await checkRalphLoop({
+            turnsCount,
+            maxTurns,
+          });
+          if (ralphAction.action === 'continue') {
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+
+            const ralphAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid
+            );
+            if (ralphAssistantUuid) lastMessageUuid = ralphAssistantUuid;
+
+            const ralphMsg: Message = {
+              role: 'user',
+              content: `\n\n<system-reminder>\n${ralphAction.reason}\n</system-reminder>`,
+            };
+            state.appendControl('user', ralphMsg);
+
+            const ralphUserUuid = await saveUserMessage(
+              deps,
+              context,
+              ralphMsg.content as string,
+              lastMessageUuid
+            );
+            if (ralphUserUuid) lastMessageUuid = ralphUserUuid;
+
+            continue;
+          }
+
+          // Stop Hook (via completionPolicy, with timeout)
+          const stopAction = await checkStopHook({
+            sessionId: context.sessionId,
+            permissionMode: context.permissionMode as PermissionMode,
+            reason: turnResult.content,
+            abortSignal: options?.signal,
+          });
+
+          if (stopAction.action === 'continue') {
+            // assistant 输出与 continue 控制消息必须走同一条 pending 队列，保证下一轮看到的时序正确
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+
+            // JSONL 持久化：确保 resume 时能恢复此 assistant 消息
+            const continueAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid
+            );
+            if (continueAssistantUuid) lastMessageUuid = continueAssistantUuid;
+
+            const continueMessage = stopAction.reason
+              ? `\n\n<system-reminder>\n${stopAction.reason}\n</system-reminder>`
+              : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
+            const continueMsg: Message = { role: 'user', content: continueMessage };
+            state.appendControl('user', continueMsg);
+
+            // JSONL 持久化：确保 resume 时能恢复此 continue prompt
+            const continueUserUuid = await saveUserMessage(
+              deps,
+              context,
+              continueMsg.content as string,
+              lastMessageUuid
+            );
+            if (continueUserUuid) lastMessageUuid = continueUserUuid;
+
+            continue;
+          }
+
+          // 保存助手最终响应到 JSONL
+          // 必须将最终 assistant 消息写入 state，确保 writeback 时 context.messages 包含它
+          state.appendAssistant({
+            role: 'assistant',
+            content: turnResult.content || '',
+            reasoningContent: turnResult.reasoningContent,
+          });
+
+          const uuid = await saveAssistantMessage(
+            deps,
+            context,
+            turnResult.content || '',
+            lastMessageUuid
+          );
+          if (uuid) lastMessageUuid = uuid;
+
           return {
             success: true,
-            finalMessage:
-              response?.reason || '已达到对话轮次上限，用户选择停止',
+            finalMessage: turnResult.content,
+            metadata: {
+              turnsCount,
+              toolCallsCount: allToolResults.length,
+              duration: Date.now() - startTime,
+              tokensUsed: totalTokens,
+              toolSuccessRate:
+                allToolResults.length > 0
+                  ? allToolResults.filter((r) => r.success).length /
+                    allToolResults.length
+                  : undefined,
+              totalToolFailures: failureTracker.totalFailures || undefined,
+            },
+          };
+        }
+
+        // 6. 添加 LLM 响应到消息历史
+        state.appendAssistant({
+          role: 'assistant',
+          content: turnResult.content || '',
+          reasoningContent: turnResult.reasoningContent,
+          tool_calls: turnResult.toolCalls,
+        });
+
+        // 保存助手工具调用请求到 JSONL
+        {
+          const uuid = await saveAssistantMessage(
+            deps,
+            context,
+            turnResult.content || '',
+            lastMessageUuid
+          );
+          if (uuid) lastMessageUuid = uuid;
+        }
+
+        // 7. 执行工具
+        if (options?.signal?.aborted) {
+          return makeAbortResult(
+            turnsCount,
+            allToolResults.length,
+            startTime,
+            options.signal
+          );
+        }
+
+        const functionCalls = turnResult.toolCalls.filter(
+          (tc) => tc.type === 'function'
+        );
+
+        // 使用 StreamingToolExecutor 或 Promise.all 执行工具
+        let executionResults: Array<{
+          toolCall: ToolCallRef;
+          result: import('../../tools/types/index.js').ToolResult;
+          toolUseUuid: string | null;
+          error?: Error;
+        }>;
+
+        if (streamingExecutor?.hasTools()) {
+          // 流式模式：工具已在流式中开始执行，收集结果
+          // tool_start 事件已在 processStreamResponse 中 yield
+          logger.debug(
+            `[Loop] 使用 StreamingToolExecutor 收集 ${functionCalls.length} 个工具结果`
+          );
+          executionResults = [];
+          for await (const execResult of streamingExecutor.getRemainingResults()) {
+            executionResults.push(execResult);
+          }
+        } else {
+          // 非流式模式或 fallback：传统 Promise.all 执行
+          // Yield tool_start 事件
+          for (const toolCall of functionCalls) {
+            const toolDef = registry.get(toolCall.function.name);
+            const toolKind = toolDef?.kind as
+              | 'readonly'
+              | 'write'
+              | 'execute'
+              | undefined;
+            yield {
+              kind: 'tool_start',
+              toolCall: toolCall as ToolCallRef,
+              toolKind,
+            };
+          }
+
+          // 并行执行所有工具
+          const executeToolCall = async (toolCall: (typeof functionCalls)[0]) => {
+            try {
+              const params = JSON.parse(toolCall.function.arguments);
+              if (
+                toolCall.function.name === 'Task' &&
+                (typeof params.subagent_session_id !== 'string' ||
+                  params.subagent_session_id.length === 0)
+              ) {
+                params.subagent_session_id =
+                  typeof params.resume === 'string' && params.resume.length > 0
+                    ? params.resume
+                    : nanoid();
+              }
+              let toolUseUuid: string | null = null;
+              toolUseUuid = await saveToolUse(
+                deps,
+                context,
+                toolCall.function.name,
+                params,
+                lastMessageUuid
+              );
+
+              const result = await deps.executionPipeline.execute(
+                toolCall.function.name,
+                params,
+                {
+                  sessionId: context.sessionId,
+                  userId: context.userId || 'default',
+                  workspaceRoot: context.workspaceRoot || getCwd(),
+                  signal: options?.signal,
+                  confirmationHandler: context.confirmationHandler,
+                  permissionMode: context.permissionMode,
+                  toolRegistry: registry,
+                  deferredToolManager: registry.deferredToolManager,
+                }
+              );
+              return { toolCall, result, toolUseUuid };
+            } catch (error) {
+              logger.error(
+                `Tool execution failed for ${toolCall.function.name}:`,
+                error
+              );
+              return {
+                toolCall,
+                result: {
+                  success: false,
+                  llmContent: '',
+                  error: {
+                    type: ToolErrorType.EXECUTION_ERROR,
+                    message: error instanceof Error ? error.message : 'Unknown error',
+                  },
+                  metadata: undefined,
+                } as import('../../tools/types/index.js').ToolResult,
+                toolUseUuid: null,
+                error: error instanceof Error ? error : new Error('Unknown error'),
+              };
+            }
+          };
+
+          executionResults = await Promise.all(functionCalls.map(executeToolCall));
+        }
+
+        // 8. 处理执行结果
+        const messageBudget = new MessageBudgetTracker();
+        for (const { toolCall: rawToolCall, result, toolUseUuid } of executionResults) {
+          // 安全断言：所有 toolCall 都是 function 类型
+          const toolCall = rawToolCall as {
+            id: string;
+            type: 'function';
+            function: { name: string; arguments: string };
+          };
+          allToolResults.push(result);
+
+          // 如果工具未实际执行就被 abort（如排队工具 skip、确认阶段 abort），
+          // 跳过 yield/持久化/appendToolResult，避免在历史中留下无意义的失败记录。
+          // 注意：只检查 abortedBeforeLaunch，不会误伤正常的 shouldExitLoop 结果
+          // （如 ExitPlanModeTool 带 targetMode/planContent 的合法退出）。
+          if (result.metadata?.abortedBeforeLaunch) {
+            return makeAbortResult(
+              turnsCount,
+              allToolResults.length,
+              startTime,
+              options?.signal
+            );
+          }
+
+          // Yield tool_result 事件
+          yield {
+            kind: 'tool_result',
+            toolCall: toolCall as ToolCallRef,
+            result,
+          };
+
+          // 保存 tool_result 到 JSONL (via conversationPersistence)
+          {
+            const metadata =
+              result.metadata && typeof result.metadata === 'object'
+                ? (result.metadata as Record<string, unknown>)
+                : undefined;
+            const isSubagentStatus = (
+              value: unknown
+            ): value is 'running' | 'completed' | 'failed' | 'cancelled' =>
+              value === 'running' ||
+              value === 'completed' ||
+              value === 'failed' ||
+              value === 'cancelled';
+            const subagentStatus = isSubagentStatus(metadata?.subagentStatus)
+              ? metadata.subagentStatus
+              : 'completed';
+            const subagentRef =
+              metadata && typeof metadata.subagentSessionId === 'string'
+                ? {
+                    subagentSessionId: metadata.subagentSessionId,
+                    subagentType:
+                      typeof metadata.subagentType === 'string'
+                        ? metadata.subagentType
+                        : toolCall.function.name,
+                    subagentStatus,
+                    subagentSummary:
+                      typeof metadata.subagentSummary === 'string'
+                        ? metadata.subagentSummary
+                        : undefined,
+                  }
+                : undefined;
+            const uuid = await persistToolResult(
+              deps,
+              context,
+              toolCall.id,
+              toolCall.function.name,
+              result.success ? toJsonValue(result.llmContent) : null,
+              toolUseUuid,
+              result.success ? undefined : result.error?.message,
+              subagentRef
+            );
+            if (uuid) lastMessageUuid = uuid;
+          }
+
+          // 领域副作用 (via toolDomainPolicy)
+          const taskAction = await applyToolDomainEffects(
+            toolCall as FunctionToolCallRef,
+            result,
+            deps
+          );
+          if (taskAction) {
+            yield taskAction;
+          }
+
+          // 添加工具结果到消息历史
+          if (result.success) {
+            recordToolSuccess(failureTracker, toolCall.function.name);
+          } else {
+            recordToolFailure(failureTracker, toolCall.function.name);
+          }
+
+          let toolResultContent = result.success
+            ? result.llmContent || ''
+            : formatToolError(toolCall.function.name, result.error);
+
+          if (!result.success) {
+            const cbHint = getCircuitBreakerHint(
+              failureTracker,
+              toolCall.function.name
+            );
+            if (cbHint && typeof toolResultContent === 'string') {
+              toolResultContent = `${toolResultContent}\n\n${cbHint}`;
+            }
+          }
+          if (typeof toolResultContent === 'object' && toolResultContent !== null) {
+            toolResultContent = JSON.stringify(toolResultContent, null, 2);
+          }
+
+          // Apply tool result budget — per-tool + per-message 截断
+          if (typeof toolResultContent === 'string') {
+            toolResultContent = applyToolResultBudget(
+              toolResultContent,
+              toolCall.function.name,
+              { messageBudget }
+            ) as string;
+          }
+
+          const finalContent =
+            typeof toolResultContent === 'string'
+              ? toolResultContent
+              : JSON.stringify(toolResultContent);
+          state.appendToolResult({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: toolCall.function.name,
+            content: finalContent,
+          });
+
+          // shouldExitLoop 检查
+          if (result.metadata?.shouldExitLoop) {
+            const finalMessage =
+              typeof result.llmContent === 'string' ? result.llmContent : '循环已退出';
+            return {
+              success: result.success,
+              finalMessage,
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                shouldExitLoop: true,
+                targetMode: result.metadata?.targetMode,
+                planContent:
+                  typeof result.metadata?.planContent === 'string'
+                    ? result.metadata.planContent
+                    : undefined,
+              },
+            };
+          }
+        }
+
+        // 检查工具执行后的中断信号
+        if (options?.signal?.aborted) {
+          return makeAbortResult(
+            turnsCount,
+            allToolResults.length,
+            startTime,
+            options.signal
+          );
+        }
+
+        // 9. 检查轮次上限
+        if (turnsCount >= maxTurns && !isYoloMode) {
+          logger.info(`Warning: 达到轮次上限 ${maxTurns} 轮`);
+
+          if (options?.onTurnLimitReached) {
+            const response = await options.onTurnLimitReached({ turnsCount });
+
+            if (response?.continue) {
+              // 用户选择继续，压缩上下文
+              // 先同步 state 到 context，确保压缩读取到完整历史
+              state.writeback();
+              try {
+                const chatConfig = deps.chatService.getConfig();
+                const compactResult = await CompactionService.compact(
+                  context.messages,
+                  {
+                    trigger: 'auto',
+                    modelName: chatConfig.model,
+                    maxContextTokens:
+                      chatConfig.maxContextTokens ?? deps.config.maxContextTokens,
+                    apiKey: chatConfig.apiKey,
+                    baseURL: chatConfig.baseUrl,
+                    actualPreTokens: lastPromptTokens,
+                    signal: options?.signal,
+                  }
+                );
+
+                context.messages = compactResult.compactedMessages;
+                state.replaceHistory(context.messages);
+
+                const continueMessage: Message = {
+                  role: 'user',
+                  content:
+                    'This session is being continued from a previous conversation. ' +
+                    'The conversation is summarized above.\n\n' +
+                    'Please continue the conversation from where we left it off without asking the user any further questions. ' +
+                    'Continue with the last task that you were asked to work on.',
+                };
+                state.appendToHistory(continueMessage);
+
+                // 保存压缩数据到 JSONL
+                await persistCompaction(deps, context, compactResult.summary, {
+                  trigger: 'auto',
+                  preTokens: compactResult.preTokens,
+                  postTokens: compactResult.postTokens,
+                  filesIncluded: compactResult.filesIncluded,
+                });
+              } catch (compactError) {
+                // 降级处理：保留最近 80 条消息
+                logger.error('[Loop] 压缩失败，使用降级策略:', compactError);
+                const currentHistory = state.getHistory();
+                const recentHistory = currentHistory.slice(-80);
+                state.replaceHistory(recentHistory);
+              }
+
+              turnsCount = 0;
+              continue;
+            }
+
+            // 用户选择停止
+            return {
+              success: true,
+              finalMessage: response?.reason || '已达到对话轮次上限，用户选择停止',
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+              },
+            };
+          }
+
+          // 非交互模式
+          return {
+            success: false,
+            error: {
+              type: 'max_turns_exceeded',
+              message: `已达到轮次上限 (${maxTurns} 轮)。使用 --permission-mode yolo 跳过此限制。`,
+            },
             metadata: {
               turnsCount,
               toolCallsCount: allToolResults.length,
@@ -1312,38 +1416,31 @@ export async function* executeLoopGenerator(
           };
         }
 
-        // 非交互模式
-        return {
-          success: false,
-          error: {
-            type: 'max_turns_exceeded',
-            message: `已达到轮次上限 (${maxTurns} 轮)。使用 --permission-mode yolo 跳过此限制。`,
-          },
-          metadata: {
-            turnsCount,
-            toolCallsCount: allToolResults.length,
-            duration: Date.now() - startTime,
-            tokensUsed: totalTokens,
-          },
-        };
+        // 继续下一轮循环...
       }
-
-      // 继续下一轮循环...
-    }
     } finally {
       // 确保所有退出路径都将消息回写到 context.messages
       state.writeback();
     }
   } catch (error) {
     if (isAbortError(error)) {
-      return makeAbortResult(turnsCount, allToolResults.length, startTime, options?.signal);
+      return makeAbortResult(
+        turnsCount,
+        allToolResults.length,
+        startTime,
+        options?.signal
+      );
     }
     const friendlyMessage = extractApiErrorMessage(error);
     logger.error(`API 调用失败: ${friendlyMessage}`);
     return {
       success: false,
       error: { type: 'api_error', message: friendlyMessage, details: error },
-      metadata: { turnsCount, toolCallsCount: allToolResults.length, duration: Date.now() - startTime },
+      metadata: {
+        turnsCount,
+        toolCallsCount: allToolResults.length,
+        duration: Date.now() - startTime,
+      },
     };
   }
 }

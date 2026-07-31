@@ -19,7 +19,11 @@ import { ProviderRoutes } from './routes/provider.js';
 import { SessionRoutes } from './routes/session.js';
 import { SkillsRoutes } from './routes/skills.js';
 import { SuggestionsRoutes } from './routes/suggestions.js';
-import { setupNodeWebSocket, TerminalRoutes, terminalWebSocket } from './routes/terminal.js';
+import {
+  setupNodeWebSocket,
+  TerminalRoutes,
+  terminalWebSocket,
+} from './routes/terminal.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -39,7 +43,7 @@ type Variables = {
 
 function getWebDistPath(): string | null {
   const currentDir = dirname(fileURLToPath(import.meta.url));
-  
+
   const possiblePaths = [
     join(currentDir, 'web'),
     join(getCwd(), 'dist/web'),
@@ -65,16 +69,16 @@ function createApp(): Hono<{ Variables: Variables }> {
 
   app.onError((err, c) => {
     logger.error('[Server] Request error:', err);
-    
+
     if (err instanceof BladeServerError) {
-      return c.json(err.toObject(), err.statusCode as 400 | 401 | 403 | 404 | 409 | 500);
+      return c.json(
+        err.toObject(),
+        err.statusCode as 400 | 401 | 403 | 404 | 409 | 500
+      );
     }
-    
+
     const message = err instanceof Error ? err.message : String(err);
-    return c.json(
-      { error: { code: 'INTERNAL_ERROR', message } },
-      500
-    );
+    return c.json({ error: { code: 'INTERNAL_ERROR', message } }, 500);
   });
 
   app.use(async (c, next) => {
@@ -84,39 +88,56 @@ function createApp(): Hono<{ Variables: Variables }> {
     }
 
     const path = c.req.path;
-    if (path === '/' || path.startsWith('/assets/') || path.endsWith('.html') || path.endsWith('.js') || path.endsWith('.css')) {
+    if (
+      path === '/' ||
+      path.startsWith('/assets/') ||
+      path.endsWith('.html') ||
+      path.endsWith('.js') ||
+      path.endsWith('.css')
+    ) {
       return next();
     }
 
     const auth = c.req.header('Authorization');
     if (!auth?.startsWith('Basic ')) {
       c.header('WWW-Authenticate', 'Basic realm="Blade Server"');
-      return c.json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } }, 401);
+      return c.json(
+        { error: { code: 'UNAUTHORIZED', message: 'Authentication required' } },
+        401
+      );
     }
 
     const credentials = Buffer.from(auth.slice(6), 'base64').toString();
     const [username, pwd] = credentials.split(':');
     const expectedUsername = process.env.BLADE_SERVER_USERNAME ?? 'blade';
-    
+
     if (username !== expectedUsername || pwd !== password) {
-      return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid credentials' } }, 401);
+      return c.json(
+        { error: { code: 'UNAUTHORIZED', message: 'Invalid credentials' } },
+        401
+      );
     }
 
     return next();
   });
 
   app.use(async (c, next) => {
-    const skipLogging = c.req.path === '/health' || c.req.path === '/global/health' || c.req.path.startsWith('/assets/');
+    const skipLogging =
+      c.req.path === '/health' ||
+      c.req.path === '/global/health' ||
+      c.req.path.startsWith('/assets/');
     if (!skipLogging) {
       logger.debug(`[Server] ${c.req.method} ${c.req.path}`);
     }
-    
+
     const start = Date.now();
     await next();
-    
+
     if (!skipLogging) {
       const duration = Date.now() - start;
-      logger.debug(`[Server] ${c.req.method} ${c.req.path} - ${c.res.status} (${duration}ms)`);
+      logger.debug(
+        `[Server] ${c.req.method} ${c.req.path} - ${c.res.status} (${duration}ms)`
+      );
     }
   });
 
@@ -124,20 +145,22 @@ function createApp(): Hono<{ Variables: Variables }> {
     cors({
       origin(origin) {
         if (!origin) return undefined;
-        
+
         if (origin.startsWith('http://localhost:')) return origin;
         if (origin.startsWith('http://127.0.0.1:')) return origin;
-        if (origin === 'tauri://localhost' || origin === 'http://tauri.localhost') return origin;
-        
+        if (origin === 'tauri://localhost' || origin === 'http://tauri.localhost')
+          return origin;
+
         if (corsWhitelist.includes(origin)) return origin;
-        
+
         return undefined;
       },
     })
   );
 
   app.use(async (c, next) => {
-    let directory = c.req.query('directory') || c.req.header('x-blade-directory') || getCwd();
+    let directory =
+      c.req.query('directory') || c.req.header('x-blade-directory') || getCwd();
     try {
       directory = decodeURIComponent(directory);
     } catch {
@@ -163,20 +186,23 @@ function createApp(): Hono<{ Variables: Variables }> {
   });
 
   const webDistPath = getWebDistPath();
-  
+
   if (webDistPath) {
     logger.info(`[Server] Serving static files from ${webDistPath}`);
-    
+
     app.get('/assets/*', (c) => {
       const filePath = join(webDistPath, c.req.path);
-      
+
       if (!existsSync(filePath)) {
-        return c.json({ error: { code: 'NOT_FOUND', message: `File not found: ${c.req.path}` } }, 404);
+        return c.json(
+          { error: { code: 'NOT_FOUND', message: `File not found: ${c.req.path}` } },
+          404
+        );
       }
-      
+
       const content = readFileSync(filePath);
       const ext = extname(filePath).toLowerCase();
-      
+
       const mimeTypes: Record<string, string> = {
         '.js': 'application/javascript',
         '.css': 'text/css',
@@ -193,9 +219,9 @@ function createApp(): Hono<{ Variables: Variables }> {
         '.ttf': 'font/ttf',
         '.eot': 'application/vnd.ms-fontobject',
       };
-      
+
       const contentType = mimeTypes[ext] || 'application/octet-stream';
-      
+
       return new Response(content, {
         headers: {
           'Content-Type': contentType,
@@ -203,7 +229,7 @@ function createApp(): Hono<{ Variables: Variables }> {
         },
       });
     });
-    
+
     app.get('/', (c) => {
       const indexPath = join(webDistPath, 'index.html');
       const html = readFileSync(indexPath, 'utf-8');
@@ -212,21 +238,23 @@ function createApp(): Hono<{ Variables: Variables }> {
 
     app.get('*', (c) => {
       const path = c.req.path;
-      
+
       if (path.includes('.')) {
         return c.json(
           { error: { code: 'NOT_FOUND', message: `File not found: ${path}` } },
           404
         );
       }
-      
+
       const indexPath = join(webDistPath, 'index.html');
       const html = readFileSync(indexPath, 'utf-8');
       return c.html(html);
     });
   } else {
-    logger.warn('[Server] Web UI not found. Run "cd packages/cli/web && bun run build" to enable web interface.');
-    
+    logger.warn(
+      '[Server] Web UI not found. Run "cd packages/cli/web && bun run build" to enable web interface.'
+    );
+
     app.get('/', (c) => {
       return c.json({
         message: 'Blade API Server',
@@ -319,8 +347,9 @@ function startWithBun(
     }
   };
 
-  const server = opts.port === 0 ? (tryServe(4096) ?? tryServe(0)) : tryServe(opts.port);
-  
+  const server =
+    opts.port === 0 ? (tryServe(4096) ?? tryServe(0)) : tryServe(opts.port);
+
   if (!server) {
     throw new Error(`Failed to start Bun server on port ${opts.port}`);
   }
@@ -399,7 +428,11 @@ function startWithNode(
       } catch (error) {
         logger.error('[Server] Node request error:', error);
         res.statusCode = 500;
-        res.end(JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } }));
+        res.end(
+          JSON.stringify({
+            error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
+          })
+        );
       }
     });
 
@@ -453,7 +486,9 @@ function startWithNode(
         actualPort = await tryListen(opts.port);
       }
 
-      const url = new URL(`http://${opts.hostname === '0.0.0.0' ? 'localhost' : opts.hostname}:${actualPort}`);
+      const url = new URL(
+        `http://${opts.hostname === '0.0.0.0' ? 'localhost' : opts.hostname}:${actualPort}`
+      );
 
       resolve({
         url,
@@ -491,11 +526,13 @@ export namespace BladeServer {
 
     if (isBunRuntime()) {
       serverHandle = startWithBun(honoApp, opts);
-      logger.info(`[Server] Blade server listening on ${serverHandle.url} (Bun runtime)`);
+      logger.info(
+        `[Server] Blade server listening on ${serverHandle.url} (Bun runtime)`
+      );
     } else {
       throw new Error(
         'Blade web server requires Bun runtime. ' +
-        'Please run with Bun: `bun run blade web` or install Bun from https://bun.sh'
+          'Please run with Bun: `bun run blade web` or install Bun from https://bun.sh'
       );
     }
 
@@ -523,10 +560,14 @@ export namespace BladeServer {
 
     if (isBunRuntime()) {
       serverHandle = startWithBun(honoApp, opts);
-      logger.info(`[Server] Blade server listening on ${serverHandle.url} (Bun runtime)`);
+      logger.info(
+        `[Server] Blade server listening on ${serverHandle.url} (Bun runtime)`
+      );
     } else {
       serverHandle = await startWithNode(honoApp, opts);
-      logger.info(`[Server] Blade server listening on ${serverHandle.url} (Node.js runtime)`);
+      logger.info(
+        `[Server] Blade server listening on ${serverHandle.url} (Node.js runtime)`
+      );
     }
 
     const handle = serverHandle;

@@ -127,9 +127,7 @@ export class JSONLStore {
    * @param predicate 过滤条件
    * @returns 符合条件的 JSONL 条目数组
    */
-  async filter(
-    predicate: (entry: SessionEvent) => boolean
-  ): Promise<SessionEvent[]> {
+  async filter(predicate: (entry: SessionEvent) => boolean): Promise<SessionEvent[]> {
     const results: SessionEvent[] = [];
     await this.readStream((entry) => {
       if (predicate(entry)) {
@@ -214,4 +212,3 @@ export class JSONLStore {
     return this.filePath;
   }
 }
-
