@@ -105,6 +105,10 @@ export class ConfigManager {
         }
       }
 
+      if (process.env.BLADE_DEBUG) {
+        config.debug = process.env.BLADE_DEBUG === '1' || process.env.BLADE_DEBUG === 'true' || process.env.BLADE_DEBUG;
+      }
+
       if (config.debug) {
         console.log('[ConfigManager] Configuration loaded successfully');
       }
