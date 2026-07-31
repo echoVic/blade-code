@@ -1,5 +1,6 @@
 const MAX_CONSECUTIVE_FAILURES = 3;
 const REFLECTION_TURN_INTERVAL = 5;
+const STALE_LOOP_THRESHOLD = 3;
 
 export interface ToolFailureTracker {
   consecutiveFailures: Map<string, number>;
@@ -61,4 +62,44 @@ export function getReflectionPrompt(turnCount: number, totalFailures: number): s
   }
 
   return parts.join('\n');
+}
+
+// ===== Stale Loop Detection =====
+
+export interface StaleLoopDetector {
+  recentOutputHashes: string[];
+}
+
+export function createStaleLoopDetector(): StaleLoopDetector {
+  return { recentOutputHashes: [] };
+}
+
+function simpleHash(str: string): string {
+  const normalized = str.trim().slice(0, 500);
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    hash = ((hash << 5) - hash + normalized.charCodeAt(i)) | 0;
+  }
+  return hash.toString(36);
+}
+
+export function recordOutput(detector: StaleLoopDetector, content: string): boolean {
+  const hash = simpleHash(content);
+  detector.recentOutputHashes.push(hash);
+  if (detector.recentOutputHashes.length > STALE_LOOP_THRESHOLD + 1) {
+    detector.recentOutputHashes.shift();
+  }
+
+  if (detector.recentOutputHashes.length < STALE_LOOP_THRESHOLD) return false;
+
+  const lastN = detector.recentOutputHashes.slice(-STALE_LOOP_THRESHOLD);
+  return lastN.every((h) => h === lastN[0]);
+}
+
+export function getStaleLoopHint(): string {
+  return (
+    'WARNING: You appear to be repeating the same output. ' +
+    'Stop and try a fundamentally different approach. ' +
+    'If the task cannot be completed, explain why and stop.'
+  );
 }

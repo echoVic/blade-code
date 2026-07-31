@@ -48,9 +48,12 @@ import {
 } from './conversationPersistence.js';
 import { ConversationState } from './ConversationState.js';
 import {
+  createStaleLoopDetector,
   createToolFailureTracker,
   getCircuitBreakerHint,
   getReflectionPrompt,
+  getStaleLoopHint,
+  recordOutput as recordStaleOutput,
   recordToolFailure,
   recordToolSuccess,
   shouldInjectReflection,
@@ -501,6 +504,7 @@ export async function* executeLoopGenerator(
     rawTools = injectSkillsMetadata(rawTools);
     const tools = deps.applySkillToolRestrictions(rawTools);
     const failureTracker = createToolFailureTracker();
+    const staleDetector = createStaleLoopDetector();
 
     // 1.5 注入 deferred tools listing 到系统提示
     let finalSystemPrompt = systemPrompt;
@@ -797,6 +801,20 @@ export async function* executeLoopGenerator(
 
       // 5. 检查是否需要工具调用
       if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
+        // Stale loop detection: if model repeats same output 3 times, inject warning
+        if (turnResult.content && recordStaleOutput(staleDetector, turnResult.content)) {
+          state.appendAssistant({
+            role: 'assistant',
+            content: turnResult.content || '',
+            reasoningContent: turnResult.reasoningContent,
+          });
+          state.appendControl('user', {
+            role: 'user',
+            content: `\n\n<system-reminder>\n${getStaleLoopHint()}\n</system-reminder>`,
+          });
+          continue;
+        }
+
         // 意图未完成检测 (via completionPolicy)
         const intentAction = checkIncompleteIntent(
           turnResult.content,

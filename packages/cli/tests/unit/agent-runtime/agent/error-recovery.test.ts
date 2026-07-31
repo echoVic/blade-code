@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createStaleLoopDetector,
   createToolFailureTracker,
   getCircuitBreakerHint,
   getReflectionPrompt,
+  getStaleLoopHint,
   isToolCircuitBroken,
+  recordOutput,
   recordToolFailure,
   recordToolSuccess,
   shouldInjectReflection,
@@ -108,6 +111,42 @@ describe('errorRecovery', () => {
     it('does not include failure note when totalFailures <= 3', () => {
       const prompt = getReflectionPrompt(5, 2);
       expect(prompt).not.toContain('tool failures');
+    });
+  });
+
+  describe('StaleLoopDetector', () => {
+    it('starts clean and does not trigger on first outputs', () => {
+      const detector = createStaleLoopDetector();
+      expect(recordOutput(detector, 'hello')).toBe(false);
+      expect(recordOutput(detector, 'world')).toBe(false);
+    });
+
+    it('triggers when same output appears 3 times consecutively', () => {
+      const detector = createStaleLoopDetector();
+      expect(recordOutput(detector, 'stuck')).toBe(false);
+      expect(recordOutput(detector, 'stuck')).toBe(false);
+      expect(recordOutput(detector, 'stuck')).toBe(true);
+    });
+
+    it('does not trigger if outputs differ', () => {
+      const detector = createStaleLoopDetector();
+      recordOutput(detector, 'a');
+      recordOutput(detector, 'b');
+      expect(recordOutput(detector, 'c')).toBe(false);
+    });
+
+    it('resets when a different output breaks the sequence', () => {
+      const detector = createStaleLoopDetector();
+      recordOutput(detector, 'stuck');
+      recordOutput(detector, 'stuck');
+      recordOutput(detector, 'different');
+      expect(recordOutput(detector, 'stuck')).toBe(false);
+    });
+
+    it('getStaleLoopHint returns a warning message', () => {
+      const hint = getStaleLoopHint();
+      expect(hint).toContain('repeating');
+      expect(hint).toContain('different approach');
     });
   });
 });
