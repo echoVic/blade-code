@@ -1,8 +1,6 @@
 import * as os from 'os';
 import * as path from 'path';
-import { getCwd } from '../../utils/cwd.js';
-import { ConfigManager, type BladeConfig, type PermissionConfig } from '../../config/index.js';
-import { PermissionMode } from '../../config/index.js';
+import { type BladeConfig, ConfigManager, type PermissionConfig, PermissionMode } from '../../config/index.js';
 import type { ModelConfig } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { loadMcpConfigFromCli } from '../../mcp/loadMcpConfig.js';
@@ -27,10 +25,11 @@ import { getBuiltinTools } from '../../tools/builtin/index.js';
 import { ExecutionPipeline } from '../../tools/execution/ExecutionPipeline.js';
 import { InMemorySessionApprovalStore } from '../../tools/execution/SessionApprovalStore.js';
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
+import { getCwd } from '../../utils/cwd.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
-import type { AgentOptions } from '../types.js';
 import { subagentRegistry } from '../subagents/SubagentRegistry.js';
+import type { AgentOptions } from '../types.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -225,11 +224,13 @@ export class SessionRuntime {
       temperature: modelConfig.temperature ?? this.config.temperature,
       maxContextTokens: this.currentModelMaxContextTokens,
       maxOutputTokens: modelConfig.maxOutputTokens ?? this.config.maxOutputTokens,
-      timeout: this.config.timeout,
+      timeout: modelConfig.timeout ?? this.config.timeout,
       supportsThinking,
       thinkingBudget: modelConfig.thinkingBudget,
       fallbackModels: modelConfig.fallbackModels,
       enablePromptCaching: modelConfig.enablePromptCaching,
+      customHeaders: modelConfig.customHeaders,
+      apiVersion: modelConfig.apiVersion,
     });
 
     const contextManager = this.executionEngine?.getContextManager();

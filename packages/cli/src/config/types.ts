@@ -68,6 +68,8 @@ export interface ModelConfig {
   projectId?: string;
   fallbackModels?: string[];
   enablePromptCaching?: boolean;
+  customHeaders?: Record<string, string>;
+  timeout?: number;
 }
 
 import { UiTheme } from '@/api/schemas.js';

@@ -172,11 +172,13 @@ export class Agent {
       temperature: modelConfig.temperature ?? this.config.temperature,
       maxContextTokens: this.currentModelMaxContextTokens,
       maxOutputTokens: modelConfig.maxOutputTokens ?? this.config.maxOutputTokens,
-      timeout: this.config.timeout,
+      timeout: modelConfig.timeout ?? this.config.timeout,
       supportsThinking,
       thinkingBudget: modelConfig.thinkingBudget,
       fallbackModels: modelConfig.fallbackModels,
       enablePromptCaching: modelConfig.enablePromptCaching,
+      customHeaders: modelConfig.customHeaders,
+      apiVersion: modelConfig.apiVersion,
     });
 
     const contextManager = this.executionEngine?.getContextManager();
