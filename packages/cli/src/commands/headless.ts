@@ -320,7 +320,7 @@ function extractToolTarget(
     case 'WebSearch':
       return stringParam('query');
     case 'Bash':
-      return stringParam('description', 'command');
+      return stringParam('command', 'description');
     case 'Task':
       return stringParam('description');
     case 'LSP':

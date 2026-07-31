@@ -377,6 +377,24 @@ function executeInBackground(
   };
 }
 
+function formatCommandFailure(
+  exitCode: number | null,
+  signal: NodeJS.Signals | null | undefined,
+  stdout: string,
+  stderr: string
+): string {
+  const reason =
+    exitCode === null
+      ? `Command terminated${signal ? ` by signal ${signal}` : ''}`
+      : `Command exited with code ${exitCode}`;
+  const diagnostics = [
+    stderr ? `stderr:\n${stderr}` : '',
+    stdout ? `stdout:\n${stdout}` : '',
+  ].filter(Boolean);
+
+  return diagnostics.length > 0 ? `${reason}\n${diagnostics.join('\n')}` : reason;
+}
+
 /**
  * 使用 ACP 终端服务执行命令
  * 通过 IDE 的终端执行命令，支持更好的 IDE 集成体验
@@ -471,15 +489,30 @@ async function executeWithAcpTerminal(
       command
     );
 
+    const llmContent = {
+      stdout: truncated.stdout,
+      stderr: truncated.stderr,
+      execution_time: executionTime,
+      exit_code: result.exitCode,
+      ...(truncated.truncationInfo && { truncation_info: truncated.truncationInfo }),
+    };
+
     return {
       success: result.success,
-      llmContent: {
-        stdout: truncated.stdout,
-        stderr: truncated.stderr,
-        execution_time: executionTime,
-        exit_code: result.exitCode,
-        ...(truncated.truncationInfo && { truncation_info: truncated.truncationInfo }),
-      },
+      llmContent,
+      ...(result.success
+        ? {}
+        : {
+            error: {
+              type: ToolErrorType.EXECUTION_ERROR,
+              message: formatCommandFailure(
+                result.exitCode,
+                undefined,
+                truncated.stdout,
+                truncated.stderr
+              ),
+            },
+          }),
       metadata,
     };
   } catch (error) {
@@ -675,18 +708,34 @@ async function executeWithTimeout(
         command
       );
 
+      const llmContent = {
+        stdout: truncated.stdout,
+        stderr: truncated.stderr,
+        execution_time: executionTime,
+        exit_code: code,
+        signal: sig,
+        ...(truncated.truncationInfo && {
+          truncation_info: truncated.truncationInfo,
+        }),
+      };
+      const success = code === 0;
+
       resolve({
-        success: true,
-        llmContent: {
-          stdout: truncated.stdout,
-          stderr: truncated.stderr,
-          execution_time: executionTime,
-          exit_code: code,
-          signal: sig,
-          ...(truncated.truncationInfo && {
-            truncation_info: truncated.truncationInfo,
-          }),
-        },
+        success,
+        llmContent,
+        ...(success
+          ? {}
+          : {
+              error: {
+                type: ToolErrorType.EXECUTION_ERROR,
+                message: formatCommandFailure(
+                  code,
+                  sig,
+                  truncated.stdout,
+                  truncated.stderr
+                ),
+              },
+            }),
         metadata,
       });
     });

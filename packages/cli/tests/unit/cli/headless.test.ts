@@ -185,7 +185,10 @@ describe('headless runner', () => {
             type: 'function',
             function: {
               name: 'Bash',
-              arguments: JSON.stringify({ command: 'npm test' }),
+              arguments: JSON.stringify({
+                command: 'npm test',
+                description: 'Run failing tests',
+              }),
             },
           },
           result: {
@@ -267,6 +270,7 @@ describe('headless runner', () => {
           type: 'tool_result',
           event_version: 1,
           tool_name: 'Bash',
+          target: 'npm test',
           success: false,
           error_type: 'execution_error',
           error_message: 'Command exited with code 1',

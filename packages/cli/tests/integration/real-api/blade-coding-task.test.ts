@@ -314,6 +314,19 @@ function createMultiFileTaskPrompt(): string {
   ].join('\n');
 }
 
+function createFailureRecoveryPrompt(): string {
+  return [
+    'Work on this repository as a coding agent.',
+    'Inspect src/math.js and the existing test before editing.',
+    'This is an audited recovery workflow: before any edit, run npm test once and observe its failing result.',
+    'Do not infer the expected failure from source alone; editing before the failed npm test result makes the task invalid.',
+    'Then fix add(left, right) with the smallest production-code change.',
+    'Run npm test again after the edit and only finish when it passes.',
+    'Modify only src/math.js; do not change package.json, tests, or add files.',
+    'In the final response, report the reproduced failure and the passing rerun.',
+  ].join('\n');
+}
+
 const enabled = isRealApiTestEnabled() && apiKey.length > 0;
 
 describe.skipIf(!enabled)('Blade coding task (real API)', () => {
@@ -495,6 +508,81 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
             0
           );
         }
+        expect(result.stdout + '\n' + result.stderr).not.toContain(apiKey);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 420_000);
+
+    it('recovers from a reproduced test failure and verifies the fix', async () => {
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          'Missing built CLI; run "bun run build:cli" before real API tests'
+        );
+      }
+
+      const workspace = createCodingTaskWorkspace();
+      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-recovery-home-'));
+
+      try {
+        const result = await runBladeInvocation(workspace, home, model, {
+          prompt: createFailureRecoveryPrompt(),
+          maxTurns: 14,
+        });
+        const parsed = parseHeadlessJsonl(result.stdout);
+        const isNpmTestResult = (
+          event: (typeof parsed.events)[number]
+        ): event is Extract<(typeof parsed.events)[number], { type: 'tool_result' }> =>
+          event.type === 'tool_result' &&
+          event.tool_name === 'Bash' &&
+          (event.target?.includes('npm test') ?? false);
+        const firstFailure = parsed.events.findIndex(
+          (event) => isNpmTestResult(event) && event.success === false
+        );
+        const firstEdit = parsed.events.findIndex(
+          (event) => event.type === 'tool_start' && event.tool_name === 'Edit'
+        );
+        const passingRerun = parsed.events.findIndex(
+          (event, index) =>
+            index > firstFailure && isNpmTestResult(event) && event.success === true
+        );
+        const diffNames = execFileSync('git', ['diff', '--name-only'], {
+          cwd: workspace,
+          encoding: 'utf8',
+        })
+          .trim()
+          .split(/\r?\n/)
+          .filter(Boolean);
+
+        expect(result.error).toBeUndefined();
+        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(parsed.nonJsonLines).toEqual([]);
+        expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
+        const eventSummary = parsed.events
+          .filter(
+            (event) => event.type === 'tool_start' || event.type === 'tool_result'
+          )
+          .map((event) =>
+            event.type === 'tool_start'
+              ? `start:${event.tool_name}:${event.target ?? ''}`
+              : `result:${event.tool_name}:${event.target ?? ''}:${String(event.success)}`
+          )
+          .join(' | ');
+        expect(firstFailure, eventSummary).toBeGreaterThanOrEqual(0);
+        expect(firstEdit, eventSummary).toBeGreaterThan(firstFailure);
+        expect(passingRerun, eventSummary).toBeGreaterThan(firstFailure);
+        expect(passingRerun, eventSummary).toBeGreaterThan(firstEdit);
+        expect(diffNames).toEqual(['src/math.js']);
+        expect(readFileSync(path.join(workspace, 'src', 'math.js'), 'utf8')).toContain(
+          'return left + right;'
+        );
+
+        const verification = spawnSync('npm', ['test', '--', '--test-reporter=dot'], {
+          cwd: workspace,
+          encoding: 'utf8',
+        });
+        expect(verification.status, verification.stderr || verification.stdout).toBe(0);
         expect(result.stdout + '\n' + result.stderr).not.toContain(apiKey);
       } finally {
         rmSync(workspace, { recursive: true, force: true });
