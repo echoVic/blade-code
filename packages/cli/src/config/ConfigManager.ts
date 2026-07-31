@@ -83,6 +83,14 @@ export class ConfigManager {
       // 4. 解析环境变量插值
       this.resolveEnvInterpolation(config);
 
+      // 5. 环境变量覆盖
+      if (process.env.BLADE_MODEL && config.models?.length > 0) {
+        const envModel = config.models.find((m) => m.id === process.env.BLADE_MODEL || m.model === process.env.BLADE_MODEL);
+        if (envModel) {
+          config.currentModelId = envModel.id;
+        }
+      }
+
       if (config.debug) {
         console.log('[ConfigManager] Configuration loaded successfully');
       }
