@@ -17,6 +17,7 @@ export interface EnvironmentInfo {
 
 export interface EnvironmentContextOptions {
   includeGitSnapshot?: boolean;
+  includeDirectoryListing?: boolean;
 }
 
 export function getEnvironmentInfo(): EnvironmentInfo {
@@ -48,7 +49,7 @@ function getGitCommandOutput(projectRoot: string, command: string): string | nul
 export function getEnvironmentContext(
   options: EnvironmentContextOptions = {}
 ): string {
-  const { includeGitSnapshot = false } = options;
+  const { includeGitSnapshot = true, includeDirectoryListing = true } = options;
   const env = getEnvironmentInfo();
   const isGitRepository = existsSync(path.join(env.projectRoot, '.git'));
   const shell = basename(process.env.SHELL || 'unknown');
@@ -91,6 +92,13 @@ When using file tools (read, write, edit), provide absolute paths based on: \`${
 
   if (keyFiles.length > 0) {
     context += `\n\nKey project files at root for quick reference:\n${keyFiles.join('\n')}`;
+  }
+
+  if (includeDirectoryListing) {
+    const listing = getGitCommandOutput(env.projectRoot, 'ls -1 | head -30');
+    if (listing) {
+      context += `\n\nProject root directory listing:\n${listing}`;
+    }
   }
 
   return context;
