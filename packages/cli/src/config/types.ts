@@ -64,6 +64,7 @@ export interface ModelConfig {
   topK?: number;
   supportsThinking?: boolean;
   thinkingBudget?: number;
+  thinkingMode?: 'off' | 'budget' | 'adaptive';
   apiVersion?: string;
   projectId?: string;
   fallbackModels?: string[];

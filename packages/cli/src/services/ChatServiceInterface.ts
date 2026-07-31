@@ -85,9 +85,10 @@ export interface ChatConfig {
   timeout?: number;
   apiVersion?: string;
   supportsThinking?: boolean;
+  thinkingBudget?: number;
+  thinkingMode?: 'off' | 'budget' | 'adaptive';
   customHeaders?: Record<string, string>;
   fallbackModel?: string;
-  thinkingBudget?: number;
   fallbackModels?: string[];
   enablePromptCaching?: boolean;
   maxRetries?: number;

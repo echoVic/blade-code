@@ -15,6 +15,7 @@ import mcpCommand from './mcp.js';
 import memoryCommand from './memory.js';
 import permissionsCommand from './permissions.js';
 import resumeCommand from './resume.js';
+import rewindCommand from './rewind.js';
 import {
   getUI,
   type SlashCommand,
@@ -431,6 +432,7 @@ export const builtinCommands = {
   doctor: doctorCommand,
   permissions: permissionsCommand,
   resume: resumeCommand,
+  rewind: rewindCommand,
   compact: compactCommand,
   mcp: mcpCommand,
   memory: memoryCommand,

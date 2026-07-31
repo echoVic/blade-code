@@ -623,18 +623,28 @@ export class VercelAIChatService implements IChatService {
 
   private getThinkingProviderOptions(): Record<string, unknown> | undefined {
     if (!this.config.supportsThinking) return undefined;
+
+    const mode = this.config.thinkingMode ?? 'budget';
+    if (mode === 'off') return undefined;
+
+    const isAdaptive = mode === 'adaptive';
     const budget = this.config.thinkingBudget ?? 10000;
+
     if (this.config.provider === 'anthropic') {
       return {
         anthropic: {
-          thinking: { type: 'enabled', budgetTokens: budget },
+          thinking: isAdaptive
+            ? { type: 'enabled', budgetTokens: 0 }
+            : { type: 'enabled', budgetTokens: budget },
         },
       };
     }
     if (this.config.provider === 'deepseek' || /deepseek/i.test(this.config.model)) {
       return {
         deepseek: {
-          thinking: { type: 'enabled', budgetTokens: budget },
+          thinking: isAdaptive
+            ? { type: 'enabled', budgetTokens: 0 }
+            : { type: 'enabled', budgetTokens: budget },
         },
       };
     }
