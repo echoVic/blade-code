@@ -338,11 +338,9 @@ export const editTool = createTool({
 
       return {
         success: true,
-        llmContent: {
-          file_path,
-          replacements: replacedCount,
-          total_matches: matches.length,
-        },
+        llmContent: diffSnippet
+          ? `Edited ${file_path} (${replacedCount} replacement${replacedCount > 1 ? 's' : ''}):\n${diffSnippet}`
+          : `Edited ${file_path} (${replacedCount} replacement${replacedCount > 1 ? 's' : ''})`,
         metadata,
       };
     } catch (error) {
