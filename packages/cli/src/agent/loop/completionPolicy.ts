@@ -68,9 +68,13 @@ const INCOMPLETE_INTENT_PATTERNS = [
   /\.\.\.\s*$/,
   /让我(先|来|开始|查看|检查|修复)/,
   /Let me (first|start|check|look|fix)/i,
+  /I('ll| will) (now |)(create|write|edit|update|modify|fix|add|implement)/i,
+  /我(现在就|来|要)(创建|写入|编辑|修改|修复|添加|实现)/,
 ];
 
-const RETRY_PROMPT = '请执行你提到的操作，不要只是描述。';
+const CODE_BLOCK_WITHOUT_TOOL_PATTERN = /```[\s\S]{50,}```/;
+
+const RETRY_PROMPT = '请执行你提到的操作，不要只是描述。使用 Edit/Write/Bash 工具来实际修改文件。';
 
 /** 最大重试次数 */
 const MAX_INCOMPLETE_INTENT_RETRIES = 2;
@@ -90,9 +94,15 @@ export type IncompleteIntentAction =
 export function checkIncompleteIntent(
   content: string | undefined,
   retryCount: number,
+  hadToolCalls = true,
 ): IncompleteIntentAction {
   if (!content || retryCount >= MAX_INCOMPLETE_INTENT_RETRIES) {
     return { action: 'none' };
+  }
+
+  // 检测：输出了代码块但没调用任何工具（说明模型想改代码但没用工具）
+  if (!hadToolCalls && CODE_BLOCK_WITHOUT_TOOL_PATTERN.test(content)) {
+    return { action: 'retry', prompt: RETRY_PROMPT };
   }
 
   // 只检测尾部 200 字符
@@ -101,7 +111,6 @@ export function checkIncompleteIntent(
   // 排除 markdown code block：如果尾部处于未闭合的代码块中，跳过检测
   const codeBlockMarkers = tail.match(/```/g);
   if (codeBlockMarkers && codeBlockMarkers.length % 2 !== 0) {
-    // 奇数个 ``` 标记意味着尾部在代码块内
     return { action: 'none' };
   }
 
