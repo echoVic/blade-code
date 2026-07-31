@@ -586,6 +586,29 @@ export class VercelAIChatService implements IChatService {
     return status !== undefined && [429, 529, 503, 502, 500].includes(status);
   }
 
+  private async retryWithBackoff<T>(
+    fn: () => Promise<T>,
+    signal?: AbortSignal,
+    maxRetries = 2,
+    baseDelayMs = 1000
+  ): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxRetries) break;
+        if (!this.isFallbackableError(error)) throw error;
+        if (signal?.aborted) throw error;
+        const delay = baseDelayMs * Math.pow(2, attempt);
+        logger.debug(`[VercelAIChatService] Retry ${attempt + 1}/${maxRetries} after ${delay}ms`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+    throw lastError;
+  }
+
   private getFallbackModelIds(): string[] {
     const models: string[] = [];
     if (this.config.fallbackModels && this.config.fallbackModels.length > 0) {
@@ -702,7 +725,7 @@ export class VercelAIChatService implements IChatService {
     };
 
     try {
-      return await attempt(this.model);
+      return await this.retryWithBackoff(() => attempt(this.model), signal);
     } catch (error) {
       const duration = Date.now() - startTime;
       logger.error('[VercelAIChatService] Chat failed after', duration, 'ms');

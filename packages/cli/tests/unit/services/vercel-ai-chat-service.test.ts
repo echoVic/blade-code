@@ -152,33 +152,39 @@ describe('VercelAIChatService', () => {
     });
 
     it('falls back on 429 when fallbackModel is configured', async () => {
-      generateText.mockRejectedValueOnce(make429Error()).mockResolvedValueOnce({
-        text: 'fallback-response',
-        toolCalls: [],
-        usage: { promptTokens: 8, completionTokens: 3 },
-        finishReason: 'stop',
-        reasoning: undefined,
-        providerMetadata: undefined,
-      });
+      generateText
+        .mockRejectedValueOnce(make429Error())
+        .mockRejectedValueOnce(make429Error())
+        .mockRejectedValueOnce(make429Error())
+        .mockResolvedValueOnce({
+          text: 'fallback-response',
+          toolCalls: [],
+          usage: { promptTokens: 8, completionTokens: 3 },
+          finishReason: 'stop',
+          reasoning: undefined,
+          providerMetadata: undefined,
+        });
 
       const service = await createService({ fallbackModel: 'fallback-model' });
       const response = await service.chat(simpleMessages);
 
       expect(response.content).toBe('fallback-response');
-      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(generateText).toHaveBeenCalledTimes(4);
     });
 
     it('throws on 429 when no fallbackModel is configured', async () => {
-      generateText.mockRejectedValueOnce(make429Error());
+      generateText.mockRejectedValue(make429Error());
 
       const service = await createService();
 
       await expect(service.chat(simpleMessages)).rejects.toThrow('429');
-      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(generateText).toHaveBeenCalledTimes(3);
     });
 
     it('throws fallback error directly when fallback fails with non-retryable error', async () => {
       generateText
+        .mockRejectedValueOnce(make429Error())
+        .mockRejectedValueOnce(make429Error())
         .mockRejectedValueOnce(make429Error())
         .mockRejectedValueOnce(new Error('fallback-error'));
 
