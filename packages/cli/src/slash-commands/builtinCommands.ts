@@ -16,10 +16,10 @@ import memoryCommand from './memory.js';
 import permissionsCommand from './permissions.js';
 import resumeCommand from './resume.js';
 import {
-    getUI,
-    type SlashCommand,
-    type SlashCommandContext,
-    type SlashCommandResult,
+  getUI,
+  type SlashCommand,
+  type SlashCommandContext,
+  type SlashCommandResult,
 } from './types.js';
 
 const helpCommand: SlashCommand = {
@@ -193,12 +193,28 @@ const statusCommand: SlashCommand = {
         // 无法读取 package.json
       }
 
+      const config = getConfig();
+      const currentModel = getCurrentModel();
+      const state = getState();
+      const usage = state.session.tokenUsage;
+
       const statusText = `**当前状态**
 
 **项目信息:**
 - 名称: ${projectName}
 - 类型: ${projectType}
 - 路径: ${cwd}
+
+**模型配置:**
+- 当前模型: ${currentModel?.name ?? 'N/A'} (${currentModel?.model ?? 'N/A'})
+- Provider: ${currentModel?.provider ?? 'N/A'}
+- 可用模型数: ${config?.models?.length ?? 0}
+
+**会话统计:**
+- Turn: ${usage.turnCount}
+- Token: ${usage.totalInputTokens.toLocaleString()} in / ${usage.totalOutputTokens.toLocaleString()} out
+- 费用: ${usage.estimatedCostUsd > 0 ? `$${usage.estimatedCostUsd.toFixed(4)}` : 'N/A'}
+- Context: ${usage.maxContextTokens > 0 ? `${Math.round((1 - usage.inputTokens / usage.maxContextTokens) * 100)}% 剩余` : 'N/A'}
 
 **配置状态:**
 - BLADE.md: ${hasBlademd ? '[OK] 已配置' : '[FAIL] 未配置 (使用 /init 创建)'}
