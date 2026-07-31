@@ -6,17 +6,20 @@
  *
  * Pipeline 位置: PostHook -> **AutoVerify** -> Formatting
  *
- * 优化 (Phase 3):
- * - 通过 VerifyQueue 做并发合并 + 短期缓存 + 增量 tsc + monorepo 感知
- * - 仍同步等待结果 (保持 Agent 下一步能看到错误),但连续 Edit 大幅提速
+ * 验证层级:
+ * 1. TypeScript 类型检查 (via VerifyQueue)
+ * 2. Lint 快速检查 (biome check, 仅对修改文件)
  */
 
+import { execFile } from 'node:child_process';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getCwd } from '../../utils/cwd.js';
 import type { PipelineStage, ToolExecution } from '../types/index.js';
 import { VerifyQueue, type VerifyResult } from './VerifyQueue.js';
 
+const execFileAsync = promisify(execFile);
 const logger = createLogger(LogCategory.EXECUTION);
 
 /** 触发自动验证的工具 */
@@ -24,6 +27,9 @@ const TRIGGER_TOOLS = new Set(['Edit', 'Write']);
 
 /** 单次注入的最大错误行数 */
 const MAX_ERROR_LINES = 15;
+
+/** Lint 检查超时 */
+const LINT_TIMEOUT_MS = 5000;
 
 /**
  * 从类型检查输出中过滤与指定文件相关的错误
@@ -36,59 +42,80 @@ function filterErrorsForFile(output: string, filePath: string): string[] {
   return lines.filter((line) => line.includes(fileName) || line.includes(absPath));
 }
 
+/**
+ * 对单个文件运行 biome lint（快速，不需要全项目扫描）
+ */
+async function runLintCheck(filePath: string, cwd: string): Promise<string | null> {
+  try {
+    await execFileAsync(
+      'npx',
+      ['biome', 'lint', '--max-diagnostics=5', filePath],
+      { cwd, timeout: LINT_TIMEOUT_MS, encoding: 'utf-8' },
+    );
+    return null;
+  } catch (err: unknown) {
+    const execErr = err as { stdout?: string; stderr?: string; killed?: boolean };
+    if (execErr.killed) return null;
+    const output = (execErr.stdout || '') + (execErr.stderr || '');
+    if (output.includes('error')) return output.trim();
+    return null;
+  }
+}
+
 export class AutoVerifyStage implements PipelineStage {
   readonly name = 'auto-verify';
 
   constructor(private readonly queue: VerifyQueue = VerifyQueue.getInstance()) {}
 
   async process(execution: ToolExecution): Promise<void> {
-    // 1. 仅对 Edit/Write 触发
     if (!TRIGGER_TOOLS.has(execution.toolName)) return;
 
-    // 2. 仅对成功的执行触发
     const result = execution.getResult();
     if (!result || !result.success) return;
 
-    // 3. 提取文件路径
     const filePath =
       (execution.params.file_path as string) || (execution.params.path as string);
     if (!filePath) return;
 
-    // 4. 跑类型检查 (通过 queue 合并 + 缓存)
     const searchRoot = execution.context.workspaceRoot || getCwd();
-    let verify: VerifyResult | null;
+    const diagnostics: string[] = [];
+
+    // 1. Type check (via VerifyQueue)
     try {
-      verify = await this.queue.verify(filePath, searchRoot);
+      const verify: VerifyResult | null = await this.queue.verify(filePath, searchRoot);
+      if (verify && !verify.timedOut && verify.hasErrors) {
+        const relevantErrors = filterErrorsForFile(verify.rawOutput, filePath);
+        if (relevantErrors.length > 0) {
+          const truncated = relevantErrors.slice(0, MAX_ERROR_LINES);
+          diagnostics.push(
+            `Type errors:\n${truncated.join('\n')}` +
+            (relevantErrors.length > MAX_ERROR_LINES
+              ? `\n... (+${relevantErrors.length - MAX_ERROR_LINES} more)`
+              : ''),
+          );
+        }
+      }
     } catch (err) {
       logger.debug(
-        `[AutoVerify] verify failed: ${err instanceof Error ? err.message : String(err)}`
+        `[AutoVerify] type-check failed: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return;
     }
-    if (!verify) return; // 无 tsconfig
 
-    if (verify.timedOut) {
-      logger.info(`[AutoVerify] type-check timed out in ${verify.workspaceRoot}`);
-      return;
+    // 2. Lint check (biome, single file)
+    if (filePath.endsWith('.ts') || filePath.endsWith('.tsx') || filePath.endsWith('.js')) {
+      const lintOutput = await runLintCheck(filePath, searchRoot);
+      if (lintOutput) {
+        const lines = lintOutput.split('\n').slice(0, 5);
+        diagnostics.push(`Lint errors:\n${lines.join('\n')}`);
+      }
     }
-    if (!verify.hasErrors || !verify.rawOutput.trim()) return;
 
-    // 5. 过滤与修改文件相关的错误
-    const relevantErrors = filterErrorsForFile(verify.rawOutput, filePath);
-    if (relevantErrors.length === 0) return;
-
-    // 6. 截断并注入
-    const truncated = relevantErrors.slice(0, MAX_ERROR_LINES);
-    const suffix =
-      relevantErrors.length > MAX_ERROR_LINES
-        ? `\n... (还有 ${relevantErrors.length - MAX_ERROR_LINES} 个错误)`
-        : '';
+    if (diagnostics.length === 0) return;
 
     const context =
-      `\n\n---\n**Auto-Verify: type-check errors in ${path.basename(filePath)}:**\n` +
+      `\n\n---\n**Auto-Verify: issues in ${path.basename(filePath)}:**\n` +
       '```\n' +
-      truncated.join('\n') +
-      suffix +
+      diagnostics.join('\n\n') +
       '\n```';
 
     const currentContent =
@@ -100,7 +127,7 @@ export class AutoVerifyStage implements PipelineStage {
     result.llmContent = `${currentContent}${context}`;
 
     logger.info(
-      `[AutoVerify] injected ${relevantErrors.length} errors (${path.basename(filePath)})`
+      `[AutoVerify] injected ${diagnostics.length} diagnostic(s) (${path.basename(filePath)})`,
     );
   }
 }
