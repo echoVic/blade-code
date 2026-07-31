@@ -13,6 +13,27 @@ export interface SnipResult {
 interface ToolTurn {
   assistantIdx: number;
   toolResultIdxs: number[];
+  priority: number;
+}
+
+const READ_ONLY_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Search', 'WebSearch', 'WebFetch', 'ToolSearch']);
+
+function computeTurnPriority(messages: Message[], turn: Omit<ToolTurn, 'priority'>): number {
+  const assistantMsg = messages[turn.assistantIdx];
+  const toolNames = (assistantMsg.tool_calls ?? [])
+    .filter((tc): tc is { type: 'function'; id: string; function: { name: string; arguments: string } } => tc.type === 'function')
+    .map((tc) => tc.function.name);
+
+  const hasWriteTool = toolNames.some((name) => !READ_ONLY_TOOLS.has(name));
+  const hasError = turn.toolResultIdxs.some((idx) => {
+    const content = messages[idx]?.content;
+    if (typeof content !== 'string') return false;
+    return content.startsWith('Error:') || content.includes('failed') || content.includes('ENOENT');
+  });
+
+  if (hasError) return 3;
+  if (hasWriteTool) return 2;
+  return 1;
 }
 
 /**
@@ -71,15 +92,25 @@ export function snipCompact(
         }
       }
 
-      toolTurns.push({ assistantIdx: i, toolResultIdxs });
+      toolTurns.push({ assistantIdx: i, toolResultIdxs, priority: 0 });
     }
   }
 
+  // Compute priority for each turn (higher = more important to keep)
+  for (const turn of toolTurns) {
+    turn.priority = computeTurnPriority(messages, turn);
+  }
+
   // ── 2. Decide which turns to remove ─────────────────────────────────
-  const turnsToRemove = toolTurns.slice(
+  // Remove oldest turns, but prefer removing low-priority (read-only success) first.
+  const candidatesForRemoval = toolTurns.slice(
     0,
     Math.max(0, toolTurns.length - keepRecentTurns),
   );
+
+  // Sort by priority ascending (low priority removed first), stable for same priority
+  const sorted = [...candidatesForRemoval].sort((a, b) => a.priority - b.priority);
+  const turnsToRemove = sorted;
 
   if (turnsToRemove.length === 0) {
     return { messages, snippedCount: 0, estimatedTokensFreed: 0 };

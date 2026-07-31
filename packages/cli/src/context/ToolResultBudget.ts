@@ -15,6 +15,33 @@ const PREVIEW_CHARS = 2000;
 const MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 200_000;
 
 /**
+ * 根据模型上下文窗口动态计算工具结果预算
+ *
+ * 策略：小窗口模型使用更紧凑的预算，大窗口模型放宽限制
+ */
+export function computeAdaptiveBudget(maxContextTokens?: number): {
+  maxCharsPerResult: number;
+  maxCharsPerMessage: number;
+} {
+  if (!maxContextTokens || maxContextTokens <= 0) {
+    return {
+      maxCharsPerResult: DEFAULT_MAX_RESULT_CHARS,
+      maxCharsPerMessage: MAX_TOOL_RESULTS_PER_MESSAGE_CHARS,
+    };
+  }
+
+  // 1 token ≈ 4 chars; tool results should use at most ~15% of context
+  const charBudget = maxContextTokens * 4 * 0.15;
+  const maxPerResult = Math.max(10_000, Math.min(charBudget * 0.5, 200_000));
+  const maxPerMessage = Math.max(20_000, Math.min(charBudget, 400_000));
+
+  return {
+    maxCharsPerResult: Math.round(maxPerResult),
+    maxCharsPerMessage: Math.round(maxPerMessage),
+  };
+}
+
+/**
  * 消息级工具结果聚合预算
  *
  * 防止并行工具在同一轮中产生过多总输出。
