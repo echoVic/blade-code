@@ -70,6 +70,7 @@ const INCOMPLETE_INTENT_PATTERNS = [
   /Let me (first|start|check|look|fix)/i,
   /I('ll| will) (now |)(create|write|edit|update|modify|fix|add|implement)/i,
   /我(现在就|来|要)(创建|写入|编辑|修改|修复|添加|实现)/,
+  /\d+\.\s+(First|Next|Then|Finally)/i,
 ];
 
 const CODE_BLOCK_WITHOUT_TOOL_PATTERN = /```[\s\S]{50,}```/;

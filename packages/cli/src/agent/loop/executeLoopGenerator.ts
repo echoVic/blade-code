@@ -936,6 +936,10 @@ export async function* executeLoopGenerator(
             toolCallsCount: allToolResults.length,
             duration: Date.now() - startTime,
             tokensUsed: totalTokens,
+            toolSuccessRate: allToolResults.length > 0
+              ? allToolResults.filter((r) => r.success).length / allToolResults.length
+              : undefined,
+            totalToolFailures: failureTracker.totalFailures || undefined,
           },
         };
       }

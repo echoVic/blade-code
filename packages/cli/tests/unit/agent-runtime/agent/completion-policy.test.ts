@@ -85,5 +85,11 @@ describe('completionPolicy', () => {
       const result = checkIncompleteIntent(content, 0);
       expect(result.action).toBe('none');
     });
+
+    it('detects numbered step lists without tool execution', () => {
+      const content = 'Here is my plan:\n1. First I will read the file\n2. Then modify it\n3. Finally run tests';
+      const result = checkIncompleteIntent(content, 0);
+      expect(result.action).toBe('retry');
+    });
   });
 });

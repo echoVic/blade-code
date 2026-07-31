@@ -140,6 +140,8 @@ export interface LoopResult {
     toolCallsCount: number;
     duration: number;
     tokensUsed?: number; // Token 使用量
+    toolSuccessRate?: number; // 工具成功率 (0-1)
+    totalToolFailures?: number; // 工具总失败次数
     configuredMaxTurns?: number;
     actualMaxTurns?: number;
     hitSafetyLimit?: boolean;
