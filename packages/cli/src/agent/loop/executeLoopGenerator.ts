@@ -904,7 +904,8 @@ export async function* executeLoopGenerator(
           // 意图未完成检测 (via completionPolicy)
           const intentAction = checkIncompleteIntent(
             turnResult.content,
-            incompleteIntentRetryCount
+            incompleteIntentRetryCount,
+            false
           );
 
           if (intentAction.action === 'retry') {
