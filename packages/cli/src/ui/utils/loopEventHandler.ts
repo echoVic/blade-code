@@ -209,9 +209,7 @@ export function createLoopEventHandler(
           turn: event.turn,
           maxTurns: event.maxTurns,
         });
-        // 重置 per-turn 标记，确保新 turn 的 stream_end 可以正常 finalize
-        // 注意：如果 model_fallback 在本 turn 内已置 true，
-        // 本 turn 的 late stream_end 仍会被守卫；只有下一个 turn_start 才重置
+        deps.sessionActions.updateTokenUsage({ turnCount: event.turn });
         streamFinalized = false;
         break;
       case 'task_update':

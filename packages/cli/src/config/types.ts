@@ -66,6 +66,8 @@ export interface ModelConfig {
   thinkingBudget?: number;
   apiVersion?: string;
   projectId?: string;
+  fallbackModels?: string[];
+  enablePromptCaching?: boolean;
 }
 
 import { UiTheme } from '@/api/schemas.js';

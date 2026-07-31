@@ -16,10 +16,10 @@ import memoryCommand from './memory.js';
 import permissionsCommand from './permissions.js';
 import resumeCommand from './resume.js';
 import {
-  getUI,
-  type SlashCommand,
-  type SlashCommandContext,
-  type SlashCommandResult,
+    getUI,
+    type SlashCommand,
+    type SlashCommandContext,
+    type SlashCommandResult,
 } from './types.js';
 
 const helpCommand: SlashCommand = {
@@ -44,6 +44,7 @@ const helpCommand: SlashCommand = {
 **/clear** - 清除屏幕内容
 **/resume** - 恢复历史会话
 **/compact** - 手动压缩上下文，生成总结并节省 token
+**/cost** - 显示当前会话 token 消耗和费用估算
 **/memory** - 管理项目 Auto Memory（list/show/edit/clear）
 **/version** - 显示 Blade Code 版本信息
 **/status** - 显示当前配置状态
@@ -308,6 +309,46 @@ const contextCommand: SlashCommand = {
   },
 };
 
+const costCommand: SlashCommand = {
+  name: 'cost',
+  description: 'Show session token usage and estimated cost',
+  fullDescription: '显示当前会话的 token 消耗和费用估算',
+  usage: '/cost',
+  aliases: [],
+  async handler(
+    _args: string[],
+    context: SlashCommandContext
+  ): Promise<SlashCommandResult> {
+    const ui = getUI(context);
+    const state = getState();
+    const usage = state.session.tokenUsage;
+    const model = getCurrentModel();
+
+    const costStr = usage.estimatedCostUsd > 0
+      ? `$${usage.estimatedCostUsd < 0.01 ? usage.estimatedCostUsd.toFixed(6) : usage.estimatedCostUsd.toFixed(4)}`
+      : 'N/A (unknown model pricing)';
+
+    const cacheInfo = (usage.cacheReadTokens > 0 || usage.cacheWriteTokens > 0)
+      ? `\n- Cache read: ${usage.cacheReadTokens.toLocaleString()} tokens\n- Cache write: ${usage.cacheWriteTokens.toLocaleString()} tokens`
+      : '';
+
+    const info = `**Session Cost Summary**
+
+- Model: ${model?.model ?? 'unknown'}
+- Turns: ${usage.turnCount}
+- Current input: ${usage.inputTokens.toLocaleString()} tokens
+- Current output: ${usage.outputTokens.toLocaleString()} tokens
+- **Total input: ${usage.totalInputTokens.toLocaleString()} tokens**
+- **Total output: ${usage.totalOutputTokens.toLocaleString()} tokens**${cacheInfo}
+- Context remaining: ${usage.maxContextTokens > 0 ? Math.round((1 - usage.inputTokens / usage.maxContextTokens) * 100) : '?'}%
+- **Estimated cost: ${costStr}**`;
+
+    ui.sendMessage(info);
+
+    return { success: true, message: 'Cost summary displayed' };
+  },
+};
+
 export const builtinCommands = {
   help: helpCommand,
   clear: clearCommand,
@@ -315,6 +356,7 @@ export const builtinCommands = {
   status: statusCommand,
   exit: exitCommand,
   context: contextCommand,
+  cost: costCommand,
   permissions: permissionsCommand,
   resume: resumeCommand,
   compact: compactCommand,

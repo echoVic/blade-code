@@ -80,13 +80,16 @@ export interface ChatConfig {
   baseUrl: string;
   model: string;
   temperature?: number;
-  maxContextTokens?: number; // 上下文窗口大小（用于压缩判断）
-  maxOutputTokens?: number; // 输出 token 限制（传给 API 的 max_tokens）
+  maxContextTokens?: number;
+  maxOutputTokens?: number;
   timeout?: number;
-  apiVersion?: string; // GPT OpenAI Platform 专用：API 版本（如 '2024-03-01-preview'）
-  supportsThinking?: boolean; // 是否支持 thinking 模式（DeepSeek Reasoner 等）
-  customHeaders?: Record<string, string>; // Provider 特定的自定义 HTTP Headers
-  fallbackModel?: string; // 备用模型 ID（429/529/503 时自动切换）
+  apiVersion?: string;
+  supportsThinking?: boolean;
+  customHeaders?: Record<string, string>;
+  fallbackModel?: string;
+  thinkingBudget?: number;
+  fallbackModels?: string[];
+  enablePromptCaching?: boolean;
 }
 
 /**

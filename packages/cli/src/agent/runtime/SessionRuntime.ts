@@ -227,6 +227,9 @@ export class SessionRuntime {
       maxOutputTokens: modelConfig.maxOutputTokens ?? this.config.maxOutputTokens,
       timeout: this.config.timeout,
       supportsThinking,
+      thinkingBudget: modelConfig.thinkingBudget,
+      fallbackModels: modelConfig.fallbackModels,
+      enablePromptCaching: modelConfig.enablePromptCaching,
     });
 
     const contextManager = this.executionEngine?.getContextManager();

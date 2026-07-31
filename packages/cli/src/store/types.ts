@@ -55,10 +55,16 @@ export interface SessionMessage {
  * Token 使用量统计
  */
 export interface TokenUsage {
-  inputTokens: number; // 当前 prompt tokens
-  outputTokens: number; // 当前 completion tokens
-  totalTokens: number; // 累计总 tokens
-  maxContextTokens: number; // 上下文窗口大小
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  maxContextTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  turnCount: number;
+  estimatedCostUsd: number;
 }
 
 /**

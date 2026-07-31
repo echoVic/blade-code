@@ -193,6 +193,88 @@ describe('ConfigManager 集成', () => {
     expect(written.permissions.allow).toEqual(['Read(file_path:package.json)']);
   });
 
+  it('标准格式的多模型配置应被正确加载，并清理字符串两端的空格和反引号', async () => {
+    const userConfigPath = path.join(tempHome, '.blade', 'config.json');
+    mkdirSync(path.dirname(userConfigPath), { recursive: true });
+    writeFileSync(
+      userConfigPath,
+      JSON.stringify({
+        currentModelId: 'claude-via-newapi',
+        models: [
+          {
+            id: 'claude-via-newapi',
+            name: 'Claude 3.5 Sonnet',
+            provider: 'openai-compatible',
+            apiKey: 'sk-test-fake-key-claude-00000000000000',
+            baseUrl: ' `https://api.example.com` ',
+            model: 'claude-3.5-sonnet',
+          },
+          {
+            id: 'gpt-via-newapi',
+            name: 'GPT 4o',
+            provider: 'openai-compatible',
+            apiKey: 'sk-test-fake-key-gpt-000000000000000000',
+            baseUrl: '`https://api.example.com`',
+            model: 'gpt-4o',
+          },
+          {
+            id: 'domestic-via-newapi',
+            name: 'Qwen Plus',
+            provider: 'openai-compatible',
+            apiKey: 'sk-test-fake-key-domestic-0000000000000',
+            baseUrl: 'https://api.example.com',
+            model: 'qwen-plus',
+          },
+        ],
+        temperature: 0.7,
+        maxContextTokens: 8000,
+        maxOutputTokens: 4000,
+        stream: true,
+        topP: 1,
+        topK: 0,
+        timeout: 30000,
+        theme: 'GitHub',
+        language: 'en',
+        fontSize: 14,
+        debug: false,
+        mcpEnabled: false,
+        mcpServers: {},
+        permissions: { allow: [], ask: [], deny: [] },
+        permissionMode: 'DEFAULT',
+        hooks: {},
+        env: {},
+        disableAllHooks: false,
+        maxTurns: 10,
+      }),
+      { encoding: 'utf-8', flag: 'w+' }
+    );
+
+    const manager = ConfigManager.getInstance();
+    const config = await manager.initialize();
+
+    const claude = config.models.find((m) => m.id === 'claude-via-newapi');
+    expect(claude).toBeDefined();
+    expect(claude!.apiKey).toBe('sk-test-fake-key-claude-00000000000000');
+    expect(claude!.baseUrl).toBe('https://api.example.com');
+    expect(claude!.provider).toBe('openai-compatible');
+    expect(claude!.name).toBe('Claude 3.5 Sonnet');
+    expect(claude!.model).toBe('claude-3.5-sonnet');
+
+    const gpt = config.models.find((m) => m.id === 'gpt-via-newapi');
+    expect(gpt).toBeDefined();
+    expect(gpt!.apiKey).toBe('sk-test-fake-key-gpt-000000000000000000');
+    expect(gpt!.baseUrl).toBe('https://api.example.com');
+    expect(gpt!.provider).toBe('openai-compatible');
+    expect(gpt!.model).toBe('gpt-4o');
+
+    const domestic = config.models.find((m) => m.id === 'domestic-via-newapi');
+    expect(domestic).toBeDefined();
+    expect(domestic!.apiKey).toBe('sk-test-fake-key-domestic-0000000000000');
+    expect(domestic!.baseUrl).toBe('https://api.example.com');
+    expect(domestic!.provider).toBe('openai-compatible');
+    expect(domestic!.model).toBe('qwen-plus');
+  });
+
   it('mergeRuntimeConfig should reject invalid model overrides', async () => {
     const { mergeRuntimeConfig } = await import('../../src/config/ConfigManager.js');
 

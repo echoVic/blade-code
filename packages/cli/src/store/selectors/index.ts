@@ -41,6 +41,9 @@ export const useClearCount = () => useBladeStore((state) => state.session.clearC
 export const useIsCompacting = () =>
   useBladeStore((state) => state.session.isCompacting);
 
+export const useSessionCost = () =>
+  useBladeStore((state) => state.session.tokenUsage.estimatedCostUsd);
+
 /**
  * 获取 Session Actions
  */

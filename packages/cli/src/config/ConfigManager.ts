@@ -20,8 +20,8 @@ import { promises as fs } from 'fs';
 import { merge } from 'lodash-es';
 import os from 'os';
 import path from 'path';
-import { getCwd } from '../utils/cwd.js';
 import type { GlobalOptions } from '../cli/types.js';
+import { getCwd } from '../utils/cwd.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import { BladeConfig, PermissionMode, RuntimeConfig } from './types.js';
 
@@ -70,11 +70,15 @@ export class ConfigManager {
       const settingsConfig = await this.loadSettingsFiles();
 
       // 3. 合并为统一配置
-      const config: BladeConfig = {
-        ...DEFAULT_CONFIG,
+      const mergedConfig: Partial<BladeConfig> = {
         ...baseConfig,
         ...settingsConfig,
       };
+      const normalized = this.normalizeConfig(mergedConfig);
+      const config: BladeConfig = {
+        ...DEFAULT_CONFIG,
+        ...normalized,
+      } as BladeConfig;
 
       // 4. 解析环境变量插值
       this.resolveEnvInterpolation(config);
@@ -282,6 +286,33 @@ export class ConfigManager {
     } catch {
       return false;
     }
+  }
+
+  private normalizeConfig(config: Partial<BladeConfig>): Partial<BladeConfig> {
+    const result = JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
+
+    const clean = (s: string): string => s.trim().replace(/^`|`$/g, '');
+
+    const walk = (obj: Record<string, unknown>): void => {
+      for (const [k, v] of Object.entries(obj)) {
+        if (typeof v === 'string') {
+          obj[k] = clean(v);
+        } else if (Array.isArray(v)) {
+          v.forEach((item, idx) => {
+            if (typeof item === 'string') {
+              v[idx] = clean(item);
+            } else if (typeof item === 'object' && item !== null) {
+              walk(item as Record<string, unknown>);
+            }
+          });
+        } else if (typeof v === 'object' && v !== null) {
+          walk(v as Record<string, unknown>);
+        }
+      }
+    };
+
+    walk(result);
+    return result as Partial<BladeConfig>;
   }
 
   /**

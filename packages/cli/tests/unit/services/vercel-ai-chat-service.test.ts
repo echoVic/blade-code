@@ -177,32 +177,14 @@ describe('VercelAIChatService', () => {
       expect(generateText).toHaveBeenCalledTimes(1);
     });
 
-    it('throws combined error when fallback also fails', async () => {
+    it('throws fallback error directly when fallback fails with non-retryable error', async () => {
       generateText
         .mockRejectedValueOnce(make429Error())
         .mockRejectedValueOnce(new Error('fallback-error'));
 
       const service = await createService({ fallbackModel: 'fallback-model' });
 
-      await expect(service.chat(simpleMessages)).rejects.toThrow(/Fallback model/);
-
-      try {
-        await service.chat(simpleMessages);
-      } catch {
-        // reset mocks for the retry above; the first assertion already verified
-      }
-
-      // Re-setup to verify cause
-      generateText
-        .mockRejectedValueOnce(make429Error())
-        .mockRejectedValueOnce(new Error('fallback-error'));
-
-      try {
-        await service.chat(simpleMessages);
-      } catch (e: unknown) {
-        expect((e as Error).message).toContain('Fallback model');
-        expect((e as Error).cause).toBeInstanceOf(Error);
-      }
+      await expect(service.chat(simpleMessages)).rejects.toThrow('fallback-error');
     });
 
     it('does not attempt fallback on non-fallbackable error (e.g. 400)', async () => {
@@ -276,7 +258,7 @@ describe('VercelAIChatService', () => {
       expect(streamText).toHaveBeenCalledTimes(2);
     });
 
-    it('throws combined error when fallback stream also fails (503)', async () => {
+    it('throws fallback error directly when fallback stream also fails with non-retryable error', async () => {
       streamText
         .mockReturnValueOnce({
           fullStream: (async function* () {
@@ -302,9 +284,8 @@ describe('VercelAIChatService', () => {
         for await (const chunk of service.streamChat(simpleMessages)) {
           chunks.push(chunk);
         }
-      }).rejects.toThrow(/Fallback model/);
+      }).rejects.toThrow('fallback-stream-error');
 
-      // modelFallback chunk should have been yielded before the fallback failure
       expect(chunks[0]).toEqual({ modelFallback: true });
     });
 

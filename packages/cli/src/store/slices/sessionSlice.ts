@@ -12,6 +12,7 @@
 import { nanoid } from 'nanoid';
 import type { StateCreator } from 'zustand';
 import type { Message } from '../../services/ChatServiceInterface.js';
+import { estimateCostUsd } from '../../services/pricing.js';
 import { clearAllMarkdownCache } from '../../ui/utils/markdownIncremental.js';
 import type {
   BladeStore,
@@ -45,7 +46,13 @@ const initialTokenUsage: TokenUsage = {
   inputTokens: 0,
   outputTokens: 0,
   totalTokens: 0,
-  maxContextTokens: 200000, // 默认值，会被 Agent 更新
+  maxContextTokens: 200000,
+  totalInputTokens: 0,
+  totalOutputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  turnCount: 0,
+  estimatedCostUsd: 0,
 };
 
 /**
@@ -255,15 +262,35 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
      * 更新 Token 使用量
      */
     updateTokenUsage: (usage: Partial<TokenUsage>) => {
-      set((state) => ({
-        session: {
-          ...state.session,
-          tokenUsage: {
-            ...state.session.tokenUsage,
-            ...usage,
+      set((state) => {
+        const prev = state.session.tokenUsage;
+        const inputDelta = (usage.inputTokens ?? 0) - (usage.inputTokens !== undefined ? prev.inputTokens : 0);
+        const outputDelta = (usage.outputTokens ?? 0) - (usage.outputTokens !== undefined ? prev.outputTokens : 0);
+        const newTotalInput = prev.totalInputTokens + Math.max(0, inputDelta);
+        const newTotalOutput = prev.totalOutputTokens + Math.max(0, outputDelta);
+        const newCacheRead = prev.cacheReadTokens + (usage.cacheReadTokens ?? 0);
+        const newCacheWrite = prev.cacheWriteTokens + (usage.cacheWriteTokens ?? 0);
+
+        const config = state.config?.config;
+        const currentModel = config?.models?.find((m) => m.id === config.currentModelId);
+        const modelName = currentModel?.model ?? '';
+        const cost = estimateCostUsd(modelName, newTotalInput, newTotalOutput, newCacheRead, newCacheWrite);
+
+        return {
+          session: {
+            ...state.session,
+            tokenUsage: {
+              ...prev,
+              ...usage,
+              totalInputTokens: newTotalInput,
+              totalOutputTokens: newTotalOutput,
+              cacheReadTokens: newCacheRead,
+              cacheWriteTokens: newCacheWrite,
+              estimatedCostUsd: cost,
+            },
           },
-        },
-      }));
+        };
+      });
     },
 
     /**
