@@ -164,3 +164,36 @@ export function snipCompact(
     estimatedTokensFreed: Math.floor(charsRemoved / 4),
   };
 }
+
+// ===== MicroCompact: Time-Based Aggressive Clearing =====
+
+const CACHE_EXPIRY_MS = 60_000;
+const MICRO_KEEP_TURNS = 3;
+
+/**
+ * MicroCompact — 基于时间间隔的激进上下文清理
+ *
+ * 当两次 API 调用之间超过 60 秒时，服务端 prompt cache 已失效，
+ * 此时激进清理旧工具结果（只保留 3 轮），减少重传开销。
+ *
+ * @param messages 当前消息历史
+ * @param lastApiCallTime 上次 API 调用时间戳（ms）
+ * @returns SnipResult 或 null（不需要清理时）
+ */
+export function microCompact(
+  messages: Message[],
+  lastApiCallTime: number | undefined,
+): SnipResult | null {
+  if (!lastApiCallTime) return null;
+
+  const elapsed = Date.now() - lastApiCallTime;
+  if (elapsed < CACHE_EXPIRY_MS) return null;
+
+  const result = snipCompact(messages, {
+    keepRecentTurns: MICRO_KEEP_TURNS,
+    minMessagesForSnip: 15,
+  });
+
+  if (result.snippedCount === 0) return null;
+  return result;
+}

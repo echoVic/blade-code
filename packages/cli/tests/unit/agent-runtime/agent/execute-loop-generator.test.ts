@@ -23,6 +23,7 @@ vi.mock('../../../../src/context/ReactiveCompaction.js', () => ({
 
 vi.mock('../../../../src/context/SnipCompaction.js', () => ({
   snipCompact: vi.fn().mockReturnValue({ messages: [], snippedCount: 0 }),
+  microCompact: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('../../../../src/context/ToolResultBudget.js', () => ({

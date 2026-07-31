@@ -9,7 +9,7 @@ import { nanoid } from 'nanoid';
 import { type PermissionMode } from '../../config/index.js';
 import { CompactionService } from '../../context/CompactionService.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
-import { snipCompact } from '../../context/SnipCompaction.js';
+import { microCompact, snipCompact } from '../../context/SnipCompaction.js';
 import { createBudgetTracker, recordOutput } from '../../context/TokenBudget.js';
 import {
   applyToolResultBudget,
@@ -346,12 +346,22 @@ export async function checkAndCompactInLoop(
   currentTurn: number,
   actualPromptTokens?: number,
   signal?: AbortSignal,
+  lastApiCallTime?: number,
 ): Promise<CompactResult> {
   if (actualPromptTokens === undefined) {
     logger.debug(
       `[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`
     );
     return 'none';
+  }
+
+  // Level 0: MicroCompact — time-based aggressive clearing when cache expired
+  const microResult = microCompact(context.messages, lastApiCallTime);
+  if (microResult) {
+    context.messages = microResult.messages;
+    logger.debug(
+      `[Loop] [轮次 ${currentTurn}] MicroCompact: 清理 ${microResult.snippedCount} 轮旧工具结果（缓存已过期）`
+    );
   }
 
   // Level 1: Snip compaction — 轻量截断旧工具调用，无 LLM 调用
@@ -553,6 +563,7 @@ export async function* executeLoopGenerator(
 
     let totalTokens = 0;
     let lastPromptTokens: number | undefined;
+    let lastApiCallTime: number | undefined;
     let maxOutputRecoveryCount = 0;
     let incompleteIntentRetryCount = 0;
 
@@ -582,6 +593,7 @@ export async function* executeLoopGenerator(
         turnsCount,
         lastPromptTokens,
         options?.signal,
+        lastApiCallTime,
       );
 
       if (compactResult !== 'none') {
@@ -680,6 +692,7 @@ export async function* executeLoopGenerator(
       }
 
       // Token 使用量
+      lastApiCallTime = Date.now();
       if (turnResult.usage) {
         if (turnResult.usage.totalTokens) {
           totalTokens += turnResult.usage.totalTokens;
