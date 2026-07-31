@@ -14,9 +14,9 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import {
+  abortableSleep,
   combineAbortSignals,
   createChildAbortController,
-  abortableSleep,
 } from '../../../src/utils/abort.js';
 
 describe('combineAbortSignals', () => {
@@ -67,8 +67,8 @@ describe('combineAbortSignals', () => {
     const c2 = new AbortController();
 
     // 监控 removeEventListener 调用
-    const spy1 = vi.spyOn(c1.signal, 'removeEventListener');
-    const spy2 = vi.spyOn(c2.signal, 'removeEventListener');
+    const _spy1 = vi.spyOn(c1.signal, 'removeEventListener');
+    const _spy2 = vi.spyOn(c2.signal, 'removeEventListener');
 
     const combined = combineAbortSignals(c1.signal, c2.signal);
 
@@ -132,7 +132,7 @@ describe('abortableSleep', () => {
     const controller = new AbortController();
     controller.abort();
     await expect(
-      abortableSleep(10000, controller.signal, { throwOnAbort: true }),
+      abortableSleep(10000, controller.signal, { throwOnAbort: true })
     ).rejects.toThrow('Aborted');
   });
 
