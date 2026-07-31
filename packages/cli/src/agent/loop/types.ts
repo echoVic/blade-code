@@ -42,7 +42,10 @@ export type SystemEvent =
   | { kind: 'token_usage'; usage: TokenUsageInfo };
 
 /** 业务事件 */
-export type DomainEvent = { kind: 'task_update'; tasks: TaskListItem[] };
+export type DomainEvent =
+  | { kind: 'task_update'; tasks: TaskListItem[] }
+  | { kind: 'subagent_spawned'; sessionId: string; type: string; prompt: string }
+  | { kind: 'subagent_completed'; sessionId: string; success: boolean; summary?: string };
 
 // ===== Tool Call Reference =====
 

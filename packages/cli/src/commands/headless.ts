@@ -766,6 +766,10 @@ export async function runHeadless(
             eventWriter.taskUpdate(event.tasks);
             break;
 
+          case 'subagent_spawned':
+          case 'subagent_completed':
+            break;
+
           // --- 模型降级 ---
           case 'model_fallback':
             // 在 headless 模式下不需要特殊处理

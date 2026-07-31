@@ -11,7 +11,7 @@
 
 import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
-import type { LoopDependencies } from './types.js';
+import type { DomainEvent, LoopDependencies } from './types.js';
 
 /**
  * 窄化的工具调用引用：只包含 function 类型的 tool call。
@@ -100,17 +100,61 @@ export function extractModelSwitch(result: ToolResult): string | undefined {
   return modelId || undefined;
 }
 
+// ===== Subagent Lifecycle =====
+
+export function handleSubagentLifecycle(
+  toolCall: FunctionToolCallRef,
+  result: ToolResult
+): DomainEvent | null {
+  if (toolCall.function.name !== 'Task') return null;
+
+  const metadata = result.metadata as Record<string, unknown> | undefined;
+  if (!metadata?.subagentSessionId) return null;
+
+  const sessionId = metadata.subagentSessionId as string;
+  const subagentType = (metadata.subagentType as string) || 'Task';
+  const status = metadata.subagentStatus as string | undefined;
+
+  if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+    return {
+      kind: 'subagent_completed',
+      sessionId,
+      success: status === 'completed',
+      summary: metadata.subagentSummary as string | undefined,
+    };
+  }
+
+  if (status === 'running') {
+    let prompt = '';
+    try {
+      const args = JSON.parse(toolCall.function.arguments);
+      prompt = args.prompt || '';
+    } catch { /* ignore */ }
+    return {
+      kind: 'subagent_spawned',
+      sessionId,
+      type: subagentType,
+      prompt,
+    };
+  }
+
+  return null;
+}
+
 /**
  * 处理所有工具结果的领域副作用。
- * 返回 TaskUpdateAction（如果有）并触发 skill/model 回调。
+ * 返回 DomainEvent（如果有）并触发 skill/model 回调。
  */
 export async function applyToolDomainEffects(
   toolCall: FunctionToolCallRef,
   result: ToolResult,
   deps: LoopDependencies
-): Promise<TaskUpdateAction | null> {
+): Promise<DomainEvent | null> {
   // Task list updates
   const taskAction = handleTaskListUpdate(toolCall, result);
+
+  // Subagent lifecycle
+  const subagentEvent = handleSubagentLifecycle(toolCall, result);
 
   // Skill activation
   handleSkillActivation(toolCall, result, deps);
@@ -121,5 +165,5 @@ export async function applyToolDomainEffects(
     await deps.onModelSwitch?.(modelId);
   }
 
-  return taskAction;
+  return subagentEvent || taskAction;
 }

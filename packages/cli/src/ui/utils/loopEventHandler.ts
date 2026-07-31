@@ -216,6 +216,10 @@ export function createLoopEventHandler(
         deps.appActions.setTasks(event.tasks);
         break;
 
+      case 'subagent_spawned':
+      case 'subagent_completed':
+        break;
+
       default: {
         const _exhaustive: never = event;
         void _exhaustive;
