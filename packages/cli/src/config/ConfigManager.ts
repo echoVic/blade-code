@@ -244,20 +244,28 @@ export class ConfigManager {
   private resolveEnvInterpolation(config: BladeConfig): void {
     const envPattern = /\$\{?([A-Z_][A-Z0-9_]*)(:-([^}]+))?\}?/g;
 
-    const resolve = (value: unknown): unknown => {
-      if (typeof value === 'string') {
-        return value.replace(envPattern, (match, varName, _, defaultValue) => {
+    const resolve = (obj: unknown): unknown => {
+      if (typeof obj === 'string') {
+        return obj.replace(envPattern, (match, varName, _, defaultValue) => {
           return process.env[varName] || defaultValue || match;
         });
       }
-      return value;
+      if (Array.isArray(obj)) {
+        return obj.map(resolve);
+      }
+      if (typeof obj === 'object' && obj !== null) {
+        const result = obj as Record<string, unknown>;
+        for (const [key, value] of Object.entries(result)) {
+          result[key] = resolve(value);
+        }
+        return result;
+      }
+      return obj;
     };
 
-    // 只解析字符串字段
-    for (const [key, value] of Object.entries(config)) {
-      if (typeof value === 'string') {
-        (config as unknown as Record<string, unknown>)[key] = resolve(value);
-      }
+    const record = config as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(record)) {
+      record[key] = resolve(value);
     }
   }
 
