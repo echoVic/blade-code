@@ -21,6 +21,7 @@ import { merge } from 'lodash-es';
 import os from 'os';
 import path from 'path';
 import type { GlobalOptions } from '../cli/types.js';
+import { resolveModelAlias } from '../services/modelAlias.js';
 import { getCwd } from '../utils/cwd.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import { BladeConfig, PermissionMode, RuntimeConfig } from './types.js';
@@ -85,7 +86,8 @@ export class ConfigManager {
 
       // 5. 环境变量覆盖
       if (process.env.BLADE_MODEL && config.models?.length > 0) {
-        const envModel = config.models.find((m) => m.id === process.env.BLADE_MODEL || m.model === process.env.BLADE_MODEL);
+        const resolvedModel = resolveModelAlias(process.env.BLADE_MODEL);
+        const envModel = config.models.find((m) => m.id === resolvedModel || m.model === resolvedModel || m.id === process.env.BLADE_MODEL || m.model === process.env.BLADE_MODEL);
         if (envModel) {
           config.currentModelId = envModel.id;
         }
