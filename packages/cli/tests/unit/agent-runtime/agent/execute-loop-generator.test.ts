@@ -382,7 +382,7 @@ describe('executeLoopGenerator', () => {
         role: 'tool',
         tool_call_id: 'tc1',
         name: 'Edit',
-        content: '用户拒绝授权',
+        content: 'Error: 用户拒绝授权',
       });
     });
 
@@ -788,7 +788,7 @@ describe('executeLoopGenerator', () => {
         {
           sessionId: 'test-session',
           role: 'user',
-          content: '请执行你提到的操作，不要只是描述。',
+          content: '请执行你提到的操作，不要只是描述。使用 Edit/Write/Bash 工具来实际修改文件。',
           parentUuid: 'msg-assistant-1',
         },
         {

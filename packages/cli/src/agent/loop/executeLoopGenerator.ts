@@ -47,6 +47,14 @@ import {
   saveUserMessage,
 } from './conversationPersistence.js';
 import { ConversationState } from './ConversationState.js';
+import {
+  createToolFailureTracker,
+  getCircuitBreakerHint,
+  getReflectionPrompt,
+  recordToolFailure,
+  recordToolSuccess,
+  shouldInjectReflection,
+} from './errorRecovery.js';
 import { StreamingToolExecutor } from './StreamingToolExecutor.js';
 import type { FunctionToolCallRef } from './toolDomainPolicy.js';
 import { applyToolDomainEffects } from './toolDomainPolicy.js';
@@ -58,6 +66,16 @@ const COMPACTION_FALLBACK_OUTPUT_RATIO = 0.1;
 const COMPACTION_FALLBACK_MIN_OUTPUT_TOKENS = 8192;
 const COMPACTION_FALLBACK_MAX_OUTPUT_TOKENS = 32768;
 const SAFETY_LIMIT = 100;
+
+const PLANNING_DIRECTIVE = `
+
+# Task Execution Strategy
+When facing complex multi-step tasks:
+1. Break the task into concrete, verifiable steps before acting.
+2. Execute one step at a time — verify each step succeeded before moving to the next.
+3. If a step fails, diagnose the root cause rather than repeating the same approach.
+4. When uncertain about file paths or project structure, use Grep/Glob/Read to gather facts first.
+5. Prefer the smallest change that achieves the goal — avoid unnecessary refactoring.`;
 
 // ===== Helper Functions (extracted from Agent.ts) =====
 
@@ -477,6 +495,7 @@ export async function* executeLoopGenerator(
     let rawTools = registry.getFunctionDeclarationsByMode(permissionMode);
     rawTools = injectSkillsMetadata(rawTools);
     const tools = deps.applySkillToolRestrictions(rawTools);
+    const failureTracker = createToolFailureTracker();
 
     // 1.5 注入 deferred tools listing 到系统提示
     let finalSystemPrompt = systemPrompt;
@@ -488,6 +507,11 @@ export async function* executeLoopGenerator(
         finalSystemPrompt =
           `${finalSystemPrompt}\n\n${deferredListing}`;
       }
+    }
+
+    // 1.6 注入任务分解与自主规划指令
+    if (finalSystemPrompt) {
+      finalSystemPrompt += PLANNING_DIRECTIVE;
     }
 
     // 2. 构建消息历史 — 使用 ConversationState 单一消息源
@@ -567,6 +591,15 @@ export async function* executeLoopGenerator(
 
       if (options?.signal?.aborted) {
         return makeAbortResult(turnsCount - 1, allToolResults.length, startTime, options.signal);
+      }
+
+      // 3.5 Self-reflection injection (every N turns)
+      if (shouldInjectReflection(turnsCount) && turnsCount > 1) {
+        const reflectionPrompt = getReflectionPrompt(turnsCount, failureTracker.totalFailures);
+        state.appendControl('user', {
+          role: 'user',
+          content: `\n\n<system-reminder>\n${reflectionPrompt}\n</system-reminder>`,
+        });
       }
 
       // 4. 调用 LLM
@@ -1094,9 +1127,22 @@ export async function* executeLoopGenerator(
         }
 
         // 添加工具结果到消息历史
+        if (result.success) {
+          recordToolSuccess(failureTracker, toolCall.function.name);
+        } else {
+          recordToolFailure(failureTracker, toolCall.function.name);
+        }
+
         let toolResultContent = result.success
           ? result.llmContent || ''
           : formatToolError(toolCall.function.name, result.error);
+
+        if (!result.success) {
+          const cbHint = getCircuitBreakerHint(failureTracker, toolCall.function.name);
+          if (cbHint && typeof toolResultContent === 'string') {
+            toolResultContent = `${toolResultContent}\n\n${cbHint}`;
+          }
+        }
         if (
           typeof toolResultContent === 'object' &&
           toolResultContent !== null
