@@ -328,6 +328,7 @@ export class ConfigManager {
    */
   public validateConfig(config: BladeConfig): void {
     const errors: string[] = [];
+    const warnings: string[] = [];
 
     if (!config.models || config.models.length === 0) {
       errors.push('没有可用的模型配置');
@@ -339,9 +340,29 @@ export class ConfigManager {
       } else {
         const currentModel = config.models.find((m) => m.id === config.currentModelId);
         if (!currentModel) {
-          errors.push('当前模型 ID 无效');
+          errors.push(`当前模型 ID "${config.currentModelId}" 在 models 列表中不存在`);
         }
       }
+
+      for (const model of config.models) {
+        const prefix = `模型 "${model.name || model.id}"`;
+        if (!model.apiKey) {
+          warnings.push(`${prefix}: apiKey 为空`);
+        }
+        if (!model.model) {
+          errors.push(`${prefix}: model 字段必填`);
+        }
+        if (!model.provider) {
+          errors.push(`${prefix}: provider 字段必填`);
+        }
+        if (model.baseUrl && !model.baseUrl.startsWith('http')) {
+          warnings.push(`${prefix}: baseUrl "${model.baseUrl}" 不是有效的 HTTP URL`);
+        }
+      }
+    }
+
+    if (warnings.length > 0) {
+      console.warn(`[ConfigManager] 配置警告:\n${warnings.map((w) => `  ⚠ ${w}`).join('\n')}`);
     }
 
     if (errors.length > 0) {
