@@ -90,6 +90,7 @@ export interface ChatConfig {
   thinkingBudget?: number;
   fallbackModels?: string[];
   enablePromptCaching?: boolean;
+  maxRetries?: number;
 }
 
 /**

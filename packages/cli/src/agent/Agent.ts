@@ -179,6 +179,7 @@ export class Agent {
       enablePromptCaching: modelConfig.enablePromptCaching,
       customHeaders: modelConfig.customHeaders,
       apiVersion: modelConfig.apiVersion,
+      maxRetries: modelConfig.maxRetries,
     });
 
     const contextManager = this.executionEngine?.getContextManager();

@@ -725,7 +725,7 @@ export class VercelAIChatService implements IChatService {
     };
 
     try {
-      return await this.retryWithBackoff(() => attempt(this.model), signal);
+      return await this.retryWithBackoff(() => attempt(this.model), signal, this.config.maxRetries);
     } catch (error) {
       const duration = Date.now() - startTime;
       logger.error('[VercelAIChatService] Chat failed after', duration, 'ms');

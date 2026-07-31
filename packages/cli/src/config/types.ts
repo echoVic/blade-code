@@ -70,6 +70,7 @@ export interface ModelConfig {
   enablePromptCaching?: boolean;
   customHeaders?: Record<string, string>;
   timeout?: number;
+  maxRetries?: number;
 }
 
 import { UiTheme } from '@/api/schemas.js';
