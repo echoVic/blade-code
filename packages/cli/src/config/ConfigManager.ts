@@ -91,6 +91,20 @@ export class ConfigManager {
         }
       }
 
+      if (process.env.BLADE_API_KEY && config.models?.length > 0) {
+        const currentModel = config.models.find((m) => m.id === config.currentModelId);
+        if (currentModel) {
+          currentModel.apiKey = process.env.BLADE_API_KEY;
+        }
+      }
+
+      if (process.env.BLADE_BASE_URL && config.models?.length > 0) {
+        const currentModel = config.models.find((m) => m.id === config.currentModelId);
+        if (currentModel) {
+          currentModel.baseUrl = process.env.BLADE_BASE_URL;
+        }
+      }
+
       if (config.debug) {
         console.log('[ConfigManager] Configuration loaded successfully');
       }
