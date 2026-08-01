@@ -32,6 +32,12 @@ const MAX_ERROR_LINES = 15;
 /** Lint 检查超时 */
 const LINT_TIMEOUT_MS = 5000;
 
+/** 单文件测试超时 */
+const TEST_TIMEOUT_MS = 15000;
+
+/** 测试输出最大行数 */
+const MAX_TEST_OUTPUT_LINES = 10;
+
 /**
  * 从类型检查输出中过滤与指定文件相关的错误
  */
@@ -48,11 +54,11 @@ function filterErrorsForFile(output: string, filePath: string): string[] {
  */
 async function runLintCheck(filePath: string, cwd: string): Promise<string | null> {
   try {
-    await execFileAsync(
-      'npx',
-      ['biome', 'lint', '--max-diagnostics=5', filePath],
-      { cwd, timeout: LINT_TIMEOUT_MS, encoding: 'utf-8' },
-    );
+    await execFileAsync('npx', ['biome', 'lint', '--max-diagnostics=5', filePath], {
+      cwd,
+      timeout: LINT_TIMEOUT_MS,
+      encoding: 'utf-8',
+    });
     return null;
   } catch (err: unknown) {
     const execErr = err as { stdout?: string; stderr?: string; killed?: boolean };
@@ -64,11 +70,50 @@ async function runLintCheck(filePath: string, cwd: string): Promise<string | nul
 }
 
 /**
+ * Run a single test file and return failure output (if any)
+ */
+async function runTestFile(testPath: string, cwd: string): Promise<string | null> {
+  try {
+    await execFileAsync('npx', ['vitest', 'run', '--reporter=dot', testPath], {
+      cwd,
+      timeout: TEST_TIMEOUT_MS,
+      encoding: 'utf-8',
+    });
+    return null;
+  } catch (err: unknown) {
+    const execErr = err as {
+      stdout?: string;
+      stderr?: string;
+      killed?: boolean;
+      code?: number;
+    };
+    if (execErr.killed) return null;
+    if (execErr.code === 0) return null;
+    const output = (execErr.stdout || '') + (execErr.stderr || '');
+    if (!output.trim()) return null;
+    const lines = output.split('\n');
+    const failLines = lines.filter(
+      (l) =>
+        l.includes('FAIL') ||
+        l.includes('Error') ||
+        l.includes('✗') ||
+        l.includes('expected')
+    );
+    if (failLines.length === 0) return null;
+    return failLines.slice(0, MAX_TEST_OUTPUT_LINES).join('\n');
+  }
+}
+
+/**
  * Find a related test file for the given source file.
  * Common patterns: foo.ts -> foo.test.ts, foo.spec.ts, __tests__/foo.test.ts
  */
 function findRelatedTestFile(filePath: string): string | null {
-  if (filePath.includes('.test.') || filePath.includes('.spec.') || filePath.includes('__tests__')) {
+  if (
+    filePath.includes('.test.') ||
+    filePath.includes('.spec.') ||
+    filePath.includes('__tests__')
+  ) {
     return null;
   }
 
@@ -118,20 +163,24 @@ export class AutoVerifyStage implements PipelineStage {
           const truncated = relevantErrors.slice(0, MAX_ERROR_LINES);
           diagnostics.push(
             `Type errors:\n${truncated.join('\n')}` +
-            (relevantErrors.length > MAX_ERROR_LINES
-              ? `\n... (+${relevantErrors.length - MAX_ERROR_LINES} more)`
-              : ''),
+              (relevantErrors.length > MAX_ERROR_LINES
+                ? `\n... (+${relevantErrors.length - MAX_ERROR_LINES} more)`
+                : '')
           );
         }
       }
     } catch (err) {
       logger.debug(
-        `[AutoVerify] type-check failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[AutoVerify] type-check failed: ${err instanceof Error ? err.message : String(err)}`
       );
     }
 
     // 2. Lint check (biome, single file)
-    if (filePath.endsWith('.ts') || filePath.endsWith('.tsx') || filePath.endsWith('.js')) {
+    if (
+      filePath.endsWith('.ts') ||
+      filePath.endsWith('.tsx') ||
+      filePath.endsWith('.js')
+    ) {
       const lintOutput = await runLintCheck(filePath, searchRoot);
       if (lintOutput) {
         const lines = lintOutput.split('\n').slice(0, 5);
@@ -139,10 +188,19 @@ export class AutoVerifyStage implements PipelineStage {
       }
     }
 
-    // 3. Suggest related test file
-    const testHint = findRelatedTestFile(filePath);
-    if (testHint) {
-      diagnostics.push(`Related test: ${testHint}`);
+    // 3. Test execution — run related test or self if editing a test file
+    const isTestFile = filePath.includes('.test.') || filePath.includes('.spec.');
+    const testFileToRun = isTestFile ? filePath : findRelatedTestFile(filePath);
+
+    if (testFileToRun) {
+      const testOutput = await runTestFile(testFileToRun, searchRoot);
+      if (testOutput) {
+        diagnostics.push(
+          `Test failures (${path.basename(testFileToRun)}):\n${testOutput}`
+        );
+      } else if (!isTestFile && testFileToRun) {
+        diagnostics.push(`Related test: ${testFileToRun}`);
+      }
     }
 
     if (diagnostics.length === 0) return;
@@ -162,7 +220,7 @@ export class AutoVerifyStage implements PipelineStage {
     result.llmContent = `${currentContent}${context}`;
 
     logger.info(
-      `[AutoVerify] injected ${diagnostics.length} diagnostic(s) (${path.basename(filePath)})`,
+      `[AutoVerify] injected ${diagnostics.length} diagnostic(s) (${path.basename(filePath)})`
     );
   }
 }

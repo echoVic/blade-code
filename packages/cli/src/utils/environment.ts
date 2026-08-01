@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { existsSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, realpathSync } from 'fs';
 import { basename, isAbsolute, resolve } from 'path';
 import * as os from 'os';
 import * as path from 'path';
@@ -93,6 +93,26 @@ When using file tools (read, write, edit), provide absolute paths based on: \`${
 
   if (keyFiles.length > 0) {
     context += `\n\nKey project files at root for quick reference:\n${keyFiles.join('\n')}`;
+  }
+
+  // Detect available project commands from package.json
+  const pkgJsonPath = path.join(env.projectRoot, 'package.json');
+  if (existsSync(pkgJsonPath)) {
+    try {
+      const pkgContent = readFileSync(pkgJsonPath, 'utf-8');
+      const pkg = JSON.parse(pkgContent);
+      const scripts = pkg.scripts;
+      if (scripts) {
+        const useful = ['test', 'lint', 'type-check', 'build', 'dev', 'start']
+          .filter((s) => scripts[s])
+          .map((s) => `  ${s}: ${scripts[s].slice(0, 60)}`);
+        if (useful.length > 0) {
+          context += `\n\nAvailable npm scripts:\n${useful.join('\n')}`;
+        }
+      }
+    } catch {
+      // ignore parse errors
+    }
   }
 
   if (includeDirectoryListing) {

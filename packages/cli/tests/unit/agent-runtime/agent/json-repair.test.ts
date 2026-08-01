@@ -36,12 +36,16 @@ describe('tryRepairJson', () => {
   });
 
   it('fixes trailing commas', () => {
-    expect(tryRepairJson('{"path": "/tmp/test.ts",}')).toEqual({ path: '/tmp/test.ts' });
+    expect(tryRepairJson('{"path": "/tmp/test.ts",}')).toEqual({
+      path: '/tmp/test.ts',
+    });
     expect(tryRepairJson('{"a": [1, 2, 3,]}')).toEqual({ a: [1, 2, 3] });
   });
 
   it('fixes missing closing brace', () => {
-    expect(tryRepairJson('{"file_path": "/src/app.ts"')).toEqual({ file_path: '/src/app.ts' });
+    expect(tryRepairJson('{"file_path": "/src/app.ts"')).toEqual({
+      file_path: '/src/app.ts',
+    });
     expect(tryRepairJson('{"old_string": "hello", "new_string": "world"')).toEqual({
       old_string: 'hello',
       new_string: 'world',

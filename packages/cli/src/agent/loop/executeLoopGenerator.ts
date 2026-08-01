@@ -1127,30 +1127,30 @@ export async function* executeLoopGenerator(
           }
 
           // 并行执行所有工具
-        const executeToolCall = async (toolCall: (typeof functionCalls)[0]) => {
-          try {
-            let params: Record<string, unknown>;
+          const executeToolCall = async (toolCall: (typeof functionCalls)[0]) => {
             try {
-              params = JSON.parse(toolCall.function.arguments);
-            } catch (parseError) {
-              const repaired = tryRepairJson(toolCall.function.arguments);
-              if (repaired === null) {
-                return {
-                  toolCall,
-                  result: {
-                    success: false,
-                    llmContent: '',
-                    error: {
-                      type: ToolErrorType.VALIDATION_ERROR,
-                      message: `Invalid JSON in tool arguments: ${(parseError as Error).message}. Raw: ${toolCall.function.arguments.slice(0, 200)}`,
-                    },
-                    metadata: undefined,
-                  } as import('../../tools/types/index.js').ToolResult,
-                  toolUseUuid: null,
-                };
+              let params: Record<string, unknown>;
+              try {
+                params = JSON.parse(toolCall.function.arguments);
+              } catch (parseError) {
+                const repaired = tryRepairJson(toolCall.function.arguments);
+                if (repaired === null) {
+                  return {
+                    toolCall,
+                    result: {
+                      success: false,
+                      llmContent: '',
+                      error: {
+                        type: ToolErrorType.VALIDATION_ERROR,
+                        message: `Invalid JSON in tool arguments: ${(parseError as Error).message}. Raw: ${toolCall.function.arguments.slice(0, 200)}`,
+                      },
+                      metadata: undefined,
+                    } as import('../../tools/types/index.js').ToolResult,
+                    toolUseUuid: null,
+                  };
+                }
+                params = repaired;
               }
-              params = repaired;
-            }
               if (
                 toolCall.function.name === 'Task' &&
                 (typeof params.subagent_session_id !== 'string' ||

@@ -8,13 +8,16 @@
  */
 
 /**
- * 匹配策略枚举
+ * 匹配策略枚举（按优先级排序）
  */
 export enum MatchStrategy {
   EXACT = 'exact', // 精确匹配
+  LINE_TRIM = 'line_trim', // 行尾空白修剪
   NORMALIZE_QUOTES = 'normalize_quotes', // 引号标准化匹配
   UNESCAPE = 'unescape', // 反转义匹配
+  WHITESPACE_NORMALIZE = 'whitespace_normalize', // 空白归一化匹配
   FLEXIBLE = 'flexible', // 弹性缩进匹配
+  BLOCK_ANCHOR = 'block_anchor', // 块锚点匹配（首尾行 + 相似度）
   FAILED = 'failed', // 所有策略都失败
 }
 
@@ -140,4 +143,108 @@ export function flexibleMatch(content: string, searchString: string): string | n
   }
 
   return null;
+}
+
+/**
+ * 行级空白修剪匹配
+ * 忽略每行的尾部空白差异（LLM 经常在行尾添加或遗漏空格）
+ */
+export function lineTrimMatch(content: string, searchString: string): string | null {
+  const searchLines = searchString.split('\n');
+  const contentLines = content.split('\n');
+  const trimmedSearch = searchLines.map((l) => l.trimEnd());
+
+  for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
+    const snippet = contentLines.slice(i, i + searchLines.length);
+    const trimmedSnippet = snippet.map((l) => l.trimEnd());
+
+    if (
+      trimmedSnippet.length === trimmedSearch.length &&
+      trimmedSnippet.every((line, idx) => line === trimmedSearch[idx])
+    ) {
+      return snippet.join('\n');
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 空白归一化匹配
+ * 将连续空白字符视为单个空格（处理 tab/space 混用、多余空格等）
+ * 保留换行符结构，仅归一化行内空白
+ */
+export function whitespaceNormalizeMatch(
+  content: string,
+  searchString: string
+): string | null {
+  const normalizeInline = (s: string) =>
+    s
+      .split('\n')
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .join('\n');
+
+  const normalizedSearch = normalizeInline(searchString);
+  const searchLineCount = searchString.split('\n').length;
+  const contentLines = content.split('\n');
+
+  for (let i = 0; i <= contentLines.length - searchLineCount; i++) {
+    const snippet = contentLines.slice(i, i + searchLineCount);
+    const normalizedSnippet = normalizeInline(snippet.join('\n'));
+
+    if (normalizedSnippet === normalizedSearch) {
+      return snippet.join('\n');
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 块锚点匹配
+ * 使用首行和尾行作为锚点精确匹配，中间行使用相似度容错
+ * 适用于 LLM 对中间行有轻微拼写或格式差异的情况
+ */
+export function blockAnchorMatch(content: string, searchString: string): string | null {
+  const searchLines = searchString.split('\n');
+  if (searchLines.length < 3) return null;
+
+  const contentLines = content.split('\n');
+  const firstSearchTrimmed = searchLines[0].trim();
+  const lastSearchTrimmed = searchLines[searchLines.length - 1].trim();
+  const searchLineCount = searchLines.length;
+
+  for (let i = 0; i <= contentLines.length - searchLineCount; i++) {
+    const firstContentTrimmed = contentLines[i].trim();
+    const lastContentTrimmed = contentLines[i + searchLineCount - 1].trim();
+
+    if (firstContentTrimmed !== firstSearchTrimmed) continue;
+    if (lastContentTrimmed !== lastSearchTrimmed) continue;
+
+    const snippet = contentLines.slice(i, i + searchLineCount);
+    const middleContent = snippet.slice(1, -1).join('\n');
+    const middleSearch = searchLines.slice(1, -1).join('\n');
+
+    const similarity = computeLineSimilarity(middleContent, middleSearch);
+    if (similarity >= 0.85) {
+      return snippet.join('\n');
+    }
+  }
+
+  return null;
+}
+
+function computeLineSimilarity(a: string, b: string): number {
+  const aLines = a.split('\n');
+  const bLines = b.split('\n');
+  if (aLines.length !== bLines.length) return 0;
+  if (aLines.length === 0) return 1;
+
+  let matches = 0;
+  for (let i = 0; i < aLines.length; i++) {
+    if (aLines[i].trim() === bLines[i].trim()) {
+      matches++;
+    }
+  }
+  return matches / aLines.length;
 }

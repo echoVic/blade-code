@@ -19,6 +19,7 @@ import initCommand from './init.js';
 import modelCommand from './model.js';
 import permissionsCommand from './permissions.js';
 import pluginsCommand from './plugins.js';
+import searchCommand from './search.js';
 import skillsCommand from './skills.js';
 import tasksCommand from './tasks.js';
 import themeCommand from './theme.js';
@@ -39,6 +40,7 @@ const slashCommands: SlashCommandRegistry = {
   model: modelCommand,
   git: gitCommand,
   ide: ideCommand,
+  search: searchCommand,
   skills: skillsCommand,
   hooks: hooksCommand,
   tasks: tasksCommand,

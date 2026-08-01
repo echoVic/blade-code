@@ -91,7 +91,7 @@ describe('utils/environment', () => {
     const { getEnvironmentContext } = await import(
       '../../../../src/utils/environment.js'
     );
-    const context = getEnvironmentContext();
+    const context = getEnvironmentContext({ includeGitSnapshot: false });
 
     expect(context).toContain('# Environment');
     expect(context).toContain(`Primary working directory: ${tempSubDir}`);

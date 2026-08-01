@@ -27,7 +27,17 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
   getCurrentModel: vi.fn().mockReturnValue({ id: 'test-model' }),
   getState: vi.fn().mockReturnValue({
     config: { config: {} },
-    session: { history: [] },
+    session: {
+      history: [],
+      tokenUsage: {
+        turnCount: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        estimatedCostUsd: 0,
+        maxContextTokens: 0,
+        inputTokens: 0,
+      },
+    },
   }),
 }));
 

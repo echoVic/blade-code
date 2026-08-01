@@ -3,19 +3,20 @@
  * 负责协调整个压缩流程：分析文件、生成总结、创建压缩消息
  */
 
-import { promises as fs } from 'node:fs';
 import { nanoid } from 'nanoid';
+import { promises as fs } from 'node:fs';
 import { PermissionMode } from '../config/types.js';
-import { getCwd } from '../utils/cwd.js';
 import { HookManager } from '../hooks/HookManager.js';
+import { consolidateAfterCompaction } from '../memory/MemoryConsolidation.js';
 import {
   createChatServiceAsync,
   type Message,
 } from '../services/ChatServiceInterface.js';
 import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
+import { isAbortError } from '../utils/abort.js';
+import { getCwd } from '../utils/cwd.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
 import { TokenCounter } from './TokenCounter.js';
-import { isAbortError } from '../utils/abort.js';
 
 /**
  * 压缩选项
@@ -233,6 +234,10 @@ export class CompactionService {
       );
 
       sessionFailures.delete(sessionKey);
+
+      // 非阻塞记忆巩固：从被丢弃的消息中提取 learnings
+      const discardedMessages = messages.slice(0, messages.length - retainCount);
+      consolidateAfterCompaction(discardedMessages).catch((_) => void _);
 
       return {
         success: true,

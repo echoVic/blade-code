@@ -14,10 +14,13 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { generateDiffSnippetWithMatch } from './diffUtils.js';
 import {
+  blockAnchorMatch,
   flexibleMatch,
+  lineTrimMatch,
   type MatchResult,
   MatchStrategy,
   unescapeString,
+  whitespaceNormalizeMatch,
 } from './editCorrector.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 import { SnapshotManager } from './SnapshotManager.js';
@@ -415,13 +418,18 @@ function smartMatch(content: string, searchString: string): MatchResult {
     return { matched: searchString, strategy: MatchStrategy.EXACT };
   }
 
-  // 策略 2: 标准化引号后匹配
+  // 策略 2: 行尾空白修剪匹配
+  const lineTrimmed = lineTrimMatch(content, searchString);
+  if (lineTrimmed) {
+    return { matched: lineTrimmed, strategy: MatchStrategy.LINE_TRIM };
+  }
+
+  // 策略 3: 标准化引号后匹配
   const normalizedSearch = normalizeQuotes(searchString);
   const normalizedContent = normalizeQuotes(content);
 
   const quoteIndex = normalizedContent.indexOf(normalizedSearch);
   if (quoteIndex !== -1) {
-    // 返回原文件中的实际字符串（保持格式）
     const actualString = content.substring(
       quoteIndex,
       quoteIndex + searchString.length
@@ -429,16 +437,28 @@ function smartMatch(content: string, searchString: string): MatchResult {
     return { matched: actualString, strategy: MatchStrategy.NORMALIZE_QUOTES };
   }
 
-  // 策略 3: 反转义后匹配
+  // 策略 4: 反转义后匹配
   const unescaped = unescapeString(searchString);
   if (unescaped !== searchString && content.includes(unescaped)) {
     return { matched: unescaped, strategy: MatchStrategy.UNESCAPE };
   }
 
-  // 策略 4: 弹性缩进匹配
+  // 策略 5: 空白归一化匹配
+  const wsNormalized = whitespaceNormalizeMatch(content, searchString);
+  if (wsNormalized) {
+    return { matched: wsNormalized, strategy: MatchStrategy.WHITESPACE_NORMALIZE };
+  }
+
+  // 策略 6: 弹性缩进匹配
   const flexible = flexibleMatch(content, searchString);
   if (flexible) {
     return { matched: flexible, strategy: MatchStrategy.FLEXIBLE };
+  }
+
+  // 策略 7: 块锚点匹配（首尾行精确 + 中间行相似度）
+  const blockAnchored = blockAnchorMatch(content, searchString);
+  if (blockAnchored) {
+    return { matched: blockAnchored, strategy: MatchStrategy.BLOCK_ANCHOR };
   }
 
   // 所有策略都失败

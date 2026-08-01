@@ -5,12 +5,24 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getProjectStoragePath } from '../../../../src/context/storage/pathUtils.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AutoMemoryManager } from '../../../../src/memory/AutoMemoryManager.js';
 import { memoryReadTool } from '../../../../src/tools/builtin/memory/MemoryReadTool.js';
 import { memoryWriteTool } from '../../../../src/tools/builtin/memory/MemoryWriteTool.js';
 import type { ExecutionContext } from '../../../../src/tools/types/index.js';
+
+// Mock getProjectStoragePath to keep everything in temp dir (avoid sandbox restrictions)
+vi.mock('../../../../src/context/storage/pathUtils.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../../../../src/context/storage/pathUtils.js')
+    >();
+  return {
+    ...actual,
+    getProjectStoragePath: (projectPath: string) =>
+      path.join(projectPath, '.blade-test-storage'),
+  };
+});
 
 describe('MemoryWriteTool', () => {
   let tmpDir: string;
@@ -25,7 +37,6 @@ describe('MemoryWriteTool', () => {
 
   afterEach(async () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
-    await fs.rm(getProjectStoragePath(tmpDir), { recursive: true, force: true });
   });
 
   it('should write a new topic file', async () => {
@@ -163,7 +174,6 @@ describe('MemoryReadTool', () => {
 
   afterEach(async () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
-    await fs.rm(getProjectStoragePath(tmpDir), { recursive: true, force: true });
   });
 
   it('should read existing topic', async () => {
