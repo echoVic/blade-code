@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2026-08-01
+
+### ✨ 新功能
+
+- 增加显式验证完成门禁：用户要求运行测试、Lint、类型检查或构建时，Agent 必须成功执行对应命令后才能报告完成
+- 增加隔离临时项目的真实 Agent 轨迹测试，覆盖读取、编辑、命令执行和结果复验
+
+### 🐛 问题修复
+
+- 修复 headless 模式忽略 Agent 失败结果并错误返回退出码 0 的问题
+- 修复 Stale Loop 告警窗口不重置导致循环无法退出的问题
+
+### ✅ 测试相关
+
+- `ready` 新增真实 API 发布门禁，支持直接读取 `~/.blade/config.json` 当前模型
+- 真实 API 套件改为无 mock 串行执行，并为 reasoning 模型预留稳定输出预算
+
 
 ## [0.4.2] - 2026-05-07
 
