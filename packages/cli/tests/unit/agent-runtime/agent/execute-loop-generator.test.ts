@@ -409,6 +409,165 @@ describe('executeLoopGenerator', () => {
       });
     });
 
+    it('propagates a worktree workspace transition to later tool calls', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext({ workspaceRoot: '/repo' });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-enter',
+              type: 'function',
+              function: {
+                name: 'EnterWorktree',
+                arguments: '{"name":"isolated"}',
+              },
+            },
+          ],
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-bash',
+              type: 'function',
+              function: {
+                name: 'Bash',
+                arguments: '{"command":"pwd"}',
+              },
+            },
+          ],
+          usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Worktree active.',
+          toolCalls: undefined,
+          usage: { promptTokens: 140, completionTokens: 20, totalTokens: 160 },
+          finishReason: 'stop',
+        });
+
+      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      executeMock
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: 'Entered worktree',
+          metadata: {
+            workspaceTransition: 'enter',
+            workspaceRoot: '/worktrees/isolated',
+          },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: '/worktrees/isolated',
+          metadata: { command: 'pwd', exit_code: 0 },
+        });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Create and use a worktree.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(context.workspaceRoot).toBe('/worktrees/isolated');
+      expect(executeMock.mock.calls[1]?.[2]).toEqual(
+        expect.objectContaining({ workspaceRoot: '/worktrees/isolated' })
+      );
+    });
+
+    it('does not accept a failed Bash verification command', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      chatMock
+        .mockResolvedValueOnce({
+          content: 'The source change is complete.',
+          toolCalls: undefined,
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-failed-test',
+              type: 'function',
+              function: {
+                name: 'Bash',
+                arguments: '{"command":"npm test"}',
+              },
+            },
+          ],
+          usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Tests have been handled.',
+          toolCalls: undefined,
+          usage: { promptTokens: 140, completionTokens: 20, totalTokens: 160 },
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-passed-test',
+              type: 'function',
+              function: {
+                name: 'Bash',
+                arguments: '{"command":"npm test"}',
+              },
+            },
+          ],
+          usage: { promptTokens: 160, completionTokens: 20, totalTokens: 180 },
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Tests now pass.',
+          toolCalls: undefined,
+          usage: { promptTokens: 180, completionTokens: 20, totalTokens: 200 },
+          finishReason: 'stop',
+        });
+
+      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      executeMock
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: '1 test failed',
+          metadata: { command: 'npm test', exit_code: 1 },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: '1 test passed',
+          metadata: { command: 'npm test', exit_code: 0 },
+        });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Fix the bug and run npm test before finishing.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(chatMock).toHaveBeenCalledTimes(5);
+      expect(executeMock).toHaveBeenCalledTimes(2);
+    });
+
     it('fails instead of reporting success when required verification never runs', async () => {
       const deps = createMockDeps();
       const context = createMockContext();

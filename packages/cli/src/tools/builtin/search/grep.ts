@@ -719,7 +719,7 @@ export const grepTool = createTool({
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const {
       pattern,
-      path = getCwd(),
+      path: requestedPath,
       glob,
       type,
       output_mode,
@@ -734,6 +734,7 @@ export const grepTool = createTool({
     } = params;
     const { updateOutput } = context;
     const signal = context.signal ?? new AbortController().signal;
+    const path = requestedPath ?? context.workspaceRoot ?? getCwd();
 
     try {
       updateOutput?.(`使用智能搜索策略查找模式 "${pattern}"...`);

@@ -132,7 +132,8 @@ export interface LoopResult {
       | 'loop_detected'
       | 'aborted'
       | 'chat_disabled'
-      | 'verification_failed';
+      | 'verification_failed'
+      | 'worktree_protocol_failed';
     message: string;
     details?: unknown;
   };

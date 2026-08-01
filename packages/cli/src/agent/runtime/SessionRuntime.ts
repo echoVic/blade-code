@@ -32,6 +32,7 @@ import { InMemorySessionApprovalStore } from '../../tools/execution/SessionAppro
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
 import { getCwd } from '../../utils/cwd.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
+import { worktreeManager } from '../../worktree/WorktreeManager.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
 import { subagentRegistry } from '../subagents/SubagentRegistry.js';
 import type { AgentOptions } from '../types.js';
@@ -196,6 +197,7 @@ export class SessionRuntime {
 
   async dispose(): Promise<void> {
     this.approvalStore.clear();
+    worktreeManager.releaseSession(this.sessionId);
     const disposableChatService = this.chatService as
       | (IChatService & { dispose?: () => Promise<void> | void })
       | undefined;

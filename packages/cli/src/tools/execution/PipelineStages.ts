@@ -85,7 +85,7 @@ export class ConfirmationStage implements PipelineStage {
           execution.context.sessionId || 'unknown',
           execution.params,
           {
-            projectDir: getCwd(),
+            projectDir: execution.context.workspaceRoot || getCwd(),
             sessionId: execution.context.sessionId || 'unknown',
             permissionMode: execution.context.permissionMode || PermissionMode.DEFAULT,
           }

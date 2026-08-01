@@ -389,6 +389,9 @@ export class Agent {
       throw new Error('Agent未初始化');
     }
 
+    if (context?.workspaceRoot) {
+      this.attachmentCollector?.setCwd(context.workspaceRoot);
+    }
     const enhancedMessage = await this.processAtMentionsForContent(message);
 
     if (context) {
@@ -489,7 +492,7 @@ export class Agent {
 
     // Plan 模式差异 1: 使用统一入口构建 Plan 模式系统提示词
     const { prompt: systemPrompt } = await buildSystemPrompt({
-      projectPath: getCwd(),
+      projectPath: context.workspaceRoot || getCwd(),
       mode: PermissionMode.PLAN,
       includeEnvironment: true,
       language: this.config.language,
@@ -601,7 +604,8 @@ export class Agent {
 
     // 无状态设计：优先使用 context.systemPrompt，否则按需构建
     const systemPrompt =
-      context.systemPrompt ?? (await this.buildSystemPromptOnDemand());
+      context.systemPrompt ??
+      (await this.buildSystemPromptOnDemand(context.workspaceRoot || getCwd()));
 
     return yield* this.executeLoop(message, context, options, systemPrompt);
   }
@@ -609,12 +613,12 @@ export class Agent {
   /**
    * 按需构建系统提示词（用于未传入 context.systemPrompt 的场景）
    */
-  private async buildSystemPromptOnDemand(): Promise<string> {
+  private async buildSystemPromptOnDemand(projectPath: string): Promise<string> {
     const replacePrompt = this.runtimeOptions.systemPrompt;
     const appendPrompt = this.runtimeOptions.appendSystemPrompt;
 
     const result = await buildSystemPrompt({
-      projectPath: getCwd(),
+      projectPath,
       replaceDefault: replacePrompt,
       append: appendPrompt,
       includeEnvironment: true,

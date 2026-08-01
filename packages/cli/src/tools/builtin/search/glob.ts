@@ -81,13 +81,14 @@ export const globTool = createTool({
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const {
       pattern,
-      path = getCwd(),
+      path: requestedPath,
       max_results,
       include_directories,
       case_sensitive,
     } = params;
     const { updateOutput } = context;
     const signal = context.signal ?? new AbortController().signal;
+    const path = requestedPath ?? context.workspaceRoot ?? getCwd();
 
     try {
       updateOutput?.(`Searching in ${path} for pattern "${pattern}"...`);

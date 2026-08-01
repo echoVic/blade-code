@@ -304,6 +304,7 @@ describe('builtin task list tool registration', () => {
 
       expect(names).toEqual(expect.arrayContaining(['TaskCreate', 'TaskGet']));
       expect(names).toEqual(expect.arrayContaining(['TaskUpdate', 'TaskList']));
+      expect(names).toEqual(expect.arrayContaining(['EnterWorktree', 'ExitWorktree']));
       expect(names).not.toContain('TodoWrite');
     } finally {
       await fs.rm(configDir, { recursive: true, force: true });

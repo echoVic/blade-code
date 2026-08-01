@@ -11,6 +11,7 @@
 
 import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
+import type { ChatContext } from '../types.js';
 import type { DomainEvent, LoopDependencies } from './types.js';
 
 /**
@@ -100,6 +101,34 @@ export function extractModelSwitch(result: ToolResult): string | undefined {
   return modelId || undefined;
 }
 
+// ===== Workspace transitions =====
+
+export function applyWorkspaceTransition(
+  toolCall: FunctionToolCallRef,
+  result: ToolResult,
+  context: ChatContext
+): string | undefined {
+  if (
+    !['EnterWorktree', 'ExitWorktree'].includes(toolCall.function.name) ||
+    !result.success
+  ) {
+    return undefined;
+  }
+
+  const metadata = result.metadata as Record<string, unknown> | undefined;
+  const workspaceRoot = metadata?.workspaceRoot;
+  if (
+    !['enter', 'exit'].includes(String(metadata?.workspaceTransition)) ||
+    typeof workspaceRoot !== 'string' ||
+    workspaceRoot.trim() === ''
+  ) {
+    return undefined;
+  }
+
+  context.workspaceRoot = workspaceRoot;
+  return workspaceRoot;
+}
+
 // ===== Subagent Lifecycle =====
 
 export function handleSubagentLifecycle(
@@ -150,7 +179,8 @@ export function handleSubagentLifecycle(
 export async function applyToolDomainEffects(
   toolCall: FunctionToolCallRef,
   result: ToolResult,
-  deps: LoopDependencies
+  deps: LoopDependencies,
+  context?: ChatContext
 ): Promise<DomainEvent | null> {
   // Task list updates
   const taskAction = handleTaskListUpdate(toolCall, result);
@@ -165,6 +195,10 @@ export async function applyToolDomainEffects(
   const modelId = extractModelSwitch(result);
   if (modelId) {
     await deps.onModelSwitch?.(modelId);
+  }
+
+  if (context) {
+    applyWorkspaceTransition(toolCall, result, context);
   }
 
   return subagentEvent || taskAction;

@@ -33,10 +33,11 @@ import { AutoVerifyStage } from './AutoVerifyStage.js';
 import { ValidationStage } from './stages/ValidationStage.js';
 import { RuleBasedPermissionStage } from './stages/RuleBasedPermissionStage.js';
 import { ResolveDecisionStage } from './stages/ResolveDecisionStage.js';
+import { WorktreeIsolationStage } from './stages/WorktreeIsolationStage.js';
 
 /**
- * 10阶段执行管道
- * Discovery -> Validation -> RulePermission -> Hook(Pre) -> ResolveDecision
+ * 11阶段执行管道
+ * Discovery -> Validation -> WorktreeIsolation -> RulePermission -> Hook(Pre) -> ResolveDecision
  *   -> Confirmation -> Execution -> PostHook -> AutoVerify -> Formatting
  */
 export class ExecutionPipeline extends EventEmitter {
@@ -82,6 +83,7 @@ export class ExecutionPipeline extends EventEmitter {
     this.stages = [
       new DiscoveryStage(this.registry), // 工具发现
       new ValidationStage(config.toolWhitelist, config.toolBlacklist), // 黑白名单 + Zod 验证
+      new WorktreeIsolationStage(), // 显式 worktree 请求下阻止原工作区副作用
       rulePermissionStage, // 规则库权限检查 + 模式 + 会话批准 + 安全检查 → ruleDecision
       new HookStage(), // PreToolUse hooks → hookDecision
       new ResolveDecisionStage(), // 仲裁 ruleDecision ⊕ hookDecision → effectiveDecision
@@ -233,7 +235,7 @@ export class ExecutionPipeline extends EventEmitter {
           execution.params,
           (error as Error).message,
           {
-            projectDir: getCwd(),
+            projectDir: execution.context.workspaceRoot || getCwd(),
             sessionId: execution.context.sessionId || 'unknown',
             permissionMode:
               (execution.context.permissionMode as PermissionMode) ||

@@ -167,12 +167,13 @@ Before executing commands:
     const { command, timeout = 30000, cwd, env, run_in_background = false } = params;
     const { updateOutput } = context;
     const signal = context.signal ?? new AbortController().signal;
+    const effectiveCwd = cwd ?? context.workspaceRoot ?? getCwd();
 
     try {
       updateOutput?.(`Executing Bash command: ${command}`);
 
       if (run_in_background) {
-        return executeInBackground(command, cwd, env);
+        return executeInBackground(command, effectiveCwd, env);
       }
 
       // 检查是否在 ACP 模式下运行
@@ -180,9 +181,23 @@ Before executing commands:
       if (useAcp) {
         // ACP 模式：通过 IDE 终端执行命令
         updateOutput?.('通过 IDE 终端执行命令...');
-        return executeWithAcpTerminal(command, cwd, env, timeout, signal, updateOutput);
+        return executeWithAcpTerminal(
+          command,
+          effectiveCwd,
+          env,
+          timeout,
+          signal,
+          updateOutput
+        );
       } else {
-        return executeWithTimeout(command, cwd, env, timeout, signal, updateOutput);
+        return executeWithTimeout(
+          command,
+          effectiveCwd,
+          env,
+          timeout,
+          signal,
+          updateOutput
+        );
       }
     } catch (error: unknown) {
       const err = error as Error;

@@ -35,6 +35,8 @@ import { createTaskListTools, taskOutputTool, taskTool } from './task/index.js';
 import { createTeamTools } from './team/index.js';
 // 网络工具
 import { webFetchTool, webSearchTool } from './web/index.js';
+// Worktree 隔离工具
+import { createWorktreeTools } from './worktree/index.js';
 
 async function getMcpTools(): Promise<Tool[]> {
   try {
@@ -84,6 +86,9 @@ export async function getBuiltinTools(opts?: {
 
     // Agent Teams: TeamCreate, TeamStatus, TeamDelete
     ...createTeamTools({ sessionId, configDir }),
+
+    // Worktree isolation: EnterWorktree, ExitWorktree
+    ...createWorktreeTools({ sessionId }),
 
     // Plan 模式: EnterPlanMode, ExitPlanMode
     enterPlanModeTool,

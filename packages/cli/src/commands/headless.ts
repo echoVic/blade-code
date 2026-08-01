@@ -325,6 +325,10 @@ function extractToolTarget(
       return stringParam('description');
     case 'LSP':
       return stringParam('filePath', 'operation');
+    case 'EnterWorktree':
+      return stringParam('name');
+    case 'ExitWorktree':
+      return stringParam('action');
     default:
       return undefined;
   }
@@ -350,6 +354,8 @@ function getPhaseForTool(
     'Bash',
     'LSP',
     'UndoEdit',
+    'EnterWorktree',
+    'ExitWorktree',
   ]);
 
   if (actionTools.has(toolName) && !state.targetLocked) {

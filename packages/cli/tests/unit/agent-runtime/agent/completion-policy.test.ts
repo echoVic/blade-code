@@ -3,12 +3,15 @@ import {
   checkIncompleteIntent,
   checkOutputRecovery,
   checkVerificationRequired,
+  checkWorktreeRequirement,
   MAX_INCOMPLETE_INTENT_RETRIES,
   MAX_OUTPUT_RECOVERY_LIMIT,
   MAX_VERIFICATION_RETRIES,
+  MAX_WORKTREE_RETRIES,
   RETRY_PROMPT,
   VERIFICATION_FAILURE_MESSAGE,
   VERIFICATION_RETRY_PROMPT,
+  WORKTREE_EXIT_RETRY_PROMPT,
 } from '../../../../src/agent/loop/completionPolicy.js';
 
 describe('completionPolicy', () => {
@@ -159,6 +162,63 @@ describe('completionPolicy', () => {
         action: 'fail',
         message: VERIFICATION_FAILURE_MESSAGE,
       });
+    });
+  });
+
+  describe('checkWorktreeRequirement', () => {
+    it('requires EnterWorktree when worktree isolation was explicit', () => {
+      expect(
+        checkWorktreeRequirement('Use a git worktree to fix this bug.', new Set(), 0)
+      ).toEqual(
+        expect.objectContaining({
+          action: 'retry',
+          tool: 'EnterWorktree',
+        })
+      );
+    });
+
+    it('requires ExitWorktree when the user explicitly asks to exit', () => {
+      expect(
+        checkWorktreeRequirement(
+          'Use a worktree, then exit the worktree with action keep.',
+          new Set(['EnterWorktree', 'Bash']),
+          0
+        )
+      ).toEqual({
+        action: 'retry',
+        tool: 'ExitWorktree',
+        prompt: WORKTREE_EXIT_RETRY_PROMPT,
+      });
+    });
+
+    it('accepts the complete managed worktree lifecycle', () => {
+      expect(
+        checkWorktreeRequirement(
+          'Use a worktree, then exit the worktree with action keep.',
+          new Set(['EnterWorktree', 'ExitWorktree']),
+          0
+        )
+      ).toEqual({ action: 'none' });
+    });
+
+    it('does not apply to ordinary coding requests', () => {
+      expect(
+        checkWorktreeRequirement('Fix the bug and run tests.', new Set(), 0)
+      ).toEqual({ action: 'none' });
+    });
+
+    it('fails closed after repeated worktree protocol violations', () => {
+      expect(
+        checkWorktreeRequirement(
+          'Use a worktree to fix this bug.',
+          new Set(),
+          MAX_WORKTREE_RETRIES
+        )
+      ).toEqual(
+        expect.objectContaining({
+          action: 'fail',
+        })
+      );
     });
   });
 });

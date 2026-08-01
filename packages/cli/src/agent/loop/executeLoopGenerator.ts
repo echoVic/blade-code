@@ -39,6 +39,8 @@ import {
   checkRalphLoop,
   checkStopHook,
   checkVerificationRequired,
+  checkWorktreeRequirement,
+  isExplicitWorktreeRequest,
   isVerificationCommand,
 } from './completionPolicy.js';
 import {
@@ -602,7 +604,9 @@ export async function* executeLoopGenerator(
     let maxOutputRecoveryCount = 0;
     let incompleteIntentRetryCount = 0;
     let verificationRetryCount = 0;
+    let worktreeRetryCount = 0;
     const successfulVerificationTools = new Set<string>();
+    const successfulTools = new Set<string>();
     const originalUserRequest =
       typeof message === 'string'
         ? message
@@ -610,6 +614,7 @@ export async function* executeLoopGenerator(
             .filter((part) => part.type === 'text')
             .map((part) => part.text)
             .join('\n');
+    const worktreeIsolationRequired = isExplicitWorktreeRequest(originalUserRequest);
 
     const isSubagent = !!context.subagentInfo;
     let budgetTracker = createBudgetTracker({
@@ -693,6 +698,10 @@ export async function* executeLoopGenerator(
                 sessionId: context.sessionId,
                 userId: context.userId || 'default',
                 workspaceRoot: context.workspaceRoot || getCwd(),
+                worktreeIsolationRequired,
+                worktreeActive:
+                  successfulTools.has('EnterWorktree') &&
+                  !successfulTools.has('ExitWorktree'),
                 signal: options?.signal,
                 confirmationHandler: context.confirmationHandler,
                 permissionMode: context.permissionMode,
@@ -954,6 +963,80 @@ export async function* executeLoopGenerator(
 
           // 正常完成时归零 incompleteIntentRetryCount
           incompleteIntentRetryCount = 0;
+
+          const worktreeAction = checkWorktreeRequirement(
+            originalUserRequest,
+            successfulTools,
+            worktreeRetryCount
+          );
+          if (worktreeAction.action === 'retry') {
+            worktreeRetryCount++;
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+
+            const worktreeAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid
+            );
+            if (worktreeAssistantUuid) {
+              lastMessageUuid = worktreeAssistantUuid;
+            }
+
+            const worktreeMsg: Message = {
+              role: 'user',
+              content: worktreeAction.prompt,
+            };
+            state.appendControl('user', worktreeMsg);
+
+            const worktreeUserUuid = await saveUserMessage(
+              deps,
+              context,
+              worktreeMsg.content as string,
+              lastMessageUuid
+            );
+            if (worktreeUserUuid) {
+              lastMessageUuid = worktreeUserUuid;
+            }
+
+            continue;
+          }
+          if (worktreeAction.action === 'fail') {
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+
+            const worktreeAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid
+            );
+            if (worktreeAssistantUuid) {
+              lastMessageUuid = worktreeAssistantUuid;
+            }
+
+            return {
+              success: false,
+              error: {
+                type: 'worktree_protocol_failed',
+                message: worktreeAction.message,
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+              },
+            };
+          }
+          worktreeRetryCount = 0;
 
           const verificationAction = checkVerificationRequired(
             originalUserRequest,
@@ -1262,6 +1345,10 @@ export async function* executeLoopGenerator(
                   sessionId: context.sessionId,
                   userId: context.userId || 'default',
                   workspaceRoot: context.workspaceRoot || getCwd(),
+                  worktreeIsolationRequired,
+                  worktreeActive:
+                    successfulTools.has('EnterWorktree') &&
+                    !successfulTools.has('ExitWorktree'),
                   signal: options?.signal,
                   confirmationHandler: context.confirmationHandler,
                   permissionMode: context.permissionMode,
@@ -1374,7 +1461,8 @@ export async function* executeLoopGenerator(
           const taskAction = await applyToolDomainEffects(
             toolCall as FunctionToolCallRef,
             result,
-            deps
+            deps,
+            context
           );
           if (taskAction) {
             yield taskAction;
@@ -1383,11 +1471,29 @@ export async function* executeLoopGenerator(
           // 添加工具结果到消息历史
           if (result.success) {
             recordToolSuccess(failureTracker, toolCall.function.name);
+            if (
+              toolCall.function.name === 'EnterWorktree' &&
+              result.metadata?.workspaceTransition === 'enter'
+            ) {
+              successfulTools.add('EnterWorktree');
+              successfulTools.delete('ExitWorktree');
+            } else if (
+              toolCall.function.name === 'ExitWorktree' &&
+              result.metadata?.workspaceTransition === 'exit' &&
+              successfulTools.has('EnterWorktree')
+            ) {
+              successfulTools.add('ExitWorktree');
+            } else if (
+              !['EnterWorktree', 'ExitWorktree'].includes(toolCall.function.name)
+            ) {
+              successfulTools.add(toolCall.function.name);
+            }
             if (['Edit', 'Write', 'NotebookEdit'].includes(toolCall.function.name)) {
               successfulVerificationTools.delete('Bash');
             } else if (
               toolCall.function.name === 'Bash' &&
               typeof result.metadata?.command === 'string' &&
+              result.metadata.exit_code === 0 &&
               isVerificationCommand(result.metadata.command)
             ) {
               successfulVerificationTools.add('Bash');

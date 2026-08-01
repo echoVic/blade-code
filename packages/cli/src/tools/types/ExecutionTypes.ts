@@ -68,6 +68,8 @@ export interface ExecutionContext {
   taskListId?: string; // Optional shared task-list scope (used by agent teams)
   messageId?: string; // 对话消息 ID（用于快照管理）
   workspaceRoot?: string;
+  worktreeIsolationRequired?: boolean;
+  worktreeActive?: boolean;
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
   updateOutput?: (output: string) => void; // 别名，与 onProgress 功能相同

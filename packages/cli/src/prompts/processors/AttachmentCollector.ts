@@ -43,6 +43,12 @@ export class AttachmentCollector {
     });
   }
 
+  setCwd(cwd: string): void {
+    if (this.options.cwd === cwd) return;
+    this.options.cwd = cwd;
+    this.fileCache.clear();
+  }
+
   /**
    * 收集所有 @ 提及的附件
    *

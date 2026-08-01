@@ -179,6 +179,86 @@ export function checkVerificationRequired(
   return { action: 'retry', prompt: VERIFICATION_RETRY_PROMPT };
 }
 
+// ===== Explicit Worktree Lifecycle Requirement =====
+
+const EXPLICIT_WORKTREE_PATTERNS = [
+  /\b(?:use|create|enter|start|work\s+(?:in|inside))\b.{0,60}\bworktree\b/i,
+  /(?:使用|创建|进入).{0,30}(?:worktree|工作树)/i,
+];
+
+const EXPLICIT_WORKTREE_EXIT_PATTERNS = [
+  /\b(?:exit|leave)\b.{0,40}\bworktree\b/i,
+  /\bworktree\b.{0,60}\b(?:action\s+)?(?:keep|remove)\b/i,
+  /(?:退出|离开).{0,30}(?:worktree|工作树)/i,
+];
+
+export function isExplicitWorktreeRequest(userRequest: string | undefined): boolean {
+  return (
+    typeof userRequest === 'string' &&
+    EXPLICIT_WORKTREE_PATTERNS.some((pattern) => pattern.test(userRequest))
+  );
+}
+
+export const WORKTREE_ENTER_RETRY_PROMPT =
+  'The user explicitly required git worktree isolation, but EnterWorktree has ' +
+  'not completed successfully. Do not continue in the original workspace. Your ' +
+  'next action must be an EnterWorktree tool call. Wait for its result before ' +
+  'using file or Bash tools.';
+
+export const WORKTREE_EXIT_RETRY_PROMPT =
+  'The user explicitly required leaving the managed worktree, but ExitWorktree ' +
+  'has not completed successfully. Do not finish or explain. Your next action ' +
+  'must be an ExitWorktree tool call using the action requested by the user.';
+
+export const WORKTREE_FAILURE_MESSAGE =
+  'Required worktree lifecycle did not complete before the retry limit.';
+
+export const MAX_WORKTREE_RETRIES = 3;
+
+export type WorktreeRequirementAction =
+  | {
+      action: 'retry';
+      tool: 'EnterWorktree' | 'ExitWorktree';
+      prompt: string;
+    }
+  | { action: 'fail'; message: string }
+  | { action: 'none' };
+
+export function checkWorktreeRequirement(
+  userRequest: string | undefined,
+  successfulTools: ReadonlySet<string>,
+  retryCount: number
+): WorktreeRequirementAction {
+  if (!userRequest || !isExplicitWorktreeRequest(userRequest)) {
+    return { action: 'none' };
+  }
+
+  const requiresExit = EXPLICIT_WORKTREE_EXIT_PATTERNS.some((pattern) =>
+    pattern.test(userRequest)
+  );
+  const missingTool = !successfulTools.has('EnterWorktree')
+    ? ('EnterWorktree' as const)
+    : requiresExit && !successfulTools.has('ExitWorktree')
+      ? ('ExitWorktree' as const)
+      : undefined;
+
+  if (!missingTool) {
+    return { action: 'none' };
+  }
+  if (retryCount >= MAX_WORKTREE_RETRIES) {
+    return { action: 'fail', message: WORKTREE_FAILURE_MESSAGE };
+  }
+
+  return {
+    action: 'retry',
+    tool: missingTool,
+    prompt:
+      missingTool === 'EnterWorktree'
+        ? WORKTREE_ENTER_RETRY_PROMPT
+        : WORKTREE_EXIT_RETRY_PROMPT,
+  };
+}
+
 // ===== Stop Hook =====
 
 const STOP_HOOK_TIMEOUT = 30_000;

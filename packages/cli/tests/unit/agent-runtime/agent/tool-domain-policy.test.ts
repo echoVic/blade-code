@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyWorkspaceTransition,
   handleSubagentLifecycle,
   handleTaskListUpdate,
   type FunctionToolCallRef,
@@ -11,6 +12,52 @@ function makeToolCall(name: string, args = '{}'): FunctionToolCallRef {
 }
 
 describe('toolDomainPolicy', () => {
+  describe('applyWorkspaceTransition', () => {
+    it('updates the chat workspace only for successful managed transitions', () => {
+      const context = {
+        messages: [],
+        sessionId: 'session-1',
+        userId: 'user-1',
+        workspaceRoot: '/repo',
+      };
+      const result: ToolResult = {
+        success: true,
+        llmContent: 'entered',
+        metadata: {
+          workspaceTransition: 'enter',
+          workspaceRoot: '/worktrees/feature',
+        },
+      };
+
+      expect(
+        applyWorkspaceTransition(makeToolCall('EnterWorktree'), result, context)
+      ).toBe('/worktrees/feature');
+      expect(context.workspaceRoot).toBe('/worktrees/feature');
+    });
+
+    it('ignores failed or unrelated tool results', () => {
+      const context = {
+        messages: [],
+        sessionId: 'session-1',
+        userId: 'user-1',
+        workspaceRoot: '/repo',
+      };
+      const result: ToolResult = {
+        success: false,
+        llmContent: 'failed',
+        metadata: {
+          workspaceTransition: 'enter',
+          workspaceRoot: '/worktrees/feature',
+        },
+      };
+
+      expect(
+        applyWorkspaceTransition(makeToolCall('EnterWorktree'), result, context)
+      ).toBeUndefined();
+      expect(context.workspaceRoot).toBe('/repo');
+    });
+  });
+
   describe('handleSubagentLifecycle', () => {
     it('returns null for non-Task tools', () => {
       const result: ToolResult = {
