@@ -13,7 +13,7 @@
     },
     "packages/cli": {
       "name": "blade-code",
-      "version": "0.6.3",
+      "version": "0.6.4",
       "bin": {
         "blade": "dist/blade.js",
       },
