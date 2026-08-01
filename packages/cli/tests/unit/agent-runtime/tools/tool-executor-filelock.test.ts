@@ -1,5 +1,5 @@
 /**
- * ExecutionPipeline file lock tests
+ * ToolExecutor file lock tests
  *
  * 覆盖：
  * - 显式 isConcurrencySafe: true 的读工具不加锁
@@ -12,15 +12,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileLockManager } from '../../../../src/tools/execution/FileLockManager.js';
 
 /**
- * 模拟 ExecutionPipeline.execute() 的文件锁判断逻辑。
+ * 模拟 ToolExecutor.execute() 的文件锁判断逻辑。
  *
- * 原始代码 (ExecutionPipeline.ts line ~103):
+ * ToolExecutor 的核心判断:
  *   const tool = this.registry.get(toolName);
  *   const needsFileLock = tool && !tool.isConcurrencySafe;
  *   const filePath = needsFileLock && params.file_path ? String(params.file_path) : null;
  *   if (needsFileLock && filePath) { ... acquireLock ... }
  *
- * 我们在此测试文件中直接验证此逻辑（隔离测试，无需启动完整 Pipeline）。
+ * 我们在此测试文件中直接验证此逻辑（隔离测试，无需启动完整执行器）。
  */
 function needsFileLock(
   toolDef: { isConcurrencySafe: boolean } | undefined,
@@ -34,7 +34,7 @@ function needsFileLock(
   };
 }
 
-describe('ExecutionPipeline — file lock logic', () => {
+describe('ToolExecutor — file lock logic', () => {
   beforeEach(() => {
     FileLockManager.resetInstance();
   });

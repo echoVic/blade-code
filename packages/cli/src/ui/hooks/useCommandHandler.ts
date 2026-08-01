@@ -34,18 +34,18 @@ import {
 import { ensureStoreInitialized, getState } from '../../store/vanilla.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import { getCwd } from '../../utils/cwd.js';
+import { classifyError } from '../utils/errorExtractor.js';
+import { createLoopEventHandler } from '../utils/loopEventHandler.js';
 import {
   appendMarkdownDelta,
   finalizeMarkdownCache,
 } from '../utils/markdownIncremental.js';
-import { classifyError } from '../utils/errorExtractor.js';
 import { buildUserMessageContent } from '../utils/messageContent.js';
 import { buildContextMessagesFromSession } from '../utils/sessionContext.js';
 import {
-  processSlashCommand,
   type CommandResult,
+  processSlashCommand,
 } from '../utils/slashCommandRouter.js';
-import { createLoopEventHandler } from '../utils/loopEventHandler.js';
 import { useAgent } from './useAgent.js';
 import type { ResolvedInput } from './useInputBuffer.js';
 import { useStreamingBuffer } from './useStreamingBuffer.js';
@@ -106,8 +106,8 @@ export const useCommandHandler = (
     if (!isProcessing) return;
 
     // 0. dismiss 确认框（如果有）：先释放阻塞的 Promise，再 abort signal
-    //    顺序重要：dismissAll 使 ConfirmationStage 的 await 返回，
-    //    然后 abort signal 让 ConfirmationStage 检测到 signal.aborted 直接 return
+    //    顺序重要：dismissAll 使审批请求的 await 返回，
+    //    然后 abort signal 让 ToolExecutor 检测到 signal.aborted 直接 return
     onDismissConfirmations?.();
 
     // 1. drain 缓冲区，保留已接收内容

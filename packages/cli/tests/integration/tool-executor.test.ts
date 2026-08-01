@@ -1,13 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { PermissionMode } from '../../src/config/types.js';
+import { HookManager } from '../../src/hooks/HookManager.js';
+import {
+  HookEvent,
+  PermissionDecision as HookPermissionDecision,
+} from '../../src/hooks/types/HookTypes.js';
 import { createTool } from '../../src/tools/core/createTool.js';
-import { ExecutionPipeline } from '../../src/tools/execution/ExecutionPipeline.js';
+import { ToolExecutor } from '../../src/tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../src/tools/registry/ToolRegistry.js';
 import type {
   ConfirmationDetails,
   ExecutionContext,
 } from '../../src/tools/types/ExecutionTypes.js';
-import { ToolKind } from '../../src/tools/types/ToolTypes.js';
+import { type Tool, ToolKind } from '../../src/tools/types/ToolTypes.js';
 
 function createTestTool(name = 'TestTool') {
   return createTool({
@@ -16,7 +22,7 @@ function createTestTool(name = 'TestTool') {
     kind: ToolKind.Execute,
     description: { short: 'integration tool' },
     schema: z.object({ value: z.string() }),
-    async execute(params, context) {
+    async execute(params) {
       return {
         success: true,
         llmContent: `executed:${(params as { value: string }).value}`,
@@ -53,12 +59,12 @@ function createTestBashTool() {
   });
 }
 
-describe('ExecutionPipeline 权限集成', () => {
+describe('ToolExecutor 权限集成', () => {
   it('ALLOW 规则应直接执行并跳过确认', async () => {
     const registry = new ToolRegistry();
     registry.register(createTestTool() as any);
 
-    const pipeline = new ExecutionPipeline(registry, {
+    const pipeline = new ToolExecutor(registry, {
       permissionConfig: {
         allow: ['TestTool'],
         ask: [],
@@ -80,7 +86,7 @@ describe('ExecutionPipeline 权限集成', () => {
     const registry = new ToolRegistry();
     registry.register(createTestTool() as any);
 
-    const pipeline = new ExecutionPipeline(registry, {
+    const pipeline = new ToolExecutor(registry, {
       permissionConfig: {
         allow: [],
         ask: ['TestTool'],
@@ -118,7 +124,7 @@ describe('ExecutionPipeline 权限集成', () => {
     const registry = new ToolRegistry();
     registry.register(createTestTool() as any);
 
-    const pipeline = new ExecutionPipeline(registry, {
+    const pipeline = new ToolExecutor(registry, {
       permissionConfig: {
         allow: [],
         ask: ['TestTool'],
@@ -158,7 +164,7 @@ describe('ExecutionPipeline 权限集成', () => {
     const registry = new ToolRegistry();
     registry.register(createTestBashTool() as any);
 
-    const pipeline = new ExecutionPipeline(registry, {
+    const pipeline = new ToolExecutor(registry, {
       permissionConfig: {
         allow: [],
         ask: ['Bash(grep *)'],
@@ -198,7 +204,7 @@ describe('ExecutionPipeline 权限集成', () => {
     const registry = new ToolRegistry();
     registry.register(createTestBashTool() as any);
 
-    const pipeline = new ExecutionPipeline(registry, {
+    const pipeline = new ToolExecutor(registry, {
       permissionConfig: {
         allow: [],
         ask: ['Bash(*)'],
@@ -238,7 +244,7 @@ describe('ExecutionPipeline 权限集成', () => {
     ]);
   });
 
-  it('共享审批状态时应跨 turn 的 pipeline 复用 session 批准', async () => {
+  it('共享审批状态时应跨 turn 的 executor 复用 session 批准', async () => {
     const registry = new ToolRegistry();
     registry.register(createTestTool() as any);
 
@@ -253,7 +259,7 @@ describe('ExecutionPipeline 权限集成', () => {
       }),
     };
 
-    const firstPipeline = new ExecutionPipeline(registry, {
+    const firstPipeline = new ToolExecutor(registry, {
       permissionConfig: {
         allow: [],
         ask: ['TestTool'],
@@ -262,7 +268,7 @@ describe('ExecutionPipeline 权限集成', () => {
       approvalStore,
     });
 
-    const secondPipeline = new ExecutionPipeline(registry, {
+    const secondPipeline = new ToolExecutor(registry, {
       permissionConfig: {
         allow: [],
         ask: ['TestTool'],
@@ -305,7 +311,7 @@ describe('ExecutionPipeline 权限集成', () => {
     const registry = new ToolRegistry();
     registry.register(createTestTool() as any);
 
-    const pipeline = new ExecutionPipeline(registry, {
+    const pipeline = new ToolExecutor(registry, {
       permissionConfig: {
         allow: [],
         ask: ['TestTool'],
@@ -338,11 +344,11 @@ describe('ExecutionPipeline 权限集成', () => {
     expect(result.error?.message).toBe('用户拒绝授权');
   });
 
-  it('已中止 signal 在进入首个 stage 前应标记 abortedBeforeLaunch', async () => {
+  it('已中止 signal 在执行前应标记 abortedBeforeLaunch', async () => {
     const registry = new ToolRegistry();
     registry.register(createTestTool() as any);
 
-    const pipeline = new ExecutionPipeline(registry, {
+    const pipeline = new ToolExecutor(registry, {
       permissionConfig: {
         allow: ['TestTool'],
         ask: [],
@@ -373,7 +379,7 @@ describe('ExecutionPipeline 权限集成', () => {
     const registry = new ToolRegistry();
     registry.register(createTestTool() as any);
 
-    const pipeline = new ExecutionPipeline(registry, {
+    const pipeline = new ToolExecutor(registry, {
       permissionConfig: {
         allow: [],
         ask: [],
@@ -393,5 +399,94 @@ describe('ExecutionPipeline 权限集成', () => {
 
     expect(result.success).toBe(false);
     expect(String(result.llmContent)).toContain('工具调用被拒绝规则阻止');
+  });
+
+  it('Hook 修改输入后应重新执行权限检查', async () => {
+    const hookManager = HookManager.getInstance();
+    hookManager.loadConfig({ enabled: true });
+    const unregister = hookManager.registerFunction(
+      HookEvent.PreToolUse,
+      { tools: 'Bash' },
+      async () => ({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: HookPermissionDecision.Allow,
+          updatedInput: { command: 'rm -rf /tmp/blocked-by-policy' },
+        },
+      })
+    );
+
+    try {
+      const registry = new ToolRegistry();
+      registry.register(createTestBashTool() as any);
+      const executor = new ToolExecutor(registry, {
+        permissionConfig: {
+          allow: ['Bash(echo *)'],
+          ask: [],
+          deny: ['Bash(rm *)'],
+        },
+      });
+
+      const result = await executor.execute(
+        'Bash',
+        { command: 'echo safe' },
+        { signal: new AbortController().signal }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.type).toBe('permission_denied');
+      expect(String(result.llmContent)).toContain('工具调用被拒绝规则阻止');
+    } finally {
+      unregister();
+      hookManager.loadConfig({ enabled: false });
+    }
+  });
+
+  it('排队期间取消时不应启动工具', async () => {
+    let releaseFirst: (() => void) | undefined;
+    let markFirstStarted: (() => void) | undefined;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const execute = vi.fn(async () => {
+      markFirstStarted?.();
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return { success: true, llmContent: 'done' };
+    });
+    const tool = createTool({
+      name: 'QueuedTool',
+      displayName: 'QueuedTool',
+      kind: ToolKind.Execute,
+      description: { short: 'queued tool' },
+      schema: z.object({}),
+      execute,
+    });
+    const registry = new ToolRegistry();
+    registry.register(tool as unknown as Tool);
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      concurrencyLimits: { execute: 1 },
+    });
+
+    const first = executor.execute('QueuedTool', {}, {});
+    await firstStarted;
+
+    const controller = new AbortController();
+    const second = executor.execute(
+      'QueuedTool',
+      {},
+      {
+        signal: controller.signal,
+      }
+    );
+    controller.abort();
+    releaseFirst?.();
+
+    const [, secondResult] = await Promise.all([first, second]);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(secondResult.success).toBe(false);
+    expect(secondResult.metadata?.abortedBeforeLaunch).toBe(true);
   });
 });

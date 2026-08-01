@@ -6,7 +6,7 @@ const runtimeState = vi.hoisted(() => ({
     dispose: vi.fn().mockResolvedValue(undefined),
     refresh: vi.fn().mockResolvedValue(undefined),
     getConfig: vi.fn(() => ({})),
-    createExecutionPipeline: vi.fn(() => ({})),
+    createToolExecutor: vi.fn(() => ({})),
     getChatService: vi.fn(),
     getExecutionEngine: vi.fn(),
     getAttachmentCollector: vi.fn(),

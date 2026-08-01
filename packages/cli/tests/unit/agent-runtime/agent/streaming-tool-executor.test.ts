@@ -9,11 +9,10 @@ import {
   STREAMING_PRELAUNCH_ALLOWLIST,
   StreamingToolExecutor,
 } from '../../../../src/agent/loop/StreamingToolExecutor.js';
-import { ToolErrorType } from '../../../../src/tools/types/index.js';
-
-import type { ExecutionPipeline } from '../../../../src/tools/execution/ExecutionPipeline.js';
+import type { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 import type { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
 import type { ExecutionContext } from '../../../../src/tools/types/ExecutionTypes.js';
+import { ToolErrorType } from '../../../../src/tools/types/index.js';
 
 // Mirror the private FunctionToolCall type from the source module
 type FunctionToolCall = {
@@ -64,7 +63,7 @@ describe('StreamingToolExecutor', () => {
     };
 
     executor = new StreamingToolExecutor(
-      pipeline as unknown as ExecutionPipeline,
+      pipeline as unknown as ToolExecutor,
       execContext,
       registry as unknown as ToolRegistry
     );
@@ -402,7 +401,7 @@ describe('StreamingToolExecutor', () => {
       };
 
       executor = new StreamingToolExecutor(
-        pipeline as unknown as ExecutionPipeline,
+        pipeline as unknown as ToolExecutor,
         execContext,
         registry as unknown as ToolRegistry,
         mockContextMgr as any,
@@ -432,7 +431,7 @@ describe('StreamingToolExecutor', () => {
       };
 
       executor = new StreamingToolExecutor(
-        pipeline as unknown as ExecutionPipeline,
+        pipeline as unknown as ToolExecutor,
         execContext,
         registry as unknown as ToolRegistry,
         mockContextMgr as any,

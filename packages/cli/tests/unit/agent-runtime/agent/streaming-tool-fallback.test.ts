@@ -14,11 +14,10 @@ import {
   STREAMING_PRELAUNCH_ALLOWLIST,
   StreamingToolExecutor,
 } from '../../../../src/agent/loop/StreamingToolExecutor.js';
-import { ToolErrorType } from '../../../../src/tools/types/index.js';
-
-import type { ExecutionPipeline } from '../../../../src/tools/execution/ExecutionPipeline.js';
+import type { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 import type { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
 import type { ExecutionContext } from '../../../../src/tools/types/ExecutionTypes.js';
+import { ToolErrorType } from '../../../../src/tools/types/index.js';
 
 type FunctionToolCall = {
   id: string;
@@ -67,7 +66,7 @@ describe('StreamingToolExecutor — fallback & epoch guard', () => {
     };
 
     executor = new StreamingToolExecutor(
-      pipeline as unknown as ExecutionPipeline,
+      pipeline as unknown as ToolExecutor,
       execContext,
       registry as unknown as ToolRegistry
     );
@@ -264,7 +263,7 @@ describe('StreamingToolExecutor — fallback & epoch guard', () => {
 
       for (const name of nonAllowlisted) {
         const exec = new StreamingToolExecutor(
-          pipeline as unknown as ExecutionPipeline,
+          pipeline as unknown as ToolExecutor,
           execContext,
           registry as unknown as ToolRegistry
         );

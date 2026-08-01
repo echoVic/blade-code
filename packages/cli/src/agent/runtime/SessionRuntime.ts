@@ -27,8 +27,8 @@ import {
   getThinkingModeEnabled,
 } from '../../store/vanilla.js';
 import { getBuiltinTools } from '../../tools/builtin/index.js';
-import { ExecutionPipeline } from '../../tools/execution/ExecutionPipeline.js';
 import { InMemorySessionApprovalStore } from '../../tools/execution/SessionApprovalStore.js';
+import { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
 import { getCwd } from '../../utils/cwd.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
@@ -160,7 +160,7 @@ export class SessionRuntime {
     }
   }
 
-  createExecutionPipeline(options: AgentOptions = {}): ExecutionPipeline {
+  createToolExecutor(options: AgentOptions = {}): ToolExecutor {
     const registry = new ToolRegistry();
     const allowed = options.toolWhitelist ? new Set(options.toolWhitelist) : null;
     const blocked = options.toolBlacklist ? new Set(options.toolBlacklist) : null;
@@ -185,7 +185,7 @@ export class SessionRuntime {
     const permissionMode =
       options.permissionMode ?? this.config.permissionMode ?? PermissionMode.DEFAULT;
 
-    return new ExecutionPipeline(registry, {
+    return new ToolExecutor(registry, {
       permissionConfig: permissions,
       permissionMode,
       approvalStore: this.approvalStore,
@@ -193,6 +193,11 @@ export class SessionRuntime {
       toolWhitelist: options.toolWhitelist,
       toolBlacklist: options.toolBlacklist,
     });
+  }
+
+  /** @deprecated Use createToolExecutor() for new code. */
+  createExecutionPipeline(options: AgentOptions = {}): ToolExecutor {
+    return this.createToolExecutor(options);
   }
 
   async dispose(): Promise<void> {

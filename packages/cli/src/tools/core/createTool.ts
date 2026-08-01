@@ -30,7 +30,7 @@ export function createTool<TSchema extends z.ZodSchema>(
 
     // isConcurrencySafe 字段
     // 优先使用 config 中的显式设置，否则默认 false
-    // 仅控制 ExecutionPipeline 中的文件锁语义，与流式预启动 allowlist 无关
+    // 仅控制 ToolExecutor 中的文件锁语义，与流式预启动 allowlist 无关
     isConcurrencySafe: config.isConcurrencySafe ?? false,
 
     // strict 字段（OpenAI Structured Outputs）

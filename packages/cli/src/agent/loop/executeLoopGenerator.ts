@@ -33,6 +33,7 @@ import type {
   LoopResult,
   UserMessageContent,
 } from '../types.js';
+import { ConversationState } from './ConversationState.js';
 import {
   checkIncompleteIntent,
   checkOutputRecovery,
@@ -50,7 +51,6 @@ import {
   saveToolUse,
   saveUserMessage,
 } from './conversationPersistence.js';
-import { ConversationState } from './ConversationState.js';
 import {
   createStaleLoopDetector,
   createToolFailureTracker,
@@ -328,7 +328,7 @@ async function* processStreamResponse(
                   type: 'function' as const,
                   function: { name: entry.name, arguments: entry.arguments },
                 };
-                const toolDef = deps.executionPipeline.getRegistry().get(entry.name);
+                const toolDef = deps.toolExecutor.getRegistry().get(entry.name);
                 const toolKind = toolDef?.kind as
                   | 'readonly'
                   | 'write'
@@ -548,7 +548,7 @@ export async function* executeLoopGenerator(
 
   try {
     // 1. 获取可用工具定义
-    const registry = deps.executionPipeline.getRegistry();
+    const registry = deps.toolExecutor.getRegistry();
     const permissionMode = context.permissionMode as PermissionMode | undefined;
     let rawTools = registry.getFunctionDeclarationsByMode(permissionMode);
     rawTools = injectSkillsMetadata(rawTools);
@@ -695,7 +695,7 @@ export async function* executeLoopGenerator(
         try {
           if (isStreamEnabled) {
             streamingExecutor = new StreamingToolExecutor(
-              deps.executionPipeline,
+              deps.toolExecutor,
               {
                 sessionId: context.sessionId,
                 userId: context.userId || 'default',
@@ -710,7 +710,7 @@ export async function* executeLoopGenerator(
                 toolRegistry: registry,
                 deferredToolManager: registry.deferredToolManager,
               },
-              deps.executionPipeline.getRegistry(),
+              deps.toolExecutor.getRegistry(),
               deps.executionEngine?.getContextManager(),
               context.sessionId,
               lastMessageUuid,
@@ -1340,7 +1340,7 @@ export async function* executeLoopGenerator(
                 lastMessageUuid
               );
 
-              const result = await deps.executionPipeline.execute(
+              const result = await deps.toolExecutor.execute(
                 toolCall.function.name,
                 params,
                 {

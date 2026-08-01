@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
+import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 
 vi.mock('../../../../src/store/vanilla.js', () => ({
   ensureStoreInitialized: vi.fn(async () => {
@@ -76,6 +77,15 @@ describe('SessionRuntime', () => {
     const runtime = await SessionRuntime.create({ sessionId: 'session-1' });
 
     expect(runtime.sessionId).toBe('session-1');
+  });
+
+  it('keeps the deprecated execution pipeline factory source-compatible', () => {
+    const runtime = new SessionRuntime({ permissions: {} } as any, {
+      sessionId: 'session-1',
+    });
+
+    expect(runtime.createExecutionPipeline()).toBeInstanceOf(ToolExecutor);
+    expect(runtime.createToolExecutor()).toBeInstanceOf(ToolExecutor);
   });
 
   it('disposes the chat service when it supports disposal', async () => {

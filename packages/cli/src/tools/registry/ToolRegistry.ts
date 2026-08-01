@@ -189,7 +189,7 @@ export class ToolRegistry extends EventEmitter {
    *
    * 工具暴露策略：
    * - PLAN 模式：仅暴露只读工具（防止 LLM 尝试调用被拒工具）
-   * - DEFAULT/AUTO_EDIT/YOLO 模式：暴露全量工具（执行阶段由 PermissionStage 控制）
+   * - DEFAULT/AUTO_EDIT/YOLO 模式：暴露全量工具（由 ToolExecutor 控制执行权限）
    *
    * 这确保了工具暴露策略和执行阶段权限检查使用相同的模式值，
    * 避免了 LLM 看到工具但执行被拒的循环问题。
@@ -235,7 +235,7 @@ export class ToolRegistry extends EventEmitter {
    * Spec 模式暴露全量工具，因为：
    * 1. 实现阶段需要 Edit/Write/Bash 来写代码
    * 2. Spec 专用工具在 Spec 模式下自动批准
-   * 3. 权限控制由执行阶段的 PermissionStage 处理
+   * 3. 权限控制由 ToolExecutor 处理
    */
   getSpecModeFunctionDeclarations(): FunctionDeclaration[] {
     // Spec 模式暴露全量工具

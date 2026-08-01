@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { PermissionMode } from '../../../../src/config/types.js';
 import { createTool } from '../../../../src/tools/core/createTool.js';
-import { ExecutionPipeline } from '../../../../src/tools/execution/ExecutionPipeline.js';
+import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
 import { type Tool, ToolKind } from '../../../../src/tools/types/ToolTypes.js';
 
@@ -23,15 +23,15 @@ function makeTool(name: string, kind: ToolKind, execute: () => Promise<unknown>)
   }) as unknown as Tool;
 }
 
-function makePipeline(tools: Tool[]): ExecutionPipeline {
+function makePipeline(tools: Tool[]): ToolExecutor {
   const registry = new ToolRegistry();
   registry.registerAll(tools);
-  return new ExecutionPipeline(registry, {
+  return new ToolExecutor(registry, {
     permissionMode: PermissionMode.YOLO,
   });
 }
 
-describe('WorktreeIsolationStage', () => {
+describe('ToolExecutor worktree isolation', () => {
   it('blocks side-effecting tools before EnterWorktree succeeds', async () => {
     const execute = vi.fn(async () => undefined);
     const pipeline = makePipeline([makeTool('Edit', ToolKind.Write, execute)]);

@@ -121,7 +121,7 @@ function createMockDeps(overrides: Partial<LoopDependencies> = {}): LoopDependen
       }),
       updateConfig: vi.fn(),
     } as any,
-    executionPipeline: {
+    toolExecutor: {
       getRegistry: vi.fn().mockReturnValue(mockRegistry),
       execute: vi.fn(),
     } as any,
@@ -279,7 +279,7 @@ describe('executeLoopGenerator', () => {
         });
 
       // Tool execution result
-      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockResolvedValueOnce({
         success: true,
         llmContent: 'file content',
@@ -376,7 +376,7 @@ describe('executeLoopGenerator', () => {
           finishReason: 'stop',
         });
 
-      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockResolvedValueOnce({
         success: true,
         llmContent: '1 test passed',
@@ -452,7 +452,7 @@ describe('executeLoopGenerator', () => {
           finishReason: 'stop',
         });
 
-      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock
         .mockResolvedValueOnce({
           success: true,
@@ -540,7 +540,7 @@ describe('executeLoopGenerator', () => {
           finishReason: 'stop',
         });
 
-      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock
         .mockResolvedValueOnce({
           success: true,
@@ -626,7 +626,7 @@ describe('executeLoopGenerator', () => {
         finishReason: 'tool_calls',
       });
 
-      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockResolvedValueOnce({
         success: false,
         llmContent: '已取消工具执行',
@@ -684,7 +684,7 @@ describe('executeLoopGenerator', () => {
         finishReason: 'tool_calls',
       });
 
-      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockImplementationOnce(async () => {
         controller.abort('user-cancel');
         return {
@@ -744,7 +744,7 @@ describe('executeLoopGenerator', () => {
         finishReason: 'tool_calls',
       });
 
-      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockResolvedValueOnce({
         success: true,
         llmContent: 'plan approved',

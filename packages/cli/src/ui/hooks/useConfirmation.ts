@@ -84,7 +84,7 @@ export const useConfirmation = () => {
   /**
    * 中止所有 pending 确认
    * Esc 取消任务时调用：用特殊 reason 标记与正常用户拒绝区分，
-   * 让 ConfirmationStage 能通过 signal.aborted 走 abort 通道而非 PERMISSION_DENIED。
+   * 让 ToolExecutor 能通过 signal.aborted 走取消通道而非 PERMISSION_DENIED。
    */
   const dismissAll = useMemoizedFn(() => {
     // resolve 当前活跃的确认

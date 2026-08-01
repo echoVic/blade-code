@@ -10,13 +10,13 @@
  *
  * 注意：流式预启动 allowlist 与 isConcurrencySafe 是独立概念：
  * - allowlist 决定是否允许在流式阶段提前执行
- * - isConcurrencySafe 仅在 ExecutionPipeline 中决定是否需要文件锁
+ * - isConcurrencySafe 仅在 ToolExecutor 中决定是否需要文件锁
  */
 
 import type { ContextManager } from '../../context/ContextManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { JsonValue } from '../../store/types.js';
-import type { ExecutionPipeline } from '../../tools/execution/ExecutionPipeline.js';
+import type { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import type { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
 import type { ExecutionContext } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
@@ -69,7 +69,7 @@ export class StreamingToolExecutor {
   private activeAborts = new Map<string, AbortController>();
 
   constructor(
-    private pipeline: ExecutionPipeline,
+    private pipeline: ToolExecutor,
     private execContext: ExecutionContext,
     private registry: ToolRegistry,
     private contextMgr?: ContextManager | null,

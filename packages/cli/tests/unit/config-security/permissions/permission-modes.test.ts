@@ -12,7 +12,7 @@ import {
 import { PermissionMode } from '../../../../src/config/types.js';
 import { ToolKind } from '../../../../src/tools/types/index.js';
 
-// 模拟 PermissionStage 的 applyModeOverrides 逻辑
+// 验证 PermissionResolver 的模式覆盖逻辑
 function applyModeOverrides(
   toolKind: ToolKind,
   checkResult: { result: PermissionResult },

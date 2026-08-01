@@ -1,8 +1,8 @@
 import { PermissionMode } from '../../config/types.js';
 import type { DeferredToolManager } from '../registry/DeferredToolManager.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
-import type { Tool, ToolInvocation, ToolResult } from './ToolTypes.js';
-import { ToolErrorType, ToolKind } from './ToolTypes.js';
+import type { ToolResult } from './ToolTypes.js';
+import { ToolKind } from './ToolTypes.js';
 
 interface QuestionOption {
   label: string;
@@ -116,92 +116,6 @@ export interface PermissionDecision {
   source: PermissionDecisionSource;
   reason?: string;
   matchedRule?: string;
-}
-
-interface ToolExecutionInternalState {
-  // DiscoveryStage / ValidationStage 设置
-  tool?: Tool;
-
-  // ValidationStage 设置 (Zod 验证和默认值处理完成后的调用实例)
-  invocation?: ToolInvocation<unknown>;
-
-  // RuleBasedPermissionStage 设置
-  permissionSignature?: string; // 供会话级批准持久化使用
-  ruleDecision?: PermissionDecision; // 规则库 + 模式 + 敏感文件调整后的决策
-
-  // PreToolUseHookStage 设置
-  hookDecision?: PermissionDecision; // Hook 返回的决策 (若 Hook 未表态则缺席)
-  hookToolUseId?: string; // 用于关联 PreToolUse 和 PostToolUse 事件
-
-  // ResolveDecisionStage 设置
-  effectiveDecision?: PermissionDecision; // 仲裁后的最终决策;下游 Stage 只读此字段
-}
-
-/**
- * 工具执行状态
- */
-export class ToolExecution {
-  private aborted = false;
-  private result?: ToolResult;
-
-  // 内部状态 (由 Pipeline 阶段设置和访问)
-  public _internal: ToolExecutionInternalState = {};
-
-  constructor(
-    public readonly toolName: string,
-    public readonly params: Record<string, unknown>,
-    public readonly context: ExecutionContext
-  ) {}
-
-  shouldAbort(): boolean {
-    return this.aborted || (this.context.signal?.aborted ?? false);
-  }
-
-  abort(
-    reason?: string,
-    options?: {
-      shouldExitLoop?: boolean;
-      llmContent?: string;
-      summary?: string;
-      errorType?: ToolErrorType;
-      abortedBeforeLaunch?: boolean;
-    }
-  ): void {
-    this.aborted = true;
-    this.result = {
-      success: false,
-      llmContent:
-        options?.llmContent || `Tool execution aborted: ${reason || 'Unknown reason'}`,
-      error: {
-        type: options?.errorType || ToolErrorType.EXECUTION_ERROR,
-        message: reason || 'Execution aborted',
-      },
-      metadata: {
-        summary: options?.summary || `执行已中止: ${reason || '未知原因'}`,
-        ...(options?.shouldExitLoop ? { shouldExitLoop: true } : {}),
-        ...(options?.abortedBeforeLaunch ? { abortedBeforeLaunch: true } : {}),
-      },
-    };
-  }
-
-  setResult(result: ToolResult): void {
-    this.result = result;
-  }
-
-  getResult(): ToolResult {
-    if (!this.result) {
-      throw new Error('Tool execution result not set');
-    }
-    return this.result;
-  }
-}
-
-/**
- * 管道阶段接口
- */
-export interface PipelineStage {
-  readonly name: string;
-  process(execution: ToolExecution): Promise<void>;
 }
 
 /**

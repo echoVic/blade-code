@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ResolveDecisionStage } from '../../../../../src/tools/execution/stages/ResolveDecisionStage.js';
+import { resolvePermissionDecision } from '../../../../../src/tools/execution/PermissionResolver.js';
 import type { PermissionDecision } from '../../../../../src/tools/types/index.js';
 
 function rule(
@@ -16,9 +16,9 @@ function hook(
   return { behavior, source: 'hook', reason };
 }
 
-const resolve = ResolveDecisionStage.resolve;
+const resolve = resolvePermissionDecision;
 
-describe('ResolveDecisionStage.resolve — 决策矩阵', () => {
+describe('resolvePermissionDecision — 决策矩阵', () => {
   describe('硬不变量: Hook 不能放宽规则库', () => {
     it('rule=deny + hook=allow → deny (来源保留 rule)', () => {
       const r = resolve(rule('deny'), hook('allow'));

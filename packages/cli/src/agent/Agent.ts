@@ -46,7 +46,7 @@ import {
   getThinkingModeEnabled,
 } from '../store/vanilla.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
-import { ExecutionPipeline } from '../tools/execution/ExecutionPipeline.js';
+import { ToolExecutor } from '../tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { Tool } from '../tools/types/index.js';
 import { getCwd } from '../utils/cwd.js';
@@ -83,7 +83,7 @@ export class Agent {
   private runtimeOptions: AgentOptions;
   private isInitialized = false;
   private activeTask?: AgentTask;
-  private executionPipeline: ExecutionPipeline;
+  private toolExecutor: ToolExecutor;
   // systemPrompt 已移除 - 改为从 context 参数传入（无状态设计）
   // sessionId 已移除 - 改为从 context 参数传入（无状态设计）
 
@@ -103,20 +103,20 @@ export class Agent {
   constructor(
     config: BladeConfig,
     runtimeOptions: AgentOptions = {},
-    executionPipeline?: ExecutionPipeline,
+    toolExecutor?: ToolExecutor,
     sessionRuntime?: SessionRuntime
   ) {
     this.config = config;
     this.runtimeOptions = runtimeOptions;
-    this.executionPipeline = executionPipeline || this.createDefaultPipeline();
+    this.toolExecutor = toolExecutor || this.createDefaultToolExecutor();
     this.sessionRuntime = sessionRuntime;
     // sessionId 不再存储在 Agent 内部，改为从 context 传入
   }
 
   /**
-   * 创建默认的 ExecutionPipeline
+   * 创建默认的工具执行器
    */
-  private createDefaultPipeline(): ExecutionPipeline {
+  private createDefaultToolExecutor(): ToolExecutor {
     const registry = new ToolRegistry();
     // 合并基础权限配置和运行时覆盖
     const permissions: PermissionConfig = {
@@ -127,7 +127,7 @@ export class Agent {
       this.runtimeOptions.permissionMode ??
       this.config.permissionMode ??
       PermissionMode.DEFAULT;
-    return new ExecutionPipeline(registry, {
+    return new ToolExecutor(registry, {
       permissionConfig: permissions,
       permissionMode,
       maxHistorySize: 1000,
@@ -281,7 +281,7 @@ export class Agent {
     const agent = new Agent(
       runtime.getConfig(),
       mergedOptions,
-      runtime.createExecutionPipeline(mergedOptions),
+      runtime.createToolExecutor(mergedOptions),
       runtime
     );
     await agent.initialize();
@@ -305,7 +305,7 @@ export class Agent {
         this.syncRuntimeState();
         this.isInitialized = true;
         this.log(
-          `Agent初始化完成，已加载 ${this.executionPipeline.getRegistry().getAll().length} 个工具`
+          `Agent初始化完成，已加载 ${this.toolExecutor.getRegistry().getAll().length} 个工具`
         );
         return;
       }
@@ -336,7 +336,7 @@ export class Agent {
 
       this.isInitialized = true;
       this.log(
-        `Agent初始化完成，已加载 ${this.executionPipeline.getRegistry().getAll().length} 个工具`
+        `Agent初始化完成，已加载 ${this.toolExecutor.getRegistry().getAll().length} 个工具`
       );
     } catch (error) {
       this.error('Agent初始化失败', error);
@@ -650,7 +650,7 @@ export class Agent {
   private buildLoopDependencies(): import('./loop/types.js').LoopDependencies {
     return {
       chatService: this.chatService,
-      executionPipeline: this.executionPipeline,
+      toolExecutor: this.toolExecutor,
       executionEngine: this.executionEngine,
       config: this.config,
       runtimeOptions: this.runtimeOptions,
@@ -726,21 +726,21 @@ export class Agent {
    * 获取可用工具列表
    */
   public getAvailableTools(): Tool[] {
-    return this.executionPipeline ? this.executionPipeline.getRegistry().getAll() : [];
+    return this.toolExecutor ? this.toolExecutor.getRegistry().getAll() : [];
   }
 
   /**
    * 获取工具注册表（用于子 Agent 工具隔离）
    */
   public getToolRegistry(): ToolRegistry {
-    return this.executionPipeline.getRegistry();
+    return this.toolExecutor.getRegistry();
   }
 
   /**
    * 应用工具白名单（仅保留指定工具）
    */
   public applyToolWhitelist(whitelist: string[]): void {
-    const registry = this.executionPipeline.getRegistry();
+    const registry = this.toolExecutor.getRegistry();
     const allTools = registry.getAll();
 
     const toolsToRemove = allTools.filter((tool) => !whitelist.includes(tool.name));
@@ -755,7 +755,7 @@ export class Agent {
   }
 
   public applyToolBlacklist(blacklist: string[]): void {
-    const registry = this.executionPipeline.getRegistry();
+    const registry = this.toolExecutor.getRegistry();
     const blacklistSet = new Set(blacklist);
 
     for (const tool of registry.getAll()) {
@@ -880,12 +880,12 @@ export class Agent {
       });
       logger.debug(`Registering ${builtinTools.length} builtin tools...`);
 
-      this.executionPipeline.getRegistry().registerAll(builtinTools);
+      this.toolExecutor.getRegistry().registerAll(builtinTools);
 
-      const registeredCount = this.executionPipeline.getRegistry().getAll().length;
+      const registeredCount = this.toolExecutor.getRegistry().getAll().length;
       logger.debug(`Builtin tools registered: ${registeredCount} tools`);
       logger.debug(
-        `[Tools] ${this.executionPipeline
+        `[Tools] ${this.toolExecutor
           .getRegistry()
           .getAll()
           .map((t) => t.name)
@@ -937,7 +937,7 @@ export class Agent {
 
       if (mcpTools.length > 0) {
         // 5. 注册到工具注册表
-        this.executionPipeline.getRegistry().registerAll(mcpTools);
+        this.toolExecutor.getRegistry().registerAll(mcpTools);
         logger.debug(`Registered ${mcpTools.length} MCP tools`);
         logger.debug(`[MCP Tools] ${mcpTools.map((t) => t.name).join(', ')}`);
       }
