@@ -131,7 +131,8 @@ export interface LoopResult {
       | 'api_error'
       | 'loop_detected'
       | 'aborted'
-      | 'chat_disabled';
+      | 'chat_disabled'
+      | 'verification_failed';
     message: string;
     details?: unknown;
   };

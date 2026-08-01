@@ -425,6 +425,63 @@ describe('headless runner', () => {
     );
   });
 
+  it('returns a non-zero exit code when the agent loop reports failure', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
+      return {
+        success: false,
+        error: {
+          type: 'api_error',
+          message: 'upstream unavailable',
+        },
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 10 },
+      };
+    });
+
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const { HeadlessJsonlEventSchema } = await import(
+      '../../../src/commands/headlessEvents.js'
+    );
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        outputFormat: 'jsonl',
+        message: 'inspect this repo',
+      },
+      { stdout, stderr }
+    );
+
+    const lines = stdout.write.mock.calls
+      .map((call) => String(call[0] ?? ''))
+      .join('')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+
+    expect(exitCode).toBe(1);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'error',
+          message: 'Error: upstream unavailable',
+        }),
+      ])
+    );
+    expect(lines).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'phase',
+          phase: 'completed',
+        }),
+      ])
+    );
+  });
+
   it('emits stronger phase events so consumers can distinguish searching vs target-hit', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };

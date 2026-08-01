@@ -145,10 +145,18 @@ export default defineConfig({
         test: {
           name: 'real-api',
           ...forkPool,
+          fileParallelism: false,
+          poolOptions: {
+            forks: {
+              singleFork: true,
+              maxForks: 1,
+              minForks: 1,
+            },
+          },
           include: ['tests/integration/real-api/**/*.{test,spec}.{js,ts,jsx,tsx}'],
-          setupFiles: ['./tests/support/setup.ts'],
-          testTimeout: 120000,
-          hookTimeout: 120000,
+          setupFiles: ['./tests/support/setup.real-api.ts'],
+          testTimeout: 300000,
+          hookTimeout: 300000,
         },
       },
     ],

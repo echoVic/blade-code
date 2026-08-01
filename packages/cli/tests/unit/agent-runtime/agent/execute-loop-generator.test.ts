@@ -84,6 +84,7 @@ vi.mock('../../../../src/agent/loop/StreamingToolExecutor.js', () => ({
 
 // ===== Imports (after mocks) =====
 
+import { MAX_VERIFICATION_RETRIES } from '../../../../src/agent/loop/completionPolicy.js';
 import { executeLoopGenerator } from '../../../../src/agent/loop/executeLoopGenerator.js';
 import type { LoopDependencies, LoopEvent } from '../../../../src/agent/loop/types.js';
 import type {
@@ -338,6 +339,108 @@ describe('executeLoopGenerator', () => {
         'Read',
         { path: 'foo' },
         expect.objectContaining({ sessionId: 'test-session' })
+      );
+    });
+
+    it('continues until an explicitly requested verification command succeeds', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      chatMock
+        .mockResolvedValueOnce({
+          content: 'The source change is complete.',
+          toolCalls: undefined,
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-verify',
+              type: 'function',
+              function: {
+                name: 'Bash',
+                arguments: '{"command":"npm test"}',
+              },
+            },
+          ],
+          usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Tests pass and the fix is complete.',
+          toolCalls: undefined,
+          usage: { promptTokens: 160, completionTokens: 20, totalTokens: 180 },
+          finishReason: 'stop',
+        });
+
+      const executeMock = deps.executionPipeline.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockResolvedValueOnce({
+        success: true,
+        llmContent: '1 test passed',
+        metadata: {
+          command: 'npm test',
+          exit_code: 0,
+        },
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Fix the bug and run npm test before finishing.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(chatMock).toHaveBeenCalledTimes(3);
+      expect(executeMock).toHaveBeenCalledWith(
+        'Bash',
+        { command: 'npm test' },
+        expect.objectContaining({ sessionId: 'test-session' })
+      );
+      expect(context.messages).toContainEqual({
+        role: 'user',
+        content: expect.stringContaining('explicitly required verification'),
+      });
+    });
+
+    it('fails instead of reporting success when required verification never runs', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValue({
+        content: 'The source change is complete.',
+        toolCalls: undefined,
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'stop',
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Fix the bug and run npm test before finishing.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(chatMock.mock.calls.length).toBeGreaterThan(MAX_VERIFICATION_RETRIES);
+      expect(chatMock.mock.calls.length).toBeLessThanOrEqual(
+        MAX_VERIFICATION_RETRIES + 2
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: false,
+          error: expect.objectContaining({
+            type: 'verification_failed',
+          }),
+        })
       );
     });
 

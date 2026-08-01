@@ -8,7 +8,11 @@
  */
 import { generateText, jsonSchema } from 'ai';
 import { describe, expect, it } from 'vitest';
-import { getEnabledModelConfigs, isRealApiTestEnabled } from './testConfig.js';
+import {
+  getEnabledModelConfigs,
+  isRealApiTestEnabled,
+  REAL_API_OUTPUT_BUDGET,
+} from './testConfig.js';
 
 const calculatorTool = {
   description: 'Calculate a math expression and return the result',
@@ -70,7 +74,7 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
         read_file: readFileTool,
         edit_file: editFileTool,
       },
-      maxOutputTokens: 200,
+      maxOutputTokens: REAL_API_OUTPUT_BUDGET,
       temperature: 0,
     });
 
@@ -93,7 +97,7 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
         { role: 'user', content: 'Read the file at /Users/test/src/index.ts' },
       ],
       tools: { read_file: readFileTool },
-      maxOutputTokens: 200,
+      maxOutputTokens: REAL_API_OUTPUT_BUDGET,
       temperature: 0,
     });
 
@@ -120,7 +124,7 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
         },
       ],
       tools: { edit_file: editFileTool },
-      maxOutputTokens: 300,
+      maxOutputTokens: REAL_API_OUTPUT_BUDGET,
       temperature: 0,
     });
 
@@ -150,7 +154,7 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
         { role: 'user', content: 'Explain what a closure is in JavaScript.' },
       ],
       tools: {},
-      maxOutputTokens: 300,
+      maxOutputTokens: REAL_API_OUTPUT_BUDGET,
       temperature: 0,
     });
 

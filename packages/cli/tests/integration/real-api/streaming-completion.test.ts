@@ -1,6 +1,10 @@
 import { streamText } from 'ai';
 import { describe, expect, it } from 'vitest';
-import { getEnabledModelConfigs, isRealApiTestEnabled } from './testConfig.js';
+import {
+  getEnabledModelConfigs,
+  isRealApiTestEnabled,
+  REAL_API_OUTPUT_BUDGET,
+} from './testConfig.js';
 
 const enabledModels = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
 
@@ -14,7 +18,7 @@ describe.skipIf(enabledModels.length === 0)('Real API Streaming Completion', () 
           { role: 'system', content: 'You are a helpful assistant.' },
           { role: 'user', content: 'Say hello world in one sentence.' },
         ],
-        maxOutputTokens: 100,
+        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
         temperature: 0,
       });
 
@@ -38,7 +42,7 @@ describe.skipIf(enabledModels.length === 0)('Real API Streaming Completion', () 
           { role: 'system', content: 'You are a helpful assistant.' },
           { role: 'user', content: 'What is 2+2? Reply with just the number.' },
         ],
-        maxOutputTokens: 50,
+        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
         temperature: 0,
       });
 
@@ -72,7 +76,7 @@ describe.skipIf(enabledModels.length === 0)('Real API Streaming Completion', () 
           { role: 'system', content: 'You are a helpful assistant.' },
           { role: 'user', content: 'Tell me a short story about a robot.' },
         ],
-        maxOutputTokens: 200,
+        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
         temperature: 0.7,
       });
 
@@ -91,7 +95,7 @@ describe.skipIf(enabledModels.length === 0)('Real API Streaming Completion', () 
           { role: 'assistant', content: 'Paris' },
           { role: 'user', content: 'And what is its population (approx)?' },
         ],
-        maxOutputTokens: 100,
+        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
         temperature: 0,
       });
 

@@ -38,6 +38,8 @@ import {
   checkOutputRecovery,
   checkRalphLoop,
   checkStopHook,
+  checkVerificationRequired,
+  isVerificationCommand,
 } from './completionPolicy.js';
 import {
   saveCompaction as persistCompaction,
@@ -599,6 +601,15 @@ export async function* executeLoopGenerator(
     let lastApiCallTime: number | undefined;
     let maxOutputRecoveryCount = 0;
     let incompleteIntentRetryCount = 0;
+    let verificationRetryCount = 0;
+    const successfulVerificationTools = new Set<string>();
+    const originalUserRequest =
+      typeof message === 'string'
+        ? message
+        : message
+            .filter((part) => part.type === 'text')
+            .map((part) => part.text)
+            .join('\n');
 
     const isSubagent = !!context.subagentInfo;
     let budgetTracker = createBudgetTracker({
@@ -943,6 +954,80 @@ export async function* executeLoopGenerator(
 
           // 正常完成时归零 incompleteIntentRetryCount
           incompleteIntentRetryCount = 0;
+
+          const verificationAction = checkVerificationRequired(
+            originalUserRequest,
+            successfulVerificationTools,
+            verificationRetryCount
+          );
+          if (verificationAction.action === 'retry') {
+            verificationRetryCount++;
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+
+            const verificationAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid
+            );
+            if (verificationAssistantUuid) {
+              lastMessageUuid = verificationAssistantUuid;
+            }
+
+            const verificationMsg: Message = {
+              role: 'user',
+              content: verificationAction.prompt,
+            };
+            state.appendControl('user', verificationMsg);
+
+            const verificationUserUuid = await saveUserMessage(
+              deps,
+              context,
+              verificationMsg.content as string,
+              lastMessageUuid
+            );
+            if (verificationUserUuid) {
+              lastMessageUuid = verificationUserUuid;
+            }
+
+            continue;
+          }
+          if (verificationAction.action === 'fail') {
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+
+            const verificationAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid
+            );
+            if (verificationAssistantUuid) {
+              lastMessageUuid = verificationAssistantUuid;
+            }
+
+            return {
+              success: false,
+              error: {
+                type: 'verification_failed',
+                message: verificationAction.message,
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+              },
+            };
+          }
+          verificationRetryCount = 0;
 
           // Ralph Loop: Spec 未完成任务时自动继续
           const ralphAction = await checkRalphLoop({
@@ -1298,6 +1383,15 @@ export async function* executeLoopGenerator(
           // 添加工具结果到消息历史
           if (result.success) {
             recordToolSuccess(failureTracker, toolCall.function.name);
+            if (['Edit', 'Write', 'NotebookEdit'].includes(toolCall.function.name)) {
+              successfulVerificationTools.delete('Bash');
+            } else if (
+              toolCall.function.name === 'Bash' &&
+              typeof result.metadata?.command === 'string' &&
+              isVerificationCommand(result.metadata.command)
+            ) {
+              successfulVerificationTools.add('Bash');
+            }
           } else {
             recordToolFailure(failureTracker, toolCall.function.name);
           }

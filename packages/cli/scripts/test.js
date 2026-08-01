@@ -18,6 +18,14 @@ const testTypes = {
     project: 'integration',
     timeout: 90000,
   },
+  realApi: {
+    name: '真实 API 集成测试',
+    project: 'real-api',
+    timeout: 1800000,
+    env: {
+      REAL_API_TEST: '1',
+    },
+  },
   cli: {
     name: 'CLI 测试',
     project: 'cli',
@@ -74,6 +82,7 @@ function printUsage() {
 测试类型:
   unit        运行单元测试
   integration 运行集成测试
+  realApi     运行真实 API 与生产 Agent 轨迹测试
   cli         运行 CLI 行为测试
   headlessCore 运行 headless 与核心 runtime 回归测试
   e2e         运行端到端测试
@@ -93,6 +102,7 @@ function printUsage() {
 示例:
   npm run test unit
   npm run test integration --coverage
+  npm run test realApi
   npm run test all --watch
   npm run test cli --debug
   npm run test snapshot --update
@@ -109,6 +119,10 @@ function runTest(testType, options = {}) {
   }
 
   console.log(`🚀 开始运行${config.name}...`);
+
+  if (config.env) {
+    Object.assign(process.env, config.env);
+  }
 
   if (options.watch && options.coverage) {
     console.warn('⚠️ 监听模式暂不支持覆盖率统计，忽略 --coverage');

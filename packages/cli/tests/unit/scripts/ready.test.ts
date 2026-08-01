@@ -30,6 +30,7 @@ describe('Ready Script - 发布前检查', () => {
     expect(content).toContain('Lint 检查');
     expect(content).toContain('单元测试');
     expect(content).toContain('集成测试');
+    expect(content).toContain('真实 API 集成测试');
     expect(content).toContain('构建项目');
   });
 
@@ -41,6 +42,7 @@ describe('Ready Script - 发布前检查', () => {
     expect(content).toContain('lint');
     expect(content).toContain('test:unit');
     expect(content).toContain('test:integration');
+    expect(content).toContain('test:real-api');
     expect(content).toContain('build');
   });
 

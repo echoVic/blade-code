@@ -3,6 +3,8 @@
  * 提供所有测试类型的基础配置和模拟
  */
 
+import os from 'node:os';
+import path from 'node:path';
 import { TextDecoder, TextEncoder } from 'util';
 import { afterEach, beforeAll, vi } from 'vitest';
 
@@ -20,6 +22,7 @@ process.env.NODE_ENV = 'test';
 process.env.TEST_MODE = 'true';
 process.env.LOG_LEVEL = 'error';
 process.env.DEBUG_TESTS = process.env.DEBUG_TESTS || 'false';
+process.env.BLADE_STORAGE_ROOT ??= path.join(os.tmpdir(), `blade-tests-${process.pid}`);
 
 // 控制台输出管理
 const originalConsoleLog = console.log;

@@ -2,9 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   checkIncompleteIntent,
   checkOutputRecovery,
+  checkVerificationRequired,
   MAX_INCOMPLETE_INTENT_RETRIES,
   MAX_OUTPUT_RECOVERY_LIMIT,
+  MAX_VERIFICATION_RETRIES,
   RETRY_PROMPT,
+  VERIFICATION_FAILURE_MESSAGE,
+  VERIFICATION_RETRY_PROMPT,
 } from '../../../../src/agent/loop/completionPolicy.js';
 
 describe('completionPolicy', () => {
@@ -107,6 +111,54 @@ describe('completionPolicy', () => {
         'Here is my plan:\n1. First I will read the file\n2. Then modify it\n3. Finally run tests';
       const result = checkIncompleteIntent(content, 0);
       expect(result.action).toBe('retry');
+    });
+  });
+
+  describe('checkVerificationRequired', () => {
+    it('requires Bash when the user explicitly asks to run tests', () => {
+      expect(
+        checkVerificationRequired(
+          'Fix the bug and run npm test before finishing.',
+          new Set(['Read', 'Edit']),
+          0
+        )
+      ).toEqual({
+        action: 'retry',
+        prompt: VERIFICATION_RETRY_PROMPT,
+      });
+    });
+
+    it('accepts a successful Bash verification', () => {
+      expect(
+        checkVerificationRequired(
+          '修复这个问题并运行测试。',
+          new Set(['Read', 'Edit', 'Bash']),
+          0
+        )
+      ).toEqual({ action: 'none' });
+    });
+
+    it('does not force Bash when verification was not requested', () => {
+      expect(
+        checkVerificationRequired(
+          'Explain how this function works.',
+          new Set(['Read']),
+          0
+        )
+      ).toEqual({ action: 'none' });
+    });
+
+    it('fails closed at the verification retry limit', () => {
+      expect(
+        checkVerificationRequired(
+          'Run the test suite.',
+          new Set(),
+          MAX_VERIFICATION_RETRIES
+        )
+      ).toEqual({
+        action: 'fail',
+        message: VERIFICATION_FAILURE_MESSAGE,
+      });
     });
   });
 });

@@ -128,6 +128,14 @@ describe('errorRecovery', () => {
       expect(recordOutput(detector, 'stuck')).toBe(true);
     });
 
+    it('resets the detection window after emitting a stale warning', () => {
+      const detector = createStaleLoopDetector();
+      recordOutput(detector, 'stuck');
+      recordOutput(detector, 'stuck');
+      expect(recordOutput(detector, 'stuck')).toBe(true);
+      expect(recordOutput(detector, 'stuck')).toBe(false);
+    });
+
     it('does not trigger if outputs differ', () => {
       const detector = createStaleLoopDetector();
       recordOutput(detector, 'a');

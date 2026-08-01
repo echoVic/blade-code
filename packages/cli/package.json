@@ -21,6 +21,7 @@
     "test:all": "vitest run --config vitest.config.ts",
     "test:unit": "node scripts/test.js unit",
     "test:integration": "node scripts/test.js integration",
+    "test:real-api": "node scripts/test.js realApi",
     "test:cli": "node scripts/test.js cli",
     "test:headless-core": "node scripts/test.js headlessCore",
     "test:e2e": "node scripts/test.js e2e",

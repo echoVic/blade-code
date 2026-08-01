@@ -2,8 +2,14 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';
+import { readFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 export type ModelId = 'deepseek' | 'claude' | 'gpt' | 'domestic';
+
+/** Leaves room for reasoning models to emit both thinking and final content. */
+export const REAL_API_OUTPUT_BUDGET = 1024;
 
 export interface TestModelConfig {
   id: ModelId;
@@ -15,86 +21,183 @@ export interface TestModelConfig {
   createModel: () => LanguageModel;
 }
 
-function getRequiredEnv(key: string): string {
-  const value = process.env[key];
-  if (!value) {
-    throw new Error(
-      `Missing required environment variable: ${key}. ` +
-        `Set it in your shell or create a .env file before running real API tests.`
-    );
+interface BladeModelConfig {
+  id: string;
+  name?: string;
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+}
+
+interface ResolvedModelSettings {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+}
+
+let cachedBladeModel: BladeModelConfig | null | undefined;
+
+function getBladeCurrentModel(): BladeModelConfig | undefined {
+  if (cachedBladeModel !== undefined) {
+    return cachedBladeModel ?? undefined;
   }
-  return value;
+
+  try {
+    const configPath = path.join(os.homedir(), '.blade', 'config.json');
+    const parsed = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+      currentModelId?: string;
+      models?: BladeModelConfig[];
+    };
+    cachedBladeModel =
+      parsed.models?.find((model) => model.id === parsed.currentModelId) ?? null;
+  } catch {
+    cachedBladeModel = null;
+  }
+
+  return cachedBladeModel ?? undefined;
 }
 
-function getOptionalEnv(key: string, fallback: string): string {
-  return process.env[key] ?? fallback;
+function matchesModel(id: ModelId, config: BladeModelConfig): boolean {
+  const provider = config.provider.toLowerCase();
+  const model = config.model.toLowerCase();
+
+  switch (id) {
+    case 'deepseek':
+      return provider === 'deepseek';
+    case 'claude':
+      return provider === 'anthropic' || model.includes('claude');
+    case 'gpt':
+      return (
+        provider === 'openai' ||
+        (provider === 'openai-compatible' && /^(gpt|o[134])/.test(model))
+      );
+    case 'domestic':
+      return provider === 'openai-compatible' && !/^(gpt|o[134])/.test(model);
+  }
 }
 
-function getApiKey(key: string): string {
-  return process.env[key] ?? '';
+function resolveModelSettings(
+  id: ModelId,
+  envPrefix: string,
+  defaultModel: string,
+  defaultBaseURL: string
+): ResolvedModelSettings {
+  const bladeModel = getBladeCurrentModel();
+  const matchingBladeModel =
+    bladeModel && matchesModel(id, bladeModel) ? bladeModel : undefined;
+
+  return {
+    apiKey: process.env[`${envPrefix}_API_KEY`] ?? matchingBladeModel?.apiKey ?? '',
+    baseURL:
+      process.env[`${envPrefix}_BASE_URL`] ??
+      matchingBladeModel?.baseUrl ??
+      defaultBaseURL,
+    model:
+      process.env[`${envPrefix}_MODEL`] ?? matchingBladeModel?.model ?? defaultModel,
+  };
 }
+
+function requireApiKey(id: ModelId, settings: ResolvedModelSettings): string {
+  if (settings.apiKey) return settings.apiKey;
+  throw new Error(
+    `Missing API credentials for ${id}. Configure the current model in ` +
+      '~/.blade/config.json or provide the corresponding environment variables.'
+  );
+}
+
+const deepseekSettings = resolveModelSettings(
+  'deepseek',
+  'DEEPSEEK',
+  'deepseek-chat',
+  'https://api.deepseek.com/v1'
+);
 
 const deepseekConfig: TestModelConfig = {
   id: 'deepseek',
   name: 'DeepSeek',
   provider: 'deepseek',
-  model: getOptionalEnv('DEEPSEEK_MODEL', 'deepseek-chat'),
-  apiKey: getApiKey('DEEPSEEK_API_KEY'),
-  baseURL: getOptionalEnv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1'),
+  model: deepseekSettings.model,
+  apiKey: deepseekSettings.apiKey,
+  baseURL: deepseekSettings.baseURL,
   createModel: () => {
-    const apiKey = getRequiredEnv('DEEPSEEK_API_KEY');
-    const baseURL = getOptionalEnv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1');
-    const model = getOptionalEnv('DEEPSEEK_MODEL', 'deepseek-chat');
-    const deepseek = createDeepSeek({ apiKey, baseURL });
-    return deepseek(model);
+    const apiKey = requireApiKey('deepseek', deepseekSettings);
+    const deepseek = createDeepSeek({
+      apiKey,
+      baseURL: deepseekSettings.baseURL,
+    });
+    return deepseek(deepseekSettings.model);
   },
 };
+
+const claudeSettings = resolveModelSettings(
+  'claude',
+  'CLAUDE',
+  'claude-3.5-sonnet',
+  'https://callapi8.com'
+);
 
 const claudeConfig: TestModelConfig = {
   id: 'claude',
   name: 'Claude (via NewAPI)',
   provider: 'anthropic',
-  model: getOptionalEnv('CLAUDE_MODEL', 'claude-3.5-sonnet'),
-  apiKey: getApiKey('CLAUDE_API_KEY'),
-  baseURL: getOptionalEnv('CLAUDE_BASE_URL', 'https://callapi8.com'),
+  model: claudeSettings.model,
+  apiKey: claudeSettings.apiKey,
+  baseURL: claudeSettings.baseURL,
   createModel: () => {
-    const apiKey = getRequiredEnv('CLAUDE_API_KEY');
-    const baseURL = getOptionalEnv('CLAUDE_BASE_URL', 'https://callapi8.com');
-    const model = getOptionalEnv('CLAUDE_MODEL', 'claude-3.5-sonnet');
-    const anthropic = createAnthropic({ apiKey, baseURL });
-    return anthropic(model);
+    const apiKey = requireApiKey('claude', claudeSettings);
+    const anthropic = createAnthropic({ apiKey, baseURL: claudeSettings.baseURL });
+    return anthropic(claudeSettings.model);
   },
 };
+
+const gptSettings = resolveModelSettings(
+  'gpt',
+  'GPT',
+  'gpt-4o',
+  'https://callapi8.com'
+);
 
 const gptConfig: TestModelConfig = {
   id: 'gpt',
   name: 'GPT (via NewAPI)',
   provider: 'openai-compatible',
-  model: getOptionalEnv('GPT_MODEL', 'gpt-4o'),
-  apiKey: getApiKey('GPT_API_KEY'),
-  baseURL: getOptionalEnv('GPT_BASE_URL', 'https://callapi8.com'),
+  model: gptSettings.model,
+  apiKey: gptSettings.apiKey,
+  baseURL: gptSettings.baseURL,
   createModel: () => {
-    const apiKey = getRequiredEnv('GPT_API_KEY');
-    const baseURL = getOptionalEnv('GPT_BASE_URL', 'https://callapi8.com');
-    const model = getOptionalEnv('GPT_MODEL', 'gpt-4o');
-    const compatible = createOpenAICompatible({ name: 'gpt', apiKey, baseURL });
-    return compatible(model);
+    const apiKey = requireApiKey('gpt', gptSettings);
+    const compatible = createOpenAICompatible({
+      name: 'gpt',
+      apiKey,
+      baseURL: gptSettings.baseURL,
+    });
+    return compatible(gptSettings.model);
   },
 };
+
+const domesticSettings = resolveModelSettings(
+  'domestic',
+  'DOMESTIC',
+  'qwen-plus',
+  'https://callapi8.com'
+);
 
 const domesticConfig: TestModelConfig = {
   id: 'domestic',
   name: 'Domestic (via NewAPI)',
   provider: 'openai-compatible',
-  model: getOptionalEnv('DOMESTIC_MODEL', 'qwen-plus'),
-  apiKey: getApiKey('DOMESTIC_API_KEY'),
-  baseURL: getOptionalEnv('DOMESTIC_BASE_URL', 'https://callapi8.com'),
+  model: domesticSettings.model,
+  apiKey: domesticSettings.apiKey,
+  baseURL: domesticSettings.baseURL,
   createModel: () => {
-    const apiKey = getRequiredEnv('DOMESTIC_API_KEY');
-    const baseURL = getOptionalEnv('DOMESTIC_BASE_URL', 'https://callapi8.com');
-    const model = getOptionalEnv('DOMESTIC_MODEL', 'qwen-plus');
-    const compatible = createOpenAICompatible({ name: 'domestic', apiKey, baseURL });
-    return compatible(model);
+    const apiKey = requireApiKey('domestic', domesticSettings);
+    const compatible = createOpenAICompatible({
+      name: 'domestic',
+      apiKey,
+      baseURL: domesticSettings.baseURL,
+    });
+    return compatible(domesticSettings.model);
   },
 };
 
@@ -114,22 +217,16 @@ export function getModelConfig(id: ModelId): TestModelConfig {
 }
 
 export function getEnabledModelConfigs(): TestModelConfig[] {
-  return ALL_MODEL_CONFIGS.filter((c) => {
-    switch (c.id) {
-      case 'deepseek':
-        return !!process.env.DEEPSEEK_API_KEY;
-      case 'claude':
-        return !!process.env.CLAUDE_API_KEY;
-      case 'gpt':
-        return !!process.env.GPT_API_KEY;
-      case 'domestic':
-        return !!process.env.DOMESTIC_API_KEY;
-      default:
-        return false;
-    }
-  });
+  return ALL_MODEL_CONFIGS.filter((config) => Boolean(config.apiKey));
 }
 
 export function isRealApiTestEnabled(): boolean {
   return process.env.REAL_API_TEST === '1';
+}
+
+if (isRealApiTestEnabled() && getEnabledModelConfigs().length === 0) {
+  throw new Error(
+    'REAL_API_TEST=1 requires a configured model in ~/.blade/config.json ' +
+      'or provider-specific API environment variables.'
+  );
 }

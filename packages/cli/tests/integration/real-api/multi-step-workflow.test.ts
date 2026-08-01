@@ -9,7 +9,11 @@
  */
 import { generateText, jsonSchema } from 'ai';
 import { describe, expect, it } from 'vitest';
-import { getEnabledModelConfigs, isRealApiTestEnabled } from './testConfig.js';
+import {
+  getEnabledModelConfigs,
+  isRealApiTestEnabled,
+  REAL_API_OUTPUT_BUDGET,
+} from './testConfig.js';
 
 const readFileTool = {
   description: 'Read the contents of a file at the given path',
@@ -82,7 +86,7 @@ describe.skipIf(enabledModels.length === 0)('Multi-Step Workflow (Real API)', ()
         },
       ],
       tools: { read_file: readFileTool, edit_file: editFileTool },
-      maxOutputTokens: 400,
+      maxOutputTokens: REAL_API_OUTPUT_BUDGET,
       temperature: 0,
     });
 
@@ -109,7 +113,7 @@ describe.skipIf(enabledModels.length === 0)('Multi-Step Workflow (Real API)', ()
         },
       ],
       tools: { grep: grepTool, read_file: readFileTool },
-      maxOutputTokens: 300,
+      maxOutputTokens: REAL_API_OUTPUT_BUDGET,
       temperature: 0,
     });
 
@@ -137,7 +141,7 @@ describe.skipIf(enabledModels.length === 0)('Multi-Step Workflow (Real API)', ()
         },
       ],
       tools: { read_file: readFileTool, edit_file: editFileTool },
-      maxOutputTokens: 400,
+      maxOutputTokens: REAL_API_OUTPUT_BUDGET,
       temperature: 0,
     });
 
@@ -168,7 +172,7 @@ describe.skipIf(enabledModels.length === 0)('Multi-Step Workflow (Real API)', ()
         },
       ],
       tools: { bash: bashTool, read_file: readFileTool },
-      maxOutputTokens: 300,
+      maxOutputTokens: REAL_API_OUTPUT_BUDGET,
       temperature: 0,
     });
 
@@ -196,7 +200,7 @@ describe.skipIf(enabledModels.length === 0)('Multi-Step Workflow (Real API)', ()
         },
       ],
       tools: { read_file: readFileTool, edit_file: editFileTool },
-      maxOutputTokens: 400,
+      maxOutputTokens: REAL_API_OUTPUT_BUDGET,
       temperature: 0,
     });
 

@@ -87,6 +87,7 @@
 
 - **单元测试**：`bun run test:unit`
 - **集成测试**：`bun run test:integration`
+- **真实 API 测试**：`bun run test:real-api`（读取 `~/.blade/config.json` 当前模型）
 - **CLI 测试**：`bun run test:cli`
 - **覆盖率报告**：`bun run test:coverage`
 

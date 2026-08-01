@@ -52,9 +52,8 @@ export function unescapeProjectPath(escapedPath: string): string {
  * @returns ~/.blade/projects/{escaped-path}/
  */
 export function getProjectStoragePath(projectPath: string): string {
-  const homeDir = os.homedir();
   const escaped = escapeProjectPath(projectPath);
-  return path.join(homeDir, '.blade', 'projects', escaped);
+  return path.join(getBladeStorageRoot(), 'projects', escaped);
 }
 
 /**
@@ -91,7 +90,7 @@ export function detectGitBranch(projectPath: string): string | undefined {
  * @returns ~/.blade/
  */
 export function getBladeStorageRoot(): string {
-  return path.join(os.homedir(), '.blade');
+  return process.env.BLADE_STORAGE_ROOT || path.join(os.homedir(), '.blade');
 }
 
 /**

@@ -21,8 +21,8 @@ import {
   statSync,
   unlinkSync,
 } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -74,7 +74,7 @@ function getLogDir(): string | null {
   logDirInitialized = true;
 
   try {
-    const logDir = path.join(os.homedir(), '.blade', 'logs');
+    const logDir = path.join(getBladeStorageRoot(), 'logs');
 
     if (!existsSync(logDir)) {
       mkdirSync(logDir, { recursive: true, mode: 0o755 });

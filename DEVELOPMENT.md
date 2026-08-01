@@ -183,6 +183,9 @@ bun run test:unit
 # 集成测试
 bun run test:integration
 
+# 真实 API 与生产 Agent 轨迹测试
+bun run test:real-api
+
 # E2E 测试
 bun run test:e2e
 
@@ -195,6 +198,10 @@ bun run test:watch
 # 覆盖率报告
 bun run test:coverage
 ```
+
+真实 API 测试默认读取 `~/.blade/config.json` 中的当前模型，也支持
+`DEEPSEEK_*`、`CLAUDE_*`、`GPT_*` 和 `DOMESTIC_*` 环境变量。
+`bun run ready` 会执行该套件；未配置任何真实模型时会直接失败，而不是跳过测试。
 
 ### 测试编写原则
 

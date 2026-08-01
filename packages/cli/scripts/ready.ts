@@ -54,6 +54,12 @@ const CHECKS = [
 		emoji: '🔗',
 	},
 	{
+		name: '真实 API 集成测试',
+		command: 'bun',
+		args: ['run', 'test:real-api'],
+		emoji: '🌐',
+	},
+	{
 		name: '构建项目',
 		command: 'bun',
 		args: ['run', 'build'],

@@ -1,6 +1,10 @@
 import { generateText } from 'ai';
 import { describe, expect, it } from 'vitest';
-import { getEnabledModelConfigs, isRealApiTestEnabled } from './testConfig.js';
+import {
+  getEnabledModelConfigs,
+  isRealApiTestEnabled,
+  REAL_API_OUTPUT_BUDGET,
+} from './testConfig.js';
 
 const enabledModels = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
 
@@ -17,7 +21,7 @@ describe.skipIf(enabledModels.length === 0)('Real API Chat Completion', () => {
           },
           { role: 'user', content: 'Say hello' },
         ],
-        maxOutputTokens: 50,
+        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
         temperature: 0,
       });
 
@@ -38,7 +42,7 @@ describe.skipIf(enabledModels.length === 0)('Real API Chat Completion', () => {
           { role: 'assistant', content: '4' },
           { role: 'user', content: 'And what is 3+5? Reply with just the number.' },
         ],
-        maxOutputTokens: 50,
+        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
         temperature: 0,
       });
 
@@ -54,7 +58,7 @@ describe.skipIf(enabledModels.length === 0)('Real API Chat Completion', () => {
           { role: 'system', content: 'Always respond in uppercase.' },
           { role: 'user', content: 'say hello' },
         ],
-        maxOutputTokens: 50,
+        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
         temperature: 0,
       });
 

@@ -11,11 +11,11 @@
  */
 
 import type { PermissionMode } from '../../config/index.js';
-import { getCwd } from '../../utils/cwd.js';
 import type { BudgetTracker } from '../../context/TokenBudget.js';
 import { checkTokenBudget } from '../../context/TokenBudget.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { getCwd } from '../../utils/cwd.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -123,7 +123,61 @@ export function checkIncompleteIntent(
   return { action: 'none' };
 }
 
-export { RETRY_PROMPT, MAX_INCOMPLETE_INTENT_RETRIES };
+export { MAX_INCOMPLETE_INTENT_RETRIES, RETRY_PROMPT };
+
+// ===== Explicit Verification Requirement =====
+
+const EXPLICIT_VERIFICATION_PATTERNS = [
+  /\b(?:run|execute|rerun|re-run)\b[\s\S]{0,60}\b(?:tests?|test suite|lint|type-?check|build)\b/i,
+  /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|build|type-?check)\b/i,
+  /(?:运行|执行|跑|重新运行).{0,30}(?:测试|单测|集成测试|检查|构建)/,
+];
+
+const VERIFICATION_COMMAND_PATTERN =
+  /(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|build|type-?check)\b|(?:^|\s)(?:node|bun)\s+--test\b|(?:^|\s)(?:vitest|jest|pytest|go\s+test|cargo\s+test)\b/i;
+
+export const VERIFICATION_RETRY_PROMPT =
+  'The user explicitly required verification, but it has not run successfully. ' +
+  'Do not finish or explain. Your next action must be a Bash tool call that runs ' +
+  'the requested test, lint, type-check, or build command. Inspect the command ' +
+  'result and fix any failure before finishing.';
+
+export const VERIFICATION_FAILURE_MESSAGE =
+  'Required verification did not run successfully before the retry limit.';
+
+export type VerificationAction =
+  | { action: 'retry'; prompt: string }
+  | { action: 'fail'; message: string }
+  | { action: 'none' };
+
+export const MAX_VERIFICATION_RETRIES = 3;
+
+export function isVerificationCommand(command: string): boolean {
+  return VERIFICATION_COMMAND_PATTERN.test(command);
+}
+
+export function checkVerificationRequired(
+  userRequest: string | undefined,
+  successfulVerificationTools: ReadonlySet<string>,
+  retryCount: number
+): VerificationAction {
+  if (
+    !userRequest ||
+    !EXPLICIT_VERIFICATION_PATTERNS.some((pattern) => pattern.test(userRequest))
+  ) {
+    return { action: 'none' };
+  }
+
+  if (successfulVerificationTools.has('Bash')) {
+    return { action: 'none' };
+  }
+
+  if (retryCount >= MAX_VERIFICATION_RETRIES) {
+    return { action: 'fail', message: VERIFICATION_FAILURE_MESSAGE };
+  }
+
+  return { action: 'retry', prompt: VERIFICATION_RETRY_PROMPT };
+}
 
 // ===== Stop Hook =====
 

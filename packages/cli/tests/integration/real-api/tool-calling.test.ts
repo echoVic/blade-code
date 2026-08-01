@@ -1,6 +1,10 @@
 import { generateText, jsonSchema, streamText } from 'ai';
 import { describe, expect, it } from 'vitest';
-import { getEnabledModelConfigs, isRealApiTestEnabled } from './testConfig.js';
+import {
+  getEnabledModelConfigs,
+  isRealApiTestEnabled,
+  REAL_API_OUTPUT_BUDGET,
+} from './testConfig.js';
 
 const calculatorTool = {
   description: 'Calculate the result of a math expression',
@@ -42,7 +46,7 @@ describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
           { role: 'user', content: 'What is 15 * 23?' },
         ],
         tools: { calculate: calculatorTool },
-        maxOutputTokens: 200,
+        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
         temperature: 0,
       });
 
@@ -65,7 +69,7 @@ describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
           { role: 'user', content: 'What is the weather in Beijing?' },
         ],
         tools: { getWeather: weatherTool },
-        maxOutputTokens: 200,
+        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
         temperature: 0,
       });
 
@@ -105,7 +109,7 @@ describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
           },
         ],
         tools: { calculate: calculatorTool, getWeather: weatherTool },
-        maxOutputTokens: 300,
+        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
         temperature: 0,
       });
 

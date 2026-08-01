@@ -798,6 +798,13 @@ export async function runHeadless(
       eventWriter.error('[warning] 输出因达到 token 上限被截断，部分内容可能不完整。');
     }
 
+    if (!loopResult.success) {
+      eventWriter.error(
+        `Error: ${loopResult.error?.message ?? 'Agent execution failed'}`
+      );
+      return 1;
+    }
+
     eventWriter.phase('completed', 'done', 'Headless run completed');
 
     return 0;

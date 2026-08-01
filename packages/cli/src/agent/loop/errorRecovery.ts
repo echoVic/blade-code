@@ -99,7 +99,11 @@ export function recordOutput(detector: StaleLoopDetector, content: string): bool
   if (detector.recentOutputHashes.length < STALE_LOOP_THRESHOLD) return false;
 
   const lastN = detector.recentOutputHashes.slice(-STALE_LOOP_THRESHOLD);
-  return lastN.every((h) => h === lastN[0]);
+  const isStale = lastN.every((h) => h === lastN[0]);
+  if (isStale) {
+    detector.recentOutputHashes = [];
+  }
+  return isStale;
 }
 
 export function getStaleLoopHint(): string {
