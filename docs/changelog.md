@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.2] - 2026-08-01
+
+### ✨ 新功能
+
+- 新增 `EnterWorktree` / `ExitWorktree` 工具，为 Agent 提供 session 级 Git worktree 隔离
+- 从仓库子目录进入 worktree 时保留相对工作目录，Bash、Glob、Grep、系统提示与 `@` 引用同步切换
+- 新增 Pipeline 隔离门禁：用户明确要求 worktree 时，进入前和退出后禁止执行写入及命令工具
+
+### 🐛 问题修复
+
+- 删除 worktree 前 fail-closed 检查未提交文件和未合并提交，必须显式确认才能丢弃
+- 修复非零退出码的 Bash 测试命令被误判为验证成功的问题
+- 修复 worktree 内权限与失败 Hook 仍使用进程原始 cwd 的问题
+
+### ✅ 测试相关
+
+- 新增 8 项真实 Git 生命周期测试和 Pipeline 隔离测试
+- 新增真实 DeepSeek worktree 轨迹，验证原 checkout 不变、隔离编辑、测试和退出协议
+
 ## [0.6.1] - 2026-08-01
 
 ### ✨ 新功能
