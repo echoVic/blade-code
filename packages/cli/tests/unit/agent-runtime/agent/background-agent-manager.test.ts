@@ -14,6 +14,55 @@ const runtimeState = vi.hoisted(() => ({
   },
 }));
 
+const worktreeState = vi.hoisted(() => ({
+  prepare: vi.fn(
+    async (input: {
+      isolation?: 'none' | 'worktree';
+      sourceWorkspaceRoot: string;
+      agentId: string;
+    }) => ({
+      isolation: input.isolation ?? 'none',
+      workspaceRoot:
+        input.isolation === 'worktree'
+          ? '/tmp/agent-worktree'
+          : input.sourceWorkspaceRoot,
+      worktree:
+        input.isolation === 'worktree'
+          ? {
+              sessionId: input.agentId,
+              name: `agent/${input.agentId}`,
+              branch: 'blade-worktree-agent',
+              baseCommit: 'abc',
+              originalBranch: 'main',
+              repositoryRoot: '/repo',
+              originalWorkspaceRoot: input.sourceWorkspaceRoot,
+              worktreeRoot: '/tmp/agent-worktree',
+              workspaceRoot: '/tmp/agent-worktree',
+              sourceHadChanges: false,
+            }
+          : undefined,
+    })
+  ),
+  finalize: vi.fn(async () => ({
+    preserved: true,
+    removed: false,
+    worktreePath: '/tmp/agent-worktree',
+    worktreeBranch: 'blade-worktree-agent',
+    worktree: {
+      sessionId: 'session_test-uuid-1234',
+      name: 'agent/session_test-uuid-1234',
+      branch: 'blade-worktree-agent',
+      baseCommit: 'abc',
+      originalBranch: 'main',
+      repositoryRoot: '/repo',
+      originalWorkspaceRoot: '/repo',
+      worktreeRoot: '/tmp/agent-worktree',
+      workspaceRoot: '/tmp/agent-worktree',
+      sourceHadChanges: false,
+    },
+  })),
+}));
+
 // Mock 所有依赖
 vi.mock('../../../../src/agent/subagents/AgentSessionStore.js');
 vi.mock('../../../../src/agent/Agent.js', () => ({
@@ -25,6 +74,12 @@ vi.mock('../../../../src/agent/Agent.js', () => ({
 vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
   SessionRuntime: {
     create: vi.fn(async () => runtimeState.runtime),
+  },
+}));
+vi.mock('../../../../src/agent/subagents/SubagentWorktreeLifecycle.js', () => ({
+  subagentWorktreeLifecycle: {
+    prepare: worktreeState.prepare,
+    finalize: worktreeState.finalize,
   },
 }));
 vi.mock('../../../../src/logging/Logger.js', () => ({
@@ -66,10 +121,20 @@ describe('BackgroundAgentManager', () => {
     vi.mocked(AgentSessionStore.getInstance).mockReturnValue(mockSessionStore as any);
 
     const mockAgent = {
-      runAgenticLoop: vi.fn().mockResolvedValue({
-        success: true,
-        finalMessage: 'Task completed',
-        metadata: { tokensUsed: 100, toolCallsCount: 5 },
+      chatStream: vi.fn(async function* () {
+        if (Date.now() < 0) {
+          yield { kind: 'stream_end' as const };
+        }
+        return {
+          success: true,
+          finalMessage: 'Task completed',
+          metadata: {
+            turnsCount: 1,
+            tokensUsed: 100,
+            toolCallsCount: 5,
+            duration: 10,
+          },
+        };
       }),
     };
     vi.mocked(Agent.createWithRuntime).mockResolvedValue(mockAgent as any);
@@ -112,7 +177,61 @@ describe('BackgroundAgentManager', () => {
         runtimeState.runtime,
         expect.objectContaining({
           sessionId: 'session_test-uuid-1234',
-          systemPrompt: 'You are an explorer',
+          appendSystemPrompt: 'You are an explorer',
+        })
+      );
+    });
+
+    it('应在预创建 worktree 中运行并持久化 lease', async () => {
+      const agentId = manager.startBackgroundAgent({
+        config: {
+          name: 'writer',
+          description: 'Writer agent',
+          systemPrompt: 'Focus on implementation and verification.',
+        },
+        description: 'Implement change',
+        prompt: 'Implement the requested code change',
+        workspaceRoot: '/repo',
+        isolation: 'worktree',
+      });
+
+      await manager.waitForCompletion(agentId, 0);
+
+      expect(worktreeState.prepare).toHaveBeenCalledWith({
+        agentId,
+        sourceWorkspaceRoot: '/repo',
+        isolation: 'worktree',
+        restoredWorktree: undefined,
+      });
+      expect(Agent.createWithRuntime).toHaveBeenCalledWith(
+        runtimeState.runtime,
+        expect.objectContaining({
+          toolBlacklist: expect.arrayContaining(['EnterWorktree', 'ExitWorktree']),
+          appendSystemPrompt: 'Focus on implementation and verification.',
+        })
+      );
+      const createdAgent = await vi.mocked(Agent.createWithRuntime).mock.results[0]
+        .value;
+      expect(createdAgent.chatStream).toHaveBeenCalledWith(
+        'Implement the requested code change',
+        expect.objectContaining({
+          workspaceRoot: '/tmp/agent-worktree',
+          worktreeActive: true,
+        }),
+        expect.anything()
+      );
+      expect(worktreeState.finalize).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId,
+          success: true,
+        })
+      );
+      expect(AgentSessionStore.getInstance().updateSession).toHaveBeenCalledWith(
+        agentId,
+        expect.objectContaining({
+          worktree: expect.objectContaining({
+            worktreeRoot: '/tmp/agent-worktree',
+          }),
         })
       );
     });

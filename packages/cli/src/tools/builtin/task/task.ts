@@ -11,26 +11,31 @@
 
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { getCwd } from '../../../utils/cwd.js';
+import type { LoopEvent } from '../../../agent/loop/types.js';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
 import { SubagentExecutor } from '../../../agent/subagents/SubagentExecutor.js';
 import { subagentRegistry } from '../../../agent/subagents/SubagentRegistry.js';
+import {
+  type SubagentIsolationMode,
+  SubagentWorktreeLease,
+  subagentWorktreeLifecycle,
+} from '../../../agent/subagents/SubagentWorktreeLifecycle.js';
 import type {
   SubagentContext,
   SubagentResult,
 } from '../../../agent/subagents/types.js';
-import type { LoopEvent } from '../../../agent/loop/types.js';
 import { PermissionMode } from '../../../config/types.js';
 import { HookManager } from '../../../hooks/HookManager.js';
 import { Bus } from '../../../server/bus.js';
 import { vanillaStore } from '../../../store/vanilla.js';
-import { createTool } from '../../core/createTool.js';
-import type { ExecutionContext, ToolResult } from '../../types/index.js';
-import { ToolErrorType, ToolKind } from '../../types/index.js';
 import {
   formatToolDisplay,
   renderToolDisplayToString,
 } from '../../../ui/utils/toolFormatters.js';
+import { getCwd } from '../../../utils/cwd.js';
+import { createTool } from '../../core/createTool.js';
+import type { ExecutionContext, ToolResult } from '../../types/index.js';
+import { ToolErrorType, ToolKind } from '../../types/index.js';
 
 /**
  * 从错误中提取用户友好的错误信息
@@ -112,6 +117,7 @@ Usage notes:
 - When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
 - You can optionally run agents in the background using the run_in_background parameter. When an agent runs in the background, you will need to use TaskOutput to retrieve its results once it's done. You can continue to work while background agents run - When you need their results to continue you can use TaskOutput in blocking mode to pause and wait for their results.
 - Agents can be resumed using the \`resume\` parameter by passing the agent ID from a previous invocation. When resumed, the agent continues with its full previous context preserved. When NOT resuming, each invocation starts fresh and you should provide a detailed task description with all necessary context.
+- Set \`isolation: "worktree"\` for coding tasks that must not modify the parent workspace. Clean successful worktrees are removed automatically; changed or failed worktrees are preserved and returned.
 - When the agent is done, it will return a single message back to you along with its agent ID. You can use this ID to resume the agent later if needed for follow-up work.
 - Provide clear, detailed prompts so the agent can work autonomously and return exactly the information you need.
 - Agents with "access to current context" can see the full conversation history before the tool call. When using these agents, you can write concise prompts that reference earlier context (e.g., "investigate the error discussed above") instead of repeating information. The agent will receive all prior messages and understand the context.
@@ -159,6 +165,12 @@ export const taskTool = createTool({
       .describe(
         'Set to true to run this agent in the background. Use TaskOutput to read the output later.'
       ),
+    isolation: z
+      .enum(['none', 'worktree'])
+      .optional()
+      .describe(
+        'Filesystem isolation for this child. Use "worktree" to prevent edits from affecting the parent workspace.'
+      ),
     resume: z
       .string()
       .optional()
@@ -183,6 +195,7 @@ export const taskTool = createTool({
       'description should be 3-5 words (e.g., "Explore error handling")',
       'prompt should contain a highly detailed task description and specify exactly what information to return',
       'Launch multiple agents concurrently when possible for better performance',
+      'Use isolation="worktree" for parallel coding agents that may edit files',
     ],
     examples: [
       {
@@ -213,6 +226,7 @@ export const taskTool = createTool({
       description,
       prompt,
       run_in_background = false,
+      isolation,
       resume,
       subagent_session_id,
     } = params;
@@ -224,6 +238,19 @@ export const taskTool = createTool({
         : typeof resume === 'string' && resume.length > 0
           ? resume
           : nanoid();
+    let worktreeLease: SubagentWorktreeLease | undefined;
+    let worktreeFinalized = false;
+    let effectiveIsolation: SubagentIsolationMode = isolation ?? 'none';
+    const finalizeWorktree = async (success: boolean) => {
+      if (!worktreeLease || worktreeFinalized) return undefined;
+      const outcome = await subagentWorktreeLifecycle.finalize({
+        agentId: subagentSessionId,
+        lease: worktreeLease,
+        success,
+      });
+      worktreeFinalized = true;
+      return outcome;
+    };
 
     try {
       // 1. 获取 subagent 配置
@@ -243,6 +270,10 @@ export const taskTool = createTool({
           },
         };
       }
+      effectiveIsolation =
+        (isolation as SubagentIsolationMode | undefined) ??
+        subagentConfig.isolation ??
+        'none';
 
       // 2. 处理 resume 模式
       if (resume) {
@@ -256,12 +287,18 @@ export const taskTool = createTool({
           description,
           prompt,
           context,
-          subagentSessionId
+          subagentSessionId,
+          effectiveIsolation
         );
       }
 
       // 4. 同步执行模式（原有逻辑）
       updateOutput?.(`启动 ${subagent_type} subagent: ${description}`);
+      worktreeLease = await subagentWorktreeLifecycle.prepare({
+        agentId: subagentSessionId,
+        sourceWorkspaceRoot: context.workspaceRoot || getCwd(),
+        isolation: effectiveIsolation,
+      });
 
       // 创建执行器
       const executor = new SubagentExecutor(subagentConfig);
@@ -279,6 +316,8 @@ export const taskTool = createTool({
         parentSessionId: context.sessionId,
         permissionMode: context.permissionMode, // 继承父 Agent 的权限模式
         subagentSessionId,
+        workspaceRoot: worktreeLease.workspaceRoot,
+        worktreeActive: Boolean(worktreeLease.worktree),
         onEvent: (event: LoopEvent) => {
           switch (event.kind) {
             case 'tool_start': {
@@ -366,7 +405,7 @@ export const taskTool = createTool({
       try {
         const hookManager = HookManager.getInstance();
         const stopResult = await hookManager.executeSubagentStopHooks(subagent_type, {
-          projectDir: getCwd(),
+          projectDir: worktreeLease.workspaceRoot,
           sessionId: context.sessionId || 'unknown',
           permissionMode:
             (context.permissionMode as PermissionMode) || PermissionMode.DEFAULT,
@@ -384,9 +423,8 @@ export const taskTool = createTool({
 
           // 使用 continueReason 作为新的 prompt 继续执行
           const continueContext: SubagentContext = {
+            ...subagentContext,
             prompt: stopResult.continueReason,
-            parentSessionId: context.sessionId,
-            permissionMode: context.permissionMode,
           };
 
           const continueStartTime = Date.now();
@@ -403,14 +441,24 @@ export const taskTool = createTool({
         console.warn('[Task] SubagentStop hook execution failed:', hookError);
       }
 
+      const worktreeOutcome = await finalizeWorktree(result.success);
+      if (worktreeOutcome?.preserved) {
+        result.worktreePath = worktreeOutcome.worktreePath;
+        result.worktreeBranch = worktreeOutcome.worktreeBranch;
+        result.worktree = worktreeOutcome.worktree;
+      }
+
       // 6. 完成进度显示
       vanillaStore.getState().app.actions.completeSubagentProgress(result.success);
 
       // 7. 返回结果
       if (result.success) {
+        const worktreeNote = result.worktreePath
+          ? `\n\nWorktree preserved at ${result.worktreePath}${result.worktreeBranch ? ` on branch ${result.worktreeBranch}` : ''}.`
+          : '';
         return {
           success: true,
-          llmContent: result.message,
+          llmContent: `${result.message}${worktreeNote}`,
           metadata: {
             summary: `${subagent_type} 任务完成`,
             subagent_type,
@@ -421,12 +469,18 @@ export const taskTool = createTool({
             subagentType: subagent_type,
             subagentStatus: 'completed' as const,
             subagentSummary: result.message.slice(0, 500),
+            isolation: effectiveIsolation,
+            worktreePath: result.worktreePath,
+            worktreeBranch: result.worktreeBranch,
           },
         };
       } else {
+        const worktreeNote = result.worktreePath
+          ? ` Worktree preserved at ${result.worktreePath}.`
+          : '';
         return {
           success: false,
-          llmContent: `Subagent execution failed: ${result.error}`,
+          llmContent: `Subagent execution failed: ${result.error}.${worktreeNote}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: result.error || 'Unknown error',
@@ -436,6 +490,9 @@ export const taskTool = createTool({
             subagentSessionId,
             subagentType: subagent_type,
             subagentStatus: 'failed' as const,
+            isolation: effectiveIsolation,
+            worktreePath: result.worktreePath,
+            worktreeBranch: result.worktreeBranch,
           },
         };
       }
@@ -445,10 +502,19 @@ export const taskTool = createTool({
 
       const err = error as Error;
       const errorMessage = extractUserFriendlyError(err);
+      let worktreeOutcome: Awaited<ReturnType<typeof finalizeWorktree>> | undefined;
+      try {
+        worktreeOutcome = await finalizeWorktree(false);
+      } catch (finalizeError) {
+        console.warn('[Task] Failed to preserve subagent worktree:', finalizeError);
+      }
+      const worktreeNote = worktreeOutcome?.worktreePath
+        ? ` Worktree preserved at ${worktreeOutcome.worktreePath}.`
+        : '';
 
       return {
         success: false,
-        llmContent: `Subagent execution error: ${err.message}`,
+        llmContent: `Subagent execution error: ${err.message}.${worktreeNote}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: err.message,
@@ -456,6 +522,9 @@ export const taskTool = createTool({
         },
         metadata: {
           summary: `Subagent 执行异常: ${errorMessage}`,
+          isolation: effectiveIsolation,
+          worktreePath: worktreeOutcome?.worktreePath,
+          worktreeBranch: worktreeOutcome?.worktreeBranch,
         },
       };
     }
@@ -482,7 +551,8 @@ function handleBackgroundExecution(
   description: string,
   prompt: string,
   context: ExecutionContext,
-  subagentSessionId: string
+  subagentSessionId: string,
+  isolation: SubagentIsolationMode
 ): ToolResult {
   const manager = BackgroundAgentManager.getInstance();
 
@@ -494,6 +564,8 @@ function handleBackgroundExecution(
     parentSessionId: context.sessionId,
     permissionMode: context.permissionMode,
     agentId: subagentSessionId,
+    workspaceRoot: context.workspaceRoot || getCwd(),
+    isolation,
   });
 
   return {
@@ -509,6 +581,7 @@ function handleBackgroundExecution(
       subagent_type: subagentConfig.name,
       description,
       background: true,
+      isolation,
       subagentSessionId: agentId,
       subagentType: subagentConfig.name,
       subagentStatus: 'running' as const,

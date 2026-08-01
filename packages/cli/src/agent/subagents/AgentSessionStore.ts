@@ -8,10 +8,12 @@
  */
 
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import { join } from 'pathe';
+import { getBladeStorageRoot } from '../../context/storage/pathUtils.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
+import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
+import type { SubagentIsolationMode } from './SubagentWorktreeLifecycle.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -70,12 +72,21 @@ export interface AgentSession {
 
   /** 共享任务列表 ID（用于 Agent Team 协作） */
   taskListId?: string;
+
+  /** 子代理源工作目录 */
+  workspaceRoot?: string;
+
+  /** 子代理文件系统隔离模式 */
+  isolation?: SubagentIsolationMode;
+
+  /** 保留并可供 resume 的 worktree lease */
+  worktree?: WorktreeSession;
 }
 
 /**
  * Agent 会话存储管理器
  *
- * 存储位置: ~/.blade/agents/sessions/{agent_id}.json
+ * 存储位置: ${BLADE_STORAGE_ROOT:-~/.blade}/agents/sessions/{agent_id}.json
  */
 export class AgentSessionStore {
   private static instance: AgentSessionStore | null = null;
@@ -85,7 +96,7 @@ export class AgentSessionStore {
   private cache = new Map<string, AgentSession>();
 
   private constructor() {
-    this.sessionsDir = path.join(os.homedir(), '.blade', 'agents', 'sessions');
+    this.sessionsDir = join(getBladeStorageRoot(), 'agents', 'sessions');
     this.ensureDirectory();
   }
 
@@ -111,7 +122,7 @@ export class AgentSessionStore {
   private getSessionPath(agentId: string): string {
     // 安全处理 ID，避免路径遍历
     const safeId = agentId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    return path.join(this.sessionsDir, `${safeId}.json`);
+    return join(this.sessionsDir, `${safeId}.json`);
   }
 
   /**

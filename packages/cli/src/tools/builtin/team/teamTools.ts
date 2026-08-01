@@ -115,6 +115,8 @@ function createTeamCreateTool(opts: { sessionId: string; configDir: string }) {
             permissionMode: context.permissionMode,
             agentId: memberId,
             taskListId: team.name,
+            workspaceRoot: context.workspaceRoot || getCwd(),
+            isolation: config.isolation,
           });
 
           members.push({

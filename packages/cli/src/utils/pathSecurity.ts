@@ -68,7 +68,7 @@ export class PathSecurity {
     const normalizedRoot = path.normalize(workspaceRoot);
 
     // 检查是否在工作区内
-    if (!normalized.startsWith(normalizedRoot)) {
+    if (!this.isWithinWorkspace(normalized, normalizedRoot)) {
       throw new PathSecurityError(
         `Path outside workspace: ${inputPath} (resolved to ${normalized}, workspace: ${normalizedRoot})`,
         'PATH_OUTSIDE_WORKSPACE'
@@ -172,10 +172,10 @@ export class PathSecurity {
   ): Promise<string> {
     try {
       const realPath = await fs.realpath(absolutePath);
+      const realWorkspaceRoot = await fs.realpath(workspaceRoot);
 
       // 检查真实路径是否在工作区内
-      const normalizedRoot = path.normalize(workspaceRoot);
-      if (!realPath.startsWith(normalizedRoot)) {
+      if (!this.isWithinWorkspace(realPath, realWorkspaceRoot)) {
         throw new PathSecurityError(
           `Symlink points outside workspace: ${absolutePath} -> ${realPath}`,
           'SYMLINK_OUTSIDE_WORKSPACE'
@@ -211,9 +211,61 @@ export class PathSecurity {
    * @returns 是否在工作区内
    */
   static isWithinWorkspace(absolutePath: string, workspaceRoot: string): boolean {
-    const normalized = path.normalize(absolutePath);
-    const normalizedRoot = path.normalize(workspaceRoot);
-    return normalized.startsWith(normalizedRoot);
+    const normalized = path.resolve(absolutePath);
+    const normalizedRoot = path.resolve(workspaceRoot);
+    const relativePath = path.relative(normalizedRoot, normalized);
+    return (
+      relativePath === '' ||
+      (relativePath !== '..' &&
+        !relativePath.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relativePath))
+    );
+  }
+
+  /**
+   * 检查目标路径及其最近存在祖先的真实路径是否仍在工作区内。
+   *
+   * 目标文件可以尚未创建，因此逐级向上解析，避免通过工作区内的
+   * 符号链接把新文件写到工作区外。
+   */
+  static async isWithinWorkspaceResolved(
+    inputPath: string,
+    workspaceRoot: string
+  ): Promise<boolean> {
+    const normalizedRoot = path.resolve(workspaceRoot);
+    const normalizedPath = path.isAbsolute(inputPath)
+      ? path.resolve(inputPath)
+      : path.resolve(normalizedRoot, inputPath);
+
+    if (!this.isWithinWorkspace(normalizedPath, normalizedRoot)) {
+      return false;
+    }
+
+    let realWorkspaceRoot: string;
+    try {
+      realWorkspaceRoot = await fs.realpath(normalizedRoot);
+    } catch {
+      return false;
+    }
+
+    let currentPath = normalizedPath;
+    while (true) {
+      try {
+        const realPath = await fs.realpath(currentPath);
+        return this.isWithinWorkspace(realPath, realWorkspaceRoot);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+          return false;
+        }
+      }
+
+      const parentPath = path.dirname(currentPath);
+      if (parentPath === currentPath) {
+        return false;
+      }
+      currentPath = parentPath;
+    }
   }
 
   /**

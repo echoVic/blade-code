@@ -236,6 +236,9 @@ export function checkWorktreeRequirement(
   const requiresExit = EXPLICIT_WORKTREE_EXIT_PATTERNS.some((pattern) =>
     pattern.test(userRequest)
   );
+  if (successfulTools.has('TaskWorktree')) {
+    return { action: 'none' };
+  }
   const missingTool = !successfulTools.has('EnterWorktree')
     ? ('EnterWorktree' as const)
     : requiresExit && !successfulTools.has('ExitWorktree')

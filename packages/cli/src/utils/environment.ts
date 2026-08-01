@@ -1,8 +1,8 @@
 import { execSync } from 'child_process';
 import { existsSync, readFileSync, realpathSync } from 'fs';
-import { basename, isAbsolute, resolve } from 'path';
 import * as os from 'os';
 import * as path from 'path';
+import { basename, isAbsolute, resolve } from 'path';
 import { setCwdState } from '../bootstrap/state.js';
 import { getCwd } from './cwd.js';
 
@@ -18,10 +18,13 @@ export interface EnvironmentInfo {
 export interface EnvironmentContextOptions {
   includeGitSnapshot?: boolean;
   includeDirectoryListing?: boolean;
+  workingDirectory?: string;
 }
 
-export function getEnvironmentInfo(): EnvironmentInfo {
-  const workingDir = getCwd();
+export function getEnvironmentInfo(
+  workingDirectory: string = getCwd()
+): EnvironmentInfo {
+  const workingDir = workingDirectory;
   const projectRoot = findProjectRoot(workingDir);
 
   return {
@@ -47,8 +50,12 @@ function getGitCommandOutput(projectRoot: string, command: string): string | nul
 }
 
 export function getEnvironmentContext(options: EnvironmentContextOptions = {}): string {
-  const { includeGitSnapshot = true, includeDirectoryListing = true } = options;
-  const env = getEnvironmentInfo();
+  const {
+    includeGitSnapshot = true,
+    includeDirectoryListing = true,
+    workingDirectory,
+  } = options;
+  const env = getEnvironmentInfo(workingDirectory);
   const isGitRepository = existsSync(path.join(env.projectRoot, '.git'));
   const shell = basename(process.env.SHELL || 'unknown');
   const keyFiles = ['package.json', 'tsconfig.json', 'BLADE.md', '.env.example']

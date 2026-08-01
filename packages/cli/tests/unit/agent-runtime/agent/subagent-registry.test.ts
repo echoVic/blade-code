@@ -96,6 +96,7 @@ describe('SubagentRegistry', () => {
 name: agent1
 description: A loaded agent
 tools: [read_file]
+isolation: worktree
 ---
 You are a loaded agent.
 `;
@@ -116,5 +117,24 @@ You are a loaded agent.
     expect(agent?.description).toBe('A loaded agent');
     expect(agent?.tools).toEqual(['read_file']);
     expect(agent?.systemPrompt?.trim()).toBe('You are a loaded agent.');
+    expect(agent?.isolation).toBe('worktree');
+  });
+
+  it('should reject an invalid isolation mode from config', () => {
+    const mdContent = `---
+name: unsafe-agent
+description: Invalid isolation
+isolation: container
+---
+Invalid agent.
+`;
+
+    (fs.existsSync as any).mockReturnValue(true);
+    (fs.readdirSync as any).mockReturnValue(['unsafe-agent.md']);
+    (fs.readFileSync as any).mockReturnValue(mdContent);
+
+    registry.loadFromDirectory('/agents');
+
+    expect(registry.getSubagent('unsafe-agent')).toBeUndefined();
   });
 });

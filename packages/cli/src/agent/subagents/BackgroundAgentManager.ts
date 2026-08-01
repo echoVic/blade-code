@@ -12,14 +12,16 @@ import type { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { getCwd } from '../../utils/cwd.js';
+import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import { Agent } from '../Agent.js';
 import { drainLoop } from '../loop/index.js';
 import { SessionRuntime } from '../runtime/SessionRuntime.js';
+import { type AgentSession, AgentSessionStore } from './AgentSessionStore.js';
 import {
-  type AgentSession,
-  type AgentSessionStatus,
-  AgentSessionStore,
-} from './AgentSessionStore.js';
+  type SubagentIsolationMode,
+  type SubagentWorktreeLease,
+  subagentWorktreeLifecycle,
+} from './SubagentWorktreeLifecycle.js';
 import type { SubagentConfig, SubagentResult } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -68,6 +70,15 @@ export interface StartBackgroundAgentOptions {
 
   /** Shared task-list scope for coordinated agent teams */
   taskListId?: string;
+
+  /** Parent workspace inherited by the child */
+  workspaceRoot?: string;
+
+  /** Optional isolated worktree execution */
+  isolation?: SubagentIsolationMode;
+
+  /** Persisted lease used when resuming an isolated child */
+  restoredWorktree?: WorktreeSession;
 }
 
 /**
@@ -133,6 +144,9 @@ export class BackgroundAgentManager {
       agentId,
       existingMessages,
       taskListId,
+      workspaceRoot = getCwd(),
+      isolation = config.isolation ?? 'none',
+      restoredWorktree,
     } = options;
 
     // 生成或使用已有的 agent ID
@@ -153,6 +167,9 @@ export class BackgroundAgentManager {
       lastActiveAt: Date.now(),
       parentSessionId,
       taskListId,
+      workspaceRoot,
+      isolation,
+      worktree: restoredWorktree,
     };
 
     // 保存会话
@@ -168,7 +185,10 @@ export class BackgroundAgentManager {
       permissionMode,
       abortController.signal,
       existingMessages,
-      taskListId
+      taskListId,
+      workspaceRoot,
+      isolation,
+      restoredWorktree
     );
 
     // 记录运行时信息
@@ -199,17 +219,46 @@ export class BackgroundAgentManager {
     permissionMode: PermissionMode | undefined,
     signal: AbortSignal,
     existingMessages?: Message[],
-    taskListId?: string
+    taskListId?: string,
+    workspaceRoot: string = getCwd(),
+    isolation: SubagentIsolationMode = 'none',
+    restoredWorktree?: WorktreeSession
   ): Promise<SubagentResult> {
     const startTime = Date.now();
     let runtime: SessionRuntime | undefined;
+    let lease: SubagentWorktreeLease | undefined;
+    let worktreeFinalized = false;
+
+    const finalizeWorktree = async (success: boolean) => {
+      if (!lease || worktreeFinalized) return undefined;
+      const outcome = await subagentWorktreeLifecycle.finalize({
+        agentId,
+        lease,
+        success,
+      });
+      worktreeFinalized = true;
+      this.sessionStore.updateSession(agentId, {
+        worktree: outcome.worktree,
+      });
+      return outcome;
+    };
 
     try {
       if (signal.aborted) {
         throw new Error('Agent execution was cancelled');
       }
 
-      const systemPrompt = config.systemPrompt || '';
+      lease = await subagentWorktreeLifecycle.prepare({
+        agentId,
+        sourceWorkspaceRoot: workspaceRoot,
+        isolation,
+        restoredWorktree,
+      });
+      this.sessionStore.updateSession(agentId, {
+        worktree: lease.worktree,
+      });
+
+      const appendSystemPrompt = config.systemPrompt?.trim();
       const modelId =
         config.model && config.model !== 'inherit' ? config.model : undefined;
       runtime = await SessionRuntime.create({
@@ -218,9 +267,10 @@ export class BackgroundAgentManager {
       });
       const agent = await Agent.createWithRuntime(runtime, {
         sessionId: agentId,
-        systemPrompt,
         toolWhitelist: config.tools,
+        toolBlacklist: ['EnterWorktree', 'ExitWorktree'],
         modelId,
+        ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
       });
 
       const context = {
@@ -228,7 +278,8 @@ export class BackgroundAgentManager {
         userId: 'subagent',
         sessionId: agentId,
         taskListId,
-        workspaceRoot: getCwd(),
+        workspaceRoot: lease.workspaceRoot,
+        worktreeActive: Boolean(lease.worktree),
         permissionMode,
         subagentInfo: {
           parentSessionId: parentSessionId || '',
@@ -266,6 +317,12 @@ export class BackgroundAgentManager {
             error: loopResult.error?.message || 'Unknown error',
             stats: { duration },
           };
+      const worktreeOutcome = await finalizeWorktree(result.success);
+      if (worktreeOutcome?.preserved) {
+        result.worktreePath = worktreeOutcome.worktreePath;
+        result.worktreeBranch = worktreeOutcome.worktreeBranch;
+        result.worktree = worktreeOutcome.worktree;
+      }
 
       this.sessionStore.markCompleted(
         agentId,
@@ -282,6 +339,15 @@ export class BackgroundAgentManager {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : String(error);
+      let worktreeOutcome: Awaited<ReturnType<typeof finalizeWorktree>> | undefined;
+      try {
+        worktreeOutcome = await finalizeWorktree(false);
+      } catch (finalizeError) {
+        logger.warn(
+          `Failed to preserve worktree for background agent ${agentId}`,
+          finalizeError
+        );
+      }
 
       this.sessionStore.markCompleted(
         agentId,
@@ -301,6 +367,9 @@ export class BackgroundAgentManager {
         agentId,
         error: errorMessage,
         stats: { duration },
+        worktreePath: worktreeOutcome?.worktreePath,
+        worktreeBranch: worktreeOutcome?.worktreeBranch,
+        worktree: worktreeOutcome?.worktree,
       };
     } finally {
       await runtime?.dispose();
@@ -396,6 +465,9 @@ export class BackgroundAgentManager {
       agentId, // 复用原 ID
       existingMessages: session.messages,
       taskListId: session.taskListId,
+      workspaceRoot: session.workspaceRoot,
+      isolation: session.isolation,
+      restoredWorktree: session.worktree,
     });
   }
 

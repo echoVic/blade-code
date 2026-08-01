@@ -80,7 +80,7 @@ describe('AgentSessionStore', () => {
       AgentSessionStore.getInstance();
 
       expect(fs.mkdirSync).toHaveBeenCalledWith(
-        expect.stringContaining('.blade/agents/sessions'),
+        path.join(process.env.BLADE_STORAGE_ROOT as string, 'agents', 'sessions'),
         expect.objectContaining({ recursive: true })
       );
     });

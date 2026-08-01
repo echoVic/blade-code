@@ -125,6 +125,11 @@ describe('PathSecurity', () => {
       expect(PathSecurity.isWithinWorkspace(outsidePath, workspace)).toBe(false);
     });
 
+    it('should reject a sibling path that shares the workspace prefix', () => {
+      const siblingPath = `${workspace}-escaped/file.ts`;
+      expect(PathSecurity.isWithinWorkspace(siblingPath, workspace)).toBe(false);
+    });
+
     it('should handle workspace root itself', () => {
       expect(PathSecurity.isWithinWorkspace(workspace, workspace)).toBe(true);
     });

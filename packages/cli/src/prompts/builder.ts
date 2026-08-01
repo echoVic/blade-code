@@ -24,8 +24,8 @@ import { AutoMemoryManager } from '../memory/AutoMemoryManager.js';
 import { getSkillRegistry } from '../skills/index.js';
 import type { SpecMetadata } from '../spec/types.js';
 import {
-  getEnvironmentContext,
   type EnvironmentContextOptions,
+  getEnvironmentContext,
 } from '../utils/environment.js';
 import { DEFAULT_SYSTEM_PROMPT, PLAN_MODE_SYSTEM_PROMPT } from './default.js';
 import { buildSpecModePrompt } from './spec.js';
@@ -198,7 +198,11 @@ export async function buildSystemPrompt(
 
   // 4. 环境上下文
   if (includeEnvironment) {
-    const envContext = getEnvironmentContext(environmentOptions);
+    const envContext = getEnvironmentContext(
+      projectPath
+        ? { ...environmentOptions, workingDirectory: projectPath }
+        : environmentOptions
+    );
     if (envContext) {
       parts.push(envContext);
       sources.push({ name: 'environment', loaded: true, length: envContext.length });

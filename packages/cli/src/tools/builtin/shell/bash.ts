@@ -1,12 +1,13 @@
+import { isAbsolute, resolve } from 'node:path';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
+import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { getCwd } from '../../../utils/cwd.js';
 import {
   stripSafeEnvVars,
   stripSafeWrappers,
 } from '../../../utils/shell/commandNormalizer.js';
-import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { createTool } from '../../core/createTool.js';
 import type {
   BashBackgroundMetadata,
@@ -167,7 +168,13 @@ Before executing commands:
     const { command, timeout = 30000, cwd, env, run_in_background = false } = params;
     const { updateOutput } = context;
     const signal = context.signal ?? new AbortController().signal;
-    const effectiveCwd = cwd ?? context.workspaceRoot ?? getCwd();
+    const workspaceRoot = context.workspaceRoot ?? getCwd();
+    const effectiveCwd =
+      cwd === undefined
+        ? workspaceRoot
+        : isAbsolute(cwd)
+          ? cwd
+          : resolve(workspaceRoot, cwd);
 
     try {
       updateOutput?.(`Executing Bash command: ${command}`);

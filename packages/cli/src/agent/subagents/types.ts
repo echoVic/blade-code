@@ -3,7 +3,9 @@
  */
 
 import { PermissionMode } from '../../config/types.js';
+import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import type { LoopEvent } from '../loop/types.js';
+import type { SubagentIsolationMode } from './SubagentWorktreeLifecycle.js';
 
 /**
  * Claude Code permissionMode 类型
@@ -96,6 +98,9 @@ export interface SubagentConfig {
   /** 自动加载的 skills 列表 */
   skills?: string[];
 
+  /** 默认文件系统隔离模式 */
+  isolation?: SubagentIsolationMode;
+
   /** 配置来源（用于调试和优先级） */
   source?:
     | 'builtin'
@@ -129,6 +134,12 @@ export interface SubagentContext {
   /** 子代理会话 ID（用于与主会话关联） */
   subagentSessionId?: string;
 
+  /** 子代理执行目录（默认继承父 Agent） */
+  workspaceRoot?: string;
+
+  /** 子代理是否已位于预创建的 managed worktree */
+  worktreeActive?: boolean;
+
   /**
    * 统一事件回调
    * SubagentExecutor 直接转发所有 LoopEvent。
@@ -151,6 +162,15 @@ export interface SubagentResult {
 
   /** 子代理会话 ID（用于关联独立 JSONL 文件） */
   agentId?: string;
+
+  /** 保留的隔离 worktree 路径（无改动自动清理时为空） */
+  worktreePath?: string;
+
+  /** 保留的隔离 worktree 分支 */
+  worktreeBranch?: string;
+
+  /** 用于后台 resume 的完整 worktree lease */
+  worktree?: WorktreeSession;
 
   /** 执行统计 */
   stats?: {
@@ -187,6 +207,8 @@ export interface SubagentFrontmatter {
   permissionMode?: ClaudeCodePermissionMode;
   /** 自动加载的 skills 列表（逗号分隔字符串或数组） */
   skills?: string[] | string;
+  /** 默认文件系统隔离模式 */
+  isolation?: SubagentIsolationMode;
   /** 许可证信息（Claude Code skills 格式） */
   license?: string;
 }

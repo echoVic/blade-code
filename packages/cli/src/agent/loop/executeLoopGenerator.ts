@@ -606,7 +606,9 @@ export async function* executeLoopGenerator(
     let verificationRetryCount = 0;
     let worktreeRetryCount = 0;
     const successfulVerificationTools = new Set<string>();
-    const successfulTools = new Set<string>();
+    const successfulTools = new Set<string>(
+      context.worktreeActive ? ['EnterWorktree'] : []
+    );
     const originalUserRequest =
       typeof message === 'string'
         ? message
@@ -1487,6 +1489,12 @@ export async function* executeLoopGenerator(
               !['EnterWorktree', 'ExitWorktree'].includes(toolCall.function.name)
             ) {
               successfulTools.add(toolCall.function.name);
+            }
+            if (
+              toolCall.function.name === 'Task' &&
+              result.metadata?.isolation === 'worktree'
+            ) {
+              successfulTools.add('TaskWorktree');
             }
             if (['Edit', 'Write', 'NotebookEdit'].includes(toolCall.function.name)) {
               successfulVerificationTools.delete('Bash');

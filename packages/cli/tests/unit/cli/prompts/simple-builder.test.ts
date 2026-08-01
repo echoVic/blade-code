@@ -6,11 +6,14 @@ import {
   PLAN_MODE_SYSTEM_PROMPT,
 } from '../../../../src/prompts/default';
 
-const { readFileMock, accessMock, loadIndexMock } = vi.hoisted(() => ({
-  readFileMock: vi.fn(),
-  accessMock: vi.fn(),
-  loadIndexMock: vi.fn(),
-}));
+const { readFileMock, accessMock, loadIndexMock, environmentContextMock } = vi.hoisted(
+  () => ({
+    readFileMock: vi.fn(),
+    accessMock: vi.fn(),
+    loadIndexMock: vi.fn(),
+    environmentContextMock: vi.fn().mockReturnValue('Mock Environment Context'),
+  })
+);
 
 // Mock fs
 vi.mock('fs', async () => {
@@ -32,7 +35,7 @@ vi.mock('../../../../src/memory/AutoMemoryManager.js', () => ({
 
 // Mock environment
 vi.mock('../../../../src/utils/environment.js', () => ({
-  getEnvironmentContext: vi.fn().mockReturnValue('Mock Environment Context'),
+  getEnvironmentContext: environmentContextMock,
 }));
 
 describe('buildSystemPrompt', () => {
@@ -71,6 +74,17 @@ describe('buildSystemPrompt', () => {
       const result = await buildSystemPrompt({ includeEnvironment: true });
 
       expect(result.prompt.match(/Mock Environment Context/g)).toHaveLength(1);
+    });
+
+    it('应使用传入的项目路径构建环境上下文', async () => {
+      await buildSystemPrompt({
+        projectPath: '/tmp/isolated-worktree',
+        includeEnvironment: true,
+      });
+
+      expect(environmentContextMock).toHaveBeenCalledWith({
+        workingDirectory: '/tmp/isolated-worktree',
+      });
     });
 
     it('应该使用分隔符连接各部分', async () => {

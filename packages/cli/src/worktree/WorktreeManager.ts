@@ -1,4 +1,4 @@
-import { execFile, type ExecFileException } from 'node:child_process';
+import { type ExecFileException, execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, realpath } from 'node:fs/promises';
 import { Mutex } from 'async-mutex';
@@ -36,6 +36,11 @@ export interface WorktreeExitResult {
   noop?: boolean;
   discardedFiles?: number;
   discardedCommits?: number;
+}
+
+export interface WorktreeChangeSummary {
+  changedFiles: number;
+  commits: number;
 }
 
 interface WorktreeManagerOptions {
@@ -207,6 +212,63 @@ export class WorktreeManager {
     });
   }
 
+  async restoreSession(session: WorktreeSession): Promise<WorktreeSession> {
+    return this.getSessionLock(session.sessionId).runExclusive(async () => {
+      const existing = this.sessions.get(session.sessionId);
+      if (existing) {
+        return existing;
+      }
+
+      validateWorktreeName(session.name);
+      const [worktreeRoot, workspaceRoot, repositoryRoot] = await Promise.all([
+        realpath(session.worktreeRoot),
+        realpath(session.workspaceRoot),
+        realpath(session.repositoryRoot),
+      ]);
+      const [resolvedRootResult, branchResult, baseResult, listResult] =
+        await Promise.all([
+          runGit(worktreeRoot, ['rev-parse', '--show-toplevel']),
+          runGit(worktreeRoot, ['branch', '--show-current']),
+          runGit(worktreeRoot, ['cat-file', '-e', `${session.baseCommit}^{commit}`]),
+          runGit(repositoryRoot, ['worktree', 'list', '--porcelain']),
+        ]);
+      const resolvedRoot = await realpath(
+        requireGitSuccess(resolvedRootResult, 'Resolve restored worktree')
+      );
+      const branch = requireGitSuccess(branchResult, 'Resolve restored branch');
+      requireGitSuccess(baseResult, 'Resolve restored base commit');
+      requireGitSuccess(listResult, 'List restored worktrees');
+
+      if (resolvedRoot !== worktreeRoot || branch !== session.branch) {
+        throw new Error('Persisted worktree metadata does not match Git state');
+      }
+      const registeredPaths = listResult.stdout
+        .split('\n')
+        .filter((line) => line.startsWith('worktree '))
+        .map((line) => line.slice('worktree '.length));
+      if (!registeredPaths.includes(worktreeRoot)) {
+        throw new Error('Persisted worktree is no longer registered');
+      }
+
+      const restored: WorktreeSession = {
+        ...session,
+        repositoryRoot,
+        worktreeRoot,
+        workspaceRoot,
+      };
+      this.sessions.set(session.sessionId, restored);
+      return restored;
+    });
+  }
+
+  async getChangeSummary(
+    sessionId: string
+  ): Promise<WorktreeChangeSummary | null | undefined> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return undefined;
+    return this.inspectChanges(session);
+  }
+
   async exit(input: ExitWorktreeInput): Promise<WorktreeExitResult> {
     return this.getSessionLock(input.sessionId).runExclusive(async () => {
       const session = this.sessions.get(input.sessionId);
@@ -298,7 +360,7 @@ export class WorktreeManager {
 
   private async inspectChanges(
     session: WorktreeSession
-  ): Promise<{ changedFiles: number; commits: number } | null> {
+  ): Promise<WorktreeChangeSummary | null> {
     const [statusResult, commitsResult] = await Promise.all([
       runGit(session.worktreeRoot, ['status', '--porcelain']),
       runGit(session.worktreeRoot, [

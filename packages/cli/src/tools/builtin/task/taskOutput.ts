@@ -242,6 +242,9 @@ async function handleAgentOutput(
       : undefined,
     result: session.result,
     stats: session.stats,
+    isolation: session.isolation,
+    worktree_path: session.worktree?.worktreeRoot,
+    worktree_branch: session.worktree?.branch,
   };
 
   const subagentStatus =

@@ -201,6 +201,16 @@ describe('completionPolicy', () => {
       ).toEqual({ action: 'none' });
     });
 
+    it('accepts a successfully delegated worktree-isolated Task', () => {
+      expect(
+        checkWorktreeRequirement(
+          'Delegate this change to an agent using worktree isolation.',
+          new Set(['TaskWorktree']),
+          0
+        )
+      ).toEqual({ action: 'none' });
+    });
+
     it('does not apply to ordinary coding requests', () => {
       expect(
         checkWorktreeRequirement('Fix the bug and run tests.', new Set(), 0)

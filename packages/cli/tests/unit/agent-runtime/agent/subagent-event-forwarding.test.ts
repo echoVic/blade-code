@@ -29,7 +29,13 @@ function createMockGenerator(events: LoopEvent[], result?: Partial<LoopResult>) 
 }
 
 /** Mock Agent 的 chatStream 方法 */
-const mockChatStream = vi.fn<() => AsyncGenerator<LoopEvent, LoopResult, void>>();
+const mockChatStream =
+  vi.fn<
+    (
+      message: string,
+      context: Record<string, unknown>
+    ) => AsyncGenerator<LoopEvent, LoopResult, void>
+  >();
 
 vi.mock('../../../../src/agent/Agent.js', () => ({
   Agent: {
@@ -203,6 +209,43 @@ describe('SubagentExecutor event forwarding', () => {
     expect(result.success).toBe(true);
     expect(result.message).toBe('');
     expect(receivedEvents).toHaveLength(2);
+  });
+
+  it('runs a pre-isolated child in its worktree and hides lifecycle tools', async () => {
+    mockChatStream.mockImplementation(createMockGenerator([]));
+    const { Agent } = await import('../../../../src/agent/Agent.js');
+    const { SubagentExecutor } = await import(
+      '../../../../src/agent/subagents/SubagentExecutor.js'
+    );
+
+    const executor = new SubagentExecutor({
+      name: 'writer',
+      description: 'writer agent',
+      systemPrompt: 'Focus on implementation and verification.',
+    });
+    const result = await executor.execute({
+      prompt: 'implement the requested change',
+      subagentSessionId: 'child-1',
+      workspaceRoot: '/tmp/isolated-worktree',
+      worktreeActive: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(Agent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolBlacklist: expect.arrayContaining(['EnterWorktree', 'ExitWorktree']),
+        appendSystemPrompt: 'Focus on implementation and verification.',
+      })
+    );
+    expect(mockChatStream).toHaveBeenCalledWith(
+      'implement the requested change',
+      expect.objectContaining({
+        sessionId: 'child-1',
+        workspaceRoot: '/tmp/isolated-worktree',
+        worktreeActive: true,
+      })
+    );
+    expect(mockChatStream.mock.calls.at(-1)?.[1]).not.toHaveProperty('systemPrompt');
   });
 });
 

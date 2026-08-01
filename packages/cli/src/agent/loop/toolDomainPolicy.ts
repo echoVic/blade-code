@@ -126,6 +126,7 @@ export function applyWorkspaceTransition(
   }
 
   context.workspaceRoot = workspaceRoot;
+  context.worktreeActive = metadata?.workspaceTransition === 'enter';
   return workspaceRoot;
 }
 

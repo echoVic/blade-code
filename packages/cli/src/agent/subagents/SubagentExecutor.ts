@@ -26,7 +26,7 @@ export class SubagentExecutor {
     const agentId = context.subagentSessionId ?? nanoid();
 
     try {
-      const systemPrompt = this.buildSystemPrompt(context);
+      const appendSystemPrompt = this.getAppendSystemPrompt();
 
       const modelId =
         this.config.model && this.config.model !== 'inherit'
@@ -34,7 +34,9 @@ export class SubagentExecutor {
           : undefined;
       const agent = await Agent.create({
         toolWhitelist: this.config.tools,
+        toolBlacklist: ['EnterWorktree', 'ExitWorktree'],
         modelId,
+        ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
       });
 
       let finalMessage = '';
@@ -57,9 +59,9 @@ export class SubagentExecutor {
           messages: [],
           userId: 'subagent',
           sessionId: agentId,
-          workspaceRoot: getCwd(),
+          workspaceRoot: context.workspaceRoot || getCwd(),
+          worktreeActive: context.worktreeActive,
           permissionMode: context.permissionMode,
-          systemPrompt,
           subagentInfo,
         }),
         onEvent
@@ -99,7 +101,8 @@ export class SubagentExecutor {
     }
   }
 
-  private buildSystemPrompt(_context: SubagentContext): string {
-    return this.config.systemPrompt || '';
+  private getAppendSystemPrompt(): string | undefined {
+    const prompt = this.config.systemPrompt?.trim();
+    return prompt || undefined;
   }
 }

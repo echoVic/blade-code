@@ -298,14 +298,22 @@ describe('builtin task list tool registration', () => {
     const configDir = await createTempConfigDir();
 
     try {
-      const names = (await getBuiltinTools({ sessionId: 'session-a', configDir })).map(
-        (tool) => tool.name
-      );
+      const tools = await getBuiltinTools({ sessionId: 'session-a', configDir });
+      const names = tools.map((tool) => tool.name);
 
       expect(names).toEqual(expect.arrayContaining(['TaskCreate', 'TaskGet']));
       expect(names).toEqual(expect.arrayContaining(['TaskUpdate', 'TaskList']));
       expect(names).toEqual(expect.arrayContaining(['EnterWorktree', 'ExitWorktree']));
       expect(names).not.toContain('TodoWrite');
+
+      const task = tools.find((tool) => tool.name === 'Task');
+      expect(task?.getFunctionDeclaration().parameters).toMatchObject({
+        properties: {
+          isolation: {
+            enum: ['none', 'worktree'],
+          },
+        },
+      });
     } finally {
       await fs.rm(configDir, { recursive: true, force: true });
     }

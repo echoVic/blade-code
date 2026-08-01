@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import yaml from 'yaml';
-import { getCwd } from '../../utils/cwd.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { getCwd } from '../../utils/cwd.js';
 import { builtinAgents } from './builtinAgents.js';
 import type { SubagentConfig, SubagentFrontmatter } from './types.js';
 import { mapClaudeCodePermissionMode } from './types.js';
@@ -138,6 +138,15 @@ export class SubagentRegistry {
     if (!frontmatter.name || !frontmatter.description) {
       throw new Error(`Missing required fields (name, description) in ${filePath}`);
     }
+    if (
+      frontmatter.isolation !== undefined &&
+      frontmatter.isolation !== 'none' &&
+      frontmatter.isolation !== 'worktree'
+    ) {
+      throw new Error(
+        `Invalid isolation mode "${String(frontmatter.isolation)}" in ${filePath}`
+      );
+    }
 
     // 使用 Markdown 内容作为系统提示
     const systemPrompt = markdownContent.trim();
@@ -161,6 +170,7 @@ export class SubagentRegistry {
       model: frontmatter.model || 'inherit', // 默认继承父 Agent 模型
       permissionMode,
       skills,
+      isolation: frontmatter.isolation,
       // ConfigSource 包含 'plugin' 用于分组，但 parseConfigFile 不会使用 'plugin'
       source: source as Exclude<ConfigSource, 'plugin'>,
     };
