@@ -1,6 +1,10 @@
 import { type ChildProcess, spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { getCwd } from '../../../utils/cwd.js';
+import {
+  isWorkspaceSandboxRuntimeFailure,
+  type SandboxedCommand,
+} from './WorkspaceWriteSandbox.js';
 
 type BackgroundShellStatus = 'running' | 'exited' | 'killed' | 'error';
 
@@ -9,6 +13,7 @@ interface StartOptions {
   sessionId: string;
   cwd?: string;
   env?: Record<string, string | undefined>;
+  sandboxedCommand?: SandboxedCommand;
 }
 
 interface BackgroundShellProcess {
@@ -27,6 +32,7 @@ interface BackgroundShellProcess {
   errorMessage?: string;
   pendingStdout: string;
   pendingStderr: string;
+  sandboxed: boolean;
 }
 
 export interface ShellOutputSnapshot {
@@ -41,6 +47,7 @@ export interface ShellOutputSnapshot {
   startedAt: number;
   endedAt?: number;
   errorMessage?: string;
+  sandboxed: boolean;
 }
 
 export interface KillResult {
@@ -70,6 +77,7 @@ export class BackgroundShellManager {
     for (const [key, value] of Object.entries({
       ...process.env,
       ...options.env,
+      ...options.sandboxedCommand?.env,
       BLADE_CLI: '1',
     })) {
       if (value !== undefined) {
@@ -77,7 +85,9 @@ export class BackgroundShellManager {
       }
     }
 
-    const child = spawn('bash', ['-c', options.command], {
+    const executable = options.sandboxedCommand?.executable ?? 'bash';
+    const args = options.sandboxedCommand?.args ?? ['-c', options.command];
+    const child = spawn(executable, args, {
       cwd: options.cwd || getCwd(),
       env: mergedEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -95,6 +105,7 @@ export class BackgroundShellManager {
       startTime: Date.now(),
       pendingStdout: '',
       pendingStderr: '',
+      sandboxed: Boolean(options.sandboxedCommand),
     };
 
     child.stdout?.setEncoding('utf8');
@@ -109,14 +120,28 @@ export class BackgroundShellManager {
     });
 
     child.on('close', (code, signal) => {
-      processInfo.status = processInfo.status === 'killed' ? 'killed' : 'exited';
+      options.sandboxedCommand?.cleanup();
+      const sandboxFailure =
+        processInfo.sandboxed &&
+        isWorkspaceSandboxRuntimeFailure(code, processInfo.pendingStderr);
+      processInfo.status =
+        processInfo.status === 'killed'
+          ? 'killed'
+          : sandboxFailure
+            ? 'error'
+            : 'exited';
       processInfo.exitCode = code;
       processInfo.signal = signal;
+      if (sandboxFailure) {
+        processInfo.errorMessage =
+          'Workspace sandbox failed to start; command was not executed';
+      }
       processInfo.endTime = Date.now();
       processInfo.process = undefined;
     });
 
     child.on('error', (error) => {
+      options.sandboxedCommand?.cleanup();
       processInfo.status = 'error';
       processInfo.errorMessage = error.message;
       processInfo.endTime = Date.now();
@@ -146,6 +171,7 @@ export class BackgroundShellManager {
       startedAt: processInfo.startTime,
       endedAt: processInfo.endTime,
       errorMessage: processInfo.errorMessage,
+      sandboxed: processInfo.sandboxed,
     };
 
     processInfo.pendingStdout = '';

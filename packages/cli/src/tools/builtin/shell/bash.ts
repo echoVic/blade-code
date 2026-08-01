@@ -20,6 +20,13 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { BackgroundShellManager } from './BackgroundShellManager.js';
 import { OutputTruncator } from './OutputTruncator.js';
+import {
+  isWorkspaceSandboxRuntimeFailure,
+  type SandboxedCommand,
+  WorkspaceSandboxBoundaryError,
+  WorkspaceSandboxUnavailableError,
+  workspaceWriteSandbox,
+} from './WorkspaceWriteSandbox.js';
 
 /**
  * Bash Tool - Shell command executor
@@ -178,13 +185,21 @@ Before executing commands:
 
     try {
       updateOutput?.(`Executing Bash command: ${command}`);
+      const sandboxedCommand = context.worktreeActive
+        ? await workspaceWriteSandbox.prepare({
+            command,
+            cwd: effectiveCwd,
+            workspaceRoot,
+            signal,
+          })
+        : undefined;
 
       if (run_in_background) {
-        return executeInBackground(command, effectiveCwd, env);
+        return executeInBackground(command, effectiveCwd, env, sandboxedCommand);
       }
 
       // 检查是否在 ACP 模式下运行
-      const useAcp = isAcpMode();
+      const useAcp = isAcpMode() && !sandboxedCommand;
       if (useAcp) {
         // ACP 模式：通过 IDE 终端执行命令
         updateOutput?.('通过 IDE 终端执行命令...');
@@ -203,7 +218,8 @@ Before executing commands:
           env,
           timeout,
           signal,
-          updateOutput
+          updateOutput,
+          sandboxedCommand
         );
       }
     } catch (error: unknown) {
@@ -215,6 +231,27 @@ Before executing commands:
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message: 'Operation aborted',
+          },
+        };
+      }
+      if (
+        error instanceof WorkspaceSandboxUnavailableError ||
+        error instanceof WorkspaceSandboxBoundaryError
+      ) {
+        return {
+          success: false,
+          llmContent:
+            `Workspace sandbox blocked Bash execution: ${err.message}. ` +
+            'The command was not started.',
+          error: {
+            type: ToolErrorType.PERMISSION_DENIED,
+            message: err.message,
+          },
+          metadata: {
+            command,
+            sandbox_required: true,
+            sandboxed: false,
+            summary: 'Workspace sandbox unavailable; command not started',
           },
         };
       }
@@ -301,7 +338,8 @@ Before executing commands:
 function executeInBackground(
   command: string,
   cwd?: string,
-  env?: Record<string, string>
+  env?: Record<string, string>,
+  sandboxedCommand?: SandboxedCommand
 ): ToolResult {
   const manager = BackgroundShellManager.getInstance();
   const backgroundProcess = manager.startBackgroundProcess({
@@ -309,6 +347,7 @@ function executeInBackground(
     sessionId: randomUUID(), // 每个后台进程使用唯一 ID
     cwd: cwd || getCwd(),
     env,
+    sandboxedCommand,
   });
 
   const cmdPreview = command.length > 30 ? `${command.substring(0, 30)}...` : command;
@@ -321,6 +360,7 @@ function executeInBackground(
     bash_id: backgroundProcess.id,
     shell_id: backgroundProcess.id,
     message: '命令已在后台启动',
+    sandboxed: Boolean(sandboxedCommand),
     summary,
   };
 
@@ -472,7 +512,8 @@ async function executeWithTimeout(
   env: Record<string, string> | undefined,
   timeout: number,
   signal: AbortSignal,
-  updateOutput?: (output: string) => void
+  updateOutput?: (output: string) => void,
+  sandboxedCommand?: SandboxedCommand
 ): Promise<ToolResult> {
   return new Promise((resolve) => {
     const startTime = Date.now();
@@ -481,9 +522,16 @@ async function executeWithTimeout(
     let timedOut = false;
 
     // 创建进程
-    const bashProcess = spawn('bash', ['-c', command], {
+    const executable = sandboxedCommand?.executable ?? 'bash';
+    const args = sandboxedCommand?.args ?? ['-c', command];
+    const bashProcess = spawn(executable, args, {
       cwd: cwd || getCwd(),
-      env: { ...process.env, ...env, BLADE_CLI: '1' },
+      env: {
+        ...process.env,
+        ...env,
+        ...sandboxedCommand?.env,
+        BLADE_CLI: '1',
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -525,6 +573,7 @@ async function executeWithTimeout(
 
     // 监听进程完成事件 - 业界标准做法
     bashProcess.on('close', (code, sig) => {
+      sandboxedCommand?.cleanup();
       clearTimeout(timeoutHandle);
       // 移除中止监听器
       if (signal.removeEventListener) {
@@ -546,6 +595,7 @@ async function executeWithTimeout(
           },
           metadata: {
             command,
+            sandboxed: Boolean(sandboxedCommand),
             timeout: true,
             stdout,
             stderr,
@@ -566,10 +616,33 @@ async function executeWithTimeout(
           },
           metadata: {
             command,
+            sandboxed: Boolean(sandboxedCommand),
             aborted: true,
             stdout,
             stderr,
             execution_time: executionTime,
+          },
+        });
+        return;
+      }
+
+      if (sandboxedCommand && isWorkspaceSandboxRuntimeFailure(code, stderr)) {
+        resolve({
+          success: false,
+          llmContent:
+            'Workspace sandbox could not start, so the Bash command was not executed.',
+          error: {
+            type: ToolErrorType.PERMISSION_DENIED,
+            message: stderr.trim() || 'Workspace sandbox failed to start',
+          },
+          metadata: {
+            command,
+            sandbox_required: true,
+            sandboxed: false,
+            execution_time: executionTime,
+            exit_code: code,
+            stderr,
+            summary: 'Workspace sandbox failed closed',
           },
         });
         return;
@@ -592,6 +665,7 @@ async function executeWithTimeout(
         stdout_length: stdout.length,
         stderr_length: stderr.length,
         has_stderr: stderr.length > 0,
+        sandboxed: Boolean(sandboxedCommand),
         summary,
       };
 
@@ -619,6 +693,7 @@ async function executeWithTimeout(
 
     // 监听进程错误
     bashProcess.on('error', (error) => {
+      sandboxedCommand?.cleanup();
       clearTimeout(timeoutHandle);
       // 移除中止监听器
       if (signal.removeEventListener) {

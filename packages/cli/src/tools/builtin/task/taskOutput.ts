@@ -167,6 +167,7 @@ async function handleShellOutput(
     pid: snapshot.pid,
     exit_code: snapshot.exitCode,
     signal: snapshot.signal,
+    sandboxed: snapshot.sandboxed,
     started_at: new Date(snapshot.startedAt).toISOString(),
     finished_at: snapshot.endedAt
       ? new Date(snapshot.endedAt).toISOString()

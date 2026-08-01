@@ -154,6 +154,7 @@ interface BashBackgroundMetadataFields extends BaseMetadataFields {
   bash_id: string;
   shell_id: string;
   message?: string;
+  sandboxed?: boolean;
 }
 
 /**
@@ -169,6 +170,7 @@ interface BashForegroundMetadataFields extends BaseMetadataFields {
   stderr_length?: number;
   has_stderr?: boolean;
   acp_mode?: boolean;
+  sandboxed?: boolean;
 }
 
 /**

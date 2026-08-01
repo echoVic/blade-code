@@ -1,11 +1,15 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
-import { join } from 'pathe';
 import { promisify } from 'node:util';
+import { join } from 'pathe';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runHeadless } from '../../../src/commands/headless.js';
 import { HeadlessJsonlEventSchema } from '../../../src/commands/headlessEvents.js';
+import {
+  installWorkspaceSandboxBackendForTests,
+  type WorkspaceSandboxBackend,
+} from '../../../src/tools/builtin/shell/WorkspaceWriteSandbox.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import { isRealApiTestEnabled } from './testConfig.js';
 
@@ -31,8 +35,24 @@ describe.skipIf(!shouldRun)('Worktree Agent Trajectory (Real API)', () => {
   let tempRoot = '';
   let repoRoot = '';
   let originalSource = '';
+  let restoreSandboxBackend: (() => void) | undefined;
+  let sandboxPreparations = 0;
 
   beforeAll(async () => {
+    const testSandboxBackend: WorkspaceSandboxBackend = {
+      async prepare(input) {
+        sandboxPreparations++;
+        return {
+          executable: process.platform === 'win32' ? 'bash' : '/bin/bash',
+          args: ['-c', input.command],
+          env: {},
+          sandboxed: true,
+          cleanup: () => undefined,
+        };
+      },
+    };
+    restoreSandboxBackend = installWorkspaceSandboxBackendForTests(testSandboxBackend);
+
     tempRoot = await mkdtemp(join(os.tmpdir(), 'blade-worktree-trajectory-'));
     repoRoot = join(tempRoot, 'repo');
     await mkdir(join(repoRoot, 'src'), { recursive: true });
@@ -82,6 +102,7 @@ describe.skipIf(!shouldRun)('Worktree Agent Trajectory (Real API)', () => {
   });
 
   afterAll(async () => {
+    restoreSandboxBackend?.();
     if (repoRoot) {
       try {
         const canonicalRepoRoot = await realpath(repoRoot);
@@ -107,6 +128,7 @@ describe.skipIf(!shouldRun)('Worktree Agent Trajectory (Real API)', () => {
   });
 
   it('edits and verifies only inside a managed worktree', async () => {
+    const preparationsBefore = sandboxPreparations;
     let output = '';
     const stdout = {
       write(chunk: string) {
@@ -158,6 +180,7 @@ describe.skipIf(!shouldRun)('Worktree Agent Trajectory (Real API)', () => {
       .map((event) => event.tool_name);
 
     expect(exitCode).toBe(0);
+    expect(sandboxPreparations).toBeGreaterThan(preparationsBefore);
     expect(toolNames).toContain('EnterWorktree');
     expect(toolNames.some((name) => name === 'Edit' || name === 'Write')).toBe(true);
     expect(toolNames).toContain('Bash');

@@ -6,6 +6,10 @@ import { join } from 'pathe';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
 import { PermissionMode } from '../../../src/config/types.js';
+import {
+  installWorkspaceSandboxBackendForTests,
+  type WorkspaceSandboxBackend,
+} from '../../../src/tools/builtin/shell/WorkspaceWriteSandbox.js';
 import { taskTool } from '../../../src/tools/builtin/task/task.js';
 import { taskOutputTool } from '../../../src/tools/builtin/task/taskOutput.js';
 import { isRealApiTestEnabled } from './testConfig.js';
@@ -32,8 +36,24 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
   let tempRoot = '';
   let repoRoot = '';
   let originalSource = '';
+  let restoreSandboxBackend: (() => void) | undefined;
+  let sandboxPreparations = 0;
 
   beforeAll(async () => {
+    const testSandboxBackend: WorkspaceSandboxBackend = {
+      async prepare(input) {
+        sandboxPreparations++;
+        return {
+          executable: process.platform === 'win32' ? 'bash' : '/bin/bash',
+          args: ['-c', input.command],
+          env: {},
+          sandboxed: true,
+          cleanup: () => undefined,
+        };
+      },
+    };
+    restoreSandboxBackend = installWorkspaceSandboxBackendForTests(testSandboxBackend);
+
     tempRoot = await mkdtemp(join(os.tmpdir(), 'blade-subagent-trajectory-'));
     repoRoot = join(tempRoot, 'repo');
     await mkdir(join(repoRoot, 'src'), { recursive: true });
@@ -95,6 +115,7 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
   });
 
   afterAll(async () => {
+    restoreSandboxBackend?.();
     if (repoRoot) {
       try {
         const canonicalRepoRoot = await realpath(repoRoot);
@@ -116,6 +137,7 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
   });
 
   it('delegates a coding change into an isolated child worktree', async () => {
+    const preparationsBefore = sandboxPreparations;
     const result = await taskTool
       .build({
         subagent_type: 'worktree-writer',
@@ -137,6 +159,7 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
       });
 
     expect(result.success).toBe(true);
+    expect(sandboxPreparations).toBeGreaterThan(preparationsBefore);
     expect(await readFile(join(repoRoot, 'src', 'clamp.js'), 'utf-8')).toBe(
       originalSource
     );
@@ -161,6 +184,7 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
   }, 300_000);
 
   it('persists a background worktree and restores it on resume', async () => {
+    const preparationsBefore = sandboxPreparations;
     const agentId = 'background-worktree-eval';
     const started = await taskTool
       .build({
@@ -228,6 +252,7 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
 
     expect(resumedOutput.success).toBe(true);
     expect(resumedOutput.metadata?.status).toBe('completed');
+    expect(sandboxPreparations).toBeGreaterThan(preparationsBefore);
     expect(await realpath(String(resumedOutput.metadata?.worktree_path))).toBe(
       await realpath(firstWorktreePath)
     );
