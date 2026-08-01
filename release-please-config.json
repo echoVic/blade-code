@@ -1,9 +1,0 @@
-{
-  "packages": {
-    ".": {
-      "release-type": "node",
-      "package-name": "blade-code",
-      "changelog-path": "CHANGELOG.md"
-    }
-  }
-}
