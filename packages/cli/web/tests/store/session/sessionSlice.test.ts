@@ -45,6 +45,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       error: null,
       messages: [],
       isStreaming: false,
+      agentPhase: 'idle',
       currentRunId: null,
       currentAssistantMessageId: null,
       hasToolCalls: false,

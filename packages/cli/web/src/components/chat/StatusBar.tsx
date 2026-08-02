@@ -1,3 +1,4 @@
+import { HelpCircle } from 'lucide-react';
 import {
   Tooltip,
   TooltipContent,
@@ -6,10 +7,19 @@ import {
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/store/session';
-import { HelpCircle } from 'lucide-react';
+
+const PHASE_LABELS = {
+  running: 'Generating...',
+  compacting: 'Compacting context...',
+  switching_model: 'Switching model...',
+  waiting_permission: 'Waiting for permission...',
+  error: 'Run failed',
+  idle: '',
+} as const;
 
 export function StatusBar() {
-  const { tokenUsage, isStreaming } = useSessionStore();
+  const { tokenUsage, isStreaming, agentPhase } = useSessionStore();
+  const phaseLabel = PHASE_LABELS[agentPhase];
 
   const usagePercent =
     tokenUsage.maxContextTokens > 0
@@ -68,10 +78,10 @@ export function StatusBar() {
 
       <div className="flex-1" />
 
-      {isStreaming && (
+      {isStreaming && phaseLabel && (
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          <span>Generating...</span>
+          <span>{phaseLabel}</span>
         </div>
       )}
     </div>

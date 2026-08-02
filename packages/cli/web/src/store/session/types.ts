@@ -28,6 +28,14 @@ export interface TokenUsage {
   isDefaultMaxTokens: boolean;
 }
 
+export type AgentPhase =
+  | 'idle'
+  | 'running'
+  | 'compacting'
+  | 'switching_model'
+  | 'waiting_permission'
+  | 'error';
+
 export interface TaskItem {
   id: string;
   subject: string;
@@ -144,12 +152,14 @@ export interface MessageSlice {
 
 export interface StreamingSlice {
   isStreaming: boolean;
+  agentPhase: AgentPhase;
   currentRunId: string | null;
   eventUnsubscribe: (() => void) | null;
   currentAssistantMessageId: string | null;
   hasToolCalls: boolean;
 
   setStreaming: (streaming: boolean) => void;
+  setAgentPhase: (phase: AgentPhase) => void;
   setRunId: (runId: string | null) => void;
   subscribeToEvents: (sessionId: string) => void;
   unsubscribeFromEvents: () => void;

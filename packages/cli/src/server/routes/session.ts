@@ -18,13 +18,13 @@ import type {
   ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
-import { Bus } from '../bus.js';
-import { BadRequestError, NotFoundError } from '../error.js';
-import { getCwd } from '../../utils/cwd.js';
 import {
   formatToolDisplay,
   renderToolDisplayToString,
 } from '../../ui/utils/toolFormatters.js';
+import { getCwd } from '../../utils/cwd.js';
+import { Bus } from '../bus.js';
+import { BadRequestError, NotFoundError } from '../error.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -630,7 +630,7 @@ async function executeRunAsync(
                 messageId: assistantMessageId,
                 toolName: event.toolCall.function.name,
                 toolCallId: event.toolCall.id,
-                success: !event.result.error,
+                success: event.result.success,
                 summary: event.result.metadata?.summary,
                 output: renderToolDisplayToString(
                   formatToolDisplay(event.toolCall.function.name, event.result)
@@ -644,15 +644,25 @@ async function executeRunAsync(
           case 'token_usage':
             emit('token.usage', { ...event.usage });
             break;
+          case 'turn_start':
+            emit('turn.started', { turn: event.turn, maxTurns: event.maxTurns });
+            break;
+          case 'compaction':
+            emit(
+              event.phase === 'start' ? 'compaction.started' : 'compaction.completed',
+              {}
+            );
+            break;
+          case 'model_fallback':
+            emit('model.fallback', {});
+            break;
 
           // --- 业务事件 ---
           case 'task_update':
             emit('task.updated', { tasks: event.tasks });
             break;
 
-          // --- 系统事件和内部信号不外发 ---
-          // stream_end: per-turn 内部信号，不外发
-          // compaction, model_fallback, turn_start: 内部事件
+          // stream_end is per-turn internal completion; clients consume run-level events.
           default:
             break;
         }

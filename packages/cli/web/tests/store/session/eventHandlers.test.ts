@@ -40,6 +40,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     error: null,
     messages,
     isStreaming: false,
+    agentPhase: 'idle',
     currentRunId: null,
     eventUnsubscribe: null,
     currentAssistantMessageId: 'assistant-1',
@@ -111,7 +112,18 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     }),
     updateToolCall: vi.fn(),
     appendThinking: vi.fn(),
-    setConfirmation: vi.fn(),
+    setConfirmation: vi.fn((id, confirmation) => {
+      state.messages = state.messages.map((message) => {
+        if (message.id !== id) return message;
+        return {
+          ...message,
+          agentContent: {
+            ...(message.agentContent ?? createEmptyAgentContent()),
+            confirmation,
+          },
+        };
+      });
+    }),
     setQuestion: vi.fn(),
     setSubagent: vi.fn((messageId, subagent) => {
       state.messages = state.messages.map((message) =>
@@ -141,6 +153,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     }),
     replaceTemp: vi.fn(),
     setStreaming: vi.fn(),
+    setAgentPhase: vi.fn(),
     setRunId: vi.fn(),
     subscribeToEvents: vi.fn(),
     unsubscribeFromEvents: vi.fn(),
@@ -305,6 +318,70 @@ describe('eventHandlers', () => {
 
     expect(state.setTasks).not.toHaveBeenCalled();
     expect(state.messages[0]?.agentContent?.tasks).toEqual([]);
+  });
+
+  test('tracks compaction and model fallback phases', () => {
+    const state = createState();
+    const set = vi.fn();
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'compaction.started',
+      properties: { sessionId: 'session-1' },
+    });
+    expect(set).toHaveBeenLastCalledWith({ agentPhase: 'compacting' });
+
+    dispatch({
+      type: 'compaction.completed',
+      properties: { sessionId: 'session-1' },
+    });
+    expect(set).toHaveBeenLastCalledWith({ agentPhase: 'running' });
+
+    dispatch({
+      type: 'model.fallback',
+      properties: { sessionId: 'session-1' },
+    });
+    expect(set).toHaveBeenLastCalledWith({ agentPhase: 'switching_model' });
+  });
+
+  test('closes a pending confirmation when permission times out', () => {
+    const state = createState({
+      messages: [
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: '',
+          timestamp: 1700000000000,
+          agentContent: {
+            ...createEmptyAgentContent(),
+            confirmation: {
+              toolCallId: 'permission-1',
+              toolName: 'Write',
+              description: 'Write the fix',
+              status: 'pending',
+            },
+          },
+        },
+      ],
+    });
+    const set = vi.fn();
+    const dispatch = createEventDispatcher(() => state, set);
+
+    expect(state.messages[0]?.agentContent?.confirmation?.status).toBe('pending');
+
+    dispatch({
+      type: 'permission.timeout',
+      properties: { sessionId: 'session-1', requestId: 'permission-1' },
+    });
+
+    expect(state.messages[0]?.agentContent?.confirmation).toMatchObject({
+      toolCallId: 'permission-1',
+      status: 'denied',
+    });
+    expect(set).toHaveBeenCalledWith({
+      agentPhase: 'running',
+      error: 'Permission request timed out',
+    });
   });
 
   test('flushes buffered message deltas to the message that received them', () => {

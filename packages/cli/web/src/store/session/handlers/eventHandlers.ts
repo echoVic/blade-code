@@ -685,6 +685,42 @@ const handlePermissionAsked: EventHandler = (props, get, _set) => {
     diff: (details?.details as string) || (details?.diff as string) || '',
     status: 'pending',
   });
+  _set({ agentPhase: 'waiting_permission' });
+};
+
+const handlePermissionTimeout: EventHandler = (props, get, set) => {
+  const { currentSessionId, messages, setConfirmation } = get();
+  if (props.sessionId !== currentSessionId) return;
+
+  const requestId = props.requestId as string;
+  const message = messages.find(
+    (candidate) => candidate.agentContent?.confirmation?.toolCallId === requestId
+  );
+  const confirmation = message?.agentContent?.confirmation;
+  if (message && confirmation?.status === 'pending') {
+    setConfirmation(message.id, { ...confirmation, status: 'denied' });
+  }
+  set({ agentPhase: 'running', error: 'Permission request timed out' });
+};
+
+const handleTurnStarted: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({ agentPhase: 'running' });
+};
+
+const handleCompactionStarted: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({ agentPhase: 'compacting' });
+};
+
+const handleCompactionCompleted: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({ agentPhase: 'running' });
+};
+
+const handleModelFallback: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({ agentPhase: 'switching_model' });
 };
 
 const handleQuestionRequired: EventHandler = (props, get) => {
@@ -721,7 +757,10 @@ const handleSessionError: EventHandler = (props, get, set) => {
   const { currentSessionId, endAgentResponse } = get();
   if (props.sessionId !== currentSessionId) return;
 
-  set({ error: (props.error as string) || 'An error occurred' });
+  set({
+    agentPhase: 'error',
+    error: (props.error as string) || 'An error occurred',
+  });
   endAgentResponse();
 };
 
@@ -730,7 +769,11 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
   if (props.sessionId !== currentSessionId) return;
 
   if (props.status === 'idle') {
-    set({ isStreaming: false });
+    set({ isStreaming: false, agentPhase: 'idle' });
+  } else if (props.status === 'running') {
+    set({ agentPhase: 'running' });
+  } else if (props.status === 'error') {
+    set({ agentPhase: 'error' });
   }
 };
 
@@ -740,6 +783,7 @@ const handleRunCancelled: EventHandler = (props, get, set) => {
 
   set((state) => ({
     isStreaming: false,
+    agentPhase: 'idle',
     messages: state.messages.map((m) => {
       if (!m.agentContent?.subagent) return m;
       if (m.agentContent.subagent.status !== 'running') return m;
@@ -776,6 +820,11 @@ const eventHandlers: Record<string, EventHandler> = {
   'subagent.tool.result': handleSubagentToolResult,
   'subagent.complete': handleSubagentComplete,
   'permission.asked': handlePermissionAsked,
+  'permission.timeout': handlePermissionTimeout,
+  'turn.started': handleTurnStarted,
+  'compaction.started': handleCompactionStarted,
+  'compaction.completed': handleCompactionCompleted,
+  'model.fallback': handleModelFallback,
   'question.required': handleQuestionRequired,
   'session.completed': handleSessionCompleted,
   'session.error': handleSessionError,

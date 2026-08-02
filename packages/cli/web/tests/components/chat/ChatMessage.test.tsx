@@ -29,6 +29,7 @@ describe('ChatMessage', () => {
       isLoading: false,
       error: null,
       isStreaming: false,
+      agentPhase: 'idle',
       currentRunId: null,
       eventUnsubscribe: null,
       currentAssistantMessageId: null,

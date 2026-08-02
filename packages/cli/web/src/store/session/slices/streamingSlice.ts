@@ -5,12 +5,15 @@ import type { SliceCreator, StreamingSlice } from '../types';
 
 export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => ({
   isStreaming: false,
+  agentPhase: 'idle',
   currentRunId: null,
   eventUnsubscribe: null,
   currentAssistantMessageId: null,
   hasToolCalls: false,
 
   setStreaming: (streaming) => set({ isStreaming: streaming }),
+
+  setAgentPhase: (phase) => set({ agentPhase: phase }),
 
   setRunId: (runId) => set({ currentRunId: runId }),
 
@@ -23,6 +26,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
       currentAssistantMessageId: messageId,
       hasToolCalls: false,
       isStreaming: true,
+      agentPhase: 'running',
     });
   },
 
@@ -32,6 +36,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
       currentAssistantMessageId: null,
       hasToolCalls: false,
       isStreaming: false,
+      agentPhase: 'idle',
       currentRunId: null,
     });
   },

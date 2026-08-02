@@ -200,4 +200,74 @@ describe('SessionRoutes runtime reuse', () => {
       ],
     });
   });
+
+  it('publishes loop lifecycle events and preserves canonical tool failure state', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'turn_start', turn: 2, maxTurns: 8 };
+      yield { kind: 'compaction', phase: 'start' };
+      yield { kind: 'compaction', phase: 'end' };
+      yield { kind: 'model_fallback' };
+      yield {
+        kind: 'tool_result',
+        toolCall: {
+          id: 'tool-failed-without-error-payload',
+          type: 'function',
+          function: { name: 'Bash', arguments: '{"command":"false"}' },
+        },
+        result: {
+          success: false,
+          llmContent: 'Command exited with code 1',
+          metadata: { summary: 'Command failed' },
+        },
+      };
+      return {
+        success: true,
+        finalMessage: 'recovered',
+        metadata: { turnsCount: 2, toolCallsCount: 1, duration: 0 },
+      };
+    });
+
+    const app = SessionRoutes();
+    const response = await app.request('/surface-events/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'recover from the failed command' }),
+    });
+
+    expect(response.status).toBe(202);
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        'surface-events',
+        'session.completed',
+        expect.any(Object)
+      );
+    });
+
+    expect(Bus.publish).toHaveBeenCalledWith('surface-events', 'turn.started', {
+      turn: 2,
+      maxTurns: 8,
+    });
+    expect(Bus.publish).toHaveBeenCalledWith(
+      'surface-events',
+      'compaction.started',
+      {}
+    );
+    expect(Bus.publish).toHaveBeenCalledWith(
+      'surface-events',
+      'compaction.completed',
+      {}
+    );
+    expect(Bus.publish).toHaveBeenCalledWith('surface-events', 'model.fallback', {});
+    expect(Bus.publish).toHaveBeenCalledWith(
+      'surface-events',
+      'tool.result',
+      expect.objectContaining({
+        toolCallId: 'tool-failed-without-error-payload',
+        success: false,
+      })
+    );
+  });
 });
