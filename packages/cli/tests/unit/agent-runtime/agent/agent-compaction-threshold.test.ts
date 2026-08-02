@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { checkAndCompactInLoop } from '../../../../src/agent/loop/executeLoopGenerator.js';
+import type { LoopDependencies } from '../../../../src/agent/loop/types.js';
 import type { ChatContext } from '../../../../src/agent/types.js';
 import { type BladeConfig, PermissionMode } from '../../../../src/config/types.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
-import { checkAndCompactInLoop } from '../../../../src/agent/loop/executeLoopGenerator.js';
-import type { LoopDependencies } from '../../../../src/agent/loop/types.js';
 
 function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
   return {
@@ -78,7 +78,12 @@ describe('Agent compaction threshold fallback', () => {
       executionEngine: undefined,
     } as unknown as LoopDependencies;
 
-    const didCompact = await checkAndCompactInLoop(deps, createContext(), 2, 148000);
+    const compaction = checkAndCompactInLoop(deps, createContext(), 2, 148000);
+    let next = await compaction.next();
+    while (!next.done) {
+      next = await compaction.next();
+    }
+    const didCompact = next.value;
 
     expect(didCompact).toBe('compacted');
     expect(compactSpy).toHaveBeenCalledOnce();

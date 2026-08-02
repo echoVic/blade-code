@@ -387,14 +387,14 @@ async function* processStreamResponse(
 
 export type CompactResult = 'none' | 'snipped' | 'compacted';
 
-export async function checkAndCompactInLoop(
+export async function* checkAndCompactInLoop(
   deps: LoopDependencies,
   context: ChatContext,
   currentTurn: number,
   actualPromptTokens?: number,
   signal?: AbortSignal,
   lastApiCallTime?: number
-): Promise<CompactResult> {
+): AsyncGenerator<LoopEvent, CompactResult, void> {
   if (actualPromptTokens === undefined) {
     logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`);
     return 'none';
@@ -462,6 +462,7 @@ export async function checkAndCompactInLoop(
       : `[Loop] [轮次 ${currentTurn}] 触发循环内自动压缩`
   );
 
+  yield { kind: 'compaction', phase: 'start' };
   try {
     // LLM compaction 使用 snip 后的消息（如有），但不提前写入 context.messages
     const messagesForCompact = didSnip ? snipResult.messages : context.messages;
@@ -508,6 +509,8 @@ export async function checkAndCompactInLoop(
     }
     logger.error(`[Loop] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
     return didSnip ? 'snipped' : 'none';
+  } finally {
+    yield { kind: 'compaction', phase: 'end' };
   }
 }
 
@@ -654,7 +657,7 @@ export async function* executeLoopGenerator(
         // writeback 确保 context.messages 与 state.history 同步，
         // 因为 checkAndCompactInLoop 直接读取 context.messages
         state.writeback();
-        const compactResult = await checkAndCompactInLoop(
+        const compactResult = yield* checkAndCompactInLoop(
           deps,
           context,
           turnsCount,
@@ -664,10 +667,6 @@ export async function* executeLoopGenerator(
         );
 
         if (compactResult !== 'none') {
-          if (compactResult === 'compacted') {
-            yield { kind: 'compaction', phase: 'start' as const };
-            yield { kind: 'compaction', phase: 'end' as const };
-          }
           // checkAndCompactInLoop 已更新 context.messages，同步到 state
           state.replaceHistory(context.messages);
         }

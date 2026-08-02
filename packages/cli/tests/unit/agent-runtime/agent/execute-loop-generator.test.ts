@@ -92,6 +92,7 @@ import type {
   LoopOptions,
   LoopResult,
 } from '../../../../src/agent/types.js';
+import { CompactionService } from '../../../../src/context/CompactionService.js';
 
 // ===== Helpers =====
 
@@ -176,6 +177,111 @@ function createMockContextManager() {
 describe('executeLoopGenerator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('compaction lifecycle', () => {
+    it('yields start while the compaction request is still pending', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-read-before-compact',
+              type: 'function',
+              function: { name: 'Read', arguments: '{"path":"package.json"}' },
+            },
+          ],
+          usage: {
+            promptTokens: 90_000,
+            completionTokens: 20,
+            totalTokens: 90_020,
+          },
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Compaction finished and work continued.',
+          toolCalls: undefined,
+          usage: { promptTokens: 1_000, completionTokens: 20, totalTokens: 1_020 },
+          finishReason: 'stop',
+        });
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        llmContent: '{"name":"fixture"}',
+      });
+
+      let markCompactionRequested: () => void = () => undefined;
+      const compactionRequested = new Promise<void>((resolve) => {
+        markCompactionRequested = resolve;
+      });
+      let releaseCompaction: () => void = () => undefined;
+      vi.mocked(CompactionService.compact).mockImplementationOnce(() => {
+        markCompactionRequested();
+        return new Promise((resolve) => {
+          releaseCompaction = () =>
+            resolve({
+              success: true,
+              summary: 'summary',
+              preTokens: 90_000,
+              postTokens: 1_000,
+              filesIncluded: [],
+              compactedMessages: [{ role: 'system', content: 'summary' }],
+              boundaryMessage: { role: 'system', content: '' },
+              summaryMessage: { role: 'user', content: 'summary' },
+            });
+        });
+      });
+
+      const generator = executeLoopGenerator(
+        deps,
+        'Read package.json before continuing.',
+        context,
+        { stream: false } as LoopOptions,
+        undefined
+      );
+
+      let sawStreamEnd = false;
+      let sawTokenUsage = false;
+      let sawToolResult = false;
+      while (!sawStreamEnd || !sawTokenUsage || !sawToolResult) {
+        const next = await generator.next();
+        expect(next.done).toBe(false);
+        if (!next.done && next.value.kind === 'stream_end') sawStreamEnd = true;
+        if (!next.done && next.value.kind === 'token_usage') sawTokenUsage = true;
+        if (!next.done && next.value.kind === 'tool_result') sawToolResult = true;
+      }
+
+      const pendingEvent = generator.next();
+      const timeout = Symbol('timeout');
+      const observed = await Promise.race([
+        pendingEvent,
+        new Promise<typeof timeout>((resolve) =>
+          setTimeout(() => resolve(timeout), 25)
+        ),
+      ]);
+
+      if (observed === timeout) {
+        await compactionRequested;
+        releaseCompaction();
+        await pendingEvent;
+        expect(observed).not.toBe(timeout);
+        return;
+      }
+      expect(observed).toMatchObject({
+        done: false,
+        value: { kind: 'compaction', phase: 'start' },
+      });
+
+      const endEvent = generator.next();
+      await compactionRequested;
+      releaseCompaction();
+      expect(await endEvent).toMatchObject({
+        done: false,
+        value: { kind: 'compaction', phase: 'end' },
+      });
+    });
   });
 
   // ------------------------------------------------------------------

@@ -9,6 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
@@ -245,6 +246,23 @@ async function waitForProcessGone(pid: number, timeoutMs = 5_000): Promise<boole
   return false;
 }
 
+async function resolvesWithin(
+  promise: Promise<unknown>,
+  timeoutMs: number
+): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<false>((resolve) => {
+        timeout = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 interface CommandResult {
   status: number | null;
   stdout: string;
@@ -260,12 +278,20 @@ interface BladeInvocationOptions {
   modelBaseUrl?: string;
   maxContextTokens?: number;
   maxOutputTokens?: number;
+  onStdout?: (stdout: string) => void;
 }
 
 interface TransientFailureProxy {
   baseUrl: string;
   requestCount: () => number;
   injectedFailureCount: () => number;
+  close: () => Promise<void>;
+}
+
+interface HeldCompactionProxy {
+  baseUrl: string;
+  compactionRequestHeld: Promise<void>;
+  releaseCompaction: () => void;
   close: () => Promise<void>;
 }
 
@@ -346,6 +372,7 @@ function runBladeInvocation(
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
       stdout += chunk;
+      options.onStdout?.(stdout);
     });
     child.stderr.on('data', (chunk: string) => {
       stderr += chunk;
@@ -366,6 +393,119 @@ function runBladeInvocation(
       });
     });
   });
+}
+
+async function readRequestBody(request: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+async function forwardProxyRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  requestBody: Buffer,
+  upstreamBaseUrl: string
+): Promise<void> {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (!value || name === 'host' || name === 'content-length') continue;
+    headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+  }
+
+  const upstreamUrl = new URL(
+    request.url ?? '/',
+    `${upstreamBaseUrl.replace(/\/$/, '')}/`
+  );
+  const method = request.method ?? 'POST';
+  const upstreamResponse = await fetch(upstreamUrl, {
+    method,
+    headers,
+    body:
+      method === 'GET' || method === 'HEAD' ? undefined : requestBody.toString('utf8'),
+    redirect: 'manual',
+  });
+  const responseHeaders: Record<string, string> = {};
+  upstreamResponse.headers.forEach((value, name) => {
+    if (
+      ![
+        'connection',
+        'content-encoding',
+        'content-length',
+        'transfer-encoding',
+      ].includes(name)
+    ) {
+      responseHeaders[name] = value;
+    }
+  });
+  response.writeHead(upstreamResponse.status, responseHeaders);
+  response.end(Buffer.from(await upstreamResponse.arrayBuffer()));
+}
+
+async function startHeldCompactionProxy(
+  upstreamBaseUrl: string
+): Promise<HeldCompactionProxy> {
+  let holdSettled = false;
+  let settleHeld: () => void = () => undefined;
+  const compactionRequestHeld = new Promise<void>((resolve) => {
+    settleHeld = resolve;
+  });
+  let releaseHeldRequest: () => void = () => undefined;
+  const heldRequestRelease = new Promise<void>((resolve) => {
+    releaseHeldRequest = resolve;
+  });
+  const server = createServer((request, response) => {
+    void (async () => {
+      const requestBody = await readRequestBody(request);
+      const isCompactionRequest = requestBody.includes(
+        'Your task is to create a detailed summary of the conversation so far'
+      );
+      if (isCompactionRequest && !holdSettled) {
+        holdSettled = true;
+        settleHeld();
+        await heldRequestRelease;
+      }
+      await forwardProxyRequest(request, response, requestBody, upstreamBaseUrl);
+    })().catch((error: unknown) => {
+      if (response.headersSent) {
+        response.destroy(error instanceof Error ? error : undefined);
+        return;
+      }
+      response.writeHead(502, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          error: {
+            message: error instanceof Error ? error.message : 'Proxy forwarding failed',
+            type: 'proxy_error',
+          },
+        })
+      );
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const address = server.address() as AddressInfo;
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    compactionRequestHeld,
+    releaseCompaction: releaseHeldRequest,
+    close: async () => {
+      releaseHeldRequest();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    },
+  };
 }
 
 async function startTransientFailureProxy(
@@ -393,46 +533,8 @@ async function startTransientFailureProxy(
         return;
       }
 
-      const requestBody: Buffer[] = [];
-      for await (const chunk of request) {
-        requestBody.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-
-      const headers = new Headers();
-      for (const [name, value] of Object.entries(request.headers)) {
-        if (!value || name === 'host' || name === 'content-length') continue;
-        headers.set(name, Array.isArray(value) ? value.join(', ') : value);
-      }
-
-      const upstreamUrl = new URL(
-        request.url ?? '/',
-        `${upstreamBaseUrl.replace(/\/$/, '')}/`
-      );
-      const method = request.method ?? 'POST';
-      const upstreamResponse = await fetch(upstreamUrl, {
-        method,
-        headers,
-        body:
-          method === 'GET' || method === 'HEAD'
-            ? undefined
-            : Buffer.concat(requestBody),
-        redirect: 'manual',
-      });
-      const responseHeaders: Record<string, string> = {};
-      upstreamResponse.headers.forEach((value, name) => {
-        if (
-          ![
-            'connection',
-            'content-encoding',
-            'content-length',
-            'transfer-encoding',
-          ].includes(name)
-        ) {
-          responseHeaders[name] = value;
-        }
-      });
-      response.writeHead(upstreamResponse.status, responseHeaders);
-      response.end(Buffer.from(await upstreamResponse.arrayBuffer()));
+      const requestBody = await readRequestBody(request);
+      await forwardProxyRequest(request, response, requestBody, upstreamBaseUrl);
     })().catch((error: unknown) => {
       if (response.headersSent) {
         response.destroy(error instanceof Error ? error : undefined);
@@ -710,7 +812,7 @@ function createCodingTaskPrompt(): string {
 
 function createCompactionContinuationPrompt(): string {
   const archivedContext = Array.from(
-    { length: 800 },
+    { length: 1_000 },
     (_, index) =>
       `Archived diagnostic record ${index}: historical-only context; preserve the active file task.`
   ).join('\n');
@@ -920,15 +1022,38 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
       const workspace = createCodingTaskWorkspace();
       const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-compact-home-'));
       const sessionId = `real-api-compact-${model}`;
+      const proxy = await startHeldCompactionProxy(baseUrl);
+      let settleCompactionStarted: () => void = () => undefined;
+      const compactionStarted = new Promise<void>((resolve) => {
+        settleCompactionStarted = resolve;
+      });
 
       try {
-        const result = await runBladeInvocation(workspace, home, model, {
+        const invocation = runBladeInvocation(workspace, home, model, {
           prompt: createCompactionContinuationPrompt(),
           sessionId,
           maxTurns: 8,
-          maxContextTokens: 24_000,
+          modelBaseUrl: proxy.baseUrl,
+          maxContextTokens: 28_000,
           maxOutputTokens: 1_024,
+          onStdout: (stdout) => {
+            if (
+              stdout.includes('"type":"compacting"') &&
+              stdout.includes('"state":"started"')
+            ) {
+              settleCompactionStarted();
+            }
+          },
         });
+        const heldRealRequest = await resolvesWithin(
+          proxy.compactionRequestHeld,
+          120_000
+        );
+        const startVisibleWhileHeld = heldRealRequest
+          ? await resolvesWithin(compactionStarted, 1_000)
+          : false;
+        proxy.releaseCompaction();
+        const result = await invocation;
         const parsed = parseHeadlessJsonl(result.stdout);
         const compactingStates = parsed.events
           .filter((event) => event.type === 'compacting')
@@ -953,6 +1078,8 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
 
         expect(result.error).toBeUndefined();
         expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(heldRealRequest).toBe(true);
+        expect(startVisibleWhileHeld).toBe(true);
         expect(parsed.nonJsonLines).toEqual([]);
         expect(compactingStates).toEqual(['started', 'completed']);
         expect(readStart).toBeGreaterThanOrEqual(0);
@@ -988,6 +1115,8 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         );
         expect(`${result.stdout}\n${result.stderr}`).not.toContain(apiKey);
       } finally {
+        proxy.releaseCompaction();
+        await proxy.close();
         rmSync(workspace, { recursive: true, force: true });
         rmSync(home, { recursive: true, force: true });
       }
