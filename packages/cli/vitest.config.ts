@@ -85,7 +85,7 @@ export default defineConfig({
           name: 'integration',
           ...forkPool,
           include: ['tests/integration/**/*.{test,spec}.{js,ts,jsx,tsx}'],
-          exclude: ['tests/integration/real-api/**'],
+          exclude: ['tests/integration/real-api/**', 'tests/integration/cli/**'],
           setupFiles: ['./tests/support/setup.ts'],
           testTimeout: 30000,
           hookTimeout: 30000,

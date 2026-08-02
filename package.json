@@ -20,6 +20,8 @@
     "test:unit": "bun run --filter blade-code test:unit",
     "test:integration": "bun run --filter blade-code test:integration",
     "test:real-api": "bun run --filter blade-code test:real-api",
+    "qualify:local": "bun run --filter blade-code qualify:local",
+    "qualify:production": "bun run --filter blade-code qualify:production",
     "test:cli": "bun run --filter blade-code test:cli",
     "test:web": "bun run --filter blade-web test",
     "test:headless-core": "bun run --filter blade-code test:headless-core",
