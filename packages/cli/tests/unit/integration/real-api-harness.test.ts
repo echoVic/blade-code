@@ -4,6 +4,10 @@ import {
   parseHeadlessJsonl,
   redactSecrets,
 } from '../../integration/real-api/codingTaskHarness.js';
+import {
+  buildRealApiRuntimeConfig,
+  resolveModelSettings,
+} from '../../integration/real-api/testConfig.js';
 
 describe('real API coding-task harness', () => {
   it('parses versioned JSONL events and reports malformed lines', () => {
@@ -49,5 +53,53 @@ describe('real API coding-task harness', () => {
     expect(redactSecrets('key=sk-secret-value; status=ok', ['sk-secret-value'])).toBe(
       'key=[REDACTED]; status=ok'
     );
+  });
+
+  it('treats explicit provider credentials as a complete model allowlist', () => {
+    const personalModel = {
+      id: 'personal-proxy',
+      provider: 'openai-compatible',
+      model: 'deepseek-v4-pro',
+      apiKey: 'personal-secret',
+      baseUrl: 'https://personal-proxy.invalid/v1',
+    };
+
+    expect(
+      resolveModelSettings(
+        'domestic',
+        'DOMESTIC',
+        'qwen-plus',
+        'https://default.invalid',
+        { DEEPSEEK_API_KEY: 'explicit-secret' },
+        personalModel
+      )
+    ).toEqual({
+      apiKey: '',
+      baseURL: 'https://default.invalid',
+      model: 'qwen-plus',
+    });
+  });
+
+  it('builds an isolated runtime config with only the selected real API model', () => {
+    const runtimeConfig = buildRealApiRuntimeConfig({
+      id: 'deepseek',
+      name: 'DeepSeek',
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+      apiKey: 'explicit-secret',
+      baseURL: 'https://api.deepseek.com',
+      createModel: () => ({}) as never,
+    });
+
+    expect(runtimeConfig.currentModelId).toBe('real-api-deepseek');
+    expect(runtimeConfig.models).toEqual([
+      expect.objectContaining({
+        id: 'real-api-deepseek',
+        apiKey: 'explicit-secret',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        provider: 'deepseek',
+      }),
+    ]);
   });
 });

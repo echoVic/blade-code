@@ -7,6 +7,12 @@
 import os from 'node:os';
 import path from 'node:path';
 import { TextDecoder, TextEncoder } from 'node:util';
+import { getState } from '../../src/store/vanilla.js';
+import {
+  buildRealApiRuntimeConfig,
+  getEnabledModelConfigs,
+  isRealApiTestEnabled,
+} from '../integration/real-api/testConfig.js';
 
 globalThis.TextEncoder = TextEncoder;
 globalThis.TextDecoder = TextDecoder as typeof globalThis.TextDecoder;
@@ -18,3 +24,10 @@ process.env.BLADE_STORAGE_ROOT ??= path.join(
   os.tmpdir(),
   `blade-real-api-${process.pid}`
 );
+
+if (isRealApiTestEnabled()) {
+  const [runtimeModel] = getEnabledModelConfigs();
+  if (runtimeModel) {
+    getState().config.actions.setConfig(buildRealApiRuntimeConfig(runtimeModel));
+  }
+}

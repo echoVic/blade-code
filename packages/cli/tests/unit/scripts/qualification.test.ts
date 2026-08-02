@@ -113,6 +113,7 @@ describe('production qualification contract', () => {
     });
 
     expect(env.DEEPSEEK_MODELS).toBe('deepseek-v4-flash,deepseek-v4-pro');
+    expect(env.DEEPSEEK_MODEL).toBe('deepseek-v4-flash');
     expect(env.DEEPSEEK_BASE_URL).toBe('https://api.deepseek.com');
     expect(env.REAL_API_TEST).toBe('1');
   });

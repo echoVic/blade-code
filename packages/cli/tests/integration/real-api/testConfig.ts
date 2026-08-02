@@ -5,6 +5,8 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';
+import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
+import type { BladeConfig } from '../../../src/config/types.js';
 
 export type ModelId = 'deepseek' | 'claude' | 'gpt' | 'domestic';
 
@@ -21,7 +23,7 @@ export interface TestModelConfig {
   createModel: () => LanguageModel;
 }
 
-interface BladeModelConfig {
+export interface BladeModelConfig {
   id: string;
   name?: string;
   provider: string;
@@ -30,7 +32,7 @@ interface BladeModelConfig {
   baseUrl?: string;
 }
 
-interface ResolvedModelSettings {
+export interface ResolvedModelSettings {
   apiKey: string;
   baseURL: string;
   model: string;
@@ -77,24 +79,36 @@ function matchesModel(id: ModelId, config: BladeModelConfig): boolean {
   }
 }
 
-function resolveModelSettings(
+const MODEL_ENV_PREFIXES = ['DEEPSEEK', 'CLAUDE', 'GPT', 'DOMESTIC'] as const;
+
+function hasExplicitProviderCredentials(
+  env: Readonly<Record<string, string | undefined>>
+): boolean {
+  return MODEL_ENV_PREFIXES.some((prefix) => Boolean(env[`${prefix}_API_KEY`]?.trim()));
+}
+
+export function resolveModelSettings(
   id: ModelId,
   envPrefix: string,
   defaultModel: string,
-  defaultBaseURL: string
+  defaultBaseURL: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  bladeModel?: BladeModelConfig
 ): ResolvedModelSettings {
-  const bladeModel = getBladeCurrentModel();
+  const fallbackModel = hasExplicitProviderCredentials(env)
+    ? undefined
+    : (bladeModel ?? getBladeCurrentModel());
   const matchingBladeModel =
-    bladeModel && matchesModel(id, bladeModel) ? bladeModel : undefined;
+    fallbackModel && matchesModel(id, fallbackModel) ? fallbackModel : undefined;
 
   return {
-    apiKey: process.env[`${envPrefix}_API_KEY`] ?? matchingBladeModel?.apiKey ?? '',
+    apiKey: env[`${envPrefix}_API_KEY`]?.trim() ?? matchingBladeModel?.apiKey ?? '',
     baseURL:
-      process.env[`${envPrefix}_BASE_URL`] ??
+      env[`${envPrefix}_BASE_URL`]?.trim() ??
       matchingBladeModel?.baseUrl ??
       defaultBaseURL,
     model:
-      process.env[`${envPrefix}_MODEL`] ?? matchingBladeModel?.model ?? defaultModel,
+      env[`${envPrefix}_MODEL`]?.trim() ?? matchingBladeModel?.model ?? defaultModel,
   };
 }
 
@@ -220,13 +234,35 @@ export function getEnabledModelConfigs(): TestModelConfig[] {
   return ALL_MODEL_CONFIGS.filter((config) => Boolean(config.apiKey));
 }
 
+export function buildRealApiRuntimeConfig(modelConfig: TestModelConfig): BladeConfig {
+  const modelId = `real-api-${modelConfig.id}`;
+  return {
+    ...DEFAULT_CONFIG,
+    currentModelId: modelId,
+    models: [
+      {
+        id: modelId,
+        name: modelConfig.name,
+        provider: modelConfig.provider,
+        apiKey: modelConfig.apiKey,
+        baseUrl: modelConfig.baseURL ?? '',
+        model: modelConfig.model,
+        maxContextTokens: 64_000,
+        maxOutputTokens: 4_096,
+        timeout: 180_000,
+        maxRetries: 1,
+      },
+    ],
+  };
+}
+
 export function isRealApiTestEnabled(): boolean {
   return process.env.REAL_API_TEST === '1';
 }
 
 if (isRealApiTestEnabled() && getEnabledModelConfigs().length === 0) {
   throw new Error(
-    'REAL_API_TEST=1 requires a configured model in ~/.blade/config.json ' +
-      'or provider-specific API environment variables.'
+    'REAL_API_TEST=1 requires provider-specific API environment variables or a ' +
+      'configured model in ~/.blade/config.json when no provider credentials are set.'
   );
 }

@@ -41,6 +41,8 @@ bun run qualify:production
 - `DEEPSEEK_API_KEY` 必须存在；
 - `DEEPSEEK_MODELS` 必须同时包含 `deepseek-v4-flash` 和 `deepseek-v4-pro`；
 - 未提供 `DEEPSEEK_BASE_URL` 时使用 `https://api.deepseek.com`；
+- `DEEPSEEK_MODEL` 默认选择列表中的第一个模型，供单模型轨迹使用；
+- 只要存在任一 provider 的显式 API key，环境变量集合就成为完整 allowlist，测试不会再合并 `~/.blade/config.json` 中的个人模型；
 - API key 只通过进程环境传递，不写入配置文件、源码、日志或快照。
 
 真实 API 项目覆盖两种模型的生产 CLI 轨迹，包括：

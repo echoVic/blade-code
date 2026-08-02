@@ -138,6 +138,7 @@ export function resolveProductionEnvironment(
     DEEPSEEK_BASE_URL:
       input.DEEPSEEK_BASE_URL?.trim() || 'https://api.deepseek.com',
     DEEPSEEK_MODELS: configuredModels.join(','),
+    DEEPSEEK_MODEL: configuredModels[0],
     REAL_API_TEST: '1',
   };
 }
