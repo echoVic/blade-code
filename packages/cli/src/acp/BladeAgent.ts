@@ -253,9 +253,10 @@ export class BladeAgent implements AcpAgentInterface {
   ): Promise<acp.SetSessionModelResponse> {
     logger.info(`[BladeAgent] Setting session model: ${params.modelId}`);
     const session = this.sessions.get(params.sessionId);
-    if (session) {
-      await session.setModel(params.modelId);
+    if (!session) {
+      throw new Error(`Session not found: ${params.sessionId}`);
     }
+    await session.setModel(params.modelId);
     return {};
   }
 

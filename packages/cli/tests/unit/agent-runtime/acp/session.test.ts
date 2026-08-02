@@ -43,8 +43,11 @@ vi.mock('../../../../src/agent/Agent.js', () => {
         return mockAgent;
       }),
       createWithRuntime: vi.fn().mockImplementation(async () => {
-        const mockAgent = createMockAgent();
+        const mockAgent = createMockAgent() as ReturnType<typeof createMockAgent> & {
+          switchModel: ReturnType<typeof vi.fn>;
+        };
         mockAgent.chat = vi.fn().mockImplementation(mockChatGen);
+        mockAgent.switchModel = vi.fn().mockResolvedValue(undefined);
         mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
         mockAgentInstance = mockAgent;
         return mockAgent;
@@ -444,11 +447,27 @@ describe('AcpSession', () => {
       await session.initialize();
     });
 
-    it('应该设置会话模型', async () => {
+    it('应该切换会话运行时使用的模型', async () => {
       await session.setModel('gpt-4');
 
-      // 模型切换目前尚未实现，但不应该抛出错误
-      expect(() => session.setModel('gpt-4')).not.toThrow();
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent> & {
+          switchModel: ReturnType<typeof vi.fn>;
+        };
+      };
+      expect(agentModule._getMockAgentInstance().switchModel).toHaveBeenCalledWith(
+        'gpt-4'
+      );
+    });
+
+    it('活动回合期间应该拒绝切换模型', async () => {
+      (session as any).pendingPrompt = new AbortController();
+
+      await expect(session.setModel('gpt-4')).rejects.toThrow(
+        'Cannot switch models while a prompt is active'
+      );
     });
   });
 

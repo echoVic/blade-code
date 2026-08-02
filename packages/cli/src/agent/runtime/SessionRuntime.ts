@@ -261,17 +261,15 @@ export class SessionRuntime {
     const modelSupportsThinking = isThinkingModel(modelConfig);
     const thinkingModeEnabled = getThinkingModeEnabled();
     const supportsThinking = modelSupportsThinking && thinkingModeEnabled;
-
-    this.currentModelMaxContextTokens =
+    const nextModelMaxContextTokens =
       modelConfig.maxContextTokens ?? this.config.maxContextTokens;
-
-    this.chatService = await createChatServiceAsync({
+    const nextChatService = await createChatServiceAsync({
       provider: modelConfig.provider,
       apiKey: modelConfig.apiKey,
       model: modelConfig.model,
       baseUrl: modelConfig.baseUrl,
       temperature: modelConfig.temperature ?? this.config.temperature,
-      maxContextTokens: this.currentModelMaxContextTokens,
+      maxContextTokens: nextModelMaxContextTokens,
       maxOutputTokens: modelConfig.maxOutputTokens ?? this.config.maxOutputTokens,
       timeout: modelConfig.timeout ?? this.config.timeout,
       supportsThinking,
@@ -283,9 +281,24 @@ export class SessionRuntime {
       maxRetries: modelConfig.maxRetries,
     });
 
+    const previousChatService = this.initialized ? this.chatService : undefined;
     const contextManager = this.executionEngine?.getContextManager();
-    this.executionEngine = new ExecutionEngine(this.chatService, contextManager);
+    this.chatService = nextChatService;
+    this.executionEngine = new ExecutionEngine(nextChatService, contextManager);
+    this.currentModelMaxContextTokens = nextModelMaxContextTokens;
     this.currentModelId = modelConfig.id;
+
+    const disposablePreviousService = previousChatService as
+      | (IChatService & { dispose?: () => Promise<void> | void })
+      | undefined;
+    try {
+      await disposablePreviousService?.dispose?.();
+    } catch (error) {
+      logger.warn(
+        `[SessionRuntime ${this.sessionId}] Failed to dispose previous model service`,
+        error
+      );
+    }
   }
 
   private async validateSystemPromptConfig(): Promise<void> {

@@ -32,7 +32,20 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
     maxOutputTokens: 8192,
   })),
   getMcpServers: vi.fn(() => ({})),
-  getModelById: vi.fn(() => undefined),
+  getModelById: vi.fn((modelId: string) =>
+    modelId === 'model-2'
+      ? {
+          id: 'model-2',
+          name: 'Model 2',
+          model: 'model-2',
+          provider: 'openai',
+          apiKey: 'test',
+          temperature: 0,
+          maxContextTokens: 32_000,
+          maxOutputTokens: 4096,
+        }
+      : undefined
+  ),
   getThinkingModeEnabled: vi.fn(() => false),
 }));
 
@@ -165,6 +178,63 @@ describe('SessionRuntime', () => {
     });
     expect(recovered.sessionId).toBe('failed-initialization');
     await recovered.dispose();
+  });
+
+  it('atomically switches the session model and disposes the previous service', async () => {
+    const firstDispose = vi.fn().mockResolvedValue(undefined);
+    const secondDispose = vi.fn().mockResolvedValue(undefined);
+    const firstService = {
+      chat: vi.fn(),
+      streamChat: vi.fn(),
+      getConfig: vi.fn(),
+      updateConfig: vi.fn(),
+      dispose: firstDispose,
+    };
+    const secondService = {
+      chat: vi.fn(),
+      streamChat: vi.fn(),
+      getConfig: vi.fn(),
+      updateConfig: vi.fn(),
+      dispose: secondDispose,
+    };
+    vi.mocked(createChatServiceAsync)
+      .mockResolvedValueOnce(firstService as any)
+      .mockResolvedValueOnce(secondService as any);
+    const runtime = await SessionRuntime.create({ sessionId: 'model-switch' });
+
+    await runtime.refresh({ modelId: 'model-2' });
+
+    expect(runtime.getCurrentModelId()).toBe('model-2');
+    expect(runtime.getCurrentModelMaxContextTokens()).toBe(32_000);
+    expect(runtime.getChatService()).toBe(secondService);
+    expect(firstDispose).toHaveBeenCalledTimes(1);
+    expect(secondDispose).not.toHaveBeenCalled();
+
+    await runtime.dispose();
+    expect(secondDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the previous model active when the replacement service cannot initialize', async () => {
+    const firstService = {
+      chat: vi.fn(),
+      streamChat: vi.fn(),
+      getConfig: vi.fn(),
+      updateConfig: vi.fn(),
+    };
+    vi.mocked(createChatServiceAsync)
+      .mockResolvedValueOnce(firstService as any)
+      .mockRejectedValueOnce(new Error('replacement provider unavailable'));
+    const runtime = await SessionRuntime.create({ sessionId: 'failed-model-switch' });
+
+    await expect(runtime.refresh({ modelId: 'model-2' })).rejects.toThrow(
+      'replacement provider unavailable'
+    );
+
+    expect(runtime.getCurrentModelId()).toBe('model-1');
+    expect(runtime.getCurrentModelMaxContextTokens()).toBe(128_000);
+    expect(runtime.getChatService()).toBe(firstService);
+
+    await runtime.dispose();
   });
 
   it('keeps the deprecated execution pipeline factory source-compatible', () => {

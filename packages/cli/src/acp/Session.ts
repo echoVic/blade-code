@@ -621,14 +621,14 @@ export class AcpSession {
   async setModel(modelId: string): Promise<void> {
     logger.info(`[AcpSession ${this.id}] Model set to: ${modelId}`);
 
-    // 更新 Agent 的模型配置
-    if (this.agent) {
-      // TODO: 实现模型切换逻辑
-      // 目前 Agent 不支持运行时切换模型，需要重新创建
-      logger.warn(
-        `[AcpSession ${this.id}] Runtime model switching not yet implemented`
-      );
+    if (this.pendingPrompt) {
+      throw new Error('Cannot switch models while a prompt is active');
     }
+    if (!this.agent) {
+      throw new Error('Session not initialized');
+    }
+
+    await this.agent.switchModel(modelId);
   }
 
   /**

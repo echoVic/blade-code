@@ -527,6 +527,15 @@ describe('BladeAgent', () => {
       const sessionInstance = sessions[sessions.length - 1];
       expect(sessionInstance?.setModel).toHaveBeenCalledWith('gpt-3.5');
     });
+
+    it('应该拒绝为不存在的会话切换模型', async () => {
+      await expect(
+        agent.unstable_setSessionModel?.({
+          sessionId: 'nonexistent-session',
+          modelId: 'gpt-3.5',
+        })
+      ).rejects.toThrow('Session not found: nonexistent-session');
+    });
   });
 
   describe('destroy', () => {

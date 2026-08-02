@@ -202,6 +202,14 @@ export class Agent {
     await this.applyModelConfig(modelConfig, '切换模型');
   }
 
+  /** Switch this agent's session runtime without changing the global default model. */
+  public async switchModel(modelId: string): Promise<void> {
+    if (!this.isInitialized) {
+      throw new Error('Agent未初始化');
+    }
+    await this.switchModelIfNeeded(modelId);
+  }
+
   /**
    * 快速创建并初始化 Agent 实例（静态工厂方法）
    * 使用 Store 获取配置
