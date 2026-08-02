@@ -9,6 +9,8 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -245,6 +247,14 @@ interface BladeInvocationOptions {
   maxTurns?: number;
   sessionId?: string;
   permissionMode?: 'plan' | 'yolo';
+  modelBaseUrl?: string;
+}
+
+interface TransientFailureProxy {
+  baseUrl: string;
+  requestCount: () => number;
+  injectedFailureCount: () => number;
+  close: () => Promise<void>;
 }
 
 interface InterruptedCommandResult extends CommandResult {
@@ -268,7 +278,15 @@ function runBladeInvocation(
   mkdirSync(configDir, { recursive: true });
   writeFileSync(
     path.join(configDir, 'config.json'),
-    JSON.stringify(buildRealApiConfig({ modelId: model, model, baseUrl }), null, 2)
+    JSON.stringify(
+      buildRealApiConfig({
+        modelId: model,
+        model,
+        baseUrl: options.modelBaseUrl ?? baseUrl,
+      }),
+      null,
+      2
+    )
   );
 
   const args = [
@@ -334,6 +352,110 @@ function runBladeInvocation(
       });
     });
   });
+}
+
+async function startTransientFailureProxy(
+  upstreamBaseUrl: string
+): Promise<TransientFailureProxy> {
+  let requests = 0;
+  let injectedFailures = 0;
+  const server = createServer((request, response) => {
+    void (async () => {
+      requests++;
+      if (injectedFailures === 0) {
+        injectedFailures++;
+        response.writeHead(503, {
+          'content-type': 'application/json',
+          'retry-after': '0',
+        });
+        response.end(
+          JSON.stringify({
+            error: {
+              message: 'Injected transient failure before response streaming',
+              type: 'server_error',
+            },
+          })
+        );
+        return;
+      }
+
+      const requestBody: Buffer[] = [];
+      for await (const chunk of request) {
+        requestBody.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(request.headers)) {
+        if (!value || name === 'host' || name === 'content-length') continue;
+        headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+      }
+
+      const upstreamUrl = new URL(
+        request.url ?? '/',
+        `${upstreamBaseUrl.replace(/\/$/, '')}/`
+      );
+      const method = request.method ?? 'POST';
+      const upstreamResponse = await fetch(upstreamUrl, {
+        method,
+        headers,
+        body:
+          method === 'GET' || method === 'HEAD'
+            ? undefined
+            : Buffer.concat(requestBody),
+        redirect: 'manual',
+      });
+      const responseHeaders: Record<string, string> = {};
+      upstreamResponse.headers.forEach((value, name) => {
+        if (
+          ![
+            'connection',
+            'content-encoding',
+            'content-length',
+            'transfer-encoding',
+          ].includes(name)
+        ) {
+          responseHeaders[name] = value;
+        }
+      });
+      response.writeHead(upstreamResponse.status, responseHeaders);
+      response.end(Buffer.from(await upstreamResponse.arrayBuffer()));
+    })().catch((error: unknown) => {
+      if (response.headersSent) {
+        response.destroy(error instanceof Error ? error : undefined);
+        return;
+      }
+      response.writeHead(502, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          error: {
+            message: error instanceof Error ? error.message : 'Proxy forwarding failed',
+            type: 'proxy_error',
+          },
+        })
+      );
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const address = server.address() as AddressInfo;
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    requestCount: () => requests,
+    injectedFailureCount: () => injectedFailures,
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    },
+  };
 }
 
 function runInterruptedBladeInvocation(
@@ -670,6 +792,8 @@ function createSessionLeaseResumePrompt(): string {
 function createTruncatedTranscriptResumePrompt(): string {
   return [
     'Continue this session after its transcript tail was recovered from a process crash.',
+    'The user has approved implementation for this turn and the permission mode is yolo.',
+    'Do not call ExitPlanMode or produce another plan; perform the Write and Bash verification now.',
     'Use the Write tool to create transcript-recovered.txt containing exactly the single line "transcript-recovered".',
     'Then call Bash with the exact command "test \"$(cat transcript-recovered.txt)\" = transcript-recovered" to verify it.',
     'Do not modify any other file and finish only after verification passes.',
@@ -728,6 +852,60 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         expect(testResult.status, testResult.stderr || testResult.stdout).toBe(0);
         expect(`${result.stdout}\n${result.stderr}`).not.toContain(apiKey);
       } finally {
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 300_000);
+
+    it('recovers from a pre-stream transient API failure without replaying work', async () => {
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          `Missing ${cliEntry}; run "bun run build:cli" before real API tests`
+        );
+      }
+
+      const workspace = createCodingTaskWorkspace();
+      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-retry-home-'));
+      const proxy = await startTransientFailureProxy(baseUrl);
+
+      try {
+        const result = await runBladeInvocation(workspace, home, model, {
+          prompt: createCodingTaskPrompt(),
+          modelBaseUrl: proxy.baseUrl,
+        });
+        const parsed = parseHeadlessJsonl(result.stdout);
+        const toolStarts = parsed.events
+          .filter((event) => event.type === 'tool_start')
+          .map((event) => event.tool_name);
+        const diffNames = execFileSync('git', ['diff', '--name-only'], {
+          cwd: workspace,
+          encoding: 'utf8',
+        })
+          .trim()
+          .split(/\r?\n/)
+          .filter(Boolean);
+
+        expect(result.error).toBeUndefined();
+        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(proxy.injectedFailureCount()).toBe(1);
+        expect(proxy.requestCount()).toBeGreaterThanOrEqual(2);
+        expect(parsed.nonJsonLines).toEqual([]);
+        expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
+        expect(toolStarts).toContain('Edit');
+        expect(toolStarts).toContain('Bash');
+        expect(diffNames).toEqual(['src/math.js']);
+        expect(readFileSync(path.join(workspace, 'src', 'math.js'), 'utf8')).toContain(
+          'return left + right;'
+        );
+
+        const verification = spawnSync('npm', ['test', '--', '--test-reporter=dot'], {
+          cwd: workspace,
+          encoding: 'utf8',
+        });
+        expect(verification.status, verification.stderr || verification.stdout).toBe(0);
+        expect(`${result.stdout}\n${result.stderr}`).not.toContain(apiKey);
+      } finally {
+        await proxy.close();
         rmSync(workspace, { recursive: true, force: true });
         rmSync(home, { recursive: true, force: true });
       }

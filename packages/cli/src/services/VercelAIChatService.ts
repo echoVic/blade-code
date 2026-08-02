@@ -7,6 +7,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, jsonSchema, type LanguageModel, streamText } from 'ai';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+import { abortableSleep } from '../utils/abort.js';
 import type {
   ChatConfig,
   ChatResponse,
@@ -576,20 +577,88 @@ export class VercelAIChatService implements IChatService {
   }
 
   private isFallbackableError(error: unknown): boolean {
-    if (!(error instanceof Error)) return false;
-    const msg = error.message.toLowerCase();
+    const chain: unknown[] = [];
+    const visited = new Set<unknown>();
+    let current: unknown = error;
+
+    while (current && !visited.has(current)) {
+      chain.push(current);
+      visited.add(current);
+      if (typeof current !== 'object') break;
+      const candidate = current as { lastError?: unknown; cause?: unknown };
+      current = candidate.lastError ?? candidate.cause;
+    }
+
+    const messages = chain
+      .filter((candidate): candidate is Error => candidate instanceof Error)
+      .map((candidate) => candidate.message.toLowerCase());
+    const combinedMessage = messages.join('\n');
+
     if (
-      msg.includes('timeout') ||
-      msg.includes('econnrefused') ||
-      msg.includes('enotfound')
+      [
+        'prompt_too_long',
+        'prompt is too long',
+        'maximum context length',
+        'context length exceeded',
+        'context_length_exceeded',
+        'request too large',
+      ].some((marker) => combinedMessage.includes(marker))
     ) {
+      return false;
+    }
+
+    const networkMarkers = [
+      'timeout',
+      'timed out',
+      'econnreset',
+      'econnrefused',
+      'enotfound',
+      'eai_again',
+      'etimedout',
+      'fetch failed',
+      'network error',
+      'socket hang up',
+      'connection reset',
+      'connection refused',
+    ];
+    if (networkMarkers.some((marker) => combinedMessage.includes(marker))) {
       return true;
     }
-    const statusMatch = msg.match(/status[:\s]*(\d{3})/);
-    const status = statusMatch
-      ? parseInt(statusMatch[1], 10)
-      : (error as Error & { status?: number }).status;
-    return status !== undefined && [429, 529, 503, 502, 500].includes(status);
+
+    for (const candidate of chain) {
+      if (!candidate || typeof candidate !== 'object') continue;
+      const details = candidate as {
+        status?: number;
+        statusCode?: number;
+        code?: unknown;
+        response?: { status?: number; statusCode?: number };
+      };
+      const status =
+        details.status ??
+        details.statusCode ??
+        details.response?.status ??
+        details.response?.statusCode;
+      if (status !== undefined && ([408, 409, 429].includes(status) || status >= 500)) {
+        return true;
+      }
+      const code = details.code;
+      if (
+        typeof code === 'string' &&
+        networkMarkers.some((marker) => code.toLowerCase().includes(marker))
+      ) {
+        return true;
+      }
+    }
+
+    for (const message of messages) {
+      const statusMatch = message.match(/\bstatus(?:\s+code)?[:\s]*(\d{3})\b/);
+      const status = statusMatch ? Number(statusMatch[1]) : undefined;
+      if (status !== undefined && ([408, 409, 429].includes(status) || status >= 500)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private async retryWithBackoff<T>(
@@ -604,14 +673,16 @@ export class VercelAIChatService implements IChatService {
         return await fn();
       } catch (error) {
         lastError = error;
+        if (signal?.aborted) {
+          await abortableSleep(0, signal, { throwOnAbort: true });
+        }
         if (attempt >= maxRetries) break;
         if (!this.isFallbackableError(error)) throw error;
-        if (signal?.aborted) throw error;
         const delay = baseDelayMs * Math.pow(2, attempt);
         logger.debug(
           `[VercelAIChatService] Retry ${attempt + 1}/${maxRetries} after ${delay}ms`
         );
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        await abortableSleep(delay, signal, { throwOnAbort: true });
       }
     }
     throw lastError;
@@ -678,6 +749,7 @@ export class VercelAIChatService implements IChatService {
       messages: coreMessages,
       tools: coreTools,
       maxOutputTokens: this.config.maxOutputTokens,
+      maxRetries: 0,
       temperature: this.config.temperature ?? 0,
       abortSignal: effectiveSignal,
       allowSystemInMessages: true,
@@ -752,6 +824,9 @@ export class VercelAIChatService implements IChatService {
       const duration = Date.now() - startTime;
       logger.error('[VercelAIChatService] Chat failed after', duration, 'ms');
 
+      if (signal?.aborted) {
+        await abortableSleep(0, signal, { throwOnAbort: true });
+      }
       if (!this.isFallbackableError(error)) throw error;
 
       const fallbackIds = this.getFallbackModelIds();
@@ -766,6 +841,9 @@ export class VercelAIChatService implements IChatService {
           logger.warn(
             `[VercelAIChatService] Fallback ${modelId} failed: ${fallbackError instanceof Error ? fallbackError.message : fallbackError}`
           );
+          if (signal?.aborted) {
+            await abortableSleep(0, signal, { throwOnAbort: true });
+          }
           if (!this.isFallbackableError(fallbackError)) throw fallbackError;
         }
       }
@@ -855,22 +933,30 @@ export class VercelAIChatService implements IChatService {
 
     const maxRetries = this.config.maxRetries ?? 2;
     let lastError: unknown;
+    let primaryEmitted = false;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        yield* streamFrom(this, this.model);
+        for await (const chunk of streamFrom(this, this.model)) {
+          primaryEmitted = true;
+          yield chunk;
+        }
         const duration = Date.now() - startTime;
         logger.debug('[VercelAIChatService] Stream completed in', duration, 'ms');
         return;
       } catch (error) {
         lastError = error;
+        if (signal?.aborted) {
+          await abortableSleep(0, signal, { throwOnAbort: true });
+        }
+        if (primaryEmitted) throw error;
         if (!this.isFallbackableError(error)) throw error;
         if (attempt < maxRetries) {
           const delay = 1000 * Math.pow(2, attempt);
           logger.debug(
             `[VercelAIChatService] Stream retry ${attempt + 1}/${maxRetries} after ${delay}ms`
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await abortableSleep(delay, signal, { throwOnAbort: true });
           continue;
         }
       }
@@ -886,11 +972,19 @@ export class VercelAIChatService implements IChatService {
       logger.warn(`[VercelAIChatService] Stream fallback: ${modelId}`);
       yield { modelFallback: true };
       const fallbackModel = this.createModel({ ...this.config, model: modelId });
+      let fallbackEmitted = false;
       try {
-        yield* streamFrom(this, fallbackModel);
+        for await (const chunk of streamFrom(this, fallbackModel)) {
+          fallbackEmitted = true;
+          yield chunk;
+        }
         return;
       } catch (fallbackError) {
         logger.warn(`[VercelAIChatService] Stream fallback ${modelId} failed`);
+        if (signal?.aborted) {
+          await abortableSleep(0, signal, { throwOnAbort: true });
+        }
+        if (fallbackEmitted) throw fallbackError;
         if (!this.isFallbackableError(fallbackError)) throw fallbackError;
       }
     }

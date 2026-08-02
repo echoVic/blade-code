@@ -64,6 +64,10 @@ function make503Error(message = 'Request failed with status: 503'): Error {
   return new Error(message);
 }
 
+function make504Error(message = 'Request failed with status: 504'): Error {
+  return new Error(message);
+}
+
 function make400Error(message = 'Request failed with status: 400'): Error {
   return new Error(message);
 }
@@ -79,6 +83,8 @@ describe('VercelAIChatService', () => {
     const ai = await import('ai');
     generateText = ai.generateText as unknown as ReturnType<typeof vi.fn>;
     streamText = ai.streamText as unknown as ReturnType<typeof vi.fn>;
+    generateText.mockReset();
+    streamText.mockReset();
   });
 
   async function createService(overrides: Partial<ChatConfig> = {}) {
@@ -201,6 +207,52 @@ describe('VercelAIChatService', () => {
       await expect(service.chat(simpleMessages)).rejects.toThrow('400');
       expect(generateText).toHaveBeenCalledTimes(1);
     });
+
+    it('does not start a fallback when the final transient attempt is aborted', async () => {
+      const controller = new AbortController();
+      generateText.mockImplementationOnce(async () => {
+        controller.abort(new Error('cancelled'));
+        throw make503Error();
+      });
+
+      const service = await createService({
+        fallbackModel: 'fallback-model',
+        maxRetries: 0,
+      });
+
+      await expect(
+        service.chat(simpleMessages, undefined, controller.signal)
+      ).rejects.toThrow('Aborted');
+      expect(generateText).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not continue to another fallback after cancellation', async () => {
+      const controller = new AbortController();
+      generateText
+        .mockRejectedValueOnce(make503Error())
+        .mockImplementationOnce(async () => {
+          controller.abort(new Error('cancelled'));
+          throw make503Error('fallback cancelled with status: 503');
+        })
+        .mockResolvedValueOnce({
+          text: 'must-not-run',
+          toolCalls: [],
+          usage: { promptTokens: 1, completionTokens: 1 },
+          finishReason: 'stop',
+          reasoning: undefined,
+          providerMetadata: undefined,
+        });
+
+      const service = await createService({
+        fallbackModels: ['fallback-one', 'fallback-two'],
+        maxRetries: 0,
+      });
+
+      await expect(
+        service.chat(simpleMessages, undefined, controller.signal)
+      ).rejects.toThrow('Aborted');
+      expect(generateText).toHaveBeenCalledTimes(2);
+    });
   });
 
   // ─── streamChat() ─────────────────────────────────────────────────────
@@ -227,6 +279,80 @@ describe('VercelAIChatService', () => {
       expect(chunks).toHaveLength(2);
       expect(chunks[0]).toEqual({ content: 'hi' });
       expect(chunks[1]).toMatchObject({ finishReason: 'stop' });
+    });
+
+    it('disables SDK retries so Blade owns the replay boundary', async () => {
+      streamText.mockReturnValueOnce({
+        fullStream: toAsyncIterable([{ type: 'finish', finishReason: 'stop' }]),
+      });
+
+      const service = await createService();
+      for await (const _chunk of service.streamChat(simpleMessages)) {
+        // drain stream
+      }
+
+      expect(streamText).toHaveBeenCalledWith(
+        expect.objectContaining({ maxRetries: 0 })
+      );
+    });
+
+    it('retries a gateway timeout before the first visible chunk', async () => {
+      vi.useFakeTimers();
+      streamText
+        .mockReturnValueOnce({
+          fullStream: (async function* () {
+            if (Date.now() < 0) yield undefined;
+            throw make504Error();
+          })(),
+        })
+        .mockReturnValueOnce({
+          fullStream: toAsyncIterable([
+            { type: 'text-delta', textDelta: 'recovered' },
+            { type: 'finish', finishReason: 'stop' },
+          ]),
+        });
+
+      const service = await createService({ maxRetries: 1 });
+      const chunks: unknown[] = [];
+      const drain = async () => {
+        for await (const chunk of service.streamChat(simpleMessages)) {
+          chunks.push(chunk);
+        }
+      };
+
+      try {
+        const result = drain();
+        await vi.runAllTimersAsync();
+        await result;
+        expect(chunks).toEqual([
+          { content: 'recovered' },
+          expect.objectContaining({ finishReason: 'stop' }),
+        ]);
+        expect(streamText).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not retry a context overflow reported with status 500', async () => {
+      streamText.mockReturnValueOnce({
+        fullStream: (async function* () {
+          if (Date.now() < 0) yield undefined;
+          throw new Error('maximum context length exceeded; status: 500');
+        })(),
+      });
+
+      const service = await createService({
+        fallbackModel: 'fallback-model',
+        maxRetries: 0,
+      });
+
+      await expect(async () => {
+        for await (const _chunk of service.streamChat(simpleMessages)) {
+          // drain stream
+        }
+      }).rejects.toThrow('maximum context length');
+      expect(streamText).toHaveBeenCalledTimes(1);
     });
 
     it('yields modelFallback then fallback stream on 429 with fallbackModel', async () => {
@@ -265,6 +391,105 @@ describe('VercelAIChatService', () => {
       expect(chunks[1]).toEqual({ content: 'fallback-content' });
       expect(chunks[2]).toMatchObject({ finishReason: 'stop' });
       expect(streamText).toHaveBeenCalledTimes(4);
+    });
+
+    it('does not replay or fall back after yielding partial text', async () => {
+      streamText.mockReturnValueOnce({
+        fullStream: (async function* () {
+          yield { type: 'text-delta', textDelta: 'partial' };
+          throw make503Error('stream disconnected with status: 503');
+        })(),
+      });
+
+      const service = await createService({
+        fallbackModel: 'fallback-model',
+        maxRetries: 0,
+      });
+      const chunks: unknown[] = [];
+
+      await expect(async () => {
+        for await (const chunk of service.streamChat(simpleMessages)) {
+          chunks.push(chunk);
+        }
+      }).rejects.toThrow('stream disconnected');
+
+      expect(chunks).toEqual([{ content: 'partial' }]);
+      expect(streamText).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not replay a tool call after the stream becomes externally visible', async () => {
+      streamText.mockReturnValueOnce({
+        fullStream: (async function* () {
+          yield {
+            type: 'tool-call',
+            toolCallId: 'tool-1',
+            toolName: 'Read',
+            input: { file_path: '/tmp/example.ts' },
+          };
+          throw make503Error('tool stream disconnected with status: 503');
+        })(),
+      });
+
+      const service = await createService({ maxRetries: 1 });
+      const chunks: unknown[] = [];
+
+      await expect(async () => {
+        for await (const chunk of service.streamChat(simpleMessages)) {
+          chunks.push(chunk);
+        }
+      }).rejects.toThrow('tool stream disconnected');
+
+      expect(chunks).toEqual([
+        {
+          toolCalls: [
+            {
+              index: 0,
+              id: 'tool-1',
+              type: 'function',
+              function: {
+                name: 'Read',
+                arguments: JSON.stringify({ file_path: '/tmp/example.ts' }),
+              },
+            },
+          ],
+        },
+      ]);
+      expect(streamText).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels retry backoff without starting another request', async () => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      const retryableStream = () => ({
+        fullStream: (async function* () {
+          if (Date.now() < 0) yield undefined;
+          throw make503Error();
+        })(),
+      });
+      streamText.mockImplementation(retryableStream);
+
+      const service = await createService({ maxRetries: 2 });
+      const drain = async () => {
+        for await (const _chunk of service.streamChat(
+          simpleMessages,
+          undefined,
+          controller.signal
+        )) {
+          // drain stream
+        }
+      };
+
+      try {
+        const result = drain();
+        const assertion = expect(result).rejects.toThrow('Aborted');
+        await vi.waitFor(() => expect(streamText).toHaveBeenCalledTimes(1));
+        controller.abort(new Error('cancelled'));
+        await vi.runAllTimersAsync();
+        await assertion;
+        expect(streamText).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('throws fallback error directly when fallback stream also fails with non-retryable error', async () => {

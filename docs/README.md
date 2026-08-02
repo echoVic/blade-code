@@ -98,6 +98,7 @@ blade web
 
 - [CLI 命令](reference/cli-commands.md)
 - [工具列表](reference/tool-list.md)
+- [模型传输恢复](reference/model-transport-recovery.md)
 
 ### 其他
 
