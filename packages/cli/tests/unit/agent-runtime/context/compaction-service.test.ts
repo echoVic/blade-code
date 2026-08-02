@@ -52,6 +52,51 @@ describe('CompactionService - 输出协议', () => {
       stdoutSpy.mockRestore();
     }
   });
+
+  test('摘要遗漏任务时仍应逐字保留有界的 active-task checkpoint', async () => {
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>The repository package metadata was inspected.</summary>',
+    });
+    const activeTask =
+      'After Read succeeds, use Write to create compacted.txt containing exactly compacted without quote characters.';
+    const messages: Message[] = [
+      { role: 'user', content: `${activeTask}\n${'archived context '.repeat(2_000)}` },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'read-active-task',
+            type: 'function',
+            function: { name: 'Read', arguments: '{"file_path":"package.json"}' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: '{"name":"test-project"}',
+        tool_call_id: 'read-active-task',
+      },
+    ];
+
+    const result = await CompactionService.compact(messages, {
+      trigger: 'auto',
+      modelName: 'test-model',
+      maxContextTokens: 6_000,
+      apiKey: 'test-key',
+      baseURL: 'https://example.invalid',
+      sessionId: 'active-task-checkpoint',
+      activeTask,
+    });
+
+    const checkpoint = result.compactedMessages.find(
+      (message) =>
+        (message.metadata as Record<string, unknown> | undefined)
+          ?.isPostCompactActiveTask === true
+    );
+    expect(checkpoint?.content).toContain(activeTask);
+    expect(String(checkpoint?.content).length).toBeLessThanOrEqual(7_000);
+  });
 });
 
 /**

@@ -133,9 +133,24 @@ describe('completionPolicy', () => {
 
     it('accepts a successful Bash verification', () => {
       expect(
+        checkVerificationRequired('修复这个问题并运行测试。', new Set(['npm test']), 0)
+      ).toEqual({ action: 'none' });
+    });
+
+    it('requires every explicitly requested verification category', () => {
+      const request =
+        'Run npm run type-check and npm test after the edits; do not finish until both pass.';
+
+      expect(checkVerificationRequired(request, new Set(['npm test']), 0)).toEqual(
+        expect.objectContaining({
+          action: 'retry',
+          prompt: expect.stringContaining('type-check'),
+        })
+      );
+      expect(
         checkVerificationRequired(
-          '修复这个问题并运行测试。',
-          new Set(['Read', 'Edit', 'Bash']),
+          request,
+          new Set(['npm test', 'npm run type-check']),
           0
         )
       ).toEqual({ action: 'none' });

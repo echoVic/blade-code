@@ -43,6 +43,8 @@ export interface CompactionOptions {
   permissionMode?: PermissionMode;
   /** 中止信号：abort 时抛 AbortError，让调用方知道是"被取消"而非"压缩失败" */
   signal?: AbortSignal;
+  /** 当前未完成的用户请求；压缩后以有界 checkpoint 确定性保留 */
+  activeTask?: string;
 }
 
 /**
@@ -84,6 +86,9 @@ export class CompactionService {
 
   /** 降级时保留比例（30%） */
   private static readonly FALLBACK_RETAIN_PERCENT = 0.3;
+
+  /** Active task checkpoint 的最大长度，避免把超长原始输入重新塞回上下文。 */
+  private static readonly ACTIVE_TASK_MAX_CHARS = 6_000;
 
   /**
    * 执行压缩
@@ -223,6 +228,10 @@ export class CompactionService {
       const restorationMessage = await this.buildFileRestorationMessage();
       if (restorationMessage) {
         compactedMessages.push(restorationMessage);
+      }
+      const activeTaskMessage = this.buildActiveTaskMessage(options.activeTask);
+      if (activeTaskMessage) {
+        compactedMessages.push(activeTaskMessage);
       }
 
       const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
@@ -520,6 +529,35 @@ Please provide your summary following the structure specified above, with both <
     } as Message;
   }
 
+  private static buildActiveTaskMessage(activeTask?: string): Message | null {
+    if (!activeTask) return null;
+
+    const maxChars = this.ACTIVE_TASK_MAX_CHARS;
+    const headChars = Math.floor(maxChars * 0.75);
+    const checkpoint =
+      activeTask.length <= maxChars
+        ? activeTask
+        : [
+            activeTask.slice(0, headChars),
+            '\n...[active task checkpoint truncated]...\n',
+            activeTask.slice(-(maxChars - headChars)),
+          ].join('');
+
+    return {
+      id: nanoid(),
+      role: 'user',
+      content: [
+        '<system-reminder>',
+        'Post-compaction active task checkpoint. Continue this user-authored request; preserve its exact literals and constraints:',
+        checkpoint,
+        '</system-reminder>',
+      ].join('\n'),
+      metadata: {
+        isPostCompactActiveTask: true,
+      },
+    } as Message;
+  }
+
   /**
    * 降级策略：简单截断
    *
@@ -571,6 +609,10 @@ Please provide your summary following the structure specified above, with both <
     );
 
     const compactedMessages = [summaryMessage, ...retainedMessages];
+    const activeTaskMessage = this.buildActiveTaskMessage(options.activeTask);
+    if (activeTaskMessage) {
+      compactedMessages.push(activeTaskMessage);
+    }
     const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
 
     return {

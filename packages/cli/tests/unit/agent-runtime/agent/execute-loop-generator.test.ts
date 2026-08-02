@@ -264,6 +264,12 @@ describe('executeLoopGenerator', () => {
 
       if (observed === timeout) {
         await compactionRequested;
+        expect(CompactionService.compact).toHaveBeenCalledWith(
+          expect.any(Array),
+          expect.objectContaining({
+            activeTask: 'Read package.json before continuing.',
+          })
+        );
         releaseCompaction();
         await pendingEvent;
         expect(observed).not.toBe(timeout);
@@ -276,6 +282,12 @@ describe('executeLoopGenerator', () => {
 
       const endEvent = generator.next();
       await compactionRequested;
+      expect(CompactionService.compact).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          activeTask: 'Read package.json before continuing.',
+        })
+      );
       releaseCompaction();
       expect(await endEvent).toMatchObject({
         done: false,
@@ -512,6 +524,82 @@ describe('executeLoopGenerator', () => {
       expect(context.messages).toContainEqual({
         role: 'user',
         content: expect.stringContaining('explicitly required verification'),
+      });
+    });
+
+    it('continues until every explicitly requested verification category succeeds', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: 'The migration is complete.',
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-test',
+              type: 'function',
+              function: { name: 'Bash', arguments: '{"command":"npm test"}' },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Tests pass.',
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-type-check',
+              type: 'function',
+              function: {
+                name: 'Bash',
+                arguments: '{"command":"npm run type-check"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Both checks pass.',
+          finishReason: 'stop',
+        });
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: 'tests passed',
+          metadata: { command: 'npm test', exit_code: 0 },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: 'type-check passed',
+          metadata: { command: 'npm run type-check', exit_code: 0 },
+        });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Run npm run type-check and npm test; finish only after both pass.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(chatMock).toHaveBeenCalledTimes(5);
+      expect(executeMock).toHaveBeenCalledTimes(2);
+      expect(context.messages).toContainEqual({
+        role: 'user',
+        content: expect.stringContaining(
+          'Missing successful verification categories: type-check'
+        ),
       });
     });
 

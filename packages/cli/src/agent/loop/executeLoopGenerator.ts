@@ -393,7 +393,8 @@ export async function* checkAndCompactInLoop(
   currentTurn: number,
   actualPromptTokens?: number,
   signal?: AbortSignal,
-  lastApiCallTime?: number
+  lastApiCallTime?: number,
+  activeTask?: string
 ): AsyncGenerator<LoopEvent, CompactResult, void> {
   if (actualPromptTokens === undefined) {
     logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`);
@@ -474,6 +475,7 @@ export async function* checkAndCompactInLoop(
       baseURL: chatConfig.baseUrl,
       actualPreTokens: actualPromptTokens,
       signal,
+      activeTask,
     });
 
     context.messages = result.compactedMessages;
@@ -620,7 +622,7 @@ export async function* executeLoopGenerator(
     let incompleteIntentRetryCount = 0;
     let verificationRetryCount = 0;
     let worktreeRetryCount = 0;
-    const successfulVerificationTools = new Set<string>();
+    const successfulVerificationCommands = new Set<string>();
     const successfulTools = new Set<string>(
       context.worktreeActive ? ['EnterWorktree'] : []
     );
@@ -663,7 +665,8 @@ export async function* executeLoopGenerator(
           turnsCount,
           lastPromptTokens,
           options?.signal,
-          lastApiCallTime
+          lastApiCallTime,
+          originalUserRequest
         );
 
         if (compactResult !== 'none') {
@@ -754,6 +757,7 @@ export async function* executeLoopGenerator(
                 apiKey: chatConfig.apiKey,
                 baseURL: chatConfig.baseUrl,
                 signal: options?.signal,
+                activeTask: originalUserRequest,
               }
             );
             if (result.success) {
@@ -1050,7 +1054,7 @@ export async function* executeLoopGenerator(
 
           const verificationAction = checkVerificationRequired(
             originalUserRequest,
-            successfulVerificationTools,
+            successfulVerificationCommands,
             verificationRetryCount
           );
           if (verificationAction.action === 'retry') {
@@ -1503,14 +1507,14 @@ export async function* executeLoopGenerator(
               successfulTools.add('TaskWorktree');
             }
             if (['Edit', 'Write', 'NotebookEdit'].includes(toolCall.function.name)) {
-              successfulVerificationTools.delete('Bash');
+              successfulVerificationCommands.clear();
             } else if (
               toolCall.function.name === 'Bash' &&
               typeof result.metadata?.command === 'string' &&
               result.metadata.exit_code === 0 &&
               isVerificationCommand(result.metadata.command)
             ) {
-              successfulVerificationTools.add('Bash');
+              successfulVerificationCommands.add(result.metadata.command);
             }
           } else {
             recordToolFailure(failureTracker, toolCall.function.name);
@@ -1608,6 +1612,7 @@ export async function* executeLoopGenerator(
                     baseURL: chatConfig.baseUrl,
                     actualPreTokens: lastPromptTokens,
                     signal: options?.signal,
+                    activeTask: originalUserRequest,
                   }
                 );
 

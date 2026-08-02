@@ -134,7 +134,24 @@ const EXPLICIT_VERIFICATION_PATTERNS = [
 ];
 
 const VERIFICATION_COMMAND_PATTERN =
-  /(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|build|type-?check)\b|(?:^|\s)(?:node|bun)\s+--test\b|(?:^|\s)(?:vitest|jest|pytest|go\s+test|cargo\s+test)\b/i;
+  /(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|build|type-?check)\b|(?:^|\s)(?:node|bun)\s+--test\b|(?:^|\s)(?:vitest|jest|pytest|go\s+test|cargo\s+test|tsc)\b/i;
+
+type VerificationKind = 'test' | 'lint' | 'type-check' | 'build';
+
+const VERIFICATION_KIND_PATTERNS: Record<VerificationKind, RegExp> = {
+  test: /\b(?:tests?|test suite)\b|(?:测试|单测|集成测试)/i,
+  lint: /\blint(?:ing)?\b/i,
+  'type-check': /\btype[\s-]?check(?:ing)?\b|\btsc\b|类型检查/i,
+  build: /\bbuild\b|构建/i,
+};
+
+const VERIFICATION_COMMAND_KIND_PATTERNS: Record<VerificationKind, RegExp> = {
+  test: /(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b|(?:^|\s)(?:node|bun)\s+--test\b|(?:^|\s)(?:vitest|jest|pytest|go\s+test|cargo\s+test)\b/i,
+  lint: /(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?lint\b/i,
+  'type-check':
+    /(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?type-?check\b|(?:^|\s)tsc\b/i,
+  build: /(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?build\b/i,
+};
 
 export const VERIFICATION_RETRY_PROMPT =
   'The user explicitly required verification, but it has not run successfully. ' +
@@ -158,7 +175,7 @@ export function isVerificationCommand(command: string): boolean {
 
 export function checkVerificationRequired(
   userRequest: string | undefined,
-  successfulVerificationTools: ReadonlySet<string>,
+  successfulVerificationCommands: ReadonlySet<string>,
   retryCount: number
 ): VerificationAction {
   if (
@@ -168,7 +185,22 @@ export function checkVerificationRequired(
     return { action: 'none' };
   }
 
-  if (successfulVerificationTools.has('Bash')) {
+  const requiredKinds = (
+    Object.keys(VERIFICATION_KIND_PATTERNS) as VerificationKind[]
+  ).filter((kind) => VERIFICATION_KIND_PATTERNS[kind].test(userRequest));
+  const successfulCommands = [...successfulVerificationCommands];
+  const missingKinds = requiredKinds.filter(
+    (kind) =>
+      !successfulCommands.some((command) =>
+        VERIFICATION_COMMAND_KIND_PATTERNS[kind].test(command)
+      )
+  );
+  const verificationSatisfied =
+    requiredKinds.length > 0
+      ? missingKinds.length === 0
+      : successfulCommands.some(isVerificationCommand);
+
+  if (verificationSatisfied) {
     return { action: 'none' };
   }
 
@@ -176,7 +208,11 @@ export function checkVerificationRequired(
     return { action: 'fail', message: VERIFICATION_FAILURE_MESSAGE };
   }
 
-  return { action: 'retry', prompt: VERIFICATION_RETRY_PROMPT };
+  const missingHint =
+    requiredKinds.length > 1 && missingKinds.length > 0
+      ? ` Missing successful verification categories: ${missingKinds.join(', ')}.`
+      : '';
+  return { action: 'retry', prompt: `${VERIFICATION_RETRY_PROMPT}${missingHint}` };
 }
 
 // ===== Explicit Worktree Lifecycle Requirement =====

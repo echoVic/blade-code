@@ -16,6 +16,7 @@ export interface ReactiveCompactOptions {
   apiKey: string;
   baseURL?: string;
   signal?: AbortSignal;
+  activeTask?: string;
 }
 
 export class ReactiveCompaction {
@@ -51,6 +52,7 @@ export class ReactiveCompaction {
         apiKey: options.apiKey,
         baseURL: options.baseURL,
         signal: options.signal,
+        activeTask: options.activeTask,
       });
 
       if (compactResult.success) {
