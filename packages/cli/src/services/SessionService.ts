@@ -246,15 +246,23 @@ export class SessionService {
     const messages: Message[] = [];
     const messageMap = new Map<string, Message>();
     const partMap = new Map<string, ContentPart[]>();
+    const recoveredToolAssistants = new Map<string, Message>();
+    const toolCallIdByPartId = new Map<string, string>();
     for (const entry of entries) {
       if (entry.type === 'message_created') {
-        const message: Message = {
+        const recoveredAssistant =
+          entry.data.role === 'assistant' && entry.data.parentMessageId
+            ? recoveredToolAssistants.get(entry.data.parentMessageId)
+            : undefined;
+        const message: Message = recoveredAssistant ?? {
           role: entry.data.role,
           content: '',
         };
         messageMap.set(entry.data.messageId, message);
         partMap.set(entry.data.messageId, []);
-        messages.push(message);
+        if (!recoveredAssistant) {
+          messages.push(message);
+        }
       }
       if (entry.type === 'part_created') {
         if (entry.data.partType === 'text') {
@@ -281,6 +289,35 @@ export class SessionService {
             }
           }
         }
+        if (entry.data.partType === 'tool_call') {
+          let message = messageMap.get(entry.data.messageId);
+          if (message?.role !== 'assistant') {
+            message = recoveredToolAssistants.get(entry.data.messageId);
+            if (!message) {
+              message = { role: 'assistant', content: '', tool_calls: [] };
+              recoveredToolAssistants.set(entry.data.messageId, message);
+              messages.push(message);
+            }
+          }
+          if (message.role === 'assistant') {
+            const payload = entry.data.payload as {
+              toolCallId?: string;
+              toolName?: string;
+              input?: JsonValue;
+            };
+            const toolCallId = payload.toolCallId ?? entry.data.partId;
+            toolCallIdByPartId.set(entry.data.partId, toolCallId);
+            message.tool_calls ??= [];
+            message.tool_calls.push({
+              id: toolCallId,
+              type: 'function',
+              function: {
+                name: payload.toolName ?? 'unknown',
+                arguments: JSON.stringify(payload.input ?? {}),
+              },
+            });
+          }
+        }
         if (entry.data.partType === 'tool_result') {
           const payload = entry.data.payload as {
             toolCallId?: string;
@@ -298,7 +335,8 @@ export class SessionService {
           messages.push({
             role: 'tool',
             content,
-            tool_call_id: payload.toolCallId,
+            tool_call_id:
+              toolCallIdByPartId.get(entry.data.messageId) ?? payload.toolCallId,
             name: payload.toolName,
             metadata,
           });

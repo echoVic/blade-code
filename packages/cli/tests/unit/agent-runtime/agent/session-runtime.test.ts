@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
+import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
 import { createChatServiceAsync } from '../../../../src/services/ChatServiceInterface.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 
@@ -82,8 +83,47 @@ describe('SessionRuntime', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     rmSync(storageRoot, { recursive: true, force: true });
+  });
+
+  it('isolates session-provided MCP servers and releases them on dispose', async () => {
+    const isolatedRegistry = {
+      registerServer: vi.fn().mockResolvedValue(undefined),
+      getAvailableTools: vi.fn().mockResolvedValue([]),
+      disconnectAll: vi.fn().mockResolvedValue(undefined),
+    };
+    const createIsolated = vi
+      .spyOn(
+        McpRegistry as typeof McpRegistry & { createIsolated: () => McpRegistry },
+        'createIsolated'
+      )
+      .mockReturnValue(isolatedRegistry as unknown as McpRegistry);
+    const globalRegistry = vi.spyOn(McpRegistry, 'getInstance');
+    const mcpServers = {
+      project: {
+        type: 'stdio' as const,
+        command: 'node',
+        args: ['server.mjs'],
+      },
+    };
+
+    const runtime = await SessionRuntime.create({
+      sessionId: 'isolated-mcp-session',
+      mcpServers,
+    });
+
+    expect(createIsolated).toHaveBeenCalledTimes(1);
+    expect(globalRegistry).not.toHaveBeenCalled();
+    expect(isolatedRegistry.registerServer).toHaveBeenCalledWith(
+      'project',
+      mcpServers.project
+    );
+
+    await runtime.dispose();
+
+    expect(isolatedRegistry.disconnectAll).toHaveBeenCalledTimes(1);
   });
 
   it('creates a runtime from the current store config', async () => {

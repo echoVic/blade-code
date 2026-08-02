@@ -10,6 +10,7 @@ import type {
   AvailableCommand,
   ClientCapabilities,
   ContentBlock,
+  McpServer,
   PlanEntry,
   PlanEntryPriority,
   PromptRequest,
@@ -26,7 +27,7 @@ import { drainLoop } from '../agent/loop/index.js';
 import type { LoopEvent } from '../agent/loop/types.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
 import type { ChatContext } from '../agent/types.js';
-import { PermissionMode } from '../config/types.js';
+import { type McpServerConfig, PermissionMode } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import {
@@ -39,11 +40,11 @@ import type {
   ConfirmationDetails,
   ConfirmationResponse,
 } from '../tools/types/ExecutionTypes.js';
-import { AcpServiceContext } from './AcpServiceContext.js';
 import {
   formatToolDisplay,
   renderToolDisplayToString,
 } from '../ui/utils/toolFormatters.js';
+import { AcpServiceContext } from './AcpServiceContext.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -58,11 +59,70 @@ const logger = createLogger(LogCategory.AGENT);
  */
 type AcpModeId = 'default' | 'auto-edit' | 'yolo' | 'plan';
 
+export interface AcpSessionOptions {
+  initialMessages?: Message[];
+  mcpServers?: McpServer[];
+}
+
+function entriesToRecord(
+  entries: Array<{ name: string; value: string }>
+): Record<string, string> {
+  return Object.fromEntries(entries.map((entry) => [entry.name, entry.value]));
+}
+
+function toMcpServerConfig(server: McpServer): McpServerConfig {
+  if ('command' in server) {
+    return {
+      type: 'stdio',
+      command: server.command,
+      args: server.args,
+      env: entriesToRecord(server.env),
+    };
+  }
+
+  return {
+    type: server.type,
+    url: server.url,
+    headers: entriesToRecord(server.headers),
+  };
+}
+
+function toMcpServers(servers: McpServer[]): Record<string, McpServerConfig> {
+  return Object.fromEntries(
+    servers.map((server) => [server.name, toMcpServerConfig(server)])
+  );
+}
+
+function historyContentBlocks(content: Message['content']): ContentBlock[] {
+  if (typeof content === 'string') {
+    return content ? [{ type: 'text', text: content }] : [];
+  }
+
+  return content.flatMap((part): ContentBlock[] => {
+    if (part.type === 'text') {
+      return part.text ? [{ type: 'text', text: part.text }] : [];
+    }
+
+    const dataUrl = part.image_url.url;
+    const match = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl);
+    if (!match) {
+      return [{ type: 'text', text: '[Image]' }];
+    }
+    return [
+      {
+        type: 'image',
+        mimeType: match[1] ?? 'image/png',
+        data: match[2] ?? '',
+      },
+    ];
+  });
+}
+
 export class AcpSession {
   private agent: Agent | null = null;
   private runtime: SessionRuntime | null = null;
   private pendingPrompt: AbortController | null = null;
-  private messages: Message[] = [];
+  private messages: Message[];
   private mode: AcpModeId = 'default';
   // 会话级别的权限缓存（allow_always 选项）
   private sessionApprovals: Set<string> = new Set();
@@ -71,8 +131,11 @@ export class AcpSession {
     private readonly id: string,
     private readonly cwd: string,
     private readonly connection: AgentSideConnection,
-    private readonly clientCapabilities: ClientCapabilities | undefined
-  ) {}
+    private readonly clientCapabilities: ClientCapabilities | undefined,
+    private readonly options: AcpSessionOptions = {}
+  ) {
+    this.messages = [...(options.initialMessages ?? [])];
+  }
 
   /**
    * 初始化会话
@@ -90,11 +153,40 @@ export class AcpSession {
     );
     logger.debug(`[AcpSession ${this.id}] ACP service context initialized`);
 
-    this.runtime = await SessionRuntime.create({ sessionId: this.id });
+    const mcpServers = this.options.mcpServers
+      ? toMcpServers(this.options.mcpServers)
+      : undefined;
+    this.runtime = await SessionRuntime.create({
+      sessionId: this.id,
+      ...(mcpServers ? { mcpServers } : {}),
+    });
     this.agent = await Agent.createWithRuntime(this.runtime, { sessionId: this.id });
 
     logger.debug(`[AcpSession ${this.id}] Agent created successfully`);
     // 注意：available_commands_update 在 BladeAgent.newSession 响应后延迟发送
+  }
+
+  /**
+   * ACP session/load requires history to be replayed before the load response.
+   * Internal system/tool messages remain in model context but are not exposed.
+   */
+  async replayHistory(): Promise<void> {
+    for (const message of this.messages) {
+      const sessionUpdate =
+        message.role === 'user'
+          ? 'user_message_chunk'
+          : message.role === 'assistant'
+            ? 'agent_message_chunk'
+            : undefined;
+      if (!sessionUpdate) continue;
+
+      for (const content of historyContentBlocks(message.content)) {
+        await this.connection.sessionUpdate({
+          sessionId: this.id,
+          update: { sessionUpdate, content },
+        });
+      }
+    }
   }
 
   /**

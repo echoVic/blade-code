@@ -4,6 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AcpSession } from '../../../../src/acp/Session.js';
+import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { createMockACPClient } from '../../../support/mocks/mockACPClient.js';
 import { createMockAgent } from '../../../support/mocks/mockAgent.js';
 
@@ -149,6 +150,133 @@ describe('AcpSession', () => {
       });
       expect(Agent.createWithRuntime).toHaveBeenCalledWith(runtimeState.runtime, {
         sessionId: 'test-session-id',
+      });
+    });
+  });
+
+  describe('replayHistory', () => {
+    it('应该按顺序回放用户和助手历史且隐藏内部消息', async () => {
+      const history: Message[] = [
+        { role: 'user', content: 'Original question' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Original ' },
+            { type: 'text', text: 'answer' },
+          ],
+        },
+        { role: 'tool', content: 'internal tool output', tool_call_id: 'tool-1' },
+        { role: 'system', content: 'internal summary' },
+      ];
+      session = new AcpSession(
+        'test-session-id',
+        '/tmp/test',
+        mockConnection as any,
+        undefined,
+        { initialMessages: history }
+      );
+
+      await session.replayHistory();
+
+      expect(mockConnection.sessionUpdates).toEqual([
+        {
+          sessionId: 'test-session-id',
+          update: {
+            sessionUpdate: 'user_message_chunk',
+            content: { type: 'text', text: 'Original question' },
+          },
+        },
+        {
+          sessionId: 'test-session-id',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'Original ' },
+          },
+        },
+        {
+          sessionId: 'test-session-id',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'answer' },
+          },
+        },
+      ]);
+    });
+
+    it('恢复后的下一次 prompt 应携带完整模型历史', async () => {
+      const history: Message[] = [
+        { role: 'user', content: 'Remember marker ACP_RESUME_MARKER.' },
+        { role: 'assistant', content: 'I will remember ACP_RESUME_MARKER.' },
+      ];
+      session = new AcpSession(
+        'test-session-id',
+        '/tmp/test',
+        mockConnection as any,
+        undefined,
+        { initialMessages: history }
+      );
+      await session.initialize();
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'What marker did I ask you to remember?' }],
+      });
+
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
+      };
+      const call = agentModule._getMockAgentInstance().getLastCall();
+      expect(call?.context.messages).toEqual(history);
+    });
+  });
+
+  describe('ACP MCP session setup', () => {
+    it('应该把结构化 MCP server 转换为 SessionRuntime 配置', async () => {
+      session = new AcpSession(
+        'test-session-id',
+        '/tmp/test',
+        mockConnection as any,
+        undefined,
+        {
+          mcpServers: [
+            {
+              name: 'project-tools',
+              command: 'node',
+              args: ['server.mjs'],
+              env: [{ name: 'PROJECT_ROOT', value: '/tmp/test' }],
+            },
+            {
+              name: 'remote-tools',
+              type: 'http',
+              url: 'https://mcp.example.test',
+              headers: [{ name: 'Authorization', value: 'Bearer test-token' }],
+            },
+          ],
+        }
+      );
+
+      await session.initialize();
+
+      const { SessionRuntime } = await import(
+        '../../../../src/agent/runtime/SessionRuntime.js'
+      );
+      expect(SessionRuntime.create).toHaveBeenCalledWith({
+        sessionId: 'test-session-id',
+        mcpServers: {
+          'project-tools': {
+            type: 'stdio',
+            command: 'node',
+            args: ['server.mjs'],
+            env: { PROJECT_ROOT: '/tmp/test' },
+          },
+          'remote-tools': {
+            type: 'http',
+            url: 'https://mcp.example.test',
+            headers: { Authorization: 'Bearer test-token' },
+          },
+        },
       });
     });
   });

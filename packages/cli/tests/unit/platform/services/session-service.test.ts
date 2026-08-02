@@ -272,20 +272,148 @@ describe('SessionService with mocked filesystem', () => {
         data: {
           partId: 'p2',
           messageId: 'm1',
-          partType: 'tool_result',
-          payload: { toolCallId: 'call', output: 'result' },
+          partType: 'tool_call',
+          payload: {
+            toolCallId: 'call',
+            toolName: 'Read',
+            input: { file_path: 'marker.txt' },
+          },
           createdAt: '2024-01-01T00:00:02Z',
+        },
+      },
+      {
+        id: 'e4',
+        sessionId: 'session-y',
+        type: 'part_created',
+        timestamp: '2024-01-01T00:00:03Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'p3',
+          messageId: 'm1',
+          partType: 'tool_result',
+          payload: { toolCallId: 'call', toolName: 'Read', output: 'result' },
+          createdAt: '2024-01-01T00:00:03Z',
         },
       },
     ] as any);
 
     expect(messages).toMatchObject([
-      { role: 'assistant', content: 'latest' },
+      {
+        role: 'assistant',
+        content: 'latest',
+        tool_calls: [
+          {
+            id: 'call',
+            type: 'function',
+            function: {
+              name: 'Read',
+              arguments: '{"file_path":"marker.txt"}',
+            },
+          },
+        ],
+      },
       {
         role: 'tool',
         content: 'result',
         tool_call_id: 'call',
-        name: undefined,
+        name: 'Read',
+      },
+    ]);
+  });
+
+  it('convertJSONLToMessages 应修复流式工具调用被挂到 user 消息的历史', () => {
+    const messages = SessionService.convertJSONLToMessages([
+      {
+        id: 'e1',
+        sessionId: 'session-stream',
+        type: 'message_created',
+        timestamp: '2024-01-01T00:00:00Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          messageId: 'user-1',
+          role: 'user',
+          createdAt: '2024-01-01T00:00:00Z',
+        },
+      },
+      {
+        id: 'e2',
+        sessionId: 'session-stream',
+        type: 'part_created',
+        timestamp: '2024-01-01T00:00:01Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'text-1',
+          messageId: 'user-1',
+          partType: 'text',
+          payload: { text: 'Read marker.txt' },
+          createdAt: '2024-01-01T00:00:01Z',
+        },
+      },
+      {
+        id: 'e3',
+        sessionId: 'session-stream',
+        type: 'part_created',
+        timestamp: '2024-01-01T00:00:02Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'call-1',
+          messageId: 'user-1',
+          partType: 'tool_call',
+          payload: {
+            toolCallId: 'call-1',
+            toolName: 'Read',
+            input: { file_path: 'marker.txt' },
+          },
+          createdAt: '2024-01-01T00:00:02Z',
+        },
+      },
+      {
+        id: 'e4',
+        sessionId: 'session-stream',
+        type: 'part_created',
+        timestamp: '2024-01-01T00:00:03Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'call-1',
+          messageId: 'call-1',
+          partType: 'tool_result',
+          payload: {
+            toolCallId: 'model-call-1',
+            toolName: 'Read',
+            output: 'marker-value',
+            error: null,
+          },
+          createdAt: '2024-01-01T00:00:03Z',
+        },
+      },
+    ] as any);
+
+    expect(messages).toMatchObject([
+      { role: 'user', content: 'Read marker.txt' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call-1',
+            type: 'function',
+            function: {
+              name: 'Read',
+              arguments: '{"file_path":"marker.txt"}',
+            },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: 'marker-value',
+        tool_call_id: 'call-1',
+        name: 'Read',
       },
     ]);
   });

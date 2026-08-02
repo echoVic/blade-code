@@ -6,7 +6,7 @@ import {
   type PermissionConfig,
   PermissionMode,
 } from '../../config/index.js';
-import type { ModelConfig } from '../../config/types.js';
+import type { McpServerConfig, ModelConfig } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { loadMcpConfigFromCli } from '../../mcp/loadMcpConfig.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
@@ -45,6 +45,7 @@ export interface SessionRuntimeOptions {
   sessionId: string;
   modelId?: string;
   mcpConfig?: string[];
+  mcpServers?: Record<string, McpServerConfig>;
   strictMcpConfig?: boolean;
 }
 
@@ -59,6 +60,7 @@ export class SessionRuntime {
   private currentModelMaxContextTokens!: number;
   private initialized = false;
   private sessionLease?: SessionLease;
+  private sessionMcpRegistry?: McpRegistry;
 
   constructor(
     private readonly config: BladeConfig,
@@ -147,8 +149,13 @@ export class SessionRuntime {
         `[SessionRuntime ${this.sessionId}] initialized with ${this.baseRegistry.getAll().length} tools`
       );
     } catch (error) {
-      await this.sessionLease.release();
-      this.sessionLease = undefined;
+      try {
+        await this.sessionMcpRegistry?.disconnectAll();
+      } finally {
+        this.sessionMcpRegistry = undefined;
+        await this.sessionLease.release();
+        this.sessionLease = undefined;
+      }
       throw error;
     }
   }
@@ -221,11 +228,16 @@ export class SessionRuntime {
       await disposableChatService?.dispose?.();
     } finally {
       try {
-        await this.sessionLease?.release();
+        await this.sessionMcpRegistry?.disconnectAll();
       } finally {
-        this.sessionLease = undefined;
-        this.currentModelId = undefined;
-        this.initialized = false;
+        this.sessionMcpRegistry = undefined;
+        try {
+          await this.sessionLease?.release();
+        } finally {
+          this.sessionLease = undefined;
+          this.currentModelId = undefined;
+          this.initialized = false;
+        }
       }
     }
   }
@@ -306,16 +318,28 @@ export class SessionRuntime {
 
   private async registerMcpTools(): Promise<void> {
     try {
-      if (this.options.mcpConfig && this.options.mcpConfig.length > 0) {
+      const hasSessionMcpServers = this.options.mcpServers !== undefined;
+      if (
+        !hasSessionMcpServers &&
+        this.options.mcpConfig &&
+        this.options.mcpConfig.length > 0
+      ) {
         await loadMcpConfigFromCli(this.options.mcpConfig);
       }
 
-      const mcpServers = getMcpServers();
+      const mcpServers = hasSessionMcpServers
+        ? (this.options.mcpServers ?? {})
+        : getMcpServers();
       if (Object.keys(mcpServers).length === 0) {
         return;
       }
 
-      const registry = McpRegistry.getInstance();
+      const registry = hasSessionMcpServers
+        ? McpRegistry.createIsolated()
+        : McpRegistry.getInstance();
+      if (hasSessionMcpServers) {
+        this.sessionMcpRegistry = registry;
+      }
       for (const [name, config] of Object.entries(mcpServers)) {
         try {
           await registry.registerServer(name, config);

@@ -2,11 +2,22 @@
  * BladeAgent 测试
  */
 
-import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
+import {
+  type LoadSessionRequest,
+  type LoadSessionResponse,
+  PROTOCOL_VERSION,
+} from '@agentclientprotocol/sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../../src/acp/BladeAgent.js';
 import { AcpSession } from '../../../../src/acp/Session.js';
 import { createMockACPClient } from '../../../support/mocks/mockACPClient.js';
+
+const sessionServiceMocks = vi.hoisted(() => ({
+  loadSession: vi.fn(),
+}));
+const acpSessionMocks = vi.hoisted(() => ({
+  nextInitializeError: null as Error | null,
+}));
 
 // 获取创建的 session 实例的辅助函数
 const getCreatedSessions = () => (AcpSession as any)._getCreatedSessions();
@@ -18,20 +29,27 @@ vi.mock('../../../../src/acp/Session.js', () => {
     id: string,
     cwd: string,
     connection: any,
-    clientCapabilities: any
+    clientCapabilities: any,
+    options: any
   ) => {
     const session = {
       id,
       cwd,
       connection,
       clientCapabilities,
-      initialize: vi.fn().mockResolvedValue(undefined),
+      initialize: vi.fn().mockImplementation(async () => {
+        const error = acpSessionMocks.nextInitializeError;
+        acpSessionMocks.nextInitializeError = null;
+        if (error) throw error;
+      }),
       prompt: vi.fn().mockResolvedValue({ stopReason: 'end_turn' }),
       cancel: vi.fn(),
       setMode: vi.fn().mockResolvedValue(undefined),
       setModel: vi.fn().mockResolvedValue(undefined),
       destroy: vi.fn().mockResolvedValue(undefined),
+      replayHistory: vi.fn().mockResolvedValue(undefined),
       sendAvailableCommandsDelayed: vi.fn(),
+      options,
     };
     _createdSessions.push(session);
     return session;
@@ -66,6 +84,12 @@ vi.mock('../../../../src/agent/Agent.js', () => ({
   Agent: MockAgentClass,
 }));
 
+vi.mock('../../../../src/services/SessionService.js', () => ({
+  SessionService: {
+    loadSession: sessionServiceMocks.loadSession,
+  },
+}));
+
 // Mock getConfig
 vi.mock('../../../../src/store/vanilla.js', () => ({
   getConfig: vi.fn(() => ({
@@ -94,6 +118,14 @@ describe('BladeAgent', () => {
   let mockConnection: ReturnType<typeof createMockACPClient>;
   let agent: BladeAgent;
 
+  function loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
+    return (
+      agent as BladeAgent & {
+        loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse>;
+      }
+    ).loadSession(params);
+  }
+
   beforeEach(() => {
     // 重置创建的 session 列表
     (AcpSession as any)._resetCreatedSessions?.();
@@ -103,6 +135,8 @@ describe('BladeAgent', () => {
 
     // 创建 BladeAgent 实例
     agent = new BladeAgent(mockConnection as any);
+    sessionServiceMocks.loadSession.mockResolvedValue([]);
+    acpSessionMocks.nextInitializeError = null;
   });
 
   afterEach(() => {
@@ -140,7 +174,7 @@ describe('BladeAgent', () => {
         http: true,
         sse: true,
       });
-      expect(agentCapabilities.loadSession).toBe(false);
+      expect(agentCapabilities.loadSession).toBe(true);
     });
 
     it('应该保存客户端能力', async () => {
@@ -160,6 +194,79 @@ describe('BladeAgent', () => {
       // 通过检查后续行为来验证客户端能力已保存
       const response = await agent.initialize(params);
       expect(response.agentCapabilities).toBeDefined();
+    });
+  });
+
+  describe('loadSession', () => {
+    it('应该按项目加载历史并在响应前回放给客户端', async () => {
+      const history = [
+        { role: 'user' as const, content: 'Original question' },
+        { role: 'assistant' as const, content: 'Original answer' },
+      ];
+      sessionServiceMocks.loadSession.mockResolvedValue(history);
+
+      const response = await loadSession({
+        sessionId: 'persisted-session',
+        cwd: '/tmp/project',
+        mcpServers: [],
+      });
+
+      expect(sessionServiceMocks.loadSession).toHaveBeenCalledWith(
+        'persisted-session',
+        '/tmp/project'
+      );
+      expect(AcpSession).toHaveBeenCalledWith(
+        'persisted-session',
+        '/tmp/project',
+        mockConnection,
+        undefined,
+        { initialMessages: history, mcpServers: [] }
+      );
+      const loadedSession = getCreatedSessions()[0];
+      expect(loadedSession.initialize).toHaveBeenCalledTimes(1);
+      expect(loadedSession.replayHistory).toHaveBeenCalledTimes(1);
+      expect(loadedSession.initialize.mock.invocationCallOrder[0]).toBeLessThan(
+        loadedSession.replayHistory.mock.invocationCallOrder[0]
+      );
+      expect(response?.modes?.currentModeId).toBe('default');
+      expect(response?.models?.currentModelId).toBe('gpt-4');
+    });
+
+    it('应该拒绝不存在的项目会话且不注册空 session', async () => {
+      sessionServiceMocks.loadSession.mockRejectedValueOnce(
+        new Error('未找到会话: missing-session')
+      );
+
+      await expect(
+        loadSession({
+          sessionId: 'missing-session',
+          cwd: '/tmp/project',
+          mcpServers: [],
+        })
+      ).rejects.toThrow('未找到会话');
+
+      expect(getCreatedSessions()).toHaveLength(0);
+    });
+
+    it('重复加载同一 session 时应该先销毁旧 owner', async () => {
+      await loadSession({
+        sessionId: 'persisted-session',
+        cwd: '/tmp/project',
+        mcpServers: [],
+      });
+      await loadSession({
+        sessionId: 'persisted-session',
+        cwd: '/tmp/project',
+        mcpServers: [],
+      });
+
+      const sessions = getCreatedSessions();
+      expect(sessions).toHaveLength(2);
+      expect(sessions[0].destroy).toHaveBeenCalledTimes(1);
+      expect(sessions[1].initialize).toHaveBeenCalledTimes(1);
+      expect(sessions[0].destroy.mock.invocationCallOrder[0]).toBeLessThan(
+        sessions[1].initialize.mock.invocationCallOrder[0]
+      );
     });
   });
 
@@ -255,6 +362,38 @@ describe('BladeAgent', () => {
         },
       ]);
       expect(response.models?.currentModelId).toBe('gpt-4');
+    });
+
+    it('应该把客户端 MCP 配置交给 session runtime', async () => {
+      const mcpServers = [
+        {
+          name: 'project-tools',
+          command: 'node',
+          args: ['server.mjs'],
+          env: [{ name: 'PROJECT_ROOT', value: '/tmp/test' }],
+        },
+      ];
+
+      await agent.newSession({ cwd: '/tmp/test', mcpServers });
+
+      expect(AcpSession).toHaveBeenCalledWith(
+        expect.any(String),
+        '/tmp/test',
+        mockConnection,
+        undefined,
+        { mcpServers }
+      );
+    });
+
+    it('初始化失败时应该销毁未注册的 session', async () => {
+      const initializeError = new Error('runtime initialization failed');
+      acpSessionMocks.nextInitializeError = initializeError;
+
+      await expect(
+        agent.newSession({ cwd: '/tmp/test', mcpServers: [] })
+      ).rejects.toThrow(initializeError);
+      const session = getCreatedSessions()[0];
+      expect(session.destroy).toHaveBeenCalledTimes(1);
     });
   });
 

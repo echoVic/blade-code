@@ -14,6 +14,7 @@ import {
 import { nanoid } from 'nanoid';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
+import { SessionService } from '../services/SessionService.js';
 import { getConfig } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 import { AcpSession } from './Session.js';
@@ -46,8 +47,7 @@ export class BladeAgent implements AcpAgentInterface {
     return {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
-        // 暂不支持加载历史会话（后续可以实现）
-        loadSession: false,
+        loadSession: true,
         // 支持的提示能力
         promptCapabilities: {
           image: true, // 支持图片
@@ -86,11 +86,17 @@ export class BladeAgent implements AcpAgentInterface {
       sessionId,
       params.cwd || getCwd(),
       this.connection,
-      this.clientCapabilities
+      this.clientCapabilities,
+      { mcpServers: params.mcpServers }
     );
 
-    // 初始化会话（创建 Agent 等）
-    await session.initialize();
+    try {
+      // 初始化会话（创建 Agent 等）
+      await session.initialize();
+    } catch (error) {
+      await session.destroy().catch(() => undefined);
+      throw error;
+    }
 
     this.sessions.set(sessionId, session);
 
@@ -101,6 +107,49 @@ export class BladeAgent implements AcpAgentInterface {
     // 延迟发送 available_commands_update，确保在响应后
     session.sendAvailableCommandsDelayed();
 
+    return {
+      sessionId,
+      ...this.buildSessionState(),
+    };
+  }
+
+  /**
+   * 恢复持久化会话并在响应前按协议回放历史。
+   */
+  async loadSession(params: acp.LoadSessionRequest): Promise<acp.LoadSessionResponse> {
+    logger.info(`[BladeAgent] Loading session: ${params.sessionId}`);
+
+    let messages = await SessionService.loadSession(params.sessionId, params.cwd);
+    const existingSession = this.sessions.get(params.sessionId);
+    if (existingSession) {
+      await existingSession.destroy();
+      this.sessions.delete(params.sessionId);
+      messages = await SessionService.loadSession(params.sessionId, params.cwd);
+    }
+
+    const session = new AcpSession(
+      params.sessionId,
+      params.cwd,
+      this.connection,
+      this.clientCapabilities,
+      { initialMessages: messages, mcpServers: params.mcpServers }
+    );
+
+    try {
+      await session.initialize();
+      await session.replayHistory();
+    } catch (error) {
+      await session.destroy().catch(() => undefined);
+      throw error;
+    }
+
+    this.sessions.set(params.sessionId, session);
+    session.sendAvailableCommandsDelayed();
+
+    return this.buildSessionState();
+  }
+
+  private buildSessionState(): acp.LoadSessionResponse {
     // 获取配置中的模型列表
     const config = getConfig();
     const models = config?.models || [];
@@ -138,7 +187,6 @@ export class BladeAgent implements AcpAgentInterface {
     ];
 
     return {
-      sessionId,
       // 返回可用模式（权限控制）
       modes: {
         availableModes,

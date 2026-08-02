@@ -41,6 +41,13 @@ export class McpRegistry extends EventEmitter {
   }
 
   /**
+   * 创建由单个 runtime 独占的注册表，避免会话级 MCP 配置污染全局实例。
+   */
+  static createIsolated(): McpRegistry {
+    return new McpRegistry();
+  }
+
+  /**
    * 注册MCP服务器
    */
   async registerServer(name: string, config: McpServerConfig): Promise<void> {
