@@ -3,7 +3,7 @@
  *
  * ## 构建顺序（固定）
  * 1. 默认提示（buildDefaultPrompt() 模块化组装）或 replaceDefault
- * 2. 项目配置（BLADE.md）- 始终加载，不受 replaceDefault 影响
+ * 2. 项目指令（CLAUDE.md / AGENTS.md / BLADE.md）- 始终加载，不受 replaceDefault 影响
  * 3. Auto Memory（MEMORY.md 前 200 行）- 跨会话持久记忆
  * 4. 环境上下文（getEnvironmentContext）
  * 5. 追加内容（append）
@@ -12,13 +12,11 @@
  * 默认提示由 sections.ts 的 8 个模块化段函数组装
  *
  * ## 规则
- * - replaceDefault 仅替换默认提示，不影响 BLADE.md 和 append
+ * - replaceDefault 仅替换默认提示，不影响项目指令和 append
  * - Plan 模式使用独立的 system prompt，但仍遵循上述顺序
  * - 各部分用 `\n\n---\n\n` 分隔
  */
 
-import { promises as fs } from 'fs';
-import path from 'path';
 import { PermissionMode } from '../config/types.js';
 import { AutoMemoryManager } from '../memory/AutoMemoryManager.js';
 import { getSkillRegistry } from '../skills/index.js';
@@ -28,6 +26,7 @@ import {
   getEnvironmentContext,
 } from '../utils/environment.js';
 import { DEFAULT_SYSTEM_PROMPT, PLAN_MODE_SYSTEM_PROMPT } from './default.js';
+import { loadProjectInstructions } from './projectInstructions.js';
 import { buildSpecModePrompt } from './spec.js';
 
 /** available_skills 占位符的正则表达式 */
@@ -38,12 +37,12 @@ const AVAILABLE_SKILLS_REGEX = /<available_skills>\s*<\/available_skills>/;
  */
 export interface BuildSystemPromptOptions {
   /**
-   * 项目路径，用于查找 BLADE.md
+   * 项目路径，用于查找分层项目指令
    */
   projectPath?: string;
 
   /**
-   * 替换默认提示（仅替换 DEFAULT_SYSTEM_PROMPT，不影响 BLADE.md）
+   * 替换默认提示（仅替换 DEFAULT_SYSTEM_PROMPT，不影响项目指令）
    */
   replaceDefault?: string;
 
@@ -105,7 +104,7 @@ export interface BuildSystemPromptResult {
 /**
  * 构建系统提示词（统一入口）
  *
- * 构建顺序：默认/replaceDefault -> BLADE.md -> Auto Memory -> 环境上下文 -> append -> 模式特定
+ * 构建顺序：默认/replaceDefault -> 项目指令 -> Auto Memory -> 环境上下文 -> append -> 模式特定
  *
  * @example
  * // 普通模式
@@ -114,7 +113,7 @@ export interface BuildSystemPromptResult {
  * // Plan 模式
  * const { prompt } = await buildSystemPrompt({ mode: PermissionMode.PLAN });
  *
- * // 替换默认，保留 BLADE.md
+ * // 替换默认，保留项目指令
  * const { prompt } = await buildSystemPrompt({
  *   replaceDefault: 'Custom prompt',
  *   projectPath: '/my/project'
@@ -165,14 +164,18 @@ export async function buildSystemPrompt(
     length: basePrompt.length,
   });
 
-  // 2. 项目配置（BLADE.md）- 始终加载，不受 replaceDefault 影响
+  // 2. 分层项目指令 - 始终加载，不受 replaceDefault 影响
   if (projectPath) {
-    const bladeContent = await loadBladeConfig(projectPath);
-    if (bladeContent) {
-      parts.push(bladeContent);
-      sources.push({ name: 'blade_md', loaded: true, length: bladeContent.length });
+    const projectInstructions = await loadProjectInstructions(projectPath);
+    if (projectInstructions) {
+      parts.push(projectInstructions.content);
+      sources.push({
+        name: 'project_instructions',
+        loaded: true,
+        length: projectInstructions.content.length,
+      });
     } else {
-      sources.push({ name: 'blade_md', loaded: false });
+      sources.push({ name: 'project_instructions', loaded: false });
     }
   }
 
@@ -267,17 +270,4 @@ function injectLanguageInstruction(prompt: string, language?: string): string {
   const instruction = `IMPORTANT: Always respond in ${langName}. All your responses must be in ${langName}.`;
 
   return prompt.replace('{{LANGUAGE_INSTRUCTION}}', instruction);
-}
-
-/**
- * 加载项目 BLADE.md 配置
- */
-async function loadBladeConfig(projectPath: string): Promise<string | null> {
-  const bladePath = path.join(projectPath, 'BLADE.md');
-  try {
-    const content = await fs.readFile(bladePath, 'utf-8');
-    return content.trim() || null;
-  } catch {
-    return null;
-  }
 }

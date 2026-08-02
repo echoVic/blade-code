@@ -34,7 +34,8 @@ vi.mock('../../../../src/memory/AutoMemoryManager.js', () => ({
 }));
 
 // Mock environment
-vi.mock('../../../../src/utils/environment.js', () => ({
+vi.mock('../../../../src/utils/environment.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../src/utils/environment.js')>()),
   getEnvironmentContext: environmentContextMock,
 }));
 
