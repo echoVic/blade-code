@@ -221,7 +221,7 @@ export async function handlePrintMode(): Promise<boolean> {
       .scriptName('blade')
       .strict(false)
       .options(cliOptions)
-      .middleware([validatePermissions, loadConfiguration, validateOutput]);
+      .middleware([loadConfiguration, validatePermissions, validateOutput]);
 
     printCommand(cli);
 

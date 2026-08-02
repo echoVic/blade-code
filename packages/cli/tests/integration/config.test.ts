@@ -174,6 +174,31 @@ describe('ConfigManager 集成', () => {
     expect(config.theme).toBe('dark');
   });
 
+  it('显式 settings 层应覆盖文件设置并保留运行时字段', async () => {
+    const projectSettingsPath = path.join(tempProject, '.blade', 'settings.json');
+    mkdirSync(path.dirname(projectSettingsPath), { recursive: true });
+    writeFileSync(
+      projectSettingsPath,
+      JSON.stringify({
+        maxTurns: 3,
+        permissions: { allow: ['Read(project)'], ask: [], deny: [] },
+      })
+    );
+
+    const manager = ConfigManager.getInstance();
+    const config = await manager.initialize({
+      appendSystemPrompt: 'FLAG_SETTINGS_RULE',
+      maxTurns: 8,
+      permissions: { allow: ['Read(flag)'], ask: [], deny: [] },
+    });
+
+    expect(config.appendSystemPrompt).toBe('FLAG_SETTINGS_RULE');
+    expect(config.maxTurns).toBe(8);
+    expect(config.permissions.allow).toEqual(
+      expect.arrayContaining(['Read(project)', 'Read(flag)'])
+    );
+  });
+
   it('应维护 settings.local.json 并忽略重复记录', async () => {
     const manager = ConfigManager.getInstance();
     await manager.initialize();

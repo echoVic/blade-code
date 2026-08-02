@@ -892,7 +892,7 @@ export async function handleHeadlessMode(): Promise<boolean> {
     .scriptName('blade')
     .strict(false)
     .options(cliOptions)
-    .middleware([validatePermissions, loadConfiguration, validateOutput]);
+    .middleware([loadConfiguration, validatePermissions, validateOutput]);
 
   headlessCommand(cli);
   await cli.parse();

@@ -49,6 +49,7 @@ bun run qualify:production
 
 - 单文件缺陷修复：读取、编辑、运行测试并确认 diff 范围；
 - 多文件 API 迁移：修改所有生产调用方并运行类型检查和测试；
+- 临时 CLI 设置：从启动目录加载 `--settings` 文件，在代理转发首轮请求前删除该文件，验证隐藏系统指令已经进入模型上下文，并完成 Read/Edit/Bash、独立测试和 diff 校验；
 - 分层项目指令：从 Git 根到 CLI 启动目录按作用域注入 `CLAUDE.md`、`AGENTS.md` 和 `BLADE.md`，在 32 KiB 预算内优先保留深层规则；透明代理验证首轮模型请求中的来源、顺序和覆盖值，并在转发前移除规则文件，证明最终修改不依赖工具补读；
 - 瞬时 API 恢复：本地代理让首个模型请求返回 `503`，随后转发真实 API，CLI 必须在零输出边界内重试并完成代码修改与测试；
 - 计划模式恢复：跨两个 CLI 进程恢复会话并完成修改；
@@ -79,3 +80,5 @@ bun run qualify:production
 - 代码、文档和测试改动通过 `git diff --check`。
 
 真实 API 门禁会产生费用，因此不会被 `test:all` 或普通 CI 单元门禁隐式触发；发布候选、跨 provider 改动和 Agent runtime 核心改动必须显式运行。
+
+当前生产准出覆盖桌面 TUI、CLI/headless、Web 和 ACP。移动端没有明确使用场景，暂不纳入实现与测试范围。

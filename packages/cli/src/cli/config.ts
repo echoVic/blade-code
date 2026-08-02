@@ -146,7 +146,6 @@ export const globalOptions = {
     group: 'Session Options:',
   },
 
-  // TODO: 未实现 - 需要在 UI/Agent 中读取并使用
   settings: {
     type: 'string',
     describe: 'Path to a settings JSON file or JSON string',

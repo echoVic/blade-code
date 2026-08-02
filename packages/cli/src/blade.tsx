@@ -154,7 +154,7 @@ export async function main() {
     .options(globalOptions)
 
     // 应用中间件
-    .middleware([validatePermissions, loadConfiguration, validateOutput])
+    .middleware([loadConfiguration, validatePermissions, validateOutput])
 
     // 注册命令
     .command(mcpCommands)

@@ -62,7 +62,9 @@ export class ConfigManager {
    *
    * 注意：不保存状态，调用方需要将结果灌进 Store
    */
-  async initialize(): Promise<BladeConfig> {
+  async initialize(
+    additionalSettings?: Partial<RuntimeConfig>
+  ): Promise<RuntimeConfig> {
     try {
       // 1. 加载基础配置 (config.json)
       const baseConfig = await this.loadConfigFiles();
@@ -71,15 +73,18 @@ export class ConfigManager {
       const settingsConfig = await this.loadSettingsFiles();
 
       // 3. 合并为统一配置
-      const mergedConfig: Partial<BladeConfig> = {
+      let mergedConfig: Partial<RuntimeConfig> = {
         ...baseConfig,
         ...settingsConfig,
       };
+      if (additionalSettings) {
+        mergedConfig = this.mergeSettings(mergedConfig, additionalSettings);
+      }
       const normalized = this.normalizeConfig(mergedConfig);
-      const config: BladeConfig = {
+      const config: RuntimeConfig = {
         ...DEFAULT_CONFIG,
         ...normalized,
-      } as BladeConfig;
+      } as RuntimeConfig;
 
       // 4. 解析环境变量插值
       this.resolveEnvInterpolation(config);
@@ -207,39 +212,36 @@ export class ConfigManager {
    * - 其他字段直接覆盖
    */
   private mergeSettings(
-    base: Partial<BladeConfig>,
-    override: Partial<BladeConfig>
-  ): Partial<BladeConfig> {
-    // 使用深拷贝避免修改原对象
-    const result: Partial<BladeConfig> = JSON.parse(JSON.stringify(base));
+    base: Partial<RuntimeConfig>,
+    override: Partial<RuntimeConfig>
+  ): Partial<RuntimeConfig> {
+    const result: Partial<RuntimeConfig> = {
+      ...JSON.parse(JSON.stringify(base)),
+      ...JSON.parse(JSON.stringify(override)),
+    };
 
     // 合并 permissions (数组追加去重)
     if (override.permissions) {
-      if (!result.permissions) {
-        result.permissions = { allow: [], ask: [], deny: [] };
-      }
-
-      if (override.permissions.allow) {
-        const combined = [
-          ...(result.permissions.allow || []),
-          ...override.permissions.allow,
-        ];
-        result.permissions.allow = Array.from(new Set(combined));
-      }
-      if (override.permissions.ask) {
-        const combined = [
-          ...(result.permissions.ask || []),
-          ...override.permissions.ask,
-        ];
-        result.permissions.ask = Array.from(new Set(combined));
-      }
-      if (override.permissions.deny) {
-        const combined = [
-          ...(result.permissions.deny || []),
-          ...override.permissions.deny,
-        ];
-        result.permissions.deny = Array.from(new Set(combined));
-      }
+      result.permissions = {
+        allow: Array.from(
+          new Set([
+            ...(base.permissions?.allow || []),
+            ...(override.permissions.allow || []),
+          ])
+        ),
+        ask: Array.from(
+          new Set([
+            ...(base.permissions?.ask || []),
+            ...(override.permissions.ask || []),
+          ])
+        ),
+        deny: Array.from(
+          new Set([
+            ...(base.permissions?.deny || []),
+            ...(override.permissions.deny || []),
+          ])
+        ),
+      };
     }
 
     // 合并 hooks (对象深度合并，使用 lodash merge)
@@ -333,7 +335,7 @@ export class ConfigManager {
     }
   }
 
-  private normalizeConfig(config: Partial<BladeConfig>): Partial<BladeConfig> {
+  private normalizeConfig(config: Partial<RuntimeConfig>): Partial<RuntimeConfig> {
     const result = JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
 
     const clean = (s: string): string => s.trim().replace(/^`|`$/g, '');
@@ -357,7 +359,7 @@ export class ConfigManager {
     };
 
     walk(result);
-    return result as Partial<BladeConfig>;
+    return result as Partial<RuntimeConfig>;
   }
 
   /**

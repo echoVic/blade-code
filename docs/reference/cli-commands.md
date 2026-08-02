@@ -71,9 +71,12 @@ blade --debug "!chat,!loop"
 
 | 选项 | 说明 |
 |------|------|
+| `--settings <file-or-json>` | 为当前进程加载临时设置；显式 CLI 参数优先 |
 | `--system-prompt <prompt>` | 替换系统提示词 |
 | `--append-system-prompt <prompt>` | 追加系统提示词 |
 | `--max-turns <n>` | 对话轮次限制（-1: 无限, 0: 禁用, N: 限制） |
+
+`--settings` 支持文件路径和内联 JSON。文件路径相对于启动 Blade 时的工作目录解析；无效 JSON、未知字段和类型错误会导致启动失败。该选项适用于 CLI/TUI、print 和 headless，不会持久化配置。
 
 ### MCP 选项
 

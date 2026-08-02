@@ -10,6 +10,7 @@ const logger = createLogger(LogCategory.GENERAL);
  */
 
 import type { MiddlewareFunction } from 'yargs';
+import { applyCliSettingsToArguments, loadCliSettings } from './settings.js';
 
 /**
  * 权限验证中间件
@@ -63,10 +64,15 @@ export const validatePermissions: MiddlewareFunction = (argv) => {
  * 所有命令（包括 UI 模式）都会执行，负责初始化 ConfigManager 和 Store
  */
 export const loadConfiguration: MiddlewareFunction = async (argv) => {
+  const cliSettings = await loadCliSettings(
+    typeof argv.settings === 'string' ? argv.settings : undefined
+  );
+  applyCliSettingsToArguments(argv, cliSettings);
+
   // 1. 初始化 ConfigManager 和 Store（所有命令共用）
   try {
     const configManager = ConfigManager.getInstance();
-    const config = await configManager.initialize();
+    const config = await configManager.initialize(cliSettings);
     getState().config.actions.setConfig(config);
 
     if (argv.debug) {

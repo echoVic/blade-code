@@ -19,6 +19,22 @@ Blade 使用双文件配置体系：`config.json`（基础配置）和 `settings
 
 环境变量插值 > settings.local.json > 项目 settings.json > 用户 settings.json > 项目 config.json > 用户 config.json > 默认值
 
+### 临时 CLI 设置
+
+CLI、TUI、print 和 headless 模式支持通过 `--settings` 传入一个 JSON 文件或内联 JSON。该配置仅对当前进程生效，不会写入用户或项目配置：
+
+```bash
+# 文件路径相对于启动 Blade 时的工作目录解析
+blade --settings ./automation-settings.json
+
+# 也可以直接传入 JSON
+blade --settings '{"permissionMode":"autoEdit","maxTurns":8}'
+```
+
+`--settings` 位于用户、项目和 `settings.local.json` 之上的临时配置层。显式命令行参数仍然具有最高优先级，例如 `--yolo` 会覆盖设置中的 `permissionMode`，`--max-turns 12` 会覆盖设置中的 `maxTurns`。
+
+Blade 会在启动模型请求前校验临时设置。无效 JSON、未知字段或已知字段的错误类型都会直接终止启动，避免自动化任务在错误配置下继续运行。不要把 API key 作为内联 JSON 传入；密钥应继续通过受保护的环境变量或本地配置提供，以免进入 shell 历史和进程参数。
+
 ## 模型配置向导
 
 ### 80+ Provider 支持
