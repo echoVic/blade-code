@@ -96,6 +96,8 @@ export interface AcpCallbacks {
  */
 export interface SlashCommandContext {
   cwd: string;
+  /** 当前 Agent session，用于隔离 session-owned runtime resources */
+  sessionId?: string;
   /** 工作目录（可选，默认为 cwd） */
   workspaceRoot?: string;
   /** ACP 模式下的回调（可选） */

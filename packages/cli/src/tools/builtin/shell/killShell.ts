@@ -26,9 +26,11 @@ export const killShellTool = createTool({
 `,
   },
 
-  async execute(params, _context: ExecutionContext): Promise<ToolResult> {
+  async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const manager = BackgroundShellManager.getInstance();
-    const result = await manager.kill(params.shell_id);
+    const result = context.sessionId
+      ? await manager.kill(params.shell_id, context.sessionId)
+      : undefined;
 
     if (!result) {
       return {

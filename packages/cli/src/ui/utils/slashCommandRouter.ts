@@ -224,7 +224,8 @@ export async function processSlashCommand(
   resolved: ResolvedInput,
   appActions: AppActions,
   sessionActions: SessionActions,
-  signal: AbortSignal
+  signal: AbortSignal,
+  sessionId?: string
 ): Promise<SlashRouteResult> {
   const { text: command } = resolved;
 
@@ -234,6 +235,7 @@ export async function processSlashCommand(
 
   const slashContext: SlashCommandContext = {
     cwd: getCwd(),
+    sessionId,
     signal,
   };
 

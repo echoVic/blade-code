@@ -379,8 +379,12 @@ export class BackgroundAgentManager {
   /**
    * 获取 Agent 状态
    */
-  getAgent(agentId: string): AgentSession | undefined {
-    return this.sessionStore.loadSession(agentId);
+  getAgent(agentId: string, parentSessionId?: string): AgentSession | undefined {
+    const session = this.sessionStore.loadSession(agentId);
+    if (parentSessionId !== undefined && session?.parentSessionId !== parentSessionId) {
+      return undefined;
+    }
+    return session;
   }
 
   /**
@@ -398,13 +402,17 @@ export class BackgroundAgentManager {
    */
   async waitForCompletion(
     agentId: string,
-    timeout: number = 30000
+    timeout: number = 30000,
+    parentSessionId?: string
   ): Promise<AgentSession | undefined> {
+    if (parentSessionId !== undefined && !this.getAgent(agentId, parentSessionId)) {
+      return undefined;
+    }
     const runtime = this.runningAgents.get(agentId);
 
     if (!runtime) {
       // 不在运行中，直接返回会话
-      return this.sessionStore.loadSession(agentId);
+      return this.getAgent(agentId, parentSessionId);
     }
 
     // 等待执行完成或超时
@@ -417,7 +425,7 @@ export class BackgroundAgentManager {
 
       if (result === 'timeout') {
         // 返回当前状态（仍在运行）
-        return this.sessionStore.loadSession(agentId);
+        return this.getAgent(agentId, parentSessionId);
       }
     } else {
       // 无限等待
@@ -425,7 +433,7 @@ export class BackgroundAgentManager {
     }
 
     // 返回最终状态
-    return this.sessionStore.loadSession(agentId);
+    return this.getAgent(agentId, parentSessionId);
   }
 
   /**
@@ -446,6 +454,11 @@ export class BackgroundAgentManager {
 
     if (!session) {
       logger.warn(`Cannot resume agent ${agentId}: session not found`);
+      return undefined;
+    }
+
+    if (parentSessionId !== undefined && session.parentSessionId !== parentSessionId) {
+      logger.warn(`Cannot resume agent ${agentId}: parent session mismatch`);
       return undefined;
     }
 
@@ -504,6 +517,12 @@ export class BackgroundAgentManager {
     return this.sessionStore.listSessions();
   }
 
+  listForSession(parentSessionId: string): AgentSession[] {
+    return this.sessionStore
+      .listSessions()
+      .filter((session) => session.parentSessionId === parentSessionId);
+  }
+
   /**
    * 列出运行中的 Agent
    */
@@ -532,5 +551,19 @@ export class BackgroundAgentManager {
    */
   cleanupExpiredSessions(maxAgeMs?: number): number {
     return this.sessionStore.cleanupExpiredSessions(maxAgeMs);
+  }
+
+  cleanupExpiredSessionsForParent(
+    parentSessionId: string,
+    maxAgeMs: number = 7 * 24 * 60 * 60 * 1000
+  ): number {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const session of this.listForSession(parentSessionId)) {
+      if (session.status === 'running') continue;
+      if (now - session.lastActiveAt <= maxAgeMs) continue;
+      if (this.sessionStore.deleteSession(session.id)) cleaned++;
+    }
+    return cleaned;
   }
 }

@@ -50,6 +50,31 @@ describe('TaskOutput Tool', () => {
   });
 
   describe('shell output (bash_xxx)', () => {
+    it('拒绝读取其他 session 的 shell 输出', async () => {
+      mockShellManager.getProcess.mockImplementation(
+        (_taskId: string, sessionId?: string) =>
+          sessionId === 'session-owner'
+            ? { id: 'bash_private', status: 'running' }
+            : undefined
+      );
+
+      const result = await taskOutputTool.execute(
+        {
+          task_id: 'bash_private',
+          block: false,
+          timeout: 30000,
+        },
+        new AbortController().signal,
+        { sessionId: 'session-other' }
+      );
+
+      expect(result.success).toBe(false);
+      expect(mockShellManager.getProcess).toHaveBeenCalledWith(
+        'bash_private',
+        'session-other'
+      );
+    });
+
     it('应获取后台 shell 输出', async () => {
       mockShellManager.getProcess.mockReturnValue({
         id: 'bash_abc123',
@@ -124,6 +149,31 @@ describe('TaskOutput Tool', () => {
   });
 
   describe('agent output (agent_xxx)', () => {
+    it('拒绝读取其他 parent session 的 agent 输出', async () => {
+      mockAgentManager.getAgent.mockImplementation(
+        (_taskId: string, parentSessionId?: string) =>
+          parentSessionId === 'parent-owner'
+            ? { id: 'agent_private', status: 'completed' }
+            : undefined
+      );
+
+      const result = await taskOutputTool.execute(
+        {
+          task_id: 'agent_private',
+          block: false,
+          timeout: 30000,
+        },
+        new AbortController().signal,
+        { sessionId: 'parent-other' }
+      );
+
+      expect(result.success).toBe(false);
+      expect(mockAgentManager.getAgent).toHaveBeenCalledWith(
+        'agent_private',
+        'parent-other'
+      );
+    });
+
     it('应获取后台 agent 输出', async () => {
       const mockSession = {
         id: 'agent_xyz789',
@@ -193,16 +243,21 @@ describe('TaskOutput Tool', () => {
       mockAgentManager.getAgent.mockReturnValue(runningSession);
       mockAgentManager.waitForCompletion.mockResolvedValue(completedSession);
 
-      const result = await taskOutputTool.execute({
-        task_id: 'agent_wait',
-        block: true,
-        timeout: 5000,
-      });
+      const result = await taskOutputTool.execute(
+        {
+          task_id: 'agent_wait',
+          block: true,
+          timeout: 5000,
+        },
+        new AbortController().signal,
+        { sessionId: 'parent-wait' }
+      );
 
       expect(result.success).toBe(true);
       expect(mockAgentManager.waitForCompletion).toHaveBeenCalledWith(
         'agent_wait',
-        5000
+        5000,
+        'parent-wait'
       );
     });
   });

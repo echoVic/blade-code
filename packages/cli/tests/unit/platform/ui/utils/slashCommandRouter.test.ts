@@ -91,6 +91,25 @@ describe('processSlashCommand', () => {
     });
   });
 
+  describe('session context', () => {
+    it('应将当前 session ID 传给 slash command handler', async () => {
+      executeSlashCommand.mockResolvedValue({ success: true });
+
+      await processSlashCommand(
+        createResolvedInput('/tasks'),
+        createMockAppActions(),
+        createMockSessionActions(),
+        new AbortController().signal,
+        'session-owner'
+      );
+
+      expect(executeSlashCommand).toHaveBeenCalledWith(
+        '/tasks',
+        expect.objectContaining({ sessionId: 'session-owner' })
+      );
+    });
+  });
+
   // ==================== 场景 1: invoke_custom_command ====================
 
   describe('/custom-cmd — UI 显示原始命令，Agent 收到展开后的 prompt', () => {

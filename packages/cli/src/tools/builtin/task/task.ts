@@ -554,6 +554,18 @@ function handleBackgroundExecution(
   subagentSessionId: string,
   isolation: SubagentIsolationMode
 ): ToolResult {
+  if (!context.sessionId) {
+    return {
+      success: false,
+      llmContent: 'Background agents require an active parent session',
+      error: {
+        type: ToolErrorType.VALIDATION_ERROR,
+        message: '后台 Agent 缺少 parent session 上下文',
+      },
+      metadata: { summary: '后台 Agent 启动失败: 缺少 parent session' },
+    };
+  }
+
   const manager = BackgroundAgentManager.getInstance();
 
   // 启动后台 agent
@@ -607,7 +619,7 @@ function handleResume(
   const manager = BackgroundAgentManager.getInstance();
 
   // 检查会话是否存在
-  const session = manager.getAgent(agentId);
+  const session = manager.getAgent(agentId, context.sessionId ?? '');
   if (!session) {
     return {
       success: false,

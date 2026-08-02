@@ -155,7 +155,8 @@ export const useCommandHandler = (
           resolved,
           appActions,
           sessionActions,
-          abortController.signal
+          abortController.signal,
+          sessionId
         );
 
         if (slashResult.type === 'handled') {

@@ -177,7 +177,7 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
     });
     const descendantPid = await fixture.readDescendantPid();
 
-    const result = await manager.kill(shell.id);
+    const result = await manager.kill(shell.id, 'process-tree-test');
 
     expect(result).toMatchObject({ success: true, alreadyExited: false });
     await expectTreeTerminated(fixture.cleanupMarker, descendantPid);

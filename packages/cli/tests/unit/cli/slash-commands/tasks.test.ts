@@ -21,7 +21,7 @@ vi.mock('../../../../src/slash-commands/types.js', async () => {
 
 // Mock BackgroundShellManager
 const mockShellManager = {
-  processes: new Map(),
+  listForSession: vi.fn(),
   kill: vi.fn(),
 };
 
@@ -33,10 +33,9 @@ vi.mock('../../../../src/tools/builtin/shell/BackgroundShellManager.js', () => (
 
 // Mock BackgroundAgentManager
 const mockAgentManager = {
-  listAll: vi.fn(),
-  getRunningCount: vi.fn(),
+  listForSession: vi.fn(),
   killAgent: vi.fn(),
-  cleanupExpiredSessions: vi.fn(),
+  cleanupExpiredSessionsForParent: vi.fn(),
 };
 
 vi.mock('../../../../src/agent/subagents/BackgroundAgentManager.js', () => ({
@@ -51,13 +50,13 @@ import type { SlashCommandContext } from '../../../../src/slash-commands/types.j
 describe('/tasks Command', () => {
   const mockContext: SlashCommandContext = {
     cwd: '/test/project',
+    sessionId: 'session-owner',
   };
 
   beforeEach(() => {
     vi.resetAllMocks();
-    mockShellManager.processes.clear();
-    mockAgentManager.listAll.mockReturnValue([]);
-    mockAgentManager.getRunningCount.mockReturnValue(0);
+    mockShellManager.listForSession.mockReturnValue([]);
+    mockAgentManager.listForSession.mockReturnValue([]);
   });
 
   describe('command metadata', () => {
@@ -68,6 +67,13 @@ describe('/tasks Command', () => {
   });
 
   describe('list tasks (default)', () => {
+    it('只请求当前 session 的后台任务', async () => {
+      await tasksCommand.handler([], mockContext);
+
+      expect(mockShellManager.listForSession).toHaveBeenCalledWith('session-owner');
+      expect(mockAgentManager.listForSession).toHaveBeenCalledWith('session-owner');
+    });
+
     it('无任务时应显示空列表', async () => {
       const result = await tasksCommand.handler([], mockContext);
 
@@ -79,13 +85,15 @@ describe('/tasks Command', () => {
     });
 
     it('应列出后台 shells', async () => {
-      mockShellManager.processes.set('bash_abc123', {
-        id: 'bash_abc123',
-        command: 'npm test',
-        status: 'running',
-        startTime: Date.now() - 5000,
-        pid: 12345,
-      });
+      mockShellManager.listForSession.mockReturnValue([
+        {
+          id: 'bash_abc123',
+          command: 'npm test',
+          status: 'running',
+          startTime: Date.now() - 5000,
+          pid: 12345,
+        },
+      ]);
 
       const result = await tasksCommand.handler([], mockContext);
 
@@ -98,7 +106,7 @@ describe('/tasks Command', () => {
     });
 
     it('应列出后台 agents', async () => {
-      mockAgentManager.listAll.mockReturnValue([
+      mockAgentManager.listForSession.mockReturnValue([
         {
           id: 'agent_xyz789',
           subagentType: 'Explore',
@@ -115,8 +123,6 @@ describe('/tasks Command', () => {
           createdAt: Date.now() - 3000,
         },
       ]);
-      mockAgentManager.getRunningCount.mockReturnValue(1);
-
       const result = await tasksCommand.handler([], mockContext);
 
       expect(result.success).toBe(true);
@@ -130,21 +136,23 @@ describe('/tasks Command', () => {
     });
 
     it('应显示统计信息', async () => {
-      mockShellManager.processes.set('bash_1', {
-        id: 'bash_1',
-        command: 'sleep 100',
-        status: 'running',
-        startTime: Date.now(),
-      });
-      mockShellManager.processes.set('bash_2', {
-        id: 'bash_2',
-        command: 'echo done',
-        status: 'exited',
-        startTime: Date.now() - 1000,
-        endTime: Date.now(),
-      });
+      mockShellManager.listForSession.mockReturnValue([
+        {
+          id: 'bash_1',
+          command: 'sleep 100',
+          status: 'running',
+          startTime: Date.now(),
+        },
+        {
+          id: 'bash_2',
+          command: 'echo done',
+          status: 'exited',
+          startTime: Date.now() - 1000,
+          endTime: Date.now(),
+        },
+      ]);
 
-      mockAgentManager.listAll.mockReturnValue([
+      mockAgentManager.listForSession.mockReturnValue([
         {
           id: 'agent_1',
           status: 'completed',
@@ -153,8 +161,6 @@ describe('/tasks Command', () => {
           description: 'Test',
         },
       ]);
-      mockAgentManager.getRunningCount.mockReturnValue(0);
-
       await tasksCommand.handler([], mockContext);
 
       const message = mockSendMessage.mock.calls[0][0];
@@ -178,12 +184,15 @@ describe('/tasks Command', () => {
 
   describe('clean subcommand', () => {
     it('应清理已完成的 agent 会话', async () => {
-      mockAgentManager.cleanupExpiredSessions.mockReturnValue(5);
+      mockAgentManager.cleanupExpiredSessionsForParent.mockReturnValue(5);
 
       const result = await tasksCommand.handler(['clean'], mockContext);
 
       expect(result.success).toBe(true);
-      expect(mockAgentManager.cleanupExpiredSessions).toHaveBeenCalledWith(0);
+      expect(mockAgentManager.cleanupExpiredSessionsForParent).toHaveBeenCalledWith(
+        'session-owner',
+        0
+      );
       const message = mockSendMessage.mock.calls[0][0];
       expect(message).toContain('已清理 5 个');
     });
@@ -191,7 +200,7 @@ describe('/tasks Command', () => {
 
   describe('status icons', () => {
     it('running 应显示 [RUNNING]', async () => {
-      mockAgentManager.listAll.mockReturnValue([
+      mockAgentManager.listForSession.mockReturnValue([
         {
           id: 'agent_running',
           subagentType: 'Explore',
@@ -208,7 +217,7 @@ describe('/tasks Command', () => {
     });
 
     it('completed 应显示 [OK]', async () => {
-      mockAgentManager.listAll.mockReturnValue([
+      mockAgentManager.listForSession.mockReturnValue([
         {
           id: 'agent_done',
           subagentType: 'Explore',
@@ -226,7 +235,7 @@ describe('/tasks Command', () => {
     });
 
     it('failed 应显示 [FAIL]', async () => {
-      mockAgentManager.listAll.mockReturnValue([
+      mockAgentManager.listForSession.mockReturnValue([
         {
           id: 'agent_failed',
           subagentType: 'Explore',
@@ -244,7 +253,7 @@ describe('/tasks Command', () => {
     });
 
     it('cancelled 应显示 [STOPPED]', async () => {
-      mockAgentManager.listAll.mockReturnValue([
+      mockAgentManager.listForSession.mockReturnValue([
         {
           id: 'agent_cancelled',
           subagentType: 'Explore',

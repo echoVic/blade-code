@@ -390,6 +390,17 @@ function createTimeoutRecoveryPrompt(): string {
   ].join('\n');
 }
 
+function createBackgroundExitCleanupPrompt(): string {
+  return [
+    'Perform a background-process ownership audit in this repository.',
+    'Call Bash exactly once with the exact command "node scripts/hang.mjs" and set run_in_background to true.',
+    'The successful background Bash result is expected; do not call TaskOutput or KillShell.',
+    'After that Bash result, use the Write tool to create background-started.txt containing exactly the single line "background-started".',
+    'Do not read or modify scripts/hang.mjs, package.json, or any other file.',
+    'Finish immediately after the Write succeeds so the CLI session can reclaim its owned background process tree.',
+  ].join('\n');
+}
+
 const enabled = isRealApiTestEnabled() && apiKey.length > 0;
 
 describe.skipIf(!enabled)('Blade coding task (real API)', () => {
@@ -524,13 +535,16 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
           maxTurns: 16,
         });
         const parsed = parseHeadlessJsonl(result.stdout);
-        const editTargets = parsed.events.flatMap((event) =>
-          event.type === 'tool_start' && event.tool_name === 'Edit'
+        const mutationTargets = parsed.events.flatMap((event) =>
+          event.type === 'tool_start' &&
+          (event.tool_name === 'Edit' || event.tool_name === 'Write')
             ? [event.target]
             : []
         );
-        const bashStarts = parsed.events.filter(
-          (event) => event.type === 'tool_start' && event.tool_name === 'Bash'
+        const bashTargets = parsed.events.flatMap((event) =>
+          event.type === 'tool_start' && event.tool_name === 'Bash'
+            ? [event.target ?? '']
+            : []
         );
         const diffNames = execFileSync('git', ['diff', '--name-only'], {
           cwd: workspace,
@@ -544,13 +558,16 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
         expect(parsed.nonJsonLines).toEqual([]);
         expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
-        expect(editTargets.some((target) => target?.endsWith('src/discount.js'))).toBe(
-          true
-        );
-        expect(editTargets.some((target) => target?.endsWith('src/checkout.js'))).toBe(
-          true
-        );
-        expect(bashStarts.length).toBeGreaterThanOrEqual(2);
+        expect(
+          mutationTargets.some((target) => target?.endsWith('src/discount.js'))
+        ).toBe(true);
+        expect(
+          mutationTargets.some((target) => target?.endsWith('src/checkout.js'))
+        ).toBe(true);
+        expect(
+          bashTargets.some((target) => target.includes('npm run type-check'))
+        ).toBe(true);
+        expect(bashTargets.some((target) => target.includes('npm test'))).toBe(true);
         expect(diffNames).toEqual(['src/checkout.js', 'src/discount.js']);
         expect(
           readFileSync(path.join(workspace, 'src', 'discount.js'), 'utf8')
@@ -697,6 +714,73 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         );
         expect(readFileSync(path.join(workspace, 'recovery.txt'), 'utf8')).toMatch(
           /^recovered\r?\n?$/
+        );
+        descendantPid = Number.parseInt(
+          readFileSync(path.join(workspace, 'descendant.pid'), 'utf8'),
+          10
+        );
+        expect(await waitForProcessGone(descendantPid)).toBe(true);
+        descendantPid = undefined;
+        expect(result.stdout + '\n' + result.stderr).not.toContain(apiKey);
+      } finally {
+        if (descendantPid !== undefined) {
+          try {
+            process.kill(descendantPid, 'SIGKILL');
+          } catch {
+            // The process tree was already reclaimed.
+          }
+        }
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 300_000);
+
+    it('reclaims a session-owned background process tree when the CLI exits', async () => {
+      if (process.platform === 'win32') return;
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          'Missing built CLI; run "bun run build:cli" before real API tests'
+        );
+      }
+
+      const workspace = createTimeoutRecoveryWorkspace();
+      const home = mkdtempSync(
+        path.join(os.tmpdir(), 'blade-real-api-background-exit-home-')
+      );
+      let descendantPid: number | undefined;
+
+      try {
+        const result = await runBladeInvocation(workspace, home, model, {
+          prompt: createBackgroundExitCleanupPrompt(),
+          maxTurns: 6,
+        });
+        const parsed = parseHeadlessJsonl(result.stdout);
+        const backgroundResult = parsed.events.findIndex(
+          (event) =>
+            event.type === 'tool_result' &&
+            event.tool_name === 'Bash' &&
+            event.target === 'node scripts/hang.mjs' &&
+            event.success === true
+        );
+        const markerWriteResult = parsed.events.findIndex(
+          (event) =>
+            event.type === 'tool_result' &&
+            event.tool_name === 'Write' &&
+            event.target?.endsWith('background-started.txt') &&
+            event.success === true
+        );
+
+        expect(result.error).toBeUndefined();
+        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(parsed.nonJsonLines).toEqual([]);
+        expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
+        expect(backgroundResult).toBeGreaterThanOrEqual(0);
+        expect(markerWriteResult).toBeGreaterThanOrEqual(0);
+        expect(
+          readFileSync(path.join(workspace, 'background-started.txt'), 'utf8')
+        ).toMatch(/^background-started\r?\n?$/);
+        expect(readFileSync(path.join(workspace, 'cleanup.marker'), 'utf8')).toBe(
+          'cleaned'
         );
         descendantPid = Number.parseInt(
           readFileSync(path.join(workspace, 'descendant.pid'), 'utf8'),

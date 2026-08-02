@@ -177,6 +177,7 @@ describe('Bash workspace-write sandbox integration', () => {
         run_in_background: true,
       })
       .execute(new AbortController().signal, undefined, {
+        sessionId: 'workspace-sandbox-background',
         workspaceRoot,
         worktreeActive: true,
         permissionMode: PermissionMode.YOLO,
@@ -188,10 +189,13 @@ describe('Bash workspace-write sandbox integration', () => {
     const manager = BackgroundShellManager.getInstance();
 
     for (let attempt = 0; attempt < 100; attempt++) {
-      if (manager.getProcess(taskId)?.status !== 'running') break;
+      if (
+        manager.getProcess(taskId, 'workspace-sandbox-background')?.status !== 'running'
+      )
+        break;
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
     }
-    const output = manager.consumeOutput(taskId);
+    const output = manager.consumeOutput(taskId, 'workspace-sandbox-background');
 
     expect(started.success).toBe(true);
     expect(started.metadata?.sandboxed).toBe(true);

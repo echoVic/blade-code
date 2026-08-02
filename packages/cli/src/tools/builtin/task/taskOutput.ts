@@ -73,21 +73,22 @@ export const taskOutputTool = createTool({
     ],
   },
 
-  async execute(params, _context: ExecutionContext): Promise<ToolResult> {
+  async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const { task_id, block, timeout } = params;
+    const sessionId = context.sessionId ?? '';
 
     // 根据 task_id 前缀判断类型
     if (task_id.startsWith('bash_')) {
-      return handleShellOutput(task_id, block, timeout);
+      return handleShellOutput(task_id, block, timeout, sessionId);
     }
     const shellManager = BackgroundShellManager.getInstance();
     const agentManager = BackgroundAgentManager.getInstance();
 
-    if (shellManager.getProcess(task_id)) {
-      return handleShellOutput(task_id, block, timeout);
+    if (shellManager.getProcess(task_id, sessionId)) {
+      return handleShellOutput(task_id, block, timeout, sessionId);
     }
-    if (agentManager.getAgent(task_id)) {
-      return handleAgentOutput(task_id, block, timeout);
+    if (agentManager.getAgent(task_id, sessionId)) {
+      return handleAgentOutput(task_id, block, timeout, sessionId);
     }
 
     return {
@@ -117,12 +118,13 @@ export const taskOutputTool = createTool({
 async function handleShellOutput(
   taskId: string,
   block: boolean,
-  timeout: number
+  timeout: number,
+  sessionId: string
 ): Promise<ToolResult> {
   const manager = BackgroundShellManager.getInstance();
 
   // 获取进程信息
-  const processInfo = manager.getProcess(taskId);
+  const processInfo = manager.getProcess(taskId, sessionId);
   if (!processInfo) {
     return {
       success: false,
@@ -140,11 +142,11 @@ async function handleShellOutput(
   // 如果需要阻塞等待且进程仍在运行
   if (block && processInfo.status === 'running') {
     // 等待进程完成或超时
-    await waitForShellCompletion(taskId, timeout);
+    await waitForShellCompletion(taskId, timeout, sessionId);
   }
 
   // 获取输出
-  const snapshot = manager.consumeOutput(taskId);
+  const snapshot = manager.consumeOutput(taskId, sessionId);
   if (!snapshot) {
     return {
       success: false,
@@ -192,12 +194,13 @@ async function handleShellOutput(
 async function handleAgentOutput(
   taskId: string,
   block: boolean,
-  timeout: number
+  timeout: number,
+  parentSessionId: string
 ): Promise<ToolResult> {
   const manager = BackgroundAgentManager.getInstance();
 
   // 获取会话信息
-  let session = manager.getAgent(taskId);
+  let session = manager.getAgent(taskId, parentSessionId);
   if (!session) {
     return {
       success: false,
@@ -214,7 +217,7 @@ async function handleAgentOutput(
 
   // 如果需要阻塞等待且 agent 仍在运行
   if (block && session.status === 'running') {
-    session = await manager.waitForCompletion(taskId, timeout);
+    session = await manager.waitForCompletion(taskId, timeout, parentSessionId);
     if (!session) {
       return {
         success: false,
@@ -275,13 +278,17 @@ async function handleAgentOutput(
 /**
  * 等待 Shell 完成
  */
-async function waitForShellCompletion(taskId: string, timeout: number): Promise<void> {
+async function waitForShellCompletion(
+  taskId: string,
+  timeout: number,
+  sessionId: string
+): Promise<void> {
   const manager = BackgroundShellManager.getInstance();
   const startTime = Date.now();
 
   return new Promise((resolve) => {
     const checkInterval = setInterval(() => {
-      const processInfo = manager.getProcess(taskId);
+      const processInfo = manager.getProcess(taskId, sessionId);
 
       // 进程不存在或已完成
       if (!processInfo || processInfo.status !== 'running') {

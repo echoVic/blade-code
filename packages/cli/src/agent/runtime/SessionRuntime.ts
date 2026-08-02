@@ -27,6 +27,7 @@ import {
   getThinkingModeEnabled,
 } from '../../store/vanilla.js';
 import { getBuiltinTools } from '../../tools/builtin/index.js';
+import { BackgroundShellManager } from '../../tools/builtin/shell/BackgroundShellManager.js';
 import { InMemorySessionApprovalStore } from '../../tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
@@ -201,6 +202,7 @@ export class SessionRuntime {
   }
 
   async dispose(): Promise<void> {
+    await BackgroundShellManager.getInstance().killSession(this.sessionId);
     this.approvalStore.clear();
     worktreeManager.releaseSession(this.sessionId);
     const disposableChatService = this.chatService as

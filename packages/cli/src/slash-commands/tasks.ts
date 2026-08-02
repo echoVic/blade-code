@@ -13,16 +13,6 @@ import {
   type SlashCommandResult,
 } from './types.js';
 
-// 列出 shells
-type ShellRow = {
-  id: string;
-  command: string;
-  status: string;
-  startTime: number;
-  endTime?: number;
-  pid?: number;
-};
-
 /**
  * 格式化时间差
  */
@@ -84,10 +74,11 @@ async function tasksHandler(
   // 获取后台 shells
   const shellManager = BackgroundShellManager.getInstance();
   const agentManager = BackgroundAgentManager.getInstance();
+  const sessionId = context.sessionId ?? '';
 
   // 子命令：clean（清理已完成的任务）
   if (subcommand === 'clean') {
-    const cleaned = agentManager.cleanupExpiredSessions(0); // 清理所有已完成
+    const cleaned = agentManager.cleanupExpiredSessionsForParent(sessionId, 0);
     ui.sendMessage(`已清理 ${cleaned} 个已完成的 Agent 会话`);
     return { success: true, message: `Cleaned ${cleaned} agent sessions` };
   }
@@ -95,10 +86,7 @@ async function tasksHandler(
   // 默认：列出所有任务
   const output: string[] = ['**后台任务列表**\n'];
 
-  const shellProcesses = (
-    shellManager as unknown as { processes?: Map<string, ShellRow> }
-  ).processes;
-  const shells = Array.from(shellProcesses?.values() || []);
+  const shells = shellManager.listForSession(sessionId);
 
   if (shells.length > 0) {
     output.push('### Shells\n');
@@ -119,7 +107,7 @@ async function tasksHandler(
   }
 
   // 列出 agents
-  const agents = agentManager.listAll();
+  const agents = agentManager.listForSession(sessionId);
 
   if (agents.length > 0) {
     output.push('### Agents\n');
@@ -141,7 +129,7 @@ async function tasksHandler(
 
   // 统计信息
   const runningShells = shells.filter((s) => s.status === 'running').length;
-  const runningAgents = agentManager.getRunningCount();
+  const runningAgents = agents.filter((agent) => agent.status === 'running').length;
 
   if (shells.length === 0 && agents.length === 0) {
     output.push('*暂无后台任务*\n');

@@ -211,7 +211,9 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
         block: true,
         timeout: 300_000,
       })
-      .execute(new AbortController().signal);
+      .execute(new AbortController().signal, undefined, {
+        sessionId: 'parent-background-worktree-eval',
+      });
 
     expect(firstOutput.success).toBe(true);
     expect(firstOutput.metadata?.status).toBe('completed');
@@ -248,7 +250,9 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
         block: true,
         timeout: 300_000,
       })
-      .execute(new AbortController().signal);
+      .execute(new AbortController().signal, undefined, {
+        sessionId: 'parent-background-worktree-eval',
+      });
 
     expect(resumedOutput.success).toBe(true);
     expect(resumedOutput.metadata?.status).toBe('completed');

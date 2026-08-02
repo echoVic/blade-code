@@ -20,7 +20,7 @@ interface StartOptions {
   sandboxedCommand?: SandboxedCommand;
 }
 
-interface BackgroundShellProcess {
+export interface BackgroundShellProcess {
   id: string;
   command: string;
   sessionId: string;
@@ -159,8 +159,8 @@ export class BackgroundShellManager {
     return processInfo;
   }
 
-  consumeOutput(shellId: string): ShellOutputSnapshot | undefined {
-    const processInfo = this.processes.get(shellId);
+  consumeOutput(shellId: string, sessionId: string): ShellOutputSnapshot | undefined {
+    const processInfo = this.getProcess(shellId, sessionId);
     if (!processInfo) {
       return undefined;
     }
@@ -186,16 +186,39 @@ export class BackgroundShellManager {
     return snapshot;
   }
 
-  getProcess(shellId: string): BackgroundShellProcess | undefined {
-    return this.processes.get(shellId);
+  getProcess(shellId: string, sessionId: string): BackgroundShellProcess | undefined {
+    const processInfo = this.processes.get(shellId);
+    return processInfo?.sessionId === sessionId ? processInfo : undefined;
   }
 
-  async kill(shellId: string): Promise<KillResult | undefined> {
-    const processInfo = this.processes.get(shellId);
+  listForSession(sessionId: string): BackgroundShellProcess[] {
+    return Array.from(this.processes.values()).filter(
+      (processInfo) => processInfo.sessionId === sessionId
+    );
+  }
+
+  async kill(shellId: string, sessionId: string): Promise<KillResult | undefined> {
+    const processInfo = this.getProcess(shellId, sessionId);
     if (!processInfo) {
       return undefined;
     }
 
+    return this.terminateProcess(processInfo);
+  }
+
+  async killSession(sessionId: string): Promise<void> {
+    const ownedProcesses = this.listForSession(sessionId);
+    await Promise.all(
+      ownedProcesses.map((processInfo) => this.terminateProcess(processInfo))
+    );
+    for (const processInfo of ownedProcesses) {
+      this.processes.delete(processInfo.id);
+    }
+  }
+
+  private async terminateProcess(
+    processInfo: BackgroundShellProcess
+  ): Promise<KillResult> {
     if (processInfo.status !== 'running' || !processInfo.process) {
       return {
         success: false,
@@ -238,10 +261,11 @@ export class BackgroundShellManager {
    * 在应用退出时调用
    */
   async killAll(): Promise<void> {
-    const runningShellIds = Array.from(this.processes.values())
-      .filter((processInfo) => processInfo.status === 'running')
-      .map((processInfo) => processInfo.id);
-    await Promise.all(runningShellIds.map((shellId) => this.kill(shellId)));
+    await Promise.all(
+      Array.from(this.processes.values()).map((processInfo) =>
+        this.terminateProcess(processInfo)
+      )
+    );
     this.processes.clear();
   }
 }

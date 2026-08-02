@@ -117,6 +117,7 @@ describe('BackgroundAgentManager', () => {
       listSessions: vi.fn().mockReturnValue([]),
       listRunningSessions: vi.fn().mockReturnValue([]),
       cleanupExpiredSessions: vi.fn().mockReturnValue(0),
+      deleteSession: vi.fn().mockReturnValue(true),
     };
     vi.mocked(AgentSessionStore.getInstance).mockReturnValue(mockSessionStore as any);
 
@@ -342,6 +343,18 @@ describe('BackgroundAgentManager', () => {
       expect(agent).toEqual(mockSession);
       expect(mockStore.loadSession).toHaveBeenCalledWith('agent_123');
     });
+
+    it('不向其他 parent session 暴露 agent', () => {
+      const mockStore = AgentSessionStore.getInstance();
+      vi.mocked(mockStore.loadSession).mockReturnValue({
+        id: 'agent_private',
+        parentSessionId: 'parent-owner',
+        status: 'completed',
+      } as any);
+
+      expect(manager.getAgent('agent_private', 'parent-owner')).toBeDefined();
+      expect(manager.getAgent('agent_private', 'parent-other')).toBeUndefined();
+    });
   });
 
   describe('killAgent', () => {
@@ -396,6 +409,26 @@ describe('BackgroundAgentManager', () => {
 
       expect(result).toBeUndefined();
     });
+
+    it('其他 parent session 不能恢复 agent', () => {
+      const mockStore = AgentSessionStore.getInstance();
+      vi.mocked(mockStore.loadSession).mockReturnValue({
+        id: 'agent_private',
+        parentSessionId: 'parent-owner',
+        status: 'completed',
+        description: 'Private task',
+        messages: [],
+      } as any);
+
+      const result = manager.resumeAgent(
+        'agent_private',
+        'Continue',
+        { name: 'Explore', description: 'Test' },
+        'parent-other'
+      );
+
+      expect(result).toBeUndefined();
+    });
   });
 
   describe('listAll / listRunning', () => {
@@ -410,6 +443,46 @@ describe('BackgroundAgentManager', () => {
       const all = manager.listAll();
 
       expect(all).toEqual(mockSessions);
+    });
+
+    it('只列出指定 parent session 的 agent', () => {
+      const mockStore = AgentSessionStore.getInstance();
+      vi.mocked(mockStore.listSessions).mockReturnValue([
+        { id: 'agent_a', parentSessionId: 'parent-a' },
+        { id: 'agent_b', parentSessionId: 'parent-b' },
+      ] as any);
+
+      expect(manager.listForSession('parent-a')).toEqual([
+        expect.objectContaining({ id: 'agent_a' }),
+      ]);
+    });
+
+    it('只清理指定 parent session 中已结束的 agent', () => {
+      const mockStore = AgentSessionStore.getInstance();
+      vi.mocked(mockStore.listSessions).mockReturnValue([
+        {
+          id: 'agent_completed_a',
+          parentSessionId: 'parent-a',
+          status: 'completed',
+          lastActiveAt: 0,
+        },
+        {
+          id: 'agent_running_a',
+          parentSessionId: 'parent-a',
+          status: 'running',
+          lastActiveAt: 0,
+        },
+        {
+          id: 'agent_completed_b',
+          parentSessionId: 'parent-b',
+          status: 'completed',
+          lastActiveAt: 0,
+        },
+      ] as any);
+
+      expect(manager.cleanupExpiredSessionsForParent('parent-a', 0)).toBe(1);
+      expect(mockStore.deleteSession).toHaveBeenCalledTimes(1);
+      expect(mockStore.deleteSession).toHaveBeenCalledWith('agent_completed_a');
     });
   });
 });

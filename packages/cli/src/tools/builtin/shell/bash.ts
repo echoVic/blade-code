@@ -1,5 +1,4 @@
 import { isAbsolute, resolve } from 'node:path';
-import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { getCwd } from '../../../utils/cwd.js';
@@ -195,7 +194,13 @@ Before executing commands:
         : undefined;
 
       if (run_in_background) {
-        return executeInBackground(command, effectiveCwd, env, sandboxedCommand);
+        return executeInBackground(
+          command,
+          effectiveCwd,
+          env,
+          context.sessionId,
+          sandboxedCommand
+        );
       }
 
       // 检查是否在 ACP 模式下运行
@@ -339,12 +344,26 @@ function executeInBackground(
   command: string,
   cwd?: string,
   env?: Record<string, string>,
+  sessionId?: string,
   sandboxedCommand?: SandboxedCommand
 ): ToolResult {
+  if (!sessionId) {
+    sandboxedCommand?.cleanup();
+    return {
+      success: false,
+      llmContent: 'Background Bash requires an active session',
+      error: {
+        type: ToolErrorType.VALIDATION_ERROR,
+        message: '后台命令缺少 session 上下文',
+      },
+      metadata: { summary: '后台命令启动失败: 缺少 session' },
+    };
+  }
+
   const manager = BackgroundShellManager.getInstance();
   const backgroundProcess = manager.startBackgroundProcess({
     command,
-    sessionId: randomUUID(), // 每个后台进程使用唯一 ID
+    sessionId,
     cwd: cwd || getCwd(),
     env,
     sandboxedCommand,
