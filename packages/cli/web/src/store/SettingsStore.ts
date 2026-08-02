@@ -1,30 +1,32 @@
-import type { GeneralSettings, UiTheme } from '@api/schemas'
-import { create } from 'zustand'
+import type { GeneralSettings, UiTheme } from '@api/schemas';
+import { create } from 'zustand';
 
 interface SettingsState extends GeneralSettings {
-  isLoading: boolean
-  error: string | null
-  loadSettings: () => Promise<void>
-  updateSettings: (updates: Partial<GeneralSettings>) => Promise<void>
+  isLoading: boolean;
+  error: string | null;
+  loadSettings: () => Promise<void>;
+  updateSettings: (updates: Partial<GeneralSettings>) => Promise<void>;
 }
 
 const getIsDark = (uiTheme: UiTheme): boolean => {
   if (uiTheme === 'system') {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
-  return uiTheme === 'dark'
-}
+  return uiTheme === 'dark';
+};
 
 const applyThemeToDOM = (uiTheme: UiTheme) => {
-  const root = document.documentElement
-  root.classList.remove('light', 'dark')
+  const root = document.documentElement;
+  root.classList.remove('light', 'dark');
   if (uiTheme === 'system') {
-    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-    root.classList.add(systemTheme)
+    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light';
+    root.classList.add(systemTheme);
   } else {
-    root.classList.add(uiTheme)
+    root.classList.add(uiTheme);
   }
-}
+};
 
 const DEFAULT_SETTINGS: GeneralSettings = {
   language: 'zh-CN',
@@ -36,7 +38,7 @@ const DEFAULT_SETTINGS: GeneralSettings = {
   notifySounds: false,
   privacyTelemetry: false,
   privacyCrash: true,
-}
+};
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   ...DEFAULT_SETTINGS,
@@ -44,13 +46,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   error: null,
 
   loadSettings: async () => {
-    set({ isLoading: true, error: null })
+    set({ isLoading: true, error: null });
     try {
-      const response = await fetch('/configs')
-      if (!response.ok) throw new Error('Failed to load settings')
-      const config = await response.json()
-      
-      const newUiTheme = config.uiTheme ?? DEFAULT_SETTINGS.uiTheme
+      const response = await fetch('/configs');
+      if (!response.ok) throw new Error('Failed to load settings');
+      const config = await response.json();
+
+      const newUiTheme = config.uiTheme ?? DEFAULT_SETTINGS.uiTheme;
       set({
         language: config.language ?? DEFAULT_SETTINGS.language,
         theme: config.theme ?? DEFAULT_SETTINGS.theme,
@@ -62,21 +64,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         privacyTelemetry: config.privacyTelemetry ?? DEFAULT_SETTINGS.privacyTelemetry,
         privacyCrash: config.privacyCrash ?? DEFAULT_SETTINGS.privacyCrash,
         isLoading: false,
-      })
-      applyThemeToDOM(newUiTheme)
+      });
+      applyThemeToDOM(newUiTheme);
     } catch (err) {
-      set({ error: (err as Error).message, isLoading: false })
+      set({ error: (err as Error).message, isLoading: false });
     }
   },
 
   updateSettings: async (updates: Partial<GeneralSettings>) => {
-    const prevState = get()
-    set({ ...updates, error: null })
-    
+    const prevState = get();
+    set({ ...updates, error: null });
+
     if (updates.uiTheme) {
-      applyThemeToDOM(updates.uiTheme)
+      applyThemeToDOM(updates.uiTheme);
     }
-    
+
     try {
       const response = await fetch('/configs', {
         method: 'PUT',
@@ -85,8 +87,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           updates,
           options: { scope: 'global' },
         }),
-      })
-      if (!response.ok) throw new Error('Failed to save settings')
+      });
+      if (!response.ok) throw new Error('Failed to save settings');
     } catch (err) {
       set({
         language: prevState.language,
@@ -99,16 +101,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         privacyTelemetry: prevState.privacyTelemetry,
         privacyCrash: prevState.privacyCrash,
         error: (err as Error).message,
-      })
+      });
       if (updates.uiTheme) {
-        applyThemeToDOM(prevState.uiTheme)
+        applyThemeToDOM(prevState.uiTheme);
       }
     }
   },
-}))
+}));
 
-applyThemeToDOM(DEFAULT_SETTINGS.uiTheme)
+applyThemeToDOM(DEFAULT_SETTINGS.uiTheme);
 
-export const useIsDark = () => useSettingsStore((state) => getIsDark(state.uiTheme))
+export const useIsDark = () => useSettingsStore((state) => getIsDark(state.uiTheme));
 
-export type { GeneralSettings, UiTheme }
+export type { GeneralSettings, UiTheme };

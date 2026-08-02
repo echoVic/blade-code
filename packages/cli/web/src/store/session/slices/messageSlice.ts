@@ -5,8 +5,8 @@ import type {
   QuestionInfo,
   SliceCreator,
   SubagentProgress,
-  TaskItem
-} from '../types'
+  TaskItem,
+} from '../types';
 
 const createEmptyAgentContent = (): AgentResponseContent => ({
   textBefore: '',
@@ -17,7 +17,7 @@ const createEmptyAgentContent = (): AgentResponseContent => ({
   subagent: null,
   confirmation: null,
   question: null,
-})
+});
 
 export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
   messages: [],
@@ -37,18 +37,24 @@ export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
   appendDelta: (id, delta, position) =>
     set((state) => ({
       messages: state.messages.map((m) => {
-        if (m.id !== id) return m
-        const agentContent = m.agentContent || createEmptyAgentContent()
+        if (m.id !== id) return m;
+        const agentContent = m.agentContent || createEmptyAgentContent();
         if (position === 'before') {
           return {
             ...m,
-            agentContent: { ...agentContent, textBefore: agentContent.textBefore + delta },
-          }
+            agentContent: {
+              ...agentContent,
+              textBefore: agentContent.textBefore + delta,
+            },
+          };
         } else {
           return {
             ...m,
-            agentContent: { ...agentContent, textAfter: agentContent.textAfter + delta },
-          }
+            agentContent: {
+              ...agentContent,
+              textAfter: agentContent.textAfter + delta,
+            },
+          };
         }
       }),
     })),
@@ -56,21 +62,24 @@ export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
   appendToolCall: (id, toolCall) =>
     set((state) => ({
       messages: state.messages.map((m) => {
-        if (m.id !== id) return m
-        const agentContent = m.agentContent || createEmptyAgentContent()
+        if (m.id !== id) return m;
+        const agentContent = m.agentContent || createEmptyAgentContent();
         return {
           ...m,
-          agentContent: { ...agentContent, toolCalls: [...agentContent.toolCalls, toolCall] },
-        }
+          agentContent: {
+            ...agentContent,
+            toolCalls: [...agentContent.toolCalls, toolCall],
+          },
+        };
       }),
     })),
 
   updateToolCall: (messageId, toolCallId, updates) =>
     set((state) => ({
       messages: state.messages.map((m) => {
-        if (m.id !== messageId) return m
-        const agentContent = m.agentContent
-        if (!agentContent) return m
+        if (m.id !== messageId) return m;
+        const agentContent = m.agentContent;
+        if (!agentContent) return m;
         return {
           ...m,
           agentContent: {
@@ -79,64 +88,69 @@ export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
               tc.toolCallId === toolCallId ? { ...tc, ...updates } : tc
             ),
           },
-        }
+        };
       }),
     })),
 
   appendThinking: (id, delta) =>
     set((state) => ({
       messages: state.messages.map((m) => {
-        if (m.id !== id) return m
-        const agentContent = m.agentContent || createEmptyAgentContent()
+        if (m.id !== id) return m;
+        const agentContent = m.agentContent || createEmptyAgentContent();
         return {
           ...m,
-          agentContent: { ...agentContent, thinkingContent: agentContent.thinkingContent + delta },
-        }
+          agentContent: {
+            ...agentContent,
+            thinkingContent: agentContent.thinkingContent + delta,
+          },
+        };
       }),
     })),
 
   setConfirmation: (id, confirmation: ConfirmationInfo | null) =>
     set((state) => ({
       messages: state.messages.map((m) => {
-        if (m.id !== id) return m
-        const agentContent = m.agentContent || createEmptyAgentContent()
-        return { ...m, agentContent: { ...agentContent, confirmation } }
+        if (m.id !== id) return m;
+        const agentContent = m.agentContent || createEmptyAgentContent();
+        return { ...m, agentContent: { ...agentContent, confirmation } };
       }),
     })),
 
   setQuestion: (id, question: QuestionInfo | null) =>
     set((state) => ({
       messages: state.messages.map((m) => {
-        if (m.id !== id) return m
-        const agentContent = m.agentContent || createEmptyAgentContent()
-        return { ...m, agentContent: { ...agentContent, question } }
+        if (m.id !== id) return m;
+        const agentContent = m.agentContent || createEmptyAgentContent();
+        return { ...m, agentContent: { ...agentContent, question } };
       }),
     })),
 
   setSubagent: (id, subagent: SubagentProgress | null) =>
     set((state) => ({
       messages: state.messages.map((m) => {
-        if (m.id !== id) return m
-        const agentContent = m.agentContent || createEmptyAgentContent()
-        return { ...m, agentContent: { ...agentContent, subagent } }
+        if (m.id !== id) return m;
+        const agentContent = m.agentContent || createEmptyAgentContent();
+        return { ...m, agentContent: { ...agentContent, subagent } };
       }),
     })),
 
   setTasks: (id, tasks: TaskItem[]) =>
     set((state) => ({
       messages: state.messages.map((m) => {
-        if (m.id !== id) return m
-        const agentContent = m.agentContent || createEmptyAgentContent()
-        return { ...m, agentContent: { ...agentContent, tasks } }
+        if (m.id !== id) return m;
+        const agentContent = m.agentContent || createEmptyAgentContent();
+        return { ...m, agentContent: { ...agentContent, tasks } };
       }),
     })),
 
   replaceTemp: (content, message) =>
     set((state) => {
-      const tempIndex = state.messages.findIndex((m) => m.content === content && m.role === 'user')
-      if (tempIndex === -1) return state
-      const newMessages = [...state.messages]
-      newMessages[tempIndex] = message
-      return { messages: newMessages }
+      const tempIndex = state.messages.findIndex(
+        (m) => m.content === content && m.role === 'user'
+      );
+      if (tempIndex === -1) return state;
+      const newMessages = [...state.messages];
+      newMessages[tempIndex] = message;
+      return { messages: newMessages };
     }),
-})
+});

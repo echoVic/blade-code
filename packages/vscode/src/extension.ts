@@ -30,7 +30,10 @@ export function activate(context: vscode.ExtensionContext) {
   console.log('[Blade Code] Extension activating...');
 
   // 创建状态栏项
-  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusBarItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100
+  );
   statusBarItem.command = 'blade-code.status';
   context.subscriptions.push(statusBarItem);
 
@@ -65,7 +68,9 @@ export function deactivate() {
  */
 async function startServer() {
   if (server) {
-    vscode.window.showInformationMessage(`Blade Code server already running on port ${serverPort}`);
+    vscode.window.showInformationMessage(
+      `Blade Code server already running on port ${serverPort}`
+    );
     return;
   }
 
@@ -100,7 +105,9 @@ async function startServer() {
     });
 
     updateStatusBar();
-    vscode.window.showInformationMessage(`Blade Code server started on port ${serverPort}`);
+    vscode.window.showInformationMessage(
+      `Blade Code server started on port ${serverPort}`
+    );
   } catch (error) {
     console.error('[Blade Code] Failed to start server:', error);
     vscode.window.showErrorMessage(`Failed to start Blade Code server: ${error}`);
@@ -153,10 +160,12 @@ function handleConnection(ws: WebSocket) {
       ws.send(JSON.stringify(response));
     } catch (error) {
       console.error('[Blade Code] Error handling message:', error);
-      ws.send(JSON.stringify({
-        id: null,
-        error: { message: String(error) }
-      }));
+      ws.send(
+        JSON.stringify({
+          id: null,
+          error: { message: String(error) },
+        })
+      );
     }
   });
 
@@ -219,7 +228,7 @@ async function handleMessage(message: any): Promise<any> {
   } catch (error) {
     return {
       id,
-      error: { message: error instanceof Error ? error.message : String(error) }
+      error: { message: error instanceof Error ? error.message : String(error) },
     };
   }
 }
@@ -227,7 +236,10 @@ async function handleMessage(message: any): Promise<any> {
 /**
  * 在编辑器中打开文件
  */
-async function openFile(filePath: string, options?: { preview?: boolean; line?: number; column?: number }) {
+async function openFile(
+  filePath: string,
+  options?: { preview?: boolean; line?: number; column?: number }
+) {
   const uri = vscode.Uri.file(filePath);
   const doc = await vscode.workspace.openTextDocument(uri);
 
@@ -241,12 +253,15 @@ async function openFile(filePath: string, options?: { preview?: boolean; line?: 
   if (options?.line !== undefined) {
     const position = new vscode.Position(options.line - 1, options.column ?? 0);
     editor.selection = new vscode.Selection(position, position);
-    editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+    editor.revealRange(
+      new vscode.Range(position, position),
+      vscode.TextEditorRevealType.InCenter
+    );
   }
 
   return {
     success: true,
-    filePath: doc.fileName
+    filePath: doc.fileName,
   };
 }
 
@@ -261,7 +276,7 @@ async function getOpenEditors() {
       if (tab.input instanceof vscode.TabInputText) {
         editors.push({
           filePath: tab.input.uri.fsPath,
-          isActive: tab.isActive
+          isActive: tab.isActive,
         });
       }
     }
@@ -288,8 +303,8 @@ async function getCurrentSelection() {
     text,
     selection: {
       start: { line: selection.start.line, character: selection.start.character },
-      end: { line: selection.end.line, character: selection.end.character }
-    }
+      end: { line: selection.end.line, character: selection.end.character },
+    },
   };
 }
 
@@ -297,10 +312,11 @@ async function getCurrentSelection() {
  * 获取工作区文件夹
  */
 async function getWorkspaceFolders() {
-  const folders = vscode.workspace.workspaceFolders?.map(folder => ({
-    name: folder.name,
-    uri: folder.uri.fsPath
-  })) || [];
+  const folders =
+    vscode.workspace.workspaceFolders?.map((folder) => ({
+      name: folder.name,
+      uri: folder.uri.fsPath,
+    })) || [];
 
   return { folders };
 }
@@ -316,7 +332,7 @@ async function getDiagnostics(uri?: string) {
     const diags = vscode.languages.getDiagnostics(targetUri);
     diagnostics.push({
       uri,
-      diagnostics: diags.map(formatDiagnostic)
+      diagnostics: diags.map(formatDiagnostic),
     });
   } else {
     // 获取所有诊断
@@ -325,7 +341,7 @@ async function getDiagnostics(uri?: string) {
       if (diags.length > 0) {
         diagnostics.push({
           uri: docUri.fsPath,
-          diagnostics: diags.map(formatDiagnostic)
+          diagnostics: diags.map(formatDiagnostic),
         });
       }
     }
@@ -343,21 +359,30 @@ function formatDiagnostic(diag: vscode.Diagnostic) {
     severity: vscode.DiagnosticSeverity[diag.severity],
     range: {
       start: { line: diag.range.start.line, character: diag.range.start.character },
-      end: { line: diag.range.end.line, character: diag.range.end.character }
+      end: { line: diag.range.end.line, character: diag.range.end.character },
     },
     source: diag.source,
-    code: diag.code
+    code: diag.code,
   };
 }
 
 /**
  * 打开 diff 视图
  */
-async function openDiff(params: { originalPath: string; modifiedPath: string; title?: string }) {
+async function openDiff(params: {
+  originalPath: string;
+  modifiedPath: string;
+  title?: string;
+}) {
   const originalUri = vscode.Uri.file(params.originalPath);
   const modifiedUri = vscode.Uri.file(params.modifiedPath);
 
-  await vscode.commands.executeCommand('vscode.diff', originalUri, modifiedUri, params.title || 'Diff');
+  await vscode.commands.executeCommand(
+    'vscode.diff',
+    originalUri,
+    modifiedUri,
+    params.title || 'Diff'
+  );
 
   return { success: true };
 }
@@ -365,7 +390,10 @@ async function openDiff(params: { originalPath: string; modifiedPath: string; ti
 /**
  * 显示消息
  */
-async function showMessage(params: { type: 'info' | 'warning' | 'error'; message: string }) {
+async function showMessage(params: {
+  type: 'info' | 'warning' | 'error';
+  message: string;
+}) {
   switch (params.type) {
     case 'info':
       vscode.window.showInformationMessage(params.message);
@@ -396,7 +424,8 @@ function writePortFile(port: number) {
       port,
       pid: process.pid,
       startTime: Date.now(),
-      workspaceFolders: vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath) || [],
+      workspaceFolders:
+        vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) || [],
     };
 
     fs.writeFileSync(PORT_FILE_PATH, JSON.stringify(portInfo, null, 2));
@@ -428,17 +457,26 @@ function setTerminalEnv(port: number) {
   // 注意：这只影响新创建的终端
   vscode.workspace.getConfiguration().update(
     'terminal.integrated.env.linux',
-    { ...vscode.workspace.getConfiguration().get('terminal.integrated.env.linux'), [ENV_VAR_NAME]: String(port) },
+    {
+      ...vscode.workspace.getConfiguration().get('terminal.integrated.env.linux'),
+      [ENV_VAR_NAME]: String(port),
+    },
     vscode.ConfigurationTarget.Workspace
   );
   vscode.workspace.getConfiguration().update(
     'terminal.integrated.env.osx',
-    { ...vscode.workspace.getConfiguration().get('terminal.integrated.env.osx'), [ENV_VAR_NAME]: String(port) },
+    {
+      ...vscode.workspace.getConfiguration().get('terminal.integrated.env.osx'),
+      [ENV_VAR_NAME]: String(port),
+    },
     vscode.ConfigurationTarget.Workspace
   );
   vscode.workspace.getConfiguration().update(
     'terminal.integrated.env.windows',
-    { ...vscode.workspace.getConfiguration().get('terminal.integrated.env.windows'), [ENV_VAR_NAME]: String(port) },
+    {
+      ...vscode.workspace.getConfiguration().get('terminal.integrated.env.windows'),
+      [ENV_VAR_NAME]: String(port),
+    },
     vscode.ConfigurationTarget.Workspace
   );
 }
@@ -455,7 +493,9 @@ function updateStatusBar() {
   } else {
     statusBarItem.text = '$(plug) Blade: Off';
     statusBarItem.tooltip = 'Blade Code server is not running';
-    statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    statusBarItem.backgroundColor = new vscode.ThemeColor(
+      'statusBarItem.warningBackground'
+    );
   }
   statusBarItem.show();
 }
@@ -476,7 +516,7 @@ async function showStatus() {
 
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (workspaceFolders) {
-    items.push(`Workspace: ${workspaceFolders.map(f => f.name).join(', ')}`);
+    items.push(`Workspace: ${workspaceFolders.map((f) => f.name).join(', ')}`);
   }
 
   vscode.window.showInformationMessage(items.join('\n'), { modal: true });

@@ -1,5 +1,5 @@
-import { initialTokenUsage } from '../constants'
-import type { SliceCreator, UiSlice } from '../types'
+import { initialTokenUsage } from '../constants';
+import type { SliceCreator, UiSlice } from '../types';
 
 export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
   tokenUsage: initialTokenUsage,
@@ -11,6 +11,10 @@ export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
 
   setMaxContextTokens: (tokens, isDefault = false) =>
     set((state) => ({
-      tokenUsage: { ...state.tokenUsage, maxContextTokens: tokens, isDefaultMaxTokens: isDefault },
+      tokenUsage: {
+        ...state.tokenUsage,
+        maxContextTokens: tokens,
+        isDefaultMaxTokens: isDefault,
+      },
     })),
-})
+});

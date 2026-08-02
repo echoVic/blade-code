@@ -1,35 +1,38 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 export interface CommandSuggestion {
-  command: string
-  description: string
-  argumentHint?: string
-  matchScore?: number
+  command: string;
+  description: string;
+  argumentHint?: string;
+  matchScore?: number;
 }
 
 interface SlashCommandMatch {
-  hasQuery: boolean
-  query: string
-  startIndex: number
-  endIndex: number
+  hasQuery: boolean;
+  query: string;
+  startIndex: number;
+  endIndex: number;
 }
 
 interface UseSlashCommandResult extends SlashCommandMatch {
-  suggestions: CommandSuggestion[]
-  selectedIndex: number
-  loading: boolean
-  setSelectedIndex: (index: number) => void
-  selectNext: () => void
-  selectPrevious: () => void
+  suggestions: CommandSuggestion[];
+  selectedIndex: number;
+  loading: boolean;
+  setSelectedIndex: (index: number) => void;
+  selectNext: () => void;
+  selectPrevious: () => void;
 }
 
-const extractSlashCommand = (input: string, cursorPosition: number): SlashCommandMatch => {
+const extractSlashCommand = (
+  input: string,
+  cursorPosition: number
+): SlashCommandMatch => {
   if (!input.startsWith('/')) {
-    return { hasQuery: false, query: '', startIndex: -1, endIndex: -1 }
+    return { hasQuery: false, query: '', startIndex: -1, endIndex: -1 };
   }
 
-  const spaceIndex = input.indexOf(' ')
-  const commandEnd = spaceIndex === -1 ? input.length : spaceIndex
+  const spaceIndex = input.indexOf(' ');
+  const commandEnd = spaceIndex === -1 ? input.length : spaceIndex;
 
   if (cursorPosition <= commandEnd) {
     return {
@@ -37,79 +40,83 @@ const extractSlashCommand = (input: string, cursorPosition: number): SlashComman
       query: input.slice(1, cursorPosition),
       startIndex: 0,
       endIndex: cursorPosition,
-    }
+    };
   }
 
-  return { hasQuery: false, query: '', startIndex: -1, endIndex: -1 }
-}
+  return { hasQuery: false, query: '', startIndex: -1, endIndex: -1 };
+};
 
 export const useSlashCommand = (
   input: string,
   cursorPosition: number | undefined,
   options: { debounceDelay?: number } = {}
 ): UseSlashCommandResult => {
-  const { debounceDelay = 150 } = options
+  const { debounceDelay = 150 } = options;
 
-  const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([])
-  const [selectedIndex, setSelectedIndex] = useState(0)
-  const [loading, setLoading] = useState(false)
+  const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
 
   const match = useMemo(() => {
     if (cursorPosition === undefined) {
-      return { hasQuery: false, query: '', startIndex: -1, endIndex: -1 }
+      return { hasQuery: false, query: '', startIndex: -1, endIndex: -1 };
     }
-    return extractSlashCommand(input, cursorPosition)
-  }, [input, cursorPosition])
+    return extractSlashCommand(input, cursorPosition);
+  }, [input, cursorPosition]);
 
   useEffect(() => {
     if (!match.hasQuery) {
-      setSuggestions([])
-      setLoading(false)
-      return
+      setSuggestions([]);
+      setLoading(false);
+      return;
     }
 
-    let cancelled = false
-    setLoading(true)
+    let cancelled = false;
+    setLoading(true);
 
     const fetchSuggestions = async () => {
       try {
-        const response = await fetch(`/suggestions/commands?q=${encodeURIComponent(match.query)}`)
-        if (!response.ok) throw new Error('Failed to fetch suggestions')
-        const data = await response.json()
+        const response = await fetch(
+          `/suggestions/commands?q=${encodeURIComponent(match.query)}`
+        );
+        if (!response.ok) throw new Error('Failed to fetch suggestions');
+        const data = await response.json();
         if (!cancelled) {
-          setSuggestions(data)
+          setSuggestions(data);
         }
       } catch (error) {
-        console.error('Failed to fetch command suggestions:', error)
+        console.error('Failed to fetch command suggestions:', error);
         if (!cancelled) {
-          setSuggestions([])
+          setSuggestions([]);
         }
       } finally {
         if (!cancelled) {
-          setLoading(false)
+          setLoading(false);
         }
       }
-    }
+    };
 
-    const timer = setTimeout(fetchSuggestions, debounceDelay)
+    const timer = setTimeout(fetchSuggestions, debounceDelay);
 
     return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [match.hasQuery, match.query, debounceDelay])
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [match.hasQuery, match.query, debounceDelay]);
 
   useEffect(() => {
-    setSelectedIndex(0)
-  }, [suggestions])
+    setSelectedIndex(0);
+  }, [suggestions]);
 
   const selectNext = useCallback(() => {
-    setSelectedIndex((prev) => (prev + 1) % Math.max(suggestions.length, 1))
-  }, [suggestions.length])
+    setSelectedIndex((prev) => (prev + 1) % Math.max(suggestions.length, 1));
+  }, [suggestions.length]);
 
   const selectPrevious = useCallback(() => {
-    setSelectedIndex((prev) => (prev - 1 + suggestions.length) % Math.max(suggestions.length, 1))
-  }, [suggestions.length])
+    setSelectedIndex(
+      (prev) => (prev - 1 + suggestions.length) % Math.max(suggestions.length, 1)
+    );
+  }, [suggestions.length]);
 
   return {
     ...match,
@@ -119,8 +126,8 @@ export const useSlashCommand = (
     setSelectedIndex,
     selectNext,
     selectPrevious,
-  }
-}
+  };
+};
 
 export const applySlashCommandSuggestion = (
   input: string,
@@ -128,12 +135,12 @@ export const applySlashCommandSuggestion = (
   suggestion: CommandSuggestion
 ): { newInput: string; newCursorPos: number } => {
   if (!match.hasQuery) {
-    return { newInput: input, newCursorPos: input.length }
+    return { newInput: input, newCursorPos: input.length };
   }
 
-  const after = input.slice(match.endIndex)
-  const newInput = suggestion.command + ' ' + after.trimStart()
-  const newCursorPos = suggestion.command.length + 1
+  const after = input.slice(match.endIndex);
+  const newInput = suggestion.command + ' ' + after.trimStart();
+  const newCursorPos = suggestion.command.length + 1;
 
-  return { newInput, newCursorPos }
-}
+  return { newInput, newCursorPos };
+};

@@ -1,20 +1,20 @@
-import { create } from 'zustand'
+import { create } from 'zustand';
 
 interface AppState {
-  isSidebarOpen: boolean
-  toggleSidebar: () => void
-  setSidebarOpen: (open: boolean) => void
-  isFilePreviewOpen: boolean
-  toggleFilePreview: () => void
-  setFilePreviewOpen: (open: boolean) => void
-  isSettingsOpen: boolean
-  toggleSettings: () => void
-  isMcpOpen: boolean
-  toggleMcp: () => void
-  isSkillsOpen: boolean
-  toggleSkills: () => void
-  isTerminalOpen: boolean
-  toggleTerminal: () => void
+  isSidebarOpen: boolean;
+  toggleSidebar: () => void;
+  setSidebarOpen: (open: boolean) => void;
+  isFilePreviewOpen: boolean;
+  toggleFilePreview: () => void;
+  setFilePreviewOpen: (open: boolean) => void;
+  isSettingsOpen: boolean;
+  toggleSettings: () => void;
+  isMcpOpen: boolean;
+  toggleMcp: () => void;
+  isSkillsOpen: boolean;
+  toggleSkills: () => void;
+  isTerminalOpen: boolean;
+  toggleTerminal: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -22,7 +22,8 @@ export const useAppStore = create<AppState>((set) => ({
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
   setSidebarOpen: (open) => set({ isSidebarOpen: open }),
   isFilePreviewOpen: false,
-  toggleFilePreview: () => set((state) => ({ isFilePreviewOpen: !state.isFilePreviewOpen })),
+  toggleFilePreview: () =>
+    set((state) => ({ isFilePreviewOpen: !state.isFilePreviewOpen })),
   setFilePreviewOpen: (open) => set({ isFilePreviewOpen: open }),
   isSettingsOpen: false,
   toggleSettings: () => set((state) => ({ isSettingsOpen: !state.isSettingsOpen })),
@@ -32,4 +33,4 @@ export const useAppStore = create<AppState>((set) => ({
   toggleSkills: () => set((state) => ({ isSkillsOpen: !state.isSkillsOpen })),
   isTerminalOpen: false,
   toggleTerminal: () => set((state) => ({ isTerminalOpen: !state.isTerminalOpen })),
-}))
+}));

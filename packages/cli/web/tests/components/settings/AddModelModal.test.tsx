@@ -66,13 +66,7 @@ describe('AddModelModal', () => {
     }) as typeof fetch;
 
     await act(async () => {
-      root.render(
-        <AddModelModal
-          open
-          onOpenChange={vi.fn()}
-          onSave={vi.fn()}
-        />
-      );
+      root.render(<AddModelModal open onOpenChange={vi.fn()} onSave={vi.fn()} />);
       await Promise.resolve();
     });
 
@@ -88,8 +82,8 @@ describe('AddModelModal', () => {
       await Promise.resolve();
     });
 
-    const deepseekOption = Array.from(document.body.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('DeepSeek')
+    const deepseekOption = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('DeepSeek')
     );
 
     expect(deepseekOption).toBeTruthy();
@@ -102,7 +96,9 @@ describe('AddModelModal', () => {
     expect(document.body.textContent).toContain('Select model');
 
     const modelInputs = Array.from(document.body.querySelectorAll('input')).filter(
-      (input) => (input as HTMLInputElement).placeholder === 'gpt-4o, claude-3-opus, deepseek-chat, etc.'
+      (input) =>
+        (input as HTMLInputElement).placeholder ===
+        'gpt-4o, claude-3-opus, deepseek-chat, etc.'
     );
 
     expect(modelInputs).toHaveLength(1);
@@ -145,18 +141,12 @@ describe('AddModelModal', () => {
     const onSave = vi.fn();
 
     await act(async () => {
-      root.render(
-        <AddModelModal
-          open
-          onOpenChange={vi.fn()}
-          onSave={onSave}
-        />
-      );
+      root.render(<AddModelModal open onOpenChange={vi.fn()} onSave={onSave} />);
       await Promise.resolve();
     });
 
-    const providerButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Custom (OpenAI Compatible)')
+    const providerButton = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('Custom (OpenAI Compatible)')
     );
 
     await act(async () => {
@@ -164,8 +154,8 @@ describe('AddModelModal', () => {
       await Promise.resolve();
     });
 
-    const deepseekOption = Array.from(document.body.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('DeepSeek')
+    const deepseekOption = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('DeepSeek')
     );
 
     await act(async () => {
@@ -174,11 +164,14 @@ describe('AddModelModal', () => {
     });
 
     const apiKeyInput = Array.from(document.body.querySelectorAll('input')).find(
-      (input) => (input as HTMLInputElement).placeholder === 'sk-........................'
+      (input) =>
+        (input as HTMLInputElement).placeholder === 'sk-........................'
     ) as HTMLInputElement | undefined;
 
     const modelIdInput = Array.from(document.body.querySelectorAll('input')).find(
-      (input) => (input as HTMLInputElement).placeholder === 'gpt-4o, claude-3-opus, deepseek-chat, etc.'
+      (input) =>
+        (input as HTMLInputElement).placeholder ===
+        'gpt-4o, claude-3-opus, deepseek-chat, etc.'
     ) as HTMLInputElement | undefined;
 
     expect(apiKeyInput).toBeTruthy();
@@ -190,8 +183,8 @@ describe('AddModelModal', () => {
       await Promise.resolve();
     });
 
-    const saveButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Save Model')
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('Save Model')
     ) as HTMLButtonElement | undefined;
 
     expect(saveButton).toBeTruthy();

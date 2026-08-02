@@ -1,7 +1,7 @@
-import { sessionService } from '@/services'
-import { createEventDispatcher } from '../handlers/eventHandlers'
-import { globalStreamingBuffer } from '../handlers/streamingBuffer'
-import type { SliceCreator, StreamingSlice } from '../types'
+import { sessionService } from '@/services';
+import { createEventDispatcher } from '../handlers/eventHandlers';
+import { globalStreamingBuffer } from '../handlers/streamingBuffer';
+import type { SliceCreator, StreamingSlice } from '../types';
 
 export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => ({
   isStreaming: false,
@@ -23,42 +23,42 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
       currentAssistantMessageId: messageId,
       hasToolCalls: false,
       isStreaming: true,
-    })
+    });
   },
 
   endAgentResponse: () => {
-    globalStreamingBuffer.drainAll()
+    globalStreamingBuffer.drainAll();
     set({
       currentAssistantMessageId: null,
       hasToolCalls: false,
       isStreaming: false,
       currentRunId: null,
-    })
+    });
   },
 
   subscribeToEvents: (sessionId: string) => {
-    const { eventUnsubscribe } = get()
+    const { eventUnsubscribe } = get();
     if (eventUnsubscribe) {
-      eventUnsubscribe()
+      eventUnsubscribe();
     }
 
-    globalStreamingBuffer.reset()
-    const dispatch = createEventDispatcher(get, set)
-    const unsubscribe = sessionService.subscribeEvents(sessionId, dispatch)
-    set({ eventUnsubscribe: unsubscribe })
+    globalStreamingBuffer.reset();
+    const dispatch = createEventDispatcher(get, set);
+    const unsubscribe = sessionService.subscribeEvents(sessionId, dispatch);
+    set({ eventUnsubscribe: unsubscribe });
   },
 
   unsubscribeFromEvents: () => {
-    const { eventUnsubscribe } = get()
+    const { eventUnsubscribe } = get();
     if (eventUnsubscribe) {
-      globalStreamingBuffer.drainAll()
-      eventUnsubscribe()
-      set({ eventUnsubscribe: null })
+      globalStreamingBuffer.drainAll();
+      eventUnsubscribe();
+      set({ eventUnsubscribe: null });
     }
   },
 
   handleEvent: (event) => {
-    const dispatch = createEventDispatcher(get, set)
-    dispatch(event)
+    const dispatch = createEventDispatcher(get, set);
+    dispatch(event);
   },
-})
+});

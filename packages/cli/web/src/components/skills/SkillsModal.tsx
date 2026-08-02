@@ -1,55 +1,57 @@
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { cn } from '@/lib/utils'
-import { useAppStore } from '@/store/AppStore'
-import { useRequest } from 'ahooks'
-import { Plus, RefreshCw, Trash2, X } from 'lucide-react'
-import { Fragment, useMemo, useState, type ReactNode } from 'react'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
+import { useAppStore } from '@/store/AppStore';
+import { useRequest } from 'ahooks';
+import { Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 
 interface Skill {
-  id: string
-  name: string
-  enabled: boolean
-  description: string
-  version: string
-  provider: string
-  location: string
-  capabilities: string[]
-  allowedTools: string[]
+  id: string;
+  name: string;
+  enabled: boolean;
+  description: string;
+  version: string;
+  provider: string;
+  location: string;
+  capabilities: string[];
+  allowedTools: string[];
 }
 
 interface CatalogSkill {
-  name: string
-  description: string
-  tag: string
-  author: string
+  name: string;
+  description: string;
+  tag: string;
+  author: string;
 }
 
 const fetchSkills = async (): Promise<Skill[]> => {
-  const response = await fetch('/skills')
-  if (!response.ok) throw new Error('Failed to fetch skills')
-  return response.json()
-}
+  const response = await fetch('/skills');
+  if (!response.ok) throw new Error('Failed to fetch skills');
+  return response.json();
+};
 
 const fetchCatalog = async (): Promise<CatalogSkill[]> => {
-  const response = await fetch('/skills/catalog')
-  if (!response.ok) throw new Error('Failed to fetch catalog')
-  return response.json()
-}
+  const response = await fetch('/skills/catalog');
+  if (!response.ok) throw new Error('Failed to fetch catalog');
+  return response.json();
+};
 
 export function SkillsModal() {
-  const { isSkillsOpen, toggleSkills } = useAppStore()
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [searchInstalled, setSearchInstalled] = useState('')
-  const [installOpen, setInstallOpen] = useState(false)
-  const [installStatusOpen, setInstallStatusOpen] = useState(false)
-  const [installStatus, setInstallStatus] = useState<'confirm' | 'installing' | 'failed'>('confirm')
-  const [installError, setInstallError] = useState<string | null>(null)
+  const { isSkillsOpen, toggleSkills } = useAppStore();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [searchInstalled, setSearchInstalled] = useState('');
+  const [installOpen, setInstallOpen] = useState(false);
+  const [installStatusOpen, setInstallStatusOpen] = useState(false);
+  const [installStatus, setInstallStatus] = useState<
+    'confirm' | 'installing' | 'failed'
+  >('confirm');
+  const [installError, setInstallError] = useState<string | null>(null);
   const [pendingInstall, setPendingInstall] = useState<{
-    source: 'catalog' | 'repo' | 'local'
-    name?: string
-    url?: string
-    path?: string
-  } | null>(null)
+    source: 'catalog' | 'repo' | 'local';
+    name?: string;
+    url?: string;
+    path?: string;
+  } | null>(null);
 
   const {
     data: skills = [],
@@ -60,22 +62,22 @@ export function SkillsModal() {
     ready: isSkillsOpen,
     onSuccess: (data) => {
       if (data.length > 0 && !selectedId) {
-        setSelectedId(data[0].id)
+        setSelectedId(data[0].id);
       }
     },
-  })
+  });
 
   const { data: catalog = [] } = useRequest(fetchCatalog, {
     refreshDeps: [isSkillsOpen],
     ready: isSkillsOpen,
-  })
+  });
 
   const { runAsync: deleteSkill } = useRequest(
     async (name: string) => {
-      await fetch(`/skills/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      await fetch(`/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
     },
     { manual: true, onSuccess: loadSkills }
-  )
+  );
 
   const { runAsync: toggleSkillEnabled, loading: toggling } = useRequest(
     async (name: string, enabled: boolean) => {
@@ -83,54 +85,59 @@ export function SkillsModal() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled }),
-      })
-      if (!response.ok) throw new Error('Failed to toggle skill')
+      });
+      if (!response.ok) throw new Error('Failed to toggle skill');
     },
     { manual: true, onSuccess: loadSkills }
-  )
+  );
 
   const filteredSkills = skills.filter((skill) =>
     skill.name.toLowerCase().includes(searchInstalled.toLowerCase())
-  )
+  );
 
   const selectedSkill = useMemo(
     () => skills.find((skill) => skill.id === selectedId) ?? skills[0],
     [skills, selectedId]
-  )
+  );
 
   const handleOpenInstall = () => {
-    setInstallOpen(true)
-  }
+    setInstallOpen(true);
+  };
 
-  const requestInstall = (payload: { source: 'catalog' | 'repo' | 'local'; name?: string; url?: string; path?: string }) => {
-    setPendingInstall(payload)
-    setInstallError(null)
-    setInstallStatus('confirm')
-    setInstallStatusOpen(true)
-  }
+  const requestInstall = (payload: {
+    source: 'catalog' | 'repo' | 'local';
+    name?: string;
+    url?: string;
+    path?: string;
+  }) => {
+    setPendingInstall(payload);
+    setInstallError(null);
+    setInstallStatus('confirm');
+    setInstallStatusOpen(true);
+  };
 
   const executeInstall = async () => {
-    if (!pendingInstall) return
-    setInstallStatus('installing')
-    setInstallError(null)
+    if (!pendingInstall) return;
+    setInstallStatus('installing');
+    setInstallError(null);
     try {
       const response = await fetch('/skills/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(pendingInstall),
-      })
-      const data = await response.json().catch(() => ({}))
+      });
+      const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
-        throw new Error(data.error || 'Failed to install skill')
+        throw new Error(data.error || 'Failed to install skill');
       }
-      await loadSkills()
-      setInstallStatusOpen(false)
-      setInstallOpen(false)
+      await loadSkills();
+      setInstallStatusOpen(false);
+      setInstallOpen(false);
     } catch (err) {
-      setInstallError(err instanceof Error ? err.message : 'Failed to install skill')
-      setInstallStatus('failed')
+      setInstallError(err instanceof Error ? err.message : 'Failed to install skill');
+      setInstallStatus('failed');
     }
-  }
+  };
 
   return (
     <Fragment>
@@ -144,7 +151,9 @@ export function SkillsModal() {
           <div className="flex h-full min-h-0">
             <div className="flex-1 p-8 flex flex-col gap-5 min-h-0">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">Skills</h2>
+                <h2 className="text-lg font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
+                  Skills
+                </h2>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleOpenInstall}
@@ -171,7 +180,9 @@ export function SkillsModal() {
 
               <div className="flex gap-5 flex-1 min-h-0 overflow-hidden">
                 <div className="w-[220px] flex flex-col gap-3 min-h-0 overflow-hidden">
-                  <div className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5] shrink-0">Installed</div>
+                  <div className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5] shrink-0">
+                    Installed
+                  </div>
                   <input
                     value={searchInstalled}
                     onChange={(event) => setSearchInstalled(event.target.value)}
@@ -180,7 +191,9 @@ export function SkillsModal() {
                   />
                   <div className="flex flex-col gap-2 overflow-y-auto flex-1 min-h-0 pr-1">
                     {filteredSkills.length === 0 && !loading && (
-                      <div className="text-center py-8 text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">No skills installed</div>
+                      <div className="text-center py-8 text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">
+                        No skills installed
+                      </div>
                     )}
                     {filteredSkills.map((skill) => (
                       <button
@@ -188,12 +201,23 @@ export function SkillsModal() {
                         onClick={() => setSelectedId(skill.id)}
                         className={cn(
                           'text-left rounded-lg px-3 py-2 flex flex-col gap-1 transition-colors',
-                          skill.id === selectedId ? 'bg-[#E5E7EB] dark:bg-[#111827]' : 'bg-white dark:bg-[#0C0C0C] hover:bg-[#F3F4F6] dark:hover:bg-[#18181b]'
+                          skill.id === selectedId
+                            ? 'bg-[#E5E7EB] dark:bg-[#111827]'
+                            : 'bg-white dark:bg-[#0C0C0C] hover:bg-[#F3F4F6] dark:hover:bg-[#18181b]'
                         )}
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-[13px] font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">{skill.name}</span>
-                          <span className={cn('text-[11px] font-mono font-semibold', skill.enabled ? 'text-[#16A34A] dark:text-[#22C55E]' : 'text-[#f59e0b]')}>
+                          <span className="text-[13px] font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                            {skill.name}
+                          </span>
+                          <span
+                            className={cn(
+                              'text-[11px] font-mono font-semibold',
+                              skill.enabled
+                                ? 'text-[#16A34A] dark:text-[#22C55E]'
+                                : 'text-[#f59e0b]'
+                            )}
+                          >
                             {skill.enabled ? 'Enabled' : 'Disabled'}
                           </span>
                         </div>
@@ -207,93 +231,117 @@ export function SkillsModal() {
 
                 {selectedSkill ? (
                   <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-2 min-h-0 overflow-hidden">
-                  <div className="flex items-center justify-between">
-                    <span className="text-base font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">{selectedSkill.name}</span>
-                    <span className="text-xs font-mono text-[#9CA3AF] dark:text-[#71717a]">v{selectedSkill.version}</span>
-                  </div>
-                  <p className="text-[12px] font-mono text-[#6B7280] dark:text-[#94a3b8]">
-                    {selectedSkill.description || 'No description available'}
-                  </p>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => toggleSkillEnabled(selectedSkill.name, !selectedSkill.enabled)}
-                      disabled={toggling}
-                      className={cn(
-                        'h-7 px-3 rounded-md text-[11px] font-mono font-semibold',
-                        selectedSkill.enabled
-                          ? 'bg-[#E5E7EB] text-[#111827] hover:bg-[#D1D5DB] dark:bg-[#27272a] dark:text-[#E5E5E5] dark:hover:bg-[#32323a]'
-                          : 'bg-[#16A34A] text-white hover:bg-[#15803D] dark:bg-[#22C55E] dark:text-[#0C0C0C] dark:hover:bg-[#1ea34b]',
-                        toggling && 'opacity-60 cursor-not-allowed'
-                      )}
-                    >
-                      {toggling ? 'Saving...' : selectedSkill.enabled ? 'Disable' : 'Enable'}
-                    </button>
-                    <button
-                      disabled
-                      title="Editing not supported yet"
-                      className="h-7 px-3 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[#111827] dark:text-[#E5E5E5] text-[11px] font-mono font-semibold opacity-60 cursor-not-allowed"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => deleteSkill(selectedSkill.name)}
-                      className="h-7 px-3 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[#ef4444] text-[11px] font-mono font-semibold flex items-center gap-1"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                      Uninstall
-                    </button>
-                  </div>
-
-                  <div className="h-px bg-[#E5E7EB] dark:bg-[#1f2937]" />
-
-                  <div className="flex flex-col gap-2">
-                    <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">Details</span>
-                    <div className="grid grid-cols-2 gap-2 text-[12px] font-mono">
-                      <span className="text-[#9CA3AF] dark:text-[#71717a]">Provider</span>
-                      <span className="text-[#111827] dark:text-[#E5E5E5]">{selectedSkill.provider}</span>
-                      <span className="text-[#9CA3AF] dark:text-[#71717a]">Location</span>
-                      <span className="text-[#111827] dark:text-[#E5E5E5] truncate">{selectedSkill.location}</span>
-                    </div>
-                  </div>
-
-                  {selectedSkill.capabilities.length > 0 && (
-                    <>
-                      <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">Capabilities</span>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedSkill.capabilities.map((capability) => (
-                          <span
-                            key={capability}
-                            className="px-2 py-1 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[11px] font-mono text-[#111827] dark:text-[#E5E5E5]"
-                          >
-                            {capability}
-                          </span>
-                        ))}
-                      </div>
-                    </>
-                  )}
-
-                  {selectedSkill.allowedTools.length > 0 && (
-                    <>
-                      <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
-                        Allowed Tools ({selectedSkill.allowedTools.length})
+                    <div className="flex items-center justify-between">
+                      <span className="text-base font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                        {selectedSkill.name}
                       </span>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedSkill.allowedTools.map((tool) => (
-                          <span
-                            key={tool}
-                            className="px-2 py-1 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[11px] font-mono text-[#111827] dark:text-[#E5E5E5]"
-                          >
-                            {tool}
-                          </span>
-                        ))}
+                      <span className="text-xs font-mono text-[#9CA3AF] dark:text-[#71717a]">
+                        v{selectedSkill.version}
+                      </span>
+                    </div>
+                    <p className="text-[12px] font-mono text-[#6B7280] dark:text-[#94a3b8]">
+                      {selectedSkill.description || 'No description available'}
+                    </p>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() =>
+                          toggleSkillEnabled(selectedSkill.name, !selectedSkill.enabled)
+                        }
+                        disabled={toggling}
+                        className={cn(
+                          'h-7 px-3 rounded-md text-[11px] font-mono font-semibold',
+                          selectedSkill.enabled
+                            ? 'bg-[#E5E7EB] text-[#111827] hover:bg-[#D1D5DB] dark:bg-[#27272a] dark:text-[#E5E5E5] dark:hover:bg-[#32323a]'
+                            : 'bg-[#16A34A] text-white hover:bg-[#15803D] dark:bg-[#22C55E] dark:text-[#0C0C0C] dark:hover:bg-[#1ea34b]',
+                          toggling && 'opacity-60 cursor-not-allowed'
+                        )}
+                      >
+                        {toggling
+                          ? 'Saving...'
+                          : selectedSkill.enabled
+                            ? 'Disable'
+                            : 'Enable'}
+                      </button>
+                      <button
+                        disabled
+                        title="Editing not supported yet"
+                        className="h-7 px-3 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[#111827] dark:text-[#E5E5E5] text-[11px] font-mono font-semibold opacity-60 cursor-not-allowed"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteSkill(selectedSkill.name)}
+                        className="h-7 px-3 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[#ef4444] text-[11px] font-mono font-semibold flex items-center gap-1"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Uninstall
+                      </button>
+                    </div>
+
+                    <div className="h-px bg-[#E5E7EB] dark:bg-[#1f2937]" />
+
+                    <div className="flex flex-col gap-2">
+                      <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                        Details
+                      </span>
+                      <div className="grid grid-cols-2 gap-2 text-[12px] font-mono">
+                        <span className="text-[#9CA3AF] dark:text-[#71717a]">
+                          Provider
+                        </span>
+                        <span className="text-[#111827] dark:text-[#E5E5E5]">
+                          {selectedSkill.provider}
+                        </span>
+                        <span className="text-[#9CA3AF] dark:text-[#71717a]">
+                          Location
+                        </span>
+                        <span className="text-[#111827] dark:text-[#E5E5E5] truncate">
+                          {selectedSkill.location}
+                        </span>
                       </div>
+                    </div>
+
+                    {selectedSkill.capabilities.length > 0 && (
+                      <>
+                        <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                          Capabilities
+                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedSkill.capabilities.map((capability) => (
+                            <span
+                              key={capability}
+                              className="px-2 py-1 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[11px] font-mono text-[#111827] dark:text-[#E5E5E5]"
+                            >
+                              {capability}
+                            </span>
+                          ))}
+                        </div>
+                      </>
+                    )}
+
+                    {selectedSkill.allowedTools.length > 0 && (
+                      <>
+                        <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                          Allowed Tools ({selectedSkill.allowedTools.length})
+                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedSkill.allowedTools.map((tool) => (
+                            <span
+                              key={tool}
+                              className="px-2 py-1 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[11px] font-mono text-[#111827] dark:text-[#E5E5E5]"
+                            >
+                              {tool}
+                            </span>
+                          ))}
+                        </div>
                       </>
                     )}
                   </div>
                 ) : (
                   <div className="flex-1 flex items-center justify-center">
-                    <span className="text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">Select a skill to view details</span>
+                    <span className="text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">
+                      Select a skill to view details
+                    </span>
                   </div>
                 )}
               </div>
@@ -319,10 +367,18 @@ export function SkillsModal() {
         onRetry={() => setInstallStatus('confirm')}
       />
     </Fragment>
-  )
+  );
 }
 
-function TabButton({ active, children, onClick }: { active: boolean; children: ReactNode; onClick: () => void }) {
+function TabButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick: () => void;
+}) {
   return (
     <button
       onClick={onClick}
@@ -335,7 +391,7 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
     >
       {children}
     </button>
-  )
+  );
 }
 
 function SkillsInstallModal({
@@ -345,42 +401,49 @@ function SkillsInstallModal({
   catalog,
   installed,
 }: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onInstall: (payload: { source: 'catalog' | 'repo' | 'local'; name?: string; url?: string; path?: string }) => void
-  catalog: CatalogSkill[]
-  installed: string[]
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onInstall: (payload: {
+    source: 'catalog' | 'repo' | 'local';
+    name?: string;
+    url?: string;
+    path?: string;
+  }) => void;
+  catalog: CatalogSkill[];
+  installed: string[];
 }) {
-  const [tab, setTab] = useState<'catalog' | 'repo' | 'local'>('catalog')
-  const [query, setQuery] = useState('')
-  const [selectedCatalog, setSelectedCatalog] = useState<string | null>(null)
-  const [repoUrl, setRepoUrl] = useState('')
-  const [localPath, setLocalPath] = useState('')
+  const [tab, setTab] = useState<'catalog' | 'repo' | 'local'>('catalog');
+  const [query, setQuery] = useState('');
+  const [selectedCatalog, setSelectedCatalog] = useState<string | null>(null);
+  const [repoUrl, setRepoUrl] = useState('');
+  const [localPath, setLocalPath] = useState('');
 
   const filteredCatalog = catalog.filter((item) =>
     item.name.toLowerCase().includes(query.toLowerCase())
-  )
+  );
 
   const handleInstall = () => {
     if (tab === 'catalog') {
-      if (!selectedCatalog) return
-      onInstall({ source: 'catalog', name: selectedCatalog })
-      return
+      if (!selectedCatalog) return;
+      onInstall({ source: 'catalog', name: selectedCatalog });
+      return;
     }
     if (tab === 'repo') {
-      if (!repoUrl) return
-      onInstall({ source: 'repo', url: repoUrl })
-      return
+      if (!repoUrl) return;
+      onInstall({ source: 'repo', url: repoUrl });
+      return;
     }
-    if (!localPath) return
-    onInstall({ source: 'local', path: localPath })
-  }
+    if (!localPath) return;
+    onInstall({ source: 'local', path: localPath });
+  };
 
-  const selectedIsInstalled = selectedCatalog ? installed.includes(selectedCatalog) : false
+  const selectedIsInstalled = selectedCatalog
+    ? installed.includes(selectedCatalog)
+    : false;
   const installDisabled =
     (tab === 'catalog' && (!selectedCatalog || selectedIsInstalled)) ||
     (tab === 'repo' && !repoUrl) ||
-    (tab === 'local' && !localPath)
+    (tab === 'local' && !localPath);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -392,7 +455,9 @@ function SkillsInstallModal({
         <DialogTitle className="sr-only">Install Skill</DialogTitle>
         <div className="p-6 flex flex-col gap-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">Install Skill</h3>
+            <h3 className="text-base font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
+              Install Skill
+            </h3>
             <button
               onClick={() => onOpenChange(false)}
               className="h-8 w-8 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] transition-colors flex items-center justify-center"
@@ -424,22 +489,28 @@ function SkillsInstallModal({
                 />
                 <div className="flex flex-col gap-2 max-h-[240px] overflow-y-auto">
                   {filteredCatalog.length === 0 && (
-                    <div className="text-center py-6 text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">No skills found</div>
+                    <div className="text-center py-6 text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">
+                      No skills found
+                    </div>
                   )}
                   {filteredCatalog.map((item) => {
-                    const isInstalled = installed.includes(item.name)
-                    const isSelected = selectedCatalog === item.name
+                    const isInstalled = installed.includes(item.name);
+                    const isSelected = selectedCatalog === item.name;
                     return (
                       <button
                         key={item.name}
                         onClick={() => setSelectedCatalog(item.name)}
                         className={cn(
                           'rounded-lg px-3 py-2 flex flex-col gap-1 text-left transition-colors',
-                          isSelected ? 'bg-[#E5E7EB] dark:bg-[#111827]' : 'bg-white dark:bg-[#0C0C0C] hover:bg-[#F3F4F6] dark:hover:bg-[#18181b]'
+                          isSelected
+                            ? 'bg-[#E5E7EB] dark:bg-[#111827]'
+                            : 'bg-white dark:bg-[#0C0C0C] hover:bg-[#F3F4F6] dark:hover:bg-[#18181b]'
                         )}
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-[13px] font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">{item.name}</span>
+                          <span className="text-[13px] font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                            {item.name}
+                          </span>
                           <span
                             className={cn(
                               'text-[10px] font-mono px-2 py-0.5 rounded',
@@ -451,11 +522,19 @@ function SkillsInstallModal({
                             {item.tag}
                           </span>
                         </div>
-                        <span className="text-[11px] font-mono text-[#6B7280] dark:text-[#94a3b8]">{item.description}</span>
-                        <span className="text-[10px] font-mono text-[#9CA3AF] dark:text-[#71717a]">by {item.author}</span>
-                        {isInstalled && <span className="text-[10px] font-mono text-[#16A34A] dark:text-[#22C55E]">Installed</span>}
+                        <span className="text-[11px] font-mono text-[#6B7280] dark:text-[#94a3b8]">
+                          {item.description}
+                        </span>
+                        <span className="text-[10px] font-mono text-[#9CA3AF] dark:text-[#71717a]">
+                          by {item.author}
+                        </span>
+                        {isInstalled && (
+                          <span className="text-[10px] font-mono text-[#16A34A] dark:text-[#22C55E]">
+                            Installed
+                          </span>
+                        )}
                       </button>
-                    )
+                    );
                   })}
                 </div>
               </>
@@ -463,7 +542,9 @@ function SkillsInstallModal({
 
             {tab === 'repo' && (
               <div className="flex flex-col gap-2">
-                <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">GitHub URL</span>
+                <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">
+                  GitHub URL
+                </span>
                 <input
                   value={repoUrl}
                   onChange={(event) => setRepoUrl(event.target.value)}
@@ -478,7 +559,9 @@ function SkillsInstallModal({
 
             {tab === 'local' && (
               <div className="flex flex-col gap-2">
-                <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">Local path</span>
+                <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">
+                  Local path
+                </span>
                 <input
                   value={localPath}
                   onChange={(event) => setLocalPath(event.target.value)}
@@ -512,7 +595,7 @@ function SkillsInstallModal({
         </div>
       </DialogContent>
     </Dialog>
-  )
+  );
 }
 
 function SkillsInstallStatusModal({
@@ -523,12 +606,12 @@ function SkillsInstallStatusModal({
   onConfirm,
   onRetry,
 }: {
-  open: boolean
-  status: 'confirm' | 'installing' | 'failed'
-  error: string | null
-  onCancel: () => void
-  onConfirm: () => void
-  onRetry: () => void
+  open: boolean;
+  status: 'confirm' | 'installing' | 'failed';
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onRetry: () => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={(next: boolean) => !next && onCancel()}>
@@ -541,8 +624,12 @@ function SkillsInstallStatusModal({
         <div className="p-5 flex flex-col gap-3">
           {status === 'confirm' && (
             <>
-              <h4 className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">Confirm Install</h4>
-              <p className="text-[12px] font-mono text-[#6B7280] dark:text-[#94a3b8]">Install selected skill?</p>
+              <h4 className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                Confirm Install
+              </h4>
+              <p className="text-[12px] font-mono text-[#6B7280] dark:text-[#94a3b8]">
+                Install selected skill?
+              </p>
               <div className="flex items-center justify-end gap-2">
                 <button
                   onClick={onCancel}
@@ -562,12 +649,18 @@ function SkillsInstallStatusModal({
 
           {status === 'installing' && (
             <>
-              <h4 className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">Installing</h4>
-              <p className="text-[12px] font-mono text-[#6B7280] dark:text-[#94a3b8]">Downloading and verifying…</p>
+              <h4 className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                Installing
+              </h4>
+              <p className="text-[12px] font-mono text-[#6B7280] dark:text-[#94a3b8]">
+                Downloading and verifying…
+              </p>
               <div className="h-1.5 rounded-full bg-[#E5E7EB] dark:bg-[#18181b] overflow-hidden">
                 <div className="h-full w-[45%] bg-[#16A34A] dark:bg-[#22C55E]" />
               </div>
-              <span className="text-[11px] font-mono text-[#9CA3AF] dark:text-[#71717a]">~35%</span>
+              <span className="text-[11px] font-mono text-[#9CA3AF] dark:text-[#71717a]">
+                ~35%
+              </span>
               <button
                 onClick={onCancel}
                 className="self-end h-6 px-2.5 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[#111827] dark:text-[#E5E5E5] text-[11px] font-mono font-semibold"
@@ -579,11 +672,15 @@ function SkillsInstallStatusModal({
 
           {status === 'failed' && (
             <>
-              <h4 className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">Install Failed</h4>
+              <h4 className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                Install Failed
+              </h4>
               <p className="text-[12px] font-mono text-[#f87171]">
                 {error || 'Installation failed.'}
               </p>
-              <p className="text-[11px] font-mono text-[#6B7280] dark:text-[#94a3b8]">Check access and try again.</p>
+              <p className="text-[11px] font-mono text-[#6B7280] dark:text-[#94a3b8]">
+                Check access and try again.
+              </p>
               <div className="flex items-center justify-end gap-2">
                 <button
                   onClick={onCancel}
@@ -603,5 +700,5 @@ function SkillsInstallStatusModal({
         </div>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

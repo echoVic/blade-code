@@ -1,66 +1,66 @@
-import { cn } from '@/lib/utils'
-import { useAppStore } from '@/store/AppStore'
-import { useIsDark } from '@/store/SettingsStore'
-import { FitAddon } from '@xterm/addon-fit'
-import { WebLinksAddon } from '@xterm/addon-web-links'
-import { Terminal } from '@xterm/xterm'
-import '@xterm/xterm/css/xterm.css'
-import { Minus, Terminal as TerminalIcon, X } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { cn } from '@/lib/utils';
+import { useAppStore } from '@/store/AppStore';
+import { useIsDark } from '@/store/SettingsStore';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { Terminal } from '@xterm/xterm';
+import '@xterm/xterm/css/xterm.css';
+import { Minus, Terminal as TerminalIcon, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export const TerminalPanel = () => {
-  const { isTerminalOpen, toggleTerminal } = useAppStore()
-  const [isMinimized, setIsMinimized] = useState(false)
-  const [isConnected, setIsConnected] = useState(false)
-  const isDark = useIsDark()
-  const terminalRef = useRef<HTMLDivElement>(null)
-  const xtermRef = useRef<Terminal | null>(null)
-  const fitAddonRef = useRef<FitAddon | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
+  const { isTerminalOpen, toggleTerminal } = useAppStore();
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const isDark = useIsDark();
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const xtermRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
+    if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const wsUrl = import.meta.env.DEV 
+    const wsUrl = import.meta.env.DEV
       ? 'ws://localhost:4097/terminal/ws'
-      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/terminal/ws`
-    
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
+      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/terminal/ws`;
+
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
 
     ws.onopen = () => {
-      setIsConnected(true)
-    }
+      setIsConnected(true);
+    };
 
     ws.onmessage = (event) => {
-      xtermRef.current?.write(event.data)
-    }
+      xtermRef.current?.write(event.data);
+    };
 
     ws.onclose = () => {
-      setIsConnected(false)
-    }
+      setIsConnected(false);
+    };
 
     ws.onerror = () => {
-      setIsConnected(false)
-    }
-  }, [])
+      setIsConnected(false);
+    };
+  }, []);
 
   const disconnect = useCallback(() => {
     if (wsRef.current) {
-      wsRef.current.close()
-      wsRef.current = null
+      wsRef.current.close();
+      wsRef.current = null;
     }
-    setIsConnected(false)
-  }, [])
+    setIsConnected(false);
+  }, []);
 
   const sendInput = useCallback((data: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(data)
+      wsRef.current.send(data);
     }
-  }, [])
+  }, []);
 
   useEffect(() => {
-    if (!isTerminalOpen || !terminalRef.current || xtermRef.current) return
+    if (!isTerminalOpen || !terminalRef.current || xtermRef.current) return;
 
     const lightTheme = {
       background: '#ffffff',
@@ -84,7 +84,7 @@ export const TerminalPanel = () => {
       brightMagenta: '#a855f7',
       brightCyan: '#22d3ee',
       brightWhite: '#111827',
-    }
+    };
 
     const term = new Terminal({
       cursorBlink: true,
@@ -93,124 +93,128 @@ export const TerminalPanel = () => {
       fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, monospace',
       allowTransparency: true,
       scrollback: 10000,
-      theme: isDark ? {
-        background: '#0a0a0a',
-        foreground: '#e4e4e7',
-        cursor: '#e4e4e7',
-        cursorAccent: '#0a0a0a',
-        selectionBackground: '#3f3f46',
-        black: '#18181b',
-        red: '#ef4444',
-        green: '#22c55e',
-        yellow: '#eab308',
-        blue: '#3b82f6',
-        magenta: '#a855f7',
-        cyan: '#06b6d4',
-        white: '#e4e4e7',
-        brightBlack: '#52525b',
-        brightRed: '#f87171',
-        brightGreen: '#4ade80',
-        brightYellow: '#facc15',
-        brightBlue: '#60a5fa',
-        brightMagenta: '#c084fc',
-        brightCyan: '#22d3ee',
-        brightWhite: '#fafafa',
-      } : lightTheme,
-    })
+      theme: isDark
+        ? {
+            background: '#0a0a0a',
+            foreground: '#e4e4e7',
+            cursor: '#e4e4e7',
+            cursorAccent: '#0a0a0a',
+            selectionBackground: '#3f3f46',
+            black: '#18181b',
+            red: '#ef4444',
+            green: '#22c55e',
+            yellow: '#eab308',
+            blue: '#3b82f6',
+            magenta: '#a855f7',
+            cyan: '#06b6d4',
+            white: '#e4e4e7',
+            brightBlack: '#52525b',
+            brightRed: '#f87171',
+            brightGreen: '#4ade80',
+            brightYellow: '#facc15',
+            brightBlue: '#60a5fa',
+            brightMagenta: '#c084fc',
+            brightCyan: '#22d3ee',
+            brightWhite: '#fafafa',
+          }
+        : lightTheme,
+    });
 
-    const fitAddon = new FitAddon()
-    const webLinksAddon = new WebLinksAddon()
+    const fitAddon = new FitAddon();
+    const webLinksAddon = new WebLinksAddon();
 
-    term.loadAddon(fitAddon)
-    term.loadAddon(webLinksAddon)
-    term.open(terminalRef.current)
-    
-    fitAddon.fit()
+    term.loadAddon(fitAddon);
+    term.loadAddon(webLinksAddon);
+    term.open(terminalRef.current);
+
+    fitAddon.fit();
 
     term.onData((data: string) => {
-      sendInput(data)
-    })
+      sendInput(data);
+    });
 
-    xtermRef.current = term
-    fitAddonRef.current = fitAddon
+    xtermRef.current = term;
+    fitAddonRef.current = fitAddon;
 
-    connect()
+    connect();
 
     return () => {
-      disconnect()
-      term.dispose()
-      xtermRef.current = null
-      fitAddonRef.current = null
-    }
+      disconnect();
+      term.dispose();
+      xtermRef.current = null;
+      fitAddonRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTerminalOpen, connect, disconnect, sendInput])
+  }, [isTerminalOpen, connect, disconnect, sendInput]);
 
   useEffect(() => {
-    if (!xtermRef.current) return
-    xtermRef.current.options.theme = isDark ? {
-      background: '#0a0a0a',
-      foreground: '#e4e4e7',
-      cursor: '#e4e4e7',
-      cursorAccent: '#0a0a0a',
-      selectionBackground: '#3f3f46',
-      black: '#18181b',
-      red: '#ef4444',
-      green: '#22c55e',
-      yellow: '#eab308',
-      blue: '#3b82f6',
-      magenta: '#a855f7',
-      cyan: '#06b6d4',
-      white: '#e4e4e7',
-      brightBlack: '#52525b',
-      brightRed: '#f87171',
-      brightGreen: '#4ade80',
-      brightYellow: '#facc15',
-      brightBlue: '#60a5fa',
-      brightMagenta: '#c084fc',
-      brightCyan: '#22d3ee',
-      brightWhite: '#fafafa',
-    } : {
-      background: '#ffffff',
-      foreground: '#111827',
-      cursor: '#111827',
-      cursorAccent: '#ffffff',
-      selectionBackground: '#E5E7EB',
-      black: '#111827',
-      red: '#dc2626',
-      green: '#16a34a',
-      yellow: '#ca8a04',
-      blue: '#2563eb',
-      magenta: '#7c3aed',
-      cyan: '#0891b2',
-      white: '#111827',
-      brightBlack: '#6b7280',
-      brightRed: '#ef4444',
-      brightGreen: '#22c55e',
-      brightYellow: '#facc15',
-      brightBlue: '#60a5fa',
-      brightMagenta: '#a855f7',
-      brightCyan: '#22d3ee',
-      brightWhite: '#111827',
-    }
-  }, [isDark])
+    if (!xtermRef.current) return;
+    xtermRef.current.options.theme = isDark
+      ? {
+          background: '#0a0a0a',
+          foreground: '#e4e4e7',
+          cursor: '#e4e4e7',
+          cursorAccent: '#0a0a0a',
+          selectionBackground: '#3f3f46',
+          black: '#18181b',
+          red: '#ef4444',
+          green: '#22c55e',
+          yellow: '#eab308',
+          blue: '#3b82f6',
+          magenta: '#a855f7',
+          cyan: '#06b6d4',
+          white: '#e4e4e7',
+          brightBlack: '#52525b',
+          brightRed: '#f87171',
+          brightGreen: '#4ade80',
+          brightYellow: '#facc15',
+          brightBlue: '#60a5fa',
+          brightMagenta: '#c084fc',
+          brightCyan: '#22d3ee',
+          brightWhite: '#fafafa',
+        }
+      : {
+          background: '#ffffff',
+          foreground: '#111827',
+          cursor: '#111827',
+          cursorAccent: '#ffffff',
+          selectionBackground: '#E5E7EB',
+          black: '#111827',
+          red: '#dc2626',
+          green: '#16a34a',
+          yellow: '#ca8a04',
+          blue: '#2563eb',
+          magenta: '#7c3aed',
+          cyan: '#0891b2',
+          white: '#111827',
+          brightBlack: '#6b7280',
+          brightRed: '#ef4444',
+          brightGreen: '#22c55e',
+          brightYellow: '#facc15',
+          brightBlue: '#60a5fa',
+          brightMagenta: '#a855f7',
+          brightCyan: '#22d3ee',
+          brightWhite: '#111827',
+        };
+  }, [isDark]);
 
   useEffect(() => {
-    if (!isTerminalOpen || isMinimized) return
+    if (!isTerminalOpen || isMinimized) return;
 
     const handleResize = () => {
-      fitAddonRef.current?.fit()
-    }
+      fitAddonRef.current?.fit();
+    };
 
-    window.addEventListener('resize', handleResize)
-    const timer = setTimeout(handleResize, 100)
+    window.addEventListener('resize', handleResize);
+    const timer = setTimeout(handleResize, 100);
 
     return () => {
-      window.removeEventListener('resize', handleResize)
-      clearTimeout(timer)
-    }
-  }, [isTerminalOpen, isMinimized])
+      window.removeEventListener('resize', handleResize);
+      clearTimeout(timer);
+    };
+  }, [isTerminalOpen, isMinimized]);
 
-  if (!isTerminalOpen) return null
+  if (!isTerminalOpen) return null;
 
   return (
     <div
@@ -239,8 +243,8 @@ export const TerminalPanel = () => {
           </button>
           <button
             onClick={() => {
-              disconnect()
-              toggleTerminal()
+              disconnect();
+              toggleTerminal();
             }}
             className="p-1.5 rounded hover:bg-[#E5E7EB] text-[#9CA3AF] hover:text-[#111827] dark:hover:bg-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
           >
@@ -248,14 +252,11 @@ export const TerminalPanel = () => {
           </button>
         </div>
       </div>
-      
+
       <div
         ref={terminalRef}
-        className={cn(
-          'h-[calc(100%-40px)] p-2',
-          isMinimized && 'hidden'
-        )}
+        className={cn('h-[calc(100%-40px)] p-2', isMinimized && 'hidden')}
       />
     </div>
-  )
-}
+  );
+};

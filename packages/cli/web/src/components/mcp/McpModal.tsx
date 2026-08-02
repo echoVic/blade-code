@@ -1,102 +1,114 @@
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { cn } from '@/lib/utils'
-import { useAppStore } from '@/store/AppStore'
-import { useDebounceFn, useInfiniteScroll, useRequest } from 'ahooks'
-import { Check, Download, ExternalLink, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react'
-import { useMemo, useRef, useState, type ReactNode } from 'react'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
+import { useAppStore } from '@/store/AppStore';
+import { useDebounceFn, useInfiniteScroll, useRequest } from 'ahooks';
+import {
+  Check,
+  Download,
+  ExternalLink,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Search,
+  X,
+} from 'lucide-react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 
 interface McpServer {
-  id: string
-  name: string
-  status: 'connected' | 'connecting' | 'offline' | 'error'
-  endpoint: string
-  description: string
-  tools: string[]
-  connectedAt?: string
-  error?: string
+  id: string;
+  name: string;
+  status: 'connected' | 'connecting' | 'offline' | 'error';
+  endpoint: string;
+  description: string;
+  tools: string[];
+  connectedAt?: string;
+  error?: string;
 }
 
 interface NpmPackage {
-  name: string
-  description: string
-  version: string
-  publisher?: { username: string }
-  keywords?: string[]
-  links?: { npm?: string; homepage?: string; repository?: string }
-  date: string
+  name: string;
+  description: string;
+  version: string;
+  publisher?: { username: string };
+  keywords?: string[];
+  links?: { npm?: string; homepage?: string; repository?: string };
+  date: string;
 }
 
 interface NpmSearchResult {
   objects: Array<{
-    package: NpmPackage
-    score: { final: number }
-    downloads: { monthly: number }
-  }>
-  total: number
+    package: NpmPackage;
+    score: { final: number };
+    downloads: { monthly: number };
+  }>;
+  total: number;
 }
 
-type PermissionKey = 'read' | 'write' | 'shell'
-type ServerPermissions = Record<PermissionKey, boolean>
+type PermissionKey = 'read' | 'write' | 'shell';
+type ServerPermissions = Record<PermissionKey, boolean>;
 
 const STATUS_STYLES: Record<McpServer['status'], string> = {
   connected: 'text-[#16A34A] dark:text-[#22C55E]',
   connecting: 'text-[#2563eb] dark:text-[#3b82f6]',
   offline: 'text-[#f59e0b]',
   error: 'text-[#ef4444]',
-}
+};
 
 const STATUS_LABELS: Record<McpServer['status'], string> = {
   connected: 'Connected',
   connecting: 'Connecting...',
   offline: 'Offline',
   error: 'Error',
-}
+};
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 20;
 
 const fetchServers = async (): Promise<McpServer[]> => {
-  const response = await fetch('/mcp')
-  if (!response.ok) throw new Error('Failed to fetch servers')
-  return response.json()
-}
+  const response = await fetch('/mcp');
+  if (!response.ok) throw new Error('Failed to fetch servers');
+  return response.json();
+};
 
-const DEFAULT_SEARCH_QUERY = 'mcp server @modelcontextprotocol'
-const MIN_SEARCH_LENGTH = 3
+const DEFAULT_SEARCH_QUERY = 'mcp server @modelcontextprotocol';
+const MIN_SEARCH_LENGTH = 3;
 
 const fetchNpmPackages = async (
   query: string,
   from: number
 ): Promise<{ list: NpmPackage[]; total: number; hasMore: boolean }> => {
-  const searchQuery = query && query.length >= MIN_SEARCH_LENGTH ? query : DEFAULT_SEARCH_QUERY
-  const url = `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(searchQuery)}&size=${PAGE_SIZE}&from=${from}`
-  const response = await fetch(url)
-  if (!response.ok) throw new Error('Failed to fetch packages')
-  const data: NpmSearchResult = await response.json()
+  const searchQuery =
+    query && query.length >= MIN_SEARCH_LENGTH ? query : DEFAULT_SEARCH_QUERY;
+  const url = `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(searchQuery)}&size=${PAGE_SIZE}&from=${from}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Failed to fetch packages');
+  const data: NpmSearchResult = await response.json();
   return {
     list: data.objects.map((obj) => obj.package),
     total: data.total,
     hasMore: from + PAGE_SIZE < data.total,
-  }
-}
+  };
+};
 
 export function McpModal() {
-  const { isMcpOpen, toggleMcp } = useAppStore()
-  const [tab, setTab] = useState<'installed' | 'catalog'>('installed')
-  const [addServerOpen, setAddServerOpen] = useState(false)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [permissionOverrides, setPermissionOverrides] = useState<Record<string, ServerPermissions>>({})
-  const [catalogSearchInput, setCatalogSearchInput] = useState('')
-  const [catalogSearch, setCatalogSearch] = useState('')
-  const [installingName, setInstallingName] = useState<string | null>(null)
-  const [installPackage, setInstallPackage] = useState<NpmPackage | null>(null)
-  const catalogRef = useRef<HTMLDivElement>(null)
+  const { isMcpOpen, toggleMcp } = useAppStore();
+  const [tab, setTab] = useState<'installed' | 'catalog'>('installed');
+  const [addServerOpen, setAddServerOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [permissionOverrides, setPermissionOverrides] = useState<
+    Record<string, ServerPermissions>
+  >({});
+  const [catalogSearchInput, setCatalogSearchInput] = useState('');
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [installingName, setInstallingName] = useState<string | null>(null);
+  const [installPackage, setInstallPackage] = useState<NpmPackage | null>(null);
+  const catalogRef = useRef<HTMLDivElement>(null);
 
   const { run: debouncedSetSearch } = useDebounceFn(
     (value: string) => {
-      setCatalogSearch(value)
+      setCatalogSearch(value);
     },
     { wait: 500 }
-  )
+  );
 
   const {
     data: servers = [],
@@ -107,10 +119,10 @@ export function McpModal() {
     ready: isMcpOpen,
     onSuccess: (data) => {
       if (data.length > 0 && !selectedId) {
-        setSelectedId(data[0].id)
+        setSelectedId(data[0].id);
       }
     },
-  })
+  });
 
   const {
     data: catalogData,
@@ -120,8 +132,8 @@ export function McpModal() {
     reload: reloadCatalog,
   } = useInfiniteScroll(
     async (d) => {
-      const from = d?.list?.length ?? 0
-      return fetchNpmPackages(catalogSearch, from)
+      const from = d?.list?.length ?? 0;
+      return fetchNpmPackages(catalogSearch, from);
     },
     {
       target: catalogRef,
@@ -129,85 +141,95 @@ export function McpModal() {
       reloadDeps: [catalogSearch],
       manual: !isMcpOpen || tab !== 'catalog',
     }
-  )
+  );
 
   const { runAsync: connectServer } = useRequest(
     async (name: string) => {
-      await fetch(`/mcp/${encodeURIComponent(name)}/connect`, { method: 'POST' })
+      await fetch(`/mcp/${encodeURIComponent(name)}/connect`, { method: 'POST' });
     },
     { manual: true, onSuccess: loadServers }
-  )
+  );
 
   const { runAsync: disconnectServer } = useRequest(
     async (name: string) => {
-      await fetch(`/mcp/${encodeURIComponent(name)}/disconnect`, { method: 'POST' })
+      await fetch(`/mcp/${encodeURIComponent(name)}/disconnect`, { method: 'POST' });
     },
     { manual: true, onSuccess: loadServers }
-  )
+  );
 
   const { runAsync: deleteServer } = useRequest(
     async (name: string) => {
-      await fetch(`/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      await fetch(`/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
     },
     { manual: true, onSuccess: loadServers }
-  )
+  );
 
   const { runAsync: addServer } = useRequest(
-    async (config: { name: string; command?: string; args?: string[]; url?: string; env?: Record<string, string> }) => {
+    async (config: {
+      name: string;
+      command?: string;
+      args?: string[];
+      url?: string;
+      env?: Record<string, string>;
+    }) => {
       await fetch('/mcp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: config.name, config }),
-      })
+      });
     },
     {
       manual: true,
       onSuccess: () => {
-        loadServers()
-        setAddServerOpen(false)
-        setInstallPackage(null)
-        setInstallingName(null)
+        loadServers();
+        setAddServerOpen(false);
+        setInstallPackage(null);
+        setInstallingName(null);
       },
       onError: () => {
-        setInstallingName(null)
+        setInstallingName(null);
       },
     }
-  )
+  );
 
   const selectedServer = useMemo(
     () => servers.find((server) => server.id === selectedId) ?? servers[0],
     [servers, selectedId]
-  )
+  );
 
   const selectedPermissions = selectedServer
-    ? (permissionOverrides[selectedServer.id] ?? { read: true, write: false, shell: false })
-    : { read: true, write: false, shell: false }
+    ? (permissionOverrides[selectedServer.id] ?? {
+        read: true,
+        write: false,
+        shell: false,
+      })
+    : { read: true, write: false, shell: false };
 
   const updatePermission = (key: PermissionKey) => {
-    if (!selectedServer) return
+    if (!selectedServer) return;
     setPermissionOverrides((prev) => ({
       ...prev,
       [selectedServer.id]: {
         ...selectedPermissions,
         [key]: !selectedPermissions[key],
       },
-    }))
-  }
+    }));
+  };
 
   const installedPackages = useMemo(() => {
-    return new Set(servers.map((s) => s.name.toLowerCase()))
-  }, [servers])
+    return new Set(servers.map((s) => s.name.toLowerCase()));
+  }, [servers]);
 
   const handleInstallFromCatalog = (pkg: NpmPackage) => {
-    setInstallPackage(pkg)
-  }
+    setInstallPackage(pkg);
+  };
 
-  const isOfficialPackage = (name: string) => name.startsWith('@modelcontextprotocol/')
+  const isOfficialPackage = (name: string) => name.startsWith('@modelcontextprotocol/');
 
   const getPackageTag = (pkg: NpmPackage): 'Official' | 'Popular' | 'Community' => {
-    if (isOfficialPackage(pkg.name)) return 'Official'
-    return 'Community'
-  }
+    if (isOfficialPackage(pkg.name)) return 'Official';
+    return 'Community';
+  };
 
   return (
     <>
@@ -221,7 +243,9 @@ export function McpModal() {
           <div className="flex flex-1 min-h-0">
             <div className="flex-1 p-8 flex flex-col gap-5 min-h-0 overflow-hidden">
               <div className="flex items-center justify-between shrink-0">
-                <h2 className="text-lg font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">MCP</h2>
+                <h2 className="text-lg font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
+                  MCP
+                </h2>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={loadServers}
@@ -247,14 +271,17 @@ export function McpModal() {
               </div>
 
               <div className="flex items-center gap-2 p-1 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] w-fit shrink-0">
-                <TabButton active={tab === 'installed'} onClick={() => setTab('installed')}>
+                <TabButton
+                  active={tab === 'installed'}
+                  onClick={() => setTab('installed')}
+                >
                   Installed ({servers.length})
                 </TabButton>
                 <TabButton
                   active={tab === 'catalog'}
                   onClick={() => {
-                    setTab('catalog')
-                    if (!catalogData) reloadCatalog()
+                    setTab('catalog');
+                    if (!catalogData) reloadCatalog();
                   }}
                 >
                   Catalog
@@ -264,7 +291,9 @@ export function McpModal() {
               {tab === 'installed' ? (
                 <div className="flex gap-5 flex-1 min-h-0 overflow-hidden">
                   <div className="w-[220px] flex flex-col gap-3 min-h-0 overflow-hidden">
-                    <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5] shrink-0">Servers</span>
+                    <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5] shrink-0">
+                      Servers
+                    </span>
                     <div className="h-8 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] flex items-center px-3 text-[12px] text-[#9CA3AF] dark:text-[#71717a] font-mono shrink-0">
                       Search servers...
                     </div>
@@ -286,12 +315,21 @@ export function McpModal() {
                           )}
                         >
                           <div className="flex items-center justify-between">
-                            <span className="text-[13px] font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">{server.name}</span>
-                            <span className={cn('text-[11px] font-mono font-semibold', STATUS_STYLES[server.status])}>
+                            <span className="text-[13px] font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                              {server.name}
+                            </span>
+                            <span
+                              className={cn(
+                                'text-[11px] font-mono font-semibold',
+                                STATUS_STYLES[server.status]
+                              )}
+                            >
                               {STATUS_LABELS[server.status]}
                             </span>
                           </div>
-                          <span className="text-[11px] font-mono text-[#6B7280] dark:text-[#94a3b8] truncate">{server.endpoint}</span>
+                          <span className="text-[11px] font-mono text-[#6B7280] dark:text-[#94a3b8] truncate">
+                            {server.endpoint}
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -300,14 +338,25 @@ export function McpModal() {
                   {selectedServer ? (
                     <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-2 min-h-0">
                       <div className="flex items-center justify-between shrink-0">
-                        <span className="text-base font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">{selectedServer.name}</span>
-                        <span className={cn('text-xs font-mono font-semibold', STATUS_STYLES[selectedServer.status])}>
+                        <span className="text-base font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                          {selectedServer.name}
+                        </span>
+                        <span
+                          className={cn(
+                            'text-xs font-mono font-semibold',
+                            STATUS_STYLES[selectedServer.status]
+                          )}
+                        >
                           {STATUS_LABELS[selectedServer.status]}
                         </span>
                       </div>
-                      <p className="text-[12px] font-mono text-[#6B7280] dark:text-[#94a3b8]">{selectedServer.description}</p>
+                      <p className="text-[12px] font-mono text-[#6B7280] dark:text-[#94a3b8]">
+                        {selectedServer.description}
+                      </p>
                       {selectedServer.error && (
-                        <p className="text-[12px] font-mono text-[#ef4444]">Error: {selectedServer.error}</p>
+                        <p className="text-[12px] font-mono text-[#ef4444]">
+                          Error: {selectedServer.error}
+                        </p>
                       )}
 
                       <div className="flex items-center gap-2">
@@ -336,7 +385,9 @@ export function McpModal() {
 
                       <div className="h-px bg-[#E5E7EB] dark:bg-[#1f2937]" />
 
-                      <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">Permissions</span>
+                      <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                        Permissions
+                      </span>
                       <PermissionRow
                         label="File read"
                         enabled={selectedPermissions.read}
@@ -358,7 +409,9 @@ export function McpModal() {
                       </span>
                       <div className="flex flex-wrap gap-2">
                         {selectedServer.tools.length === 0 ? (
-                          <span className="text-[12px] font-mono text-[#9CA3AF] dark:text-[#71717a]">No tools available</span>
+                          <span className="text-[12px] font-mono text-[#9CA3AF] dark:text-[#71717a]">
+                            No tools available
+                          </span>
                         ) : (
                           selectedServer.tools.map((tool) => (
                             <span
@@ -373,7 +426,9 @@ export function McpModal() {
                     </div>
                   ) : (
                     <div className="flex-1 flex items-center justify-center">
-                      <span className="text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">Select a server to view details</span>
+                      <span className="text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">
+                        Select a server to view details
+                      </span>
                     </div>
                   )}
                 </div>
@@ -386,8 +441,8 @@ export function McpModal() {
                         type="text"
                         value={catalogSearchInput}
                         onChange={(e) => {
-                          setCatalogSearchInput(e.target.value)
-                          debouncedSetSearch(e.target.value)
+                          setCatalogSearchInput(e.target.value);
+                          debouncedSetSearch(e.target.value);
                         }}
                         placeholder="Search MCP servers on npm (min 3 chars)..."
                         className="flex-1 bg-transparent text-[12px] font-mono text-[#111827] dark:text-[#E5E5E5] placeholder:text-[#9CA3AF] dark:placeholder:text-[#71717a] focus:outline-none"
@@ -403,11 +458,16 @@ export function McpModal() {
                     ) : (
                       <div className="grid grid-cols-2 gap-3 pb-4">
                         {catalogData?.list.map((pkg) => {
-                          const isInstalled = installedPackages.has(pkg.name.toLowerCase().replace(/\s+/g, '-'))
-                          const isInstalling = installingName === pkg.name
-                          const tag = getPackageTag(pkg)
+                          const isInstalled = installedPackages.has(
+                            pkg.name.toLowerCase().replace(/\s+/g, '-')
+                          );
+                          const isInstalling = installingName === pkg.name;
+                          const tag = getPackageTag(pkg);
                           return (
-                            <div key={pkg.name} className="rounded-lg bg-white dark:bg-[#0C0C0C] p-4 flex flex-col gap-2">
+                            <div
+                              key={pkg.name}
+                              className="rounded-lg bg-white dark:bg-[#0C0C0C] p-4 flex flex-col gap-2"
+                            >
                               <div className="flex items-center justify-between gap-2">
                                 <span className="text-[13px] font-mono font-semibold text-[#111827] dark:text-[#E5E5E5] truncate">
                                   {pkg.name}
@@ -437,7 +497,10 @@ export function McpModal() {
                               </div>
                               <div className="flex items-center justify-between mt-auto pt-2">
                                 <a
-                                  href={pkg.links?.npm || `https://www.npmjs.com/package/${pkg.name}`}
+                                  href={
+                                    pkg.links?.npm ||
+                                    `https://www.npmjs.com/package/${pkg.name}`
+                                  }
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="text-[10px] font-mono text-[#9CA3AF] dark:text-[#71717a] hover:text-[#111827] dark:hover:text-[#E5E5E5] flex items-center gap-1"
@@ -456,13 +519,18 @@ export function McpModal() {
                                     disabled={isInstalling}
                                     className="h-6 px-2 rounded-md bg-[#E5E7EB] text-[#111827] dark:bg-[#27272a] dark:text-[#E5E5E5] text-[10px] font-mono font-semibold flex items-center gap-1 hover:bg-[#D1D5DB] dark:hover:bg-[#32323a] disabled:opacity-50"
                                   >
-                                    <Download className={cn('h-3 w-3', isInstalling && 'animate-pulse')} />
+                                    <Download
+                                      className={cn(
+                                        'h-3 w-3',
+                                        isInstalling && 'animate-pulse'
+                                      )}
+                                    />
                                     {isInstalling ? 'Installing...' : 'Install'}
                                   </button>
                                 )}
                               </div>
                             </div>
-                          )
+                          );
                         })}
                       </div>
                     )}
@@ -474,7 +542,9 @@ export function McpModal() {
                     )}
 
                     {noMore && catalogData && catalogData.list.length > 0 && (
-                      <div className="text-center py-4 text-[11px] font-mono text-[#9CA3AF] dark:text-[#71717a]">No more packages</div>
+                      <div className="text-center py-4 text-[11px] font-mono text-[#9CA3AF] dark:text-[#71717a]">
+                        No more packages
+                      </div>
                     )}
                   </div>
 
@@ -499,23 +569,35 @@ export function McpModal() {
         </DialogContent>
       </Dialog>
 
-      <McpAddServerModal open={addServerOpen} onOpenChange={setAddServerOpen} onAdd={addServer} />
+      <McpAddServerModal
+        open={addServerOpen}
+        onOpenChange={setAddServerOpen}
+        onAdd={addServer}
+      />
 
       {installPackage && (
         <McpInstallModal
           pkg={installPackage}
           onClose={() => setInstallPackage(null)}
           onInstall={(config) => {
-            setInstallingName(installPackage.name)
-            addServer(config)
+            setInstallingName(installPackage.name);
+            addServer(config);
           }}
         />
       )}
     </>
-  )
+  );
 }
 
-function TabButton({ active, children, onClick }: { active: boolean; children: ReactNode; onClick: () => void }) {
+function TabButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick: () => void;
+}) {
   return (
     <button
       onClick={onClick}
@@ -528,30 +610,48 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
     >
       {children}
     </button>
-  )
+  );
 }
 
-function PermissionRow({ label, enabled, onToggle }: { label: string; enabled: boolean; onToggle: () => void }) {
+function PermissionRow({
+  label,
+  enabled,
+  onToggle,
+}: {
+  label: string;
+  enabled: boolean;
+  onToggle: () => void;
+}) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-[13px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">{label}</span>
+      <span className="text-[13px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">
+        {label}
+      </span>
       <ToggleSwitch enabled={enabled} onChange={onToggle} />
     </div>
-  )
+  );
 }
 
-function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: () => void }) {
+function ToggleSwitch({
+  enabled,
+  onChange,
+}: {
+  enabled: boolean;
+  onChange: () => void;
+}) {
   return (
     <button
       onClick={onChange}
       className={cn(
         'w-9 h-5 rounded-full px-0.5 flex items-center transition-colors',
-        enabled ? 'bg-[#16A34A] dark:bg-[#22C55E] justify-end' : 'bg-[#E5E7EB] dark:bg-[#27272a] justify-start'
+        enabled
+          ? 'bg-[#16A34A] dark:bg-[#22C55E] justify-end'
+          : 'bg-[#E5E7EB] dark:bg-[#27272a] justify-start'
       )}
     >
       <span className="h-4 w-4 rounded-full bg-white" />
     </button>
-  )
+  );
 }
 
 function McpAddServerModal({
@@ -559,46 +659,46 @@ function McpAddServerModal({
   onOpenChange,
   onAdd,
 }: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onAdd: (config: {
-    name: string
-    command?: string
-    args?: string[]
-    url?: string
-    env?: Record<string, string>
-  }) => Promise<void>
+    name: string;
+    command?: string;
+    args?: string[];
+    url?: string;
+    env?: Record<string, string>;
+  }) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<'form' | 'json'>('form')
-  const [name, setName] = useState('')
-  const [command, setCommand] = useState('')
-  const [args, setArgs] = useState('')
+  const [mode, setMode] = useState<'form' | 'json'>('form');
+  const [name, setName] = useState('');
+  const [command, setCommand] = useState('');
+  const [args, setArgs] = useState('');
   const [jsonConfig, setJsonConfig] = useState(`{
   "name": "my-server",
   "command": "npx",
   "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-}`)
+}`);
 
   const handleSubmit = () => {
     if (mode === 'json') {
       try {
-        const config = JSON.parse(jsonConfig)
-        onAdd(config)
+        const config = JSON.parse(jsonConfig);
+        onAdd(config);
       } catch {
-        alert('Invalid JSON')
+        alert('Invalid JSON');
       }
     } else {
       if (!name || !command) {
-        alert('Name and command are required')
-        return
+        alert('Name and command are required');
+        return;
       }
       onAdd({
         name,
         command,
         args: args.split(' ').filter(Boolean),
-      })
+      });
     }
-  }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -610,7 +710,9 @@ function McpAddServerModal({
         <DialogTitle className="sr-only">Add MCP Server</DialogTitle>
         <div className="p-6 flex flex-col gap-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">Add MCP Server</h3>
+            <h3 className="text-base font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
+              Add MCP Server
+            </h3>
             <button
               onClick={() => onOpenChange(false)}
               className="h-8 w-8 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] transition-colors flex items-center justify-center"
@@ -630,7 +732,9 @@ function McpAddServerModal({
 
           {mode === 'json' ? (
             <div className="flex flex-col gap-2">
-              <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">JSON config</span>
+              <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">
+                JSON config
+              </span>
               <textarea
                 className="min-h-[140px] rounded-md bg-white dark:bg-[#0C0C0C] text-[#111827] dark:text-[#E5E5E5] font-mono text-[12px] p-3 border border-transparent focus:outline-none focus:border-[#E5E7EB] dark:border-[#27272a]"
                 value={jsonConfig}
@@ -640,7 +744,9 @@ function McpAddServerModal({
           ) : (
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-1">
-                <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">Server name</span>
+                <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">
+                  Server name
+                </span>
                 <input
                   type="text"
                   value={name}
@@ -650,7 +756,9 @@ function McpAddServerModal({
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">Command</span>
+                <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">
+                  Command
+                </span>
                 <input
                   type="text"
                   value={command}
@@ -660,7 +768,9 @@ function McpAddServerModal({
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">Arguments (space separated)</span>
+                <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">
+                  Arguments (space separated)
+                </span>
                 <input
                   type="text"
                   value={args}
@@ -689,7 +799,7 @@ function McpAddServerModal({
         </div>
       </DialogContent>
     </Dialog>
-  )
+  );
 }
 
 function McpInstallModal({
@@ -697,25 +807,34 @@ function McpInstallModal({
   onClose,
   onInstall,
 }: {
-  pkg: NpmPackage
-  onClose: () => void
-  onInstall: (config: { name: string; command: string; args: string[]; env?: Record<string, string> }) => void
+  pkg: NpmPackage;
+  onClose: () => void;
+  onInstall: (config: {
+    name: string;
+    command: string;
+    args: string[];
+    env?: Record<string, string>;
+  }) => void;
 }) {
-  const serverName = pkg.name.split('/').pop()?.replace(/^server-/, '') || pkg.name
-  const [name, setName] = useState(serverName)
-  const [args, setArgs] = useState(`-y ${pkg.name}`)
+  const serverName =
+    pkg.name
+      .split('/')
+      .pop()
+      ?.replace(/^server-/, '') || pkg.name;
+  const [name, setName] = useState(serverName);
+  const [args, setArgs] = useState(`-y ${pkg.name}`);
 
   const handleInstall = () => {
     if (!name.trim()) {
-      alert('Server name is required')
-      return
+      alert('Server name is required');
+      return;
     }
     onInstall({
       name: name.trim(),
       command: 'npx',
       args: args.split(' ').filter(Boolean),
-    })
-  }
+    });
+  };
 
   return (
     <Dialog open onOpenChange={onClose}>
@@ -727,7 +846,9 @@ function McpInstallModal({
         <DialogTitle className="sr-only">Install {pkg.name}</DialogTitle>
         <div className="p-6 flex flex-col gap-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">Install MCP Server</h3>
+            <h3 className="text-base font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
+              Install MCP Server
+            </h3>
             <button
               onClick={onClose}
               className="h-8 w-8 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] transition-colors flex items-center justify-center"
@@ -737,15 +858,21 @@ function McpInstallModal({
           </div>
 
           <div className="rounded-md bg-white dark:bg-[#0C0C0C] p-3">
-            <span className="text-[13px] font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">{pkg.name}</span>
-            <p className="text-[11px] font-mono text-[#6B7280] dark:text-[#94a3b8] mt-1">{pkg.description || 'No description'}</p>
+            <span className="text-[13px] font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
+              {pkg.name}
+            </span>
+            <p className="text-[11px] font-mono text-[#6B7280] dark:text-[#94a3b8] mt-1">
+              {pkg.description || 'No description'}
+            </p>
           </div>
 
           <div className="h-px bg-[#E5E7EB] dark:bg-[#1f2937]" />
 
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-1">
-              <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">Server name</span>
+              <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">
+                Server name
+              </span>
               <input
                 type="text"
                 value={name}
@@ -755,7 +882,9 @@ function McpInstallModal({
               />
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">Arguments</span>
+              <span className="text-[12px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">
+                Arguments
+              </span>
               <input
                 type="text"
                 value={args}
@@ -786,10 +915,18 @@ function McpInstallModal({
         </div>
       </DialogContent>
     </Dialog>
-  )
+  );
 }
 
-function ModeButton({ active, children, onClick }: { active: boolean; children: ReactNode; onClick: () => void }) {
+function ModeButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick: () => void;
+}) {
   return (
     <button
       onClick={onClick}
@@ -802,5 +939,5 @@ function ModeButton({ active, children, onClick }: { active: boolean; children: 
     >
       {children}
     </button>
-  )
+  );
 }
