@@ -251,6 +251,12 @@ interface InterruptedCommandResult extends CommandResult {
   signalDelivered: boolean;
 }
 
+interface HeldBladeInvocation {
+  toolStarted: Promise<boolean>;
+  result: Promise<CommandResult>;
+  terminate: (signal?: NodeJS.Signals) => boolean;
+}
+
 function runBladeInvocation(
   workspace: string,
   home: string,
@@ -432,6 +438,115 @@ function runInterruptedBladeInvocation(
   });
 }
 
+function startHeldBladeInvocation(
+  workspace: string,
+  home: string,
+  model: string,
+  options: BladeInvocationOptions
+): HeldBladeInvocation {
+  const configDir = path.join(home, '.blade');
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(
+    path.join(configDir, 'config.json'),
+    JSON.stringify(buildRealApiConfig({ modelId: model, model, baseUrl }), null, 2)
+  );
+
+  const sessionId = options.sessionId;
+  if (!sessionId) {
+    throw new Error('Held real API invocation requires a session ID');
+  }
+
+  const child = realSpawn(
+    'node',
+    [
+      cliEntry,
+      '--headless',
+      '--output-format',
+      'jsonl',
+      '--permission-mode',
+      options.permissionMode ?? 'yolo',
+      '--max-turns',
+      String(options.maxTurns ?? 6),
+      '--model',
+      model,
+      '--session-id',
+      sessionId,
+      options.prompt,
+    ],
+    {
+      cwd: workspace,
+      env: {
+        ...process.env,
+        HOME: home,
+        BLADE_STORAGE_ROOT: configDir,
+        BLADE_API_KEY: apiKey,
+        BLADE_TELEMETRY_DISABLED: '1',
+        BLADE_ALLOW_ROOT: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  );
+
+  let stdout = '';
+  let stderr = '';
+  let timedOut = false;
+  let toolStartSettled = false;
+  let settleToolStart: (started: boolean) => void = () => undefined;
+  const toolStarted = new Promise<boolean>((resolve) => {
+    settleToolStart = resolve;
+  });
+  const settleToolStartOnce = (started: boolean) => {
+    if (toolStartSettled) return;
+    toolStartSettled = true;
+    settleToolStart(started);
+  };
+
+  const result = new Promise<CommandResult>((resolve) => {
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, 240_000);
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+      if (
+        stdout.includes('"type":"tool_start"') &&
+        stdout.includes('"target":"node scripts/hang.mjs"')
+      ) {
+        settleToolStartOnce(true);
+      }
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      settleToolStartOnce(false);
+      resolve({ status: null, stdout, stderr, error });
+    });
+    child.once('close', (status) => {
+      clearTimeout(timeout);
+      settleToolStartOnce(false);
+      resolve({
+        status,
+        stdout,
+        stderr,
+        error: timedOut
+          ? new Error('Held Blade CLI timed out after 240 seconds')
+          : undefined,
+      });
+    });
+  });
+
+  return {
+    toolStarted,
+    result,
+    terminate: (signal = 'SIGTERM') => child.kill(signal),
+  };
+}
+
 function findSessionFile(home: string, sessionId: string): string | undefined {
   const projectsRoot = path.join(home, '.blade', 'projects');
   if (!existsSync(projectsRoot)) return undefined;
@@ -537,6 +652,16 @@ function createInterruptedTurnResumePrompt(): string {
     'Do not rerun scripts/hang.mjs.',
     'Use the Write tool to create resumed.txt containing exactly the single line "resumed".',
     'Then call Bash with the exact command "test \"$(cat resumed.txt)\" = resumed" to verify it.',
+    'Do not modify any other file and finish only after verification passes.',
+  ].join('\n');
+}
+
+function createSessionLeaseResumePrompt(): string {
+  return [
+    'Continue after the prior session owner exited.',
+    'Do not rerun scripts/hang.mjs.',
+    'Use the Write tool to create lease-resumed.txt containing exactly the single line "lease-resumed".',
+    'Then call Bash with the exact command "test \"$(cat lease-resumed.txt)\" = lease-resumed" to verify it.',
     'Do not modify any other file and finish only after verification passes.',
   ].join('\n');
 }
@@ -1026,6 +1151,103 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
           apiKey
         );
       } finally {
+        if (descendantPid !== undefined) {
+          try {
+            process.kill(descendantPid, 'SIGKILL');
+          } catch {
+            // The interrupted process tree was already reclaimed.
+          }
+        }
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 420_000);
+
+    it('rejects a concurrent owner of the same session and resumes after release', async () => {
+      if (process.platform === 'win32') return;
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          'Missing built CLI; run "bun run build:cli" before real API tests'
+        );
+      }
+
+      const workspace = createTimeoutRecoveryWorkspace();
+      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-lease-home-'));
+      const sessionId = `real-api-lease-${model}`;
+      const blockedPrompt = 'SESSION_LEASE_BLOCKED_PROMPT_MUST_NOT_BE_PERSISTED';
+      let held: HeldBladeInvocation | undefined;
+      let heldFinished = false;
+      let descendantPid: number | undefined;
+
+      try {
+        held = startHeldBladeInvocation(workspace, home, model, {
+          prompt: createInterruptedTurnPrompt(),
+          sessionId,
+        });
+        expect(await held.toolStarted).toBe(true);
+
+        const concurrent = await runBladeInvocation(workspace, home, model, {
+          prompt: blockedPrompt,
+          sessionId,
+          maxTurns: 1,
+        });
+        const concurrentEvents = parseHeadlessJsonl(concurrent.stdout);
+
+        expect(concurrent.error).toBeUndefined();
+        expect(concurrent.status, redactSecrets(concurrent.stderr, [apiKey])).toBe(1);
+        expect(concurrentEvents.nonJsonLines).toEqual([]);
+        expect(concurrentEvents.events).toEqual([
+          expect.objectContaining({
+            type: 'error',
+            message: expect.stringContaining('already active'),
+          }),
+        ]);
+
+        const sessionFile = findSessionFile(home, sessionId);
+        expect(sessionFile).toBeDefined();
+        if (!sessionFile) throw new Error(`Missing persisted session ${sessionId}`);
+        expect(readFileSync(sessionFile, 'utf8')).not.toContain(blockedPrompt);
+
+        expect(held.terminate()).toBe(true);
+        const interrupted = await held.result;
+        heldFinished = true;
+        expect(interrupted.error).toBeUndefined();
+        expect(interrupted.status, redactSecrets(interrupted.stderr, [apiKey])).toBe(1);
+
+        if (existsSync(path.join(workspace, 'descendant.pid'))) {
+          descendantPid = Number.parseInt(
+            readFileSync(path.join(workspace, 'descendant.pid'), 'utf8'),
+            10
+          );
+          expect(await waitForProcessGone(descendantPid)).toBe(true);
+          descendantPid = undefined;
+        }
+
+        const resumed = await runBladeInvocation(workspace, home, model, {
+          prompt: createSessionLeaseResumePrompt(),
+          sessionId,
+          maxTurns: 6,
+        });
+        const resumedEvents = parseHeadlessJsonl(resumed.stdout);
+
+        expect(resumed.error).toBeUndefined();
+        expect(resumed.status, redactSecrets(resumed.stderr, [apiKey])).toBe(0);
+        expect(resumedEvents.nonJsonLines).toEqual([]);
+        expect(resumedEvents.events.filter((event) => event.type === 'error')).toEqual(
+          []
+        );
+        expect(readFileSync(path.join(workspace, 'lease-resumed.txt'), 'utf8')).toMatch(
+          /^lease-resumed\r?\n?$/
+        );
+        expect(readFileSync(sessionFile, 'utf8')).not.toContain(blockedPrompt);
+        expect(
+          concurrent.stdout + concurrent.stderr + interrupted.stdout + resumed.stdout
+        ).not.toContain(apiKey);
+      } finally {
+        if (held && !heldFinished) {
+          held.terminate('SIGKILL');
+          await held.result;
+        }
         if (descendantPid !== undefined) {
           try {
             process.kill(descendantPid, 'SIGKILL');

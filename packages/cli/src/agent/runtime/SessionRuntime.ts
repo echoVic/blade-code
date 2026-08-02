@@ -37,6 +37,7 @@ import { worktreeManager } from '../../worktree/WorktreeManager.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
 import { subagentRegistry } from '../subagents/SubagentRegistry.js';
 import type { AgentOptions } from '../types.js';
+import { SessionLease } from './SessionLease.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -57,6 +58,7 @@ export class SessionRuntime {
   private currentModelId?: string;
   private currentModelMaxContextTokens!: number;
   private initialized = false;
+  private sessionLease?: SessionLease;
 
   constructor(
     private readonly config: BladeConfig,
@@ -129,19 +131,26 @@ export class SessionRuntime {
       return;
     }
 
-    await this.validateSystemPromptConfig();
-    await this.registerBuiltinTools();
-    await this.loadSubagents();
-    await this.discoverSkills();
-    await this.applyModelConfig(
-      this.resolveModelConfig(this.options.modelId),
-      '使用模型:'
-    );
+    this.sessionLease = await SessionLease.acquire(this.sessionId);
+    try {
+      await this.validateSystemPromptConfig();
+      await this.registerBuiltinTools();
+      await this.loadSubagents();
+      await this.discoverSkills();
+      await this.applyModelConfig(
+        this.resolveModelConfig(this.options.modelId),
+        '使用模型:'
+      );
 
-    this.initialized = true;
-    logger.debug(
-      `[SessionRuntime ${this.sessionId}] initialized with ${this.baseRegistry.getAll().length} tools`
-    );
+      this.initialized = true;
+      logger.debug(
+        `[SessionRuntime ${this.sessionId}] initialized with ${this.baseRegistry.getAll().length} tools`
+      );
+    } catch (error) {
+      await this.sessionLease.release();
+      this.sessionLease = undefined;
+      throw error;
+    }
   }
 
   async refresh(options: Partial<SessionRuntimeOptions>): Promise<void> {
@@ -202,15 +211,23 @@ export class SessionRuntime {
   }
 
   async dispose(): Promise<void> {
-    await BackgroundShellManager.getInstance().killSession(this.sessionId);
-    this.approvalStore.clear();
-    worktreeManager.releaseSession(this.sessionId);
-    const disposableChatService = this.chatService as
-      | (IChatService & { dispose?: () => Promise<void> | void })
-      | undefined;
-    await disposableChatService?.dispose?.();
-    this.currentModelId = undefined;
-    this.initialized = false;
+    try {
+      await BackgroundShellManager.getInstance().killSession(this.sessionId);
+      this.approvalStore.clear();
+      worktreeManager.releaseSession(this.sessionId);
+      const disposableChatService = this.chatService as
+        | (IChatService & { dispose?: () => Promise<void> | void })
+        | undefined;
+      await disposableChatService?.dispose?.();
+    } finally {
+      try {
+        await this.sessionLease?.release();
+      } finally {
+        this.sessionLease = undefined;
+        this.currentModelId = undefined;
+        this.initialized = false;
+      }
+    }
   }
 
   private resolveModelConfig(requestedModelId?: string): ModelConfig {

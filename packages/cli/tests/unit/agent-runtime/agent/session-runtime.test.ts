@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
+import { createChatServiceAsync } from '../../../../src/services/ChatServiceInterface.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 
 vi.mock('../../../../src/store/vanilla.js', () => ({
@@ -69,14 +73,58 @@ vi.mock('../../../../src/services/ChatServiceInterface.js', () => ({
 }));
 
 describe('SessionRuntime', () => {
+  let storageRoot: string;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    storageRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-session-runtime-'));
+    vi.stubEnv('BLADE_STORAGE_ROOT', storageRoot);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(storageRoot, { recursive: true, force: true });
   });
 
   it('creates a runtime from the current store config', async () => {
     const runtime = await SessionRuntime.create({ sessionId: 'session-1' });
 
     expect(runtime.sessionId).toBe('session-1');
+
+    await runtime.dispose();
+  });
+
+  it('exclusively owns a session until the runtime is disposed', async () => {
+    const first = await SessionRuntime.create({ sessionId: 'exclusive-session' });
+
+    await expect(
+      SessionRuntime.create({ sessionId: 'exclusive-session' })
+    ).rejects.toMatchObject({
+      name: 'SessionInUseError',
+      code: 'BLADE_SESSION_IN_USE',
+    });
+
+    await first.dispose();
+
+    const resumed = await SessionRuntime.create({ sessionId: 'exclusive-session' });
+    expect(resumed.sessionId).toBe('exclusive-session');
+    await resumed.dispose();
+  });
+
+  it('releases the session lease when initialization fails', async () => {
+    vi.mocked(createChatServiceAsync).mockRejectedValueOnce(
+      new Error('provider initialization failed')
+    );
+
+    await expect(
+      SessionRuntime.create({ sessionId: 'failed-initialization' })
+    ).rejects.toThrow('provider initialization failed');
+
+    const recovered = await SessionRuntime.create({
+      sessionId: 'failed-initialization',
+    });
+    expect(recovered.sessionId).toBe('failed-initialization');
+    await recovered.dispose();
   });
 
   it('keeps the deprecated execution pipeline factory source-compatible', () => {
@@ -102,6 +150,20 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
 
     expect(chatDispose).toHaveBeenCalledTimes(1);
+    expect((runtime as any).initialized).toBe(false);
+  });
+
+  it('clears runtime state even when releasing the session lease fails', async () => {
+    const runtime = new SessionRuntime({} as any, { sessionId: 'session-1' });
+    (runtime as any).initialized = true;
+    (runtime as any).sessionLease = {
+      release: vi.fn().mockRejectedValue(new Error('lease release failed')),
+    };
+
+    await expect(runtime.dispose()).rejects.toThrow('lease release failed');
+
+    expect((runtime as any).sessionLease).toBeUndefined();
+    expect((runtime as any).currentModelId).toBeUndefined();
     expect((runtime as any).initialized).toBe(false);
   });
 });

@@ -39,6 +39,7 @@ const testTypes = {
       'tests/unit/cli/headless.test.ts',
       'tests/unit/cli/headless-events.test.ts',
       'tests/integration/cli/blade-help.test.ts',
+      'tests/unit/agent-runtime/agent/session-lease.test.ts',
       'tests/unit/agent-runtime/agent/session-runtime.test.ts',
       'tests/unit/agent-runtime/agent/subagent-registry.test.ts',
       'tests/unit/agent-runtime/server/session-routes.test.ts',
