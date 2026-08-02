@@ -31,6 +31,12 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - 后台 agent 会话保留在 session store 中，允许同一 parent session 跨 CLI 进程读取和恢复。列举、输出、恢复和清理都按 `parentSessionId` 隔离。
 - 缺失 session 上下文时，后台 Bash 和后台 agent 启动会 fail closed，不会退化为全局可见任务。
 
+## Transcript 提交与恢复
+
+- session transcript 使用逐行 JSONL，换行符是单条事件的提交边界。加载时只允许忽略最后一个未换行且无法解析的尾片段，它代表进程在 append 过程中退出；任何已换行的坏记录或中间损坏都会 fail closed。
+- 同一进程中的 transcript append 按文件串行。首次恢复写入前会检查文件尾：完整 JSON 记录只缺换行时补齐换行，无法解析的 crash tail 则截回最后一个已提交边界，再追加新事件。
+- `SessionService`、`PersistentStore` 和 runtime resume 使用同一解析语义，避免会话列表可见但 CLI 无法恢复，或读取时跳过坏行而后续写入继续污染历史。
+
 ## 验证
 
 `packages/cli/tests/integration/process-tree-lifecycle.test.ts` 会启动一个父进程和一个忽略 `SIGTERM` 的后代，验证父进程获得优雅清理机会、后代最终被强制回收，并且 API 只在回收完成后返回。
@@ -40,3 +46,4 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - 模型触发一个必然超时的 Bash 进程树，收到结构化 `timeout_error` 后继续使用 Write 工具完成恢复任务，同时验证没有后代进程遗留；
 - 模型启动后台 Bash 但不主动终止，正常结束 headless 会话，然后验证 session dispose 已等待整棵进程树回收。
 - 首个 CLI 在工具执行期间持有 session，第二个同 session CLI 必须返回结构化占用错误且不写入输入；首个 CLI 退出后，第三个 CLI 必须恢复该 session 并完成写入与 Bash 验证。
+- 在完整 session 尾部注入未换行的截断 JSON 记录，第二个 CLI 必须恢复原有历史、完成 Write/Bash 任务，并使最终 transcript 的每一行重新成为合法 JSON。

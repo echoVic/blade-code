@@ -1,6 +1,6 @@
-import { nanoid } from 'nanoid';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { nanoid } from 'nanoid';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import type { JsonValue, MessageRole } from '../../store/types.js';
 import { getCwd } from '../../utils/cwd.js';
@@ -67,8 +67,8 @@ export class PersistentStore {
   ): Promise<void> {
     const filePath = getSessionFilePath(this.projectPath, sessionId);
     const store = new JSONLStore(filePath);
-    const stats = await store.getStats();
-    if (stats.lineCount > 0) return;
+    const entries = await store.readAll();
+    if (entries.length > 0) return;
     const now = new Date().toISOString();
     const sessionInfo: SessionInfo = {
       sessionId,

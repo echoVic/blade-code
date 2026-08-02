@@ -5,6 +5,7 @@
 
 import { readdir, readFile, rm } from 'node:fs/promises';
 import * as path from 'node:path';
+import { parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import {
   getBladeStorageRoot,
   getSessionFilePath,
@@ -152,16 +153,11 @@ export class SessionService {
     projectPath: string
   ): Promise<SessionMetadata> {
     const content = await readFile(filePath, 'utf-8');
-    const lines = content
-      .trim()
-      .split('\n')
-      .filter((line) => line.trim());
+    const entries = parseSessionJSONL(content, filePath);
 
-    if (lines.length === 0) {
+    if (entries.length === 0) {
       throw new Error('空的 JSONL 文件');
     }
-
-    const entries = lines.map((line) => JSON.parse(line) as SessionEvent);
     const firstEntry = entries[0];
     const lastEntry = entries[entries.length - 1];
     const sessionCreated = entries.find((entry) => entry.type === 'session_created');
@@ -239,15 +235,7 @@ export class SessionService {
    */
   private static async loadSessionFromFile(filePath: string): Promise<Message[]> {
     const content = await readFile(filePath, 'utf-8');
-    const lines = content
-      .trim()
-      .split('\n')
-      .filter((line) => line.trim());
-
-    const entries: SessionEvent[] = lines.map(
-      (line) => JSON.parse(line) as SessionEvent
-    );
-
+    const entries = parseSessionJSONL(content, filePath);
     return this.convertJSONLToMessages(entries);
   }
 

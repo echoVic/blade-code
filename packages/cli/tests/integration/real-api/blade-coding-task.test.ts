@@ -1,5 +1,6 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -666,6 +667,15 @@ function createSessionLeaseResumePrompt(): string {
   ].join('\n');
 }
 
+function createTruncatedTranscriptResumePrompt(): string {
+  return [
+    'Continue this session after its transcript tail was recovered from a process crash.',
+    'Use the Write tool to create transcript-recovered.txt containing exactly the single line "transcript-recovered".',
+    'Then call Bash with the exact command "test \"$(cat transcript-recovered.txt)\" = transcript-recovered" to verify it.',
+    'Do not modify any other file and finish only after verification passes.',
+  ].join('\n');
+}
+
 const enabled = isRealApiTestEnabled() && apiKey.length > 0;
 
 describe.skipIf(!enabled)('Blade coding task (real API)', () => {
@@ -1255,6 +1265,72 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
             // The interrupted process tree was already reclaimed.
           }
         }
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 420_000);
+
+    it('recovers a truncated transcript tail before appending resumed work', async () => {
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          'Missing built CLI; run "bun run build:cli" before real API tests'
+        );
+      }
+
+      const workspace = createCodingTaskWorkspace();
+      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-jsonl-home-'));
+      const sessionId = `real-api-jsonl-recovery-${model}`;
+      const crashTail = 'CRASH_TAIL_MUST_BE_REMOVED';
+
+      try {
+        const initial = await runBladeInvocation(workspace, home, model, {
+          prompt: createInspectionPrompt(),
+          sessionId,
+          permissionMode: 'plan',
+          maxTurns: 4,
+        });
+        expect(initial.error).toBeUndefined();
+        expect(initial.status, redactSecrets(initial.stderr, [apiKey])).toBe(0);
+
+        const sessionFile = findSessionFile(home, sessionId);
+        expect(sessionFile).toBeDefined();
+        if (!sessionFile) throw new Error(`Missing persisted session ${sessionId}`);
+        appendFileSync(sessionFile, `{"id":"${crashTail}`);
+
+        const resumed = await runBladeInvocation(workspace, home, model, {
+          prompt: createTruncatedTranscriptResumePrompt(),
+          sessionId,
+          maxTurns: 6,
+        });
+        const resumedEvents = parseHeadlessJsonl(resumed.stdout);
+        const toolStarts = resumedEvents.events
+          .filter((event) => event.type === 'tool_start')
+          .map((event) => event.tool_name);
+
+        expect(resumed.error).toBeUndefined();
+        expect(resumed.status, redactSecrets(resumed.stderr, [apiKey])).toBe(0);
+        expect(resumedEvents.nonJsonLines).toEqual([]);
+        expect(resumedEvents.events.filter((event) => event.type === 'error')).toEqual(
+          []
+        );
+        expect(toolStarts).toContain('Write');
+        expect(toolStarts).toContain('Bash');
+        expect(
+          readFileSync(path.join(workspace, 'transcript-recovered.txt'), 'utf8')
+        ).toMatch(/^transcript-recovered\r?\n?$/);
+
+        const repairedTranscript = readFileSync(sessionFile, 'utf8');
+        expect(repairedTranscript).not.toContain(crashTail);
+        expect(repairedTranscript.endsWith('\n')).toBe(true);
+        expect(() => {
+          for (const line of repairedTranscript.split(/\r?\n/).filter(Boolean)) {
+            JSON.parse(line);
+          }
+        }).not.toThrow();
+        expect(
+          initial.stdout + initial.stderr + resumed.stdout + resumed.stderr
+        ).not.toContain(apiKey);
+      } finally {
         rmSync(workspace, { recursive: true, force: true });
         rmSync(home, { recursive: true, force: true });
       }
