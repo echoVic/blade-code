@@ -4,11 +4,55 @@
  */
 
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { CompactionService } from '../../../../src/context/CompactionService.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
+
+const { compactChat } = vi.hoisted(() => ({
+  compactChat: vi.fn(),
+}));
+
+vi.mock('../../../../src/services/ChatServiceInterface.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../../../../src/services/ChatServiceInterface.js')
+    >();
+  return {
+    ...actual,
+    createChatServiceAsync: vi.fn(async () => ({ chat: compactChat })),
+  };
+});
+
+describe('CompactionService - 输出协议', () => {
+  test('压缩诊断不应写入 stdout', async () => {
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>Preserve the active coding task.</summary>',
+    });
+    const stdoutSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    try {
+      const result = await CompactionService.compact(
+        [{ role: 'user', content: 'Continue the coding task.' }],
+        {
+          trigger: 'auto',
+          modelName: 'test-model',
+          maxContextTokens: 6_000,
+          apiKey: 'test-key',
+          baseURL: 'https://example.invalid',
+          sessionId: 'stdout-contract',
+        }
+      );
+
+      expect(result.success).toBe(true);
+      expect(stdoutSpy).not.toHaveBeenCalled();
+    } finally {
+      stdoutSpy.mockRestore();
+    }
+  });
+});
 
 /**
  * 模拟孤儿 tool 消息场景

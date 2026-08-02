@@ -3,10 +3,11 @@
  * 负责协调整个压缩流程：分析文件、生成总结、创建压缩消息
  */
 
-import { nanoid } from 'nanoid';
 import { promises as fs } from 'node:fs';
+import { nanoid } from 'nanoid';
 import { PermissionMode } from '../config/types.js';
 import { HookManager } from '../hooks/HookManager.js';
+import { createLogger, LogCategory } from '../logging/Logger.js';
 import { consolidateAfterCompaction } from '../memory/MemoryConsolidation.js';
 import {
   createChatServiceAsync,
@@ -17,6 +18,8 @@ import { isAbortError } from '../utils/abort.js';
 import { getCwd } from '../utils/cwd.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
 import { TokenCounter } from './TokenCounter.js';
+
+const logger = createLogger(LogCategory.CONTEXT);
 
 /**
  * 压缩选项
@@ -104,7 +107,7 @@ export class CompactionService {
     const tokenSource = options.actualPreTokens
       ? 'actual (from LLM usage)'
       : 'estimated';
-    console.log(`[CompactionService] preTokens source: ${tokenSource}`);
+    logger.debug(`[CompactionService] preTokens source: ${tokenSource}`);
 
     // 执行 Compaction Hook（压缩前）
     // Hook 可以阻止压缩
@@ -120,7 +123,7 @@ export class CompactionService {
 
       // 如果 hook 返回 blockCompaction: true，阻止压缩
       if (hookResult.blockCompaction) {
-        console.log(
+        logger.debug(
           `[CompactionService] Compaction hook 阻止压缩: ${hookResult.blockReason || '(无原因)'}`
         );
         return {
@@ -138,19 +141,19 @@ export class CompactionService {
 
       // 如果有警告，记录日志
       if (hookResult.warning) {
-        console.warn(
+        logger.warn(
           `[CompactionService] Compaction hook warning: ${hookResult.warning}`
         );
       }
     } catch (hookError) {
       // Hook 执行失败不应阻止压缩
-      console.warn('[CompactionService] Compaction hook execution failed:', hookError);
+      logger.warn('[CompactionService] Compaction hook execution failed:', hookError);
     }
 
     const sessionKey = options.sessionId ?? '_default';
     const failures = sessionFailures.get(sessionKey) ?? 0;
     if (failures >= MAX_CONSECUTIVE_FAILURES) {
-      console.warn(
+      logger.warn(
         `[CompactionService] Circuit breaker open (${failures} consecutive failures for session ${sessionKey}), using fallback`
       );
       return this.fallbackCompact(
@@ -162,20 +165,20 @@ export class CompactionService {
     }
 
     try {
-      console.log('[CompactionService] 开始压缩，消息数:', messages.length);
-      console.log('[CompactionService] 压缩前 tokens:', preTokens);
+      logger.debug('[CompactionService] 开始压缩，消息数:', messages.length);
+      logger.debug('[CompactionService] 压缩前 tokens:', preTokens);
 
       // 1. 分析并读取重点文件
       const fileRefs = FileAnalyzer.analyzeFiles(messages);
       const filePaths = fileRefs.map((f) => f.path);
-      console.log('[CompactionService] 提取重点文件:', filePaths);
+      logger.debug('[CompactionService] 提取重点文件:', filePaths);
 
       const fileContents = await FileAnalyzer.readFilesContent(filePaths);
-      console.log('[CompactionService] 成功读取文件:', fileContents.length);
+      logger.debug('[CompactionService] 成功读取文件:', fileContents.length);
 
       // 2. 生成总结
       const summary = await this.generateSummary(messages, fileContents, options);
-      console.log('[CompactionService] 生成总结，长度:', summary.length);
+      logger.debug('[CompactionService] 生成总结，长度:', summary.length);
 
       // 3. 计算保留范围并过滤孤儿 tool 消息
       const retainCount = Math.ceil(messages.length * this.RETAIN_PERCENT);
@@ -199,8 +202,8 @@ export class CompactionService {
         return true; // 保留其他所有消息
       });
 
-      console.log('[CompactionService] 保留消息数:', retainCount);
-      console.log('[CompactionService] 过滤后保留消息数:', retainedMessages.length);
+      logger.debug('[CompactionService] 保留消息数:', retainCount);
+      logger.debug('[CompactionService] 过滤后保留消息数:', retainedMessages.length);
 
       // 4. 创建压缩消息
       const boundaryMessageId = nanoid();
@@ -224,8 +227,8 @@ export class CompactionService {
 
       const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
 
-      console.log('[CompactionService] 压缩完成！');
-      console.log(
+      logger.debug('[CompactionService] 压缩完成！');
+      logger.debug(
         '[CompactionService] Token 变化:',
         preTokens,
         '->',
@@ -255,7 +258,7 @@ export class CompactionService {
         throw error;
       }
       sessionFailures.set(sessionKey, (sessionFailures.get(sessionKey) ?? 0) + 1);
-      console.error('[CompactionService] 压缩失败，使用降级策略', error);
+      logger.error('[CompactionService] 压缩失败，使用降级策略', error);
       return this.fallbackCompact(messages, options, preTokens, error);
     }
   }
@@ -275,7 +278,7 @@ export class CompactionService {
   ): Promise<string> {
     const prompt = this.buildCompactionPrompt(messages, fileContents);
 
-    console.log('[CompactionService] 使用压缩模型:', options.modelName);
+    logger.debug('[CompactionService] 使用压缩模型:', options.modelName);
 
     // 预检查：如果 signal 已 aborted，不发起 LLM 调用
     if (options.signal?.aborted) {
@@ -305,7 +308,7 @@ export class CompactionService {
     const summaryMatch = content.match(/<summary>([\s\S]*?)<\/summary>/);
 
     if (!summaryMatch) {
-      console.warn('[CompactionService] 总结格式不正确，使用完整响应');
+      logger.warn('[CompactionService] 总结格式不正确，使用完整响应');
       // 如果没有找到标签，返回完整响应
       return content;
     }
@@ -505,7 +508,7 @@ Please provide your summary following the structure specified above, with both <
       '</system-reminder>',
     ].join('\n');
 
-    console.log('[CompactionService] Post-compact 恢复文件:', recentFiles.length);
+    logger.debug('[CompactionService] Post-compact 恢复文件:', recentFiles.length);
 
     return {
       id: nanoid(),

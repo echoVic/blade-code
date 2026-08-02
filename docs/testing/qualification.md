@@ -58,6 +58,7 @@ bun run qualify:production
 - 中断恢复：真实信号中断活动工具调用，持久化一次模型可见的中断边界，再由第二个 CLI 安全恢复；
 - session 独占：活动 runtime 拒绝第二个同 session CLI 且不持久化其输入，owner 退出后允许恢复并继续验证；
 - transcript 截断恢复：在 session JSONL 尾部制造未提交半行，恢复后完成 Write/Bash 任务，并逐行验证修复后的完整历史；
+- 上下文压缩续跑：受限上下文窗口在 Read 后触发一次自动压缩，stdout 必须保持纯 JSONL，自动摘要必须落盘，Write 必须发生在压缩完成之后；
 - 输出协议、工具调用、错误事件和 key 泄漏检查。
 
 仅收到模型文本或 HTTP 200 不算通过。每条轨迹都必须证明文件内容、`git diff --name-only`、测试/类型检查退出码、结构化事件和进程退出状态。

@@ -7,6 +7,8 @@ export interface RealApiModelConfigInput {
   modelId: string;
   model: string;
   baseUrl: string;
+  maxContextTokens?: number;
+  maxOutputTokens?: number;
 }
 
 export interface ParsedHeadlessJsonl {
@@ -51,8 +53,8 @@ export function buildRealApiConfig(
         apiKey: '${BLADE_API_KEY}',
         baseUrl: input.baseUrl,
         model: input.model,
-        maxContextTokens: 64_000,
-        maxOutputTokens: 4_096,
+        maxContextTokens: input.maxContextTokens ?? 64_000,
+        maxOutputTokens: input.maxOutputTokens ?? 4_096,
         timeout: 180_000,
         maxRetries: 1,
       },

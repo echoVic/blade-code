@@ -49,6 +49,25 @@ describe('real API coding-task harness', () => {
     });
   });
 
+  it('allows a real CLI trajectory to exercise a constrained context window', () => {
+    expect(
+      buildRealApiConfig({
+        modelId: 'deepseek-v4-flash',
+        model: 'deepseek-v4-flash',
+        baseUrl: 'https://api.deepseek.com',
+        maxContextTokens: 24_000,
+        maxOutputTokens: 1_024,
+      })
+    ).toMatchObject({
+      models: [
+        expect.objectContaining({
+          maxContextTokens: 24_000,
+          maxOutputTokens: 1_024,
+        }),
+      ],
+    });
+  });
+
   it('redacts provider keys from output without changing unrelated text', () => {
     expect(redactSecrets('key=sk-secret-value; status=ok', ['sk-secret-value'])).toBe(
       'key=[REDACTED]; status=ok'

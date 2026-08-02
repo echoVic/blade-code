@@ -258,6 +258,8 @@ interface BladeInvocationOptions {
   sessionId?: string;
   permissionMode?: 'plan' | 'yolo';
   modelBaseUrl?: string;
+  maxContextTokens?: number;
+  maxOutputTokens?: number;
 }
 
 interface TransientFailureProxy {
@@ -293,6 +295,8 @@ function runBladeInvocation(
         modelId: model,
         model,
         baseUrl: options.modelBaseUrl ?? baseUrl,
+        maxContextTokens: options.maxContextTokens,
+        maxOutputTokens: options.maxOutputTokens,
       }),
       null,
       2
@@ -704,6 +708,24 @@ function createCodingTaskPrompt(): string {
   ].join('\n');
 }
 
+function createCompactionContinuationPrompt(): string {
+  const archivedContext = Array.from(
+    { length: 800 },
+    (_, index) =>
+      `Archived diagnostic record ${index}: historical-only context; preserve the active file task.`
+  ).join('\n');
+
+  return [
+    'Perform a context-compaction continuation audit in this repository.',
+    'First call Read for package.json and wait for its result. Do not call any other tool in the same response.',
+    'Only after the Read result, use Write to create compacted.txt containing exactly the single line "compacted".',
+    'Do not read or modify any other file. Finish immediately after the Write succeeds.',
+    '<archived-context>',
+    archivedContext,
+    '</archived-context>',
+  ].join('\n');
+}
+
 function createInspectionPrompt(): string {
   return [
     'Inspect this repository as a coding agent.',
@@ -887,6 +909,89 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         rmSync(home, { recursive: true, force: true });
       }
     }, 300_000);
+
+    it('compacts and continues through a machine-readable CLI stream', async () => {
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          `Missing ${cliEntry}; run "bun run build:cli" before real API tests`
+        );
+      }
+
+      const workspace = createCodingTaskWorkspace();
+      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-compact-home-'));
+      const sessionId = `real-api-compact-${model}`;
+
+      try {
+        const result = await runBladeInvocation(workspace, home, model, {
+          prompt: createCompactionContinuationPrompt(),
+          sessionId,
+          maxTurns: 8,
+          maxContextTokens: 24_000,
+          maxOutputTokens: 1_024,
+        });
+        const parsed = parseHeadlessJsonl(result.stdout);
+        const compactingStates = parsed.events
+          .filter((event) => event.type === 'compacting')
+          .map((event) => event.state);
+        const toolStarts = parsed.events
+          .filter((event) => event.type === 'tool_start')
+          .map((event) => event.tool_name);
+        const readStart = parsed.events.findIndex(
+          (event) => event.type === 'tool_start' && event.tool_name === 'Read'
+        );
+        const compactStart = parsed.events.findIndex(
+          (event) => event.type === 'compacting' && event.state === 'started'
+        );
+        const compactEnd = parsed.events.findIndex(
+          (event) => event.type === 'compacting' && event.state === 'completed'
+        );
+        const writeStart = parsed.events.findIndex(
+          (event) =>
+            event.type === 'tool_start' &&
+            (event.tool_name === 'Write' || event.tool_name === 'Edit')
+        );
+
+        expect(result.error).toBeUndefined();
+        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(parsed.nonJsonLines).toEqual([]);
+        expect(compactingStates).toEqual(['started', 'completed']);
+        expect(readStart).toBeGreaterThanOrEqual(0);
+        expect(compactStart).toBeGreaterThan(readStart);
+        expect(compactEnd).toBeGreaterThan(compactStart);
+        expect(writeStart).toBeGreaterThan(compactEnd);
+        expect(toolStarts.some((name) => name === 'Write' || name === 'Edit')).toBe(
+          true
+        );
+        expect(readFileSync(path.join(workspace, 'compacted.txt'), 'utf8')).toMatch(
+          /^compacted\r?\n?$/
+        );
+
+        const sessionFile = findSessionFile(home, sessionId);
+        expect(sessionFile).toBeDefined();
+        if (!sessionFile) throw new Error(`Missing persisted session ${sessionId}`);
+        const transcript = readFileSync(sessionFile, 'utf8')
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as Record<string, unknown>);
+        expect(transcript).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'part_created',
+              data: expect.objectContaining({
+                partType: 'summary',
+                payload: expect.objectContaining({
+                  metadata: expect.objectContaining({ trigger: 'auto' }),
+                }),
+              }),
+            }),
+          ])
+        );
+        expect(`${result.stdout}\n${result.stderr}`).not.toContain(apiKey);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 420_000);
 
     it('recovers from a pre-stream transient API failure without replaying work', async () => {
       if (!existsSync(cliEntry)) {
