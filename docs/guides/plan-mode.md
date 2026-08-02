@@ -116,6 +116,8 @@ AI: 让我分析项目需求并对比方案...
 }
 ```
 
+ExitPlanMode 由运行时按当前权限模式校验。它只允许在 Plan 模式中退出；在 Default、Auto Edit、Yolo 或 Spec 模式中调用会收到 `validation_error`，不会重新弹出确认，也不会中断已批准的实现流程。
+
 用户确认后：
 
 1. 方案保存到 `.blade/plans/` 目录

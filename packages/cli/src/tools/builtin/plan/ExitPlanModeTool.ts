@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { z } from 'zod';
+import { PermissionMode } from '../../../config/types.js';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
@@ -63,6 +64,21 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
   },
 
   async execute(params, context): Promise<ToolResult> {
+    if (context.permissionMode !== PermissionMode.PLAN) {
+      return {
+        success: false,
+        llmContent:
+          'You are not in plan mode. ExitPlanMode can only be used while plan mode is active. ' +
+          'If the plan was already approved, continue with implementation.',
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          message: 'ExitPlanMode is only available in plan mode',
+          code: 'EXIT_PLAN_MODE_OUTSIDE_PLAN',
+        },
+        metadata: { summary: 'ExitPlanMode rejected outside Plan mode' },
+      };
+    }
+
     // 使用参数中的 plan 内容
     const planContent = params.plan || '';
 

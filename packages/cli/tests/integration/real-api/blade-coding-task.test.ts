@@ -54,6 +54,16 @@ function runGit(cwd: string, args: string[]): void {
   }
 }
 
+function getChangedPaths(cwd: string): string[] {
+  return execFileSync('git', ['status', '--short', '--untracked-files=all'], {
+    cwd,
+    encoding: 'utf8',
+  })
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => line.slice(3));
+}
+
 function createCodingTaskWorkspace(): string {
   const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-task-'));
   mkdirSync(path.join(workspace, 'src'), { recursive: true });
@@ -739,6 +749,18 @@ function createFailureRecoveryPrompt(): string {
   ].join('\n');
 }
 
+function createOutOfModePlanExitRecoveryPrompt(): string {
+  return [
+    'Perform a plan-mode boundary recovery audit in this repository.',
+    'The current permission mode is yolo and implementation is already approved.',
+    'First call ExitPlanMode exactly once with the plan value "# stale plan".',
+    'That call is expected to fail because this turn is not in plan mode. Wait for the failed tool result and do not call ExitPlanMode again.',
+    'After observing the rejection, use the Write tool to create plan-boundary-recovered.txt containing exactly the single line "plan-boundary-recovered".',
+    'Then call Bash with the exact command "test \"$(cat plan-boundary-recovered.txt)\" = plan-boundary-recovered" to verify it.',
+    'Do not modify any other file and finish only after verification passes.',
+  ].join('\n');
+}
+
 function createTimeoutRecoveryPrompt(): string {
   return [
     'Perform a runtime recovery audit in this repository.',
@@ -793,10 +815,19 @@ function createTruncatedTranscriptResumePrompt(): string {
   return [
     'Continue this session after its transcript tail was recovered from a process crash.',
     'The user has approved implementation for this turn and the permission mode is yolo.',
-    'Do not call ExitPlanMode or produce another plan; perform the Write and Bash verification now.',
-    'Use the Write tool to create transcript-recovered.txt containing exactly the single line "transcript-recovered".',
+    'Do not call ExitPlanMode or produce another plan; perform the file edit and Bash verification now.',
+    'Use Write or Edit to create transcript-recovered.txt containing exactly the single line "transcript-recovered".',
     'Then call Bash with the exact command "test \"$(cat transcript-recovered.txt)\" = transcript-recovered" to verify it.',
     'Do not modify any other file and finish only after verification passes.',
+  ].join('\n');
+}
+
+function createTranscriptInspectionPrompt(): string {
+  return [
+    'Establish a read-only transcript for a crash-recovery audit.',
+    'Read package.json and report only the package name.',
+    'Do not inspect source files, diagnose implementation work, edit files, or run Bash.',
+    'Stop after reporting the package name and wait for the next instruction.',
   ].join('\n');
 }
 
@@ -906,6 +937,61 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         expect(`${result.stdout}\n${result.stderr}`).not.toContain(apiKey);
       } finally {
         await proxy.close();
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 300_000);
+
+    it('rejects a stale plan-mode exit and continues approved work', async () => {
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          `Missing ${cliEntry}; run "bun run build:cli" before real API tests`
+        );
+      }
+
+      const workspace = createCodingTaskWorkspace();
+      const home = mkdtempSync(
+        path.join(os.tmpdir(), 'blade-real-api-plan-boundary-home-')
+      );
+
+      try {
+        const result = await runBladeInvocation(workspace, home, model, {
+          prompt: createOutOfModePlanExitRecoveryPrompt(),
+          maxTurns: 8,
+        });
+        const parsed = parseHeadlessJsonl(result.stdout);
+        const exitStart = parsed.events.findIndex(
+          (event) => event.type === 'tool_start' && event.tool_name === 'ExitPlanMode'
+        );
+        const exitResult = parsed.events.findIndex(
+          (event) =>
+            event.type === 'tool_result' &&
+            event.tool_name === 'ExitPlanMode' &&
+            event.success === false &&
+            event.error_type === 'validation_error'
+        );
+        const writeStart = parsed.events.findIndex(
+          (event) => event.type === 'tool_start' && event.tool_name === 'Write'
+        );
+        const bashStart = parsed.events.findIndex(
+          (event) => event.type === 'tool_start' && event.tool_name === 'Bash'
+        );
+        const changedPaths = getChangedPaths(workspace);
+
+        expect(result.error).toBeUndefined();
+        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(parsed.nonJsonLines).toEqual([]);
+        expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
+        expect(exitStart).toBeGreaterThanOrEqual(0);
+        expect(exitResult).toBeGreaterThan(exitStart);
+        expect(writeStart).toBeGreaterThan(exitResult);
+        expect(bashStart).toBeGreaterThan(writeStart);
+        expect(changedPaths).toEqual(['plan-boundary-recovered.txt']);
+        expect(
+          readFileSync(path.join(workspace, 'plan-boundary-recovered.txt'), 'utf8')
+        ).toMatch(/^plan-boundary-recovered\r?\n?$/);
+        expect(`${result.stdout}\n${result.stderr}`).not.toContain(apiKey);
+      } finally {
         rmSync(workspace, { recursive: true, force: true });
         rmSync(home, { recursive: true, force: true });
       }
@@ -1462,7 +1548,7 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
 
       try {
         const initial = await runBladeInvocation(workspace, home, model, {
-          prompt: createInspectionPrompt(),
+          prompt: createTranscriptInspectionPrompt(),
           sessionId,
           permissionMode: 'plan',
           maxTurns: 4,
@@ -1481,9 +1567,15 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
           maxTurns: 6,
         });
         const resumedEvents = parseHeadlessJsonl(resumed.stdout);
-        const toolStarts = resumedEvents.events
-          .filter((event) => event.type === 'tool_start')
-          .map((event) => event.tool_name);
+        const writeStart = resumedEvents.events.findIndex(
+          (event) =>
+            event.type === 'tool_start' &&
+            (event.tool_name === 'Write' || event.tool_name === 'Edit')
+        );
+        const bashStart = resumedEvents.events.findIndex(
+          (event) => event.type === 'tool_start' && event.tool_name === 'Bash'
+        );
+        const changedPaths = getChangedPaths(workspace);
 
         expect(resumed.error).toBeUndefined();
         expect(resumed.status, redactSecrets(resumed.stderr, [apiKey])).toBe(0);
@@ -1491,8 +1583,9 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         expect(resumedEvents.events.filter((event) => event.type === 'error')).toEqual(
           []
         );
-        expect(toolStarts).toContain('Write');
-        expect(toolStarts).toContain('Bash');
+        expect(writeStart).toBeGreaterThanOrEqual(0);
+        expect(bashStart).toBeGreaterThan(writeStart);
+        expect(changedPaths).toEqual(['transcript-recovered.txt']);
         expect(
           readFileSync(path.join(workspace, 'transcript-recovered.txt'), 'utf8')
         ).toMatch(/^transcript-recovered\r?\n?$/);
