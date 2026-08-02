@@ -12,9 +12,9 @@ import type {
   ToolCallStatus,
   ToolKind,
 } from '@agentclientprotocol/sdk';
-import { spawn } from 'child_process';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { getCwd } from '../utils/cwd.js';
+import { spawnOwnedProcess } from '../utils/process/OwnedProcessTree.js';
 import {
   type FileSystemService,
   LocalFileSystemService,
@@ -75,11 +75,16 @@ class LocalTerminalService implements TerminalService {
       const shellArgs =
         process.platform === 'win32' ? ['/c', command] : ['-c', command];
 
-      const proc = spawn(shell, shellArgs, {
+      const { child: proc, processTree } = spawnOwnedProcess(shell, shellArgs, {
         cwd: options?.cwd || getCwd(),
         env: { ...process.env, ...options?.env },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
+      let terminationPromise: ReturnType<typeof processTree.terminate> | undefined;
+      const terminateProcessTree = () => {
+        terminationPromise ??= processTree.terminate();
+        return terminationPromise;
+      };
 
       let stdout = '';
       let stderr = '';
@@ -89,7 +94,7 @@ class LocalTerminalService implements TerminalService {
       const timeoutId = options?.timeout
         ? setTimeout(() => {
             killed = true;
-            proc.kill('SIGTERM');
+            void terminateProcessTree();
           }, options.timeout)
         : null;
 
@@ -108,25 +113,30 @@ class LocalTerminalService implements TerminalService {
       if (options?.signal) {
         abortHandler = () => {
           killed = true;
-          proc.kill('SIGTERM');
+          void terminateProcessTree();
         };
         options.signal.addEventListener('abort', abortHandler);
+        if (options.signal.aborted) abortHandler();
       }
 
-      proc.stdout.on('data', (data) => {
+      proc.stdout?.on('data', (data) => {
         const chunk = data.toString();
         stdout += chunk;
         options?.onOutput?.(chunk);
       });
 
-      proc.stderr.on('data', (data) => {
+      proc.stderr?.on('data', (data) => {
         const chunk = data.toString();
         stderr += chunk;
         options?.onOutput?.(chunk);
       });
 
-      proc.on('close', (code) => {
+      proc.on('close', async (code) => {
         cleanup();
+
+        if (killed) {
+          await terminateProcessTree();
+        }
 
         resolve({
           success: code === 0 && !killed,

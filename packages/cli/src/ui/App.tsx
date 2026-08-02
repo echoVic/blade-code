@@ -254,7 +254,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
 
       // 11. 注册退出清理函数
       registerCleanup(async () => {
-        BackgroundShellManager.getInstance().killAll();
+        await BackgroundShellManager.getInstance().killAll();
         await McpRegistry.getInstance().disconnectAll();
         HookManager.getInstance().cleanup();
       });

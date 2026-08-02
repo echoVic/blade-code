@@ -179,6 +179,58 @@ function createMultiFileTaskWorkspace(): string {
   return workspace;
 }
 
+function createTimeoutRecoveryWorkspace(): string {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-timeout-'));
+  mkdirSync(path.join(workspace, 'scripts'), { recursive: true });
+  writeFileSync(
+    path.join(workspace, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'blade-real-api-timeout-recovery',
+        private: true,
+        type: 'module',
+      },
+      null,
+      2
+    )
+  );
+  writeFileSync(
+    path.join(workspace, 'scripts', 'hang.mjs'),
+    [
+      "import { spawn } from 'node:child_process';",
+      "import { writeFileSync } from 'node:fs';",
+      "const descendant = spawn(process.execPath, ['-e',",
+      '  "process.on(\'SIGTERM\', () => {}); setInterval(() => {}, 1000);"',
+      "], { stdio: 'ignore' });",
+      "writeFileSync('descendant.pid', String(descendant.pid));",
+      "process.on('SIGTERM', () => {",
+      "  writeFileSync('cleanup.marker', 'cleaned');",
+      '  process.exit(0);',
+      '});',
+      'setInterval(() => {}, 1000);',
+      '',
+    ].join('\n')
+  );
+
+  runGit(workspace, ['init', '-q']);
+  runGit(workspace, ['add', '.']);
+  runGit(workspace, ['commit', '-qm', 'fixture']);
+  return workspace;
+}
+
+async function waitForProcessGone(pid: number, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
 interface CommandResult {
   status: number | null;
   stdout: string;
@@ -324,6 +376,17 @@ function createFailureRecoveryPrompt(): string {
     'Run npm test again after the edit and only finish when it passes.',
     'Modify only src/math.js; do not change package.json, tests, or add files.',
     'In the final response, report the reproduced failure and the passing rerun.',
+  ].join('\n');
+}
+
+function createTimeoutRecoveryPrompt(): string {
+  return [
+    'Perform a runtime recovery audit in this repository.',
+    'First call Bash with the exact command "node scripts/hang.mjs" and set its timeout parameter to exactly 1000 milliseconds.',
+    'The command is expected to time out. Wait for the failed Bash result and do not retry it.',
+    'After observing that timeout, use the Write tool to create recovery.txt containing exactly the single line "recovered".',
+    'Do not read or modify scripts/hang.mjs, package.json, or any other file.',
+    'Finish only after recovery.txt has been written, and report both the expected timeout and recovery.',
   ].join('\n');
 }
 
@@ -589,5 +652,70 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         rmSync(home, { recursive: true, force: true });
       }
     }, 420_000);
+
+    it('recovers after a timed-out process tree without leaving descendants', async () => {
+      if (process.platform === 'win32') return;
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          'Missing built CLI; run "bun run build:cli" before real API tests'
+        );
+      }
+
+      const workspace = createTimeoutRecoveryWorkspace();
+      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-timeout-home-'));
+      let descendantPid: number | undefined;
+
+      try {
+        const result = await runBladeInvocation(workspace, home, model, {
+          prompt: createTimeoutRecoveryPrompt(),
+          maxTurns: 8,
+        });
+        const parsed = parseHeadlessJsonl(result.stdout);
+        const timeoutResult = parsed.events.findIndex(
+          (event) =>
+            event.type === 'tool_result' &&
+            event.tool_name === 'Bash' &&
+            event.target === 'node scripts/hang.mjs' &&
+            event.success === false &&
+            event.error_type === 'timeout_error'
+        );
+        const recoveryWrite = parsed.events.findIndex(
+          (event) =>
+            event.type === 'tool_start' &&
+            event.tool_name === 'Write' &&
+            event.target?.endsWith('recovery.txt')
+        );
+
+        expect(result.error).toBeUndefined();
+        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(parsed.nonJsonLines).toEqual([]);
+        expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
+        expect(timeoutResult).toBeGreaterThanOrEqual(0);
+        expect(recoveryWrite).toBeGreaterThan(timeoutResult);
+        expect(readFileSync(path.join(workspace, 'cleanup.marker'), 'utf8')).toBe(
+          'cleaned'
+        );
+        expect(readFileSync(path.join(workspace, 'recovery.txt'), 'utf8')).toMatch(
+          /^recovered\r?\n?$/
+        );
+        descendantPid = Number.parseInt(
+          readFileSync(path.join(workspace, 'descendant.pid'), 'utf8'),
+          10
+        );
+        expect(await waitForProcessGone(descendantPid)).toBe(true);
+        descendantPid = undefined;
+        expect(result.stdout + '\n' + result.stderr).not.toContain(apiKey);
+      } finally {
+        if (descendantPid !== undefined) {
+          try {
+            process.kill(descendantPid, 'SIGKILL');
+          } catch {
+            // The process tree was already reclaimed.
+          }
+        }
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 300_000);
   });
 });

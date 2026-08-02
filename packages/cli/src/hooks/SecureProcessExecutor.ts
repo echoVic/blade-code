@@ -4,7 +4,7 @@
  * 安全地执行 Hook 子进程
  */
 
-import { spawn } from 'child_process';
+import { spawnOwnedProcess } from '../utils/process/OwnedProcessTree.js';
 import type {
   HookExecutionContext,
   HookExitCode,
@@ -68,34 +68,33 @@ export class SecureProcessExecutor {
     const env = this.createSafeEnv(input);
 
     // 3. 启动子进程
-    const child = spawn(command, [], {
+    const { child, processTree } = spawnOwnedProcess(command, [], {
       shell: true,
       env,
       cwd: context.projectDir,
-      timeout: timeoutMs,
     });
 
     // 4. 流量控制
     const stdout = new StreamLimiter(this.MAX_STDOUT_SIZE);
     const stderr = new StreamLimiter(this.MAX_STDERR_SIZE);
 
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
 
-    child.stdout.on('data', (data: string) => {
+    child.stdout?.on('data', (data: string) => {
       stdout.append(data);
     });
 
-    child.stderr.on('data', (data: string) => {
+    child.stderr?.on('data', (data: string) => {
       stderr.append(data);
     });
 
     // 5. 写入输入
     try {
-      child.stdin.write(inputJson);
-      child.stdin.end();
+      child.stdin?.write(inputJson);
+      child.stdin?.end();
     } catch (err) {
-      child.kill('SIGTERM');
+      await processTree.terminate();
       throw new Error(`Failed to write hook input: ${err}`);
     }
 
@@ -103,6 +102,12 @@ export class SecureProcessExecutor {
     return new Promise((resolve, reject) => {
       let timedOut = false;
       let resolved = false;
+      let terminationPromise: ReturnType<typeof processTree.terminate> | undefined;
+
+      const terminate = () => {
+        terminationPromise ??= processTree.terminate();
+        return terminationPromise;
+      };
 
       // 保存 abort handler 引用，以便后续移除
       let abortHandler: (() => void) | null = null;
@@ -117,14 +122,15 @@ export class SecureProcessExecutor {
 
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGKILL');
+        void terminate();
       }, timeoutMs);
 
-      child.on('close', (code) => {
+      child.on('close', async (code) => {
         if (resolved) return;
         resolved = true;
         clearTimeout(timer);
         cleanup();
+        if (timedOut) await terminate();
 
         resolve({
           stdout: stdout.getContent(),
@@ -149,15 +155,17 @@ export class SecureProcessExecutor {
           resolved = true;
           clearTimeout(timer);
           cleanup();
-          child.kill('SIGTERM');
-          resolve({
-            stdout: stdout.getContent(),
-            stderr: 'Hook cancelled by abort signal',
-            exitCode: 1,
-            timedOut: false,
+          void terminate().then(() => {
+            resolve({
+              stdout: stdout.getContent(),
+              stderr: 'Hook cancelled by abort signal',
+              exitCode: 1,
+              timedOut: false,
+            });
           });
         };
         context.abortSignal.addEventListener('abort', abortHandler);
+        if (context.abortSignal.aborted) abortHandler();
       }
     });
   }

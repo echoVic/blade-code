@@ -1,6 +1,10 @@
-import { type ChildProcess, spawn } from 'child_process';
+import type { ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { getCwd } from '../../../utils/cwd.js';
+import {
+  type OwnedProcessTree,
+  spawnOwnedProcess,
+} from '../../../utils/process/OwnedProcessTree.js';
 import {
   isWorkspaceSandboxRuntimeFailure,
   type SandboxedCommand,
@@ -23,6 +27,7 @@ interface BackgroundShellProcess {
   cwd?: string;
   env?: Record<string, string | undefined>;
   process?: ChildProcess;
+  processTree?: OwnedProcessTree;
   pid?: number;
   status: BackgroundShellStatus;
   exitCode?: number | null;
@@ -87,7 +92,7 @@ export class BackgroundShellManager {
 
     const executable = options.sandboxedCommand?.executable ?? 'bash';
     const args = options.sandboxedCommand?.args ?? ['-c', options.command];
-    const child = spawn(executable, args, {
+    const { child, processTree } = spawnOwnedProcess(executable, args, {
       cwd: options.cwd || getCwd(),
       env: mergedEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -100,6 +105,7 @@ export class BackgroundShellManager {
       cwd: options.cwd,
       env: options.env,
       process: child,
+      processTree,
       pid: child.pid,
       status: 'running',
       startTime: Date.now(),
@@ -184,7 +190,7 @@ export class BackgroundShellManager {
     return this.processes.get(shellId);
   }
 
-  kill(shellId: string): KillResult | undefined {
+  async kill(shellId: string): Promise<KillResult | undefined> {
     const processInfo = this.processes.get(shellId);
     if (!processInfo) {
       return undefined;
@@ -201,11 +207,15 @@ export class BackgroundShellManager {
       };
     }
 
-    const killed = processInfo.process.kill('SIGTERM');
-    if (!killed) {
+    processInfo.status = 'killed';
+    processInfo.endTime = Date.now();
+    const termination = await processInfo.processTree?.terminate();
+    if (!termination?.success) {
+      processInfo.status = 'error';
+      processInfo.errorMessage = 'Failed to terminate owned process tree';
       return {
         success: false,
-        alreadyExited: false,
+        alreadyExited: termination?.alreadyExited ?? false,
         status: processInfo.status,
         pid: processInfo.pid,
         exitCode: processInfo.exitCode,
@@ -213,13 +223,9 @@ export class BackgroundShellManager {
       };
     }
 
-    processInfo.status = 'killed';
-    processInfo.endTime = Date.now();
-    processInfo.process = undefined;
-
     return {
       success: true,
-      alreadyExited: false,
+      alreadyExited: termination.alreadyExited,
       status: processInfo.status,
       pid: processInfo.pid,
       exitCode: processInfo.exitCode,
@@ -231,19 +237,11 @@ export class BackgroundShellManager {
    * 终止所有后台进程
    * 在应用退出时调用
    */
-  killAll(): void {
-    for (const [_shellId, processInfo] of this.processes) {
-      if (processInfo.status === 'running' && processInfo.process) {
-        try {
-          processInfo.process.kill('SIGTERM');
-          processInfo.status = 'killed';
-          processInfo.endTime = Date.now();
-          processInfo.process = undefined;
-        } catch {
-          // 忽略终止失败（进程可能已退出）
-        }
-      }
-    }
+  async killAll(): Promise<void> {
+    const runningShellIds = Array.from(this.processes.values())
+      .filter((processInfo) => processInfo.status === 'running')
+      .map((processInfo) => processInfo.id);
+    await Promise.all(runningShellIds.map((shellId) => this.kill(shellId)));
     this.processes.clear();
   }
 }

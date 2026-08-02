@@ -1,9 +1,9 @@
 import { isAbsolute, resolve } from 'node:path';
-import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { getCwd } from '../../../utils/cwd.js';
+import { spawnOwnedProcess } from '../../../utils/process/OwnedProcessTree.js';
 import {
   stripSafeEnvVars,
   stripSafeWrappers,
@@ -557,7 +557,7 @@ async function executeWithTimeout(
     // 创建进程
     const executable = sandboxedCommand?.executable ?? 'bash';
     const args = sandboxedCommand?.args ?? ['-c', command];
-    const bashProcess = spawn(executable, args, {
+    const { child: bashProcess, processTree } = spawnOwnedProcess(executable, args, {
       cwd: cwd || getCwd(),
       env: {
         ...process.env,
@@ -567,33 +567,31 @@ async function executeWithTimeout(
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    let terminationPromise: ReturnType<typeof processTree.terminate> | undefined;
+    const terminateProcessTree = () => {
+      terminationPromise ??= processTree.terminate();
+      return terminationPromise;
+    };
 
     // 收集 stdout
-    bashProcess.stdout.on('data', (data) => {
+    bashProcess.stdout?.on('data', (data) => {
       stdout += data.toString();
     });
 
     // 收集 stderr
-    bashProcess.stderr.on('data', (data) => {
+    bashProcess.stderr?.on('data', (data) => {
       stderr += data.toString();
     });
 
     // 设置超时
     const timeoutHandle = setTimeout(() => {
       timedOut = true;
-      bashProcess.kill('SIGTERM');
-
-      // 如果 SIGTERM 无效,强制 SIGKILL
-      setTimeout(() => {
-        if (!bashProcess.killed) {
-          bashProcess.kill('SIGKILL');
-        }
-      }, 1000);
+      void terminateProcessTree();
     }, timeout);
 
     // 处理中止信号
     const abortHandler = () => {
-      bashProcess.kill('SIGTERM');
+      void terminateProcessTree();
       clearTimeout(timeoutHandle);
     };
 
@@ -603,9 +601,10 @@ async function executeWithTimeout(
     } else if ('onabort' in signal) {
       (signal as unknown as { onabort: () => void }).onabort = abortHandler;
     }
+    if (signal.aborted) abortHandler();
 
     // 监听进程完成事件 - 业界标准做法
-    bashProcess.on('close', (code, sig) => {
+    bashProcess.on('close', async (code, sig) => {
       sandboxedCommand?.cleanup();
       clearTimeout(timeoutHandle);
       // 移除中止监听器
@@ -616,6 +615,10 @@ async function executeWithTimeout(
       }
 
       const executionTime = Date.now() - startTime;
+
+      if (timedOut || signal.aborted) {
+        await terminateProcessTree();
+      }
 
       // 如果超时
       if (timedOut) {

@@ -24,6 +24,7 @@
 * 参考
   * [CLI 命令](reference/cli-commands.md)
   * [工具列表](reference/tool-list.md)
+  * [子进程生命周期](reference/process-lifecycle.md)
 
 * [常见问题](faq.md)
 
