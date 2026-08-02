@@ -4,9 +4,10 @@
  */
 
 import { useMemoizedFn } from 'ahooks';
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Agent } from '../../agent/Agent.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
+import { registerCleanup } from '../../services/GracefulShutdown.js';
 
 export interface AgentOptions {
   sessionId?: string;
@@ -29,6 +30,41 @@ export interface AgentOptions {
 export function useAgent(options: AgentOptions) {
   const agentRef = useRef<Agent | undefined>(undefined);
   const runtimeRef = useRef<SessionRuntime | undefined>(undefined);
+  const cleanupPromiseRef = useRef<Promise<void> | undefined>(undefined);
+
+  /**
+   * Release the complete runtime ownership boundary. Clearing refs first makes
+   * concurrent shutdown/unmount cleanup idempotent while disposal is in flight.
+   */
+  const cleanupAgent = useMemoizedFn(async (): Promise<void> => {
+    if (cleanupPromiseRef.current) {
+      return cleanupPromiseRef.current;
+    }
+
+    const agent = agentRef.current;
+    const runtime = runtimeRef.current;
+    if (!agent && !runtime) return;
+
+    agentRef.current = undefined;
+    runtimeRef.current = undefined;
+
+    const cleanupPromise = (async () => {
+      try {
+        await agent?.destroy();
+      } finally {
+        await runtime?.dispose();
+      }
+    })();
+    cleanupPromiseRef.current = cleanupPromise;
+
+    try {
+      await cleanupPromise;
+    } finally {
+      if (cleanupPromiseRef.current === cleanupPromise) {
+        cleanupPromiseRef.current = undefined;
+      }
+    }
+  });
 
   /**
    * 创建并设置 Agent 实例
@@ -42,8 +78,7 @@ export function useAgent(options: AgentOptions) {
       let agent: Agent;
       if (!shouldUseEphemeralRuntime && sessionId) {
         if (runtimeRef.current && runtimeRef.current.sessionId !== sessionId) {
-          await runtimeRef.current.dispose();
-          runtimeRef.current = undefined;
+          await cleanupAgent();
         }
 
         if (!runtimeRef.current) {
@@ -83,14 +118,13 @@ export function useAgent(options: AgentOptions) {
     }
   );
 
-  /**
-   * 清理 Agent 实例
-   */
-  const cleanupAgent = useMemoizedFn(() => {
-    if (agentRef.current) {
-      agentRef.current = undefined;
-    }
-  });
+  useEffect(() => {
+    const unregisterCleanup = registerCleanup(cleanupAgent);
+    return () => {
+      unregisterCleanup();
+      void cleanupAgent().catch(() => undefined);
+    };
+  }, [cleanupAgent]);
 
   return {
     agentRef,

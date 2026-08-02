@@ -78,7 +78,7 @@ export const useCommandHandler = (
   const abortMessageSentRef = useRef(false);
 
   // ==================== 子模块组合 ====================
-  const { createAgent, cleanupAgent } = useAgent({
+  const { createAgent } = useAgent({
     sessionId,
     systemPrompt: replaceSystemPrompt,
     appendSystemPrompt: appendSystemPrompt,
@@ -90,10 +90,9 @@ export const useCommandHandler = (
   // ==================== 生命周期 ====================
   useEffect(() => {
     return () => {
-      cleanupAgent();
       streamingBuffer.resetStreamingBuffers();
     };
-  }, [cleanupAgent, streamingBuffer.resetStreamingBuffers]);
+  }, [streamingBuffer.resetStreamingBuffers]);
 
   useEffect(() => {
     if (!thinkingModeEnabled) {
