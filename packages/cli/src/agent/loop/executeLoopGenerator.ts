@@ -45,9 +45,11 @@ import {
   isVerificationCommand,
 } from './completionPolicy.js';
 import {
+  INTERRUPTED_TURN_MARKER,
   saveCompaction as persistCompaction,
   saveToolResult as persistToolResult,
   saveAssistantMessage,
+  saveInterruptedTurnMarker,
   saveToolUse,
   saveUserMessage,
 } from './conversationPersistence.js';
@@ -545,6 +547,16 @@ export async function* executeLoopGenerator(
   // 提到 try 外，使 catch 中的 makeAbortResult 能拿到真实进度
   let turnsCount = 0;
   const allToolResults: import('../../tools/types/index.js').ToolResult[] = [];
+  let lastMessageUuid: string | null = null;
+  let interruptedTurn = false;
+  const makeInterruptedResult = (
+    completedTurns: number,
+    completedToolCalls: number,
+    signal?: AbortSignal
+  ) => {
+    interruptedTurn = true;
+    return makeAbortResult(completedTurns, completedToolCalls, startTime, signal);
+  };
 
   try {
     // 1. 获取可用工具定义
@@ -575,7 +587,7 @@ export async function* executeLoopGenerator(
     state.appendUser({ role: 'user', content: message });
 
     // 保存用户消息到 JSONL
-    let lastMessageUuid: string | null = await saveUserMessage(deps, context, message);
+    lastMessageUuid = await saveUserMessage(deps, context, message);
 
     // === Agentic Loop ===
     const isYoloMode = context.permissionMode === ('yolo' as PermissionMode);
@@ -631,10 +643,9 @@ export async function* executeLoopGenerator(
       while (true) {
         // 1. 检查中断信号
         if (options?.signal?.aborted) {
-          return makeAbortResult(
+          return makeInterruptedResult(
             turnsCount,
             allToolResults.length,
-            startTime,
             options.signal
           );
         }
@@ -667,10 +678,9 @@ export async function* executeLoopGenerator(
         yield { kind: 'turn_start', turn: turnsCount, maxTurns };
 
         if (options?.signal?.aborted) {
-          return makeAbortResult(
+          return makeInterruptedResult(
             turnsCount - 1,
             allToolResults.length,
-            startTime,
             options.signal
           );
         }
@@ -786,10 +796,9 @@ export async function* executeLoopGenerator(
         );
 
         if (options?.signal?.aborted) {
-          return makeAbortResult(
+          return makeInterruptedResult(
             turnsCount - 1,
             allToolResults.length,
-            startTime,
             options.signal
           );
         }
@@ -1249,10 +1258,9 @@ export async function* executeLoopGenerator(
 
         // 7. 执行工具
         if (options?.signal?.aborted) {
-          return makeAbortResult(
+          return makeInterruptedResult(
             turnsCount,
             allToolResults.length,
-            startTime,
             options.signal
           );
         }
@@ -1400,10 +1408,9 @@ export async function* executeLoopGenerator(
           // 注意：只检查 abortedBeforeLaunch，不会误伤正常的 shouldExitLoop 结果
           // （如 ExitPlanModeTool 带 targetMode/planContent 的合法退出）。
           if (result.metadata?.abortedBeforeLaunch) {
-            return makeAbortResult(
+            return makeInterruptedResult(
               turnsCount,
               allToolResults.length,
-              startTime,
               options?.signal
             );
           }
@@ -1571,10 +1578,9 @@ export async function* executeLoopGenerator(
 
         // 检查工具执行后的中断信号
         if (options?.signal?.aborted) {
-          return makeAbortResult(
+          return makeInterruptedResult(
             turnsCount,
             allToolResults.length,
-            startTime,
             options.signal
           );
         }
@@ -1675,12 +1681,7 @@ export async function* executeLoopGenerator(
     }
   } catch (error) {
     if (isAbortError(error)) {
-      return makeAbortResult(
-        turnsCount,
-        allToolResults.length,
-        startTime,
-        options?.signal
-      );
+      return makeInterruptedResult(turnsCount, allToolResults.length, options?.signal);
     }
     const friendlyMessage = extractApiErrorMessage(error);
     logger.error(`API 调用失败: ${friendlyMessage}`);
@@ -1693,5 +1694,10 @@ export async function* executeLoopGenerator(
         duration: Date.now() - startTime,
       },
     };
+  } finally {
+    if (interruptedTurn) {
+      context.messages.push({ role: 'system', content: INTERRUPTED_TURN_MARKER });
+      await saveInterruptedTurnMarker(deps, context, lastMessageUuid);
+    }
   }
 }

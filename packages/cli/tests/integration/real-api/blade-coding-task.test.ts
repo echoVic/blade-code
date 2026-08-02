@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -245,6 +246,11 @@ interface BladeInvocationOptions {
   permissionMode?: 'plan' | 'yolo';
 }
 
+interface InterruptedCommandResult extends CommandResult {
+  interruptedAtTool: boolean;
+  signalDelivered: boolean;
+}
+
 function runBladeInvocation(
   workspace: string,
   home: string,
@@ -281,6 +287,7 @@ function runBladeInvocation(
       env: {
         ...process.env,
         HOME: home,
+        BLADE_STORAGE_ROOT: configDir,
         BLADE_API_KEY: apiKey,
         BLADE_TELEMETRY_DISABLED: '1',
         BLADE_ALLOW_ROOT: '1',
@@ -320,6 +327,121 @@ function runBladeInvocation(
       });
     });
   });
+}
+
+function runInterruptedBladeInvocation(
+  workspace: string,
+  home: string,
+  model: string,
+  options: BladeInvocationOptions
+): Promise<InterruptedCommandResult> {
+  const configDir = path.join(home, '.blade');
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(
+    path.join(configDir, 'config.json'),
+    JSON.stringify(buildRealApiConfig({ modelId: model, model, baseUrl }), null, 2)
+  );
+
+  const sessionId = options.sessionId;
+  if (!sessionId) {
+    throw new Error('Interrupted real API invocation requires a session ID');
+  }
+
+  const args = [
+    cliEntry,
+    '--headless',
+    '--output-format',
+    'jsonl',
+    '--permission-mode',
+    options.permissionMode ?? 'yolo',
+    '--max-turns',
+    String(options.maxTurns ?? 6),
+    '--model',
+    model,
+    '--session-id',
+    sessionId,
+    options.prompt,
+  ];
+
+  return new Promise((resolve) => {
+    const child = realSpawn('node', args, {
+      cwd: workspace,
+      env: {
+        ...process.env,
+        HOME: home,
+        BLADE_STORAGE_ROOT: configDir,
+        BLADE_API_KEY: apiKey,
+        BLADE_TELEMETRY_DISABLED: '1',
+        BLADE_ALLOW_ROOT: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let interruptedAtTool = false;
+    let signalDelivered = false;
+    let interruptScheduled = false;
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, 240_000);
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+      if (
+        !interruptScheduled &&
+        stdout.includes('"type":"tool_start"') &&
+        stdout.includes('"target":"node scripts/hang.mjs"')
+      ) {
+        interruptScheduled = true;
+        interruptedAtTool = true;
+        signalDelivered = child.kill('SIGTERM');
+      }
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      resolve({
+        status: null,
+        stdout,
+        stderr,
+        error,
+        interruptedAtTool,
+        signalDelivered,
+      });
+    });
+    child.once('close', (status) => {
+      clearTimeout(timeout);
+      resolve({
+        status,
+        stdout,
+        stderr,
+        interruptedAtTool,
+        signalDelivered,
+        error: timedOut
+          ? new Error('Interrupted Blade CLI timed out after 240 seconds')
+          : undefined,
+      });
+    });
+  });
+}
+
+function findSessionFile(home: string, sessionId: string): string | undefined {
+  const projectsRoot = path.join(home, '.blade', 'projects');
+  if (!existsSync(projectsRoot)) return undefined;
+
+  for (const projectEntry of readdirSync(projectsRoot, { withFileTypes: true })) {
+    if (!projectEntry.isDirectory()) continue;
+    const candidate = path.join(projectsRoot, projectEntry.name, `${sessionId}.jsonl`);
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 function createCodingTaskPrompt(): string {
@@ -398,6 +520,24 @@ function createBackgroundExitCleanupPrompt(): string {
     'After that Bash result, use the Write tool to create background-started.txt containing exactly the single line "background-started".',
     'Do not read or modify scripts/hang.mjs, package.json, or any other file.',
     'Finish immediately after the Write succeeds so the CLI session can reclaim its owned background process tree.',
+  ].join('\n');
+}
+
+function createInterruptedTurnPrompt(): string {
+  return [
+    'Perform an interruption recovery audit in this repository.',
+    'Call Bash exactly once with the exact command "node scripts/hang.mjs" and do not set a timeout or run it in the background.',
+    'Wait for the command; do not call any other tool and do not modify files.',
+  ].join('\n');
+}
+
+function createInterruptedTurnResumePrompt(): string {
+  return [
+    'Continue after the previous interrupted turn.',
+    'Do not rerun scripts/hang.mjs.',
+    'Use the Write tool to create resumed.txt containing exactly the single line "resumed".',
+    'Then call Bash with the exact command "test \"$(cat resumed.txt)\" = resumed" to verify it.',
+    'Do not modify any other file and finish only after verification passes.',
   ].join('\n');
 }
 
@@ -801,5 +941,101 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         rmSync(home, { recursive: true, force: true });
       }
     }, 300_000);
+
+    it('persists an interrupted-turn boundary and safely resumes in a second CLI process', async () => {
+      if (process.platform === 'win32') return;
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          'Missing built CLI; run "bun run build:cli" before real API tests'
+        );
+      }
+
+      const workspace = createTimeoutRecoveryWorkspace();
+      const home = mkdtempSync(
+        path.join(os.tmpdir(), 'blade-real-api-interrupt-home-')
+      );
+      const sessionId = `real-api-interrupt-${model}`;
+      let descendantPid: number | undefined;
+
+      try {
+        const interrupted = await runInterruptedBladeInvocation(
+          workspace,
+          home,
+          model,
+          {
+            prompt: createInterruptedTurnPrompt(),
+            sessionId,
+          }
+        );
+        const interruptedEvents = parseHeadlessJsonl(interrupted.stdout);
+
+        expect(interrupted.error).toBeUndefined();
+        expect(
+          interrupted.interruptedAtTool,
+          redactSecrets(`stdout=${interrupted.stdout}\nstderr=${interrupted.stderr}`, [
+            apiKey,
+          ])
+        ).toBe(true);
+        expect(interrupted.signalDelivered).toBe(true);
+        expect(interrupted.status, redactSecrets(interrupted.stderr, [apiKey])).toBe(1);
+        expect(interruptedEvents.nonJsonLines).toEqual([]);
+        expect(
+          interruptedEvents.events.some(
+            (event) =>
+              event.type === 'tool_start' &&
+              event.tool_name === 'Bash' &&
+              event.target === 'node scripts/hang.mjs'
+          )
+        ).toBe(true);
+        if (existsSync(path.join(workspace, 'descendant.pid'))) {
+          descendantPid = Number.parseInt(
+            readFileSync(path.join(workspace, 'descendant.pid'), 'utf8'),
+            10
+          );
+          expect(await waitForProcessGone(descendantPid)).toBe(true);
+          descendantPid = undefined;
+        }
+
+        const sessionFile = findSessionFile(home, sessionId);
+        expect(sessionFile).toBeDefined();
+        if (!sessionFile) throw new Error(`Missing persisted session ${sessionId}`);
+        expect(readFileSync(sessionFile, 'utf8').match(/<turn_aborted>/g)).toHaveLength(
+          1
+        );
+
+        const resumed = await runBladeInvocation(workspace, home, model, {
+          prompt: createInterruptedTurnResumePrompt(),
+          sessionId,
+          maxTurns: 6,
+        });
+        const resumedEvents = parseHeadlessJsonl(resumed.stdout);
+
+        expect(resumed.error).toBeUndefined();
+        expect(resumed.status, redactSecrets(resumed.stderr, [apiKey])).toBe(0);
+        expect(resumedEvents.nonJsonLines).toEqual([]);
+        expect(resumedEvents.events.filter((event) => event.type === 'error')).toEqual(
+          []
+        );
+        expect(readFileSync(path.join(workspace, 'resumed.txt'), 'utf8')).toMatch(
+          /^resumed\r?\n?$/
+        );
+        expect(readFileSync(sessionFile, 'utf8').match(/<turn_aborted>/g)).toHaveLength(
+          1
+        );
+        expect(interrupted.stdout + interrupted.stderr + resumed.stdout).not.toContain(
+          apiKey
+        );
+      } finally {
+        if (descendantPid !== undefined) {
+          try {
+            process.kill(descendantPid, 'SIGKILL');
+          } catch {
+            // The interrupted process tree was already reclaimed.
+          }
+        }
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 420_000);
   });
 });

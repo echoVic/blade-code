@@ -89,16 +89,16 @@ export async function main() {
     }
   }
 
-  // 初始化优雅退出处理器（捕获 uncaughtException/unhandledRejection/SIGTERM）
-  initializeGracefulShutdown();
-
-  // 首先检查是否是 headless 模式
+  // Headless owns its signal lifecycle so it can settle the active turn before exit.
   if (hasFlag(rawArgs, '--headless')) {
     const { handleHeadlessMode } = await import('./commands/headless.js');
     if (await handleHeadlessMode()) {
       return;
     }
   }
+
+  // 非 headless 模式使用全局退出处理器（含 TUI 双击 Ctrl+C 语义）。
+  initializeGracefulShutdown();
 
   // 首先检查是否是 print 模式
   if (hasFlag(rawArgs, '--print', '-p')) {

@@ -5,12 +5,15 @@
  * 从 StreamingToolExecutor 中提取并增强。
  */
 
+import { isAbortReason } from './abortReason.js';
+
 /**
  * 判断一个 error 是否为 AbortError（宽口径）。
  * 覆盖 DOMException('AbortError')、普通 Error name='AbortError'、以及 message 含 'aborted' 的情况。
  * 与 executeLoopGenerator 外层 catch 的判断逻辑一致。
  */
 export function isAbortError(error: unknown): boolean {
+  if (isAbortReason(error)) return true;
   if (!(error instanceof Error)) return false;
   if (error.name === 'AbortError') return true;
   if (error instanceof DOMException && error.name === 'AbortError') return true;

@@ -55,6 +55,32 @@ interface HeadlessIO {
   stderr: WritableLike;
 }
 
+interface HeadlessRunControl {
+  signal?: AbortSignal;
+}
+
+function createHeadlessAbortSignal(control?: HeadlessRunControl): {
+  signal: AbortSignal;
+  dispose: () => void;
+} {
+  if (control?.signal) {
+    return { signal: control.signal, dispose: () => undefined };
+  }
+
+  const controller = new AbortController();
+  const interrupt = () => controller.abort('interrupt');
+  process.once('SIGINT', interrupt);
+  process.once('SIGTERM', interrupt);
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      process.removeListener('SIGINT', interrupt);
+      process.removeListener('SIGTERM', interrupt);
+    },
+  };
+}
+
 type HeadlessOutputFormat = 'text' | 'jsonl';
 
 const HeadlessOutputFormatSchema = z.enum(['text', 'jsonl']);
@@ -593,13 +619,15 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
 
 export async function runHeadless(
   options: HeadlessOptions,
-  io: HeadlessIO = { stdout: process.stdout, stderr: process.stderr }
+  io: HeadlessIO = { stdout: process.stdout, stderr: process.stderr },
+  control?: HeadlessRunControl
 ): Promise<number> {
   let outputFormat: HeadlessOutputFormat = 'text';
   let eventWriter = createEventWriter(io, outputFormat);
   const streamState = new HeadlessStreamState();
   const phaseState: HeadlessPhaseState = { targetLocked: false };
   let runtime: SessionRuntime | undefined;
+  const abortControl = createHeadlessAbortSignal(control);
 
   try {
     const validatedOptions = validateHeadlessOptions(options);
@@ -633,6 +661,7 @@ export async function runHeadless(
       sessionId,
       workspaceRoot: getCwd(),
       permissionMode,
+      signal: abortControl.signal,
       confirmationHandler: createConfirmationHandler(),
     };
 
@@ -660,6 +689,7 @@ export async function runHeadless(
     const loopResult = await drainLoop(
       agent.chatStream(normalized.content, chatContext, {
         stream: true,
+        signal: abortControl.signal,
         maxTurns: validatedOptions.maxTurns,
         onTurnLimitReached: async (data) => {
           eventWriter.turnLimit(data.turnsCount);
@@ -834,7 +864,11 @@ export async function runHeadless(
     eventWriter.error(`Error: ${extractHeadlessErrorMessage(error)}`);
     return 1;
   } finally {
-    await runtime?.dispose();
+    try {
+      await runtime?.dispose();
+    } finally {
+      abortControl.dispose();
+    }
   }
 }
 

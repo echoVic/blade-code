@@ -13,6 +13,10 @@ import type { LoopDependencies } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
+export const INTERRUPTED_TURN_MARKER = `<turn_aborted>
+The previous turn was interrupted. Commands or tool calls may have partially completed; inspect the workspace and running processes before retrying.
+</turn_aborted>`;
+
 /** 获取 ContextManager（可能为 undefined） */
 function getContextMgr(deps: LoopDependencies) {
   return deps.executionEngine?.getContextManager();
@@ -76,6 +80,30 @@ export async function saveAssistantMessage(
     }
   } catch (error) {
     logger.warn('[Loop] 保存助手消息失败:', error);
+  }
+  return null;
+}
+
+/** Persist a model-visible recovery boundary without exposing it in resumed UI history. */
+export async function saveInterruptedTurnMarker(
+  deps: LoopDependencies,
+  context: ChatContext,
+  parentUuid: string | null
+): Promise<string | null> {
+  try {
+    const contextMgr = getContextMgr(deps);
+    if (contextMgr && context.sessionId) {
+      return await contextMgr.saveMessage(
+        context.sessionId,
+        'system',
+        INTERRUPTED_TURN_MARKER,
+        parentUuid,
+        undefined,
+        context.subagentInfo
+      );
+    }
+  } catch (error) {
+    logger.warn('[Loop] 保存中断边界失败:', error);
   }
   return null;
 }

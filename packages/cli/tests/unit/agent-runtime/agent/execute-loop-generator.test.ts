@@ -777,8 +777,13 @@ describe('executeLoopGenerator', () => {
   // 4. Abort signal → returns aborted
   // ------------------------------------------------------------------
   describe('abort signal → aborted result', () => {
-    it('should return aborted error when signal is already aborted', async () => {
-      const deps = createMockDeps();
+    it('should persist one model-visible interrupted-turn boundary', async () => {
+      const contextManager = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: vi.fn().mockReturnValue(contextManager),
+        } as any,
+      });
       const context = createMockContext();
 
       const gen = executeLoopGenerator(
@@ -794,6 +799,24 @@ describe('executeLoopGenerator', () => {
       expect(result.success).toBe(false);
       expect(result.error?.type).toBe('aborted');
       expect(result.error?.message).toContain('中止');
+      expect(contextManager.saveMessage).toHaveBeenCalledTimes(2);
+      expect(contextManager.saveMessage).toHaveBeenNthCalledWith(
+        2,
+        'test-session',
+        'system',
+        expect.stringContaining('<turn_aborted>'),
+        'msg-user-1',
+        undefined,
+        undefined
+      );
+      expect(
+        context.messages.filter(
+          (entry) =>
+            entry.role === 'system' &&
+            typeof entry.content === 'string' &&
+            entry.content.includes('<turn_aborted>')
+        )
+      ).toHaveLength(1);
     });
   });
 

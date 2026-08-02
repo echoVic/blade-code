@@ -17,7 +17,18 @@ import {
   abortableSleep,
   combineAbortSignals,
   createChildAbortController,
+  isAbortError,
 } from '../../../src/utils/abort.js';
+
+describe('isAbortError', () => {
+  it('recognizes semantic abort reasons without treating arbitrary strings as aborts', () => {
+    expect(isAbortError('interrupt')).toBe(true);
+    expect(isAbortError('user-cancel')).toBe(true);
+    expect(isAbortError('sibling-error')).toBe(true);
+    expect(isAbortError('timeout')).toBe(true);
+    expect(isAbortError('upstream failed')).toBe(false);
+  });
+});
 
 describe('combineAbortSignals', () => {
   it('空数组返回未 aborted 的 signal', () => {

@@ -21,6 +21,10 @@ const VALID_REASONS = new Set<string>([
   'timeout',
 ]);
 
+export function isAbortReason(value: unknown): value is AbortReason {
+  return typeof value === 'string' && VALID_REASONS.has(value);
+}
+
 /**
  * 从 AbortSignal 中提取 reason。
  * - 如果 signal 未 aborted，返回 undefined
@@ -29,8 +33,8 @@ const VALID_REASONS = new Set<string>([
  */
 export function getAbortReason(signal: AbortSignal): AbortReason | undefined {
   if (!signal.aborted) return undefined;
-  if (typeof signal.reason === 'string' && VALID_REASONS.has(signal.reason)) {
-    return signal.reason as AbortReason;
+  if (isAbortReason(signal.reason)) {
+    return signal.reason;
   }
   return 'user-cancel'; // 兼容不传 reason 的旧调用
 }

@@ -514,6 +514,53 @@ describe('headless runner', () => {
     );
   });
 
+  it('forwards cancellation to the active turn and disposes runtime before returning', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    let markLoopStarted: (() => void) | undefined;
+    const loopStarted = new Promise<void>((resolve) => {
+      markLoopStarted = resolve;
+    });
+
+    agentState.chatStream.mockImplementationOnce(
+      async function* (_message, _context, options) {
+        observedSignal = options?.signal;
+        markLoopStarted?.();
+        await new Promise<void>((resolve) => {
+          if (observedSignal?.aborted) {
+            resolve();
+            return;
+          }
+          observedSignal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return {
+          success: false,
+          error: { type: 'aborted', message: 'turn interrupted' },
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 10 },
+        };
+      }
+    );
+
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const run = runHeadless(
+      {
+        headless: true,
+        message: 'inspect this repo',
+      },
+      { stdout, stderr },
+      { signal: controller.signal }
+    );
+
+    await loopStarted;
+    controller.abort('interrupt');
+
+    await expect(run).resolves.toBe(1);
+    expect(observedSignal).toBe(controller.signal);
+    expect(runtimeState.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it('emits stronger phase events so consumers can distinguish searching vs target-hit', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
