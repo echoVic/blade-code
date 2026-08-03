@@ -101,12 +101,10 @@ function parseInboxRecord(
   return { version: INBOX_VERSION, sessionId, messages };
 }
 
-function appliedInboxIds(events: SessionEvent[]): Set<string> {
+function acknowledgedInboxIds(events: SessionEvent[]): Set<string> {
   return new Set(
     events.flatMap((event) =>
-      event.type === 'message_created' && event.data.inboxMessageId
-        ? [event.data.inboxMessageId]
-        : []
+      event.type === 'inbox_acknowledged' ? event.data.messageIds : []
     )
   );
 }
@@ -206,9 +204,9 @@ export class DurableSteeringInbox {
       }
 
       const transcriptPath = getSessionFilePath(this.workspaceRoot, this.sessionId);
-      let applied = new Set<string>();
+      let acknowledged = new Set<string>();
       try {
-        applied = appliedInboxIds(
+        acknowledged = acknowledgedInboxIds(
           parseSessionJSONL(await fs.readFile(transcriptPath, 'utf8'), transcriptPath)
         );
       } catch (error) {
@@ -216,7 +214,7 @@ export class DurableSteeringInbox {
       }
 
       const next = record.messages
-        .filter((message) => !applied.has(message.id))
+        .filter((message) => !acknowledged.has(message.id))
         .map((message) => ({ ...message, recovered: true }));
       this.messages = next;
       if (next.length !== record.messages.length) {

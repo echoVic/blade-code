@@ -186,6 +186,23 @@ export class PersistentStore {
     }
   }
 
+  async acknowledgeInboxMessages(
+    sessionId: string,
+    messageIds: readonly string[]
+  ): Promise<void> {
+    if (messageIds.length === 0) return;
+    const filePath = getSessionFilePath(this.projectPath, sessionId);
+    const store = new JSONLStore(filePath);
+    await this.ensureSessionCreated(sessionId);
+    const acknowledgedAt = new Date().toISOString();
+    await store.append(
+      this.createEvent('inbox_acknowledged', sessionId, {
+        messageIds: [...messageIds],
+        acknowledgedAt,
+      })
+    );
+  }
+
   /**
    * 保存工具调用到 JSONL 文件
    */

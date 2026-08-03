@@ -64,6 +64,7 @@ export interface RunState {
     resolve: (response: ConfirmationResponse) => void;
     details: ConfirmationDetails;
   };
+  pendingFollowUpRequested?: boolean;
   createdAt: Date;
 }
 
@@ -151,6 +152,7 @@ export const SessionRoutes = () => {
   const app = new Hono<{ Variables: Variables }>();
   const runtimes = new Map<string, SessionRuntime>();
   const runtimeInitializations = new Map<string, Promise<SessionRuntime>>();
+  const sessionHydrations = new Map<string, Promise<SessionInfo>>();
 
   const getOrCreateRuntime = async (session: SessionInfo): Promise<SessionRuntime> => {
     const existing = runtimes.get(session.id);
@@ -173,6 +175,101 @@ export const SessionRoutes = () => {
         runtimeInitializations.delete(session.id);
       }
     }
+  };
+
+  const getOrHydrateSession = async (
+    sessionId: string,
+    fallbackDirectory: string
+  ): Promise<SessionInfo> => {
+    const existing = sessions.get(sessionId);
+    if (existing) return existing;
+
+    let hydration = sessionHydrations.get(sessionId);
+    if (!hydration) {
+      hydration = (async () => {
+        const metadata = (await SessionService.listSessions()).find(
+          (candidate) => candidate.sessionId === sessionId
+        );
+        const projectPath = metadata?.projectPath ?? fallbackDirectory;
+        const messages = metadata
+          ? await SessionService.loadSession(sessionId, projectPath).catch(() => [])
+          : [];
+        const session: SessionInfo = {
+          id: sessionId,
+          projectPath,
+          title: `Session ${sessionId.slice(0, 6)}`,
+          createdAt: metadata ? new Date(metadata.firstMessageTime) : new Date(),
+          messages,
+          relationType: metadata?.relationType,
+        };
+        sessions.set(sessionId, session);
+        return session;
+      })();
+      sessionHydrations.set(sessionId, hydration);
+    }
+
+    try {
+      return await hydration;
+    } finally {
+      if (sessionHydrations.get(sessionId) === hydration) {
+        sessionHydrations.delete(sessionId);
+      }
+    }
+  };
+
+  const startRun = (
+    session: SessionInfo,
+    content: UserMessageContent,
+    permissionMode: PermissionMode,
+    pendingInputOnly = false
+  ): RunState => {
+    const runId = nanoid(12);
+    const run: RunState = {
+      id: runId,
+      sessionId: session.id,
+      status: 'running',
+      abortController: new AbortController(),
+      createdAt: new Date(),
+    };
+    activeRuns.set(runId, run);
+    session.currentRunId = runId;
+    executeRunAsync(run, session, content, permissionMode, getOrCreateRuntime, {
+      pendingInputOnly,
+    }).catch((error) => {
+      logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
+    });
+    return run;
+  };
+
+  const resumePendingSession = async (session: SessionInfo): Promise<void> => {
+    const currentRun = session.currentRunId
+      ? activeRuns.get(session.currentRunId)
+      : undefined;
+    if (
+      currentRun &&
+      (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
+    ) {
+      return;
+    }
+    if (!(await SessionRuntime.hasPendingInbox(session.projectPath, session.id))) {
+      return;
+    }
+
+    const runtime = await getOrCreateRuntime(session);
+    const initializedRun = session.currentRunId
+      ? activeRuns.get(session.currentRunId)
+      : undefined;
+    if (
+      initializedRun &&
+      (initializedRun.status === 'running' ||
+        initializedRun.status === 'waiting_permission')
+    ) {
+      return;
+    }
+    if (runtime.getPendingSteeringCount() === 0 || runtime.hasTurnOwner()) {
+      return;
+    }
+    startRun(session, '', PermissionMode.DEFAULT, true);
   };
 
   app.get('/', async (c) => {
@@ -345,6 +442,7 @@ export const SessionRoutes = () => {
       logger.warn('[SessionRoutes] Failed to delete session file:', error);
     }
     sessions.delete(sessionId);
+    sessionHydrations.delete(sessionId);
     runtimeInitializations.delete(sessionId);
     const runtime = runtimes.get(sessionId);
     if (runtime) {
@@ -372,19 +470,10 @@ export const SessionRoutes = () => {
 
   app.get('/:sessionId/events', async (c) => {
     const sessionId = c.req.param('sessionId');
-
-    let session = sessions.get(sessionId);
-    if (!session) {
-      const directory = c.get('directory') || getCwd();
-      session = {
-        id: sessionId,
-        projectPath: directory,
-        title: `Session ${sessionId.slice(0, 6)}`,
-        createdAt: new Date(),
-        messages: [],
-      };
-      sessions.set(sessionId, session);
-    }
+    const session = await getOrHydrateSession(
+      sessionId,
+      c.get('directory') || getCwd()
+    );
 
     return streamSSE(c, async (stream) => {
       const HEARTBEAT_INTERVAL = 15000;
@@ -408,6 +497,13 @@ export const SessionRoutes = () => {
           .catch(() => {
             /* ignore write errors on closed streams */
           });
+      });
+
+      void resumePendingSession(session).catch((error) => {
+        logger.error(
+          `[SessionRoutes] Failed to resume pending input for ${sessionId}:`,
+          error
+        );
       });
 
       const heartbeatInterval = setInterval(() => {
@@ -452,20 +548,7 @@ export const SessionRoutes = () => {
     const directory = c.get('directory') || getCwd();
     const userContent = buildUserMessageContent(content, attachments);
 
-    let session = sessions.get(sessionId);
-    if (!session) {
-      const persistedMessages = await SessionService.loadSession(sessionId).catch(
-        () => []
-      );
-      session = {
-        id: sessionId,
-        projectPath: directory,
-        title: `Session ${sessionId.slice(0, 6)}`,
-        createdAt: new Date(),
-        messages: persistedMessages,
-      };
-      sessions.set(sessionId, session);
-    }
+    const session = await getOrHydrateSession(sessionId, directory);
 
     const currentRun = session.currentRunId
       ? activeRuns.get(session.currentRunId)
@@ -492,46 +575,42 @@ export const SessionRoutes = () => {
         role: 'user',
         content: getDisplayContent(userContent),
       });
-      Bus.publish(sessionId, 'steering.queued', {
+      const queuedEvent =
+        steering.delivery === 'next_turn' ? 'follow_up.queued' : 'steering.queued';
+      Bus.publish(sessionId, queuedEvent, {
         runId: currentRun.id,
         messageId,
         queued,
       });
+      if (
+        steering.delivery === 'next_turn' &&
+        currentRun.status !== 'running' &&
+        currentRun.status !== 'waiting_permission'
+      ) {
+        void resumePendingSession(session).catch((error) => {
+          logger.error(
+            `[SessionRoutes] Failed to wake queued follow-up for ${sessionId}:`,
+            error
+          );
+        });
+      }
+      if (steering.delivery === 'next_turn') {
+        currentRun.pendingFollowUpRequested = true;
+      }
       return c.json(
         {
           runId: currentRun.id,
-          status: 'steering_queued',
+          status:
+            steering.delivery === 'next_turn' ? 'follow_up_queued' : 'steering_queued',
           queued,
         },
         202
       );
     }
 
-    const runId = nanoid(12);
-    const abortController = new AbortController();
+    const run = startRun(session, userContent, permissionMode);
 
-    const run: RunState = {
-      id: runId,
-      sessionId,
-      status: 'running',
-      abortController,
-      createdAt: new Date(),
-    };
-
-    activeRuns.set(runId, run);
-    session.currentRunId = runId;
-
-    executeRunAsync(
-      run,
-      session,
-      userContent,
-      permissionMode,
-      getOrCreateRuntime
-    ).catch((error) => {
-      logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
-    });
-
-    return c.json({ runId, status: 'running' }, 202);
+    return c.json({ runId: run.id, status: 'running' }, 202);
   });
 
   app.post('/:sessionId/abort', async (c) => {
@@ -574,28 +653,35 @@ async function executeRunAsync(
   session: SessionInfo,
   content: UserMessageContent,
   permissionMode: PermissionMode,
-  getOrCreateRuntime: (session: SessionInfo) => Promise<SessionRuntime>
+  getOrCreateRuntime: (session: SessionInfo) => Promise<SessionRuntime>,
+  options: { pendingInputOnly?: boolean } = {}
 ): Promise<void> {
   const { abortController, sessionId, id: runId } = run;
   const userMessageId = nanoid(12);
-  const assistantMessageId = nanoid(12);
+  let assistantMessageId: string | undefined = options.pendingInputOnly
+    ? undefined
+    : nanoid(12);
 
   const emit = (type: string, properties: Record<string, unknown>) => {
     Bus.publish(sessionId, type, properties);
   };
 
   try {
-    emit('message.created', {
-      messageId: userMessageId,
-      role: 'user',
-      content: getDisplayContent(content),
-    });
+    if (!options.pendingInputOnly) {
+      emit('message.created', {
+        messageId: userMessageId,
+        role: 'user',
+        content: getDisplayContent(content),
+      });
+    }
     emit('session.status', { status: 'running' });
-    emit('message.created', {
-      messageId: assistantMessageId,
-      role: 'assistant',
-      content: '',
-    });
+    if (assistantMessageId) {
+      emit('message.created', {
+        messageId: assistantMessageId,
+        role: 'assistant',
+        content: '',
+      });
+    }
 
     const runtime = await getOrCreateRuntime(session);
     const agent = await Agent.createWithRuntime(runtime, { sessionId });
@@ -658,96 +744,153 @@ async function executeRunAsync(
       permissionMode,
       confirmationHandler: { requestConfirmation },
     };
+    const ensureAssistantMessage = (): string => {
+      if (!assistantMessageId) {
+        assistantMessageId = nanoid(12);
+        emit('message.created', {
+          messageId: assistantMessageId,
+          role: 'assistant',
+          content: '',
+        });
+      }
+      return assistantMessageId;
+    };
 
     // Phase 4: 使用 chatStream() + onEvent 事件驱动消费
     // message.complete 只在整个 run 结束时发一次（run-level 语义）
     // stream_end 不外发给客户端（内部 per-turn 信号）
-    const loopResult = await drainLoop(
-      agent.chatStream(content, chatContext, { stream: true }),
-      async (event: LoopEvent) => {
-        switch (event.kind) {
-          // --- 流式增量 ---
-          case 'content_delta':
-            emit('message.delta', {
-              messageId: assistantMessageId,
-              delta: event.delta,
+    const handleLoopEvent = async (event: LoopEvent) => {
+      switch (event.kind) {
+        // --- 流式增量 ---
+        case 'content_delta':
+          emit('message.delta', {
+            messageId: ensureAssistantMessage(),
+            delta: event.delta,
+          });
+          break;
+        case 'thinking_delta':
+          emit('thinking.delta', { delta: event.delta });
+          break;
+
+        // --- 工具事件 ---
+        case 'tool_start':
+          if ('function' in event.toolCall) {
+            emit('tool.start', {
+              messageId: ensureAssistantMessage(),
+              toolName: event.toolCall.function.name,
+              toolCallId: event.toolCall.id,
+              arguments: event.toolCall.function.arguments,
+              toolKind: event.toolKind,
             });
-            break;
-          case 'thinking_delta':
-            emit('thinking.delta', { delta: event.delta });
-            break;
-
-          // --- 工具事件 ---
-          case 'tool_start':
-            if ('function' in event.toolCall) {
-              emit('tool.start', {
-                messageId: assistantMessageId,
-                toolName: event.toolCall.function.name,
-                toolCallId: event.toolCall.id,
-                arguments: event.toolCall.function.arguments,
-                toolKind: event.toolKind,
-              });
-            }
-            break;
-          case 'tool_result':
-            if ('function' in event.toolCall) {
-              emit('tool.result', {
-                messageId: assistantMessageId,
-                toolName: event.toolCall.function.name,
-                toolCallId: event.toolCall.id,
-                success: event.result.success,
-                summary: event.result.metadata?.summary,
-                output: renderToolDisplayToString(
-                  formatToolDisplay(event.toolCall.function.name, event.result)
-                ),
-                metadata: sanitizeToolMetadata(event.result.metadata),
-              });
-            }
-            break;
-
-          // --- Token 使用 ---
-          case 'token_usage':
-            emit('token.usage', { ...event.usage });
-            break;
-          case 'turn_start':
-            emit('turn.started', { turn: event.turn, maxTurns: event.maxTurns });
-            break;
-          case 'steering_applied':
-            emit('steering.applied', {
-              runId,
-              messageIds: event.messageIds,
-              count: event.count,
-              recovered: event.recovered,
-              queued: runtime.getPendingSteeringCount(),
+          }
+          break;
+        case 'tool_result':
+          if ('function' in event.toolCall) {
+            emit('tool.result', {
+              messageId: ensureAssistantMessage(),
+              toolName: event.toolCall.function.name,
+              toolCallId: event.toolCall.id,
+              success: event.result.success,
+              summary: event.result.metadata?.summary,
+              output: renderToolDisplayToString(
+                formatToolDisplay(event.toolCall.function.name, event.result)
+              ),
+              metadata: sanitizeToolMetadata(event.result.metadata),
             });
-            break;
-          case 'compaction':
-            emit(
-              event.phase === 'start' ? 'compaction.started' : 'compaction.completed',
-              {}
-            );
-            break;
-          case 'model_fallback':
-            emit('model.fallback', {});
-            break;
+          }
+          break;
 
-          // --- 业务事件 ---
-          case 'task_update':
-            emit('task.updated', { tasks: event.tasks });
-            break;
-
-          // stream_end is per-turn internal completion; clients consume run-level events.
-          default:
-            break;
+        // --- Token 使用 ---
+        case 'token_usage':
+          emit('token.usage', { ...event.usage });
+          break;
+        case 'turn_start':
+          emit('turn.started', { turn: event.turn, maxTurns: event.maxTurns });
+          break;
+        case 'steering_applied':
+          emit('steering.applied', {
+            runId,
+            messageIds: event.messageIds,
+            count: event.count,
+            recovered: event.recovered,
+            delivery: event.delivery,
+            queued: runtime.getPendingSteeringCount(),
+          });
+          break;
+        case 'follow_up_started': {
+          if (assistantMessageId) {
+            emit('message.complete', { messageId: assistantMessageId });
+            assistantMessageId = undefined;
+          }
+          for (const message of event.messages) {
+            if (!message.recovered || message.persisted) continue;
+            emit('message.created', {
+              messageId: message.id,
+              role: 'user',
+              content: getDisplayContent(message.content),
+              recovered: true,
+            });
+          }
+          emit('follow_up.started', {
+            runId,
+            queued: event.queued,
+            recovered: event.recovered,
+          });
+          ensureAssistantMessage();
+          break;
         }
+        case 'compaction':
+          emit(
+            event.phase === 'start' ? 'compaction.started' : 'compaction.completed',
+            {}
+          );
+          break;
+        case 'model_fallback':
+          emit('model.fallback', {});
+          break;
+
+        // --- 业务事件 ---
+        case 'task_update':
+          emit('task.updated', { tasks: event.tasks });
+          break;
+
+        // stream_end is per-turn internal completion; clients consume run-level events.
+        default:
+          break;
       }
+    };
+    let loopResult = await drainLoop(
+      agent.chatStream(content, chatContext, {
+        stream: true,
+        pendingInputOnly: options.pendingInputOnly,
+      }),
+      handleLoopEvent
     );
+    for (let followUpRun = 0; followUpRun < 20; followUpRun++) {
+      const requested = run.pendingFollowUpRequested === true;
+      run.pendingFollowUpRequested = false;
+      if (runtime.getPendingSteeringCount() === 0) {
+        if (!requested) break;
+        continue;
+      }
+      if (abortController.signal.aborted) break;
+
+      loopResult = await drainLoop(
+        agent.chatStream('', chatContext, {
+          stream: true,
+          pendingInputOnly: true,
+        }),
+        handleLoopEvent
+      );
+    }
 
     // Phase 4: 使用 chatContext.messages 作为完整历史（不再手工构造）
     session.messages = [...chatContext.messages];
 
     // message.complete 只在整个 run 结束时发一次（run-level 语义）
-    emit('message.complete', { messageId: assistantMessageId });
+    if (assistantMessageId) {
+      emit('message.complete', { messageId: assistantMessageId });
+    }
     // 保持 thinking.completed 向后兼容（Web 客户端注册了该事件，虽然当前是 no-op）
     emit('thinking.completed', {});
 

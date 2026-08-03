@@ -122,6 +122,7 @@ export class AcpSession {
   private agent: Agent | null = null;
   private runtime: SessionRuntime | null = null;
   private pendingPrompt: AbortController | null = null;
+  private pendingResumeRequested = false;
   private messages: Message[];
   private mode: AcpModeId = 'default';
   // 会话级别的权限缓存（allow_always 选项）
@@ -164,6 +165,13 @@ export class AcpSession {
     this.agent = await Agent.createWithRuntime(this.runtime, { sessionId: this.id });
 
     logger.debug(`[AcpSession ${this.id}] Agent created successfully`);
+    if (this.runtime.getPendingSteeringCount() > 0) {
+      if (this.options.initialMessages === undefined) {
+        this.schedulePendingResume();
+      } else {
+        this.pendingResumeRequested = true;
+      }
+    }
     // 注意：available_commands_update 在 BladeAgent.newSession 响应后延迟发送
   }
 
@@ -187,6 +195,9 @@ export class AcpSession {
           update: { sessionUpdate, content },
         });
       }
+    }
+    if (this.pendingResumeRequested) {
+      this.schedulePendingResume();
     }
   }
 
@@ -369,7 +380,10 @@ export class AcpSession {
    * @param params - ACP prompt 请求参数
    * @returns ACP prompt 响应
    */
-  async prompt(params: PromptRequest): Promise<PromptResponse> {
+  async prompt(
+    params: PromptRequest,
+    internalOptions: { pendingInputOnly?: boolean } = {}
+  ): Promise<PromptResponse> {
     // 设置当前会话（确保工具使用正确的服务上下文）
     AcpServiceContext.setCurrentSession(this.id);
 
@@ -392,6 +406,9 @@ export class AcpSession {
       logger.debug(
         `[AcpSession ${this.id}] Queued steering for active turn (${steering.queued})`
       );
+      if (steering.delivery === 'next_turn') {
+        this.schedulePendingResume();
+      }
       return { stopReason: 'end_turn' };
     }
 
@@ -433,7 +450,9 @@ export class AcpSession {
       // 4. 调用 Agent chatStream（Phase 4: 事件驱动消费）
       // stream_end 不外发给 ACP 客户端（保持内部语义）
       await drainLoop(
-        this.agent.chatStream(message, context),
+        this.agent.chatStream(message, context, {
+          pendingInputOnly: internalOptions.pendingInputOnly,
+        }),
         async (event: LoopEvent) => {
           switch (event.kind) {
             // --- 流式内容（delta 是唯一内容信号） ---
@@ -513,12 +532,23 @@ export class AcpSession {
               this.sendPlanUpdate(event.tasks);
               break;
             case 'steering_applied':
+              break;
+            case 'follow_up_started':
+              for (const pending of event.messages) {
+                if (!pending.recovered || pending.persisted) continue;
+                for (const content of historyContentBlocks(pending.content)) {
+                  this.sendUpdate({
+                    sessionUpdate: 'user_message_chunk',
+                    content,
+                  });
+                }
+              }
               if (event.recovered > 0) {
                 this.sendUpdate({
                   sessionUpdate: 'agent_message_chunk',
                   content: {
                     type: 'text',
-                    text: `[Recovered ${event.recovered} queued instruction${event.recovered === 1 ? '' : 's'} after restart]\n`,
+                    text: `[Resuming ${event.recovered} queued instruction${event.recovered === 1 ? '' : 's'} recovered after restart]\n`,
                   },
                 });
               }
@@ -556,8 +586,34 @@ export class AcpSession {
     } finally {
       if (this.pendingPrompt === abortController) {
         this.pendingPrompt = null;
+        if (this.pendingResumeRequested) {
+          this.schedulePendingResume();
+        }
       }
     }
+  }
+
+  private schedulePendingResume(): void {
+    this.pendingResumeRequested = true;
+    queueMicrotask(() => {
+      void this.resumePendingIfIdle();
+    });
+  }
+
+  private async resumePendingIfIdle(): Promise<void> {
+    if (this.pendingPrompt || !this.runtime || !this.agent) return;
+    if (this.runtime.getPendingSteeringCount() === 0) {
+      this.pendingResumeRequested = false;
+      return;
+    }
+
+    this.pendingResumeRequested = false;
+    await this.prompt(
+      { sessionId: this.id, prompt: [] },
+      { pendingInputOnly: true }
+    ).catch((error) => {
+      logger.error(`[AcpSession ${this.id}] Failed to resume pending input:`, error);
+    });
   }
 
   /**
@@ -565,6 +621,7 @@ export class AcpSession {
    */
   cancel(): void {
     logger.info(`[AcpSession ${this.id}] Cancel requested`);
+    this.pendingResumeRequested = false;
     if (this.pendingPrompt) {
       this.pendingPrompt.abort();
       this.pendingPrompt = null;

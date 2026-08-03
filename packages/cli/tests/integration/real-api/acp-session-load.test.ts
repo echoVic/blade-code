@@ -1,10 +1,11 @@
+import * as acp from '@agentclientprotocol/sdk';
 import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import * as acp from '@agentclientprotocol/sdk';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { AcpSession } from '../../../src/acp/Session.js';
+import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { SessionService } from '../../../src/services/SessionService.js';
@@ -260,9 +261,9 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
               {
                 type: 'text',
                 text:
-                  'A configuration review is in progress. The current candidate value ' +
-                  'is ALPHA_ACP_VALUE. Reply with the current candidate value only. ' +
-                  'Do not call tools.',
+                  'We are choosing a TypeScript identifier before editing code. The ' +
+                  'current requested identifier is ALPHA_ACP_IDENTIFIER. Reply with ' +
+                  'that identifier only. Do not call tools.',
               },
             ],
           });
@@ -273,8 +274,8 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
               {
                 type: 'text',
                 text:
-                  'New information from the user: the candidate value is now ' +
-                  'BETA_ACP_VALUE. Reply with the newest candidate value only.',
+                  'Requirement update: use BETA_ACP_IDENTIFIER instead. Reply with ' +
+                  'the newest requested identifier only.',
               },
             ],
           });
@@ -283,14 +284,89 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
           expect(steeringResponse.stopReason).toBe('end_turn');
           expect(initialResponse.stopReason).toBe('end_turn');
           const output = replayedText(client.updates);
-          expect(output).toContain('BETA_ACP_VALUE');
-          expect(output.lastIndexOf('BETA_ACP_VALUE')).toBeGreaterThan(
-            output.lastIndexOf('ALPHA_ACP_VALUE')
+          expect(output).toContain('BETA_ACP_IDENTIFIER');
+          expect(output.lastIndexOf('BETA_ACP_IDENTIFIER')).toBeGreaterThan(
+            output.lastIndexOf('ALPHA_ACP_IDENTIFIER')
           );
           expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
         });
       } finally {
         await session.destroy().catch(() => undefined);
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }, 300_000);
+
+    it(`${modelConfig.model} auto-resumes durable input when ACP initializes`, async () => {
+      const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-recovery-'));
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      configureModel(modelConfig);
+      const client = new RecordingClient();
+      const sessionId = `acp-recovery-${Date.now()}`;
+      let firstRuntime: SessionRuntime | undefined;
+      let session: AcpSession | undefined;
+
+      try {
+        await runWithCwdOverride(workspace, async () => {
+          firstRuntime = await SessionRuntime.create({
+            sessionId,
+            workspaceRoot: workspace,
+          });
+          const durablePrompt =
+            'The old value was ALPHA_ACP_RECOVERY. The newest value is ' +
+            'BETA_ACP_RECOVERY. Reply with the newest value only.';
+          await firstRuntime.enqueueSteering(durablePrompt, { allowBeforeTurn: true });
+          const inboxMessageId = firstRuntime.getPendingSteeringMessages()[0]?.id;
+          expect(inboxMessageId).toBeTruthy();
+          await firstRuntime
+            .getExecutionEngine()
+            .getContextManager()
+            .persistentStore.saveMessage(sessionId, 'user', durablePrompt, null, {
+              inboxMessageId,
+            });
+          await firstRuntime.dispose();
+          firstRuntime = undefined;
+
+          const initialMessages = await SessionService.loadSession(
+            sessionId,
+            workspace
+          );
+          session = new AcpSession(
+            sessionId,
+            workspace,
+            client as unknown as acp.AgentSideConnection,
+            {},
+            { initialMessages }
+          );
+          await session.initialize();
+          await session.replayHistory();
+
+          await vi.waitFor(
+            () => {
+              const agentOutput = client.updates
+                .flatMap((update) =>
+                  update.update.sessionUpdate === 'agent_message_chunk' &&
+                  update.update.content.type === 'text'
+                    ? [update.update.content.text]
+                    : []
+                )
+                .join('');
+              expect(agentOutput).toContain('BETA_ACP_RECOVERY');
+            },
+            { timeout: 120_000, interval: 100 }
+          );
+          expect(
+            client.updates.filter(
+              (update) =>
+                update.update.sessionUpdate === 'user_message_chunk' &&
+                update.update.content.type === 'text' &&
+                update.update.content.text.includes('BETA_ACP_RECOVERY')
+            )
+          ).toHaveLength(1);
+          expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
+        });
+      } finally {
+        await firstRuntime?.dispose().catch(() => undefined);
+        await session?.destroy().catch(() => undefined);
         await rm(workspace, { recursive: true, force: true });
       }
     }, 300_000);

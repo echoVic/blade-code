@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import {
@@ -7,6 +8,7 @@ import {
   PermissionMode,
 } from '../../config/index.js';
 import type { McpServerConfig, ModelConfig } from '../../config/types.js';
+import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { loadMcpConfigFromCli } from '../../mcp/loadMcpConfig.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
@@ -143,6 +145,18 @@ export class SessionRuntime {
     return runtime;
   }
 
+  static async hasPendingInbox(
+    workspaceRoot: string,
+    sessionId: string
+  ): Promise<boolean> {
+    try {
+      return (await stat(getSessionInboxFilePath(workspaceRoot, sessionId))).size > 0;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+  }
+
   get sessionId(): string {
     return this.options.sessionId;
   }
@@ -186,31 +200,51 @@ export class SessionRuntime {
     return this.activeTurnMailbox.enqueue(content, options);
   }
 
-  drainSteering(handle: ActiveTurnHandle): SteeringMessage[] {
+  async drainSteering(handle: ActiveTurnHandle): Promise<SteeringMessage[]> {
     return this.activeTurnMailbox.drain(handle);
   }
 
-  drainSteeringOrSeal(handle: ActiveTurnHandle): {
+  async drainSteeringOrSeal(handle: ActiveTurnHandle): Promise<{
     messages: SteeringMessage[];
     sealed: boolean;
-  } {
+  }> {
     return this.activeTurnMailbox.drainOrSeal(handle);
   }
 
-  async acknowledgeSteering(ids: readonly string[]): Promise<void> {
+  async acknowledgeTurn(handle: ActiveTurnHandle): Promise<void> {
+    const ids = await this.activeTurnMailbox.claimedMessageIds(handle);
+    if (ids.length === 0) return;
+    await this.executionEngine
+      .getContextManager()
+      .persistentStore.acknowledgeInboxMessages(this.sessionId, ids);
     await this.activeTurnMailbox.acknowledge(ids);
   }
 
-  endTurn(handle: ActiveTurnHandle): void {
-    this.activeTurnMailbox.endTurn(handle);
+  async finishTurn(
+    handle: ActiveTurnHandle,
+    options?: { continuePending?: boolean }
+  ): Promise<ActiveTurnHandle | undefined> {
+    return this.activeTurnMailbox.finishTurn(handle, options);
+  }
+
+  async beginPendingTurn(): Promise<ActiveTurnHandle | undefined> {
+    return this.activeTurnMailbox.beginPendingTurn();
   }
 
   hasActiveTurn(): boolean {
     return this.activeTurnMailbox.isActive();
   }
 
+  hasTurnOwner(): boolean {
+    return this.activeTurnMailbox.hasTurnOwner();
+  }
+
   getPendingSteeringCount(): number {
     return this.activeTurnMailbox.pendingCount();
+  }
+
+  getPendingSteeringMessages(): SteeringMessage[] {
+    return this.activeTurnMailbox.pendingMessages();
   }
 
   getRecoveredSteeringCount(): number {

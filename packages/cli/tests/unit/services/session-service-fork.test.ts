@@ -38,6 +38,9 @@ describe('SessionService.forkSession', () => {
     const persistentStore = new PersistentStore(projectPath, 100, 'test');
     await persistentStore.saveMessage('parent-session', 'user', 'Remember FORK_VALUE');
     await persistentStore.saveMessage('parent-session', 'assistant', 'READY');
+    await persistentStore.acknowledgeInboxMessages('parent-session', [
+      'parent-only-inbox-id',
+    ]);
 
     const parentPath = getSessionFilePath(projectPath, 'parent-session');
     const parentBeforeFork = await readFile(parentPath, 'utf-8');
@@ -88,6 +91,9 @@ describe('SessionService.forkSession', () => {
         (event) => !parentEvents.some((parent) => parent.id === event.id)
       )
     ).toBe(true);
+    expect(childEvents.some((event) => event.type === 'inbox_acknowledged')).toBe(
+      false
+    );
     expect(childEvents.at(-1)).toMatchObject({
       type: 'session_updated',
       sessionId: 'child-session',

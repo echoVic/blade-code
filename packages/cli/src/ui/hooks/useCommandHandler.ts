@@ -20,6 +20,9 @@
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useRef } from 'react';
 import { drainLoop } from '../../agent/loop/index.js';
+import type { LoopEvent } from '../../agent/loop/types.js';
+import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
+import type { LoopResult } from '../../agent/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import {
@@ -76,6 +79,7 @@ export const useCommandHandler = (
 
   // ==================== Local Refs ====================
   const abortMessageSentRef = useRef(false);
+  const pendingResumeRequestedRef = useRef(false);
 
   // ==================== 子模块组合 ====================
   const { createAgent, steerActiveTurn } = useAgent({
@@ -131,6 +135,29 @@ export const useCommandHandler = (
       abortMessageSentRef.current = true;
     }
   });
+
+  const consumeAgentStream = useMemoizedFn(
+    async (
+      stream: AsyncGenerator<LoopEvent, LoopResult, void>,
+      abortController: AbortController
+    ) => {
+      const stats = { contentDeltaCount: 0, contentDeltaTotalLen: 0 };
+      const eventHandler = createLoopEventHandler(
+        {
+          sessionActions,
+          appActions,
+          commandActions,
+          streamingBuffer,
+          thinkingModeEnabled,
+          getStreamingMessageId: () => getState().session.currentStreamingMessageId,
+          signal: abortController.signal,
+        },
+        stats
+      );
+      const loopResult = await drainLoop(stream, eventHandler);
+      return { loopResult, stats };
+    }
+  );
 
   // ==================== handleCommandSubmit ====================
   const handleCommandSubmit = useMemoizedFn(
@@ -243,22 +270,8 @@ export const useCommandHandler = (
           permissionMode: permissionMode,
         };
 
-        // --- 5. 创建事件处理器并消费流 ---
-        const stats = { contentDeltaCount: 0, contentDeltaTotalLen: 0 };
-        const eventHandler = createLoopEventHandler(
-          {
-            sessionActions,
-            appActions,
-            commandActions,
-            streamingBuffer,
-            thinkingModeEnabled,
-            getStreamingMessageId: () => getState().session.currentStreamingMessageId,
-            signal: abortController.signal,
-          },
-          stats
-        );
-
-        const loopResult = await drainLoop(
+        // --- 5. 消费 Agent 事件流 ---
+        const { loopResult, stats } = await consumeAgentStream(
           agent.chatStream(userMessageContent, chatContext, {
             stream: true,
             onTurnLimitReached: confirmationHandler
@@ -278,7 +291,7 @@ export const useCommandHandler = (
                 }
               : undefined,
           }),
-          eventHandler
+          abortController
         );
 
         // --- 6. 后处理 ---
@@ -330,6 +343,79 @@ export const useCommandHandler = (
       }
     }
   );
+
+  const resumePendingInput = useMemoizedFn(async (): Promise<void> => {
+    if (getState().command.isProcessing) {
+      pendingResumeRequestedRef.current = true;
+      return;
+    }
+    const hasPending = await SessionRuntime.hasPendingInbox(getCwd(), sessionId);
+    if (!hasPending) {
+      pendingResumeRequestedRef.current = false;
+      return;
+    }
+    if (getState().command.isProcessing) {
+      pendingResumeRequestedRef.current = true;
+      return;
+    }
+
+    pendingResumeRequestedRef.current = false;
+    await ensureStoreInitialized();
+    const abortController = commandActions.createAbortController();
+    streamingBuffer.resetStreamingBuffers();
+    sessionActions.clearFinalizingStreamingMessageId();
+    commandActions.setProcessing(true);
+
+    try {
+      const agent = await createAgent();
+      if (abortController.signal.aborted) return;
+
+      const chatContext = {
+        messages: buildContextMessagesFromSession(getState().session),
+        userId: 'cli-user',
+        sessionId,
+        workspaceRoot: getCwd(),
+        signal: abortController.signal,
+        confirmationHandler,
+        permissionMode,
+      };
+      const { loopResult } = await consumeAgentStream(
+        agent.chatStream('', chatContext, {
+          stream: true,
+          pendingInputOnly: true,
+        }),
+        abortController
+      );
+
+      if (loopResult.metadata?.outputTruncated) {
+        sessionActions.addAssistantMessage(
+          '输出因达到 token 上限被截断，部分内容可能不完整。'
+        );
+      }
+      if (!loopResult.success && loopResult.error?.type === 'api_error') {
+        sessionActions.addAssistantMessage(
+          loopResult.error.message || '恢复排队指令失败，请检查网络和 API 配置'
+        );
+      }
+    } catch (error) {
+      const classified = classifyError(error);
+      if (!classified.isAbort) {
+        sessionActions.setError(`恢复排队指令失败: ${classified.displayMessage}`);
+      }
+    } finally {
+      const isOurTask = commandActions.getAbortController() === abortController;
+      if (isOurTask) {
+        commandActions.setProcessing(false);
+        commandActions.clearAbortController(abortController);
+        sessionActions.setCurrentThinkingContent(null);
+      }
+      if (pendingResumeRequestedRef.current) {
+        queueMicrotask(() => {
+          void resumePendingInput();
+        });
+      }
+    }
+  });
 
   // ==================== executeCommand ====================
   const executeCommand = useMemoizedFn(async (resolved: ResolvedInput) => {
@@ -398,6 +484,14 @@ export const useCommandHandler = (
 
       commandActions.enqueueCommand(resolved);
       sessionActions.addUserMessage(resolved.displayText);
+      if (steering.delivery === 'next_turn') {
+        pendingResumeRequestedRef.current = true;
+        if (!getState().command.isProcessing) {
+          queueMicrotask(() => {
+            void resumePendingInput();
+          });
+        }
+      }
       return;
     }
 
@@ -444,9 +538,32 @@ export const useCommandHandler = (
         commandActions.setProcessing(false);
         commandActions.clearAbortController(taskAbortController);
         sessionActions.setCurrentThinkingContent(null);
+        if (pendingResumeRequestedRef.current) {
+          queueMicrotask(() => {
+            void resumePendingInput();
+          });
+        }
       }
     }
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    void SessionRuntime.hasPendingInbox(getCwd(), sessionId)
+      .then((hasPending) => {
+        if (!cancelled && hasPending) {
+          return resumePendingInput();
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          logger.warn('[useCommandHandler] Failed to inspect pending inbox', error);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resumePendingInput, sessionId]);
 
   return {
     executeCommand,

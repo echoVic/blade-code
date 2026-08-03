@@ -358,6 +358,21 @@ describe('eventHandlers', () => {
     expect(set).toHaveBeenLastCalledWith({ pendingSteeringCount: 2 });
 
     dispatch({
+      type: 'follow_up.queued',
+      properties: { sessionId: 'session-1', queued: 3 },
+    });
+    expect(set).toHaveBeenLastCalledWith({ pendingSteeringCount: 3 });
+
+    dispatch({
+      type: 'follow_up.started',
+      properties: { sessionId: 'session-1', recovered: 2 },
+    });
+    expect(set).toHaveBeenLastCalledWith({
+      agentPhase: 'running',
+      recoveredSteeringCount: 2,
+    });
+
+    dispatch({
       type: 'steering.applied',
       properties: { sessionId: 'session-1', queued: 0 },
     });

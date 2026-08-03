@@ -118,6 +118,7 @@ export interface ContextManagerOptions {
 export type JSONLEventType =
   | 'session_created'
   | 'session_updated'
+  | 'inbox_acknowledged'
   | 'message_created'
   | 'part_created'
   | 'part_updated';
@@ -159,6 +160,11 @@ export interface MessageInfo {
   };
 }
 
+export interface InboxAcknowledgementInfo {
+  messageIds: string[];
+  acknowledgedAt: string;
+}
+
 export interface PartInfo {
   partId: string;
   messageId: string;
@@ -180,6 +186,10 @@ export interface SessionEventBase {
 export type SessionEvent =
   | (SessionEventBase & { type: 'session_created'; data: SessionInfo })
   | (SessionEventBase & { type: 'session_updated'; data: Partial<SessionInfo> })
+  | (SessionEventBase & {
+      type: 'inbox_acknowledged';
+      data: InboxAcknowledgementInfo;
+    })
   | (SessionEventBase & { type: 'message_created'; data: MessageInfo })
   | (SessionEventBase & { type: 'part_created'; data: PartInfo })
   | (SessionEventBase & { type: 'part_updated'; data: PartInfo });

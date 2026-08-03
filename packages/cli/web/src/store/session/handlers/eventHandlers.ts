@@ -822,6 +822,17 @@ const handleSteeringApplied: EventHandler = (props, get, set) => {
   });
 };
 
+const handleFollowUpStarted: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({
+    agentPhase: 'running',
+    recoveredSteeringCount:
+      typeof props.recovered === 'number'
+        ? Math.max(0, props.recovered)
+        : get().recoveredSteeringCount,
+  });
+};
+
 const eventHandlers: Record<string, EventHandler> = {
   'message.created': handleMessageCreated,
   'message.delta': handleMessageDelta,
@@ -851,6 +862,8 @@ const eventHandlers: Record<string, EventHandler> = {
   'session.status': handleSessionStatus,
   'run.cancelled': handleRunCancelled,
   'steering.queued': handleSteeringQueued,
+  'follow_up.queued': handleSteeringQueued,
+  'follow_up.started': handleFollowUpStarted,
   'steering.applied': handleSteeringApplied,
 };
 

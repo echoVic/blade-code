@@ -227,6 +227,22 @@ export function createLoopEventHandler(
         }
         break;
 
+      case 'follow_up_started':
+        for (const message of event.messages) {
+          if (!message.recovered || message.persisted) continue;
+          const display =
+            typeof message.content === 'string'
+              ? message.content
+              : message.content
+                  .map((part) => (part.type === 'text' ? part.text : '[Image]'))
+                  .join('\n');
+          deps.sessionActions.addUserMessage(display);
+        }
+        if (event.recovered > 0) {
+          deps.commandActions.setRecoveredSteeringCount(event.recovered);
+        }
+        break;
+
       case 'subagent_spawned':
       case 'subagent_completed':
         break;

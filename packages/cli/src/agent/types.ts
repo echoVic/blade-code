@@ -103,11 +103,15 @@ export interface LoopOptions {
   autoCompact?: boolean;
   signal?: AbortSignal;
   stream?: boolean;
+  /** Start a turn from the runtime-owned durable inbox without a synthetic user message. */
+  pendingInputOnly?: boolean;
   /** SessionRuntime-owned same-turn user steering source. */
   turnSteering?: {
-    drain: () => SteeringMessage[];
-    drainOrSeal: () => { messages: SteeringMessage[]; sealed: boolean };
-    acknowledge: (ids: readonly string[]) => Promise<void>;
+    drain: () => Promise<SteeringMessage[]>;
+    drainOrSeal: () => Promise<{
+      messages: SteeringMessage[];
+      sealed: boolean;
+    }>;
   };
 
   // 行为回调（影响循环控制流，不是事件通知）

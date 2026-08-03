@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { BladeServer } from '../../../src/server/server.js';
 import { getState } from '../../../src/store/vanilla.js';
@@ -396,14 +397,15 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
 
         const initial = await sendMessage(
           sessionId,
-          'A configuration review is in progress. The current candidate value is ' +
-            'ALPHA_VALUE. Reply with the current candidate value only. Do not call tools.'
+          'We are choosing a TypeScript identifier before editing code. The current ' +
+            'requested identifier is ALPHA_CANDIDATE_IDENTIFIER. Reply with that ' +
+            'identifier only. Do not call tools.'
         );
         await collector.waitFor((event) => event.type === 'turn.started');
         const steered = await sendMessage(
           sessionId,
-          'New information from the user: the candidate value is now BETA_VALUE. ' +
-            'Reply with the newest candidate value only.'
+          'Requirement update: use BETA_CANDIDATE_IDENTIFIER instead. Reply with ' +
+            'the newest requested identifier only.'
         );
 
         expect(steered).toMatchObject({
@@ -422,7 +424,7 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
           .filter((event) => event.type === 'message.delta')
           .map((event) => String(event.properties.delta ?? ''))
           .join('');
-        expect(responseAfterSteering).toContain('BETA_VALUE');
+        expect(responseAfterSteering).toContain('BETA_CANDIDATE_IDENTIFIER');
         expect(
           collector.events.filter((event) => event.type === 'turn.started').length
         ).toBeGreaterThanOrEqual(2);
@@ -430,6 +432,60 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
           'session.error'
         );
       } finally {
+        await collector?.close();
+        if (sessionId) await deleteSession(sessionId);
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 300_000);
+
+    it(`${modelConfig.model} auto-resumes durable input when Web SSE reconnects`, async () => {
+      const workspace = createWorkspace();
+      let sessionId: string | undefined;
+      let collector: EventCollector | undefined;
+      let runtime: SessionRuntime | undefined;
+      try {
+        setRuntimeModel(modelConfig);
+        sessionId = `web-recovery-${Date.now()}`;
+        runtime = await SessionRuntime.create({
+          sessionId,
+          workspaceRoot: workspace,
+        });
+        const durablePrompt =
+          'The old value was ALPHA_WEB_RECOVERY. The newest value is ' +
+          'BETA_WEB_RECOVERY. Reply with the newest value only.';
+        await runtime.enqueueSteering(durablePrompt, { allowBeforeTurn: true });
+        const inboxMessageId = runtime.getPendingSteeringMessages()[0]?.id;
+        expect(inboxMessageId).toBeTruthy();
+        await runtime
+          .getExecutionEngine()
+          .getContextManager()
+          .persistentStore.saveMessage(sessionId, 'user', durablePrompt, null, {
+            inboxMessageId,
+          });
+        await runtime.dispose();
+        runtime = undefined;
+
+        collector = await collectEvents(sessionId);
+        await collector.waitFor((event) => event.type === 'follow_up.started');
+        await collector.waitFor((event) => event.type === 'session.completed');
+
+        const recoveredUser = collector.events.find(
+          (event) =>
+            event.type === 'message.created' &&
+            event.properties.role === 'user' &&
+            event.properties.recovered === true
+        );
+        expect(recoveredUser).toBeUndefined();
+        const output = collector.events
+          .filter((event) => event.type === 'message.delta')
+          .map((event) => String(event.properties.delta ?? ''))
+          .join('');
+        expect(output).toContain('BETA_WEB_RECOVERY');
+        expect(collector.events.map((event) => event.type)).not.toContain(
+          'session.error'
+        );
+      } finally {
+        await runtime?.dispose().catch(() => undefined);
         await collector?.close();
         if (sessionId) await deleteSession(sessionId);
         rmSync(workspace, { recursive: true, force: true });

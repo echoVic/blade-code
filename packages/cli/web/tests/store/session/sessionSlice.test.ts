@@ -107,6 +107,26 @@ describe('sessionSlice multimodal sendMessage', () => {
     );
   });
 
+  it('subscribes after persisted history is loaded', async () => {
+    const subscribeToEvents = vi.fn();
+    useSessionStore.setState({ subscribeToEvents });
+    vi.mocked(sessionService.getMessages).mockResolvedValue([
+      {
+        id: 'history-1',
+        role: 'user',
+        content: 'persisted',
+        timestamp: Date.now(),
+      },
+    ] as never);
+
+    await useSessionStore.getState().selectSession('persisted-session');
+
+    expect(subscribeToEvents).toHaveBeenCalledWith('persisted-session');
+    expect(useSessionStore.getState().messages).toEqual([
+      expect.objectContaining({ role: 'user', content: 'persisted' }),
+    ]);
+  });
+
   it('adds optimistic image-only user messages without fabricating text content', async () => {
     vi.mocked(sessionService.createSession).mockResolvedValue({
       sessionId: 'session-2',
@@ -175,5 +195,15 @@ describe('sessionSlice multimodal sendMessage', () => {
       isStreaming: true,
       pendingSteeringCount: 2,
     });
+
+    vi.mocked(sessionService.sendMessage).mockResolvedValue({
+      runId: 'run-active',
+      status: 'follow_up_queued',
+      queued: 1,
+    });
+    await useSessionStore.getState().sendMessage({
+      content: 'Run this after the current answer.',
+    });
+    expect(useSessionStore.getState().pendingSteeringCount).toBe(1);
   });
 });

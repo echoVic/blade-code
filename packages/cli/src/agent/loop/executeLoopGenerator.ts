@@ -603,10 +603,13 @@ export async function* executeLoopGenerator(
 
     // 2. 构建消息历史 — 使用 ConversationState 单一消息源
     const state = new ConversationState(context, finalSystemPrompt);
-    state.appendUser({ role: 'user', content: message });
+    const pendingInputOnly = options?.pendingInputOnly === true;
+    if (!pendingInputOnly) {
+      state.appendUser({ role: 'user', content: message });
 
-    // 保存用户消息到 JSONL
-    lastMessageUuid = await saveUserMessage(deps, context, message);
+      // 保存用户消息到 JSONL
+      lastMessageUuid = await saveUserMessage(deps, context, message);
+    }
 
     // === Agentic Loop ===
     const isYoloMode = context.permissionMode === ('yolo' as PermissionMode);
@@ -659,6 +662,7 @@ export async function* executeLoopGenerator(
       .filter(Boolean)
       .join('\n');
     let worktreeIsolationRequired = isExplicitWorktreeRequest(activeUserRequest);
+    let pendingTurnInputApplied = !pendingInputOnly;
 
     let budgetTracker = createBudgetTracker({
       budget: deps.currentModelMaxContextTokens,
@@ -671,21 +675,35 @@ export async function* executeLoopGenerator(
       messages: SteeringMessage[]
     ): Promise<{ messageIds: string[]; count: number; recovered: number }> => {
       for (const steering of messages) {
-        const uuid = await saveUserMessage(
-          deps,
-          context,
-          steering.content,
-          lastMessageUuid,
-          { inboxMessageId: steering.id }
-        );
-        if (!uuid) {
-          throw new Error(
-            `Failed to persist steering message before applying it: ${steering.id}`
+        const alreadyPersisted = state.getHistory().some((message) => {
+          const metadata = message.metadata;
+          return (
+            metadata !== null &&
+            typeof metadata === 'object' &&
+            !Array.isArray(metadata) &&
+            metadata.inboxMessageId === steering.id
           );
+        });
+        if (!alreadyPersisted) {
+          const uuid = await saveUserMessage(
+            deps,
+            context,
+            steering.content,
+            lastMessageUuid,
+            { inboxMessageId: steering.id }
+          );
+          if (!uuid) {
+            throw new Error(
+              `Failed to persist steering message before applying it: ${steering.id}`
+            );
+          }
+          lastMessageUuid = uuid;
+          state.appendUser({
+            role: 'user',
+            content: steering.content,
+            metadata: { inboxMessageId: steering.id },
+          });
         }
-        lastMessageUuid = uuid;
-        await options?.turnSteering?.acknowledge([steering.id]);
-        state.appendUser({ role: 'user', content: steering.content });
 
         const steeringText =
           typeof steering.content === 'string'
@@ -726,11 +744,23 @@ export async function* executeLoopGenerator(
           );
         }
 
-        const queuedSteering = options?.turnSteering?.drain() ?? [];
+        const queuedSteering = (await options?.turnSteering?.drain()) ?? [];
         if (queuedSteering.length > 0) {
           yield {
             kind: 'steering_applied',
             ...(await applySteeringMessages(queuedSteering)),
+            delivery: pendingTurnInputApplied ? 'current_turn' : 'next_turn',
+          };
+          pendingTurnInputApplied = true;
+        } else if (!pendingTurnInputApplied) {
+          return {
+            success: true,
+            finalMessage: '',
+            metadata: {
+              turnsCount: 0,
+              toolCallsCount: 0,
+              duration: Date.now() - startTime,
+            },
           };
         }
 
@@ -997,7 +1027,7 @@ export async function* executeLoopGenerator(
 
         // 5. 检查是否需要工具调用
         if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
-          const queuedSteering = options?.turnSteering?.drain() ?? [];
+          const queuedSteering = (await options?.turnSteering?.drain()) ?? [];
           if (queuedSteering.length > 0) {
             state.appendAssistant({
               role: 'assistant',
@@ -1016,6 +1046,7 @@ export async function* executeLoopGenerator(
             yield {
               kind: 'steering_applied',
               ...(await applySteeringMessages(queuedSteering)),
+              delivery: 'current_turn',
             };
             continue;
           }
@@ -1345,7 +1376,7 @@ export async function* executeLoopGenerator(
             continue;
           }
 
-          const completionSteering = options?.turnSteering?.drainOrSeal();
+          const completionSteering = await options?.turnSteering?.drainOrSeal();
           if (completionSteering && completionSteering.messages.length > 0) {
             state.appendAssistant({
               role: 'assistant',
@@ -1364,6 +1395,7 @@ export async function* executeLoopGenerator(
             yield {
               kind: 'steering_applied',
               ...(await applySteeringMessages(completionSteering.messages)),
+              delivery: 'current_turn',
             };
             continue;
           }

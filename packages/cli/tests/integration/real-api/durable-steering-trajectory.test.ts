@@ -13,6 +13,7 @@ import {
 } from '../../../src/context/storage/pathUtils.js';
 import { parseSessionJSONL } from '../../../src/context/storage/JSONLStore.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
+import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import {
   buildRealApiRuntimeConfig,
@@ -55,15 +56,21 @@ describe.skipIf(!enabled)('Durable steering recovery (real API)', () => {
       let agent: Agent | undefined;
 
       try {
+        const durablePrompt =
+          'The old candidate was ALPHA_DURABLE_VALUE. The newest candidate is ' +
+          'BETA_DURABLE_VALUE. Reply with the newest candidate value only.';
         firstRuntime = await SessionRuntime.create({
           sessionId,
           workspaceRoot: workspace,
         });
-        const queued = await firstRuntime.enqueueSteering(
-          'New user information: the current candidate value is BETA_DURABLE_VALUE.',
-          { allowBeforeTurn: true }
-        );
-        expect(queued).toMatchObject({ accepted: true, queued: 1 });
+        const queued = await firstRuntime.enqueueSteering(durablePrompt, {
+          allowBeforeTurn: true,
+        });
+        expect(queued).toMatchObject({
+          accepted: true,
+          queued: 1,
+          delivery: 'next_turn',
+        });
 
         const inboxPath = getSessionInboxFilePath(workspace, sessionId);
         const inbox = JSON.parse(await readFile(inboxPath, 'utf8')) as {
@@ -71,6 +78,12 @@ describe.skipIf(!enabled)('Durable steering recovery (real API)', () => {
         };
         const inboxMessageId = inbox.messages[0]?.id;
         expect(inboxMessageId).toBeTruthy();
+        await firstRuntime
+          .getExecutionEngine()
+          .getContextManager()
+          .persistentStore.saveMessage(sessionId, 'user', durablePrompt, null, {
+            inboxMessageId,
+          });
 
         await firstRuntime.dispose();
         firstRuntime = undefined;
@@ -82,7 +95,7 @@ describe.skipIf(!enabled)('Durable steering recovery (real API)', () => {
         expect(secondRuntime.getRecoveredSteeringCount()).toBe(1);
         agent = await Agent.createWithRuntime(secondRuntime, { sessionId });
         const context: ChatContext = {
-          messages: [],
+          messages: await SessionService.loadSession(sessionId, workspace),
           userId: 'durable-steering-test',
           sessionId,
           workspaceRoot: workspace,
@@ -90,11 +103,10 @@ describe.skipIf(!enabled)('Durable steering recovery (real API)', () => {
         };
         const events: LoopEvent[] = [];
         const result = await drainLoop(
-          agent.chatStream(
-            'A configuration review is in progress. The old candidate value was ALPHA_DURABLE_VALUE. Reply with the newest candidate value only.',
-            context,
-            { stream: true }
-          ),
+          agent.chatStream('', context, {
+            stream: true,
+            pendingInputOnly: true,
+          }),
           (event) => {
             events.push(event);
           }
@@ -107,6 +119,14 @@ describe.skipIf(!enabled)('Durable steering recovery (real API)', () => {
             kind: 'steering_applied',
             recovered: 1,
             count: 1,
+            delivery: 'next_turn',
+          })
+        );
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            kind: 'follow_up_started',
+            recovered: 1,
+            queued: 1,
           })
         );
         await expect(access(inboxPath)).rejects.toThrow();
@@ -121,6 +141,20 @@ describe.skipIf(!enabled)('Durable steering recovery (real API)', () => {
             (event) =>
               event.type === 'message_created' &&
               event.data.inboxMessageId === inboxMessageId
+          )
+        ).toBe(true);
+        expect(
+          transcript.filter(
+            (event) =>
+              event.type === 'message_created' &&
+              event.data.inboxMessageId === inboxMessageId
+          )
+        ).toHaveLength(1);
+        expect(
+          transcript.some(
+            (event) =>
+              event.type === 'inbox_acknowledged' &&
+              event.data.messageIds.includes(inboxMessageId!)
           )
         ).toBe(true);
         expect(JSON.stringify(events)).not.toContain(modelConfig.apiKey);

@@ -39,43 +39,52 @@ describe('ActiveTurnMailbox', () => {
       accepted: true,
       turnId: turn.id,
       queued: 1,
+      delivery: 'current_turn',
     });
     await expect(mailbox.enqueue('second')).resolves.toMatchObject({
       accepted: true,
       queued: 2,
     });
 
-    const claimed = mailbox.drain(turn);
+    const claimed = await mailbox.drain(turn);
     expect(claimed.map((message) => message.content)).toEqual(['first', 'second']);
     expect(mailbox.pendingCount()).toBe(2);
-    expect(mailbox.drain(turn)).toEqual([]);
+    await expect(mailbox.drain(turn)).resolves.toEqual([]);
     await mailbox.acknowledge(claimed.map((message) => message.id));
     expect(mailbox.pendingCount()).toBe(0);
-    mailbox.endTurn(turn);
+    await mailbox.finishTurn(turn);
   });
 
-  it('stages input during turn startup and rejects input after atomic sealing', async () => {
+  it('stages startup input and defers input after atomic sealing', async () => {
     const mailbox = await createMailbox();
     await expect(
       mailbox.enqueue('startup guidance', { allowBeforeTurn: true })
     ).resolves.toMatchObject({
       accepted: true,
       queued: 1,
+      delivery: 'next_turn',
     });
 
     const turn = mailbox.beginTurn();
-    const claimed = mailbox.drain(turn);
+    const claimed = await mailbox.drain(turn);
     expect(claimed[0]?.content).toBe('startup guidance');
     await mailbox.acknowledge(claimed.map((message) => message.id));
-    expect(mailbox.drainOrSeal(turn)).toEqual({ messages: [], sealed: true });
+    await expect(mailbox.drainOrSeal(turn)).resolves.toEqual({
+      messages: [],
+      sealed: true,
+    });
     await expect(mailbox.enqueue('too late')).resolves.toMatchObject({
-      accepted: false,
-      reason: 'turn_sealed',
+      accepted: true,
+      delivery: 'next_turn',
     });
     expect(() => mailbox.beginTurn()).toThrow('already has an active turn');
 
-    mailbox.endTurn(turn);
-    expect(mailbox.beginTurn().id).toBeTruthy();
+    const nextTurn = await mailbox.finishTurn(turn, { continuePending: true });
+    expect(nextTurn?.id).toBeTruthy();
+    await expect(mailbox.drain(nextTurn!)).resolves.toEqual([
+      expect.objectContaining({ content: 'too late' }),
+    ]);
+    await mailbox.finishTurn(nextTurn!);
   });
 
   it('fails closed when the pending steering budget is exhausted', async () => {
@@ -110,12 +119,12 @@ describe('ActiveTurnMailbox', () => {
     const first = await createMailbox('recovered-session');
     const firstTurn = first.beginTurn();
     await first.enqueue('retry this guidance');
-    first.endTurn(firstTurn);
+    await first.finishTurn(firstTurn);
 
     const recovered = await createMailbox('recovered-session');
     expect(recovered.recoveredCount()).toBe(1);
-    const retryTurn = recovered.beginTurn();
-    expect(recovered.drain(retryTurn)).toEqual([
+    const retryTurn = await recovered.beginPendingTurn();
+    await expect(recovered.drain(retryTurn!)).resolves.toEqual([
       expect.objectContaining({
         content: 'retry this guidance',
         recovered: true,
@@ -143,11 +152,11 @@ describe('ActiveTurnMailbox', () => {
     ).rejects.toThrow('Invalid steering inbox JSON');
   });
 
-  it('reconciles transcript-committed guidance when ack did not finish', async () => {
+  it('retries transcript-committed guidance until a completion ack exists', async () => {
     const first = await createMailbox('reconciled-session');
     const firstTurn = first.beginTurn();
     await first.enqueue('committed guidance');
-    const [claimed] = first.drain(firstTurn);
+    const [claimed] = await first.drain(firstTurn);
     expect(claimed).toBeDefined();
 
     const persistentStore = new PersistentStore(workspaceRoot);
@@ -160,6 +169,11 @@ describe('ActiveTurnMailbox', () => {
       { inboxMessageId: claimed!.id }
     );
 
+    const crashRecovered = await createMailbox('reconciled-session');
+    expect(crashRecovered.pendingCount()).toBe(1);
+    expect(crashRecovered.recoveredCount()).toBe(1);
+
+    await persistentStore.acknowledgeInboxMessages('reconciled-session', [claimed!.id]);
     const reconciled = await createMailbox('reconciled-session');
     expect(reconciled.pendingCount()).toBe(0);
     expect(reconciled.recoveredCount()).toBe(0);

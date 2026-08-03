@@ -401,62 +401,155 @@ export class Agent {
     const enhancedMessage = await this.processAtMentionsForContent(message);
 
     if (context) {
-      const turnHandle = this.sessionRuntime?.beginTurn();
-      const loopOptions: LoopOptions = {
-        ...options,
-        signal: context.signal,
-        turnSteering:
-          this.sessionRuntime && turnHandle
-            ? {
-                drain: () => this.sessionRuntime!.drainSteering(turnHandle),
-                drainOrSeal: () => this.sessionRuntime!.drainSteeringOrSeal(turnHandle),
-                acknowledge: (ids) => this.sessionRuntime!.acknowledgeSteering(ids),
-              }
-            : undefined,
-      };
+      let currentMessage = enhancedMessage;
+      let currentContext = context;
+      let pendingInputOnly = options?.pendingInputOnly === true;
+      if (
+        this.sessionRuntime &&
+        !pendingInputOnly &&
+        !this.sessionRuntime.hasTurnOwner() &&
+        this.sessionRuntime.getPendingSteeringCount() > 0
+      ) {
+        const queued = await this.sessionRuntime.enqueueSteering(enhancedMessage, {
+          allowBeforeTurn: true,
+        });
+        if (!queued.accepted) {
+          throw new Error(
+            queued.reason === 'queue_full'
+              ? 'Pending user input queue is full'
+              : 'Pending user input could not be queued'
+          );
+        }
+        pendingInputOnly = true;
+        currentMessage = '';
+      }
+      let turnHandle = this.sessionRuntime
+        ? pendingInputOnly
+          ? await this.sessionRuntime.beginPendingTurn()
+          : this.sessionRuntime.beginTurn()
+        : undefined;
+      let chainedFollowUps = 0;
+
+      if (pendingInputOnly && this.sessionRuntime && !turnHandle) {
+        return {
+          success: true,
+          finalMessage: '',
+          metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
+        };
+      }
+      const pendingMessagesForEvent = () =>
+        this.sessionRuntime!.getPendingSteeringMessages().map((pending) => ({
+          ...pending,
+          persisted: currentContext.messages.some((message) => {
+            const metadata = message.metadata;
+            return (
+              metadata !== null &&
+              typeof metadata === 'object' &&
+              !Array.isArray(metadata) &&
+              metadata.inboxMessageId === pending.id
+            );
+          }),
+        }));
 
       try {
-        // 选择对应模式的 generator
-        let result: LoopResult;
-        if (context.permissionMode === 'plan') {
-          result = yield* this.runPlanLoop(enhancedMessage, context, loopOptions);
-        } else {
-          result = yield* this.runLoop(enhancedMessage, context, loopOptions);
+        if (pendingInputOnly && this.sessionRuntime) {
+          yield {
+            kind: 'follow_up_started',
+            queued: this.sessionRuntime.getPendingSteeringCount(),
+            recovered: this.sessionRuntime.getRecoveredSteeringCount(),
+            messages: pendingMessagesForEvent(),
+          };
         }
 
-        // Plan 模式批准后切换模式并重新执行
-        if (
-          result.success &&
-          result.metadata?.targetMode &&
-          context.permissionMode === 'plan'
-        ) {
-          const targetMode = result.metadata.targetMode as PermissionMode;
-          const planContent = result.metadata.planContent as string | undefined;
-          logger.debug(`Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
+        while (true) {
+          const ownedHandle = turnHandle;
+          const loopOptions: LoopOptions = {
+            ...options,
+            pendingInputOnly,
+            signal: currentContext.signal,
+            turnSteering:
+              this.sessionRuntime && ownedHandle
+                ? {
+                    drain: () => this.sessionRuntime!.drainSteering(ownedHandle),
+                    drainOrSeal: () =>
+                      this.sessionRuntime!.drainSteeringOrSeal(ownedHandle),
+                  }
+                : undefined,
+          };
 
-          await configActions().setPermissionMode(targetMode);
-
-          const newContext: ChatContext = { ...context, permissionMode: targetMode };
-          let messageWithPlan: UserMessageContent = enhancedMessage;
-          if (planContent) {
-            const planSuffix = `\n\n<approved-plan>\n${planContent}\n</approved-plan>\n\nIMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
-            if (typeof enhancedMessage === 'string') {
-              messageWithPlan = enhancedMessage + planSuffix;
-            } else {
-              messageWithPlan = [
-                ...enhancedMessage,
-                { type: 'text', text: planSuffix },
-              ];
-            }
+          // 选择对应模式的 generator
+          let result: LoopResult;
+          if (currentContext.permissionMode === 'plan') {
+            result = yield* this.runPlanLoop(
+              currentMessage,
+              currentContext,
+              loopOptions
+            );
+          } else {
+            result = yield* this.runLoop(currentMessage, currentContext, loopOptions);
           }
 
-          result = yield* this.runLoop(messageWithPlan, newContext, loopOptions);
-        }
+          // Plan 模式批准后切换模式并重新执行
+          if (
+            result.success &&
+            result.metadata?.targetMode &&
+            currentContext.permissionMode === 'plan'
+          ) {
+            const targetMode = result.metadata.targetMode as PermissionMode;
+            const planContent = result.metadata.planContent as string | undefined;
+            logger.debug(`Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
 
-        return result;
+            await configActions().setPermissionMode(targetMode);
+
+            currentContext = {
+              ...currentContext,
+              permissionMode: targetMode,
+            };
+            let messageWithPlan: UserMessageContent = currentMessage;
+            if (planContent) {
+              const planSuffix = `\n\n<approved-plan>\n${planContent}\n</approved-plan>\n\nIMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
+              if (typeof currentMessage === 'string') {
+                messageWithPlan = currentMessage + planSuffix;
+              } else {
+                messageWithPlan = [
+                  ...currentMessage,
+                  { type: 'text', text: planSuffix },
+                ];
+              }
+            }
+
+            result = yield* this.runLoop(messageWithPlan, currentContext, loopOptions);
+          }
+
+          if (!this.sessionRuntime || !ownedHandle) {
+            return result;
+          }
+
+          if (result.success && !currentContext.signal?.aborted) {
+            await this.sessionRuntime.acknowledgeTurn(ownedHandle);
+          }
+          const continuePending =
+            !currentContext.signal?.aborted && chainedFollowUps < 20;
+          turnHandle = await this.sessionRuntime.finishTurn(ownedHandle, {
+            continuePending,
+          });
+          if (!turnHandle) {
+            return result;
+          }
+
+          chainedFollowUps++;
+          pendingInputOnly = true;
+          currentMessage = '';
+          yield {
+            kind: 'follow_up_started',
+            queued: this.sessionRuntime.getPendingSteeringCount(),
+            recovered: this.sessionRuntime.getRecoveredSteeringCount(),
+            messages: pendingMessagesForEvent(),
+          };
+        }
       } finally {
         if (this.sessionRuntime && turnHandle) {
-          this.sessionRuntime.endTurn(turnHandle);
+          await this.sessionRuntime.finishTurn(turnHandle);
         }
       }
     }

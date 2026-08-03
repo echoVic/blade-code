@@ -1,3 +1,4 @@
+import { Mutex } from 'async-mutex';
 import { nanoid } from 'nanoid';
 import type { UserMessageContent } from '../types.js';
 import {
@@ -15,6 +16,7 @@ export interface SteeringEnqueueResult {
   turnId?: string;
   queued: number;
   reason?: 'no_active_turn' | 'turn_sealed' | 'queue_full';
+  delivery?: 'current_turn' | 'next_turn';
 }
 
 export interface ActiveTurnHandle {
@@ -35,6 +37,7 @@ export function getSteeringContentSize(content: UserMessageContent): number {
 }
 
 export class ActiveTurnMailbox {
+  private readonly transitionMutex = new Mutex();
   private activeTurn?: ActiveTurnState;
   private claimed = new Map<string, SteeringMessage>();
 
@@ -54,81 +57,88 @@ export class ActiveTurnMailbox {
       throw new Error(`Session already has an active turn: ${this.activeTurn.id}`);
     }
 
-    const handle = { id: nanoid(12) };
-    this.activeTurn = { id: handle.id, sealed: false };
-    return handle;
+    return this.createTurn();
   }
 
   async enqueue(
     content: UserMessageContent,
     options: { allowBeforeTurn?: boolean } = {}
   ): Promise<SteeringEnqueueResult> {
-    if (!this.activeTurn && !options.allowBeforeTurn) {
-      return {
-        accepted: false,
-        queued: this.inbox.count(),
-        reason: 'no_active_turn',
-      };
-    }
-    if (this.activeTurn?.sealed) {
-      return {
-        accepted: false,
-        turnId: this.activeTurn.id,
-        queued: this.inbox.count(),
-        reason: 'turn_sealed',
-      };
-    }
+    return this.transitionMutex.runExclusive(async () => {
+      if (!this.activeTurn && !options.allowBeforeTurn) {
+        return {
+          accepted: false,
+          queued: this.inbox.count(),
+          reason: 'no_active_turn',
+        };
+      }
 
-    const accepted = await this.inbox.enqueue(
-      {
-        id: nanoid(12),
-        content,
-        queuedAt: Date.now(),
-      },
-      (pending) =>
-        pending.length < MAX_PENDING_STEERS &&
-        pending.reduce(
-          (total, message) => total + getSteeringContentSize(message.content),
-          getSteeringContentSize(content)
-        ) <= MAX_PENDING_STEER_CHARS
-    );
-    if (!accepted) {
+      const delivery =
+        this.activeTurn && !this.activeTurn.sealed
+          ? ('current_turn' as const)
+          : ('next_turn' as const);
+      const accepted = await this.inbox.enqueue(
+        {
+          id: nanoid(12),
+          content,
+          queuedAt: Date.now(),
+        },
+        (pending) =>
+          pending.length < MAX_PENDING_STEERS &&
+          pending.reduce(
+            (total, message) => total + getSteeringContentSize(message.content),
+            getSteeringContentSize(content)
+          ) <= MAX_PENDING_STEER_CHARS
+      );
+      if (!accepted) {
+        return {
+          accepted: false,
+          turnId: this.activeTurn?.id,
+          queued: this.inbox.count(),
+          reason: 'queue_full',
+        };
+      }
       return {
-        accepted: false,
+        accepted: true,
         turnId: this.activeTurn?.id,
         queued: this.inbox.count(),
-        reason: 'queue_full',
+        delivery,
       };
-    }
-    return {
-      accepted: true,
-      turnId: this.activeTurn?.id,
-      queued: this.inbox.count(),
-    };
+    });
   }
 
-  drain(handle: ActiveTurnHandle): SteeringMessage[] {
-    this.assertOwner(handle);
-    const messages = this.inbox
-      .list()
-      .filter((message) => !this.claimed.has(message.id));
-    for (const message of messages) {
-      this.claimed.set(message.id, message);
-    }
-    return messages;
+  async drain(handle: ActiveTurnHandle): Promise<SteeringMessage[]> {
+    return this.transitionMutex.runExclusive(() => {
+      this.assertOwner(handle);
+      const messages = this.inbox
+        .list()
+        .filter((message) => !this.claimed.has(message.id));
+      for (const message of messages) {
+        this.claimed.set(message.id, message);
+      }
+      return messages;
+    });
   }
 
-  drainOrSeal(handle: ActiveTurnHandle): {
+  async drainOrSeal(handle: ActiveTurnHandle): Promise<{
     messages: SteeringMessage[];
     sealed: boolean;
-  } {
-    this.assertOwner(handle);
-    if (this.inbox.count() > this.claimed.size) {
-      return { messages: this.drain(handle), sealed: false };
-    }
+  }> {
+    return this.transitionMutex.runExclusive(() => {
+      this.assertOwner(handle);
+      if (this.inbox.count() > this.claimed.size) {
+        const messages = this.inbox
+          .list()
+          .filter((message) => !this.claimed.has(message.id));
+        for (const message of messages) {
+          this.claimed.set(message.id, message);
+        }
+        return { messages, sealed: false };
+      }
 
-    this.activeTurn!.sealed = true;
-    return { messages: [], sealed: true };
+      this.activeTurn!.sealed = true;
+      return { messages: [], sealed: true };
+    });
   }
 
   async acknowledge(ids: readonly string[]): Promise<void> {
@@ -138,18 +148,52 @@ export class ActiveTurnMailbox {
     }
   }
 
-  endTurn(handle: ActiveTurnHandle): void {
-    this.assertOwner(handle);
-    this.activeTurn = undefined;
-    this.claimed.clear();
+  async claimedMessageIds(handle: ActiveTurnHandle): Promise<string[]> {
+    return this.transitionMutex.runExclusive(() => {
+      this.assertOwner(handle);
+      return [...this.claimed.keys()];
+    });
+  }
+
+  async finishTurn(
+    handle: ActiveTurnHandle,
+    options: { continuePending?: boolean } = {}
+  ): Promise<ActiveTurnHandle | undefined> {
+    return this.transitionMutex.runExclusive(() => {
+      this.assertOwner(handle);
+      this.activeTurn = undefined;
+      this.claimed.clear();
+      if (!options.continuePending || this.inbox.count() === 0) {
+        return undefined;
+      }
+
+      return this.createTurn();
+    });
+  }
+
+  async beginPendingTurn(): Promise<ActiveTurnHandle | undefined> {
+    return this.transitionMutex.runExclusive(() => {
+      if (this.activeTurn || this.inbox.count() === 0) {
+        return undefined;
+      }
+      return this.createTurn();
+    });
   }
 
   isActive(): boolean {
     return Boolean(this.activeTurn && !this.activeTurn.sealed);
   }
 
+  hasTurnOwner(): boolean {
+    return Boolean(this.activeTurn);
+  }
+
   pendingCount(): number {
     return this.inbox.count();
+  }
+
+  pendingMessages(): SteeringMessage[] {
+    return this.inbox.list();
   }
 
   recoveredCount(): number {
@@ -160,5 +204,11 @@ export class ActiveTurnMailbox {
     if (!this.activeTurn || this.activeTurn.id !== handle.id) {
       throw new Error(`Turn ${handle.id} does not own this session mailbox`);
     }
+  }
+
+  private createTurn(): ActiveTurnHandle {
+    const handle = { id: nanoid(12) };
+    this.activeTurn = { id: handle.id, sealed: false };
+    return handle;
   }
 }

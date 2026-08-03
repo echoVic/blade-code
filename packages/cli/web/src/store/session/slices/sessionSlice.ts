@@ -103,6 +103,9 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
         isLoading: false,
         tokenUsage: { ...initialTokenUsage },
       });
+      if (get().currentSessionId === sessionId) {
+        get().subscribeToEvents(sessionId);
+      }
     } catch (err) {
       set({ error: (err as Error).message, isLoading: false });
     }
@@ -184,7 +187,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       set({
         currentRunId: response.runId,
         pendingSteeringCount:
-          response.status === 'steering_queued'
+          response.status === 'steering_queued' ||
+          response.status === 'follow_up_queued'
             ? Math.max(0, response.queued ?? 1)
             : get().pendingSteeringCount,
       });

@@ -294,7 +294,10 @@ export class SessionService {
       },
     };
     const copiedEntries = sourceEntries
-      .filter((entry) => entry.type !== 'session_created')
+      .filter(
+        (entry) =>
+          entry.type !== 'session_created' && entry.type !== 'inbox_acknowledged'
+      )
       .map((entry): SessionEvent => {
         const base = {
           ...entry,

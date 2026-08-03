@@ -372,12 +372,11 @@ describe('executeLoopGenerator', () => {
         recovered: false,
       };
       const turnSteering = {
-        drain: vi.fn(() => {
+        drain: vi.fn(async () => {
           drainCount++;
           return drainCount === 2 ? [steeringMessage] : [];
         }),
-        drainOrSeal: vi.fn(() => ({ messages: [], sealed: true })),
-        acknowledge: vi.fn().mockResolvedValue(undefined),
+        drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
       };
 
       const { events, result } = await drainGenerator(
@@ -399,8 +398,8 @@ describe('executeLoopGenerator', () => {
         messageIds: ['steer-1'],
         count: 1,
         recovered: 0,
+        delivery: 'current_turn',
       });
-      expect(turnSteering.acknowledge).toHaveBeenCalledWith(['steer-1']);
       expect(contextManager.saveMessage).toHaveBeenCalledWith(
         'test-session',
         'user',
@@ -429,7 +428,7 @@ describe('executeLoopGenerator', () => {
       );
     });
 
-    it('acknowledges durable steering one message at a time on partial persistence failure', async () => {
+    it('retains persisted durable steering on partial persistence failure', async () => {
       const contextManager = createMockContextManager();
       contextManager.saveMessage
         .mockReset()
@@ -451,7 +450,7 @@ describe('executeLoopGenerator', () => {
       });
       let drainCount = 0;
       const turnSteering = {
-        drain: vi.fn(() => {
+        drain: vi.fn(async () => {
           drainCount++;
           return drainCount === 2
             ? [
@@ -470,23 +469,160 @@ describe('executeLoopGenerator', () => {
               ]
             : [];
         }),
-        drainOrSeal: vi.fn(() => ({ messages: [], sealed: true })),
-        acknowledge: vi.fn().mockResolvedValue(undefined),
+        drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
       };
 
+      const context = createMockContext();
       const { result } = await drainGenerator(
         executeLoopGenerator(
           deps,
           'Initial request.',
-          createMockContext(),
+          context,
           { stream: false, turnSteering },
           undefined
         )
       );
 
       expect(result.success).toBe(false);
-      expect(turnSteering.acknowledge).toHaveBeenCalledTimes(1);
-      expect(turnSteering.acknowledge).toHaveBeenCalledWith(['steer-1']);
+      expect(context.messages).toContainEqual(
+        expect.objectContaining({
+          role: 'user',
+          content: 'First durable update.',
+          metadata: { inboxMessageId: 'steer-1' },
+        })
+      );
+    });
+
+    it('starts a pending-only turn without persisting a synthetic empty prompt', async () => {
+      const contextManager = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as any,
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: 'BETA_VALUE',
+        toolCalls: undefined,
+        usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110 },
+        finishReason: 'stop',
+      });
+      let drained = false;
+      const turnSteering = {
+        drain: vi.fn(async () => {
+          if (drained) return [];
+          drained = true;
+          return [
+            {
+              id: 'recovered-follow-up',
+              content: 'Reply with BETA_VALUE only.',
+              queuedAt: Date.now(),
+              recovered: true,
+            },
+          ];
+        }),
+        drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+      };
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          '',
+          createMockContext(),
+          { stream: false, pendingInputOnly: true, turnSteering },
+          undefined
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'BETA_VALUE',
+      });
+      expect(events).toContainEqual({
+        kind: 'steering_applied',
+        messageIds: ['recovered-follow-up'],
+        count: 1,
+        recovered: 1,
+        delivery: 'next_turn',
+      });
+      expect(contextManager.saveMessage).toHaveBeenCalledWith(
+        'test-session',
+        'user',
+        'Reply with BETA_VALUE only.',
+        null,
+        { inboxMessageId: 'recovered-follow-up' },
+        undefined
+      );
+      expect(
+        contextManager.saveMessage.mock.calls.some((call: unknown[]) => call[2] === '')
+      ).toBe(false);
+    });
+
+    it('reuses a transcript-committed inbox message after a pre-model crash', async () => {
+      const contextManager = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as any,
+      });
+      const context = createMockContext();
+      context.messages = [
+        {
+          role: 'user',
+          content: 'Resume this exact durable request.',
+          metadata: { inboxMessageId: 'durable-crash-window' },
+        },
+      ];
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: 'resumed',
+        toolCalls: undefined,
+        usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110 },
+        finishReason: 'stop',
+      });
+      let drained = false;
+      const turnSteering = {
+        drain: vi.fn(async () => {
+          if (drained) return [];
+          drained = true;
+          return [
+            {
+              id: 'durable-crash-window',
+              content: 'Resume this exact durable request.',
+              queuedAt: Date.now(),
+              recovered: true,
+            },
+          ];
+        }),
+        drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+      };
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          '',
+          context,
+          { stream: false, pendingInputOnly: true, turnSteering },
+          undefined
+        )
+      );
+
+      expect(result).toMatchObject({ success: true, finalMessage: 'resumed' });
+      expect(
+        contextManager.saveMessage.mock.calls.filter(
+          (call: unknown[]) =>
+            call[1] === 'user' && call[2] === 'Resume this exact durable request.'
+        )
+      ).toHaveLength(0);
+      expect(
+        context.messages.filter(
+          (message) =>
+            message.metadata &&
+            typeof message.metadata === 'object' &&
+            !Array.isArray(message.metadata) &&
+            message.metadata.inboxMessageId === 'durable-crash-window'
+        )
+      ).toHaveLength(1);
     });
   });
 

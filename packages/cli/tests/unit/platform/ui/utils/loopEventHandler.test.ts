@@ -600,6 +600,7 @@ describe('createLoopEventHandler', () => {
         messageIds: ['steer-1', 'steer-2'],
         count: 2,
         recovered: 0,
+        delivery: 'current_turn',
       });
 
       expect(deps.commandActions.dequeueCommand).toHaveBeenCalledTimes(2);
@@ -614,6 +615,7 @@ describe('createLoopEventHandler', () => {
         messageIds: ['steer-recovered'],
         count: 1,
         recovered: 1,
+        delivery: 'next_turn',
       });
 
       expect(deps.commandActions.setRecoveredSteeringCount).toHaveBeenCalledWith(1);

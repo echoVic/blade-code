@@ -11,6 +11,7 @@ import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import type { ToolResult } from '../../tools/types/index.js';
 import type { ExecutionEngine } from '../ExecutionEngine.js';
+import type { SteeringMessage } from '../runtime/ActiveTurnMailbox.js';
 import type { AgentOptions } from '../types.js';
 
 // ===== Loop Event Subtypes =====
@@ -49,6 +50,13 @@ export type DomainEvent =
       messageIds: string[];
       count: number;
       recovered: number;
+      delivery: 'current_turn' | 'next_turn';
+    }
+  | {
+      kind: 'follow_up_started';
+      queued: number;
+      recovered: number;
+      messages: Array<SteeringMessage & { persisted: boolean }>;
     }
   | { kind: 'subagent_spawned'; sessionId: string; type: string; prompt: string }
   | {

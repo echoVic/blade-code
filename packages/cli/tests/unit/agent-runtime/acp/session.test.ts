@@ -17,6 +17,7 @@ const runtimeState = vi.hoisted(() => ({
       turnId: 'turn-1',
       queued: 1,
     })),
+    getPendingSteeringCount: vi.fn(() => 0),
   },
 }));
 
@@ -107,6 +108,7 @@ describe('AcpSession', () => {
   let session: AcpSession;
 
   beforeEach(() => {
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     // 创建 mock 连接
     mockConnection = createMockACPClient();
 
@@ -160,6 +162,23 @@ describe('AcpSession', () => {
       });
       expect(Agent.createWithRuntime).toHaveBeenCalledWith(runtimeState.runtime, {
         sessionId: 'test-session-id',
+      });
+    });
+
+    it('应该在初始化后自动恢复 durable follow-up', async () => {
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      await session.initialize();
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
+      };
+
+      await vi.waitFor(() => {
+        expect(agentModule._getMockAgentInstance().calls[0]).toMatchObject({
+          message: '',
+          options: { pendingInputOnly: true },
+        });
       });
     });
   });
@@ -384,10 +403,18 @@ describe('AcpSession', () => {
       const mockAgent = agentModule._getMockAgentInstance();
       mockAgent.chatStream = vi.fn(async function* () {
         yield {
-          kind: 'steering_applied',
-          messageIds: ['recovered-1'],
-          count: 1,
+          kind: 'follow_up_started',
+          queued: 1,
           recovered: 1,
+          messages: [
+            {
+              id: 'recovered-1',
+              content: 'recovered guidance',
+              queuedAt: Date.now(),
+              recovered: true,
+              persisted: false,
+            },
+          ],
         } as const;
         return {
           success: true,
@@ -405,7 +432,15 @@ describe('AcpSession', () => {
           (notification) =>
             notification.update.sessionUpdate === 'agent_message_chunk' &&
             notification.update.content.type === 'text' &&
-            notification.update.content.text.includes('Recovered 1 queued instruction')
+            notification.update.content.text.includes('Resuming 1 queued instruction')
+        )
+      ).toBe(true);
+      expect(
+        mockConnection.sessionUpdates.some(
+          (notification) =>
+            notification.update.sessionUpdate === 'user_message_chunk' &&
+            notification.update.content.type === 'text' &&
+            notification.update.content.text === 'recovered guidance'
         )
       ).toBe(true);
     });
