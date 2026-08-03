@@ -75,6 +75,8 @@ const logger = createLogger(LogCategory.AGENT);
 const COMPACTION_FALLBACK_OUTPUT_RATIO = 0.1;
 const COMPACTION_FALLBACK_MIN_OUTPUT_TOKENS = 8192;
 const COMPACTION_FALLBACK_MAX_OUTPUT_TOKENS = 32768;
+const COMPACTION_COOLDOWN_TURNS = 2;
+const COMPACTION_EMERGENCY_INPUT_RATIO = 0.95;
 const SAFETY_LIMIT = 100;
 
 const PLANNING_DIRECTIVE = `
@@ -401,6 +403,10 @@ async function* processStreamResponse(
 
 export type CompactResult = 'none' | 'snipped' | 'compacted';
 
+export interface LoopCompactionState {
+  lastCompactionTurn?: number;
+}
+
 export async function* checkAndCompactInLoop(
   deps: LoopDependencies,
   context: ChatContext,
@@ -408,7 +414,8 @@ export async function* checkAndCompactInLoop(
   actualPromptTokens?: number,
   signal?: AbortSignal,
   lastApiCallTime?: number,
-  activeTask?: string
+  activeTask?: string,
+  compactionState?: LoopCompactionState
 ): AsyncGenerator<LoopEvent, CompactResult, void> {
   if (actualPromptTokens === undefined) {
     logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`);
@@ -471,6 +478,26 @@ export async function* checkAndCompactInLoop(
     return didSnip ? 'snipped' : 'none';
   }
 
+  const turnsSinceCompaction =
+    compactionState?.lastCompactionTurn === undefined
+      ? undefined
+      : currentTurn - compactionState.lastCompactionTurn;
+  const inCooldown =
+    turnsSinceCompaction !== undefined &&
+    turnsSinceCompaction <= COMPACTION_COOLDOWN_TURNS;
+  const emergencyThreshold = Math.floor(
+    availableForInput * COMPACTION_EMERGENCY_INPUT_RATIO
+  );
+  if (inCooldown && actualPromptTokens < emergencyThreshold) {
+    if (didSnip) {
+      context.messages = snipResult.messages;
+    }
+    logger.debug(
+      `[Loop] [轮次 ${currentTurn}] 跳过连续 LLM 压缩，距离上次压缩 ${turnsSinceCompaction} 轮`
+    );
+    return didSnip ? 'snipped' : 'none';
+  }
+
   logger.debug(
     currentTurn === 0
       ? '[Loop] 触发自动压缩'
@@ -493,6 +520,9 @@ export async function* checkAndCompactInLoop(
     });
 
     context.messages = result.compactedMessages;
+    if (compactionState) {
+      compactionState.lastCompactionTurn = currentTurn;
+    }
     if (result.success) {
       logger.debug(
         `[Loop] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} -> ${result.postTokens} tokens`
@@ -678,6 +708,7 @@ export async function* executeLoopGenerator(
     });
 
     const reactiveCompaction = new ReactiveCompaction();
+    const compactionState: LoopCompactionState = {};
 
     const applySteeringMessages = async (
       messages: SteeringMessage[]
@@ -783,7 +814,8 @@ export async function* executeLoopGenerator(
           lastPromptTokens,
           options?.signal,
           lastApiCallTime,
-          activeUserRequest
+          activeUserRequest,
+          compactionState
         );
 
         if (compactResult !== 'none') {

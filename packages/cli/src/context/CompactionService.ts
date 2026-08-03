@@ -3,8 +3,8 @@
  * 负责协调整个压缩流程：分析文件、生成总结、创建压缩消息
  */
 
-import { promises as fs } from 'node:fs';
 import { nanoid } from 'nanoid';
+import { promises as fs } from 'node:fs';
 import { PermissionMode } from '../config/types.js';
 import { HookManager } from '../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';

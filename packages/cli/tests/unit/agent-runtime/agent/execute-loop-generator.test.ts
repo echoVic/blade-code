@@ -85,7 +85,10 @@ vi.mock('../../../../src/agent/loop/StreamingToolExecutor.js', () => ({
 // ===== Imports (after mocks) =====
 
 import { MAX_VERIFICATION_RETRIES } from '../../../../src/agent/loop/completionPolicy.js';
-import { executeLoopGenerator } from '../../../../src/agent/loop/executeLoopGenerator.js';
+import {
+  checkAndCompactInLoop,
+  executeLoopGenerator,
+} from '../../../../src/agent/loop/executeLoopGenerator.js';
 import type { LoopDependencies, LoopEvent } from '../../../../src/agent/loop/types.js';
 import type {
   ChatContext,
@@ -293,6 +296,59 @@ describe('executeLoopGenerator', () => {
         done: false,
         value: { kind: 'compaction', phase: 'end' },
       });
+    });
+
+    it('applies post-compaction hysteresis while preserving emergency compaction', async () => {
+      const deps = createMockDeps();
+      (deps.chatService.getConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+        stream: false,
+        model: 'test-model',
+        apiKey: 'key',
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_096,
+      });
+      const compacted: Awaited<ReturnType<typeof CompactionService.compact>> = {
+        success: true,
+        summary: 'summary',
+        preTokens: 85_000,
+        postTokens: 1_000,
+        filesIncluded: [],
+        compactedMessages: [{ role: 'user', content: 'summary' }],
+        boundaryMessage: { role: 'system', content: '' },
+        summaryMessage: { role: 'user', content: 'summary' },
+      };
+      vi.mocked(CompactionService.compact)
+        .mockResolvedValueOnce(compacted)
+        .mockResolvedValueOnce(compacted);
+      const context = createMockContext({
+        messages: [{ role: 'user', content: 'large history' }],
+      });
+      const compactionState: { lastCompactionTurn?: number } = {};
+
+      const runCheck = async (turn: number, tokens: number) => {
+        const generator = checkAndCompactInLoop(
+          deps,
+          context,
+          turn,
+          tokens,
+          undefined,
+          undefined,
+          'active task',
+          compactionState
+        );
+        let step = await generator.next();
+        while (!step.done) {
+          step = await generator.next();
+        }
+        return step.value;
+      };
+
+      await expect(runCheck(1, 85_000)).resolves.toBe('compacted');
+      await expect(runCheck(2, 85_000)).resolves.toBe('none');
+      expect(CompactionService.compact).toHaveBeenCalledTimes(1);
+
+      await expect(runCheck(2, 92_000)).resolves.toBe('compacted');
+      expect(CompactionService.compact).toHaveBeenCalledTimes(2);
     });
   });
 
