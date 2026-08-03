@@ -237,4 +237,25 @@ describe('ChatInput', () => {
     expect(container.querySelector('img')).toBeNull();
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  test('keeps the composer available while streaming so users can steer', () => {
+    act(() => {
+      root.render(
+        <ChatInput
+          onSend={vi.fn()}
+          onAbort={vi.fn()}
+          isStreaming
+          pendingSteeringCount={2}
+        />
+      );
+    });
+
+    const textarea = container.querySelector('textarea');
+    expect(textarea?.disabled).toBe(false);
+    expect(textarea?.placeholder).toContain('steer the active turn');
+    expect(container.textContent).toContain('Active turn is steerable');
+    expect(container.textContent).toContain('2 queued');
+    expect(container.querySelector('[title="Stop active turn"]')).toBeTruthy();
+    expect(container.querySelector('[title="Steer active turn"]')).toBeTruthy();
+  });
 });

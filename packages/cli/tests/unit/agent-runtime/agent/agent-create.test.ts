@@ -87,4 +87,48 @@ describe('Agent runLoop system prompt injection', () => {
     expect((agent as any).buildSystemPromptOnDemand).toHaveBeenCalledOnce();
     expect(receivedSystemPrompt).toBe('BASE_PROMPT');
   });
+
+  it('owns the SessionRuntime turn mailbox for the full streamed run', async () => {
+    const turnHandle = { id: 'turn-1' };
+    const runtime = {
+      beginTurn: vi.fn(() => turnHandle),
+      drainSteering: vi.fn(() => []),
+      drainSteeringOrSeal: vi.fn(() => ({ messages: [], sealed: true })),
+      endTurn: vi.fn(),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      {
+        getRegistry: () => ({ getAll: () => [] }),
+      } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).processAtMentionsForContent = vi.fn().mockResolvedValue('hello');
+    (agent as any).runLoop = vi.fn(async function* () {
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const iterator = agent.chatStream('hello', {
+      messages: [],
+      userId: 'user-1',
+      sessionId: 'session-1',
+      workspaceRoot: process.cwd(),
+    });
+    expect(await iterator.next()).toMatchObject({
+      done: true,
+      value: { success: true, finalMessage: 'done' },
+    });
+
+    expect(runtime.beginTurn).toHaveBeenCalledOnce();
+    expect(runtime.endTurn).toHaveBeenCalledWith(turnHandle, {
+      preservePending: false,
+    });
+  });
 });

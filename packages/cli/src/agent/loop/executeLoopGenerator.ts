@@ -27,13 +27,13 @@ import { ToolErrorType } from '../../tools/types/index.js';
 import { isAbortError } from '../../utils/abort.js';
 import { getAbortReason } from '../../utils/abortReason.js';
 import { getCwd } from '../../utils/cwd.js';
+import type { SteeringMessage } from '../runtime/ActiveTurnMailbox.js';
 import type {
   ChatContext,
   LoopOptions,
   LoopResult,
   UserMessageContent,
 } from '../types.js';
-import { ConversationState } from './ConversationState.js';
 import {
   checkDelegationRequirement,
   checkIncompleteIntent,
@@ -53,6 +53,7 @@ import {
   saveToolUse,
   saveUserMessage,
 } from './conversationPersistence.js';
+import { ConversationState } from './ConversationState.js';
 import {
   createStaleLoopDetector,
   createToolFailureTracker,
@@ -650,13 +651,14 @@ export async function* executeLoopGenerator(
             .filter((part) => part.type === 'text')
             .map((part) => part.text)
             .join('\n');
-    const verificationPolicyRequest = [
-      originalUserRequest,
+    let activeUserRequest = originalUserRequest;
+    let verificationPolicyRequest = [
+      activeUserRequest,
       context.completionRequirements?.trim(),
     ]
       .filter(Boolean)
       .join('\n');
-    const worktreeIsolationRequired = isExplicitWorktreeRequest(originalUserRequest);
+    let worktreeIsolationRequired = isExplicitWorktreeRequest(activeUserRequest);
 
     let budgetTracker = createBudgetTracker({
       budget: deps.currentModelMaxContextTokens,
@@ -664,6 +666,45 @@ export async function* executeLoopGenerator(
     });
 
     const reactiveCompaction = new ReactiveCompaction();
+
+    const applySteeringMessages = async (
+      messages: SteeringMessage[]
+    ): Promise<{ messageIds: string[]; count: number }> => {
+      for (const steering of messages) {
+        state.appendUser({ role: 'user', content: steering.content });
+        const uuid = await saveUserMessage(
+          deps,
+          context,
+          steering.content,
+          lastMessageUuid
+        );
+        if (uuid) lastMessageUuid = uuid;
+
+        const steeringText =
+          typeof steering.content === 'string'
+            ? steering.content
+            : steering.content
+                .filter((part) => part.type === 'text')
+                .map((part) => part.text)
+                .join('\n');
+        if (steeringText.trim()) {
+          activeUserRequest = [activeUserRequest, steeringText].join('\n');
+          verificationPolicyRequest = [
+            activeUserRequest,
+            context.completionRequirements?.trim(),
+          ]
+            .filter(Boolean)
+            .join('\n');
+          worktreeIsolationRequired =
+            worktreeIsolationRequired || isExplicitWorktreeRequest(steeringText);
+        }
+      }
+
+      return {
+        messageIds: messages.map((steering) => steering.id),
+        count: messages.length,
+      };
+    };
 
     try {
       // eslint-disable-next-line no-constant-condition
@@ -677,6 +718,14 @@ export async function* executeLoopGenerator(
           );
         }
 
+        const queuedSteering = options?.turnSteering?.drain() ?? [];
+        if (queuedSteering.length > 0) {
+          yield {
+            kind: 'steering_applied',
+            ...(await applySteeringMessages(queuedSteering)),
+          };
+        }
+
         // 2. 上下文压缩检查
         // writeback 确保 context.messages 与 state.history 同步，
         // 因为 checkAndCompactInLoop 直接读取 context.messages
@@ -688,7 +737,7 @@ export async function* executeLoopGenerator(
           lastPromptTokens,
           options?.signal,
           lastApiCallTime,
-          originalUserRequest
+          activeUserRequest
         );
 
         if (compactResult !== 'none') {
@@ -779,7 +828,7 @@ export async function* executeLoopGenerator(
                 apiKey: chatConfig.apiKey,
                 baseURL: chatConfig.baseUrl,
                 signal: options?.signal,
-                activeTask: originalUserRequest,
+                activeTask: activeUserRequest,
               }
             );
             if (result.success) {
@@ -940,6 +989,29 @@ export async function* executeLoopGenerator(
 
         // 5. 检查是否需要工具调用
         if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
+          const queuedSteering = options?.turnSteering?.drain() ?? [];
+          if (queuedSteering.length > 0) {
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+            const steeringAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid
+            );
+            if (steeringAssistantUuid) {
+              lastMessageUuid = steeringAssistantUuid;
+            }
+            yield {
+              kind: 'steering_applied',
+              ...(await applySteeringMessages(queuedSteering)),
+            };
+            continue;
+          }
+
           // Stale loop detection: if model repeats same output 3 times, inject warning
           if (
             turnResult.content &&
@@ -1001,7 +1073,7 @@ export async function* executeLoopGenerator(
           incompleteIntentRetryCount = 0;
 
           const delegationAction = checkDelegationRequirement(
-            originalUserRequest,
+            activeUserRequest,
             successfulTools,
             delegationRetryCount
           );
@@ -1075,7 +1147,7 @@ export async function* executeLoopGenerator(
           delegationRetryCount = 0;
 
           const worktreeAction = checkWorktreeRequirement(
-            originalUserRequest,
+            activeUserRequest,
             successfulTools,
             worktreeRetryCount
           );
@@ -1262,6 +1334,29 @@ export async function* executeLoopGenerator(
             );
             if (continueUserUuid) lastMessageUuid = continueUserUuid;
 
+            continue;
+          }
+
+          const completionSteering = options?.turnSteering?.drainOrSeal();
+          if (completionSteering && completionSteering.messages.length > 0) {
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+            const steeringAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid
+            );
+            if (steeringAssistantUuid) {
+              lastMessageUuid = steeringAssistantUuid;
+            }
+            yield {
+              kind: 'steering_applied',
+              ...(await applySteeringMessages(completionSteering.messages)),
+            };
             continue;
           }
 
@@ -1694,7 +1789,7 @@ export async function* executeLoopGenerator(
                     baseURL: chatConfig.baseUrl,
                     actualPreTokens: lastPromptTokens,
                     signal: options?.signal,
-                    activeTask: originalUserRequest,
+                    activeTask: activeUserRequest,
                   }
                 );
 

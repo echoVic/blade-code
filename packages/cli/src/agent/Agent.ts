@@ -401,46 +401,69 @@ export class Agent {
     const enhancedMessage = await this.processAtMentionsForContent(message);
 
     if (context) {
+      const turnHandle = this.sessionRuntime?.beginTurn();
       const loopOptions: LoopOptions = {
-        signal: context.signal,
         ...options,
+        signal: context.signal,
+        turnSteering:
+          this.sessionRuntime && turnHandle
+            ? {
+                drain: () => this.sessionRuntime!.drainSteering(turnHandle),
+                drainOrSeal: () => this.sessionRuntime!.drainSteeringOrSeal(turnHandle),
+              }
+            : undefined,
       };
+      let terminalResult: LoopResult | undefined;
 
-      // 选择对应模式的 generator
-      let result: LoopResult;
-      if (context.permissionMode === 'plan') {
-        result = yield* this.runPlanLoop(enhancedMessage, context, loopOptions);
-      } else {
-        result = yield* this.runLoop(enhancedMessage, context, loopOptions);
-      }
-
-      // Plan 模式批准后切换模式并重新执行
-      if (
-        result.success &&
-        result.metadata?.targetMode &&
-        context.permissionMode === 'plan'
-      ) {
-        const targetMode = result.metadata.targetMode as PermissionMode;
-        const planContent = result.metadata.planContent as string | undefined;
-        logger.debug(`Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
-
-        await configActions().setPermissionMode(targetMode);
-
-        const newContext: ChatContext = { ...context, permissionMode: targetMode };
-        let messageWithPlan: UserMessageContent = enhancedMessage;
-        if (planContent) {
-          const planSuffix = `\n\n<approved-plan>\n${planContent}\n</approved-plan>\n\nIMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
-          if (typeof enhancedMessage === 'string') {
-            messageWithPlan = enhancedMessage + planSuffix;
-          } else {
-            messageWithPlan = [...enhancedMessage, { type: 'text', text: planSuffix }];
-          }
+      try {
+        // 选择对应模式的 generator
+        let result: LoopResult;
+        if (context.permissionMode === 'plan') {
+          result = yield* this.runPlanLoop(enhancedMessage, context, loopOptions);
+        } else {
+          result = yield* this.runLoop(enhancedMessage, context, loopOptions);
         }
 
-        result = yield* this.runLoop(messageWithPlan, newContext, loopOptions);
-      }
+        // Plan 模式批准后切换模式并重新执行
+        if (
+          result.success &&
+          result.metadata?.targetMode &&
+          context.permissionMode === 'plan'
+        ) {
+          const targetMode = result.metadata.targetMode as PermissionMode;
+          const planContent = result.metadata.planContent as string | undefined;
+          logger.debug(`Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
 
-      return result;
+          await configActions().setPermissionMode(targetMode);
+
+          const newContext: ChatContext = { ...context, permissionMode: targetMode };
+          let messageWithPlan: UserMessageContent = enhancedMessage;
+          if (planContent) {
+            const planSuffix = `\n\n<approved-plan>\n${planContent}\n</approved-plan>\n\nIMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
+            if (typeof enhancedMessage === 'string') {
+              messageWithPlan = enhancedMessage + planSuffix;
+            } else {
+              messageWithPlan = [
+                ...enhancedMessage,
+                { type: 'text', text: planSuffix },
+              ];
+            }
+          }
+
+          result = yield* this.runLoop(messageWithPlan, newContext, loopOptions);
+        }
+
+        terminalResult = result;
+        return result;
+      } finally {
+        if (this.sessionRuntime && turnHandle) {
+          const preservePending =
+            !terminalResult ||
+            (!terminalResult.success &&
+              !['aborted', 'canceled'].includes(terminalResult.error?.type ?? ''));
+          this.sessionRuntime.endTurn(turnHandle, { preservePending });
+        }
+      }
     }
 
     // 无 context 的简单流程
@@ -788,7 +811,7 @@ export class Agent {
       const appendPrompt = this.runtimeOptions.appendSystemPrompt;
 
       const result = await buildSystemPrompt({
-        projectPath: getCwd(),
+        projectPath: this.sessionRuntime?.workspaceRoot ?? getCwd(),
         replaceDefault: replacePrompt,
         append: appendPrompt,
         includeEnvironment: false,

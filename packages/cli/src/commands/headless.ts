@@ -675,6 +675,7 @@ export async function runHeadless(
 
     runtime = await SessionRuntime.create({
       sessionId,
+      workspaceRoot: getCwd(),
       modelId: validatedOptions.model,
       mcpConfig: validatedOptions.mcpConfig,
       strictMcpConfig: validatedOptions.strictMcpConfig,
@@ -821,6 +822,9 @@ export async function runHeadless(
           // --- 业务事件 ---
           case 'task_update':
             eventWriter.taskUpdate(event.tasks);
+            break;
+
+          case 'steering_applied':
             break;
 
           case 'subagent_spawned':

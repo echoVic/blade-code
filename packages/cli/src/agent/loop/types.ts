@@ -44,6 +44,11 @@ export type SystemEvent =
 /** 业务事件 */
 export type DomainEvent =
   | { kind: 'task_update'; tasks: TaskListItem[] }
+  | {
+      kind: 'steering_applied';
+      messageIds: string[];
+      count: number;
+    }
   | { kind: 'subagent_spawned'; sessionId: string; type: string; prompt: string }
   | {
       kind: 'subagent_completed';

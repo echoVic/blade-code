@@ -340,6 +340,77 @@ describe('executeLoopGenerator', () => {
       expect(result.metadata?.turnsCount).toBe(1);
       expect(result.metadata?.toolCallsCount).toBe(0);
     });
+
+    it('applies mid-turn steering before accepting the model final response', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: 'Initial answer',
+          toolCalls: undefined,
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: 'Steered answer',
+          toolCalls: undefined,
+          usage: { promptTokens: 130, completionTokens: 20, totalTokens: 150 },
+          finishReason: 'stop',
+        });
+
+      let drainCount = 0;
+      const steeringMessage = {
+        id: 'steer-1',
+        content: 'Use the updated requirement.',
+        queuedAt: Date.now(),
+      };
+      const turnSteering = {
+        drain: vi.fn(() => {
+          drainCount++;
+          return drainCount === 2 ? [steeringMessage] : [];
+        }),
+        drainOrSeal: vi.fn(() => ({ messages: [], sealed: true })),
+      };
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Use the initial requirement.',
+          context,
+          { stream: false, turnSteering } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'Steered answer',
+      });
+      expect(events).toContainEqual({
+        kind: 'steering_applied',
+        messageIds: ['steer-1'],
+        count: 1,
+      });
+      expect(chatMock).toHaveBeenCalledTimes(2);
+      expect(chatMock.mock.calls[1]?.[0]).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ role: 'assistant', content: 'Initial answer' }),
+          expect.objectContaining({
+            role: 'user',
+            content: 'Use the updated requirement.',
+          }),
+        ])
+      );
+      expect(context.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: 'Use the updated requirement.',
+          }),
+        ])
+      );
+    });
   });
 
   // ------------------------------------------------------------------

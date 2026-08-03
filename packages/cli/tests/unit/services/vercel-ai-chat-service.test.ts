@@ -157,6 +157,40 @@ describe('VercelAIChatService', () => {
       expect(response.toolCalls).toBeUndefined();
     });
 
+    it('does not fabricate unsigned reasoning blocks when replaying Anthropic history', async () => {
+      generateText.mockResolvedValueOnce({
+        text: 'updated answer',
+        toolCalls: [],
+        usage: { promptTokens: 10, completionTokens: 5 },
+        finishReason: 'stop',
+        reasoning: undefined,
+        providerMetadata: undefined,
+      });
+      const service = await createService({
+        provider: 'anthropic',
+        model: 'claude-opus-4-8',
+        baseUrl: 'https://callapi8.com/v1',
+        supportsThinking: true,
+      });
+
+      await service.chat([
+        { role: 'user', content: 'Initial request' },
+        {
+          role: 'assistant',
+          content: 'Visible answer',
+          reasoningContent: 'Unsigned private reasoning',
+        },
+        { role: 'user', content: 'Updated request' },
+      ]);
+
+      const call = generateText.mock.calls[0][0];
+      expect(call.messages).toContainEqual({
+        role: 'assistant',
+        content: 'Visible answer',
+      });
+      expect(JSON.stringify(call.messages)).not.toContain('Unsigned private reasoning');
+    });
+
     it('falls back on 429 when fallbackModel is configured', async () => {
       generateText
         .mockRejectedValueOnce(make429Error())

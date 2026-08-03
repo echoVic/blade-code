@@ -8,6 +8,7 @@ import { PermissionMode } from '../config/types.js';
 import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../tools/types/ToolTypes.js';
+import type { SteeringMessage } from './runtime/ActiveTurnMailbox.js';
 
 /**
  * 用户消息内容类型
@@ -102,6 +103,11 @@ export interface LoopOptions {
   autoCompact?: boolean;
   signal?: AbortSignal;
   stream?: boolean;
+  /** SessionRuntime-owned same-turn user steering source. */
+  turnSteering?: {
+    drain: () => SteeringMessage[];
+    drainOrSeal: () => { messages: SteeringMessage[]; sealed: boolean };
+  };
 
   // 行为回调（影响循环控制流，不是事件通知）
   /** 工具审批门控 - 返回 false 阻止工具执行 */

@@ -154,6 +154,7 @@ export interface StreamingSlice {
   isStreaming: boolean;
   agentPhase: AgentPhase;
   currentRunId: string | null;
+  pendingSteeringCount: number;
   eventUnsubscribe: (() => void) | null;
   currentAssistantMessageId: string | null;
   hasToolCalls: boolean;

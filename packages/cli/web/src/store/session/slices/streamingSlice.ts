@@ -7,6 +7,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
   isStreaming: false,
   agentPhase: 'idle',
   currentRunId: null,
+  pendingSteeringCount: 0,
   eventUnsubscribe: null,
   currentAssistantMessageId: null,
   hasToolCalls: false,
@@ -38,6 +39,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
       isStreaming: false,
       agentPhase: 'idle',
       currentRunId: null,
+      pendingSteeringCount: 0,
     });
   },
 

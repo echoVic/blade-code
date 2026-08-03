@@ -6,8 +6,11 @@
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useRef } from 'react';
 import { Agent } from '../../agent/Agent.js';
+import type { SteeringEnqueueResult } from '../../agent/runtime/ActiveTurnMailbox.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
+import type { UserMessageContent } from '../../agent/types.js';
 import { registerCleanup } from '../../services/GracefulShutdown.js';
+import { getCwd } from '../../utils/cwd.js';
 
 export interface AgentOptions {
   sessionId?: string;
@@ -84,6 +87,7 @@ export function useAgent(options: AgentOptions) {
         if (!runtimeRef.current) {
           runtimeRef.current = await SessionRuntime.create({
             sessionId,
+            workspaceRoot: getCwd(),
             modelId: overrides?.modelId ?? options.modelId,
           });
         } else {
@@ -118,6 +122,17 @@ export function useAgent(options: AgentOptions) {
     }
   );
 
+  const steerActiveTurn = useMemoizedFn(
+    (content: UserMessageContent): SteeringEnqueueResult => {
+      if (!runtimeRef.current) {
+        return { accepted: false, queued: 0, reason: 'no_active_turn' };
+      }
+      return runtimeRef.current.enqueueSteering(content, {
+        allowBeforeTurn: true,
+      });
+    }
+  );
+
   useEffect(() => {
     const unregisterCleanup = registerCleanup(cleanupAgent);
     return () => {
@@ -130,5 +145,6 @@ export function useAgent(options: AgentOptions) {
     agentRef,
     createAgent,
     cleanupAgent,
+    steerActiveTurn,
   };
 }

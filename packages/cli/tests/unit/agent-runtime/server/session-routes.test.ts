@@ -12,6 +12,12 @@ const runtimeState = vi.hoisted(() => ({
     getAttachmentCollector: vi.fn(),
     getCurrentModelId: vi.fn(() => 'model-1'),
     getCurrentModelMaxContextTokens: vi.fn(() => 128000),
+    enqueueSteering: vi.fn(() => ({
+      accepted: true,
+      turnId: 'turn-1',
+      queued: 1,
+    })),
+    getPendingSteeringCount: vi.fn(() => 0),
   },
 }));
 
@@ -69,6 +75,7 @@ describe('SessionRoutes runtime reuse', () => {
     vi.clearAllMocks();
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.refresh.mockClear();
+    runtimeState.runtime.enqueueSteering.mockClear();
     agentState.chatStream.mockImplementation(async function* () {
       if (Date.now() < 0) {
         yield undefined;
@@ -109,13 +116,81 @@ describe('SessionRoutes runtime reuse', () => {
     await sendMessage('second');
 
     expect(SessionRuntime.create).toHaveBeenCalledTimes(1);
-    expect(SessionRuntime.create).toHaveBeenCalledWith({ sessionId: 'session-1' });
+    expect(SessionRuntime.create).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      workspaceRoot: expect.any(String),
+    });
     expect(Agent.createWithRuntime).toHaveBeenCalledTimes(2);
     expect(Agent.createWithRuntime).toHaveBeenNthCalledWith(1, runtimeState.runtime, {
       sessionId: 'session-1',
     });
     expect(Agent.createWithRuntime).toHaveBeenNthCalledWith(2, runtimeState.runtime, {
       sessionId: 'session-1',
+    });
+  });
+
+  it('routes a second message into the active turn instead of starting a concurrent run', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Agent } = await import('../../../../src/agent/Agent.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    let releaseRun: () => void = () => undefined;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+      await runGate;
+      return {
+        success: true,
+        finalMessage: 'steered reply',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const app = SessionRoutes();
+    const first = await app.request('/steering-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'initial request' }),
+    });
+    expect(first.status).toBe(202);
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        'steering-session',
+        'turn.started',
+        expect.any(Object)
+      );
+    });
+
+    const second = await app.request('/steering-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'updated requirement' }),
+    });
+
+    expect(second.status).toBe(202);
+    expect(await second.json()).toMatchObject({
+      status: 'steering_queued',
+      queued: 1,
+    });
+    expect(runtimeState.runtime.enqueueSteering).toHaveBeenCalledWith(
+      'updated requirement',
+      { allowBeforeTurn: true }
+    );
+    expect(Agent.createWithRuntime).toHaveBeenCalledTimes(1);
+    expect(Bus.publish).toHaveBeenCalledWith(
+      'steering-session',
+      'steering.queued',
+      expect.objectContaining({ queued: 1 })
+    );
+
+    releaseRun();
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        'steering-session',
+        'session.completed',
+        expect.any(Object)
+      );
     });
   });
 

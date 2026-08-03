@@ -126,6 +126,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
     const {
       currentSessionId,
       isTemporarySession,
+      isStreaming,
       subscribeToEvents,
       addSession,
       addMessage,
@@ -165,7 +166,9 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
     });
 
     set({ isStreaming: true, error: null });
-    subscribeToEvents(sessionId);
+    if (!isStreaming) {
+      subscribeToEvents(sessionId);
+    }
 
     try {
       const { currentMode } = useConfigStore.getState();
@@ -174,7 +177,13 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
         payload,
         currentMode
       );
-      set({ currentRunId: response.runId });
+      set({
+        currentRunId: response.runId,
+        pendingSteeringCount:
+          response.status === 'steering_queued'
+            ? Math.max(0, response.queued ?? 1)
+            : get().pendingSteeringCount,
+      });
     } catch (err) {
       set({ error: (err as Error).message, isStreaming: false });
     }
@@ -184,7 +193,11 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
     const { currentSessionId, unsubscribeFromEvents } = get();
 
     unsubscribeFromEvents();
-    set({ isStreaming: false, currentRunId: null });
+    set({
+      isStreaming: false,
+      currentRunId: null,
+      pendingSteeringCount: 0,
+    });
 
     if (currentSessionId) {
       try {

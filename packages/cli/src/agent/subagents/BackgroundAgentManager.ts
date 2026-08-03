@@ -265,6 +265,7 @@ export class BackgroundAgentManager {
       const effectivePermissionMode = config.permissionMode ?? permissionMode;
       runtime = await SessionRuntime.create({
         sessionId: agentId,
+        workspaceRoot: lease.workspaceRoot,
         modelId,
       });
       const agent = await Agent.createWithRuntime(runtime, {

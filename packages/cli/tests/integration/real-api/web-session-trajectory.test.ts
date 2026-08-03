@@ -202,7 +202,10 @@ async function collectEvents(sessionId: string): Promise<EventCollector> {
   };
 }
 
-async function sendMessage(sessionId: string, content: string): Promise<void> {
+async function sendMessage(
+  sessionId: string,
+  content: string
+): Promise<{ runId: string; status: string; queued?: number }> {
   if (!server) throw new Error('Blade web server is not running');
   const response = await fetch(new URL(`/sessions/${sessionId}/message`, server.url), {
     method: 'POST',
@@ -210,6 +213,11 @@ async function sendMessage(sessionId: string, content: string): Promise<void> {
     body: JSON.stringify({ content, permissionMode: 'yolo' }),
   });
   expect(response.status).toBe(202);
+  return response.json() as Promise<{
+    runId: string;
+    status: string;
+    queued?: number;
+  }>;
 }
 
 async function deleteSession(sessionId: string): Promise<void> {
@@ -348,5 +356,56 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
         rmSync(workspace, { recursive: true, force: true });
       }
     }, 360_000);
+
+    it(`${modelConfig.model} steers an active Web turn without starting a concurrent run`, async () => {
+      const workspace = createWorkspace();
+      let sessionId: string | undefined;
+      let collector: EventCollector | undefined;
+      try {
+        setRuntimeModel(modelConfig);
+        sessionId = await createSession(workspace);
+        collector = await collectEvents(sessionId);
+
+        const initial = await sendMessage(
+          sessionId,
+          'A configuration review is in progress. The current candidate value is ' +
+            'ALPHA_VALUE. Reply with the current candidate value only. Do not call tools.'
+        );
+        await collector.waitFor((event) => event.type === 'turn.started');
+        const steered = await sendMessage(
+          sessionId,
+          'New information from the user: the candidate value is now BETA_VALUE. ' +
+            'Reply with the newest candidate value only.'
+        );
+
+        expect(steered).toMatchObject({
+          runId: initial.runId,
+          status: 'steering_queued',
+        });
+        await collector.waitFor((event) => event.type === 'steering.queued');
+        await collector.waitFor((event) => event.type === 'steering.applied');
+        await collector.waitFor((event) => event.type === 'session.completed');
+
+        const appliedIndex = collector.events.findIndex(
+          (event) => event.type === 'steering.applied'
+        );
+        const responseAfterSteering = collector.events
+          .slice(appliedIndex + 1)
+          .filter((event) => event.type === 'message.delta')
+          .map((event) => String(event.properties.delta ?? ''))
+          .join('');
+        expect(responseAfterSteering).toContain('BETA_VALUE');
+        expect(
+          collector.events.filter((event) => event.type === 'turn.started').length
+        ).toBeGreaterThanOrEqual(2);
+        expect(collector.events.map((event) => event.type)).not.toContain(
+          'session.error'
+        );
+      } finally {
+        await collector?.close();
+        if (sessionId) await deleteSession(sessionId);
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 300_000);
   }
 });

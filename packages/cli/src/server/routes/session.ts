@@ -6,6 +6,11 @@ import { z } from 'zod';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
+import {
+  getSteeringContentSize,
+  MAX_PENDING_STEER_CHARS,
+  MAX_PENDING_STEERS,
+} from '../../agent/runtime/ActiveTurnMailbox.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
 import { PermissionMode } from '../../config/types.js';
@@ -64,6 +69,7 @@ export interface RunState {
     resolve: (response: ConfirmationResponse) => void;
     details: ConfirmationDetails;
   };
+  steeringBacklog: UserMessageContent[];
   createdAt: Date;
 }
 
@@ -442,6 +448,58 @@ export const SessionRoutes = () => {
       sessions.set(sessionId, session);
     }
 
+    const currentRun = session.currentRunId
+      ? activeRuns.get(session.currentRunId)
+      : undefined;
+    if (
+      currentRun &&
+      (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
+    ) {
+      const runtime = runtimes.get(sessionId);
+      const steering = runtime?.enqueueSteering(userContent, {
+        allowBeforeTurn: true,
+      });
+      if (!runtime) {
+        const backlogChars = currentRun.steeringBacklog.reduce(
+          (total, message) => total + getSteeringContentSize(message),
+          0
+        );
+        if (
+          currentRun.steeringBacklog.length >= MAX_PENDING_STEERS ||
+          backlogChars + getSteeringContentSize(userContent) > MAX_PENDING_STEER_CHARS
+        ) {
+          return c.json({ status: 'rejected', reason: 'queue_full' }, 409);
+        }
+        currentRun.steeringBacklog.push(userContent);
+      } else if (!steering?.accepted) {
+        return c.json(
+          { status: 'rejected', reason: steering?.reason ?? 'turn_unavailable' },
+          409
+        );
+      }
+
+      const messageId = nanoid(12);
+      const queued = steering?.queued ?? currentRun.steeringBacklog.length;
+      Bus.publish(sessionId, 'message.created', {
+        messageId,
+        role: 'user',
+        content: getDisplayContent(userContent),
+      });
+      Bus.publish(sessionId, 'steering.queued', {
+        runId: currentRun.id,
+        messageId,
+        queued,
+      });
+      return c.json(
+        {
+          runId: currentRun.id,
+          status: 'steering_queued',
+          queued,
+        },
+        202
+      );
+    }
+
     const runId = nanoid(12);
     const abortController = new AbortController();
 
@@ -450,6 +508,7 @@ export const SessionRoutes = () => {
       sessionId,
       status: 'running',
       abortController,
+      steeringBacklog: [],
       createdAt: new Date(),
     };
 
@@ -530,10 +589,16 @@ async function executeRunAsync(
 
     let runtime = runtimes.get(sessionId);
     if (!runtime) {
-      runtime = await SessionRuntime.create({ sessionId });
+      runtime = await SessionRuntime.create({
+        sessionId,
+        workspaceRoot: session.projectPath,
+      });
       runtimes.set(sessionId, runtime);
     }
     const agent = await Agent.createWithRuntime(runtime, { sessionId });
+    for (const steering of run.steeringBacklog.splice(0)) {
+      runtime.enqueueSteering(steering, { allowBeforeTurn: true });
+    }
 
     const requestConfirmation = async (
       details: ConfirmationDetails
@@ -646,6 +711,14 @@ async function executeRunAsync(
             break;
           case 'turn_start':
             emit('turn.started', { turn: event.turn, maxTurns: event.maxTurns });
+            break;
+          case 'steering_applied':
+            emit('steering.applied', {
+              runId,
+              messageIds: event.messageIds,
+              count: event.count,
+              queued: runtime.getPendingSteeringCount(),
+            });
             break;
           case 'compaction':
             emit(

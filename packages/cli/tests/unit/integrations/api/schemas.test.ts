@@ -34,12 +34,7 @@ import {
 describe('API Schemas', () => {
   describe('PermissionModeSchema', () => {
     it('应该验证有效的权限模式', () => {
-      const validModes: PermissionMode[] = [
-        'default',
-        'autoEdit',
-        'yolo',
-        'plan',
-      ];
+      const validModes: PermissionMode[] = ['default', 'autoEdit', 'yolo', 'plan'];
 
       validModes.forEach((mode) => {
         expect(() => PermissionModeSchema.parse(mode)).not.toThrow();

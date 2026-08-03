@@ -67,6 +67,9 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
     appActions: {
       setTasks: vi.fn(),
     } as any,
+    commandActions: {
+      dequeueCommand: vi.fn(),
+    } as any,
     streamingBuffer: {
       batchAppendContent: vi.fn(),
       batchAppendThinking: vi.fn(),
@@ -585,6 +588,19 @@ describe('createLoopEventHandler', () => {
       handler({ kind: 'task_update', tasks } as LoopEvent);
 
       expect(deps.appActions.setTasks).toHaveBeenCalledWith(tasks);
+    });
+
+    it('steering_applied 应该移除已注入的排队输入', () => {
+      const deps = createMockDeps();
+      const handler = createLoopEventHandler(deps, createMockStats());
+
+      handler({
+        kind: 'steering_applied',
+        messageIds: ['steer-1', 'steer-2'],
+        count: 2,
+      });
+
+      expect(deps.commandActions.dequeueCommand).toHaveBeenCalledTimes(2);
     });
   });
 });

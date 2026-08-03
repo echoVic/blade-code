@@ -158,6 +158,7 @@ export class AcpSession {
       : undefined;
     this.runtime = await SessionRuntime.create({
       sessionId: this.id,
+      workspaceRoot: this.cwd,
       ...(mcpServers ? { mcpServers } : {}),
     });
     this.agent = await Agent.createWithRuntime(this.runtime, { sessionId: this.id });
@@ -372,19 +373,33 @@ export class AcpSession {
     // 设置当前会话（确保工具使用正确的服务上下文）
     AcpServiceContext.setCurrentSession(this.id);
 
-    // 中止之前的请求（如果有）
-    this.pendingPrompt?.abort();
+    if (!this.agent || !this.runtime) {
+      throw new Error('Session not initialized');
+    }
+
+    const message = this.resolvePrompt(params.prompt);
+    if (this.pendingPrompt) {
+      const steering = this.runtime.enqueueSteering(message, {
+        allowBeforeTurn: true,
+      });
+      if (!steering.accepted) {
+        throw new Error(
+          steering.reason === 'queue_full'
+            ? 'Active turn steering queue is full'
+            : 'Active turn is no longer steerable'
+        );
+      }
+      logger.debug(
+        `[AcpSession ${this.id}] Queued steering for active turn (${steering.queued})`
+      );
+      return { stopReason: 'end_turn' };
+    }
 
     const abortController = new AbortController();
     this.pendingPrompt = abortController;
 
-    if (!this.agent) {
-      throw new Error('Session not initialized');
-    }
-
     try {
       // 1. 解析 ACP prompt 为文本消息
-      const message = this.resolvePrompt(params.prompt);
       logger.debug(
         `[AcpSession ${this.id}] Received prompt: ${message.slice(0, 100)}...`
       );
@@ -500,7 +515,8 @@ export class AcpSession {
 
             // --- 系统事件不外发 ---
             // stream_end: 内部 per-turn 信号，不外发
-            // turn_start, compaction, token_usage, model_fallback: 内部事件
+            // turn_start, compaction, token_usage, model_fallback,
+            // steering_applied: 内部事件
             default:
               break;
           }

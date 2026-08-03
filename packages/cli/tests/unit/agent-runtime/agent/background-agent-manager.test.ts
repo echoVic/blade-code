@@ -173,6 +173,7 @@ describe('BackgroundAgentManager', () => {
 
       expect(SessionRuntime.create).toHaveBeenCalledWith({
         sessionId: 'session_test-uuid-1234',
+        workspaceRoot: expect.any(String),
         modelId: undefined,
       });
       expect(Agent.createWithRuntime).toHaveBeenCalledWith(

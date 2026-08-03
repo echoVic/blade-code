@@ -47,6 +47,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       isStreaming: false,
       agentPhase: 'idle',
       currentRunId: null,
+      pendingSteeringCount: 0,
       currentAssistantMessageId: null,
       hasToolCalls: false,
       tokenUsage: {
@@ -145,5 +146,33 @@ describe('sessionSlice multimodal sendMessage', () => {
       payload,
       'default'
     );
+  });
+
+  it('keeps the active SSE subscription and records queued steering depth', async () => {
+    const subscribeToEvents = vi.fn();
+    useSessionStore.setState({
+      currentSessionId: 'session-active',
+      isTemporarySession: false,
+      isStreaming: true,
+      currentRunId: 'run-active',
+      pendingSteeringCount: 0,
+      subscribeToEvents,
+    });
+    vi.mocked(sessionService.sendMessage).mockResolvedValue({
+      runId: 'run-active',
+      status: 'steering_queued',
+      queued: 2,
+    });
+
+    await useSessionStore.getState().sendMessage({
+      content: 'Use the updated requirement.',
+    });
+
+    expect(subscribeToEvents).not.toHaveBeenCalled();
+    expect(useSessionStore.getState()).toMatchObject({
+      currentRunId: 'run-active',
+      isStreaming: true,
+      pendingSteeringCount: 2,
+    });
   });
 });

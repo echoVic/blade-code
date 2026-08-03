@@ -4,6 +4,7 @@ import path from 'node:path';
 import * as acp from '@agentclientprotocol/sdk';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
+import { AcpSession } from '../../../src/acp/Session.js';
 import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { SessionService } from '../../../src/services/SessionService.js';
@@ -232,6 +233,64 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
       } finally {
         await firstAgent?.destroy().catch(() => undefined);
         await secondAgent?.destroy().catch(() => undefined);
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }, 300_000);
+
+    it(`${modelConfig.model} steers an active ACP prompt without aborting it`, async () => {
+      const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-steering-'));
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      configureModel(modelConfig);
+      const client = new RecordingClient();
+      const session = new AcpSession(
+        `acp-steering-${Date.now()}`,
+        workspace,
+        client as unknown as acp.AgentSideConnection,
+        {}
+      );
+
+      try {
+        await runWithCwdOverride(workspace, async () => {
+          await session.initialize();
+          await session.setMode('yolo');
+
+          const initialPrompt = session.prompt({
+            sessionId: 'ignored-by-session',
+            prompt: [
+              {
+                type: 'text',
+                text:
+                  'A configuration review is in progress. The current candidate value ' +
+                  'is ALPHA_ACP_VALUE. Reply with the current candidate value only. ' +
+                  'Do not call tools.',
+              },
+            ],
+          });
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          const steeringResponse = await session.prompt({
+            sessionId: 'ignored-by-session',
+            prompt: [
+              {
+                type: 'text',
+                text:
+                  'New information from the user: the candidate value is now ' +
+                  'BETA_ACP_VALUE. Reply with the newest candidate value only.',
+              },
+            ],
+          });
+          const initialResponse = await initialPrompt;
+
+          expect(steeringResponse.stopReason).toBe('end_turn');
+          expect(initialResponse.stopReason).toBe('end_turn');
+          const output = replayedText(client.updates);
+          expect(output).toContain('BETA_ACP_VALUE');
+          expect(output.lastIndexOf('BETA_ACP_VALUE')).toBeGreaterThan(
+            output.lastIndexOf('ALPHA_ACP_VALUE')
+          );
+          expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
+        });
+      } finally {
+        await session.destroy().catch(() => undefined);
         await rm(workspace, { recursive: true, force: true });
       }
     }, 300_000);

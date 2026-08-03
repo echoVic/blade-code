@@ -140,6 +140,7 @@ export async function runPrint(
 
     runtime = await SessionRuntime.create({
       sessionId,
+      workspaceRoot: getCwd(),
       modelId: options.model,
       mcpConfig: options.mcpConfig,
       strictMcpConfig: options.strictMcpConfig,

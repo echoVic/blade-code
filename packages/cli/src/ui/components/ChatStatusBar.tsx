@@ -9,6 +9,7 @@ import {
   useCurrentModel,
   useIsCompacting,
   useIsReady,
+  usePendingCommands,
   usePermissionMode,
   useSessionCost,
   useThinkingModeEnabled,
@@ -36,6 +37,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const isCompacting = useIsCompacting();
   const thinkingModeEnabled = useThinkingModeEnabled();
   const sessionCost = useSessionCost();
+  const pendingCommands = usePendingCommands();
 
   // 检查当前模型是否支持 thinking
   const supportsThinking = currentModel ? isThinkingModel(currentModel) : false;
@@ -158,6 +160,13 @@ export const ChatStatusBar: React.FC = React.memo(() => {
                   $
                   {sessionCost < 0.01 ? sessionCost.toFixed(4) : sessionCost.toFixed(3)}
                 </Text>
+              </>
+            )}
+
+            {pendingCommands.length > 0 && (
+              <>
+                <Text color="gray">·</Text>
+                <Text color="yellow">已排队 {pendingCommands.length}</Text>
               </>
             )}
 

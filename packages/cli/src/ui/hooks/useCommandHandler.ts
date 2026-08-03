@@ -78,7 +78,7 @@ export const useCommandHandler = (
   const abortMessageSentRef = useRef(false);
 
   // ==================== 子模块组合 ====================
-  const { createAgent } = useAgent({
+  const { createAgent, steerActiveTurn } = useAgent({
     sessionId,
     systemPrompt: replaceSystemPrompt,
     appendSystemPrompt: appendSystemPrompt,
@@ -196,7 +196,10 @@ export const useCommandHandler = (
             ...agentInput,
             text: hookResult.updatedPrompt,
             displayText: hookResult.updatedPrompt,
-            parts: [{ type: 'text', text: hookResult.updatedPrompt }],
+            parts: [
+              { type: 'text', text: hookResult.updatedPrompt },
+              ...agentInput.parts.filter((part) => part.type === 'image'),
+            ],
           };
         }
 
@@ -246,6 +249,7 @@ export const useCommandHandler = (
           {
             sessionActions,
             appActions,
+            commandActions,
             streamingBuffer,
             thinkingModeEnabled,
             getStreamingMessageId: () => getState().session.currentStreamingMessageId,
@@ -333,23 +337,68 @@ export const useCommandHandler = (
       return;
     }
 
-    // 中断模型：运行中提交新消息 = abort 当前任务 + 立即执行新消息
+    // 运行中提交新消息时，将其注入当前 Agent 回合的下一个安全边界。
+    // Esc/Ctrl+C 仍由 handleAbort 提供真正的中止语义。
     if (isProcessing) {
-      // 1. dismiss 确认框（如果有）
-      onDismissConfirmations?.();
-      // 2. drain 缓冲区，保留旧任务已接收内容（必须在 abort 之前）
-      const { extraContent, extraThinking } = streamingBuffer.drainPendingBuffers();
-      // 3. abort 当前任务，传 reason='interrupt'
-      commandActions.abort('interrupt');
-      // 4. 用 drain 结果 finalize 旧任务的流式消息
-      const streamingId = getState().session.currentStreamingMessageId;
-      if (streamingId) {
-        if (extraContent) appendMarkdownDelta(streamingId, extraContent);
-        finalizeMarkdownCache(streamingId);
+      if (resolved.text.trimStart().startsWith('/')) {
+        sessionActions.addAssistantMessage(
+          '活动回合中不能执行 slash command；请先停止任务或等待完成。'
+        );
+        return;
       }
-      sessionActions.finalizeStreamingMessage(extraContent, extraThinking);
-      // 5. 不 return，继续往下走正常的 executeCommand 流程
-      //    旧任务的 finally 中 isOurTask 检查会阻止它干扰新任务
+
+      await ensureStoreInitialized();
+      const hookResult = await HookManager.getInstance().executeUserPromptSubmitHooks(
+        resolved.text,
+        {
+          projectDir: getCwd(),
+          sessionId,
+          permissionMode,
+          hasImages: resolved.images.length > 0,
+          imageCount: resolved.images.length,
+        }
+      );
+      if (!hookResult.proceed) {
+        if (hookResult.warning) {
+          sessionActions.addAssistantMessage(hookResult.warning);
+        }
+        return;
+      }
+
+      let steeringInput = resolved;
+      if (hookResult.updatedPrompt) {
+        steeringInput = {
+          ...resolved,
+          text: hookResult.updatedPrompt,
+          parts: [
+            { type: 'text', text: hookResult.updatedPrompt },
+            ...resolved.parts.filter((part) => part.type === 'image'),
+          ],
+        };
+      }
+      if (hookResult.contextInjection) {
+        const injection = `<user-prompt-submit-hook>\n${hookResult.contextInjection}\n</user-prompt-submit-hook>`;
+        steeringInput = {
+          ...steeringInput,
+          text: `${steeringInput.text}\n\n${injection}`,
+          parts: [...steeringInput.parts, { type: 'text', text: `\n\n${injection}` }],
+        };
+      }
+
+      const steeringContent = buildUserMessageContent(steeringInput);
+      const steering = steerActiveTurn(steeringContent);
+      if (!steering.accepted) {
+        const message =
+          steering.reason === 'queue_full'
+            ? '补充指令队列已满，请等待当前任务处理后重试。'
+            : '当前任务正在结束，补充指令未入队，请稍后重试。';
+        sessionActions.addAssistantMessage(message);
+        return;
+      }
+
+      commandActions.enqueueCommand(resolved);
+      sessionActions.addUserMessage(resolved.displayText);
+      return;
     }
 
     // 清空上一轮对话的 tasks

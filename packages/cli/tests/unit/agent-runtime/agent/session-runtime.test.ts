@@ -166,6 +166,21 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
+  it('owns the explicit workspace root across runtime initialization', async () => {
+    const workspaceRoot = path.join(storageRoot, 'project');
+    const runtime = await SessionRuntime.create({
+      sessionId: 'workspace-owned-session',
+      workspaceRoot,
+    });
+
+    expect(runtime.workspaceRoot).toBe(workspaceRoot);
+    expect(worktreeMocks.cleanupStaleAgentWorktrees).toHaveBeenCalledWith({
+      workspaceRoot,
+    });
+
+    await runtime.dispose();
+  });
+
   it('exclusively owns a session until the runtime is disposed', async () => {
     const first = await SessionRuntime.create({ sessionId: 'exclusive-session' });
 

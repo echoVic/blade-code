@@ -802,6 +802,22 @@ const handleRunCancelled: EventHandler = (props, get, set) => {
   endAgentResponse();
 };
 
+const handleSteeringQueued: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({
+    pendingSteeringCount:
+      typeof props.queued === 'number' ? Math.max(0, props.queued) : 1,
+  });
+};
+
+const handleSteeringApplied: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({
+    pendingSteeringCount:
+      typeof props.queued === 'number' ? Math.max(0, props.queued) : 0,
+  });
+};
+
 const eventHandlers: Record<string, EventHandler> = {
   'message.created': handleMessageCreated,
   'message.delta': handleMessageDelta,
@@ -830,6 +846,8 @@ const eventHandlers: Record<string, EventHandler> = {
   'session.error': handleSessionError,
   'session.status': handleSessionStatus,
   'run.cancelled': handleRunCancelled,
+  'steering.queued': handleSteeringQueued,
+  'steering.applied': handleSteeringApplied,
 };
 
 // 需要缓冲的高频 delta 事件

@@ -42,6 +42,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     isStreaming: false,
     agentPhase: 'idle',
     currentRunId: null,
+    pendingSteeringCount: 0,
     eventUnsubscribe: null,
     currentAssistantMessageId: 'assistant-1',
     hasToolCalls: false,
@@ -342,6 +343,24 @@ describe('eventHandlers', () => {
       properties: { sessionId: 'session-1' },
     });
     expect(set).toHaveBeenLastCalledWith({ agentPhase: 'switching_model' });
+  });
+
+  test('tracks queued and applied steering depth from SSE events', () => {
+    const state = createState();
+    const set = vi.fn();
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'steering.queued',
+      properties: { sessionId: 'session-1', queued: 2 },
+    });
+    expect(set).toHaveBeenLastCalledWith({ pendingSteeringCount: 2 });
+
+    dispatch({
+      type: 'steering.applied',
+      properties: { sessionId: 'session-1', queued: 0 },
+    });
+    expect(set).toHaveBeenLastCalledWith({ pendingSteeringCount: 0 });
   });
 
   test('closes a pending confirmation when permission times out', () => {

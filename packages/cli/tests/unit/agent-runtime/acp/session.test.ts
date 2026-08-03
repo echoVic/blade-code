@@ -12,6 +12,11 @@ const runtimeState = vi.hoisted(() => ({
   runtime: {
     sessionId: 'test-session-id',
     dispose: vi.fn().mockResolvedValue(undefined),
+    enqueueSteering: vi.fn(() => ({
+      accepted: true,
+      turnId: 'turn-1',
+      queued: 1,
+    })),
   },
 }));
 
@@ -123,6 +128,7 @@ describe('AcpSession', () => {
   afterEach(() => {
     vi.clearAllMocks();
     runtimeState.runtime.dispose.mockClear();
+    runtimeState.runtime.enqueueSteering.mockClear();
   });
 
   describe('initialize', () => {
@@ -150,6 +156,7 @@ describe('AcpSession', () => {
       const { Agent } = await import('../../../../src/agent/Agent.js');
       expect(SessionRuntime.create).toHaveBeenCalledWith({
         sessionId: 'test-session-id',
+        workspaceRoot: '/tmp/test',
       });
       expect(Agent.createWithRuntime).toHaveBeenCalledWith(runtimeState.runtime, {
         sessionId: 'test-session-id',
@@ -267,6 +274,7 @@ describe('AcpSession', () => {
       );
       expect(SessionRuntime.create).toHaveBeenCalledWith({
         sessionId: 'test-session-id',
+        workspaceRoot: '/tmp/test',
         mcpServers: {
           'project-tools': {
             type: 'stdio',
@@ -304,6 +312,24 @@ describe('AcpSession', () => {
 
       expect(response).toBeDefined();
       expect(response.stopReason).toBe('end_turn');
+    });
+
+    it('活动回合中的第二个 prompt 应转为 steering 而不是中止前一个回合', async () => {
+      const activeController = new AbortController();
+      (session as any).pendingPrompt = activeController;
+
+      const result = await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'Use the updated requirement.' }],
+      });
+
+      expect(result.stopReason).toBe('end_turn');
+      expect(activeController.signal.aborted).toBe(false);
+      expect(runtimeState.runtime.enqueueSteering).toHaveBeenCalledWith(
+        'Use the updated requirement.',
+        { allowBeforeTurn: true }
+      );
+      expect((session as any).pendingPrompt).toBe(activeController);
     });
 
     it('应该处理 slash command', async () => {

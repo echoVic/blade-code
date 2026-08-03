@@ -37,7 +37,13 @@ import { worktreeManager } from '../../worktree/WorktreeManager.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
 import { subagentRegistry } from '../subagents/SubagentRegistry.js';
 import type { SubagentConfig } from '../subagents/types.js';
-import type { AgentOptions } from '../types.js';
+import type { AgentOptions, UserMessageContent } from '../types.js';
+import {
+  type ActiveTurnHandle,
+  ActiveTurnMailbox,
+  type SteeringEnqueueResult,
+  type SteeringMessage,
+} from './ActiveTurnMailbox.js';
 import { SessionLease } from './SessionLease.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -76,6 +82,7 @@ async function cleanupStaleWorktreesOnce(workspaceRoot: string): Promise<void> {
 
 export interface SessionRuntimeOptions {
   sessionId: string;
+  workspaceRoot?: string;
   modelId?: string;
   mcpConfig?: string[];
   mcpServers?: Record<string, McpServerConfig>;
@@ -87,6 +94,7 @@ export class SessionRuntime {
   private readonly approvalStore = new InMemorySessionApprovalStore();
   private readonly baseRegistry = new ToolRegistry();
   private readonly attachmentCollector: AttachmentCollector;
+  private readonly activeTurnMailbox = new ActiveTurnMailbox();
 
   private chatService!: IChatService;
   private executionEngine!: ExecutionEngine;
@@ -101,7 +109,7 @@ export class SessionRuntime {
     private readonly options: SessionRuntimeOptions
   ) {
     this.attachmentCollector = new AttachmentCollector({
-      cwd: getCwd(),
+      cwd: this.workspaceRoot,
       maxFileSize: 1024 * 1024,
       maxLines: 2000,
       maxTokens: 32000,
@@ -110,7 +118,7 @@ export class SessionRuntime {
 
   static async create(options: SessionRuntimeOptions): Promise<SessionRuntime> {
     await ensureStoreInitialized();
-    await cleanupStaleWorktreesOnce(getCwd());
+    await cleanupStaleWorktreesOnce(options.workspaceRoot ?? getCwd());
 
     const models = getAllModels();
     if (models.length === 0) {
@@ -139,6 +147,10 @@ export class SessionRuntime {
     return this.options.sessionId;
   }
 
+  get workspaceRoot(): string {
+    return this.options.workspaceRoot ?? getCwd();
+  }
+
   getConfig(): BladeConfig {
     return this.config;
   }
@@ -161,6 +173,40 @@ export class SessionRuntime {
 
   getCurrentModelMaxContextTokens(): number {
     return this.currentModelMaxContextTokens;
+  }
+
+  beginTurn(): ActiveTurnHandle {
+    return this.activeTurnMailbox.beginTurn();
+  }
+
+  enqueueSteering(
+    content: UserMessageContent,
+    options?: { allowBeforeTurn?: boolean }
+  ): SteeringEnqueueResult {
+    return this.activeTurnMailbox.enqueue(content, options);
+  }
+
+  drainSteering(handle: ActiveTurnHandle): SteeringMessage[] {
+    return this.activeTurnMailbox.drain(handle);
+  }
+
+  drainSteeringOrSeal(handle: ActiveTurnHandle): {
+    messages: SteeringMessage[];
+    sealed: boolean;
+  } {
+    return this.activeTurnMailbox.drainOrSeal(handle);
+  }
+
+  endTurn(handle: ActiveTurnHandle, options?: { preservePending?: boolean }): void {
+    this.activeTurnMailbox.endTurn(handle, options);
+  }
+
+  hasActiveTurn(): boolean {
+    return this.activeTurnMailbox.isActive();
+  }
+
+  getPendingSteeringCount(): number {
+    return this.activeTurnMailbox.pendingCount();
   }
 
   async initialize(): Promise<void> {
@@ -339,7 +385,7 @@ export class SessionRuntime {
   private async validateSystemPromptConfig(): Promise<void> {
     try {
       await buildSystemPrompt({
-        projectPath: getCwd(),
+        projectPath: this.workspaceRoot,
         includeEnvironment: false,
         language: this.config.language,
       });
@@ -421,7 +467,7 @@ export class SessionRuntime {
   private async discoverSkills(): Promise<void> {
     try {
       await discoverSkills({
-        cwd: getCwd(),
+        cwd: this.workspaceRoot,
       });
     } catch (error) {
       logger.warn('Failed to discover skills:', error);

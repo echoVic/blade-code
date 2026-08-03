@@ -22,6 +22,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useCurrentModel: () => null,
   useIsCompacting: () => false,
   useIsReady: () => true,
+  usePendingCommands: () => [],
   usePermissionMode: () => 'default',
   useSessionCost: () => null,
   useThinkingModeEnabled: () => false,

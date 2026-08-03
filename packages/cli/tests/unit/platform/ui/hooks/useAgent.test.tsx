@@ -37,6 +37,7 @@ describe('useAgent runtime ownership', () => {
     sessionId: string;
     refresh: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
+    enqueueSteering: ReturnType<typeof vi.fn>;
   };
   let agent: { destroy: ReturnType<typeof vi.fn> };
 
@@ -50,6 +51,11 @@ describe('useAgent runtime ownership', () => {
       sessionId: 'session-1',
       refresh: vi.fn().mockResolvedValue(undefined),
       dispose: vi.fn().mockResolvedValue(undefined),
+      enqueueSteering: vi.fn(() => ({
+        accepted: true,
+        turnId: 'turn-1',
+        queued: 1,
+      })),
     };
     agent = { destroy: vi.fn().mockResolvedValue(undefined) };
     mocks.createRuntime.mockResolvedValue(runtime);
@@ -144,5 +150,21 @@ describe('useAgent runtime ownership', () => {
 
     await expect(hook?.cleanupAgent()).rejects.toThrow('agent cleanup failed');
     expect(runtime.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('queues steering through the owned SessionRuntime', async () => {
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await hook?.createAgent();
+
+    expect(hook?.steerActiveTurn('updated requirement')).toMatchObject({
+      accepted: true,
+      queued: 1,
+    });
+    expect(runtime.enqueueSteering).toHaveBeenCalledWith('updated requirement', {
+      allowBeforeTurn: true,
+    });
   });
 });

@@ -14,6 +14,7 @@ export interface StreamEvent {
 export interface SendMessageResponse {
   runId: string;
   status: string;
+  queued?: number;
 }
 
 export type MessageContentPart =

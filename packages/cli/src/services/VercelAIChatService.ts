@@ -365,6 +365,7 @@ export class VercelAIChatService implements IChatService {
 
   private convertMessages(messages: Message[]): AIMessage[] {
     const result: AIMessage[] = [];
+    const canReplayReasoning = this.needsThinkingReplayMetadata();
 
     const sourceMessages = this.shouldFlattenDeepSeekThinkingToolHistory()
       ? this.flattenDeepSeekThinkingToolHistory(messages)
@@ -420,9 +421,10 @@ export class VercelAIChatService implements IChatService {
             };
           });
           const text = getTextContent(msg.content);
-          const reasoningParts = msg.reasoningContent?.trim()
-            ? [{ type: 'reasoning' as const, text: msg.reasoningContent }]
-            : [];
+          const reasoningParts =
+            canReplayReasoning && msg.reasoningContent?.trim()
+              ? [{ type: 'reasoning' as const, text: msg.reasoningContent }]
+              : [];
           const providerOptions = this.getThinkingReplayProviderOptions(
             msg.reasoningContent
           );
@@ -447,7 +449,7 @@ export class VercelAIChatService implements IChatService {
           } else {
             result.push({ role: 'assistant', content: toolCalls });
           }
-        } else if (msg.reasoningContent?.trim()) {
+        } else if (canReplayReasoning && msg.reasoningContent?.trim()) {
           const text = getTextContent(msg.content);
           const content: Array<{ type: 'text'; text: string } | AIReasoningPart> = [
             { type: 'reasoning', text: msg.reasoningContent },

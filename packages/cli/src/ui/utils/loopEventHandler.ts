@@ -21,7 +21,11 @@
 import type { LoopEvent } from '../../agent/loop/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { streamDebug } from '../../logging/StreamDebugLogger.js';
-import type { useAppActions, useSessionActions } from '../../store/selectors/index.js';
+import type {
+  useAppActions,
+  useCommandActions,
+  useSessionActions,
+} from '../../store/selectors/index.js';
 import type { StreamingBufferAPI } from '../hooks/useStreamingBuffer.js';
 import {
   appendMarkdownDelta,
@@ -35,10 +39,12 @@ const logger = createLogger(LogCategory.UI);
 
 type SessionActions = ReturnType<typeof useSessionActions>;
 type AppActions = ReturnType<typeof useAppActions>;
+type CommandActions = ReturnType<typeof useCommandActions>;
 
 export interface LoopEventDeps {
   sessionActions: SessionActions;
   appActions: AppActions;
+  commandActions: CommandActions;
   streamingBuffer: StreamingBufferAPI;
   thinkingModeEnabled: boolean;
   getStreamingMessageId: () => string | null;
@@ -210,6 +216,12 @@ export function createLoopEventHandler(
         break;
       case 'task_update':
         deps.appActions.setTasks(event.tasks);
+        break;
+
+      case 'steering_applied':
+        for (let index = 0; index < event.count; index++) {
+          deps.commandActions.dequeueCommand();
+        }
         break;
 
       case 'subagent_spawned':

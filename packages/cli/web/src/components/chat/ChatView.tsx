@@ -10,6 +10,7 @@ export function ChatView() {
     messages,
     currentSessionId,
     isStreaming,
+    pendingSteeringCount,
     isLoading,
     error,
     loadSessions,
@@ -74,6 +75,7 @@ export function ChatView() {
         onAbort={handleAbort}
         disabled={isLoading}
         isStreaming={isStreaming}
+        pendingSteeringCount={pendingSteeringCount}
       />
       <StatusBar />
     </div>

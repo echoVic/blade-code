@@ -29,16 +29,22 @@ interface ChatInputProps {
   onAbort?: () => void;
   disabled?: boolean;
   isStreaming?: boolean;
+  pendingSteeringCount?: number;
 }
 
 const MODES: { value: PermissionMode; label: string }[] = [
   { value: PermissionModeEnum.DEFAULT, label: 'Default' },
   { value: PermissionModeEnum.AUTO_EDIT, label: 'Auto Edit' },
   { value: PermissionModeEnum.PLAN, label: 'Plan' },
-  { value: PermissionModeEnum.SPEC, label: 'Spec' },
 ];
 
-export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputProps) {
+export function ChatInput({
+  onSend,
+  onAbort,
+  disabled,
+  isStreaming,
+  pendingSteeringCount = 0,
+}: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<ComposerImageAttachment[]>([]);
   const [cursorPosition, setCursorPosition] = useState<number | undefined>(undefined);
@@ -364,10 +370,23 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
             onPaste={handlePaste}
             onSelect={handleSelect}
             onClick={handleSelect}
-            placeholder="Type @ for files, / for commands..."
+            placeholder={
+              isStreaming
+                ? 'Add guidance to steer the active turn...'
+                : 'Type @ for files, / for commands...'
+            }
             className="flex-1 w-full resize-none border-0 bg-transparent py-4 px-4 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none text-[#111827] dark:text-zinc-300 placeholder:text-[#9CA3AF] dark:placeholder:text-zinc-600"
-            disabled={disabled || isStreaming}
+            disabled={disabled}
           />
+
+          {isStreaming && (
+            <div className="px-4 pb-2 text-[11px] font-mono text-amber-600 dark:text-amber-400">
+              Active turn is steerable
+              {pendingSteeringCount > 0
+                ? ` · ${pendingSteeringCount} queued`
+                : ' · Enter sends guidance'}
+            </div>
+          )}
 
           {attachments.length > 0 && (
             <div className="px-4 pb-2 flex flex-wrap gap-2">
@@ -500,24 +519,27 @@ export function ChatInput({ onSend, onAbort, disabled, isStreaming }: ChatInputP
                 </PopoverContent>
               </Popover>
             </div>
-            {isStreaming ? (
-              <Button
-                size="icon"
-                onClick={onAbort}
-                className="w-8 h-8 text-white bg-red-500 hover:bg-red-600"
-              >
-                <Square className="w-3 h-3" />
-              </Button>
-            ) : (
+            <div className="flex items-center gap-2">
+              {isStreaming && (
+                <Button
+                  size="icon"
+                  onClick={onAbort}
+                  title="Stop active turn"
+                  className="w-8 h-8 text-white bg-red-500 hover:bg-red-600"
+                >
+                  <Square className="w-3 h-3" />
+                </Button>
+              )}
               <Button
                 size="icon"
                 onClick={handleSend}
                 disabled={!canSend || disabled || showAnySuggestions}
+                title={isStreaming ? 'Steer active turn' : 'Send message'}
                 className="h-8 w-8 bg-[#111827] text-white hover:bg-[#0F172A] disabled:bg-[#E5E7EB] disabled:text-[#9CA3AF] dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white dark:disabled:bg-zinc-800 dark:disabled:text-zinc-600"
               >
                 <Send className="w-4 h-4" />
               </Button>
-            )}
+            </div>
           </div>
         </div>
         <div className="text-center text-xs text-[#6B7280] dark:text-zinc-600 mt-3 font-mono">
