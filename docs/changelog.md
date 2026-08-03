@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.4] - 2026-08-03
+
+### ✨ 新功能
+
+- sealed turn 后提交的输入会持久化为 next-turn follow-up，并由 runtime 原子交接到后续逻辑回合
+- CLI 启动、Web SSE 重连与 ACP initialize/session load 会自动唤醒 durable pending input
+- CLI、Web 与 ACP 新增 follow-up queued/started 状态协议，并保持 user input 的 FIFO 顺序
+
+### 🐛 问题修复
+
+- 增加 transcript `inbox_acknowledged` 完成标记，修复 user transcript 已写入但模型尚未执行时崩溃导致输入丢失的问题
+- 恢复时通过 `inboxMessageId` 幂等复用已持久化 user message，避免 transcript 与界面重复显示
+- 修复 Web session hydration、双 SSE 重连和 enqueue/turn completion 之间可能启动重复 run 或遗漏唤醒的竞态
+- fork session 不再继承父会话的 inbox acknowledgement 事务状态
+
+### ✅ 测试相关
+
+- 新增原子 seal/enqueue、pending-only turn、completion ACK、FIFO handoff 与 CLI/Web/ACP 自动唤醒故障注入测试
+- Production qualification 15/15、单元测试 1,498 项、Web 测试 30 项、真实 API 轨迹 66/66 通过
+- DeepSeek v4 Flash/Pro 完整资格通过；Claude Opus 4.8 与 GPT 5.5 的跨 runtime、Web、ACP durable recovery 轨迹通过
+
 ## [0.7.3] - 2026-08-03
 
 ### ✨ 新功能
