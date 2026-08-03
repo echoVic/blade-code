@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.2] - 2026-08-03
+
+### ✨ 新功能
+
+- 新增 active-turn steering mailbox，允许用户在 Agent 工作期间排队补充指令，并在 LLM/工具安全边界注入当前回合
+- CLI 运行中按 Enter 改为实时转向，保留 Esc 中止语义，并在状态栏显示待处理消息数量
+- Web 输入框在 streaming 期间保持可编辑，通过同一 run 的 SSE 暴露 `steering.queued` / `steering.applied`
+- ACP 活动 prompt 支持 steering，不再通过新 prompt 隐式中止前一个回合
+- SessionRuntime 显式拥有 workspace root，统一 CLI、Web、ACP、Headless 与 Subagent 的项目级规则和 Skills 发现
+
+### 🐛 问题修复
+
+- 防止 Web 对同一 session 启动并发 Agent run
+- 修复 Anthropic 历史回放伪造无签名 reasoning block 导致 Claude 拒绝后续指令的问题
+- steering 指令会持久化到 transcript，并动态更新验证、委派和 worktree 完成策略
+- 移除不再维护的 Spec 模式及其工具、状态与文档入口
+
+### ✅ 测试相关
+
+- 新增 mailbox 所有权、原子封闭、容量限制、失败恢复及跨表面事件测试
+- 新增 DeepSeek v4 Flash 的 Web/ACP steering 生产资格轨迹
+- Claude Opus 4.8、GPT 5.5、DeepSeek v4 Flash 的 Web/ACP 真实 API steering 轨迹全部通过
+- Production qualification 15/15、真实 API 63/63 通过
+
 ## [0.7.1] - 2026-08-03
 
 ### 🐛 问题修复
