@@ -117,6 +117,17 @@ const activeRuns = new LRUCache<string, RunState>({
   },
 });
 
+function resetSharedSessionRouteState(): void {
+  for (const run of activeRuns.values()) {
+    if (run.status === 'running' || run.status === 'waiting_permission') {
+      run.abortController.abort();
+      run.status = 'cancelled';
+    }
+  }
+  activeRuns.clear();
+  sessions.clear();
+}
+
 type Variables = {
   directory: string;
 };
@@ -304,6 +315,7 @@ function buildUserMessageContent(
 }
 
 export const SessionRoutes = () => {
+  resetSharedSessionRouteState();
   const app = new Hono<{ Variables: Variables }>();
   app.onError((err, c) => {
     if (err instanceof BladeServerError) {
@@ -503,7 +515,7 @@ export const SessionRoutes = () => {
       return c.json(allSessions);
     } catch (error) {
       logger.error('[SessionRoutes] Failed to list sessions:', error);
-      return c.json([]);
+      throw new InternalServerError('Failed to list sessions');
     }
   });
 
@@ -665,15 +677,20 @@ export const SessionRoutes = () => {
       const ref = await resolveSessionRef(sessionId, requestedProjectPath);
       const key = sessionRefKey(ref);
       const session = sessions.get(key);
+      let cancelledRunId: string | undefined;
       if (session?.currentRunId) {
         const run = activeRuns.get(session.currentRunId);
         if (run) {
           run.abortController.abort();
+          run.status = 'cancelled';
           Bus.publish(ref, 'run.cancelled', { runId: run.id });
-          activeRuns.delete(session.currentRunId);
+          cancelledRunId = run.id;
         }
       }
       await SessionService.deleteSession(ref.sessionId, ref.projectPath);
+      if (cancelledRunId) {
+        activeRuns.delete(cancelledRunId);
+      }
       sessions.delete(key);
       sessionHydrations.delete(key);
       runtimeInitializations.delete(key);

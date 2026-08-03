@@ -1,5 +1,9 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+  InputTurnPreparation,
+  SteeringEnqueueResult,
+} from '../../../../src/agent/runtime/ActiveTurnMailbox.js';
 import {
   SessionRuntime,
   type SessionRuntimeOptions,
@@ -7,6 +11,47 @@ import {
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 import type { SessionMetadata } from '../../../../src/services/SessionService.js';
+
+const DEFAULT_PROJECT_PATH =
+  '/Users/bytedance/Documents/GitHub/Blade/.worktrees/session-discovery-fork/packages/cli';
+
+const makePreparedInputTurn = (): InputTurnPreparation => ({
+  accepted: true,
+  handle: { id: 'prepared-turn' },
+  messageId: 'prepared-input',
+  queued: 1,
+  mode: 'direct',
+});
+
+const makeSteeringEnqueueResult = (): SteeringEnqueueResult => ({
+  accepted: true,
+  messageId: 'steering-input',
+  turnId: 'turn-1',
+  queued: 1,
+  delivery: 'current_turn',
+});
+
+const makeMessages = (...messages: Message[]): Message[] => messages;
+
+const makeSessionMetadata = (
+  overrides: Pick<SessionMetadata, 'sessionId' | 'projectPath'> &
+    Partial<
+      Omit<SessionMetadata, 'sessionId' | 'projectPath' | 'rootId'> & {
+        rootId: string;
+      }
+    >
+): SessionMetadata => ({
+  sessionId: overrides.sessionId,
+  projectPath: overrides.projectPath,
+  rootId: overrides.rootId ?? overrides.sessionId,
+  title: overrides.title ?? `Session ${overrides.sessionId}`,
+  messageCount: overrides.messageCount ?? 0,
+  firstMessageTime: overrides.firstMessageTime ?? new Date(0).toISOString(),
+  lastMessageTime: overrides.lastMessageTime ?? new Date(1).toISOString(),
+  hasErrors: overrides.hasErrors ?? false,
+  ...(overrides.parentId ? { parentId: overrides.parentId } : {}),
+  ...(overrides.relationType ? { relationType: overrides.relationType } : {}),
+});
 
 const runtimeState = vi.hoisted(() => ({
   runtime: {
@@ -20,20 +65,12 @@ const runtimeState = vi.hoisted(() => ({
     getAttachmentCollector: vi.fn(),
     getCurrentModelId: vi.fn(() => 'model-1'),
     getCurrentModelMaxContextTokens: vi.fn(() => 128000),
-    prepareInputTurn: vi.fn((): any => ({
-      accepted: true,
-      handle: { id: 'prepared-turn' },
-      messageId: 'prepared-input',
-      queued: 1,
-      mode: 'direct',
-    })),
-    enqueueSteering: vi.fn((): any => ({
-      accepted: true,
-      messageId: 'steering-input',
-      turnId: 'turn-1',
-      queued: 1,
-      delivery: 'current_turn',
-    })),
+    prepareInputTurn: vi.fn(
+      async (): Promise<InputTurnPreparation> => makePreparedInputTurn()
+    ),
+    enqueueSteering: vi.fn(
+      async (): Promise<SteeringEnqueueResult> => makeSteeringEnqueueResult()
+    ),
     finishTurn: vi.fn().mockResolvedValue(undefined),
     getPendingSteeringCount: vi.fn(() => 0),
     hasTurnOwner: vi.fn(() => false),
@@ -115,28 +152,21 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
     findSessionMetadata: vi.fn(async () => undefined),
     loadSession: vi.fn(async () => []),
     createSessionMetadata: vi.fn(
-      async (sessionId: string, projectPath: string, initial?: { title?: string }) => ({
-        sessionId,
-        projectPath,
-        rootId: sessionId,
-        title: initial?.title,
-        messageCount: 0,
-        firstMessageTime: new Date(0).toISOString(),
-        lastMessageTime: new Date(0).toISOString(),
-        hasErrors: false,
-      })
+      async (sessionId: string, projectPath: string, initial?: { title?: string }) =>
+        makeSessionMetadata({
+          sessionId,
+          projectPath,
+          title: initial?.title,
+          lastMessageTime: new Date(0).toISOString(),
+        })
     ),
     updateSessionMetadata: vi.fn(
-      async (sessionId: string, projectPath: string, update: { title?: string }) => ({
-        sessionId,
-        projectPath,
-        rootId: sessionId,
-        title: update.title,
-        messageCount: 0,
-        firstMessageTime: new Date(0).toISOString(),
-        lastMessageTime: new Date(1).toISOString(),
-        hasErrors: false,
-      })
+      async (sessionId: string, projectPath: string, update: { title?: string }) =>
+        makeSessionMetadata({
+          sessionId,
+          projectPath,
+          title: update.title,
+        })
     ),
     forkSession: vi.fn(
       async (
@@ -146,18 +176,15 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
         sessionId: 'forked-session',
         parentSessionId: sessionId,
         projectPath: options.targetProjectPath,
-        messages: [],
-        metadata: {
+        messages: makeMessages(),
+        metadata: makeSessionMetadata({
           sessionId: 'forked-session',
           projectPath: options.targetProjectPath,
-          rootId: sessionId,
           parentId: sessionId,
           relationType: 'fork',
-          messageCount: 0,
-          firstMessageTime: new Date(0).toISOString(),
+          rootId: sessionId,
           lastMessageTime: new Date(0).toISOString(),
-          hasErrors: false,
-        },
+        }),
       })
     ),
     deleteSession: vi.fn(async () => {
@@ -235,56 +262,41 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.refresh.mockClear();
     runtimeState.runtime.prepareInputTurn.mockReset();
-    runtimeState.runtime.prepareInputTurn.mockImplementation(async () => ({
-      accepted: true,
-      handle: { id: 'prepared-turn' },
-      messageId: 'prepared-input',
-      queued: 1,
-      mode: 'direct',
-    }));
+    runtimeState.runtime.prepareInputTurn.mockImplementation(async () =>
+      makePreparedInputTurn()
+    );
     runtimeState.runtime.enqueueSteering.mockClear();
-    runtimeState.runtime.enqueueSteering.mockResolvedValue({
-      accepted: true,
-      messageId: 'steering-input',
-      turnId: 'turn-1',
-      queued: 1,
-      delivery: 'current_turn',
-    });
+    runtimeState.runtime.enqueueSteering.mockResolvedValue(makeSteeringEnqueueResult());
     runtimeState.runtime.finishTurn.mockClear();
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.hasTurnOwner.mockReturnValue(false);
     vi.mocked(SessionRuntime.create).mockImplementation(
-      async () => runtimeState.runtime as never
+      async (options: SessionRuntimeOptions) =>
+        createRuntimeDouble({
+          sessionId: options.sessionId,
+          workspaceRoot: options.workspaceRoot,
+        })
     );
     vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
     vi.mocked(SessionService.listSessions).mockResolvedValue([]);
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(undefined);
-    vi.mocked(SessionService.loadSession).mockResolvedValue([]);
+    vi.mocked(SessionService.loadSession).mockResolvedValue(makeMessages());
     vi.mocked(SessionService.createSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath: string, initial?: { title?: string }) =>
-        ({
+        makeSessionMetadata({
           sessionId,
           projectPath,
-          rootId: sessionId,
           title: initial?.title,
-          messageCount: 0,
-          firstMessageTime: new Date(0).toISOString(),
           lastMessageTime: new Date(0).toISOString(),
-          hasErrors: false,
-        }) as never
+        })
     );
     vi.mocked(SessionService.updateSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath: string, update: { title?: string }) =>
-        ({
+        makeSessionMetadata({
           sessionId,
           projectPath,
-          rootId: sessionId,
           title: update.title,
-          messageCount: 0,
-          firstMessageTime: new Date(0).toISOString(),
-          lastMessageTime: new Date(1).toISOString(),
-          hasErrors: false,
-        }) as never
+        })
     );
     agentState.chatStream.mockImplementation(async function* () {
       if (Date.now() < 0) {
@@ -304,8 +316,7 @@ describe('SessionRoutes runtime reuse', () => {
 
   const refFor = (sessionId: string) => ({
     sessionId,
-    projectPath:
-      '/Users/bytedance/Documents/GitHub/Blade/.worktrees/session-discovery-fork/packages/cli',
+    projectPath: DEFAULT_PROJECT_PATH,
   });
 
   const createPermissionsApp = async () => {
@@ -354,9 +365,7 @@ describe('SessionRoutes runtime reuse', () => {
       actualSessionRuntimeModule.SessionRuntime.prototype
     ) as SessionRuntime;
     const sessionId = overrides.sessionId ?? runtimeState.runtime.sessionId;
-    const workspaceRoot =
-      overrides.workspaceRoot ??
-      '/Users/bytedance/Documents/GitHub/Blade/.worktrees/session-discovery-fork/packages/cli';
+    const workspaceRoot = overrides.workspaceRoot ?? DEFAULT_PROJECT_PATH;
     const {
       sessionId: _ignoredSessionId,
       workspaceRoot: _ignoredWorkspaceRoot,
@@ -393,29 +402,23 @@ describe('SessionRoutes runtime reuse', () => {
       parentId: string;
       relationType: 'subagent' | 'fork';
     }> = {}
-  ): SessionMetadata => ({
-    sessionId,
-    projectPath,
-    rootId: overrides.rootId ?? sessionId,
-    title: overrides.title ?? `Session ${sessionId}`,
-    messageCount: overrides.messageCount ?? 0,
-    firstMessageTime: overrides.firstMessageTime ?? new Date(0).toISOString(),
-    lastMessageTime: overrides.lastMessageTime ?? new Date(1).toISOString(),
-    hasErrors: overrides.hasErrors ?? false,
-    ...(overrides.parentId ? { parentId: overrides.parentId } : {}),
-    ...(overrides.relationType ? { relationType: overrides.relationType } : {}),
-  });
+  ): SessionMetadata =>
+    makeSessionMetadata({
+      sessionId,
+      projectPath,
+      ...overrides,
+    });
 
   const mockResolvedSession = (
     sessionId: string,
     options: {
       projectPath?: string;
-      messages?: Array<{ role: string; content: string }>;
+      messages?: Message[];
     } = {}
   ) => {
     const metadata = metadataFor(sessionId, options.projectPath);
-    const messages = options.messages ?? [];
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata] as never);
+    const messages = options.messages ?? makeMessages();
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (requestedSessionId: string, requestedProjectPath?: string) => {
         if (requestedSessionId !== sessionId) {
@@ -427,7 +430,7 @@ describe('SessionRoutes runtime reuse', () => {
         ) {
           return undefined;
         }
-        return metadata as never;
+        return metadata;
       }
     );
     vi.mocked(SessionService.loadSession).mockImplementation(
@@ -436,9 +439,9 @@ describe('SessionRoutes runtime reuse', () => {
           requestedSessionId === sessionId &&
           requestedProjectPath === metadata.projectPath
         ) {
-          return messages as never;
+          return messages;
         }
-        return [] as never;
+        return makeMessages();
       }
     );
     return metadata;
@@ -476,10 +479,16 @@ describe('SessionRoutes runtime reuse', () => {
     expect(runtimeState.runtime.prepareInputTurn).toHaveBeenNthCalledWith(1, 'first');
     expect(runtimeState.runtime.prepareInputTurn).toHaveBeenNthCalledWith(2, 'second');
     expect(Agent.createWithRuntime).toHaveBeenCalledTimes(2);
-    expect(Agent.createWithRuntime).toHaveBeenNthCalledWith(1, runtimeState.runtime, {
+    expect(vi.mocked(Agent.createWithRuntime).mock.calls[0]?.[0]).toMatchObject({
       sessionId: 'session-1',
     });
-    expect(Agent.createWithRuntime).toHaveBeenNthCalledWith(2, runtimeState.runtime, {
+    expect(vi.mocked(Agent.createWithRuntime).mock.calls[0]?.[1]).toEqual({
+      sessionId: 'session-1',
+    });
+    expect(vi.mocked(Agent.createWithRuntime).mock.calls[1]?.[0]).toMatchObject({
+      sessionId: 'session-1',
+    });
+    expect(vi.mocked(Agent.createWithRuntime).mock.calls[1]?.[1]).toEqual({
       sessionId: 'session-1',
     });
   });
@@ -627,7 +636,7 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionRuntime.create).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          releaseRuntime = () => resolve(runtimeState.runtime as never);
+          releaseRuntime = async () => resolve(await createRuntimeDouble());
         })
     );
     let releaseRun: () => void = () => undefined;
@@ -695,7 +704,13 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('does not return 202 until the initial input has been durably prepared', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionRuntime } = await import(
+      '../../../../src/agent/runtime/SessionRuntime.js'
+    );
     mockResolvedSession('durable-accept');
+    vi.mocked(SessionRuntime.create).mockResolvedValueOnce(
+      await createRuntimeDouble({ sessionId: 'durable-accept' })
+    );
     let releasePreparation: () => void = () => undefined;
     runtimeState.runtime.prepareInputTurn.mockImplementationOnce(
       () =>
@@ -707,7 +722,7 @@ describe('SessionRoutes runtime reuse', () => {
               messageId: 'fsynced-input',
               queued: 1,
               mode: 'direct',
-            });
+            } satisfies InputTurnPreparation);
         })
     );
 
@@ -747,16 +762,14 @@ describe('SessionRoutes runtime reuse', () => {
       'recovered-web-session',
       '/persisted-workspace'
     );
-    vi.mocked(SessionService.listSessions).mockResolvedValue([
-      recoveredMetadata,
-    ] as never);
+    vi.mocked(SessionService.listSessions).mockResolvedValue([recoveredMetadata]);
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath?: string) => {
         if (
           sessionId === 'recovered-web-session' &&
           projectPath === '/persisted-workspace'
         ) {
-          return recoveredMetadata as never;
+          return recoveredMetadata;
         }
         return undefined;
       }
@@ -869,15 +882,17 @@ describe('SessionRoutes runtime reuse', () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     mockResolvedSession('persisted-session', {
       projectPath: '/persisted-workspace',
-      messages: [
+      messages: makeMessages(
         { role: 'user', content: 'earlier question' },
-        { role: 'assistant', content: 'earlier answer' },
-      ],
+        { role: 'assistant', content: 'earlier answer' }
+      ),
     });
-    vi.mocked(SessionService.loadSession).mockResolvedValue([
-      { role: 'user', content: 'earlier question' },
-      { role: 'assistant', content: 'earlier answer' },
-    ] as never);
+    vi.mocked(SessionService.loadSession).mockResolvedValue(
+      makeMessages(
+        { role: 'user', content: 'earlier question' },
+        { role: 'assistant', content: 'earlier answer' }
+      )
+    );
 
     const app = SessionRoutes();
 
@@ -1098,6 +1113,66 @@ describe('SessionRoutes runtime reuse', () => {
     });
   });
 
+  it('isolates module-global session state between SessionRoutes instances and aborts ghost runs', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    const metadata = metadataFor('ghost-session', '/tmp/ghost-workspace', {
+      title: 'Ghost session',
+    });
+    let observedSignal: AbortSignal | undefined;
+    let releaseRun: () => void = () => undefined;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    agentState.chatStream.mockImplementationOnce(async function* (
+      _content,
+      chatContext: { signal: AbortSignal }
+    ) {
+      observedSignal = chatContext.signal;
+      yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+      await runGate;
+      return {
+        success: true,
+        finalMessage: 'ghost session reply',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const app1 = SessionRoutes();
+    const startResponse = await app1.request(
+      `/ghost-session/message?projectPath=${encodeURIComponent('/tmp/ghost-workspace')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'leave a ghost run behind' }),
+      }
+    );
+    expect(startResponse.status).toBe(202);
+    expect(observedSignal?.aborted).toBe(false);
+
+    vi.clearAllMocks();
+    busState.subscribers.clear();
+    vi.mocked(SessionService.listSessions).mockResolvedValue([]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(undefined);
+
+    const app2 = SessionRoutes();
+    expect(observedSignal?.aborted).toBe(true);
+
+    const listResponse = await app2.request('/');
+    expect(listResponse.status).toBe(200);
+    expect(await listResponse.json()).toEqual([]);
+
+    const getResponse = await app2.request(
+      `/ghost-session?projectPath=${encodeURIComponent('/tmp/ghost-workspace')}`
+    );
+    expect(getResponse.status).toBe(404);
+
+    releaseRun();
+  });
+
   it('does not keep an in-memory session when durable creation fails', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { SessionService } = await import(
@@ -1141,16 +1216,14 @@ describe('SessionRoutes runtime reuse', () => {
     });
     const created = await createResponse.json();
 
-    vi.mocked(SessionService.updateSessionMetadata).mockResolvedValueOnce({
-      sessionId: created.sessionId,
-      projectPath: '/tmp/task4-rename-workspace',
-      rootId: created.sessionId,
-      title: 'Renamed durably',
-      messageCount: 0,
-      firstMessageTime: new Date(0).toISOString(),
-      lastMessageTime: new Date(2).toISOString(),
-      hasErrors: false,
-    } as never);
+    vi.mocked(SessionService.updateSessionMetadata).mockResolvedValueOnce(
+      makeSessionMetadata({
+        sessionId: created.sessionId,
+        projectPath: '/tmp/task4-rename-workspace',
+        title: 'Renamed durably',
+        lastMessageTime: new Date(2).toISOString(),
+      })
+    );
 
     const patchResponse = await app.request(`/${created.sessionId}`, {
       method: 'PATCH',
@@ -1178,22 +1251,26 @@ describe('SessionRoutes runtime reuse', () => {
     const { SessionService } = await import(
       '../../../../src/services/SessionService.js'
     );
+    const metadata = metadataFor('stable-title-session', '/tmp/task4-stable-title', {
+      title: 'Stable title',
+    });
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (
+          sessionId === 'stable-title-session' &&
+          projectPath === '/tmp/task4-stable-title'
+        ) {
+          return metadata;
+        }
+        return undefined;
+      }
+    );
 
     const app = SessionRoutes();
-    const createResponse = await app.request('/', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        title: 'Stable title',
-        projectPath: '/tmp/task4-stable-title',
-      }),
-    });
-    const created = await createResponse.json();
-
     vi.mocked(SessionService.updateSessionMetadata).mockRejectedValueOnce(
       new Error('rename failed')
     );
-    const patchResponse = await app.request(`/${created.sessionId}`, {
+    const patchResponse = await app.request('/stable-title-session', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -1205,7 +1282,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(patchResponse.status).toBe(500);
 
     const getResponse = await app.request(
-      `/${created.sessionId}?projectPath=${encodeURIComponent('/tmp/task4-stable-title')}`
+      `/stable-title-session?projectPath=${encodeURIComponent('/tmp/task4-stable-title')}`
     );
     expect(getResponse.status).toBe(200);
     expect(await getResponse.json()).toMatchObject({
@@ -1220,27 +1297,20 @@ describe('SessionRoutes runtime reuse', () => {
     );
 
     vi.mocked(SessionService.listSessions).mockResolvedValue([
-      {
+      makeSessionMetadata({
         sessionId: 'shared-session',
         projectPath: '/tmp/workspace-a',
-        rootId: 'shared-session',
         title: 'Workspace A',
         messageCount: 1,
-        firstMessageTime: new Date(0).toISOString(),
-        lastMessageTime: new Date(1).toISOString(),
-        hasErrors: false,
-      },
-      {
+      }),
+      makeSessionMetadata({
         sessionId: 'shared-session',
         projectPath: '/tmp/workspace-b',
-        rootId: 'shared-session',
         title: 'Workspace B',
         messageCount: 2,
-        firstMessageTime: new Date(0).toISOString(),
         lastMessageTime: new Date(2).toISOString(),
-        hasErrors: false,
-      },
-    ] as never);
+      }),
+    ]);
 
     const app = SessionRoutes();
     const response = await app.request('/shared-session');
@@ -1260,16 +1330,13 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath?: string) => {
         if (sessionId === 'shared-session' && projectPath === '/tmp/workspace-b') {
-          return {
+          return makeSessionMetadata({
             sessionId,
             projectPath,
-            rootId: sessionId,
             title: 'Workspace B',
             messageCount: 2,
-            firstMessageTime: new Date(0).toISOString(),
             lastMessageTime: new Date(2).toISOString(),
-            hasErrors: false,
-          } as never;
+          });
         }
         return undefined;
       }
@@ -1277,9 +1344,9 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionService.loadSession).mockImplementation(
       async (sessionId: string, projectPath?: string) => {
         if (sessionId === 'shared-session' && projectPath === '/tmp/workspace-b') {
-          return [{ role: 'assistant', content: 'workspace-b-history' }] as never;
+          return makeMessages({ role: 'assistant', content: 'workspace-b-history' });
         }
-        return [] as never;
+        return makeMessages();
       }
     );
 
@@ -1327,27 +1394,19 @@ describe('SessionRoutes runtime reuse', () => {
     });
 
     vi.mocked(SessionService.listSessions).mockResolvedValue([
-      {
+      makeSessionMetadata({
         sessionId: 'shared-session',
         projectPath: '/tmp/workspace-a',
-        rootId: 'shared-session',
         title: 'Workspace A',
         messageCount: 1,
-        firstMessageTime: new Date(0).toISOString(),
-        lastMessageTime: new Date(1).toISOString(),
-        hasErrors: false,
-      },
-      {
+      }),
+      makeSessionMetadata({
         sessionId: 'shared-session',
         projectPath: '/tmp/workspace-b',
-        rootId: 'shared-session',
         title: 'Workspace B',
         messageCount: 1,
-        firstMessageTime: new Date(0).toISOString(),
-        lastMessageTime: new Date(1).toISOString(),
-        hasErrors: false,
-      },
-    ] as never);
+      }),
+    ]);
 
     const ambiguous = await app.request('/shared-session/events');
     expect(ambiguous.status).toBe(409);
@@ -1365,16 +1424,11 @@ describe('SessionRoutes runtime reuse', () => {
           sessionId === 'shared-session' &&
           (projectPath === '/tmp/workspace-a' || projectPath === '/tmp/workspace-b')
         ) {
-          return {
+          return makeSessionMetadata({
             sessionId,
             projectPath,
-            rootId: sessionId,
             title: `Session ${projectPath?.slice(-1)}`,
-            messageCount: 0,
-            firstMessageTime: new Date(0).toISOString(),
-            lastMessageTime: new Date(1).toISOString(),
-            hasErrors: false,
-          } as never;
+          });
         }
         return undefined;
       }
@@ -1479,27 +1533,19 @@ describe('SessionRoutes runtime reuse', () => {
   it('requires projectPath for duplicate session ids before accepting a message', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     vi.mocked(SessionService.listSessions).mockResolvedValue([
-      {
+      makeSessionMetadata({
         sessionId: 'shared-session',
         projectPath: '/tmp/workspace-a',
-        rootId: 'shared-session',
         title: 'Workspace A',
         messageCount: 1,
-        firstMessageTime: new Date(0).toISOString(),
-        lastMessageTime: new Date(1).toISOString(),
-        hasErrors: false,
-      },
-      {
+      }),
+      makeSessionMetadata({
         sessionId: 'shared-session',
         projectPath: '/tmp/workspace-b',
-        rootId: 'shared-session',
         title: 'Workspace B',
         messageCount: 1,
-        firstMessageTime: new Date(0).toISOString(),
-        lastMessageTime: new Date(1).toISOString(),
-        hasErrors: false,
-      },
-    ] as never);
+      }),
+    ]);
 
     const app = SessionRoutes();
     const response = await app.request('/shared-session/message', {
@@ -1522,16 +1568,11 @@ describe('SessionRoutes runtime reuse', () => {
           sessionId === 'shared-session' &&
           (projectPath === '/tmp/workspace-a' || projectPath === '/tmp/workspace-b')
         ) {
-          return {
+          return makeSessionMetadata({
             sessionId,
             projectPath,
-            rootId: sessionId,
             title: `Session ${projectPath?.slice(-1)}`,
-            messageCount: 0,
-            firstMessageTime: new Date(0).toISOString(),
-            lastMessageTime: new Date(1).toISOString(),
-            hasErrors: false,
-          } as never;
+          });
         }
         return undefined;
       }
@@ -1875,6 +1916,117 @@ describe('SessionRoutes runtime reuse', () => {
     expect(SessionService.deleteSession).not.toHaveBeenCalled();
   });
 
+  it('keeps volatile session state after durable delete failure while marking the run cancelled', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    const metadata = metadataFor(
+      'delete-failure-session',
+      '/tmp/delete-failure-workspace',
+      {
+        title: 'Delete failure session',
+      }
+    );
+    let deleted = false;
+    const dispose = vi.fn().mockResolvedValue(undefined);
+    const runtime = await createRuntimeDouble({ dispose });
+    let observedSignal: AbortSignal | undefined;
+    let releaseRun: () => void = () => undefined;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (
+          deleted ||
+          sessionId !== 'delete-failure-session' ||
+          projectPath !== '/tmp/delete-failure-workspace'
+        ) {
+          return undefined;
+        }
+        return metadata;
+      }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionRuntime.create).mockResolvedValue(runtime);
+    agentState.chatStream.mockImplementationOnce(async function* (
+      _content,
+      chatContext: { signal: AbortSignal }
+    ) {
+      observedSignal = chatContext.signal;
+      yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+      await runGate;
+      return {
+        success: true,
+        finalMessage: 'delete failure reply',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const app = SessionRoutes();
+    const startResponse = await app.request(
+      `/delete-failure-session/message?projectPath=${encodeURIComponent('/tmp/delete-failure-workspace')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'start delete failure run' }),
+      }
+    );
+    expect(startResponse.status).toBe(202);
+
+    vi.mocked(SessionService.deleteSession).mockRejectedValueOnce(
+      new Error('failed to delete /tmp/delete-failure-workspace/secret.jsonl')
+    );
+
+    const deleteResponse = await app.request(
+      `/delete-failure-session?projectPath=${encodeURIComponent('/tmp/delete-failure-workspace')}`,
+      {
+        method: 'DELETE',
+      }
+    );
+    expect(deleteResponse.status).toBe(500);
+    expect(observedSignal?.aborted).toBe(true);
+    expect(dispose).not.toHaveBeenCalled();
+
+    const statusAfterFailure = await app.request(
+      `/delete-failure-session/status?projectPath=${encodeURIComponent('/tmp/delete-failure-workspace')}`
+    );
+    expect(statusAfterFailure.status).toBe(200);
+    expect(await statusAfterFailure.json()).toMatchObject({
+      sessionId: 'delete-failure-session',
+      projectPath: '/tmp/delete-failure-workspace',
+      status: 'cancelled',
+    });
+
+    const getAfterFailure = await app.request(
+      `/delete-failure-session?projectPath=${encodeURIComponent('/tmp/delete-failure-workspace')}`
+    );
+    expect(getAfterFailure.status).toBe(200);
+    expect(await getAfterFailure.json()).toMatchObject({
+      sessionId: 'delete-failure-session',
+      projectPath: '/tmp/delete-failure-workspace',
+      title: 'Delete failure session',
+    });
+
+    vi.mocked(SessionService.deleteSession).mockResolvedValueOnce(1);
+    const retryDelete = await app.request(
+      `/delete-failure-session?projectPath=${encodeURIComponent('/tmp/delete-failure-workspace')}`,
+      {
+        method: 'DELETE',
+      }
+    );
+    expect(retryDelete.status).toBe(200);
+    deleted = true;
+    expect(dispose).toHaveBeenCalledTimes(1);
+
+    const statusAfterSuccess = await app.request(
+      `/delete-failure-session/status?projectPath=${encodeURIComponent('/tmp/delete-failure-workspace')}`
+    );
+    expect(statusAfterSuccess.status).toBe(404);
+
+    releaseRun();
+  });
+
   it('aborts only the exact same-id workspace run and rejects duplicate no-path abort requests', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
 
@@ -2151,27 +2303,19 @@ describe('SessionRoutes runtime reuse', () => {
     );
 
     vi.mocked(SessionService.listSessions).mockResolvedValue([
-      {
+      makeSessionMetadata({
         sessionId: 'shared-session',
         projectPath: '/tmp/workspace-a',
-        rootId: 'shared-session',
         title: 'Workspace A',
         messageCount: 1,
-        firstMessageTime: new Date(0).toISOString(),
-        lastMessageTime: new Date(1).toISOString(),
-        hasErrors: false,
-      },
-      {
+      }),
+      makeSessionMetadata({
         sessionId: 'shared-session',
         projectPath: '/tmp/workspace-b',
-        rootId: 'shared-session',
         title: 'Workspace B',
         messageCount: 1,
-        firstMessageTime: new Date(0).toISOString(),
-        lastMessageTime: new Date(1).toISOString(),
-        hasErrors: false,
-      },
-    ] as never);
+      }),
+    ]);
 
     const ambiguous = await permissionApp.request(
       '/permissions/perm-1?sessionId=shared-session',
@@ -2226,16 +2370,11 @@ describe('SessionRoutes runtime reuse', () => {
           sessionId === 'shared-session' &&
           (projectPath === '/tmp/workspace-a' || projectPath === '/tmp/workspace-b')
         ) {
-          return {
+          return makeSessionMetadata({
             sessionId,
             projectPath,
-            rootId: sessionId,
             title: `Session ${projectPath?.slice(-1)}`,
-            messageCount: 0,
-            firstMessageTime: new Date(0).toISOString(),
-            lastMessageTime: new Date(1).toISOString(),
-            hasErrors: false,
-          } as never;
+          });
         }
         return undefined;
       }
@@ -2328,5 +2467,27 @@ describe('SessionRoutes runtime reuse', () => {
         message: 'Internal server error',
       },
     });
+  });
+
+  it('returns a generic internal error when listing sessions fails instead of leaking paths or returning []', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    vi.mocked(SessionService.listSessions).mockRejectedValueOnce(
+      new Error('scan failed for /secret/workspaces/project/.blade/sessions')
+    );
+
+    const app = SessionRoutes();
+    const response = await app.request('/');
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body).toMatchObject({
+      error: {
+        code: 'INTERNAL_ERROR',
+      },
+    });
+    expect(body.error.message).not.toContain(
+      '/secret/workspaces/project/.blade/sessions'
+    );
   });
 });
