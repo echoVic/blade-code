@@ -762,14 +762,22 @@ describe('SessionService strict session catalog', () => {
     ).rejects.toThrow();
 
     await createSessionMetadata?.('race-session-2', workspaceA, { title: 'Initial' });
-    await expect(
-      SessionService.deleteSession('race-session-2', workspaceA)
-    ).resolves.toBe(1);
-    await expect(
-      updateSessionMetadata?.('race-session-2', workspaceA, {
-        title: 'Should fail',
-      })
-    ).rejects.toMatchObject({ code: 'ENOENT' });
+    const deleteFirst = SessionService.deleteSession('race-session-2', workspaceA);
+    const updateSecond = updateSessionMetadata?.('race-session-2', workspaceA, {
+      title: 'Should fail',
+    });
+    const [deleteResult, updateResult] = await Promise.allSettled([
+      deleteFirst,
+      updateSecond,
+    ]);
+    expect(deleteResult).toMatchObject({
+      status: 'fulfilled',
+      value: 1,
+    });
+    expect(updateResult).toMatchObject({
+      status: 'rejected',
+      reason: expect.objectContaining({ code: 'ENOENT' }),
+    });
     await expect(
       access(getSessionFilePath(workspaceA, 'race-session-2'))
     ).rejects.toThrow();

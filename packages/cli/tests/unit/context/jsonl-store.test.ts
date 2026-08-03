@@ -191,22 +191,38 @@ describe('JSONLStore.appendValidated', () => {
     await writeFile(filePath, `${JSON.stringify(created)}\n`, 'utf8');
     const store = new JSONLStore(filePath);
 
-    await Promise.all([
-      invokeAppendValidated(store, () =>
-        createSessionUpdated(
-          'session-1',
-          '/workspace',
-          '2024-01-01T00:00:01.000Z',
-          'queued-update'
-        )
-      ),
-      store.delete(),
-    ]);
+    const update = invokeAppendValidated(store, () =>
+      createSessionUpdated(
+        'session-1',
+        '/workspace',
+        '2024-01-01T00:00:01.000Z',
+        'queued-update'
+      )
+    );
+    const deletion = store.delete();
 
+    await Promise.all([update, deletion]);
+
+    await expect(deletion).resolves.toBe(true);
     await expect(access(filePath)).rejects.toThrow();
   });
 
-  it('does not recreate the file when delete wins before appendValidated', async () => {
+  it('reports whether delete removed an existing transcript', async () => {
+    const missingStore = new JSONLStore(filePath);
+    await expect(missingStore.delete()).resolves.toBe(false);
+
+    const created = createSessionCreated(
+      'session-1',
+      '/workspace',
+      '2024-01-01T00:00:00.000Z'
+    );
+    await writeFile(filePath, `${JSON.stringify(created)}\n`, 'utf8');
+    const existingStore = new JSONLStore(filePath);
+    await expect(existingStore.delete()).resolves.toBe(true);
+    await expect(access(filePath)).rejects.toThrow();
+  });
+
+  it('does not recreate the file when delete is queued before appendValidated', async () => {
     const created = createSessionCreated(
       'session-1',
       '/workspace',
@@ -215,24 +231,25 @@ describe('JSONLStore.appendValidated', () => {
     await writeFile(filePath, `${JSON.stringify(created)}\n`, 'utf8');
     const store = new JSONLStore(filePath);
 
-    await store.delete();
-    await expect(
-      invokeAppendValidated(store, () =>
-        createSessionUpdated(
-          'session-1',
-          '/workspace',
-          '2024-01-01T00:00:01.000Z',
-          'should-fail'
-        )
+    const deletion = store.delete();
+    const update = invokeAppendValidated(store, () =>
+      createSessionUpdated(
+        'session-1',
+        '/workspace',
+        '2024-01-01T00:00:01.000Z',
+        'should-fail'
       )
-    ).rejects.toMatchObject({ code: 'ENOENT' });
+    );
+
+    await expect(deletion).resolves.toBe(true);
+    await expect(update).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(access(filePath)).rejects.toThrow();
   });
 
   it('keeps delete idempotent for missing files and shares the same queue with updates', async () => {
     const store = new JSONLStore(filePath);
 
-    await expect(store.delete()).resolves.toBeUndefined();
+    await expect(store.delete()).resolves.toBe(false);
     await expect(
       Promise.all([
         store.delete(),

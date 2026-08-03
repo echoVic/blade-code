@@ -401,7 +401,7 @@ describe('SessionService.forkSession', () => {
     ).rejects.toThrow();
   });
 
-  it('retries on a changing source transcript and forks from a stable full snapshot', async () => {
+  it('forks from a stable pre-append snapshot without retry when stats stay unchanged', async () => {
     await writeTranscript(projectPath, 'parent-session', [
       makeCreatedEvent('parent-session', projectPath, '2024-01-01T00:00:00.000Z'),
       ...makeMessageEvents(
@@ -411,31 +411,112 @@ describe('SessionService.forkSession', () => {
         'before append'
       ),
     ]);
-    const appendedLines =
-      makeMessageEvents(
+    const parentPath = getSessionFilePath(projectPath, 'parent-session');
+    const parentContent = await readFile(parentPath, 'utf-8');
+    const stableStats = await stat(parentPath, { bigint: true });
+    const { setSnapshotIO, resetSnapshotIO } = getSnapshotTestingHooks();
+    expect(setSnapshotIO).toBeTypeOf('function');
+    expect(resetSnapshotIO).toBeTypeOf('function');
+
+    let statCallCount = 0;
+    let readCallCount = 0;
+    setSnapshotIO?.({
+      async stat(filePath) {
+        expect(filePath).toBe(parentPath);
+        statCallCount += 1;
+        return stableStats;
+      },
+      async readFile(filePath) {
+        expect(filePath).toBe(parentPath);
+        readCallCount += 1;
+        return parentContent;
+      },
+    });
+
+    try {
+      const fork = await SessionService.forkSession('parent-session', {
+        newSessionId: 'child-session',
+        sourceProjectPath: projectPath,
+        targetProjectPath: projectPath,
+      });
+
+      expect(fork.messages).toEqual([{ role: 'user', content: 'before append' }]);
+      expect(statCallCount).toBe(2);
+      expect(readCallCount).toBe(1);
+    } finally {
+      resetSnapshotIO?.();
+    }
+  });
+
+  it('retries after a changed snapshot and forks from a stable post-append snapshot', async () => {
+    const preEntries = [
+      makeCreatedEvent('parent-session', projectPath, '2024-01-01T00:00:00.000Z'),
+      ...makeMessageEvents(
+        'parent-session',
+        projectPath,
+        '2024-01-01T00:00:01.000Z',
+        'before append'
+      ),
+    ];
+    const postEntries = [
+      ...preEntries,
+      ...makeMessageEvents(
         'parent-session',
         projectPath,
         '2024-01-01T00:00:02.000Z',
         'after append'
-      )
-        .map((entry) => JSON.stringify(entry))
-        .join('\n') + '\n';
+      ),
+    ];
+    await writeTranscript(projectPath, 'parent-session', preEntries);
     const parentPath = getSessionFilePath(projectPath, 'parent-session');
+    const baseStats = await stat(parentPath, { bigint: true });
+    const preContent = `${preEntries.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+    const postContent = `${postEntries.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+    const statsSequence: SnapshotBigIntStats[] = [
+      { ...baseStats, size: baseStats.size },
+      { ...baseStats, size: baseStats.size + 1n, mtimeNs: baseStats.mtimeNs + 1n },
+      { ...baseStats, size: baseStats.size + 2n, mtimeNs: baseStats.mtimeNs + 2n },
+      { ...baseStats, size: baseStats.size + 2n, mtimeNs: baseStats.mtimeNs + 2n },
+    ];
+    const { setSnapshotIO, resetSnapshotIO } = getSnapshotTestingHooks();
+    expect(setSnapshotIO).toBeTypeOf('function');
+    expect(resetSnapshotIO).toBeTypeOf('function');
 
-    const forkPromise = SessionService.forkSession('parent-session', {
-      newSessionId: 'child-session',
-      sourceProjectPath: projectPath,
-      targetProjectPath: projectPath,
+    let statCallCount = 0;
+    let readCallCount = 0;
+    setSnapshotIO?.({
+      async stat(filePath) {
+        expect(filePath).toBe(parentPath);
+        const next = statsSequence[statCallCount];
+        statCallCount += 1;
+        if (!next) {
+          throw new Error('Exhausted retry stat fixtures');
+        }
+        return next;
+      },
+      async readFile(filePath) {
+        expect(filePath).toBe(parentPath);
+        readCallCount += 1;
+        return readCallCount === 1 ? preContent : postContent;
+      },
     });
-    await appendFile(parentPath, appendedLines, 'utf-8');
-    const fork = await forkPromise;
 
-    const contents = fork.messages.map((message) => message.content);
-    expect(
-      JSON.stringify(contents) === JSON.stringify(['before append']) ||
-        JSON.stringify(contents) === JSON.stringify(['before append', 'after append'])
-    ).toBe(true);
-    expect(contents).not.toEqual(['after append']);
+    try {
+      const fork = await SessionService.forkSession('parent-session', {
+        newSessionId: 'child-session',
+        sourceProjectPath: projectPath,
+        targetProjectPath: projectPath,
+      });
+
+      expect(fork.messages).toEqual([
+        { role: 'user', content: 'before append' },
+        { role: 'user', content: 'after append' },
+      ]);
+      expect(statCallCount).toBe(4);
+      expect(readCallCount).toBe(2);
+    } finally {
+      resetSnapshotIO?.();
+    }
   });
 
   it('fails after three unstable snapshot attempts and leaves no child transcript', async () => {

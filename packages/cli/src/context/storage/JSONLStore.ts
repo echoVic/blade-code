@@ -232,14 +232,15 @@ export class JSONLStore {
   /**
    * 删除 JSONL 文件
    */
-  async delete(): Promise<void> {
+  async delete(): Promise<boolean> {
     try {
-      await this.enqueue(async () => {
+      return await this.enqueue(async () => {
         try {
           await fs.unlink(this.filePath);
+          return true;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-            return;
+            return false;
           }
           throw error;
         }

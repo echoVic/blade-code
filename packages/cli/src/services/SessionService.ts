@@ -427,16 +427,10 @@ export class SessionService {
       }
       const resolvedProjectPath = path.resolve(projectPath);
       const filePath = this.getSessionFilePath(resolvedProjectPath, sessionId);
-      try {
-        await access(filePath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-          return 0;
-        }
-        throw error;
+      const deleted = await new JSONLStore(filePath).delete();
+      if (!deleted) {
+        return 0;
       }
-
-      await new JSONLStore(filePath).delete();
       await rm(path.join(path.dirname(filePath), `${sessionId}.inbox.json`), {
         force: true,
       });
