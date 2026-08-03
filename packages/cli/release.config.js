@@ -52,8 +52,8 @@ export default {
   
   // 发布配置
   publish: {
-    // 是否发布到 npm
-    npm: true,
+    // npm 发布由 tag workflow 统一负责，避免本地脚本与 CI 重复发布
+    npm: false,
     // npm 发布配置
     npmConfig: {
       access: 'public',
@@ -94,4 +94,4 @@ export default {
       failure: '❌ 版本 {{version}} 发布失败：{{error}}',
     },
   },
-}; 
+};
