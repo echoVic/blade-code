@@ -81,12 +81,14 @@ describe('production qualification contract', () => {
     );
   });
 
-  it('runs real API trajectories only after building the current source', () => {
+  it('runs production performance and real API checks only after building', () => {
     const plan = createQualificationPlan('production');
     const buildIndex = plan.findIndex((check) => check.id === 'build');
+    const performanceIndex = plan.findIndex((check) => check.id === 'performance');
     const realApiIndex = plan.findIndex((check) => check.id === 'real-api');
 
     expect(buildIndex).toBeGreaterThanOrEqual(0);
+    expect(performanceIndex).toBeGreaterThan(buildIndex);
     expect(realApiIndex).toBeGreaterThan(buildIndex);
     expect(plan[realApiIndex]).toMatchObject({
       command: 'bun',
