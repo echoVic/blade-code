@@ -89,7 +89,7 @@ export type SendMessageResponse = z.infer<typeof SendMessageResponseSchema>;
 export const PermissionResponseSchema = z.object({
   approved: z.boolean(),
   remember: z.boolean().optional(),
-  scope: z.enum(['once', 'session']).optional(),
+  scope: z.enum(['once', 'session', 'project']).optional(),
   targetMode: PermissionModeSchema.optional(),
   feedback: z.string().optional(),
   answers: z.record(z.union([z.string(), z.array(z.string())])).optional(),

@@ -37,7 +37,7 @@ export interface ConfirmationDetails {
   questions?: Question[]; // NEW: AskUserQuestion 的问题列表
 }
 
-type PermissionApprovalScope = 'once' | 'session';
+export type PermissionApprovalScope = 'once' | 'session' | 'project';
 
 export interface ConfirmationResponse {
   approved: boolean;

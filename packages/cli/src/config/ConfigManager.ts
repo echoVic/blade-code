@@ -24,10 +24,16 @@ import type { GlobalOptions } from '../cli/types.js';
 import { resolveModelAlias } from '../services/modelAlias.js';
 import { getCwd } from '../utils/cwd.js';
 import { DEFAULT_CONFIG } from './defaults.js';
-import { BladeConfig, PermissionMode, RuntimeConfig } from './types.js';
+import {
+  BladeConfig,
+  type PermissionConfig,
+  PermissionMode,
+  RuntimeConfig,
+} from './types.js';
 
 export class ConfigManager {
   private static instance: ConfigManager | null = null;
+  private runtimePermissionOverrides?: PermissionConfig;
 
   /**
    * 私有构造函数，防止外部直接实例化
@@ -66,6 +72,7 @@ export class ConfigManager {
     additionalSettings?: Partial<RuntimeConfig>
   ): Promise<RuntimeConfig> {
     try {
+      this.runtimePermissionOverrides = additionalSettings?.permissions;
       // 1. 加载基础配置 (config.json)
       const baseConfig = await this.loadConfigFiles();
 
@@ -203,6 +210,93 @@ export class ConfigManager {
     }
 
     return settings;
+  }
+
+  /**
+   * 为独立 runtime 合并指定 workspace 的项目与本地权限。
+   * 用户级规则已经包含在 base 中，这里只叠加 workspace 私有层。
+   */
+  async loadWorkspacePermissions(
+    workspaceRoot: string,
+    base: PermissionConfig
+  ): Promise<PermissionConfig> {
+    const permissions: PermissionConfig = {
+      allow: [...base.allow],
+      ask: [...base.ask],
+      deny: [...base.deny],
+    };
+
+    if (path.resolve(workspaceRoot) !== path.resolve(getCwd())) {
+      const sourcePermissions = await this.loadWorkspacePermissionOverrides(getCwd());
+      const userSettings = await this.loadJsonFile(
+        path.join(os.homedir(), '.blade', 'settings.json')
+      );
+      const portableRules: PermissionConfig = {
+        allow: Array.from(
+          new Set([
+            ...DEFAULT_CONFIG.permissions.allow,
+            ...(userSettings?.permissions?.allow || []),
+            ...(this.runtimePermissionOverrides?.allow || []),
+          ])
+        ),
+        ask: Array.from(
+          new Set([
+            ...DEFAULT_CONFIG.permissions.ask,
+            ...(userSettings?.permissions?.ask || []),
+            ...(this.runtimePermissionOverrides?.ask || []),
+          ])
+        ),
+        deny: Array.from(
+          new Set([
+            ...DEFAULT_CONFIG.permissions.deny,
+            ...(userSettings?.permissions?.deny || []),
+            ...(this.runtimePermissionOverrides?.deny || []),
+          ])
+        ),
+      };
+      for (const decision of ['allow', 'ask', 'deny'] as const) {
+        const sourceOnly = new Set(
+          sourcePermissions[decision].filter(
+            (rule) => !portableRules[decision].includes(rule)
+          )
+        );
+        permissions[decision] = permissions[decision].filter(
+          (rule) => !sourceOnly.has(rule)
+        );
+      }
+    }
+
+    const workspaceOverrides =
+      await this.loadWorkspacePermissionOverrides(workspaceRoot);
+    for (const decision of ['allow', 'ask', 'deny'] as const) {
+      permissions[decision] = Array.from(
+        new Set([...permissions[decision], ...workspaceOverrides[decision]])
+      );
+    }
+
+    return permissions;
+  }
+
+  private async loadWorkspacePermissionOverrides(
+    workspaceRoot: string
+  ): Promise<PermissionConfig> {
+    const permissions: PermissionConfig = { allow: [], ask: [], deny: [] };
+    const settingsPaths = [
+      path.join(workspaceRoot, '.blade', 'settings.json'),
+      path.join(workspaceRoot, '.blade', 'settings.local.json'),
+    ];
+
+    for (const settingsPath of settingsPaths) {
+      const settings = await this.loadJsonFile(settingsPath);
+      if (!settings?.permissions) continue;
+      for (const decision of ['allow', 'ask', 'deny'] as const) {
+        permissions[decision] = Array.from(
+          new Set([...permissions[decision], ...(settings.permissions[decision] || [])])
+        );
+      }
+    }
+
+    return permissions;
   }
 
   /**

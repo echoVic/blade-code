@@ -772,33 +772,76 @@ describe('AcpSession', () => {
       expect(response).toBeDefined();
     });
 
-    it('应该缓存 allow_always 权限', async () => {
-      await session.setMode('default');
-
-      // 第一次请求允许并选择 always allow
-      mockConnection.setPermissionResponse('tool-123', {
-        outcome: {
-          outcome: 'selected',
-          optionId: 'allow_always',
-        },
+    it('maps ACP allow_always to an explicit project approval scope', async () => {
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
+      };
+      const agent = agentModule._getMockAgentInstance();
+      let permissionResponse: unknown;
+      agent.chatStream = async function* (_message, context) {
+        yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
+        permissionResponse = await context.confirmationHandler?.requestConfirmation({
+          type: 'permission',
+          kind: 'execute',
+          title: 'npm test',
+          message: 'Run tests?',
+        } as never);
+        return {
+          success: true,
+          finalMessage: 'done',
+          metadata: { turnsCount: 1, toolCallsCount: 1, duration: 0 },
+        };
+      };
+      vi.spyOn(mockConnection, 'requestPermission').mockResolvedValue({
+        outcome: { outcome: 'selected', optionId: 'allow_always' },
       });
 
-      const promptParams = {
+      await session.prompt({
         sessionId: 'test-session-id',
-        prompt: [{ type: 'text' as const, text: 'Execute command' }],
+        prompt: [{ type: 'text', text: 'Run tests' }],
+      });
+
+      expect(permissionResponse).toEqual({ approved: true, scope: 'project' });
+    });
+
+    it('maps ACP reject_always to an explicit project denial scope', async () => {
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
       };
+      const agent = agentModule._getMockAgentInstance();
+      let permissionResponse: unknown;
+      agent.chatStream = async function* (_message, context) {
+        yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
+        permissionResponse = await context.confirmationHandler?.requestConfirmation({
+          type: 'permission',
+          kind: 'execute',
+          title: 'npm publish',
+          message: 'Publish package?',
+        } as never);
+        return {
+          success: true,
+          finalMessage: 'done',
+          metadata: { turnsCount: 1, toolCallsCount: 1, duration: 0 },
+        };
+      };
+      vi.spyOn(mockConnection, 'requestPermission').mockResolvedValue({
+        outcome: { outcome: 'selected', optionId: 'reject_always' },
+      });
 
-      await session.prompt(promptParams);
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'Publish package' }],
+      });
 
-      // 清空权限请求记录
-      mockConnection.permissionRequests = [];
-
-      // 第二次请求相同操作
-      await session.prompt(promptParams);
-
-      // 验证第二次没有发送权限请求（使用了缓存）
-      // 由于我们的 mock 逻辑简单，这里只是验证不会重复请求
-      expect(mockConnection.permissionRequests.length).toBe(0);
+      expect(permissionResponse).toEqual({
+        approved: false,
+        scope: 'project',
+        reason: 'User permanently denied the permission request',
+      });
     });
 
     it('collects structured single-select answers even in yolo mode', async () => {

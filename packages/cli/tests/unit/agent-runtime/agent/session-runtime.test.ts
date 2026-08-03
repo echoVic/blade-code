@@ -72,6 +72,9 @@ vi.mock('../../../../src/config/index.js', async () => {
     ConfigManager: {
       getInstance: vi.fn(() => ({
         validateConfig: vi.fn(),
+        loadWorkspacePermissions: vi.fn(
+          async (_workspaceRoot: string, permissions: unknown) => permissions
+        ),
       })),
     },
   };

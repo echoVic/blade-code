@@ -139,9 +139,18 @@ export class SessionRuntime {
       throw new Error('配置未初始化，请确保应用已正确启动');
     }
 
-    ConfigManager.getInstance().validateConfig(config);
+    const workspaceRoot = options.workspaceRoot ?? getCwd();
+    const configManager = ConfigManager.getInstance();
+    const runtimeConfig: BladeConfig = {
+      ...config,
+      permissions: await configManager.loadWorkspacePermissions(
+        workspaceRoot,
+        config.permissions
+      ),
+    };
+    configManager.validateConfig(runtimeConfig);
 
-    const runtime = new SessionRuntime(config, options);
+    const runtime = new SessionRuntime(runtimeConfig, options);
     await runtime.initialize();
     return runtime;
   }

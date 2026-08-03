@@ -259,6 +259,15 @@ describe('API Schemas', () => {
       expect(() => PermissionResponseSchema.parse(approvedResponse)).not.toThrow();
     });
 
+    it('应该接受显式的项目级权限作用域', () => {
+      expect(() =>
+        PermissionResponseSchema.parse({
+          approved: true,
+          scope: 'project',
+        })
+      ).not.toThrow();
+    });
+
     it('应该验证拒绝的响应', () => {
       const deniedResponse: PermissionResponse = {
         approved: false,

@@ -65,6 +65,7 @@ bun run qualify:production
 - Web surface：通过生产 HTTP session 路由提交任务并消费真实 SSE，验证代码修改、宿主测试、canonical tool success，以及 `compaction.started` / `compaction.completed` 在 resumed Write 之前按序可见；
 - 结构化用户问题：Web 在 `yolo` 中仍必须发出 `question.required`，SSE 断线重连只重放当前未解决且 ID 不变的问题，提交结构化答案后继续 Write/Bash；ACP 在自动批准模式下也必须通过标准 permission options 收集单选答案。ACP 协议无法保真表达多选时 fail closed，不得静默降级为单选；
 - 阻塞交互取消：TUI 先结算所有 confirmation 再中止回合；Web abort 必须使 pending permission/question 立即失效，并等待旧回合释放 runtime 后才返回 idle，晚到回答返回 `404`；ACP cancel notification 必须独立打断未响应的 reverse request。Flash 和 Pro 都要在同一 session 中取消问题后继续完成 Write/Bash，且 cancelled 终态不得被 completed/error 覆盖；
+- 权限作用域：`once`、`session`、`project` 必须是不同契约。TUI/Web 显式展示会话级与项目级选择；session approval 只进入当前 runtime cache，不能写盘，并在新 session 重新询问；project approval 写入目标 workspace 的 `.blade/settings.local.json`，不能落到 server 启动目录或泄漏到其他项目，新 Web/ACP session 必须自动加载。ACP `allow_always` / `reject_always` 映射为真实项目级持久规则；Flash 和 Pro 都通过真实 Bash 轨迹验证；
 - 跨表面 session branch：TUI `/branch` 原子切换到持久化子会话；Web 通过 HTTP fork 路由创建并选中子会话，活动回合返回 `409`；ACP `/branch` 返回可由标准 `session/load` 加载的子会话 ID。Flash 和 Pro 都必须在删除原 marker 后，仅依赖继承的 Read 结果继续 Write/Bash，并证明父 transcript 未改变；
 - TUI runtime 生命周期：通过 `useAgent` 完成真实模型回合后清理，并用同一 session ID 重新获取 runtime lease，证明退出路径释放 Agent、后台资源和会话所有权；
 - ACP session/load：通过真实 ACP SDK NDJSON 连接新建并销毁会话，删除原始 marker 文件后加载持久化历史，在响应前回放用户/助手消息，并仅依赖恢复上下文继续 Write/Bash；客户端传入的 MCP server 使用会话私有注册表，初始化失败或退出时独立回收；

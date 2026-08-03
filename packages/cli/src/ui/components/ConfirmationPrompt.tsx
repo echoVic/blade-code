@@ -102,10 +102,16 @@ const ConfirmationContent = React.memo<ConfirmationContentProps>(
 );
 
 function getShortcutHint(
+  isPlanModeExit: boolean,
   isPlanModeEnter: boolean,
   isMaxTurnsExceeded: boolean
 ): string {
-  const shortcutText = isPlanModeEnter || isMaxTurnsExceeded ? 'Y/N' : 'Y/S/N';
+  const shortcutText =
+    isPlanModeEnter || isMaxTurnsExceeded
+      ? 'Y/N'
+      : isPlanModeExit
+        ? 'Y/S/N'
+        : 'Y/S/P/N';
   return `使用 ↑↓ 选择，回车确认 · ${shortcutText} 快捷键 · Esc 取消`;
 }
 
@@ -201,6 +207,10 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
             onResponse({ approved: true, scope: 'session' });
             return;
           }
+          if (lowerInput === 'p') {
+            onResponse({ approved: true, scope: 'project' });
+            return;
+          }
           if (lowerInput === 'n') {
             onResponse({ approved: false, reason: '用户拒绝' });
             return;
@@ -271,8 +281,13 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
         },
         {
           key: 'approve-session',
-          label: '[S] 允许（记住本项目）',
+          label: '[S] 允许（本次会话）',
           value: { approved: true, scope: 'session' },
+        },
+        {
+          key: 'approve-project',
+          label: '[P] 允许并记住（本项目）',
+          value: { approved: true, scope: 'project' },
         },
         {
           key: 'reject',
@@ -320,7 +335,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
 
         <Box flexDirection="column">
           <Text color="gray">
-            {getShortcutHint(isPlanModeEnter, isMaxTurnsExceeded)}
+            {getShortcutHint(isPlanModeExit, isPlanModeEnter, isMaxTurnsExceeded)}
           </Text>
           <SelectInput
             items={options}

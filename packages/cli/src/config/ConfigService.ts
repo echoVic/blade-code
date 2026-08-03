@@ -10,15 +10,15 @@
  * 6. 向前兼容（保留未知字段）
  */
 
-import { Mutex } from 'async-mutex';
-import { merge } from 'lodash-es';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Mutex } from 'async-mutex';
+import { merge } from 'lodash-es';
 import writeFileAtomic from 'write-file-atomic';
-import { getCwd } from '../utils/cwd.js';
 import type { BladeConfig, PermissionConfig } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+import { getCwd } from '../utils/cwd.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -366,6 +366,7 @@ const _NON_PERSISTABLE_FIELDS = new Set(
 export interface SaveOptions {
   scope?: ConfigScope;
   immediate?: boolean;
+  projectDir?: string;
 }
 
 // ============================================
@@ -428,7 +429,11 @@ export class ConfigService {
     this.validatePersistableFields(updates);
 
     // 2. 按 target 和 scope 分组
-    const grouped = this.groupUpdatesByTarget(updates, options.scope);
+    const grouped = this.groupUpdatesByTarget(
+      updates,
+      options.scope,
+      options.projectDir
+    );
 
     // 3. 根据 immediate 选项决定持久化方式
     if (options.immediate) {
@@ -488,8 +493,26 @@ export class ConfigService {
    * NOTE: 并发安全：整个 Read-Modify-Write 在 per-file mutex 保护下执行
    */
   async appendPermissionRule(rule: string, options: SaveOptions = {}): Promise<void> {
+    await this.appendPermissionRuleForDecision(rule, 'allow', options);
+  }
+
+  /**
+   * 追加权限拒绝规则（手动实现 append-dedupe 策略）
+   */
+  async appendPermissionDenyRule(
+    rule: string,
+    options: SaveOptions = {}
+  ): Promise<void> {
+    await this.appendPermissionRuleForDecision(rule, 'deny', options);
+  }
+
+  private async appendPermissionRuleForDecision(
+    rule: string,
+    decision: 'allow' | 'deny',
+    options: SaveOptions
+  ): Promise<void> {
     const scope = options.scope ?? 'local';
-    const filePath = this.resolveFilePath('settings', scope);
+    const filePath = this.resolveFilePath('settings', scope, options.projectDir);
 
     // 使用 flushTargetWithModifier 确保 Read-Modify-Write 原子性
     await this.flushTargetWithModifier(filePath, (existingConfig) => {
@@ -501,9 +524,15 @@ export class ConfigService {
 
       // 追加并去重
       const updatedPermissions: PermissionConfig = {
-        allow: this.dedupeArray([...(existingPermissions.allow || []), rule]),
+        allow:
+          decision === 'allow'
+            ? this.dedupeArray([...(existingPermissions.allow || []), rule])
+            : existingPermissions.allow || [],
         ask: existingPermissions.ask || [],
-        deny: existingPermissions.deny || [],
+        deny:
+          decision === 'deny'
+            ? this.dedupeArray([...(existingPermissions.deny || []), rule])
+            : existingPermissions.deny || [],
       };
 
       // 返回完整配置（保留其他字段）
@@ -522,6 +551,16 @@ export class ConfigService {
     options: Omit<SaveOptions, 'scope'> = {}
   ): Promise<void> {
     await this.appendPermissionRule(rule, { ...options, scope: 'local' });
+  }
+
+  /**
+   * 追加本地权限拒绝规则（强制 local scope）
+   */
+  async appendLocalPermissionDenyRule(
+    rule: string,
+    options: Omit<SaveOptions, 'scope'> = {}
+  ): Promise<void> {
+    await this.appendPermissionDenyRule(rule, { ...options, scope: 'local' });
   }
 
   // ============================================
@@ -553,7 +592,8 @@ export class ConfigService {
    */
   private groupUpdatesByTarget(
     updates: Partial<BladeConfig>,
-    scopeOverride?: ConfigScope
+    scopeOverride?: ConfigScope,
+    projectDir?: string
   ): Map<string, Record<string, unknown>> {
     const grouped = new Map<string, Record<string, unknown>>();
 
@@ -562,7 +602,7 @@ export class ConfigService {
       if (!routing) continue;
 
       const scope = scopeOverride ?? routing.defaultScope;
-      const filePath = this.resolveFilePath(routing.target, scope);
+      const filePath = this.resolveFilePath(routing.target, scope, projectDir);
 
       if (!grouped.has(filePath)) {
         grouped.set(filePath, {});
@@ -576,23 +616,28 @@ export class ConfigService {
   /**
    * 解析文件路径
    */
-  private resolveFilePath(target: ConfigTarget, scope: ConfigScope): string {
+  private resolveFilePath(
+    target: ConfigTarget,
+    scope: ConfigScope,
+    projectDir?: string
+  ): string {
+    const workspaceRoot = projectDir ?? getCwd();
     if (target === 'config') {
       return scope === 'global'
         ? path.join(os.homedir(), '.blade', 'config.json')
-        : path.join(getCwd(), '.blade', 'config.json');
+        : path.join(workspaceRoot, '.blade', 'config.json');
     }
 
     // settings
     switch (scope) {
       case 'local':
-        return path.join(getCwd(), '.blade', 'settings.local.json');
+        return path.join(workspaceRoot, '.blade', 'settings.local.json');
       case 'project':
-        return path.join(getCwd(), '.blade', 'settings.json');
+        return path.join(workspaceRoot, '.blade', 'settings.json');
       case 'global':
         return path.join(os.homedir(), '.blade', 'settings.json');
       default:
-        return path.join(getCwd(), '.blade', 'settings.local.json');
+        return path.join(workspaceRoot, '.blade', 'settings.local.json');
     }
   }
 

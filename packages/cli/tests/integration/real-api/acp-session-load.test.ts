@@ -1,7 +1,7 @@
-import * as acp from '@agentclientprotocol/sdk';
 import { access, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import * as acp from '@agentclientprotocol/sdk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { AcpSession } from '../../../src/acp/Session.js';
@@ -265,6 +265,91 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
                 notification.update.title.includes('Bash')
             )
           ).toBe(true);
+          expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
+          expect(JSON.stringify(client.permissionRequests)).not.toContain(
+            modelConfig.apiKey
+          );
+        });
+      } finally {
+        await harness.agent.destroy().catch(() => undefined);
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+
+    it(`${modelConfig.model} persists ACP allow_always for the project and reloads it`, async () => {
+      const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-scope-'));
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      configureModel(modelConfig);
+      const client = new RecordingClient(async (request) => ({
+        outcome: {
+          outcome: 'selected',
+          optionId:
+            request.options.find((option) => option.kind === 'allow_always')
+              ?.optionId ?? 'allow_always',
+        },
+      }));
+      const harness = createHarness(client);
+      const command = "printf 'acp-scope\\n' > acp-permission-scope.log";
+
+      try {
+        await runWithCwdOverride(workspace, async () => {
+          await harness.connection.initialize({
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientCapabilities: {},
+          });
+          const first = await harness.connection.newSession({
+            cwd: workspace,
+            mcpServers: [],
+          });
+          const firstResult = await harness.connection.prompt({
+            sessionId: first.sessionId,
+            prompt: [
+              {
+                type: 'text',
+                text: `Call Bash exactly once with ${JSON.stringify(command)} and finish after it succeeds.`,
+              },
+            ],
+          });
+          expect(firstResult.stopReason).toBe('end_turn');
+          expect(client.permissionRequests).toHaveLength(1);
+          const settings = JSON.parse(
+            await readFile(
+              path.join(workspace, '.blade', 'settings.local.json'),
+              'utf8'
+            )
+          ) as { permissions?: { allow?: string[] } };
+          expect(settings.permissions?.allow).toEqual([
+            expect.stringContaining('Bash'),
+          ]);
+
+          const updatesBeforeReloadedPrompt = client.updates.length;
+          const second = await harness.connection.newSession({
+            cwd: workspace,
+            mcpServers: [],
+          });
+          const secondResult = await harness.connection.prompt({
+            sessionId: second.sessionId,
+            prompt: [
+              {
+                type: 'text',
+                text: `Call Bash exactly once with ${JSON.stringify(command)} and finish after it succeeds.`,
+              },
+            ],
+          });
+          expect(secondResult.stopReason).toBe('end_turn');
+          expect(client.permissionRequests).toHaveLength(1);
+          expect(
+            client.updates
+              .slice(updatesBeforeReloadedPrompt)
+              .some(
+                (notification) =>
+                  notification.update.sessionUpdate === 'tool_call' &&
+                  notification.update.title.includes('Bash')
+              )
+          ).toBe(true);
+          expect(
+            await readFile(path.join(workspace, 'acp-permission-scope.log'), 'utf8')
+          ).toBe('acp-scope\n');
           expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
           expect(JSON.stringify(client.permissionRequests)).not.toContain(
             modelConfig.apiKey

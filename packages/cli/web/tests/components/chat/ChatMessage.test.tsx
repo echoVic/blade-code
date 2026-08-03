@@ -3,10 +3,9 @@
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-
+import { sessionService } from '../../../src/services/sessionService';
 import { useSessionStore } from '../../../src/store/session';
 import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages';
-import { sessionService } from '../../../src/services/sessionService';
 
 vi.mock('../../../src/components/chat/MarkdownRenderer', () => ({
   MarkdownRenderer: ({ content }: { content: string }) => content,
@@ -136,6 +135,52 @@ describe('ChatMessage', () => {
     const image = container.querySelector('img');
     expect(image?.getAttribute('src')).toBe('data:image/png;base64,history');
     expect(container.textContent).not.toContain('undefined');
+  });
+
+  test('offers distinct session and project permission scopes', async () => {
+    const respondPermission = vi
+      .spyOn(sessionService, 'respondPermission')
+      .mockResolvedValue(undefined);
+    const message = {
+      id: 'assistant-permission',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000002,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        question: null,
+        confirmation: {
+          toolCallId: 'permission-1',
+          toolName: 'Bash',
+          description: 'Run the verification command',
+          status: 'pending',
+        },
+      },
+    };
+    useSessionStore.setState({ messages: [message as never] });
+
+    act(() => {
+      root.render(<ChatMessage message={message as never} />);
+    });
+
+    expect(container.textContent).toContain('Session');
+    const project = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Project'
+    );
+    expect(project).toBeTruthy();
+    await act(async () => {
+      project?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(respondPermission).toHaveBeenCalledWith('session-1', 'permission-1', {
+      approved: true,
+      scope: 'project',
+    });
   });
 
   test('submits structured answers through the permission endpoint and closes the prompt', async () => {

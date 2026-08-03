@@ -244,13 +244,14 @@ async function collectEvents(sessionId: string): Promise<EventCollector> {
 
 async function sendMessage(
   sessionId: string,
-  content: string
+  content: string,
+  permissionMode: 'default' | 'autoEdit' | 'yolo' | 'plan' = 'yolo'
 ): Promise<{ runId: string; messageId?: string; status: string; queued?: number }> {
   if (!server) throw new Error('Blade web server is not running');
   const response = await fetch(new URL(`/sessions/${sessionId}/message`, server.url), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ content, permissionMode: 'yolo' }),
+    body: JSON.stringify({ content, permissionMode }),
   });
   if (response.status !== 202) {
     throw new Error(
@@ -335,6 +336,23 @@ async function answerQuestion(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ approved: true, answers }),
+    }
+  );
+  expect(response.status).toBe(200);
+}
+
+async function answerPermission(
+  sessionId: string,
+  requestId: string,
+  scope: 'once' | 'session' | 'project'
+): Promise<void> {
+  if (!server) throw new Error('Blade web server is not running');
+  const response = await fetch(
+    new URL(`/permissions/${requestId}?sessionId=${sessionId}`, server.url),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ approved: true, scope }),
     }
   );
   expect(response.status).toBe(200);
@@ -522,6 +540,130 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
       } finally {
         await collector?.close();
         if (sessionId) await deleteSession(sessionId);
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+
+    it(`${modelConfig.model} keeps session approvals ephemeral and reloads project approvals`, async () => {
+      const workspace = createWorkspace();
+      const settingsPath = path.join(workspace, '.blade', 'settings.local.json');
+      const command = "printf 'scope-check\\n' > permission-scope.log";
+      const sessions: string[] = [];
+      const collectors: EventCollector[] = [];
+
+      const openSession = async () => {
+        const sessionId = await createSession(workspace);
+        sessions.push(sessionId);
+        const collector = await collectEvents(sessionId);
+        collectors.push(collector);
+        return { sessionId, collector };
+      };
+
+      try {
+        setRuntimeModel(modelConfig);
+
+        const ephemeral = await openSession();
+        await sendMessage(
+          ephemeral.sessionId,
+          [
+            'Test the permission cache through real tool execution.',
+            `Call Bash with the exact command ${JSON.stringify(command)} and wait for its result.`,
+            `Then call Bash a second time with the same exact command ${JSON.stringify(command)} and wait for its result.`,
+            'Use two separate sequential Bash tool calls. Do not use any other tool.',
+          ].join('\n'),
+          'default'
+        );
+        await ephemeral.collector.waitFor((event) => event.type === 'permission.asked');
+        const ephemeralRequest = ephemeral.collector.events.find(
+          (event) => event.type === 'permission.asked'
+        );
+        await answerPermission(
+          ephemeral.sessionId,
+          String(ephemeralRequest?.properties.requestId ?? ''),
+          'session'
+        );
+        await ephemeral.collector.waitFor(
+          (event) => event.type === 'session.completed'
+        );
+        expect(
+          ephemeral.collector.events.filter(
+            (event) => event.type === 'permission.asked'
+          )
+        ).toHaveLength(1);
+        expect(
+          ephemeral.collector.events.filter(
+            (event) =>
+              event.type === 'tool.start' && event.properties.toolName === 'Bash'
+          ).length
+        ).toBeGreaterThanOrEqual(2);
+        expect(existsSync(settingsPath)).toBe(false);
+        await ephemeral.collector.close();
+        await deleteSession(ephemeral.sessionId);
+
+        const persistent = await openSession();
+        await sendMessage(
+          persistent.sessionId,
+          `Call Bash exactly once with ${JSON.stringify(command)} and finish after it succeeds.`,
+          'default'
+        );
+        await persistent.collector.waitFor(
+          (event) => event.type === 'permission.asked'
+        );
+        const persistentRequest = persistent.collector.events.find(
+          (event) => event.type === 'permission.asked'
+        );
+        await answerPermission(
+          persistent.sessionId,
+          String(persistentRequest?.properties.requestId ?? ''),
+          'project'
+        );
+        await persistent.collector.waitFor(
+          (event) => event.type === 'session.completed'
+        );
+        const persistedSettings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+          permissions?: { allow?: string[] };
+        };
+        expect(persistedSettings.permissions?.allow).toEqual([
+          expect.stringContaining('Bash'),
+        ]);
+        await persistent.collector.close();
+        await deleteSession(persistent.sessionId);
+
+        const reloaded = await openSession();
+        await sendMessage(
+          reloaded.sessionId,
+          `Call Bash exactly once with ${JSON.stringify(command)} and finish after it succeeds.`,
+          'default'
+        );
+        await reloaded.collector.waitFor(
+          (event) =>
+            event.type === 'permission.asked' || event.type === 'session.completed'
+        );
+        expect(
+          reloaded.collector.events.some((event) => event.type === 'permission.asked')
+        ).toBe(false);
+        expect(
+          reloaded.collector.events.some((event) => event.type === 'session.completed')
+        ).toBe(true);
+        expect(
+          reloaded.collector.events.some(
+            (event) =>
+              event.type === 'tool.start' && event.properties.toolName === 'Bash'
+          )
+        ).toBe(true);
+        expect(readFileSync(path.join(workspace, 'permission-scope.log'), 'utf8')).toBe(
+          'scope-check\n'
+        );
+        expect(
+          JSON.stringify(collectors.flatMap((collector) => collector.events))
+        ).not.toContain(modelConfig.apiKey);
+      } finally {
+        for (const collector of collectors) {
+          await collector.close().catch(() => undefined);
+        }
+        for (const sessionId of sessions) {
+          await deleteSession(sessionId).catch(() => undefined);
+        }
         rmSync(workspace, { recursive: true, force: true });
       }
     }, 360_000);

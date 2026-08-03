@@ -1,3 +1,4 @@
+import { getConfigService } from '../../config/ConfigService.js';
 import {
   PermissionChecker,
   type ToolInvocationDescriptor,
@@ -5,7 +6,6 @@ import {
 import { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
-import { configActions, getConfig } from '../../store/vanilla.js';
 import { getCwd } from '../../utils/cwd.js';
 import type {
   ExecutionContext,
@@ -87,6 +87,15 @@ export class ToolApprovalController {
         });
       }
       if (!response.approved) {
+        if (response.scope === 'project') {
+          await this.persistProjectPermission(
+            tool,
+            invocation,
+            params,
+            'deny',
+            context.workspaceRoot || getCwd()
+          );
+        }
         return createRejectedResult(response.reason || '用户拒绝授权', {
           shouldExitLoop: true,
           llmContent: '已取消工具执行',
@@ -97,7 +106,14 @@ export class ToolApprovalController {
 
       if (response.scope === 'session') {
         this.sessionApprovals.add(permissionSignature);
-        await this.persistSessionApproval(tool, invocation, params);
+      } else if (response.scope === 'project') {
+        await this.persistProjectPermission(
+          tool,
+          invocation,
+          params,
+          'allow',
+          context.workspaceRoot || getCwd()
+        );
       }
 
       return undefined;
@@ -146,34 +162,35 @@ export class ToolApprovalController {
     return undefined;
   }
 
-  private async persistSessionApproval(
+  private async persistProjectPermission(
     tool: Tool,
     invocation: ToolInvocation<unknown>,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    decision: 'allow' | 'deny',
+    projectDir: string
   ): Promise<void> {
-    try {
-      const descriptor: ToolInvocationDescriptor = {
-        toolName: tool.name,
-        params,
-        affectedPaths: invocation.getAffectedPaths() || [],
-        tool,
-      };
-      const pattern = PermissionChecker.abstractPattern(descriptor);
-      await configActions().appendLocalPermissionAllowRule(pattern, {
-        immediate: true,
-      });
-
-      const currentConfig = getConfig();
-      if (currentConfig?.permissions) {
-        this.permissionChecker.replaceConfig(currentConfig.permissions);
-      }
-    } catch (error) {
-      logger.warn(
-        `Failed to persist permission rule: ${
-          error instanceof Error ? error.message : 'Unknown error'
-        }`
-      );
+    const descriptor: ToolInvocationDescriptor = {
+      toolName: tool.name,
+      params,
+      affectedPaths: invocation.getAffectedPaths() || [],
+      tool,
+    };
+    const pattern = PermissionChecker.abstractPattern(descriptor);
+    if (!pattern) {
+      throw new Error(`Tool "${tool.name}" does not support project permission rules`);
     }
+    if (decision === 'allow') {
+      await getConfigService().appendLocalPermissionRule(pattern, {
+        immediate: true,
+        projectDir,
+      });
+    } else {
+      await getConfigService().appendLocalPermissionDenyRule(pattern, {
+        immediate: true,
+        projectDir,
+      });
+    }
+    this.permissionChecker.updateConfig({ [decision]: [pattern] });
   }
 }
 

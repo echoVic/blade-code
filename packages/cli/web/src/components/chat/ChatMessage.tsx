@@ -431,7 +431,10 @@ function ConfirmationSection({
 
   if (!confirmation) return null;
 
-  const handleResponse = async (approved: boolean, scope?: 'once' | 'session') => {
+  const handleResponse = async (
+    approved: boolean,
+    scope?: 'once' | 'session' | 'project'
+  ) => {
     if (!currentSessionId || submitting) return;
     setSubmitting(true);
     try {
@@ -485,6 +488,13 @@ function ConfirmationSection({
           className="px-3 py-1.5 text-[12px] font-mono bg-[#3B82F6] text-white rounded-md hover:bg-[#2563EB] disabled:opacity-50"
         >
           Session
+        </button>
+        <button
+          onClick={() => handleResponse(true, 'project')}
+          disabled={submitting}
+          className="px-3 py-1.5 text-[12px] font-mono bg-[#6366F1] text-white rounded-md hover:bg-[#4F46E5] disabled:opacity-50"
+        >
+          Project
         </button>
         <button
           onClick={() => handleResponse(false)}

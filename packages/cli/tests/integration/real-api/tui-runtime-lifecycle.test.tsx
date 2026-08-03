@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { act } from 'react';
@@ -110,6 +110,74 @@ describe.skipIf(!enabled)('TUI runtime lifecycle (real API)', () => {
 
         const replacement = await SessionRuntime.create({ sessionId, modelId });
         await replacement.dispose();
+      } finally {
+        await hook?.cleanupAgent().catch(() => undefined);
+        await act(async () => {
+          root.unmount();
+          await Promise.resolve();
+        });
+        container.remove();
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 240_000);
+
+    it(`${model} keeps a TUI session approval in memory without persisting it`, async () => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-tui-scope-'));
+      const sessionId = `tui-scope-${model}-${Date.now()}`;
+      const modelId = setRuntimeModel(model);
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = ReactDOM.createRoot(container);
+      let hook: ReturnType<typeof useAgent> | undefined;
+      let confirmationCount = 0;
+      const command = "printf 'tui-scope\\n' >> tui-permission-scope.log";
+
+      function Harness() {
+        hook = useAgent({ sessionId, modelId, maxTurns: 6 });
+        return null;
+      }
+
+      try {
+        await act(async () => {
+          root.render(<Harness />);
+          await Promise.resolve();
+        });
+        const agent = await hook?.createAgent();
+        if (!agent) throw new Error('TUI Agent was not created');
+
+        const result = await runWithCwdOverride(workspace, () =>
+          agent.chat(
+            [
+              `Call Bash with the exact command ${JSON.stringify(command)} and wait for its result.`,
+              `Then call Bash a second time with the same exact command ${JSON.stringify(command)} and wait for its result.`,
+              'Use two separate sequential Bash tool calls. Do not use any other tool.',
+            ].join('\n'),
+            {
+              messages: [],
+              userId: 'tui-permission-scope-test',
+              sessionId,
+              workspaceRoot: workspace,
+              permissionMode: PermissionMode.DEFAULT,
+              confirmationHandler: {
+                requestConfirmation: async () => {
+                  confirmationCount += 1;
+                  return { approved: true, scope: 'session' };
+                },
+              },
+            },
+            { maxTurns: 6, stream: true }
+          )
+        );
+
+        expect(result.success).toBe(true);
+        expect(confirmationCount).toBe(1);
+        expect(
+          readFileSync(path.join(workspace, 'tui-permission-scope.log'), 'utf8')
+        ).toBe('tui-scope\ntui-scope\n');
+        expect(existsSync(path.join(workspace, '.blade', 'settings.local.json'))).toBe(
+          false
+        );
+        expect(JSON.stringify(result)).not.toContain(apiKey);
       } finally {
         await hook?.cleanupAgent().catch(() => undefined);
         await act(async () => {

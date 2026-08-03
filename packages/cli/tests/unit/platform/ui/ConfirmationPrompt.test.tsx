@@ -75,7 +75,7 @@ describe('ConfirmationPrompt', () => {
     mockCtrlCHandler.mockReturnValue(vi.fn());
   });
 
-  it('覆盖长风险列表、长文件列表，并支持 S 快捷键批准项目级授权', async () => {
+  it('覆盖长风险列表、长文件列表，并支持 S 快捷键批准会话级授权', async () => {
     const { ConfirmationPrompt } = await import(
       '../../../../src/ui/components/ConfirmationPrompt.js'
     );
@@ -113,13 +113,38 @@ describe('ConfirmationPrompt', () => {
     expect(html).toContain('影响的文件:');
     expect(html).toContain('packages/cli/src/commands/headless.ts');
     expect(html).toContain('...还有 3 个文件');
-    expect(html).toContain('Y/S/N 快捷键');
+    expect(html).toContain('[S] 允许（本次会话）');
+    expect(html).toContain('Y/S/P/N 快捷键');
 
     inputHandler?.('s', { ctrl: false, meta: false, escape: false });
 
     expect(onResponse).toHaveBeenCalledWith({
       approved: true,
       scope: 'session',
+    });
+  });
+
+  it('通过独立的 P 快捷键明确批准项目级持久授权', async () => {
+    const { ConfirmationPrompt } = await import(
+      '../../../../src/ui/components/ConfirmationPrompt.js'
+    );
+    const onResponse = vi.fn();
+    const html = renderToStaticMarkup(
+      React.createElement(ConfirmationPrompt, {
+        details: {
+          type: 'permission',
+          title: 'Bash Permission',
+          message: 'Run the command?',
+        },
+        onResponse,
+      })
+    );
+
+    expect(html).toContain('[P] 允许并记住（本项目）');
+    inputHandler?.('p', { ctrl: false, meta: false, escape: false });
+    expect(onResponse).toHaveBeenCalledWith({
+      approved: true,
+      scope: 'project',
     });
   });
 

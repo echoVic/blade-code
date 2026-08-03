@@ -9,6 +9,7 @@ import {
   type ToolInvocationDescriptor,
 } from '../../../../src/config/PermissionChecker.js';
 import type { PermissionConfig } from '../../../../src/config/types.js';
+import { bashTool } from '../../../../src/tools/builtin/shell/bash.js';
 
 // Mock 工具实例，用于测试完整签名生成
 const createMockTool = (extractFn: (params: Record<string, unknown>) => string) => ({
@@ -137,6 +138,22 @@ describe('PermissionChecker', () => {
 
       const result = checker.check(descriptor);
       expect(result.result).toBe(PermissionResult.ALLOW);
+    });
+
+    it('应该把 Bash 抽象规则的固定前缀按字面量匹配', () => {
+      const descriptor: ToolInvocationDescriptor = {
+        toolName: 'Bash',
+        params: { command: "printf 'scope-check\\n' >> permission-scope.log" },
+        tool: bashTool as ToolInvocationDescriptor['tool'],
+      };
+      const rule = PermissionChecker.abstractPattern(descriptor);
+      checker = new PermissionChecker({ allow: [rule], ask: [], deny: [] });
+
+      expect(checker.check(descriptor)).toMatchObject({
+        result: PermissionResult.ALLOW,
+        matchedRule: rule,
+        matchType: 'wildcard',
+      });
     });
   });
 

@@ -281,6 +281,12 @@ export class PermissionChecker {
         return 'wildcard';
       }
 
+      // Bash 的抽象规则以 "固定命令前缀 *" 表示同一命令族。
+      // 固定部分可能包含反斜杠或其他 glob 元字符，必须按 shell 文本字面量匹配。
+      if (sigToolName === 'Bash' && ruleParams.endsWith(' *')) {
+        return sigParams.startsWith(ruleParams.slice(0, -1)) ? 'wildcard' : null;
+      }
+
       // 尝试参数值级别的 glob 匹配
       const paramMatch = this.matchParams(sigParams, ruleParams);
       if (paramMatch) {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setCwdState } from '../../src/bootstrap/state.js';
 import { ConfigManager } from '../../src/config/ConfigManager.js';
+import { ConfigService } from '../../src/config/ConfigService.js';
 
 describe('ConfigManager 集成', () => {
   let tempHome: string;
@@ -13,6 +14,7 @@ describe('ConfigManager 集成', () => {
 
   beforeEach(async () => {
     ConfigManager.resetInstance();
+    ConfigService.resetInstance();
 
     tempHome = mkdtempSync(path.join(os.tmpdir(), 'blade-home-'));
     tempProject = mkdtempSync(path.join(os.tmpdir(), 'blade-project-'));
@@ -32,6 +34,7 @@ describe('ConfigManager 集成', () => {
     delete process.env.BLADE_API_KEY;
     delete process.env.BLADE_THEME;
     ConfigManager.resetInstance();
+    ConfigService.resetInstance();
   });
 
   it('环境变量占位符应被解析，并可持久化覆盖', async () => {
@@ -216,6 +219,108 @@ describe('ConfigManager 集成', () => {
     const written = JSON.parse(readFileSync(settingsPath, 'utf-8'));
 
     expect(written.permissions.allow).toEqual(['Read(file_path:package.json)']);
+  });
+
+  it('应把显式 workspace 的权限规则写入目标项目而不是服务器启动目录', async () => {
+    const targetProject = mkdtempSync(path.join(os.tmpdir(), 'blade-target-project-'));
+    try {
+      await ConfigService.getInstance().appendLocalPermissionRule('Bash(npm test)', {
+        immediate: true,
+        projectDir: targetProject,
+      });
+
+      const targetSettings = path.join(targetProject, '.blade', 'settings.local.json');
+      expect(
+        JSON.parse(readFileSync(targetSettings, 'utf8')).permissions.allow
+      ).toEqual(['Bash(npm test)']);
+      expect(() =>
+        readFileSync(path.join(tempProject, '.blade', 'settings.local.json'), 'utf8')
+      ).toThrow();
+    } finally {
+      rmSync(targetProject, { recursive: true, force: true });
+    }
+  });
+
+  it('应为新 runtime 仅加载其 workspace 的项目权限', async () => {
+    const targetProject = mkdtempSync(path.join(os.tmpdir(), 'blade-runtime-project-'));
+    try {
+      const projectSettings = path.join(targetProject, '.blade', 'settings.json');
+      const localSettings = path.join(targetProject, '.blade', 'settings.local.json');
+      mkdirSync(path.dirname(projectSettings), { recursive: true });
+      writeFileSync(
+        projectSettings,
+        JSON.stringify({
+          permissions: { allow: ['Read(project)'], ask: [], deny: [] },
+        })
+      );
+      writeFileSync(
+        localSettings,
+        JSON.stringify({
+          permissions: { allow: ['Bash(npm test)'], ask: [], deny: ['Bash(rm *)'] },
+        })
+      );
+
+      const manager = ConfigManager.getInstance() as ConfigManager & {
+        loadWorkspacePermissions: (
+          workspaceRoot: string,
+          base: { allow: string[]; ask: string[]; deny: string[] }
+        ) => Promise<{ allow: string[]; ask: string[]; deny: string[] }>;
+      };
+      const permissions = await manager.loadWorkspacePermissions(targetProject, {
+        allow: ['Read(global)'],
+        ask: ['Write'],
+        deny: [],
+      });
+
+      expect(permissions).toEqual({
+        allow: ['Read(global)', 'Read(project)', 'Bash(npm test)'],
+        ask: ['Write'],
+        deny: ['Bash(rm *)'],
+      });
+    } finally {
+      rmSync(targetProject, { recursive: true, force: true });
+    }
+  });
+
+  it('不应把服务器启动项目的本地权限泄漏到另一个 workspace', async () => {
+    const targetProject = mkdtempSync(
+      path.join(os.tmpdir(), 'blade-isolated-project-')
+    );
+    try {
+      const sourceSettings = path.join(tempProject, '.blade', 'settings.local.json');
+      const targetSettings = path.join(targetProject, '.blade', 'settings.local.json');
+      mkdirSync(path.dirname(sourceSettings), { recursive: true });
+      mkdirSync(path.dirname(targetSettings), { recursive: true });
+      writeFileSync(
+        sourceSettings,
+        JSON.stringify({
+          permissions: { allow: ['Bash(source-only)'], ask: [], deny: [] },
+        })
+      );
+      writeFileSync(
+        targetSettings,
+        JSON.stringify({
+          permissions: { allow: ['Bash(target-only)'], ask: [], deny: [] },
+        })
+      );
+
+      const permissions = await ConfigManager.getInstance().loadWorkspacePermissions(
+        targetProject,
+        {
+          allow: ['Read(default)', 'Bash(source-only)', 'Bash(runtime-override)'],
+          ask: [],
+          deny: [],
+        }
+      );
+
+      expect(permissions.allow).toEqual([
+        'Read(default)',
+        'Bash(runtime-override)',
+        'Bash(target-only)',
+      ]);
+    } finally {
+      rmSync(targetProject, { recursive: true, force: true });
+    }
   });
 
   it('标准格式的多模型配置应被正确加载，并清理字符串两端的空格和反引号', async () => {

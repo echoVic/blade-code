@@ -126,8 +126,6 @@ export class AcpSession {
   private pendingResumeRequested = false;
   private messages: Message[];
   private mode: AcpModeId = 'default';
-  // 会话级别的权限缓存（allow_always 选项）
-  private sessionApprovals: Set<string> = new Set();
 
   constructor(
     private readonly id: string,
@@ -844,20 +842,6 @@ export class AcpSession {
       };
     }
 
-    // 生成权限签名（用于 allow_always 缓存）
-    const permissionSignature = `${toolKind}:${details.title || 'unknown'}`;
-
-    // 检查会话级别的权限缓存（allow_always）
-    if (this.sessionApprovals.has(permissionSignature)) {
-      logger.debug(
-        `[AcpSession ${this.id}] Using cached approval for: ${permissionSignature}`
-      );
-      // 注意：返回 'once' 而非 'session'，因为：
-      // 1. ACP 自己管理会话缓存（sessionApprovals）
-      // 2. 'session' 会触发 Blade 的持久化逻辑，与 ACP "仅本次会话" 语义不符
-      return { approved: true };
-    }
-
     try {
       const toolCallId = nanoid();
       const content: ToolCallContent[] = [];
@@ -919,23 +903,21 @@ export class AcpSession {
 
       // outcome.outcome === 'selected'，此时有 optionId
       const optionId = outcome.optionId;
-      const approved = optionId === 'allow_once' || optionId === 'allow_always';
-
-      // 缓存 allow_always 选择（会话级别）
       if (optionId === 'allow_always') {
-        this.sessionApprovals.add(permissionSignature);
-        logger.debug(
-          `[AcpSession ${this.id}] Cached approval for: ${permissionSignature}`
-        );
+        return { approved: true, scope: 'project' };
+      }
+      if (optionId === 'reject_always') {
+        return {
+          approved: false,
+          scope: 'project',
+          reason: 'User permanently denied the permission request',
+        };
       }
 
-      // 处理 reject_always（可选：缓存拒绝，但目前不实现）
-      // if (optionId === 'reject_always') { ... }
-
-      // 注意：始终返回 'once' 或不返回 scope
-      // ACP 的 "Always Allow" 仅在本次会话有效（内存缓存），不应触发 Blade 的持久化
+      const approved = optionId === 'allow_once';
       return {
         approved,
+        scope: 'once',
         reason: approved ? undefined : 'User denied the operation',
       };
     } catch (error) {

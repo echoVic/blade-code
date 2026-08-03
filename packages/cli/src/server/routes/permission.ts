@@ -11,7 +11,7 @@ const logger = createLogger(LogCategory.SERVICE);
 const PermissionResponseSchema = z.object({
   approved: z.boolean(),
   remember: z.boolean().optional(),
-  scope: z.enum(['once', 'session']).optional(),
+  scope: z.enum(['once', 'session', 'project']).optional(),
   targetMode: z.enum(['default', 'autoEdit', 'plan', 'yolo']).optional(),
   feedback: z.string().optional(),
   answers: z.record(z.union([z.string(), z.array(z.string())])).optional(),
