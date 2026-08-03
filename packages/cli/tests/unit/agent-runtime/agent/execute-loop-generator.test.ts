@@ -90,12 +90,14 @@ import {
   executeLoopGenerator,
 } from '../../../../src/agent/loop/executeLoopGenerator.js';
 import type { LoopDependencies, LoopEvent } from '../../../../src/agent/loop/types.js';
+import { ExecutionEngine } from '../../../../src/agent/ExecutionEngine.js';
 import type {
   ChatContext,
   LoopOptions,
   LoopResult,
 } from '../../../../src/agent/types.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
+import { ContextManager } from '../../../../src/context/ContextManager.js';
 
 // ===== Helpers =====
 
@@ -173,6 +175,33 @@ function createMockContextManager() {
     saveToolResult: vi.fn(),
     saveCompaction: vi.fn(),
   };
+}
+
+function createTypedPersistenceHarness(options?: { rejectToolUse?: boolean }) {
+  const baseDeps = createMockDeps();
+  const contextManager = new ContextManager({
+    projectPath: '/tmp/blade-execute-loop-durable-identity',
+  });
+  let messageIndex = 0;
+  const saveMessage = vi
+    .spyOn(contextManager, 'saveMessage')
+    .mockImplementation(async () => `durable-message-${++messageIndex}`);
+  const saveToolUse = vi.spyOn(contextManager, 'saveToolUse');
+  if (options?.rejectToolUse) {
+    saveToolUse.mockRejectedValue(new Error('durable tool-use persistence failed'));
+  } else {
+    saveToolUse.mockResolvedValue('durable-tool-id');
+  }
+  const saveToolResult = vi
+    .spyOn(contextManager, 'saveToolResult')
+    .mockResolvedValue('durable-result-message-id');
+  const executionEngine = new ExecutionEngine(
+    baseDeps.chatService,
+    contextManager,
+    '/tmp/blade-execute-loop-durable-identity'
+  );
+  const deps: LoopDependencies = { ...baseDeps, executionEngine };
+  return { deps, saveMessage, saveToolUse, saveToolResult };
 }
 
 // ===== Tests =====
@@ -904,13 +933,7 @@ describe('executeLoopGenerator', () => {
     });
 
     it('should execute tool calls and return the final LLM response', async () => {
-      const contextManager = createMockContextManager();
-      contextManager.saveToolUse.mockResolvedValue('durable-tool-id');
-      const deps = createMockDeps({
-        executionEngine: {
-          getContextManager: vi.fn().mockReturnValue(contextManager),
-        } as any,
-      });
+      const { deps, saveToolResult } = createTypedPersistenceHarness();
       const context = createMockContext();
 
       // First LLM call: returns a tool call
@@ -999,7 +1022,7 @@ describe('executeLoopGenerator', () => {
         { path: 'foo' },
         expect.objectContaining({ sessionId: 'test-session' })
       );
-      expect(contextManager.saveToolResult).toHaveBeenCalledWith(
+      expect(saveToolResult).toHaveBeenCalledWith(
         'test-session',
         'durable-tool-id',
         'Read',
@@ -1019,12 +1042,8 @@ describe('executeLoopGenerator', () => {
     });
 
     it('falls back to the provider tool ID when durable tool-use persistence fails', async () => {
-      const contextManager = createMockContextManager();
-      contextManager.saveToolUse.mockResolvedValue(null);
-      const deps = createMockDeps({
-        executionEngine: {
-          getContextManager: vi.fn().mockReturnValue(contextManager),
-        } as any,
+      const { deps, saveToolResult } = createTypedPersistenceHarness({
+        rejectToolUse: true,
       });
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
@@ -1062,7 +1081,7 @@ describe('executeLoopGenerator', () => {
         )
       );
 
-      expect(contextManager.saveToolResult).toHaveBeenCalledWith(
+      expect(saveToolResult).toHaveBeenCalledWith(
         'test-session',
         'tc1',
         'Read',
@@ -1670,13 +1689,7 @@ describe('executeLoopGenerator', () => {
     });
 
     it('should persist and write back the tool result before returning when tool requests loop exit', async () => {
-      const contextManager = createMockContextManager();
-      contextManager.saveToolUse.mockResolvedValue('durable-tool-id');
-      const deps = createMockDeps({
-        executionEngine: {
-          getContextManager: vi.fn().mockReturnValue(contextManager),
-        } as any,
-      });
+      const { deps, saveToolResult } = createTypedPersistenceHarness();
       const context = createMockContext();
 
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
@@ -1718,8 +1731,8 @@ describe('executeLoopGenerator', () => {
       const { result } = await drainGenerator(gen);
 
       expect(result.success).toBe(false);
-      expect(contextManager.saveToolResult).toHaveBeenCalledTimes(1);
-      expect(contextManager.saveToolResult).toHaveBeenCalledWith(
+      expect(saveToolResult).toHaveBeenCalledTimes(1);
+      expect(saveToolResult).toHaveBeenCalledWith(
         'test-session',
         'durable-tool-id',
         'Edit',
