@@ -510,6 +510,81 @@ export function assertForkExcludesPostBoundaryEvents(
   }
 }
 
+function containsForbiddenIdentity(
+  value: unknown,
+  forbidden: ReadonlySet<string>
+): boolean {
+  if (typeof value === 'string') return forbidden.has(value);
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsForbiddenIdentity(entry, forbidden));
+  }
+  if (!isRecord(value)) return false;
+  return Object.values(value).some((entry) =>
+    containsForbiddenIdentity(entry, forbidden)
+  );
+}
+
+export function assertForkSnapshotExcludesParentSuffix(
+  childEvents: readonly SessionEvent[],
+  parentBoundary: number,
+  completedParentEvents: readonly SessionEvent[]
+): void {
+  assertForkExcludesPostBoundaryEvents(
+    childEvents,
+    parentBoundary,
+    completedParentEvents
+  );
+  const suffix = completedParentEvents.slice(parentBoundary);
+  const assistantMessageIds = new Set(
+    suffix
+      .filter(
+        (event): event is Extract<SessionEvent, { type: 'message_created' }> =>
+          event.type === 'message_created' && event.data.role === 'assistant'
+      )
+      .map((event) => event.data.messageId)
+  );
+  if (assistantMessageIds.size === 0) {
+    throw new Error('Fork parent suffix requires an assistant message');
+  }
+  const hasNonEmptyAssistantText = suffix.some((event) => {
+    if (
+      event.type !== 'part_created' ||
+      event.data.partType !== 'text' ||
+      !assistantMessageIds.has(event.data.messageId) ||
+      !isRecord(event.data.payload)
+    ) {
+      return false;
+    }
+    return (
+      typeof event.data.payload.text === 'string' &&
+      event.data.payload.text.trim().length > 0
+    );
+  });
+  if (!hasNonEmptyAssistantText) {
+    throw new Error('Fork parent suffix requires assistant non-empty text');
+  }
+
+  const forbiddenIdentities = new Set<string>();
+  for (const event of suffix) {
+    forbiddenIdentities.add(event.id);
+    if (event.type === 'message_created') {
+      forbiddenIdentities.add(event.data.messageId);
+    }
+    if (event.type === 'part_created' || event.type === 'part_updated') {
+      forbiddenIdentities.add(event.data.partId);
+    }
+  }
+  if (
+    childEvents.some(
+      (event) =>
+        forbiddenIdentities.has(event.id) ||
+        containsForbiddenIdentity(event.data, forbiddenIdentities)
+    )
+  ) {
+    throw new Error('Fork child contains a post-boundary parent identity');
+  }
+}
+
 export function assertParentUnchanged(before: string, parentPath: string): void {
   if (readFileSync(parentPath, 'utf8') !== before) {
     throw new Error(`Parent transcript changed during fork: ${parentPath}`);

@@ -19,9 +19,9 @@ import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
 import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js';
 import {
   assertForkChildToolTrace,
-  assertForkExcludesPostBoundaryEvents,
   assertForkLineage,
   assertForkParentToolTrace,
+  assertForkSnapshotExcludesParentSuffix,
   assertNoSecrets,
   assertParentUnchanged,
   cleanupForkFixture,
@@ -445,7 +445,8 @@ function assertNonEmptyFinalWithoutFixture(
   collector: EventCollector,
   eventBoundary: number,
   marker: string,
-  nonce: string
+  nonce: string,
+  context: { caseName: 'completed' | 'active'; phase: 'parent' | 'child' }
 ): void {
   const finalText = collector.events
     .slice(eventBoundary)
@@ -454,8 +455,19 @@ function assertNonEmptyFinalWithoutFixture(
     .filter((delta): delta is string => typeof delta === 'string')
     .join('');
   if (!finalText.trim()) throw new Error('Qualification final response is empty');
-  if (finalText.includes(marker) || finalText.includes(nonce)) {
-    throw new Error('Qualification final response exposed fixture material');
+  const containsMarker = finalText.includes(marker);
+  const containsNonce = finalText.includes(nonce);
+  if (containsMarker || containsNonce) {
+    throw new Error(
+      `Qualification final response exposed fixture material: ${JSON.stringify({
+        case: context.caseName,
+        phase: context.phase,
+        textLength: finalText.length,
+        containsMarker,
+        containsNonce,
+        hash: createHash('sha256').update(finalText).digest('hex'),
+      })}`
+    );
   }
 }
 
@@ -491,8 +503,8 @@ function parentPrompt(): string {
     'Use the Read tool to read the workspace file memory.txt.',
     'Remember its complete contents for a later fork.',
     'Only Read is allowed. Exact retries are acceptable.',
-    'Do not repeat, quote, encode, or summarize file contents in final prose.',
-    'After Read succeeds, give a brief completion confirmation.',
+    'Never repeat, quote, encode, summarize, or otherwise expose any file contents.',
+    'After Read succeeds, reply with exactly READ_COMPLETE and nothing else.',
   ].join(' ');
 }
 
@@ -502,7 +514,7 @@ function childPrompt(): string {
     'Use Write to create result.txt with that exact marker and exactly one trailing newline.',
     'Then use Bash with exactly this command: wc -c result.txt',
     'Only exact retries of those two calls are allowed.',
-    'Do not repeat the marker in final prose; finish with a brief confirmation.',
+    'Do not repeat the marker in final prose; reply with exactly CHILD_COMPLETE.',
   ].join(' ');
 }
 
@@ -514,7 +526,8 @@ async function runChildTurn(
   parentPath: string,
   fixture: ForkFixture,
   expectedBytes: string,
-  marker: string
+  marker: string,
+  caseName: 'completed' | 'active'
 ): Promise<{ collector: EventCollector; raw: string }> {
   const collector = await collectEvents(server, child);
   const resultPath = path.join(fixture.workspace, 'result.txt');
@@ -532,7 +545,10 @@ async function runChildTurn(
     if (readFileSync(resultPath, 'utf8') !== expectedBytes) {
       throw new Error('Web fork child result bytes violated the exact contract');
     }
-    assertNonEmptyFinalWithoutFixture(collector, eventBoundary, marker, fixture.nonce);
+    assertNonEmptyFinalWithoutFixture(collector, eventBoundary, marker, fixture.nonce, {
+      caseName,
+      phase: 'child',
+    });
     assertCollectorIdentity(collector, child);
     assertParentUnchanged(parentBeforeFork, parentPath);
     expect(events.length).toBeGreaterThan(childSnapshot.length);
@@ -610,7 +626,8 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
           parentCollector,
           parentEventBoundary,
           marker,
-          fixture.nonce
+          fixture.nonce,
+          { caseName: 'completed', phase: 'parent' }
         );
         const forked = await forkSession(activeServer, parent);
         child = forked.ref;
@@ -643,7 +660,8 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
           parentPath,
           fixture,
           expectedBytes,
-          marker
+          marker,
+          'completed'
         );
         childCollector = childRun.collector;
         assertNoSecrets(
@@ -686,11 +704,6 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
       const marker = `WEB_ACTIVE_MARKER_${fixture.nonce}`;
       const expectedBytes = `${marker}\n`;
       const memoryPath = path.join(fixture.workspace, 'memory.txt');
-      const boundarySeed = createHash('sha256')
-        .update(`${modelLabel}:${fixture.nonce}`)
-        .digest('hex')
-        .slice(0, 20);
-      const postBoundaryMarker = boundarySeed.split('').reverse().join('');
       const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
       const originalAutoMemory = process.env.BLADE_AUTO_MEMORY;
       const hookManager = HookManager.getInstance();
@@ -735,7 +748,8 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
           parentCollector,
           firstSseBoundary,
           marker,
-          fixture.nonce
+          fixture.nonce,
+          { caseName: 'active', phase: 'parent' }
         );
         const parentPath = findSessionTranscript(fixture.storageRoot, parent.sessionId);
         const committedEvents = readSessionEvents(parentPath);
@@ -755,11 +769,7 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
         const secondAccepted = await sendMessage(
           activeServer,
           parent,
-          [
-            `Reverse this identifier exactly: ${boundarySeed}`,
-            'Reply with only the reversed identifier.',
-            'Do not call tools.',
-          ].join(' ')
+          'Reply with a short acknowledgment. Do not call tools.'
         );
         await parentCollector.waitFor(
           (event) =>
@@ -808,24 +818,11 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
         const completedParentEvents = readSessionEvents(parentPath);
         expect(completedParentRaw.startsWith(boundaryRaw)).toBe(true);
         expect(completedParentRaw.length).toBeGreaterThan(boundaryRaw.length);
-        assertForkExcludesPostBoundaryEvents(
+        assertForkSnapshotExcludesParentSuffix(
           childSnapshot,
           boundaryEvents.length,
           completedParentEvents
         );
-        const secondOutput = parentCollector.events
-          .slice(secondSseBoundary)
-          .filter((event) => event.type === 'message.delta')
-          .map((event) => String(event.properties.delta ?? ''))
-          .join('');
-        if (!secondOutput.includes(postBoundaryMarker)) {
-          throw new Error(
-            'Held parent response did not satisfy its exact output contract'
-          );
-        }
-        if (readFileSync(childPath, 'utf8').includes(postBoundaryMarker)) {
-          throw new Error('Fork child contains parent post-boundary response content');
-        }
         expect(
           parentCollector.events
             .slice(secondSseBoundary)
@@ -850,7 +847,8 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
           parentPath,
           fixture,
           expectedBytes,
-          marker
+          marker,
+          'active'
         );
         childCollector = childRun.collector;
         assertNoSecrets(

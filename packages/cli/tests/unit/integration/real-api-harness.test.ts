@@ -23,6 +23,7 @@ import {
   assertForkExcludesPostBoundaryEvents,
   assertForkLineage,
   assertForkParentToolTrace,
+  assertForkSnapshotExcludesParentSuffix,
   assertNoSecrets,
   assertParentUnchanged,
   cleanupForkFixture,
@@ -616,6 +617,52 @@ describe('real API coding-task harness', () => {
 });
 
 describe('real API session-fork trajectory harness', () => {
+  it('requires a completed assistant suffix that is absent from the fork snapshot', () => {
+    const parentId = 'parent-session';
+    const childId = 'child-session';
+    const prefix = [createForkCreatedEvent(parentId, 'root-session', 'root-session')];
+    const assistant = createMessageEvent(parentId);
+    assistant.id = 'parent-suffix-message-event';
+    assistant.data.messageId = 'parent-suffix-assistant';
+    assistant.data.role = 'assistant';
+    const text = createPartEvent(parentId);
+    text.id = 'parent-suffix-text-event';
+    text.data.partId = 'parent-suffix-text';
+    text.data.messageId = assistant.data.messageId;
+    text.data.payload = { text: 'completed response' };
+    const completed = [...prefix, assistant, text];
+    const child = [
+      createForkCreatedEvent(childId, parentId, 'root-session'),
+      createForkBoundaryEvent(childId, parentId, 'root-session'),
+    ];
+
+    expect(() =>
+      assertForkSnapshotExcludesParentSuffix(child, prefix.length, completed)
+    ).not.toThrow();
+    expect(() =>
+      assertForkSnapshotExcludesParentSuffix(child, prefix.length, [
+        ...prefix,
+        assistant,
+      ])
+    ).toThrow('non-empty text');
+    expect(() =>
+      assertForkSnapshotExcludesParentSuffix(
+        [
+          ...child,
+          {
+            ...createPartEvent(childId),
+            data: {
+              ...createPartEvent(childId).data,
+              payload: { inheritedEventId: text.id },
+            },
+          },
+        ],
+        prefix.length,
+        completed
+      )
+    ).toThrow('post-boundary');
+  });
+
   it('accepts a child snapshot that excludes parent message and part events after the fork boundary', () => {
     const sessionId = 'parent-session';
     const childId = 'child-session';
