@@ -3,8 +3,15 @@ import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
 import {
+  sameSessionRef,
+  sessionRefFromSession,
+  sessionRefKey,
+} from '@/store/session/sessionIdentity';
+import {
   Check,
   ChevronLeft,
+  GitFork,
+  Loader2,
   Pencil,
   Plus,
   Server,
@@ -32,15 +39,18 @@ export function Sidebar({ className }: SidebarProps) {
   } = useAppStore();
   const {
     sessions,
-    currentSessionId,
+    currentSessionRef,
+    forkingSessionRef,
     selectSession,
     startTemporarySession,
     deleteSession,
+    forkSession,
+    updateSession,
     loadSessions,
   } = useSessionStore();
-  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingSessionKey, setEditingSessionKey] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
-  const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
+  const [hoveredSessionKey, setHoveredSessionKey] = useState<string | null>(null);
 
   const groupSessionsByDate = () => {
     const today = new Date();
@@ -51,8 +61,9 @@ export function Sidebar({ className }: SidebarProps) {
     const groups: { label: string; sessions: typeof sessions }[] = [];
     const uniqueSessions = new Map<string, (typeof sessions)[number]>();
     for (const session of sessions) {
-      if (session && !uniqueSessions.has(session.sessionId)) {
-        uniqueSessions.set(session.sessionId, session);
+      const key = sessionRefKey(sessionRefFromSession(session));
+      if (session && !uniqueSessions.has(key)) {
+        uniqueSessions.set(key, session);
       }
     }
     const validSessions = Array.from(uniqueSessions.values());
@@ -112,29 +123,28 @@ export function Sidebar({ className }: SidebarProps) {
     startTemporarySession();
   };
 
-  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
+  const handleDeleteSession = async (
+    e: React.MouseEvent,
+    session: (typeof sessions)[0]
+  ) => {
     e.stopPropagation();
-    await deleteSession(sessionId);
+    await deleteSession(sessionRefFromSession(session));
   };
 
   const handleStartRename = (e: React.MouseEvent, session: (typeof sessions)[0]) => {
     e.stopPropagation();
-    setEditingSessionId(session.sessionId);
+    setEditingSessionKey(sessionRefKey(sessionRefFromSession(session)));
     setEditingTitle(getSessionTitle(session));
   };
 
-  const handleSaveRename = async (sessionId: string) => {
+  const handleSaveRename = async (session: (typeof sessions)[0]) => {
     if (!editingTitle.trim()) {
-      setEditingSessionId(null);
+      setEditingSessionKey(null);
       return;
     }
     try {
-      await fetch(`/sessions/${sessionId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: editingTitle.trim() }),
-      });
-      setEditingSessionId(null);
+      await updateSession(sessionRefFromSession(session), editingTitle.trim());
+      setEditingSessionKey(null);
       await loadSessions();
     } catch (err) {
       console.error('Failed to rename session:', err);
@@ -142,7 +152,7 @@ export function Sidebar({ className }: SidebarProps) {
   };
 
   const handleCancelRename = () => {
-    setEditingSessionId(null);
+    setEditingSessionKey(null);
     setEditingTitle('');
   };
 
@@ -286,14 +296,18 @@ export function Sidebar({ className }: SidebarProps) {
                 {group.label}
               </div>
               {group.sessions.map((session) => {
-                const isActive = session.sessionId === currentSessionId;
-                const isEditing = editingSessionId === session.sessionId;
-                const isHovered = hoveredSessionId === session.sessionId;
+                const sessionRef = sessionRefFromSession(session);
+                const sessionKey = sessionRefKey(sessionRef);
+                const isActive = sameSessionRef(sessionRef, currentSessionRef);
+                const isEditing = editingSessionKey === sessionKey;
+                const isHovered = hoveredSessionKey === sessionKey;
+                const isForking = sameSessionRef(sessionRef, forkingSessionRef);
+                const anyForking = Boolean(forkingSessionRef);
 
                 if (isEditing) {
                   return (
                     <div
-                      key={session.sessionId}
+                      key={sessionKey}
                       className="w-full h-[34px] flex items-center gap-2 px-3 bg-[#F3F4F6] dark:bg-[#27272a]"
                     >
                       <input
@@ -301,19 +315,21 @@ export function Sidebar({ className }: SidebarProps) {
                         value={editingTitle}
                         onChange={(e) => setEditingTitle(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleSaveRename(session.sessionId);
+                          if (e.key === 'Enter') handleSaveRename(session);
                           if (e.key === 'Escape') handleCancelRename();
                         }}
                         autoFocus
                         className="flex-1 bg-white dark:bg-[#18181b] text-[13px] text-[#111827] dark:text-[#E5E5E5] font-mono px-2 py-1 rounded outline-none focus:ring-1 focus:ring-[#22C55E]"
                       />
                       <button
-                        onClick={() => handleSaveRename(session.sessionId)}
+                        aria-label={`Save ${getSessionTitle(session)}`}
+                        onClick={() => handleSaveRename(session)}
                         className="p-1 text-[#22C55E] hover:bg-[#E5E7EB] dark:hover:bg-[#18181b] rounded"
                       >
                         <Check className="h-3 w-3" />
                       </button>
                       <button
+                        aria-label={`Cancel ${getSessionTitle(session)}`}
                         onClick={handleCancelRename}
                         className="p-1 text-[#9CA3AF] dark:text-[#71717a] hover:bg-[#E5E7EB] dark:hover:bg-[#18181b] rounded"
                       >
@@ -325,16 +341,18 @@ export function Sidebar({ className }: SidebarProps) {
 
                 return (
                   <div
-                    key={session.sessionId}
-                    onMouseEnter={() => setHoveredSessionId(session.sessionId)}
-                    onMouseLeave={() => setHoveredSessionId(null)}
+                    key={sessionKey}
+                    aria-current={isActive ? 'true' : undefined}
+                    aria-busy={isForking ? 'true' : undefined}
+                    onMouseEnter={() => setHoveredSessionKey(sessionKey)}
+                    onMouseLeave={() => setHoveredSessionKey(null)}
                     className={cn(
                       'w-full h-[34px] flex items-center gap-2 px-3 transition-colors group cursor-pointer',
                       isActive
                         ? 'bg-[#E5E7EB] dark:bg-[#27272a]'
                         : 'hover:bg-[#F3F4F6] dark:hover:bg-[#18181b]'
                     )}
-                    onClick={() => selectSession(session.sessionId)}
+                    onClick={() => selectSession(sessionRef)}
                   >
                     <div
                       className={cn(
@@ -346,24 +364,49 @@ export function Sidebar({ className }: SidebarProps) {
                     />
                     <span
                       className={cn(
-                        'text-[13px] font-mono truncate text-left flex-1',
+                        'text-[13px] font-mono truncate text-left flex-1 flex items-center gap-2',
                         isActive
                           ? 'text-[#111827] dark:text-[#E5E5E5]'
                           : 'text-[#6B7280] dark:text-[#a1a1aa]'
                       )}
                     >
-                      {getSessionTitle(session)}
+                      <span className="truncate">{getSessionTitle(session)}</span>
+                      {session.relationType === 'fork' && session.parentId && (
+                        <span
+                          title={`Forked from ${session.parentId.slice(0, 6)}`}
+                          aria-label={`Forked from ${session.parentId.slice(0, 6)}`}
+                          className="text-[10px] text-[#16A34A] dark:text-[#22C55E] shrink-0"
+                        >
+                          Forked from {session.parentId.slice(0, 6)}
+                        </span>
+                      )}
                     </span>
+                    {isForking && (
+                      <Loader2 className="h-3 w-3 animate-spin text-[#16A34A] dark:text-[#22C55E]" />
+                    )}
                     {isHovered && (
                       <div className="flex items-center gap-1">
                         <button
+                          aria-label={`Fork ${getSessionTitle(session)}`}
+                          disabled={anyForking}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void forkSession(session);
+                          }}
+                          className="p-1 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] rounded transition-colors disabled:opacity-50"
+                        >
+                          <GitFork className="h-3 w-3" />
+                        </button>
+                        <button
+                          aria-label={`Rename ${getSessionTitle(session)}`}
                           onClick={(e) => handleStartRename(e, session)}
                           className="p-1 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] rounded transition-colors"
                         >
                           <Pencil className="h-3 w-3" />
                         </button>
                         <button
-                          onClick={(e) => handleDeleteSession(e, session.sessionId)}
+                          aria-label={`Delete ${getSessionTitle(session)}`}
+                          onClick={(e) => handleDeleteSession(e, session)}
                           className="p-1 text-[#9CA3AF] hover:text-red-500 hover:bg-[#F3F4F6] dark:text-[#71717a] dark:hover:text-red-400 dark:hover:bg-[#27272a] rounded transition-colors"
                         >
                           <Trash2 className="h-3 w-3" />

@@ -1,3 +1,4 @@
+import type { SessionRef } from '@api/schemas';
 import type {
   Message as BaseMessage,
   ImageAttachmentInput,
@@ -19,6 +20,7 @@ export type {
   Session,
   StreamEvent,
 };
+export type { SessionRef };
 
 export interface TokenUsage {
   inputTokens: number;
@@ -109,22 +111,26 @@ export interface Message extends Omit<BaseMessage, 'metadata'> {
 export interface SessionSlice {
   sessions: Session[];
   currentSessionId: string | null;
+  currentSessionRef: SessionRef | null;
+  forkingSessionRef: SessionRef | null;
   isTemporarySession: boolean;
   isLoading: boolean;
   error: string | null;
 
   setSessions: (sessions: Session[]) => void;
   addSession: (session: Session) => void;
-  removeSession: (sessionId: string) => void;
-  setCurrentSession: (sessionId: string | null) => void;
+  removeSession: (ref: SessionRef) => void;
+  setCurrentSession: (ref: SessionRef | null) => void;
   setTemporarySession: (isTemp: boolean) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   startTemporarySession: () => void;
   clearError: () => void;
   loadSessions: () => Promise<void>;
-  selectSession: (sessionId: string) => Promise<void>;
-  deleteSession: (sessionId: string) => Promise<void>;
+  selectSession: (ref: SessionRef) => Promise<void>;
+  deleteSession: (ref: SessionRef) => Promise<void>;
+  updateSession: (ref: SessionRef, title: string) => Promise<void>;
+  forkSession: (session: Session) => Promise<void>;
   sendMessage: (payload: SendMessagePayload) => Promise<void>;
   abortSession: () => Promise<void>;
 }
@@ -163,7 +169,9 @@ export interface StreamingSlice {
   setStreaming: (streaming: boolean) => void;
   setAgentPhase: (phase: AgentPhase) => void;
   setRunId: (runId: string | null) => void;
-  subscribeToEvents: (sessionId: string) => void;
+  prepareEventSubscription: (ref: SessionRef) => Promise<() => void>;
+  replaceEventSubscription: (next: (() => void) | null) => void;
+  subscribeToEvents: (ref: SessionRef) => Promise<void>;
   unsubscribeFromEvents: () => void;
   handleEvent: (event: StreamEvent) => void;
   setCurrentAssistantMessageId: (id: string | null) => void;

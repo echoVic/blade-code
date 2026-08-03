@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { registerMonacoTheme } from '@/lib/monacoTheme';
 import { cn } from '@/lib/utils';
+import { sessionDirectoryHeaders } from '@/services/sessionService';
 import { useAppStore } from '@/store/AppStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import { useSessionStore } from '@/store/session';
@@ -58,7 +59,7 @@ const MonacoEditorLazy = lazy(async () => {
 
 export function FilePreview() {
   const { toggleFilePreview } = useAppStore();
-  const { messages, currentSessionId } = useSessionStore();
+  const { messages, currentSessionRef } = useSessionStore();
   const [activeTab, setActiveTab] = useState<'diff' | 'files' | 'logs'>('diff');
   const [rootNodes, setRootNodes] = useState<TreeNode[]>([]);
   const [childrenCache, setChildrenCache] = useState<Record<string, TreeNode[]>>({});
@@ -73,11 +74,16 @@ export function FilePreview() {
   const [filePreviewTruncated, setFilePreviewTruncated] = useState(false);
 
   const loadTreeNodes = async (dirPath: string = '') => {
+    if (!currentSessionRef) {
+      return [];
+    }
     try {
       const url = dirPath
         ? `/suggestions/files/tree?path=${encodeURIComponent(dirPath)}`
         : '/suggestions/files/tree';
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: sessionDirectoryHeaders(currentSessionRef),
+      });
       if (!response.ok) throw new Error('Failed to load tree');
       const data = (await response.json()) as Array<{
         name: string;
@@ -96,6 +102,10 @@ export function FilePreview() {
   useEffect(() => {
     let isMounted = true;
     const loadRoot = async () => {
+      if (!currentSessionRef) {
+        setRootNodes([]);
+        return;
+      }
       setFileLoading(true);
       setFileError(null);
       try {
@@ -111,7 +121,7 @@ export function FilePreview() {
     return () => {
       isMounted = false;
     };
-  }, [currentSessionId]);
+  }, [currentSessionRef]);
 
   useEffect(() => {
     setSelectedFile(null);
@@ -120,7 +130,7 @@ export function FilePreview() {
     setFilePreviewTruncated(false);
     setExpandedDirs({});
     setChildrenCache({});
-  }, [currentSessionId]);
+  }, [currentSessionRef?.projectPath]);
 
   const allDiffs = useMemo(() => findAllDiffs(messages), [messages]);
   const logs = useMemo(() => buildLogs(messages), [messages]);
@@ -131,6 +141,9 @@ export function FilePreview() {
   };
 
   const openFile = async (path: string) => {
+    if (!currentSessionRef) {
+      return;
+    }
     setSelectedFile(path);
     setFileContent('');
     setFilePreviewLoading(true);
@@ -138,7 +151,10 @@ export function FilePreview() {
     setFilePreviewTruncated(false);
     try {
       const response = await fetch(
-        `/suggestions/files/content?path=${encodeURIComponent(path)}`
+        `/suggestions/files/content?path=${encodeURIComponent(path)}`,
+        {
+          headers: sessionDirectoryHeaders(currentSessionRef),
+        }
       );
       if (!response.ok) {
         throw new Error('Failed to load file');

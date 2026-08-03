@@ -19,6 +19,20 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
 
   setRunId: (runId) => set({ currentRunId: runId }),
 
+  prepareEventSubscription: async (ref) => {
+    const dispatch = createEventDispatcher(get, set);
+    return sessionService.openEventSubscription(ref, dispatch);
+  },
+
+  replaceEventSubscription: (next) => {
+    const previous = get().eventUnsubscribe;
+    set({ eventUnsubscribe: next });
+    globalStreamingBuffer.reset();
+    if (previous) {
+      previous();
+    }
+  },
+
   setCurrentAssistantMessageId: (id) => set({ currentAssistantMessageId: id }),
 
   setHasToolCalls: (has) => set({ hasToolCalls: has }),
@@ -44,16 +58,9 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
     });
   },
 
-  subscribeToEvents: (sessionId: string) => {
-    const { eventUnsubscribe } = get();
-    if (eventUnsubscribe) {
-      eventUnsubscribe();
-    }
-
-    globalStreamingBuffer.reset();
-    const dispatch = createEventDispatcher(get, set);
-    const unsubscribe = sessionService.subscribeEvents(sessionId, dispatch);
-    set({ eventUnsubscribe: unsubscribe });
+  subscribeToEvents: async (ref) => {
+    const unsubscribe = await get().prepareEventSubscription(ref);
+    get().replaceEventSubscription(unsubscribe);
   },
 
   unsubscribeFromEvents: () => {

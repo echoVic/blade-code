@@ -1,6 +1,11 @@
 import { sessionService } from '@/services';
 import { useConfigStore } from '@/store/ConfigStore';
 import { initialTokenUsage, TEMP_SESSION_ID } from '../constants';
+import {
+  removeSessionByRef,
+  sessionRefFromSession,
+  upsertSessionByRef,
+} from '../sessionIdentity';
 import type {
   MessageContentPart,
   SendMessagePayload,
@@ -36,6 +41,8 @@ const buildOptimisticUserContent = (payload: SendMessagePayload) => {
 export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
   sessions: [],
   currentSessionId: null,
+  currentSessionRef: null,
+  forkingSessionRef: null,
   isTemporarySession: false,
   isLoading: false,
   error: null,
@@ -44,20 +51,26 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
 
   addSession: (session) =>
     set((state) => ({
-      sessions: [...state.sessions, session],
+      sessions: upsertSessionByRef(state.sessions, session),
     })),
 
-  removeSession: (sessionId) =>
-    set((state) => ({
-      sessions: state.sessions.filter((s) => s.sessionId !== sessionId),
-      currentSessionId:
-        state.currentSessionId === sessionId ? null : state.currentSessionId,
-      messages: state.currentSessionId === sessionId ? [] : state.messages,
-    })),
+  removeSession: (ref) =>
+    set((state) => {
+      const isCurrent =
+        state.currentSessionRef?.sessionId === ref.sessionId &&
+        state.currentSessionRef?.projectPath === ref.projectPath;
+      return {
+        sessions: removeSessionByRef(state.sessions, ref),
+        currentSessionId: isCurrent ? null : state.currentSessionId,
+        currentSessionRef: isCurrent ? null : state.currentSessionRef,
+        messages: isCurrent ? [] : state.messages,
+      };
+    }),
 
-  setCurrentSession: (sessionId) =>
+  setCurrentSession: (ref) =>
     set({
-      currentSessionId: sessionId,
+      currentSessionId: ref?.sessionId ?? null,
+      currentSessionRef: ref,
       isTemporarySession: false,
     }),
 
@@ -72,6 +85,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
   startTemporarySession: () =>
     set({
       currentSessionId: TEMP_SESSION_ID,
+      currentSessionRef: null,
       isTemporarySession: true,
       messages: [],
       tokenUsage: { ...initialTokenUsage },
@@ -88,46 +102,106 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
     }
   },
 
-  selectSession: async (sessionId: string) => {
-    set({
-      isLoading: true,
-      error: null,
-      currentSessionId: sessionId,
-      isTemporarySession: false,
-    });
+  selectSession: async (ref) => {
+    set({ isLoading: true, error: null });
     try {
-      const rawMessages = await sessionService.getMessages(sessionId);
+      const rawMessages = await sessionService.getMessages(ref);
       const messages = aggregateMessages(rawMessages);
+      const unsubscribe = await get().prepareEventSubscription(ref);
       set({
+        currentSessionId: ref.sessionId,
+        currentSessionRef: ref,
+        isTemporarySession: false,
         messages,
         isLoading: false,
         tokenUsage: { ...initialTokenUsage },
       });
-      if (get().currentSessionId === sessionId) {
-        get().subscribeToEvents(sessionId);
-      }
+      get().replaceEventSubscription(unsubscribe);
     } catch (err) {
       set({ error: (err as Error).message, isLoading: false });
     }
   },
 
-  deleteSession: async (sessionId: string) => {
+  deleteSession: async (ref) => {
     try {
-      await sessionService.deleteSession(sessionId);
+      await sessionService.deleteSession(ref);
       set((state) => ({
-        sessions: state.sessions.filter((s) => s.sessionId !== sessionId),
+        sessions: removeSessionByRef(state.sessions, ref),
         currentSessionId:
-          state.currentSessionId === sessionId ? null : state.currentSessionId,
-        messages: state.currentSessionId === sessionId ? [] : state.messages,
+          state.currentSessionRef?.sessionId === ref.sessionId &&
+          state.currentSessionRef?.projectPath === ref.projectPath
+            ? null
+            : state.currentSessionId,
+        currentSessionRef:
+          state.currentSessionRef?.sessionId === ref.sessionId &&
+          state.currentSessionRef?.projectPath === ref.projectPath
+            ? null
+            : state.currentSessionRef,
+        messages:
+          state.currentSessionRef?.sessionId === ref.sessionId &&
+          state.currentSessionRef?.projectPath === ref.projectPath
+            ? []
+            : state.messages,
       }));
     } catch (err) {
       set({ error: (err as Error).message });
     }
   },
 
+  updateSession: async (ref, title) => {
+    try {
+      await sessionService.updateSession(ref, title);
+      set((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.sessionId === ref.sessionId && session.projectPath === ref.projectPath
+            ? { ...session, title }
+            : session
+        ),
+      }));
+    } catch (err) {
+      set({ error: (err as Error).message });
+    }
+  },
+
+  forkSession: async (session) => {
+    const sourceRef = sessionRefFromSession(session);
+    set({ forkingSessionRef: sourceRef, error: null });
+
+    let preparedUnsubscribe: (() => void) | null = null;
+    try {
+      const forked = await sessionService.forkSession(session);
+      const childRef = sessionRefFromSession(forked.session);
+      const messages = aggregateMessages(forked.messages);
+      preparedUnsubscribe = await get().prepareEventSubscription(childRef);
+
+      set((state) => ({
+        sessions: upsertSessionByRef(
+          upsertSessionByRef(state.sessions, session),
+          forked.session
+        ),
+        currentSessionId: childRef.sessionId,
+        currentSessionRef: childRef,
+        isTemporarySession: false,
+        messages,
+        tokenUsage: { ...initialTokenUsage },
+        error: null,
+        forkingSessionRef: null,
+      }));
+      get().replaceEventSubscription(preparedUnsubscribe);
+      preparedUnsubscribe = null;
+    } catch (err) {
+      preparedUnsubscribe?.();
+      set({
+        error: (err as Error).message,
+        forkingSessionRef: null,
+      });
+    }
+  },
+
   sendMessage: async (payload: SendMessagePayload) => {
     const {
       currentSessionId,
+      currentSessionRef,
       isTemporarySession,
       isStreaming,
       subscribeToEvents,
@@ -135,28 +209,27 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       addMessage,
     } = get();
 
+    let sessionRef = currentSessionRef;
     let sessionId = currentSessionId;
 
-    if (
-      isTemporarySession ||
-      !currentSessionId ||
-      currentSessionId === TEMP_SESSION_ID
-    ) {
+    if (isTemporarySession || !sessionId || sessionId === TEMP_SESSION_ID) {
       try {
         const session = await sessionService.createSession();
         addSession(session);
+        sessionRef = sessionRefFromSession(session);
+        sessionId = session.sessionId;
         set({
           currentSessionId: session.sessionId,
+          currentSessionRef: sessionRef,
           isTemporarySession: false,
         });
-        sessionId = session.sessionId;
       } catch (err) {
         set({ error: (err as Error).message });
         return;
       }
     }
 
-    if (!sessionId || sessionId === TEMP_SESSION_ID) {
+    if (!sessionRef || !sessionId || sessionId === TEMP_SESSION_ID) {
       set({ error: 'Failed to create session' });
       return;
     }
@@ -174,13 +247,13 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       recoveredSteeringCount: isStreaming ? get().recoveredSteeringCount : 0,
     });
     if (!isStreaming) {
-      subscribeToEvents(sessionId);
+      await subscribeToEvents(sessionRef);
     }
 
     try {
       const { currentMode } = useConfigStore.getState();
       const response = await sessionService.sendMessage(
-        sessionId,
+        sessionRef,
         payload,
         currentMode
       );
@@ -198,7 +271,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
   },
 
   abortSession: async () => {
-    const { currentSessionId, unsubscribeFromEvents } = get();
+    const { currentSessionRef, unsubscribeFromEvents } = get();
 
     unsubscribeFromEvents();
     set({
@@ -207,9 +280,9 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       pendingSteeringCount: 0,
     });
 
-    if (currentSessionId) {
+    if (currentSessionRef) {
       try {
-        await sessionService.abortSession(currentSessionId);
+        await sessionService.abortSession(currentSessionRef);
       } catch {
         // Ignore abort errors
       }

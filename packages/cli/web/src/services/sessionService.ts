@@ -1,10 +1,19 @@
-import type {
-  Message as ApiMessage,
+import {
+  ForkSessionResponseSchema,
+  BusEventSchema,
+  type Message as ApiMessage,
+  type ForkSessionResponse,
+  type SessionHistoryMessage,
+  SessionHistoryMessageSchema,
   MessageRole,
   PermissionMode,
-  PermissionResponse,
-  Session,
+  type PermissionResponse,
+  type Session,
+  SessionRefSchema,
+  SessionSchema,
+  type SessionRef,
 } from '@api/schemas';
+import { z } from 'zod';
 
 export interface StreamEvent {
   type: string;
@@ -39,7 +48,12 @@ export interface Message extends Omit<ApiMessage, 'content'> {
   content: MessageContent;
 }
 
+export type { SessionRef };
+
 const API_BASE = '';
+const SESSION_EVENT_READY_TIMEOUT_MS = 10000;
+
+const SessionArraySchema = z.array(SessionSchema);
 
 const normalizeContent = (content: unknown): MessageContent => {
   if (Array.isArray(content)) {
@@ -48,14 +62,6 @@ const normalizeContent = (content: unknown): MessageContent => {
   if (content == null) return '';
   if (typeof content === 'string') return content;
   return JSON.stringify(content);
-};
-
-const extractTextContent = (content: MessageContent): string => {
-  if (typeof content === 'string') return content;
-  return content
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n');
 };
 
 const generateDefaultTitle = (): string => {
@@ -68,11 +74,45 @@ const generateDefaultTitle = (): string => {
   return `Session ${year}-${month}-${day} ${hours}:${minutes}`;
 };
 
+function sessionRefQuery(ref: SessionRef): string {
+  const parsed = SessionRefSchema.parse(ref);
+  return `projectPath=${encodeURIComponent(parsed.projectPath)}`;
+}
+
+export function withSessionRef(path: string, ref: SessionRef): string {
+  const query = sessionRefQuery(ref);
+  return `${path}${path.includes('?') ? '&' : '?'}${query}`;
+}
+
+export function sessionDirectoryHeaders(ref: SessionRef): Record<string, string> {
+  const parsed = SessionRefSchema.parse(ref);
+  return { 'x-blade-directory': parsed.projectPath };
+}
+
+const normalizeHistoryMessage = (
+  message: SessionHistoryMessage,
+  index: number,
+  now: number
+): Message => ({
+  id: `history-${index}-${now}`,
+  role: message.role as MessageRole,
+  content: normalizeContent(message.content),
+  timestamp: now,
+  metadata:
+    message.metadata && typeof message.metadata === 'object'
+      ? (message.metadata as Record<string, unknown>)
+      : undefined,
+  tool_call_id: message.tool_call_id,
+  name: message.name,
+  tool_calls: message.tool_calls,
+  thinkingContent: message.thinkingContent ?? message.reasoningContent,
+});
+
 export const sessionService = {
   listSessions: async (): Promise<Session[]> => {
     const res = await fetch(`${API_BASE}/sessions`);
     if (!res.ok) throw new Error('Failed to load sessions');
-    return res.json();
+    return SessionArraySchema.parse(await res.json());
   },
 
   createSession: async (projectPath?: string, title?: string): Promise<Session> => {
@@ -82,134 +122,149 @@ export const sessionService = {
       body: JSON.stringify({ projectPath, title: title || generateDefaultTitle() }),
     });
     if (!res.ok) throw new Error('Failed to create session');
-    return res.json();
+    return SessionSchema.parse(await res.json());
   },
 
-  deleteSession: async (sessionId: string): Promise<void> => {
-    const res = await fetch(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE' });
+  deleteSession: async (ref: SessionRef): Promise<void> => {
+    const res = await fetch(
+      withSessionRef(`${API_BASE}/sessions/${ref.sessionId}`, ref),
+      {
+        method: 'DELETE',
+      }
+    );
     if (!res.ok) throw new Error('Failed to delete session');
   },
 
-  updateSession: async (sessionId: string, title: string): Promise<void> => {
-    const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+  updateSession: async (ref: SessionRef, title: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/sessions/${ref.sessionId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, projectPath: ref.projectPath }),
     });
     if (!res.ok) throw new Error('Failed to update session');
   },
 
-  getMessages: async (sessionId: string): Promise<Message[]> => {
-    const res = await fetch(`${API_BASE}/sessions/${sessionId}/message`);
+  getMessages: async (ref: SessionRef): Promise<Message[]> => {
+    const res = await fetch(
+      withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/message`, ref)
+    );
     if (!res.ok) throw new Error('Failed to load messages');
-    const result = await res.json();
+    const result = z.array(SessionHistoryMessageSchema).parse(await res.json());
     const now = Date.now();
-    return result.map((m: Message, index: number) => {
-      const content = normalizeContent(m.content);
-      const textContent = extractTextContent(content);
-      const metadata =
-        m.role === 'tool'
-          ? {
-              kind: 'tool_result',
-              toolCallId: m.tool_call_id,
-              toolName: m.name,
-              output: textContent,
-            }
-          : m.metadata;
-      return {
-        id: m.id || `history-${index}-${now}`,
-        role: m.role,
-        content,
-        timestamp: now,
-        metadata,
-        tool_call_id: m.tool_call_id,
-        name: m.name,
-        tool_calls: m.tool_calls,
-        thinkingContent: m.thinkingContent,
-      };
-    });
+    return result.map((message, index) => normalizeHistoryMessage(message, index, now));
   },
 
   sendMessage: async (
-    sessionId: string,
+    ref: SessionRef,
     payload: SendMessagePayload,
     permissionMode?: PermissionMode
   ): Promise<SendMessageResponse> => {
-    const res = await fetch(`${API_BASE}/sessions/${sessionId}/message`, {
+    const res = await fetch(`${API_BASE}/sessions/${ref.sessionId}/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...payload, permissionMode }),
+      body: JSON.stringify({
+        ...payload,
+        permissionMode,
+        projectPath: ref.projectPath,
+      }),
     });
     if (!res.ok) throw new Error('Failed to send message');
     return res.json();
   },
 
-  abortSession: async (sessionId: string): Promise<void> => {
-    await fetch(`${API_BASE}/sessions/${sessionId}/abort`, { method: 'POST' });
+  abortSession: async (ref: SessionRef): Promise<void> => {
+    await fetch(withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/abort`, ref), {
+      method: 'POST',
+    });
   },
 
-  subscribeEvents: (
-    sessionId: string,
+  forkSession: async (
+    session: Session
+  ): Promise<{ session: Session; messages: Message[] }> => {
+    const res = await fetch(`${API_BASE}/sessions/${session.sessionId}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectPath: session.projectPath }),
+    });
+    if (!res.ok) throw new Error('Failed to fork session');
+    const parsed = ForkSessionResponseSchema.parse(
+      await res.json()
+    ) as ForkSessionResponse;
+    const now = Date.now();
+    return {
+      session: parsed.session,
+      messages: parsed.messages.map((message, index) =>
+        normalizeHistoryMessage(message, index, now)
+      ),
+    };
+  },
+
+  openEventSubscription: async (
+    ref: SessionRef,
     onEvent: (event: StreamEvent) => void,
     options?: { maxRetries?: number; onConnectionChange?: (connected: boolean) => void }
-  ): (() => void) => {
+  ): Promise<() => void> => {
     const maxRetries = options?.maxRetries ?? 5;
     const onConnectionChange = options?.onConnectionChange;
     let eventSource: EventSource | null = null;
     let retryCount = 0;
     let retryTimeout: ReturnType<typeof setTimeout> | null = null;
-    let isManualClose = false;
     let lastHeartbeat = Date.now();
     let heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null;
+    let readinessTimeout: ReturnType<typeof setTimeout> | null = null;
+    let isManualClose = false;
+    let isSubscriptionReady = false;
 
-    const connect = () => {
-      if (isManualClose) return;
+    let resolveReady!: () => void;
+    let rejectReady!: (error: Error) => void;
+    let settled = false;
 
-      eventSource = new EventSource(`${API_BASE}/sessions/${sessionId}/events`);
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
 
-      eventSource.onopen = () => {
-        retryCount = 0;
-        lastHeartbeat = Date.now();
-        onConnectionChange?.(true);
-
-        heartbeatCheckInterval = setInterval(() => {
-          if (Date.now() - lastHeartbeat > 45000) {
-            console.warn('SSE heartbeat timeout, reconnecting...');
-            eventSource?.close();
-            scheduleReconnect();
-          }
-        }, 15000);
-      };
-
-      eventSource.onmessage = (e) => {
-        try {
-          const event = JSON.parse(e.data) as StreamEvent;
-          lastHeartbeat = Date.now();
-          if (event.type === 'heartbeat' || event.type === 'connected') {
-            return;
-          }
-          onEvent(event);
-        } catch (err) {
-          console.error('Failed to parse SSE event:', e.data, err);
-        }
-      };
-
-      eventSource.onerror = () => {
-        if (isManualClose) return;
-        console.error('SSE connection error');
-        onConnectionChange?.(false);
-        cleanup();
-        scheduleReconnect();
-      };
-    };
-
-    const cleanup = () => {
+    const clearHeartbeatMonitor = () => {
       if (heartbeatCheckInterval) {
         clearInterval(heartbeatCheckInterval);
         heartbeatCheckInterval = null;
       }
+    };
+
+    const clearReadinessTimeout = () => {
+      if (readinessTimeout) {
+        clearTimeout(readinessTimeout);
+        readinessTimeout = null;
+      }
+    };
+
+    const closeCurrentConnection = () => {
       eventSource?.close();
       eventSource = null;
+    };
+
+    const cleanup = () => {
+      if (retryTimeout) {
+        clearTimeout(retryTimeout);
+        retryTimeout = null;
+      }
+      clearHeartbeatMonitor();
+      clearReadinessTimeout();
+      closeCurrentConnection();
+    };
+
+    const settleReady = () => {
+      if (settled) return;
+      settled = true;
+      clearReadinessTimeout();
+      resolveReady();
+    };
+
+    const failReady = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectReady(error);
     };
 
     const scheduleReconnect = () => {
@@ -226,10 +281,85 @@ export const sessionService = {
         `SSE reconnecting in ${delay}ms (attempt ${retryCount}/${maxRetries})`
       );
 
-      retryTimeout = setTimeout(connect, delay);
+      retryTimeout = setTimeout(() => {
+        void connect();
+      }, delay);
     };
 
-    connect();
+    const markReady = () => {
+      retryCount = 0;
+      lastHeartbeat = Date.now();
+      onConnectionChange?.(true);
+      clearHeartbeatMonitor();
+      heartbeatCheckInterval = setInterval(() => {
+        if (Date.now() - lastHeartbeat > 45000) {
+          console.warn('SSE heartbeat timeout, reconnecting...');
+          clearHeartbeatMonitor();
+          closeCurrentConnection();
+          onConnectionChange?.(false);
+          scheduleReconnect();
+        }
+      }, 15000);
+      if (!isSubscriptionReady) {
+        isSubscriptionReady = true;
+        settleReady();
+      }
+    };
+
+    const connect = async (): Promise<void> => {
+      if (isManualClose) return;
+
+      closeCurrentConnection();
+      eventSource = new EventSource(
+        withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/events`, ref)
+      );
+
+      if (!isSubscriptionReady) {
+        clearReadinessTimeout();
+        readinessTimeout = setTimeout(() => {
+          failReady(new Error('Timed out waiting for event subscription readiness'));
+        }, SESSION_EVENT_READY_TIMEOUT_MS);
+      }
+
+      eventSource.onopen = () => {
+        markReady();
+      };
+
+      eventSource.onmessage = (e) => {
+        try {
+          const event = BusEventSchema.parse(JSON.parse(e.data)) as StreamEvent;
+          lastHeartbeat = Date.now();
+          if (event.type === 'connected') {
+            markReady();
+            return;
+          }
+          if (event.type === 'heartbeat') return;
+          onEvent(event);
+        } catch (err) {
+          console.error('Failed to parse SSE event:', e.data, err);
+        }
+      };
+
+      eventSource.onerror = () => {
+        if (isManualClose) return;
+        clearHeartbeatMonitor();
+        closeCurrentConnection();
+        if (!isSubscriptionReady) {
+          failReady(new Error('Failed to open event subscription'));
+          return;
+        }
+        console.error('SSE connection error');
+        onConnectionChange?.(false);
+        scheduleReconnect();
+      };
+    };
+
+    void connect().catch((error) => {
+      failReady(
+        error instanceof Error ? error : new Error('Failed to open event subscription')
+      );
+    });
+    await readyPromise;
 
     return () => {
       isManualClose = true;
@@ -243,12 +373,16 @@ export const sessionService = {
   },
 
   respondPermission: async (
-    sessionId: string,
+    ref: SessionRef,
     permissionId: string,
     payload: Omit<PermissionResponse, 'remember'>
   ): Promise<void> => {
+    const query = new URLSearchParams({
+      sessionId: ref.sessionId,
+      projectPath: ref.projectPath,
+    });
     const res = await fetch(
-      `${API_BASE}/permissions/${permissionId}?sessionId=${sessionId}`,
+      `${API_BASE}/permissions/${permissionId}?${query.toString()}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -259,12 +393,15 @@ export const sessionService = {
   },
 
   respondToConfirmation: async (
-    sessionId: string,
+    ref: SessionRef,
     toolCallId: string,
     approved: boolean
   ): Promise<void> => {
     const res = await fetch(
-      `${API_BASE}/sessions/${sessionId}/confirmation/${toolCallId}`,
+      withSessionRef(
+        `${API_BASE}/sessions/${ref.sessionId}/confirmation/${toolCallId}`,
+        ref
+      ),
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -275,12 +412,15 @@ export const sessionService = {
   },
 
   respondToQuestion: async (
-    sessionId: string,
+    ref: SessionRef,
     toolCallId: string,
     answers: Record<string, string | string[]>
   ): Promise<void> => {
     const res = await fetch(
-      `${API_BASE}/sessions/${sessionId}/question/${toolCallId}`,
+      withSessionRef(
+        `${API_BASE}/sessions/${ref.sessionId}/question/${toolCallId}`,
+        ref
+      ),
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -290,8 +430,10 @@ export const sessionService = {
     if (!res.ok) throw new Error('Failed to respond to question');
   },
 
-  getGitInfo: async (): Promise<{ branch: string | null }> => {
-    const res = await fetch(`${API_BASE}/suggestions/git-info`);
+  getGitInfo: async (ref: SessionRef): Promise<{ branch: string | null }> => {
+    const res = await fetch(`${API_BASE}/suggestions/git-info`, {
+      headers: sessionDirectoryHeaders(ref),
+    });
     if (!res.ok) throw new Error('Failed to get git info');
     return res.json();
   },

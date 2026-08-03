@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { sessionService } from '@/services';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
+import { sameSessionRef } from '@/store/session/sessionIdentity';
 import { Sidebar } from './Sidebar';
 
 interface LayoutProps {
@@ -57,27 +58,36 @@ export function Layout({ children }: LayoutProps) {
     isTerminalOpen,
     toggleFilePreview,
   } = useAppStore();
-  const { currentSessionId, sessions } = useSessionStore();
+  const { currentSessionId, currentSessionRef, sessions } = useSessionStore();
   const [gitBranch, setGitBranch] = useState<string | null>(null);
 
   const currentPath = useMemo(() => {
     if (!currentSessionId) return 'No session';
-    const session = sessions.find((s) => s.sessionId === currentSessionId);
+    const session = sessions.find((s) =>
+      sameSessionRef(
+        { sessionId: s.sessionId, projectPath: s.projectPath },
+        currentSessionRef
+      )
+    );
     if (!session?.projectPath) return 'New session';
     return formatPath(session.projectPath);
-  }, [currentSessionId, sessions]);
+  }, [currentSessionId, currentSessionRef, sessions]);
 
   useEffect(() => {
+    if (!currentSessionRef) {
+      setGitBranch(null);
+      return;
+    }
     const fetchGitInfo = async () => {
       try {
-        const info = await sessionService.getGitInfo();
+        const info = await sessionService.getGitInfo(currentSessionRef);
         setGitBranch(info.branch);
       } catch {
         setGitBranch(null);
       }
     };
     fetchGitInfo();
-  }, [currentSessionId]);
+  }, [currentSessionRef]);
 
   return (
     <div className="flex h-screen overflow-hidden">
