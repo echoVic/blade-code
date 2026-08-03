@@ -904,7 +904,13 @@ describe('executeLoopGenerator', () => {
     });
 
     it('should execute tool calls and return the final LLM response', async () => {
-      const deps = createMockDeps();
+      const contextManager = createMockContextManager();
+      contextManager.saveToolUse.mockResolvedValue('durable-tool-id');
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: vi.fn().mockReturnValue(contextManager),
+        } as any,
+      });
       const context = createMockContext();
 
       // First LLM call: returns a tool call
@@ -992,6 +998,82 @@ describe('executeLoopGenerator', () => {
         'Read',
         { path: 'foo' },
         expect.objectContaining({ sessionId: 'test-session' })
+      );
+      expect(contextManager.saveToolResult).toHaveBeenCalledWith(
+        'test-session',
+        'durable-tool-id',
+        'Read',
+        'file content',
+        'durable-tool-id',
+        undefined,
+        undefined,
+        undefined
+      );
+      expect(context.messages).toContainEqual(
+        expect.objectContaining({
+          role: 'tool',
+          tool_call_id: 'tc1',
+          name: 'Read',
+        })
+      );
+    });
+
+    it('falls back to the provider tool ID when durable tool-use persistence fails', async () => {
+      const contextManager = createMockContextManager();
+      contextManager.saveToolUse.mockResolvedValue(null);
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: vi.fn().mockReturnValue(contextManager),
+        } as any,
+      });
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc1',
+              type: 'function',
+              function: { name: 'Read', arguments: '{"path":"foo"}' },
+            },
+          ],
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Done.',
+          toolCalls: undefined,
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          finishReason: 'stop',
+        });
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        llmContent: 'file content',
+      });
+
+      await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read the file',
+          context,
+          { stream: false } as LoopOptions,
+          'You are a helpful assistant.'
+        )
+      );
+
+      expect(contextManager.saveToolResult).toHaveBeenCalledWith(
+        'test-session',
+        'tc1',
+        'Read',
+        'file content',
+        null,
+        undefined,
+        undefined,
+        undefined
+      );
+      expect(context.messages).toContainEqual(
+        expect.objectContaining({ role: 'tool', tool_call_id: 'tc1' })
       );
     });
 
@@ -1589,6 +1671,7 @@ describe('executeLoopGenerator', () => {
 
     it('should persist and write back the tool result before returning when tool requests loop exit', async () => {
       const contextManager = createMockContextManager();
+      contextManager.saveToolUse.mockResolvedValue('durable-tool-id');
       const deps = createMockDeps({
         executionEngine: {
           getContextManager: vi.fn().mockReturnValue(contextManager),
@@ -1636,6 +1719,16 @@ describe('executeLoopGenerator', () => {
 
       expect(result.success).toBe(false);
       expect(contextManager.saveToolResult).toHaveBeenCalledTimes(1);
+      expect(contextManager.saveToolResult).toHaveBeenCalledWith(
+        'test-session',
+        'durable-tool-id',
+        'Edit',
+        null,
+        'durable-tool-id',
+        '用户拒绝授权',
+        undefined,
+        undefined
+      );
       expect(context.messages).toContainEqual({
         role: 'tool',
         tool_call_id: 'tc1',

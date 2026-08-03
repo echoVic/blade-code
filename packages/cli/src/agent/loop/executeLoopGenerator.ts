@@ -1717,7 +1717,7 @@ export async function* executeLoopGenerator(
             const uuid = await persistToolResult(
               deps,
               context,
-              toolCall.id,
+              toolUseUuid ?? toolCall.id,
               toolCall.function.name,
               result.success ? toJsonValue(result.llmContent) : null,
               toolUseUuid,
