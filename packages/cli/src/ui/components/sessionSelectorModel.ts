@@ -1,6 +1,10 @@
 import type { SessionMetadata } from '../../services/SessionService.js';
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 
+export function getSessionCandidateKey(session: SessionMetadata): string {
+  return `${session.projectPath}\0${session.sessionId}`;
+}
+
 export function getVisibleSessionCandidates(
   sessions: readonly SessionMetadata[],
   intent: SessionSelectionIntent

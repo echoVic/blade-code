@@ -284,7 +284,7 @@ export async function processSlashCommand(
 
   const slashResult = await executeSlashCommand(command, slashContext);
 
-  if (isSessionSelectionAction(slashResult.data)) {
+  if (slashResult.success && isSessionSelectionAction(slashResult.data)) {
     if (slashResult.data.action === 'select_session') {
       appActions.showSessionSelector(
         slashResult.data.sessions,

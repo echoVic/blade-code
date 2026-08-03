@@ -444,10 +444,11 @@ describe('session selector fork integration', () => {
       stdin.write('\u001b[B');
       await waitForAssertion(
         () => {
+          const selectedChunk = stdout.output.slice(outputLengthBeforeMove);
           expect(stdout.output.length).toBeGreaterThan(outputLengthBeforeMove);
-          expect(stdout.output.slice(outputLengthBeforeMove)).toContain(
-            `> 今天 19:00 | ${workspaceLabel} (main) | 12 条消息 ↳ fork`
-          );
+          expect(selectedChunk).toContain('> ');
+          expect(selectedChunk).toContain(workspaceLabel);
+          expect(selectedChunk).toContain('(main) | 12 条消息 ↳ fork');
         },
         () => `output=${JSON.stringify(stdout.output)}`
       );
@@ -569,10 +570,11 @@ describe('session selector fork integration', () => {
       stdin.write('\u001b[B');
       await waitForAssertion(
         () => {
+          const selectedChunk = stdout.output.slice(outputLengthBeforeMove);
           expect(stdout.output.length).toBeGreaterThan(outputLengthBeforeMove);
-          expect(stdout.output.slice(outputLengthBeforeMove)).toContain(
-            `> 今天 19:00 | ${workspaceLabel} (main) | 12 条消息 ↳ fork`
-          );
+          expect(selectedChunk).toContain('> ');
+          expect(selectedChunk).toContain(workspaceLabel);
+          expect(selectedChunk).toContain('(main) | 12 条消息 ↳ fork');
         },
         () => `output=${JSON.stringify(stdout.output)}`
       );

@@ -416,6 +416,84 @@ describe('processSlashCommand', () => {
       );
     });
 
+    it('does not route failed structured select_session results as handled success', async () => {
+      const sessions = [createSessionMetadata({ sessionId: 'ordinary-session' })];
+      executeSlashCommand.mockResolvedValue({
+        success: false,
+        error: 'blocked',
+        data: {
+          action: 'select_session',
+          intent: 'fork',
+          sessions,
+        },
+      });
+
+      const appActions = createMockAppActions();
+      const sessionActions = createMockSessionActions();
+      const result = await processSlashCommand(
+        createResolvedInput('/fork'),
+        appActions,
+        sessionActions,
+        new AbortController().signal
+      );
+
+      expect(appActions.showSessionSelector).not.toHaveBeenCalled();
+      expect(activationMocks.activateSessionSelection).not.toHaveBeenCalled();
+      expect(sessionActions.addAssistantMessage).toHaveBeenCalledWith('blocked');
+      expect(result).toEqual({
+        type: 'handled',
+        commandResult: {
+          success: false,
+          output: undefined,
+          error: 'blocked',
+          metadata: {
+            action: 'select_session',
+            intent: 'fork',
+            sessions,
+          },
+        },
+      });
+    });
+
+    it('does not route failed structured activate_session results as handled success', async () => {
+      const session = createSessionMetadata();
+      executeSlashCommand.mockResolvedValue({
+        success: false,
+        error: 'blocked',
+        data: {
+          action: 'activate_session',
+          intent: 'fork',
+          session,
+        },
+      });
+
+      const appActions = createMockAppActions();
+      const sessionActions = createMockSessionActions();
+      const result = await processSlashCommand(
+        createResolvedInput('/fork parent-session'),
+        appActions,
+        sessionActions,
+        new AbortController().signal
+      );
+
+      expect(appActions.showSessionSelector).not.toHaveBeenCalled();
+      expect(activationMocks.activateSessionSelection).not.toHaveBeenCalled();
+      expect(sessionActions.addAssistantMessage).toHaveBeenCalledWith('blocked');
+      expect(result).toEqual({
+        type: 'handled',
+        commandResult: {
+          success: false,
+          output: undefined,
+          error: 'blocked',
+          metadata: {
+            action: 'activate_session',
+            intent: 'fork',
+            session,
+          },
+        },
+      });
+    });
+
     it('propagates activation helper failures instead of faking handled success', async () => {
       const session = createSessionMetadata();
       const expectedError = new Error('activation failed');

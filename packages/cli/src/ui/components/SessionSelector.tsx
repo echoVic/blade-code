@@ -13,6 +13,7 @@ import { useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 import {
+  getSessionCandidateKey,
   getSessionSelectorCopy,
   getVisibleSessionCandidates,
 } from './sessionSelectorModel.js';
@@ -172,6 +173,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
             : '';
 
       return {
+        key: getSessionCandidateKey(session),
         label: `${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${errorStr}${relationStr}`,
         value: session,
       };

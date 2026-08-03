@@ -65,4 +65,33 @@ describe('sessionSelectorModel', () => {
       [ordinary, subagent, forked]
     );
   });
+
+  it('builds stable distinct compound keys for session candidates', async () => {
+    const sameIdOtherWorkspace = createSessionMetadata({
+      sessionId: 'shared-id',
+      projectPath: '/workspace/b',
+      rootId: 'root-2',
+    });
+    const sameWorkspaceOtherId = createSessionMetadata({
+      sessionId: 'different-id',
+      projectPath: '/workspace/a',
+      rootId: 'root-3',
+    });
+
+    const { getSessionCandidateKey } = await import(
+      '../../../../../src/ui/components/sessionSelectorModel.js'
+    );
+
+    const ordinaryKey = getSessionCandidateKey(
+      createSessionMetadata({ sessionId: 'shared-id' })
+    );
+    const otherWorkspaceKey = getSessionCandidateKey(sameIdOtherWorkspace);
+    const otherIdKey = getSessionCandidateKey(sameWorkspaceOtherId);
+
+    expect(ordinaryKey).toBe('/workspace/a\u0000shared-id');
+    expect(
+      getSessionCandidateKey(createSessionMetadata({ sessionId: 'shared-id' }))
+    ).toBe(ordinaryKey);
+    expect(new Set([ordinaryKey, otherWorkspaceKey, otherIdKey]).size).toBe(3);
+  });
 });
