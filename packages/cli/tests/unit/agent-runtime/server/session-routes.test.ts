@@ -1,7 +1,12 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
+import {
+  SessionRuntime,
+  type SessionRuntimeOptions,
+} from '../../../../src/agent/runtime/SessionRuntime.js';
+import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
+import type { SessionMetadata } from '../../../../src/services/SessionService.js';
 
 const runtimeState = vi.hoisted(() => ({
   runtime: {
@@ -339,6 +344,42 @@ describe('SessionRoutes runtime reuse', () => {
     return app;
   };
 
+  const createRuntimeDouble = async (
+    overrides: Partial<typeof runtimeState.runtime> & { workspaceRoot?: string } = {}
+  ): Promise<SessionRuntime> => {
+    const actualSessionRuntimeModule = await vi.importActual<
+      typeof import('../../../../src/agent/runtime/SessionRuntime.js')
+    >('../../../../src/agent/runtime/SessionRuntime.js');
+    const runtime = Object.create(
+      actualSessionRuntimeModule.SessionRuntime.prototype
+    ) as SessionRuntime;
+    const sessionId = overrides.sessionId ?? runtimeState.runtime.sessionId;
+    const workspaceRoot =
+      overrides.workspaceRoot ??
+      '/Users/bytedance/Documents/GitHub/Blade/.worktrees/session-discovery-fork/packages/cli';
+    const {
+      sessionId: _ignoredSessionId,
+      workspaceRoot: _ignoredWorkspaceRoot,
+      ...methods
+    } = {
+      ...runtimeState.runtime,
+      ...overrides,
+    };
+
+    Object.defineProperties(runtime, {
+      sessionId: {
+        configurable: true,
+        get: () => sessionId,
+      },
+      workspaceRoot: {
+        configurable: true,
+        get: () => workspaceRoot,
+      },
+    });
+    Object.assign(runtime, methods);
+    return runtime;
+  };
+
   const metadataFor = (
     sessionId: string,
     projectPath = refFor(sessionId).projectPath,
@@ -352,7 +393,7 @@ describe('SessionRoutes runtime reuse', () => {
       parentId: string;
       relationType: 'subagent' | 'fork';
     }> = {}
-  ) => ({
+  ): SessionMetadata => ({
     sessionId,
     projectPath,
     rootId: overrides.rootId ?? sessionId,
@@ -1525,6 +1566,558 @@ describe('SessionRoutes runtime reuse', () => {
       sessionId: 'shared-session',
       workspaceRoot: '/tmp/workspace-b',
     });
+  });
+
+  it('patches only the exact same-id workspace and rejects duplicate no-path patch requests', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    const metadataA = metadataFor('shared-session', '/tmp/workspace-a', {
+      title: 'Workspace A',
+    });
+    const metadataB = metadataFor('shared-session', '/tmp/workspace-b', {
+      title: 'Workspace B',
+    });
+
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (sessionId !== 'shared-session') {
+          return undefined;
+        }
+        if (projectPath === '/tmp/workspace-a') {
+          return metadataA;
+        }
+        if (projectPath === '/tmp/workspace-b') {
+          return metadataB;
+        }
+        return undefined;
+      }
+    );
+
+    vi.mocked(SessionService.updateSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath: string, update: { title?: string }) => {
+        if (sessionId === 'shared-session' && projectPath === '/tmp/workspace-a') {
+          return {
+            ...metadataA,
+            title: update.title,
+            lastMessageTime: new Date(2).toISOString(),
+          };
+        }
+        if (sessionId === 'shared-session' && projectPath === '/tmp/workspace-b') {
+          return {
+            ...metadataB,
+            title: update.title,
+            lastMessageTime: new Date(2).toISOString(),
+          };
+        }
+        throw new Error(`Unexpected update target: ${sessionId} ${projectPath}`);
+      }
+    );
+
+    const app = SessionRoutes();
+    const controllerA = new AbortController();
+    const controllerB = new AbortController();
+    const responseA = await app.request(
+      `/shared-session/events?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      {
+        signal: controllerA.signal,
+      }
+    );
+    const responseB = await app.request(
+      `/shared-session/events?projectPath=${encodeURIComponent('/tmp/workspace-b')}`,
+      {
+        signal: controllerB.signal,
+      }
+    );
+    expect(responseA.status).toBe(200);
+    expect(responseB.status).toBe(200);
+    const collectorA = createSseCollector(responseA);
+    const collectorB = createSseCollector(responseB);
+    await expect(collectorA.next()).resolves.toMatchObject({
+      type: 'connected',
+      properties: {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-a',
+      },
+    });
+    await expect(collectorB.next()).resolves.toMatchObject({
+      type: 'connected',
+      properties: {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-b',
+      },
+    });
+    controllerA.abort();
+    controllerB.abort();
+    await Promise.all([collectorA.cancel(), collectorB.cancel()]);
+
+    const patchA = await app.request(
+      `/shared-session?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectPath: '/tmp/workspace-a',
+          title: 'Workspace A2',
+        }),
+      }
+    );
+
+    expect(patchA.status).toBe(200);
+    expect(SessionService.updateSessionMetadata).toHaveBeenCalledTimes(1);
+    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+      'shared-session',
+      '/tmp/workspace-a',
+      { title: 'Workspace A2' }
+    );
+
+    const getA = await app.request(
+      `/shared-session?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+    const getB = await app.request(
+      `/shared-session?projectPath=${encodeURIComponent('/tmp/workspace-b')}`
+    );
+
+    expect(getA.status).toBe(200);
+    expect(await getA.json()).toMatchObject({
+      sessionId: 'shared-session',
+      projectPath: '/tmp/workspace-a',
+      title: 'Workspace A2',
+    });
+    expect(getB.status).toBe(200);
+    expect(await getB.json()).toMatchObject({
+      sessionId: 'shared-session',
+      projectPath: '/tmp/workspace-b',
+      title: 'Workspace B',
+    });
+
+    vi.clearAllMocks();
+    busState.subscribers.clear();
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+
+    const ambiguousPatch = await app.request('/shared-session', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Should fail without path' }),
+    });
+
+    expect(ambiguousPatch.status).toBe(409);
+    await expect(ambiguousPatch.json()).resolves.toMatchObject({
+      error: { code: 'AMBIGUOUS_SESSION' },
+    });
+    expect(SessionService.updateSessionMetadata).not.toHaveBeenCalled();
+  });
+
+  it('deletes only the exact same-id workspace and rejects duplicate no-path delete requests', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    const metadataA = metadataFor('shared-session', '/tmp/workspace-a', {
+      title: 'Workspace A',
+    });
+    const metadataB = metadataFor('shared-session', '/tmp/workspace-b', {
+      title: 'Workspace B',
+    });
+    const historyB: Message[] = [{ role: 'assistant', content: 'workspace-b-history' }];
+    const deletedProjectPaths = new Set<string>();
+    const disposeA = vi.fn().mockResolvedValue(undefined);
+    const disposeB = vi.fn().mockResolvedValue(undefined);
+    const runtimeA = await createRuntimeDouble({ dispose: disposeA });
+    const runtimeB = await createRuntimeDouble({ dispose: disposeB });
+
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (sessionId !== 'shared-session') {
+          return undefined;
+        }
+        if (projectPath && deletedProjectPaths.has(projectPath)) {
+          return undefined;
+        }
+        if (projectPath === '/tmp/workspace-a') {
+          return metadataA;
+        }
+        if (projectPath === '/tmp/workspace-b') {
+          return metadataB;
+        }
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.loadSession).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (sessionId === 'shared-session' && projectPath === '/tmp/workspace-b') {
+          return historyB;
+        }
+        return [];
+      }
+    );
+
+    vi.mocked(SessionRuntime.create).mockImplementation(
+      async ({ workspaceRoot }: SessionRuntimeOptions) => {
+        if (workspaceRoot === '/tmp/workspace-a') {
+          return runtimeA;
+        }
+        if (workspaceRoot === '/tmp/workspace-b') {
+          return runtimeB;
+        }
+        return createRuntimeDouble();
+      }
+    );
+
+    let releaseRunA: () => void = () => undefined;
+    let releaseRunB: () => void = () => undefined;
+    let signalA: AbortSignal | undefined;
+    let signalB: AbortSignal | undefined;
+    const runGateA = new Promise<void>((resolve) => {
+      releaseRunA = resolve;
+    });
+    const runGateB = new Promise<void>((resolve) => {
+      releaseRunB = resolve;
+    });
+    agentState.chatStream
+      .mockImplementationOnce(async function* (
+        _content,
+        chatContext: { signal: AbortSignal }
+      ) {
+        signalA = chatContext.signal;
+        yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+        await runGateA;
+        return {
+          success: true,
+          finalMessage: 'workspace-a',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      })
+      .mockImplementationOnce(async function* (
+        _content,
+        chatContext: { signal: AbortSignal }
+      ) {
+        signalB = chatContext.signal;
+        yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+        await runGateB;
+        return {
+          success: true,
+          finalMessage: 'workspace-b',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+
+    const app = SessionRoutes();
+    const sendMessage = (projectPath: string, content: string) =>
+      app.request(
+        `/shared-session/message?projectPath=${encodeURIComponent(projectPath)}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content }),
+        }
+      );
+
+    const [messageA, messageB] = await Promise.all([
+      sendMessage('/tmp/workspace-a', 'run a'),
+      sendMessage('/tmp/workspace-b', 'run b'),
+    ]);
+    expect(messageA.status).toBe(202);
+    expect(messageB.status).toBe(202);
+
+    const deleteA = await app.request(
+      `/shared-session?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      {
+        method: 'DELETE',
+      }
+    );
+
+    expect(deleteA.status).toBe(200);
+    deletedProjectPaths.add('/tmp/workspace-a');
+    expect(SessionService.deleteSession).toHaveBeenCalledWith(
+      'shared-session',
+      '/tmp/workspace-a'
+    );
+    expect(signalA?.aborted).toBe(true);
+    expect(signalB?.aborted).toBe(false);
+    expect(disposeA).toHaveBeenCalledTimes(1);
+    expect(disposeB).not.toHaveBeenCalled();
+
+    const getA = await app.request(
+      `/shared-session?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+    const getB = await app.request(
+      `/shared-session?projectPath=${encodeURIComponent('/tmp/workspace-b')}`
+    );
+    const historyAfterDeleteB = await app.request(
+      `/shared-session/message?projectPath=${encodeURIComponent('/tmp/workspace-b')}`
+    );
+
+    expect(getA.status).toBe(404);
+    expect(getB.status).toBe(200);
+    expect(await getB.json()).toMatchObject({
+      sessionId: 'shared-session',
+      projectPath: '/tmp/workspace-b',
+      title: 'Workspace B',
+    });
+    expect(historyAfterDeleteB.status).toBe(200);
+    expect(await historyAfterDeleteB.json()).toEqual(historyB);
+
+    releaseRunA();
+    releaseRunB();
+
+    vi.clearAllMocks();
+    busState.subscribers.clear();
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+
+    const ambiguousDelete = await app.request('/shared-session', {
+      method: 'DELETE',
+    });
+
+    expect(ambiguousDelete.status).toBe(409);
+    await expect(ambiguousDelete.json()).resolves.toMatchObject({
+      error: { code: 'AMBIGUOUS_SESSION' },
+    });
+    expect(SessionService.deleteSession).not.toHaveBeenCalled();
+  });
+
+  it('aborts only the exact same-id workspace run and rejects duplicate no-path abort requests', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    const metadataA = metadataFor('shared-session', '/tmp/workspace-a');
+    const metadataB = metadataFor('shared-session', '/tmp/workspace-b');
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (sessionId !== 'shared-session') {
+          return undefined;
+        }
+        if (projectPath === '/tmp/workspace-a') {
+          return metadataA;
+        }
+        if (projectPath === '/tmp/workspace-b') {
+          return metadataB;
+        }
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+
+    let signalA: AbortSignal | undefined;
+    let signalB: AbortSignal | undefined;
+    let releaseRunA: () => void = () => undefined;
+    let releaseRunB: () => void = () => undefined;
+    const runGateA = new Promise<void>((resolve) => {
+      releaseRunA = resolve;
+    });
+    const runGateB = new Promise<void>((resolve) => {
+      releaseRunB = resolve;
+    });
+
+    agentState.chatStream
+      .mockImplementationOnce(async function* (
+        _content,
+        chatContext: { signal: AbortSignal }
+      ) {
+        if (Date.now() < 0) {
+          yield undefined;
+        }
+        signalA = chatContext.signal;
+        await runGateA;
+        return {
+          success: true,
+          finalMessage: 'workspace-a',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      })
+      .mockImplementationOnce(async function* (
+        _content,
+        chatContext: { signal: AbortSignal }
+      ) {
+        if (Date.now() < 0) {
+          yield undefined;
+        }
+        signalB = chatContext.signal;
+        await runGateB;
+        return {
+          success: true,
+          finalMessage: 'workspace-b',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+
+    const app = SessionRoutes();
+    const startRun = (projectPath: string) =>
+      app.request(
+        `/shared-session/message?projectPath=${encodeURIComponent(projectPath)}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: `start ${projectPath}` }),
+        }
+      );
+
+    const [runA, runB] = await Promise.all([
+      startRun('/tmp/workspace-a'),
+      startRun('/tmp/workspace-b'),
+    ]);
+    expect(runA.status).toBe(202);
+    expect(runB.status).toBe(202);
+
+    const abortA = await app.request(
+      `/shared-session/abort?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      {
+        method: 'POST',
+      }
+    );
+
+    expect(abortA.status).toBe(200);
+
+    const statusA = await app.request(
+      `/shared-session/status?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+    const statusB = await app.request(
+      `/shared-session/status?projectPath=${encodeURIComponent('/tmp/workspace-b')}`
+    );
+
+    expect(statusA.status).toBe(200);
+    expect(await statusA.json()).toMatchObject({
+      sessionId: 'shared-session',
+      projectPath: '/tmp/workspace-a',
+      status: 'cancelled',
+    });
+    expect(statusB.status).toBe(200);
+    expect(await statusB.json()).toMatchObject({
+      sessionId: 'shared-session',
+      projectPath: '/tmp/workspace-b',
+      status: 'running',
+    });
+
+    expect(signalA?.aborted).toBe(true);
+    expect(signalB?.aborted).toBe(false);
+
+    const ambiguousAbort = await app.request('/shared-session/abort', {
+      method: 'POST',
+    });
+
+    expect(ambiguousAbort.status).toBe(409);
+    await expect(ambiguousAbort.json()).resolves.toMatchObject({
+      error: { code: 'AMBIGUOUS_SESSION' },
+    });
+
+    releaseRunA();
+    releaseRunB();
+  });
+
+  it('returns exact same-id workspace status and rejects duplicate no-path status requests', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    const metadataA = metadataFor('shared-session', '/tmp/workspace-a');
+    const metadataB = metadataFor('shared-session', '/tmp/workspace-b');
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (sessionId !== 'shared-session') {
+          return undefined;
+        }
+        if (projectPath === '/tmp/workspace-a') {
+          return metadataA;
+        }
+        if (projectPath === '/tmp/workspace-b') {
+          return metadataB;
+        }
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+
+    let releaseRunA: () => void = () => undefined;
+    let releaseRunB: () => void = () => undefined;
+    const runGateA = new Promise<void>((resolve) => {
+      releaseRunA = resolve;
+    });
+    const runGateB = new Promise<void>((resolve) => {
+      releaseRunB = resolve;
+    });
+    const runtimeA = await createRuntimeDouble();
+    const runtimeB = await createRuntimeDouble();
+    vi.mocked(SessionRuntime.create).mockImplementation(
+      async ({ workspaceRoot }: SessionRuntimeOptions) => {
+        if (workspaceRoot === '/tmp/workspace-a') {
+          return runtimeA;
+        }
+        if (workspaceRoot === '/tmp/workspace-b') {
+          return runtimeB;
+        }
+        return createRuntimeDouble();
+      }
+    );
+
+    agentState.chatStream
+      .mockImplementationOnce(async function* () {
+        yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+        await runGateA;
+        return {
+          success: true,
+          finalMessage: 'workspace-a',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      })
+      .mockImplementationOnce(async function* () {
+        yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+        await runGateB;
+        return {
+          success: true,
+          finalMessage: 'workspace-b',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+
+    const app = SessionRoutes();
+    const runA = await app.request(
+      `/shared-session/message?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'start a' }),
+      }
+    );
+    expect(runA.status).toBe(202);
+
+    const runB = await app.request(
+      `/shared-session/message?projectPath=${encodeURIComponent('/tmp/workspace-b')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'start b' }),
+      }
+    );
+    expect(runB.status).toBe(202);
+
+    const statusA = await app.request(
+      `/shared-session/status?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+    const statusB = await app.request(
+      `/shared-session/status?projectPath=${encodeURIComponent('/tmp/workspace-b')}`
+    );
+
+    expect(statusA.status).toBe(200);
+    expect(await statusA.json()).toMatchObject({
+      sessionId: 'shared-session',
+      projectPath: '/tmp/workspace-a',
+      runId: expect.any(String),
+      status: 'running',
+    });
+    expect(statusB.status).toBe(200);
+    expect(await statusB.json()).toMatchObject({
+      sessionId: 'shared-session',
+      projectPath: '/tmp/workspace-b',
+      runId: expect.any(String),
+      status: 'running',
+    });
+
+    const ambiguousStatus = await app.request('/shared-session/status');
+    expect(ambiguousStatus.status).toBe(409);
+    await expect(ambiguousStatus.json()).resolves.toMatchObject({
+      error: { code: 'AMBIGUOUS_SESSION' },
+    });
+
+    releaseRunA();
+    releaseRunB();
   });
 
   it('routes permission responses through the unified exact session resolver', async () => {
