@@ -18,6 +18,7 @@ import { BladeServer } from '../../../src/server/server.js';
 import { getState } from '../../../src/store/vanilla.js';
 import {
   buildRealApiRuntimeConfig,
+  expandDeepSeekModelMatrix,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
   type TestModelConfig,
@@ -38,6 +39,7 @@ interface EventCollector {
 }
 
 const modelConfigs = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
+const questionModelConfigs = expandDeepSeekModelMatrix(modelConfigs);
 const enabled = modelConfigs.length > 0;
 let server: Awaited<ReturnType<typeof BladeServer.listenAsync>> | undefined;
 let originalConfig: RuntimeConfig | null = null;
@@ -295,6 +297,23 @@ async function deleteSession(sessionId: string): Promise<void> {
   expect(response.status).toBe(200);
 }
 
+async function answerQuestion(
+  sessionId: string,
+  requestId: string,
+  answers: Record<string, string | string[]>
+): Promise<void> {
+  if (!server) throw new Error('Blade web server is not running');
+  const response = await fetch(
+    new URL(`/permissions/${requestId}?sessionId=${sessionId}`, server.url),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ approved: true, answers }),
+    }
+  );
+  expect(response.status).toBe(200);
+}
+
 function codingPrompt(): string {
   return [
     'Work on this repository as a coding agent.',
@@ -336,6 +355,89 @@ afterAll(async () => {
 });
 
 describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
+  for (const modelConfig of questionModelConfigs) {
+    it(`${modelConfig.model} replays a structured question and continues with its answer`, async () => {
+      const workspace = createWorkspace();
+      const resultPath = path.join(workspace, 'selected-channel.txt');
+      let sessionId: string | undefined;
+      let firstCollector: EventCollector | undefined;
+      let resumedCollector: EventCollector | undefined;
+      try {
+        setRuntimeModel(modelConfig);
+        sessionId = await createSession(workspace);
+        firstCollector = await collectEvents(sessionId);
+        await sendMessage(
+          sessionId,
+          [
+            'Work as a coding agent and follow this interaction contract exactly.',
+            'Before editing any file, call AskUserQuestion exactly once with one single-select question:',
+            '- header: Channel',
+            '- question: Which release channel should be written?',
+            '- options in order: Stable, then Canary',
+            '- multiSelect: false',
+            'After the user answers, write only the selected label and a newline to selected-channel.txt.',
+            "Then invoke Bash with: node -e \"const fs=require('node:fs');if(fs.readFileSync('selected-channel.txt','utf8').trim()!=='Canary')process.exit(1)\"",
+            'Finish only after Bash succeeds.',
+          ].join('\n')
+        );
+        await firstCollector.waitFor(
+          (event) => event.type === 'question.required',
+          180_000
+        );
+        const originalQuestion = firstCollector.events.find(
+          (event) => event.type === 'question.required'
+        );
+        const requestId = String(originalQuestion?.properties.requestId ?? '');
+        expect(requestId).toBeTruthy();
+        expect(originalQuestion?.properties.questions).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              header: 'Channel',
+              multiSelect: false,
+            }),
+          ])
+        );
+        expect(existsSync(resultPath)).toBe(false);
+
+        await firstCollector.close();
+        firstCollector = undefined;
+        resumedCollector = await collectEvents(sessionId);
+        await resumedCollector.waitFor(
+          (event) => event.type === 'question.required',
+          10_000
+        );
+        const replayedQuestion = resumedCollector.events.find(
+          (event) => event.type === 'question.required'
+        );
+        expect(replayedQuestion?.properties).toMatchObject({
+          requestId,
+          replayed: true,
+        });
+
+        await answerQuestion(sessionId, requestId, { Channel: 'Canary' });
+        await resumedCollector.waitFor(
+          (event) => event.type === 'session.completed',
+          300_000
+        );
+        expect(readFileSync(resultPath, 'utf8')).toMatch(/^Canary\r?\n?$/);
+        expect(
+          resumedCollector.events.some(
+            (event) =>
+              event.type === 'tool.start' && event.properties.toolName === 'Bash'
+          )
+        ).toBe(true);
+        expect(JSON.stringify(resumedCollector.events)).not.toContain(
+          modelConfig.apiKey
+        );
+      } finally {
+        await firstCollector?.close();
+        await resumedCollector?.close();
+        if (sessionId) await deleteSession(sessionId);
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+  }
+
   for (const modelConfig of modelConfigs) {
     it(`${modelConfig.model} branches durable context through Web without mutating its parent`, async () => {
       const workspace = createWorkspace();

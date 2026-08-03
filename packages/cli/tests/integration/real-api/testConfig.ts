@@ -241,6 +241,31 @@ export function getEnabledModelConfigs(): TestModelConfig[] {
   return ALL_MODEL_CONFIGS.filter((config) => Boolean(config.apiKey));
 }
 
+export function expandDeepSeekModelMatrix(
+  configs: readonly TestModelConfig[],
+  configuredModels = process.env.DEEPSEEK_MODELS
+): TestModelConfig[] {
+  const models = [
+    ...new Set(
+      (configuredModels ?? '')
+        .split(',')
+        .map((model) => model.trim())
+        .filter(Boolean)
+    ),
+  ];
+  if (models.length === 0) return [...configs];
+
+  return configs.flatMap((config) =>
+    config.id === 'deepseek'
+      ? models.map((model) => ({
+          ...config,
+          name: `${config.name} (${model})`,
+          model,
+        }))
+      : [config]
+  );
+}
+
 export function buildRealApiRuntimeConfig(modelConfig: TestModelConfig): BladeConfig {
   const modelId = `real-api-${modelConfig.id}`;
   return {

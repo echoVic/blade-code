@@ -127,7 +127,19 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
         };
       });
     }),
-    setQuestion: vi.fn(),
+    setQuestion: vi.fn((id, question) => {
+      state.messages = state.messages.map((message) =>
+        message.id === id
+          ? {
+              ...message,
+              agentContent: {
+                ...(message.agentContent ?? createEmptyAgentContent()),
+                question,
+              },
+            }
+          : message
+      );
+    }),
     setSubagent: vi.fn((messageId, subagent) => {
       state.messages = state.messages.map((message) =>
         message.id === messageId
@@ -430,6 +442,44 @@ describe('eventHandlers', () => {
       agentPhase: 'running',
       error: 'Permission request timed out',
     });
+  });
+
+  test('attaches replayed structured questions to the latest assistant message', () => {
+    const state = createState({ currentAssistantMessageId: null });
+    const set = vi.fn();
+    const dispatch = createEventDispatcher(() => state, set);
+    const questions = [
+      {
+        header: 'Channel',
+        question: 'Which release channel should be used?',
+        multiSelect: false,
+        options: [
+          { label: 'Stable', description: 'Use stable' },
+          { label: 'Canary', description: 'Use canary' },
+        ],
+      },
+    ];
+
+    dispatch({
+      type: 'question.required',
+      properties: {
+        sessionId: 'session-1',
+        requestId: 'question-1',
+        questions,
+        replayed: true,
+      },
+    });
+
+    expect(state.setQuestion).toHaveBeenCalledWith('assistant-1', {
+      toolCallId: 'question-1',
+      questions,
+      status: 'pending',
+    });
+    expect(state.messages[0]?.agentContent?.question).toMatchObject({
+      toolCallId: 'question-1',
+      status: 'pending',
+    });
+    expect(set).toHaveBeenCalledWith({ agentPhase: 'waiting_permission' });
   });
 
   test('flushes buffered message deltas to the message that received them', () => {

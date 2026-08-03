@@ -733,6 +733,96 @@ describe('AcpSession', () => {
       // 由于我们的 mock 逻辑简单，这里只是验证不会重复请求
       expect(mockConnection.permissionRequests.length).toBe(0);
     });
+
+    it('collects structured single-select answers even in yolo mode', async () => {
+      await session.setMode('yolo');
+      vi.spyOn(mockConnection, 'requestPermission').mockImplementation(
+        async (request) => {
+          mockConnection.permissionRequests.push(request);
+          return {
+            outcome: {
+              outcome: 'selected',
+              optionId: request.options[1]?.optionId,
+            },
+          };
+        }
+      );
+
+      const response = await (
+        session as unknown as {
+          requestPermission: (details: unknown) => Promise<{
+            approved: boolean;
+            answers?: Record<string, string | string[]>;
+          }>;
+        }
+      ).requestPermission({
+        type: 'askUserQuestion',
+        kind: 'readonly',
+        message: 'Choose the release channel',
+        questions: [
+          {
+            header: 'Channel',
+            question: 'Which release channel should be used?',
+            multiSelect: false,
+            options: [
+              { label: 'Stable', description: 'Use the stable channel' },
+              { label: 'Canary', description: 'Use the canary channel' },
+            ],
+          },
+        ],
+      });
+
+      expect(response).toEqual({
+        approved: true,
+        answers: { Channel: 'Canary' },
+      });
+      expect(mockConnection.permissionRequests).toHaveLength(1);
+      expect(mockConnection.permissionRequests[0]).toMatchObject({
+        sessionId: 'test-session-id',
+        options: [
+          { name: 'Stable', kind: 'allow_once' },
+          { name: 'Canary', kind: 'allow_once' },
+          { name: 'Cancel', kind: 'reject_once' },
+        ],
+        toolCall: {
+          title: 'Channel',
+          status: 'pending',
+        },
+      });
+    });
+
+    it('rejects ACP multiselect questions instead of silently changing their meaning', async () => {
+      await session.setMode('yolo');
+
+      const response = await (
+        session as unknown as {
+          requestPermission: (details: unknown) => Promise<{
+            approved: boolean;
+            reason?: string;
+          }>;
+        }
+      ).requestPermission({
+        type: 'askUserQuestion',
+        kind: 'readonly',
+        questions: [
+          {
+            header: 'Checks',
+            question: 'Which checks should run?',
+            multiSelect: true,
+            options: [
+              { label: 'Unit', description: 'Run unit tests' },
+              { label: 'E2E', description: 'Run end-to-end tests' },
+            ],
+          },
+        ],
+      });
+
+      expect(response).toEqual({
+        approved: false,
+        reason: expect.stringContaining('multi-select'),
+      });
+      expect(mockConnection.permissionRequests).toHaveLength(0);
+    });
   });
 
   describe('ToolKind 映射', () => {

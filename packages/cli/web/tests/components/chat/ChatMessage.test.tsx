@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { useSessionStore } from '../../../src/store/session';
 import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages';
+import { sessionService } from '../../../src/services/sessionService';
 
 vi.mock('../../../src/components/chat/MarkdownRenderer', () => ({
   MarkdownRenderer: ({ content }: { content: string }) => content,
@@ -49,6 +50,7 @@ describe('ChatMessage', () => {
       root.unmount();
     });
     container.remove();
+    vi.restoreAllMocks();
   });
 
   test('keeps expanded tool details visible after rerendering with re-aggregated stable tool ids', () => {
@@ -134,5 +136,140 @@ describe('ChatMessage', () => {
     const image = container.querySelector('img');
     expect(image?.getAttribute('src')).toBe('data:image/png;base64,history');
     expect(container.textContent).not.toContain('undefined');
+  });
+
+  test('submits structured answers through the permission endpoint and closes the prompt', async () => {
+    const respondPermission = vi
+      .spyOn(sessionService, 'respondPermission')
+      .mockResolvedValue(undefined);
+    const message = {
+      id: 'assistant-question',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000002,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: {
+          toolCallId: 'question-1',
+          status: 'pending',
+          questions: [
+            {
+              header: 'Channel',
+              question: 'Which release channel should be used?',
+              multiSelect: false,
+              options: [
+                { label: 'Stable', description: 'Use stable' },
+                { label: 'Canary', description: 'Use canary' },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    useSessionStore.setState({ messages: [message as never] });
+
+    act(() => {
+      root.render(<ChatMessage message={message as never} />);
+    });
+
+    const submitBeforeAnswer = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Submit'
+    );
+    expect(submitBeforeAnswer?.disabled).toBe(true);
+
+    const canary = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Canary')
+    );
+    act(() => {
+      canary?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Submit'
+    );
+    await act(async () => {
+      submit?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(respondPermission).toHaveBeenCalledWith('session-1', 'question-1', {
+      approved: true,
+      answers: { Channel: 'Canary' },
+    });
+    expect(
+      useSessionStore.getState().messages[0]?.agentContent?.question
+    ).toMatchObject({
+      status: 'answered',
+      answers: { Channel: 'Canary' },
+    });
+  });
+
+  test('accepts a custom Other response for a structured question', async () => {
+    const respondPermission = vi
+      .spyOn(sessionService, 'respondPermission')
+      .mockResolvedValue(undefined);
+    const message = {
+      id: 'assistant-other',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000003,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: {
+          toolCallId: 'question-other',
+          status: 'pending',
+          questions: [
+            {
+              header: 'Channel',
+              question: 'Which release channel should be used?',
+              multiSelect: false,
+              options: [
+                { label: 'Stable', description: 'Use stable' },
+                { label: 'Canary', description: 'Use canary' },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    useSessionStore.setState({ messages: [message as never] });
+    act(() => {
+      root.render(<ChatMessage message={message as never} />);
+    });
+
+    const other = container.querySelector(
+      'input[aria-label="Channel other response"]'
+    ) as HTMLInputElement | null;
+    expect(other).toBeTruthy();
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value'
+      )?.set;
+      setter?.call(other, 'Preview');
+      other?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Submit'
+    );
+    expect(submit?.disabled).toBe(false);
+    await act(async () => {
+      submit?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(respondPermission).toHaveBeenCalledWith('session-1', 'question-other', {
+      approved: true,
+      answers: { Channel: 'Preview' },
+    });
   });
 });

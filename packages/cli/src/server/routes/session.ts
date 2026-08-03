@@ -94,6 +94,37 @@ const activeRuns = new LRUCache<string, RunState>({
   },
 });
 
+function buildPendingInteractionEvent(
+  pending: NonNullable<RunState['pendingPermission']>,
+  replayed = false
+): { type: string; properties: Record<string, unknown> } {
+  const { permissionId, details } = pending;
+  if (details.type === 'askUserQuestion' && details.questions) {
+    return {
+      type: 'question.required',
+      properties: {
+        requestId: permissionId,
+        toolCallId: permissionId,
+        questions: details.questions,
+        details,
+        ...(replayed ? { replayed: true } : {}),
+      },
+    };
+  }
+
+  return {
+    type: 'permission.asked',
+    properties: {
+      requestId: permissionId,
+      toolName: details.toolName,
+      description: details.message,
+      args: details.args,
+      details,
+      ...(replayed ? { replayed: true } : {}),
+    },
+  };
+}
+
 type Variables = {
   directory: string;
 };
@@ -559,8 +590,17 @@ export const SessionRoutes = () => {
         }),
       });
 
+      const deliveredInteractionIds = new Set<string>();
       const unsubscribe = Bus.subscribe((event) => {
         if (event.sessionId !== sessionId) return;
+        const requestId = event.properties.requestId;
+        if (
+          (event.type === 'permission.asked' || event.type === 'question.required') &&
+          typeof requestId === 'string'
+        ) {
+          if (deliveredInteractionIds.has(requestId)) return;
+          deliveredInteractionIds.add(requestId);
+        }
         stream
           .writeSSE({
             data: JSON.stringify({
@@ -572,6 +612,21 @@ export const SessionRoutes = () => {
             /* ignore write errors on closed streams */
           });
       });
+
+      const currentRun = session.currentRunId
+        ? activeRuns.get(session.currentRunId)
+        : undefined;
+      const pendingInteraction = currentRun?.pendingPermission;
+      if (pendingInteraction) {
+        deliveredInteractionIds.add(pendingInteraction.permissionId);
+        const replay = buildPendingInteractionEvent(pendingInteraction, true);
+        await stream.writeSSE({
+          data: JSON.stringify({
+            type: replay.type,
+            properties: { sessionId, ...replay.properties },
+          }),
+        });
+      }
 
       void resumePendingSession(session).catch((error) => {
         logger.error(
@@ -816,13 +871,12 @@ async function executeRunAsync(
         };
       });
 
-      emit('permission.asked', {
-        requestId: permissionId,
-        toolName: details.toolName,
-        description: details.message,
-        args: details.args,
-        details,
-      });
+      const pendingInteraction = run.pendingPermission;
+      if (!pendingInteraction) {
+        throw new Error('Permission request was not registered');
+      }
+      const interaction = buildPendingInteractionEvent(pendingInteraction);
+      emit(interaction.type, interaction.properties);
 
       logger.info(
         `[SessionRoutes] Permission request created: ${permissionId}, runId: ${runId}`

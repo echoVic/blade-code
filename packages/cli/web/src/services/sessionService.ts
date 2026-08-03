@@ -268,38 +268,6 @@ export const sessionService = {
     if (!res.ok) throw new Error('Failed to respond to permission');
   },
 
-  respondToConfirmation: async (
-    sessionId: string,
-    toolCallId: string,
-    approved: boolean
-  ): Promise<void> => {
-    const res = await fetch(
-      `${API_BASE}/sessions/${sessionId}/confirmation/${toolCallId}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approved }),
-      }
-    );
-    if (!res.ok) throw new Error('Failed to respond to confirmation');
-  },
-
-  respondToQuestion: async (
-    sessionId: string,
-    toolCallId: string,
-    answers: Record<string, string | string[]>
-  ): Promise<void> => {
-    const res = await fetch(
-      `${API_BASE}/sessions/${sessionId}/question/${toolCallId}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answers }),
-      }
-    );
-    if (!res.ok) throw new Error('Failed to respond to question');
-  },
-
   getGitInfo: async (): Promise<{ branch: string | null }> => {
     const res = await fetch(`${API_BASE}/suggestions/git-info`);
     if (!res.ok) throw new Error('Failed to get git info');

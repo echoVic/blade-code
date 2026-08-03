@@ -621,6 +621,101 @@ describe('SessionRoutes runtime reuse', () => {
     ]);
   });
 
+  it('publishes structured questions and replays the unresolved prompt on SSE reconnect', async () => {
+    const { SessionRoutes, respondToPermission } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const questions = [
+      {
+        header: 'Channel',
+        question: 'Which release channel should be used?',
+        multiSelect: false,
+        options: [
+          { label: 'Stable', description: 'Use stable' },
+          { label: 'Canary', description: 'Use canary' },
+        ],
+      },
+    ];
+    agentState.chatStream.mockImplementationOnce(async function* (_message, context) {
+      yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+      await context.confirmationHandler.requestConfirmation({
+        type: 'askUserQuestion',
+        kind: 'readonly',
+        message: 'Choose a channel',
+        questions,
+      });
+      return {
+        success: true,
+        finalMessage: 'answered',
+        metadata: { turnsCount: 1, toolCallsCount: 1, duration: 0 },
+      };
+    });
+
+    const app = SessionRoutes();
+    const messageResponse = await app.request('/question-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'Ask before changing code',
+        permissionMode: 'yolo',
+      }),
+    });
+    expect(messageResponse.status).toBe(202);
+
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        'question-session',
+        'question.required',
+        expect.objectContaining({
+          requestId: expect.any(String),
+          questions,
+        })
+      );
+    });
+    const questionCall = vi
+      .mocked(Bus.publish)
+      .mock.calls.find((call) => call[1] === 'question.required');
+    const requestId = questionCall?.[2].requestId as string;
+    expect(requestId).toBeTruthy();
+
+    const controller = new AbortController();
+    const eventResponse = await app.request('/question-session/events', {
+      signal: controller.signal,
+    });
+    expect(eventResponse.status).toBe(200);
+    const reader = eventResponse.body?.getReader();
+    expect(reader).toBeDefined();
+    const decoder = new TextDecoder();
+    let output = '';
+    try {
+      await Promise.race([
+        (async () => {
+          while (!output.includes('question.required')) {
+            const { done, value } = await reader!.read();
+            if (done) break;
+            output += decoder.decode(value, { stream: true });
+          }
+        })(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Timed out waiting for question replay')),
+            1000
+          )
+        ),
+      ]);
+      expect(output).toContain('question.required');
+      expect(output).toContain('"replayed":true');
+    } finally {
+      respondToPermission('question-session', requestId, {
+        approved: true,
+        answers: { Channel: 'Canary' },
+      });
+      controller.abort();
+      await reader?.cancel().catch(() => undefined);
+    }
+  });
+
   it('builds multimodal user content from image attachments', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
 

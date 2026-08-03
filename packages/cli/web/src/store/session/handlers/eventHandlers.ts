@@ -723,16 +723,18 @@ const handleModelFallback: EventHandler = (props, get, set) => {
   set({ agentPhase: 'switching_model' });
 };
 
-const handleQuestionRequired: EventHandler = (props, get) => {
-  const { currentSessionId, setQuestion, currentAssistantMessageId } = get();
+const handleQuestionRequired: EventHandler = (props, get, set) => {
+  const { currentSessionId, setQuestion, messages } = get();
   if (props.sessionId !== currentSessionId) return;
-  if (!currentAssistantMessageId) return;
+  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
+  if (!lastAssistant) return;
 
-  setQuestion(currentAssistantMessageId, {
-    toolCallId: props.toolCallId as string,
+  setQuestion(lastAssistant.id, {
+    toolCallId: (props.requestId as string) || (props.toolCallId as string) || '',
     questions: props.questions as QuestionInfo['questions'],
     status: 'pending',
   });
+  set({ agentPhase: 'waiting_permission' });
 };
 
 interface QuestionInfo {

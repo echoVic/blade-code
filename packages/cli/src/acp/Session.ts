@@ -820,6 +820,10 @@ export class AcpSession {
   private async requestPermission(
     details: ConfirmationDetails
   ): Promise<ConfirmationResponse> {
+    if (details.type === 'askUserQuestion') {
+      return this.requestUserQuestions(details);
+    }
+
     // 检查是否应该自动批准（基于当前模式）
     const toolKind = details.kind?.toLowerCase() || 'execute';
     if (this.shouldAutoApprove(toolKind)) {
@@ -933,6 +937,76 @@ export class AcpSession {
         approved: false,
         reason: 'Permission request failed',
       };
+    }
+  }
+
+  private async requestUserQuestions(
+    details: ConfirmationDetails
+  ): Promise<ConfirmationResponse> {
+    const questions = details.questions ?? [];
+    if (questions.length === 0) {
+      return { approved: false, reason: 'No structured questions were provided' };
+    }
+    if (questions.some((question) => question.multiSelect)) {
+      return {
+        approved: false,
+        reason: 'ACP does not support multi-select question responses',
+      };
+    }
+
+    const answers: Record<string, string> = {};
+    try {
+      for (const [questionIndex, question] of questions.entries()) {
+        const optionIds = question.options.map(
+          (_option, optionIndex) => `answer:${questionIndex}:${optionIndex}`
+        );
+        const cancelId = `answer:${questionIndex}:cancel`;
+        const response = await this.connection.requestPermission({
+          sessionId: this.id,
+          options: [
+            ...question.options.map((option, optionIndex) => ({
+              optionId: optionIds[optionIndex]!,
+              name: option.label,
+              kind: 'allow_once' as const,
+            })),
+            { optionId: cancelId, name: 'Cancel', kind: 'reject_once' as const },
+          ],
+          toolCall: {
+            toolCallId: nanoid(),
+            status: 'pending' as ToolCallStatus,
+            title: question.header,
+            kind: 'think',
+            content: [
+              {
+                type: 'content',
+                content: {
+                  type: 'text',
+                  text: [
+                    question.question,
+                    ...question.options.map(
+                      (option) => `${option.label}: ${option.description}`
+                    ),
+                  ].join('\n'),
+                },
+              },
+            ],
+          },
+        });
+
+        if (response.outcome.outcome !== 'selected') {
+          return { approved: false, reason: 'User cancelled the question prompt' };
+        }
+        const selectedIndex = optionIds.indexOf(response.outcome.optionId);
+        if (selectedIndex < 0) {
+          return { approved: false, reason: 'User cancelled the question prompt' };
+        }
+        answers[question.header] = question.options[selectedIndex]!.label;
+      }
+
+      return { approved: true, answers };
+    } catch (error) {
+      logger.warn(`[AcpSession ${this.id}] Question request failed:`, error);
+      return { approved: false, reason: 'Question request failed' };
     }
   }
 

@@ -498,22 +498,57 @@ function ConfirmationSection({
   );
 }
 
-function QuestionSection({ question }: { question: AgentResponseContent['question'] }) {
+function QuestionSection({
+  question,
+  messageId,
+}: {
+  question: AgentResponseContent['question'];
+  messageId: string;
+}) {
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
+  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-  const { currentSessionId } = useSessionStore();
+  const { currentSessionId, setQuestion, setError } = useSessionStore();
+
+  const resolvedAnswers = useMemo<Record<string, string | string[]>>(() => {
+    if (!question) return {};
+    return question.questions.reduce<Record<string, string | string[]>>(
+      (resolved, item) => {
+        const custom = customAnswers[item.header]?.trim();
+        const selected = answers[item.header];
+        if (item.multiSelect) {
+          const values = Array.isArray(selected) ? [...selected] : [];
+          if (custom) values.push(custom);
+          if (values.length > 0) resolved[item.header] = values;
+          return resolved;
+        }
+        const value = custom || (typeof selected === 'string' ? selected : '');
+        if (value) resolved[item.header] = value;
+        return resolved;
+      },
+      {}
+    );
+  }, [answers, customAnswers, question]);
+  const allAnswered =
+    question?.questions.every((item) => item.header in resolvedAnswers) ?? false;
 
   if (!question) return null;
 
   const handleSubmit = async () => {
-    if (!currentSessionId || submitting) return;
+    if (!currentSessionId || submitting || !allAnswered) return;
     setSubmitting(true);
     try {
-      await sessionService.respondToQuestion(
-        currentSessionId,
-        question.toolCallId,
-        answers
-      );
+      await sessionService.respondPermission(currentSessionId, question.toolCallId, {
+        approved: true,
+        answers: resolvedAnswers,
+      });
+      setQuestion(messageId, {
+        ...question,
+        status: 'answered',
+        answers: resolvedAnswers,
+      });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to submit answers');
     } finally {
       setSubmitting(false);
     }
@@ -549,6 +584,7 @@ function QuestionSection({ question }: { question: AgentResponseContent['questio
                     setAnswers({ ...answers, [q.header]: updated });
                   } else {
                     setAnswers({ ...answers, [q.header]: opt.label });
+                    setCustomAnswers({ ...customAnswers, [q.header]: '' });
                   }
                 }}
                 className={cn(
@@ -569,12 +605,24 @@ function QuestionSection({ question }: { question: AgentResponseContent['questio
                 </div>
               </button>
             ))}
+            <input
+              aria-label={`${q.header} other response`}
+              value={customAnswers[q.header] ?? ''}
+              onChange={(event) =>
+                setCustomAnswers({
+                  ...customAnswers,
+                  [q.header]: event.target.value,
+                })
+              }
+              placeholder="Other"
+              className="w-full rounded-md border border-[#E5E7EB] bg-white px-3 py-2 text-[12px] text-[#111827] outline-none focus:border-[#22C55E] dark:border-[#27272a] dark:bg-[#111113] dark:text-[#E5E5E5]"
+            />
           </div>
         </div>
       ))}
       <button
         onClick={handleSubmit}
-        disabled={submitting}
+        disabled={submitting || !allAnswered}
         className="px-3 py-1.5 text-[12px] font-mono bg-[#22C55E] text-white rounded-md hover:bg-[#16A34A] disabled:opacity-50"
       >
         Submit
@@ -640,7 +688,7 @@ function AgentMessageContent({ message }: { message: Message }) {
       {confirmation && (
         <ConfirmationSection confirmation={confirmation} messageId={message.id} />
       )}
-      {question && <QuestionSection question={question} />}
+      {question && <QuestionSection question={question} messageId={message.id} />}
       {showChangedFiles && <ChangedFilesSection toolCalls={toolCalls} />}
       {textAfter && (
         <MarkdownBlock content={textAfter} syntaxHighlight={syntaxHighlight} />

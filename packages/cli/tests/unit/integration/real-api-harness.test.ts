@@ -6,6 +6,7 @@ import {
 } from '../../integration/real-api/codingTaskHarness.js';
 import {
   buildRealApiRuntimeConfig,
+  expandDeepSeekModelMatrix,
   normalizeNewApiBaseURL,
   resolveModelSettings,
 } from '../../integration/real-api/testConfig.js';
@@ -133,5 +134,33 @@ describe('real API coding-task harness', () => {
         provider: 'deepseek',
       }),
     ]);
+  });
+
+  it('expands DeepSeek surface qualification across the required model matrix', () => {
+    const configs = [
+      {
+        id: 'deepseek' as const,
+        name: 'DeepSeek',
+        provider: 'deepseek' as const,
+        model: 'deepseek-v4-flash',
+        apiKey: 'explicit-secret',
+        baseURL: 'https://api.deepseek.com',
+        createModel: () => ({}) as never,
+      },
+      {
+        id: 'gpt' as const,
+        name: 'GPT',
+        provider: 'openai-compatible' as const,
+        model: 'gpt-test',
+        apiKey: 'gpt-secret',
+        createModel: () => ({}) as never,
+      },
+    ];
+
+    expect(
+      expandDeepSeekModelMatrix(configs, 'deepseek-v4-flash,deepseek-v4-pro').map(
+        (config) => config.model
+      )
+    ).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro', 'gpt-test']);
   });
 });

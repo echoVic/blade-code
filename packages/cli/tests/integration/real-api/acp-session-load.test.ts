@@ -13,26 +13,31 @@ import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
+  expandDeepSeekModelMatrix,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
   type TestModelConfig,
 } from './testConfig.js';
 
 const modelConfigs = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
+const questionModelConfigs = expandDeepSeekModelMatrix(modelConfigs);
 const enabled = modelConfigs.length > 0;
 let originalConfig: RuntimeConfig | null = null;
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 
 class RecordingClient implements acp.Client {
   readonly updates: acp.SessionNotification[] = [];
+  readonly permissionRequests: acp.RequestPermissionRequest[] = [];
 
   async requestPermission(
-    _params: acp.RequestPermissionRequest
+    params: acp.RequestPermissionRequest
   ): Promise<acp.RequestPermissionResponse> {
+    this.permissionRequests.push(params);
+    const preferredAnswer = params.options.find((option) => option.name === 'Canary');
     return {
       outcome: {
         outcome: 'selected',
-        optionId: 'allow_once',
+        optionId: preferredAnswer?.optionId ?? 'allow_once',
       },
     };
   }
@@ -116,6 +121,69 @@ afterAll(() => {
 });
 
 describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
+  for (const modelConfig of questionModelConfigs) {
+    it(`${modelConfig.model} collects a structured answer in yolo mode and continues the coding loop`, async () => {
+      const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-question-'));
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      configureModel(modelConfig);
+      const client = new RecordingClient();
+      const session = new AcpSession(
+        `acp-question-${Date.now()}`,
+        workspace,
+        client as unknown as acp.AgentSideConnection,
+        {}
+      );
+      const resultPath = path.join(workspace, 'selected-channel.txt');
+
+      try {
+        await runWithCwdOverride(workspace, async () => {
+          await session.initialize();
+          await session.setMode('yolo');
+          const response = await session.prompt({
+            sessionId: 'ignored-by-session',
+            prompt: [
+              {
+                type: 'text',
+                text: [
+                  'Work as a coding agent and follow this interaction contract exactly.',
+                  'Before editing any file, call AskUserQuestion exactly once with one single-select question:',
+                  '- header: Channel',
+                  '- question: Which release channel should be written?',
+                  '- options in order: Stable, then Canary',
+                  '- multiSelect: false',
+                  'After the user answers, write only the selected label and a newline to selected-channel.txt.',
+                  "Then invoke Bash with: node -e \"const fs=require('node:fs');if(fs.readFileSync('selected-channel.txt','utf8').trim()!=='Canary')process.exit(1)\"",
+                  'Finish only after Bash succeeds.',
+                ].join('\n'),
+              },
+            ],
+          });
+
+          expect(response.stopReason).toBe('end_turn');
+          expect(client.permissionRequests).toHaveLength(1);
+          expect(
+            client.permissionRequests[0]?.options.map((option) => option.name)
+          ).toEqual(['Stable', 'Canary', 'Cancel']);
+          expect((await readFile(resultPath, 'utf8')).trim()).toBe('Canary');
+          expect(
+            client.updates.some(
+              (notification) =>
+                notification.update.sessionUpdate === 'tool_call' &&
+                notification.update.title.includes('Bash')
+            )
+          ).toBe(true);
+          expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
+          expect(JSON.stringify(client.permissionRequests)).not.toContain(
+            modelConfig.apiKey
+          );
+        });
+      } finally {
+        await session.destroy().catch(() => undefined);
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+  }
+
   for (const modelConfig of modelConfigs) {
     it(`${modelConfig.model} branches durable context through ACP session/load`, async () => {
       const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-branch-'));
