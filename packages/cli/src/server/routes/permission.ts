@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
-import { BadRequestError, NotFoundError } from '../error.js';
-import { respondToPermission } from './session.js';
+import { AmbiguousSessionError, BadRequestError, NotFoundError } from '../error.js';
+import { normalizeSessionRef } from '../sessionRef.js';
+import { resolveSessionRef, respondToPermission } from './session.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -23,6 +24,7 @@ export const PermissionRoutes = () => {
   app.post('/:permissionId', async (c) => {
     const permissionId = c.req.param('permissionId');
     const sessionId = c.req.query('sessionId');
+    const requestedProjectPath = c.req.query('projectPath');
 
     logger.info(
       `[PermissionRoutes] Received permission response: permissionId=${permissionId}, sessionId=${sessionId}`
@@ -41,6 +43,13 @@ export const PermissionRoutes = () => {
       if (!sessionId) {
         throw new BadRequestError('sessionId query parameter is required');
       }
+      const ref =
+        requestedProjectPath !== undefined
+          ? normalizeSessionRef({
+              sessionId,
+              projectPath: requestedProjectPath,
+            })
+          : await resolveSessionRef(sessionId);
 
       const response: ConfirmationResponse = {
         approved,
@@ -51,7 +60,7 @@ export const PermissionRoutes = () => {
         answers,
       };
 
-      const success = respondToPermission(sessionId, permissionId, response);
+      const success = respondToPermission(ref, permissionId, response);
 
       if (!success) {
         throw new NotFoundError('Permission request', permissionId);
@@ -64,6 +73,9 @@ export const PermissionRoutes = () => {
       return c.json({ success: true, approved, remember });
     } catch (error) {
       logger.error('[PermissionRoutes] Failed to respond to permission:', error);
+      if (error instanceof BadRequestError || error instanceof AmbiguousSessionError) {
+        throw error;
+      }
       throw error;
     }
   });

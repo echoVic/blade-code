@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
+import { SessionService } from '../../../../src/services/SessionService.js';
 
 const runtimeState = vi.hoisted(() => ({
   runtime: {
@@ -64,7 +65,54 @@ vi.mock('../../../../src/server/bus.js', () => ({
 vi.mock('../../../../src/services/SessionService.js', () => ({
   SessionService: {
     listSessions: vi.fn(async () => []),
+    findSessionMetadata: vi.fn(async () => undefined),
     loadSession: vi.fn(async () => []),
+    createSessionMetadata: vi.fn(
+      async (sessionId: string, projectPath: string, initial?: { title?: string }) => ({
+        sessionId,
+        projectPath,
+        rootId: sessionId,
+        title: initial?.title,
+        messageCount: 0,
+        firstMessageTime: new Date(0).toISOString(),
+        lastMessageTime: new Date(0).toISOString(),
+        hasErrors: false,
+      })
+    ),
+    updateSessionMetadata: vi.fn(
+      async (sessionId: string, projectPath: string, update: { title?: string }) => ({
+        sessionId,
+        projectPath,
+        rootId: sessionId,
+        title: update.title,
+        messageCount: 0,
+        firstMessageTime: new Date(0).toISOString(),
+        lastMessageTime: new Date(1).toISOString(),
+        hasErrors: false,
+      })
+    ),
+    forkSession: vi.fn(
+      async (
+        sessionId: string,
+        options: { sourceProjectPath: string; targetProjectPath: string }
+      ) => ({
+        sessionId: 'forked-session',
+        parentSessionId: sessionId,
+        projectPath: options.targetProjectPath,
+        messages: [],
+        metadata: {
+          sessionId: 'forked-session',
+          projectPath: options.targetProjectPath,
+          rootId: sessionId,
+          parentId: sessionId,
+          relationType: 'fork',
+          messageCount: 0,
+          firstMessageTime: new Date(0).toISOString(),
+          lastMessageTime: new Date(0).toISOString(),
+          hasErrors: false,
+        },
+      })
+    ),
     deleteSession: vi.fn(async () => {
       /* noop */
     }),
@@ -111,6 +159,35 @@ describe('SessionRoutes runtime reuse', () => {
       async () => runtimeState.runtime as never
     );
     vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
+    vi.mocked(SessionService.listSessions).mockResolvedValue([]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(undefined);
+    vi.mocked(SessionService.loadSession).mockResolvedValue([]);
+    vi.mocked(SessionService.createSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath: string, initial?: { title?: string }) =>
+        ({
+          sessionId,
+          projectPath,
+          rootId: sessionId,
+          title: initial?.title,
+          messageCount: 0,
+          firstMessageTime: new Date(0).toISOString(),
+          lastMessageTime: new Date(0).toISOString(),
+          hasErrors: false,
+        }) as never
+    );
+    vi.mocked(SessionService.updateSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath: string, update: { title?: string }) =>
+        ({
+          sessionId,
+          projectPath,
+          rootId: sessionId,
+          title: update.title,
+          messageCount: 0,
+          firstMessageTime: new Date(0).toISOString(),
+          lastMessageTime: new Date(1).toISOString(),
+          hasErrors: false,
+        }) as never
+    );
     agentState.chatStream.mockImplementation(async function* () {
       if (Date.now() < 0) {
         yield undefined;
@@ -125,6 +202,12 @@ describe('SessionRoutes runtime reuse', () => {
 
   afterEach(() => {
     vi.resetModules();
+  });
+
+  const refFor = (sessionId: string) => ({
+    sessionId,
+    projectPath:
+      '/Users/bytedance/Documents/GitHub/Blade/.worktrees/session-discovery-fork/packages/cli',
   });
 
   it('reuses one SessionRuntime for repeated messages in the same session', async () => {
@@ -193,7 +276,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(first.status).toBe(202);
     await vi.waitFor(() => {
       expect(Bus.publish).toHaveBeenCalledWith(
-        'steering-session',
+        refFor('steering-session'),
         'turn.started',
         expect.any(Object)
       );
@@ -216,7 +299,7 @@ describe('SessionRoutes runtime reuse', () => {
     );
     expect(Agent.createWithRuntime).toHaveBeenCalledTimes(1);
     expect(Bus.publish).toHaveBeenCalledWith(
-      'steering-session',
+      refFor('steering-session'),
       'steering.queued',
       expect.objectContaining({ queued: 1 })
     );
@@ -224,7 +307,7 @@ describe('SessionRoutes runtime reuse', () => {
     releaseRun();
     await vi.waitFor(() => {
       expect(Bus.publish).toHaveBeenCalledWith(
-        'steering-session',
+        refFor('steering-session'),
         'session.completed',
         expect.any(Object)
       );
@@ -256,7 +339,7 @@ describe('SessionRoutes runtime reuse', () => {
     });
     await vi.waitFor(() => {
       expect(Bus.publish).toHaveBeenCalledWith(
-        'follow-up-session',
+        refFor('follow-up-session'),
         'turn.started',
         expect.any(Object)
       );
@@ -279,7 +362,7 @@ describe('SessionRoutes runtime reuse', () => {
       queued: 1,
     });
     expect(Bus.publish).toHaveBeenCalledWith(
-      'follow-up-session',
+      refFor('follow-up-session'),
       'follow_up.queued',
       expect.objectContaining({ queued: 1 })
     );
@@ -547,6 +630,16 @@ describe('SessionRoutes runtime reuse', () => {
         firstMessageTime: new Date(0).toISOString(),
       },
     ] as never);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue({
+      sessionId: 'persisted-session',
+      projectPath: '/persisted-workspace',
+      rootId: 'persisted-session',
+      title: 'Persisted session',
+      messageCount: 2,
+      firstMessageTime: new Date(0).toISOString(),
+      lastMessageTime: new Date(1).toISOString(),
+      hasErrors: false,
+    } as never);
 
     const app = SessionRoutes();
 
@@ -592,15 +685,19 @@ describe('SessionRoutes runtime reuse', () => {
 
     expect(response.status).toBe(202);
     await vi.waitFor(() => {
-      expect(Bus.publish).toHaveBeenCalledWith('failed-prepared-run', 'session.error', {
-        error: 'upstream unavailable',
-      });
+      expect(Bus.publish).toHaveBeenCalledWith(
+        refFor('failed-prepared-run'),
+        'session.error',
+        {
+          error: 'upstream unavailable',
+        }
+      );
     });
     expect(runtimeState.runtime.finishTurn).toHaveBeenCalledWith({
       id: 'prepared-turn',
     });
     expect(Bus.publish).not.toHaveBeenCalledWith(
-      'failed-prepared-run',
+      refFor('failed-prepared-run'),
       'session.completed',
       expect.any(Object)
     );
@@ -673,34 +770,38 @@ describe('SessionRoutes runtime reuse', () => {
     expect(response.status).toBe(202);
     await vi.waitFor(() => {
       expect(Bus.publish).toHaveBeenCalledWith(
-        'surface-events',
+        refFor('surface-events'),
         'session.completed',
         expect.any(Object)
       );
     });
 
-    expect(Bus.publish).toHaveBeenCalledWith('surface-events', 'turn.started', {
+    expect(Bus.publish).toHaveBeenCalledWith(refFor('surface-events'), 'turn.started', {
       turn: 2,
       maxTurns: 8,
     });
     expect(Bus.publish).toHaveBeenCalledWith(
-      'surface-events',
+      refFor('surface-events'),
       'compaction.started',
       {}
     );
     expect(Bus.publish).toHaveBeenCalledWith(
-      'surface-events',
+      refFor('surface-events'),
       'compaction.completed',
       {}
     );
-    expect(Bus.publish).toHaveBeenCalledWith('surface-events', 'model.fallback', {});
+    expect(Bus.publish).toHaveBeenCalledWith(
+      refFor('surface-events'),
+      'model.fallback',
+      {}
+    );
     expect(Bus.publish).not.toHaveBeenCalledWith(
-      'surface-events',
+      refFor('surface-events'),
       'message.created',
       expect.objectContaining({ messageId: 'already-persisted' })
     );
     expect(Bus.publish).toHaveBeenCalledWith(
-      'surface-events',
+      refFor('surface-events'),
       'message.created',
       expect.objectContaining({
         messageId: 'not-yet-persisted',
@@ -708,7 +809,7 @@ describe('SessionRoutes runtime reuse', () => {
       })
     );
     expect(Bus.publish).toHaveBeenCalledWith(
-      'surface-events',
+      refFor('surface-events'),
       'steering.applied',
       expect.objectContaining({
         messageIds: ['recovered-steer'],
@@ -717,12 +818,252 @@ describe('SessionRoutes runtime reuse', () => {
       })
     );
     expect(Bus.publish).toHaveBeenCalledWith(
-      'surface-events',
+      refFor('surface-events'),
       'tool.result',
       expect.objectContaining({
         toolCallId: 'tool-failed-without-error-payload',
         success: false,
       })
+    );
+  });
+
+  it('creates durable metadata before inserting an active session', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionService } = await import(
+      '../../../../src/services/SessionService.js'
+    );
+
+    const app = SessionRoutes();
+    const response = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Created from web',
+        projectPath: '/tmp/task4-create-workspace',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(SessionService.createSessionMetadata).toHaveBeenCalledTimes(1);
+    expect(SessionService.createSessionMetadata).toHaveBeenCalledWith(
+      expect.any(String),
+      '/tmp/task4-create-workspace',
+      { title: 'Created from web' }
+    );
+    const body = await response.json();
+    expect(body).toMatchObject({
+      sessionId: expect.any(String),
+      projectPath: '/tmp/task4-create-workspace',
+      rootId: expect.any(String),
+    });
+  });
+
+  it('does not keep an in-memory session when durable creation fails', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionService } = await import(
+      '../../../../src/services/SessionService.js'
+    );
+    vi.mocked(SessionService.createSessionMetadata).mockRejectedValueOnce(
+      new Error('disk full')
+    );
+
+    const app = SessionRoutes();
+    const createResponse = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Unpersisted',
+        projectPath: '/tmp/task4-create-fail',
+      }),
+    });
+
+    expect(createResponse.status).toBe(500);
+
+    const listResponse = await app.request('/');
+    expect(listResponse.status).toBe(200);
+    expect(await listResponse.json()).toEqual([]);
+  });
+
+  it('updates durable metadata before mutating the active session title', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionService } = await import(
+      '../../../../src/services/SessionService.js'
+    );
+
+    const app = SessionRoutes();
+    const createResponse = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Before rename',
+        projectPath: '/tmp/task4-rename-workspace',
+      }),
+    });
+    const created = await createResponse.json();
+
+    vi.mocked(SessionService.updateSessionMetadata).mockResolvedValueOnce({
+      sessionId: created.sessionId,
+      projectPath: '/tmp/task4-rename-workspace',
+      rootId: created.sessionId,
+      title: 'Renamed durably',
+      messageCount: 0,
+      firstMessageTime: new Date(0).toISOString(),
+      lastMessageTime: new Date(2).toISOString(),
+      hasErrors: false,
+    } as never);
+
+    const patchResponse = await app.request(`/${created.sessionId}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Renamed durably',
+        projectPath: '/tmp/task4-rename-workspace',
+      }),
+    });
+
+    expect(patchResponse.status).toBe(200);
+    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+      created.sessionId,
+      '/tmp/task4-rename-workspace',
+      { title: 'Renamed durably' }
+    );
+    expect(await patchResponse.json()).toMatchObject({
+      success: true,
+      title: 'Renamed durably',
+    });
+  });
+
+  it('does not mutate the active title when durable rename fails', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionService } = await import(
+      '../../../../src/services/SessionService.js'
+    );
+
+    const app = SessionRoutes();
+    const createResponse = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Stable title',
+        projectPath: '/tmp/task4-stable-title',
+      }),
+    });
+    const created = await createResponse.json();
+
+    vi.mocked(SessionService.updateSessionMetadata).mockRejectedValueOnce(
+      new Error('rename failed')
+    );
+    const patchResponse = await app.request(`/${created.sessionId}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Should not stick',
+        projectPath: '/tmp/task4-stable-title',
+      }),
+    });
+
+    expect(patchResponse.status).toBe(500);
+
+    const getResponse = await app.request(
+      `/${created.sessionId}?projectPath=${encodeURIComponent('/tmp/task4-stable-title')}`
+    );
+    expect(getResponse.status).toBe(200);
+    expect(await getResponse.json()).toMatchObject({
+      title: 'Stable title',
+    });
+  });
+
+  it('requires projectPath when duplicate session ids exist across workspaces', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionService } = await import(
+      '../../../../src/services/SessionService.js'
+    );
+
+    vi.mocked(SessionService.listSessions).mockResolvedValue([
+      {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-a',
+        rootId: 'shared-session',
+        title: 'Workspace A',
+        messageCount: 1,
+        firstMessageTime: new Date(0).toISOString(),
+        lastMessageTime: new Date(1).toISOString(),
+        hasErrors: false,
+      },
+      {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-b',
+        rootId: 'shared-session',
+        title: 'Workspace B',
+        messageCount: 2,
+        firstMessageTime: new Date(0).toISOString(),
+        lastMessageTime: new Date(2).toISOString(),
+        hasErrors: false,
+      },
+    ] as never);
+
+    const app = SessionRoutes();
+    const response = await app.request('/shared-session');
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'AMBIGUOUS_SESSION' },
+    });
+  });
+
+  it('resolves duplicate ids to the exact workspace for get and message history', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionService } = await import(
+      '../../../../src/services/SessionService.js'
+    );
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (sessionId === 'shared-session' && projectPath === '/tmp/workspace-b') {
+          return {
+            sessionId,
+            projectPath,
+            rootId: sessionId,
+            title: 'Workspace B',
+            messageCount: 2,
+            firstMessageTime: new Date(0).toISOString(),
+            lastMessageTime: new Date(2).toISOString(),
+            hasErrors: false,
+          } as never;
+        }
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.loadSession).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (sessionId === 'shared-session' && projectPath === '/tmp/workspace-b') {
+          return [{ role: 'assistant', content: 'workspace-b-history' }] as never;
+        }
+        return [] as never;
+      }
+    );
+
+    const app = SessionRoutes();
+    const getResponse = await app.request(
+      `/shared-session?projectPath=${encodeURIComponent('/tmp/workspace-b')}`
+    );
+    expect(getResponse.status).toBe(200);
+    expect(await getResponse.json()).toMatchObject({
+      sessionId: 'shared-session',
+      projectPath: '/tmp/workspace-b',
+      title: 'Workspace B',
+    });
+
+    const messagesResponse = await app.request(
+      `/shared-session/message?projectPath=${encodeURIComponent('/tmp/workspace-b')}`
+    );
+    expect(messagesResponse.status).toBe(200);
+    expect(await messagesResponse.json()).toEqual([
+      { role: 'assistant', content: 'workspace-b-history' },
+    ]);
+    expect(SessionService.loadSession).toHaveBeenCalledWith(
+      'shared-session',
+      '/tmp/workspace-b'
     );
   });
 });

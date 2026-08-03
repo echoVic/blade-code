@@ -383,3 +383,169 @@ describe('Subagent Bus topic stability', () => {
     ]);
   });
 });
+
+describe('Task tool subagent event publishing', () => {
+  it('publishes every forwarded subagent event with the parent session ref', async () => {
+    vi.resetModules();
+    const busState = { publish: vi.fn() };
+    const worktreeState = {
+      prepare: vi.fn(async () => ({
+        workspaceRoot: '/tmp/task-workspace',
+        worktree: undefined,
+      })),
+      finalize: vi.fn(async () => undefined),
+    };
+    const storeState = {
+      startSubagentProgress: vi.fn(),
+      updateSubagentTool: vi.fn(),
+      completeSubagentProgress: vi.fn(),
+    };
+    const subagentExecutorState = {
+      execute: vi.fn(),
+    };
+    vi.doMock('../../../../src/server/bus.js', () => ({
+      Bus: {
+        publish: busState.publish,
+      },
+    }));
+    vi.doMock('../../../../src/agent/subagents/SubagentWorktreeLifecycle.js', () => ({
+      subagentWorktreeLifecycle: worktreeState,
+    }));
+    vi.doMock('../../../../src/store/vanilla.js', () => ({
+      vanillaStore: {
+        getState: () => ({
+          app: {
+            actions: {
+              startSubagentProgress: storeState.startSubagentProgress,
+              updateSubagentTool: storeState.updateSubagentTool,
+              completeSubagentProgress: storeState.completeSubagentProgress,
+            },
+          },
+        }),
+      },
+    }));
+    vi.doMock('../../../../src/agent/subagents/SubagentExecutor.js', () => ({
+      SubagentExecutor: vi.fn(() => ({
+        execute: subagentExecutorState.execute,
+      })),
+    }));
+    const toolStart: LoopEvent = {
+      kind: 'tool_start',
+      toolCall: {
+        id: 'tool-1',
+        type: 'function',
+        function: { name: 'Read', arguments: '{}' },
+      },
+    };
+    const toolResult: LoopEvent = {
+      kind: 'tool_result',
+      toolCall: {
+        id: 'tool-1',
+        type: 'function',
+        function: { name: 'Read', arguments: '{}' },
+      },
+      result: { success: true, llmContent: 'ok' },
+    };
+    const contentDelta: LoopEvent = { kind: 'content_delta', delta: 'hello' };
+    const thinkingDelta: LoopEvent = { kind: 'thinking_delta', delta: 'hmm' };
+    const streamEnd: LoopEvent = { kind: 'stream_end' };
+    subagentExecutorState.execute.mockImplementationOnce(
+      async ({ onEvent }: { onEvent?: (event: LoopEvent) => void | Promise<void> }) => {
+        if (!onEvent) {
+          throw new Error('expected onEvent');
+        }
+        for (const event of [
+          toolStart,
+          toolResult,
+          contentDelta,
+          thinkingDelta,
+          streamEnd,
+        ]) {
+          await onEvent(event);
+        }
+        return {
+          success: true,
+          message: 'done',
+          stats: { toolCalls: 1, duration: 1, tokens: 1 },
+        };
+      }
+    );
+
+    const { PermissionMode } = await import('../../../../src/config/types.js');
+    const { subagentRegistry } = await import(
+      '../../../../src/agent/subagents/SubagentRegistry.js'
+    );
+    subagentRegistry.applyOverrides([
+      {
+        name: 'test-worker',
+        description: 'test worker',
+      },
+    ]);
+    const { taskTool } = await import('../../../../src/tools/builtin/task/task.js');
+    const context = {
+      sessionId: 'parent-session',
+      workspaceRoot: '/tmp/parent-workspace',
+      permissionMode: PermissionMode.DEFAULT,
+      signal: new AbortController().signal,
+      updateOutput: vi.fn(),
+    };
+
+    const result = await taskTool.execute(
+      {
+        subagent_type: 'test-worker',
+        description: 'Forward events',
+        prompt: 'Forward all events',
+        run_in_background: false,
+      },
+      undefined,
+      context
+    );
+
+    expect(result.success).toBe(true);
+    expect(busState.publish).toHaveBeenCalledTimes(6);
+    const ref = {
+      sessionId: 'parent-session',
+      projectPath: '/tmp/parent-workspace',
+    };
+    expect(busState.publish).toHaveBeenNthCalledWith(
+      1,
+      ref,
+      'subagent.update',
+      expect.objectContaining({ toolName: 'Read' })
+    );
+    expect(busState.publish).toHaveBeenNthCalledWith(
+      2,
+      ref,
+      'subagent.tool.start',
+      expect.objectContaining({ toolName: 'Read', toolCallId: 'tool-1' })
+    );
+    expect(busState.publish).toHaveBeenNthCalledWith(
+      3,
+      ref,
+      'subagent.tool.result',
+      expect.objectContaining({ toolName: 'Read', toolCallId: 'tool-1' })
+    );
+    expect(busState.publish).toHaveBeenNthCalledWith(
+      4,
+      ref,
+      'subagent.delta',
+      expect.objectContaining({ delta: 'hello' })
+    );
+    expect(busState.publish).toHaveBeenNthCalledWith(
+      5,
+      ref,
+      'subagent.thinking.delta',
+      expect.objectContaining({ delta: 'hmm' })
+    );
+    expect(busState.publish).toHaveBeenNthCalledWith(
+      6,
+      ref,
+      'subagent.stream.end',
+      expect.objectContaining({})
+    );
+    vi.doUnmock('../../../../src/server/bus.js');
+    vi.doUnmock('../../../../src/agent/subagents/SubagentWorktreeLifecycle.js');
+    vi.doUnmock('../../../../src/store/vanilla.js');
+    vi.doUnmock('../../../../src/agent/subagents/SubagentExecutor.js');
+  });
+});
