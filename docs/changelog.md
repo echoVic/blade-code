@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1] - 2026-08-03
+
+### 🐛 问题修复
+
+- 强制执行显式委派、验证和 yolo 轮次上限，防止 Agent 提前完成或无限重试
+- 在验证成功前阻止退出 worktree，并确保生命周期工具始终向模型暴露完整 schema
+- 启动时安全清理过期且无未提交、未推送改动的 Agent worktree
+- 将自定义 Agent 的完成要求纳入子 Agent 验证策略
+
+### ✅ 测试相关
+
+- 将 Claude 资格模型升级为 `claude-opus-4-8`，GPT 资格模型升级为 `gpt-5.5`
+- 规范化 NewAPI `/v1` 地址，并覆盖 Claude、GPT、DeepSeek 的 CLI、Web 与 ACP 真实 API 轨迹
+- 增强 worktree、session fork 与自定义 Agent 的真实 API 资格测试
+
 ## [0.7.0] - 2026-08-03
 
 ### ✨ 新功能
