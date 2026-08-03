@@ -91,9 +91,9 @@ export const useModelEditorTarget = () =>
   useBladeStore((state) => state.app.modelEditorTarget);
 
 /**
- * 获取会话选择器数据
+ * 获取会话选择器状态
  */
-export const useSessionSelectorData = () =>
+export const useSessionSelectorState = () =>
   useBladeStore((state) => state.app.sessionSelectorData);
 
 /**

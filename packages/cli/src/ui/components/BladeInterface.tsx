@@ -1,4 +1,5 @@
 import { useMemoizedFn } from 'ahooks';
+import path from 'node:path';
 import { Box } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import {
@@ -9,6 +10,8 @@ import {
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
 import { SessionService } from '../../services/SessionService.js';
+import type { SessionMetadata } from '../../services/SessionService.js';
+import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import {
   useActiveModal,
   useAppActions,
@@ -19,7 +22,7 @@ import {
   useModelEditorTarget,
   usePermissionMode,
   useSessionActions,
-  useSessionSelectorData,
+  useSessionSelectorState,
   useThemeName,
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
@@ -34,6 +37,7 @@ import { useInputBuffer } from '../hooks/useInputBuffer.js';
 import { useMainInput } from '../hooks/useMainInput.js';
 import { useRefreshStatic } from '../hooks/useRefreshStatic.js';
 import { themeManager } from '../themes/ThemeManager.js';
+import { activateSessionSelection } from '../utils/sessionActivation.js';
 import { AgentCreationWizard } from './AgentCreationWizard.js';
 import { AgentsManager } from './AgentsManager.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
@@ -91,7 +95,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const initializationStatus = useInitializationStatus();
   const initializationError = useInitializationError();
   const activeModal = useActiveModal();
-  const sessionSelectorData = useSessionSelectorData();
+  const sessionSelectorState = useSessionSelectorState();
   const modelEditorTarget = useModelEditorTarget();
   const appActions = useAppActions();
 
@@ -206,25 +210,63 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   });
 
-  const restorePersistedSession = useMemoizedFn(async (sourceSessionId: string) => {
-    const workspace = getCwd();
-    const resolved = otherProps.forkSession
-      ? await SessionService.forkSession(sourceSessionId, {
-          newSessionId: otherProps.sessionId,
-          sourceProjectPath: workspace,
-          targetProjectPath: workspace,
-        })
-      : {
-          sessionId: sourceSessionId,
-          messages: await SessionService.loadSession(sourceSessionId),
-        };
-    const sessionMessages = SessionService.toUISafeMessages(resolved.messages);
-    sessionActions.restoreSession(
-      resolved.sessionId,
-      sessionMessages,
-      resolved.messages
-    );
-  });
+  const activatePersistedSession = useMemoizedFn(
+    async (
+      session: SessionMetadata,
+      intent: SessionSelectionIntent,
+      options?: { newSessionId?: string; announceFork?: boolean }
+    ) => {
+      return activateSessionSelection(
+        {
+          intent,
+          session,
+          newSessionId: options?.newSessionId,
+          announceFork: options?.announceFork,
+        },
+        getCwd(),
+        sessionActions
+      );
+    }
+  );
+
+  const resolveSessionMetadata = useMemoizedFn(
+    async (
+      sourceSessionId: string,
+      intent: SessionSelectionIntent
+    ): Promise<SessionMetadata> => {
+      const workspace = getCwd();
+      if (intent === 'fork') {
+        const sessions = await SessionService.listSessions({
+          cwd: workspace,
+          includeSubagents: false,
+        });
+        const resolvedWorkspace = path.resolve(workspace);
+        const session = sessions.find(
+          (candidate) =>
+            candidate.sessionId === sourceSessionId &&
+            path.resolve(candidate.projectPath) === resolvedWorkspace &&
+            candidate.relationType !== 'subagent'
+        );
+        if (!session) {
+          throw new Error(`Session not found: ${sourceSessionId}`);
+        }
+        return session;
+      }
+
+      const scoped = await SessionService.findSessionMetadata(
+        sourceSessionId,
+        workspace
+      );
+      if (scoped) {
+        return scoped;
+      }
+      const session = await SessionService.findSessionMetadata(sourceSessionId);
+      if (!session) {
+        throw new Error(`Session not found: ${sourceSessionId}`);
+      }
+      return session;
+    }
+  );
 
   const { showSuggestions, suggestions, selectedSuggestionIndex } = useMainInput(
     inputBuffer,
@@ -262,7 +304,14 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       }
 
       const mostRecentSession = sessions[0];
-      await restorePersistedSession(mostRecentSession.sessionId);
+      await activatePersistedSession(
+        mostRecentSession,
+        otherProps.forkSession ? 'fork' : 'resume',
+        {
+          newSessionId: otherProps.forkSession ? otherProps.sessionId : undefined,
+          announceFork: otherProps.forkSession ? false : undefined,
+        }
+      );
     } catch (error) {
       logger.error('[BladeInterface] 继续会话失败:', error);
       if (otherProps.forkSession) {
@@ -277,18 +326,31 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     readyAnnouncementSent.current = true;
     try {
       if (typeof otherProps.resume === 'string' && otherProps.resume !== 'true') {
-        await restorePersistedSession(otherProps.resume);
+        const intent: SessionSelectionIntent = otherProps.forkSession
+          ? 'fork'
+          : 'resume';
+        const session = await resolveSessionMetadata(otherProps.resume, intent);
+        await activatePersistedSession(session, intent, {
+          newSessionId: otherProps.forkSession ? otherProps.sessionId : undefined,
+          announceFork: otherProps.forkSession ? false : undefined,
+        });
         return;
       }
 
-      const sessions = await SessionService.listSessions();
+      const sessions = await SessionService.listSessions({
+        cwd: getCwd(),
+        includeSubagents: false,
+      });
 
       if (sessions.length === 0) {
         logger.error('没有找到历史会话');
         safeExit(1);
       }
 
-      appActions.showSessionSelector(sessions);
+      appActions.showSessionSelector(
+        sessions,
+        otherProps.forkSession ? 'fork' : 'resume'
+      );
     } catch (error) {
       logger.error('[BladeInterface] 加载会话失败:', error);
       safeExit(1);
@@ -345,12 +407,15 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     appActions.closeModal();
   });
 
-  const handleSessionSelect = useMemoizedFn(async (sessionId: string) => {
+  const handleSessionSelect = useMemoizedFn(async (session: SessionMetadata) => {
     try {
-      await restorePersistedSession(sessionId);
+      await activatePersistedSession(session, sessionSelectorState?.intent ?? 'resume');
       appActions.closeModal();
     } catch (error) {
       logger.error('[BladeInterface] Failed to restore session:', error);
+      sessionActions.addAssistantMessage(
+        `会话操作失败: ${error instanceof Error ? error.message : '未知错误'}`
+      );
       appActions.closeModal();
     }
   });
@@ -588,7 +653,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       <PermissionsManager onClose={closeModal} />
     ) : activeModal === 'sessionSelector' ? (
       <SessionSelector
-        sessions={sessionSelectorData}
+        intent={sessionSelectorState?.intent ?? 'resume'}
+        sessions={sessionSelectorState?.sessions}
         onSelect={handleSessionSelect}
         onCancel={handleSessionCancel}
       />

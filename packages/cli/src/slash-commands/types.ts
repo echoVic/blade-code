@@ -3,8 +3,23 @@
  */
 
 import { sessionActions } from '../store/vanilla.js';
+import type { SessionMetadata } from '../services/SessionService.js';
 
-type SlashCommandAction =
+export type SessionSelectionIntent = 'resume' | 'fork';
+
+export type SessionSelectionAction =
+  | {
+      action: 'select_session';
+      intent: SessionSelectionIntent;
+      sessions: SessionMetadata[];
+    }
+  | {
+      action: 'activate_session';
+      intent: SessionSelectionIntent;
+      session: SessionMetadata;
+    };
+
+export type SlashCommandAction =
   | 'show_model_selector'
   | 'show_model_add_wizard'
   | 'show_agents_manager'
@@ -17,7 +32,9 @@ type SlashCommandAction =
   | 'invoke_skill'
   | 'invoke_custom_command'
   | 'invoke_plugin_command'
-  | 'invoke_once_model';
+  | 'invoke_once_model'
+  | 'select_session'
+  | 'activate_session';
 
 /**
  * Slash command 返回的结构化数据
@@ -25,6 +42,8 @@ type SlashCommandAction =
 export interface SlashCommandData {
   /** UI 指令（触发特定 UI 组件） */
   action?: SlashCommandAction;
+  /** Session selection intent */
+  intent?: SessionSelectionIntent;
   /** 模式（如 add/edit） */
   mode?: string;
   /** 压缩结果相关 */
@@ -35,8 +54,8 @@ export interface SlashCommandData {
   postTokens?: number;
   filesIncluded?: string[];
   /** Resume 相关 */
-  sessions?: unknown[];
-  selectedSession?: unknown;
+  sessions?: SessionMetadata[];
+  session?: SessionMetadata;
   /** 扩展字段（用于未来新增的数据类型） */
   [key: string]: unknown;
 }

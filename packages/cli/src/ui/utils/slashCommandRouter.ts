@@ -13,7 +13,9 @@ import {
   isSlashCommand,
   type SlashCommandContext,
 } from '../../slash-commands/index.js';
+import type { SessionSelectionAction } from '../../slash-commands/types.js';
 import type { useAppActions, useSessionActions } from '../../store/selectors/index.js';
+import { activateSessionSelection } from './sessionActivation.js';
 import type { ResolvedInput } from '../hooks/useInputBuffer.js';
 
 // ==================== 类型定义 ====================
@@ -92,6 +94,20 @@ interface InvokeOnceModelData {
   prompt: string;
 }
 
+function isSessionMetadata(value: unknown): value is SessionMetadata {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as SessionMetadata).sessionId === 'string' &&
+    typeof (value as SessionMetadata).projectPath === 'string' &&
+    typeof (value as SessionMetadata).rootId === 'string' &&
+    typeof (value as SessionMetadata).messageCount === 'number' &&
+    typeof (value as SessionMetadata).firstMessageTime === 'string' &&
+    typeof (value as SessionMetadata).lastMessageTime === 'string' &&
+    typeof (value as SessionMetadata).hasErrors === 'boolean'
+  );
+}
+
 // ==================== 类型守卫 ====================
 
 export function isInvokeSkillAction(data: unknown): data is InvokeSkillData {
@@ -135,6 +151,33 @@ export function isInvokeOnceModelAction(data: unknown): data is InvokeOnceModelD
     typeof (data as InvokeOnceModelData).modelId === 'string' &&
     typeof (data as InvokeOnceModelData).prompt === 'string'
   );
+}
+
+export function isSessionSelectionAction(
+  data: unknown
+): data is SessionSelectionAction {
+  if (typeof data !== 'object' || data === null) {
+    return false;
+  }
+
+  const intent = (data as { intent?: unknown }).intent;
+  if (intent !== 'resume' && intent !== 'fork') {
+    return false;
+  }
+
+  const action = (data as { action?: unknown }).action;
+  if (action === 'select_session') {
+    const sessions = (data as { sessions?: unknown }).sessions;
+    return (
+      Array.isArray(sessions) && sessions.every((session) => isSessionMetadata(session))
+    );
+  }
+
+  if (action === 'activate_session') {
+    return isSessionMetadata((data as { session?: unknown }).session);
+  }
+
+  return false;
 }
 
 // ==================== handleSlashMessage ====================
@@ -184,7 +227,7 @@ function handleSlashMessage(
       return true;
     case 'show_session_selector': {
       const sessions = (data as { sessions?: SessionMetadata[] } | undefined)?.sessions;
-      appActions.showSessionSelector(sessions);
+      appActions.showSessionSelector(sessions ?? [], 'resume');
       return true;
     }
     case 'clear_screen':
@@ -240,6 +283,19 @@ export async function processSlashCommand(
   };
 
   const slashResult = await executeSlashCommand(command, slashContext);
+
+  if (isSessionSelectionAction(slashResult.data)) {
+    if (slashResult.data.action === 'select_session') {
+      appActions.showSessionSelector(
+        slashResult.data.sessions,
+        slashResult.data.intent
+      );
+      return { type: 'handled', commandResult: { success: true } };
+    }
+
+    await activateSessionSelection(slashResult.data, getCwd(), sessionActions);
+    return { type: 'handled', commandResult: { success: true } };
+  }
 
   // 处理 UI 消息（show modal / clear / exit 等）
   if (slashResult.message) {

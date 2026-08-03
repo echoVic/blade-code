@@ -8,13 +8,19 @@ import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import React, { useEffect, useMemo, useState } from 'react';
 import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
+import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import { useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import {
+  getSessionSelectorCopy,
+  getVisibleSessionCandidates,
+} from './sessionSelectorModel.js';
 
 interface SessionSelectorProps {
+  intent: SessionSelectionIntent;
   sessions?: SessionMetadata[]; // 可选，如果不提供则自动加载
-  onSelect: (sessionId: string) => void;
+  onSelect: (session: SessionMetadata) => void;
   onCancel?: () => void; // 可选，用于 --resume CLI 模式，在 /resume 斜杠命令模式下由全局处理器处理
 }
 
@@ -72,6 +78,7 @@ const Item = ({ isSelected, label }: { isSelected?: boolean; label: string }) =>
 const PAGE_SIZE = 20;
 
 export const SessionSelector: React.FC<SessionSelectorProps> = ({
+  intent,
   sessions: propSessions,
   onSelect,
   onCancel,
@@ -144,7 +151,11 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
     loadSessions();
   }, [propSessions]);
 
-  const sessions = propSessions || loadedSessions;
+  const sessions = useMemo(
+    () => getVisibleSessionCandidates(propSessions || loadedSessions, intent),
+    [intent, propSessions, loadedSessions]
+  );
+  const copy = useMemo(() => getSessionSelectorCopy(intent), [intent]);
 
   // 转换为 SelectInput 的 items 格式
   const items = useMemo(() => {
@@ -162,7 +173,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
 
       return {
         label: `${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${errorStr}${relationStr}`,
-        value: session.sessionId,
+        value: session,
       };
     });
   }, [sessions]);
@@ -191,7 +202,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
     setCurrentPage(0);
   }, [sessions.length]);
 
-  const handleSelect = (item: { label: string; value: string }) => {
+  const handleSelect = (item: { label: string; value: SessionMetadata }) => {
     onSelect(item.value);
   };
 
@@ -217,11 +228,12 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Text bold color="cyan">
-        选择要恢复的会话:
+        {copy.title}
       </Text>
       <Text dimColor>
-        {'\n'}(Left/Right to page | Up/Down to select | Enter to confirm | Esc to
-        cancel){'\n'}
+        {'\n'}
+        {copy.instructions}
+        {'\n'}
       </Text>
 
       <SelectInput

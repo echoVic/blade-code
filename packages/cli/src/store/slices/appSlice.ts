@@ -12,6 +12,7 @@
 import type { StateCreator } from 'zustand';
 import type { ModelConfig } from '../../config/types.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
+import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type {
   ActiveModal,
@@ -73,12 +74,18 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
     /**
      * 显示会话选择器
      */
-    showSessionSelector: (sessions?: SessionMetadata[]) => {
+    showSessionSelector: (
+      sessions: SessionMetadata[],
+      intent: SessionSelectionIntent = 'resume'
+    ) => {
       set((state) => ({
         app: {
           ...state.app,
           activeModal: 'sessionSelector',
-          sessionSelectorData: sessions,
+          sessionSelectorData: {
+            intent,
+            sessions,
+          },
         },
       }));
     },
