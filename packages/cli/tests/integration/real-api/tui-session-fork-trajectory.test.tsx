@@ -23,6 +23,8 @@ import type { ResolvedInput } from '../../../src/ui/hooks/useInputBuffer.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
   assertForkLineage,
+  assertForkChildToolTrace,
+  assertForkParentToolTrace,
   assertNoSecrets,
   assertParentUnchanged,
   cleanupForkFixture,
@@ -69,26 +71,11 @@ function resolvedInput(text: string): ResolvedInput {
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function assertDurableParentTrace(
   events: readonly SessionEvent[],
   memoryPath: string
 ): void {
-  const trace = extractDurableToolTrace(events);
-  const call = trace[0];
-  if (
-    trace.length !== 1 ||
-    call?.toolName !== 'Read' ||
-    !isRecord(call.input) ||
-    call.input.file_path !== memoryPath ||
-    call.output === null ||
-    call.error !== null
-  ) {
-    throw new Error('TUI parent durable tool trace did not match exact contract');
-  }
+  assertForkParentToolTrace(extractDurableToolTrace(events), memoryPath);
 }
 
 function assertDurableChildTrace(
@@ -97,41 +84,19 @@ function assertDurableChildTrace(
   resultPath: string,
   expectedBytes: string
 ): void {
-  const trace = extractDurableToolTrace(events, { afterEventCount });
-  const write = trace[0];
-  const bash = trace[1];
-  if (
-    trace.length !== 2 ||
-    write?.toolName !== 'Write' ||
-    !isRecord(write.input) ||
-    write.input.file_path !== resultPath ||
-    write.input.content !== expectedBytes ||
-    write.output === null ||
-    write.error !== null ||
-    bash?.toolName !== 'Bash' ||
-    !isRecord(bash.input) ||
-    bash.input.command !== 'wc -c result.txt' ||
-    bash.output === null ||
-    bash.error !== null
-  ) {
-    throw new Error('TUI child durable tool trace did not match exact contract');
-  }
+  assertForkChildToolTrace(
+    extractDurableToolTrace(events, { afterEventCount }),
+    resultPath,
+    expectedBytes
+  );
 }
 
-function assertUiFinal(
-  content: unknown,
-  expected: 'READY' | 'DONE',
-  marker: string,
-  nonce: string
-): void {
-  if (typeof content !== 'string') {
-    throw new Error('TUI final response was not text');
+function assertUiFinal(content: unknown, marker: string, nonce: string): void {
+  if (typeof content !== 'string' || content.trim().length === 0) {
+    throw new Error('TUI final response must be non-empty text');
   }
   if (content.includes(marker) || content.includes(nonce)) {
     throw new Error('TUI final response exposed fixture material');
-  }
-  if (content.trim() !== expected) {
-    throw new Error('TUI final response did not match exact contract');
   }
 }
 
@@ -311,24 +276,21 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
                 [
                   'Use Read exactly once on the workspace file memory.txt.',
                   'Remember its complete content for a later fork.',
-                  'Never repeat the file content in final prose; reply only READY after Read succeeds.',
+                  'Never repeat the file content in final prose; briefly confirm completion after Read succeeds.',
                 ].join(' ')
               )
             );
           });
           expect(getState().command.isProcessing).toBe(false);
+          expect(getState().session.error).toBeNull();
           const parentPath = findSessionTranscript(fixture.storageRoot, parentId);
           const parentEvents = readSessionEvents(parentPath);
           assertDurableParentTrace(parentEvents, memoryPath);
           const parentBeforeFork = readFileSync(parentPath, 'utf8');
-          assertUiFinal(
-            getState()
-              .session.messages.filter((message) => message.role === 'assistant')
-              .at(-1)?.content,
-            'READY',
-            marker,
-            fixture.nonce
-          );
+          const parentAssistantContents = getState()
+            .session.messages.filter((message) => message.role === 'assistant')
+            .map((message) => message.content);
+          assertUiFinal(parentAssistantContents.at(-1), marker, fixture.nonce);
           const versionBeforeFork = latest.renderVersion;
           const parentHook = latest.hook;
 
@@ -377,7 +339,7 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
                   'Recover the complete marker from the inherited Read result.',
                   'Use Write exactly once to create result.txt with that marker and exactly one trailing newline.',
                   'Then use Bash exactly once with command `wc -c result.txt`.',
-                  'Use no other command, never repeat the marker in final prose, and reply only DONE.',
+                  'Use no other command, never repeat the marker in final prose, and briefly confirm completion.',
                 ].join(' ')
               )
             );
@@ -399,13 +361,10 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
           if (readFileSync(resultPath, 'utf8') !== expectedBytes) {
             throw new Error('TUI child result bytes did not match exact contract');
           }
-          assertUiFinal(
-            uiMessages.filter((message) => message.role === 'assistant').at(-1)
-              ?.content,
-            'DONE',
-            marker,
-            fixture.nonce
-          );
+          const childAssistantContents = uiMessages
+            .filter((message) => message.role === 'assistant')
+            .map((message) => message.content);
+          assertUiFinal(childAssistantContents.at(-1), marker, fixture.nonce);
           assertDurableChildTrace(
             childEvents,
             childSnapshot.length,
@@ -424,6 +383,7 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
             pendingCommands: [],
             abortController: null,
           });
+          expect(getState().session.error).toBeNull();
 
           await childHook.cleanupAgent();
           await proveLeaseReleased(

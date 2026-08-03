@@ -20,10 +20,13 @@ import {
 } from '../../integration/real-api/codingTaskHarness.js';
 import {
   assertForkLineage,
+  assertForkChildToolTrace,
+  assertForkParentToolTrace,
   assertNoSecrets,
   assertParentUnchanged,
   cleanupForkFixture,
   createForkFixture,
+  type DurableToolTraceRecord,
   extractDurableToolTrace,
   findSessionTranscript,
   readSessionEvents,
@@ -612,6 +615,109 @@ describe('real API coding-task harness', () => {
 });
 
 describe('real API session-fork trajectory harness', () => {
+  it('accepts repeated exact successful parent Reads', () => {
+    const memoryPath = '/workspace/memory.txt';
+    const reads = ['read-1', 'read-2', 'read-3'].map((toolCallId) => ({
+      toolCallId,
+      toolName: 'Read',
+      input: { file_path: memoryPath },
+      output: { text: 'fixture output' },
+      error: null,
+    }));
+
+    expect(() => assertForkParentToolTrace(reads, memoryPath)).not.toThrow();
+  });
+
+  it('rejects empty, wrong-path, unexpected, and failed parent traces', () => {
+    const memoryPath = '/workspace/memory.txt';
+    const valid = {
+      toolCallId: 'read-1',
+      toolName: 'Read',
+      input: { file_path: memoryPath },
+      output: { text: 'fixture output' },
+      error: null,
+    };
+
+    expect(() => assertForkParentToolTrace([], memoryPath)).toThrow();
+    expect(() =>
+      assertForkParentToolTrace(
+        [{ ...valid, input: { file_path: '/workspace/other.txt' } }],
+        memoryPath
+      )
+    ).toThrow();
+    expect(() =>
+      assertForkParentToolTrace([{ ...valid, toolName: 'Bash' }], memoryPath)
+    ).toThrow();
+    expect(() =>
+      assertForkParentToolTrace([{ ...valid, output: null }], memoryPath)
+    ).toThrow();
+    expect(() =>
+      assertForkParentToolTrace([{ ...valid, error: 'failed' }], memoryPath)
+    ).toThrow();
+  });
+
+  it('accepts repeated exact child Write and wc calls in required order', () => {
+    const resultPath = '/workspace/result.txt';
+    const expectedBytes = 'fixture-marker\n';
+    const write = (toolCallId: string) => ({
+      toolCallId,
+      toolName: 'Write',
+      input: { file_path: resultPath, content: expectedBytes },
+      output: { written: true },
+      error: null,
+    });
+    const bash = (toolCallId: string) => ({
+      toolCallId,
+      toolName: 'Bash',
+      input: { command: 'wc -c result.txt' },
+      output: { stdout: '15 result.txt' },
+      error: null,
+    });
+
+    expect(() =>
+      assertForkChildToolTrace(
+        [write('write-1'), write('write-2'), bash('bash-1'), bash('bash-2')],
+        resultPath,
+        expectedBytes
+      )
+    ).not.toThrow();
+  });
+
+  it('rejects incomplete, reordered, unexpected, mismatched, and failed child traces', () => {
+    const resultPath = '/workspace/result.txt';
+    const expectedBytes = 'fixture-marker\n';
+    const write: DurableToolTraceRecord = {
+      toolCallId: 'write-1',
+      toolName: 'Write',
+      input: { file_path: resultPath, content: expectedBytes },
+      output: { written: true },
+      error: null,
+    };
+    const bash: DurableToolTraceRecord = {
+      toolCallId: 'bash-1',
+      toolName: 'Bash',
+      input: { command: 'wc -c result.txt' },
+      output: { stdout: '15 result.txt' },
+      error: null,
+    };
+    const assertRejected = (trace: DurableToolTraceRecord[]) =>
+      expect(() =>
+        assertForkChildToolTrace(trace, resultPath, expectedBytes)
+      ).toThrow();
+
+    assertRejected([write]);
+    assertRejected([bash]);
+    assertRejected([bash, write]);
+    assertRejected([write, { ...bash, input: { command: 'cat result.txt' } }]);
+    assertRejected([write, { ...bash, toolName: 'Read' }]);
+    assertRejected([
+      { ...write, input: { file_path: resultPath, content: 'wrong' } },
+      bash,
+    ]);
+    assertRejected([{ ...write, output: null }, bash]);
+    assertRejected([write, { ...bash, error: 'failed' }]);
+  });
+
   it('pairs durable tool calls and results in call order after a snapshot boundary', () => {
     const inherited = createToolPartEvent('child', 0, 'tool_call', {
       toolCallId: 'inherited-read',

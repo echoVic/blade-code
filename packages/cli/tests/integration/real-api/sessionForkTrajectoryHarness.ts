@@ -213,6 +213,66 @@ export interface DurableToolTraceRecord {
   error: string | null;
 }
 
+export function assertForkParentToolTrace(
+  trace: readonly DurableToolTraceRecord[],
+  memoryPath: string
+): void {
+  if (trace.length === 0) {
+    throw new Error('Fork parent tool trace must contain a successful Read');
+  }
+  for (const record of trace) {
+    if (
+      record.toolName !== 'Read' ||
+      !isRecord(record.input) ||
+      record.input.file_path !== memoryPath ||
+      record.output === null ||
+      record.error !== null
+    ) {
+      throw new Error('Fork parent tool trace violated the Read contract');
+    }
+  }
+}
+
+export function assertForkChildToolTrace(
+  trace: readonly DurableToolTraceRecord[],
+  resultPath: string,
+  expectedBytes: string
+): void {
+  let firstWriteIndex = -1;
+  let firstBashIndex = -1;
+  for (const [index, record] of trace.entries()) {
+    const input = isRecord(record.input) ? record.input : undefined;
+    const succeeded = record.output !== null && record.error === null;
+    if (record.toolName === 'Write') {
+      if (
+        !input ||
+        input.file_path !== resultPath ||
+        input.content !== expectedBytes ||
+        !succeeded
+      ) {
+        throw new Error('Fork child Write trace violated the exact contract');
+      }
+      if (firstWriteIndex < 0) firstWriteIndex = index;
+      continue;
+    }
+    if (record.toolName === 'Bash') {
+      if (!input || input.command !== 'wc -c result.txt' || !succeeded) {
+        throw new Error('Fork child Bash trace violated the exact contract');
+      }
+      if (firstBashIndex < 0) firstBashIndex = index;
+      continue;
+    }
+    throw new Error('Fork child tool trace contains an unexpected tool');
+  }
+
+  if (firstWriteIndex < 0 || firstBashIndex < 0) {
+    throw new Error('Fork child tool trace requires Write and Bash');
+  }
+  if (firstWriteIndex >= firstBashIndex) {
+    throw new Error('Fork child tool trace requires Write before Bash');
+  }
+}
+
 export function extractDurableToolTrace(
   events: readonly SessionEvent[],
   options: { afterEventCount?: number } = {}

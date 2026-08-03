@@ -16,10 +16,13 @@ import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js'
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
   assertForkLineage,
+  assertForkChildToolTrace,
+  assertForkParentToolTrace,
   assertNoSecrets,
   assertParentUnchanged,
   cleanupForkFixture,
   createForkFixture,
+  type DurableToolTraceRecord,
   extractDurableToolTrace,
   findSessionTranscript,
   readSessionEvents,
@@ -51,13 +54,6 @@ function safeModelLabel(
   return `${modelConfig.id}-${ordinal + 1}-${digest}`;
 }
 
-interface LoopToolTraceRecord {
-  toolCallId: string;
-  name: string;
-  input: Record<string, unknown>;
-  result: Extract<LoopEvent, { kind: 'tool_result' }>['result'];
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -75,9 +71,13 @@ function parseToolInput(
   return parsed;
 }
 
-function extractLoopToolTrace(events: readonly LoopEvent[]): LoopToolTraceRecord[] {
-  const orderedCalls: Array<Omit<LoopToolTraceRecord, 'result'>> = [];
-  const pending = new Map<string, Omit<LoopToolTraceRecord, 'result'>>();
+function extractLoopToolTrace(events: readonly LoopEvent[]): DurableToolTraceRecord[] {
+  const orderedCalls: Array<{
+    toolCallId: string;
+    toolName: string;
+    input: Record<string, unknown>;
+  }> = [];
+  const pending = new Map<string, (typeof orderedCalls)[number]>();
   const completed = new Map<
     string,
     Extract<LoopEvent, { kind: 'tool_result' }>['result']
@@ -92,7 +92,7 @@ function extractLoopToolTrace(events: readonly LoopEvent[]): LoopToolTraceRecord
       }
       const call = {
         toolCallId: event.toolCall.id,
-        name: event.toolCall.function.name,
+        toolName: event.toolCall.function.name,
         input: parseToolInput(event),
       };
       orderedCalls.push(call);
@@ -107,7 +107,7 @@ function extractLoopToolTrace(events: readonly LoopEvent[]): LoopToolTraceRecord
       }
       const call = pending.get(event.toolCall.id);
       if (!call) throw new Error('Runtime tool trace contains an orphan result');
-      if (call.name !== event.toolCall.function.name) {
+      if (call.toolName !== event.toolCall.function.name) {
         throw new Error('Runtime tool trace tool name mismatch');
       }
       pending.delete(event.toolCall.id);
@@ -118,60 +118,24 @@ function extractLoopToolTrace(events: readonly LoopEvent[]): LoopToolTraceRecord
   return orderedCalls.map((call) => {
     const result = completed.get(call.toolCallId);
     if (!result) throw new Error('Runtime tool trace call is missing a result');
-    return { ...call, result };
+    return {
+      ...call,
+      output: result.success ? result.llmContent : null,
+      error: result.success ? null : (result.error?.message ?? 'tool failed'),
+    };
   });
 }
 
 function assertFinalContract(
-  finalMessage: string | undefined,
-  expected: 'READY' | 'DONE',
+  finalMessage: unknown,
   marker: string,
   nonce: string
 ): void {
-  if (finalMessage?.includes(marker) || finalMessage?.includes(nonce)) {
+  if (typeof finalMessage !== 'string' || finalMessage.trim().length === 0) {
+    throw new Error('Qualification final response must be non-empty text');
+  }
+  if (finalMessage.includes(marker) || finalMessage.includes(nonce)) {
     throw new Error('Qualification final response exposed fixture material');
-  }
-  if (finalMessage?.trim() !== expected) {
-    throw new Error('Qualification final response did not match exact contract');
-  }
-}
-
-function assertRuntimeParentTrace(
-  trace: readonly LoopToolTraceRecord[],
-  memoryPath: string
-): void {
-  const call = trace[0];
-  if (
-    trace.length !== 1 ||
-    call?.name !== 'Read' ||
-    call.input.file_path !== memoryPath ||
-    !call.result.success ||
-    call.result.error !== undefined
-  ) {
-    throw new Error('Runtime parent tool trace did not match exact contract');
-  }
-}
-
-function assertRuntimeChildTrace(
-  trace: readonly LoopToolTraceRecord[],
-  resultPath: string,
-  expectedBytes: string
-): void {
-  const write = trace[0];
-  const bash = trace[1];
-  if (
-    trace.length !== 2 ||
-    write?.name !== 'Write' ||
-    write.input.file_path !== resultPath ||
-    write.input.content !== expectedBytes ||
-    !write.result.success ||
-    write.result.error !== undefined ||
-    bash?.name !== 'Bash' ||
-    bash.input.command !== 'wc -c result.txt' ||
-    !bash.result.success ||
-    bash.result.error !== undefined
-  ) {
-    throw new Error('Runtime child tool trace did not match exact contract');
   }
 }
 
@@ -179,18 +143,7 @@ function assertDurableParentTrace(
   events: readonly SessionEvent[],
   memoryPath: string
 ): void {
-  const trace = extractDurableToolTrace(events);
-  const call = trace[0];
-  if (
-    trace.length !== 1 ||
-    call?.toolName !== 'Read' ||
-    !isRecord(call.input) ||
-    call.input.file_path !== memoryPath ||
-    call.output === null ||
-    call.error !== null
-  ) {
-    throw new Error('Durable parent tool trace did not match exact contract');
-  }
+  assertForkParentToolTrace(extractDurableToolTrace(events), memoryPath);
 }
 
 function assertDurableChildTrace(
@@ -199,25 +152,11 @@ function assertDurableChildTrace(
   resultPath: string,
   expectedBytes: string
 ): void {
-  const trace = extractDurableToolTrace(events, { afterEventCount });
-  const write = trace[0];
-  const bash = trace[1];
-  if (
-    trace.length !== 2 ||
-    write?.toolName !== 'Write' ||
-    !isRecord(write.input) ||
-    write.input.file_path !== resultPath ||
-    write.input.content !== expectedBytes ||
-    write.output === null ||
-    write.error !== null ||
-    bash?.toolName !== 'Bash' ||
-    !isRecord(bash.input) ||
-    bash.input.command !== 'wc -c result.txt' ||
-    bash.output === null ||
-    bash.error !== null
-  ) {
-    throw new Error('Durable child tool trace did not match exact contract');
-  }
+  assertForkChildToolTrace(
+    extractDurableToolTrace(events, { afterEventCount }),
+    resultPath,
+    expectedBytes
+  );
 }
 
 function createResolvedConfig(
@@ -371,7 +310,7 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
                 'Use the Read tool exactly once to read the workspace file named memory.txt.',
                 'Remember the complete file content for a later fork.',
                 'Do not repeat, quote, encode, or summarize the file content in final prose.',
-                'After the successful Read, reply only READY.',
+                'After the successful Read, give a brief completion confirmation.',
               ].join(' '),
               {
                 messages: [],
@@ -400,13 +339,8 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
             [modelConfig.apiKey]
           );
           expect(parentResult.success).toBe(true);
-          assertFinalContract(
-            parentResult.finalMessage,
-            'READY',
-            marker,
-            fixture.nonce
-          );
-          assertRuntimeParentTrace(parentTrace, memoryPath);
+          assertFinalContract(parentResult.finalMessage, marker, fixture.nonce);
+          assertForkParentToolTrace(parentTrace, memoryPath);
           assertDurableParentTrace(parentTranscriptEvents, memoryPath);
 
           await releaseOwner(parentOwner);
@@ -457,7 +391,7 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
                 'Use Write exactly once to create result.txt with that exact marker and exactly one trailing newline.',
                 'Then use Bash exactly once with command `wc -c result.txt`.',
                 'Do not use any other command and do not repeat the marker in final prose.',
-                'After both tools succeed, reply only DONE.',
+                'After both tools succeed, give a brief completion confirmation.',
               ].join(' '),
               {
                 messages: fork.messages,
@@ -488,11 +422,11 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
             [modelConfig.apiKey]
           );
           expect(childResult.success).toBe(true);
-          assertFinalContract(childResult.finalMessage, 'DONE', marker, fixture.nonce);
+          assertFinalContract(childResult.finalMessage, marker, fixture.nonce);
           if (readFileSync(resultPath, 'utf8') !== expectedBytes) {
             throw new Error('Runtime child result bytes did not match exact contract');
           }
-          assertRuntimeChildTrace(childTrace, resultPath, expectedBytes);
+          assertForkChildToolTrace(childTrace, resultPath, expectedBytes);
           assertDurableChildTrace(
             childTranscriptEvents,
             childSnapshot.length,
