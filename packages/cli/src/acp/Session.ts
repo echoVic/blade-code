@@ -36,9 +36,10 @@ import {
   isSlashCommand,
 } from '../slash-commands/index.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
-import type {
-  ConfirmationDetails,
-  ConfirmationResponse,
+import {
+  CONFIRMATION_ABORTED_REASON,
+  type ConfirmationDetails,
+  type ConfirmationResponse,
 } from '../tools/types/ExecutionTypes.js';
 import {
   formatToolDisplay,
@@ -820,8 +821,9 @@ export class AcpSession {
   private async requestPermission(
     details: ConfirmationDetails
   ): Promise<ConfirmationResponse> {
+    const signal = this.pendingPrompt?.signal;
     if (details.type === 'askUserQuestion') {
-      return this.requestUserQuestions(details);
+      return this.requestUserQuestions(details, signal);
     }
 
     // 检查是否应该自动批准（基于当前模式）
@@ -898,7 +900,13 @@ export class AcpSession {
         },
       };
 
-      const response = await this.connection.requestPermission(permissionRequest);
+      const response = await this.waitForClientInteraction(
+        this.connection.requestPermission(permissionRequest),
+        signal
+      );
+      if (!response) {
+        return { approved: false, reason: CONFIRMATION_ABORTED_REASON };
+      }
 
       // 检查用户选择
       const outcome = response.outcome;
@@ -941,7 +949,8 @@ export class AcpSession {
   }
 
   private async requestUserQuestions(
-    details: ConfirmationDetails
+    details: ConfirmationDetails,
+    signal?: AbortSignal
   ): Promise<ConfirmationResponse> {
     const questions = details.questions ?? [];
     if (questions.length === 0) {
@@ -961,37 +970,44 @@ export class AcpSession {
           (_option, optionIndex) => `answer:${questionIndex}:${optionIndex}`
         );
         const cancelId = `answer:${questionIndex}:cancel`;
-        const response = await this.connection.requestPermission({
-          sessionId: this.id,
-          options: [
-            ...question.options.map((option, optionIndex) => ({
-              optionId: optionIds[optionIndex]!,
-              name: option.label,
-              kind: 'allow_once' as const,
-            })),
-            { optionId: cancelId, name: 'Cancel', kind: 'reject_once' as const },
-          ],
-          toolCall: {
-            toolCallId: nanoid(),
-            status: 'pending' as ToolCallStatus,
-            title: question.header,
-            kind: 'think',
-            content: [
-              {
-                type: 'content',
-                content: {
-                  type: 'text',
-                  text: [
-                    question.question,
-                    ...question.options.map(
-                      (option) => `${option.label}: ${option.description}`
-                    ),
-                  ].join('\n'),
-                },
-              },
+        const response = await this.waitForClientInteraction(
+          this.connection.requestPermission({
+            sessionId: this.id,
+            options: [
+              ...question.options.map((option, optionIndex) => ({
+                optionId: optionIds[optionIndex]!,
+                name: option.label,
+                kind: 'allow_once' as const,
+              })),
+              { optionId: cancelId, name: 'Cancel', kind: 'reject_once' as const },
             ],
-          },
-        });
+            toolCall: {
+              toolCallId: nanoid(),
+              status: 'pending' as ToolCallStatus,
+              title: question.header,
+              kind: 'think',
+              content: [
+                {
+                  type: 'content',
+                  content: {
+                    type: 'text',
+                    text: [
+                      question.question,
+                      ...question.options.map(
+                        (option) => `${option.label}: ${option.description}`
+                      ),
+                    ].join('\n'),
+                  },
+                },
+              ],
+            },
+          }),
+          signal
+        );
+
+        if (!response) {
+          return { approved: false, reason: CONFIRMATION_ABORTED_REASON };
+        }
 
         if (response.outcome.outcome !== 'selected') {
           return { approved: false, reason: 'User cancelled the question prompt' };
@@ -1008,6 +1024,33 @@ export class AcpSession {
       logger.warn(`[AcpSession ${this.id}] Question request failed:`, error);
       return { approved: false, reason: 'Question request failed' };
     }
+  }
+
+  private async waitForClientInteraction<T>(
+    request: Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T | undefined> {
+    if (!signal) return request;
+    if (signal.aborted) return undefined;
+
+    return new Promise<T | undefined>((resolve, reject) => {
+      let settled = false;
+      const settle = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        callback();
+      };
+      const onAbort = () => settle(() => resolve(undefined));
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) {
+        onAbort();
+      }
+      request.then(
+        (response) => settle(() => resolve(response)),
+        (error) => settle(() => reject(error))
+      );
+    });
   }
 
   /**

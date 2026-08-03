@@ -4,6 +4,8 @@ import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { ToolResult } from './ToolTypes.js';
 import { ToolKind } from './ToolTypes.js';
 
+export const CONFIRMATION_ABORTED_REASON = '__aborted__' as const;
+
 interface QuestionOption {
   label: string;
   description: string;

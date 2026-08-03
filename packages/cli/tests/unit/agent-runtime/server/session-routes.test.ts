@@ -716,6 +716,118 @@ describe('SessionRoutes runtime reuse', () => {
     }
   });
 
+  it('settles a pending interaction when the Web run is aborted', async () => {
+    const { SessionRoutes, respondToPermission } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const { Bus } = await import('../../../../src/server/bus.js');
+    let releaseCancelledRun: (() => void) | undefined;
+    const cancelledRunCleanup = new Promise<void>((resolve) => {
+      releaseCancelledRun = resolve;
+    });
+    agentState.chatStream.mockImplementationOnce(async function* (_message, context) {
+      yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+      const response = await context.confirmationHandler.requestConfirmation({
+        type: 'askUserQuestion',
+        kind: 'readonly',
+        message: 'Choose a channel',
+        questions: [
+          {
+            header: 'Channel',
+            question: 'Which release channel should be used?',
+            multiSelect: false,
+            options: [
+              { label: 'Stable', description: 'Use stable' },
+              { label: 'Canary', description: 'Use canary' },
+            ],
+          },
+        ],
+      });
+      expect(response).toEqual({ approved: false, reason: '__aborted__' });
+      await cancelledRunCleanup;
+      return {
+        success: true,
+        finalMessage: 'cancelled',
+        metadata: { turnsCount: 1, toolCallsCount: 1, duration: 0 },
+      };
+    });
+
+    const app = SessionRoutes();
+    const messageResponse = await app.request('/abort-question-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'Ask before changing code',
+        permissionMode: 'yolo',
+      }),
+    });
+    expect(messageResponse.status).toBe(202);
+
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        'abort-question-session',
+        'question.required',
+        expect.objectContaining({ requestId: expect.any(String) })
+      );
+    });
+    const questionCall = vi
+      .mocked(Bus.publish)
+      .mock.calls.find((call) => call[1] === 'question.required');
+    const requestId = questionCall?.[2].requestId as string;
+
+    let abortSettled = false;
+    const abortResponsePromise = Promise.resolve(
+      app.request('/abort-question-session/abort', { method: 'POST' })
+    ).then((response) => {
+      abortSettled = true;
+      return response;
+    });
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        'abort-question-session',
+        'run.cancelled',
+        expect.any(Object)
+      );
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(abortSettled).toBe(false);
+    expect(
+      respondToPermission('abort-question-session', requestId, {
+        approved: true,
+        answers: { Channel: 'Canary' },
+      })
+    ).toBe(false);
+
+    releaseCancelledRun?.();
+    const abortResponse = await abortResponsePromise;
+    expect(abortResponse.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        'abort-question-session',
+        'session.status',
+        { status: 'idle' }
+      );
+    });
+
+    expect(
+      vi
+        .mocked(Bus.publish)
+        .mock.calls.filter(
+          (call) => call[0] === 'abort-question-session' && call[1] === 'run.cancelled'
+        )
+    ).toHaveLength(1);
+    expect(Bus.publish).not.toHaveBeenCalledWith(
+      'abort-question-session',
+      'session.completed',
+      expect.any(Object)
+    );
+    expect(Bus.publish).not.toHaveBeenCalledWith(
+      'abort-question-session',
+      'session.error',
+      expect.any(Object)
+    );
+  });
+
   it('builds multimodal user content from image attachments', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
 

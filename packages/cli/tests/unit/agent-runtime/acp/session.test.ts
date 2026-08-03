@@ -477,6 +477,73 @@ describe('AcpSession', () => {
       // 验证取消成功（没有抛出错误）
       expect(() => session.cancel()).not.toThrow();
     });
+
+    it('cancels a prompt while the ACP client leaves a question unanswered', async () => {
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
+      };
+      const agent = agentModule._getMockAgentInstance();
+      agent.chatStream = async function* (_message, context) {
+        yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
+        await context.confirmationHandler?.requestConfirmation({
+          type: 'askUserQuestion',
+          message: 'Choose a channel',
+          questions: [
+            {
+              header: 'Channel',
+              question: 'Which release channel should be used?',
+              multiSelect: false,
+              options: [
+                { label: 'Stable', description: 'Use stable' },
+                { label: 'Canary', description: 'Use canary' },
+              ],
+            },
+          ],
+        });
+        return {
+          success: true,
+          finalMessage: 'cancelled',
+          metadata: { turnsCount: 1, toolCallsCount: 1, duration: 0 },
+        };
+      };
+
+      let releasePermission: (() => void) | undefined;
+      vi.spyOn(mockConnection, 'requestPermission').mockImplementation(
+        (request) =>
+          new Promise((resolve) => {
+            mockConnection.permissionRequests.push(request);
+            releasePermission = () =>
+              resolve({
+                outcome: {
+                  outcome: 'selected',
+                  optionId: request.options[0]?.optionId,
+                },
+              });
+          })
+      );
+
+      const promptPromise = session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'Ask before changing code' }],
+      });
+      await vi.waitFor(() => {
+        expect(mockConnection.permissionRequests).toHaveLength(1);
+      });
+      session.cancel();
+
+      const resultBeforeClientResponse = await Promise.race([
+        promptPromise,
+        new Promise<'still-pending'>((resolve) =>
+          setTimeout(() => resolve('still-pending'), 25)
+        ),
+      ]);
+      releasePermission?.();
+      await promptPromise;
+
+      expect(resultBeforeClientResponse).toEqual({ stopReason: 'cancelled' });
+    });
   });
 
   describe('setMode', () => {

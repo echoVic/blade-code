@@ -1,9 +1,10 @@
 import { useMemoizedFn } from 'ahooks';
 import { useMemo, useRef, useState } from 'react';
-import type {
-  ConfirmationDetails,
-  ConfirmationHandler,
-  ConfirmationResponse,
+import {
+  CONFIRMATION_ABORTED_REASON,
+  type ConfirmationDetails,
+  type ConfirmationHandler,
+  type ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
 
 /**
@@ -89,11 +90,14 @@ export const useConfirmation = () => {
   const dismissAll = useMemoizedFn(() => {
     // resolve 当前活跃的确认
     if (activeRef.current) {
-      activeRef.current.resolve({ approved: false, reason: '__aborted__' });
+      activeRef.current.resolve({
+        approved: false,
+        reason: CONFIRMATION_ABORTED_REASON,
+      });
     }
     // resolve 队列中所有 pending 确认
     for (const entry of queueRef.current) {
-      entry.resolve({ approved: false, reason: '__aborted__' });
+      entry.resolve({ approved: false, reason: CONFIRMATION_ABORTED_REASON });
     }
     queueRef.current = [];
     showActive(null);

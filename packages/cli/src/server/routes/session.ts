@@ -15,9 +15,10 @@ import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import { SessionService } from '../../services/SessionService.js';
-import type {
-  ConfirmationDetails,
-  ConfirmationResponse,
+import {
+  CONFIRMATION_ABORTED_REASON,
+  type ConfirmationDetails,
+  type ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
 import {
@@ -67,6 +68,7 @@ export interface RunState {
     details: ConfirmationDetails;
   };
   pendingFollowUpRequested?: boolean;
+  completion?: Promise<void>;
   createdAt: Date;
 }
 
@@ -88,11 +90,32 @@ const activeRuns = new LRUCache<string, RunState>({
   ttl: 30 * 60 * 1000,
   dispose: (run: RunState, runId: string) => {
     if (run.status === 'running' || run.status === 'waiting_permission') {
-      run.abortController.abort();
+      cancelRun(run, 'cache-eviction');
       logger.debug(`[SessionRoutes] Run ${runId} disposed due to cache eviction`);
     }
   },
 });
+
+function cancelRun(run: RunState, reason = 'user-cancel'): boolean {
+  if (
+    run.status === 'cancelled' ||
+    run.status === 'completed' ||
+    run.status === 'failed'
+  ) {
+    return false;
+  }
+
+  const pendingPermission = run.pendingPermission;
+  run.pendingPermission = undefined;
+  pendingPermission?.resolve({
+    approved: false,
+    reason: CONFIRMATION_ABORTED_REASON,
+  });
+  run.abortController.abort(reason);
+  run.status = 'cancelled';
+  Bus.publish(run.sessionId, 'run.cancelled', { runId: run.id });
+  return true;
+}
 
 function buildPendingInteractionEvent(
   pending: NonNullable<RunState['pendingPermission']>,
@@ -281,10 +304,17 @@ export const SessionRoutes = () => {
     };
     activeRuns.set(runId, run);
     session.currentRunId = runId;
-    executeRunAsync(run, session, content, permissionMode, getOrCreateRuntime, {
-      pendingInputOnly: options.pendingInputOnly,
-      preparedInputTurn: options.preparedInputTurn,
-    }).catch((error) => {
+    run.completion = executeRunAsync(
+      run,
+      session,
+      content,
+      permissionMode,
+      getOrCreateRuntime,
+      {
+        pendingInputOnly: options.pendingInputOnly,
+        preparedInputTurn: options.preparedInputTurn,
+      }
+    ).catch((error) => {
       logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
     });
     return run;
@@ -535,8 +565,8 @@ export const SessionRoutes = () => {
     if (session?.currentRunId) {
       const run = activeRuns.get(session.currentRunId);
       if (run) {
-        run.abortController.abort();
-        Bus.publish(sessionId, 'run.cancelled', { runId: run.id });
+        cancelRun(run);
+        await run.completion;
         activeRuns.delete(session.currentRunId);
       }
     }
@@ -771,9 +801,8 @@ export const SessionRoutes = () => {
     if (session?.currentRunId) {
       const run = activeRuns.get(session.currentRunId);
       if (run) {
-        run.abortController.abort();
-        run.status = 'cancelled';
-        Bus.publish(sessionId, 'run.cancelled', { runId: run.id });
+        cancelRun(run);
+        await run.completion;
       }
     }
 
@@ -886,8 +915,12 @@ async function executeRunAsync(
       logger.info(
         `[SessionRoutes] Permission response received: ${permissionId}, approved: ${response.approved}`
       );
-      run.status = 'running';
-      run.pendingPermission = undefined;
+      if (!abortController.signal.aborted) {
+        run.status = 'running';
+      }
+      if (run.pendingPermission === pendingInteraction) {
+        run.pendingPermission = undefined;
+      }
 
       return response;
     };
@@ -1051,6 +1084,11 @@ async function executeRunAsync(
     // Phase 4: 使用 chatContext.messages 作为完整历史（不再手工构造）
     session.messages = [...chatContext.messages];
 
+    if (abortController.signal.aborted || run.status === 'cancelled') {
+      emit('session.status', { status: 'idle' });
+      return;
+    }
+
     // message.complete 只在整个 run 结束时发一次（run-level 语义）
     if (assistantMessageId) {
       emit('message.complete', { messageId: assistantMessageId });
@@ -1067,6 +1105,11 @@ async function executeRunAsync(
   } catch (error) {
     if (runtime && options.preparedInputTurn) {
       await runtime.finishTurn(options.preparedInputTurn.handle).catch(() => undefined);
+    }
+    if (abortController.signal.aborted || run.status === 'cancelled') {
+      cancelRun(run, 'runtime-abort');
+      emit('session.status', { status: 'idle' });
+      return;
     }
     logger.error('[SessionRoutes] Agent execution error:', error);
     run.status = 'failed';

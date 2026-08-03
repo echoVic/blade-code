@@ -29,10 +29,19 @@ class RecordingClient implements acp.Client {
   readonly updates: acp.SessionNotification[] = [];
   readonly permissionRequests: acp.RequestPermissionRequest[] = [];
 
+  constructor(
+    private readonly permissionResponder?: (
+      params: acp.RequestPermissionRequest
+    ) => Promise<acp.RequestPermissionResponse>
+  ) {}
+
   async requestPermission(
     params: acp.RequestPermissionRequest
   ): Promise<acp.RequestPermissionResponse> {
     this.permissionRequests.push(params);
+    if (this.permissionResponder) {
+      return this.permissionResponder(params);
+    }
     const preferredAnswer = params.options.find((option) => option.name === 'Canary');
     return {
       outcome: {
@@ -179,6 +188,90 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
         });
       } finally {
         await session.destroy().catch(() => undefined);
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+
+    it(`${modelConfig.model} cancels an unanswered ACP question and reuses the session`, async () => {
+      const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-cancel-'));
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      configureModel(modelConfig);
+      const client = new RecordingClient(async () => {
+        return new Promise<acp.RequestPermissionResponse>(() => undefined);
+      });
+      const harness = createHarness(client);
+      const resultPath = path.join(workspace, 'cancel-recovery.txt');
+
+      try {
+        await runWithCwdOverride(workspace, async () => {
+          await harness.connection.initialize({
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientCapabilities: {},
+          });
+          const session = await harness.connection.newSession({
+            cwd: workspace,
+            mcpServers: [],
+          });
+          await harness.connection.setSessionMode?.({
+            sessionId: session.sessionId,
+            modeId: 'yolo',
+          });
+
+          const blockedPrompt = harness.connection.prompt({
+            sessionId: session.sessionId,
+            prompt: [
+              {
+                type: 'text',
+                text: [
+                  'Before editing any file, call AskUserQuestion exactly once.',
+                  'Ask one single-select question with header Channel and options Stable and Canary.',
+                  'Wait for the answer. Do not edit files or call Bash before the answer.',
+                ].join('\n'),
+              },
+            ],
+          });
+          await vi.waitFor(
+            () => {
+              expect(client.permissionRequests).toHaveLength(1);
+            },
+            { timeout: 180_000, interval: 50 }
+          );
+          await harness.connection.cancel({ sessionId: session.sessionId });
+          await expect(blockedPrompt).resolves.toEqual({ stopReason: 'cancelled' });
+
+          const recovered = await harness.connection.prompt({
+            sessionId: session.sessionId,
+            prompt: [
+              {
+                type: 'text',
+                text: [
+                  'The previous turn was explicitly cancelled. Start a new turn now.',
+                  'Do not call AskUserQuestion.',
+                  'Use Write to create cancel-recovery.txt containing exactly recovered-after-cancel and a newline.',
+                  'Then run Bash with "wc -c cancel-recovery.txt" and finish only after Bash succeeds.',
+                ].join('\n'),
+              },
+            ],
+          });
+
+          expect(recovered.stopReason).toBe('end_turn');
+          expect((await readFile(resultPath, 'utf8')).trim()).toBe(
+            'recovered-after-cancel'
+          );
+          expect(
+            client.updates.some(
+              (notification) =>
+                notification.update.sessionUpdate === 'tool_call' &&
+                notification.update.title.includes('Bash')
+            )
+          ).toBe(true);
+          expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
+          expect(JSON.stringify(client.permissionRequests)).not.toContain(
+            modelConfig.apiKey
+          );
+        });
+      } finally {
+        await harness.agent.destroy().catch(() => undefined);
         await rm(workspace, { recursive: true, force: true });
       }
     }, 360_000);

@@ -297,6 +297,32 @@ async function deleteSession(sessionId: string): Promise<void> {
   expect(response.status).toBe(200);
 }
 
+async function abortSession(sessionId: string): Promise<void> {
+  if (!server) throw new Error('Blade web server is not running');
+  const response = await fetch(new URL(`/sessions/${sessionId}/abort`, server.url), {
+    method: 'POST',
+  });
+  expect(response.status).toBe(200);
+}
+
+async function sendLateQuestionAnswer(
+  sessionId: string,
+  requestId: string
+): Promise<Response> {
+  if (!server) throw new Error('Blade web server is not running');
+  return fetch(
+    new URL(`/permissions/${requestId}?sessionId=${sessionId}`, server.url),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        approved: true,
+        answers: { Channel: 'Canary' },
+      }),
+    }
+  );
+}
+
 async function answerQuestion(
   sessionId: string,
   requestId: string,
@@ -432,6 +458,69 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
       } finally {
         await firstCollector?.close();
         await resumedCollector?.close();
+        if (sessionId) await deleteSession(sessionId);
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+
+    it(`${modelConfig.model} cancels an unanswered Web question and reuses the session`, async () => {
+      const workspace = createWorkspace();
+      const resultPath = path.join(workspace, 'cancel-recovery.txt');
+      let sessionId: string | undefined;
+      let collector: EventCollector | undefined;
+      try {
+        setRuntimeModel(modelConfig);
+        sessionId = await createSession(workspace);
+        collector = await collectEvents(sessionId);
+        await sendMessage(
+          sessionId,
+          [
+            'Before editing any file, call AskUserQuestion exactly once.',
+            'Ask one single-select question with header Channel and options Stable and Canary.',
+            'Wait for the answer. Do not edit files or call Bash before the answer.',
+          ].join('\n')
+        );
+        await collector.waitFor((event) => event.type === 'question.required', 180_000);
+        const question = collector.events.find(
+          (event) => event.type === 'question.required'
+        );
+        const requestId = String(question?.properties.requestId ?? '');
+        expect(requestId).toBeTruthy();
+        expect(existsSync(resultPath)).toBe(false);
+
+        await abortSession(sessionId);
+        await collector.waitFor((event) => event.type === 'run.cancelled', 10_000);
+        const lateAnswer = await sendLateQuestionAnswer(sessionId, requestId);
+        expect(lateAnswer.status).toBe(404);
+
+        await sendMessage(
+          sessionId,
+          [
+            'The previous turn was explicitly cancelled. Start a new turn now.',
+            'Do not call AskUserQuestion.',
+            'Use Write to create cancel-recovery.txt containing exactly recovered-after-cancel and a newline.',
+            "Then invoke Bash with: node -e \"const fs=require('node:fs');if(fs.readFileSync('cancel-recovery.txt','utf8').trim()!=='recovered-after-cancel')process.exit(1)\"",
+            'Finish only after Bash succeeds.',
+          ].join('\n')
+        );
+        await collector.waitFor((event) => event.type === 'session.completed', 300_000);
+
+        expect(readFileSync(resultPath, 'utf8').trim()).toBe('recovered-after-cancel');
+        expect(
+          collector.events.filter((event) => event.type === 'run.cancelled')
+        ).toHaveLength(1);
+        expect(collector.events.some((event) => event.type === 'session.error')).toBe(
+          false
+        );
+        expect(
+          collector.events.some(
+            (event) =>
+              event.type === 'tool.start' && event.properties.toolName === 'Bash'
+          )
+        ).toBe(true);
+        expect(JSON.stringify(collector.events)).not.toContain(modelConfig.apiKey);
+      } finally {
+        await collector?.close();
         if (sessionId) await deleteSession(sessionId);
         rmSync(workspace, { recursive: true, force: true });
       }
