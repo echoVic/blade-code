@@ -341,6 +341,65 @@ describe('executeLoopGenerator', () => {
       expect(result.metadata?.toolCallsCount).toBe(0);
     });
 
+    it('persists a direct durable input with its inbox identity', async () => {
+      const contextManager = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as any,
+      });
+      const context = createMockContext();
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Durable initial request.',
+          context,
+          { stream: false, inputMessageId: 'initial-input-1' },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(contextManager.saveMessage).toHaveBeenCalledWith(
+        'test-session',
+        'user',
+        'Durable initial request.',
+        null,
+        { inboxMessageId: 'initial-input-1' },
+        undefined
+      );
+      expect(context.messages).toContainEqual({
+        role: 'user',
+        content: 'Durable initial request.',
+        metadata: { inboxMessageId: 'initial-input-1' },
+      });
+    });
+
+    it('does not call the model when a direct durable input cannot be persisted', async () => {
+      const contextManager = createMockContextManager();
+      contextManager.saveMessage.mockReset().mockResolvedValue(null);
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as any,
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Do not lose this request.',
+          createMockContext(),
+          { stream: false, inputMessageId: 'initial-input-failure' },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(chatMock).not.toHaveBeenCalled();
+    });
+
     it('applies mid-turn steering before accepting the model final response', async () => {
       const contextManager = createMockContextManager();
       const deps = createMockDeps({

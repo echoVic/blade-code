@@ -605,10 +605,18 @@ export async function* executeLoopGenerator(
     const state = new ConversationState(context, finalSystemPrompt);
     const pendingInputOnly = options?.pendingInputOnly === true;
     if (!pendingInputOnly) {
-      state.appendUser({ role: 'user', content: message });
+      const metadata = options?.inputMessageId
+        ? { inboxMessageId: options.inputMessageId }
+        : undefined;
+      state.appendUser({ role: 'user', content: message, metadata });
 
       // 保存用户消息到 JSONL
-      lastMessageUuid = await saveUserMessage(deps, context, message);
+      lastMessageUuid = await saveUserMessage(deps, context, message, null, metadata);
+      if (options?.inputMessageId && !lastMessageUuid) {
+        throw new Error(
+          `Failed to persist durable input before applying it: ${options.inputMessageId}`
+        );
+      }
     }
 
     // === Agentic Loop ===

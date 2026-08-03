@@ -44,7 +44,7 @@ afterAll(() => {
 
 describe.skipIf(!enabled)('Durable steering recovery (real API)', () => {
   for (const modelConfig of modelConfigs) {
-    it(`${modelConfig.model} recovers accepted steering after a runtime restart`, async () => {
+    it(`${modelConfig.model} recovers prepared input after a runtime restart`, async () => {
       const workspace = await mkdtemp(
         path.join(os.tmpdir(), 'blade-durable-steering-')
       );
@@ -63,21 +63,22 @@ describe.skipIf(!enabled)('Durable steering recovery (real API)', () => {
           sessionId,
           workspaceRoot: workspace,
         });
-        const queued = await firstRuntime.enqueueSteering(durablePrompt, {
-          allowBeforeTurn: true,
-        });
-        expect(queued).toMatchObject({
+        const prepared = await firstRuntime.prepareInputTurn(durablePrompt);
+        expect(prepared).toMatchObject({
           accepted: true,
           queued: 1,
-          delivery: 'next_turn',
+          mode: 'direct',
         });
+        if (!prepared.accepted) {
+          throw new Error('Expected durable input preparation to succeed');
+        }
 
         const inboxPath = getSessionInboxFilePath(workspace, sessionId);
         const inbox = JSON.parse(await readFile(inboxPath, 'utf8')) as {
           messages: Array<{ id: string }>;
         };
         const inboxMessageId = inbox.messages[0]?.id;
-        expect(inboxMessageId).toBeTruthy();
+        expect(inboxMessageId).toBe(prepared.messageId);
         await firstRuntime
           .getExecutionEngine()
           .getContextManager()

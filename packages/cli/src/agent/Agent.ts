@@ -51,6 +51,11 @@ import { getCwd } from '../utils/cwd.js';
 import { isThinkingModel } from '../utils/modelDetection.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import { executeLoopGenerator } from './loop/index.js';
+import type {
+  ActiveTurnHandle,
+  PreparedInputTurn,
+  SteeringMessage,
+} from './runtime/ActiveTurnMailbox.js';
 import { SessionRuntime } from './runtime/SessionRuntime.js';
 import { subagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
@@ -398,36 +403,66 @@ export class Agent {
     if (context?.workspaceRoot) {
       this.attachmentCollector?.setCwd(context.workspaceRoot);
     }
-    const enhancedMessage = await this.processAtMentionsForContent(message);
+
+    const requestedPendingInputOnly = options?.pendingInputOnly === true;
+    if (requestedPendingInputOnly && options?.preparedInputTurn) {
+      throw new Error('preparedInputTurn cannot be combined with pendingInputOnly');
+    }
+    if (!context && options?.preparedInputTurn) {
+      throw new Error('preparedInputTurn requires a ChatContext');
+    }
+
+    let preparedInputTurn = options?.preparedInputTurn;
+    if (context && this.sessionRuntime && !requestedPendingInputOnly) {
+      if (!preparedInputTurn) {
+        const preparation = await this.sessionRuntime.prepareInputTurn(message);
+        if (!preparation.accepted) {
+          throw new Error(
+            preparation.reason === 'queue_full'
+              ? 'Pending user input queue is full'
+              : 'Session already has an active turn'
+          );
+        }
+        preparedInputTurn = preparation;
+      }
+    }
+
+    let enhancedMessage = message;
+    if (!requestedPendingInputOnly && preparedInputTurn?.mode !== 'pending') {
+      try {
+        enhancedMessage = await this.processAtMentionsForContent(message);
+      } catch (error) {
+        if (this.sessionRuntime && preparedInputTurn) {
+          await this.sessionRuntime
+            .finishTurn(preparedInputTurn.handle)
+            .catch(() => undefined);
+        }
+        throw error;
+      }
+    } else if (!context || !this.sessionRuntime) {
+      enhancedMessage = await this.processAtMentionsForContent(message);
+    }
 
     if (context) {
       let currentMessage = enhancedMessage;
       let currentContext = context;
-      let pendingInputOnly = options?.pendingInputOnly === true;
-      if (
-        this.sessionRuntime &&
-        !pendingInputOnly &&
-        !this.sessionRuntime.hasTurnOwner() &&
-        this.sessionRuntime.getPendingSteeringCount() > 0
-      ) {
-        const queued = await this.sessionRuntime.enqueueSteering(enhancedMessage, {
-          allowBeforeTurn: true,
-        });
-        if (!queued.accepted) {
-          throw new Error(
-            queued.reason === 'queue_full'
-              ? 'Pending user input queue is full'
-              : 'Pending user input could not be queued'
-          );
+      let pendingInputOnly = requestedPendingInputOnly;
+      let inputMessageId: string | undefined;
+      let turnHandle: ActiveTurnHandle | undefined;
+      if (this.sessionRuntime) {
+        if (pendingInputOnly) {
+          turnHandle = await this.sessionRuntime.beginPendingTurn();
+        } else {
+          const prepared = preparedInputTurn as PreparedInputTurn;
+          turnHandle = prepared.handle;
+          if (prepared.mode === 'pending') {
+            pendingInputOnly = true;
+            currentMessage = '';
+          } else {
+            inputMessageId = prepared.messageId;
+          }
         }
-        pendingInputOnly = true;
-        currentMessage = '';
       }
-      let turnHandle = this.sessionRuntime
-        ? pendingInputOnly
-          ? await this.sessionRuntime.beginPendingTurn()
-          : this.sessionRuntime.beginTurn()
-        : undefined;
       let chainedFollowUps = 0;
 
       if (pendingInputOnly && this.sessionRuntime && !turnHandle) {
@@ -450,6 +485,15 @@ export class Agent {
             );
           }),
         }));
+      const enhancePendingMessages = async (
+        messages: SteeringMessage[]
+      ): Promise<SteeringMessage[]> =>
+        Promise.all(
+          messages.map(async (pending) => ({
+            ...pending,
+            content: await this.processAtMentionsForContent(pending.content),
+          }))
+        );
 
       try {
         if (pendingInputOnly && this.sessionRuntime) {
@@ -466,13 +510,24 @@ export class Agent {
           const loopOptions: LoopOptions = {
             ...options,
             pendingInputOnly,
+            preparedInputTurn: undefined,
+            inputMessageId: pendingInputOnly ? undefined : inputMessageId,
             signal: currentContext.signal,
             turnSteering:
               this.sessionRuntime && ownedHandle
                 ? {
-                    drain: () => this.sessionRuntime!.drainSteering(ownedHandle),
-                    drainOrSeal: () =>
-                      this.sessionRuntime!.drainSteeringOrSeal(ownedHandle),
+                    drain: async () =>
+                      enhancePendingMessages(
+                        await this.sessionRuntime!.drainSteering(ownedHandle)
+                      ),
+                    drainOrSeal: async () => {
+                      const result =
+                        await this.sessionRuntime!.drainSteeringOrSeal(ownedHandle);
+                      return {
+                        ...result,
+                        messages: await enhancePendingMessages(result.messages),
+                      };
+                    },
                   }
                 : undefined,
           };
@@ -518,7 +573,10 @@ export class Agent {
               }
             }
 
-            result = yield* this.runLoop(messageWithPlan, currentContext, loopOptions);
+            result = yield* this.runLoop(messageWithPlan, currentContext, {
+              ...loopOptions,
+              inputMessageId: undefined,
+            });
           }
 
           if (!this.sessionRuntime || !ownedHandle) {
@@ -529,7 +587,7 @@ export class Agent {
             await this.sessionRuntime.acknowledgeTurn(ownedHandle);
           }
           const continuePending =
-            !currentContext.signal?.aborted && chainedFollowUps < 20;
+            result.success && !currentContext.signal?.aborted && chainedFollowUps < 20;
           turnHandle = await this.sessionRuntime.finishTurn(ownedHandle, {
             continuePending,
           });

@@ -1,3 +1,4 @@
+import { Mutex } from 'async-mutex';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
@@ -6,6 +7,7 @@ import { z } from 'zod';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
+import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
 import { PermissionMode } from '../../config/types.js';
@@ -153,6 +155,16 @@ export const SessionRoutes = () => {
   const runtimes = new Map<string, SessionRuntime>();
   const runtimeInitializations = new Map<string, Promise<SessionRuntime>>();
   const sessionHydrations = new Map<string, Promise<SessionInfo>>();
+  const messageSubmissionLocks = new Map<string, Mutex>();
+
+  const getMessageSubmissionLock = (sessionId: string): Mutex => {
+    let lock = messageSubmissionLocks.get(sessionId);
+    if (!lock) {
+      lock = new Mutex();
+      messageSubmissionLocks.set(sessionId, lock);
+    }
+    return lock;
+  };
 
   const getOrCreateRuntime = async (session: SessionInfo): Promise<SessionRuntime> => {
     const existing = runtimes.get(session.id);
@@ -221,7 +233,10 @@ export const SessionRoutes = () => {
     session: SessionInfo,
     content: UserMessageContent,
     permissionMode: PermissionMode,
-    pendingInputOnly = false
+    options: {
+      pendingInputOnly?: boolean;
+      preparedInputTurn?: PreparedInputTurn;
+    } = {}
   ): RunState => {
     const runId = nanoid(12);
     const run: RunState = {
@@ -234,7 +249,8 @@ export const SessionRoutes = () => {
     activeRuns.set(runId, run);
     session.currentRunId = runId;
     executeRunAsync(run, session, content, permissionMode, getOrCreateRuntime, {
-      pendingInputOnly,
+      pendingInputOnly: options.pendingInputOnly,
+      preparedInputTurn: options.preparedInputTurn,
     }).catch((error) => {
       logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
     });
@@ -269,7 +285,7 @@ export const SessionRoutes = () => {
     if (runtime.getPendingSteeringCount() === 0 || runtime.hasTurnOwner()) {
       return;
     }
-    startRun(session, '', PermissionMode.DEFAULT, true);
+    startRun(session, '', PermissionMode.DEFAULT, { pendingInputOnly: true });
   };
 
   app.get('/', async (c) => {
@@ -444,6 +460,7 @@ export const SessionRoutes = () => {
     sessions.delete(sessionId);
     sessionHydrations.delete(sessionId);
     runtimeInitializations.delete(sessionId);
+    messageSubmissionLocks.delete(sessionId);
     const runtime = runtimes.get(sessionId);
     if (runtime) {
       await runtime.dispose();
@@ -550,67 +567,89 @@ export const SessionRoutes = () => {
 
     const session = await getOrHydrateSession(sessionId, directory);
 
-    const currentRun = session.currentRunId
-      ? activeRuns.get(session.currentRunId)
-      : undefined;
-    if (
-      currentRun &&
-      (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
-    ) {
-      const runtime = await getOrCreateRuntime(session);
-      const steering = await runtime.enqueueSteering(userContent, {
-        allowBeforeTurn: true,
-      });
-      if (!steering.accepted) {
+    return getMessageSubmissionLock(sessionId).runExclusive(async () => {
+      const currentRun = session.currentRunId
+        ? activeRuns.get(session.currentRunId)
+        : undefined;
+      if (
+        currentRun &&
+        (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
+      ) {
+        const runtime = await getOrCreateRuntime(session);
+        const steering = await runtime.enqueueSteering(userContent, {
+          allowBeforeTurn: true,
+        });
+        if (!steering.accepted) {
+          return c.json(
+            { status: 'rejected', reason: steering.reason ?? 'turn_unavailable' },
+            409
+          );
+        }
+
+        const messageId = steering.messageId ?? nanoid(12);
+        const queued = steering.queued;
+        Bus.publish(sessionId, 'message.created', {
+          messageId,
+          role: 'user',
+          content: getDisplayContent(userContent),
+        });
+        const queuedEvent =
+          steering.delivery === 'next_turn' ? 'follow_up.queued' : 'steering.queued';
+        Bus.publish(sessionId, queuedEvent, {
+          runId: currentRun.id,
+          messageId,
+          queued,
+        });
+        if (
+          steering.delivery === 'next_turn' &&
+          currentRun.status !== 'running' &&
+          currentRun.status !== 'waiting_permission'
+        ) {
+          void resumePendingSession(session).catch((error) => {
+            logger.error(
+              `[SessionRoutes] Failed to wake queued follow-up for ${sessionId}:`,
+              error
+            );
+          });
+        }
+        if (steering.delivery === 'next_turn') {
+          currentRun.pendingFollowUpRequested = true;
+        }
         return c.json(
-          { status: 'rejected', reason: steering.reason ?? 'turn_unavailable' },
-          409
+          {
+            runId: currentRun.id,
+            messageId,
+            status:
+              steering.delivery === 'next_turn'
+                ? 'follow_up_queued'
+                : 'steering_queued',
+            queued,
+          },
+          202
         );
       }
 
-      const messageId = nanoid(12);
-      const queued = steering.queued;
-      Bus.publish(sessionId, 'message.created', {
-        messageId,
-        role: 'user',
-        content: getDisplayContent(userContent),
-      });
-      const queuedEvent =
-        steering.delivery === 'next_turn' ? 'follow_up.queued' : 'steering.queued';
-      Bus.publish(sessionId, queuedEvent, {
-        runId: currentRun.id,
-        messageId,
-        queued,
-      });
-      if (
-        steering.delivery === 'next_turn' &&
-        currentRun.status !== 'running' &&
-        currentRun.status !== 'waiting_permission'
-      ) {
-        void resumePendingSession(session).catch((error) => {
-          logger.error(
-            `[SessionRoutes] Failed to wake queued follow-up for ${sessionId}:`,
-            error
-          );
-        });
+      const runtime = await getOrCreateRuntime(session);
+      const preparation = await runtime.prepareInputTurn(userContent);
+      if (!preparation.accepted) {
+        return c.json(
+          { status: 'rejected', reason: preparation.reason },
+          preparation.reason === 'queue_full' ? 429 : 409
+        );
       }
-      if (steering.delivery === 'next_turn') {
-        currentRun.pendingFollowUpRequested = true;
-      }
+
+      const run = startRun(session, userContent, permissionMode, {
+        preparedInputTurn: preparation,
+      });
       return c.json(
         {
-          runId: currentRun.id,
-          status:
-            steering.delivery === 'next_turn' ? 'follow_up_queued' : 'steering_queued',
-          queued,
+          runId: run.id,
+          messageId: preparation.messageId,
+          status: 'running',
         },
         202
       );
-    }
-
-    const run = startRun(session, userContent, permissionMode);
-
-    return c.json({ runId: run.id, status: 'running' }, 202);
+    });
   });
 
   app.post('/:sessionId/abort', async (c) => {
@@ -654,13 +693,19 @@ async function executeRunAsync(
   content: UserMessageContent,
   permissionMode: PermissionMode,
   getOrCreateRuntime: (session: SessionInfo) => Promise<SessionRuntime>,
-  options: { pendingInputOnly?: boolean } = {}
+  options: {
+    pendingInputOnly?: boolean;
+    preparedInputTurn?: PreparedInputTurn;
+  } = {}
 ): Promise<void> {
   const { abortController, sessionId, id: runId } = run;
-  const userMessageId = nanoid(12);
-  let assistantMessageId: string | undefined = options.pendingInputOnly
+  const userMessageId = options.preparedInputTurn?.messageId ?? nanoid(12);
+  const startsFromPending =
+    options.pendingInputOnly === true || options.preparedInputTurn?.mode === 'pending';
+  let assistantMessageId: string | undefined = startsFromPending
     ? undefined
     : nanoid(12);
+  let runtime: SessionRuntime | undefined;
 
   const emit = (type: string, properties: Record<string, unknown>) => {
     Bus.publish(sessionId, type, properties);
@@ -683,8 +728,9 @@ async function executeRunAsync(
       });
     }
 
-    const runtime = await getOrCreateRuntime(session);
-    const agent = await Agent.createWithRuntime(runtime, { sessionId });
+    runtime = await getOrCreateRuntime(session);
+    const runtimeOwner = runtime;
+    const agent = await Agent.createWithRuntime(runtimeOwner, { sessionId });
 
     const requestConfirmation = async (
       details: ConfirmationDetails
@@ -814,7 +860,7 @@ async function executeRunAsync(
             count: event.count,
             recovered: event.recovered,
             delivery: event.delivery,
-            queued: runtime.getPendingSteeringCount(),
+            queued: runtimeOwner.getPendingSteeringCount(),
           });
           break;
         case 'follow_up_started': {
@@ -863,13 +909,17 @@ async function executeRunAsync(
       agent.chatStream(content, chatContext, {
         stream: true,
         pendingInputOnly: options.pendingInputOnly,
+        preparedInputTurn: options.preparedInputTurn,
       }),
       handleLoopEvent
     );
+    if (!loopResult.success) {
+      throw new Error(loopResult.error?.message ?? 'Agent run failed');
+    }
     for (let followUpRun = 0; followUpRun < 20; followUpRun++) {
       const requested = run.pendingFollowUpRequested === true;
       run.pendingFollowUpRequested = false;
-      if (runtime.getPendingSteeringCount() === 0) {
+      if (runtimeOwner.getPendingSteeringCount() === 0) {
         if (!requested) break;
         continue;
       }
@@ -882,6 +932,9 @@ async function executeRunAsync(
         }),
         handleLoopEvent
       );
+      if (!loopResult.success) {
+        throw new Error(loopResult.error?.message ?? 'Agent follow-up failed');
+      }
     }
 
     // Phase 4: 使用 chatContext.messages 作为完整历史（不再手工构造）
@@ -901,6 +954,9 @@ async function executeRunAsync(
     });
     emit('session.status', { status: 'idle' });
   } catch (error) {
+    if (runtime && options.preparedInputTurn) {
+      await runtime.finishTurn(options.preparedInputTurn.handle).catch(() => undefined);
+    }
     logger.error('[SessionRoutes] Agent execution error:', error);
     run.status = 'failed';
     emit('session.error', {

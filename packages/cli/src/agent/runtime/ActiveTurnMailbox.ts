@@ -13,6 +13,7 @@ export type SteeringMessage = DurableSteeringMessage;
 
 export interface SteeringEnqueueResult {
   accepted: boolean;
+  messageId?: string;
   turnId?: string;
   queued: number;
   reason?: 'no_active_turn' | 'turn_sealed' | 'queue_full';
@@ -22,6 +23,21 @@ export interface SteeringEnqueueResult {
 export interface ActiveTurnHandle {
   id: string;
 }
+
+export interface PreparedInputTurn {
+  handle: ActiveTurnHandle;
+  messageId: string;
+  queued: number;
+  mode: 'direct' | 'pending';
+}
+
+export type InputTurnPreparation =
+  | ({ accepted: true } & PreparedInputTurn)
+  | {
+      accepted: false;
+      queued: number;
+      reason: 'turn_active' | 'queue_full';
+    };
 
 interface ActiveTurnState {
   id: string;
@@ -77,32 +93,48 @@ export class ActiveTurnMailbox {
         this.activeTurn && !this.activeTurn.sealed
           ? ('current_turn' as const)
           : ('next_turn' as const);
-      const accepted = await this.inbox.enqueue(
-        {
-          id: nanoid(12),
-          content,
-          queuedAt: Date.now(),
-        },
-        (pending) =>
-          pending.length < MAX_PENDING_STEERS &&
-          pending.reduce(
-            (total, message) => total + getSteeringContentSize(message.content),
-            getSteeringContentSize(content)
-          ) <= MAX_PENDING_STEER_CHARS
-      );
-      if (!accepted) {
+      return this.enqueueDurably(content, delivery);
+    });
+  }
+
+  async prepareInputTurn(content: UserMessageContent): Promise<InputTurnPreparation> {
+    return this.transitionMutex.runExclusive(async () => {
+      if (this.activeTurn) {
         return {
           accepted: false,
-          turnId: this.activeTurn?.id,
           queued: this.inbox.count(),
+          reason: 'turn_active',
+        };
+      }
+
+      const hadPendingInput = this.inbox.count() > 0;
+      const queued = await this.enqueueDurably(content, 'next_turn');
+      if (!queued.accepted || !queued.messageId) {
+        return {
+          accepted: false,
+          queued: queued.queued,
           reason: 'queue_full',
         };
       }
+
+      const handle = this.createTurn();
+      if (!hadPendingInput) {
+        const message = this.inbox
+          .list()
+          .find((candidate) => candidate.id === queued.messageId);
+        if (!message) {
+          this.activeTurn = undefined;
+          throw new Error(`Prepared input disappeared from inbox: ${queued.messageId}`);
+        }
+        this.claimed.set(message.id, message);
+      }
+
       return {
         accepted: true,
-        turnId: this.activeTurn?.id,
-        queued: this.inbox.count(),
-        delivery,
+        handle,
+        messageId: queued.messageId,
+        queued: queued.queued,
+        mode: hadPendingInput ? 'pending' : 'direct',
       };
     });
   }
@@ -204,6 +236,41 @@ export class ActiveTurnMailbox {
     if (!this.activeTurn || this.activeTurn.id !== handle.id) {
       throw new Error(`Turn ${handle.id} does not own this session mailbox`);
     }
+  }
+
+  private async enqueueDurably(
+    content: UserMessageContent,
+    delivery: 'current_turn' | 'next_turn'
+  ): Promise<SteeringEnqueueResult> {
+    const message = {
+      id: nanoid(12),
+      content,
+      queuedAt: Date.now(),
+    };
+    const accepted = await this.inbox.enqueue(message, (pending) => {
+      if (pending.length >= MAX_PENDING_STEERS) return false;
+      const pendingSize = pending.reduce(
+        (total, candidate) => total + getSteeringContentSize(candidate.content),
+        0
+      );
+      return pendingSize + getSteeringContentSize(content) <= MAX_PENDING_STEER_CHARS;
+    });
+    if (!accepted) {
+      return {
+        accepted: false,
+        turnId: this.activeTurn?.id,
+        queued: this.inbox.count(),
+        reason: 'queue_full',
+      };
+    }
+
+    return {
+      accepted: true,
+      messageId: message.id,
+      turnId: this.activeTurn?.id,
+      queued: this.inbox.count(),
+      delivery,
+    };
   }
 
   private createTurn(): ActiveTurnHandle {

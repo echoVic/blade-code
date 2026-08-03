@@ -1,10 +1,18 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
+import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.js';
 import { BladeServer } from '../../../src/server/server.js';
 import { getState } from '../../../src/store/vanilla.js';
 import {
@@ -234,7 +242,7 @@ async function collectEvents(sessionId: string): Promise<EventCollector> {
 async function sendMessage(
   sessionId: string,
   content: string
-): Promise<{ runId: string; status: string; queued?: number }> {
+): Promise<{ runId: string; messageId?: string; status: string; queued?: number }> {
   if (!server) throw new Error('Blade web server is not running');
   const response = await fetch(new URL(`/sessions/${sessionId}/message`, server.url), {
     method: 'POST',
@@ -244,6 +252,7 @@ async function sendMessage(
   expect(response.status).toBe(202);
   return response.json() as Promise<{
     runId: string;
+    messageId?: string;
     status: string;
     queued?: number;
   }>;
@@ -307,7 +316,15 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
         setRuntimeModel(modelConfig);
         sessionId = await createSession(workspace);
         collector = await collectEvents(sessionId);
-        await sendMessage(sessionId, codingPrompt());
+        const accepted = await sendMessage(sessionId, codingPrompt());
+        expect(accepted).toMatchObject({
+          status: 'running',
+          messageId: expect.any(String),
+        });
+        const durableInbox = JSON.parse(
+          readFileSync(getSessionInboxFilePath(workspace, sessionId), 'utf8')
+        ) as { messages: Array<{ id: string }> };
+        expect(durableInbox.messages[0]?.id).toBe(accepted.messageId);
         await collector.waitFor((event) => event.type === 'session.completed');
         await collector.waitFor(
           (event) =>
@@ -338,6 +355,7 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
           encoding: 'utf8',
         });
         expect(test.status, test.stderr || test.stdout).toBe(0);
+        expect(existsSync(getSessionInboxFilePath(workspace, sessionId))).toBe(false);
         expect(JSON.stringify(collector.events)).not.toContain(modelConfig.apiKey);
       } finally {
         await collector?.close();
@@ -453,15 +471,16 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
         const durablePrompt =
           'The old value was ALPHA_WEB_RECOVERY. The newest value is ' +
           'BETA_WEB_RECOVERY. Reply with the newest value only.';
-        await runtime.enqueueSteering(durablePrompt, { allowBeforeTurn: true });
-        const inboxMessageId = runtime.getPendingSteeringMessages()[0]?.id;
-        expect(inboxMessageId).toBeTruthy();
-        await runtime
-          .getExecutionEngine()
-          .getContextManager()
-          .persistentStore.saveMessage(sessionId, 'user', durablePrompt, null, {
-            inboxMessageId,
-          });
+        const prepared = await runtime.prepareInputTurn(durablePrompt);
+        expect(prepared).toMatchObject({
+          accepted: true,
+          mode: 'direct',
+          queued: 1,
+        });
+        if (!prepared.accepted) {
+          throw new Error('Expected durable input preparation to succeed');
+        }
+        const inboxMessageId = prepared.messageId;
         await runtime.dispose();
         runtime = undefined;
 
@@ -475,7 +494,12 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
             event.properties.role === 'user' &&
             event.properties.recovered === true
         );
-        expect(recoveredUser).toBeUndefined();
+        expect(recoveredUser).toMatchObject({
+          properties: expect.objectContaining({
+            messageId: inboxMessageId,
+            content: durablePrompt,
+          }),
+        });
         const output = collector.events
           .filter((event) => event.type === 'message.delta')
           .map((event) => String(event.properties.delta ?? ''))
@@ -484,6 +508,7 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
         expect(collector.events.map((event) => event.type)).not.toContain(
           'session.error'
         );
+        expect(existsSync(getSessionInboxFilePath(workspace, sessionId))).toBe(false);
       } finally {
         await runtime?.dispose().catch(() => undefined);
         await collector?.close();

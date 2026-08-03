@@ -91,7 +91,13 @@ describe('Agent runLoop system prompt injection', () => {
   it('owns the SessionRuntime turn mailbox for the full streamed run', async () => {
     const turnHandle = { id: 'turn-1' };
     const runtime = {
-      beginTurn: vi.fn(() => turnHandle),
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: turnHandle,
+        messageId: 'input-1',
+        queued: 1,
+        mode: 'direct',
+      })),
       drainSteering: vi.fn(async () => []),
       drainSteeringOrSeal: vi.fn(async () => ({
         messages: [],
@@ -99,8 +105,6 @@ describe('Agent runLoop system prompt injection', () => {
       })),
       acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
       finishTurn: vi.fn().mockResolvedValue(undefined),
-      hasTurnOwner: vi.fn(() => false),
-      getPendingSteeringCount: vi.fn(() => 0),
     };
     const agent = new Agent(
       createConfig(),
@@ -132,19 +136,186 @@ describe('Agent runLoop system prompt injection', () => {
       value: { success: true, finalMessage: 'done' },
     });
 
-    expect(runtime.beginTurn).toHaveBeenCalledOnce();
+    expect(runtime.prepareInputTurn).toHaveBeenCalledWith('hello');
     expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
       continuePending: true,
     });
     expect(runtime.acknowledgeTurn).toHaveBeenCalledWith(turnHandle);
   });
 
+  it('uses a caller-prepared durable input without enqueueing it twice', async () => {
+    const turnHandle = { id: 'prepared-turn' };
+    const preparedInputTurn = {
+      handle: turnHandle,
+      messageId: 'prepared-input',
+      queued: 1,
+      mode: 'direct' as const,
+    };
+    const runtime = {
+      prepareInputTurn: vi.fn(),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({
+        messages: [],
+        sealed: true,
+      })),
+      acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      {
+        getRegistry: () => ({ getAll: () => [] }),
+      } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).processAtMentionsForContent = vi.fn().mockResolvedValue('hello');
+    let receivedOptions: { inputMessageId?: string } | undefined;
+    (agent as any).runLoop = vi.fn(async function* (
+      _message: string,
+      _context: unknown,
+      options: { inputMessageId?: string }
+    ) {
+      if (Date.now() < 0) yield undefined;
+      receivedOptions = options;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const result = await agent
+      .chatStream(
+        'hello',
+        {
+          messages: [],
+          userId: 'user-1',
+          sessionId: 'session-1',
+          workspaceRoot: process.cwd(),
+        },
+        { preparedInputTurn }
+      )
+      .next();
+
+    expect(result.done).toBe(true);
+    expect(runtime.prepareInputTurn).not.toHaveBeenCalled();
+    expect(receivedOptions?.inputMessageId).toBe('prepared-input');
+    expect(runtime.acknowledgeTurn).toHaveBeenCalledWith(turnHandle);
+  });
+
+  it('prepares input before async prompt expansion and releases ownership on failure', async () => {
+    const turnHandle = { id: 'expansion-turn' };
+    const order: string[] = [];
+    const runtime = {
+      prepareInputTurn: vi.fn(async () => {
+        order.push('prepare');
+        return {
+          accepted: true,
+          handle: turnHandle,
+          messageId: 'expansion-input',
+          queued: 1,
+          mode: 'direct',
+        };
+      }),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      {
+        getRegistry: () => ({ getAll: () => [] }),
+      } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).processAtMentionsForContent = vi.fn(async () => {
+      order.push('expand');
+      throw new Error('attachment unavailable');
+    });
+    (agent as any).runLoop = vi.fn();
+
+    const next = agent
+      .chatStream('@missing.txt', {
+        messages: [],
+        userId: 'user-1',
+        sessionId: 'session-1',
+        workspaceRoot: process.cwd(),
+      })
+      .next();
+
+    await expect(next).rejects.toThrow('attachment unavailable');
+    expect(order).toEqual(['prepare', 'expand']);
+    expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle);
+    expect((agent as any).runLoop).not.toHaveBeenCalled();
+  });
+
+  it('leaves failed durable input pending without immediate retry', async () => {
+    const turnHandle = { id: 'failed-turn' };
+    const runtime = {
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: turnHandle,
+        messageId: 'failed-input',
+        queued: 1,
+        mode: 'direct',
+      })),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({
+        messages: [],
+        sealed: true,
+      })),
+      acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      {
+        getRegistry: () => ({ getAll: () => [] }),
+      } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).processAtMentionsForContent = vi.fn().mockResolvedValue('hello');
+    (agent as any).runLoop = vi.fn(async function* () {
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: false,
+        error: { type: 'api_error', message: 'temporary outage' },
+        metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const result = await agent
+      .chatStream('hello', {
+        messages: [],
+        userId: 'user-1',
+        sessionId: 'session-1',
+        workspaceRoot: process.cwd(),
+      })
+      .next();
+
+    expect(result.done).toBe(true);
+    expect((agent as any).runLoop).toHaveBeenCalledOnce();
+    expect(runtime.acknowledgeTurn).not.toHaveBeenCalled();
+    expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
+      continuePending: false,
+    });
+  });
+
   it('starts a durable follow-up turn without a synthetic user message', async () => {
     const firstTurn = { id: 'turn-1' };
     const secondTurn = { id: 'turn-2' };
     const runtime = {
-      beginTurn: vi.fn(() => firstTurn),
-      beginPendingTurn: vi.fn(),
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: firstTurn,
+        messageId: 'input-1',
+        queued: 1,
+        mode: 'direct',
+      })),
       drainSteering: vi.fn(async () => []),
       drainSteeringOrSeal: vi.fn(async () => ({
         messages: [],
@@ -155,8 +326,7 @@ describe('Agent runLoop system prompt injection', () => {
         .fn()
         .mockResolvedValueOnce(secondTurn)
         .mockResolvedValueOnce(undefined),
-      hasTurnOwner: vi.fn(() => false),
-      getPendingSteeringCount: vi.fn().mockReturnValueOnce(0).mockReturnValue(1),
+      getPendingSteeringCount: vi.fn(() => 1),
       getRecoveredSteeringCount: vi.fn(() => 1),
       getPendingSteeringMessages: vi.fn(() => []),
     };
@@ -222,12 +392,12 @@ describe('Agent runLoop system prompt injection', () => {
   it('queues a new prompt behind durable input before starting an idle turn', async () => {
     const pendingTurn = { id: 'pending-turn' };
     const runtime = {
-      beginTurn: vi.fn(),
-      beginPendingTurn: vi.fn().mockResolvedValue(pendingTurn),
-      enqueueSteering: vi.fn().mockResolvedValue({
+      prepareInputTurn: vi.fn().mockResolvedValue({
         accepted: true,
+        handle: pendingTurn,
+        messageId: 'newer-durable',
         queued: 2,
-        delivery: 'next_turn',
+        mode: 'pending',
       }),
       drainSteering: vi.fn(async () => []),
       drainSteeringOrSeal: vi.fn(async () => ({
@@ -236,8 +406,7 @@ describe('Agent runLoop system prompt injection', () => {
       })),
       acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
       finishTurn: vi.fn().mockResolvedValue(undefined),
-      hasTurnOwner: vi.fn(() => false),
-      getPendingSteeringCount: vi.fn(() => 1),
+      getPendingSteeringCount: vi.fn(() => 2),
       getRecoveredSteeringCount: vi.fn(() => 1),
       getPendingSteeringMessages: vi.fn(() => [
         {
@@ -245,6 +414,12 @@ describe('Agent runLoop system prompt injection', () => {
           content: 'older',
           queuedAt: Date.now(),
           recovered: true,
+        },
+        {
+          id: 'newer-durable',
+          content: 'newer',
+          queuedAt: Date.now(),
+          recovered: false,
         },
       ]),
     };
@@ -292,20 +467,16 @@ describe('Agent runLoop system prompt injection', () => {
       step = await iterator.next();
     }
 
-    expect(runtime.enqueueSteering).toHaveBeenCalledWith('newer', {
-      allowBeforeTurn: true,
-    });
-    expect(runtime.beginTurn).not.toHaveBeenCalled();
-    expect(runtime.beginPendingTurn).toHaveBeenCalledOnce();
+    expect(runtime.prepareInputTurn).toHaveBeenCalledWith('newer');
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: 'follow_up_started',
-        messages: [
+        messages: expect.arrayContaining([
           expect.objectContaining({
             id: 'older-durable',
             persisted: true,
           }),
-        ],
+        ]),
       })
     );
   });

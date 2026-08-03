@@ -43,6 +43,7 @@ import type { AgentOptions, UserMessageContent } from '../types.js';
 import {
   type ActiveTurnHandle,
   ActiveTurnMailbox,
+  type InputTurnPreparation,
   type SteeringEnqueueResult,
   type SteeringMessage,
 } from './ActiveTurnMailbox.js';
@@ -191,6 +192,10 @@ export class SessionRuntime {
 
   beginTurn(): ActiveTurnHandle {
     return this.activeTurnMailbox.beginTurn();
+  }
+
+  async prepareInputTurn(content: UserMessageContent): Promise<InputTurnPreparation> {
+    return this.activeTurnMailbox.prepareInputTurn(content);
   }
 
   async enqueueSteering(

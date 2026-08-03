@@ -13,12 +13,21 @@ const runtimeState = vi.hoisted(() => ({
     getAttachmentCollector: vi.fn(),
     getCurrentModelId: vi.fn(() => 'model-1'),
     getCurrentModelMaxContextTokens: vi.fn(() => 128000),
+    prepareInputTurn: vi.fn((): any => ({
+      accepted: true,
+      handle: { id: 'prepared-turn' },
+      messageId: 'prepared-input',
+      queued: 1,
+      mode: 'direct',
+    })),
     enqueueSteering: vi.fn((): any => ({
       accepted: true,
+      messageId: 'steering-input',
       turnId: 'turn-1',
       queued: 1,
       delivery: 'current_turn',
     })),
+    finishTurn: vi.fn().mockResolvedValue(undefined),
     getPendingSteeringCount: vi.fn(() => 0),
     hasTurnOwner: vi.fn(() => false),
   },
@@ -79,7 +88,23 @@ describe('SessionRoutes runtime reuse', () => {
     vi.clearAllMocks();
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.refresh.mockClear();
+    runtimeState.runtime.prepareInputTurn.mockReset();
+    runtimeState.runtime.prepareInputTurn.mockImplementation(async () => ({
+      accepted: true,
+      handle: { id: 'prepared-turn' },
+      messageId: 'prepared-input',
+      queued: 1,
+      mode: 'direct',
+    }));
     runtimeState.runtime.enqueueSteering.mockClear();
+    runtimeState.runtime.enqueueSteering.mockResolvedValue({
+      accepted: true,
+      messageId: 'steering-input',
+      turnId: 'turn-1',
+      queued: 1,
+      delivery: 'current_turn',
+    });
+    runtimeState.runtime.finishTurn.mockClear();
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.hasTurnOwner.mockReturnValue(false);
     vi.mocked(SessionRuntime.create).mockImplementation(
@@ -130,6 +155,8 @@ describe('SessionRoutes runtime reuse', () => {
       sessionId: 'session-1',
       workspaceRoot: expect.any(String),
     });
+    expect(runtimeState.runtime.prepareInputTurn).toHaveBeenNthCalledWith(1, 'first');
+    expect(runtimeState.runtime.prepareInputTurn).toHaveBeenNthCalledWith(2, 'second');
     expect(Agent.createWithRuntime).toHaveBeenCalledTimes(2);
     expect(Agent.createWithRuntime).toHaveBeenNthCalledWith(1, runtimeState.runtime, {
       sessionId: 'session-1',
@@ -270,7 +297,7 @@ describe('SessionRoutes runtime reuse', () => {
     });
   });
 
-  it('waits for one runtime initialization before acknowledging startup steering', async () => {
+  it('serializes concurrent startup input behind one durable runtime preparation', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { SessionRuntime } = await import(
       '../../../../src/agent/runtime/SessionRuntime.js'
@@ -282,14 +309,32 @@ describe('SessionRoutes runtime reuse', () => {
           releaseRuntime = () => resolve(runtimeState.runtime as never);
         })
     );
+    let releaseRun: () => void = () => undefined;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+      await runGate;
+      return {
+        success: true,
+        finalMessage: 'started',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
 
     const app = SessionRoutes();
-    const first = await app.request('/startup-steering/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'initial request' }),
+    let firstSettled = false;
+    const firstPromise = Promise.resolve(
+      app.request('/startup-steering/message', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'initial request' }),
+      })
+    ).then((response) => {
+      firstSettled = true;
+      return response;
     });
-    expect(first.status).toBe(202);
 
     let secondSettled = false;
     const secondPromise = Promise.resolve(
@@ -303,10 +348,17 @@ describe('SessionRoutes runtime reuse', () => {
       return response;
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(firstSettled).toBe(false);
     expect(secondSettled).toBe(false);
 
     releaseRuntime();
+    const first = await firstPromise;
     const second = await secondPromise;
+    expect(first.status).toBe(202);
+    expect(await first.json()).toMatchObject({
+      status: 'running',
+      messageId: 'prepared-input',
+    });
     expect(second.status).toBe(202);
     expect(await second.json()).toMatchObject({
       status: 'steering_queued',
@@ -317,6 +369,50 @@ describe('SessionRoutes runtime reuse', () => {
       'guidance during startup',
       { allowBeforeTurn: true }
     );
+    releaseRun();
+  });
+
+  it('does not return 202 until the initial input has been durably prepared', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    let releasePreparation: () => void = () => undefined;
+    runtimeState.runtime.prepareInputTurn.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releasePreparation = () =>
+            resolve({
+              accepted: true,
+              handle: { id: 'fsynced-turn' },
+              messageId: 'fsynced-input',
+              queued: 1,
+              mode: 'direct',
+            });
+        })
+    );
+
+    const app = SessionRoutes();
+    let settled = false;
+    const responsePromise = Promise.resolve(
+      app.request('/durable-accept/message', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'persist before accepting' }),
+      })
+    ).then((response) => {
+      settled = true;
+      return response;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+
+    releasePreparation();
+    const response = await responsePromise;
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      status: 'running',
+      messageId: 'fsynced-input',
+    });
   });
 
   it('wakes a persisted durable follow-up when Web SSE reconnects', async () => {
@@ -473,6 +569,41 @@ describe('SessionRoutes runtime reuse', () => {
         { role: 'assistant', content: 'earlier answer' },
       ],
     });
+  });
+
+  it('publishes a run error and releases a prepared owner on loop failure', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: false,
+        error: { type: 'api_error', message: 'upstream unavailable' },
+        metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const app = SessionRoutes();
+    const response = await app.request('/failed-prepared-run/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'durable request' }),
+    });
+
+    expect(response.status).toBe(202);
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith('failed-prepared-run', 'session.error', {
+        error: 'upstream unavailable',
+      });
+    });
+    expect(runtimeState.runtime.finishTurn).toHaveBeenCalledWith({
+      id: 'prepared-turn',
+    });
+    expect(Bus.publish).not.toHaveBeenCalledWith(
+      'failed-prepared-run',
+      'session.completed',
+      expect.any(Object)
+    );
   });
 
   it('publishes loop lifecycle events and preserves canonical tool failure state', async () => {

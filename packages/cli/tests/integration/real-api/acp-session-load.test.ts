@@ -1,5 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk';
-import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -8,6 +8,7 @@ import { AcpSession } from '../../../src/acp/Session.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
+import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
@@ -314,15 +315,15 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
           const durablePrompt =
             'The old value was ALPHA_ACP_RECOVERY. The newest value is ' +
             'BETA_ACP_RECOVERY. Reply with the newest value only.';
-          await firstRuntime.enqueueSteering(durablePrompt, { allowBeforeTurn: true });
-          const inboxMessageId = firstRuntime.getPendingSteeringMessages()[0]?.id;
-          expect(inboxMessageId).toBeTruthy();
-          await firstRuntime
-            .getExecutionEngine()
-            .getContextManager()
-            .persistentStore.saveMessage(sessionId, 'user', durablePrompt, null, {
-              inboxMessageId,
-            });
+          const prepared = await firstRuntime.prepareInputTurn(durablePrompt);
+          expect(prepared).toMatchObject({
+            accepted: true,
+            mode: 'direct',
+            queued: 1,
+          });
+          if (!prepared.accepted) {
+            throw new Error('Expected durable input preparation to succeed');
+          }
           await firstRuntime.dispose();
           firstRuntime = undefined;
 
@@ -362,6 +363,18 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
                 update.update.content.text.includes('BETA_ACP_RECOVERY')
             )
           ).toHaveLength(1);
+          await vi.waitFor(
+            async () => {
+              let inboxExists = true;
+              try {
+                await access(getSessionInboxFilePath(workspace, sessionId));
+              } catch {
+                inboxExists = false;
+              }
+              expect(inboxExists).toBe(false);
+            },
+            { timeout: 10_000, interval: 50 }
+          );
           expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
         });
       } finally {

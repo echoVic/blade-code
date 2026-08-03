@@ -8,7 +8,10 @@ import { PermissionMode } from '../config/types.js';
 import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../tools/types/ToolTypes.js';
-import type { SteeringMessage } from './runtime/ActiveTurnMailbox.js';
+import type {
+  PreparedInputTurn,
+  SteeringMessage,
+} from './runtime/ActiveTurnMailbox.js';
 
 /**
  * 用户消息内容类型
@@ -105,6 +108,10 @@ export interface LoopOptions {
   stream?: boolean;
   /** Start a turn from the runtime-owned durable inbox without a synthetic user message. */
   pendingInputOnly?: boolean;
+  /** Runtime-prepared turn whose input was fsynced before the caller acknowledged it. */
+  preparedInputTurn?: PreparedInputTurn;
+  /** Durable inbox identity attached to the direct user transcript entry. */
+  inputMessageId?: string;
   /** SessionRuntime-owned same-turn user steering source. */
   turnSteering?: {
     drain: () => Promise<SteeringMessage[]>;

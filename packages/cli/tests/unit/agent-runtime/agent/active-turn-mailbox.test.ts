@@ -87,6 +87,68 @@ describe('ActiveTurnMailbox', () => {
     await mailbox.finishTurn(nextTurn!);
   });
 
+  it('atomically prepares and claims a durable direct input turn', async () => {
+    const mailbox = await createMailbox('direct-input-session');
+
+    const prepared = await mailbox.prepareInputTurn('durable first prompt');
+    expect(prepared).toMatchObject({
+      accepted: true,
+      queued: 1,
+      mode: 'direct',
+    });
+    if (!prepared.accepted) throw new Error('Expected input preparation to succeed');
+
+    await expect(mailbox.claimedMessageIds(prepared.handle)).resolves.toEqual([
+      prepared.messageId,
+    ]);
+    await expect(mailbox.drain(prepared.handle)).resolves.toEqual([]);
+    expect(mailbox.pendingMessages()).toEqual([
+      expect.objectContaining({
+        id: prepared.messageId,
+        content: 'durable first prompt',
+      }),
+    ]);
+    await mailbox.finishTurn(prepared.handle);
+  });
+
+  it('keeps older durable input ahead of a newly prepared prompt', async () => {
+    const mailbox = await createMailbox('ordered-input-session');
+    await mailbox.enqueue('older pending prompt', { allowBeforeTurn: true });
+
+    const prepared = await mailbox.prepareInputTurn('new prompt');
+    expect(prepared).toMatchObject({
+      accepted: true,
+      queued: 2,
+      mode: 'pending',
+    });
+    if (!prepared.accepted) throw new Error('Expected input preparation to succeed');
+
+    await expect(mailbox.claimedMessageIds(prepared.handle)).resolves.toEqual([]);
+    const pending = await mailbox.drain(prepared.handle);
+    expect(pending.map((message) => message.content)).toEqual([
+      'older pending prompt',
+      'new prompt',
+    ]);
+    await mailbox.finishTurn(prepared.handle);
+  });
+
+  it('allows only one concurrent input preparation to own the turn', async () => {
+    const mailbox = await createMailbox('concurrent-input-session');
+
+    const [first, second] = await Promise.all([
+      mailbox.prepareInputTurn('first'),
+      mailbox.prepareInputTurn('second'),
+    ]);
+    const accepted = [first, second].filter((result) => result.accepted);
+    const rejected = [first, second].filter((result) => !result.accepted);
+
+    expect(accepted).toHaveLength(1);
+    expect(rejected).toEqual([
+      expect.objectContaining({ accepted: false, reason: 'turn_active' }),
+    ]);
+    expect(mailbox.pendingCount()).toBe(1);
+  });
+
   it('fails closed when the pending steering budget is exhausted', async () => {
     const mailbox = await createMailbox();
     const turn = mailbox.beginTurn();
@@ -127,6 +189,24 @@ describe('ActiveTurnMailbox', () => {
     await expect(recovered.drain(retryTurn!)).resolves.toEqual([
       expect.objectContaining({
         content: 'retry this guidance',
+        recovered: true,
+      }),
+    ]);
+  });
+
+  it('recovers a prepared direct input when the process exits before completion', async () => {
+    const first = await createMailbox('recovered-direct-input');
+    const prepared = await first.prepareInputTurn('recover this initial prompt');
+    if (!prepared.accepted) throw new Error('Expected input preparation to succeed');
+    await first.finishTurn(prepared.handle);
+
+    const recovered = await createMailbox('recovered-direct-input');
+    expect(recovered.recoveredCount()).toBe(1);
+    const retryTurn = await recovered.beginPendingTurn();
+    await expect(recovered.drain(retryTurn!)).resolves.toEqual([
+      expect.objectContaining({
+        id: prepared.messageId,
+        content: 'recover this initial prompt',
         recovered: true,
       }),
     ]);
