@@ -105,6 +105,7 @@ vi.mock('../../../../src/slash-commands/index.js', () => ({
 
 describe('AcpSession', () => {
   let mockConnection: ReturnType<typeof createMockACPClient>;
+  let connectionAbortController: AbortController;
   let session: AcpSession;
 
   beforeEach(() => {
@@ -112,6 +113,10 @@ describe('AcpSession', () => {
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     // 创建 mock 连接
     mockConnection = createMockACPClient();
+    connectionAbortController = new AbortController();
+    Object.defineProperty(mockConnection, 'signal', {
+      value: connectionAbortController.signal,
+    });
 
     // 创建会话实例
     session = new AcpSession(
@@ -536,6 +541,59 @@ describe('AcpSession', () => {
       );
       expect(modeUpdates.length).toBeGreaterThan(0);
       expect((modeUpdates[0].update as any).currentModeId).toBe('default');
+    });
+  });
+
+  describe('sendAvailableCommandsDelayed', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('destroy 后不应该发送延迟的 available commands update', async () => {
+      session.sendAvailableCommandsDelayed();
+
+      await vi.advanceTimersByTimeAsync(499);
+      await session.destroy();
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(
+        mockConnection.sessionUpdates.filter(
+          (notification) =>
+            notification.update.sessionUpdate === 'available_commands_update'
+        )
+      ).toHaveLength(0);
+    });
+
+    it('重复 schedule 后在 500ms 只发送一次 available commands update', async () => {
+      session.sendAvailableCommandsDelayed();
+      session.sendAvailableCommandsDelayed();
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(
+        mockConnection.sessionUpdates.filter(
+          (notification) =>
+            notification.update.sessionUpdate === 'available_commands_update'
+        )
+      ).toHaveLength(1);
+    });
+
+    it('connection aborted 后不应该发送 available commands update', async () => {
+      session.sendAvailableCommandsDelayed();
+      connectionAbortController.abort();
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(
+        mockConnection.sessionUpdates.filter(
+          (notification) =>
+            notification.update.sessionUpdate === 'available_commands_update'
+        )
+      ).toHaveLength(0);
     });
   });
 

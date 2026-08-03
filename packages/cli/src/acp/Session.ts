@@ -123,6 +123,7 @@ export class AcpSession {
   private runtime: SessionRuntime | null = null;
   private pendingPrompt: AbortController | null = null;
   private pendingResumeRequested = false;
+  private availableCommandsTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
   private messages: Message[];
   private mode: AcpModeId = 'default';
@@ -206,13 +207,20 @@ export class AcpSession {
    * 发送可用的 slash commands 给 IDE（公开方法，由 BladeAgent 调用）
    */
   sendAvailableCommandsDelayed(): void {
+    if (this.destroyed || this.connection.signal.aborted) return;
+    if (this.availableCommandsTimer !== null) {
+      clearTimeout(this.availableCommandsTimer);
+    }
+
     // 延迟发送，确保在 session/new 响应之后
     // 使用较长的延迟确保 Zed 已准备好接收
     logger.debug(
       `[AcpSession ${this.id}] Scheduling available commands update (500ms delay)`
     );
-    setTimeout(() => {
-      this.sendAvailableCommands();
+    this.availableCommandsTimer = setTimeout(() => {
+      this.availableCommandsTimer = null;
+      if (this.destroyed || this.connection.signal.aborted) return;
+      void this.sendAvailableCommands();
     }, 500);
   }
 
@@ -721,6 +729,10 @@ export class AcpSession {
   async destroy(): Promise<void> {
     if (this.destroyed) return;
     this.destroyed = true;
+    if (this.availableCommandsTimer !== null) {
+      clearTimeout(this.availableCommandsTimer);
+      this.availableCommandsTimer = null;
+    }
 
     const agent = this.agent;
     const runtime = this.runtime;
