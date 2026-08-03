@@ -3,10 +3,12 @@ import { SessionService } from '../../../../src/services/SessionService.js';
 
 const readdirMock = vi.fn();
 const readFileMock = vi.fn();
+const rmMock = vi.fn();
 
 vi.mock('node:fs/promises', () => ({
   readdir: (...args: any[]) => readdirMock(...args),
   readFile: (...args: any[]) => readFileMock(...args),
+  rm: (...args: any[]) => rmMock(...args),
 }));
 
 vi.mock('../../../../src/context/storage/pathUtils.js', () => ({
@@ -21,6 +23,7 @@ vi.mock('../../../../src/context/storage/pathUtils.js', () => ({
 beforeEach(() => {
   readdirMock.mockReset();
   readFileMock.mockReset();
+  rmMock.mockReset();
 });
 
 const makeDirent = (name: string, isDir: boolean) => ({
@@ -418,5 +421,109 @@ describe('SessionService with mocked filesystem', () => {
         name: 'Read',
       },
     ]);
+  });
+
+  it('listSessionPage propagates root scan permission errors', async () => {
+    readdirMock.mockRejectedValueOnce(
+      Object.assign(new Error('denied'), { code: 'EACCES' })
+    );
+
+    await expect(SessionService.listSessionPage()).rejects.toThrow('denied');
+  });
+
+  it('listSessionPage returns an empty page when the storage root is missing', async () => {
+    readdirMock.mockRejectedValueOnce(
+      Object.assign(new Error('missing'), { code: 'ENOENT' })
+    );
+
+    await expect(SessionService.listSessionPage()).resolves.toEqual({ sessions: [] });
+  });
+
+  it('listSessions skips a corrupt transcript and ignores a transcript removed mid-scan', async () => {
+    readdirMock.mockImplementation(async (dir: string, options?: any) => {
+      if (dir === '/blade-root/projects' && options?.withFileTypes) {
+        return [makeDirent('encodedA', true)];
+      }
+      if (dir === '/blade-root/projects/encodedA') {
+        return ['valid.jsonl', 'corrupt.jsonl', 'gone.jsonl'];
+      }
+      return [];
+    });
+
+    readFileMock.mockImplementation(async (filePath: string) => {
+      if (filePath.endsWith('valid.jsonl')) {
+        return [
+          JSON.stringify({
+            id: 'e1',
+            sessionId: 'valid',
+            type: 'session_created',
+            timestamp: '2024-01-01T00:00:00Z',
+            cwd: '/projects/encodedA',
+            version: '0.0.0',
+            data: {
+              sessionId: 'valid',
+              rootId: 'valid',
+              createdAt: '2024-01-01T00:00:00Z',
+              updatedAt: '2024-01-01T00:00:00Z',
+            },
+          }),
+          JSON.stringify({
+            id: 'e2',
+            sessionId: 'valid',
+            type: 'message_created',
+            timestamp: '2024-01-01T00:00:01Z',
+            cwd: '/projects/encodedA',
+            version: '0.0.0',
+            data: {
+              messageId: 'm1',
+              role: 'user',
+              createdAt: '2024-01-01T00:00:01Z',
+            },
+          }),
+        ].join('\n');
+      }
+      if (filePath.endsWith('corrupt.jsonl')) {
+        throw new Error('malformed');
+      }
+      if (filePath.endsWith('gone.jsonl')) {
+        throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+      }
+      throw new Error(`unexpected file ${filePath}`);
+    });
+
+    await expect(SessionService.listSessions()).resolves.toMatchObject([
+      { sessionId: 'valid' },
+    ]);
+  });
+
+  it('listSessions propagates project and transcript I/O failures', async () => {
+    readdirMock.mockImplementation(async (dir: string, options?: any) => {
+      if (dir === '/blade-root/projects' && options?.withFileTypes) {
+        return [makeDirent('encodedA', true)];
+      }
+      if (dir === '/blade-root/projects/encodedA') {
+        throw Object.assign(new Error('project denied'), { code: 'EACCES' });
+      }
+      return [];
+    });
+
+    await expect(SessionService.listSessions()).rejects.toThrow('project denied');
+
+    readdirMock.mockReset();
+    readFileMock.mockReset();
+    readdirMock.mockImplementation(async (dir: string, options?: any) => {
+      if (dir === '/blade-root/projects' && options?.withFileTypes) {
+        return [makeDirent('encodedA', true)];
+      }
+      if (dir === '/blade-root/projects/encodedA') {
+        return ['blocked.jsonl'];
+      }
+      return [];
+    });
+    readFileMock.mockRejectedValueOnce(
+      Object.assign(new Error('blocked'), { code: 'EACCES' })
+    );
+
+    await expect(SessionService.listSessions()).rejects.toThrow('blocked');
   });
 });
