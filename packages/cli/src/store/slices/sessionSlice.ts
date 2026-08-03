@@ -9,11 +9,11 @@
  * 注意：isThinking 已合并到 commandSlice.isProcessing
  */
 
-import { nanoid } from 'nanoid';
 import type { StateCreator } from 'zustand';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { estimateCostUsd } from '../../services/pricing.js';
 import { clearAllMarkdownCache } from '../../ui/utils/markdownIncremental.js';
+import { createSessionId } from '../../utils/sessionId.js';
 import type {
   BladeStore,
   SessionMessage,
@@ -59,7 +59,7 @@ const initialTokenUsage: TokenUsage = {
  * 初始会话状态
  */
 const initialSessionState: SessionState = {
-  sessionId: nanoid(),
+  sessionId: createSessionId('tui'),
   messages: [],
   restoredContextMessages: null,
   restoredVisibleMessageCount: 0,

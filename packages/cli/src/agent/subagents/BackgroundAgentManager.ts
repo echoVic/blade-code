@@ -7,11 +7,11 @@
  * - 支持等待完成、恢复、终止
  */
 
-import { nanoid } from 'nanoid';
 import type { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { getCwd } from '../../utils/cwd.js';
+import { createSessionId } from '../../utils/sessionId.js';
 import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import { Agent } from '../Agent.js';
 import { recordVerificationEvidence } from '../loop/completionPolicy.js';
@@ -151,7 +151,7 @@ export class BackgroundAgentManager {
     } = options;
 
     // 生成或使用已有的 agent ID
-    const id = agentId || nanoid();
+    const id = agentId || createSessionId('agent');
 
     // 创建 AbortController 用于取消
     const abortController = new AbortController();

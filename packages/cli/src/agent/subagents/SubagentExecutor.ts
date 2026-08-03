@@ -1,5 +1,5 @@
-import { nanoid } from 'nanoid';
 import { getCwd } from '../../utils/cwd.js';
+import { createSessionId } from '../../utils/sessionId.js';
 import { Agent } from '../Agent.js';
 import { recordVerificationEvidence } from '../loop/completionPolicy.js';
 import { drainLoop } from '../loop/index.js';
@@ -25,7 +25,7 @@ export class SubagentExecutor {
    */
   async execute(context: SubagentContext): Promise<SubagentResult> {
     const startTime = Date.now();
-    const agentId = context.subagentSessionId ?? nanoid();
+    const agentId = context.subagentSessionId ?? createSessionId('agent');
 
     try {
       const appendSystemPrompt = this.getAppendSystemPrompt();

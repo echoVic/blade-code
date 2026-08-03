@@ -172,14 +172,14 @@ describe('BackgroundAgentManager', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(SessionRuntime.create).toHaveBeenCalledWith({
-        sessionId: 'session_test-uuid-1234',
+        sessionId: 'agent-session_test-uuid-1234',
         workspaceRoot: expect.any(String),
         modelId: undefined,
       });
       expect(Agent.createWithRuntime).toHaveBeenCalledWith(
         runtimeState.runtime,
         expect.objectContaining({
-          sessionId: 'session_test-uuid-1234',
+          sessionId: 'agent-session_test-uuid-1234',
           appendSystemPrompt: 'You are an explorer',
         })
       );
@@ -285,12 +285,12 @@ describe('BackgroundAgentManager', () => {
         prompt: 'Do something',
       });
 
-      expect(agentId).toBe('session_test-uuid-1234');
+      expect(agentId).toBe('agent-session_test-uuid-1234');
 
       const mockStore = AgentSessionStore.getInstance();
       expect(mockStore.saveSession).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: 'session_test-uuid-1234',
+          id: 'agent-session_test-uuid-1234',
           subagentType: 'Explore',
           description: 'Test task',
           status: 'running',
@@ -344,7 +344,7 @@ describe('BackgroundAgentManager', () => {
         prompt: 'Do something',
       });
 
-      expect(manager.isRunning('session_test-uuid-1234')).toBe(true);
+      expect(manager.isRunning('agent-session_test-uuid-1234')).toBe(true);
     });
 
     it('不存在的 agent 应返回 false', () => {

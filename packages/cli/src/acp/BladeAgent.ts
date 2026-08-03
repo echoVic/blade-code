@@ -11,12 +11,12 @@ import {
   type AgentSideConnection,
   PROTOCOL_VERSION,
 } from '@agentclientprotocol/sdk';
-import { nanoid } from 'nanoid';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { SessionService } from '../services/SessionService.js';
 import { getConfig } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
+import { createSessionId } from '../utils/sessionId.js';
 import { AcpSession } from './Session.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -77,7 +77,7 @@ export class BladeAgent implements AcpAgentInterface {
    * 创建新会话
    */
   async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
-    const sessionId = nanoid();
+    const sessionId = createSessionId('acp');
     logger.info(`[BladeAgent] Creating new session: ${sessionId}`);
     logger.debug(`[BladeAgent] Session cwd: ${params.cwd || getCwd()}`);
 

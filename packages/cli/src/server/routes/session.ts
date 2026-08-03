@@ -26,6 +26,7 @@ import {
   renderToolDisplayToString,
 } from '../../ui/utils/toolFormatters.js';
 import { getCwd } from '../../utils/cwd.js';
+import { createSessionId } from '../../utils/sessionId.js';
 import { Bus } from '../bus.js';
 import { BadRequestError, NotFoundError } from '../error.js';
 
@@ -412,7 +413,7 @@ export const SessionRoutes = () => {
       }
 
       const { title, projectPath } = parsed.data;
-      const sessionId = nanoid(12);
+      const sessionId = createSessionId('web', 12);
       const directory = projectPath || c.get('directory') || getCwd();
 
       const session: SessionInfo = {

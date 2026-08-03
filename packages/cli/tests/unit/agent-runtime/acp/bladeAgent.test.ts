@@ -18,6 +18,12 @@ const sessionServiceMocks = vi.hoisted(() => ({
 const acpSessionMocks = vi.hoisted(() => ({
   nextInitializeError: null as Error | null,
 }));
+const idMocks = vi.hoisted(() => ({
+  counter: 0,
+  nanoid: vi.fn(() => 'generated-session'),
+}));
+
+vi.mock('nanoid', () => ({ nanoid: idMocks.nanoid }));
 
 // 获取创建的 session 实例的辅助函数
 const getCreatedSessions = () => (AcpSession as any)._getCreatedSessions();
@@ -127,6 +133,8 @@ describe('BladeAgent', () => {
   }
 
   beforeEach(() => {
+    idMocks.counter = 0;
+    idMocks.nanoid.mockImplementation(() => `generated-session-${++idMocks.counter}`);
     // 重置创建的 session 列表
     (AcpSession as any)._resetCreatedSessions?.();
 
@@ -284,6 +292,14 @@ describe('BladeAgent', () => {
   });
 
   describe('newSession', () => {
+    it('应该把可能以符号开头的随机值转换为合法 session ID', async () => {
+      idMocks.nanoid.mockReturnValueOnce('-unsafe-random-id');
+
+      const response = await agent.newSession({ cwd: '/tmp/test', mcpServers: [] });
+
+      expect(response.sessionId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+    });
+
     it('应该创建新会话', async () => {
       const params = {
         cwd: '/tmp/test',

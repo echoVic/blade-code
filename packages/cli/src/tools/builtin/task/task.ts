@@ -33,6 +33,7 @@ import {
   renderToolDisplayToString,
 } from '../../../ui/utils/toolFormatters.js';
 import { getCwd } from '../../../utils/cwd.js';
+import { createSessionId } from '../../../utils/sessionId.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -237,7 +238,7 @@ export const taskTool = createTool({
         ? subagent_session_id
         : typeof resume === 'string' && resume.length > 0
           ? resume
-          : nanoid();
+          : createSessionId('agent');
     let worktreeLease: SubagentWorktreeLease | undefined;
     let worktreeFinalized = false;
     let effectiveIsolation: SubagentIsolationMode = isolation ?? 'none';

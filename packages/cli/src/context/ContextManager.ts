@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import type { ContentPart } from '../services/ChatServiceInterface.js';
 import type { JsonObject, JsonValue } from '../store/types.js';
 import { getCwd } from '../utils/cwd.js';
+import { createSessionId } from '../utils/sessionId.js';
 import { ContextAssembler } from './ContextAssembler.js';
 import { ContextCompressor } from './processors/ContextCompressor.js';
 import { ContextFilter } from './processors/ContextFilter.js';
@@ -499,8 +500,7 @@ export class ContextManager {
   // 私有方法
 
   private generateSessionId(): string {
-    // 使用 nanoid 生成会话 ID
-    return nanoid();
+    return createSessionId();
   }
 
   private generateMessageId(): string {

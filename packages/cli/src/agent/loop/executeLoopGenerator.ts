@@ -5,7 +5,6 @@
  * 转换为 AsyncGenerator 模式，yield LoopEvent 事件流。
  */
 
-import { nanoid } from 'nanoid';
 import { type PermissionMode } from '../../config/index.js';
 import { CompactionService } from '../../context/CompactionService.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
@@ -27,6 +26,7 @@ import { ToolErrorType } from '../../tools/types/index.js';
 import { isAbortError } from '../../utils/abort.js';
 import { getAbortReason } from '../../utils/abortReason.js';
 import { getCwd } from '../../utils/cwd.js';
+import { createSessionId } from '../../utils/sessionId.js';
 import type { SteeringMessage } from '../runtime/ActiveTurnMailbox.js';
 import type {
   ChatContext,
@@ -34,6 +34,7 @@ import type {
   LoopResult,
   UserMessageContent,
 } from '../types.js';
+import { ConversationState } from './ConversationState.js';
 import {
   checkDelegationRequirement,
   checkIncompleteIntent,
@@ -53,7 +54,6 @@ import {
   saveToolUse,
   saveUserMessage,
 } from './conversationPersistence.js';
-import { ConversationState } from './ConversationState.js';
 import {
   createStaleLoopDetector,
   createToolFailureTracker,
@@ -1568,7 +1568,7 @@ export async function* executeLoopGenerator(
                 params.subagent_session_id =
                   typeof params.resume === 'string' && params.resume.length > 0
                     ? params.resume
-                    : nanoid();
+                    : createSessionId('agent');
               }
               let toolUseUuid: string | null = null;
               toolUseUuid = await saveToolUse(
