@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-08-03
+
+### ✨ 新功能
+
+- fork persisted conversations (a141169b)
+- load custom agents from CLI (356b2eef)
+- load ephemeral settings overrides (a79dbfc2)
+- load scoped project instructions (a8b6a2b4)
+- switch session models atomically (d5bd12d8)
+- restore persisted sessions (6d712a03)
+- expose structured tool results (df7f3b40)
+
+### 🐛 问题修复
+
+- require webhook credentials from env (22d71f98)
+- assign npm publishing to tag workflow (328ffcec)
+- preserve continuation requirements (519438cb)
+- dispose session runtime on exit (959149a8)
+- expose agent lifecycle events (34f634c8)
+- stream compaction lifecycle events (aa777c34)
+- preserve headless compaction protocol (46ed652d)
+- enforce exit mode boundary (78806782)
+- make model retries replay-safe (e23c481c)
+- recover truncated session transcripts (e2aad46f)
+- serialize session ownership (46145c53)
+- persist interrupted turns (3d7ec137)
+- scope background tasks to sessions (a30743d6)
+- terminate owned process trees (61a78ea9)
+- surface recoverable command failures (9308759a)
+- invalidate auto-verify after edits (297ab72f)
+
+### 💄 代码格式
+
+- normalize Biome formatting baseline (a8095801)
+
+### ✅ 测试相关
+
+- strengthen publisher ownership contract (3d7445e9)
+- isolate real API qualification config (0d5381e7)
+- enforce production qualification gates (ebd8b3a4)
+- cover real API multi-file migrations (c8aae582)
+- cover resumed coding tasks across permission modes (f74df91c)
+- add real API coding task harness (8c7c9afc)
+
+
 ## [0.6.2] - 2026-08-01
 
 ### ✨ 新功能
