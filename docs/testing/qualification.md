@@ -63,6 +63,7 @@ bun run qualify:production
 - transcript 截断恢复：在 session JSONL 尾部制造未提交半行，恢复后完成 Write/Bash 任务，并逐行验证修复后的完整历史；
 - 上下文压缩续跑：受限上下文窗口在 Read 后触发一次自动压缩；透明代理暂停真实摘要请求时，stdout 必须已实时发出 `compacting: started`，随后保持纯 JSONL、落盘自动摘要，并在 `compacting: completed` 之后执行 Write；
 - Web surface：通过生产 HTTP session 路由提交任务并消费真实 SSE，验证代码修改、宿主测试、canonical tool success，以及 `compaction.started` / `compaction.completed` 在 resumed Write 之前按序可见；
+- 跨表面 session branch：TUI `/branch` 原子切换到持久化子会话；Web 通过 HTTP fork 路由创建并选中子会话，活动回合返回 `409`；ACP `/branch` 返回可由标准 `session/load` 加载的子会话 ID。Flash 和 Pro 都必须在删除原 marker 后，仅依赖继承的 Read 结果继续 Write/Bash，并证明父 transcript 未改变；
 - TUI runtime 生命周期：通过 `useAgent` 完成真实模型回合后清理，并用同一 session ID 重新获取 runtime lease，证明退出路径释放 Agent、后台资源和会话所有权；
 - ACP session/load：通过真实 ACP SDK NDJSON 连接新建并销毁会话，删除原始 marker 文件后加载持久化历史，在响应前回放用户/助手消息，并仅依赖恢复上下文继续 Write/Bash；客户端传入的 MCP server 使用会话私有注册表，初始化失败或退出时独立回收；
 - ACP 会话模型切换：会话以 Flash 初始化后通过真实 `session/set_model` 切换到 Pro，透明代理必须只观察到 Pro 的后续采样请求；切换期间原子更新 provider 与上下文窗口、回收旧 provider，并完成 Read、源码修改、Bash、独立测试与 Git diff 校验；

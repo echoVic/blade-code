@@ -187,6 +187,30 @@ function handleSlashMessage(
       appActions.showSessionSelector(sessions);
       return true;
     }
+    case 'session_forked': {
+      const fork = data as
+        | {
+            action?: string;
+            sessionId?: string;
+            messages?: unknown[];
+            visibleMessages?: unknown[];
+          }
+        | undefined;
+      if (
+        fork?.action !== 'restore_forked_session' ||
+        !fork.sessionId ||
+        !Array.isArray(fork.messages) ||
+        !Array.isArray(fork.visibleMessages)
+      ) {
+        return false;
+      }
+      sessionActions.restoreSession(
+        fork.sessionId,
+        fork.visibleMessages as Parameters<SessionActions['restoreSession']>[1],
+        fork.messages as Parameters<SessionActions['restoreSession']>[2]
+      );
+      return true;
+    }
     case 'clear_screen':
       // 完整重置会话状态（参考 Claude Code 的 /clear 行为）
       sessionActions.clearMessages();

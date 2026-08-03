@@ -111,6 +111,22 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
     }
   },
 
+  forkSession: async (sessionId: string) => {
+    set({ isLoading: true, error: null });
+    try {
+      const child = await sessionService.forkSession(sessionId);
+      set((state) => ({
+        sessions: [
+          ...state.sessions.filter((session) => session.sessionId !== child.sessionId),
+          child,
+        ],
+      }));
+      await get().selectSession(child.sessionId);
+    } catch (err) {
+      set({ error: (err as Error).message, isLoading: false });
+    }
+  },
+
   deleteSession: async (sessionId: string) => {
     try {
       await sessionService.deleteSession(sessionId);

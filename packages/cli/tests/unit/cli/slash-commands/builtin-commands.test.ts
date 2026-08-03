@@ -72,6 +72,16 @@ describe('Builtin Slash Commands', () => {
       expect(message).toContain('可用的 Slash Commands');
       expect(message).toContain('/init');
       expect(message).toContain('/help');
+      expect(message).toContain('/branch');
+    });
+  });
+
+  describe('branch command', () => {
+    it('should register a session branch command', () => {
+      expect(builtinCommands.branch).toMatchObject({
+        name: 'branch',
+        aliases: expect.arrayContaining(['fork']),
+      });
     });
   });
 

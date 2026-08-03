@@ -124,6 +124,7 @@ export interface SessionSlice {
   clearError: () => void;
   loadSessions: () => Promise<void>;
   selectSession: (sessionId: string) => Promise<void>;
+  forkSession: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
   sendMessage: (payload: SendMessagePayload) => Promise<void>;
   abortSession: () => Promise<void>;

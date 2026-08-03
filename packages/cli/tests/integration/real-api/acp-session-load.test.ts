@@ -117,6 +117,133 @@ afterAll(() => {
 
 describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
   for (const modelConfig of modelConfigs) {
+    it(`${modelConfig.model} branches durable context through ACP session/load`, async () => {
+      const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-branch-'));
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      const modelMarker = modelConfig.model.replaceAll(/[^A-Za-z0-9]/g, '_');
+      const marker = `ACP_BRANCH_${modelMarker}`;
+      const markerPath = path.join(workspace, 'branch-marker.txt');
+      const resultPath = path.join(workspace, 'branch-result.txt');
+      await writeFile(markerPath, `${marker}\n`);
+      const modelId = configureModel(modelConfig);
+
+      let firstAgent: BladeAgent | undefined;
+      let secondAgent: BladeAgent | undefined;
+      try {
+        await runWithCwdOverride(workspace, async () => {
+          const firstClient = new RecordingClient();
+          const first = createHarness(firstClient);
+          firstAgent = first.agent;
+          await first.connection.initialize({
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientCapabilities: {},
+          });
+          const parent = await first.connection.newSession({
+            cwd: workspace,
+            mcpServers: [],
+          });
+          await first.connection.setSessionMode?.({
+            sessionId: parent.sessionId,
+            modeId: 'yolo',
+          });
+          const captured = await first.connection.prompt({
+            sessionId: parent.sessionId,
+            prompt: [
+              {
+                type: 'text',
+                text:
+                  'Read branch-marker.txt. Do not modify files and do not repeat its contents. ' +
+                  'After the Read tool succeeds, reply only with "Marker captured.".',
+              },
+            ],
+          });
+          expect(captured.stopReason).toBe('end_turn');
+          const parentMessagesBefore = await SessionService.loadSession(
+            parent.sessionId,
+            workspace
+          );
+
+          const branchUpdateStart = firstClient.updates.length;
+          const branched = await first.connection.prompt({
+            sessionId: parent.sessionId,
+            prompt: [{ type: 'text', text: '/branch' }],
+          });
+          expect(branched.stopReason).toBe('end_turn');
+          const branchOutput = replayedText(
+            firstClient.updates.slice(branchUpdateStart)
+          );
+          const childId = /Created session branch ([A-Za-z0-9_-]+)/.exec(
+            branchOutput
+          )?.[1];
+          expect(childId).toBeTruthy();
+          expect(branchOutput).toContain('session/load');
+          if (!childId) throw new Error('ACP branch did not return a child session ID');
+
+          await first.agent.destroy();
+          firstAgent = undefined;
+          await unlink(markerPath);
+
+          const secondClient = new RecordingClient();
+          const second = createHarness(secondClient);
+          secondAgent = second.agent;
+          await second.connection.initialize({
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientCapabilities: {},
+          });
+          const loaded = await second.connection.loadSession({
+            sessionId: childId,
+            cwd: workspace,
+            mcpServers: [],
+          });
+          expect(loaded.models?.currentModelId).toBe(modelId);
+          expect(replayedText(secondClient.updates)).toContain(
+            'Read branch-marker.txt'
+          );
+          await second.connection.setSessionMode?.({
+            sessionId: childId,
+            modeId: 'yolo',
+          });
+          const continued = await second.connection.prompt({
+            sessionId: childId,
+            prompt: [
+              {
+                type: 'text',
+                text:
+                  'Use the exact marker from the earlier Read tool result. Write it as the only ' +
+                  'line in branch-result.txt, then run Bash with "wc -c branch-result.txt" before finishing.',
+              },
+            ],
+          });
+          expect(continued.stopReason).toBe('end_turn');
+          expect((await readFile(resultPath, 'utf8')).trim()).toBe(marker);
+          expect(
+            secondClient.updates.some(
+              (notification) =>
+                notification.update.sessionUpdate === 'tool_call' &&
+                notification.update.title.includes('Bash')
+            )
+          ).toBe(true);
+          expect(await SessionService.loadSession(parent.sessionId, workspace)).toEqual(
+            parentMessagesBefore
+          );
+          const childMetadata = (await SessionService.listSessions()).find(
+            (session) => session.sessionId === childId
+          );
+          expect(childMetadata).toMatchObject({
+            parentId: parent.sessionId,
+            relationType: 'fork',
+          });
+          expect(JSON.stringify(secondClient.updates)).not.toContain(
+            modelConfig.apiKey
+          );
+        });
+      } finally {
+        await firstAgent?.destroy().catch(() => undefined);
+        await secondAgent?.destroy().catch(() => undefined);
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+
     it(`${modelConfig.model} reloads history through ACP and continues the coding loop`, async () => {
       const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-load-'));
       process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');

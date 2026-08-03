@@ -85,6 +85,16 @@ export const sessionService = {
     return res.json();
   },
 
+  forkSession: async (sessionId: string): Promise<Session> => {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) throw new Error('Failed to branch session');
+    return res.json();
+  },
+
   deleteSession: async (sessionId: string): Promise<void> => {
     const res = await fetch(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed to delete session');

@@ -62,6 +62,7 @@ function createMockSessionActions() {
     clearMessages: vi.fn(),
     setError: vi.fn(),
     resetTokenUsage: vi.fn(),
+    restoreSession: vi.fn(),
   } as any;
 }
 
@@ -277,6 +278,39 @@ describe('processSlashCommand', () => {
   // ==================== UI 消息路由 ====================
 
   describe('UI 消息路由', () => {
+    it('session_forked 应该原子切换到子会话', async () => {
+      const rawMessages = [{ id: 'raw-1', role: 'user', content: 'context' }];
+      const visibleMessages = [
+        { id: 'visible-1', role: 'user', content: 'context', timestamp: 1 },
+      ];
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        message: 'session_forked',
+        data: {
+          action: 'restore_forked_session',
+          sessionId: 'child-session',
+          messages: rawMessages,
+          visibleMessages,
+        },
+      });
+
+      const sessionActions = createMockSessionActions();
+      const result = await processSlashCommand(
+        createResolvedInput('/branch'),
+        createMockAppActions(),
+        sessionActions,
+        new AbortController().signal,
+        'parent-session'
+      );
+
+      expect(result.type).toBe('handled');
+      expect(sessionActions.restoreSession).toHaveBeenCalledWith(
+        'child-session',
+        visibleMessages,
+        rawMessages
+      );
+    });
+
     it('show_model_selector 应该返回 handled', async () => {
       executeSlashCommand.mockResolvedValue({
         success: true,

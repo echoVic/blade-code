@@ -372,7 +372,10 @@ describe('AcpSession', () => {
       );
       expect(executeSlashCommand).toHaveBeenCalledWith(
         '/test command',
-        expect.any(Object)
+        expect.objectContaining({
+          sessionId: 'test-session-id',
+          workspaceRoot: '/tmp/test',
+        })
       );
     });
 

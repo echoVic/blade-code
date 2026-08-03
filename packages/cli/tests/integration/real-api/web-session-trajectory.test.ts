@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
@@ -249,13 +250,41 @@ async function sendMessage(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ content, permissionMode: 'yolo' }),
   });
-  expect(response.status).toBe(202);
+  if (response.status !== 202) {
+    throw new Error(
+      `Web message returned ${response.status}: ${await response.text()}`
+    );
+  }
   return response.json() as Promise<{
     runId: string;
     messageId?: string;
     status: string;
     queued?: number;
   }>;
+}
+
+async function forkSession(sessionId: string): Promise<{
+  sessionId: string;
+  parentId: string;
+  relationType: string;
+}> {
+  if (!server) throw new Error('Blade web server is not running');
+  const response = await fetch(new URL(`/sessions/${sessionId}/fork`, server.url), {
+    method: 'POST',
+  });
+  expect(response.status).toBe(201);
+  return response.json() as Promise<{
+    sessionId: string;
+    parentId: string;
+    relationType: string;
+  }>;
+}
+
+async function getSessionMessages(sessionId: string): Promise<unknown[]> {
+  if (!server) throw new Error('Blade web server is not running');
+  const response = await fetch(new URL(`/sessions/${sessionId}/message`, server.url));
+  expect(response.status).toBe(200);
+  return response.json() as Promise<unknown[]>;
 }
 
 async function deleteSession(sessionId: string): Promise<void> {
@@ -308,6 +337,77 @@ afterAll(async () => {
 
 describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
   for (const modelConfig of modelConfigs) {
+    it(`${modelConfig.model} branches durable context through Web without mutating its parent`, async () => {
+      const workspace = createWorkspace();
+      const marker = `WEB_BRANCH_${modelConfig.model.replaceAll(/[^A-Za-z0-9]/g, '_')}`;
+      const markerPath = path.join(workspace, 'branch-marker.txt');
+      const resultPath = path.join(workspace, 'branch-result.txt');
+      writeFileSync(markerPath, `${marker}\n`);
+      let parentId: string | undefined;
+      let childId: string | undefined;
+      let parentCollector: EventCollector | undefined;
+      let childCollector: EventCollector | undefined;
+
+      try {
+        setRuntimeModel(modelConfig);
+        parentId = await createSession(workspace);
+        parentCollector = await collectEvents(parentId);
+        await sendMessage(
+          parentId,
+          'Read branch-marker.txt. Do not modify files and do not repeat the file contents. ' +
+            'After the Read tool succeeds, reply only with "Marker captured.".'
+        );
+        await parentCollector.waitFor(
+          (event) => event.type === 'session.completed',
+          300_000
+        );
+        await parentCollector.waitFor(
+          (event) =>
+            event.type === 'session.status' && event.properties.status === 'idle'
+        );
+        const parentMessagesBefore = await getSessionMessages(parentId);
+
+        const child = await forkSession(parentId);
+        childId = child.sessionId;
+        expect(child).toMatchObject({
+          parentId,
+          relationType: 'fork',
+        });
+        unlinkSync(markerPath);
+        childCollector = await collectEvents(childId);
+        await sendMessage(
+          childId,
+          'Use the exact marker from the earlier Read tool result. Write it as the only ' +
+            'line in branch-result.txt, then run Bash with "wc -c branch-result.txt" before finishing.'
+        );
+        await childCollector.waitFor(
+          (event) => event.type === 'session.completed',
+          300_000
+        );
+        await childCollector.waitFor(
+          (event) =>
+            event.type === 'session.status' && event.properties.status === 'idle'
+        );
+
+        expect(readFileSync(resultPath, 'utf8').trim()).toBe(marker);
+        expect(
+          childCollector.events.some(
+            (event) =>
+              event.type === 'tool.start' && event.properties.toolName === 'Bash'
+          )
+        ).toBe(true);
+        expect(await getSessionMessages(parentId)).toEqual(parentMessagesBefore);
+        expect(await getSessionMessages(childId)).not.toEqual(parentMessagesBefore);
+        expect(JSON.stringify(childCollector.events)).not.toContain(modelConfig.apiKey);
+      } finally {
+        await parentCollector?.close();
+        await childCollector?.close();
+        if (childId) await deleteSession(childId);
+        if (parentId) await deleteSession(parentId);
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+
     it(`${modelConfig.model} fixes and verifies code through HTTP and SSE`, async () => {
       const workspace = createWorkspace();
       let sessionId: string | undefined;

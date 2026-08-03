@@ -228,6 +228,8 @@ export class AcpSession {
       // 创建 slash command 上下文，包含 ACP 回调和取消信号
       const context = {
         cwd: this.cwd,
+        workspaceRoot: this.cwd,
+        sessionId: this.id,
         signal, // 传递取消信号
         acp: {
           // 发送文本消息给 IDE

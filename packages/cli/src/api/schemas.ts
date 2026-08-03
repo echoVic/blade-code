@@ -44,6 +44,8 @@ export const SessionSchema = z.object({
   projectPath: z.string(),
   title: z.string().optional(),
   gitBranch: z.string().optional(),
+  parentId: z.string().optional(),
+  relationType: z.enum(['subagent', 'fork']).optional(),
   messageCount: z.number(),
   firstMessageTime: z.string(),
   lastMessageTime: z.string(),

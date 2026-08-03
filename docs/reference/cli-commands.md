@@ -285,6 +285,13 @@ blade mcp reset-project-choices
 - `/` 开头：触发 Slash 命令补全
 - `@` 开头：触发文件路径补全
 
+### 会话分支
+
+- TUI 输入 `/branch`（别名 `/fork`）会复制当前已持久化历史，原子切换到独立子会话，父会话保持不变。
+- Web 会话列表的分支按钮执行相同操作；活动回合结束前按钮不可用。
+- ACP 输入 `/branch` 后会返回子会话 ID，客户端使用标准 `session/load` 加载并继续。
+- 命令行启动时也可使用 `--resume <id> --fork-session` 创建分支。
+
 ## 使用示例
 
 ```bash

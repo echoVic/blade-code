@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
+import { SessionService } from '../../../../src/services/SessionService.js';
 
 const runtimeState = vi.hoisted(() => ({
   runtime: {
@@ -68,6 +69,7 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
     deleteSession: vi.fn(async () => {
       /* noop */
     }),
+    forkSession: vi.fn(),
   },
 }));
 
@@ -164,6 +166,146 @@ describe('SessionRoutes runtime reuse', () => {
     expect(Agent.createWithRuntime).toHaveBeenNthCalledWith(2, runtimeState.runtime, {
       sessionId: 'session-1',
     });
+  });
+
+  it('forks an idle session and exposes durable lineage to Web clients', async () => {
+    vi.mocked(SessionService.forkSession).mockResolvedValue({
+      sessionId: 'child-session',
+      parentSessionId: 'parent-session',
+      projectPath: '/workspace',
+      messages: [{ role: 'user', content: 'inherited context' }],
+    });
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const app = SessionRoutes();
+
+    const response = await app.request('/parent-session/fork', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      sessionId: 'child-session',
+      parentId: 'parent-session',
+      relationType: 'fork',
+      messageCount: 1,
+    });
+    expect(SessionService.forkSession).toHaveBeenCalledWith(
+      'parent-session',
+      expect.objectContaining({
+        sourceProjectPath: expect.any(String),
+        targetProjectPath: expect.any(String),
+      })
+    );
+
+    const child = await app.request('/child-session');
+    expect(await child.json()).toMatchObject({
+      sessionId: 'child-session',
+      parentId: 'parent-session',
+      relationType: 'fork',
+    });
+  });
+
+  it('refuses to fork a session while its turn is active', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    let releaseRun: () => void = () => undefined;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+      await runGate;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const app = SessionRoutes();
+
+    const started = await app.request('/active-parent/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'keep running' }),
+    });
+    expect(started.status).toBe(202);
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        'active-parent',
+        'turn.started',
+        expect.any(Object)
+      );
+    });
+
+    const response = await app.request('/active-parent/fork', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(409);
+    expect(SessionService.forkSession).not.toHaveBeenCalled();
+    releaseRun();
+  });
+
+  it('serializes a fork behind startup input preparation', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    let releasePreparation: () => void = () => undefined;
+    runtimeState.runtime.prepareInputTurn.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releasePreparation = () =>
+            resolve({
+              accepted: true,
+              handle: { id: 'prepared-turn' },
+              messageId: 'prepared-input',
+              queued: 1,
+              mode: 'direct',
+            });
+        })
+    );
+    let releaseRun: () => void = () => undefined;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+      await runGate;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const app = SessionRoutes();
+
+    const messagePromise = app.request('/starting-parent/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'start a durable turn' }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    let forkSettled = false;
+    const forkPromise = Promise.resolve(
+      app.request('/starting-parent/fork', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+    ).then((response) => {
+      forkSettled = true;
+      return response;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(forkSettled).toBe(false);
+    releasePreparation();
+    expect((await messagePromise).status).toBe(202);
+    expect((await forkPromise).status).toBe(409);
+    expect(SessionService.forkSession).not.toHaveBeenCalled();
+    releaseRun();
   });
 
   it('routes a second message into the active turn instead of starting a concurrent run', async () => {

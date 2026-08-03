@@ -65,6 +65,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     clearError: vi.fn(),
     loadSessions: vi.fn(),
     selectSession: vi.fn(),
+    forkSession: vi.fn(),
     deleteSession: vi.fn(),
     sendMessage: vi.fn(),
     abortSession: vi.fn(),

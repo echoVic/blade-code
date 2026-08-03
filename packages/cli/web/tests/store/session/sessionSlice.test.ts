@@ -4,6 +4,7 @@ vi.mock('../../../src/services', () => ({
   sessionService: {
     listSessions: vi.fn(),
     createSession: vi.fn(),
+    forkSession: vi.fn(),
     deleteSession: vi.fn(),
     updateSession: vi.fn(),
     getMessages: vi.fn(),
@@ -125,6 +126,51 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(useSessionStore.getState().messages).toEqual([
       expect.objectContaining({ role: 'user', content: 'persisted' }),
     ]);
+  });
+
+  it('forks the current session and atomically selects inherited history', async () => {
+    const subscribeToEvents = vi.fn();
+    useSessionStore.setState({
+      currentSessionId: 'parent-session',
+      isTemporarySession: false,
+      subscribeToEvents,
+    });
+    vi.mocked(sessionService.forkSession).mockResolvedValue({
+      sessionId: 'child-session',
+      projectPath: '/tmp/project',
+      title: 'Session child',
+      parentId: 'parent-session',
+      relationType: 'fork',
+      messageCount: 1,
+      firstMessageTime: '2026-08-04T00:00:00.000Z',
+      lastMessageTime: '2026-08-04T00:00:00.000Z',
+      hasErrors: false,
+    });
+    vi.mocked(sessionService.getMessages).mockResolvedValue([
+      {
+        id: 'history-1',
+        role: 'user',
+        content: 'inherited context',
+        timestamp: Date.now(),
+      },
+    ] as never);
+
+    await useSessionStore.getState().forkSession('parent-session');
+
+    expect(sessionService.forkSession).toHaveBeenCalledWith('parent-session');
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionId: 'child-session',
+      isTemporarySession: false,
+      messages: [expect.objectContaining({ content: 'inherited context' })],
+      sessions: [
+        expect.objectContaining({
+          sessionId: 'child-session',
+          parentId: 'parent-session',
+          relationType: 'fork',
+        }),
+      ],
+    });
+    expect(subscribeToEvents).toHaveBeenCalledWith('child-session');
   });
 
   it('adds optimistic image-only user messages without fabricating text content', async () => {

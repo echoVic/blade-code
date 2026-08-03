@@ -5,6 +5,7 @@ import { useSessionStore } from '@/store/session';
 import {
   Check,
   ChevronLeft,
+  GitFork,
   Pencil,
   Plus,
   Server,
@@ -35,8 +36,10 @@ export function Sidebar({ className }: SidebarProps) {
     currentSessionId,
     selectSession,
     startTemporarySession,
+    forkSession,
     deleteSession,
     loadSessions,
+    isStreaming,
   } = useSessionStore();
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
@@ -115,6 +118,11 @@ export function Sidebar({ className }: SidebarProps) {
   const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
     await deleteSession(sessionId);
+  };
+
+  const handleForkSession = async (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    await forkSession(sessionId);
   };
 
   const handleStartRename = (e: React.MouseEvent, session: (typeof sessions)[0]) => {
@@ -356,6 +364,20 @@ export function Sidebar({ className }: SidebarProps) {
                     </span>
                     {isHovered && (
                       <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          aria-label="Branch session"
+                          title={
+                            isActive && isStreaming
+                              ? 'Wait for the active turn to finish'
+                              : 'Branch session'
+                          }
+                          disabled={isActive && isStreaming}
+                          onClick={(e) => handleForkSession(e, session.sessionId)}
+                          className="p-1 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] disabled:cursor-not-allowed disabled:opacity-40 dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] rounded transition-colors"
+                        >
+                          <GitFork className="h-3 w-3" />
+                        </button>
                         <button
                           onClick={(e) => handleStartRename(e, session)}
                           className="p-1 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] rounded transition-colors"

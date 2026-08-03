@@ -77,6 +77,7 @@ interface SessionInfo {
   createdAt: Date;
   messages: Message[];
   currentRunId?: string;
+  parentId?: string;
   relationType?: 'subagent' | 'fork';
 }
 
@@ -212,6 +213,7 @@ export const SessionRoutes = () => {
           title: `Session ${sessionId.slice(0, 6)}`,
           createdAt: metadata ? new Date(metadata.firstMessageTime) : new Date(),
           messages,
+          parentId: metadata?.parentId,
           relationType: metadata?.relationType,
         };
         sessions.set(sessionId, session);
@@ -304,8 +306,8 @@ export const SessionRoutes = () => {
           sessionId: s.id,
           projectPath: s.projectPath,
           title: s.title,
-          parentId: undefined,
-          relationType: undefined,
+          parentId: s.parentId,
+          relationType: s.relationType,
           status: undefined,
           agentType: undefined,
           model: undefined,
@@ -391,6 +393,8 @@ export const SessionRoutes = () => {
         sessionId: session.id,
         projectPath: session.projectPath,
         title: session.title,
+        parentId: session.parentId,
+        relationType: session.relationType,
         messageCount: session.messages.length,
         firstMessageTime: session.createdAt.toISOString(),
         lastMessageTime: new Date().toISOString(),
@@ -413,6 +417,59 @@ export const SessionRoutes = () => {
       logger.error('[SessionRoutes] Failed to get session:', error);
       throw error;
     }
+  });
+
+  app.post('/:sessionId/fork', async (c) => {
+    const sourceSessionId = c.req.param('sessionId');
+    const source = await getOrHydrateSession(
+      sourceSessionId,
+      c.get('directory') || getCwd()
+    );
+    return getMessageSubmissionLock(sourceSessionId).runExclusive(async () => {
+      const sourceRun = source.currentRunId
+        ? activeRuns.get(source.currentRunId)
+        : undefined;
+      if (
+        sourceRun &&
+        (sourceRun.status === 'running' || sourceRun.status === 'waiting_permission')
+      ) {
+        return c.json({ error: 'Cannot branch an active session' }, 409);
+      }
+
+      const fork = await SessionService.forkSession(sourceSessionId, {
+        sourceProjectPath: source.projectPath,
+        targetProjectPath: source.projectPath,
+      });
+      const createdAt = new Date();
+      const child: SessionInfo = {
+        id: fork.sessionId,
+        projectPath: fork.projectPath,
+        title: `Session ${fork.sessionId.slice(0, 6)}`,
+        createdAt,
+        messages: fork.messages,
+        parentId: fork.parentSessionId,
+        relationType: 'fork',
+      };
+      sessions.set(child.id, child);
+
+      return c.json(
+        {
+          sessionId: child.id,
+          projectPath: child.projectPath,
+          title: child.title,
+          parentId: child.parentId,
+          relationType: child.relationType,
+          status: undefined,
+          agentType: undefined,
+          model: undefined,
+          messageCount: child.messages.length,
+          firstMessageTime: child.createdAt.toISOString(),
+          lastMessageTime: child.createdAt.toISOString(),
+          hasErrors: false,
+        },
+        201
+      );
+    });
   });
 
   app.patch('/:sessionId', async (c) => {
