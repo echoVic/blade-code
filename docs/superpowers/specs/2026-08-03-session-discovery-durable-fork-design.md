@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-03
 
-**Status:** Design direction approved; written specification awaiting final review
+**Status:** Approved for implementation
 
 ## Problem
 
@@ -88,7 +88,6 @@ interface SessionMetadata {
   rootId: string;
   parentId?: string;
   relationType?: 'subagent' | 'fork';
-  status?: 'running' | 'completed' | 'failed';
   messageCount: number;
   firstMessageTime: string;
   lastMessageTime: string;
@@ -96,12 +95,30 @@ interface SessionMetadata {
 }
 ```
 
-Internal file paths remain server/runtime-only and are not sent through ACP. User-facing lists
-exclude `relationType: 'subagent'` by default but include forks.
+Internal transcript paths such as `~/.blade/projects/.../*.jsonl` remain server/runtime-only. The
+workspace `projectPath` is intentionally public because it is the session identity and execution
+root; ACP exposes it as `cwd` and Web uses it for workspace-scoped tools. User-facing lists exclude
+`relationType: 'subagent'` by default but include forks.
+
+Every Web session-specific operation uses a compound identity:
+
+```ts
+interface SessionRef {
+  sessionId: string;
+  projectPath: string;
+}
+```
+
+The server's session/runtime/hydration/lock caches and event filtering use a canonical key derived
+from both fields. Legacy requests without `projectPath` remain compatible only when the durable
+catalog contains exactly one matching session ID; an ambiguous ID fails with HTTP 409. This avoids
+cross-project selection, deletion, permission routing, or SSE leakage when users explicitly reuse a
+session ID in different repositories.
 
 Metadata projection merges the initial `session_created` event with later `session_updated`
-events in event order. This fixes stale titles/statuses and makes every surface observe the same
-latest durable state.
+events in event order. This fixes stale titles and makes every surface observe the same latest
+durable catalog state. Legacy JSONL status fields remain readable internally but are not part of the
+public catalog until every Agent surface persists completed/failed transitions consistently.
 
 ## Runtime Architecture
 
@@ -185,8 +202,9 @@ interface ForkedSession {
 
 A new built-in slash command provides the interactive entrypoint:
 
-- `/fork <sessionId>` forks that session in its own workspace and activates the child.
-- `/fork` opens the existing `SessionSelector` in fork mode.
+- `/fork <sessionId>` forks that session when it belongs to the TUI process's current workspace and
+  activates the child.
+- `/fork` opens the existing `SessionSelector` in fork mode, scoped to the current workspace.
 - The selector title and confirmation copy say "fork", rather than pretending the action is a
   resume.
 - Only ordinary sessions and prior forks are shown; subagent sessions are hidden.
@@ -198,6 +216,11 @@ A new built-in slash command provides the interactive entrypoint:
 The slash command is rejected while the TUI owns an active turn. Switching the process-level
 session while tools or a model stream are active would orphan UI state even though the underlying
 source run could continue. Startup `--fork-session` behavior is unchanged.
+
+The interactive TUI does not offer cross-project fork. Its tool runtime resolves the workspace from
+the process-level cwd, so restoring another project's history without switching the complete
+runtime workspace would execute tools in the wrong repository. Web and ACP carry an explicit
+workspace per session and are not subject to this restriction.
 
 The selector receives an explicit intent instead of duplicating components:
 
@@ -218,12 +241,15 @@ The session router adds:
 POST /sessions/:sessionId/fork
 Content-Type: application/json
 
-{}
+{ "projectPath": "/absolute/source/workspace" }
 ```
 
-The server resolves the source metadata, binds source and target to its recorded `projectPath`,
+The client supplies the source path already present in its catalog row. The server performs an
+exact durable-catalog lookup for `(projectPath, sessionId)`, then binds source and target to the
+catalog's recorded `projectPath`; the request cannot choose a different target workspace. The route
 forks the committed transcript, hydrates a child `SessionInfo` in the in-memory session map, and
-returns `201` with the shared child session projection. A source with no durable
+returns `201` with `{ session, messages }`, so child activation does not require a second fallible
+history request. A source with no durable
 `session_created` event returns `409`; a missing source returns `404`; invalid IDs return `400`.
 Unexpected storage errors remain `500` and include no transcript or credential material.
 
@@ -237,13 +263,16 @@ The shared API `SessionSchema` gains `rootId`, `parentId`, and `relationType`. T
 adds:
 
 ```ts
-forkingSessionId: string | null;
-forkSession(sessionId: string): Promise<void>;
+currentSessionRef: SessionRef | null;
+forkingSessionRef: SessionRef | null;
+forkSession(session: Session): Promise<void>;
 ```
 
-On success, the store upserts the child, selects it, loads its history, and subscribes to the child
-event stream. The previous event subscription is closed before the child subscription starts. On
-failure, the selected source and its messages remain unchanged.
+On success, the store prepares a child event subscription, atomically upserts/selects the child and
+copied history from the fork response, then closes the previous subscription. If fork or new
+subscription creation fails, the selected source, messages, and old subscription remain unchanged.
+The durable child remains committed after a successful server response even if browser activation
+fails; it is visible after the next list refresh rather than destructively rolled back.
 
 Each sidebar row gets a hover-only Fork action beside rename/delete, with an accessible label and a
 busy/disabled state while that source is being forked. Fork rows show a small lineage marker and a
@@ -333,6 +362,8 @@ or protocol.
 - A corrupt source or missing `session_created` event fails before child creation.
 - Invalid cwd, source ID, or cursor fails before filesystem traversal.
 - Web state changes only after a successful `201`; an error cannot replace the current conversation.
+- Web caches, locks, runtimes, event streams, and permissions are keyed by the compound SessionRef;
+  legacy ID-only requests fail on ambiguity rather than selecting the first catalog match.
 - ACP registers the child only after initialization succeeds and always disposes failed runtime
   initialization.
 - Errors are concise and redact transcript contents, environment variables, API keys, and MCP
@@ -348,7 +379,7 @@ result.
 ### Runtime and storage tests
 
 - Project-scoped list filtering, stable tie ordering, pagination, and malformed-cursor rejection.
-- Latest `session_updated` title/status projection.
+- Latest `session_updated` title projection and legacy status tolerance without public exposure.
 - Missing storage root versus unexpected I/O failure semantics.
 - Source byte equality before/after fork, child lineage, independent append, and duplicate child ID.
 - Active-source snapshot excludes inbox acknowledgements and incomplete final JSONL data.
@@ -376,7 +407,8 @@ result.
 ### Real API four-surface trajectory
 
 The production gate creates isolated workspaces and storage roots. For each required DeepSeek
-qualification model, it exercises four actual entrypoints:
+qualification model and every explicitly configured Claude, GPT, or domestic compatibility model,
+it exercises four actual entrypoints:
 
 1. **Runtime:** create a parent through a real Agent turn, fork through `SessionService`, resume the
    child, and make the model write a file using a nonce available only in inherited history.
@@ -399,9 +431,9 @@ Every trajectory asserts:
 
 Receiving model text, an HTTP 2xx, or an ACP response alone is not a pass. The existing
 `qualify:production` gate remains the authoritative paid-model command and must include the new
-four-surface trajectory. Configured Claude, GPT, and domestic-provider credentials may run targeted
-compatibility coverage, but the current required DeepSeek Flash/Pro model matrix remains
-fail-closed.
+four-surface trajectory. Explicitly configured Claude, GPT, and domestic-provider credentials must
+run the same cross-surface compatibility coverage, while the required DeepSeek Flash/Pro matrix
+remains fail-closed.
 
 ## Files Expected to Change
 
@@ -433,7 +465,8 @@ Web:
 ACP:
 
 - `packages/cli/src/acp/BladeAgent.ts`
-- setup-response helper if needed to keep new/load/fork consistent
+- `BladeAgent.buildSessionSetup()` and `buildChildSessionResponse()` helpers keep
+  new/load/fork mode and model responses consistent
 - ACP unit and real NDJSON tests
 
 Qualification and documentation:
@@ -446,7 +479,8 @@ Qualification and documentation:
 
 ## Delivery Boundary
 
-Implementation starts from current `main@8db7d2ae` in an isolated worktree created at execution
-time. The existing untracked `docs/design/web-task-oriented-redesign.md` is preserved and excluded
-from this patch. The obsolete `feat/session-fork` branch is reference-only and will not be merged,
-rebased, or deleted as part of this slice.
+Implementation starts from the reviewed-plan commit that follows design commit `194fd603` in an
+isolated worktree created at execution time. The existing untracked
+`docs/design/web-task-oriented-redesign.md` is preserved and excluded from this patch. The obsolete
+`feat/session-fork` branch is reference-only and will not be merged, rebased, or deleted as part of
+this slice.
