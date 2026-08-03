@@ -52,8 +52,8 @@ export default {
   
   // 发布配置
   publish: {
-    // 是否发布到 npm
-    npm: true,
+    // npm 发布由 tag workflow 统一负责，避免本地脚本与 CI 重复发布
+    npm: false,
     // npm 发布配置
     npmConfig: {
       access: 'public',
@@ -86,7 +86,7 @@ export default {
     methods: ['console', 'discord'],
     // Discord 配置
     discord: {
-      webhookUrl: process.env.DISCORD_WEBHOOK_URL || 'https://discord.com/api/webhooks/1460226980938125387/5fWgMuGmkGtb6j3eoDaz4JtSFfH8LtFtHK9F2srIHGoXp71zm4sHFPCc729PujDbHJ2F',
+      webhookUrl: process.env.DISCORD_WEBHOOK_URL,
     },
     // 通知模板
     templates: {
@@ -94,4 +94,4 @@ export default {
       failure: '❌ 版本 {{version}} 发布失败：{{error}}',
     },
   },
-}; 
+};
