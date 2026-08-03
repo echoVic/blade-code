@@ -278,6 +278,37 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(useSessionStore.getState().pendingSteeringCount).toBe(1);
   });
 
+  it('rolls back optimistic send state when initial subscription startup fails', async () => {
+    const currentRef = createRef('session-active', '/tmp/project-active');
+    const existingMessages = [
+      createMessage({
+        id: 'existing-message',
+        role: 'assistant',
+        content: 'persisted assistant',
+      }),
+    ];
+    const subscribeToEvents = vi.fn().mockRejectedValue(new Error('sse unavailable'));
+
+    useSessionStore.setState({
+      currentSessionId: currentRef.sessionId,
+      currentSessionRef: currentRef,
+      isTemporarySession: false,
+      isStreaming: false,
+      messages: existingMessages,
+      subscribeToEvents,
+    });
+
+    await useSessionStore.getState().sendMessage({ content: 'hello' });
+
+    expect(subscribeToEvents).toHaveBeenCalledWith(currentRef);
+    expect(sessionService.sendMessage).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().messages).toEqual(existingMessages);
+    expect(useSessionStore.getState().isStreaming).toBe(false);
+    expect(useSessionStore.getState().error).toBe('sse unavailable');
+    expect(useSessionStore.getState().currentSessionRef).toEqual(currentRef);
+    expect(useSessionStore.getState().currentSessionId).toBe(currentRef.sessionId);
+  });
+
   it('keeps same-id sessions from different workspaces distinct for selection and deletion', async () => {
     const sessionA = createSession({
       sessionId: 'shared-id',

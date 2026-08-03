@@ -234,23 +234,24 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       return;
     }
 
-    addMessage({
-      id: `temp-${Date.now()}`,
-      role: 'user',
-      content: buildOptimisticUserContent(payload),
-      timestamp: Date.now(),
-    });
-
-    set({
-      isStreaming: true,
-      error: null,
-      recoveredSteeringCount: isStreaming ? get().recoveredSteeringCount : 0,
-    });
-    if (!isStreaming) {
-      await subscribeToEvents(sessionRef);
-    }
-
     try {
+      if (!isStreaming) {
+        await subscribeToEvents(sessionRef);
+      }
+
+      addMessage({
+        id: `temp-${Date.now()}`,
+        role: 'user',
+        content: buildOptimisticUserContent(payload),
+        timestamp: Date.now(),
+      });
+
+      set({
+        isStreaming: true,
+        error: null,
+        recoveredSteeringCount: isStreaming ? get().recoveredSteeringCount : 0,
+      });
+
       const { currentMode } = useConfigStore.getState();
       const response = await sessionService.sendMessage(
         sessionRef,
