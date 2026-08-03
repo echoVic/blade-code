@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { createServer } from 'node:http';
-import type { OutgoingHttpHeaders } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import type { Dirent } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import type { OutgoingHttpHeaders } from 'node:http';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { SessionEvent } from '../../../src/context/types.js';
@@ -472,6 +472,44 @@ export function assertForkLineage(
   }
 }
 
+export function assertForkExcludesPostBoundaryEvents(
+  childEvents: readonly SessionEvent[],
+  parentBoundary: number,
+  completedParentEvents: readonly SessionEvent[]
+): void {
+  if (
+    !Number.isInteger(parentBoundary) ||
+    parentBoundary < 0 ||
+    parentBoundary > completedParentEvents.length
+  ) {
+    throw new Error('Fork parent snapshot boundary is invalid');
+  }
+  const postBoundaryMessageIds = new Set<string>();
+  const postBoundaryPartIds = new Set<string>();
+  for (const event of completedParentEvents.slice(parentBoundary)) {
+    if (event.type === 'message_created') {
+      postBoundaryMessageIds.add(event.data.messageId);
+    }
+    if (event.type === 'part_created' || event.type === 'part_updated') {
+      postBoundaryPartIds.add(event.data.partId);
+    }
+  }
+
+  for (const event of childEvents) {
+    if (
+      event.type === 'message_created' &&
+      postBoundaryMessageIds.has(event.data.messageId)
+    ) {
+      throw new Error('Fork child contains a post-boundary parent message');
+    }
+    if (event.type === 'part_created' || event.type === 'part_updated') {
+      if (postBoundaryPartIds.has(event.data.partId)) {
+        throw new Error('Fork child contains a post-boundary parent part');
+      }
+    }
+  }
+}
+
 export function assertParentUnchanged(before: string, parentPath: string): void {
   if (readFileSync(parentPath, 'utf8') !== before) {
     throw new Error(`Parent transcript changed during fork: ${parentPath}`);
@@ -745,6 +783,7 @@ export async function startHeldProviderProxy(upstreamBaseUrl: string): Promise<{
   });
   let released = false;
   let firstRequestSeen = false;
+  let firstResponseHeld = false;
   let closePromise: Promise<void> | undefined;
   let closing = false;
   const controllers = new Set<AbortController>();
@@ -762,11 +801,8 @@ export async function startHeldProviderProxy(upstreamBaseUrl: string): Promise<{
         pathname: new URL(request.url ?? '/', 'http://blade-proxy.invalid').pathname,
         bodyBytes: requestBody.byteLength,
       });
-      if (!firstRequestSeen) {
-        firstRequestSeen = true;
-        resolveHeld();
-        await gate;
-      }
+      const holdResponse = !firstRequestSeen;
+      firstRequestSeen = true;
       if (closing || response.destroyed) return;
 
       const controller = new AbortController();
@@ -792,6 +828,15 @@ export async function startHeldProviderProxy(upstreamBaseUrl: string): Promise<{
             signal: controller.signal,
           }
         );
+        if (holdResponse) {
+          firstResponseHeld = true;
+          resolveHeld();
+          await gate;
+        }
+        if (closing || response.destroyed) {
+          await upstreamResponse.body?.cancel().catch(() => undefined);
+          return;
+        }
         response.writeHead(
           upstreamResponse.status,
           copyResponseHeaders(upstreamResponse.headers)
@@ -805,6 +850,11 @@ export async function startHeldProviderProxy(upstreamBaseUrl: string): Promise<{
         response.off('close', abortUpstream);
       }
     })().catch(() => {
+      if (firstRequestSeen && !firstResponseHeld) {
+        rejectHeld(
+          new Error('Held provider proxy closed before first upstream response')
+        );
+      }
       if (response.destroyed) return;
       if (response.headersSent) {
         response.destroy();
@@ -840,6 +890,10 @@ export async function startHeldProviderProxy(upstreamBaseUrl: string): Promise<{
       closing = true;
       if (!firstRequestSeen) {
         rejectHeld(new Error('Held provider proxy closed before first request'));
+      } else if (!firstResponseHeld) {
+        rejectHeld(
+          new Error('Held provider proxy closed before first upstream response')
+        );
       }
       release();
       for (const controller of controllers) controller.abort();

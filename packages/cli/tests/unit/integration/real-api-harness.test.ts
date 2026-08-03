@@ -19,8 +19,9 @@ import {
   redactSecrets,
 } from '../../integration/real-api/codingTaskHarness.js';
 import {
-  assertForkLineage,
   assertForkChildToolTrace,
+  assertForkExcludesPostBoundaryEvents,
+  assertForkLineage,
   assertForkParentToolTrace,
   assertNoSecrets,
   assertParentUnchanged,
@@ -615,6 +616,61 @@ describe('real API coding-task harness', () => {
 });
 
 describe('real API session-fork trajectory harness', () => {
+  it('accepts a child snapshot that excludes parent message and part events after the fork boundary', () => {
+    const sessionId = 'parent-session';
+    const childId = 'child-session';
+    const parentMessage = createMessageEvent(sessionId);
+    const parentPart = createPartEvent(sessionId);
+    const before: SessionEvent[] = [
+      createForkCreatedEvent(sessionId, 'root-session', 'root-session'),
+      parentMessage,
+      parentPart,
+    ];
+    const postMessage: Extract<SessionEvent, { type: 'message_created' }> = {
+      ...createMessageEvent(sessionId),
+      id: 'parent-post-message-event',
+      data: {
+        ...createMessageEvent(sessionId).data,
+        messageId: 'parent-post-message',
+      },
+    };
+    const postPart: Extract<SessionEvent, { type: 'part_created' }> = {
+      ...createPartEvent(sessionId),
+      id: 'parent-post-part-event',
+      data: {
+        ...createPartEvent(sessionId).data,
+        partId: 'parent-post-part',
+        messageId: 'parent-post-message',
+      },
+    };
+    const after: SessionEvent[] = [...before, postMessage, postPart];
+    const inheritedMessage: Extract<SessionEvent, { type: 'message_created' }> = {
+      ...createMessageEvent(childId),
+      data: { ...parentMessage.data },
+    };
+    const inheritedPart: Extract<SessionEvent, { type: 'part_created' }> = {
+      ...createPartEvent(childId),
+      data: { ...parentPart.data },
+    };
+    const child: SessionEvent[] = [
+      createForkCreatedEvent(childId, sessionId, 'root-session'),
+      inheritedMessage,
+      inheritedPart,
+      createForkBoundaryEvent(childId, sessionId, 'root-session'),
+    ];
+
+    expect(() =>
+      assertForkExcludesPostBoundaryEvents(child, before.length, after)
+    ).not.toThrow();
+    expect(() =>
+      assertForkExcludesPostBoundaryEvents(
+        [child[0]!, child[1]!, { ...inheritedPart, data: { ...postPart.data } }],
+        before.length,
+        after
+      )
+    ).toThrow('post-boundary');
+  });
+
   it('accepts repeated exact successful parent Reads', () => {
     const memoryPath = '/workspace/memory.txt';
     const reads = ['read-1', 'read-2', 'read-3'].map((toolCallId) => ({
@@ -1295,6 +1351,7 @@ describe('real API session-fork trajectory harness', () => {
           requestHopHeaders: Record<string, string | undefined>;
         }
       | undefined;
+    let upstreamHeadersProduced = false;
     let releaseSecondChunk: () => void = () => undefined;
     const secondChunkGate = new Promise<void>((resolve) => {
       releaseSecondChunk = resolve;
@@ -1314,6 +1371,7 @@ describe('real API session-fork trajectory harness', () => {
           'content-type': 'text/event-stream',
           'x-upstream': 'streamed',
         });
+        upstreamHeadersProduced = true;
         response.write('data: first\n\n');
         void secondChunkGate.then(() => response.end('data: second\n\n'));
       });
@@ -1332,6 +1390,7 @@ describe('real API session-fork trajectory harness', () => {
     const requestBody = '{"prompt":"body-fake-secret"}';
 
     try {
+      let downstreamSettled = false;
       const responsePromise = fetch(
         `${proxy.baseUrl}/v1/messages?mode=stream&key=request-query-secret`,
         {
@@ -1344,9 +1403,16 @@ describe('real API session-fork trajectory harness', () => {
           },
           body: requestBody,
         }
-      );
+      ).finally(() => {
+        downstreamSettled = true;
+      });
       await proxy.requestHeld;
-      expect(upstreamRequest).toBeUndefined();
+      expect(upstreamRequest).toMatchObject({
+        method: 'POST',
+        body: requestBody,
+      });
+      expect(upstreamHeadersProduced).toBe(true);
+      expect(downstreamSettled).toBe(false);
       expect(proxy.redactedEvidence()).toEqual({
         upstream: {
           origin: `http://127.0.0.1:${upstreamAddress.port}`,
@@ -1546,9 +1612,12 @@ describe('real API session-fork trajectory harness', () => {
   });
 
   it('closes an unreleased held proxy without hanging', async () => {
-    const upstream: Server = createHttpServer((_request, response) =>
-      response.end('unused')
-    );
+    let upstreamReceived = false;
+    const upstream: Server = createHttpServer((_request, response) => {
+      upstreamReceived = true;
+      response.writeHead(200, { 'content-type': 'text/plain' });
+      response.write('held upstream body');
+    });
     await new Promise<void>((resolve, reject) => {
       upstream.once('error', reject);
       upstream.listen(0, '127.0.0.1', () => {
@@ -1560,13 +1629,20 @@ describe('real API session-fork trajectory harness', () => {
     const proxy = await startHeldProviderProxy(
       `http://127.0.0.1:${upstreamAddress.port}`
     );
+    let downstreamSettled = false;
     const pendingFetch = fetch(`${proxy.baseUrl}/held`, {
       method: 'POST',
       body: 'held',
-    }).catch(() => undefined);
+    })
+      .catch(() => undefined)
+      .finally(() => {
+        downstreamSettled = true;
+      });
 
     try {
       await proxy.requestHeld;
+      expect(upstreamReceived).toBe(true);
+      expect(downstreamSettled).toBe(false);
       await expect(
         Promise.race([
           proxy.close().then(() => 'closed'),
@@ -1576,6 +1652,7 @@ describe('real API session-fork trajectory harness', () => {
         ])
       ).resolves.toBe('closed');
       await pendingFetch;
+      expect(downstreamSettled).toBe(true);
     } finally {
       await proxy.close();
       await new Promise<void>((resolve, reject) => {
