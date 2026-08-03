@@ -34,12 +34,14 @@ interface SessionCursorV1 {
 }
 
 const BASE64URL_UNPADDED_PATTERN = /^[A-Za-z0-9_-]+$/;
+const ISO_DATETIME_WITH_TIMEZONE_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 
 function isValidIsoTime(value: unknown): value is string {
   return (
     typeof value === 'string' &&
-    Number.isFinite(Date.parse(value)) &&
-    new Date(value).toISOString() === value
+    ISO_DATETIME_WITH_TIMEZONE_PATTERN.test(value) &&
+    Number.isFinite(Date.parse(value))
   );
 }
 

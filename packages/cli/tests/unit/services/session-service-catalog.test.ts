@@ -280,6 +280,38 @@ describe('SessionService strict session catalog', () => {
     expect('status' in (projected ?? {})).toBe(false);
   });
 
+  it('paginates with valid non-canonical ISO timestamps in cursors', async () => {
+    await writeTranscript(workspaceA, 'legacy-newer', [
+      makeCreatedEvent('legacy-newer', workspaceA, '2024-01-02T00:00:00Z'),
+      ...makeMessageEvents('legacy-newer', workspaceA, '2024-01-02T00:00:00Z', 'newer'),
+    ]);
+    await writeTranscript(workspaceA, 'legacy-older', [
+      makeCreatedEvent('legacy-older', workspaceA, '2024-01-01T00:00:00Z'),
+      ...makeMessageEvents('legacy-older', workspaceA, '2024-01-01T00:00:00Z', 'older'),
+    ]);
+
+    const first = await SessionService.listSessionPage({
+      cwd: workspaceA,
+      limit: 1,
+      includeSubagents: false,
+    });
+    expect(first.sessions.map((session) => session.sessionId)).toEqual([
+      'legacy-newer',
+    ]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    const second = await SessionService.listSessionPage({
+      cwd: workspaceA,
+      cursor: first.nextCursor,
+      limit: 1,
+      includeSubagents: false,
+    });
+    expect(second.sessions.map((session) => session.sessionId)).toEqual([
+      'legacy-older',
+    ]);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
   it('loads and deletes hidden subagents even when public listing hides them', async () => {
     const parentStore = new PersistentStore(workspaceA, 100, 'test');
     await parentStore.saveMessage('visible-parent', 'user', 'parent');
