@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.3] - 2026-08-03
+
+### ✨ 新功能
+
+- 为 active-turn steering 增加 session 级持久化 inbox，使用原子写入、`fsync` 与 `0600` 权限保存已确认但尚未应用的指令
+- runtime 重启后自动对账 inbox 与 JSONL transcript，并在 CLI、Web 与 ACP 显示恢复的 steering 数量
+- steering 只有在 transcript 持久化成功后才逐条 ack，支持部分失败和进程崩溃后的幂等恢复
+
+### 🐛 问题修复
+
+- 修复 Web 首次 runtime 初始化期间第二条消息可能只进入内存 backlog 的崩溃丢失窗口
+- 将 SessionRuntime、SessionLease 与 ContextManager 统一绑定到显式 workspace root，并使用 transcript `cwd` 恢复权威项目路径
+- 拒绝可逃逸项目存储目录的 session ID，并在删除 session 时同步清理 durable inbox
+- 在并发 enqueue 下原子执行 steering 条数与内容大小限制
+
+### ✅ 测试相关
+
+- 新增重启恢复、ack 中断对账、部分持久化失败、并发容量、损坏 sidecar、文件权限与 session 删除故障注入测试
+- 新增 Web runtime 启动竞态与 CLI、Web、ACP 恢复状态回归测试
+- DeepSeek v4 Flash、Claude Opus 4.8 与 GPT 5.5 的真实 API durable restart 轨迹全部通过
+
 ## [0.7.2] - 2026-08-03
 
 ### ✨ 新功能
