@@ -374,6 +374,39 @@ describe('SessionService strict session catalog', () => {
     );
   });
 
+  it('deletes an exact transcript by path even when the transcript is corrupt', async () => {
+    const corruptPath = getSessionFilePath(workspaceA, 'corrupt-delete');
+    const siblingInbox = path.join(
+      path.dirname(corruptPath),
+      'corrupt-delete.inbox.json'
+    );
+    await mkdir(path.dirname(corruptPath), { recursive: true });
+    await writeFile(corruptPath, '{"bad-json":\n', 'utf8');
+    await writeFile(
+      siblingInbox,
+      '{"version":1,"sessionId":"corrupt-delete","messages":[]}\n',
+      'utf8'
+    );
+
+    expect(await SessionService.deleteSession('corrupt-delete', workspaceA)).toBe(1);
+    await expect(access(corruptPath)).rejects.toThrow();
+    await expect(access(siblingInbox)).rejects.toThrow();
+
+    await expect(
+      SessionService.deleteSession('corrupt-delete-missing', workspaceA)
+    ).resolves.toBe(0);
+  });
+
+  it('propagates direct exact-path I/O errors from findSessionMetadata', async () => {
+    const directoryPath = getSessionFilePath(workspaceA, 'directory-session');
+    await mkdir(directoryPath, { recursive: true });
+    await expect(
+      SessionService.findSessionMetadata('directory-session', workspaceA)
+    ).rejects.toMatchObject({
+      code: expect.stringMatching(/^(EISDIR|EPERM|EACCES)$/),
+    });
+  });
+
   it('finds exact workspace metadata, rejects ambiguous IDs, and preserves hard failures', async () => {
     await writeTranscript(workspaceA, 'duplicate-id', [
       makeCreatedEvent('duplicate-id', workspaceA, '2024-01-01T00:00:00.000Z'),

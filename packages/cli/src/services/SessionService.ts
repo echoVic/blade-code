@@ -3,7 +3,7 @@
  * 负责加载和恢复历史会话
  */
 
-import { readdir, readFile, rm } from 'node:fs/promises';
+import { access, readdir, readFile, rm } from 'node:fs/promises';
 import * as path from 'node:path';
 import { nanoid } from 'nanoid';
 import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
@@ -392,11 +392,31 @@ export class SessionService {
   static async deleteSession(sessionId: string, projectPath?: string): Promise<number> {
     assertValidSessionId(sessionId);
 
-    const matches = projectPath
-      ? await this.findStoredSessionsByExactProject(sessionId, projectPath)
-      : (await this.scanStoredSessions(undefined, true)).filter(
-          (session) => session.sessionId === sessionId
-        );
+    if (projectPath) {
+      if (!path.isAbsolute(projectPath)) {
+        throw new Error('Session catalog cwd must be absolute');
+      }
+      const resolvedProjectPath = path.resolve(projectPath);
+      const filePath = this.getSessionFilePath(resolvedProjectPath, sessionId);
+      try {
+        await access(filePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return 0;
+        }
+        throw error;
+      }
+
+      await new JSONLStore(filePath).delete();
+      await rm(path.join(path.dirname(filePath), `${sessionId}.inbox.json`), {
+        force: true,
+      });
+      return 1;
+    }
+
+    const matches = (await this.scanStoredSessions(undefined, true)).filter(
+      (session) => session.sessionId === sessionId
+    );
 
     if (matches.length === 0) return 0;
 
@@ -683,27 +703,6 @@ export class SessionService {
   private static toPublicMetadata(session: StoredSessionMetadata): SessionMetadata {
     const { filePath: _filePath, ...publicSession } = session;
     return publicSession;
-  }
-
-  private static async findStoredSessionsByExactProject(
-    sessionId: string,
-    projectPath: string
-  ): Promise<StoredSessionMetadata[]> {
-    if (!path.isAbsolute(projectPath)) {
-      throw new Error('Session catalog cwd must be absolute');
-    }
-    const resolvedProjectPath = path.resolve(projectPath);
-    const filePath = this.getSessionFilePath(resolvedProjectPath, sessionId);
-    try {
-      return [
-        await this.readStoredSessionMetadata(filePath, sessionId, resolvedProjectPath),
-      ];
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return [];
-      }
-      throw error;
-    }
   }
 
   /**
