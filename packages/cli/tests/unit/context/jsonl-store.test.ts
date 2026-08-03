@@ -52,19 +52,6 @@ function createSessionUpdated(
   };
 }
 
-async function invokeAppendValidated(
-  store: JSONLStore,
-  buildEntry: (entries: readonly SessionEvent[]) => SessionEvent
-): Promise<void> {
-  const method = Reflect.get(store, 'appendValidated') as
-    | ((builder: (entries: readonly SessionEvent[]) => SessionEvent) => Promise<void>)
-    | undefined;
-  if (!method) {
-    throw new Error('appendValidated is not implemented');
-  }
-  await method.call(store, buildEntry);
-}
-
 describe('JSONLStore.appendValidated', () => {
   let tempDir: string;
   let filePath: string;
@@ -82,7 +69,7 @@ describe('JSONLStore.appendValidated', () => {
     const store = new JSONLStore(filePath);
 
     await expect(
-      invokeAppendValidated(store, (entries) =>
+      store.appendValidated((entries) =>
         createSessionUpdated(
           'missing-session',
           '/workspace',
@@ -104,7 +91,7 @@ describe('JSONLStore.appendValidated', () => {
     const store = new JSONLStore(filePath);
     let callbackEntries: readonly SessionEvent[] = [];
 
-    await invokeAppendValidated(store, (entries) => {
+    await store.appendValidated((entries) => {
       callbackEntries = entries;
       return createSessionUpdated(
         'session-1',
@@ -139,7 +126,7 @@ describe('JSONLStore.appendValidated', () => {
     const store = new JSONLStore(filePath);
 
     await expect(
-      invokeAppendValidated(store, () => {
+      store.appendValidated(() => {
         throw new Error('builder failed');
       })
     ).rejects.toThrow('builder failed');
@@ -168,10 +155,7 @@ describe('JSONLStore.appendValidated', () => {
       'validated'
     );
 
-    await Promise.all([
-      store.append(appended),
-      invokeAppendValidated(store, () => validated),
-    ]);
+    await Promise.all([store.append(appended), store.appendValidated(() => validated)]);
 
     const content = await readFile(filePath, 'utf8');
     expect(() => parseSessionJSONL(content, filePath)).not.toThrow();
@@ -191,7 +175,7 @@ describe('JSONLStore.appendValidated', () => {
     await writeFile(filePath, `${JSON.stringify(created)}\n`, 'utf8');
     const store = new JSONLStore(filePath);
 
-    const update = invokeAppendValidated(store, () =>
+    const update = store.appendValidated(() =>
       createSessionUpdated(
         'session-1',
         '/workspace',
@@ -232,7 +216,7 @@ describe('JSONLStore.appendValidated', () => {
     const store = new JSONLStore(filePath);
 
     const deletion = store.delete();
-    const update = invokeAppendValidated(store, () =>
+    const update = store.appendValidated(() =>
       createSessionUpdated(
         'session-1',
         '/workspace',
@@ -253,7 +237,7 @@ describe('JSONLStore.appendValidated', () => {
     await expect(
       Promise.all([
         store.delete(),
-        invokeAppendValidated(store, () =>
+        store.appendValidated(() =>
           createSessionUpdated(
             'session-1',
             '/workspace',

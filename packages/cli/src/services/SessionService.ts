@@ -317,6 +317,7 @@ export class SessionService {
     const rootId = sourceCreated.data.rootId || sourceSessionId;
     const gitBranch = detectGitBranch(targetProjectPath);
     const version = getVersion();
+    const { status: _sourceStatus, ...sourceCreatedData } = sourceCreated.data;
     const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
       id: nanoid(),
       sessionId: targetSessionId,
@@ -326,7 +327,7 @@ export class SessionService {
       gitBranch,
       version,
       data: {
-        ...sourceCreated.data,
+        ...sourceCreatedData,
         sessionId: targetSessionId,
         rootId,
         parentId: sourceSessionId,
@@ -350,11 +351,12 @@ export class SessionService {
           version,
         };
         if (entry.type === 'session_updated') {
+          const { status: _status, ...updatedData } = entry.data;
           return {
             ...base,
             type: 'session_updated',
             data: {
-              ...entry.data,
+              ...updatedData,
               sessionId: targetSessionId,
               rootId,
               parentId: sourceSessionId,

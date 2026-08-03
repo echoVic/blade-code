@@ -19,8 +19,11 @@ import {
   getSessionInboxFilePath,
 } from '../../../src/context/storage/pathUtils.js';
 import type { SessionEvent } from '../../../src/context/types.js';
-import * as SessionServiceModule from '../../../src/services/SessionService.js';
-import { SessionService } from '../../../src/services/SessionService.js';
+import {
+  __resetSessionSnapshotIOForTesting,
+  __setSessionSnapshotIOForTesting,
+  SessionService,
+} from '../../../src/services/SessionService.js';
 
 function makeCreatedEvent(
   sessionId: string,
@@ -88,6 +91,24 @@ function makeMessageEvents(
   ];
 }
 
+function makeUpdatedEvent(
+  sessionId: string,
+  cwd: string,
+  timestamp: string,
+  data: Extract<SessionEvent, { type: 'session_updated' }>['data']
+): Extract<SessionEvent, { type: 'session_updated' }> {
+  return {
+    id: `${sessionId}-updated-${timestamp}`,
+    sessionId,
+    timestamp,
+    type: 'session_updated',
+    cwd,
+    gitBranch: 'main',
+    version: 'test',
+    data,
+  };
+}
+
 async function writeTranscript(
   workspace: string,
   sessionId: string,
@@ -108,27 +129,6 @@ async function readTranscript(filePath: string): Promise<SessionEvent[]> {
 
 type SnapshotBigIntStats = BigIntStats;
 
-interface TestSessionSnapshotIO {
-  stat(filePath: string): Promise<SnapshotBigIntStats>;
-  readFile(filePath: string): Promise<string>;
-}
-
-function getSnapshotTestingHooks(): {
-  setSnapshotIO: ((io: TestSessionSnapshotIO) => void) | undefined;
-  resetSnapshotIO: (() => void) | undefined;
-} {
-  return {
-    setSnapshotIO: Reflect.get(
-      SessionServiceModule,
-      '__setSessionSnapshotIOForTesting'
-    ) as ((io: TestSessionSnapshotIO) => void) | undefined,
-    resetSnapshotIO: Reflect.get(
-      SessionServiceModule,
-      '__resetSessionSnapshotIOForTesting'
-    ) as (() => void) | undefined,
-  };
-}
-
 describe('SessionService.forkSession', () => {
   let storageRoot: string;
   let projectPath: string;
@@ -147,7 +147,7 @@ describe('SessionService.forkSession', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
-    getSnapshotTestingHooks().resetSnapshotIO?.();
+    __resetSessionSnapshotIOForTesting();
     if (previousStorageRoot === undefined) {
       delete process.env.BLADE_STORAGE_ROOT;
     } else {
@@ -349,6 +349,51 @@ describe('SessionService.forkSession', () => {
     ).toContainEqual(expect.objectContaining({ content: 'committed history' }));
   });
 
+  it('sanitizes legacy status metadata from child durable fork events', async () => {
+    await writeTranscript(projectPath, 'parent-session', [
+      makeCreatedEvent('parent-session', projectPath, '2024-01-01T00:00:00.000Z', {
+        title: 'Legacy parent',
+        status: 'completed',
+      }),
+      makeUpdatedEvent('parent-session', projectPath, '2024-01-01T00:00:01.000Z', {
+        sessionId: 'parent-session',
+        title: 'Still legacy',
+        status: 'running',
+      }),
+      ...makeMessageEvents(
+        'parent-session',
+        projectPath,
+        '2024-01-01T00:00:02.000Z',
+        'parent history'
+      ),
+    ]);
+
+    await SessionService.forkSession('parent-session', {
+      newSessionId: 'child-session',
+      sourceProjectPath: projectPath,
+      targetProjectPath: projectPath,
+    });
+
+    const childEvents = await readTranscript(
+      getSessionFilePath(projectPath, 'child-session')
+    );
+    const childCreated = childEvents.find(
+      (event): event is Extract<SessionEvent, { type: 'session_created' }> =>
+        event.type === 'session_created'
+    );
+    const childUpdated = childEvents.filter(
+      (event): event is Extract<SessionEvent, { type: 'session_updated' }> =>
+        event.type === 'session_updated'
+    );
+
+    expect(childCreated).toBeDefined();
+    expect(childCreated?.data).not.toHaveProperty('status');
+    expect(childUpdated.length).toBeGreaterThan(0);
+    for (const event of childUpdated) {
+      expect(event.data).not.toHaveProperty('status');
+    }
+  });
+
   it('fails closed when the committed creation payload sessionId mismatches the request source ID', async () => {
     await writeTranscript(projectPath, 'parent-session', [
       makeCreatedEvent('parent-session', projectPath, '2024-01-01T00:00:00.000Z', {
@@ -414,13 +459,9 @@ describe('SessionService.forkSession', () => {
     const parentPath = getSessionFilePath(projectPath, 'parent-session');
     const parentContent = await readFile(parentPath, 'utf-8');
     const stableStats = await stat(parentPath, { bigint: true });
-    const { setSnapshotIO, resetSnapshotIO } = getSnapshotTestingHooks();
-    expect(setSnapshotIO).toBeTypeOf('function');
-    expect(resetSnapshotIO).toBeTypeOf('function');
-
     let statCallCount = 0;
     let readCallCount = 0;
-    setSnapshotIO?.({
+    __setSessionSnapshotIOForTesting({
       async stat(filePath) {
         expect(filePath).toBe(parentPath);
         statCallCount += 1;
@@ -444,7 +485,7 @@ describe('SessionService.forkSession', () => {
       expect(statCallCount).toBe(2);
       expect(readCallCount).toBe(1);
     } finally {
-      resetSnapshotIO?.();
+      __resetSessionSnapshotIOForTesting();
     }
   });
 
@@ -478,13 +519,9 @@ describe('SessionService.forkSession', () => {
       { ...baseStats, size: baseStats.size + 2n, mtimeNs: baseStats.mtimeNs + 2n },
       { ...baseStats, size: baseStats.size + 2n, mtimeNs: baseStats.mtimeNs + 2n },
     ];
-    const { setSnapshotIO, resetSnapshotIO } = getSnapshotTestingHooks();
-    expect(setSnapshotIO).toBeTypeOf('function');
-    expect(resetSnapshotIO).toBeTypeOf('function');
-
     let statCallCount = 0;
     let readCallCount = 0;
-    setSnapshotIO?.({
+    __setSessionSnapshotIOForTesting({
       async stat(filePath) {
         expect(filePath).toBe(parentPath);
         const next = statsSequence[statCallCount];
@@ -515,7 +552,7 @@ describe('SessionService.forkSession', () => {
       expect(statCallCount).toBe(4);
       expect(readCallCount).toBe(2);
     } finally {
-      resetSnapshotIO?.();
+      __resetSessionSnapshotIOForTesting();
     }
   });
 
@@ -556,13 +593,9 @@ describe('SessionService.forkSession', () => {
         mtimeNs: baseStats.mtimeNs + 4n,
       },
     ];
-    const { setSnapshotIO, resetSnapshotIO } = getSnapshotTestingHooks();
-    expect(setSnapshotIO).toBeTypeOf('function');
-    expect(resetSnapshotIO).toBeTypeOf('function');
-
     let statCallCount = 0;
     let readCallCount = 0;
-    setSnapshotIO?.({
+    __setSessionSnapshotIOForTesting({
       async stat(filePath) {
         expect(filePath).toBe(parentPath);
         const next = statsSequence[statCallCount];
@@ -593,7 +626,7 @@ describe('SessionService.forkSession', () => {
         access(getSessionFilePath(projectPath, 'unstable-child'))
       ).rejects.toThrow();
     } finally {
-      resetSnapshotIO?.();
+      __resetSessionSnapshotIOForTesting();
     }
   });
 

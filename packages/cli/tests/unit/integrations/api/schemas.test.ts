@@ -3,12 +3,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import * as schemaModule from '../../../../src/api/schemas.js';
 import {
   type BusEvent,
   BusEventSchema,
   type EditorTheme,
   EditorThemeSchema,
+  ForkSessionResponseSchema,
   type GeneralSettings,
   GeneralSettingsSchema,
   type GeneralSettingsUpdate,
@@ -27,23 +27,12 @@ import {
   type SendMessageResponse,
   SendMessageResponseSchema,
   type Session,
+  SessionHistoryMessageSchema,
+  SessionRefSchema,
   SessionSchema,
   type UiTheme,
   UiThemeSchema,
 } from '../../../../src/api/schemas.js';
-
-const SessionHistoryMessageSchema = () =>
-  Reflect.get(schemaModule, 'SessionHistoryMessageSchema') as
-    | { parse: (value: unknown) => unknown }
-    | undefined;
-const ForkSessionResponseSchema = () =>
-  Reflect.get(schemaModule, 'ForkSessionResponseSchema') as
-    | { parse: (value: unknown) => unknown }
-    | undefined;
-const SessionRefSchema = () =>
-  Reflect.get(schemaModule, 'SessionRefSchema') as
-    | { parse: (value: unknown) => unknown }
-    | undefined;
 
 describe('API Schemas', () => {
   describe('PermissionModeSchema', () => {
@@ -205,7 +194,6 @@ describe('API Schemas', () => {
 
   describe('SessionHistoryMessageSchema', () => {
     it('应该验证字符串历史消息', () => {
-      expect(SessionHistoryMessageSchema()).toBeDefined();
       const message = {
         role: 'assistant',
         content: 'history',
@@ -216,11 +204,10 @@ describe('API Schemas', () => {
         tool_calls: [{ id: 'tool-1' }],
       };
 
-      expect(() => SessionHistoryMessageSchema()!.parse(message)).not.toThrow();
+      expect(() => SessionHistoryMessageSchema.parse(message)).not.toThrow();
     });
 
     it('应该验证多模态与工具历史消息，不要求 UI id/timestamp', () => {
-      expect(SessionHistoryMessageSchema()).toBeDefined();
       const multimodal = {
         role: 'user',
         content: [
@@ -235,21 +222,36 @@ describe('API Schemas', () => {
         name: 'tool',
       };
 
-      expect(() => SessionHistoryMessageSchema()!.parse(multimodal)).not.toThrow();
-      expect(() => SessionHistoryMessageSchema()!.parse(toolResult)).not.toThrow();
+      expect(() => SessionHistoryMessageSchema.parse(multimodal)).not.toThrow();
+      expect(() => SessionHistoryMessageSchema.parse(toolResult)).not.toThrow();
       expect(() =>
-        SessionHistoryMessageSchema()!.parse({
+        SessionHistoryMessageSchema.parse({
           id: 'ui-only',
           timestamp: Date.now(),
           ...multimodal,
         })
       ).not.toThrow();
     });
+
+    it('应该保留 reasoningContent 与 thinkingContent', () => {
+      const parsed = SessionHistoryMessageSchema.parse({
+        role: 'assistant',
+        content: 'history',
+        reasoningContent: 'chain-of-thought',
+        thinkingContent: 'ui-thinking',
+      });
+
+      expect(parsed).toMatchObject({
+        role: 'assistant',
+        content: 'history',
+        reasoningContent: 'chain-of-thought',
+        thinkingContent: 'ui-thinking',
+      });
+    });
   });
 
   describe('ForkSessionResponseSchema', () => {
     it('应该验证 fork 返回的公开 session 与原始 history', () => {
-      expect(ForkSessionResponseSchema()).toBeDefined();
       const response = {
         session: {
           sessionId: 'child-session',
@@ -280,19 +282,18 @@ describe('API Schemas', () => {
         ],
       };
 
-      expect(() => ForkSessionResponseSchema()!.parse(response)).not.toThrow();
+      expect(() => ForkSessionResponseSchema.parse(response)).not.toThrow();
     });
   });
 
   describe('SessionRefSchema', () => {
     it('应该验证 compound session ref', () => {
-      expect(SessionRefSchema()).toBeDefined();
       const ref = {
         sessionId: 'session-123',
         projectPath: '/workspace',
       };
 
-      expect(() => SessionRefSchema()!.parse(ref)).not.toThrow();
+      expect(() => SessionRefSchema.parse(ref)).not.toThrow();
     });
   });
 

@@ -58,6 +58,7 @@ export const SessionHistoryMessageSchema = z.object({
   role: MessageRoleSchema,
   content: z.union([z.string(), z.array(MessageContentPartSchema)]),
   metadata: z.unknown().optional(),
+  reasoningContent: z.string().optional(),
   thinkingContent: z.string().optional(),
   tool_call_id: z.string().optional(),
   name: z.string().optional(),
