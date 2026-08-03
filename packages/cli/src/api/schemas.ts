@@ -44,13 +44,38 @@ export const SessionSchema = z.object({
   projectPath: z.string(),
   title: z.string().optional(),
   gitBranch: z.string().optional(),
+  rootId: z.string(),
+  parentId: z.string().optional(),
+  relationType: z.enum(['subagent', 'fork']).optional(),
   messageCount: z.number(),
   firstMessageTime: z.string(),
   lastMessageTime: z.string(),
   hasErrors: z.boolean(),
-  filePath: z.string().optional(),
 });
 export type Session = z.infer<typeof SessionSchema>;
+
+export const SessionHistoryMessageSchema = z.object({
+  role: MessageRoleSchema,
+  content: z.union([z.string(), z.array(MessageContentPartSchema)]),
+  metadata: z.unknown().optional(),
+  thinkingContent: z.string().optional(),
+  tool_call_id: z.string().optional(),
+  name: z.string().optional(),
+  tool_calls: z.unknown().optional(),
+});
+export type SessionHistoryMessage = z.infer<typeof SessionHistoryMessageSchema>;
+
+export const ForkSessionResponseSchema = z.object({
+  session: SessionSchema,
+  messages: z.array(SessionHistoryMessageSchema),
+});
+export type ForkSessionResponse = z.infer<typeof ForkSessionResponseSchema>;
+
+export const SessionRefSchema = z.object({
+  sessionId: z.string(),
+  projectPath: z.string(),
+});
+export type SessionRef = z.infer<typeof SessionRefSchema>;
 
 export const BusEventSchema = z.object({
   type: z.string(),

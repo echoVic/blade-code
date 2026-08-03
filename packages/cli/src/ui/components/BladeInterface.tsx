@@ -207,10 +207,12 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   });
 
   const restorePersistedSession = useMemoizedFn(async (sourceSessionId: string) => {
+    const workspace = getCwd();
     const resolved = otherProps.forkSession
       ? await SessionService.forkSession(sourceSessionId, {
           newSessionId: otherProps.sessionId,
-          targetProjectPath: getCwd(),
+          sourceProjectPath: workspace,
+          targetProjectPath: workspace,
         })
       : {
           sessionId: sourceSessionId,

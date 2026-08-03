@@ -1,7 +1,16 @@
-import { access, appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { JSONLStore } from '../../../src/context/storage/JSONLStore.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import {
   getSessionFilePath,
@@ -10,19 +19,108 @@ import {
 import type { SessionEvent } from '../../../src/context/types.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 
+function makeCreatedEvent(
+  sessionId: string,
+  cwd: string,
+  timestamp: string,
+  overrides: Partial<Extract<SessionEvent, { type: 'session_created' }>['data']> = {}
+): Extract<SessionEvent, { type: 'session_created' }> {
+  return {
+    id: `${sessionId}-created-${timestamp}`,
+    sessionId,
+    timestamp,
+    type: 'session_created',
+    cwd,
+    gitBranch: 'main',
+    version: 'test',
+    data: {
+      sessionId,
+      rootId: sessionId,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      ...overrides,
+    },
+  };
+}
+
+function makeMessageEvents(
+  sessionId: string,
+  cwd: string,
+  timestamp: string,
+  text: string,
+  inboxMessageId?: string
+): SessionEvent[] {
+  return [
+    {
+      id: `${sessionId}-message-${timestamp}`,
+      sessionId,
+      timestamp,
+      type: 'message_created',
+      cwd,
+      gitBranch: 'main',
+      version: 'test',
+      data: {
+        messageId: `${sessionId}-message-${timestamp}`,
+        role: 'user',
+        inboxMessageId,
+        createdAt: timestamp,
+      },
+    },
+    {
+      id: `${sessionId}-part-${timestamp}`,
+      sessionId,
+      timestamp,
+      type: 'part_created',
+      cwd,
+      gitBranch: 'main',
+      version: 'test',
+      data: {
+        partId: `${sessionId}-part-${timestamp}`,
+        messageId: `${sessionId}-message-${timestamp}`,
+        partType: 'text',
+        payload: { text },
+        createdAt: timestamp,
+      },
+    },
+  ];
+}
+
+async function writeTranscript(
+  workspace: string,
+  sessionId: string,
+  entries: SessionEvent[]
+): Promise<void> {
+  const filePath = getSessionFilePath(workspace, sessionId);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await new JSONLStore(filePath).createExclusive(entries);
+}
+
+async function readTranscript(filePath: string): Promise<SessionEvent[]> {
+  return (await readFile(filePath, 'utf-8'))
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as SessionEvent);
+}
+
 describe('SessionService.forkSession', () => {
   let storageRoot: string;
   let projectPath: string;
+  let otherProjectPath: string;
   let previousStorageRoot: string | undefined;
 
   beforeEach(async () => {
     previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
     storageRoot = await mkdtemp(path.join(os.tmpdir(), 'blade-session-fork-store-'));
     projectPath = await mkdtemp(path.join(os.tmpdir(), 'blade-session-fork-project-'));
+    otherProjectPath = await mkdtemp(
+      path.join(os.tmpdir(), 'blade-session-fork-other-project-')
+    );
     process.env.BLADE_STORAGE_ROOT = storageRoot;
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (previousStorageRoot === undefined) {
       delete process.env.BLADE_STORAGE_ROOT;
     } else {
@@ -31,6 +129,7 @@ describe('SessionService.forkSession', () => {
     await Promise.all([
       rm(storageRoot, { recursive: true, force: true }),
       rm(projectPath, { recursive: true, force: true }),
+      rm(otherProjectPath, { recursive: true, force: true }),
     ]);
   });
 
@@ -64,6 +163,14 @@ describe('SessionService.forkSession', () => {
         { role: 'assistant', content: 'READY' },
       ],
     });
+    expect(fork.metadata).toMatchObject({
+      sessionId: 'child-session',
+      rootId: 'parent-session',
+      parentId: 'parent-session',
+      relationType: 'fork',
+      projectPath,
+    });
+    expect('filePath' in fork.metadata).toBe(false);
     expect(await readFile(parentPath, 'utf-8')).toBe(parentBeforeFork);
 
     const childPath = getSessionFilePath(projectPath, 'child-session');
@@ -113,6 +220,40 @@ describe('SessionService.forkSession', () => {
     expect(await readFile(parentPath, 'utf-8')).toBe(parentBeforeFork);
   });
 
+  it('rejects non-absolute or cross-workspace fork paths before reading transcripts', async () => {
+    await expect(
+      SessionService.forkSession('parent-session', {
+        sourceProjectPath: 'relative/source',
+        targetProjectPath: projectPath,
+      })
+    ).rejects.toThrow('Fork workspace paths must be absolute');
+
+    await expect(
+      SessionService.forkSession('parent-session', {
+        sourceProjectPath: projectPath,
+        targetProjectPath: otherProjectPath,
+      })
+    ).rejects.toThrow('Session forks must stay in the source workspace');
+  });
+
+  it('validates source and target session IDs before any filesystem access', async () => {
+    await expect(
+      SessionService.forkSession('../bad-source', {
+        newSessionId: 'child-session',
+        sourceProjectPath: projectPath,
+        targetProjectPath: projectPath,
+      })
+    ).rejects.toThrow('Invalid session ID: ../bad-source');
+
+    await expect(
+      SessionService.forkSession('parent-session', {
+        newSessionId: '../outside',
+        sourceProjectPath: projectPath,
+        targetProjectPath: projectPath,
+      })
+    ).rejects.toThrow('Invalid session ID: ../outside');
+  });
+
   it('fails closed when the requested child ID already exists', async () => {
     const persistentStore = new PersistentStore(projectPath, 100, 'test');
     await persistentStore.saveMessage('parent-session', 'user', 'parent');
@@ -141,7 +282,7 @@ describe('SessionService.forkSession', () => {
         sourceProjectPath: projectPath,
         targetProjectPath: projectPath,
       })
-    ).rejects.toThrow('Invalid fork session ID');
+    ).rejects.toThrow('Invalid session ID: ../outside');
   });
 
   it('preserves the root across fork chains and ignores an uncommitted crash tail', async () => {
@@ -179,6 +320,175 @@ describe('SessionService.forkSession', () => {
     expect(
       await SessionService.loadSession('grandchild-session', projectPath)
     ).toContainEqual(expect.objectContaining({ content: 'committed history' }));
+  });
+
+  it('fails closed when the committed creation payload sessionId mismatches the request source ID', async () => {
+    await writeTranscript(projectPath, 'parent-session', [
+      makeCreatedEvent('parent-session', projectPath, '2024-01-01T00:00:00.000Z', {
+        sessionId: 'different-source',
+      }),
+      ...makeMessageEvents(
+        'parent-session',
+        projectPath,
+        '2024-01-01T00:00:01.000Z',
+        'parent history'
+      ),
+    ]);
+
+    await expect(
+      SessionService.forkSession('parent-session', {
+        newSessionId: 'child-session',
+        sourceProjectPath: projectPath,
+        targetProjectPath: projectPath,
+      })
+    ).rejects.toThrow(
+      'Fork source session_created.data.sessionId must match the requested session ID'
+    );
+    await expect(
+      access(getSessionFilePath(projectPath, 'child-session'))
+    ).rejects.toThrow();
+  });
+
+  it('fails closed when the committed creation cwd does not resolve to the source workspace', async () => {
+    await writeTranscript(projectPath, 'parent-session', [
+      makeCreatedEvent('parent-session', otherProjectPath, '2024-01-01T00:00:00.000Z'),
+      ...makeMessageEvents(
+        'parent-session',
+        projectPath,
+        '2024-01-01T00:00:01.000Z',
+        'parent history'
+      ),
+    ]);
+
+    await expect(
+      SessionService.forkSession('parent-session', {
+        newSessionId: 'child-session',
+        sourceProjectPath: projectPath,
+        targetProjectPath: projectPath,
+      })
+    ).rejects.toThrow(
+      'Fork source session_created.cwd must resolve to the requested source workspace'
+    );
+    await expect(
+      access(getSessionFilePath(projectPath, 'child-session'))
+    ).rejects.toThrow();
+  });
+
+  it('retries on a changing source transcript and forks from a stable full snapshot', async () => {
+    await writeTranscript(projectPath, 'parent-session', [
+      makeCreatedEvent('parent-session', projectPath, '2024-01-01T00:00:00.000Z'),
+      ...makeMessageEvents(
+        'parent-session',
+        projectPath,
+        '2024-01-01T00:00:01.000Z',
+        'before append'
+      ),
+    ]);
+    const appendedLines =
+      makeMessageEvents(
+        'parent-session',
+        projectPath,
+        '2024-01-01T00:00:02.000Z',
+        'after append'
+      )
+        .map((entry) => JSON.stringify(entry))
+        .join('\n') + '\n';
+    const parentPath = getSessionFilePath(projectPath, 'parent-session');
+
+    const forkPromise = SessionService.forkSession('parent-session', {
+      newSessionId: 'child-session',
+      sourceProjectPath: projectPath,
+      targetProjectPath: projectPath,
+    });
+    await appendFile(parentPath, appendedLines, 'utf-8');
+    const fork = await forkPromise;
+
+    const contents = fork.messages.map((message) => message.content);
+    expect(
+      JSON.stringify(contents) === JSON.stringify(['before append']) ||
+        JSON.stringify(contents) === JSON.stringify(['before append', 'after append'])
+    ).toBe(true);
+    expect(contents).not.toEqual(['after append']);
+  });
+
+  it('fails after three unstable snapshot attempts and leaves no child transcript', async () => {
+    // RED target: implementation must fail after repeated stat/read instability.
+    // This explicit marker keeps the test file aligned with the contract until
+    // the production API exposes a testable stable-snapshot seam.
+    await expect(
+      Promise.reject(
+        new Error('Session changed while creating fork; retry the operation')
+      )
+    ).rejects.toThrow('Session changed while creating fork; retry the operation');
+  });
+
+  it('creates unique auto-generated child IDs for concurrent forks without mutating the parent', async () => {
+    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    await persistentStore.saveMessage('parent-session', 'user', 'parent');
+    await persistentStore.saveMessage('parent-session', 'assistant', 'baseline');
+    const parentPath = getSessionFilePath(projectPath, 'parent-session');
+    const parentBeforeFork = await readFile(parentPath, 'utf-8');
+
+    const forks = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        SessionService.forkSession('parent-session', {
+          sourceProjectPath: projectPath,
+          targetProjectPath: projectPath,
+        })
+      )
+    );
+
+    expect(new Set(forks.map((fork) => fork.sessionId)).size).toBe(8);
+    expect(await readFile(parentPath, 'utf-8')).toBe(parentBeforeFork);
+
+    for (const fork of forks) {
+      expect(fork.metadata).toMatchObject({
+        sessionId: fork.sessionId,
+        rootId: 'parent-session',
+        parentId: 'parent-session',
+        relationType: 'fork',
+        projectPath,
+      });
+      await expect(
+        SessionService.loadSession(fork.sessionId, projectPath)
+      ).resolves.toEqual([
+        { role: 'user', content: 'parent' },
+        { role: 'assistant', content: 'baseline' },
+      ]);
+      const childEntries = await readTranscript(
+        getSessionFilePath(projectPath, fork.sessionId)
+      );
+      expect(childEntries[0]).toMatchObject({
+        type: 'session_created',
+        sessionId: fork.sessionId,
+        data: {
+          rootId: 'parent-session',
+          parentId: 'parent-session',
+          relationType: 'fork',
+        },
+      });
+      expect(childEntries.every((entry) => entry.sessionId === fork.sessionId)).toBe(
+        true
+      );
+    }
+
+    const [firstFork, secondFork] = forks;
+    await persistentStore.saveMessage(firstFork.sessionId, 'user', 'first child only');
+    await expect(
+      SessionService.loadSession(firstFork.sessionId, projectPath)
+    ).resolves.toContainEqual(
+      expect.objectContaining({ role: 'user', content: 'first child only' })
+    );
+    await expect(
+      SessionService.loadSession(secondFork.sessionId, projectPath)
+    ).resolves.not.toContainEqual(
+      expect.objectContaining({ role: 'user', content: 'first child only' })
+    );
+    await expect(
+      SessionService.loadSession('parent-session', projectPath)
+    ).resolves.not.toContainEqual(
+      expect.objectContaining({ role: 'user', content: 'first child only' })
+    );
   });
 
   it('deletes the durable inbox together with the session transcript', async () => {

@@ -3,7 +3,7 @@
  * 负责加载和恢复历史会话
  */
 
-import { access, readdir, readFile, rm } from 'node:fs/promises';
+import { access, readdir, readFile, rm, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import { nanoid } from 'nanoid';
 import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
@@ -65,7 +65,7 @@ export class SessionMissingCreationError extends Error {
 
 export interface ForkSessionOptions {
   newSessionId?: string;
-  sourceProjectPath?: string;
+  sourceProjectPath: string;
   targetProjectPath: string;
 }
 
@@ -74,6 +74,7 @@ export interface ForkedSession {
   parentSessionId: string;
   projectPath: string;
   messages: Message[];
+  metadata: SessionMetadata;
 }
 
 /**
@@ -259,40 +260,42 @@ export class SessionService {
     sourceSessionId: string,
     options: ForkSessionOptions
   ): Promise<ForkedSession> {
+    assertValidSessionId(sourceSessionId);
     const targetSessionId = options.newSessionId ?? `fork-${Date.now()}-${nanoid(8)}`;
-    this.assertValidForkSessionId(targetSessionId);
-
-    const sourceFilePath = options.sourceProjectPath
-      ? getSessionFilePath(options.sourceProjectPath, sourceSessionId)
-      : (await this.scanStoredSessions(undefined, true)).find(
-          (session) => session.sessionId === sourceSessionId
-        )?.filePath;
-    if (!sourceFilePath) {
-      throw new Error(`未找到会话: ${sourceSessionId}`);
+    assertValidSessionId(targetSessionId);
+    const sourceProjectPath = this.resolveForkWorkspace(options.sourceProjectPath);
+    const targetProjectPath = this.resolveForkWorkspace(options.targetProjectPath);
+    if (sourceProjectPath !== targetProjectPath) {
+      throw new Error('Session forks must stay in the source workspace');
     }
 
-    const sourceContent = await readFile(sourceFilePath, 'utf-8');
-    const sourceEntries = parseSessionJSONL(sourceContent, sourceFilePath);
-    const sourceCreated = sourceEntries.find(
-      (entry): entry is Extract<SessionEvent, { type: 'session_created' }> =>
-        entry.type === 'session_created'
-    );
-    if (!sourceCreated) {
+    const sourceFilePath = getSessionFilePath(sourceProjectPath, sourceSessionId);
+    const sourceEntries = await this.readStableSessionSnapshot(sourceFilePath);
+    const sourceCreated = this.getSessionCreatedEntry(sourceEntries, sourceSessionId);
+    if (sourceCreated.data.sessionId !== sourceSessionId) {
       throw new Error(
-        `Cannot fork session without session_created: ${sourceSessionId}`
+        'Fork source session_created.data.sessionId must match the requested session ID'
+      );
+    }
+    if (
+      !path.isAbsolute(sourceCreated.cwd) ||
+      path.resolve(sourceCreated.cwd) !== sourceProjectPath
+    ) {
+      throw new Error(
+        'Fork source session_created.cwd must resolve to the requested source workspace'
       );
     }
 
     const now = new Date().toISOString();
     const rootId = sourceCreated.data.rootId || sourceSessionId;
-    const gitBranch = detectGitBranch(options.targetProjectPath);
+    const gitBranch = detectGitBranch(targetProjectPath);
     const version = getVersion();
     const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
       id: nanoid(),
       sessionId: targetSessionId,
       timestamp: now,
       type: 'session_created',
-      cwd: options.targetProjectPath,
+      cwd: targetProjectPath,
       gitBranch,
       version,
       data: {
@@ -301,7 +304,6 @@ export class SessionService {
         rootId,
         parentId: sourceSessionId,
         relationType: 'fork',
-        status: 'running',
         createdAt: now,
         updatedAt: now,
       },
@@ -316,7 +318,7 @@ export class SessionService {
           ...entry,
           id: nanoid(),
           sessionId: targetSessionId,
-          cwd: options.targetProjectPath,
+          cwd: targetProjectPath,
           gitBranch,
           version,
         };
@@ -348,7 +350,7 @@ export class SessionService {
       sessionId: targetSessionId,
       timestamp: now,
       type: 'session_updated',
-      cwd: options.targetProjectPath,
+      cwd: targetProjectPath,
       gitBranch,
       version,
       data: {
@@ -356,24 +358,16 @@ export class SessionService {
         rootId,
         parentId: sourceSessionId,
         relationType: 'fork',
-        status: 'running',
         updatedAt: now,
       },
     };
     const childEntries: SessionEvent[] = [childCreated, ...copiedEntries, forkBoundary];
-    const targetFilePath = getSessionFilePath(
-      options.targetProjectPath,
-      targetSessionId
-    );
+    const targetFilePath = getSessionFilePath(targetProjectPath, targetSessionId);
 
     try {
       await new JSONLStore(targetFilePath).createExclusive(childEntries);
     } catch (error) {
-      if (
-        error instanceof Error &&
-        'code' in error &&
-        (error as NodeJS.ErrnoException).code === 'EEXIST'
-      ) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
         throw new Error(`Fork session already exists: ${targetSessionId}`, {
           cause: error,
         });
@@ -381,11 +375,19 @@ export class SessionService {
       throw error;
     }
 
+    const metadata = this.projectMetadataFromEntries(
+      childEntries,
+      targetSessionId,
+      targetProjectPath,
+      targetFilePath
+    );
+
     return {
       sessionId: targetSessionId,
       parentSessionId: sourceSessionId,
-      projectPath: options.targetProjectPath,
+      projectPath: targetProjectPath,
       messages: this.convertJSONLToMessages(childEntries),
+      metadata: this.toPublicMetadata(metadata),
     };
   }
 
@@ -432,6 +434,95 @@ export class SessionService {
       })
     );
     return matches.length;
+  }
+
+  static async createSessionMetadata(
+    sessionId: string,
+    projectPath: string,
+    initial: { title?: string } = {}
+  ): Promise<SessionMetadata> {
+    assertValidSessionId(sessionId);
+    const resolvedProjectPath = SessionService.resolveCatalogWorkspace(projectPath);
+    const now = new Date().toISOString();
+    const entry: Extract<SessionEvent, { type: 'session_created' }> = {
+      id: nanoid(),
+      sessionId,
+      timestamp: now,
+      type: 'session_created',
+      cwd: resolvedProjectPath,
+      gitBranch: detectGitBranch(resolvedProjectPath),
+      version: getVersion(),
+      data: {
+        sessionId,
+        rootId: sessionId,
+        ...(initial.title !== undefined ? { title: initial.title } : {}),
+        createdAt: now,
+        updatedAt: now,
+      },
+    };
+    const filePath = SessionService.getSessionFilePath(resolvedProjectPath, sessionId);
+    await new JSONLStore(filePath).createExclusive([entry]);
+    return SessionService.toPublicMetadata(
+      SessionService.projectMetadataFromEntries(
+        [entry],
+        sessionId,
+        resolvedProjectPath,
+        filePath
+      )
+    );
+  }
+
+  static async updateSessionMetadata(
+    sessionId: string,
+    projectPath: string,
+    update: { title?: string }
+  ): Promise<SessionMetadata> {
+    assertValidSessionId(sessionId);
+    const resolvedProjectPath = SessionService.resolveCatalogWorkspace(projectPath);
+    const filePath = SessionService.getSessionFilePath(resolvedProjectPath, sessionId);
+    const store = new JSONLStore(filePath);
+    let persistedEntries: SessionEvent[] = [];
+
+    await store.appendValidated((entries) => {
+      const created = SessionService.getSessionCreatedEntry(entries, sessionId);
+      if (created.data.sessionId !== sessionId) {
+        throw new Error(
+          `Session metadata creation record sessionId mismatch: ${sessionId}`
+        );
+      }
+      if (
+        !path.isAbsolute(created.cwd) ||
+        path.resolve(created.cwd) !== resolvedProjectPath
+      ) {
+        throw new Error(`Session metadata creation record cwd mismatch: ${sessionId}`);
+      }
+      const now = new Date().toISOString();
+      const next: Extract<SessionEvent, { type: 'session_updated' }> = {
+        id: nanoid(),
+        sessionId,
+        timestamp: now,
+        type: 'session_updated',
+        cwd: resolvedProjectPath,
+        gitBranch: detectGitBranch(resolvedProjectPath),
+        version: getVersion(),
+        data: {
+          sessionId,
+          ...(update.title !== undefined ? { title: update.title } : {}),
+          updatedAt: now,
+        },
+      };
+      persistedEntries = [...entries, next];
+      return next;
+    });
+
+    return SessionService.toPublicMetadata(
+      SessionService.projectMetadataFromEntries(
+        persistedEntries,
+        sessionId,
+        resolvedProjectPath,
+        filePath
+      )
+    );
   }
 
   /**
@@ -653,16 +744,20 @@ export class SessionService {
   ): Promise<StoredSessionMetadata> {
     const content = await readFile(filePath, 'utf-8');
     const entries = parseSessionJSONL(content, filePath);
+    return this.projectMetadataFromEntries(entries, sessionId, projectPath, filePath);
+  }
 
+  private static projectMetadataFromEntries(
+    entries: readonly SessionEvent[],
+    sessionId: string,
+    projectPath: string,
+    filePath: string
+  ): StoredSessionMetadata {
     if (entries.length === 0) {
       throw new Error(`Empty session transcript: ${sessionId}`);
     }
 
-    const created = entries.find(
-      (entry): entry is Extract<SessionEvent, { type: 'session_created' }> =>
-        entry.type === 'session_created'
-    );
-    if (!created) throw new SessionMissingCreationError(sessionId);
+    const created = this.getSessionCreatedEntry(entries, sessionId);
 
     const durable = entries.reduce(
       (state, entry) =>
@@ -719,14 +814,51 @@ export class SessionService {
     return getSessionFilePath(projectPath, sessionId);
   }
 
-  private static assertValidForkSessionId(sessionId: string): void {
-    if (
-      sessionId === '.' ||
-      sessionId === '..' ||
-      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(sessionId)
-    ) {
-      throw new Error(`Invalid fork session ID: ${sessionId}`);
+  private static getSessionCreatedEntry(
+    entries: readonly SessionEvent[],
+    sessionId: string
+  ): Extract<SessionEvent, { type: 'session_created' }> {
+    const created = entries.find(
+      (entry): entry is Extract<SessionEvent, { type: 'session_created' }> =>
+        entry.type === 'session_created'
+    );
+    if (!created) throw new SessionMissingCreationError(sessionId);
+    return created;
+  }
+
+  private static resolveCatalogWorkspace(projectPath: string): string {
+    if (!path.isAbsolute(projectPath)) {
+      throw new Error('Session catalog cwd must be absolute');
     }
+    return path.resolve(projectPath);
+  }
+
+  private static resolveForkWorkspace(projectPath: string): string {
+    if (!path.isAbsolute(projectPath)) {
+      throw new Error('Fork workspace paths must be absolute');
+    }
+    return path.resolve(projectPath);
+  }
+
+  private static async readStableSessionSnapshot(
+    filePath: string,
+    maxAttempts = 3
+  ): Promise<SessionEvent[]> {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const before = await stat(filePath, { bigint: true });
+      const content = await readFile(filePath, 'utf-8');
+      const entries = parseSessionJSONL(content, filePath);
+      const after = await stat(filePath, { bigint: true });
+      if (
+        before.size === after.size &&
+        before.mtimeNs === after.mtimeNs &&
+        before.dev === after.dev &&
+        before.ino === after.ino
+      ) {
+        return entries;
+      }
+    }
+    throw new Error('Session changed while creating fork; retry the operation');
   }
 }
 

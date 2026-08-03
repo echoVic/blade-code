@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import * as schemaModule from '../../../../src/api/schemas.js';
 import {
   type BusEvent,
   BusEventSchema,
@@ -30,6 +31,19 @@ import {
   type UiTheme,
   UiThemeSchema,
 } from '../../../../src/api/schemas.js';
+
+const SessionHistoryMessageSchema = () =>
+  Reflect.get(schemaModule, 'SessionHistoryMessageSchema') as
+    | { parse: (value: unknown) => unknown }
+    | undefined;
+const ForkSessionResponseSchema = () =>
+  Reflect.get(schemaModule, 'ForkSessionResponseSchema') as
+    | { parse: (value: unknown) => unknown }
+    | undefined;
+const SessionRefSchema = () =>
+  Reflect.get(schemaModule, 'SessionRefSchema') as
+    | { parse: (value: unknown) => unknown }
+    | undefined;
 
 describe('API Schemas', () => {
   describe('PermissionModeSchema', () => {
@@ -139,11 +153,13 @@ describe('API Schemas', () => {
         projectPath: '/path/to/project',
         title: 'Test Session',
         gitBranch: 'main',
+        rootId: 'session-123',
+        parentId: 'parent-session',
+        relationType: 'fork',
         messageCount: 10,
         firstMessageTime: '2024-01-01T00:00:00Z',
         lastMessageTime: '2024-01-01T01:00:00Z',
         hasErrors: false,
-        filePath: '/path/to/session.jsonl',
       };
 
       expect(() => SessionSchema.parse(validSession)).not.toThrow();
@@ -153,6 +169,7 @@ describe('API Schemas', () => {
       const minimalSession: Session = {
         sessionId: 'session-456',
         projectPath: '/path/to/project',
+        rootId: 'session-456',
         messageCount: 5,
         firstMessageTime: '2024-01-01T00:00:00Z',
         lastMessageTime: '2024-01-01T01:00:00Z',
@@ -160,6 +177,122 @@ describe('API Schemas', () => {
       };
 
       expect(() => SessionSchema.parse(minimalSession)).not.toThrow();
+    });
+
+    it('应该保留 lineage 字段并剥离未知的 filePath', () => {
+      const parsed = SessionSchema.parse({
+        sessionId: 'session-789',
+        projectPath: '/path/to/project',
+        rootId: 'root-session',
+        parentId: 'parent-session',
+        relationType: 'fork',
+        messageCount: 1,
+        firstMessageTime: '2024-01-01T00:00:00Z',
+        lastMessageTime: '2024-01-01T00:00:01Z',
+        hasErrors: false,
+        filePath: '/should/not/leak.jsonl',
+      });
+
+      expect(parsed).toMatchObject({
+        sessionId: 'session-789',
+        rootId: 'root-session',
+        parentId: 'parent-session',
+        relationType: 'fork',
+      });
+      expect('filePath' in parsed).toBe(false);
+    });
+  });
+
+  describe('SessionHistoryMessageSchema', () => {
+    it('应该验证字符串历史消息', () => {
+      expect(SessionHistoryMessageSchema()).toBeDefined();
+      const message = {
+        role: 'assistant',
+        content: 'history',
+        metadata: { source: 'fork' },
+        thinkingContent: 'reasoning',
+        tool_call_id: 'call-1',
+        name: 'tool-name',
+        tool_calls: [{ id: 'tool-1' }],
+      };
+
+      expect(() => SessionHistoryMessageSchema()!.parse(message)).not.toThrow();
+    });
+
+    it('应该验证多模态与工具历史消息，不要求 UI id/timestamp', () => {
+      expect(SessionHistoryMessageSchema()).toBeDefined();
+      const multimodal = {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'look' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+        ],
+      };
+      const toolResult = {
+        role: 'tool',
+        content: 'done',
+        tool_call_id: 'call-2',
+        name: 'tool',
+      };
+
+      expect(() => SessionHistoryMessageSchema()!.parse(multimodal)).not.toThrow();
+      expect(() => SessionHistoryMessageSchema()!.parse(toolResult)).not.toThrow();
+      expect(() =>
+        SessionHistoryMessageSchema()!.parse({
+          id: 'ui-only',
+          timestamp: Date.now(),
+          ...multimodal,
+        })
+      ).not.toThrow();
+    });
+  });
+
+  describe('ForkSessionResponseSchema', () => {
+    it('应该验证 fork 返回的公开 session 与原始 history', () => {
+      expect(ForkSessionResponseSchema()).toBeDefined();
+      const response = {
+        session: {
+          sessionId: 'child-session',
+          projectPath: '/workspace',
+          rootId: 'parent-session',
+          parentId: 'parent-session',
+          relationType: 'fork',
+          messageCount: 2,
+          firstMessageTime: '2024-01-01T00:00:00Z',
+          lastMessageTime: '2024-01-01T00:01:00Z',
+          hasErrors: false,
+        },
+        messages: [
+          { role: 'user', content: 'hello' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'see image' },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+            ],
+          },
+          {
+            role: 'tool',
+            content: 'tool output',
+            tool_call_id: 'call-3',
+            name: 'search',
+          },
+        ],
+      };
+
+      expect(() => ForkSessionResponseSchema()!.parse(response)).not.toThrow();
+    });
+  });
+
+  describe('SessionRefSchema', () => {
+    it('应该验证 compound session ref', () => {
+      expect(SessionRefSchema()).toBeDefined();
+      const ref = {
+        sessionId: 'session-123',
+        projectPath: '/workspace',
+      };
+
+      expect(() => SessionRefSchema()!.parse(ref)).not.toThrow();
     });
   });
 

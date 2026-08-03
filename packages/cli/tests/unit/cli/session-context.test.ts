@@ -43,6 +43,7 @@ describe('resolveNonInteractiveSession', () => {
     });
     expect(sessionState.forkSession).toHaveBeenCalledWith('parent-session', {
       newSessionId: 'child-session',
+      sourceProjectPath: '/workspace',
       targetProjectPath: '/workspace',
     });
     expect(sessionState.loadSession).not.toHaveBeenCalled();
@@ -65,6 +66,7 @@ describe('resolveNonInteractiveSession', () => {
 
     expect(sessionState.forkSession).toHaveBeenCalledWith('latest-session', {
       newSessionId: undefined,
+      sourceProjectPath: '/workspace',
       targetProjectPath: '/workspace',
     });
   });

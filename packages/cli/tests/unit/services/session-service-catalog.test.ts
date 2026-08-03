@@ -2,7 +2,10 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { JSONLStore } from '../../../src/context/storage/JSONLStore.js';
+import {
+  JSONLStore,
+  parseSessionJSONL,
+} from '../../../src/context/storage/JSONLStore.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import {
   getSessionFilePath,
@@ -573,5 +576,202 @@ describe('SessionService strict session catalog', () => {
 
     await rm(missingCreationPath, { force: true });
     await expect(readFile(missingCreationPath, 'utf8')).rejects.toThrow();
+  });
+
+  it('atomically creates public metadata for a new session and fails closed on collisions or invalid input', async () => {
+    const createSessionMetadata = Reflect.get(
+      SessionService,
+      'createSessionMetadata'
+    ) as
+      | ((
+          sessionId: string,
+          projectPath: string,
+          initial?: { title?: string }
+        ) => Promise<unknown>)
+      | undefined;
+
+    expect(createSessionMetadata).toBeTypeOf('function');
+
+    const created = await createSessionMetadata?.('created-session', workspaceA, {
+      title: 'Created title',
+    });
+    expect(created).toMatchObject({
+      sessionId: 'created-session',
+      projectPath: workspaceA,
+      rootId: 'created-session',
+      title: 'Created title',
+      messageCount: 0,
+    });
+    expect('filePath' in ((created as Record<string, unknown>) ?? {})).toBe(false);
+    expect('status' in ((created as Record<string, unknown>) ?? {})).toBe(false);
+
+    const filePath = getSessionFilePath(workspaceA, 'created-session');
+    const entries = parseSessionJSONL(await readFile(filePath, 'utf8'), filePath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      type: 'session_created',
+      sessionId: 'created-session',
+      cwd: workspaceA,
+      data: {
+        sessionId: 'created-session',
+        rootId: 'created-session',
+        title: 'Created title',
+      },
+    });
+
+    await expect(
+      Promise.all([
+        createSessionMetadata?.('collision-session', workspaceA, { title: 'first' }),
+        createSessionMetadata?.('collision-session', workspaceA, { title: 'second' }),
+      ])
+    ).rejects.toMatchObject({ code: 'EEXIST' });
+    await expect(
+      createSessionMetadata?.('collision-session', workspaceA, { title: 'again' })
+    ).rejects.toMatchObject({ code: 'EEXIST' });
+    await expect(
+      createSessionMetadata?.('unsafe/../id', workspaceA, { title: 'bad' })
+    ).rejects.toThrow('Invalid session ID: unsafe/../id');
+    await expect(
+      createSessionMetadata?.('relative-workspace', 'relative/workspace', {
+        title: 'bad',
+      })
+    ).rejects.toThrow('Session catalog cwd must be absolute');
+  });
+
+  it('updates existing metadata with exactly one durable session_updated and hides private fields', async () => {
+    const createSessionMetadata = Reflect.get(
+      SessionService,
+      'createSessionMetadata'
+    ) as
+      | ((
+          sessionId: string,
+          projectPath: string,
+          initial?: { title?: string }
+        ) => Promise<unknown>)
+      | undefined;
+    const updateSessionMetadata = Reflect.get(
+      SessionService,
+      'updateSessionMetadata'
+    ) as
+      | ((
+          sessionId: string,
+          projectPath: string,
+          update: { title?: string }
+        ) => Promise<unknown>)
+      | undefined;
+
+    await createSessionMetadata?.('update-session', workspaceA, { title: 'Initial' });
+    const updated = await updateSessionMetadata?.('update-session', workspaceA, {
+      title: 'Updated',
+    });
+
+    expect(updated).toMatchObject({
+      sessionId: 'update-session',
+      projectPath: workspaceA,
+      rootId: 'update-session',
+      title: 'Updated',
+      messageCount: 0,
+    });
+    expect('filePath' in ((updated as Record<string, unknown>) ?? {})).toBe(false);
+
+    const filePath = getSessionFilePath(workspaceA, 'update-session');
+    const entries = parseSessionJSONL(await readFile(filePath, 'utf8'), filePath);
+    expect(entries.filter((entry) => entry.type === 'session_updated')).toHaveLength(1);
+    expect(entries.at(-1)).toMatchObject({
+      type: 'session_updated',
+      sessionId: 'update-session',
+      cwd: workspaceA,
+      data: {
+        sessionId: 'update-session',
+        title: 'Updated',
+      },
+    });
+    await expect(
+      SessionService.findSessionMetadata('update-session', workspaceA)
+    ).resolves.toMatchObject({ title: 'Updated' });
+  });
+
+  it('fails closed when metadata update input is invalid or the transcript is missing or mismatched', async () => {
+    const updateSessionMetadata = Reflect.get(
+      SessionService,
+      'updateSessionMetadata'
+    ) as
+      | ((
+          sessionId: string,
+          projectPath: string,
+          update: { title?: string }
+        ) => Promise<unknown>)
+      | undefined;
+
+    await expect(
+      updateSessionMetadata?.('unsafe/../id', workspaceA, { title: 'bad' })
+    ).rejects.toThrow('Invalid session ID: unsafe/../id');
+    await expect(
+      updateSessionMetadata?.('relative-workspace', 'relative/workspace', {
+        title: 'bad',
+      })
+    ).rejects.toThrow('Session catalog cwd must be absolute');
+    await expect(
+      updateSessionMetadata?.('missing-session', workspaceA, { title: 'bad' })
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+
+    await writeTranscript(workspaceA, 'mismatch-session', [
+      makeCreatedEvent('mismatch-session', workspaceB, '2024-01-01T00:00:00.000Z', {
+        sessionId: 'different-id',
+      }),
+    ]);
+    await expect(
+      updateSessionMetadata?.('mismatch-session', workspaceA, { title: 'bad' })
+    ).rejects.toThrow();
+  });
+
+  it('returns persisted metadata when update wins before delete and does not recreate transcripts when delete wins first', async () => {
+    const createSessionMetadata = Reflect.get(
+      SessionService,
+      'createSessionMetadata'
+    ) as
+      | ((
+          sessionId: string,
+          projectPath: string,
+          initial?: { title?: string }
+        ) => Promise<unknown>)
+      | undefined;
+    const updateSessionMetadata = Reflect.get(
+      SessionService,
+      'updateSessionMetadata'
+    ) as
+      | ((
+          sessionId: string,
+          projectPath: string,
+          update: { title?: string }
+        ) => Promise<unknown>)
+      | undefined;
+
+    await createSessionMetadata?.('race-session', workspaceA, { title: 'Initial' });
+    const updateFirst = updateSessionMetadata?.('race-session', workspaceA, {
+      title: 'Updated before delete',
+    });
+    const deleteSecond = SessionService.deleteSession('race-session', workspaceA);
+    await expect(updateFirst).resolves.toMatchObject({
+      sessionId: 'race-session',
+      title: 'Updated before delete',
+    });
+    await expect(deleteSecond).resolves.toBe(1);
+    await expect(
+      access(getSessionFilePath(workspaceA, 'race-session'))
+    ).rejects.toThrow();
+
+    await createSessionMetadata?.('race-session-2', workspaceA, { title: 'Initial' });
+    await expect(
+      SessionService.deleteSession('race-session-2', workspaceA)
+    ).resolves.toBe(1);
+    await expect(
+      updateSessionMetadata?.('race-session-2', workspaceA, {
+        title: 'Should fail',
+      })
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      access(getSessionFilePath(workspaceA, 'race-session-2'))
+    ).rejects.toThrow();
   });
 });
