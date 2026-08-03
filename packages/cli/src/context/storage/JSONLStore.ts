@@ -88,6 +88,31 @@ export class JSONLStore {
     }
   }
 
+  /** Create a complete transcript without replacing an existing session. */
+  async createExclusive(entries: SessionEvent[]): Promise<void> {
+    if (entries.length === 0) {
+      throw new Error('Cannot create an empty session transcript');
+    }
+
+    await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o755 });
+    let handle: fs.FileHandle | undefined;
+    try {
+      handle = await fs.open(this.filePath, 'wx', 0o600);
+      const content = `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+      await handle.writeFile(content, 'utf-8');
+      await handle.sync();
+    } catch (error) {
+      if (handle) {
+        await handle.close();
+        handle = undefined;
+        await fs.unlink(this.filePath).catch(() => undefined);
+      }
+      throw error;
+    } finally {
+      await handle?.close();
+    }
+  }
+
   /**
    * 读取所有 JSONL 记录
    * @returns JSONL 条目数组

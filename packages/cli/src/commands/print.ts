@@ -34,6 +34,7 @@ interface PrintOptions {
   sessionId?: string;
   continue?: boolean;
   resume?: string | boolean;
+  forkSession?: boolean;
   allowedTools?: string[];
   disallowedTools?: string[];
   agents?: string;
@@ -133,6 +134,7 @@ export async function runPrint(
       sessionId: options.sessionId,
       continue: options.continue,
       resume: options.resume,
+      forkSession: options.forkSession,
       fallbackSessionPrefix: 'print',
     });
 

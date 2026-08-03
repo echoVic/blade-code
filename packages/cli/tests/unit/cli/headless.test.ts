@@ -342,6 +342,7 @@ describe('headless runner', () => {
         allowedTools: ['Read'],
         disallowedTools: ['Write'],
         continue: true,
+        forkSession: true,
       },
       { stdout, stderr }
     );
@@ -351,6 +352,7 @@ describe('headless runner', () => {
       sessionId: undefined,
       continue: true,
       resume: undefined,
+      forkSession: true,
       fallbackSessionPrefix: 'headless',
     });
     expect(runtimeState.create).toHaveBeenCalledWith(

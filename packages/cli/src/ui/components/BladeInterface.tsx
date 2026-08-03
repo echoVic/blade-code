@@ -34,6 +34,7 @@ import { useConfirmation } from '../hooks/useConfirmation.js';
 import { useInputBuffer } from '../hooks/useInputBuffer.js';
 import { useMainInput } from '../hooks/useMainInput.js';
 import { useRefreshStatic } from '../hooks/useRefreshStatic.js';
+import { themeManager } from '../themes/ThemeManager.js';
 import { AgentCreationWizard } from './AgentCreationWizard.js';
 import { AgentsManager } from './AgentsManager.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
@@ -43,8 +44,8 @@ import { HooksManager } from './HooksManager.js';
 import { InputArea } from './InputArea.js';
 import { LoadingIndicator } from './LoadingIndicator.js';
 import { MessageArea } from './MessageArea.js';
-import { ModelConfigWizard } from './model-config/index.js';
 import { ModelSelector } from './ModelSelector.js';
+import { ModelConfigWizard } from './model-config/index.js';
 import { PermissionsManager } from './PermissionsManager.js';
 import { PluginsManager } from './PluginsManager.js';
 import { QuestionPrompt } from './QuestionPrompt.js';
@@ -52,7 +53,6 @@ import { SessionSelector } from './SessionSelector.js';
 import { SkillsManager } from './SkillsManager.js';
 import { SpecStatusPanel } from './SpecStatusPanel.js';
 import { SubagentProgress } from './SubagentProgress.js';
-import { themeManager } from '../themes/ThemeManager.js';
 import { ThemeSelector } from './ThemeSelector.js';
 
 // 创建 BladeInterface 专用 Logger
@@ -247,6 +247,24 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   });
 
+  const restorePersistedSession = useMemoizedFn(async (sourceSessionId: string) => {
+    const resolved = otherProps.forkSession
+      ? await SessionService.forkSession(sourceSessionId, {
+          newSessionId: otherProps.sessionId,
+          targetProjectPath: getCwd(),
+        })
+      : {
+          sessionId: sourceSessionId,
+          messages: await SessionService.loadSession(sourceSessionId),
+        };
+    const sessionMessages = SessionService.toUISafeMessages(resolved.messages);
+    sessionActions.restoreSession(
+      resolved.sessionId,
+      sessionMessages,
+      resolved.messages
+    );
+  });
+
   const { showSuggestions, suggestions, selectedSuggestionIndex } = useMainInput(
     inputBuffer,
     executeCommand,
@@ -273,22 +291,23 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       const sessions = await SessionService.listSessions();
 
       if (sessions.length === 0) {
+        if (otherProps.forkSession) {
+          logger.error('没有可供 fork 的历史会话');
+          safeExit(1);
+          return;
+        }
         sessionActions.addAssistantMessage('没有找到历史会话，开始新对话。');
         return;
       }
 
       const mostRecentSession = sessions[0];
-      const messages = await SessionService.loadSession(mostRecentSession.sessionId);
-
-      const sessionMessages = SessionService.toUISafeMessages(messages);
-
-      sessionActions.restoreSession(
-        mostRecentSession.sessionId,
-        sessionMessages,
-        messages
-      );
+      await restorePersistedSession(mostRecentSession.sessionId);
     } catch (error) {
       logger.error('[BladeInterface] 继续会话失败:', error);
+      if (otherProps.forkSession) {
+        safeExit(1);
+        return;
+      }
       sessionActions.addAssistantMessage('继续会话失败，开始新对话。');
     }
   });
@@ -297,11 +316,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     readyAnnouncementSent.current = true;
     try {
       if (typeof otherProps.resume === 'string' && otherProps.resume !== 'true') {
-        const messages = await SessionService.loadSession(otherProps.resume);
-
-        const sessionMessages = SessionService.toUISafeMessages(messages);
-
-        sessionActions.restoreSession(otherProps.resume, sessionMessages, messages);
+        await restorePersistedSession(otherProps.resume);
         return;
       }
 
@@ -371,11 +386,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   const handleSessionSelect = useMemoizedFn(async (sessionId: string) => {
     try {
-      const messages = await SessionService.loadSession(sessionId);
-
-      const sessionMessages = SessionService.toUISafeMessages(messages);
-
-      sessionActions.restoreSession(sessionId, sessionMessages, messages);
+      await restorePersistedSession(sessionId);
       appActions.closeModal();
     } catch (error) {
       logger.error('[BladeInterface] Failed to restore session:', error);

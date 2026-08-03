@@ -74,6 +74,8 @@ export const loadConfiguration: MiddlewareFunction = async (argv) => {
     parseCliAgents(argv.agents);
   }
 
+  validateSessionOptions(argv);
+
   // 1. 初始化 ConfigManager 和 Store（所有命令共用）
   try {
     const configManager = ConfigManager.getInstance();
@@ -96,12 +98,21 @@ export const loadConfiguration: MiddlewareFunction = async (argv) => {
     console.error('  3. 配置文件权限是否正确\n');
     process.exit(1);
   }
+};
 
-  // 2. 验证会话选项
+function validateSessionOptions(argv: Record<string, unknown>): void {
   if (argv.continue && argv.resume) {
     throw new Error('Cannot use both --continue and --resume flags simultaneously');
   }
-};
+  if (argv.forkSession && !argv.continue && !argv.resume) {
+    throw new Error('--fork-session requires --resume or --continue');
+  }
+  if (argv.sessionId && (argv.continue || argv.resume) && !argv.forkSession) {
+    throw new Error(
+      '--session-id can only be combined with --resume or --continue when --fork-session is set'
+    );
+  }
+}
 
 /**
  * 输出格式验证中间件

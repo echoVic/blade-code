@@ -5,8 +5,10 @@
 
 import { readdir, readFile, rm } from 'node:fs/promises';
 import * as path from 'node:path';
-import { parseSessionJSONL } from '../context/storage/JSONLStore.js';
+import { nanoid } from 'nanoid';
+import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import {
+  detectGitBranch,
   getBladeStorageRoot,
   getSessionFilePath,
   unescapeProjectPath,
@@ -14,6 +16,7 @@ import {
 import type { SessionEvent } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { JsonValue, SessionMessage } from '../store/types.js';
+import { getVersion } from '../utils/packageInfo.js';
 import type { ContentPart, Message } from './ChatServiceInterface.js';
 
 const logger = createLogger(LogCategory.SERVICE);
@@ -26,7 +29,7 @@ export interface SessionMetadata {
   projectPath: string;
   gitBranch?: string;
   parentId?: string;
-  relationType?: 'subagent';
+  relationType?: 'subagent' | 'fork';
   status?: 'running' | 'completed' | 'failed';
   agentType?: string;
   model?: string;
@@ -35,6 +38,19 @@ export interface SessionMetadata {
   lastMessageTime: string;
   hasErrors: boolean;
   filePath: string; // JSONL 文件路径
+}
+
+export interface ForkSessionOptions {
+  newSessionId?: string;
+  sourceProjectPath?: string;
+  targetProjectPath: string;
+}
+
+export interface ForkedSession {
+  sessionId: string;
+  parentSessionId: string;
+  projectPath: string;
+  messages: Message[];
 }
 
 /**
@@ -222,6 +238,133 @@ export class SessionService {
     }
   }
 
+  /**
+   * Fork committed history into a new transcript without mutating the source.
+   * Exclusive creation makes an explicit target ID collision fail closed.
+   */
+  static async forkSession(
+    sourceSessionId: string,
+    options: ForkSessionOptions
+  ): Promise<ForkedSession> {
+    const targetSessionId = options.newSessionId ?? `fork-${Date.now()}-${nanoid(8)}`;
+    this.assertValidForkSessionId(targetSessionId);
+
+    const sourceFilePath = options.sourceProjectPath
+      ? getSessionFilePath(options.sourceProjectPath, sourceSessionId)
+      : (await this.listSessions()).find(
+          (session) => session.sessionId === sourceSessionId
+        )?.filePath;
+    if (!sourceFilePath) {
+      throw new Error(`未找到会话: ${sourceSessionId}`);
+    }
+
+    const sourceContent = await readFile(sourceFilePath, 'utf-8');
+    const sourceEntries = parseSessionJSONL(sourceContent, sourceFilePath);
+    const sourceCreated = sourceEntries.find(
+      (entry): entry is Extract<SessionEvent, { type: 'session_created' }> =>
+        entry.type === 'session_created'
+    );
+    if (!sourceCreated) {
+      throw new Error(
+        `Cannot fork session without session_created: ${sourceSessionId}`
+      );
+    }
+
+    const now = new Date().toISOString();
+    const rootId = sourceCreated.data.rootId || sourceSessionId;
+    const gitBranch = detectGitBranch(options.targetProjectPath);
+    const version = getVersion();
+    const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
+      id: nanoid(),
+      sessionId: targetSessionId,
+      timestamp: now,
+      type: 'session_created',
+      cwd: options.targetProjectPath,
+      gitBranch,
+      version,
+      data: {
+        ...sourceCreated.data,
+        sessionId: targetSessionId,
+        rootId,
+        parentId: sourceSessionId,
+        relationType: 'fork',
+        status: 'running',
+        createdAt: now,
+        updatedAt: now,
+      },
+    };
+    const copiedEntries = sourceEntries
+      .filter((entry) => entry.type !== 'session_created')
+      .map((entry): SessionEvent => {
+        const base = {
+          ...entry,
+          id: nanoid(),
+          sessionId: targetSessionId,
+          cwd: options.targetProjectPath,
+          gitBranch,
+          version,
+        };
+        if (entry.type === 'session_updated') {
+          return {
+            ...base,
+            type: 'session_updated',
+            data: {
+              ...entry.data,
+              sessionId: targetSessionId,
+              rootId,
+              parentId: sourceSessionId,
+              relationType: 'fork',
+            },
+          };
+        }
+        return base as SessionEvent;
+      });
+    const forkBoundary: Extract<SessionEvent, { type: 'session_updated' }> = {
+      id: nanoid(),
+      sessionId: targetSessionId,
+      timestamp: now,
+      type: 'session_updated',
+      cwd: options.targetProjectPath,
+      gitBranch,
+      version,
+      data: {
+        sessionId: targetSessionId,
+        rootId,
+        parentId: sourceSessionId,
+        relationType: 'fork',
+        status: 'running',
+        updatedAt: now,
+      },
+    };
+    const childEntries: SessionEvent[] = [childCreated, ...copiedEntries, forkBoundary];
+    const targetFilePath = getSessionFilePath(
+      options.targetProjectPath,
+      targetSessionId
+    );
+
+    try {
+      await new JSONLStore(targetFilePath).createExclusive(childEntries);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        (error as NodeJS.ErrnoException).code === 'EEXIST'
+      ) {
+        throw new Error(`Fork session already exists: ${targetSessionId}`, {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+
+    return {
+      sessionId: targetSessionId,
+      parentSessionId: sourceSessionId,
+      projectPath: options.targetProjectPath,
+      messages: this.convertJSONLToMessages(childEntries),
+    };
+  }
+
   static async deleteSession(sessionId: string): Promise<number> {
     const sessions = await this.listSessions();
     const matches = sessions.filter((s) => s.sessionId === sessionId);
@@ -369,6 +512,16 @@ export class SessionService {
    */
   private static getSessionFilePath(projectPath: string, sessionId: string): string {
     return getSessionFilePath(projectPath, sessionId);
+  }
+
+  private static assertValidForkSessionId(sessionId: string): void {
+    if (
+      sessionId === '.' ||
+      sessionId === '..' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(sessionId)
+    ) {
+      throw new Error(`Invalid fork session ID: ${sessionId}`);
+    }
   }
 }
 

@@ -135,7 +135,7 @@ export interface SessionInfo {
   sessionId: string;
   rootId: string;
   parentId?: string;
-  relationType?: 'subagent';
+  relationType?: 'subagent' | 'fork';
   title?: string;
   status?: 'running' | 'completed' | 'failed';
   agentType?: string;

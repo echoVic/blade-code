@@ -6,6 +6,7 @@ export interface NonInteractiveSessionOptions {
   sessionId?: string;
   continue?: boolean;
   resume?: string | boolean;
+  forkSession?: boolean;
   fallbackSessionPrefix: string;
 }
 
@@ -47,6 +48,12 @@ export async function resolveNonInteractiveSession(
   }
 
   if (typeof options.resume === 'string' && options.resume.length > 0) {
+    if (options.forkSession) {
+      return SessionService.forkSession(options.resume, {
+        newSessionId: options.sessionId,
+        targetProjectPath: getCwd(),
+      });
+    }
     return {
       sessionId: options.resume,
       messages: await SessionService.loadSession(options.resume),
@@ -57,10 +64,19 @@ export async function resolveNonInteractiveSession(
     const sessions = await SessionService.listSessions();
     if (sessions.length > 0) {
       const sessionId = sessions[0].sessionId;
+      if (options.forkSession) {
+        return SessionService.forkSession(sessionId, {
+          newSessionId: options.sessionId,
+          targetProjectPath: getCwd(),
+        });
+      }
       return {
         sessionId,
         messages: await SessionService.loadSession(sessionId),
       };
+    }
+    if (options.forkSession) {
+      throw new Error('Cannot fork: no sessions are available to continue');
     }
   }
 

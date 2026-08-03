@@ -93,7 +93,7 @@ blade serve --port 3000      # 无头服务器模式
 - `--print/-p` 打印模式（适合管道）
 - `--output-format` 输出格式（text/json/stream-json）
 - `--permission-mode` 权限模式
-- `--resume/-r` 恢复会话 / `--session-id` 指定会话
+- `--resume/-r` 恢复会话；`--fork-session` 可复制历史到独立子会话
 
 ---
 

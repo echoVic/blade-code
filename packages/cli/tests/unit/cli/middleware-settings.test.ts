@@ -146,4 +146,20 @@ describe('--settings middleware', () => {
 
     expect(configState.initialize).not.toHaveBeenCalled();
   });
+
+  it('validates fork session combinations before initializing configuration', async () => {
+    const { loadConfiguration } = await import('../../../src/cli/middleware.js');
+
+    await expect(loadConfiguration({ forkSession: true } as never)).rejects.toThrow(
+      '--fork-session requires --resume or --continue'
+    );
+    await expect(
+      loadConfiguration({ continue: true, resume: 'parent' } as never)
+    ).rejects.toThrow('Cannot use both --continue and --resume');
+    await expect(
+      loadConfiguration({ sessionId: 'child', resume: 'parent' } as never)
+    ).rejects.toThrow('--session-id can only be combined with --resume');
+
+    expect(configState.initialize).not.toHaveBeenCalled();
+  });
 });

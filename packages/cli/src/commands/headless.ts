@@ -109,6 +109,7 @@ export const HeadlessOptionsSchema = z.object({
   agents: z.string().optional(),
   continue: z.boolean().optional(),
   resume: z.union([z.string(), z.boolean()]).optional(),
+  forkSession: z.boolean().optional(),
   outputFormat: HeadlessOutputFormatSchema.optional(),
 });
 
@@ -145,6 +146,8 @@ export interface HeadlessOptions {
   continue?: boolean;
   /** Resume a specific conversation. */
   resume?: string | boolean;
+  /** Fork resumed history into an independent session. */
+  forkSession?: boolean;
   /** Terminal output format. */
   outputFormat?: string;
 }
@@ -656,6 +659,7 @@ export async function runHeadless(
       sessionId: validatedOptions.sessionId,
       continue: validatedOptions.continue,
       resume: validatedOptions.resume,
+      forkSession: validatedOptions.forkSession,
       fallbackSessionPrefix: 'headless',
     });
     const contextMessages: Message[] = [...messages];

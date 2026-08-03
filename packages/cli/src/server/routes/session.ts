@@ -74,7 +74,7 @@ interface SessionInfo {
   createdAt: Date;
   messages: Message[];
   currentRunId?: string;
-  relationType?: 'subagent';
+  relationType?: 'subagent' | 'fork';
 }
 
 const sessions = new Map<string, SessionInfo>();

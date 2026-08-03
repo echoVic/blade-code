@@ -64,8 +64,8 @@ blade --debug "!chat,!loop"
 |------|------|------|
 | `--continue` | `-c` | 继续最近的会话 |
 | `--resume [id]` | `-r` | 恢复指定会话（无参数时交互选择） |
-| `--fork-session` | | 恢复时创建新会话 ID |
-| `--session-id <id>` | | 指定会话 ID（用于持久化文件名和会话标识） |
+| `--fork-session` | | 与 `--resume`/`--continue` 配合，将历史复制到独立子会话，父会话保持不变 |
+| `--session-id <id>` | | 指定新会话 ID；与恢复参数同时使用时必须启用 `--fork-session` |
 
 ### AI 选项
 
@@ -302,6 +302,9 @@ blade --resume
 
 # 指定会话 ID 恢复
 blade --resume 2024-12-foo-session
+
+# 从历史创建独立子会话（TUI、print、headless 均支持）
+blade --resume 2024-12-foo-session --fork-session --session-id experiment-1
 
 # 调试模式
 blade --debug agent "分析这段代码"

@@ -89,6 +89,7 @@ describe('print command runner', () => {
         print: true,
         message: 'hello',
         sessionId: 'cli-session',
+        forkSession: true,
         agents: JSON.stringify({
           reviewer: {
             description: 'Reviews changes',
@@ -107,6 +108,7 @@ describe('print command runner', () => {
       sessionId: 'cli-session',
       continue: undefined,
       resume: undefined,
+      forkSession: true,
       fallbackSessionPrefix: 'print',
     });
     expect(runtimeState.create).toHaveBeenCalledWith(

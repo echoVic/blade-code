@@ -102,7 +102,7 @@ blade serve --port 3000      # 无头服务器模式
 - `--headless` 无 Ink UI 的完整 agent 模式，按终端事件流输出
 - `--output-format` 输出格式（text/json/stream-json/jsonl）
 - `--permission-mode` 权限模式
-- `--resume/-r` 恢复会话 / `--session-id` 指定会话
+- `--resume/-r` 恢复会话；`--fork-session` 可复制历史到独立子会话
 
 **Headless 模式**
 

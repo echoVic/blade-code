@@ -3,9 +3,9 @@
  * 用于交互式选择历史会话
  */
 
+import { basename } from 'node:path';
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
-import { basename } from 'node:path';
 import React, { useEffect, useMemo, useState } from 'react';
 import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
 import { useCurrentFocus } from '../../store/selectors/index.js';
@@ -153,7 +153,12 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
       const timeStr = formatTimestamp(session.lastMessageTime);
       const branchStr = session.gitBranch ? ` (${session.gitBranch})` : '';
       const errorStr = session.hasErrors ? ' [!]' : '';
-      const relationStr = session.relationType === 'subagent' ? ' ↳ subagent' : '';
+      const relationStr =
+        session.relationType === 'subagent'
+          ? ' ↳ subagent'
+          : session.relationType === 'fork'
+            ? ' ↳ fork'
+            : '';
 
       return {
         label: `${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${errorStr}${relationStr}`,
