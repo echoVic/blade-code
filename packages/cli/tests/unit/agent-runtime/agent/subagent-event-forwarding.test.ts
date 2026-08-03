@@ -8,6 +8,7 @@
  * - Bus topic 稳定性
  */
 
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoopEvent } from '../../../../src/agent/loop/types.js';
 import type { LoopResult } from '../../../../src/agent/types.js';
@@ -505,7 +506,7 @@ describe('Task tool subagent event publishing', () => {
     expect(busState.publish).toHaveBeenCalledTimes(6);
     const ref = {
       sessionId: 'parent-session',
-      projectPath: '/tmp/parent-workspace',
+      projectPath: path.resolve('/tmp/parent-workspace/../parent-workspace'),
     };
     expect(busState.publish).toHaveBeenNthCalledWith(
       1,

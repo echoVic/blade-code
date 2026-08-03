@@ -3,8 +3,12 @@ import { z } from 'zod';
 import { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
-import { AmbiguousSessionError, BadRequestError, NotFoundError } from '../error.js';
-import { normalizeSessionRef } from '../sessionRef.js';
+import {
+  AmbiguousSessionError,
+  BadRequestError,
+  BladeServerError,
+  NotFoundError,
+} from '../error.js';
 import { resolveSessionRef, respondToPermission } from './session.js';
 
 const logger = createLogger(LogCategory.SERVICE);
@@ -43,13 +47,7 @@ export const PermissionRoutes = () => {
       if (!sessionId) {
         throw new BadRequestError('sessionId query parameter is required');
       }
-      const ref =
-        requestedProjectPath !== undefined
-          ? normalizeSessionRef({
-              sessionId,
-              projectPath: requestedProjectPath,
-            })
-          : await resolveSessionRef(sessionId);
+      const ref = await resolveSessionRef(sessionId, requestedProjectPath);
 
       const response: ConfirmationResponse = {
         approved,
@@ -73,7 +71,12 @@ export const PermissionRoutes = () => {
       return c.json({ success: true, approved, remember });
     } catch (error) {
       logger.error('[PermissionRoutes] Failed to respond to permission:', error);
-      if (error instanceof BadRequestError || error instanceof AmbiguousSessionError) {
+      if (
+        error instanceof BadRequestError ||
+        error instanceof AmbiguousSessionError ||
+        error instanceof NotFoundError ||
+        error instanceof BladeServerError
+      ) {
         throw error;
       }
       throw error;

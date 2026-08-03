@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import type { SessionRef } from './sessionRef.js';
+import { normalizeSessionRef } from './sessionRef.js';
 
 export interface BusEvent {
   sessionId: string;
@@ -24,9 +25,10 @@ class GlobalBus extends EventEmitter {
   }
 
   publish(ref: SessionRef, type: string, properties: Record<string, unknown>) {
+    const normalizedRef = normalizeSessionRef(ref);
     this.emit('event', {
-      sessionId: ref.sessionId,
-      projectPath: ref.projectPath,
+      sessionId: normalizedRef.sessionId,
+      projectPath: normalizedRef.projectPath,
       type,
       properties,
     } satisfies BusEvent);

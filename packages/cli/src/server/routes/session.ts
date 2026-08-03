@@ -184,19 +184,6 @@ function sessionInfoFromMetadata(
   };
 }
 
-function createEphemeralSession(ref: SessionRef): SessionInfo {
-  const now = new Date();
-  return {
-    id: ref.sessionId,
-    projectPath: ref.projectPath,
-    title: `Session ${ref.sessionId.slice(0, 6)}`,
-    createdAt: now,
-    updatedAt: now,
-    rootId: ref.sessionId,
-    messages: [],
-  };
-}
-
 function projectActiveSession(session: SessionInfo) {
   return {
     sessionId: session.id,
@@ -327,7 +314,7 @@ export const SessionRoutes = () => {
       {
         error: {
           code: 'INTERNAL_ERROR',
-          message: err instanceof Error ? err.message : String(err),
+          message: 'Internal server error',
         },
       },
       500
@@ -372,10 +359,7 @@ export const SessionRoutes = () => {
     }
   };
 
-  const getOrHydrateSession = async (
-    ref: SessionRef,
-    options: { createIfMissing?: boolean } = {}
-  ): Promise<SessionInfo> => {
+  const getOrHydrateSession = async (ref: SessionRef): Promise<SessionInfo> => {
     const key = sessionRefKey(ref);
     const existing = sessions.get(key);
     if (existing) return existing;
@@ -387,16 +371,13 @@ export const SessionRoutes = () => {
           ref.sessionId,
           ref.projectPath
         );
-        const session = metadata
-          ? sessionInfoFromMetadata(
-              metadata,
-              await SessionService.loadSession(ref.sessionId, ref.projectPath)
-            )
-          : options.createIfMissing
-            ? createEphemeralSession(ref)
-            : (() => {
-                throw new NotFoundError('Session', ref.sessionId);
-              })();
+        if (!metadata) {
+          throw new NotFoundError('Session', ref.sessionId);
+        }
+        const session = sessionInfoFromMetadata(
+          metadata,
+          await SessionService.loadSession(ref.sessionId, ref.projectPath)
+        );
         sessions.set(key, session);
         return session;
       })();
@@ -414,32 +395,11 @@ export const SessionRoutes = () => {
 
   const resolveSessionForWrite = async (
     sessionId: string,
-    requestedProjectPath: string | undefined,
-    fallbackDirectory: string
+    requestedProjectPath: string | undefined
   ): Promise<SessionInfo> => {
-    if (requestedProjectPath !== undefined) {
-      return getOrHydrateSession(
-        normalizeSessionRef({
-          sessionId,
-          projectPath: normalizeProjectPathInput(requestedProjectPath),
-        }),
-        { createIfMissing: true }
-      );
-    }
-    try {
-      return await getOrHydrateSession(await resolveSessionRef(sessionId));
-    } catch (error) {
-      if (!(error instanceof NotFoundError)) {
-        throw error;
-      }
-      return getOrHydrateSession(
-        normalizeSessionRef({
-          sessionId,
-          projectPath: fallbackDirectory,
-        }),
-        { createIfMissing: true }
-      );
-    }
+    return getOrHydrateSession(
+      await resolveSessionRef(sessionId, requestedProjectPath)
+    );
   };
 
   const startRun = (
@@ -766,26 +726,8 @@ export const SessionRoutes = () => {
 
   app.get('/:sessionId/events', async (c) => {
     const sessionId = c.req.param('sessionId');
-    const directory = normalizeProjectPathInput(
-      c.get('directory') || getCwd(),
-      'directory'
-    );
-    let ref: SessionRef;
-    try {
-      ref =
-        c.req.query('projectPath') !== undefined
-          ? normalizeSessionRef({
-              sessionId,
-              projectPath: normalizeProjectPathInput(c.req.query('projectPath')!),
-            })
-          : await resolveSessionRef(sessionId);
-    } catch (error) {
-      if (!(error instanceof NotFoundError)) {
-        throw error;
-      }
-      ref = normalizeSessionRef({ sessionId, projectPath: directory });
-    }
-    const session = await getOrHydrateSession(ref, { createIfMissing: true });
+    const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+    const session = await getOrHydrateSession(ref);
 
     return streamSSE(c, async (stream) => {
       const HEARTBEAT_INTERVAL = 15000;
@@ -875,16 +817,11 @@ export const SessionRoutes = () => {
       projectPath,
     } = parsed.data;
     const permissionMode = (requestedMode as PermissionMode) || PermissionMode.DEFAULT;
-    const directory = normalizeProjectPathInput(
-      c.get('directory') || getCwd(),
-      'directory'
-    );
     const userContent = buildUserMessageContent(content, attachments);
 
     const session = await resolveSessionForWrite(
       sessionId,
-      projectPath ?? c.req.query('projectPath'),
-      directory
+      projectPath ?? c.req.query('projectPath')
     );
     const sessionRef = sessionRefFromSession(session);
 

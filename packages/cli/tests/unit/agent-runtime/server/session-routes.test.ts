@@ -1,3 +1,4 @@
+import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
@@ -38,6 +39,49 @@ const agentState = vi.hoisted(() => ({
   chatStream: vi.fn(),
 }));
 
+const busState = vi.hoisted(() => ({
+  subscribers: new Set<
+    (event: {
+      sessionId: string;
+      projectPath: string;
+      type: string;
+      properties: Record<string, unknown>;
+    }) => void
+  >(),
+  publish: vi.fn(
+    (
+      ref: { sessionId: string; projectPath: string },
+      type: string,
+      properties: Record<string, unknown>
+    ) => {
+      const event = {
+        sessionId: ref.sessionId,
+        projectPath: ref.projectPath,
+        type,
+        properties,
+      };
+      for (const subscriber of busState.subscribers) {
+        subscriber(event);
+      }
+    }
+  ),
+  subscribe: vi.fn(
+    (
+      callback: (event: {
+        sessionId: string;
+        projectPath: string;
+        type: string;
+        properties: Record<string, unknown>;
+      }) => void
+    ) => {
+      busState.subscribers.add(callback);
+      return () => {
+        busState.subscribers.delete(callback);
+      };
+    }
+  ),
+}));
+
 vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
   SessionRuntime: {
     create: vi.fn(async () => runtimeState.runtime),
@@ -55,10 +99,8 @@ vi.mock('../../../../src/agent/Agent.js', () => ({
 
 vi.mock('../../../../src/server/bus.js', () => ({
   Bus: {
-    publish: vi.fn(),
-    subscribe: vi.fn(() => () => {
-      /* noop */
-    }),
+    publish: busState.publish,
+    subscribe: busState.subscribe,
   },
 }));
 
@@ -131,9 +173,60 @@ vi.mock('../../../../src/logging/Logger.js', () => ({
   })),
 }));
 
+function createSseCollector(response: Response) {
+  if (!response.body) {
+    throw new Error('Expected SSE response body');
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  return {
+    async next() {
+      while (true) {
+        const readResult = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            setTimeout(
+              () => reject(new Error('Timed out waiting for SSE event')),
+              2000
+            );
+          }),
+        ]);
+        if (readResult.done) {
+          throw new Error('SSE stream ended before the next event was received');
+        }
+        buffer += decoder.decode(readResult.value, { stream: true });
+        const delimiterIndex = buffer.indexOf('\n\n');
+        if (delimiterIndex === -1) {
+          continue;
+        }
+        const rawEvent = buffer.slice(0, delimiterIndex);
+        buffer = buffer.slice(delimiterIndex + 2);
+        const data = rawEvent
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trimStart())
+          .join('\n');
+        if (!data) {
+          continue;
+        }
+        return JSON.parse(data) as {
+          type: string;
+          properties: Record<string, unknown>;
+        };
+      }
+    },
+    async cancel() {
+      await reader.cancel().catch(() => undefined);
+    },
+  };
+}
+
 describe('SessionRoutes runtime reuse', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    busState.subscribers.clear();
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.refresh.mockClear();
     runtimeState.runtime.prepareInputTurn.mockReset();
@@ -210,12 +303,113 @@ describe('SessionRoutes runtime reuse', () => {
       '/Users/bytedance/Documents/GitHub/Blade/.worktrees/session-discovery-fork/packages/cli',
   });
 
+  const createPermissionsApp = async () => {
+    const { BladeServerError } = await import('../../../../src/server/error.js');
+    const { PermissionRoutes } = await import(
+      '../../../../src/server/routes/permission.js'
+    );
+
+    const app = new Hono();
+    app.onError((error, c) => {
+      if (error instanceof BladeServerError) {
+        return c.json(error.toObject(), error.statusCode as 400 | 404 | 409 | 500);
+      }
+      throw error;
+    });
+    app.route('/permissions', PermissionRoutes());
+    return app;
+  };
+
+  const createSessionAndPermissionApp = async () => {
+    const { BladeServerError } = await import('../../../../src/server/error.js');
+    const { PermissionRoutes } = await import(
+      '../../../../src/server/routes/permission.js'
+    );
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    const app = new Hono();
+    app.onError((error, c) => {
+      if (error instanceof BladeServerError) {
+        return c.json(error.toObject(), error.statusCode as 400 | 404 | 409 | 500);
+      }
+      throw error;
+    });
+    app.route('/sessions', SessionRoutes());
+    app.route('/permissions', PermissionRoutes());
+    return app;
+  };
+
+  const metadataFor = (
+    sessionId: string,
+    projectPath = refFor(sessionId).projectPath,
+    overrides: Partial<{
+      title: string;
+      messageCount: number;
+      firstMessageTime: string;
+      lastMessageTime: string;
+      hasErrors: boolean;
+      rootId: string;
+      parentId: string;
+      relationType: 'subagent' | 'fork';
+    }> = {}
+  ) => ({
+    sessionId,
+    projectPath,
+    rootId: overrides.rootId ?? sessionId,
+    title: overrides.title ?? `Session ${sessionId}`,
+    messageCount: overrides.messageCount ?? 0,
+    firstMessageTime: overrides.firstMessageTime ?? new Date(0).toISOString(),
+    lastMessageTime: overrides.lastMessageTime ?? new Date(1).toISOString(),
+    hasErrors: overrides.hasErrors ?? false,
+    ...(overrides.parentId ? { parentId: overrides.parentId } : {}),
+    ...(overrides.relationType ? { relationType: overrides.relationType } : {}),
+  });
+
+  const mockResolvedSession = (
+    sessionId: string,
+    options: {
+      projectPath?: string;
+      messages?: Array<{ role: string; content: string }>;
+    } = {}
+  ) => {
+    const metadata = metadataFor(sessionId, options.projectPath);
+    const messages = options.messages ?? [];
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata] as never);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId: string, requestedProjectPath?: string) => {
+        if (requestedSessionId !== sessionId) {
+          return undefined;
+        }
+        if (
+          requestedProjectPath !== undefined &&
+          requestedProjectPath !== metadata.projectPath
+        ) {
+          return undefined;
+        }
+        return metadata as never;
+      }
+    );
+    vi.mocked(SessionService.loadSession).mockImplementation(
+      async (requestedSessionId: string, requestedProjectPath?: string) => {
+        if (
+          requestedSessionId === sessionId &&
+          requestedProjectPath === metadata.projectPath
+        ) {
+          return messages as never;
+        }
+        return [] as never;
+      }
+    );
+    return metadata;
+  };
+
   it('reuses one SessionRuntime for repeated messages in the same session', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { SessionRuntime } = await import(
       '../../../../src/agent/runtime/SessionRuntime.js'
     );
     const { Agent } = await import('../../../../src/agent/Agent.js');
+    mockResolvedSession('session-1');
 
     const app = SessionRoutes();
 
@@ -253,6 +447,7 @@ describe('SessionRoutes runtime reuse', () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { Agent } = await import('../../../../src/agent/Agent.js');
     const { Bus } = await import('../../../../src/server/bus.js');
+    mockResolvedSession('steering-session');
     let releaseRun: () => void = () => undefined;
     const runGate = new Promise<void>((resolve) => {
       releaseRun = resolve;
@@ -317,6 +512,7 @@ describe('SessionRoutes runtime reuse', () => {
   it('defers input submitted after the active turn seals', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { Bus } = await import('../../../../src/server/bus.js');
+    mockResolvedSession('follow-up-session');
     let releaseRun: () => void = () => undefined;
     const runGate = new Promise<void>((resolve) => {
       releaseRun = resolve;
@@ -385,6 +581,7 @@ describe('SessionRoutes runtime reuse', () => {
     const { SessionRuntime } = await import(
       '../../../../src/agent/runtime/SessionRuntime.js'
     );
+    mockResolvedSession('startup-steering');
     let releaseRuntime: () => void = () => undefined;
     vi.mocked(SessionRuntime.create).mockImplementationOnce(
       () =>
@@ -457,6 +654,7 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('does not return 202 until the initial input has been durably prepared', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('durable-accept');
     let releasePreparation: () => void = () => undefined;
     runtimeState.runtime.prepareInputTurn.mockImplementationOnce(
       () =>
@@ -504,13 +702,24 @@ describe('SessionRoutes runtime reuse', () => {
     const { SessionService } = await import(
       '../../../../src/services/SessionService.js'
     );
+    const recoveredMetadata = metadataFor(
+      'recovered-web-session',
+      '/persisted-workspace'
+    );
     vi.mocked(SessionService.listSessions).mockResolvedValue([
-      {
-        sessionId: 'recovered-web-session',
-        projectPath: '/persisted-workspace',
-        firstMessageTime: new Date(0).toISOString(),
-      },
+      recoveredMetadata,
     ] as never);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (
+          sessionId === 'recovered-web-session' &&
+          projectPath === '/persisted-workspace'
+        ) {
+          return recoveredMetadata as never;
+        }
+        return undefined;
+      }
+    );
     vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
     let releaseRun: () => void = () => undefined;
@@ -564,6 +773,7 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('builds multimodal user content from image attachments', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('session-2');
 
     const app = SessionRoutes();
 
@@ -591,6 +801,7 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('builds image-only user content when the request only contains image attachments', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('session-3');
 
     const app = SessionRoutes();
 
@@ -615,31 +826,17 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('hydrates persisted session history before sending a follow-up message', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { SessionService } = await import(
-      '../../../../src/services/SessionService.js'
-    );
-
+    mockResolvedSession('persisted-session', {
+      projectPath: '/persisted-workspace',
+      messages: [
+        { role: 'user', content: 'earlier question' },
+        { role: 'assistant', content: 'earlier answer' },
+      ],
+    });
     vi.mocked(SessionService.loadSession).mockResolvedValue([
       { role: 'user', content: 'earlier question' },
       { role: 'assistant', content: 'earlier answer' },
     ] as never);
-    vi.mocked(SessionService.listSessions).mockResolvedValue([
-      {
-        sessionId: 'persisted-session',
-        projectPath: '/persisted-workspace',
-        firstMessageTime: new Date(0).toISOString(),
-      },
-    ] as never);
-    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue({
-      sessionId: 'persisted-session',
-      projectPath: '/persisted-workspace',
-      rootId: 'persisted-session',
-      title: 'Persisted session',
-      messageCount: 2,
-      firstMessageTime: new Date(0).toISOString(),
-      lastMessageTime: new Date(1).toISOString(),
-      hasErrors: false,
-    } as never);
 
     const app = SessionRoutes();
 
@@ -667,6 +864,7 @@ describe('SessionRoutes runtime reuse', () => {
   it('publishes a run error and releases a prepared owner on loop failure', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { Bus } = await import('../../../../src/server/bus.js');
+    mockResolvedSession('failed-prepared-run');
     agentState.chatStream.mockImplementationOnce(async function* () {
       if (Date.now() < 0) yield undefined;
       return {
@@ -706,6 +904,7 @@ describe('SessionRoutes runtime reuse', () => {
   it('publishes loop lifecycle events and preserves canonical tool failure state', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { Bus } = await import('../../../../src/server/bus.js');
+    mockResolvedSession('surface-events');
 
     agentState.chatStream.mockImplementationOnce(async function* () {
       yield { kind: 'turn_start', turn: 2, maxTurns: 8 };
@@ -1065,5 +1264,476 @@ describe('SessionRoutes runtime reuse', () => {
       'shared-session',
       '/tmp/workspace-b'
     );
+  });
+
+  it('returns exact lookup errors for SSE instead of falling back to the request directory', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    const app = SessionRoutes();
+
+    const explicitMissing = await app.request(
+      `/missing-session/events?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+    expect(explicitMissing.status).toBe(404);
+    await expect(explicitMissing.json()).resolves.toMatchObject({
+      error: { code: 'NOT_FOUND' },
+    });
+
+    const missingWithoutPath = await app.request('/missing-session/events');
+    expect(missingWithoutPath.status).toBe(404);
+    await expect(missingWithoutPath.json()).resolves.toMatchObject({
+      error: { code: 'NOT_FOUND' },
+    });
+
+    vi.mocked(SessionService.listSessions).mockResolvedValue([
+      {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-a',
+        rootId: 'shared-session',
+        title: 'Workspace A',
+        messageCount: 1,
+        firstMessageTime: new Date(0).toISOString(),
+        lastMessageTime: new Date(1).toISOString(),
+        hasErrors: false,
+      },
+      {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-b',
+        rootId: 'shared-session',
+        title: 'Workspace B',
+        messageCount: 1,
+        firstMessageTime: new Date(0).toISOString(),
+        lastMessageTime: new Date(1).toISOString(),
+        hasErrors: false,
+      },
+    ] as never);
+
+    const ambiguous = await app.request('/shared-session/events');
+    expect(ambiguous.status).toBe(409);
+    await expect(ambiguous.json()).resolves.toMatchObject({
+      error: { code: 'AMBIGUOUS_SESSION' },
+    });
+  });
+
+  it('delivers SSE events only to the collector for the exact session workspace', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (
+          sessionId === 'shared-session' &&
+          (projectPath === '/tmp/workspace-a' || projectPath === '/tmp/workspace-b')
+        ) {
+          return {
+            sessionId,
+            projectPath,
+            rootId: sessionId,
+            title: `Session ${projectPath?.slice(-1)}`,
+            messageCount: 0,
+            firstMessageTime: new Date(0).toISOString(),
+            lastMessageTime: new Date(1).toISOString(),
+            hasErrors: false,
+          } as never;
+        }
+        return undefined;
+      }
+    );
+
+    const app = SessionRoutes();
+    const firstAbortController = new AbortController();
+    const secondAbortController = new AbortController();
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      app.request(
+        `/shared-session/events?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+        {
+          signal: firstAbortController.signal,
+        }
+      ),
+      app.request(
+        `/shared-session/events?projectPath=${encodeURIComponent('/tmp/workspace-b')}`,
+        {
+          signal: secondAbortController.signal,
+        }
+      ),
+    ]);
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+
+    const firstCollector = createSseCollector(firstResponse);
+    const secondCollector = createSseCollector(secondResponse);
+
+    expect(await firstCollector.next()).toMatchObject({
+      type: 'connected',
+      properties: {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-a',
+      },
+    });
+    expect(await secondCollector.next()).toMatchObject({
+      type: 'connected',
+      properties: {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-b',
+      },
+    });
+
+    Bus.publish(
+      { sessionId: 'shared-session', projectPath: '/tmp/workspace-a' },
+      'session.status',
+      { status: 'running' }
+    );
+    Bus.publish(
+      { sessionId: 'shared-session', projectPath: '/tmp/workspace-b' },
+      'session.status',
+      { status: 'idle' }
+    );
+
+    expect(await firstCollector.next()).toMatchObject({
+      type: 'session.status',
+      properties: {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-a',
+        status: 'running',
+      },
+    });
+    expect(await secondCollector.next()).toMatchObject({
+      type: 'session.status',
+      properties: {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-b',
+        status: 'idle',
+      },
+    });
+
+    firstAbortController.abort();
+    secondAbortController.abort();
+    await Promise.all([firstCollector.cancel(), secondCollector.cancel()]);
+  });
+
+  it('rejects message posts for an explicit missing workspace without creating runtime state', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+
+    const app = SessionRoutes();
+    const response = await app.request(
+      `/missing-session/message?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'hello from nowhere' }),
+      }
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'NOT_FOUND' },
+    });
+    expect(SessionRuntime.create).not.toHaveBeenCalled();
+    expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
+    expect(Bus.publish).not.toHaveBeenCalled();
+  });
+
+  it('requires projectPath for duplicate session ids before accepting a message', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    vi.mocked(SessionService.listSessions).mockResolvedValue([
+      {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-a',
+        rootId: 'shared-session',
+        title: 'Workspace A',
+        messageCount: 1,
+        firstMessageTime: new Date(0).toISOString(),
+        lastMessageTime: new Date(1).toISOString(),
+        hasErrors: false,
+      },
+      {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-b',
+        rootId: 'shared-session',
+        title: 'Workspace B',
+        messageCount: 1,
+        firstMessageTime: new Date(0).toISOString(),
+        lastMessageTime: new Date(1).toISOString(),
+        hasErrors: false,
+      },
+    ] as never);
+
+    const app = SessionRoutes();
+    const response = await app.request('/shared-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'ambiguous' }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'AMBIGUOUS_SESSION' },
+    });
+  });
+
+  it('creates isolated runtimes for the same session id in different explicit workspaces', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (
+          sessionId === 'shared-session' &&
+          (projectPath === '/tmp/workspace-a' || projectPath === '/tmp/workspace-b')
+        ) {
+          return {
+            sessionId,
+            projectPath,
+            rootId: sessionId,
+            title: `Session ${projectPath?.slice(-1)}`,
+            messageCount: 0,
+            firstMessageTime: new Date(0).toISOString(),
+            lastMessageTime: new Date(1).toISOString(),
+            hasErrors: false,
+          } as never;
+        }
+        return undefined;
+      }
+    );
+
+    const app = SessionRoutes();
+    const firstResponse = await app.request(
+      `/shared-session/message?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'workspace a' }),
+      }
+    );
+    const secondResponse = await app.request(
+      `/shared-session/message?projectPath=${encodeURIComponent('/tmp/workspace-b')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'workspace b' }),
+      }
+    );
+
+    expect(firstResponse.status).toBe(202);
+    expect(secondResponse.status).toBe(202);
+    expect(SessionRuntime.create).toHaveBeenCalledTimes(2);
+    expect(SessionRuntime.create).toHaveBeenNthCalledWith(1, {
+      sessionId: 'shared-session',
+      workspaceRoot: '/tmp/workspace-a',
+    });
+    expect(SessionRuntime.create).toHaveBeenNthCalledWith(2, {
+      sessionId: 'shared-session',
+      workspaceRoot: '/tmp/workspace-b',
+    });
+  });
+
+  it('routes permission responses through the unified exact session resolver', async () => {
+    const permissionApp = await createPermissionsApp();
+
+    const relativeProjectPath = await permissionApp.request(
+      '/permissions/perm-1?sessionId=shared-session&projectPath=relative-path',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ approved: true }),
+      }
+    );
+    expect(relativeProjectPath.status).toBe(400);
+    await expect(relativeProjectPath.json()).resolves.toMatchObject({
+      error: { code: 'BAD_REQUEST' },
+    });
+
+    const explicitMissing = await permissionApp.request(
+      `/permissions/perm-1?sessionId=shared-session&projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ approved: true }),
+      }
+    );
+    expect(explicitMissing.status).toBe(404);
+    expect(SessionService.findSessionMetadata).toHaveBeenCalledWith(
+      'shared-session',
+      '/tmp/workspace-a'
+    );
+
+    vi.mocked(SessionService.listSessions).mockResolvedValue([
+      {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-a',
+        rootId: 'shared-session',
+        title: 'Workspace A',
+        messageCount: 1,
+        firstMessageTime: new Date(0).toISOString(),
+        lastMessageTime: new Date(1).toISOString(),
+        hasErrors: false,
+      },
+      {
+        sessionId: 'shared-session',
+        projectPath: '/tmp/workspace-b',
+        rootId: 'shared-session',
+        title: 'Workspace B',
+        messageCount: 1,
+        firstMessageTime: new Date(0).toISOString(),
+        lastMessageTime: new Date(1).toISOString(),
+        hasErrors: false,
+      },
+    ] as never);
+
+    const ambiguous = await permissionApp.request(
+      '/permissions/perm-1?sessionId=shared-session',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ approved: true }),
+      }
+    );
+    expect(ambiguous.status).toBe(409);
+    await expect(ambiguous.json()).resolves.toMatchObject({
+      error: { code: 'AMBIGUOUS_SESSION' },
+    });
+  });
+
+  it('applies permission responses only to the exact matching same-id workspace run', async () => {
+    const app = await createSessionAndPermissionApp();
+    const resolvedPermissions: string[] = [];
+
+    agentState.chatStream.mockImplementation(async function* (
+      _content,
+      chatContext: {
+        workspaceRoot: string;
+        confirmationHandler: {
+          requestConfirmation: (details: {
+            toolName: string;
+            message: string;
+            args?: Record<string, unknown>;
+          }) => Promise<{ approved: boolean }>;
+        };
+      }
+    ) {
+      await chatContext.confirmationHandler.requestConfirmation({
+        toolName: 'Read',
+        message: `Need approval for ${chatContext.workspaceRoot}`,
+        args: {},
+      });
+      if (Date.now() < 0) {
+        yield undefined;
+      }
+      resolvedPermissions.push(chatContext.workspaceRoot);
+      return {
+        success: true,
+        finalMessage: `approved ${chatContext.workspaceRoot}`,
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (
+          sessionId === 'shared-session' &&
+          (projectPath === '/tmp/workspace-a' || projectPath === '/tmp/workspace-b')
+        ) {
+          return {
+            sessionId,
+            projectPath,
+            rootId: sessionId,
+            title: `Session ${projectPath?.slice(-1)}`,
+            messageCount: 0,
+            firstMessageTime: new Date(0).toISOString(),
+            lastMessageTime: new Date(1).toISOString(),
+            hasErrors: false,
+          } as never;
+        }
+        return undefined;
+      }
+    );
+
+    const messageRequest = (projectPath: string) =>
+      app.request(
+        `/sessions/shared-session/message?projectPath=${encodeURIComponent(projectPath)}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: `run in ${projectPath}` }),
+        }
+      );
+
+    const [firstMessageResponse, secondMessageResponse] = await Promise.all([
+      messageRequest('/tmp/workspace-a'),
+      messageRequest('/tmp/workspace-b'),
+    ]);
+    expect(firstMessageResponse.status).toBe(202);
+    expect(secondMessageResponse.status).toBe(202);
+
+    await vi.waitFor(() => {
+      const permissionCalls = vi
+        .mocked(busState.publish)
+        .mock.calls.filter(([, type]) => type === 'permission.asked');
+      expect(permissionCalls).toHaveLength(2);
+    });
+
+    const permissionCalls = vi
+      .mocked(busState.publish)
+      .mock.calls.filter(([, type]) => type === 'permission.asked');
+    const firstPermissionCall = permissionCalls.find(
+      ([ref]) => ref.projectPath === '/tmp/workspace-a'
+    );
+    const secondPermissionCall = permissionCalls.find(
+      ([ref]) => ref.projectPath === '/tmp/workspace-b'
+    );
+    expect(firstPermissionCall).toBeDefined();
+    expect(secondPermissionCall).toBeDefined();
+
+    const firstPermissionId = String(firstPermissionCall?.[2].requestId);
+    const secondPermissionId = String(secondPermissionCall?.[2].requestId);
+
+    const firstPermissionResponse = await app.request(
+      `/permissions/${firstPermissionId}?sessionId=shared-session&projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ approved: true }),
+      }
+    );
+    expect(firstPermissionResponse.status).toBe(200);
+
+    await vi.waitFor(() => {
+      expect(resolvedPermissions).toEqual(['/tmp/workspace-a']);
+    });
+
+    const secondPermissionResponse = await app.request(
+      `/permissions/${secondPermissionId}?sessionId=shared-session&projectPath=${encodeURIComponent('/tmp/workspace-b')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ approved: true }),
+      }
+    );
+    expect(secondPermissionResponse.status).toBe(200);
+
+    await vi.waitFor(() => {
+      expect(resolvedPermissions).toEqual(['/tmp/workspace-a', '/tmp/workspace-b']);
+    });
+  });
+
+  it('returns a generic internal error body when an unexpected session route error occurs', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    vi.mocked(SessionService.findSessionMetadata).mockRejectedValueOnce(
+      new Error('failed to parse /secret/path.jsonl')
+    );
+
+    const app = SessionRoutes();
+    const response = await app.request(
+      `/secretive/events?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Internal server error',
+      },
+    });
   });
 });
