@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.5] - 2026-08-03
+
+### ✨ 新功能
+
+- 普通首条 prompt 现在会在模型调用和 `@` 文件展开前写入 session-owned durable inbox，并原子取得 turn ownership
+- direct input 使用稳定 `inboxMessageId` 关联 sidecar、JSONL transcript、Web 事件与完成 ACK，崩溃恢复时保持幂等
+- Web message POST 按 session 串行提交，只有在 inbox `fsync` 完成后才返回 `202`；CLI、Headless 与 ACP 通过共享 Agent 入口获得相同语义
+- 已存在 durable input 时，新 prompt 会按 FIFO 进入 pending-only turn，不会插队或启动并发 run
+
+### 🐛 问题修复
+
+- 修复首条 Web 请求在返回 `202` 后、写入 transcript 前崩溃会永久丢失的问题
+- 修复失败的 durable turn 在同一次 run 中最多自动重试 20 次的问题；失败输入现在保留 sidecar，等待显式恢复
+- Web loop 失败现在发布 `session.error` 并释放 prepared owner，不再错误发布 `session.completed`
+- 为 LLM compaction 增加 2-turn hysteresis，并保留 95% 紧急水位绕过，防止静态 system/tool 开销导致每轮重复压缩
+
+### ✅ 测试相关
+
+- 新增 direct prepare/claim、并发 owner、FIFO backlog、pre-model persistence failure、Web `202` 时序和失败 owner 释放测试
+- Production qualification 15/15、单元测试 1,510 项、Web 测试 30 项、真实 API 轨迹 66/66 通过
+- DeepSeek v4 Flash/Pro 完整资格通过；Claude Opus 4.8 与 GPT 5.5 的 core、Web、ACP durable initial recovery 轨迹通过
+
 ## [0.7.4] - 2026-08-03
 
 ### ✨ 新功能
