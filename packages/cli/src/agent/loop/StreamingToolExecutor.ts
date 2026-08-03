@@ -270,6 +270,7 @@ export class StreamingToolExecutor {
       const combinedSignal = combineAbortSignals(...signalsToMerge);
       const execContext: ExecutionContext = {
         ...this.execContext,
+        messageId: toolUseUuid ?? toolCall.id,
         signal: combinedSignal,
       };
 

@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -15,6 +16,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { SnapshotManager } from '../../../src/tools/builtin/file/SnapshotManager.js';
 import {
   buildRealApiConfig,
   parseHeadlessJsonl,
@@ -96,6 +98,48 @@ function createCodingTaskWorkspace(): string {
       "test('add returns the sum', () => {",
       '  assert.equal(add(2, 3), 5);',
       '  assert.equal(add(-2, 3), 1);',
+      '});',
+      '',
+    ].join('\n')
+  );
+
+  runGit(workspace, ['init', '-q']);
+  runGit(workspace, ['add', '.']);
+  runGit(workspace, ['commit', '-qm', 'fixture']);
+  return workspace;
+}
+
+function createRewindTaskWorkspace(): string {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-rewind-'));
+  mkdirSync(path.join(workspace, 'src'), { recursive: true });
+  mkdirSync(path.join(workspace, 'test'), { recursive: true });
+  writeFileSync(
+    path.join(workspace, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'blade-real-api-rewind-task',
+        private: true,
+        type: 'module',
+        scripts: { test: 'node --test' },
+      },
+      null,
+      2
+    )
+  );
+  writeFileSync(
+    path.join(workspace, 'src', 'mode.js'),
+    "export const mode = 'baseline';\n"
+  );
+  writeFileSync(
+    path.join(workspace, 'test', 'mode.test.js'),
+    [
+      "import test from 'node:test';",
+      "import assert from 'node:assert/strict';",
+      "import { mode } from '../src/mode.js';",
+      '',
+      "test('mode remains a non-empty string', () => {",
+      "  assert.equal(typeof mode, 'string');",
+      '  assert.ok(mode.length > 0);',
       '});',
       '',
     ].join('\n')
@@ -810,6 +854,16 @@ function createCodingTaskPrompt(): string {
   ].join('\n');
 }
 
+function createRewindTaskPrompt(): string {
+  return [
+    'Work on this repository as a coding agent.',
+    'Use Read to inspect src/mode.js before editing it.',
+    "Use Edit to replace the exact value 'baseline' with 'rewind-ready'.",
+    'Modify only src/mode.js and do not create files.',
+    'Then use Bash to run npm test and finish only when it passes.',
+  ].join('\n');
+}
+
 function createCompactionContinuationPrompt(): string {
   const archivedContext = Array.from(
     { length: 1_000 },
@@ -959,6 +1013,84 @@ const enabled = isRealApiTestEnabled() && apiKey.length > 0;
 
 describe.skipIf(!enabled)('Blade coding task (real API)', () => {
   describe.each(models)('%s', (model) => {
+    it('persists a real Edit snapshot and rewinds it after runtime restart', async () => {
+      if (!existsSync(cliEntry)) {
+        throw new Error(
+          `Missing ${cliEntry}; run "bun run build:cli" before real API tests`
+        );
+      }
+
+      const workspace = createRewindTaskWorkspace();
+      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-rewind-home-'));
+      const sessionId = `real-api-rewind-${model}`;
+      const targetFile = path.join(workspace, 'src', 'mode.js');
+      const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+
+      try {
+        const result = await runBladeInvocation(workspace, home, model, {
+          prompt: createRewindTaskPrompt(),
+          sessionId,
+          maxTurns: 8,
+        });
+        const parsed = parseHeadlessJsonl(result.stdout);
+        const toolStarts = parsed.events
+          .filter((event) => event.type === 'tool_start')
+          .map((event) => event.tool_name);
+
+        expect(result.error).toBeUndefined();
+        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(parsed.nonJsonLines).toEqual([]);
+        expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
+        expect(toolStarts).toContain('Read');
+        expect(toolStarts).toContain('Edit');
+        expect(toolStarts).toContain('Bash');
+        expect(readFileSync(targetFile, 'utf8')).toContain("mode = 'rewind-ready'");
+        expect(getChangedPaths(workspace)).toEqual(['src/mode.js']);
+
+        process.env.BLADE_STORAGE_ROOT = path.join(home, '.blade');
+        const restartedManager = new SnapshotManager({ sessionId });
+        await restartedManager.initialize();
+        const snapshots = await restartedManager.listSnapshots(targetFile);
+        const snapshotSessionDir = path.join(home, '.blade', 'file-history', sessionId);
+        const snapshotFiles = existsSync(snapshotSessionDir)
+          ? readdirSync(snapshotSessionDir)
+          : [];
+        expect(
+          snapshots,
+          JSON.stringify({
+            snapshotFiles,
+            stderr: redactSecrets(result.stderr, [apiKey]),
+          })
+        ).toHaveLength(1);
+        expect(snapshots[0]).toMatchObject({
+          filePath: realpathSync(targetFile),
+          messageId: expect.any(String),
+          version: 1,
+        });
+
+        await restartedManager.rewindLatest(targetFile);
+        expect(readFileSync(targetFile, 'utf8')).toBe(
+          "export const mode = 'baseline';\n"
+        );
+        expect(getChangedPaths(workspace)).toEqual([]);
+
+        const testResult = spawnSync('npm', ['test', '--', '--test-reporter=dot'], {
+          cwd: workspace,
+          encoding: 'utf8',
+        });
+        expect(testResult.status, testResult.stderr || testResult.stdout).toBe(0);
+        expect(`${result.stdout}\n${result.stderr}`).not.toContain(apiKey);
+      } finally {
+        if (previousStorageRoot === undefined) {
+          delete process.env.BLADE_STORAGE_ROOT;
+        } else {
+          process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+        }
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }, 300_000);
+
     it('fixes a bug through the real CLI agent loop and verifies the repository', async () => {
       if (!existsSync(cliEntry)) {
         throw new Error(

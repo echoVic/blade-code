@@ -175,6 +175,20 @@ describe('StreamingToolExecutor', () => {
   // getRemainingResults
   // ----------------------------------------------------------------
   describe('getRemainingResults', () => {
+    it('passes the tool call ID as the execution message ID', async () => {
+      executor.addTool(makeToolCall('edit-call-1', 'Edit'), {
+        file_path: '/tmp/example.ts',
+      });
+
+      await collectAsync(executor.getRemainingResults());
+
+      expect(pipeline.execute).toHaveBeenCalledWith(
+        'Edit',
+        { file_path: '/tmp/example.ts' },
+        expect.objectContaining({ messageId: 'edit-call-1' })
+      );
+    });
+
     it('yields results in insertion order for allowlisted tools', async () => {
       pipeline.execute
         .mockResolvedValueOnce(makeSuccessResult('r1'))
@@ -422,6 +436,11 @@ describe('StreamingToolExecutor', () => {
         'msg-uuid',
         undefined
       );
+      expect(pipeline.execute).toHaveBeenCalledWith(
+        'Read',
+        { file_path: '/a' },
+        expect.objectContaining({ messageId: 'uuid-123' })
+      );
       expect(collected[0].toolUseUuid).toBe('uuid-123');
     });
 
@@ -448,6 +467,11 @@ describe('StreamingToolExecutor', () => {
       expect(collected).toHaveLength(1);
       expect(collected[0].result.success).toBe(true);
       expect(collected[0].toolUseUuid).toBeNull();
+      expect(pipeline.execute).toHaveBeenCalledWith(
+        'Read',
+        {},
+        expect.objectContaining({ messageId: 'ctx2' })
+      );
     });
 
     it('skips saveToolUse when contextMgr is not provided', async () => {

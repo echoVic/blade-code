@@ -23,7 +23,7 @@ import {
   whitespaceNormalizeMatch,
 } from './editCorrector.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
-import { SnapshotManager } from './SnapshotManager.js';
+import { SnapshotManager, type SnapshotMetadata } from './SnapshotManager.js';
 
 /**
  * EditTool - File edit tool
@@ -136,18 +136,6 @@ export const editTool = createTool({
               details: { externalModification: externalModCheck.message },
             },
           };
-        }
-      }
-
-      // 创建快照（如果有 sessionId 和 messageId）
-      if (sessionId && messageId) {
-        try {
-          const snapshotManager = new SnapshotManager({ sessionId });
-          await snapshotManager.initialize();
-          await snapshotManager.createSnapshot(file_path, messageId);
-        } catch (error) {
-          console.warn('[EditTool] 创建快照失败:', error);
-          // 快照失败不中断编辑操作，只记录警告
         }
       }
 
@@ -286,11 +274,51 @@ export const editTool = createTool({
         signal.throwIfAborted();
       }
 
+      let snapshotManager: SnapshotManager | undefined;
+      let snapshotMetadata: SnapshotMetadata | undefined;
+      let snapshotCreated = false;
+      if (!useAcp && sessionId && messageId) {
+        try {
+          snapshotManager = new SnapshotManager({ sessionId });
+          await snapshotManager.initialize();
+          snapshotMetadata = await snapshotManager.createSnapshot(file_path, messageId);
+        } catch (error) {
+          console.warn('[EditTool] 创建快照失败:', error);
+          snapshotManager = undefined;
+          snapshotMetadata = undefined;
+        }
+      }
+
       // 写入文件（统一使用 FileSystemService）
       if (useAcp) {
         updateOutput?.('通过 IDE 写入文件...');
       }
-      await fsService.writeTextFile(file_path, newContent);
+      try {
+        await fsService.writeTextFile(file_path, newContent);
+      } catch (error) {
+        if (snapshotManager && snapshotMetadata) {
+          await snapshotManager
+            .discardSnapshot(file_path, snapshotMetadata)
+            .catch((cleanupError) =>
+              console.warn('[EditTool] 丢弃未完成快照失败:', cleanupError)
+            );
+        }
+        throw error;
+      }
+
+      if (snapshotManager && snapshotMetadata) {
+        try {
+          await snapshotManager.recordPostEditState(file_path, snapshotMetadata);
+          snapshotCreated = true;
+        } catch (error) {
+          console.warn('[EditTool] 完成快照失败:', error);
+          await snapshotManager
+            .discardSnapshot(file_path, snapshotMetadata)
+            .catch((cleanupError) =>
+              console.warn('[EditTool] 丢弃未完成快照失败:', cleanupError)
+            );
+        }
+      }
 
       // 更新文件访问记录（记录编辑操作）
       if (sessionId) {
@@ -329,7 +357,7 @@ export const editTool = createTool({
         size_diff: newContent.length - content.length,
         last_modified:
           stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
-        snapshot_created: !!(sessionId && messageId),
+        snapshot_created: snapshotCreated,
         session_id: sessionId,
         message_id: messageId,
         diff_snippet: diffSnippet,

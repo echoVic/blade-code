@@ -123,6 +123,20 @@ describe('SnapshotManager', () => {
   });
 
   describe('列出快照', () => {
+    it('应该把符号链接别名和真实路径识别为同一文件', async () => {
+      const realDir = path.join(tempDir, 'real');
+      const aliasDir = path.join(tempDir, 'alias');
+      await fs.mkdir(realDir);
+      await fs.symlink(realDir, aliasDir, 'dir');
+      const realFile = path.join(realDir, 'linked.txt');
+      const aliasFile = path.join(aliasDir, 'linked.txt');
+      await fs.writeFile(realFile, 'linked content', 'utf-8');
+
+      await snapshotManager.createSnapshot(aliasFile, messageId);
+
+      await expect(snapshotManager.listSnapshots(realFile)).resolves.toHaveLength(1);
+    });
+
     it('应该列出指定文件的所有快照', async () => {
       await snapshotManager.createSnapshot(testFile, 'msg-001');
       await snapshotManager.createSnapshot(testFile, 'msg-002');
@@ -140,6 +154,98 @@ describe('SnapshotManager', () => {
   });
 
   describe('恢复快照', () => {
+    it('应该持久删除未完成快照', async () => {
+      const metadata = await snapshotManager.createSnapshot(testFile, messageId);
+
+      await snapshotManager.discardSnapshot(testFile, metadata);
+
+      const restartedManager = new SnapshotManager({ sessionId });
+      await restartedManager.initialize();
+      await expect(restartedManager.listSnapshots(testFile)).resolves.toHaveLength(0);
+      await expect(
+        fs.stat(
+          path.join(
+            snapshotManager.getSnapshotDir(),
+            `${metadata.backupFileName}@v${metadata.version}`
+          )
+        )
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('应该在管理器重建后删除由 Blade 新建的文件', async () => {
+      const createdFile = path.join(tempDir, 'created.txt');
+      const metadata = await snapshotManager.createSnapshot(createdFile, messageId);
+
+      await fs.writeFile(createdFile, 'Created by Blade', 'utf-8');
+      await snapshotManager.recordPostEditState(createdFile, metadata);
+
+      const restartedManager = new SnapshotManager({ sessionId });
+      await restartedManager.initialize();
+      await restartedManager.rewindLatest(createdFile);
+
+      await expect(fs.stat(createdFile)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(restartedManager.listSnapshots(createdFile)).resolves.toHaveLength(
+        0
+      );
+    });
+
+    it('应该在管理器重建后恢复 Blade 最后一次写入前的内容', async () => {
+      const metadata = await snapshotManager.createSnapshot(testFile, messageId);
+
+      await fs.writeFile(testFile, 'Modified content', 'utf-8');
+      await snapshotManager.recordPostEditState(testFile, metadata);
+
+      const restartedManager = new SnapshotManager({ sessionId });
+      await restartedManager.initialize();
+
+      const snapshots = await restartedManager.listSnapshots(testFile);
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0]).toMatchObject({
+        filePath: await fs.realpath(testFile),
+        messageId,
+        version: 1,
+      });
+
+      await restartedManager.rewindLatest(testFile);
+
+      await expect(fs.readFile(testFile, 'utf-8')).resolves.toBe('Original content');
+      await expect(restartedManager.listSnapshots(testFile)).resolves.toHaveLength(0);
+    });
+
+    it('文件在 Blade 编辑后再次变化时应该拒绝覆盖', async () => {
+      const metadata = await snapshotManager.createSnapshot(testFile, messageId);
+
+      await fs.writeFile(testFile, 'Blade content', 'utf-8');
+      await snapshotManager.recordPostEditState(testFile, metadata);
+      await fs.writeFile(testFile, 'User content', 'utf-8');
+
+      await expect(snapshotManager.rewindLatest(testFile)).rejects.toThrow(
+        '文件在 Blade 编辑后已被修改'
+      );
+      await expect(fs.readFile(testFile, 'utf-8')).resolves.toBe('User content');
+      await expect(snapshotManager.listSnapshots(testFile)).resolves.toHaveLength(1);
+    });
+
+    it('应该按栈顺序逐次回退同一文件的多次编辑', async () => {
+      const first = await snapshotManager.createSnapshot(testFile, 'msg-001');
+      await fs.writeFile(testFile, 'First edit', 'utf-8');
+      await snapshotManager.recordPostEditState(testFile, first);
+
+      const second = await snapshotManager.createSnapshot(testFile, 'msg-002');
+      await fs.writeFile(testFile, 'Second edit', 'utf-8');
+      await snapshotManager.recordPostEditState(testFile, second);
+
+      const restartedManager = new SnapshotManager({ sessionId });
+      await restartedManager.initialize();
+
+      await restartedManager.rewindLatest(testFile);
+      await expect(fs.readFile(testFile, 'utf-8')).resolves.toBe('First edit');
+
+      await restartedManager.rewindLatest(testFile);
+      await expect(fs.readFile(testFile, 'utf-8')).resolves.toBe('Original content');
+      await expect(restartedManager.listSnapshots(testFile)).resolves.toHaveLength(0);
+    });
+
     it('应该成功恢复文件快照', async () => {
       await snapshotManager.createSnapshot(testFile, messageId);
 
@@ -178,7 +284,7 @@ describe('SnapshotManager', () => {
       await snapshotManager.cleanup(2);
 
       const files = await fs.readdir(snapshotManager.getSnapshotDir());
-      expect(files.length).toBeLessThanOrEqual(2);
+      expect(files.filter((file) => file !== 'manifest.json')).toHaveLength(2);
     });
   });
 

@@ -14,7 +14,7 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/zodSchemas.js';
 import { generateDiffSnippet } from './diffUtils.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
-import { SnapshotManager } from './SnapshotManager.js';
+import { SnapshotManager, type SnapshotMetadata } from './SnapshotManager.js';
 
 /**
  * WriteTool - File writer
@@ -134,58 +134,85 @@ export const writeTool = createTool({
         }
       }
 
-      // 创建快照（如果文件存在且有 sessionId 和 messageId）
       let snapshotCreated = false;
-      if (fileExists && sessionId && messageId) {
-        try {
-          const snapshotManager = new SnapshotManager({ sessionId });
-          await snapshotManager.initialize();
-          await snapshotManager.createSnapshot(file_path, messageId);
-          snapshotCreated = true;
-        } catch (error) {
-          console.warn('[WriteTool] 创建快照失败:', error);
-          // 快照失败不中断写入操作
-        }
-      }
+      let snapshotManager: SnapshotManager | undefined;
+      let snapshotMetadata: SnapshotMetadata | undefined;
 
       if (typeof signal.throwIfAborted === 'function') {
         signal.throwIfAborted();
       }
 
-      // 根据编码写入文件
-      if (encoding === 'utf8') {
-        // 文本文件：使用 FileSystemService 写入
-        if (useAcp) {
-          updateOutput?.('通过 IDE 写入文件...');
+      if (!useAcp && sessionId && messageId) {
+        try {
+          snapshotManager = new SnapshotManager({ sessionId });
+          await snapshotManager.initialize();
+          snapshotMetadata = await snapshotManager.createSnapshot(file_path, messageId);
+        } catch (error) {
+          console.warn('[WriteTool] 创建快照失败:', error);
+          snapshotManager = undefined;
+          snapshotMetadata = undefined;
         }
-        await fsService.writeTextFile(file_path, content);
-      } else {
-        // 二进制文件写入
-        // [WARN] ACP 模式下不支持二进制写入，必须明确失败
-        // 否则会写到本地磁盘而非远端，造成数据丢失/错位
-        if (useAcp) {
-          return {
-            success: false,
-            llmContent: `Binary file writes are not supported in ACP mode. The IDE only supports text file operations. Please use encoding='utf8' for text files, or ask the user to write the file manually.`,
-            error: {
-              type: ToolErrorType.VALIDATION_ERROR,
-              message: 'Binary writes not supported in ACP mode',
-            },
-          };
-        }
+      }
 
-        // 本地模式：正常写入二进制
-        let writeBuffer: Buffer;
-
-        if (encoding === 'base64') {
-          writeBuffer = Buffer.from(content, 'base64');
-        } else if (encoding === 'binary') {
-          writeBuffer = Buffer.from(content, 'binary');
+      try {
+        // 根据编码写入文件
+        if (encoding === 'utf8') {
+          // 文本文件：使用 FileSystemService 写入
+          if (useAcp) {
+            updateOutput?.('通过 IDE 写入文件...');
+          }
+          await fsService.writeTextFile(file_path, content);
         } else {
-          writeBuffer = Buffer.from(content, 'utf8');
-        }
+          // 二进制文件写入
+          // [WARN] ACP 模式下不支持二进制写入，必须明确失败
+          // 否则会写到本地磁盘而非远端，造成数据丢失/错位
+          if (useAcp) {
+            return {
+              success: false,
+              llmContent: `Binary file writes are not supported in ACP mode. The IDE only supports text file operations. Please use encoding='utf8' for text files, or ask the user to write the file manually.`,
+              error: {
+                type: ToolErrorType.VALIDATION_ERROR,
+                message: 'Binary writes not supported in ACP mode',
+              },
+            };
+          }
 
-        await fs.writeFile(file_path, writeBuffer);
+          // 本地模式：正常写入二进制
+          let writeBuffer: Buffer;
+
+          if (encoding === 'base64') {
+            writeBuffer = Buffer.from(content, 'base64');
+          } else if (encoding === 'binary') {
+            writeBuffer = Buffer.from(content, 'binary');
+          } else {
+            writeBuffer = Buffer.from(content, 'utf8');
+          }
+
+          await fs.writeFile(file_path, writeBuffer);
+        }
+      } catch (error) {
+        if (snapshotManager && snapshotMetadata) {
+          await snapshotManager
+            .discardSnapshot(file_path, snapshotMetadata)
+            .catch((cleanupError) =>
+              console.warn('[WriteTool] 丢弃未完成快照失败:', cleanupError)
+            );
+        }
+        throw error;
+      }
+
+      if (snapshotManager && snapshotMetadata) {
+        try {
+          await snapshotManager.recordPostEditState(file_path, snapshotMetadata);
+          snapshotCreated = true;
+        } catch (error) {
+          console.warn('[WriteTool] 完成快照失败:', error);
+          await snapshotManager
+            .discardSnapshot(file_path, snapshotMetadata)
+            .catch((cleanupError) =>
+              console.warn('[WriteTool] 丢弃未完成快照失败:', cleanupError)
+            );
+        }
       }
 
       // 更新文件访问记录（记录写入操作）
