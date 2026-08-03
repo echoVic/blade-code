@@ -108,6 +108,7 @@ describe('AcpSession', () => {
   let session: AcpSession;
 
   beforeEach(() => {
+    runtimeState.runtime.dispose.mockReset().mockResolvedValue(undefined);
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     // 创建 mock 连接
     mockConnection = createMockACPClient();
@@ -568,16 +569,149 @@ describe('AcpSession', () => {
   });
 
   describe('destroy', () => {
-    it('应该销毁会话', async () => {
+    it('应该完整清理会话且二次 destroy 不重复资源 cleanup', async () => {
       await session.initialize();
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
+      };
+      const mockAgent = agentModule._getMockAgentInstance();
+      const cancel = vi.spyOn(session, 'cancel');
+      await session.destroy();
       await session.destroy();
 
-      // 验证 ACP 服务上下文已销毁
       const { AcpServiceContext } = await import(
         '../../../../src/acp/AcpServiceContext.js'
       );
-      expect(AcpServiceContext.destroySession).toHaveBeenCalledWith('test-session-id');
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
       expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledWith('test-session-id');
+      await expect(session.setModel('gpt-4')).rejects.toThrow(
+        'Session not initialized'
+      );
+    });
+
+    it.each([
+      {
+        name: 'Agent destroy 失败',
+        agentError: new Error('agent destroy failed'),
+        runtimeError: undefined,
+        expectedError: 'agent destroy failed',
+      },
+      {
+        name: 'runtime dispose 失败',
+        agentError: undefined,
+        runtimeError: new Error('runtime dispose failed'),
+        expectedError: 'runtime dispose failed',
+      },
+      {
+        name: 'Agent 与 runtime 都失败',
+        agentError: new Error('agent destroy failed first'),
+        runtimeError: new Error('runtime dispose failed second'),
+        expectedError: 'agent destroy failed first',
+      },
+    ])('$name 时仍应该清理全部资源并由第一个错误获胜', async ({
+      agentError,
+      runtimeError,
+      expectedError,
+    }) => {
+      await session.initialize();
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
+      };
+      const mockAgent = agentModule._getMockAgentInstance();
+      if (agentError) mockAgent.destroy = vi.fn().mockRejectedValueOnce(agentError);
+      if (runtimeError) {
+        runtimeState.runtime.dispose.mockRejectedValueOnce(runtimeError);
+      }
+
+      await expect(session.destroy()).rejects.toThrow(expectedError);
+
+      const { AcpServiceContext } = await import(
+        '../../../../src/acp/AcpServiceContext.js'
+      );
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+      await expect(session.setModel('gpt-4')).rejects.toThrow(
+        'Session not initialized'
+      );
+
+      await expect(session.destroy()).resolves.toBeUndefined();
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancel 失败时仍应该清理 Agent、runtime 与 ACP context', async () => {
+      await session.initialize();
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
+      };
+      const mockAgent = agentModule._getMockAgentInstance();
+      vi.spyOn(session, 'cancel').mockImplementationOnce(() => {
+        throw new Error('cancel failed first');
+      });
+
+      await expect(session.destroy()).rejects.toThrow('cancel failed first');
+
+      const { AcpServiceContext } = await import(
+        '../../../../src/acp/AcpServiceContext.js'
+      );
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+    });
+
+    it('ACP context destroy 失败时应该在其余 cleanup 后重抛且保持幂等', async () => {
+      await session.initialize();
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
+      };
+      const mockAgent = agentModule._getMockAgentInstance();
+      const { AcpServiceContext } = await import(
+        '../../../../src/acp/AcpServiceContext.js'
+      );
+      vi.mocked(AcpServiceContext.destroySession).mockImplementationOnce(() => {
+        throw new Error('context destroy failed');
+      });
+
+      await expect(session.destroy()).rejects.toThrow('context destroy failed');
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+
+      await expect(session.destroy()).resolves.toBeUndefined();
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+    });
+
+    it('runtime 创建失败的半初始化会话仍应该清理 ACP context', async () => {
+      const { SessionRuntime } = await import(
+        '../../../../src/agent/runtime/SessionRuntime.js'
+      );
+      vi.mocked(SessionRuntime.create).mockRejectedValueOnce(
+        new Error('runtime create failed')
+      );
+
+      await expect(session.initialize()).rejects.toThrow('runtime create failed');
+      await session.destroy();
+
+      const { AcpServiceContext } = await import(
+        '../../../../src/acp/AcpServiceContext.js'
+      );
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).not.toHaveBeenCalled();
     });
 
     it('应该取消挂起的提示', async () => {
@@ -596,15 +730,6 @@ describe('AcpSession', () => {
       // 等待提示完成（应该被取消）
       const result = await promptPromise;
       expect(result.stopReason).toBe('cancelled');
-    });
-
-    it('应该销毁 Agent', async () => {
-      await session.initialize();
-      await session.destroy();
-
-      // 简单验证 destroy 方法不抛出错误
-      // 具体的 Agent 实例检查比较复杂，涉及 mock 时机问题
-      expect(true).toBe(true);
     });
   });
 

@@ -3,6 +3,8 @@
  */
 
 import {
+  type ForkSessionRequest,
+  type ListSessionsRequest,
   type LoadSessionRequest,
   type LoadSessionResponse,
   PROTOCOL_VERSION,
@@ -13,10 +15,17 @@ import { AcpSession } from '../../../../src/acp/Session.js';
 import { createMockACPClient } from '../../../support/mocks/mockACPClient.js';
 
 const sessionServiceMocks = vi.hoisted(() => ({
+  deleteSession: vi.fn(),
+  forkSession: vi.fn(),
+  listSessionPage: vi.fn(),
   loadSession: vi.fn(),
 }));
 const acpSessionMocks = vi.hoisted(() => ({
+  destroyErrors: [] as Error[],
   nextInitializeError: null as Error | null,
+}));
+const mcpRegistryMocks = vi.hoisted(() => ({
+  disconnectAll: vi.fn().mockResolvedValue(undefined),
 }));
 
 // 获取创建的 session 实例的辅助函数
@@ -46,7 +55,10 @@ vi.mock('../../../../src/acp/Session.js', () => {
       cancel: vi.fn(),
       setMode: vi.fn().mockResolvedValue(undefined),
       setModel: vi.fn().mockResolvedValue(undefined),
-      destroy: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn().mockImplementation(async () => {
+        const error = acpSessionMocks.destroyErrors.shift();
+        if (error) throw error;
+      }),
       replayHistory: vi.fn().mockResolvedValue(undefined),
       sendAvailableCommandsDelayed: vi.fn(),
       options,
@@ -86,7 +98,16 @@ vi.mock('../../../../src/agent/Agent.js', () => ({
 
 vi.mock('../../../../src/services/SessionService.js', () => ({
   SessionService: {
+    deleteSession: sessionServiceMocks.deleteSession,
+    forkSession: sessionServiceMocks.forkSession,
+    listSessionPage: sessionServiceMocks.listSessionPage,
     loadSession: sessionServiceMocks.loadSession,
+  },
+}));
+
+vi.mock('../../../../src/mcp/McpRegistry.js', () => ({
+  McpRegistry: {
+    getInstance: vi.fn(() => mcpRegistryMocks),
   },
 }));
 
@@ -135,7 +156,13 @@ describe('BladeAgent', () => {
 
     // 创建 BladeAgent 实例
     agent = new BladeAgent(mockConnection as any);
+    sessionServiceMocks.listSessionPage.mockResolvedValue({ sessions: [] });
+    sessionServiceMocks.forkSession.mockResolvedValue({
+      sessionId: 'forked-session',
+      messages: [],
+    });
     sessionServiceMocks.loadSession.mockResolvedValue([]);
+    acpSessionMocks.destroyErrors = [];
     acpSessionMocks.nextInitializeError = null;
   });
 
@@ -175,6 +202,10 @@ describe('BladeAgent', () => {
         sse: true,
       });
       expect(agentCapabilities.loadSession).toBe(true);
+      expect(agentCapabilities.sessionCapabilities).toEqual({
+        list: {},
+        fork: {},
+      });
     });
 
     it('应该保存客户端能力', async () => {
@@ -194,6 +225,223 @@ describe('BladeAgent', () => {
       // 通过检查后续行为来验证客户端能力已保存
       const response = await agent.initialize(params);
       expect(response.agentCapabilities).toBeDefined();
+    });
+  });
+
+  describe('unstable_listSessions', () => {
+    it('应该分页列出非 subagent 会话并映射 ACP metadata', async () => {
+      sessionServiceMocks.listSessionPage.mockResolvedValueOnce({
+        sessions: [
+          {
+            sessionId: 'persisted-session',
+            projectPath: '/tmp/project',
+            title: 'Persisted title',
+            lastMessageTime: '2026-08-04T01:02:03.000Z',
+          },
+          {
+            sessionId: 'untitled-session',
+            projectPath: '/tmp/project',
+            lastMessageTime: '2026-08-04T01:02:04.000Z',
+          },
+        ],
+        nextCursor: 'next-page',
+      });
+
+      const response = await agent.unstable_listSessions({
+        cwd: '/tmp/project',
+        cursor: 'current-page',
+      });
+
+      expect(sessionServiceMocks.listSessionPage).toHaveBeenCalledWith({
+        cwd: '/tmp/project',
+        cursor: 'current-page',
+        limit: 50,
+        includeSubagents: false,
+      });
+      expect(response).toEqual({
+        sessions: [
+          {
+            sessionId: 'persisted-session',
+            cwd: '/tmp/project',
+            title: 'Persisted title',
+            updatedAt: '2026-08-04T01:02:03.000Z',
+          },
+          {
+            sessionId: 'untitled-session',
+            cwd: '/tmp/project',
+            title: null,
+            updatedAt: '2026-08-04T01:02:04.000Z',
+          },
+        ],
+        nextCursor: 'next-page',
+      });
+    });
+
+    it('应该把 null filter 转为 undefined', async () => {
+      await agent.unstable_listSessions({ cwd: null, cursor: null });
+
+      expect(sessionServiceMocks.listSessionPage).toHaveBeenCalledWith({
+        cwd: undefined,
+        cursor: undefined,
+        limit: 50,
+        includeSubagents: false,
+      });
+    });
+
+    it('应该在读取 catalog 前拒绝相对 cwd', async () => {
+      const request: ListSessionsRequest = { cwd: 'relative/project' };
+
+      await expect(agent.unstable_listSessions(request)).rejects.toThrow(
+        'ACP session list cwd must be absolute'
+      );
+      expect(sessionServiceMocks.listSessionPage).not.toHaveBeenCalled();
+    });
+
+    it('应该原样传播 malformed cursor 错误且不注册会话', async () => {
+      const cursorError = new Error('Invalid session cursor');
+      sessionServiceMocks.listSessionPage.mockRejectedValueOnce(cursorError);
+
+      await expect(
+        agent.unstable_listSessions({ cursor: 'not-base64url-json' })
+      ).rejects.toBe(cursorError);
+      expect(getCreatedSessions()).toHaveLength(0);
+    });
+  });
+
+  describe('unstable_forkSession', () => {
+    const request: ForkSessionRequest = {
+      sessionId: 'parent-session',
+      cwd: '/tmp/project',
+      mcpServers: [],
+    };
+
+    it('应该用 durable child history 初始化且不回放历史', async () => {
+      const messages = [
+        { role: 'user' as const, content: 'Remember the fork context' },
+        { role: 'assistant' as const, content: 'Context remembered' },
+      ];
+      sessionServiceMocks.forkSession.mockResolvedValueOnce({
+        sessionId: 'forked-session',
+        messages,
+      });
+
+      const response = await agent.unstable_forkSession(request);
+
+      expect(sessionServiceMocks.forkSession).toHaveBeenCalledWith('parent-session', {
+        sourceProjectPath: '/tmp/project',
+        targetProjectPath: '/tmp/project',
+      });
+      expect(AcpSession).toHaveBeenCalledWith(
+        'forked-session',
+        '/tmp/project',
+        mockConnection,
+        undefined,
+        { initialMessages: messages, mcpServers: [] }
+      );
+      const child = getCreatedSessions()[0];
+      expect(child.initialize).toHaveBeenCalledTimes(1);
+      expect(child.replayHistory).not.toHaveBeenCalled();
+      expect(child.sendAvailableCommandsDelayed).toHaveBeenCalledTimes(1);
+      expect(response).toMatchObject({
+        sessionId: 'forked-session',
+        modes: { currentModeId: 'default' },
+        models: { currentModelId: 'gpt-4' },
+      });
+
+      await agent.prompt({
+        sessionId: 'forked-session',
+        prompt: [{ type: 'text', text: 'Continue in the child' }],
+      });
+      expect(child.prompt).toHaveBeenCalledTimes(1);
+    });
+
+    it('应该让 fork 与 new 返回完全相同的 setup', async () => {
+      const created = await agent.newSession({
+        cwd: '/tmp/project',
+        mcpServers: [],
+      });
+      const forked = await agent.unstable_forkSession(request);
+      const { sessionId: _createdId, ...createdSetup } = created;
+      const { sessionId: _forkedId, ...forkedSetup } = forked;
+
+      expect(forkedSetup).toEqual(createdSetup);
+    });
+
+    it('应该在初始化失败时销毁临时 child 并保留 durable transcript', async () => {
+      const initializeError = new Error('fork runtime initialization failed');
+      acpSessionMocks.nextInitializeError = initializeError;
+
+      await expect(agent.unstable_forkSession(request)).rejects.toBe(initializeError);
+
+      const child = getCreatedSessions()[0];
+      expect(child.destroy).toHaveBeenCalledTimes(1);
+      expect(sessionServiceMocks.deleteSession).not.toHaveBeenCalled();
+      await expect(
+        agent.prompt({
+          sessionId: 'forked-session',
+          prompt: [{ type: 'text', text: 'must not be registered' }],
+        })
+      ).rejects.toThrow('Session not found: forked-session');
+    });
+
+    it('cleanup 失败时仍应该抛出原始 initialize error', async () => {
+      const initializeError = new Error('fork initialize failed first');
+      acpSessionMocks.nextInitializeError = initializeError;
+      acpSessionMocks.destroyErrors = [new Error('temporary cleanup failed')];
+      sessionServiceMocks.forkSession.mockResolvedValueOnce({
+        sessionId: 'cleanup-failure-child',
+        messages: [],
+      });
+
+      await expect(agent.unstable_forkSession(request)).rejects.toBe(initializeError);
+      expect(sessionServiceMocks.deleteSession).not.toHaveBeenCalled();
+    });
+
+    it('应该在 fork catalog 调用前拒绝相对 cwd', async () => {
+      await expect(
+        agent.unstable_forkSession({ ...request, cwd: 'relative/project' })
+      ).rejects.toThrow('ACP session fork cwd must be absolute');
+      expect(sessionServiceMocks.forkSession).not.toHaveBeenCalled();
+      expect(getCreatedSessions()).toHaveLength(0);
+    });
+
+    it.each([
+      ['/tmp/wrong-project', 'Session forks must stay in the source workspace'],
+      ['/tmp/project', 'Session source not found: missing-session'],
+    ])('service 拒绝 %s 时不应该注册 child', async (cwd, message) => {
+      sessionServiceMocks.forkSession.mockRejectedValueOnce(new Error(message));
+
+      await expect(
+        agent.unstable_forkSession({
+          ...request,
+          sessionId: message.includes('missing')
+            ? 'missing-session'
+            : request.sessionId,
+          cwd,
+        })
+      ).rejects.toThrow(message);
+      expect(getCreatedSessions()).toHaveLength(0);
+    });
+
+    it('应该把非空 MCP 配置原样传给 fork child', async () => {
+      const mcpServers = [
+        {
+          name: 'project-tools',
+          command: 'node',
+          args: ['server.mjs'],
+          env: [{ name: 'PROJECT_ROOT', value: '/tmp/project' }],
+        },
+      ];
+
+      await agent.unstable_forkSession({ ...request, mcpServers });
+
+      expect(AcpSession).toHaveBeenCalledWith(
+        'forked-session',
+        '/tmp/project',
+        mockConnection,
+        undefined,
+        { initialMessages: [], mcpServers }
+      );
     });
   });
 
@@ -572,6 +820,26 @@ describe('BladeAgent', () => {
 
       // 验证会话已被清理（后续提示应该失败）
       await expect(agent.prompt(promptParams)).rejects.toThrow('Session not found');
+    });
+
+    it('一个 session cleanup 失败时仍应该销毁其余 session 和 MCP 并抛第一个错误', async () => {
+      await agent.newSession({ cwd: '/tmp/test1', mcpServers: [] });
+      await agent.newSession({ cwd: '/tmp/test2', mcpServers: [] });
+      const firstError = new Error('first session destroy failed');
+      acpSessionMocks.destroyErrors = [firstError];
+
+      await expect(agent.destroy()).rejects.toBe(firstError);
+
+      const sessions = getCreatedSessions();
+      expect(sessions[0].destroy).toHaveBeenCalledTimes(1);
+      expect(sessions[1].destroy).toHaveBeenCalledTimes(1);
+      expect(mcpRegistryMocks.disconnectAll).toHaveBeenCalledTimes(1);
+      await expect(
+        agent.prompt({
+          sessionId: sessions[1].id,
+          prompt: [{ type: 'text', text: 'must be removed' }],
+        })
+      ).rejects.toThrow('Session not found');
     });
   });
 

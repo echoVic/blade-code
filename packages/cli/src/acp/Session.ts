@@ -123,6 +123,7 @@ export class AcpSession {
   private runtime: SessionRuntime | null = null;
   private pendingPrompt: AbortController | null = null;
   private pendingResumeRequested = false;
+  private destroyed = false;
   private messages: Message[];
   private mode: AcpModeId = 'default';
   // 会话级别的权限缓存（allow_always 选项）
@@ -718,18 +719,29 @@ export class AcpSession {
    * 销毁会话
    */
   async destroy(): Promise<void> {
-    this.cancel();
-    if (this.agent) {
-      await this.agent.destroy();
-      this.agent = null;
-    }
-    if (this.runtime) {
-      await this.runtime.dispose();
-      this.runtime = null;
-    }
-    // 销毁此会话的 ACP 服务（不影响其他会话）
-    AcpServiceContext.destroySession(this.id);
+    if (this.destroyed) return;
+    this.destroyed = true;
+
+    const agent = this.agent;
+    const runtime = this.runtime;
+    this.agent = null;
+    this.runtime = null;
+    let firstError: unknown;
+    const attempt = async (cleanup: () => void | Promise<void>): Promise<void> => {
+      try {
+        await cleanup();
+      } catch (error) {
+        firstError ??= error;
+      }
+    };
+
+    await attempt(() => this.cancel());
+    if (agent) await attempt(() => agent.destroy());
+    if (runtime) await attempt(() => runtime.dispose());
+    await attempt(() => AcpServiceContext.destroySession(this.id));
     logger.debug(`[AcpSession ${this.id}] Destroyed`);
+
+    if (firstError !== undefined) throw firstError;
   }
 
   /**

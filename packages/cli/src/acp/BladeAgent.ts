@@ -6,6 +6,7 @@
  */
 
 import type * as acp from '@agentclientprotocol/sdk';
+import path from 'node:path';
 import {
   type Agent as AcpAgentInterface,
   type AgentSideConnection,
@@ -48,6 +49,10 @@ export class BladeAgent implements AcpAgentInterface {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
         loadSession: true,
+        sessionCapabilities: {
+          list: {},
+          fork: {},
+        },
         // 支持的提示能力
         promptCapabilities: {
           image: true, // 支持图片
@@ -107,10 +112,63 @@ export class BladeAgent implements AcpAgentInterface {
     // 延迟发送 available_commands_update，确保在响应后
     session.sendAvailableCommandsDelayed();
 
+    return this.buildChildSessionResponse(sessionId);
+  }
+
+  async unstable_listSessions(
+    params: acp.ListSessionsRequest
+  ): Promise<acp.ListSessionsResponse> {
+    if (params.cwd != null && !path.isAbsolute(params.cwd)) {
+      throw new Error('ACP session list cwd must be absolute');
+    }
+
+    const page = await SessionService.listSessionPage({
+      cwd: params.cwd ?? undefined,
+      cursor: params.cursor ?? undefined,
+      limit: 50,
+      includeSubagents: false,
+    });
+
     return {
-      sessionId,
-      ...this.buildSessionState(),
+      sessions: page.sessions.map((session) => ({
+        sessionId: session.sessionId,
+        cwd: session.projectPath,
+        title: session.title ?? null,
+        updatedAt: session.lastMessageTime,
+      })),
+      nextCursor: page.nextCursor,
     };
+  }
+
+  async unstable_forkSession(
+    params: acp.ForkSessionRequest
+  ): Promise<acp.ForkSessionResponse> {
+    if (!path.isAbsolute(params.cwd)) {
+      throw new Error('ACP session fork cwd must be absolute');
+    }
+
+    const fork = await SessionService.forkSession(params.sessionId, {
+      sourceProjectPath: params.cwd,
+      targetProjectPath: params.cwd,
+    });
+    const session = new AcpSession(
+      fork.sessionId,
+      params.cwd,
+      this.connection,
+      this.clientCapabilities,
+      { initialMessages: fork.messages, mcpServers: params.mcpServers }
+    );
+
+    try {
+      await session.initialize();
+    } catch (error) {
+      await session.destroy().catch(() => undefined);
+      throw error;
+    }
+
+    this.sessions.set(fork.sessionId, session);
+    session.sendAvailableCommandsDelayed();
+    return this.buildChildSessionResponse(fork.sessionId);
   }
 
   /**
@@ -146,10 +204,16 @@ export class BladeAgent implements AcpAgentInterface {
     this.sessions.set(params.sessionId, session);
     session.sendAvailableCommandsDelayed();
 
-    return this.buildSessionState();
+    return this.buildSessionSetup();
   }
 
-  private buildSessionState(): acp.LoadSessionResponse {
+  private buildChildSessionResponse(
+    sessionId: string
+  ): acp.NewSessionResponse & acp.ForkSessionResponse {
+    return { sessionId, ...this.buildSessionSetup() };
+  }
+
+  private buildSessionSetup(): acp.LoadSessionResponse {
     // 获取配置中的模型列表
     const config = getConfig();
     const models = config?.models || [];
@@ -264,10 +328,20 @@ export class BladeAgent implements AcpAgentInterface {
    * 清理资源
    */
   async destroy(): Promise<void> {
+    let firstError: unknown;
     for (const session of this.sessions.values()) {
-      await session.destroy();
+      try {
+        await session.destroy();
+      } catch (error) {
+        firstError ??= error;
+      }
     }
     this.sessions.clear();
-    await McpRegistry.getInstance().disconnectAll();
+    try {
+      await McpRegistry.getInstance().disconnectAll();
+    } catch (error) {
+      firstError ??= error;
+    }
+    if (firstError !== undefined) throw firstError;
   }
 }
