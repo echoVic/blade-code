@@ -36,6 +36,11 @@ interface PendingNotificationWaiter {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface NotificationWaitOptions {
+  afterIndex?: number;
+  timeoutMs?: number;
+}
+
 class RecordingClient implements acp.Client {
   readonly updates: acp.SessionNotification[] = [];
   private readonly waiters = new Set<PendingNotificationWaiter>();
@@ -58,16 +63,21 @@ class RecordingClient implements acp.Client {
     }
   }
 
-  waitForUpdate(
+  waitForNotification(
     predicate: NotificationPredicate,
-    timeoutMs: number,
-    afterIndex = this.updates.length
+    options: NotificationWaitOptions = {}
   ): Promise<acp.SessionNotification> {
+    const afterIndex = options.afterIndex ?? 0;
+    const timeoutMs = options.timeoutMs ?? 1_000;
     if (this.closed) {
       return Promise.reject(new Error('recording client closed'));
     }
-    if (!Number.isInteger(afterIndex) || afterIndex < 0) {
-      return Promise.reject(new Error('notification boundary must be non-negative'));
+    if (
+      !Number.isInteger(afterIndex) ||
+      afterIndex < 0 ||
+      afterIndex > this.updates.length
+    ) {
+      return Promise.reject(new Error('notification boundary is invalid'));
     }
     const existing = this.updates.slice(afterIndex).find(predicate);
     if (existing) return Promise.resolve(existing);
@@ -158,6 +168,65 @@ function createPairedHarness(client = new RecordingClient()): PairedAcpHarness {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function describeParentTrace(
+  trace: ReturnType<typeof extractDurableToolTrace>,
+  expectedPath: string
+): {
+  traceLength: number;
+  records: Array<{
+    toolName: string;
+    inputKeys: string[];
+    filePath: {
+      basename: string | null;
+      isAbsolute: boolean;
+      equalsExpected: boolean;
+    };
+    outputType: string;
+    outputNull: boolean;
+    errorNull: boolean;
+  }>;
+} {
+  return {
+    traceLength: trace.length,
+    records: trace.map((record) => {
+      const input = isRecord(record.input) ? record.input : undefined;
+      const filePath = typeof input?.file_path === 'string' ? input.file_path : null;
+      return {
+        toolName: record.toolName,
+        inputKeys: input ? Object.keys(input).sort() : [],
+        filePath: {
+          basename: filePath === null ? null : path.basename(filePath),
+          isAbsolute: filePath === null ? false : path.isAbsolute(filePath),
+          equalsExpected: filePath === expectedPath,
+        },
+        outputType: record.output === null ? 'null' : typeof record.output,
+        outputNull: record.output === null,
+        errorNull: record.error === null,
+      };
+    }),
+  };
+}
+
+function assertStrictParentTrace(
+  trace: ReturnType<typeof extractDurableToolTrace>,
+  memoryPath: string
+): void {
+  try {
+    assertForkParentToolTrace(trace, memoryPath);
+  } catch (error) {
+    throw new Error(
+      `ACP parent durable trace rejected: ${JSON.stringify(
+        describeParentTrace(trace, memoryPath)
+      )}`,
+      { cause: error }
+    );
+  }
+}
+
 describe('ACP recording client lifecycle', () => {
   it('routes initialize through paired SDK streams and closes both connections', async () => {
     const harness = createPairedHarness();
@@ -177,11 +246,11 @@ describe('ACP recording client lifecycle', () => {
 
   it('resolves notification waiters from the matching incoming event', async () => {
     const client = new RecordingClient();
-    const waiting = client.waitForUpdate(
+    const waiting = client.waitForNotification(
       (notification) =>
         notification.sessionId === 'child' &&
         notification.update.sessionUpdate === 'agent_message_chunk',
-      1_000
+      { timeoutMs: 1_000 }
     );
     const update: acp.SessionNotification = {
       sessionId: 'child',
@@ -197,13 +266,103 @@ describe('ACP recording client lifecycle', () => {
     client.close();
   });
 
+  it('resolves from a matching notification that arrived before the waiter', async () => {
+    const client = new RecordingClient();
+    const update: acp.SessionNotification = {
+      sessionId: 'parent',
+      update: {
+        sessionUpdate: 'current_mode_update',
+        currentModeId: 'yolo',
+      },
+    };
+    await client.sessionUpdate(update);
+
+    const waiting = client.waitForNotification(
+      (notification) => notification.sessionId === 'parent',
+      { timeoutMs: 100 }
+    );
+
+    await expect(waiting).resolves.toBe(update);
+    client.close();
+  });
+
+  it('does not match notifications older than an explicit boundary', async () => {
+    const client = new RecordingClient();
+    await client.sessionUpdate({
+      sessionId: 'child',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'old' },
+      },
+    });
+    const afterIndex = client.updates.length;
+    const waiting = client.waitForNotification(
+      (notification) =>
+        notification.sessionId === 'child' &&
+        notification.update.sessionUpdate === 'agent_message_chunk',
+      { afterIndex, timeoutMs: 100 }
+    );
+    const fresh: acp.SessionNotification = {
+      sessionId: 'child',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'fresh' },
+      },
+    };
+
+    await client.sessionUpdate(fresh);
+
+    await expect(waiting).resolves.toBe(fresh);
+    client.close();
+  });
+
   it('rejects pending notification waiters during teardown', async () => {
     const client = new RecordingClient();
-    const waiting = client.waitForUpdate(() => false, 1_000);
+    const waiting = client.waitForNotification(() => false, { timeoutMs: 1_000 });
 
     client.close();
 
     await expect(waiting).rejects.toThrow('recording client closed');
+  });
+});
+
+describe('ACP parent trace diagnostics', () => {
+  it('reports only structural metadata for a rejected Read trace', () => {
+    const secretPath = '/private/tmp/secret-workspace/memory.txt';
+    const secretOutput = 'must-not-appear';
+
+    const metadata = describeParentTrace(
+      [
+        {
+          toolCallId: 'tool-1',
+          toolName: 'Read',
+          input: { file_path: 'memory.txt', offset: 0 },
+          output: secretOutput,
+          error: null,
+        },
+      ],
+      secretPath
+    );
+
+    expect(metadata).toEqual({
+      traceLength: 1,
+      records: [
+        {
+          toolName: 'Read',
+          inputKeys: ['file_path', 'offset'],
+          filePath: {
+            basename: 'memory.txt',
+            isAbsolute: false,
+            equalsExpected: false,
+          },
+          outputType: 'string',
+          outputNull: false,
+          errorNull: true,
+        },
+      ],
+    });
+    expect(JSON.stringify(metadata)).not.toContain(secretPath);
+    expect(JSON.stringify(metadata)).not.toContain(secretOutput);
   });
 });
 
@@ -411,30 +570,20 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
             sessionId: parentId,
             modeId: 'yolo',
           });
-          const parentToolNotice = harness.client.waitForUpdate(
-            (notification) =>
-              notification.sessionId === parentId &&
-              notification.update.sessionUpdate === 'tool_call' &&
-              notification.update.title.includes('Read'),
-            300_000
-          );
-          const [parentPrompt] = await Promise.all([
-            harness.connection.prompt({
-              sessionId: parentId,
-              prompt: [
-                {
-                  type: 'text',
-                  text: [
-                    'Use Read on the workspace file named memory.txt.',
-                    'Remember its complete contents for a later fork.',
-                    'Do not repeat, quote, encode, or summarize the file contents in final prose.',
-                    'After the successful Read, give a brief completion confirmation.',
-                  ].join(' '),
-                },
-              ],
-            }),
-            parentToolNotice,
-          ]);
+          const parentPrompt = await harness.connection.prompt({
+            sessionId: parentId,
+            prompt: [
+              {
+                type: 'text',
+                text: [
+                  `Use Read on the workspace file at the exact absolute path ${memoryPath}.`,
+                  'Remember its complete contents for a later fork.',
+                  'Do not repeat, quote, encode, or summarize the file contents in final prose.',
+                  'After the successful Read, give a brief completion confirmation.',
+                ].join(' '),
+              },
+            ],
+          });
           expect(parentPrompt.stopReason).toBe('end_turn');
           const parentNotifications = harness.client.updates.slice(
             parentNotificationStart
@@ -448,7 +597,7 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
 
           const parentPath = findSessionTranscript(fixture.storageRoot, parentId);
           const parentEvents = readSessionEvents(parentPath);
-          assertForkParentToolTrace(extractDurableToolTrace(parentEvents), memoryPath);
+          assertStrictParentTrace(extractDurableToolTrace(parentEvents), memoryPath);
           const parentSnapshot = readFileSync(parentPath);
 
           const listed = await listUntilParent(
@@ -501,30 +650,20 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
           expect(existsSync(memoryPath)).toBe(false);
 
           const childNotificationStart = harness.client.updates.length;
-          const childToolNotice = harness.client.waitForUpdate(
-            (notification) =>
-              notification.sessionId === childId &&
-              notification.update.sessionUpdate === 'tool_call' &&
-              notification.update.title.includes('Bash'),
-            300_000
-          );
-          const [childPrompt] = await Promise.all([
-            harness.connection.prompt({
-              sessionId: childId,
-              prompt: [
-                {
-                  type: 'text',
-                  text: [
-                    'Recover the complete marker from the inherited Read result.',
-                    'Use Write to create result.txt with those exact bytes and exactly one trailing newline.',
-                    'Then use Bash with exactly `wc -c result.txt`.',
-                    'Use no other tools or commands, never repeat the marker in final prose, and briefly confirm completion.',
-                  ].join(' '),
-                },
-              ],
-            }),
-            childToolNotice,
-          ]);
+          const childPrompt = await harness.connection.prompt({
+            sessionId: childId,
+            prompt: [
+              {
+                type: 'text',
+                text: [
+                  'Recover the complete marker from the inherited Read result.',
+                  'Use Write to create result.txt with those exact bytes and exactly one trailing newline.',
+                  'Then use Bash with exactly `wc -c result.txt`.',
+                  'Use no other tools or commands, never repeat the marker in final prose, and briefly confirm completion.',
+                ].join(' '),
+              },
+            ],
+          });
           expect(childPrompt.stopReason).toBe('end_turn');
           const childNotifications =
             harness.client.updates.slice(childNotificationStart);
