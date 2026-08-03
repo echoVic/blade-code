@@ -89,6 +89,12 @@ describe('print command runner', () => {
         print: true,
         message: 'hello',
         sessionId: 'cli-session',
+        agents: JSON.stringify({
+          reviewer: {
+            description: 'Reviews changes',
+            prompt: 'Review the change carefully.',
+          },
+        }),
         allowedTools: ['Read'],
         disallowedTools: ['Write'],
         permissionMode: 'default',
@@ -106,6 +112,13 @@ describe('print command runner', () => {
     expect(runtimeState.create).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'print-session',
+        agents: [
+          expect.objectContaining({
+            name: 'reviewer',
+            systemPrompt: 'Review the change carefully.',
+            source: 'flag',
+          }),
+        ],
       })
     );
     expect(agentState.createWithRuntime).toHaveBeenCalledWith(

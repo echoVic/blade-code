@@ -49,6 +49,7 @@ export interface AgentSession {
     success: boolean;
     message: string;
     error?: string;
+    verificationCommands?: string[];
   };
 
   /** 执行统计 */
@@ -212,7 +213,12 @@ export class AgentSessionStore {
    */
   markCompleted(
     agentId: string,
-    result: { success: boolean; message: string; error?: string },
+    result: {
+      success: boolean;
+      message: string;
+      error?: string;
+      verificationCommands?: string[];
+    },
     stats?: AgentSession['stats']
   ): AgentSession | undefined {
     return this.updateSession(agentId, {

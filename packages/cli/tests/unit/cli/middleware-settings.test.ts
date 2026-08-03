@@ -132,4 +132,18 @@ describe('--settings middleware', () => {
       loadConfiguration({ settings: '{"maxContextTokens":"many"}' } as never)
     ).rejects.toThrow('Invalid --settings value: maxContextTokens');
   });
+
+  it('validates invocation agents before initializing configuration', async () => {
+    const { loadConfiguration } = await import('../../../src/cli/middleware.js');
+
+    await expect(
+      loadConfiguration({
+        agents: JSON.stringify({
+          reviewer: { description: 'Missing the required prompt' },
+        }),
+      } as never)
+    ).rejects.toThrow('Invalid --agents definition for "reviewer"');
+
+    expect(configState.initialize).not.toHaveBeenCalled();
+  });
 });

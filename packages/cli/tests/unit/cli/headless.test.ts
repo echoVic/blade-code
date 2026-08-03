@@ -64,6 +64,40 @@ describe('headless runner', () => {
     });
   });
 
+  it('parses custom agents and passes them to the session runtime', async () => {
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'delegate this task',
+        agents: JSON.stringify({
+          specialist: {
+            description: 'Handles focused changes',
+            prompt: 'Make the requested change and verify it.',
+            tools: ['Read', 'Edit', 'Bash'],
+          },
+        }),
+      },
+      { stdout, stderr }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(runtimeState.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agents: [
+          expect.objectContaining({
+            name: 'specialist',
+            systemPrompt: 'Make the requested change and verify it.',
+            source: 'flag',
+          }),
+        ],
+      })
+    );
+  });
+
   it('defaults to yolo permissions and prints streamed frontend events', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };

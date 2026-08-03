@@ -1,7 +1,9 @@
 import { nanoid } from 'nanoid';
 import { getCwd } from '../../utils/cwd.js';
 import { Agent } from '../Agent.js';
+import { recordVerificationEvidence } from '../loop/completionPolicy.js';
 import { drainLoop } from '../loop/index.js';
+import type { LoopEvent } from '../loop/types.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
 
 /**
@@ -32,16 +34,24 @@ export class SubagentExecutor {
         this.config.model && this.config.model !== 'inherit'
           ? this.config.model
           : undefined;
+      const permissionMode = this.config.permissionMode ?? context.permissionMode;
       const agent = await Agent.create({
         toolWhitelist: this.config.tools,
-        toolBlacklist: ['EnterWorktree', 'ExitWorktree'],
+        toolBlacklist: [
+          'EnterWorktree',
+          'ExitWorktree',
+          ...(this.config.disallowedTools ?? []),
+        ],
         modelId,
+        maxTurns: this.config.maxTurns,
+        permissionMode,
         ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
       });
 
       let finalMessage = '';
       let toolCallCount = 0;
       let tokensUsed = 0;
+      const verificationCommands = new Set<string>();
 
       const subagentInfo = {
         parentSessionId: context.parentSessionId || '',
@@ -52,7 +62,16 @@ export class SubagentExecutor {
       /**
        * Phase 4: 统一通过 onEvent 转发所有 LoopEvent
        */
-      const onEvent = context.onEvent;
+      const onEvent = async (event: LoopEvent) => {
+        if (event.kind === 'tool_result' && 'function' in event.toolCall) {
+          recordVerificationEvidence(
+            verificationCommands,
+            event.toolCall.function.name,
+            event.result
+          );
+        }
+        await context.onEvent?.(event);
+      };
 
       const loopResult = await drainLoop(
         agent.chatStream(context.prompt, {
@@ -61,7 +80,7 @@ export class SubagentExecutor {
           sessionId: agentId,
           workspaceRoot: context.workspaceRoot || getCwd(),
           worktreeActive: context.worktreeActive,
-          permissionMode: context.permissionMode,
+          permissionMode,
           subagentInfo,
         }),
         onEvent
@@ -81,6 +100,7 @@ export class SubagentExecutor {
         success: true,
         message: finalMessage,
         agentId,
+        verificationCommands: [...verificationCommands],
         stats: {
           tokens: tokensUsed,
           toolCalls: toolCallCount,

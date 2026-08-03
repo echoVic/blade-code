@@ -14,6 +14,7 @@ import type { Message } from '../../services/ChatServiceInterface.js';
 import { getCwd } from '../../utils/cwd.js';
 import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import { Agent } from '../Agent.js';
+import { recordVerificationEvidence } from '../loop/completionPolicy.js';
 import { drainLoop } from '../loop/index.js';
 import { SessionRuntime } from '../runtime/SessionRuntime.js';
 import { type AgentSession, AgentSessionStore } from './AgentSessionStore.js';
@@ -261,6 +262,7 @@ export class BackgroundAgentManager {
       const appendSystemPrompt = config.systemPrompt?.trim();
       const modelId =
         config.model && config.model !== 'inherit' ? config.model : undefined;
+      const effectivePermissionMode = config.permissionMode ?? permissionMode;
       runtime = await SessionRuntime.create({
         sessionId: agentId,
         modelId,
@@ -268,8 +270,14 @@ export class BackgroundAgentManager {
       const agent = await Agent.createWithRuntime(runtime, {
         sessionId: agentId,
         toolWhitelist: config.tools,
-        toolBlacklist: ['EnterWorktree', 'ExitWorktree'],
+        toolBlacklist: [
+          'EnterWorktree',
+          'ExitWorktree',
+          ...(config.disallowedTools ?? []),
+        ],
         modelId,
+        maxTurns: config.maxTurns,
+        permissionMode: effectivePermissionMode,
         ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
       });
 
@@ -280,7 +288,7 @@ export class BackgroundAgentManager {
         taskListId,
         workspaceRoot: lease.workspaceRoot,
         worktreeActive: Boolean(lease.worktree),
-        permissionMode,
+        permissionMode: effectivePermissionMode,
         subagentInfo: {
           parentSessionId: parentSessionId || '',
           subagentType: config.name,
@@ -288,10 +296,20 @@ export class BackgroundAgentManager {
         },
       };
 
+      const verificationCommands = new Set<string>();
       const loopResult = await drainLoop(
         agent.chatStream(prompt, context, {
           signal,
-        })
+        }),
+        (event) => {
+          if (event.kind === 'tool_result' && 'function' in event.toolCall) {
+            recordVerificationEvidence(
+              verificationCommands,
+              event.toolCall.function.name,
+              event.result
+            );
+          }
+        }
       );
 
       this.sessionStore.updateSession(agentId, {
@@ -304,6 +322,7 @@ export class BackgroundAgentManager {
             success: true,
             message: loopResult.finalMessage || '',
             agentId,
+            verificationCommands: [...verificationCommands],
             stats: {
               tokens: loopResult.metadata?.tokensUsed || 0,
               toolCalls: loopResult.metadata?.toolCallsCount || 0,
@@ -330,6 +349,7 @@ export class BackgroundAgentManager {
           success: result.success,
           message: result.message,
           error: result.error,
+          verificationCommands: result.verificationCommands,
         },
         result.stats
       );

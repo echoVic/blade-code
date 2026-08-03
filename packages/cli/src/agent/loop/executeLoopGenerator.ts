@@ -42,7 +42,7 @@ import {
   checkVerificationRequired,
   checkWorktreeRequirement,
   isExplicitWorktreeRequest,
-  isVerificationCommand,
+  recordVerificationEvidence,
 } from './completionPolicy.js';
 import {
   INTERRUPTED_TURN_MARKER,
@@ -104,6 +104,18 @@ function tryRepairJson(raw: string): Record<string, unknown> | null {
       return parsed as Record<string, unknown>;
     }
     return null;
+  } catch {
+    return null;
+  }
+}
+
+function parseToolArguments(raw: string): Record<string, unknown> | null {
+  const direct = tryRepairJson(raw);
+  if (direct) return direct;
+
+  try {
+    const decoded = JSON.parse(raw);
+    return typeof decoded === 'string' ? tryRepairJson(decoded) : null;
   } catch {
     return null;
   }
@@ -324,7 +336,8 @@ async function* processStreamResponse(
             const entry = toolCallAccumulator.get(idx);
             if (entry && entry.id && entry.name) {
               try {
-                const params = JSON.parse(entry.arguments);
+                const params = parseToolArguments(entry.arguments);
+                if (params === null) continue;
                 const toolCall = {
                   id: entry.id,
                   type: 'function' as const,
@@ -1310,27 +1323,21 @@ export async function* executeLoopGenerator(
           // 并行执行所有工具
           const executeToolCall = async (toolCall: (typeof functionCalls)[0]) => {
             try {
-              let params: Record<string, unknown>;
-              try {
-                params = JSON.parse(toolCall.function.arguments);
-              } catch (parseError) {
-                const repaired = tryRepairJson(toolCall.function.arguments);
-                if (repaired === null) {
-                  return {
-                    toolCall,
-                    result: {
-                      success: false,
-                      llmContent: '',
-                      error: {
-                        type: ToolErrorType.VALIDATION_ERROR,
-                        message: `Invalid JSON in tool arguments: ${(parseError as Error).message}. Raw: ${toolCall.function.arguments.slice(0, 200)}`,
-                      },
-                      metadata: undefined,
-                    } as import('../../tools/types/index.js').ToolResult,
-                    toolUseUuid: null,
-                  };
-                }
-                params = repaired;
+              const params = parseToolArguments(toolCall.function.arguments);
+              if (params === null) {
+                return {
+                  toolCall,
+                  result: {
+                    success: false,
+                    llmContent: '',
+                    error: {
+                      type: ToolErrorType.VALIDATION_ERROR,
+                      message: `Invalid JSON object in tool arguments. Raw: ${toolCall.function.arguments.slice(0, 200)}`,
+                    },
+                    metadata: undefined,
+                  } as import('../../tools/types/index.js').ToolResult,
+                  toolUseUuid: null,
+                };
               }
               if (
                 toolCall.function.name === 'Task' &&
@@ -1506,16 +1513,11 @@ export async function* executeLoopGenerator(
             ) {
               successfulTools.add('TaskWorktree');
             }
-            if (['Edit', 'Write', 'NotebookEdit'].includes(toolCall.function.name)) {
-              successfulVerificationCommands.clear();
-            } else if (
-              toolCall.function.name === 'Bash' &&
-              typeof result.metadata?.command === 'string' &&
-              result.metadata.exit_code === 0 &&
-              isVerificationCommand(result.metadata.command)
-            ) {
-              successfulVerificationCommands.add(result.metadata.command);
-            }
+            recordVerificationEvidence(
+              successfulVerificationCommands,
+              toolCall.function.name,
+              result
+            );
           } else {
             recordToolFailure(failureTracker, toolCall.function.name);
           }
@@ -1589,7 +1591,7 @@ export async function* executeLoopGenerator(
         }
 
         // 9. 检查轮次上限
-        if (turnsCount >= maxTurns && !isYoloMode) {
+        if (turnsCount >= maxTurns && (!isYoloMode || isSubagent)) {
           logger.info(`Warning: 达到轮次上限 ${maxTurns} 轮`);
 
           if (options?.onTurnLimitReached) {
@@ -1666,7 +1668,9 @@ export async function* executeLoopGenerator(
             success: false,
             error: {
               type: 'max_turns_exceeded',
-              message: `已达到轮次上限 (${maxTurns} 轮)。使用 --permission-mode yolo 跳过此限制。`,
+              message: isSubagent
+                ? `子代理已达到轮次上限 (${maxTurns} 轮)。`
+                : `已达到轮次上限 (${maxTurns} 轮)。使用 --permission-mode yolo 跳过此限制。`,
             },
             metadata: {
               turnsCount,

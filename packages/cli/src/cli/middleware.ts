@@ -10,6 +10,7 @@ const logger = createLogger(LogCategory.GENERAL);
  */
 
 import type { MiddlewareFunction } from 'yargs';
+import { parseCliAgents } from './agents.js';
 import { applyCliSettingsToArguments, loadCliSettings } from './settings.js';
 
 /**
@@ -68,6 +69,10 @@ export const loadConfiguration: MiddlewareFunction = async (argv) => {
     typeof argv.settings === 'string' ? argv.settings : undefined
   );
   applyCliSettingsToArguments(argv, cliSettings);
+
+  if (typeof argv.agents === 'string') {
+    parseCliAgents(argv.agents);
+  }
 
   // 1. 初始化 ConfigManager 和 Store（所有命令共用）
   try {

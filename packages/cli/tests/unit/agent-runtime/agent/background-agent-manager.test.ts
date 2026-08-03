@@ -5,6 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PermissionMode } from '../../../../src/config/types.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 
 const runtimeState = vi.hoisted(() => ({
@@ -180,6 +181,41 @@ describe('BackgroundAgentManager', () => {
           sessionId: 'session_test-uuid-1234',
           appendSystemPrompt: 'You are an explorer',
         })
+      );
+    });
+
+    it('应执行自定义 agent 的工具、回合和权限限制', async () => {
+      const agentId = manager.startBackgroundAgent({
+        config: {
+          name: 'restricted-reviewer',
+          description: 'Review with invocation limits',
+          tools: ['Read', 'Bash'],
+          disallowedTools: ['Bash', 'Write'],
+          maxTurns: 3,
+          permissionMode: PermissionMode.PLAN,
+        },
+        description: 'Review changes',
+        prompt: 'Review the current change',
+        permissionMode: PermissionMode.YOLO,
+      });
+
+      await manager.waitForCompletion(agentId, 0);
+
+      expect(Agent.createWithRuntime).toHaveBeenCalledWith(
+        runtimeState.runtime,
+        expect.objectContaining({
+          toolWhitelist: ['Read', 'Bash'],
+          toolBlacklist: ['EnterWorktree', 'ExitWorktree', 'Bash', 'Write'],
+          maxTurns: 3,
+          permissionMode: PermissionMode.PLAN,
+        })
+      );
+      const createdAgent = await vi.mocked(Agent.createWithRuntime).mock.results[0]
+        .value;
+      expect(createdAgent.chatStream).toHaveBeenCalledWith(
+        'Review the current change',
+        expect.objectContaining({ permissionMode: PermissionMode.PLAN }),
+        expect.anything()
       );
     });
 

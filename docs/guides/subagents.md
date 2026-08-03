@@ -108,6 +108,40 @@ color: blue
 | `tools` | string[] | 允许的工具列表，留空则不限制 |
 | `color` | string | UI 标记颜色（可选） |
 
+### 单次运行定义
+
+使用 `--agents <json>` 可以为当前进程注入一个或多个 Subagents，无需创建配置文件。它同时适用于桌面 TUI、print 和 headless，定义不会持久化：
+
+```bash
+blade --agents '{
+  "code-reviewer": {
+    "description": "Review code changes and run focused checks",
+    "prompt": "Find correctness risks, inspect the diff, and run tests.",
+    "tools": ["Read", "Grep", "Bash"],
+    "disallowedTools": ["Write"],
+    "model": "deepseek-v4-pro",
+    "permissionMode": "dontAsk",
+    "maxTurns": 8,
+    "isolation": "worktree"
+  }
+}'
+```
+
+支持字段：
+
+| 字段 | 必需 | 说明 |
+|------|------|------|
+| `description` | 是 | 提供给主代理的用途说明 |
+| `prompt` | 是 | 子代理系统提示词 |
+| `tools` | 否 | 工具白名单 |
+| `disallowedTools` | 否 | 工具黑名单，优先于白名单 |
+| `model` | 否 | 子代理使用的模型 |
+| `permissionMode` | 否 | `default`、`acceptEdits`、`dontAsk`、`bypassPermissions`、`plan` 或 `ignore`；省略时继承主会话 |
+| `maxTurns` | 否 | 正整数，最大 100 |
+| `isolation` | 否 | `none` 或 `worktree` |
+
+单次运行定义的优先级高于同名的内置、用户级和项目级定义。解析采用严格模式：未知字段、非法 agent 名称、空提示词和错误类型都会在 Agent runtime 初始化前终止启动。
+
 ### 可用颜色
 
 `red`, `blue`, `green`, `yellow`, `purple`, `orange`, `pink`, `cyan`
@@ -272,7 +306,7 @@ color: purple
 ## 注意事项
 
 1. **无状态** - 每次调用使用新的上下文
-2. **权限继承** - 工具权限受主会话权限模式约束
+2. **权限继承** - 默认继承主会话权限模式；单次运行定义可显式覆盖，工具仍受白名单和黑名单约束
 3. **重新加载** - 修改配置后需重启 Blade 或重新进入 UI
 
 ## 相关资源

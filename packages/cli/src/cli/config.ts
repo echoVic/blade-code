@@ -181,7 +181,6 @@ export const globalOptions = {
     describe: 'Use a specific session ID for the conversation',
     group: 'Session Options:',
   },
-  // TODO: 未实现 - 需要解析 JSON 并配置自定义 Agent
   agents: {
     type: 'string',
     describe: 'JSON object defining custom agents',

@@ -186,6 +186,7 @@ describe('TaskOutput Tool', () => {
         result: {
           success: true,
           message: 'Found 10 files',
+          verificationCommands: ['npm test'],
         },
         stats: {
           duration: 1000,
@@ -208,6 +209,7 @@ describe('TaskOutput Tool', () => {
         subagent_type: 'Explore',
         description: 'Find files',
       });
+      expect(result.metadata?.verificationCommands).toEqual(['npm test']);
     });
 
     it('agent 不存在时应返回错误', async () => {

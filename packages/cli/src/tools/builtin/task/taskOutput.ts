@@ -271,6 +271,7 @@ async function handleAgentOutput(
         typeof session.result?.message === 'string'
           ? session.result.message.slice(0, 500)
           : undefined,
+      verificationCommands: session.result?.verificationCommands,
     },
   };
 }

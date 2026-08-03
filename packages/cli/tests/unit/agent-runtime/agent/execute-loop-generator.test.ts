@@ -364,10 +364,106 @@ describe('executeLoopGenerator', () => {
     });
   });
 
+  it('enforces an explicit turn limit for subagents in yolo mode', async () => {
+    const deps = createMockDeps({
+      runtimeOptions: { maxTurns: 1 } as any,
+    });
+    const context = createMockContext({
+      permissionMode: 'yolo' as any,
+      subagentInfo: {
+        parentSessionId: 'parent-session',
+        subagentType: 'reviewer',
+        isSidechain: true,
+      },
+    });
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    chatMock.mockResolvedValueOnce({
+      content: '',
+      toolCalls: [
+        {
+          id: 'tc-turn-limit',
+          type: 'function',
+          function: { name: 'Read', arguments: '{"path":"foo"}' },
+        },
+      ],
+      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+      finishReason: 'tool_calls',
+    });
+    (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      success: true,
+      llmContent: 'file content',
+    });
+
+    const { result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Read the file',
+        context,
+        { stream: false } as LoopOptions,
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('max_turns_exceeded');
+    expect(result.metadata?.turnsCount).toBe(1);
+    expect(chatMock).toHaveBeenCalledTimes(1);
+  });
+
   // ------------------------------------------------------------------
   // 3. Tool call → tool result → final response (2 turns)
   // ------------------------------------------------------------------
   describe('tool call → tool result → final response (2 turns)', () => {
+    it('decodes a double-encoded JSON object before tool validation', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-double-encoded',
+              type: 'function',
+              function: {
+                name: 'Read',
+                arguments: JSON.stringify(JSON.stringify({ path: 'foo' })),
+              },
+            },
+          ],
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Read completed.',
+          toolCalls: undefined,
+          usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
+          finishReason: 'stop',
+        });
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockResolvedValueOnce({
+        success: true,
+        llmContent: 'file content',
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read the file',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(executeMock).toHaveBeenCalledWith(
+        'Read',
+        { path: 'foo' },
+        expect.any(Object)
+      );
+    });
+
     it('should execute tool calls and return the final LLM response', async () => {
       const deps = createMockDeps();
       const context = createMockContext();
@@ -522,6 +618,58 @@ describe('executeLoopGenerator', () => {
         expect.objectContaining({ sessionId: 'test-session' })
       );
       expect(context.messages).toContainEqual({
+        role: 'user',
+        content: expect.stringContaining('explicitly required verification'),
+      });
+    });
+
+    it('accepts structured verification evidence from a successful Task', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-delegate',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"reviewer","description":"fix","prompt":"fix and test"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'The delegated fix and verification are complete.',
+          toolCalls: undefined,
+          finishReason: 'stop',
+        });
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        llmContent: 'Subagent completed the change.',
+        metadata: {
+          subagentStatus: 'completed',
+          verificationCommands: ['npm test'],
+        },
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Delegate the bug fix and run npm test before finishing.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(chatMock).toHaveBeenCalledTimes(2);
+      expect(context.messages).not.toContainEqual({
         role: 'user',
         content: expect.stringContaining('explicitly required verification'),
       });

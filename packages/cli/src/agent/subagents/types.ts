@@ -79,6 +79,9 @@ export interface SubagentConfig {
   /** 允许的工具列表（空数组 = 所有工具） */
   tools?: string[];
 
+  /** 禁止的工具列表（优先于允许列表） */
+  disallowedTools?: string[];
+
   /** UI 背景颜色（可选，用于视觉区分） */
   color?: SubagentColor;
 
@@ -95,6 +98,9 @@ export interface SubagentConfig {
   /** 权限模式（已映射为 Blade PermissionMode） */
   permissionMode?: PermissionMode;
 
+  /** 最大对话轮次 */
+  maxTurns?: number;
+
   /** 自动加载的 skills 列表 */
   skills?: string[];
 
@@ -108,6 +114,7 @@ export interface SubagentConfig {
     | 'claude-code-project'
     | 'blade-user'
     | 'blade-project'
+    | 'flag'
     | `plugin:${string}`;
 }
 
@@ -171,6 +178,9 @@ export interface SubagentResult {
 
   /** 用于后台 resume 的完整 worktree lease */
   worktree?: WorktreeSession;
+
+  /** 最后一次源码修改后成功执行的结构化验证命令 */
+  verificationCommands?: string[];
 
   /** 执行统计 */
   stats?: {

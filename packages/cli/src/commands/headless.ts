@@ -14,6 +14,7 @@ import { drainLoop } from '../agent/loop/index.js';
 import type { LoopEvent } from '../agent/loop/types.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
 import type { ChatContext } from '../agent/types.js';
+import { parseCliAgents } from '../cli/agents.js';
 import { globalOptions } from '../cli/config.js';
 import {
   loadConfiguration,
@@ -105,6 +106,7 @@ export const HeadlessOptionsSchema = z.object({
   sessionId: z.string().optional(),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
+  agents: z.string().optional(),
   continue: z.boolean().optional(),
   resume: z.union([z.string(), z.boolean()]).optional(),
   outputFormat: HeadlessOutputFormatSchema.optional(),
@@ -137,6 +139,8 @@ export interface HeadlessOptions {
   allowedTools?: string[];
   /** Tool blacklist for this run. */
   disallowedTools?: string[];
+  /** Invocation-scoped custom agent definitions. */
+  agents?: string;
   /** Continue the most recent conversation. */
   continue?: boolean;
   /** Resume a specific conversation. */
@@ -670,6 +674,9 @@ export async function runHeadless(
       modelId: validatedOptions.model,
       mcpConfig: validatedOptions.mcpConfig,
       strictMcpConfig: validatedOptions.strictMcpConfig,
+      agents: validatedOptions.agents
+        ? parseCliAgents(validatedOptions.agents)
+        : undefined,
     });
 
     const agent = await Agent.createWithRuntime(runtime, {

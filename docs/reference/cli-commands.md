@@ -75,8 +75,17 @@ blade --debug "!chat,!loop"
 | `--system-prompt <prompt>` | 替换系统提示词 |
 | `--append-system-prompt <prompt>` | 追加系统提示词 |
 | `--max-turns <n>` | 对话轮次限制（-1: 无限, 0: 禁用, N: 限制） |
+| `--agents <json>` | 为本次运行注入自定义 Subagents，CLI 定义优先级最高 |
 
 `--settings` 支持文件路径和内联 JSON。文件路径相对于启动 Blade 时的工作目录解析；无效 JSON、未知字段和类型错误会导致启动失败。该选项适用于 CLI/TUI、print 和 headless，不会持久化配置。
+
+`--agents` 接受以 agent 名称为键的内联 JSON，适用于 CLI/TUI、print 和 headless，不会写入用户或项目配置：
+
+```bash
+blade --agents '{"reviewer":{"description":"Review code changes","prompt":"Find correctness risks and run tests.","tools":["Read","Grep","Bash"],"maxTurns":6}}'
+```
+
+定义必须包含 `description` 和 `prompt`；未知字段、无效类型或格式错误会导致启动失败。完整字段说明见 [Subagents 指南](../guides/subagents.md)。
 
 ### MCP 选项
 

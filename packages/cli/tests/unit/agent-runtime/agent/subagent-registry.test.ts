@@ -137,4 +137,31 @@ Invalid agent.
 
     expect(registry.getSubagent('unsafe-agent')).toBeUndefined();
   });
+
+  it('applies CLI definitions after standard sources with highest precedence', () => {
+    registry.register({
+      name: 'reviewer',
+      description: 'Built-in reviewer',
+      systemPrompt: 'Use the built-in review process.',
+      source: 'builtin',
+    });
+
+    registry.applyOverrides([
+      {
+        name: 'reviewer',
+        description: 'CLI reviewer',
+        systemPrompt: 'Use the invocation-specific review process.',
+        source: 'flag',
+      },
+    ]);
+
+    expect(registry.getSubagent('reviewer')).toEqual(
+      expect.objectContaining({
+        description: 'CLI reviewer',
+        systemPrompt: 'Use the invocation-specific review process.',
+        source: 'flag',
+      })
+    );
+    expect(registry.getSubagentsBySource().flag).toHaveLength(1);
+  });
 });

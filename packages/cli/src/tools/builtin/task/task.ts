@@ -469,6 +469,7 @@ export const taskTool = createTool({
             subagentType: subagent_type,
             subagentStatus: 'completed' as const,
             subagentSummary: result.message.slice(0, 500),
+            verificationCommands: result.verificationCommands,
             isolation: effectiveIsolation,
             worktreePath: result.worktreePath,
             worktreeBranch: result.worktreeBranch,

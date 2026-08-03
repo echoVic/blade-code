@@ -36,6 +36,7 @@ import { isThinkingModel } from '../../utils/modelDetection.js';
 import { worktreeManager } from '../../worktree/WorktreeManager.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
 import { subagentRegistry } from '../subagents/SubagentRegistry.js';
+import type { SubagentConfig } from '../subagents/types.js';
 import type { AgentOptions } from '../types.js';
 import { SessionLease } from './SessionLease.js';
 
@@ -47,6 +48,7 @@ export interface SessionRuntimeOptions {
   mcpConfig?: string[];
   mcpServers?: Record<string, McpServerConfig>;
   strictMcpConfig?: boolean;
+  agents?: SubagentConfig[];
 }
 
 export class SessionRuntime {
@@ -371,12 +373,13 @@ export class SessionRuntime {
   }
 
   private async loadSubagents(): Promise<void> {
-    if (subagentRegistry.getAllNames().length > 0) {
-      return;
-    }
-
     try {
-      subagentRegistry.loadFromStandardLocations();
+      if (subagentRegistry.getAllNames().length === 0) {
+        subagentRegistry.loadFromStandardLocations();
+      }
+      if (this.options.agents?.length) {
+        subagentRegistry.applyOverrides(this.options.agents);
+      }
     } catch (error) {
       logger.warn('Failed to load subagents:', error);
     }

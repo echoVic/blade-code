@@ -4,6 +4,7 @@ import { hideBin } from 'yargs/helpers';
 import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
+import { parseCliAgents } from '../cli/agents.js';
 import { globalOptions } from '../cli/config.js';
 import {
   loadConfiguration,
@@ -35,6 +36,7 @@ interface PrintOptions {
   resume?: string | boolean;
   allowedTools?: string[];
   disallowedTools?: string[];
+  agents?: string;
   mcpConfig?: string[];
   strictMcpConfig?: boolean;
   _?: (string | number)[];
@@ -139,6 +141,7 @@ export async function runPrint(
       modelId: options.model,
       mcpConfig: options.mcpConfig,
       strictMcpConfig: options.strictMcpConfig,
+      agents: options.agents ? parseCliAgents(options.agents) : undefined,
     });
 
     const agent = await Agent.createWithRuntime(runtime, {

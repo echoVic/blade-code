@@ -19,6 +19,7 @@ type ConfigSource =
   | 'claude-code-project'
   | 'blade-user'
   | 'blade-project'
+  | 'flag'
   | 'plugin';
 
 /**
@@ -41,6 +42,13 @@ export class SubagentRegistry {
       throw new Error(`Subagent '${config.name}' already registered`);
     }
     this.subagents.set(config.name, config);
+  }
+
+  /** Apply invocation-scoped definitions with the highest configuration priority. */
+  applyOverrides(configs: readonly SubagentConfig[]): void {
+    for (const config of configs) {
+      this.subagents.set(config.name, config);
+    }
   }
 
   /**
@@ -272,6 +280,7 @@ export class SubagentRegistry {
       'claude-code-project': [],
       'blade-user': [],
       'blade-project': [],
+      flag: [],
       plugin: [],
     };
 

@@ -1,6 +1,7 @@
 import { useMemoizedFn } from 'ahooks';
 import React, { useEffect, useState } from 'react';
 import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
+import { parseCliAgents } from '../cli/agents.js';
 import type { GlobalOptions } from '../cli/types.js';
 import {
   DEFAULT_CONFIG,
@@ -115,6 +116,9 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
       // 6. 预加载 subagents 配置
       try {
         const loadedCount = subagentRegistry.loadFromStandardLocations();
+        if (props.agents) {
+          subagentRegistry.applyOverrides(parseCliAgents(props.agents));
+        }
         if (props.debug && loadedCount > 0) {
           console.log(
             `[OK] 已加载 ${loadedCount} 个 subagents: ${subagentRegistry.getAllNames().join(', ')}`

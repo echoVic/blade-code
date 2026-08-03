@@ -15,6 +15,7 @@ import type { BudgetTracker } from '../../context/TokenBudget.js';
 import { checkTokenBudget } from '../../context/TokenBudget.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import type { ToolResult } from '../../tools/types/index.js';
 import { getCwd } from '../../utils/cwd.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -171,6 +172,39 @@ export const MAX_VERIFICATION_RETRIES = 3;
 
 export function isVerificationCommand(command: string): boolean {
   return VERIFICATION_COMMAND_PATTERN.test(command);
+}
+
+/** Record only structured, successful verification evidence from tool results. */
+export function recordVerificationEvidence(
+  commands: Set<string>,
+  toolName: string,
+  result: ToolResult
+): void {
+  if (!result.success) return;
+
+  if (['Edit', 'Write', 'NotebookEdit'].includes(toolName)) {
+    commands.clear();
+    return;
+  }
+
+  if (
+    toolName === 'Bash' &&
+    typeof result.metadata?.command === 'string' &&
+    result.metadata.exit_code === 0 &&
+    isVerificationCommand(result.metadata.command)
+  ) {
+    commands.add(result.metadata.command);
+    return;
+  }
+
+  if (!['Task', 'TaskOutput'].includes(toolName)) return;
+  const delegatedCommands = result.metadata?.verificationCommands;
+  if (!Array.isArray(delegatedCommands)) return;
+  for (const command of delegatedCommands) {
+    if (typeof command === 'string' && isVerificationCommand(command)) {
+      commands.add(command);
+    }
+  }
 }
 
 export function checkVerificationRequired(

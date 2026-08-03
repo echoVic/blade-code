@@ -153,6 +153,52 @@ describe('SubagentExecutor event forwarding', () => {
     expect(result.stats?.tokens).toBe(1500);
   });
 
+  it('returns only successful verification commands executed after the last edit', async () => {
+    const toolResult = (
+      id: string,
+      name: string,
+      metadata: Record<string, unknown>
+    ): LoopEvent => ({
+      kind: 'tool_result',
+      toolCall: {
+        id,
+        type: 'function',
+        function: { name, arguments: '{}' },
+      },
+      result: { success: true, llmContent: 'ok', metadata },
+    });
+    const events: LoopEvent[] = [
+      toolResult('test-before-edit', 'Bash', {
+        command: 'npm test',
+        exit_code: 0,
+      }),
+      toolResult('edit', 'Edit', {}),
+      toolResult('failed-test', 'Bash', {
+        command: 'npm test -- failed',
+        exit_code: 1,
+      }),
+      toolResult('test-after-edit', 'Bash', {
+        command: 'npm test',
+        exit_code: 0,
+      }),
+      toolResult('not-verification', 'Bash', {
+        command: 'git status --short',
+        exit_code: 0,
+      }),
+    ];
+    mockChatStream.mockImplementation(createMockGenerator(events));
+
+    const { SubagentExecutor } = await import(
+      '../../../../src/agent/subagents/SubagentExecutor.js'
+    );
+    const result = await new SubagentExecutor({
+      name: 'test',
+      description: 'test agent',
+    }).execute({ prompt: 'fix and verify' });
+
+    expect(result.verificationCommands).toEqual(['npm test']);
+  });
+
   it('returns failure result when generator throws', async () => {
     mockChatStream.mockImplementation(async function* (): AsyncGenerator<
       LoopEvent,
@@ -246,6 +292,41 @@ describe('SubagentExecutor event forwarding', () => {
       })
     );
     expect(mockChatStream.mock.calls.at(-1)?.[1]).not.toHaveProperty('systemPrompt');
+  });
+
+  it('enforces invocation-specific limits and permissions', async () => {
+    mockChatStream.mockImplementation(createMockGenerator([]));
+    const { Agent } = await import('../../../../src/agent/Agent.js');
+    const { PermissionMode } = await import('../../../../src/config/types.js');
+    const { SubagentExecutor } = await import(
+      '../../../../src/agent/subagents/SubagentExecutor.js'
+    );
+
+    const executor = new SubagentExecutor({
+      name: 'reviewer',
+      description: 'reviewer agent',
+      tools: ['Read', 'Bash'],
+      disallowedTools: ['Bash', 'Write'],
+      maxTurns: 4,
+      permissionMode: PermissionMode.PLAN,
+    });
+    await executor.execute({
+      prompt: 'review the change',
+      permissionMode: PermissionMode.YOLO,
+    });
+
+    expect(Agent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolWhitelist: ['Read', 'Bash'],
+        toolBlacklist: ['EnterWorktree', 'ExitWorktree', 'Bash', 'Write'],
+        maxTurns: 4,
+        permissionMode: PermissionMode.PLAN,
+      })
+    );
+    expect(mockChatStream).toHaveBeenCalledWith(
+      'review the change',
+      expect.objectContaining({ permissionMode: PermissionMode.PLAN })
+    );
   });
 });
 
