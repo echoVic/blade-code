@@ -39,11 +39,42 @@ vi.unmock('node:http');
 
 const CREATED_AT = '2026-08-04T00:00:00.000Z';
 let createHttpServer: typeof import('node:http').createServer;
+let createHttpRequest: typeof import('node:http').request;
 
 beforeAll(async () => {
   const http = await vi.importActual<typeof import('node:http')>('node:http');
   createHttpServer = http.createServer;
+  createHttpRequest = http.request;
 });
+
+function localHttpRequest(
+  url: string,
+  options: { method?: string; headers?: Record<string, string>; body?: string } = {}
+): Promise<{
+  status: number;
+  headers: import('node:http').IncomingHttpHeaders;
+  body: string;
+}> {
+  return new Promise((resolve, reject) => {
+    const request = createHttpRequest(
+      url,
+      { method: options.method ?? 'GET', headers: options.headers },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            headers: response.headers,
+            body: Buffer.concat(chunks).toString('utf8'),
+          })
+        );
+      }
+    );
+    request.once('error', reject);
+    request.end(options.body);
+  });
+}
 
 function createForkCreatedEvent(
   childId: string,
@@ -65,6 +96,52 @@ function createForkCreatedEvent(
       relationType: 'fork',
       createdAt: CREATED_AT,
       updatedAt: CREATED_AT,
+    },
+  };
+}
+
+function createForkBoundaryEvent(
+  childId: string,
+  parentId: string,
+  rootId: string,
+  dataOverrides: Partial<
+    Extract<SessionEvent, { type: 'session_updated' }>['data']
+  > = {}
+): Extract<SessionEvent, { type: 'session_updated' }> {
+  return {
+    id: `${childId}-boundary`,
+    sessionId: childId,
+    timestamp: CREATED_AT,
+    type: 'session_updated',
+    cwd: '/tmp/fork-workspace',
+    gitBranch: 'main',
+    version: 'test',
+    data: {
+      sessionId: childId,
+      rootId,
+      parentId,
+      relationType: 'fork',
+      updatedAt: CREATED_AT,
+      ...dataOverrides,
+    },
+  };
+}
+
+function createMessageEvent(
+  sessionId: string
+): Extract<SessionEvent, { type: 'message_created' }> {
+  return {
+    id: `${sessionId}-message`,
+    sessionId,
+    timestamp: CREATED_AT,
+    type: 'message_created',
+    cwd: '/tmp/fork-workspace',
+    gitBranch: 'main',
+    version: 'test',
+    data: {
+      messageId: `${sessionId}-message`,
+      role: 'user',
+      createdAt: CREATED_AT,
     },
   };
 }
@@ -434,6 +511,28 @@ describe('real API session-fork trajectory harness', () => {
     expect(existsSync(secondRoot)).toBe(false);
   });
 
+  it('cleans a registered fixture idempotently without deleting sibling roots', () => {
+    const fixture = createForkFixture('headless', 'deepseek-v4-flash');
+    const sibling = createForkFixture('headless', 'deepseek-v4-pro');
+    const siblingRoot = path.dirname(sibling.workspace);
+
+    try {
+      cleanupForkFixture(fixture);
+      expect(() => cleanupForkFixture(fixture)).not.toThrow();
+      expect(existsSync(siblingRoot)).toBe(true);
+      expect(() =>
+        cleanupForkFixture({
+          workspace: fixture.workspace,
+          storageRoot: fixture.storageRoot,
+          nonce: fixture.nonce,
+          resultPath: fixture.resultPath,
+        })
+      ).toThrow(/unregistered/i);
+    } finally {
+      cleanupForkFixture(sibling);
+    }
+  });
+
   it('finds exactly one transcript recursively and rejects missing or ambiguous IDs', () => {
     const storageRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-transcript-find-'));
     const firstDirectory = path.join(storageRoot, 'projects', 'workspace-a');
@@ -489,6 +588,31 @@ describe('real API session-fork trajectory harness', () => {
     }
   });
 
+  it('rejects blank lines between durable session records', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'blade-session-blank-line-'));
+    const transcriptPath = path.join(root, 'child-session.jsonl');
+    const created = createForkCreatedEvent(
+      'child-session',
+      'parent-session',
+      'root-session'
+    );
+    const boundary = createForkBoundaryEvent(
+      'child-session',
+      'parent-session',
+      'root-session'
+    );
+    writeFileSync(
+      transcriptPath,
+      `${JSON.stringify(created)}\n   \n${JSON.stringify(boundary)}\n`
+    );
+
+    try {
+      expect(() => readSessionEvents(transcriptPath)).toThrow(/blank.*line 2/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a transcript whose durable created identity does not match its file', () => {
     const storageRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-transcript-id-'));
     const projectDirectory = path.join(storageRoot, 'projects', 'workspace-a');
@@ -521,22 +645,41 @@ describe('real API session-fork trajectory harness', () => {
       expected.rootId
     );
 
-    expect(() => assertForkLineage([valid], expected)).not.toThrow();
+    const boundary = createForkBoundaryEvent(
+      expected.childId,
+      expected.parentId,
+      expected.rootId
+    );
     expect(() =>
       assertForkLineage(
-        [createForkCreatedEvent('wrong-child', expected.parentId, expected.rootId)],
+        [valid, createMessageEvent(expected.childId), boundary],
+        expected
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertForkLineage(
+        [
+          createForkCreatedEvent('wrong-child', expected.parentId, expected.rootId),
+          boundary,
+        ],
         expected
       )
     ).toThrow(/child.*child-session/i);
     expect(() =>
       assertForkLineage(
-        [createForkCreatedEvent(expected.childId, 'wrong-parent', expected.rootId)],
+        [
+          createForkCreatedEvent(expected.childId, 'wrong-parent', expected.rootId),
+          boundary,
+        ],
         expected
       )
     ).toThrow(/parent.*parent-session/i);
     expect(() =>
       assertForkLineage(
-        [createForkCreatedEvent(expected.childId, expected.parentId, 'wrong-root')],
+        [
+          createForkCreatedEvent(expected.childId, expected.parentId, 'wrong-root'),
+          boundary,
+        ],
         expected
       )
     ).toThrow(/root.*root-session/i);
@@ -544,9 +687,135 @@ describe('real API session-fork trajectory harness', () => {
       ...valid,
       data: { ...valid.data, relationType: 'subagent' },
     };
-    expect(() => assertForkLineage([wrongRelation], expected)).toThrow(
+    expect(() => assertForkLineage([wrongRelation, boundary], expected)).toThrow(
       /relation.*fork/i
     );
+  });
+
+  it('rejects any fork event with a non-child top-level session ID', () => {
+    const expected = {
+      childId: 'child-session',
+      parentId: 'parent-session',
+      rootId: 'root-session',
+    };
+    const wrongMessage = createMessageEvent('wrong-child');
+
+    expect(() =>
+      assertForkLineage(
+        [
+          createForkCreatedEvent(expected.childId, expected.parentId, expected.rootId),
+          wrongMessage,
+          createForkBoundaryEvent(expected.childId, expected.parentId, expected.rootId),
+        ],
+        expected
+      )
+    ).toThrow(/event.*session ID.*child-session/i);
+  });
+
+  it('requires exactly one session_created event at transcript index zero', () => {
+    const expected = {
+      childId: 'child-session',
+      parentId: 'parent-session',
+      rootId: 'root-session',
+    };
+    const created = createForkCreatedEvent(
+      expected.childId,
+      expected.parentId,
+      expected.rootId
+    );
+    const boundary = createForkBoundaryEvent(
+      expected.childId,
+      expected.parentId,
+      expected.rootId
+    );
+
+    expect(() =>
+      assertForkLineage(
+        [createMessageEvent(expected.childId), created, boundary],
+        expected
+      )
+    ).toThrow(/session_created.*first/i);
+    expect(() => assertForkLineage([created, created, boundary], expected)).toThrow(
+      /exactly one session_created/i
+    );
+  });
+
+  it('rejects conflicting lineage fields on intermediate session updates', () => {
+    const expected = {
+      childId: 'child-session',
+      parentId: 'parent-session',
+      rootId: 'root-session',
+    };
+    const created = createForkCreatedEvent(
+      expected.childId,
+      expected.parentId,
+      expected.rootId
+    );
+    const boundary = createForkBoundaryEvent(
+      expected.childId,
+      expected.parentId,
+      expected.rootId
+    );
+    const conflicts: Array<
+      Partial<Extract<SessionEvent, { type: 'session_updated' }>['data']>
+    > = [
+      { sessionId: 'wrong-child' },
+      { rootId: 'wrong-root' },
+      { parentId: 'wrong-parent' },
+      { relationType: 'subagent' },
+    ];
+
+    for (const conflict of conflicts) {
+      expect(() =>
+        assertForkLineage(
+          [
+            created,
+            {
+              ...createForkBoundaryEvent(
+                expected.childId,
+                expected.parentId,
+                expected.rootId,
+                conflict
+              ),
+              id: `intermediate-${Object.keys(conflict)[0]}`,
+            },
+            boundary,
+          ],
+          expected
+        )
+      ).toThrow(/session_updated.*lineage/i);
+    }
+  });
+
+  it('requires a complete fork lineage boundary as the final event', () => {
+    const expected = {
+      childId: 'child-session',
+      parentId: 'parent-session',
+      rootId: 'root-session',
+    };
+    const created = createForkCreatedEvent(
+      expected.childId,
+      expected.parentId,
+      expected.rootId
+    );
+
+    expect(() =>
+      assertForkLineage([created, createMessageEvent(expected.childId)], expected)
+    ).toThrow(/final.*fork boundary/i);
+    expect(() =>
+      assertForkLineage(
+        [
+          created,
+          createForkBoundaryEvent(
+            expected.childId,
+            expected.parentId,
+            expected.rootId,
+            { parentId: undefined }
+          ),
+        ],
+        expected
+      )
+    ).toThrow(/complete.*fork boundary/i);
   });
 
   it('detects parent transcript mutation without including transcript contents', () => {
@@ -582,19 +851,41 @@ describe('real API session-fork trajectory harness', () => {
     safeEvidence.self = safeEvidence;
     expect(() => assertNoSecrets(safeEvidence, [fakeSecret, ''])).not.toThrow();
 
-    const unsafeEvidence: typeof safeEvidence & { nested: { value: string } } = {
-      ...safeEvidence,
-      nested: { value: fakeSecret },
-    };
-    unsafeEvidence.self = unsafeEvidence;
-    const message = thrownMessage(() => assertNoSecrets(unsafeEvidence, [fakeSecret]));
-    expect(message).toMatch(/secret.*evidence/i);
+    const firstFakeSecret = 'first-fake-secret';
+    const unsafeEvidence = new Map<unknown, unknown>([
+      ['error', new Error('outer', { cause: { nested: firstFakeSecret } })],
+      [{ key: fakeSecret }, new Set([42n])],
+    ]);
+    unsafeEvidence.set('self', unsafeEvidence);
+    const message = thrownMessage(() =>
+      assertNoSecrets(unsafeEvidence, [fakeSecret, firstFakeSecret])
+    );
+    expect(message).toContain(
+      'Secret material #2 found at $.map[0].value.cause.nested'
+    );
+    expect(message).not.toContain(fakeSecret);
+    expect(message).not.toContain(firstFakeSecret);
+  });
+
+  it('reports the original secret index while ignoring empty secret entries', () => {
+    const fakeSecret = 'indexed-fake-secret';
+    const message = thrownMessage(() =>
+      assertNoSecrets({ value: fakeSecret }, ['', fakeSecret])
+    );
+
+    expect(message).toBe('Secret material #2 found at $.value');
     expect(message).not.toContain(fakeSecret);
   });
 
   it('holds, releases, streams, and redacts a local provider request', async () => {
     let upstreamRequest:
-      | { method: string; url: string; body: string; authorization?: string }
+      | {
+          method: string;
+          url: string;
+          body: string;
+          authorization?: string;
+          requestHopHeaders: Record<string, string | undefined>;
+        }
       | undefined;
     let releaseSecondChunk: () => void = () => undefined;
     const secondChunkGate = new Promise<void>((resolve) => {
@@ -609,6 +900,7 @@ describe('real API session-fork trajectory harness', () => {
           url: request.url ?? '',
           body: Buffer.concat(chunks).toString('utf8'),
           authorization: request.headers.authorization,
+          requestHopHeaders: {},
         };
         response.writeHead(201, {
           'content-type': 'text/event-stream',
@@ -684,6 +976,7 @@ describe('real API session-fork trajectory harness', () => {
         url: '/provider/v1/messages?token=upstream-query-secret&mode=stream&key=request-query-secret',
         body: requestBody,
         authorization: 'Bearer header-fake-secret',
+        requestHopHeaders: {},
       });
       expect(() =>
         assertNoSecrets(proxy.redactedEvidence(), [
@@ -699,6 +992,107 @@ describe('real API session-fork trajectory harness', () => {
       await proxy.close();
     } finally {
       releaseSecondChunk();
+      await proxy.close();
+      await new Promise<void>((resolve, reject) => {
+        upstream.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it('filters standard and Connection-declared request hop-by-hop headers', async () => {
+    let upstreamHeaders: import('node:http').IncomingHttpHeaders | undefined;
+    const upstream: Server = createHttpServer((request, response) => {
+      upstreamHeaders = request.headers;
+      response.end('forwarded');
+    });
+    await new Promise<void>((resolve, reject) => {
+      upstream.once('error', reject);
+      upstream.listen(0, '127.0.0.1', () => {
+        upstream.off('error', reject);
+        resolve();
+      });
+    });
+    const upstreamAddress = upstream.address() as AddressInfo;
+    const proxy = await startHeldProviderProxy(
+      `http://127.0.0.1:${upstreamAddress.port}`
+    );
+
+    try {
+      const responsePromise = localHttpRequest(`${proxy.baseUrl}/headers`, {
+        method: 'POST',
+        headers: {
+          connection: 'x-request-hop, keep-alive',
+          'keep-alive': 'timeout=5',
+          'proxy-authorization': 'fake-request-proxy-auth',
+          te: 'trailers',
+          trailer: 'x-trailer',
+          upgrade: 'fake-upgrade',
+          'x-request-hop': 'fake-request-hop',
+          'x-end-to-end': 'preserved',
+        },
+        body: 'request-body',
+      });
+      await proxy.requestHeld;
+      proxy.release();
+      const response = await responsePromise;
+
+      expect(response.status).toBe(200);
+      expect(upstreamHeaders?.connection).toBe('keep-alive');
+      expect(upstreamHeaders?.['keep-alive']).toBeUndefined();
+      expect(upstreamHeaders?.['proxy-authorization']).toBeUndefined();
+      expect(upstreamHeaders?.te).toBeUndefined();
+      expect(upstreamHeaders?.trailer).toBeUndefined();
+      expect(upstreamHeaders?.upgrade).toBeUndefined();
+      expect(upstreamHeaders?.['x-request-hop']).toBeUndefined();
+      expect(upstreamHeaders?.['x-end-to-end']).toBe('preserved');
+    } finally {
+      await proxy.close();
+      await new Promise<void>((resolve, reject) => {
+        upstream.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it('filters standard and Connection-declared response hop-by-hop headers', async () => {
+    const upstream: Server = createHttpServer((_request, response) => {
+      response.writeHead(200, {
+        connection: 'x-response-hop, keep-alive',
+        'keep-alive': 'timeout=99, max=1',
+        'proxy-authenticate': 'fake-response-proxy-auth',
+        trailer: 'x-trailer',
+        upgrade: 'fake-upgrade',
+        'x-response-hop': 'fake-response-hop',
+        'x-end-to-end': 'preserved',
+      });
+      response.end('response-body');
+    });
+    await new Promise<void>((resolve, reject) => {
+      upstream.once('error', reject);
+      upstream.listen(0, '127.0.0.1', () => {
+        upstream.off('error', reject);
+        resolve();
+      });
+    });
+    const upstreamAddress = upstream.address() as AddressInfo;
+    const proxy = await startHeldProviderProxy(
+      `http://127.0.0.1:${upstreamAddress.port}`
+    );
+
+    try {
+      const responsePromise = localHttpRequest(`${proxy.baseUrl}/headers`);
+      await proxy.requestHeld;
+      proxy.release();
+      const response = await responsePromise;
+
+      expect(response.status).toBe(200);
+      expect(response.headers.connection).not.toContain('x-response-hop');
+      expect(response.headers['keep-alive']).not.toContain('timeout=99');
+      expect(response.headers['proxy-authenticate']).toBeUndefined();
+      expect(response.headers.trailer).toBeUndefined();
+      expect(response.headers.upgrade).toBeUndefined();
+      expect(response.headers['x-response-hop']).toBeUndefined();
+      expect(response.headers['x-end-to-end']).toBe('preserved');
+    } finally {
       await proxy.close();
       await new Promise<void>((resolve, reject) => {
         upstream.close((error) => (error ? reject(error) : resolve()));

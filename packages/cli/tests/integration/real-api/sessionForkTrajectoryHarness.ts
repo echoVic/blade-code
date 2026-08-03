@@ -25,6 +25,17 @@ interface ProviderProxyEvidence {
 }
 
 const fixtureRoots = new WeakMap<ForkFixture, string>();
+const cleanedFixtures = new WeakSet<ForkFixture>();
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
 
 function sanitizeSegment(value: string, fallback: string): string {
   const sanitized = value
@@ -162,8 +173,17 @@ function isSessionEvent(value: unknown): value is SessionEvent {
 export function readSessionEvents(filePath: string): SessionEvent[] {
   const content = readFileSync(filePath, 'utf8');
   const events: SessionEvent[] = [];
-  for (const [index, line] of content.split(/\r?\n/).entries()) {
-    if (!line.trim()) continue;
+  const lines = content.split(/\r?\n/);
+  const lastDurableLine = lines.findLastIndex((line) => Boolean(line.trim()));
+  for (const [index, line] of lines.entries()) {
+    if (!line.trim()) {
+      if (index < lastDurableLine) {
+        throw new Error(
+          `Blank line inside durable session JSONL at ${filePath} line ${index + 1}`
+        );
+      }
+      continue;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
@@ -238,12 +258,23 @@ export function assertForkLineage(
   events: SessionEvent[],
   expected: { childId: string; parentId: string; rootId: string }
 ): void {
-  const created = events.find(
+  const createdEvents = events.filter(
     (event): event is Extract<SessionEvent, { type: 'session_created' }> =>
       event.type === 'session_created'
   );
-  if (!created) {
-    throw new Error('Fork transcript is missing its durable session_created event');
+  if (createdEvents.length !== 1) {
+    throw new Error('Fork transcript must contain exactly one session_created event');
+  }
+  const created = createdEvents[0];
+  if (events[0] !== created) {
+    throw new Error('Fork transcript session_created event must be first');
+  }
+  for (const [index, event] of events.entries()) {
+    if (event.sessionId !== expected.childId) {
+      throw new Error(
+        `Fork child event ${index + 1} session ID must be ${expected.childId}`
+      );
+    }
   }
   if (
     created.sessionId !== expected.childId ||
@@ -260,6 +291,34 @@ export function assertForkLineage(
   if (created.data.relationType !== 'fork') {
     throw new Error('Fork relation type must be fork');
   }
+
+  const matchesOptionalLineage = (
+    event: Extract<SessionEvent, { type: 'session_updated' }>
+  ): boolean =>
+    (event.data.sessionId === undefined || event.data.sessionId === expected.childId) &&
+    (event.data.rootId === undefined || event.data.rootId === expected.rootId) &&
+    (event.data.parentId === undefined || event.data.parentId === expected.parentId) &&
+    (event.data.relationType === undefined || event.data.relationType === 'fork');
+  for (const event of events) {
+    if (event.type === 'session_updated' && !matchesOptionalLineage(event)) {
+      throw new Error('Fork session_updated event contains conflicting lineage');
+    }
+  }
+
+  const boundary = events.at(-1);
+  if (boundary?.type !== 'session_updated') {
+    throw new Error(
+      'Fork transcript final event must be a fork boundary session_updated'
+    );
+  }
+  if (
+    boundary.data.sessionId !== expected.childId ||
+    boundary.data.rootId !== expected.rootId ||
+    boundary.data.parentId !== expected.parentId ||
+    boundary.data.relationType !== 'fork'
+  ) {
+    throw new Error('Fork transcript must end with a complete fork boundary lineage');
+  }
 }
 
 export function assertParentUnchanged(before: string, parentPath: string): void {
@@ -268,70 +327,111 @@ export function assertParentUnchanged(before: string, parentPath: string): void 
   }
 }
 
-function evidenceContainsSecret(
+interface SecretEvidenceMatch {
+  secretIndex: number;
+  path: string;
+}
+
+interface IndexedSecret {
+  value: string;
+  originalIndex: number;
+}
+
+function secretMatchAt(
+  value: string,
+  secrets: readonly IndexedSecret[],
+  path: string
+): SecretEvidenceMatch | undefined {
+  const secret = secrets.find((candidate) => value.includes(candidate.value));
+  return secret ? { secretIndex: secret.originalIndex, path } : undefined;
+}
+
+function findSecretEvidence(
   value: unknown,
-  secrets: readonly string[],
-  seen: WeakSet<object>
-): boolean {
+  secrets: readonly IndexedSecret[],
+  seen: WeakSet<object>,
+  evidencePath: string
+): SecretEvidenceMatch | undefined {
   if (typeof value === 'string') {
-    return secrets.some((secret) => value.includes(secret));
+    return secretMatchAt(value, secrets, evidencePath);
   }
   if (typeof value === 'bigint') {
-    return secrets.some((secret) => value.toString().includes(secret));
+    return secretMatchAt(value.toString(), secrets, evidencePath);
   }
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
-    return false;
+    return undefined;
   }
-  if (seen.has(value)) return false;
+  if (seen.has(value)) return undefined;
   seen.add(value);
 
   if (value instanceof Error) {
-    return (
-      evidenceContainsSecret(value.name, secrets, seen) ||
-      evidenceContainsSecret(value.message, secrets, seen) ||
-      evidenceContainsSecret(value.stack, secrets, seen) ||
-      evidenceContainsSecret(value.cause, secrets, seen)
+    return [
+      ['name', value.name],
+      ['message', value.message],
+      ['stack', value.stack],
+      ['cause', value.cause],
+    ].reduce<SecretEvidenceMatch | undefined>(
+      (match, [key, entry]) =>
+        match ?? findSecretEvidence(entry, secrets, seen, `${evidencePath}.${key}`),
+      undefined
     );
   }
   if (value instanceof Map) {
+    let index = 0;
     for (const [key, entryValue] of value) {
-      if (
-        evidenceContainsSecret(key, secrets, seen) ||
-        evidenceContainsSecret(entryValue, secrets, seen)
-      ) {
-        return true;
-      }
+      const entryPath = `${evidencePath}.map[${index}]`;
+      const match =
+        findSecretEvidence(key, secrets, seen, `${entryPath}.key`) ??
+        findSecretEvidence(entryValue, secrets, seen, `${entryPath}.value`);
+      if (match) return match;
+      index++;
     }
-    return false;
+    return undefined;
   }
   if (value instanceof Set) {
+    let index = 0;
     for (const entry of value) {
-      if (evidenceContainsSecret(entry, secrets, seen)) return true;
+      const match = findSecretEvidence(
+        entry,
+        secrets,
+        seen,
+        `${evidencePath}.set[${index}]`
+      );
+      if (match) return match;
+      index++;
     }
-    return false;
+    return undefined;
   }
+  let propertyIndex = 0;
   for (const [key, entry] of Object.entries(value)) {
-    if (evidenceContainsSecret(key, secrets, seen)) {
-      return true;
-    }
-    if (evidenceContainsSecret(entry, secrets, seen)) return true;
+    const entryPath = `${evidencePath}.${key}`;
+    const match =
+      secretMatchAt(key, secrets, `${evidencePath}.[key#${propertyIndex}]`) ??
+      findSecretEvidence(entry, secrets, seen, entryPath);
+    if (match) return match;
+    propertyIndex++;
   }
-  return false;
+  return undefined;
 }
 
 export function assertNoSecrets(evidence: unknown, secrets: readonly string[]): void {
-  const nonEmptySecrets = secrets.filter(Boolean);
-  if (evidenceContainsSecret(evidence, nonEmptySecrets, new WeakSet())) {
-    throw new Error('Secret material was found in fork qualification evidence');
+  const nonEmptySecrets = secrets.flatMap((value, originalIndex) =>
+    value ? [{ value, originalIndex }] : []
+  );
+  const match = findSecretEvidence(evidence, nonEmptySecrets, new WeakSet(), '$');
+  if (match) {
+    throw new Error(`Secret material #${match.secretIndex + 1} found at ${match.path}`);
   }
 }
 
 export function cleanupForkFixture(fixture: ForkFixture): void {
+  if (cleanedFixtures.has(fixture)) return;
   const fixtureRoot = fixtureRoots.get(fixture);
   if (!fixtureRoot) {
     throw new Error('Refusing to clean an unregistered fork fixture');
   }
   fixtureRoots.delete(fixture);
+  cleanedFixtures.add(fixture);
   rmSync(fixtureRoot, { recursive: true, force: true });
 }
 
@@ -360,10 +460,30 @@ async function readRequestBody(
   return Buffer.concat(chunks);
 }
 
+function connectionHeaderNames(value: string | string[] | undefined): Set<string> {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return new Set(
+    values
+      .flatMap((entry) => entry.split(','))
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
 function copyRequestHeaders(request: import('node:http').IncomingMessage): Headers {
   const headers = new Headers();
+  const dynamicHopHeaders = connectionHeaderNames(request.headers.connection);
   for (const [name, value] of Object.entries(request.headers)) {
-    if (!value || name === 'host' || name === 'content-length') continue;
+    const normalizedName = name.toLowerCase();
+    if (
+      !value ||
+      normalizedName === 'host' ||
+      normalizedName === 'content-length' ||
+      HOP_BY_HOP_HEADERS.has(normalizedName) ||
+      dynamicHopHeaders.has(normalizedName)
+    ) {
+      continue;
+    }
     headers.set(name, Array.isArray(value) ? value.join(', ') : value);
   }
   return headers;
@@ -371,14 +491,16 @@ function copyRequestHeaders(request: import('node:http').IncomingMessage): Heade
 
 function copyResponseHeaders(headers: Headers): Record<string, string> {
   const copied: Record<string, string> = {};
+  const dynamicHopHeaders = connectionHeaderNames(
+    headers.get('connection') ?? undefined
+  );
   headers.forEach((value, name) => {
+    const normalizedName = name.toLowerCase();
     if (
-      ![
-        'connection',
-        'content-encoding',
-        'content-length',
-        'transfer-encoding',
-      ].includes(name)
+      !HOP_BY_HOP_HEADERS.has(normalizedName) &&
+      !dynamicHopHeaders.has(normalizedName) &&
+      normalizedName !== 'content-encoding' &&
+      normalizedName !== 'content-length'
     ) {
       copied[name] = value;
     }
