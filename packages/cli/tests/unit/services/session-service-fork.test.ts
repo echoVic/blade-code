@@ -1,3 +1,4 @@
+import type { BigIntStats } from 'node:fs';
 import {
   access,
   appendFile,
@@ -5,6 +6,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
@@ -17,6 +19,7 @@ import {
   getSessionInboxFilePath,
 } from '../../../src/context/storage/pathUtils.js';
 import type { SessionEvent } from '../../../src/context/types.js';
+import * as SessionServiceModule from '../../../src/services/SessionService.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 
 function makeCreatedEvent(
@@ -103,6 +106,29 @@ async function readTranscript(filePath: string): Promise<SessionEvent[]> {
     .map((line) => JSON.parse(line) as SessionEvent);
 }
 
+type SnapshotBigIntStats = BigIntStats;
+
+interface TestSessionSnapshotIO {
+  stat(filePath: string): Promise<SnapshotBigIntStats>;
+  readFile(filePath: string): Promise<string>;
+}
+
+function getSnapshotTestingHooks(): {
+  setSnapshotIO: ((io: TestSessionSnapshotIO) => void) | undefined;
+  resetSnapshotIO: (() => void) | undefined;
+} {
+  return {
+    setSnapshotIO: Reflect.get(
+      SessionServiceModule,
+      '__setSessionSnapshotIOForTesting'
+    ) as ((io: TestSessionSnapshotIO) => void) | undefined,
+    resetSnapshotIO: Reflect.get(
+      SessionServiceModule,
+      '__resetSessionSnapshotIOForTesting'
+    ) as (() => void) | undefined,
+  };
+}
+
 describe('SessionService.forkSession', () => {
   let storageRoot: string;
   let projectPath: string;
@@ -121,6 +147,7 @@ describe('SessionService.forkSession', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    getSnapshotTestingHooks().resetSnapshotIO?.();
     if (previousStorageRoot === undefined) {
       delete process.env.BLADE_STORAGE_ROOT;
     } else {
@@ -412,14 +439,81 @@ describe('SessionService.forkSession', () => {
   });
 
   it('fails after three unstable snapshot attempts and leaves no child transcript', async () => {
-    // RED target: implementation must fail after repeated stat/read instability.
-    // This explicit marker keeps the test file aligned with the contract until
-    // the production API exposes a testable stable-snapshot seam.
-    await expect(
-      Promise.reject(
-        new Error('Session changed while creating fork; retry the operation')
-      )
-    ).rejects.toThrow('Session changed while creating fork; retry the operation');
+    await writeTranscript(projectPath, 'parent-session', [
+      makeCreatedEvent('parent-session', projectPath, '2024-01-01T00:00:00.000Z'),
+      ...makeMessageEvents(
+        'parent-session',
+        projectPath,
+        '2024-01-01T00:00:01.000Z',
+        'parent history'
+      ),
+    ]);
+    const parentPath = getSessionFilePath(projectPath, 'parent-session');
+    const parentContent = await readFile(parentPath, 'utf-8');
+    const baseStats = await stat(parentPath, { bigint: true });
+    const statsSequence: SnapshotBigIntStats[] = [
+      { ...baseStats, size: baseStats.size + 1n },
+      { ...baseStats, size: baseStats.size + 2n },
+      {
+        ...baseStats,
+        size: baseStats.size + 3n,
+        mtimeNs: baseStats.mtimeNs + 1n,
+      },
+      {
+        ...baseStats,
+        size: baseStats.size + 4n,
+        mtimeNs: baseStats.mtimeNs + 2n,
+      },
+      {
+        ...baseStats,
+        size: baseStats.size + 5n,
+        mtimeNs: baseStats.mtimeNs + 3n,
+      },
+      {
+        ...baseStats,
+        size: baseStats.size + 6n,
+        mtimeNs: baseStats.mtimeNs + 4n,
+      },
+    ];
+    const { setSnapshotIO, resetSnapshotIO } = getSnapshotTestingHooks();
+    expect(setSnapshotIO).toBeTypeOf('function');
+    expect(resetSnapshotIO).toBeTypeOf('function');
+
+    let statCallCount = 0;
+    let readCallCount = 0;
+    setSnapshotIO?.({
+      async stat(filePath) {
+        expect(filePath).toBe(parentPath);
+        const next = statsSequence[statCallCount];
+        statCallCount += 1;
+        if (!next) {
+          throw new Error('Exhausted unstable stat fixtures');
+        }
+        return next;
+      },
+      async readFile(filePath) {
+        expect(filePath).toBe(parentPath);
+        readCallCount += 1;
+        return parentContent;
+      },
+    });
+
+    try {
+      await expect(
+        SessionService.forkSession('parent-session', {
+          newSessionId: 'unstable-child',
+          sourceProjectPath: projectPath,
+          targetProjectPath: projectPath,
+        })
+      ).rejects.toThrow('Session changed while creating fork; retry the operation');
+      expect(statCallCount).toBe(6);
+      expect(readCallCount).toBe(3);
+      await expect(
+        access(getSessionFilePath(projectPath, 'unstable-child'))
+      ).rejects.toThrow();
+    } finally {
+      resetSnapshotIO?.();
+    }
   });
 
   it('creates unique auto-generated child IDs for concurrent forks without mutating the parent', async () => {

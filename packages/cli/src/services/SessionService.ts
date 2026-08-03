@@ -3,6 +3,7 @@
  * 负责加载和恢复历史会话
  */
 
+import type { BigIntStats } from 'node:fs';
 import { access, readdir, readFile, rm, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import { nanoid } from 'nanoid';
@@ -30,6 +31,32 @@ import {
 } from './sessionCatalog.js';
 
 const logger = createLogger(LogCategory.SERVICE);
+
+type SessionSnapshotBigIntStats = BigIntStats;
+
+interface SessionSnapshotIO {
+  stat(filePath: string): Promise<SessionSnapshotBigIntStats>;
+  readFile(filePath: string): Promise<string>;
+}
+
+const defaultSessionSnapshotIO: SessionSnapshotIO = {
+  stat(filePath) {
+    return stat(filePath, { bigint: true });
+  },
+  readFile(filePath) {
+    return readFile(filePath, 'utf-8');
+  },
+};
+
+let sessionSnapshotIO: SessionSnapshotIO = defaultSessionSnapshotIO;
+
+export function __setSessionSnapshotIOForTesting(io: SessionSnapshotIO): void {
+  sessionSnapshotIO = io;
+}
+
+export function __resetSessionSnapshotIOForTesting(): void {
+  sessionSnapshotIO = defaultSessionSnapshotIO;
+}
 
 export interface SessionMetadata {
   sessionId: string;
@@ -845,10 +872,10 @@ export class SessionService {
     maxAttempts = 3
   ): Promise<SessionEvent[]> {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const before = await stat(filePath, { bigint: true });
-      const content = await readFile(filePath, 'utf-8');
+      const before = await sessionSnapshotIO.stat(filePath);
+      const content = await sessionSnapshotIO.readFile(filePath);
       const entries = parseSessionJSONL(content, filePath);
-      const after = await stat(filePath, { bigint: true });
+      const after = await sessionSnapshotIO.stat(filePath);
       if (
         before.size === after.size &&
         before.mtimeNs === after.mtimeNs &&
