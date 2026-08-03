@@ -32,6 +32,20 @@ function resolveWorkspace(workspace: string): string {
   return path.resolve(workspace);
 }
 
+export async function listSessionCandidatesForIntent(
+  intent: SessionSelectionIntent,
+  workspaceRoot: string
+): Promise<SessionMetadata[]> {
+  if (intent === 'fork') {
+    return SessionService.listSessions({
+      cwd: resolveWorkspace(workspaceRoot),
+      includeSubagents: false,
+    });
+  }
+
+  return SessionService.listSessions();
+}
+
 export async function activateSessionSelection(
   selection: SessionSelectionInput,
   workspaceRoot: string,

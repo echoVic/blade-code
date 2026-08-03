@@ -37,7 +37,10 @@ import { useInputBuffer } from '../hooks/useInputBuffer.js';
 import { useMainInput } from '../hooks/useMainInput.js';
 import { useRefreshStatic } from '../hooks/useRefreshStatic.js';
 import { themeManager } from '../themes/ThemeManager.js';
-import { activateSessionSelection } from '../utils/sessionActivation.js';
+import {
+  activateSessionSelection,
+  listSessionCandidatesForIntent,
+} from '../utils/sessionActivation.js';
 import { AgentCreationWizard } from './AgentCreationWizard.js';
 import { AgentsManager } from './AgentsManager.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
@@ -291,7 +294,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const handleContinue = useMemoizedFn(async () => {
     readyAnnouncementSent.current = true;
     try {
-      const sessions = await SessionService.listSessions();
+      const intent: SessionSelectionIntent = otherProps.forkSession ? 'fork' : 'resume';
+      const sessions = await listSessionCandidatesForIntent(intent, getCwd());
 
       if (sessions.length === 0) {
         if (otherProps.forkSession) {
@@ -304,14 +308,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       }
 
       const mostRecentSession = sessions[0];
-      await activatePersistedSession(
-        mostRecentSession,
-        otherProps.forkSession ? 'fork' : 'resume',
-        {
-          newSessionId: otherProps.forkSession ? otherProps.sessionId : undefined,
-          announceFork: otherProps.forkSession ? false : undefined,
-        }
-      );
+      await activatePersistedSession(mostRecentSession, intent, {
+        newSessionId: otherProps.forkSession ? otherProps.sessionId : undefined,
+        announceFork: otherProps.forkSession ? false : undefined,
+      });
     } catch (error) {
       logger.error('[BladeInterface] 继续会话失败:', error);
       if (otherProps.forkSession) {
@@ -337,20 +337,15 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         return;
       }
 
-      const sessions = await SessionService.listSessions({
-        cwd: getCwd(),
-        includeSubagents: false,
-      });
+      const intent: SessionSelectionIntent = otherProps.forkSession ? 'fork' : 'resume';
+      const sessions = await listSessionCandidatesForIntent(intent, getCwd());
 
       if (sessions.length === 0) {
         logger.error('没有找到历史会话');
         safeExit(1);
       }
 
-      appActions.showSessionSelector(
-        sessions,
-        otherProps.forkSession ? 'fork' : 'resume'
-      );
+      appActions.showSessionSelector(sessions, intent);
     } catch (error) {
       logger.error('[BladeInterface] 加载会话失败:', error);
       safeExit(1);

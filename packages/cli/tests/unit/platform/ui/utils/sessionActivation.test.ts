@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '../../../../../src/services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../../../../../src/services/SessionService.js';
@@ -5,6 +7,7 @@ import type { SessionMessage } from '../../../../../src/store/types.js';
 
 const serviceMocks = vi.hoisted(() => ({
   forkSession: vi.fn(),
+  listSessions: vi.fn(),
   loadSession: vi.fn(),
   toUISafeMessages: vi.fn(),
 }));
@@ -18,6 +21,7 @@ vi.mock('../../../../../src/services/SessionService.js', async () => {
     SessionService: {
       ...actual.SessionService,
       forkSession: serviceMocks.forkSession,
+      listSessions: serviceMocks.listSessions,
       loadSession: serviceMocks.loadSession,
       toUISafeMessages: serviceMocks.toUISafeMessages,
     },
@@ -90,6 +94,7 @@ describe('activateSessionSelection', () => {
 
   beforeEach(() => {
     serviceMocks.forkSession.mockReset();
+    serviceMocks.listSessions.mockReset();
     serviceMocks.loadSession.mockReset();
     serviceMocks.toUISafeMessages.mockReset();
     actions.restoreSession.mockReset();
@@ -298,5 +303,88 @@ describe('activateSessionSelection', () => {
     );
 
     expect(calls).toEqual(['service', 'ui:2', 'restore', 'announce']);
+  });
+});
+
+describe('listSessionCandidatesForIntent', () => {
+  beforeEach(() => {
+    serviceMocks.listSessions.mockReset();
+  });
+
+  it('lists fork candidates from the resolved workspace only and excludes subagents', async () => {
+    const candidates = [
+      createSessionMetadata({
+        sessionId: 'fork-source-1',
+        projectPath: '/workspace/project',
+      }),
+    ];
+    serviceMocks.listSessions.mockResolvedValue(candidates);
+
+    const { listSessionCandidatesForIntent } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await expect(
+      listSessionCandidatesForIntent('fork', '/workspace/project/nested/..')
+    ).resolves.toEqual(candidates);
+
+    expect(serviceMocks.listSessions).toHaveBeenCalledWith({
+      cwd: '/workspace/project',
+      includeSubagents: false,
+    });
+  });
+
+  it('lists resume candidates from the global catalog without cwd filtering', async () => {
+    const candidates = [
+      createSessionMetadata({
+        sessionId: 'resume-source-1',
+        projectPath: '/workspace/elsewhere',
+      }),
+    ];
+    serviceMocks.listSessions.mockResolvedValue(candidates);
+
+    const { listSessionCandidatesForIntent } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await expect(
+      listSessionCandidatesForIntent('resume', '/workspace/project')
+    ).resolves.toEqual(candidates);
+
+    expect(serviceMocks.listSessions).toHaveBeenCalledWith();
+  });
+});
+
+describe('BladeInterface startup routing source contract', () => {
+  it('uses shared session candidate discovery for startup continue and selector flows', () => {
+    const bladeInterfacePath = path.resolve(
+      import.meta.dirname,
+      '../../../../../src/ui/components/BladeInterface.tsx'
+    );
+    const source = fs.readFileSync(bladeInterfacePath, 'utf8');
+
+    expect(source).toContain('listSessionCandidatesForIntent');
+
+    const handleContinueStart = source.indexOf(
+      'const handleContinue = useMemoizedFn(async () => {'
+    );
+    const handleResumeStart = source.indexOf(
+      'const handleResume = useMemoizedFn(async () => {'
+    );
+    const handleResponseStart = source.indexOf(
+      'const handleResponse = useMemoizedFn(async (response: ConfirmationResponse) => {'
+    );
+
+    expect(handleContinueStart).toBeGreaterThanOrEqual(0);
+    expect(handleResumeStart).toBeGreaterThan(handleContinueStart);
+    expect(handleResponseStart).toBeGreaterThan(handleResumeStart);
+
+    const handleContinueSource = source.slice(handleContinueStart, handleResumeStart);
+    const handleResumeSource = source.slice(handleResumeStart, handleResponseStart);
+
+    expect(handleContinueSource).toContain('listSessionCandidatesForIntent(');
+    expect(handleContinueSource).not.toContain('SessionService.listSessions(');
+    expect(handleResumeSource).toContain('listSessionCandidatesForIntent(');
+    expect(handleResumeSource).not.toContain('SessionService.listSessions({');
   });
 });
