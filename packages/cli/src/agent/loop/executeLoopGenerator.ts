@@ -35,9 +35,9 @@ import type {
 } from '../types.js';
 import { ConversationState } from './ConversationState.js';
 import {
+  checkDelegationRequirement,
   checkIncompleteIntent,
   checkOutputRecovery,
-  checkRalphLoop,
   checkStopHook,
   checkVerificationRequired,
   checkWorktreeRequirement,
@@ -609,6 +609,9 @@ export async function* executeLoopGenerator(
 
     // === Agentic Loop ===
     const isYoloMode = context.permissionMode === ('yolo' as PermissionMode);
+    const isSubagent = !!context.subagentInfo;
+    const hasExplicitTurnLimit =
+      deps.runtimeOptions.maxTurns !== undefined || options?.maxTurns !== undefined;
     const configuredMaxTurns =
       deps.runtimeOptions.maxTurns ?? options?.maxTurns ?? deps.config.maxTurns ?? -1;
 
@@ -633,6 +636,7 @@ export async function* executeLoopGenerator(
     let lastApiCallTime: number | undefined;
     let maxOutputRecoveryCount = 0;
     let incompleteIntentRetryCount = 0;
+    let delegationRetryCount = 0;
     let verificationRetryCount = 0;
     let worktreeRetryCount = 0;
     const successfulVerificationCommands = new Set<string>();
@@ -646,9 +650,14 @@ export async function* executeLoopGenerator(
             .filter((part) => part.type === 'text')
             .map((part) => part.text)
             .join('\n');
+    const verificationPolicyRequest = [
+      originalUserRequest,
+      context.completionRequirements?.trim(),
+    ]
+      .filter(Boolean)
+      .join('\n');
     const worktreeIsolationRequired = isExplicitWorktreeRequest(originalUserRequest);
 
-    const isSubagent = !!context.subagentInfo;
     let budgetTracker = createBudgetTracker({
       budget: deps.currentModelMaxContextTokens,
       isSubagent,
@@ -991,6 +1000,80 @@ export async function* executeLoopGenerator(
           // 正常完成时归零 incompleteIntentRetryCount
           incompleteIntentRetryCount = 0;
 
+          const delegationAction = checkDelegationRequirement(
+            originalUserRequest,
+            successfulTools,
+            delegationRetryCount
+          );
+          if (delegationAction.action === 'retry') {
+            delegationRetryCount++;
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+
+            const delegationAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid
+            );
+            if (delegationAssistantUuid) {
+              lastMessageUuid = delegationAssistantUuid;
+            }
+
+            const delegationMsg: Message = {
+              role: 'user',
+              content: delegationAction.prompt,
+            };
+            state.appendControl('user', delegationMsg);
+
+            const delegationUserUuid = await saveUserMessage(
+              deps,
+              context,
+              delegationMsg.content as string,
+              lastMessageUuid
+            );
+            if (delegationUserUuid) {
+              lastMessageUuid = delegationUserUuid;
+            }
+
+            continue;
+          }
+          if (delegationAction.action === 'fail') {
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+
+            const delegationAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid
+            );
+            if (delegationAssistantUuid) {
+              lastMessageUuid = delegationAssistantUuid;
+            }
+
+            return {
+              success: false,
+              error: {
+                type: 'delegation_protocol_failed',
+                message: delegationAction.message,
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+              },
+            };
+          }
+          delegationRetryCount = 0;
+
           const worktreeAction = checkWorktreeRequirement(
             originalUserRequest,
             successfulTools,
@@ -1066,7 +1149,7 @@ export async function* executeLoopGenerator(
           worktreeRetryCount = 0;
 
           const verificationAction = checkVerificationRequired(
-            originalUserRequest,
+            verificationPolicyRequest,
             successfulVerificationCommands,
             verificationRetryCount
           );
@@ -1138,43 +1221,6 @@ export async function* executeLoopGenerator(
             };
           }
           verificationRetryCount = 0;
-
-          // Ralph Loop: Spec 未完成任务时自动继续
-          const ralphAction = await checkRalphLoop({
-            turnsCount,
-            maxTurns,
-          });
-          if (ralphAction.action === 'continue') {
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-
-            const ralphAssistantUuid = await saveAssistantMessage(
-              deps,
-              context,
-              turnResult.content || '',
-              lastMessageUuid
-            );
-            if (ralphAssistantUuid) lastMessageUuid = ralphAssistantUuid;
-
-            const ralphMsg: Message = {
-              role: 'user',
-              content: `\n\n<system-reminder>\n${ralphAction.reason}\n</system-reminder>`,
-            };
-            state.appendControl('user', ralphMsg);
-
-            const ralphUserUuid = await saveUserMessage(
-              deps,
-              context,
-              ralphMsg.content as string,
-              lastMessageUuid
-            );
-            if (ralphUserUuid) lastMessageUuid = ralphUserUuid;
-
-            continue;
-          }
 
           // Stop Hook (via completionPolicy, with timeout)
           const stopAction = await checkStopHook({
@@ -1357,6 +1403,36 @@ export async function* executeLoopGenerator(
                 params as unknown as JsonValue,
                 lastMessageUuid
               );
+
+              const exitingBeforeVerification =
+                toolCall.function.name === 'ExitWorktree' &&
+                successfulTools.has('EnterWorktree') &&
+                !successfulTools.has('ExitWorktree') &&
+                checkVerificationRequired(
+                  verificationPolicyRequest,
+                  successfulVerificationCommands,
+                  0
+                ).action !== 'none';
+              if (exitingBeforeVerification) {
+                const message =
+                  'Run the requested verification before ExitWorktree. ' +
+                  'The worktree remains active so Bash can run in isolation.';
+                return {
+                  toolCall,
+                  result: {
+                    success: false,
+                    llmContent: message,
+                    error: {
+                      type: ToolErrorType.VALIDATION_ERROR,
+                      message,
+                    },
+                    metadata: {
+                      summary: 'Blocked ExitWorktree until verification succeeds',
+                    },
+                  } as import('../../tools/types/index.js').ToolResult,
+                  toolUseUuid,
+                };
+              }
 
               const result = await deps.toolExecutor.execute(
                 toolCall.function.name,
@@ -1591,8 +1667,12 @@ export async function* executeLoopGenerator(
         }
 
         // 9. 检查轮次上限
-        if (turnsCount >= maxTurns && (!isYoloMode || isSubagent)) {
-          logger.info(`Warning: 达到轮次上限 ${maxTurns} 轮`);
+        const reachedSafetyLimit = turnsCount >= SAFETY_LIMIT;
+        const reachedConfiguredLimit =
+          turnsCount >= maxTurns && (hasExplicitTurnLimit || !isYoloMode || isSubagent);
+        if (reachedSafetyLimit || reachedConfiguredLimit) {
+          const enforcedTurnLimit = reachedSafetyLimit ? SAFETY_LIMIT : maxTurns;
+          logger.info(`Warning: 达到轮次上限 ${enforcedTurnLimit} 轮`);
 
           if (options?.onTurnLimitReached) {
             const response = await options.onTurnLimitReached({ turnsCount });
@@ -1669,8 +1749,10 @@ export async function* executeLoopGenerator(
             error: {
               type: 'max_turns_exceeded',
               message: isSubagent
-                ? `子代理已达到轮次上限 (${maxTurns} 轮)。`
-                : `已达到轮次上限 (${maxTurns} 轮)。使用 --permission-mode yolo 跳过此限制。`,
+                ? `子代理已达到轮次上限 (${enforcedTurnLimit} 轮)。`
+                : `已达到${
+                    reachedSafetyLimit ? '安全' : '显式'
+                  }轮次上限 (${enforcedTurnLimit} 轮)。`,
             },
             metadata: {
               turnsCount,

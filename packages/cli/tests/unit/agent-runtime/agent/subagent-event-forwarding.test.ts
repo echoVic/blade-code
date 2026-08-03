@@ -153,6 +153,28 @@ describe('SubagentExecutor event forwarding', () => {
     expect(result.stats?.tokens).toBe(1500);
   });
 
+  it('passes custom agent policy into completion requirements', async () => {
+    mockChatStream.mockImplementation(createMockGenerator([]));
+
+    const { SubagentExecutor } = await import(
+      '../../../../src/agent/subagents/SubagentExecutor.js'
+    );
+    const executor = new SubagentExecutor({
+      name: 'test',
+      description: 'test agent',
+      systemPrompt: 'Edit the source and run npm test before finishing.',
+    });
+
+    await executor.execute({ prompt: 'repair the project' });
+
+    expect(mockChatStream).toHaveBeenCalledWith(
+      'repair the project',
+      expect.objectContaining({
+        completionRequirements: 'Edit the source and run npm test before finishing.',
+      })
+    );
+  });
+
   it('returns only successful verification commands executed after the last edit', async () => {
     const toolResult = (
       id: string,

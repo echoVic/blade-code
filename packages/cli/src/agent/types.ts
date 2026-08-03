@@ -42,6 +42,7 @@ export interface ChatContext {
   confirmationHandler?: ConfirmationHandler; // 会话级别的确认处理器
   permissionMode?: PermissionMode; // 当前权限模式（用于 Plan 模式判断）
   systemPrompt?: string; // 动态传入的系统提示词（无状态设计）
+  completionRequirements?: string; // 内部完成门禁要求，不写入对话历史
   worktreeActive?: boolean; // 当前会话已由父级放入 managed worktree
   subagentInfo?: SubagentInfoForContext; // 子代理信息（用于 JSONL 写入）
 }
@@ -133,6 +134,7 @@ export interface LoopResult {
       | 'loop_detected'
       | 'aborted'
       | 'chat_disabled'
+      | 'delegation_protocol_failed'
       | 'verification_failed'
       | 'worktree_protocol_failed';
     message: string;

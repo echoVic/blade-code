@@ -1,12 +1,15 @@
 import { type ExecFileException, execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, realpath } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
+import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
 import { Mutex } from 'async-mutex';
 import { basename, isAbsolute, join, relative, resolve } from 'pathe';
 import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
 
 const MAX_WORKTREE_NAME_LENGTH = 64;
 const VALID_NAME_SEGMENT = /^[a-zA-Z0-9._-]+$/;
+const EPHEMERAL_AGENT_WORKTREE = /^agent\+[a-zA-Z0-9_-]{1,40}$/;
+const DEFAULT_STALE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface GitResult {
   code: number;
@@ -41,6 +44,20 @@ export interface WorktreeExitResult {
 export interface WorktreeChangeSummary {
   changedFiles: number;
   commits: number;
+}
+
+export interface WorktreeCleanupOptions {
+  workspaceRoot: string;
+  maxAgeMs?: number;
+  now?: number;
+}
+
+export interface WorktreeCleanupResult {
+  scanned: number;
+  removed: number;
+  preserved: number;
+  skipped: number;
+  errors: string[];
 }
 
 interface WorktreeManagerOptions {
@@ -267,6 +284,189 @@ export class WorktreeManager {
     const session = this.sessions.get(sessionId);
     if (!session) return undefined;
     return this.inspectChanges(session);
+  }
+
+  async cleanupStaleAgentWorktrees(
+    input: WorktreeCleanupOptions
+  ): Promise<WorktreeCleanupResult> {
+    const result: WorktreeCleanupResult = {
+      scanned: 0,
+      removed: 0,
+      preserved: 0,
+      skipped: 0,
+      errors: [],
+    };
+    const maxAgeMs = input.maxAgeMs ?? DEFAULT_STALE_AGE_MS;
+    if (!Number.isFinite(maxAgeMs) || maxAgeMs < 0) {
+      throw new Error('maxAgeMs must be a finite non-negative number');
+    }
+
+    const rootResult = await runGit(resolve(input.workspaceRoot), [
+      'rev-parse',
+      '--show-toplevel',
+    ]);
+    if (rootResult.code !== 0) {
+      const detail = rootResult.stderr.trim() || rootResult.stdout.trim();
+      if (!/not a git repository|not a git work tree/i.test(detail)) {
+        result.errors.push(`Resolve cleanup repository failed: ${detail}`);
+      }
+      return result;
+    }
+
+    let repositoryRoot: string;
+    try {
+      repositoryRoot = await realpath(rootResult.stdout.trim());
+    } catch (error) {
+      result.errors.push(
+        `Resolve cleanup repository path failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return result;
+    }
+
+    const managedRoot = this.getManagedRoot(repositoryRoot);
+    let entries: Dirent<string>[];
+    try {
+      entries = await readdir(managedRoot, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        result.errors.push(
+          `Read managed worktrees failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+      return result;
+    }
+
+    const activeRoots = new Set(
+      [...this.sessions.values()].map((session) => resolve(session.worktreeRoot))
+    );
+    const cutoff = (input.now ?? Date.now()) - maxAgeMs;
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !EPHEMERAL_AGENT_WORKTREE.test(entry.name)) {
+        result.skipped++;
+        continue;
+      }
+
+      const worktreeRoot = join(managedRoot, entry.name);
+      result.scanned++;
+      if (activeRoots.has(resolve(worktreeRoot))) {
+        result.skipped++;
+        continue;
+      }
+
+      let modifiedAt: number;
+      try {
+        modifiedAt = (await stat(worktreeRoot)).mtimeMs;
+      } catch (error) {
+        result.errors.push(
+          `Inspect stale worktree "${entry.name}" failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+        continue;
+      }
+      if (modifiedAt >= cutoff) {
+        result.skipped++;
+        continue;
+      }
+
+      const [resolvedRootResult, branchResult, statusResult, unpushedResult] =
+        await Promise.all([
+          runGit(worktreeRoot, ['rev-parse', '--show-toplevel']),
+          runGit(worktreeRoot, ['branch', '--show-current']),
+          runGit(worktreeRoot, ['--no-optional-locks', 'status', '--porcelain']),
+          runGit(worktreeRoot, [
+            'rev-list',
+            '--max-count=1',
+            'HEAD',
+            '--not',
+            '--remotes',
+          ]),
+        ]);
+      if (
+        resolvedRootResult.code !== 0 ||
+        branchResult.code !== 0 ||
+        statusResult.code !== 0 ||
+        unpushedResult.code !== 0
+      ) {
+        result.errors.push(`Git inspection failed for stale worktree "${entry.name}"`);
+        continue;
+      }
+
+      const branch = branchResult.stdout.trim();
+      let canonicalWorktreeRoot: string;
+      let canonicalResolvedRoot: string;
+      try {
+        [canonicalWorktreeRoot, canonicalResolvedRoot] = await Promise.all([
+          realpath(worktreeRoot),
+          realpath(resolvedRootResult.stdout.trim()),
+        ]);
+      } catch (error) {
+        result.errors.push(
+          `Canonical path inspection failed for "${entry.name}": ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+        continue;
+      }
+      if (
+        canonicalWorktreeRoot !== canonicalResolvedRoot ||
+        !branch.startsWith('blade-worktree-agent+')
+      ) {
+        result.errors.push(`Managed worktree identity mismatch for "${entry.name}"`);
+        continue;
+      }
+
+      if (
+        statusResult.stdout.trim().length > 0 ||
+        unpushedResult.stdout.trim().length > 0
+      ) {
+        result.preserved++;
+        continue;
+      }
+
+      const removeResult = await runGit(repositoryRoot, [
+        'worktree',
+        'remove',
+        '--force',
+        worktreeRoot,
+      ]);
+      if (removeResult.code !== 0) {
+        result.errors.push(
+          `Remove stale worktree "${entry.name}" failed: ${
+            removeResult.stderr.trim() || removeResult.stdout.trim()
+          }`
+        );
+        continue;
+      }
+
+      result.removed++;
+      const branchDeleteResult = await runGit(repositoryRoot, ['branch', '-D', branch]);
+      if (branchDeleteResult.code !== 0) {
+        result.errors.push(
+          `Delete stale branch "${branch}" failed: ${
+            branchDeleteResult.stderr.trim() || branchDeleteResult.stdout.trim()
+          }`
+        );
+      }
+    }
+
+    if (result.removed > 0) {
+      const pruneResult = await runGit(repositoryRoot, ['worktree', 'prune']);
+      if (pruneResult.code !== 0) {
+        result.errors.push(
+          `Prune stale worktree registrations failed: ${
+            pruneResult.stderr.trim() || pruneResult.stdout.trim()
+          }`
+        );
+      }
+    }
+
+    return result;
   }
 
   async exit(input: ExitWorktreeInput): Promise<WorktreeExitResult> {

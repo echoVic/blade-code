@@ -41,6 +41,38 @@ import type { AgentOptions } from '../types.js';
 import { SessionLease } from './SessionLease.js';
 
 const logger = createLogger(LogCategory.AGENT);
+const staleWorktreeCleanupRuns = new Map<string, Promise<void>>();
+
+async function cleanupStaleWorktreesOnce(workspaceRoot: string): Promise<void> {
+  let cleanup = staleWorktreeCleanupRuns.get(workspaceRoot);
+  if (!cleanup) {
+    cleanup = (async () => {
+      try {
+        const result = await worktreeManager.cleanupStaleAgentWorktrees({
+          workspaceRoot,
+        });
+        if (result.removed > 0) {
+          logger.info(`[WorktreeGC] removed ${result.removed} stale agent worktree(s)`);
+        }
+        if (result.errors.length > 0) {
+          logger.warn(
+            `[WorktreeGC] completed with ${result.errors.length} error(s): ${result.errors.join(
+              '; '
+            )}`
+          );
+        }
+      } catch (error) {
+        logger.warn(
+          `[WorktreeGC] cleanup failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    })();
+    staleWorktreeCleanupRuns.set(workspaceRoot, cleanup);
+  }
+  await cleanup;
+}
 
 export interface SessionRuntimeOptions {
   sessionId: string;
@@ -78,6 +110,7 @@ export class SessionRuntime {
 
   static async create(options: SessionRuntimeOptions): Promise<SessionRuntime> {
     await ensureStoreInitialized();
+    await cleanupStaleWorktreesOnce(getCwd());
 
     const models = getAllModels();
     if (models.length === 0) {

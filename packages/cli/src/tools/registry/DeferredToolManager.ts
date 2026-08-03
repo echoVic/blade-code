@@ -33,6 +33,8 @@ const ALWAYS_LOADED_TOOLS = new Set([
   'ToolSearch', // ToolSearch 自身必须立即加载
   'EnterPlanMode',
   'ExitPlanMode',
+  'EnterWorktree',
+  'ExitWorktree',
 ]);
 
 export class DeferredToolManager {

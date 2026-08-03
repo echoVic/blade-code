@@ -184,4 +184,22 @@ describe('ToolRegistry', () => {
     expect(stats.tags).toBeGreaterThanOrEqual(2);
     expect(stats.toolsByCategory.alpha).toBe(2);
   });
+
+  it('始终暴露 worktree 生命周期工具并延迟普通扩展工具', () => {
+    registry.register(createMockTool('EnterWorktree'));
+    registry.register(createMockTool('ExitWorktree'));
+    registry.register(createMockTool('OptionalExtension'));
+
+    const declarations = registry
+      .getFunctionDeclarationsByMode()
+      .map((declaration) => declaration.name);
+
+    expect(declarations).toEqual(
+      expect.arrayContaining(['EnterWorktree', 'ExitWorktree'])
+    );
+    expect(declarations).not.toContain('OptionalExtension');
+    expect(registry.getDeferredToolsListing()).toContain('OptionalExtension');
+    expect(registry.getDeferredToolsListing()).not.toContain('EnterWorktree');
+    expect(registry.getDeferredToolsListing()).not.toContain('ExitWorktree');
+  });
 });

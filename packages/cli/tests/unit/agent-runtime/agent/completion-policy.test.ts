@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  checkDelegationRequirement,
   checkIncompleteIntent,
   checkOutputRecovery,
   checkVerificationRequired,
   checkWorktreeRequirement,
+  DELEGATION_FAILURE_MESSAGE,
+  DELEGATION_RETRY_PROMPT,
+  MAX_DELEGATION_RETRIES,
   MAX_INCOMPLETE_INTENT_RETRIES,
   MAX_OUTPUT_RECOVERY_LIMIT,
   MAX_VERIFICATION_RETRIES,
@@ -176,6 +180,51 @@ describe('completionPolicy', () => {
       ).toEqual({
         action: 'fail',
         message: VERIFICATION_FAILURE_MESSAGE,
+      });
+    });
+  });
+
+  describe('checkDelegationRequirement', () => {
+    it('requires Task for an explicit delegation request', () => {
+      expect(
+        checkDelegationRequirement(
+          'Delegate this repair to channel-specialist with the Task tool.',
+          new Set(),
+          0
+        )
+      ).toEqual({
+        action: 'retry',
+        prompt: DELEGATION_RETRY_PROMPT,
+      });
+    });
+
+    it('accepts a successful Task and ignores negated delegation', () => {
+      expect(
+        checkDelegationRequirement(
+          'Delegate this repair to an agent with the Task tool.',
+          new Set(['Task']),
+          0
+        )
+      ).toEqual({ action: 'none' });
+      expect(
+        checkDelegationRequirement(
+          'Do not delegate to a subagent. Fix it directly.',
+          new Set(),
+          0
+        )
+      ).toEqual({ action: 'none' });
+    });
+
+    it('fails closed after the retry limit', () => {
+      expect(
+        checkDelegationRequirement(
+          'Use the Task tool to invoke a subagent.',
+          new Set(),
+          MAX_DELEGATION_RETRIES
+        )
+      ).toEqual({
+        action: 'fail',
+        message: DELEGATION_FAILURE_MESSAGE,
       });
     });
   });

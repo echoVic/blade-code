@@ -79,6 +79,7 @@ export class SubagentExecutor {
           userId: 'subagent',
           sessionId: agentId,
           workspaceRoot: context.workspaceRoot || getCwd(),
+          completionRequirements: appendSystemPrompt,
           worktreeActive: context.worktreeActive,
           permissionMode,
           subagentInfo,

@@ -7,6 +7,21 @@ import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
 import { createChatServiceAsync } from '../../../../src/services/ChatServiceInterface.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 
+const worktreeMocks = vi.hoisted(() => ({
+  cleanupStaleAgentWorktrees: vi.fn(async () => ({
+    scanned: 0,
+    removed: 0,
+    preserved: 0,
+    skipped: 0,
+    errors: [],
+  })),
+  releaseSession: vi.fn(),
+}));
+
+vi.mock('../../../../src/worktree/WorktreeManager.js', () => ({
+  worktreeManager: worktreeMocks,
+}));
+
 vi.mock('../../../../src/store/vanilla.js', () => ({
   ensureStoreInitialized: vi.fn(async () => {
     /* noop */
@@ -127,6 +142,10 @@ describe('SessionRuntime', () => {
       mcpServers,
     });
 
+    expect(worktreeMocks.cleanupStaleAgentWorktrees).toHaveBeenCalledTimes(1);
+    expect(worktreeMocks.cleanupStaleAgentWorktrees).toHaveBeenCalledWith({
+      workspaceRoot: expect.any(String),
+    });
     expect(createIsolated).toHaveBeenCalledTimes(1);
     expect(globalRegistry).not.toHaveBeenCalled();
     expect(isolatedRegistry.registerServer).toHaveBeenCalledWith(

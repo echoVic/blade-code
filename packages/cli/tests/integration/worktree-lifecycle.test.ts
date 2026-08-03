@@ -1,15 +1,24 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
-import { join } from 'pathe';
 import { promisify } from 'node:util';
+import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { bashTool } from '../../src/tools/builtin/shell/bash.js';
+import { createWorktreeTools } from '../../src/tools/builtin/worktree/worktreeTools.js';
 import {
   validateWorktreeName,
   WorktreeManager,
 } from '../../src/worktree/WorktreeManager.js';
-import { bashTool } from '../../src/tools/builtin/shell/bash.js';
-import { createWorktreeTools } from '../../src/tools/builtin/worktree/worktreeTools.js';
 
 vi.unmock('child_process');
 vi.unmock('node:child_process');
@@ -55,6 +64,18 @@ describe('WorktreeManager integration', () => {
   afterEach(async () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
+
+  async function publishMainBranch(): Promise<void> {
+    const remoteRoot = join(tempRoot, 'remote.git');
+    await git(tempRoot, 'init', '--bare', remoteRoot);
+    await git(repoRoot, 'remote', 'add', 'origin', remoteRoot);
+    await git(repoRoot, 'push', '-u', 'origin', 'main');
+  }
+
+  async function makeStale(worktreeRoot: string): Promise<void> {
+    const staleTime = new Date(Date.now() - 60_000);
+    await utimes(worktreeRoot, staleTime, staleTime);
+  }
 
   it('rejects traversal and unsafe worktree names before side effects', () => {
     for (const name of ['', '.', '..', '../escape', '/absolute', 'bad name']) {
@@ -212,5 +233,130 @@ describe('WorktreeManager integration', () => {
     expect(await git(repoRoot, 'worktree', 'list', '--porcelain')).not.toContain(
       manager.getManagedRoot(repoRoot)
     );
+  });
+
+  it('treats cleanup outside a Git repository as a no-op', async () => {
+    const nonGitRoot = join(tempRoot, 'non-git');
+    await mkdir(nonGitRoot);
+
+    const result = await manager.cleanupStaleAgentWorktrees({
+      workspaceRoot: nonGitRoot,
+    });
+
+    expect(result).toEqual({
+      scanned: 0,
+      removed: 0,
+      preserved: 0,
+      skipped: 0,
+      errors: [],
+    });
+  });
+
+  it('removes stale clean agent worktrees after an interrupted process', async () => {
+    await publishMainBranch();
+    const session = await manager.enter({
+      sessionId: 'agent-clean',
+      workspaceRoot: repoRoot,
+      name: 'agent/agent-clean',
+    });
+    manager.releaseSession(session.sessionId);
+    await makeStale(session.worktreeRoot);
+
+    const result = await manager.cleanupStaleAgentWorktrees({
+      workspaceRoot: repoRoot,
+      maxAgeMs: 1_000,
+    });
+
+    expect(result.removed).toBe(1);
+    expect(result.preserved).toBe(0);
+    expect(result.errors).toEqual([]);
+    await expect(access(session.worktreeRoot)).rejects.toThrow();
+    expect(await git(repoRoot, 'branch', '--list', session.branch)).toBe('');
+  });
+
+  it('preserves stale agent worktrees with dirty or unpushed work', async () => {
+    await publishMainBranch();
+    const dirty = await manager.enter({
+      sessionId: 'agent-dirty',
+      workspaceRoot: repoRoot,
+      name: 'agent/agent-dirty',
+    });
+    await writeFile(join(dirty.worktreeRoot, 'untracked.txt'), 'valuable\n');
+    manager.releaseSession(dirty.sessionId);
+    await makeStale(dirty.worktreeRoot);
+
+    const committed = await manager.enter({
+      sessionId: 'agent-commit',
+      workspaceRoot: repoRoot,
+      name: 'agent/agent-commit',
+    });
+    await writeFile(join(committed.worktreeRoot, 'committed.txt'), 'valuable\n');
+    await git(committed.worktreeRoot, 'add', '.');
+    await git(committed.worktreeRoot, 'commit', '-m', 'local work');
+    manager.releaseSession(committed.sessionId);
+    await makeStale(committed.worktreeRoot);
+
+    const result = await manager.cleanupStaleAgentWorktrees({
+      workspaceRoot: repoRoot,
+      maxAgeMs: 1_000,
+    });
+
+    expect(result.removed).toBe(0);
+    expect(result.preserved).toBe(2);
+    expect(result.errors).toEqual([]);
+    expect(await readFile(join(dirty.worktreeRoot, 'untracked.txt'), 'utf-8')).toBe(
+      'valuable\n'
+    );
+    expect(await readFile(join(committed.worktreeRoot, 'committed.txt'), 'utf-8')).toBe(
+      'valuable\n'
+    );
+  });
+
+  it('never sweeps user-named or currently active worktrees', async () => {
+    await publishMainBranch();
+    const userNamed = await manager.enter({
+      sessionId: 'user-feature',
+      workspaceRoot: repoRoot,
+      name: 'feature/user-owned',
+    });
+    manager.releaseSession(userNamed.sessionId);
+    await makeStale(userNamed.worktreeRoot);
+
+    const active = await manager.enter({
+      sessionId: 'agent-active',
+      workspaceRoot: repoRoot,
+      name: 'agent/agent-active',
+    });
+    await makeStale(active.worktreeRoot);
+
+    const result = await manager.cleanupStaleAgentWorktrees({
+      workspaceRoot: repoRoot,
+      maxAgeMs: 1_000,
+    });
+
+    expect(result.removed).toBe(0);
+    expect(result.preserved).toBe(0);
+    expect(result.skipped).toBeGreaterThanOrEqual(2);
+    await expect(access(userNamed.worktreeRoot)).resolves.toBeUndefined();
+    await expect(access(active.worktreeRoot)).resolves.toBeUndefined();
+  });
+
+  it('preserves stale directories when Git identity cannot be verified', async () => {
+    const invalidRoot = join(
+      manager.getManagedRoot(await realpath(repoRoot)),
+      'agent+invalid-state'
+    );
+    await mkdir(invalidRoot, { recursive: true });
+    await makeStale(invalidRoot);
+
+    const result = await manager.cleanupStaleAgentWorktrees({
+      workspaceRoot: repoRoot,
+      maxAgeMs: 1_000,
+    });
+
+    expect(result.removed).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('Git inspection failed');
+    await expect(access(invalidRoot)).resolves.toBeUndefined();
   });
 });

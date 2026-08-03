@@ -410,6 +410,46 @@ describe('executeLoopGenerator', () => {
     expect(chatMock).toHaveBeenCalledTimes(1);
   });
 
+  it('enforces an explicit turn limit for the main agent in yolo mode', async () => {
+    const deps = createMockDeps({
+      runtimeOptions: { maxTurns: 1 } as any,
+    });
+    const context = createMockContext({
+      permissionMode: 'yolo' as any,
+    });
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    chatMock.mockResolvedValueOnce({
+      content: '',
+      toolCalls: [
+        {
+          id: 'tc-main-turn-limit',
+          type: 'function',
+          function: { name: 'Bash', arguments: '{"command":"echo retry"}' },
+        },
+      ],
+      finishReason: 'tool_calls',
+    });
+    (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      success: false,
+      llmContent: 'blocked',
+    });
+
+    const { result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Run the command once.',
+        context,
+        { stream: false } as LoopOptions,
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('max_turns_exceeded');
+    expect(result.metadata?.turnsCount).toBe(1);
+    expect(chatMock).toHaveBeenCalledTimes(1);
+  });
+
   // ------------------------------------------------------------------
   // 3. Tool call → tool result → final response (2 turns)
   // ------------------------------------------------------------------
@@ -751,6 +791,71 @@ describe('executeLoopGenerator', () => {
       });
     });
 
+    it('continues until an explicitly requested delegation succeeds', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      chatMock
+        .mockResolvedValueOnce({
+          content: 'I completed the task directly.',
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-delegate-required',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'The delegated repair completed.',
+          finishReason: 'stop',
+        });
+
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockResolvedValueOnce({
+        success: true,
+        llmContent: 'Subagent repaired and verified the project.',
+        metadata: {
+          subagentStatus: 'completed',
+          verificationCommands: ['npm test'],
+        },
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Delegate this repair to channel-specialist with the Task tool.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(executeMock).toHaveBeenCalledTimes(1);
+      expect(executeMock).toHaveBeenCalledWith(
+        'Task',
+        expect.objectContaining({
+          subagent_type: 'channel-specialist',
+        }),
+        expect.objectContaining({ sessionId: 'test-session' })
+      );
+      expect(context.messages).toContainEqual({
+        role: 'user',
+        content: expect.stringContaining('explicitly required delegation'),
+      });
+    });
+
     it('propagates a worktree workspace transition to later tool calls', async () => {
       const deps = createMockDeps();
       const context = createMockContext({ workspaceRoot: '/repo' });
@@ -824,6 +929,144 @@ describe('executeLoopGenerator', () => {
       expect(context.workspaceRoot).toBe('/worktrees/isolated');
       expect(executeMock.mock.calls[1]?.[2]).toEqual(
         expect.objectContaining({ workspaceRoot: '/worktrees/isolated' })
+      );
+    });
+
+    it('blocks ExitWorktree until requested verification succeeds', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext({ workspaceRoot: '/repo' });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-enter',
+              type: 'function',
+              function: {
+                name: 'EnterWorktree',
+                arguments: '{"name":"isolated"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-edit',
+              type: 'function',
+              function: {
+                name: 'Edit',
+                arguments:
+                  '{"file_path":"/worktrees/isolated/src.ts","old_string":"bad","new_string":"good"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-exit-too-early',
+              type: 'function',
+              function: {
+                name: 'ExitWorktree',
+                arguments: '{"action":"keep"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-test',
+              type: 'function',
+              function: {
+                name: 'Bash',
+                arguments: '{"command":"npm test"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-exit',
+              type: 'function',
+              function: {
+                name: 'ExitWorktree',
+                arguments: '{"action":"keep"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Verified worktree change complete.',
+          finishReason: 'stop',
+        });
+
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: 'Entered worktree',
+          metadata: {
+            workspaceTransition: 'enter',
+            workspaceRoot: '/worktrees/isolated',
+          },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: 'Edited source',
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: 'tests passed',
+          metadata: { command: 'npm test', exit_code: 0 },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: 'Exited worktree',
+          metadata: {
+            workspaceTransition: 'exit',
+            workspaceRoot: '/repo',
+          },
+        });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Use a worktree to fix the bug, run npm test, then exit the worktree.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(executeMock.mock.calls.map((call) => call[0])).toEqual([
+        'EnterWorktree',
+        'Edit',
+        'Bash',
+        'ExitWorktree',
+      ]);
+      expect(context.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'tool',
+            tool_call_id: 'tc-exit-too-early',
+            content: expect.stringContaining('verification before ExitWorktree'),
+          }),
+        ])
       );
     });
 
