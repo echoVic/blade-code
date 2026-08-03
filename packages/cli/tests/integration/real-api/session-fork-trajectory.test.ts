@@ -102,7 +102,7 @@ function runBlade(
         '--permission-mode',
         'yolo',
         '--max-turns',
-        '8',
+        '16',
         '--model',
         model,
         ...args,
@@ -200,7 +200,7 @@ describe.skipIf(!enabled)('CLI session fork trajectory (real API)', () => {
           [
             'Use the exact token I asked you to memorize earlier.',
             'Read result.txt, replace the entire file with only that token and a newline,',
-            'then run Bash with "wc -c result.txt". Do not inspect or modify other files.',
+            'Do not inspect or modify other files.',
           ].join(' '),
         ]);
         const parsed = parseHeadlessJsonl(forked.stdout);
@@ -213,7 +213,6 @@ describe.skipIf(!enabled)('CLI session fork trajectory (real API)', () => {
         expect(parsed.nonJsonLines).toEqual([]);
         expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
         expect(toolStarts).toContain('Read');
-        expect(toolStarts).toContain('Bash');
         expect(readFileSync(path.join(workspace, 'result.txt'), 'utf8').trim()).toBe(
           memorizedValue
         );

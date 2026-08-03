@@ -38,6 +38,11 @@ export interface ResolvedModelSettings {
   model: string;
 }
 
+export function normalizeNewApiBaseURL(baseURL: string): string {
+  const normalized = baseURL.trim().replace(/^`|`$/g, '').replace(/\/+$/, '');
+  return /\/v\d+$/i.test(normalized) ? normalized : `${normalized}/v1`;
+}
+
 let cachedBladeModel: BladeModelConfig | null | undefined;
 
 function getBladeCurrentModel(): BladeModelConfig | undefined {
@@ -112,6 +117,23 @@ export function resolveModelSettings(
   };
 }
 
+function resolveNewApiSettings(
+  id: Exclude<ModelId, 'deepseek'>,
+  envPrefix: string,
+  defaultModel: string
+): ResolvedModelSettings {
+  const settings = resolveModelSettings(
+    id,
+    envPrefix,
+    defaultModel,
+    'https://callapi8.com/v1'
+  );
+  return {
+    ...settings,
+    baseURL: normalizeNewApiBaseURL(settings.baseURL),
+  };
+}
+
 function requireApiKey(id: ModelId, settings: ResolvedModelSettings): string {
   if (settings.apiKey) return settings.apiKey;
   throw new Error(
@@ -144,12 +166,7 @@ const deepseekConfig: TestModelConfig = {
   },
 };
 
-const claudeSettings = resolveModelSettings(
-  'claude',
-  'CLAUDE',
-  'claude-3.5-sonnet',
-  'https://callapi8.com'
-);
+const claudeSettings = resolveNewApiSettings('claude', 'CLAUDE', 'claude-opus-4-8');
 
 const claudeConfig: TestModelConfig = {
   id: 'claude',
@@ -165,12 +182,7 @@ const claudeConfig: TestModelConfig = {
   },
 };
 
-const gptSettings = resolveModelSettings(
-  'gpt',
-  'GPT',
-  'gpt-4o',
-  'https://callapi8.com'
-);
+const gptSettings = resolveNewApiSettings('gpt', 'GPT', 'gpt-5.5');
 
 const gptConfig: TestModelConfig = {
   id: 'gpt',
@@ -190,12 +202,7 @@ const gptConfig: TestModelConfig = {
   },
 };
 
-const domesticSettings = resolveModelSettings(
-  'domestic',
-  'DOMESTIC',
-  'qwen-plus',
-  'https://callapi8.com'
-);
+const domesticSettings = resolveNewApiSettings('domestic', 'DOMESTIC', 'qwen-plus');
 
 const domesticConfig: TestModelConfig = {
   id: 'domestic',

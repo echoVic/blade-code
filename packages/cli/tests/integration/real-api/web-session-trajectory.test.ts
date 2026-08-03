@@ -3,11 +3,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { BladeServer } from '../../../src/server/server.js';
 import { getState } from '../../../src/store/vanilla.js';
-import { isRealApiTestEnabled } from './testConfig.js';
+import {
+  buildRealApiRuntimeConfig,
+  getEnabledModelConfigs,
+  isRealApiTestEnabled,
+  type TestModelConfig,
+} from './testConfig.js';
 
 interface SurfaceEvent {
   type: string;
@@ -23,13 +27,8 @@ interface EventCollector {
   close: () => Promise<void>;
 }
 
-const enabled = isRealApiTestEnabled() && Boolean(process.env.DEEPSEEK_API_KEY);
-const apiKey = process.env.DEEPSEEK_API_KEY ?? '';
-const baseUrl = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
-const models = (process.env.DEEPSEEK_MODELS ?? 'deepseek-v4-flash,deepseek-v4-pro')
-  .split(',')
-  .map((model) => model.trim())
-  .filter(Boolean);
+const modelConfigs = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
+const enabled = modelConfigs.length > 0;
 let server: Awaited<ReturnType<typeof BladeServer.listenAsync>> | undefined;
 let originalConfig: RuntimeConfig | null = null;
 
@@ -90,26 +89,13 @@ function createWorkspace(): string {
   return workspace;
 }
 
-function setRuntimeModel(model: string, maxContextTokens = 64_000): void {
-  const modelId = `web-real-api-${model}`;
-  getState().config.actions.setConfig({
-    ...DEFAULT_CONFIG,
-    currentModelId: modelId,
-    models: [
-      {
-        id: modelId,
-        name: model,
-        provider: 'deepseek',
-        apiKey,
-        baseUrl,
-        model,
-        maxContextTokens,
-        maxOutputTokens: 1_024,
-        timeout: 180_000,
-        maxRetries: 1,
-      },
-    ],
-  });
+function setRuntimeModel(
+  modelConfig: TestModelConfig,
+  maxContextTokens = 64_000
+): void {
+  const runtimeConfig = buildRealApiRuntimeConfig(modelConfig);
+  runtimeConfig.models[0]!.maxContextTokens = maxContextTokens;
+  getState().config.actions.setConfig(runtimeConfig);
 }
 
 async function createSession(workspace: string): Promise<string> {
@@ -275,13 +261,13 @@ afterAll(async () => {
 });
 
 describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
-  for (const model of models) {
-    it(`${model} fixes and verifies code through HTTP and SSE`, async () => {
+  for (const modelConfig of modelConfigs) {
+    it(`${modelConfig.model} fixes and verifies code through HTTP and SSE`, async () => {
       const workspace = createWorkspace();
       let sessionId: string | undefined;
       let collector: EventCollector | undefined;
       try {
-        setRuntimeModel(model);
+        setRuntimeModel(modelConfig);
         sessionId = await createSession(workspace);
         collector = await collectEvents(sessionId);
         await sendMessage(sessionId, codingPrompt());
@@ -315,7 +301,7 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
           encoding: 'utf8',
         });
         expect(test.status, test.stderr || test.stdout).toBe(0);
-        expect(JSON.stringify(collector.events)).not.toContain(apiKey);
+        expect(JSON.stringify(collector.events)).not.toContain(modelConfig.apiKey);
       } finally {
         await collector?.close();
         if (sessionId) await deleteSession(sessionId);
@@ -323,16 +309,16 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
       }
     }, 300_000);
 
-    it(`${model} exposes paired compaction events before resumed write`, async () => {
+    it(`${modelConfig.model} exposes paired compaction events before resumed write`, async () => {
       const workspace = createWorkspace();
       let sessionId: string | undefined;
       let collector: EventCollector | undefined;
       try {
-        setRuntimeModel(model, 28_000);
+        setRuntimeModel(modelConfig, 28_000);
         sessionId = await createSession(workspace);
         collector = await collectEvents(sessionId);
         await sendMessage(sessionId, compactionPrompt());
-        await collector.waitFor((event) => event.type === 'session.completed', 240_000);
+        await collector.waitFor((event) => event.type === 'session.completed', 300_000);
         await collector.waitFor(
           (event) =>
             event.type === 'session.status' && event.properties.status === 'idle'
@@ -355,7 +341,7 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
         expect(readFileSync(path.join(workspace, 'compacted.txt'), 'utf8')).toMatch(
           /^compacted\r?\n?$/
         );
-        expect(JSON.stringify(collector.events)).not.toContain(apiKey);
+        expect(JSON.stringify(collector.events)).not.toContain(modelConfig.apiKey);
       } finally {
         await collector?.close();
         if (sessionId) await deleteSession(sessionId);

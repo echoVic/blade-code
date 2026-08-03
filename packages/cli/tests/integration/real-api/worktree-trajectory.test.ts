@@ -1,5 +1,14 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import { promisify } from 'node:util';
 import { join } from 'pathe';
@@ -11,6 +20,7 @@ import {
   type WorkspaceSandboxBackend,
 } from '../../../src/tools/builtin/shell/WorkspaceWriteSandbox.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import { WorktreeManager } from '../../../src/worktree/WorktreeManager.js';
 import { isRealApiTestEnabled } from './testConfig.js';
 
 const execFileAsync = promisify(execFile);
@@ -99,6 +109,10 @@ describe.skipIf(!shouldRun)('Worktree Agent Trajectory (Real API)', () => {
     await git(repoRoot, 'config', 'user.name', 'Blade Test');
     await git(repoRoot, 'add', '.');
     await git(repoRoot, 'commit', '-m', 'initial');
+    const remoteRoot = join(tempRoot, 'remote.git');
+    await git(tempRoot, 'init', '--bare', remoteRoot);
+    await git(repoRoot, 'remote', 'add', 'origin', remoteRoot);
+    await git(repoRoot, 'push', '-u', 'origin', 'main');
   });
 
   afterAll(async () => {
@@ -129,6 +143,16 @@ describe.skipIf(!shouldRun)('Worktree Agent Trajectory (Real API)', () => {
 
   it('edits and verifies only inside a managed worktree', async () => {
     const preparationsBefore = sandboxPreparations;
+    const orphanManager = new WorktreeManager();
+    const orphan = await orphanManager.enter({
+      sessionId: 'real-api-orphan',
+      workspaceRoot: repoRoot,
+      name: 'agent/real-api-orphan',
+    });
+    orphanManager.releaseSession(orphan.sessionId);
+    const staleTime = new Date(Date.now() - 60 * 24 * 60 * 60 * 1_000);
+    await utimes(orphan.worktreeRoot, staleTime, staleTime);
+
     let output = '';
     const stdout = {
       write(chunk: string) {
@@ -181,6 +205,7 @@ describe.skipIf(!shouldRun)('Worktree Agent Trajectory (Real API)', () => {
 
     expect(exitCode).toBe(0);
     expect(sandboxPreparations).toBeGreaterThan(preparationsBefore);
+    await expect(access(orphan.worktreeRoot)).rejects.toThrow();
     expect(toolNames).toContain('EnterWorktree');
     expect(toolNames.some((name) => name === 'Edit' || name === 'Write')).toBe(true);
     expect(toolNames).toContain('Bash');

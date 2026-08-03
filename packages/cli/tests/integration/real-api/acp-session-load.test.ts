@@ -9,15 +9,14 @@ import type { RuntimeConfig } from '../../../src/config/types.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
-import { isRealApiTestEnabled } from './testConfig.js';
+import {
+  getEnabledModelConfigs,
+  isRealApiTestEnabled,
+  type TestModelConfig,
+} from './testConfig.js';
 
-const enabled = isRealApiTestEnabled() && Boolean(process.env.DEEPSEEK_API_KEY);
-const apiKey = process.env.DEEPSEEK_API_KEY ?? '';
-const baseUrl = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
-const models = (process.env.DEEPSEEK_MODELS ?? 'deepseek-v4-flash,deepseek-v4-pro')
-  .split(',')
-  .map((model) => model.trim())
-  .filter(Boolean);
+const modelConfigs = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
+const enabled = modelConfigs.length > 0;
 let originalConfig: RuntimeConfig | null = null;
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 
@@ -62,21 +61,21 @@ function createHarness(client: RecordingClient): {
   return { connection, agent };
 }
 
-function configureModel(model: string): string {
-  const modelId = `acp-load-${model}`;
+function configureModel(modelConfig: TestModelConfig): string {
+  const modelId = `acp-load-${modelConfig.id}`;
   getState().config.actions.setConfig({
     ...DEFAULT_CONFIG,
     currentModelId: modelId,
     models: [
       {
         id: modelId,
-        name: model,
-        provider: 'deepseek',
-        apiKey,
-        baseUrl,
-        model,
+        name: modelConfig.name,
+        provider: modelConfig.provider,
+        apiKey: modelConfig.apiKey,
+        baseUrl: modelConfig.baseURL ?? '',
+        model: modelConfig.model,
         maxContextTokens: 64_000,
-        maxOutputTokens: 1_024,
+        maxOutputTokens: 4_096,
         timeout: 180_000,
         maxRetries: 1,
       },
@@ -114,16 +113,17 @@ afterAll(() => {
 });
 
 describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
-  for (const model of models) {
-    it(`${model} reloads history through ACP and continues the coding loop`, async () => {
+  for (const modelConfig of modelConfigs) {
+    it(`${modelConfig.model} reloads history through ACP and continues the coding loop`, async () => {
       const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-load-'));
       process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
-      const marker = `ACP_SESSION_RECOVERY_${model.replaceAll(/[^A-Za-z0-9]/g, '_')}`;
-      const resumedValue = `ACP_SESSION_RESUMED_${model.replaceAll(/[^A-Za-z0-9]/g, '_')}`;
+      const modelMarker = modelConfig.model.replaceAll(/[^A-Za-z0-9]/g, '_');
+      const marker = `ACP_SESSION_RECOVERY_${modelMarker}`;
+      const resumedValue = `ACP_SESSION_RESUMED_${modelMarker}`;
       const markerPath = path.join(workspace, 'marker.txt');
       const resultPath = path.join(workspace, 'result.txt');
       await writeFile(markerPath, `${marker}\n`);
-      configureModel(model);
+      const modelId = configureModel(modelConfig);
 
       let firstAgent: BladeAgent | undefined;
       let secondAgent: BladeAgent | undefined;
@@ -198,7 +198,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
             cwd: workspace,
             mcpServers: [],
           });
-          expect(loaded.models?.currentModelId).toBe(`acp-load-${model}`);
+          expect(loaded.models?.currentModelId).toBe(modelId);
           expect(replayedText(secondClient.updates)).toContain('Read marker.txt');
 
           await second.connection.setSessionMode?.({
@@ -225,7 +225,9 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
                 notification.update.title.includes('Bash')
             )
           ).toBe(true);
-          expect(JSON.stringify(secondClient.updates)).not.toContain(apiKey);
+          expect(JSON.stringify(secondClient.updates)).not.toContain(
+            modelConfig.apiKey
+          );
         });
       } finally {
         await firstAgent?.destroy().catch(() => undefined);

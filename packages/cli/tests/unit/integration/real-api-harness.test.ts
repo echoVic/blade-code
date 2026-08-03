@@ -6,6 +6,7 @@ import {
 } from '../../integration/real-api/codingTaskHarness.js';
 import {
   buildRealApiRuntimeConfig,
+  normalizeNewApiBaseURL,
   resolveModelSettings,
 } from '../../integration/real-api/testConfig.js';
 
@@ -97,6 +98,18 @@ describe('real API coding-task harness', () => {
       baseURL: 'https://default.invalid',
       model: 'qwen-plus',
     });
+  });
+
+  it('normalizes NewAPI channel roots without duplicating the API version', () => {
+    expect(normalizeNewApiBaseURL('https://callapi8.com')).toBe(
+      'https://callapi8.com/v1'
+    );
+    expect(normalizeNewApiBaseURL(' `https://callapi8.com/` ')).toBe(
+      'https://callapi8.com/v1'
+    );
+    expect(normalizeNewApiBaseURL('https://callapi8.com/v1')).toBe(
+      'https://callapi8.com/v1'
+    );
   });
 
   it('builds an isolated runtime config with only the selected real API model', () => {

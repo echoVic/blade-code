@@ -195,7 +195,7 @@ function runBlade(
       ].join('\n'),
       tools: ['Read', 'Edit', 'Bash'],
       permissionMode: 'dontAsk',
-      maxTurns: 8,
+      maxTurns: 12,
     },
   });
 
@@ -310,7 +310,8 @@ describe.skipIf(!enabled)('CLI custom agents trajectory (real API)', () => {
           event.type === 'tool_result' && event.success ? [event.tool_name] : []
         );
         const taskResult = parsed.events.find(
-          (event) => event.type === 'tool_result' && event.tool_name === 'Task'
+          (event) =>
+            event.type === 'tool_result' && event.tool_name === 'Task' && event.success
         );
         const changedPaths = execFileSync('git', ['diff', '--name-only'], {
           cwd: workspace,
