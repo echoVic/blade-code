@@ -28,8 +28,12 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
     const previous = get().eventUnsubscribe;
     set({ eventUnsubscribe: next });
     globalStreamingBuffer.reset();
-    if (previous) {
-      previous();
+    if (previous && previous !== next) {
+      try {
+        previous();
+      } catch (error) {
+        console.warn('Failed to clean up previous event subscription', error);
+      }
     }
   },
 

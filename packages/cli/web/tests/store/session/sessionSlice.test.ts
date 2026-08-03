@@ -24,6 +24,8 @@ import { sessionService } from '../../../src/services';
 import { useConfigStore } from '../../../src/store/ConfigStore';
 import { TEMP_SESSION_ID, useSessionStore } from '../../../src/store/session';
 import type { Message } from '../../../src/store/session/types';
+import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer';
+import { createStreamingSlice } from '../../../src/store/session/slices/streamingSlice';
 
 function createSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -61,6 +63,25 @@ function createMessage(
     thinkingContent: overrides.thinkingContent,
     agentContent: overrides.agentContent,
   };
+}
+
+function createActualReplaceEventSubscription() {
+  const set = (
+    partial:
+      | Parameters<typeof useSessionStore.setState>[0]
+      | ((
+          state: ReturnType<typeof useSessionStore.getState>
+        ) => Partial<ReturnType<typeof useSessionStore.getState>>)
+  ) => {
+    if (typeof partial === 'function') {
+      useSessionStore.setState(partial(useSessionStore.getState()));
+      return;
+    }
+    useSessionStore.setState(partial);
+  };
+  const get = () => useSessionStore.getState();
+  return createStreamingSlice(set as never, get as never, {} as never)
+    .replaceEventSubscription;
 }
 
 describe('sessionSlice multimodal sendMessage', () => {
@@ -419,6 +440,74 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(originalUnsubscribe).not.toHaveBeenCalled();
   });
 
+  it('keeps committed child state when replacing the old subscription cleanup throws during fork', async () => {
+    const source = createSession({
+      sessionId: 'shared-id',
+      projectPath: '/tmp/project-a',
+      title: 'Parent A',
+      rootId: 'root-a',
+    });
+    const child = createSession({
+      sessionId: 'child-id',
+      projectPath: '/tmp/project-a',
+      title: 'Child',
+      rootId: 'root-a',
+      parentId: 'shared-id',
+      relationType: 'fork',
+    });
+    const sourceRef = createRef(source.sessionId, source.projectPath);
+    const childRef = createRef(child.sessionId, child.projectPath);
+    const replacementUnsubscribe = vi.fn();
+    const oldUnsubscribe = vi.fn(() => {
+      throw new Error('old close failed');
+    });
+
+    useSessionStore.setState({
+      sessions: [source],
+      currentSessionId: source.sessionId,
+      currentSessionRef: sourceRef,
+      messages: [
+        createMessage({ id: 'existing-message', role: 'user', content: 'persisted' }),
+      ],
+      eventUnsubscribe: oldUnsubscribe,
+    });
+
+    vi.mocked(sessionService.forkSession).mockResolvedValue({
+      session: child,
+      messages: [
+        createMessage({ id: 'history-user', role: 'user', content: 'hello child' }),
+      ],
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {
+      // Suppress expected cleanup warning in this test.
+    });
+
+    try {
+      useSessionStore.setState({
+        prepareEventSubscription: vi.fn().mockResolvedValue(replacementUnsubscribe),
+        replaceEventSubscription: createActualReplaceEventSubscription(),
+      });
+
+      await useSessionStore.getState().forkSession(source);
+
+      expect(useSessionStore.getState().sessions).toEqual([source, child]);
+      expect(useSessionStore.getState().currentSessionRef).toEqual(childRef);
+      expect(useSessionStore.getState().currentSessionId).toBe(child.sessionId);
+      expect(useSessionStore.getState().messages).toEqual([
+        expect.objectContaining({ role: 'user', content: 'hello child' }),
+      ]);
+      expect(useSessionStore.getState().eventUnsubscribe).toBe(replacementUnsubscribe);
+      expect(useSessionStore.getState().forkingSessionRef).toBeNull();
+      expect(useSessionStore.getState().error).toBeNull();
+      expect(replacementUnsubscribe).not.toHaveBeenCalled();
+      expect(oldUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('keeps the source view unchanged when fork route fails', async () => {
     const source = createSession({
       sessionId: 'shared-id',
@@ -562,6 +651,106 @@ describe('sessionSlice multimodal sendMessage', () => {
     ]);
     expect(useSessionStore.getState().eventUnsubscribe).toBe(originalUnsubscribe);
     expect(useSessionStore.getState().error).toBe('prepare failed');
+  });
+
+  it('keeps committed target state when replacing the old subscription cleanup throws during select', async () => {
+    const source = createSession({
+      sessionId: 'shared-id',
+      projectPath: '/tmp/project-a',
+      title: 'Parent A',
+      rootId: 'root-a',
+    });
+    const target = createSession({
+      sessionId: 'shared-id',
+      projectPath: '/tmp/project-b',
+      title: 'Parent B',
+      rootId: 'root-b',
+    });
+    const sourceRef = createRef(source.sessionId, source.projectPath);
+    const targetRef = createRef(target.sessionId, target.projectPath);
+    const replacementUnsubscribe = vi.fn();
+    const oldUnsubscribe = vi.fn(() => {
+      throw new Error('old close failed');
+    });
+    const prepareEventSubscription = vi.fn().mockResolvedValue(replacementUnsubscribe);
+
+    useSessionStore.setState({
+      sessions: [source, target],
+      currentSessionId: source.sessionId,
+      currentSessionRef: sourceRef,
+      messages: [
+        createMessage({
+          id: 'source-message',
+          role: 'user',
+          content: 'persisted source',
+        }),
+      ],
+      eventUnsubscribe: oldUnsubscribe,
+      prepareEventSubscription,
+      replaceEventSubscription: createActualReplaceEventSubscription(),
+    });
+    vi.mocked(sessionService.getMessages).mockResolvedValue([
+      createMessage({
+        id: 'target-message',
+        role: 'user',
+        content: 'persisted target',
+      }),
+    ]);
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {
+      // Suppress expected cleanup warning in this test.
+    });
+
+    try {
+      await useSessionStore.getState().selectSession(targetRef);
+
+      expect(prepareEventSubscription).toHaveBeenCalledWith(targetRef);
+      expect(useSessionStore.getState().currentSessionRef).toEqual(targetRef);
+      expect(useSessionStore.getState().currentSessionId).toBe(target.sessionId);
+      expect(useSessionStore.getState().messages).toEqual([
+        expect.objectContaining({ id: 'target-message' }),
+      ]);
+      expect(useSessionStore.getState().eventUnsubscribe).toBe(replacementUnsubscribe);
+      expect(useSessionStore.getState().error).toBeNull();
+      expect(replacementUnsubscribe).not.toHaveBeenCalled();
+      expect(oldUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('replaces subscriptions fail-safely after setting next and resetting the global buffer', () => {
+    const next = vi.fn();
+    const previous = vi.fn(() => {
+      throw new Error('old close failed');
+    });
+    const resetSpy = vi.spyOn(globalStreamingBuffer, 'reset');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {
+      // Suppress expected cleanup warning in this test.
+    });
+
+    try {
+      useSessionStore.setState({
+        eventUnsubscribe: previous,
+        replaceEventSubscription: createActualReplaceEventSubscription(),
+      });
+
+      expect(() =>
+        useSessionStore.getState().replaceEventSubscription(next)
+      ).not.toThrow();
+      expect(useSessionStore.getState().eventUnsubscribe).toBe(next);
+      expect(resetSpy).toHaveBeenCalledTimes(1);
+      expect(previous).toHaveBeenCalledTimes(1);
+      expect(next).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Failed to clean up previous event subscription',
+        expect.any(Error)
+      );
+    } finally {
+      resetSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 
   it('encodes projectPath on all session-ref service routes and session directory headers', async () => {
