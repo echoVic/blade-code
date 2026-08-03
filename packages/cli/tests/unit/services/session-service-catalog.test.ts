@@ -312,6 +312,65 @@ describe('SessionService strict session catalog', () => {
     expect(second.nextCursor).toBeUndefined();
   });
 
+  it('skips transcripts whose committed cwd is relative and keeps pagination stable', async () => {
+    await writeTranscript(workspaceA, 'valid-newer', [
+      makeCreatedEvent('valid-newer', workspaceA, '2024-01-03T00:00:00.000Z'),
+      ...makeMessageEvents(
+        'valid-newer',
+        workspaceA,
+        '2024-01-03T00:00:00.000Z',
+        'valid newer'
+      ),
+    ]);
+    await writeTranscript(workspaceA, 'invalid-relative', [
+      makeCreatedEvent(
+        'invalid-relative',
+        'relative/workspace',
+        '2024-01-04T00:00:00.000Z'
+      ),
+      ...makeMessageEvents(
+        'invalid-relative',
+        workspaceA,
+        '2024-01-04T00:00:00.000Z',
+        'invalid relative cwd'
+      ),
+    ]);
+    await writeTranscript(workspaceA, 'valid-older', [
+      makeCreatedEvent('valid-older', workspaceA, '2024-01-02T00:00:00.000Z'),
+      ...makeMessageEvents(
+        'valid-older',
+        workspaceA,
+        '2024-01-02T00:00:00.000Z',
+        'valid older'
+      ),
+    ]);
+
+    const first = await SessionService.listSessionPage({
+      cwd: workspaceA,
+      limit: 1,
+      includeSubagents: false,
+    });
+    expect(first.sessions.map((session) => session.sessionId)).toEqual(['valid-newer']);
+    expect(first.sessions).not.toContainEqual(
+      expect.objectContaining({ sessionId: 'invalid-relative' })
+    );
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    const second = await SessionService.listSessionPage({
+      cwd: workspaceA,
+      cursor: first.nextCursor,
+      limit: 1,
+      includeSubagents: false,
+    });
+    expect(second.sessions.map((session) => session.sessionId)).toEqual([
+      'valid-older',
+    ]);
+    expect(second.sessions).not.toContainEqual(
+      expect.objectContaining({ sessionId: 'invalid-relative' })
+    );
+    expect(second.nextCursor).toBeUndefined();
+  });
+
   it('loads and deletes hidden subagents even when public listing hides them', async () => {
     const parentStore = new PersistentStore(workspaceA, 100, 'test');
     await parentStore.saveMessage('visible-parent', 'user', 'parent');

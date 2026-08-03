@@ -681,10 +681,17 @@ export class SessionService {
         entry.data.partType === 'tool_result' &&
         typeof (entry.data.payload as { error?: unknown }).error === 'string'
     );
+    const committedProjectPath = created.cwd;
+    if (committedProjectPath !== undefined && !path.isAbsolute(committedProjectPath)) {
+      throw new Error(`Session catalog cwd must be absolute: ${sessionId}`);
+    }
 
     return {
       sessionId,
-      projectPath: created.cwd ?? projectPath,
+      projectPath:
+        committedProjectPath === undefined
+          ? projectPath
+          : path.resolve(committedProjectPath),
       gitBranch: created.gitBranch,
       rootId: durable.rootId || sessionId,
       parentId: durable.parentId,
