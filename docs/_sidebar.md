@@ -17,7 +17,6 @@
   * [Skills 系统](guides/skills.md)
   * [Hooks 钩子](guides/hooks.md)
   * [Plan 模式](guides/plan-mode.md)
-  * [Spec 模式](guides/spec-mode.md)
   * [@ 文件提及](guides/at-file-mentions.md)
   * [Markdown 支持](guides/markdown-support.md)
 

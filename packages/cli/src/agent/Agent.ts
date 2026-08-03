@@ -26,7 +26,6 @@ import { McpRegistry } from '../mcp/McpRegistry.js';
 import { buildSystemPrompt, createPlanModeReminder } from '../prompts/index.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
 import type { Attachment } from '../prompts/processors/types.js';
-import { buildSpecModePrompt, createSpecModeReminder } from '../prompts/spec.js';
 import {
   type ContentPart,
   createChatServiceAsync,
@@ -34,7 +33,6 @@ import {
   type Message,
 } from '../services/ChatServiceInterface.js';
 import { discoverSkills } from '../skills/index.js';
-import { SpecManager } from '../spec/SpecManager.js';
 import {
   configActions,
   ensureStoreInitialized,
@@ -412,8 +410,6 @@ export class Agent {
       let result: LoopResult;
       if (context.permissionMode === 'plan') {
         result = yield* this.runPlanLoop(enhancedMessage, context, loopOptions);
-      } else if (context.permissionMode === 'spec') {
-        result = yield* this.runSpecLoop(enhancedMessage, context, loopOptions);
       } else {
         result = yield* this.runLoop(enhancedMessage, context, loopOptions);
       }
@@ -535,68 +531,6 @@ export class Agent {
 
     // 调用通用循环，传入 Plan 模式专用配置
     // 注意：不再传递 isPlanMode 参数，executeLoop 会从 context.permissionMode 读取
-    return yield* this.executeLoop(messageWithReminder, context, options, systemPrompt);
-  }
-
-  /**
-   * Spec 模式入口 - 准备 Spec 专用配置后调用通用循环
-   * Spec 模式特点：结构化 4 阶段工作流（Requirements -> Design -> Tasks -> Implementation）
-   */
-  private async *runSpecLoop(
-    message: UserMessageContent,
-    context: ChatContext,
-    options?: LoopOptions
-  ): AsyncGenerator<import('./loop/types.js').LoopEvent, LoopResult, void> {
-    logger.debug('Processing Spec mode message...');
-
-    // 1. 确保 SpecManager 已初始化
-    const specManager = SpecManager.getInstance();
-    const workspaceRoot = context.workspaceRoot || getCwd();
-
-    try {
-      // 尝试初始化（如果已初始化会安全返回）
-      await specManager.initialize(workspaceRoot);
-    } catch (error) {
-      logger.warn('SpecManager initialization warning:', error);
-      // 继续执行，可能是首次进入 Spec 模式
-    }
-
-    // 2. 获取当前 Spec 上下文
-    const currentSpec = specManager.getCurrentSpec();
-    const steeringContextString = await specManager.getSteeringContextString();
-
-    // 2. 构建 Spec 模式系统提示词
-    const systemPrompt = buildSpecModePrompt(currentSpec, steeringContextString);
-
-    // 3. 在用户消息中注入 spec-mode-reminder
-    let messageWithReminder: UserMessageContent;
-    const phase = currentSpec?.phase || 'init';
-
-    if (typeof message === 'string') {
-      messageWithReminder = `${createSpecModeReminder(phase)}\n\n${message}`;
-    } else {
-      // 多模态消息：在第一个文本部分前添加 reminder
-      const textParts = message.filter((p) => p.type === 'text');
-      if (textParts.length > 0) {
-        const firstTextPart = textParts[0] as { type: 'text'; text: string };
-        messageWithReminder = message.map((p) =>
-          p === firstTextPart
-            ? {
-                type: 'text' as const,
-                text: `${createSpecModeReminder(phase)}\n\n${firstTextPart.text}`,
-              }
-            : p
-        );
-      } else {
-        // 仅图片，添加 reminder
-        messageWithReminder = [
-          { type: 'text', text: createSpecModeReminder(phase) },
-          ...message,
-        ];
-      }
-    }
-
-    // 4. 调用通用循环，传入 Spec 模式专用配置
     return yield* this.executeLoop(messageWithReminder, context, options, systemPrompt);
   }
 

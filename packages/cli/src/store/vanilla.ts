@@ -28,7 +28,6 @@ import {
   createConfigSlice,
   createFocusSlice,
   createSessionSlice,
-  createSpecSlice,
 } from './slices/index.js';
 import type { BladeStore } from './types.js';
 
@@ -53,7 +52,6 @@ export const vanillaStore = createStore<BladeStore>()(
       config: createConfigSlice(...a),
       focus: createFocusSlice(...a),
       command: createCommandSlice(...a),
-      spec: createSpecSlice(...a),
     })),
     {
       name: 'BladeStore',

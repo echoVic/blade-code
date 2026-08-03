@@ -12,7 +12,7 @@ const PermissionResponseSchema = z.object({
   approved: z.boolean(),
   remember: z.boolean().optional(),
   scope: z.enum(['once', 'session']).optional(),
-  targetMode: z.enum(['default', 'autoEdit', 'plan', 'spec', 'yolo']).optional(),
+  targetMode: z.enum(['default', 'autoEdit', 'plan', 'yolo']).optional(),
   feedback: z.string().optional(),
   answers: z.record(z.union([z.string(), z.array(z.string())])).optional(),
 });

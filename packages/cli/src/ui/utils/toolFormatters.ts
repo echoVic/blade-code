@@ -119,46 +119,6 @@ export function formatToolCallSummary(
       const fileName = notebookPath ? basename(notebookPath) : 'notebook';
       return `Editing notebook: ${fileName}`;
     }
-    // Spec Mode Tools
-    case 'EnterSpecMode': {
-      const name = params.name as string;
-      return `Creating spec: ${name || 'new spec'}`;
-    }
-    case 'UpdateSpec': {
-      const fileType = params.fileType as string;
-      return `Updating ${fileType}.md`;
-    }
-    case 'GetSpecContext': {
-      return `Getting spec context`;
-    }
-    case 'TransitionSpecPhase': {
-      const targetPhase = params.targetPhase as string;
-      return `Transitioning to: ${targetPhase}`;
-    }
-    case 'AddTask': {
-      const title = params.title as string;
-      const truncatedTitle =
-        title && title.length > 30 ? title.substring(0, 30) + '...' : title;
-      return `Adding task: ${truncatedTitle || 'task'}`;
-    }
-    case 'UpdateTaskStatus': {
-      const status = params.status as string;
-      const taskId = params.taskId as string;
-      const statusIcon =
-        status === 'completed'
-          ? '[done]'
-          : status === 'in_progress'
-            ? '[in progress]'
-            : '[paused]';
-      return `${statusIcon} Task ${taskId?.substring(0, 8) || ''}: ${status}`;
-    }
-    case 'ValidateSpec': {
-      return `Validating spec`;
-    }
-    case 'ExitSpecMode': {
-      const archive = params.archive as boolean;
-      return archive ? `Archiving spec` : `Exiting spec mode`;
-    }
     default:
       return `${toolName}`;
   }

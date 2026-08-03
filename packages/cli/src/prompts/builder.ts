@@ -20,14 +20,12 @@
 import { PermissionMode } from '../config/types.js';
 import { AutoMemoryManager } from '../memory/AutoMemoryManager.js';
 import { getSkillRegistry } from '../skills/index.js';
-import type { SpecMetadata } from '../spec/types.js';
 import {
   type EnvironmentContextOptions,
   getEnvironmentContext,
 } from '../utils/environment.js';
 import { DEFAULT_SYSTEM_PROMPT, PLAN_MODE_SYSTEM_PROMPT } from './default.js';
 import { loadProjectInstructions } from './projectInstructions.js';
-import { buildSpecModePrompt } from './spec.js';
 
 /** available_skills 占位符的正则表达式 */
 const AVAILABLE_SKILLS_REGEX = /<available_skills>\s*<\/available_skills>/;
@@ -52,7 +50,7 @@ export interface BuildSystemPromptOptions {
   append?: string;
 
   /**
-   * 权限模式（Plan/Spec 模式会使用独立的 system prompt）
+   * 权限模式（Plan 模式会使用独立的 system prompt）
    */
   mode?: PermissionMode;
 
@@ -65,16 +63,6 @@ export interface BuildSystemPromptOptions {
    * 环境上下文选项
    */
   environmentOptions?: EnvironmentContextOptions;
-
-  /**
-   * Spec 模式专用：当前 Spec 元数据
-   */
-  currentSpec?: SpecMetadata | null;
-
-  /**
-   * Spec 模式专用：Steering 上下文
-   */
-  steeringContext?: string | null;
 
   /**
    * AI 回复语言（如 'zh-CN', 'en-US'）
@@ -129,8 +117,6 @@ export async function buildSystemPrompt(
     mode,
     includeEnvironment = true,
     environmentOptions,
-    currentSpec,
-    steeringContext,
     language,
   } = options;
 
@@ -138,18 +124,13 @@ export async function buildSystemPrompt(
   const sources: BuildSystemPromptResult['sources'] = [];
 
   // 1. 默认提示或替换内容
-  // Plan/Spec 模式使用独立的 system prompt
+  // Plan 模式使用独立的 system prompt
   const isPlanMode = mode === PermissionMode.PLAN;
-  const isSpecMode = mode === PermissionMode.SPEC;
 
   let basePrompt: string;
   let sourceName: string;
 
-  if (isSpecMode) {
-    // Spec 模式：使用专用提示词
-    basePrompt = buildSpecModePrompt(currentSpec ?? null, steeringContext ?? null);
-    sourceName = 'spec_mode_prompt';
-  } else if (isPlanMode) {
+  if (isPlanMode) {
     basePrompt = PLAN_MODE_SYSTEM_PROMPT;
     sourceName = 'plan_mode_prompt';
   } else {

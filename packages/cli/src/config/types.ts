@@ -33,21 +33,12 @@ export type ProviderType =
  * - Blocks all modifications: Write 和 Execute 工具
  * - Special tools: ExitPlanMode（用于提交方案）
  * - 适用场景：调研阶段，生成实现方案，用户批准后退出 Plan 模式
- *
- * ## SPEC 模式（Spec-Driven Development）
- * - Auto-approve: ReadOnly 工具 + Spec 专用工具
- * - Needs confirm: Write 和 Execute 工具（除 Spec 工具外）
- * - Special tools: InitSpec, UpdateSpec, ValidateSpec, GetSpecContext, ExitSpecMode
- * - Persistence: Spec 文件自动保存到 `.blade/specs/<feature>/` 或 `.blade/changes/<feature>/`
- * - 适用场景：复杂功能开发，需要结构化的 Requirements -> Design -> Tasks -> Implementation 工作流
- * - 与 Plan Mode 共存：Plan Mode 用于简单任务，Spec Mode 用于复杂功能开发
  */
 export enum PermissionMode {
   DEFAULT = 'default',
   AUTO_EDIT = 'autoEdit',
   YOLO = 'yolo',
   PLAN = 'plan',
-  SPEC = 'spec',
 }
 
 export interface ModelConfig {

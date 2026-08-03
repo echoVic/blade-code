@@ -203,50 +203,9 @@ export class ToolRegistry extends EventEmitter {
       return this.getReadOnlyFunctionDeclarations();
     }
 
-    // Spec 模式：暴露只读工具 + Spec 专用工具
-    // Spec 工具（EnterSpecMode, UpdateSpec, GetSpecContext, TransitionSpecPhase, ValidateSpec, ExitSpecMode）
-    // 可以执行写操作但在 Spec 模式下自动批准
-    if (mode === PermissionMode.SPEC) {
-      return this.getSpecModeFunctionDeclarations();
-    }
-
     // 其他模式（default/autoEdit/yolo）：使用 DeferredToolManager 过滤
     // 已加载的工具返回完整 schema，deferred 工具通过系统提示列出名称
     return this._deferredManager.filterDeclarations(this.getAll(), mode);
-  }
-
-  /**
-   * Spec 模式专用工具列表
-   */
-  private static readonly SPEC_TOOLS = [
-    'EnterSpecMode',
-    'UpdateSpec',
-    'GetSpecContext',
-    'TransitionSpecPhase',
-    'AddTask',
-    'UpdateTaskStatus',
-    'ValidateSpec',
-    'ExitSpecMode',
-  ];
-
-  /**
-   * 获取 Spec 模式可用工具
-   *
-   * Spec 模式暴露全量工具，因为：
-   * 1. 实现阶段需要 Edit/Write/Bash 来写代码
-   * 2. Spec 专用工具在 Spec 模式下自动批准
-   * 3. 权限控制由 ToolExecutor 处理
-   */
-  getSpecModeFunctionDeclarations(): FunctionDeclaration[] {
-    // Spec 模式暴露全量工具
-    return this.getFunctionDeclarations();
-  }
-
-  /**
-   * 检查是否为 Spec 专用工具
-   */
-  isSpecTool(toolName: string): boolean {
-    return ToolRegistry.SPEC_TOOLS.includes(toolName);
   }
 
   /**

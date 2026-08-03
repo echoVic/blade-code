@@ -11,7 +11,6 @@ import {
   useIsReady,
   usePermissionMode,
   useSessionCost,
-  useSpecProgress,
   useThinkingModeEnabled,
 } from '../../store/selectors/index.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
@@ -23,7 +22,6 @@ import { useGitBranch } from '../hooks/useGitBranch.js';
  *
  * 状态管理：
  * - 使用 Zustand selectors 获取状态（SSOT）
- * - Spec 进度从 Store 读取（SpecManager 更新 Store）
  */
 export const ChatStatusBar: React.FC = React.memo(() => {
   // 使用 Zustand selectors 获取状态
@@ -38,9 +36,6 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const isCompacting = useIsCompacting();
   const thinkingModeEnabled = useThinkingModeEnabled();
   const sessionCost = useSessionCost();
-
-  // 从 Store 读取 Spec 进度（SSOT）
-  const specProgress = useSpecProgress();
 
   // 检查当前模型是否支持 thinking
   const supportsThinking = currentModel ? isThinkingModel(currentModel) : false;
@@ -70,26 +65,6 @@ export const ChatStatusBar: React.FC = React.memo(() => {
       return (
         <Text color="red">
           yolo mode on <Text color="gray">(all tools auto-approved)</Text>
-        </Text>
-      );
-    }
-
-    if (permissionMode === PermissionMode.SPEC) {
-      // 增强的 Spec 模式显示：阶段 + 进度
-      const { phase, completed, total } = specProgress;
-      let phaseDisplay: string;
-
-      if (!phase) {
-        phaseDisplay = 'init';
-      } else if ((phase === 'tasks' || phase === 'implementation') && total > 0) {
-        phaseDisplay = `${phase} ${completed}/${total}`;
-      } else {
-        phaseDisplay = phase;
-      }
-
-      return (
-        <Text color="blue">
-          spec: {phaseDisplay} <Text color="gray">(shift+tab to cycle)</Text>
         </Text>
       );
     }

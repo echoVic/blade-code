@@ -292,77 +292,6 @@
 
 **类型**: ReadOnly
 
-## Spec 模式工具
-
-### EnterSpecMode
-
-进入 Spec 驱动开发模式。
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `spec_path` | string | | Spec 文件路径 |
-
-**类型**: Write
-
-### UpdateSpec
-
-更新 Spec 文件内容。
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `content` | string | ✅ | 更新后的 Spec 内容 |
-
-**类型**: Write
-
-### GetSpecContext
-
-获取当前 Spec 上下文信息。
-
-**类型**: ReadOnly
-
-### TransitionSpecPhase
-
-转换 Spec 工作流阶段。
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `phase` | string | ✅ | 目标阶段 |
-
-**类型**: Write
-
-### AddTask
-
-向 Spec 添加任务。
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `task` | object | ✅ | 任务定义 |
-
-**类型**: Write
-
-### UpdateTaskStatus
-
-更新 Spec 中的任务状态。
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `task_id` | string | ✅ | 任务 ID |
-| `status` | string | ✅ | 新状态 |
-
-**类型**: Write
-
-### ValidateSpec
-
-验证 Spec 文件完整性。
-
-**类型**: ReadOnly
-
-### ExitSpecMode
-
-退出 Spec 模式。
-
-**类型**: Write
-
 ## 系统工具
 
 ### MemoryRead
@@ -465,14 +394,6 @@ blade mcp list
 | 任务 | TaskList | ReadOnly | 列出当前任务 |
 | Plan | EnterPlanMode | ReadOnly | 进入只读调研模式 |
 | Plan | ExitPlanMode | ReadOnly | 退出并提交方案 |
-| Spec | EnterSpecMode | Write | 进入 Spec 驱动开发模式 |
-| Spec | UpdateSpec | Write | 更新 Spec 文件 |
-| Spec | GetSpecContext | ReadOnly | 获取 Spec 上下文 |
-| Spec | TransitionSpecPhase | Write | 转换工作流阶段 |
-| Spec | AddTask | Write | 添加任务 |
-| Spec | UpdateTaskStatus | Write | 更新任务状态 |
-| Spec | ValidateSpec | ReadOnly | 验证 Spec 完整性 |
-| Spec | ExitSpecMode | Write | 退出 Spec 模式 |
 | 系统 | MemoryRead | ReadOnly | 读取项目记忆文件 |
 | 系统 | MemoryWrite | Write | 保存项目记忆 |
 | 系统 | AskUserQuestion | ReadOnly | 向用户提问 |

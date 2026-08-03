@@ -47,7 +47,6 @@ blade serve     # 无头服务器模式
 ### 📝 灵活的工作模式
 
 - **Plan 模式**: 先规划后执行
-- **Spec 模式**: 结构化开发工作流
 - **Subagents**: 并行任务处理
 
 ### 🔌 MCP 扩展
@@ -88,7 +87,6 @@ blade web
 - [@ 文件引用](guides/at-file-mentions.md)
 - [Slash 命令](guides/slash-commands.md)
 - [Plan 模式](guides/plan-mode.md)
-- [Spec 模式](guides/spec-mode.md)
 - [Subagents](guides/subagents.md)
 - [Hooks](guides/hooks.md)
 - [Skills](guides/skills.md)

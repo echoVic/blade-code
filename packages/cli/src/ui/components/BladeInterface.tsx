@@ -9,7 +9,6 @@ import {
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
 import { SessionService } from '../../services/SessionService.js';
-import { SpecManager } from '../../spec/SpecManager.js';
 import {
   useActiveModal,
   useAppActions,
@@ -51,7 +50,6 @@ import { PluginsManager } from './PluginsManager.js';
 import { QuestionPrompt } from './QuestionPrompt.js';
 import { SessionSelector } from './SessionSelector.js';
 import { SkillsManager } from './SkillsManager.js';
-import { SpecStatusPanel } from './SpecStatusPanel.js';
 import { SubagentProgress } from './SubagentProgress.js';
 import { ThemeSelector } from './ThemeSelector.js';
 
@@ -157,15 +155,13 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const handlePermissionModeToggle = useMemoizedFn(async () => {
     const currentMode: PermissionMode = permissionMode;
 
-    // Shift+Tab 循环切换: DEFAULT -> AUTO_EDIT -> PLAN -> SPEC -> DEFAULT
+    // Shift+Tab 循环切换: DEFAULT -> AUTO_EDIT -> PLAN -> DEFAULT
     let nextMode: PermissionMode;
     if (currentMode === PermissionMode.DEFAULT) {
       nextMode = PermissionMode.AUTO_EDIT;
     } else if (currentMode === PermissionMode.AUTO_EDIT) {
       nextMode = PermissionMode.PLAN;
     } else if (currentMode === PermissionMode.PLAN) {
-      nextMode = PermissionMode.SPEC;
-    } else if (currentMode === PermissionMode.SPEC) {
       nextMode = PermissionMode.DEFAULT;
     } else {
       nextMode = PermissionMode.DEFAULT;
@@ -174,43 +170,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     try {
       // 使用 configActions 自动同步内存 + 持久化
       await configActions().setPermissionMode(nextMode);
-
-      // Spec 模式：初始化并检测已存在的 Spec
-      if (nextMode === PermissionMode.SPEC) {
-        try {
-          const specManager = SpecManager.getInstance();
-          await specManager.initialize(getCwd());
-
-          // 检查是否有已存在的活跃 Spec
-          const specs = await specManager.listSpecs();
-          if (specs.length > 0) {
-            // 加载最近的 Spec
-            const recentSpec = specs[0];
-            await specManager.loadSpec(recentSpec.name);
-            sessionActions.addAssistantMessage(
-              `**已进入 Spec 模式**\n\n` +
-                `检测到已存在的 Spec: **${recentSpec.name}**\n` +
-                `当前阶段: ${recentSpec.phase}\n\n` +
-                `继续之前的工作，或告诉我你想做什么。`
-            );
-          } else {
-            sessionActions.addAssistantMessage(
-              '**已进入 Spec 模式**\n\n' +
-                '请告诉我你想实现什么功能，我会引导你完成整个工作流：\n' +
-                '`提案 -> 需求 -> 设计 -> 任务 -> 实现`\n\n' +
-                '例如："实现用户认证功能" 或 "添加暗黑模式支持"'
-            );
-          }
-        } catch (error) {
-          logger.warn('Failed to initialize SpecManager:', error);
-          sessionActions.addAssistantMessage(
-            '**已进入 Spec 模式**\n\n' +
-              '请告诉我你想实现什么功能，我会引导你完成整个工作流：\n' +
-              '`提案 -> 需求 -> 设计 -> 任务 -> 实现`\n\n' +
-              '例如："实现用户认证功能" 或 "添加暗黑模式支持"'
-          );
-        }
-      }
     } catch (error) {
       logger.error('权限模式切换失败:', error instanceof Error ? error.message : error);
     }
@@ -645,9 +604,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
       {/* 主界面内容 - 当有阻塞弹窗时通过 display="none" 隐藏但不卸载，避免 Static 组件重复渲染 */}
       <Box flexDirection="column" display={hasBlockingModal ? 'none' : 'flex'}>
-        {/* Spec 状态面板（仅在 Spec 模式下显示） */}
-        {permissionMode === PermissionMode.SPEC && <SpecStatusPanel />}
-
         {/* MessageArea 内部直接获取状态，不需要 props */}
         <MessageArea />
 

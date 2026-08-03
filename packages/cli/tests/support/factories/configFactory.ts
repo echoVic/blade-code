@@ -179,5 +179,4 @@ export const permissionModes: PermissionMode[] = [
   PermissionMode.AUTO_EDIT,
   PermissionMode.YOLO,
   PermissionMode.PLAN,
-  PermissionMode.SPEC,
 ];

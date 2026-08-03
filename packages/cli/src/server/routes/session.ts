@@ -47,7 +47,7 @@ const SendMessageSchema = z.object({
       })
     )
     .optional(),
-  permissionMode: z.enum(['default', 'autoEdit', 'plan', 'spec', 'yolo']).optional(),
+  permissionMode: z.enum(['default', 'autoEdit', 'plan', 'yolo']).optional(),
 });
 
 const UpdateSessionSchema = z.object({

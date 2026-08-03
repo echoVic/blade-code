@@ -13,7 +13,6 @@ import { PermissionMode } from '../config/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../services/SessionService.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
-import type { SpecSlice } from './slices/specSlice.js';
 
 // ==================== Session Types ====================
 
@@ -367,7 +366,6 @@ export interface BladeStore {
   config: ConfigSlice;
   focus: FocusSlice;
   command: CommandSlice;
-  spec: SpecSlice;
 }
 
 // ==================== Utility Types ====================

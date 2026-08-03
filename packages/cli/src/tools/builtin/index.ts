@@ -20,8 +20,6 @@ import { enterPlanModeTool, exitPlanModeTool } from './plan/index.js';
 import { globTool, grepTool } from './search/index.js';
 // Shell 命令工具
 import { bashTool, killShellTool } from './shell/index.js';
-// Spec 工具
-import { specTools } from './spec/index.js';
 // System 工具
 import {
   askUserQuestionTool,
@@ -93,9 +91,6 @@ export async function getBuiltinTools(opts?: {
     // Plan 模式: EnterPlanMode, ExitPlanMode
     enterPlanModeTool,
     exitPlanModeTool,
-
-    // Spec 模式: EnterSpecMode, UpdateSpec, GetSpecContext, TransitionSpecPhase, ValidateSpec, ExitSpecMode
-    ...specTools,
 
     // System: AskUserQuestion, Skill, SlashCommand, ToolSearch
     askUserQuestionTool,

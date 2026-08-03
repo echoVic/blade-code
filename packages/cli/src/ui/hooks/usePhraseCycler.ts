@@ -97,7 +97,7 @@ const WITTY_LOADING_PHRASES = [
 const INFORMATIVE_TIPS = [
   // 快捷键
   'Esc - 中止任务 / 隐藏建议 / 双击清空输入',
-  'Shift+Tab - 切换模式 (DEFAULT → AUTO_EDIT → PLAN → SPEC)',
+  'Shift+Tab - 切换模式 (DEFAULT → AUTO_EDIT → PLAN)',
   'Tab - 选中建议 / 切换 thinking 模式',
   'Up/Down - 浏览建议或输入历史',
   '? - 显示快捷键帮助（输入框为空时）',

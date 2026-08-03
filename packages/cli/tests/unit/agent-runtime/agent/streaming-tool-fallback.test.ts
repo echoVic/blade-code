@@ -252,12 +252,6 @@ describe('StreamingToolExecutor — fallback & epoch guard', () => {
         'TaskCreate',
         'TaskUpdate',
         'MemoryWrite',
-        'AddTask',
-        'EnterSpecMode',
-        'ExitSpecMode',
-        'TransitionSpecPhase',
-        'UpdateSpec',
-        'UpdateTaskStatus',
         'KillShell',
       ];
 

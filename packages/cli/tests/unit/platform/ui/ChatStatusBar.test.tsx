@@ -24,7 +24,6 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useIsReady: () => true,
   usePermissionMode: () => 'default',
   useSessionCost: () => null,
-  useSpecProgress: () => ({ phase: null, completed: 0, total: 0 }),
   useThinkingModeEnabled: () => false,
 }));
 

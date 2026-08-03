@@ -8,7 +8,6 @@ describe('ExitPlanModeTool', () => {
     PermissionMode.DEFAULT,
     PermissionMode.AUTO_EDIT,
     PermissionMode.YOLO,
-    PermissionMode.SPEC,
   ])('rejects an exit request in %s mode before asking for confirmation', async (permissionMode) => {
     const requestConfirmation = vi.fn().mockResolvedValue({
       approved: true,

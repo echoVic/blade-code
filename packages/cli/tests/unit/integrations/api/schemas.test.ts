@@ -39,7 +39,6 @@ describe('API Schemas', () => {
         'autoEdit',
         'yolo',
         'plan',
-        'spec',
       ];
 
       validModes.forEach((mode) => {
@@ -60,7 +59,6 @@ describe('API Schemas', () => {
       expect(PermissionModeEnum.AUTO_EDIT).toBe('autoEdit');
       expect(PermissionModeEnum.YOLO).toBe('yolo');
       expect(PermissionModeEnum.PLAN).toBe('plan');
-      expect(PermissionModeEnum.SPEC).toBe('spec');
     });
   });
 

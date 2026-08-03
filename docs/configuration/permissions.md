@@ -44,16 +44,6 @@ Blade 提供五种权限模式，可通过 `Shift+Tab` 循环切换（UI 中）�
 
 适用场景：调研阶段，生成实现方案，用户批准后退出。
 
-### SPEC 模式
-
-```
-✅ 自动批准: 只读工具 + Spec 专用工具
-❌ 需要确认: Write 和 Execute 工具（除 Spec 工具外）
-📁 持久化: Spec 文件保存到 .blade/specs/ 或 .blade/changes/
-```
-
-适用场景：复杂功能开发，结构化工作流。
-
 ### YOLO 模式（危险）
 
 ```
@@ -303,4 +293,3 @@ Python 项目：
 
 - [配置系统](config-system.md) - 完整配置说明
 - [Plan 模式](../guides/plan-mode.md) - Plan 模式详解
-- [Spec 模式](../guides/spec-mode.md) - Spec 模式详解

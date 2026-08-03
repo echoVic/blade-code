@@ -50,7 +50,6 @@ Blade/
 │   │       ├── slash-commands/ # Slash commands
 │   │       ├── skills/         # Skills system
 │   │       ├── hooks/          # Hooks system
-│   │       ├── spec/           # Spec mode
 │   │       └── blade.tsx       # Entry point
 │   └── vscode/         # blade-vscode - VSCode extension
 ├── docs/               # User documentation (Docsify)
