@@ -82,7 +82,7 @@ export const useCommandHandler = (
   const pendingResumeRequestedRef = useRef(false);
 
   // ==================== 子模块组合 ====================
-  const { createAgent, steerActiveTurn } = useAgent({
+  const { createAgent, cleanupAgent, steerActiveTurn } = useAgent({
     sessionId,
     systemPrompt: replaceSystemPrompt,
     appendSystemPrompt: appendSystemPrompt,
@@ -569,5 +569,6 @@ export const useCommandHandler = (
     executeCommand,
     handleAbort,
     isProcessing,
+    cleanupAgent,
   };
 };

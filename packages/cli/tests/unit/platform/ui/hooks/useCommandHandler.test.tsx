@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
   return {
     abortController,
     createAgent: vi.fn(),
+    cleanupAgent: vi.fn(),
     steerActiveTurn: vi.fn(),
     processSlashCommand: vi.fn(),
     abort: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock('../../../../../src/agent/runtime/SessionRuntime.js', () => ({
 vi.mock('../../../../../src/ui/hooks/useAgent.js', () => ({
   useAgent: () => ({
     createAgent: mocks.createAgent,
+    cleanupAgent: mocks.cleanupAgent,
     steerActiveTurn: mocks.steerActiveTurn,
   }),
 }));
@@ -187,6 +189,16 @@ describe('useCommandHandler durable recovery', () => {
     );
     expect(mocks.setProcessing).toHaveBeenNthCalledWith(1, true);
     expect(mocks.setProcessing).toHaveBeenLastCalledWith(false);
+  });
+
+  it('exposes agent cleanup to orchestration owners', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    expect(hook?.cleanupAgent).toBe(mocks.cleanupAgent);
   });
 
   it('wakes a next-turn input when the rendered processing state is stale', async () => {
