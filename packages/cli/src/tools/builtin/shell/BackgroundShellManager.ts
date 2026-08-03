@@ -64,6 +64,14 @@ export interface KillResult {
   signal?: string | null;
 }
 
+export interface WriteInputResult {
+  success: boolean;
+  status: BackgroundShellStatus;
+  bytesWritten: number;
+  stdinClosed: boolean;
+  errorMessage?: string;
+}
+
 export class BackgroundShellManager {
   private static instance: BackgroundShellManager | null = null;
   private processes = new Map<string, BackgroundShellProcess>();
@@ -95,7 +103,7 @@ export class BackgroundShellManager {
     const { child, processTree } = spawnOwnedProcess(executable, args, {
       cwd: options.cwd || getCwd(),
       env: mergedEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     const processInfo: BackgroundShellProcess = {
@@ -195,6 +203,73 @@ export class BackgroundShellManager {
     return Array.from(this.processes.values()).filter(
       (processInfo) => processInfo.sessionId === sessionId
     );
+  }
+
+  async writeInput(
+    shellId: string,
+    sessionId: string,
+    data: string,
+    closeStdin = false
+  ): Promise<WriteInputResult | undefined> {
+    const processInfo = this.getProcess(shellId, sessionId);
+    if (!processInfo) {
+      return undefined;
+    }
+
+    const stdin = processInfo.process?.stdin;
+    if (
+      processInfo.status !== 'running' ||
+      !stdin ||
+      stdin.destroyed ||
+      stdin.writableEnded
+    ) {
+      return {
+        success: false,
+        status: processInfo.status,
+        bytesWritten: 0,
+        stdinClosed: !stdin || stdin.destroyed || stdin.writableEnded,
+        errorMessage: 'Shell stdin is not writable',
+      };
+    }
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          stdin.off('error', onError);
+          reject(error);
+        };
+        const onWritten = (error?: Error | null) => {
+          stdin.off('error', onError);
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        };
+
+        stdin.once('error', onError);
+        if (closeStdin) {
+          stdin.end(data, onWritten);
+        } else {
+          stdin.write(data, onWritten);
+        }
+      });
+
+      return {
+        success: true,
+        status: processInfo.status,
+        bytesWritten: Buffer.byteLength(data),
+        stdinClosed: closeStdin,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        status: processInfo.status,
+        bytesWritten: 0,
+        stdinClosed: stdin.destroyed || stdin.writableEnded,
+        errorMessage: error instanceof Error ? error.message : 'Failed to write stdin',
+      };
+    }
   }
 
   async kill(shellId: string, sessionId: string): Promise<KillResult | undefined> {

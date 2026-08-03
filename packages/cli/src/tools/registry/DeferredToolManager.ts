@@ -18,6 +18,7 @@ const ALWAYS_LOADED_TOOLS = new Set([
   'Glob',
   'Grep',
   'Bash',
+  'WriteStdin',
   'Task',
   'TaskOutput',
   'TaskCreate',

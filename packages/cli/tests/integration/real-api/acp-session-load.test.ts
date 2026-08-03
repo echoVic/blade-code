@@ -13,6 +13,11 @@ import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
+  buildInteractiveShellCommand,
+  buildInteractiveShellPrompt,
+  INTERACTIVE_SHELL_INPUT,
+} from './interactiveShellFixture.js';
+import {
   expandDeepSeekModelMatrix,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
@@ -354,6 +359,58 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
           expect(JSON.stringify(client.permissionRequests)).not.toContain(
             modelConfig.apiKey
           );
+        });
+      } finally {
+        await harness.agent.destroy().catch(() => undefined);
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+
+    it(`${modelConfig.model} drives an interactive background shell through ACP`, async () => {
+      const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-stdin-'));
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      configureModel(modelConfig);
+      const client = new RecordingClient();
+      const harness = createHarness(client);
+      const outputFile = 'acp-stdin.txt';
+      const command = buildInteractiveShellCommand(outputFile);
+
+      try {
+        await runWithCwdOverride(workspace, async () => {
+          await harness.connection.initialize({
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientCapabilities: {},
+          });
+          const session = await harness.connection.newSession({
+            cwd: workspace,
+            mcpServers: [],
+          });
+          await harness.connection.setSessionMode?.({
+            sessionId: session.sessionId,
+            modeId: 'yolo',
+          });
+
+          const result = await harness.connection.prompt({
+            sessionId: session.sessionId,
+            prompt: [{ type: 'text', text: buildInteractiveShellPrompt(command) }],
+          });
+
+          expect(result.stopReason).toBe('end_turn');
+          expect(await readFile(path.join(workspace, outputFile), 'utf8')).toBe(
+            INTERACTIVE_SHELL_INPUT
+          );
+          const toolTitles = client.updates
+            .map((notification) => notification.update)
+            .filter((update) => update.sessionUpdate === 'tool_call')
+            .map((update) => update.title);
+          expect(toolTitles).toEqual(
+            expect.arrayContaining([
+              'Executing Bash',
+              'Executing WriteStdin',
+              'Executing TaskOutput',
+            ])
+          );
+          expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
         });
       } finally {
         await harness.agent.destroy().catch(() => undefined);

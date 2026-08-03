@@ -17,6 +17,11 @@ import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.
 import { BladeServer } from '../../../src/server/server.js';
 import { getState } from '../../../src/store/vanilla.js';
 import {
+  buildInteractiveShellCommand,
+  buildInteractiveShellPrompt,
+  INTERACTIVE_SHELL_INPUT,
+} from './interactiveShellFixture.js';
+import {
   buildRealApiRuntimeConfig,
   expandDeepSeekModelMatrix,
   getEnabledModelConfigs,
@@ -664,6 +669,40 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
         for (const sessionId of sessions) {
           await deleteSession(sessionId).catch(() => undefined);
         }
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+
+    it(`${modelConfig.model} drives an interactive background shell through Web`, async () => {
+      const workspace = createWorkspace();
+      const outputFile = 'web-stdin.txt';
+      const command = buildInteractiveShellCommand(outputFile);
+      let sessionId: string | undefined;
+      let collector: EventCollector | undefined;
+
+      try {
+        setRuntimeModel(modelConfig);
+        sessionId = await createSession(workspace);
+        collector = await collectEvents(sessionId);
+        await sendMessage(sessionId, buildInteractiveShellPrompt(command));
+        await collector.waitFor((event) => event.type === 'session.completed', 300_000);
+
+        expect(readFileSync(path.join(workspace, outputFile), 'utf8')).toBe(
+          INTERACTIVE_SHELL_INPUT
+        );
+        const startedTools = collector.events
+          .filter((event) => event.type === 'tool.start')
+          .map((event) => event.properties.toolName);
+        expect(startedTools).toEqual(
+          expect.arrayContaining(['Bash', 'WriteStdin', 'TaskOutput'])
+        );
+        expect(collector.events.some((event) => event.type === 'session.error')).toBe(
+          false
+        );
+        expect(JSON.stringify(collector.events)).not.toContain(modelConfig.apiKey);
+      } finally {
+        await collector?.close();
+        if (sessionId) await deleteSession(sessionId);
         rmSync(workspace, { recursive: true, force: true });
       }
     }, 360_000);

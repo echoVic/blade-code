@@ -40,6 +40,10 @@ export function formatToolCallSummary(
       const preview = cmd ? cmd.substring(0, 40) : 'command';
       return `Running: ${preview}${cmd && cmd.length > 40 ? '...' : ''}`;
     }
+    case 'WriteStdin': {
+      const shellId = params.shell_id as string;
+      return `Sending input to Shell: ${shellId || 'unknown'}`;
+    }
     case 'Glob': {
       const pattern = params.pattern as string;
       return `Searching files: ${pattern}`;

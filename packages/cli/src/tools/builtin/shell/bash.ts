@@ -87,6 +87,7 @@ Before executing commands:
       'It is very helpful if you write a clear, concise description of what this command does in 5-10 words',
       'If the output exceeds 30000 characters, output will be truncated before being returned to you',
       'You can use the run_in_background parameter to run the command in the background, which allows you to continue working while the command runs. You can monitor the output using the TaskOutput tool. You do not need to use "&" at the end of the command when using this parameter',
+      'Background commands accept input through WriteStdin. Include a newline for line-oriented programs, and set close_stdin=true when the process must receive EOF before it can finish',
       'Avoid using Bash with the find, grep, cat, head, tail, sed, awk, or echo commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:',
       ' - File search: Use Glob (NOT find or ls)',
       ' - Content search: Use Grep (NOT grep or rg)',

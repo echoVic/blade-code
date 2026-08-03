@@ -6,10 +6,10 @@ import * as os from 'os';
 import * as path from 'path';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
 import type { Tool } from '../types/index.js';
-// 文件操作工具
-import { editTool, readTool, writeTool } from './file/index.js';
 // Config 工具
 import { configTool } from './config/index.js';
+// 文件操作工具
+import { editTool, readTool, writeTool } from './file/index.js';
 // Memory 工具
 import { memoryReadTool, memoryWriteTool } from './memory/index.js';
 // Notebook 工具
@@ -19,7 +19,7 @@ import { enterPlanModeTool, exitPlanModeTool } from './plan/index.js';
 // 搜索工具
 import { globTool, grepTool } from './search/index.js';
 // Shell 命令工具
-import { bashTool, killShellTool } from './shell/index.js';
+import { bashTool, killShellTool, writeStdinTool } from './shell/index.js';
 // System 工具
 import {
   askUserQuestionTool,
@@ -67,8 +67,9 @@ export async function getBuiltinTools(opts?: {
     globTool,
     grepTool,
 
-    // Shell 工具: Bash, KillShell
+    // Shell 工具: Bash, WriteStdin, KillShell
     bashTool,
+    writeStdinTool,
     killShellTool,
 
     // 网络工具: WebFetch, WebSearch

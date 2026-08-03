@@ -2,8 +2,8 @@ import { spawn } from 'node:child_process';
 import os from 'node:os';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../src/agent/runtime/SessionRuntime.js';
-import { bashTool } from '../../src/tools/builtin/shell/bash.js';
 import { BackgroundShellManager } from '../../src/tools/builtin/shell/BackgroundShellManager.js';
+import { bashTool } from '../../src/tools/builtin/shell/bash.js';
 import { killShellTool } from '../../src/tools/builtin/shell/killShell.js';
 import { taskOutputTool } from '../../src/tools/builtin/task/taskOutput.js';
 
@@ -33,6 +33,21 @@ async function waitForProcessGone(pid: number, timeoutMs = 5_000): Promise<boole
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return false;
+}
+
+async function waitForShellExit(
+  manager: BackgroundShellManager,
+  shellId: string,
+  sessionId: string,
+  timeoutMs = 5_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = manager.getProcess(shellId, sessionId)?.status;
+    if (status && status !== 'running') return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Shell ${shellId} did not exit within ${timeoutMs}ms`);
 }
 
 afterEach(async () => {
@@ -103,6 +118,58 @@ describe.skipIf(process.platform === 'win32')(
 
       expect(denied.success).toBe(false);
       expect(killed.success).toBe(true);
+    });
+
+    it('writes to an owned background shell stdin and closes it explicitly', async () => {
+      const manager = BackgroundShellManager.getInstance();
+      const script = [
+        "process.stdin.setEncoding('utf8')",
+        "let input = ''",
+        "process.stdin.on('data', (chunk) => { input += chunk })",
+        "process.stdin.on('end', () => process.stdout.write(`received:${input}`))",
+      ].join(';');
+      const shell = manager.startBackgroundProcess({
+        command: `${shellQuote(process.execPath)} -e ${shellQuote(script)}`,
+        sessionId: 'session-owner',
+        cwd: os.tmpdir(),
+      });
+
+      expect(typeof manager.writeInput).toBe('function');
+      const written = await manager.writeInput(
+        shell.id,
+        'session-owner',
+        'owned-input\n',
+        true
+      );
+      await waitForShellExit(manager, shell.id, 'session-owner');
+      const output = manager.consumeOutput(shell.id, 'session-owner');
+
+      expect(written).toMatchObject({
+        success: true,
+        bytesWritten: 12,
+        stdinClosed: true,
+      });
+      expect(output?.stdout).toBe('received:owned-input\n');
+      expect(output?.status).toBe('exited');
+    });
+
+    it('denies stdin writes from another session', async () => {
+      const manager = BackgroundShellManager.getInstance();
+      const shell = manager.startBackgroundProcess({
+        command: longRunningCommand(),
+        sessionId: 'session-owner',
+        cwd: os.tmpdir(),
+      });
+
+      const denied = await manager.writeInput(
+        shell.id,
+        'session-other',
+        'private-input\n',
+        false
+      );
+
+      expect(denied).toBeUndefined();
+      expect(manager.getProcess(shell.id, 'session-owner')?.status).toBe('running');
     });
 
     it('reclaims only the disposing runtime session shells', async () => {

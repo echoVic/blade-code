@@ -12,6 +12,11 @@ import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js
 import { getState } from '../../../src/store/vanilla.js';
 import { useAgent } from '../../../src/ui/hooks/useAgent.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import {
+  buildInteractiveShellCommand,
+  buildInteractiveShellPrompt,
+  INTERACTIVE_SHELL_INPUT,
+} from './interactiveShellFixture.js';
 import { isRealApiTestEnabled } from './testConfig.js';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -177,6 +182,72 @@ describe.skipIf(!enabled)('TUI runtime lifecycle (real API)', () => {
         expect(existsSync(path.join(workspace, '.blade', 'settings.local.json'))).toBe(
           false
         );
+        expect(JSON.stringify(result)).not.toContain(apiKey);
+      } finally {
+        await hook?.cleanupAgent().catch(() => undefined);
+        await act(async () => {
+          root.unmount();
+          await Promise.resolve();
+        });
+        container.remove();
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 240_000);
+
+    it(`${model} drives an interactive background shell through the TUI runtime`, async () => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-tui-stdin-'));
+      const sessionId = `tui-stdin-${model}-${Date.now()}`;
+      const modelId = setRuntimeModel(model);
+      const outputFile = 'tui-stdin.txt';
+      const command = buildInteractiveShellCommand(outputFile);
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = ReactDOM.createRoot(container);
+      let hook: ReturnType<typeof useAgent> | undefined;
+
+      function Harness() {
+        hook = useAgent({ sessionId, modelId, maxTurns: 8 });
+        return null;
+      }
+
+      try {
+        await act(async () => {
+          root.render(<Harness />);
+          await Promise.resolve();
+        });
+        const agent = await hook?.createAgent();
+        if (!agent) throw new Error('TUI Agent was not created');
+
+        const result = await runWithCwdOverride(workspace, () =>
+          agent.chat(
+            buildInteractiveShellPrompt(command),
+            {
+              messages: [],
+              userId: 'tui-write-stdin-test',
+              sessionId,
+              workspaceRoot: workspace,
+              permissionMode: PermissionMode.YOLO,
+            },
+            { maxTurns: 8, stream: true }
+          )
+        );
+
+        const outputPath = path.join(workspace, outputFile);
+        const diagnostic = JSON.stringify(
+          {
+            error: result.error,
+            finalMessage: result.finalMessage,
+            metadata: result.metadata,
+            outputExists: existsSync(outputPath),
+            output: existsSync(outputPath) ? readFileSync(outputPath, 'utf8') : null,
+          },
+          null,
+          2
+        ).replaceAll(apiKey, '[redacted]');
+        expect(result.success, diagnostic).toBe(true);
+        expect(existsSync(outputPath), diagnostic).toBe(true);
+        expect(readFileSync(outputPath, 'utf8')).toBe(INTERACTIVE_SHELL_INPUT);
+        expect(result.metadata?.toolCallsCount ?? 0).toBeGreaterThanOrEqual(3);
         expect(JSON.stringify(result)).not.toContain(apiKey);
       } finally {
         await hook?.cleanupAgent().catch(() => undefined);

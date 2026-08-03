@@ -106,8 +106,21 @@
 | `run_in_background` | boolean | | 后台运行（适用于长时间运行的命令） |
 | `timeout` | number | | 超时时间（毫秒，默认 30000） |
 
+**类型**: Execute
+**返回**: 后台运行时返回 `bash_id` 和 `shell_id`，可用于 WriteStdin、KillShell 或 TaskOutput
+
+### WriteStdin
+
+向当前 session 拥有的后台 Bash 进程写入标准输入。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `shell_id` | string | ✅ | Bash 返回的后台 Shell ID |
+| `data` | string | ✅ | 原样写入的文本；行式程序需要显式包含换行符 |
+| `close_stdin` | boolean | | 写入后关闭 stdin，让等待 EOF 的进程继续退出 |
+
 **类型**: Execute  
-**返回**: 后台运行时返回 `bash_id` 和 `shell_id`，可用于 KillShell 或 TaskOutput 查询
+**安全边界**: 仅能操作当前 session 的 Shell；单次输入最多 64 KiB；跨 session 与已清理 ID 统一按未找到处理
 
 ### KillShell
 
