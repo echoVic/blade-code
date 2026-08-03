@@ -211,6 +211,41 @@ describe('SessionService strict session catalog', () => {
     await expect(
       SessionService.listSessionPage({ cursor: 'not-base64url-json' })
     ).rejects.toThrow('Invalid session cursor');
+
+    const withSubagents = await SessionService.listSessionPage({
+      cwd: workspaceA,
+      includeSubagents: true,
+    });
+    expect(withSubagents.sessions.map((session) => session.sessionId)).toContain(
+      'hidden-subagent'
+    );
+
+    await expect(
+      SessionService.listSessions({ cwd: workspaceA, includeSubagents: true })
+    ).resolves.toContainEqual(
+      expect.objectContaining({
+        sessionId: 'hidden-subagent',
+        relationType: 'subagent',
+      })
+    );
+
+    const paddedCursor = `${first.nextCursor}=`;
+    await expect(
+      SessionService.listSessionPage({
+        cwd: workspaceA,
+        cursor: paddedCursor,
+        includeSubagents: false,
+      })
+    ).rejects.toThrow('Invalid session cursor');
+
+    const suffixedCursor = `${first.nextCursor}***`;
+    await expect(
+      SessionService.listSessionPage({
+        cwd: workspaceA,
+        cursor: suffixedCursor,
+        includeSubagents: false,
+      })
+    ).rejects.toThrow('Invalid session cursor');
   });
 
   it('projects only public metadata fields and applies latest session_updated metadata', async () => {
@@ -304,6 +339,39 @@ describe('SessionService strict session catalog', () => {
     await expect(
       access(getSessionFilePath(workspaceA, 'hidden-subagent-unscoped'))
     ).rejects.toThrow();
+  });
+
+  it('deletes the inbox from the transcript directory instead of committed cwd', async () => {
+    await writeTranscript(workspaceA, 'drifted-session', [
+      makeCreatedEvent('drifted-session', workspaceB, '2024-01-01T00:00:00.000Z'),
+      ...makeMessageEvents(
+        'drifted-session',
+        workspaceA,
+        '2024-01-01T00:01:00.000Z',
+        'workspace-a transcript'
+      ),
+    ]);
+
+    const transcriptPath = getSessionFilePath(workspaceA, 'drifted-session');
+    const transcriptDirInbox = path.join(
+      path.dirname(transcriptPath),
+      'drifted-session.inbox.json'
+    );
+    const foreignInbox = getSessionInboxFilePath(workspaceB, 'drifted-session');
+    await mkdir(path.dirname(foreignInbox), { recursive: true });
+    await writeFile(
+      transcriptDirInbox,
+      '{"version":1,"sessionId":"drifted-session","messages":[]}\n',
+      'utf8'
+    );
+    await writeFile(foreignInbox, 'workspace-b-sentinel\n', 'utf8');
+
+    expect(await SessionService.deleteSession('drifted-session', workspaceA)).toBe(1);
+    await expect(access(transcriptPath)).rejects.toThrow();
+    await expect(access(transcriptDirInbox)).rejects.toThrow();
+    await expect(readFile(foreignInbox, 'utf8')).resolves.toBe(
+      'workspace-b-sentinel\n'
+    );
   });
 
   it('finds exact workspace metadata, rejects ambiguous IDs, and preserves hard failures', async () => {

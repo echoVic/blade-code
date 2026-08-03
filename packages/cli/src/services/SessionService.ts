@@ -133,12 +133,11 @@ export class SessionService {
 
   static async listSessionPage(options: SessionListOptions = {}): Promise<SessionPage> {
     const normalized = normalizeSessionListOptions(options);
-    const stored = await this.scanStoredSessions(normalized.cwd ?? undefined);
-    const filtered = stored
-      .filter(
-        (session) => normalized.includeSubagents || session.relationType !== 'subagent'
-      )
-      .sort(compareSessionCatalogItems);
+    const stored = await this.scanStoredSessions(
+      normalized.cwd ?? undefined,
+      normalized.includeSubagents
+    );
+    const filtered = stored.sort(compareSessionCatalogItems);
     const page = paginateSessionCatalog(filtered, normalized);
     return {
       sessions: page.sessions.map((session) => this.toPublicMetadata(session)),
@@ -404,9 +403,12 @@ export class SessionService {
     await Promise.all(
       matches.map(async (session) => {
         await new JSONLStore(session.filePath).delete();
-        await rm(getSessionInboxFilePath(session.projectPath, session.sessionId), {
-          force: true,
-        });
+        await rm(
+          path.join(path.dirname(session.filePath), `${session.sessionId}.inbox.json`),
+          {
+            force: true,
+          }
+        );
       })
     );
     return matches.length;
@@ -590,8 +592,7 @@ export class SessionService {
           if (code === 'ENOENT') continue;
           if (code) throw error;
           logger.warn(
-            `[SessionService] Skipping invalid session transcript: ${sessionId}`,
-            error
+            `[SessionService] Skipping invalid session transcript: ${sessionId}`
           );
         }
       }

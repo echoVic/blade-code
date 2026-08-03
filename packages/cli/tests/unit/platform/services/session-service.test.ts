@@ -4,11 +4,21 @@ import { SessionService } from '../../../../src/services/SessionService.js';
 const readdirMock = vi.fn();
 const readFileMock = vi.fn();
 const rmMock = vi.fn();
+const loggerWarnMock = vi.fn();
+const loggerErrorMock = vi.fn();
 
 vi.mock('node:fs/promises', () => ({
   readdir: (...args: any[]) => readdirMock(...args),
   readFile: (...args: any[]) => readFileMock(...args),
   rm: (...args: any[]) => rmMock(...args),
+}));
+
+vi.mock('../../../../src/logging/Logger.js', () => ({
+  LogCategory: { SERVICE: 'service' },
+  createLogger: () => ({
+    warn: (...args: any[]) => loggerWarnMock(...args),
+    error: (...args: any[]) => loggerErrorMock(...args),
+  }),
 }));
 
 vi.mock('../../../../src/context/storage/pathUtils.js', () => ({
@@ -24,6 +34,8 @@ beforeEach(() => {
   readdirMock.mockReset();
   readFileMock.mockReset();
   rmMock.mockReset();
+  loggerWarnMock.mockReset();
+  loggerErrorMock.mockReset();
 });
 
 const makeDirent = (name: string, isDir: boolean) => ({
@@ -494,6 +506,17 @@ describe('SessionService with mocked filesystem', () => {
     await expect(SessionService.listSessions()).resolves.toMatchObject([
       { sessionId: 'valid' },
     ]);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      '[SessionService] Skipping invalid session transcript: corrupt'
+    );
+    const serializedWarnings = loggerWarnMock.mock.calls
+      .flat()
+      .map((value) => String(value))
+      .join(' ');
+    expect(serializedWarnings).not.toContain(
+      '/blade-root/projects/encodedA/corrupt.jsonl'
+    );
+    expect(serializedWarnings).not.toContain('/blade-root');
   });
 
   it('listSessions propagates project and transcript I/O failures', async () => {

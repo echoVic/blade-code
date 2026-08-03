@@ -33,6 +33,8 @@ interface SessionCursorV1 {
   sessionId: string;
 }
 
+const BASE64URL_UNPADDED_PATTERN = /^[A-Za-z0-9_-]+$/;
+
 function isValidIsoTime(value: unknown): value is string {
   return (
     typeof value === 'string' &&
@@ -55,9 +57,14 @@ function encodeCursor(cursor: SessionCursorV1): string {
 
 function parseCursor(cursor: string): SessionCursorV1 {
   try {
-    const parsed = JSON.parse(
-      Buffer.from(cursor, 'base64url').toString('utf8')
-    ) as Partial<SessionCursorV1>;
+    if (!BASE64URL_UNPADDED_PATTERN.test(cursor)) {
+      throw new Error('invalid');
+    }
+    const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+    if (Buffer.from(decoded, 'utf8').toString('base64url') !== cursor) {
+      throw new Error('invalid');
+    }
+    const parsed = JSON.parse(decoded) as Partial<SessionCursorV1>;
     if (
       parsed.version !== 1 ||
       typeof parsed.includeSubagents !== 'boolean' ||
