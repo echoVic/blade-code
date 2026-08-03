@@ -323,7 +323,7 @@ Use a private `scanStoredSessions(cwd?: string): Promise<StoredSessionMetadata[]
 
 `listSessionPage` filters subagents unless explicitly included, sorts once, and delegates page slicing to `paginateSessionCatalog`. `listSessions` walks all pages with a `Set<string>` keyed by `${projectPath}\0${sessionId}` and rejects a repeated cursor. `findSessionMetadata(sessionId, projectPath)` validates both inputs and reads the exact transcript path directly: `ENOENT` returns undefined, while `SessionMissingCreationError`, corruption, and I/O failures propagate. Without a project path it scans all stored sessions, returns the unique match, and throws `Ambiguous session ID: ${sessionId}` on duplicates. Refactor no-workspace `loadSession()` and `deleteSession()` to use the private stored catalog with subagents included, so hiding subagents from public lists does not make background transcripts unresumable or undeletable. Change `deleteSession` to accept an optional project path; an exact path deletes one transcript, while an omitted path preserves the existing delete-all-matching-ID behavior. Add a regression test that creates a subagent transcript, verifies public `listSessions()` hides it, and verifies `deleteSession(subagentId, workspace)` removes its transcript and inbox.
 
-For every transcript selected by `SessionService.deleteSession`, instantiate `JSONLStore` and await its queued `delete()`; do not call `rm(transcriptPath)` directly. Remove the inbox only after the transcript delete settles. Add service-level races in which `updateSessionMetadata` and `deleteSession` start in both orders: update-first yields a valid updated transcript then deletion, while delete-first makes update reject `ENOENT` and never recreates a partial file.
+For every transcript selected by `SessionService.deleteSession`, instantiate `JSONLStore` and await its `delete()`; do not call `rm(transcriptPath)` directly. Remove the inbox only after the transcript delete settles. Task 2 will place that same `delete()` operation on the per-file queue and add the update/delete race coverage once `updateSessionMetadata` exists.
 
 - [ ] **Step 6: Run focused tests and verify green**
 
@@ -352,6 +352,7 @@ git commit -m "feat(session): add strict session catalog"
 - Modify: `packages/cli/src/commands/shared/sessionContext.ts`
 - Modify: `packages/cli/src/ui/components/BladeInterface.tsx`
 - Modify: `packages/cli/tests/unit/services/session-service-fork.test.ts`
+- Modify: `packages/cli/tests/unit/services/session-service-catalog.test.ts`
 - Modify: `packages/cli/tests/unit/integrations/api/schemas.test.ts`
 - Modify: `packages/cli/tests/unit/cli/session-context.test.ts`
 - Create: `packages/cli/tests/unit/context/jsonl-store.test.ts`
@@ -416,6 +417,7 @@ In the API schema suite, prove a full lineage payload parses and `filePath` is s
 cd packages/cli
 bunx vitest run --config vitest.config.ts --project unit \
   tests/unit/services/session-service-fork.test.ts \
+  tests/unit/services/session-service-catalog.test.ts \
   tests/unit/context/jsonl-store.test.ts \
   tests/unit/integrations/api/schemas.test.ts \
   tests/unit/cli/session-context.test.ts
@@ -507,6 +509,8 @@ await store.appendValidated((entries) => ({
 
 Do not change Agent completion status in this patch; the existing status lifecycle is outside the fork slice. This entrypoint makes explicit metadata writes, especially Web rename, durable.
 
+Add service-level races in `session-service-catalog.test.ts` in which `updateSessionMetadata` and `deleteSession` start in both orders: update-first yields a valid updated transcript before deletion settles, while delete-first makes update reject `ENOENT` and never recreates a partial file. These tests prove that the service routes transcript deletion through the same `JSONLStore` queue rather than bypassing it with a direct `rm()`.
+
 Add an atomic creation entrypoint for Web and future surfaces:
 
 ```ts
@@ -592,6 +596,7 @@ git add packages/cli/src/services/SessionService.ts \
   packages/cli/src/commands/shared/sessionContext.ts \
   packages/cli/src/ui/components/BladeInterface.tsx \
   packages/cli/tests/unit/services/session-service-fork.test.ts \
+  packages/cli/tests/unit/services/session-service-catalog.test.ts \
   packages/cli/tests/unit/integrations/api/schemas.test.ts \
   packages/cli/tests/unit/cli/session-context.test.ts \
   packages/cli/tests/unit/context/jsonl-store.test.ts
