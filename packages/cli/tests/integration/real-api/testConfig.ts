@@ -150,13 +150,6 @@ function requireApiKey(id: ModelId, settings: ResolvedModelSettings): string {
   );
 }
 
-const deepseekSettings = resolveModelSettings(
-  'deepseek',
-  'DEEPSEEK',
-  'deepseek-chat',
-  'https://api.deepseek.com'
-);
-
 function createDeepSeekTestConfig(
   model: string,
   settings: ResolvedModelSettings
@@ -179,89 +172,6 @@ function createDeepSeekTestConfig(
       return deepseek(model);
     },
   };
-}
-
-const deepseekConfig = createDeepSeekTestConfig(
-  deepseekSettings.model,
-  deepseekSettings
-);
-
-const claudeSettings = resolveNewApiSettings('claude', 'CLAUDE', 'claude-opus-4-8');
-
-const claudeConfig: TestModelConfig = {
-  id: 'claude',
-  qualificationId: `claude:${claudeSettings.model}`,
-  name: 'Claude (via NewAPI)',
-  provider: 'anthropic',
-  model: claudeSettings.model,
-  apiKey: claudeSettings.apiKey,
-  baseURL: claudeSettings.baseURL,
-  createModel: () => {
-    const apiKey = requireApiKey('claude', claudeSettings);
-    const anthropic = createAnthropic({ apiKey, baseURL: claudeSettings.baseURL });
-    return anthropic(claudeSettings.model);
-  },
-};
-
-const gptSettings = resolveNewApiSettings('gpt', 'GPT', 'gpt-5.5');
-
-const gptConfig: TestModelConfig = {
-  id: 'gpt',
-  qualificationId: `gpt:${gptSettings.model}`,
-  name: 'GPT (via NewAPI)',
-  provider: 'openai-compatible',
-  model: gptSettings.model,
-  apiKey: gptSettings.apiKey,
-  baseURL: gptSettings.baseURL,
-  createModel: () => {
-    const apiKey = requireApiKey('gpt', gptSettings);
-    const compatible = createOpenAICompatible({
-      name: 'gpt',
-      apiKey,
-      baseURL: gptSettings.baseURL,
-    });
-    return compatible(gptSettings.model);
-  },
-};
-
-const domesticSettings = resolveNewApiSettings('domestic', 'DOMESTIC', 'qwen-plus');
-
-const domesticConfig: TestModelConfig = {
-  id: 'domestic',
-  qualificationId: `domestic:${domesticSettings.model}`,
-  name: 'Domestic (via NewAPI)',
-  provider: 'openai-compatible',
-  model: domesticSettings.model,
-  apiKey: domesticSettings.apiKey,
-  baseURL: domesticSettings.baseURL,
-  createModel: () => {
-    const apiKey = requireApiKey('domestic', domesticSettings);
-    const compatible = createOpenAICompatible({
-      name: 'domestic',
-      apiKey,
-      baseURL: domesticSettings.baseURL,
-    });
-    return compatible(domesticSettings.model);
-  },
-};
-
-export const ALL_MODEL_CONFIGS: TestModelConfig[] = [
-  deepseekConfig,
-  claudeConfig,
-  gptConfig,
-  domesticConfig,
-];
-
-export function getModelConfig(id: ModelId): TestModelConfig {
-  const config = ALL_MODEL_CONFIGS.find((c) => c.id === id);
-  if (!config) {
-    throw new Error(`Unknown model: ${id}`);
-  }
-  return config;
-}
-
-export function getEnabledModelConfigs(): TestModelConfig[] {
-  return ALL_MODEL_CONFIGS.filter((config) => Boolean(config.apiKey));
 }
 
 function parseModelList(value: string): string[] {
@@ -391,24 +301,64 @@ export function resolveForkQualificationModels(
   return configs;
 }
 
+function resolveLegacyModelConfigs(): TestModelConfig[] {
+  const env = process.env;
+  const bladeModel = hasExplicitProviderCredentials(env)
+    ? null
+    : (getBladeCurrentModel() ?? null);
+  const deepseekSettings = resolveModelSettings(
+    'deepseek',
+    'DEEPSEEK',
+    'deepseek-chat',
+    'https://api.deepseek.com',
+    env,
+    bladeModel
+  );
+  const claudeSettings = resolveNewApiSettings(
+    'claude',
+    'CLAUDE',
+    'claude-opus-4-8',
+    env,
+    bladeModel
+  );
+  const gptSettings = resolveNewApiSettings('gpt', 'GPT', 'gpt-5.5', env, bladeModel);
+  const domesticSettings = resolveNewApiSettings(
+    'domestic',
+    'DOMESTIC',
+    'qwen-plus',
+    env,
+    bladeModel
+  );
+
+  return [
+    createDeepSeekTestConfig(deepseekSettings.model, deepseekSettings),
+    createClaudeTestConfig(claudeSettings),
+    createCompatibleTestConfig('gpt', 'GPT (via NewAPI)', gptSettings),
+    createCompatibleTestConfig('domestic', 'Domestic (via NewAPI)', domesticSettings),
+  ];
+}
+
+export function getModelConfig(id: ModelId): TestModelConfig {
+  const config = resolveLegacyModelConfigs().find((candidate) => candidate.id === id);
+  if (!config) throw new Error(`Unknown model: ${id}`);
+  return config;
+}
+
+export function getEnabledModelConfigs(): TestModelConfig[] {
+  return resolveLegacyModelConfigs().filter((config) => Boolean(config.apiKey));
+}
+
 function sanitizeRuntimeModelId(qualificationId: string): string {
-  const sanitized = qualificationId
+  const slug = qualificationId
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  if (!sanitized) {
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  if (!slug) {
     throw new Error('Fork qualification model ID must contain letters or numbers');
   }
-  const model = qualificationId.slice(qualificationId.indexOf(':') + 1);
-  const sanitizedModel = model
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  const collisionSuffix =
-    model !== sanitizedModel
-      ? `-${createHash('sha256').update(qualificationId).digest('hex').slice(0, 12)}`
-      : '';
-  return `real-api-${sanitized}${collisionSuffix}`;
+  const hash = createHash('sha256').update(qualificationId).digest('hex').slice(0, 12);
+  return `real-api-${slug}-${hash}`;
 }
 
 export function buildRealApiRuntimeConfig(modelConfig: TestModelConfig): BladeConfig {

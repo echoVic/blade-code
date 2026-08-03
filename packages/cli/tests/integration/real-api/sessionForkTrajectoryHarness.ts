@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
+import type { OutgoingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Dirent } from 'node:fs';
 import os from 'node:os';
@@ -142,7 +143,8 @@ function isSessionEvent(value: unknown): value is SessionEvent {
     case 'message_created':
       return (
         isString(data.messageId) &&
-        ['user', 'assistant', 'system', 'tool'].includes(String(data.role)) &&
+        isString(data.role) &&
+        ['user', 'assistant', 'system', 'tool'].includes(data.role) &&
         isOptionalString(data.parentMessageId) &&
         isOptionalString(data.inboxMessageId) &&
         isString(data.createdAt)
@@ -152,6 +154,7 @@ function isSessionEvent(value: unknown): value is SessionEvent {
       return (
         isString(data.partId) &&
         isString(data.messageId) &&
+        isString(data.partType) &&
         [
           'text',
           'image',
@@ -161,7 +164,7 @@ function isSessionEvent(value: unknown): value is SessionEvent {
           'patch',
           'summary',
           'subtask_ref',
-        ].includes(String(data.partType)) &&
+        ].includes(data.partType) &&
         Object.hasOwn(data, 'payload') &&
         isString(data.createdAt)
       );
@@ -305,19 +308,16 @@ export function assertForkLineage(
     }
   }
 
-  const boundary = events.at(-1);
-  if (boundary?.type !== 'session_updated') {
-    throw new Error(
-      'Fork transcript final event must be a fork boundary session_updated'
-    );
-  }
-  if (
-    boundary.data.sessionId !== expected.childId ||
-    boundary.data.rootId !== expected.rootId ||
-    boundary.data.parentId !== expected.parentId ||
-    boundary.data.relationType !== 'fork'
-  ) {
-    throw new Error('Fork transcript must end with a complete fork boundary lineage');
+  const boundary = events.find(
+    (event): event is Extract<SessionEvent, { type: 'session_updated' }> =>
+      event.type === 'session_updated' &&
+      event.data.sessionId === expected.childId &&
+      event.data.rootId === expected.rootId &&
+      event.data.parentId === expected.parentId &&
+      event.data.relationType === 'fork'
+  );
+  if (!boundary) {
+    throw new Error('Fork transcript must contain a complete fork boundary lineage');
   }
 }
 
@@ -358,24 +358,19 @@ function findSecretEvidence(
   if (typeof value === 'bigint') {
     return secretMatchAt(value.toString(), secrets, evidencePath);
   }
+  if (value instanceof Uint8Array) {
+    return secretMatchAt(Buffer.from(value).toString('utf8'), secrets, evidencePath);
+  }
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
     return undefined;
   }
   if (seen.has(value)) return undefined;
   seen.add(value);
-
   if (value instanceof Error) {
-    return [
-      ['name', value.name],
-      ['message', value.message],
-      ['stack', value.stack],
-      ['cause', value.cause],
-    ].reduce<SecretEvidenceMatch | undefined>(
-      (match, [key, entry]) =>
-        match ?? findSecretEvidence(entry, secrets, seen, `${evidencePath}.${key}`),
-      undefined
-    );
+    const nameMatch = secretMatchAt(value.name, secrets, `${evidencePath}.name`);
+    if (nameMatch) return nameMatch;
   }
+
   if (value instanceof Map) {
     let index = 0;
     for (const [key, entryValue] of value) {
@@ -402,14 +397,32 @@ function findSecretEvidence(
     }
     return undefined;
   }
-  let propertyIndex = 0;
-  for (const [key, entry] of Object.entries(value)) {
-    const entryPath = `${evidencePath}.${key}`;
-    const match =
-      secretMatchAt(key, secrets, `${evidencePath}.[key#${propertyIndex}]`) ??
-      findSecretEvidence(entry, secrets, seen, entryPath);
+  let keys: Array<string | symbol>;
+  try {
+    keys = Reflect.ownKeys(value);
+  } catch {
+    throw new Error(`Unable to inspect evidence at ${evidencePath}`);
+  }
+  for (const [propertyIndex, key] of keys.entries()) {
+    const keyText = typeof key === 'symbol' ? key.description : key;
+    const keyPath =
+      typeof key === 'symbol'
+        ? `${evidencePath}.[symbol#${propertyIndex}]`
+        : `${evidencePath}.[key#${propertyIndex}]`;
+    if (keyText) {
+      const keyMatch = secretMatchAt(keyText, secrets, keyPath);
+      if (keyMatch) return keyMatch;
+    }
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new Error(`Unable to inspect evidence at ${evidencePath}`);
+    }
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) continue;
+    const entryPath = typeof key === 'symbol' ? keyPath : `${evidencePath}.${key}`;
+    const match = findSecretEvidence(descriptor.value, secrets, seen, entryPath);
     if (match) return match;
-    propertyIndex++;
   }
   return undefined;
 }
@@ -489,8 +502,8 @@ function copyRequestHeaders(request: import('node:http').IncomingMessage): Heade
   return headers;
 }
 
-function copyResponseHeaders(headers: Headers): Record<string, string> {
-  const copied: Record<string, string> = {};
+function copyResponseHeaders(headers: Headers): OutgoingHttpHeaders {
+  const copied: OutgoingHttpHeaders = {};
   const dynamicHopHeaders = connectionHeaderNames(
     headers.get('connection') ?? undefined
   );
@@ -505,6 +518,8 @@ function copyResponseHeaders(headers: Headers): Record<string, string> {
       copied[name] = value;
     }
   });
+  const setCookies = headers.getSetCookie();
+  if (setCookies.length > 0) copied['set-cookie'] = setCookies;
   return copied;
 }
 
@@ -567,9 +582,12 @@ export async function startHeldProviderProxy(upstreamBaseUrl: string): Promise<{
     requests: [],
   };
   let resolveHeld: () => void = () => undefined;
-  const requestHeld = new Promise<void>((resolve) => {
+  let rejectHeld: (reason: Error) => void = () => undefined;
+  const requestHeld = new Promise<void>((resolve, reject) => {
     resolveHeld = resolve;
+    rejectHeld = reject;
   });
+  void requestHeld.catch(() => undefined);
   let resolveGate: () => void = () => undefined;
   const gate = new Promise<void>((resolve) => {
     resolveGate = resolve;
@@ -669,6 +687,9 @@ export async function startHeldProviderProxy(upstreamBaseUrl: string): Promise<{
     close: () => {
       if (closePromise) return closePromise;
       closing = true;
+      if (!firstRequestSeen) {
+        rejectHeld(new Error('Held provider proxy closed before first request'));
+      }
       release();
       for (const controller of controllers) controller.abort();
       server.closeAllConnections();

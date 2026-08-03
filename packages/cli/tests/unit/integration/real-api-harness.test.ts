@@ -146,6 +146,27 @@ function createMessageEvent(
   };
 }
 
+function createPartEvent(
+  sessionId: string
+): Extract<SessionEvent, { type: 'part_created' }> {
+  return {
+    id: `${sessionId}-part`,
+    sessionId,
+    timestamp: CREATED_AT,
+    type: 'part_created',
+    cwd: '/tmp/fork-workspace',
+    gitBranch: 'main',
+    version: 'test',
+    data: {
+      partId: `${sessionId}-part`,
+      messageId: `${sessionId}-message`,
+      partType: 'text',
+      payload: { text: 'after fork boundary' },
+      createdAt: CREATED_AT,
+    },
+  };
+}
+
 function thrownMessage(action: () => unknown): string {
   try {
     action();
@@ -156,6 +177,42 @@ function thrownMessage(action: () => unknown): string {
 }
 
 describe('real API coding-task harness', () => {
+  it('imports testConfig without reading the local Blade configuration', async () => {
+    vi.resetModules();
+    const credentialNames = [
+      'DEEPSEEK_API_KEY',
+      'CLAUDE_API_KEY',
+      'GPT_API_KEY',
+      'DOMESTIC_API_KEY',
+    ] as const;
+    const previousCredentials = new Map(
+      credentialNames.map((name) => [name, process.env[name]])
+    );
+    for (const name of credentialNames) delete process.env[name];
+    const readFileSync = vi.fn(() => {
+      throw new Error('testConfig import attempted local config I/O');
+    });
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      return { ...actual, readFileSync };
+    });
+
+    try {
+      await expect(
+        import('../../integration/real-api/testConfig.js')
+      ).resolves.toHaveProperty('getEnabledModelConfigs');
+      expect(readFileSync).not.toHaveBeenCalled();
+    } finally {
+      for (const name of credentialNames) {
+        const previous = previousCredentials.get(name);
+        if (previous === undefined) delete process.env[name];
+        else process.env[name] = previous;
+      }
+      vi.doUnmock('node:fs');
+      vi.resetModules();
+    }
+  });
+
   it('parses versioned JSONL events and reports malformed lines', () => {
     const parsed = parseHeadlessJsonl(
       [
@@ -245,6 +302,31 @@ describe('real API coding-task harness', () => {
     });
   });
 
+  it('allows an injected Blade model fallback when no explicit credential exists', () => {
+    const fallback = {
+      id: 'fake-deepseek',
+      provider: 'deepseek',
+      model: 'deepseek-fallback-model',
+      apiKey: 'fallback-fake-secret',
+      baseUrl: 'https://fallback.invalid',
+    };
+
+    expect(
+      resolveModelSettings(
+        'deepseek',
+        'DEEPSEEK',
+        'deepseek-chat',
+        'https://default.invalid',
+        {},
+        fallback
+      )
+    ).toEqual({
+      apiKey: 'fallback-fake-secret',
+      baseURL: 'https://fallback.invalid',
+      model: 'deepseek-fallback-model',
+    });
+  });
+
   it('normalizes NewAPI channel roots without duplicating the API version', () => {
     expect(normalizeNewApiBaseURL('https://callapi8.com')).toBe(
       'https://callapi8.com/v1'
@@ -269,10 +351,12 @@ describe('real API coding-task harness', () => {
 
     const runtimeConfig = buildRealApiRuntimeConfig(modelConfig);
 
-    expect(runtimeConfig.currentModelId).toBe('real-api-deepseek-deepseek-v4-flash');
+    expect(runtimeConfig.currentModelId).toMatch(
+      /^real-api-deepseek-deepseek-v4-flash-[a-f0-9]{12}$/
+    );
     expect(runtimeConfig.models).toEqual([
       expect.objectContaining({
-        id: 'real-api-deepseek-deepseek-v4-flash',
+        id: runtimeConfig.currentModelId,
         apiKey: 'explicit-secret',
         baseUrl: 'https://api.deepseek.com',
         model: 'deepseek-v4-flash',
@@ -463,13 +547,28 @@ describe('real API coding-task harness', () => {
       (config) => buildRealApiRuntimeConfig(config).currentModelId
     );
 
-    expect(runtimeIds).toEqual([
-      'real-api-deepseek-deepseek-v4-flash',
-      'real-api-deepseek-deepseek-v4-pro',
-    ]);
     expect(new Set(runtimeIds).size).toBe(2);
     expect(runtimeIds.every((id) => /^[a-z0-9-]+$/.test(id))).toBe(true);
+    expect(runtimeIds.every((id) => /-[a-f0-9]{12}$/.test(id))).toBe(true);
+    expect(runtimeIds.every((id) => id.length <= 80)).toBe(true);
     expect(runtimeIds.join(' ')).not.toContain(fakeSecret);
+  });
+
+  it('builds stable bounded runtime IDs without exposing a long model label', () => {
+    const longModel = `sensitivepurealphabeticlabel${'x'.repeat(180)}`;
+    const [config] = resolveForkQualificationModels({
+      DEEPSEEK_API_KEY: 'bounded-id-fake-secret',
+      DEEPSEEK_MODELS: longModel,
+    });
+    if (!config) throw new Error('Expected a long-model config');
+
+    const first = buildRealApiRuntimeConfig(config).currentModelId;
+    const second = buildRealApiRuntimeConfig(config).currentModelId;
+    expect(first).toBe(second);
+    expect(first.length).toBeLessThanOrEqual(80);
+    expect(first).toMatch(/^real-api-[a-z0-9-]+-[a-f0-9]{12}$/);
+    expect(first).not.toContain(longModel);
+    expect(first).not.toContain(config.qualificationId);
   });
 
   it('keeps sanitized runtime IDs collision-free for punctuation-distinct models', () => {
@@ -583,6 +682,28 @@ describe('real API session-fork trajectory harness', () => {
       expect(() => readSessionEvents(transcriptPath)).toThrow(/line 2/i);
       writeFileSync(transcriptPath, '{"type":"session_created"}\n');
       expect(() => readSessionEvents(transcriptPath)).toThrow(/session event.*line 1/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects coercible non-string message roles and part types', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'blade-session-enum-types-'));
+    const transcriptPath = path.join(root, 'child-session.jsonl');
+    const message = createMessageEvent('child-session');
+    const part = createPartEvent('child-session');
+
+    try {
+      writeFileSync(
+        transcriptPath,
+        `${JSON.stringify({ ...message, data: { ...message.data, role: ['user'] } })}\n`
+      );
+      expect(() => readSessionEvents(transcriptPath)).toThrow(/session event/i);
+      writeFileSync(
+        transcriptPath,
+        `${JSON.stringify({ ...part, data: { ...part.data, partType: ['text'] } })}\n`
+      );
+      expect(() => readSessionEvents(transcriptPath)).toThrow(/session event/i);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -787,7 +908,7 @@ describe('real API session-fork trajectory harness', () => {
     }
   });
 
-  it('requires a complete fork lineage boundary as the final event', () => {
+  it('requires a complete fork lineage boundary', () => {
     const expected = {
       childId: 'child-session',
       parentId: 'parent-session',
@@ -801,7 +922,7 @@ describe('real API session-fork trajectory harness', () => {
 
     expect(() =>
       assertForkLineage([created, createMessageEvent(expected.childId)], expected)
-    ).toThrow(/final.*fork boundary/i);
+    ).toThrow(/complete fork boundary/i);
     expect(() =>
       assertForkLineage(
         [
@@ -816,6 +937,26 @@ describe('real API session-fork trajectory harness', () => {
         expected
       )
     ).toThrow(/complete.*fork boundary/i);
+  });
+
+  it('accepts child message and part appends after the complete fork boundary', () => {
+    const expected = {
+      childId: 'child-session',
+      parentId: 'parent-session',
+      rootId: 'root-session',
+    };
+
+    expect(() =>
+      assertForkLineage(
+        [
+          createForkCreatedEvent(expected.childId, expected.parentId, expected.rootId),
+          createForkBoundaryEvent(expected.childId, expected.parentId, expected.rootId),
+          createMessageEvent(expected.childId),
+          createPartEvent(expected.childId),
+        ],
+        expected
+      )
+    ).not.toThrow();
   });
 
   it('detects parent transcript mutation without including transcript contents', () => {
@@ -874,6 +1015,58 @@ describe('real API session-fork trajectory harness', () => {
     );
 
     expect(message).toBe('Secret material #2 found at $.value');
+    expect(message).not.toContain(fakeSecret);
+  });
+
+  it('finds secrets in byte arrays, non-enumerable values, and symbol keys without invoking getters', () => {
+    const byteSecret = 'buffer-fake-secret';
+    const hiddenSecret = 'hidden-fake-secret';
+    const symbolSecret = 'symbol-fake-secret';
+    let getterCalls = 0;
+    const evidence = {
+      buffer: Buffer.from(byteSecret),
+      bytes: Uint8Array.from(Buffer.from(byteSecret)),
+    };
+    Object.defineProperty(evidence, 'hidden', {
+      value: hiddenSecret,
+      enumerable: false,
+    });
+    Object.defineProperty(evidence, Symbol(symbolSecret), {
+      value: 'safe',
+      enumerable: false,
+    });
+    Object.defineProperty(evidence, 'dangerousGetter', {
+      get: () => {
+        getterCalls++;
+        return 'getter-fake-secret';
+      },
+    });
+
+    expect(thrownMessage(() => assertNoSecrets(evidence.buffer, [byteSecret]))).toBe(
+      'Secret material #1 found at $'
+    );
+    expect(thrownMessage(() => assertNoSecrets(evidence, [hiddenSecret]))).toContain(
+      '$.hidden'
+    );
+    expect(thrownMessage(() => assertNoSecrets(evidence, [symbolSecret]))).toContain(
+      '[symbol#'
+    );
+    expect(getterCalls).toBe(0);
+  });
+
+  it('reports an actionable scan error without echoing a Proxy ownKeys failure', () => {
+    const fakeSecret = 'ownkeys-fake-secret';
+    const evidence = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw new Error(fakeSecret);
+        },
+      }
+    );
+
+    const message = thrownMessage(() => assertNoSecrets(evidence, [fakeSecret]));
+    expect(message).toContain('Unable to inspect evidence at $');
     expect(message).not.toContain(fakeSecret);
   });
 
@@ -1100,6 +1293,43 @@ describe('real API session-fork trajectory harness', () => {
     }
   });
 
+  it('preserves multiple Set-Cookie response header values', async () => {
+    const upstream: Server = createHttpServer((_request, response) => {
+      response.writeHead(200, {
+        'set-cookie': ['first=fake-one; Path=/', 'second=fake-two; HttpOnly'],
+      });
+      response.end('cookies');
+    });
+    await new Promise<void>((resolve, reject) => {
+      upstream.once('error', reject);
+      upstream.listen(0, '127.0.0.1', () => {
+        upstream.off('error', reject);
+        resolve();
+      });
+    });
+    const upstreamAddress = upstream.address() as AddressInfo;
+    const proxy = await startHeldProviderProxy(
+      `http://127.0.0.1:${upstreamAddress.port}`
+    );
+
+    try {
+      const responsePromise = localHttpRequest(`${proxy.baseUrl}/cookies`);
+      await proxy.requestHeld;
+      proxy.release();
+      const response = await responsePromise;
+
+      expect(response.headers['set-cookie']).toEqual([
+        'first=fake-one; Path=/',
+        'second=fake-two; HttpOnly',
+      ]);
+    } finally {
+      await proxy.close();
+      await new Promise<void>((resolve, reject) => {
+        upstream.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it('closes an unreleased held proxy without hanging', async () => {
     const upstream: Server = createHttpServer((_request, response) =>
       response.end('unused')
@@ -1131,6 +1361,37 @@ describe('real API session-fork trajectory harness', () => {
         ])
       ).resolves.toBe('closed');
       await pendingFetch;
+    } finally {
+      await proxy.close();
+      await new Promise<void>((resolve, reject) => {
+        upstream.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it('rejects requestHeld when closed before the first provider request', async () => {
+    const upstream: Server = createHttpServer((_request, response) =>
+      response.end('unused')
+    );
+    await new Promise<void>((resolve, reject) => {
+      upstream.once('error', reject);
+      upstream.listen(0, '127.0.0.1', () => {
+        upstream.off('error', reject);
+        resolve();
+      });
+    });
+    const upstreamAddress = upstream.address() as AddressInfo;
+    const proxy = await startHeldProviderProxy(
+      `http://127.0.0.1:${upstreamAddress.port}`
+    );
+    const heldRejection = expect(proxy.requestHeld).rejects.toThrow(
+      'Held provider proxy closed before first request'
+    );
+
+    try {
+      await proxy.close();
+      await heldRejection;
+      await expect(proxy.close()).resolves.toBeUndefined();
     } finally {
       await proxy.close();
       await new Promise<void>((resolve, reject) => {
