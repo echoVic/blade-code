@@ -194,6 +194,55 @@ describe('SessionRoutes runtime reuse', () => {
     });
   });
 
+  it('waits for one runtime initialization before acknowledging startup steering', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionRuntime } = await import(
+      '../../../../src/agent/runtime/SessionRuntime.js'
+    );
+    let releaseRuntime: () => void = () => undefined;
+    vi.mocked(SessionRuntime.create).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseRuntime = () => resolve(runtimeState.runtime as never);
+        })
+    );
+
+    const app = SessionRoutes();
+    const first = await app.request('/startup-steering/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'initial request' }),
+    });
+    expect(first.status).toBe(202);
+
+    let secondSettled = false;
+    const secondPromise = Promise.resolve(
+      app.request('/startup-steering/message', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'guidance during startup' }),
+      })
+    ).then((response) => {
+      secondSettled = true;
+      return response;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(secondSettled).toBe(false);
+
+    releaseRuntime();
+    const second = await secondPromise;
+    expect(second.status).toBe(202);
+    expect(await second.json()).toMatchObject({
+      status: 'steering_queued',
+      queued: 1,
+    });
+    expect(SessionRuntime.create).toHaveBeenCalledTimes(1);
+    expect(runtimeState.runtime.enqueueSteering).toHaveBeenCalledWith(
+      'guidance during startup',
+      { allowBeforeTurn: true }
+    );
+  });
+
   it('builds multimodal user content from image attachments', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
 
@@ -286,6 +335,12 @@ describe('SessionRoutes runtime reuse', () => {
       yield { kind: 'compaction', phase: 'end' };
       yield { kind: 'model_fallback' };
       yield {
+        kind: 'steering_applied',
+        messageIds: ['recovered-steer'],
+        count: 1,
+        recovered: 1,
+      };
+      yield {
         kind: 'tool_result',
         toolCall: {
           id: 'tool-failed-without-error-payload',
@@ -336,6 +391,15 @@ describe('SessionRoutes runtime reuse', () => {
       {}
     );
     expect(Bus.publish).toHaveBeenCalledWith('surface-events', 'model.fallback', {});
+    expect(Bus.publish).toHaveBeenCalledWith(
+      'surface-events',
+      'steering.applied',
+      expect.objectContaining({
+        messageIds: ['recovered-steer'],
+        count: 1,
+        recovered: 1,
+      })
+    );
     expect(Bus.publish).toHaveBeenCalledWith(
       'surface-events',
       'tool.result',

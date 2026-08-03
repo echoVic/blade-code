@@ -11,6 +11,7 @@ import {
   useIsReady,
   usePendingCommands,
   usePermissionMode,
+  useRecoveredSteeringCount,
   useSessionCost,
   useThinkingModeEnabled,
 } from '../../store/selectors/index.js';
@@ -38,6 +39,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const thinkingModeEnabled = useThinkingModeEnabled();
   const sessionCost = useSessionCost();
   const pendingCommands = usePendingCommands();
+  const recoveredSteeringCount = useRecoveredSteeringCount();
 
   // 检查当前模型是否支持 thinking
   const supportsThinking = currentModel ? isThinkingModel(currentModel) : false;
@@ -167,6 +169,13 @@ export const ChatStatusBar: React.FC = React.memo(() => {
               <>
                 <Text color="gray">·</Text>
                 <Text color="yellow">已排队 {pendingCommands.length}</Text>
+              </>
+            )}
+
+            {recoveredSteeringCount > 0 && (
+              <>
+                <Text color="gray">·</Text>
+                <Text color="cyan">已恢复 {recoveredSteeringCount} 条指令</Text>
               </>
             )}
 

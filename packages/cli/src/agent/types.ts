@@ -107,6 +107,7 @@ export interface LoopOptions {
   turnSteering?: {
     drain: () => SteeringMessage[];
     drainOrSeal: () => { messages: SteeringMessage[]; sealed: boolean };
+    acknowledge: (ids: readonly string[]) => Promise<void>;
   };
 
   // 行为回调（影响循环控制流，不是事件通知）

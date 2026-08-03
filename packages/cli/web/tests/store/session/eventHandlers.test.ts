@@ -43,6 +43,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     agentPhase: 'idle',
     currentRunId: null,
     pendingSteeringCount: 0,
+    recoveredSteeringCount: 0,
     eventUnsubscribe: null,
     currentAssistantMessageId: 'assistant-1',
     hasToolCalls: false,
@@ -360,7 +361,19 @@ describe('eventHandlers', () => {
       type: 'steering.applied',
       properties: { sessionId: 'session-1', queued: 0 },
     });
-    expect(set).toHaveBeenLastCalledWith({ pendingSteeringCount: 0 });
+    expect(set).toHaveBeenLastCalledWith({
+      pendingSteeringCount: 0,
+      recoveredSteeringCount: 0,
+    });
+
+    dispatch({
+      type: 'steering.applied',
+      properties: { sessionId: 'session-1', queued: 0, recovered: 1 },
+    });
+    expect(set).toHaveBeenLastCalledWith({
+      pendingSteeringCount: 0,
+      recoveredSteeringCount: 1,
+    });
   });
 
   test('closes a pending confirmation when permission times out', () => {

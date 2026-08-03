@@ -14,13 +14,13 @@
  * 10. abort 后 late content_delta/thinking_delta 不污染缓冲区
  */
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { LoopEvent } from '../../../../../src/agent/loop/types.js';
 import {
   createLoopEventHandler,
   type LoopEventDeps,
   type LoopEventStats,
 } from '../../../../../src/ui/utils/loopEventHandler.js';
-import type { LoopEvent } from '../../../../../src/agent/loop/types.js';
 
 // Mock 外部依赖 — Logger、markdownIncremental、toolFormatters
 vi.mock('../../../../../src/logging/Logger.js', () => ({
@@ -69,6 +69,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
     } as any,
     commandActions: {
       dequeueCommand: vi.fn(),
+      setRecoveredSteeringCount: vi.fn(),
     } as any,
     streamingBuffer: {
       batchAppendContent: vi.fn(),
@@ -598,9 +599,24 @@ describe('createLoopEventHandler', () => {
         kind: 'steering_applied',
         messageIds: ['steer-1', 'steer-2'],
         count: 2,
+        recovered: 0,
       });
 
       expect(deps.commandActions.dequeueCommand).toHaveBeenCalledTimes(2);
+    });
+
+    it('steering_applied 应该显示崩溃后恢复的指令数量', () => {
+      const deps = createMockDeps();
+      const handler = createLoopEventHandler(deps, createMockStats());
+
+      handler({
+        kind: 'steering_applied',
+        messageIds: ['steer-recovered'],
+        count: 1,
+        recovered: 1,
+      });
+
+      expect(deps.commandActions.setRecoveredSteeringCount).toHaveBeenCalledWith(1);
     });
   });
 });

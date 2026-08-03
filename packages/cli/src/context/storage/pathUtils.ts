@@ -56,6 +56,16 @@ export function getProjectStoragePath(projectPath: string): string {
   return path.join(getBladeStorageRoot(), 'projects', escaped);
 }
 
+export function assertValidSessionId(sessionId: string): void {
+  if (
+    sessionId === '.' ||
+    sessionId === '..' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(sessionId)
+  ) {
+    throw new Error(`Invalid session ID: ${sessionId}`);
+  }
+}
+
 /**
  * 获取项目的会话文件路径
  *
@@ -64,7 +74,16 @@ export function getProjectStoragePath(projectPath: string): string {
  * @returns ~/.blade/projects/{escaped-path}/{sessionId}.jsonl
  */
 export function getSessionFilePath(projectPath: string, sessionId: string): string {
+  assertValidSessionId(sessionId);
   return path.join(getProjectStoragePath(projectPath), `${sessionId}.jsonl`);
+}
+
+export function getSessionInboxFilePath(
+  projectPath: string,
+  sessionId: string
+): string {
+  assertValidSessionId(sessionId);
+  return path.join(getProjectStoragePath(projectPath), `${sessionId}.inbox.json`);
 }
 
 /**

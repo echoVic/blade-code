@@ -6,11 +6,6 @@ import { z } from 'zod';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
-import {
-  getSteeringContentSize,
-  MAX_PENDING_STEER_CHARS,
-  MAX_PENDING_STEERS,
-} from '../../agent/runtime/ActiveTurnMailbox.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
 import { PermissionMode } from '../../config/types.js';
@@ -69,7 +64,6 @@ export interface RunState {
     resolve: (response: ConfirmationResponse) => void;
     details: ConfirmationDetails;
   };
-  steeringBacklog: UserMessageContent[];
   createdAt: Date;
 }
 
@@ -156,6 +150,30 @@ function buildUserMessageContent(
 export const SessionRoutes = () => {
   const app = new Hono<{ Variables: Variables }>();
   const runtimes = new Map<string, SessionRuntime>();
+  const runtimeInitializations = new Map<string, Promise<SessionRuntime>>();
+
+  const getOrCreateRuntime = async (session: SessionInfo): Promise<SessionRuntime> => {
+    const existing = runtimes.get(session.id);
+    if (existing) return existing;
+
+    let initialization = runtimeInitializations.get(session.id);
+    if (!initialization) {
+      initialization = SessionRuntime.create({
+        sessionId: session.id,
+        workspaceRoot: session.projectPath,
+      });
+      runtimeInitializations.set(session.id, initialization);
+    }
+    try {
+      const runtime = await initialization;
+      runtimes.set(session.id, runtime);
+      return runtime;
+    } finally {
+      if (runtimeInitializations.get(session.id) === initialization) {
+        runtimeInitializations.delete(session.id);
+      }
+    }
+  };
 
   app.get('/', async (c) => {
     try {
@@ -327,6 +345,7 @@ export const SessionRoutes = () => {
       logger.warn('[SessionRoutes] Failed to delete session file:', error);
     }
     sessions.delete(sessionId);
+    runtimeInitializations.delete(sessionId);
     const runtime = runtimes.get(sessionId);
     if (runtime) {
       await runtime.dispose();
@@ -455,31 +474,19 @@ export const SessionRoutes = () => {
       currentRun &&
       (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
     ) {
-      const runtime = runtimes.get(sessionId);
-      const steering = runtime?.enqueueSteering(userContent, {
+      const runtime = await getOrCreateRuntime(session);
+      const steering = await runtime.enqueueSteering(userContent, {
         allowBeforeTurn: true,
       });
-      if (!runtime) {
-        const backlogChars = currentRun.steeringBacklog.reduce(
-          (total, message) => total + getSteeringContentSize(message),
-          0
-        );
-        if (
-          currentRun.steeringBacklog.length >= MAX_PENDING_STEERS ||
-          backlogChars + getSteeringContentSize(userContent) > MAX_PENDING_STEER_CHARS
-        ) {
-          return c.json({ status: 'rejected', reason: 'queue_full' }, 409);
-        }
-        currentRun.steeringBacklog.push(userContent);
-      } else if (!steering?.accepted) {
+      if (!steering.accepted) {
         return c.json(
-          { status: 'rejected', reason: steering?.reason ?? 'turn_unavailable' },
+          { status: 'rejected', reason: steering.reason ?? 'turn_unavailable' },
           409
         );
       }
 
       const messageId = nanoid(12);
-      const queued = steering?.queued ?? currentRun.steeringBacklog.length;
+      const queued = steering.queued;
       Bus.publish(sessionId, 'message.created', {
         messageId,
         role: 'user',
@@ -508,18 +515,21 @@ export const SessionRoutes = () => {
       sessionId,
       status: 'running',
       abortController,
-      steeringBacklog: [],
       createdAt: new Date(),
     };
 
     activeRuns.set(runId, run);
     session.currentRunId = runId;
 
-    executeRunAsync(run, session, userContent, permissionMode, runtimes).catch(
-      (error) => {
-        logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
-      }
-    );
+    executeRunAsync(
+      run,
+      session,
+      userContent,
+      permissionMode,
+      getOrCreateRuntime
+    ).catch((error) => {
+      logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
+    });
 
     return c.json({ runId, status: 'running' }, 202);
   });
@@ -564,7 +574,7 @@ async function executeRunAsync(
   session: SessionInfo,
   content: UserMessageContent,
   permissionMode: PermissionMode,
-  runtimes: Map<string, SessionRuntime>
+  getOrCreateRuntime: (session: SessionInfo) => Promise<SessionRuntime>
 ): Promise<void> {
   const { abortController, sessionId, id: runId } = run;
   const userMessageId = nanoid(12);
@@ -587,18 +597,8 @@ async function executeRunAsync(
       content: '',
     });
 
-    let runtime = runtimes.get(sessionId);
-    if (!runtime) {
-      runtime = await SessionRuntime.create({
-        sessionId,
-        workspaceRoot: session.projectPath,
-      });
-      runtimes.set(sessionId, runtime);
-    }
+    const runtime = await getOrCreateRuntime(session);
     const agent = await Agent.createWithRuntime(runtime, { sessionId });
-    for (const steering of run.steeringBacklog.splice(0)) {
-      runtime.enqueueSteering(steering, { allowBeforeTurn: true });
-    }
 
     const requestConfirmation = async (
       details: ConfirmationDetails
@@ -717,6 +717,7 @@ async function executeRunAsync(
               runId,
               messageIds: event.messageIds,
               count: event.count,
+              recovered: event.recovered,
               queued: runtime.getPendingSteeringCount(),
             });
             break;

@@ -1,6 +1,6 @@
+import { nanoid } from 'nanoid';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { nanoid } from 'nanoid';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import type { JsonValue, MessageRole } from '../../store/types.js';
 import { getCwd } from '../../utils/cwd.js';
@@ -18,6 +18,7 @@ import {
   detectGitBranch,
   getProjectStoragePath,
   getSessionFilePath,
+  getSessionInboxFilePath,
   listProjectDirectories,
 } from './pathUtils.js';
 
@@ -126,6 +127,7 @@ export class PersistentStore {
     metadata?: {
       model?: string;
       usage?: { input_tokens: number; output_tokens: number };
+      inboxMessageId?: string;
     },
     subagentInfo?: {
       parentSessionId: string;
@@ -143,6 +145,7 @@ export class PersistentStore {
         messageId,
         role: messageRole,
         parentMessageId: parentUuid ?? undefined,
+        inboxMessageId: metadata?.inboxMessageId,
         createdAt: now,
         model: metadata?.model,
         usage: metadata?.usage,
@@ -556,6 +559,11 @@ export class PersistentStore {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
       const store = new JSONLStore(filePath);
       await store.delete();
+      await fs
+        .unlink(getSessionInboxFilePath(this.projectPath, sessionId))
+        .catch((error) => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        });
     } catch (error) {
       console.warn(`[PersistentStore] 删除会话失败 (session: ${sessionId}):`, error);
     }

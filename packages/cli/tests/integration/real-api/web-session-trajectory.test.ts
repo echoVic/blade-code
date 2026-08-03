@@ -123,6 +123,7 @@ async function collectEvents(sessionId: string): Promise<EventCollector> {
   const waiters = new Set<{
     predicate: (event: SurfaceEvent) => boolean;
     resolve: () => void;
+    reject: (error: Error) => void;
   }>();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -137,6 +138,16 @@ async function collectEvents(sessionId: string): Promise<EventCollector> {
     if (!data) return;
     const event = JSON.parse(data) as SurfaceEvent;
     events.push(event);
+    if (event.type === 'session.error') {
+      const error = new Error(
+        `Web session failed: ${JSON.stringify(event.properties)}`
+      );
+      for (const waiter of waiters) {
+        waiters.delete(waiter);
+        waiter.reject(error);
+      }
+      return;
+    }
     for (const waiter of waiters) {
       if (waiter.predicate(event)) {
         waiters.delete(waiter);
@@ -165,23 +176,40 @@ async function collectEvents(sessionId: string): Promise<EventCollector> {
     timeoutMs = 180_000
   ): Promise<void> => {
     if (events.some(predicate)) return;
+    const sessionError = events.find((event) => event.type === 'session.error');
+    if (sessionError) {
+      throw new Error(`Web session failed: ${JSON.stringify(sessionError.properties)}`);
+    }
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const waiter: {
       predicate: (event: SurfaceEvent) => boolean;
       resolve: () => void;
-    } = { predicate, resolve: () => undefined };
+      reject: (error: Error) => void;
+    } = {
+      predicate,
+      resolve: () => undefined,
+      reject: () => undefined,
+    };
     try {
       await Promise.race([
-        new Promise<void>((resolve) => {
+        new Promise<void>((resolve, reject) => {
           waiter.resolve = resolve;
+          waiter.reject = reject;
           waiters.add(waiter);
         }),
         new Promise<never>((_, reject) => {
-          timeout = setTimeout(
-            () =>
-              reject(new Error(`Timed out waiting for SSE event after ${timeoutMs}ms`)),
-            timeoutMs
-          );
+          timeout = setTimeout(() => {
+            const recentEvents = events
+              .slice(-20)
+              .map((event) => event.type)
+              .join(', ');
+            reject(
+              new Error(
+                `Timed out waiting for SSE event after ${timeoutMs}ms. ` +
+                  `Recent events: ${recentEvents || '(none)'}`
+              )
+            );
+          }, timeoutMs);
         }),
       ]);
     } finally {

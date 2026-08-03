@@ -11,6 +11,7 @@
 
 import { ContextManager } from '../context/ContextManager.js';
 import type { IChatService, Message } from '../services/ChatServiceInterface.js';
+import { getCwd } from '../utils/cwd.js';
 import type { AgentResponse, AgentTask } from './types.js';
 
 /**
@@ -30,9 +31,14 @@ export class ExecutionEngine {
   private contextManager: ContextManager;
   private memoryAdapter: MemoryMessageAdapter;
 
-  constructor(chatService: IChatService, contextManager?: ContextManager) {
+  constructor(
+    chatService: IChatService,
+    contextManager?: ContextManager,
+    projectPath?: string
+  ) {
     this.chatService = chatService;
-    this.contextManager = contextManager || new ContextManager();
+    this.contextManager =
+      contextManager || new ContextManager({ projectPath: projectPath || getCwd() });
     this.memoryAdapter = this.createMemoryAdapter();
   }
 

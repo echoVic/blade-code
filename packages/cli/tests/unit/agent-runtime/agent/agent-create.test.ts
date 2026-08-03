@@ -94,6 +94,7 @@ describe('Agent runLoop system prompt injection', () => {
       beginTurn: vi.fn(() => turnHandle),
       drainSteering: vi.fn(() => []),
       drainSteeringOrSeal: vi.fn(() => ({ messages: [], sealed: true })),
+      acknowledgeSteering: vi.fn().mockResolvedValue(undefined),
       endTurn: vi.fn(),
     };
     const agent = new Agent(
@@ -127,8 +128,6 @@ describe('Agent runLoop system prompt injection', () => {
     });
 
     expect(runtime.beginTurn).toHaveBeenCalledOnce();
-    expect(runtime.endTurn).toHaveBeenCalledWith(turnHandle, {
-      preservePending: false,
-    });
+    expect(runtime.endTurn).toHaveBeenCalledWith(turnHandle);
   });
 });

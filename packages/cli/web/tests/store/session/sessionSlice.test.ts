@@ -48,6 +48,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       agentPhase: 'idle',
       currentRunId: null,
       pendingSteeringCount: 0,
+      recoveredSteeringCount: 0,
       currentAssistantMessageId: null,
       hasToolCalls: false,
       tokenUsage: {

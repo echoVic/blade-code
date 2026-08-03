@@ -1,8 +1,8 @@
 import * as crypto from 'crypto';
 import { nanoid } from 'nanoid';
-import { getCwd } from '../utils/cwd.js';
 import type { ContentPart } from '../services/ChatServiceInterface.js';
 import type { JsonObject, JsonValue } from '../store/types.js';
+import { getCwd } from '../utils/cwd.js';
 import { ContextAssembler } from './ContextAssembler.js';
 import { ContextCompressor } from './processors/ContextCompressor.js';
 import { ContextFilter } from './processors/ContextFilter.js';
@@ -50,6 +50,7 @@ export class ContextManager {
       options.storage?.persistentPath || getBladeStorageRoot();
 
     this.options = {
+      projectPath: options.projectPath || getCwd(),
       storage: {
         maxMemorySize: 1000,
         persistentPath: defaultPersistentPath,
@@ -69,8 +70,7 @@ export class ContextManager {
 
     // 初始化存储层
     this.memory = new MemoryStore(this.options.storage.maxMemorySize);
-    // PersistentStore 现在使用项目路径，默认为当前工作目录
-    this.persistent = new PersistentStore(getCwd(), 100);
+    this.persistent = new PersistentStore(this.options.projectPath, 100);
     this.cache = new CacheStore(
       this.options.storage.cacheSize,
       5 * 60 * 1000 // 5分钟默认TTL
@@ -256,6 +256,7 @@ export class ContextManager {
     metadata?: {
       model?: string;
       usage?: { input_tokens: number; output_tokens: number };
+      inboxMessageId?: string;
     },
     subagentInfo?: {
       parentSessionId: string;
@@ -518,7 +519,7 @@ export class ContextManager {
 
   private async createWorkspaceContext(): Promise<WorkspaceContext> {
     try {
-      const cwd = getCwd();
+      const cwd = this.options.projectPath;
       return {
         projectPath: cwd,
         currentFiles: [],

@@ -159,7 +159,7 @@ describe('useAgent runtime ownership', () => {
     });
     await hook?.createAgent();
 
-    expect(hook?.steerActiveTurn('updated requirement')).toMatchObject({
+    await expect(hook?.steerActiveTurn('updated requirement')).resolves.toMatchObject({
       accepted: true,
       queued: 1,
     });

@@ -14,6 +14,8 @@ vi.mock('../../../../src/context/storage/pathUtils.js', () => ({
   unescapeProjectPath: (escaped: string) => `/projects/${escaped}`,
   getSessionFilePath: (projectPath: string, sessionId: string) =>
     `${projectPath}/sessions/${sessionId}.jsonl`,
+  getSessionInboxFilePath: (projectPath: string, sessionId: string) =>
+    `${projectPath}/${sessionId}.inbox.json`,
 }));
 
 beforeEach(() => {

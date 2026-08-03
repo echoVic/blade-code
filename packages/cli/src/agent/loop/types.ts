@@ -48,6 +48,7 @@ export type DomainEvent =
       kind: 'steering_applied';
       messageIds: string[];
       count: number;
+      recovered: number;
     }
   | { kind: 'subagent_spawned'; sessionId: string; type: string; prompt: string }
   | {

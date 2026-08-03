@@ -222,6 +222,9 @@ export function createLoopEventHandler(
         for (let index = 0; index < event.count; index++) {
           deps.commandActions.dequeueCommand();
         }
+        if (event.recovered > 0) {
+          deps.commandActions.setRecoveredSteeringCount(event.recovered);
+        }
         break;
 
       case 'subagent_spawned':

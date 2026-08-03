@@ -206,6 +206,9 @@ export const useCommandActions = () => useBladeStore((state) => state.command.ac
 export const usePendingCommands = () =>
   useBladeStore((state) => state.command.pendingCommands);
 
+export const useRecoveredSteeringCount = () =>
+  useBladeStore((state) => state.command.recoveredSteeringCount);
+
 // ==================== Thinking 模式选择器 ====================
 
 /**

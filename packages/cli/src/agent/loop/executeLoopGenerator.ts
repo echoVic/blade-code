@@ -669,16 +669,23 @@ export async function* executeLoopGenerator(
 
     const applySteeringMessages = async (
       messages: SteeringMessage[]
-    ): Promise<{ messageIds: string[]; count: number }> => {
+    ): Promise<{ messageIds: string[]; count: number; recovered: number }> => {
       for (const steering of messages) {
-        state.appendUser({ role: 'user', content: steering.content });
         const uuid = await saveUserMessage(
           deps,
           context,
           steering.content,
-          lastMessageUuid
+          lastMessageUuid,
+          { inboxMessageId: steering.id }
         );
-        if (uuid) lastMessageUuid = uuid;
+        if (!uuid) {
+          throw new Error(
+            `Failed to persist steering message before applying it: ${steering.id}`
+          );
+        }
+        lastMessageUuid = uuid;
+        await options?.turnSteering?.acknowledge([steering.id]);
+        state.appendUser({ role: 'user', content: steering.content });
 
         const steeringText =
           typeof steering.content === 'string'
@@ -703,6 +710,7 @@ export async function* executeLoopGenerator(
       return {
         messageIds: messages.map((steering) => steering.id),
         count: messages.length,
+        recovered: messages.filter((steering) => steering.recovered).length,
       };
     };
 

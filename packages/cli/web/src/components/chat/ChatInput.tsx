@@ -30,6 +30,7 @@ interface ChatInputProps {
   disabled?: boolean;
   isStreaming?: boolean;
   pendingSteeringCount?: number;
+  recoveredSteeringCount?: number;
 }
 
 const MODES: { value: PermissionMode; label: string }[] = [
@@ -44,6 +45,7 @@ export function ChatInput({
   disabled,
   isStreaming,
   pendingSteeringCount = 0,
+  recoveredSteeringCount = 0,
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<ComposerImageAttachment[]>([]);
@@ -387,9 +389,15 @@ export function ChatInput({
                 : ' · Enter sends guidance'}
             </div>
           )}
+          {recoveredSteeringCount > 0 && (
+            <div className="px-4 pb-2 text-[11px] font-mono text-cyan-600 dark:text-cyan-400">
+              Recovered {recoveredSteeringCount} queued instruction
+              {recoveredSteeringCount === 1 ? '' : 's'} after restart
+            </div>
+          )}
 
           {attachments.length > 0 && (
-            <div className="px-4 pb-2 flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 px-4 pb-2">
               {attachments.map((attachment) => (
                 <div
                   key={attachment.id}
@@ -398,7 +406,7 @@ export function ChatInput({
                   <img
                     src={attachment.dataUrl}
                     alt={attachment.name}
-                    className="h-20 w-20 object-cover"
+                    className="object-cover w-20 h-20"
                   />
                   <button
                     type="button"
@@ -519,7 +527,7 @@ export function ChatInput({
                 </PopoverContent>
               </Popover>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex gap-2 items-center">
               {isStreaming && (
                 <Button
                   size="icon"

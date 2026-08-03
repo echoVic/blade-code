@@ -116,7 +116,15 @@ export class ContextAssembler {
           role: event.data.role,
           content: '',
           timestamp: new Date(event.timestamp).getTime(),
-          metadata: event.data.model ? { model: event.data.model } : undefined,
+          metadata:
+            event.data.model || event.data.inboxMessageId
+              ? {
+                  ...(event.data.model ? { model: event.data.model } : {}),
+                  ...(event.data.inboxMessageId
+                    ? { inboxMessageId: event.data.inboxMessageId }
+                    : {}),
+                }
+              : undefined,
         });
       }
 

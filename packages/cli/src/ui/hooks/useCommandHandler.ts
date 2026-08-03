@@ -386,7 +386,7 @@ export const useCommandHandler = (
       }
 
       const steeringContent = buildUserMessageContent(steeringInput);
-      const steering = steerActiveTurn(steeringContent);
+      const steering = await steerActiveTurn(steeringContent);
       if (!steering.accepted) {
         const message =
           steering.reason === 'queue_full'
@@ -403,6 +403,7 @@ export const useCommandHandler = (
 
     // 清空上一轮对话的 tasks
     appActions.setTasks([]);
+    commandActions.setRecoveredSteeringCount(0);
 
     // 重置中止提示标记
     abortMessageSentRef.current = false;

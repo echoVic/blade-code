@@ -24,6 +24,7 @@ const initialCommandState: CommandState = {
   isProcessing: false,
   abortController: null,
   pendingCommands: [],
+  recoveredSteeringCount: 0,
 };
 
 /**
@@ -159,6 +160,15 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
         command: {
           ...state.command,
           pendingCommands: [],
+        },
+      }));
+    },
+
+    setRecoveredSteeringCount: (count: number) => {
+      set((state) => ({
+        command: {
+          ...state.command,
+          recoveredSteeringCount: Math.max(0, count),
         },
       }));
     },

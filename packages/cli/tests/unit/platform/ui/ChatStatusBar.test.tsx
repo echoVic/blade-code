@@ -7,6 +7,7 @@ const mockUseGitBranch = vi.fn((_projectRoot?: string) => ({
   loading: false,
 }));
 const mockGetProjectRoot = vi.fn(() => '/repo-root');
+const mockRecoveredSteeringCount = vi.fn(() => 0);
 
 vi.mock('ink', () => ({
   Box: ({ children }: { children?: React.ReactNode }) =>
@@ -24,6 +25,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useIsReady: () => true,
   usePendingCommands: () => [],
   usePermissionMode: () => 'default',
+  useRecoveredSteeringCount: () => mockRecoveredSteeringCount(),
   useSessionCost: () => null,
   useThinkingModeEnabled: () => false,
 }));
@@ -40,6 +42,7 @@ describe('ChatStatusBar', () => {
   beforeEach(() => {
     mockUseGitBranch.mockClear();
     mockGetProjectRoot.mockClear();
+    mockRecoveredSteeringCount.mockReturnValue(0);
   });
 
   it('应该使用稳定 projectRoot 获取分支', async () => {
@@ -51,5 +54,16 @@ describe('ChatStatusBar', () => {
 
     expect(mockGetProjectRoot).toHaveBeenCalledTimes(1);
     expect(mockUseGitBranch).toHaveBeenCalledWith('/repo-root');
+  });
+
+  it('应该显示崩溃后恢复的 steering 指令数量', async () => {
+    mockRecoveredSteeringCount.mockReturnValue(2);
+    const { ChatStatusBar } = await import(
+      '../../../../src/ui/components/ChatStatusBar.js'
+    );
+
+    const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
+
+    expect(markup).toContain('已恢复 2 条指令');
   });
 });

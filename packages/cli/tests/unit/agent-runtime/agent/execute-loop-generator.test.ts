@@ -342,7 +342,12 @@ describe('executeLoopGenerator', () => {
     });
 
     it('applies mid-turn steering before accepting the model final response', async () => {
-      const deps = createMockDeps();
+      const contextManager = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as any,
+      });
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
@@ -364,6 +369,7 @@ describe('executeLoopGenerator', () => {
         id: 'steer-1',
         content: 'Use the updated requirement.',
         queuedAt: Date.now(),
+        recovered: false,
       };
       const turnSteering = {
         drain: vi.fn(() => {
@@ -371,6 +377,7 @@ describe('executeLoopGenerator', () => {
           return drainCount === 2 ? [steeringMessage] : [];
         }),
         drainOrSeal: vi.fn(() => ({ messages: [], sealed: true })),
+        acknowledge: vi.fn().mockResolvedValue(undefined),
       };
 
       const { events, result } = await drainGenerator(
@@ -391,7 +398,17 @@ describe('executeLoopGenerator', () => {
         kind: 'steering_applied',
         messageIds: ['steer-1'],
         count: 1,
+        recovered: 0,
       });
+      expect(turnSteering.acknowledge).toHaveBeenCalledWith(['steer-1']);
+      expect(contextManager.saveMessage).toHaveBeenCalledWith(
+        'test-session',
+        'user',
+        'Use the updated requirement.',
+        expect.any(String),
+        { inboxMessageId: 'steer-1' },
+        undefined
+      );
       expect(chatMock).toHaveBeenCalledTimes(2);
       expect(chatMock.mock.calls[1]?.[0]).toEqual(
         expect.arrayContaining([
@@ -410,6 +427,66 @@ describe('executeLoopGenerator', () => {
           }),
         ])
       );
+    });
+
+    it('acknowledges durable steering one message at a time on partial persistence failure', async () => {
+      const contextManager = createMockContextManager();
+      contextManager.saveMessage
+        .mockReset()
+        .mockResolvedValueOnce('initial-user')
+        .mockResolvedValueOnce('initial-assistant')
+        .mockResolvedValueOnce('steering-one')
+        .mockRejectedValueOnce(new Error('disk unavailable'));
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as any,
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: 'Initial answer',
+        toolCalls: undefined,
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'stop',
+      });
+      let drainCount = 0;
+      const turnSteering = {
+        drain: vi.fn(() => {
+          drainCount++;
+          return drainCount === 2
+            ? [
+                {
+                  id: 'steer-1',
+                  content: 'First durable update.',
+                  queuedAt: Date.now(),
+                  recovered: false,
+                },
+                {
+                  id: 'steer-2',
+                  content: 'Second durable update.',
+                  queuedAt: Date.now(),
+                  recovered: false,
+                },
+              ]
+            : [];
+        }),
+        drainOrSeal: vi.fn(() => ({ messages: [], sealed: true })),
+        acknowledge: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Initial request.',
+          createMockContext(),
+          { stream: false, turnSteering },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(turnSteering.acknowledge).toHaveBeenCalledTimes(1);
+      expect(turnSteering.acknowledge).toHaveBeenCalledWith(['steer-1']);
     });
   });
 

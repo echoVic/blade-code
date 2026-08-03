@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
+import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
 import { createChatServiceAsync } from '../../../../src/services/ChatServiceInterface.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
@@ -177,6 +178,9 @@ describe('SessionRuntime', () => {
     expect(worktreeMocks.cleanupStaleAgentWorktrees).toHaveBeenCalledWith({
       workspaceRoot,
     });
+    expect(
+      existsSync(getSessionFilePath(workspaceRoot, 'workspace-owned-session'))
+    ).toBe(true);
 
     await runtime.dispose();
   });

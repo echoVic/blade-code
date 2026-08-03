@@ -1,9 +1,12 @@
-import { appendFile, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
-import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
+import {
+  getSessionFilePath,
+  getSessionInboxFilePath,
+} from '../../../src/context/storage/pathUtils.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 
@@ -170,5 +173,26 @@ describe('SessionService.forkSession', () => {
     expect(
       await SessionService.loadSession('grandchild-session', projectPath)
     ).toContainEqual(expect.objectContaining({ content: 'committed history' }));
+  });
+
+  it('deletes the durable inbox together with the session transcript', async () => {
+    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    await persistentStore.saveMessage('delete-session', 'user', 'committed');
+    const transcriptPath = getSessionFilePath(projectPath, 'delete-session');
+    const inboxPath = getSessionInboxFilePath(projectPath, 'delete-session');
+    await writeFile(
+      inboxPath,
+      '{"version":1,"sessionId":"delete-session","messages":[]}\n',
+      'utf8'
+    );
+    expect(
+      (await SessionService.listSessions()).find(
+        (session) => session.sessionId === 'delete-session'
+      )?.projectPath
+    ).toBe(projectPath);
+
+    expect(await SessionService.deleteSession('delete-session')).toBe(1);
+    await expect(access(transcriptPath)).rejects.toThrow();
+    await expect(access(inboxPath)).rejects.toThrow();
   });
 });

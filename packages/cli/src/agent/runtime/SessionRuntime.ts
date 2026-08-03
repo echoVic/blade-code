@@ -94,7 +94,7 @@ export class SessionRuntime {
   private readonly approvalStore = new InMemorySessionApprovalStore();
   private readonly baseRegistry = new ToolRegistry();
   private readonly attachmentCollector: AttachmentCollector;
-  private readonly activeTurnMailbox = new ActiveTurnMailbox();
+  private activeTurnMailbox!: ActiveTurnMailbox;
 
   private chatService!: IChatService;
   private executionEngine!: ExecutionEngine;
@@ -179,10 +179,10 @@ export class SessionRuntime {
     return this.activeTurnMailbox.beginTurn();
   }
 
-  enqueueSteering(
+  async enqueueSteering(
     content: UserMessageContent,
     options?: { allowBeforeTurn?: boolean }
-  ): SteeringEnqueueResult {
+  ): Promise<SteeringEnqueueResult> {
     return this.activeTurnMailbox.enqueue(content, options);
   }
 
@@ -197,8 +197,12 @@ export class SessionRuntime {
     return this.activeTurnMailbox.drainOrSeal(handle);
   }
 
-  endTurn(handle: ActiveTurnHandle, options?: { preservePending?: boolean }): void {
-    this.activeTurnMailbox.endTurn(handle, options);
+  async acknowledgeSteering(ids: readonly string[]): Promise<void> {
+    await this.activeTurnMailbox.acknowledge(ids);
+  }
+
+  endTurn(handle: ActiveTurnHandle): void {
+    this.activeTurnMailbox.endTurn(handle);
   }
 
   hasActiveTurn(): boolean {
@@ -209,14 +213,22 @@ export class SessionRuntime {
     return this.activeTurnMailbox.pendingCount();
   }
 
+  getRecoveredSteeringCount(): number {
+    return this.activeTurnMailbox.recoveredCount();
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) {
       return;
     }
 
-    this.sessionLease = await SessionLease.acquire(this.sessionId);
+    this.sessionLease = await SessionLease.acquire(this.sessionId, this.workspaceRoot);
     try {
       await this.validateSystemPromptConfig();
+      this.activeTurnMailbox = await ActiveTurnMailbox.create(
+        this.workspaceRoot,
+        this.sessionId
+      );
       await this.registerBuiltinTools();
       await this.loadSubagents();
       await this.discoverSkills();
@@ -224,6 +236,9 @@ export class SessionRuntime {
         this.resolveModelConfig(this.options.modelId),
         '使用模型:'
       );
+      await this.executionEngine
+        .getContextManager()
+        .persistentStore.initSession(this.sessionId);
 
       this.initialized = true;
       logger.debug(
@@ -365,7 +380,11 @@ export class SessionRuntime {
     const previousChatService = this.initialized ? this.chatService : undefined;
     const contextManager = this.executionEngine?.getContextManager();
     this.chatService = nextChatService;
-    this.executionEngine = new ExecutionEngine(nextChatService, contextManager);
+    this.executionEngine = new ExecutionEngine(
+      nextChatService,
+      contextManager,
+      this.workspaceRoot
+    );
     this.currentModelMaxContextTokens = nextModelMaxContextTokens;
     this.currentModelId = modelConfig.id;
 

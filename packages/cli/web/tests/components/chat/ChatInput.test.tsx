@@ -246,6 +246,7 @@ describe('ChatInput', () => {
           onAbort={vi.fn()}
           isStreaming
           pendingSteeringCount={2}
+          recoveredSteeringCount={1}
         />
       );
     });
@@ -255,6 +256,9 @@ describe('ChatInput', () => {
     expect(textarea?.placeholder).toContain('steer the active turn');
     expect(container.textContent).toContain('Active turn is steerable');
     expect(container.textContent).toContain('2 queued');
+    expect(container.textContent).toContain(
+      'Recovered 1 queued instruction after restart'
+    );
     expect(container.querySelector('[title="Stop active turn"]')).toBeTruthy();
     expect(container.querySelector('[title="Steer active turn"]')).toBeTruthy();
   });

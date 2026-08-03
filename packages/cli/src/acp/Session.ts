@@ -379,7 +379,7 @@ export class AcpSession {
 
     const message = this.resolvePrompt(params.prompt);
     if (this.pendingPrompt) {
-      const steering = this.runtime.enqueueSteering(message, {
+      const steering = await this.runtime.enqueueSteering(message, {
         allowBeforeTurn: true,
       });
       if (!steering.accepted) {
@@ -512,11 +512,21 @@ export class AcpSession {
             case 'task_update':
               this.sendPlanUpdate(event.tasks);
               break;
+            case 'steering_applied':
+              if (event.recovered > 0) {
+                this.sendUpdate({
+                  sessionUpdate: 'agent_message_chunk',
+                  content: {
+                    type: 'text',
+                    text: `[Recovered ${event.recovered} queued instruction${event.recovered === 1 ? '' : 's'} after restart]\n`,
+                  },
+                });
+              }
+              break;
 
             // --- 系统事件不外发 ---
             // stream_end: 内部 per-turn 信号，不外发
-            // turn_start, compaction, token_usage, model_fallback,
-            // steering_applied: 内部事件
+            // turn_start, compaction, token_usage, model_fallback: 内部事件
             default:
               break;
           }

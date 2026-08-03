@@ -123,7 +123,7 @@ export function useAgent(options: AgentOptions) {
   );
 
   const steerActiveTurn = useMemoizedFn(
-    (content: UserMessageContent): SteeringEnqueueResult => {
+    async (content: UserMessageContent): Promise<SteeringEnqueueResult> => {
       if (!runtimeRef.current) {
         return { accepted: false, queued: 0, reason: 'no_active_turn' };
       }

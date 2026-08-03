@@ -165,7 +165,11 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       timestamp: Date.now(),
     });
 
-    set({ isStreaming: true, error: null });
+    set({
+      isStreaming: true,
+      error: null,
+      recoveredSteeringCount: isStreaming ? get().recoveredSteeringCount : 0,
+    });
     if (!isStreaming) {
       subscribeToEvents(sessionId);
     }

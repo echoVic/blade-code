@@ -1,4 +1,3 @@
-import type { StateCreator } from 'zustand';
 import type {
   Message as BaseMessage,
   ImageAttachmentInput,
@@ -9,6 +8,7 @@ import type {
   Session,
   StreamEvent,
 } from '@/services';
+import type { StateCreator } from 'zustand';
 
 export type {
   ImageAttachmentInput,
@@ -155,6 +155,7 @@ export interface StreamingSlice {
   agentPhase: AgentPhase;
   currentRunId: string | null;
   pendingSteeringCount: number;
+  recoveredSteeringCount: number;
   eventUnsubscribe: (() => void) | null;
   currentAssistantMessageId: string | null;
   hasToolCalls: boolean;

@@ -375,6 +375,41 @@ describe('AcpSession', () => {
       expect(mockConnection.sessionUpdates.length).toBeGreaterThanOrEqual(0);
     });
 
+    it('应该通知 IDE 有崩溃后恢复的 steering 指令', async () => {
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
+      };
+      const mockAgent = agentModule._getMockAgentInstance();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'steering_applied',
+          messageIds: ['recovered-1'],
+          count: 1,
+          recovered: 1,
+        } as const;
+        return {
+          success: true,
+          finalMessage: 'done',
+        };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'continue' }],
+      });
+
+      expect(
+        mockConnection.sessionUpdates.some(
+          (notification) =>
+            notification.update.sessionUpdate === 'agent_message_chunk' &&
+            notification.update.content.type === 'text' &&
+            notification.update.content.text.includes('Recovered 1 queued instruction')
+        )
+      ).toBe(true);
+    });
+
     it('应该发送可用命令', async () => {
       const promptParams = {
         sessionId: 'test-session-id',

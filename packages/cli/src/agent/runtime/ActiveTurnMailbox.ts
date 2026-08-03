@@ -1,14 +1,14 @@
 import { nanoid } from 'nanoid';
 import type { UserMessageContent } from '../types.js';
+import {
+  DurableSteeringInbox,
+  type DurableSteeringMessage,
+} from './DurableSteeringInbox.js';
 
 export const MAX_PENDING_STEERS = 20;
 export const MAX_PENDING_STEER_CHARS = 5_000_000;
 
-export interface SteeringMessage {
-  id: string;
-  content: UserMessageContent;
-  queuedAt: number;
-}
+export type SteeringMessage = DurableSteeringMessage;
 
 export interface SteeringEnqueueResult {
   accepted: boolean;
@@ -36,7 +36,18 @@ export function getSteeringContentSize(content: UserMessageContent): number {
 
 export class ActiveTurnMailbox {
   private activeTurn?: ActiveTurnState;
-  private pending: SteeringMessage[] = [];
+  private claimed = new Map<string, SteeringMessage>();
+
+  private constructor(private readonly inbox: DurableSteeringInbox) {}
+
+  static async create(
+    workspaceRoot: string,
+    sessionId: string
+  ): Promise<ActiveTurnMailbox> {
+    return new ActiveTurnMailbox(
+      await DurableSteeringInbox.open(workspaceRoot, sessionId)
+    );
+  }
 
   beginTurn(): ActiveTurnHandle {
     if (this.activeTurn) {
@@ -48,14 +59,14 @@ export class ActiveTurnMailbox {
     return handle;
   }
 
-  enqueue(
+  async enqueue(
     content: UserMessageContent,
     options: { allowBeforeTurn?: boolean } = {}
-  ): SteeringEnqueueResult {
+  ): Promise<SteeringEnqueueResult> {
     if (!this.activeTurn && !options.allowBeforeTurn) {
       return {
         accepted: false,
-        queued: this.pending.length,
+        queued: this.inbox.count(),
         reason: 'no_active_turn',
       };
     }
@@ -63,43 +74,47 @@ export class ActiveTurnMailbox {
       return {
         accepted: false,
         turnId: this.activeTurn.id,
-        queued: this.pending.length,
+        queued: this.inbox.count(),
         reason: 'turn_sealed',
       };
     }
 
-    const pendingChars = this.pending.reduce(
-      (total, message) => total + getSteeringContentSize(message.content),
-      0
+    const accepted = await this.inbox.enqueue(
+      {
+        id: nanoid(12),
+        content,
+        queuedAt: Date.now(),
+      },
+      (pending) =>
+        pending.length < MAX_PENDING_STEERS &&
+        pending.reduce(
+          (total, message) => total + getSteeringContentSize(message.content),
+          getSteeringContentSize(content)
+        ) <= MAX_PENDING_STEER_CHARS
     );
-    if (
-      this.pending.length >= MAX_PENDING_STEERS ||
-      pendingChars + getSteeringContentSize(content) > MAX_PENDING_STEER_CHARS
-    ) {
+    if (!accepted) {
       return {
         accepted: false,
         turnId: this.activeTurn?.id,
-        queued: this.pending.length,
+        queued: this.inbox.count(),
         reason: 'queue_full',
       };
     }
-
-    this.pending.push({
-      id: nanoid(12),
-      content,
-      queuedAt: Date.now(),
-    });
     return {
       accepted: true,
       turnId: this.activeTurn?.id,
-      queued: this.pending.length,
+      queued: this.inbox.count(),
     };
   }
 
   drain(handle: ActiveTurnHandle): SteeringMessage[] {
     this.assertOwner(handle);
-    const messages = this.pending;
-    this.pending = [];
+    const messages = this.inbox
+      .list()
+      .filter((message) => !this.claimed.has(message.id));
+    for (const message of messages) {
+      this.claimed.set(message.id, message);
+    }
     return messages;
   }
 
@@ -108,7 +123,7 @@ export class ActiveTurnMailbox {
     sealed: boolean;
   } {
     this.assertOwner(handle);
-    if (this.pending.length > 0) {
+    if (this.inbox.count() > this.claimed.size) {
       return { messages: this.drain(handle), sealed: false };
     }
 
@@ -116,12 +131,17 @@ export class ActiveTurnMailbox {
     return { messages: [], sealed: true };
   }
 
-  endTurn(handle: ActiveTurnHandle, options: { preservePending?: boolean } = {}): void {
+  async acknowledge(ids: readonly string[]): Promise<void> {
+    await this.inbox.acknowledge(ids);
+    for (const id of ids) {
+      this.claimed.delete(id);
+    }
+  }
+
+  endTurn(handle: ActiveTurnHandle): void {
     this.assertOwner(handle);
     this.activeTurn = undefined;
-    if (!options.preservePending) {
-      this.pending = [];
-    }
+    this.claimed.clear();
   }
 
   isActive(): boolean {
@@ -129,7 +149,11 @@ export class ActiveTurnMailbox {
   }
 
   pendingCount(): number {
-    return this.pending.length;
+    return this.inbox.count();
+  }
+
+  recoveredCount(): number {
+    return this.inbox.recoveredCount();
   }
 
   private assertOwner(handle: ActiveTurnHandle): void {

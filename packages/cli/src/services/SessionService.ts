@@ -192,7 +192,7 @@ export class SessionService {
 
     return {
       sessionId,
-      projectPath,
+      projectPath: sessionCreated?.cwd ?? firstEntry.cwd ?? projectPath,
       gitBranch: sessionCreated?.gitBranch ?? firstEntry.gitBranch,
       parentId: sessionCreated?.data.parentId,
       relationType: sessionCreated?.data.relationType,
@@ -317,6 +317,14 @@ export class SessionService {
             },
           };
         }
+        if (entry.type === 'message_created') {
+          const { inboxMessageId: _inboxMessageId, ...data } = entry.data;
+          return {
+            ...base,
+            type: 'message_created',
+            data,
+          };
+        }
         return base as SessionEvent;
       });
     const forkBoundary: Extract<SessionEvent, { type: 'session_updated' }> = {
@@ -369,7 +377,15 @@ export class SessionService {
     const sessions = await this.listSessions();
     const matches = sessions.filter((s) => s.sessionId === sessionId);
     if (matches.length === 0) return 0;
-    await Promise.all(matches.map((s) => rm(s.filePath, { force: true })));
+    await Promise.all(
+      matches.flatMap((session) => [
+        rm(session.filePath, { force: true }),
+        rm(
+          path.join(path.dirname(session.filePath), `${session.sessionId}.inbox.json`),
+          { force: true }
+        ),
+      ])
+    );
     return matches.length;
   }
 
@@ -400,6 +416,9 @@ export class SessionService {
         const message: Message = recoveredAssistant ?? {
           role: entry.data.role,
           content: '',
+          ...(entry.data.inboxMessageId
+            ? { metadata: { inboxMessageId: entry.data.inboxMessageId } }
+            : {}),
         };
         messageMap.set(entry.data.messageId, message);
         partMap.set(entry.data.messageId, []);

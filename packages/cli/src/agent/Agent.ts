@@ -410,10 +410,10 @@ export class Agent {
             ? {
                 drain: () => this.sessionRuntime!.drainSteering(turnHandle),
                 drainOrSeal: () => this.sessionRuntime!.drainSteeringOrSeal(turnHandle),
+                acknowledge: (ids) => this.sessionRuntime!.acknowledgeSteering(ids),
               }
             : undefined,
       };
-      let terminalResult: LoopResult | undefined;
 
       try {
         // 选择对应模式的 generator
@@ -453,15 +453,10 @@ export class Agent {
           result = yield* this.runLoop(messageWithPlan, newContext, loopOptions);
         }
 
-        terminalResult = result;
         return result;
       } finally {
         if (this.sessionRuntime && turnHandle) {
-          const preservePending =
-            !terminalResult ||
-            (!terminalResult.success &&
-              !['aborted', 'canceled'].includes(terminalResult.error?.type ?? ''));
-          this.sessionRuntime.endTurn(turnHandle, { preservePending });
+          this.sessionRuntime.endTurn(turnHandle);
         }
       }
     }

@@ -105,6 +105,7 @@ export interface ContextStorageOptions {
 }
 
 export interface ContextManagerOptions {
+  projectPath: string;
   storage: ContextStorageOptions;
   defaultFilter: ContextFilter;
   compressionThreshold: number;
@@ -149,6 +150,7 @@ export interface MessageInfo {
   messageId: string;
   role: MessageRole;
   parentMessageId?: string;
+  inboxMessageId?: string;
   createdAt: string;
   model?: string;
   usage?: {

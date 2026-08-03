@@ -815,6 +815,10 @@ const handleSteeringApplied: EventHandler = (props, get, set) => {
   set({
     pendingSteeringCount:
       typeof props.queued === 'number' ? Math.max(0, props.queued) : 0,
+    recoveredSteeringCount:
+      typeof props.recovered === 'number'
+        ? Math.max(0, props.recovered)
+        : get().recoveredSteeringCount,
   });
 };
 

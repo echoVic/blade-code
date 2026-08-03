@@ -323,6 +323,7 @@ export interface CommandState {
   isProcessing: boolean; // 临时状态 - 不持久化
   abortController: AbortController | null; // 不持久化
   pendingCommands: PendingCommand[]; // 待处理命令队列 - 不持久化
+  recoveredSteeringCount: number;
 }
 
 /**
@@ -346,6 +347,7 @@ export interface CommandActions {
   enqueueCommand: (command: PendingCommand) => void;
   dequeueCommand: () => PendingCommand | undefined;
   clearQueue: () => void;
+  setRecoveredSteeringCount: (count: number) => void;
 }
 
 /**

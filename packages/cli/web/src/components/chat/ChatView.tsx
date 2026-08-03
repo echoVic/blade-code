@@ -11,6 +11,7 @@ export function ChatView() {
     currentSessionId,
     isStreaming,
     pendingSteeringCount,
+    recoveredSteeringCount,
     isLoading,
     error,
     loadSessions,
@@ -76,6 +77,7 @@ export function ChatView() {
         disabled={isLoading}
         isStreaming={isStreaming}
         pendingSteeringCount={pendingSteeringCount}
+        recoveredSteeringCount={recoveredSteeringCount}
       />
       <StatusBar />
     </div>

@@ -8,6 +8,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
   agentPhase: 'idle',
   currentRunId: null,
   pendingSteeringCount: 0,
+  recoveredSteeringCount: 0,
   eventUnsubscribe: null,
   currentAssistantMessageId: null,
   hasToolCalls: false,
