@@ -205,6 +205,97 @@ export function readSessionEvents(filePath: string): SessionEvent[] {
   return events;
 }
 
+export interface DurableToolTraceRecord {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  output: unknown;
+  error: string | null;
+}
+
+export function extractDurableToolTrace(
+  events: readonly SessionEvent[],
+  options: { afterEventCount?: number } = {}
+): DurableToolTraceRecord[] {
+  const afterEventCount = options.afterEventCount ?? 0;
+  if (
+    !Number.isInteger(afterEventCount) ||
+    afterEventCount < 0 ||
+    afterEventCount > events.length
+  ) {
+    throw new Error('Durable tool trace boundary is invalid');
+  }
+
+  const orderedCalls: Array<{
+    toolCallId: string;
+    toolName: string;
+    input: unknown;
+  }> = [];
+  const pending = new Map<string, (typeof orderedCalls)[number]>();
+  const completed = new Map<string, { output: unknown; error: string | null }>();
+
+  for (const event of events.slice(afterEventCount)) {
+    if (event.type !== 'part_created') continue;
+    const { partType, payload } = event.data;
+    if (partType !== 'tool_call' && partType !== 'tool_result') continue;
+    if (!isRecord(payload)) {
+      throw new Error('Durable tool trace payload must be an object');
+    }
+    const toolCallId = payload.toolCallId;
+    const toolName = payload.toolName;
+    if (typeof toolCallId !== 'string' || typeof toolName !== 'string') {
+      throw new Error('Durable tool trace identity is invalid');
+    }
+
+    if (partType === 'tool_call') {
+      if (pending.has(toolCallId) || completed.has(toolCallId)) {
+        throw new Error('Durable tool trace contains a duplicate call');
+      }
+      if (!Object.hasOwn(payload, 'input')) {
+        throw new Error('Durable tool trace call input is missing');
+      }
+      const call = { toolCallId, toolName, input: payload.input };
+      orderedCalls.push(call);
+      pending.set(toolCallId, call);
+      continue;
+    }
+
+    if (completed.has(toolCallId)) {
+      throw new Error('Durable tool trace contains a duplicate result');
+    }
+    const call = pending.get(toolCallId);
+    if (!call) {
+      throw new Error('Durable tool trace contains an orphan result');
+    }
+    if (call.toolName !== toolName) {
+      throw new Error('Durable tool trace tool name mismatch');
+    }
+    if (!Object.hasOwn(payload, 'output') || !Object.hasOwn(payload, 'error')) {
+      throw new Error('Durable tool trace result fields are missing');
+    }
+    if (payload.error !== null && typeof payload.error !== 'string') {
+      throw new Error('Durable tool trace result error is invalid');
+    }
+    pending.delete(toolCallId);
+    completed.set(toolCallId, {
+      output: payload.output,
+      error: payload.error,
+    });
+  }
+
+  if (pending.size > 0) {
+    throw new Error('Durable tool trace call is missing a result');
+  }
+
+  return orderedCalls.map((call) => {
+    const result = completed.get(call.toolCallId);
+    if (!result) {
+      throw new Error('Durable tool trace call is missing a result');
+    }
+    return { ...call, ...result };
+  });
+}
+
 export function findSessionTranscript(storageRoot: string, sessionId: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(sessionId)) {
     throw new Error(`Invalid session ID for transcript lookup: ${sessionId}`);

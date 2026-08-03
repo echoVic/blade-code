@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Agent } from '../../../src/agent/Agent.js';
@@ -20,6 +20,7 @@ import {
   assertParentUnchanged,
   cleanupForkFixture,
   createForkFixture,
+  extractDurableToolTrace,
   findSessionTranscript,
   readSessionEvents,
 } from './sessionForkTrajectoryHarness.js';
@@ -50,10 +51,11 @@ function safeModelLabel(
   return `${modelConfig.id}-${ordinal + 1}-${digest}`;
 }
 
-interface ToolEvidence {
+interface LoopToolTraceRecord {
+  toolCallId: string;
   name: string;
   input: Record<string, unknown>;
-  success?: boolean;
+  result: Extract<LoopEvent, { kind: 'tool_result' }>['result'];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -73,40 +75,149 @@ function parseToolInput(
   return parsed;
 }
 
-function collectToolEvidence(events: LoopEvent[]): ToolEvidence[] {
-  return events.flatMap((event) => {
+function extractLoopToolTrace(events: readonly LoopEvent[]): LoopToolTraceRecord[] {
+  const orderedCalls: Array<Omit<LoopToolTraceRecord, 'result'>> = [];
+  const pending = new Map<string, Omit<LoopToolTraceRecord, 'result'>>();
+  const completed = new Map<
+    string,
+    Extract<LoopEvent, { kind: 'tool_result' }>['result']
+  >();
+  for (const event of events) {
     if (event.kind === 'tool_start') {
-      if (!('function' in event.toolCall)) return [];
-      return [{ name: event.toolCall.function.name, input: parseToolInput(event) }];
+      if (!('function' in event.toolCall)) {
+        throw new Error('Runtime tool trace requires function calls');
+      }
+      if (pending.has(event.toolCall.id) || completed.has(event.toolCall.id)) {
+        throw new Error('Runtime tool trace contains a duplicate call');
+      }
+      const call = {
+        toolCallId: event.toolCall.id,
+        name: event.toolCall.function.name,
+        input: parseToolInput(event),
+      };
+      orderedCalls.push(call);
+      pending.set(call.toolCallId, call);
     }
     if (event.kind === 'tool_result') {
-      if (!('function' in event.toolCall)) return [];
-      return [
-        {
-          name: event.toolCall.function.name,
-          input: parseToolInput({
-            kind: 'tool_start',
-            toolCall: event.toolCall,
-          }),
-          success: event.result.success,
-        },
-      ];
+      if (!('function' in event.toolCall)) {
+        throw new Error('Runtime tool trace requires function calls');
+      }
+      if (completed.has(event.toolCall.id)) {
+        throw new Error('Runtime tool trace contains a duplicate result');
+      }
+      const call = pending.get(event.toolCall.id);
+      if (!call) throw new Error('Runtime tool trace contains an orphan result');
+      if (call.name !== event.toolCall.function.name) {
+        throw new Error('Runtime tool trace tool name mismatch');
+      }
+      pending.delete(event.toolCall.id);
+      completed.set(event.toolCall.id, event.result);
     }
-    return [];
+  }
+  if (pending.size > 0) throw new Error('Runtime tool trace call is missing a result');
+  return orderedCalls.map((call) => {
+    const result = completed.get(call.toolCallId);
+    if (!result) throw new Error('Runtime tool trace call is missing a result');
+    return { ...call, result };
   });
 }
 
-function transcriptHasToolPart(
-  events: SessionEvent[],
-  partType: 'tool_call' | 'tool_result',
-  toolName: string
-): boolean {
-  return events.some((event) => {
-    if (event.type !== 'part_created' || event.data.partType !== partType) {
-      return false;
-    }
-    return isRecord(event.data.payload) && event.data.payload.toolName === toolName;
-  });
+function assertFinalContract(
+  finalMessage: string | undefined,
+  expected: 'READY' | 'DONE',
+  marker: string,
+  nonce: string
+): void {
+  if (finalMessage?.includes(marker) || finalMessage?.includes(nonce)) {
+    throw new Error('Qualification final response exposed fixture material');
+  }
+  if (finalMessage?.trim() !== expected) {
+    throw new Error('Qualification final response did not match exact contract');
+  }
+}
+
+function assertRuntimeParentTrace(
+  trace: readonly LoopToolTraceRecord[],
+  memoryPath: string
+): void {
+  const call = trace[0];
+  if (
+    trace.length !== 1 ||
+    call?.name !== 'Read' ||
+    call.input.file_path !== memoryPath ||
+    !call.result.success ||
+    call.result.error !== undefined
+  ) {
+    throw new Error('Runtime parent tool trace did not match exact contract');
+  }
+}
+
+function assertRuntimeChildTrace(
+  trace: readonly LoopToolTraceRecord[],
+  resultPath: string,
+  expectedBytes: string
+): void {
+  const write = trace[0];
+  const bash = trace[1];
+  if (
+    trace.length !== 2 ||
+    write?.name !== 'Write' ||
+    write.input.file_path !== resultPath ||
+    write.input.content !== expectedBytes ||
+    !write.result.success ||
+    write.result.error !== undefined ||
+    bash?.name !== 'Bash' ||
+    bash.input.command !== 'wc -c result.txt' ||
+    !bash.result.success ||
+    bash.result.error !== undefined
+  ) {
+    throw new Error('Runtime child tool trace did not match exact contract');
+  }
+}
+
+function assertDurableParentTrace(
+  events: readonly SessionEvent[],
+  memoryPath: string
+): void {
+  const trace = extractDurableToolTrace(events);
+  const call = trace[0];
+  if (
+    trace.length !== 1 ||
+    call?.toolName !== 'Read' ||
+    !isRecord(call.input) ||
+    call.input.file_path !== memoryPath ||
+    call.output === null ||
+    call.error !== null
+  ) {
+    throw new Error('Durable parent tool trace did not match exact contract');
+  }
+}
+
+function assertDurableChildTrace(
+  events: readonly SessionEvent[],
+  afterEventCount: number,
+  resultPath: string,
+  expectedBytes: string
+): void {
+  const trace = extractDurableToolTrace(events, { afterEventCount });
+  const write = trace[0];
+  const bash = trace[1];
+  if (
+    trace.length !== 2 ||
+    write?.toolName !== 'Write' ||
+    !isRecord(write.input) ||
+    write.input.file_path !== resultPath ||
+    write.input.content !== expectedBytes ||
+    write.output === null ||
+    write.error !== null ||
+    bash?.toolName !== 'Bash' ||
+    !isRecord(bash.input) ||
+    bash.input.command !== 'wc -c result.txt' ||
+    bash.output === null ||
+    bash.error !== null
+  ) {
+    throw new Error('Durable child tool trace did not match exact contract');
+  }
 }
 
 function createResolvedConfig(
@@ -278,27 +389,25 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
 
           const parentPath = findSessionTranscript(fixture.storageRoot, parentId);
           const parentTranscriptEvents = readSessionEvents(parentPath);
-          const parentEvidence = collectToolEvidence(parentEvents);
+          const parentTrace = extractLoopToolTrace(parentEvents);
           assertNoSecrets(
             {
               parentResult,
               parentEvents,
-              parentEvidence,
+              parentTrace,
               parentTranscriptEvents,
             },
             [modelConfig.apiKey]
           );
           expect(parentResult.success).toBe(true);
-          expect(parentResult.finalMessage).not.toContain(marker);
-          expect(parentEvidence).toContainEqual(
-            expect.objectContaining({ name: 'Read', success: true })
+          assertFinalContract(
+            parentResult.finalMessage,
+            'READY',
+            marker,
+            fixture.nonce
           );
-          expect(
-            transcriptHasToolPart(parentTranscriptEvents, 'tool_call', 'Read')
-          ).toBe(true);
-          expect(
-            transcriptHasToolPart(parentTranscriptEvents, 'tool_result', 'Read')
-          ).toBe(true);
+          assertRuntimeParentTrace(parentTrace, memoryPath);
+          assertDurableParentTrace(parentTranscriptEvents, memoryPath);
 
           await releaseOwner(parentOwner);
           const parentBeforeFork = readFileSync(parentPath, 'utf8');
@@ -317,6 +426,10 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
           assertNoSecrets({ forkMessages: fork.messages, childSnapshot }, [
             modelConfig.apiKey,
           ]);
+          rmSync(memoryPath);
+          if (existsSync(memoryPath)) {
+            throw new Error('Source memory fixture still exists before child turn');
+          }
 
           childOwner.runtime = await SessionRuntime.create({
             sessionId: childId,
@@ -362,12 +475,12 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
 
           const childTranscriptEvents = readSessionEvents(childPath);
           const childRaw = readFileSync(childPath, 'utf8');
-          const childEvidence = collectToolEvidence(childEvents);
+          const childTrace = extractLoopToolTrace(childEvents);
           assertNoSecrets(
             {
               childResult,
               childEvents,
-              childEvidence,
+              childTrace,
               childTranscriptEvents,
               childRaw,
               resultBytes: readFileSync(resultPath),
@@ -375,30 +488,17 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
             [modelConfig.apiKey]
           );
           expect(childResult.success).toBe(true);
-          expect(childResult.finalMessage).not.toContain(marker);
-          expect(readFileSync(resultPath, 'utf8')).toBe(expectedBytes);
-          expect(childEvidence).toContainEqual(
-            expect.objectContaining({ name: 'Write', success: true })
+          assertFinalContract(childResult.finalMessage, 'DONE', marker, fixture.nonce);
+          if (readFileSync(resultPath, 'utf8') !== expectedBytes) {
+            throw new Error('Runtime child result bytes did not match exact contract');
+          }
+          assertRuntimeChildTrace(childTrace, resultPath, expectedBytes);
+          assertDurableChildTrace(
+            childTranscriptEvents,
+            childSnapshot.length,
+            resultPath,
+            expectedBytes
           );
-          expect(childEvidence).toContainEqual(
-            expect.objectContaining({
-              name: 'Bash',
-              input: expect.objectContaining({ command: 'wc -c result.txt' }),
-              success: true,
-            })
-          );
-          expect(
-            transcriptHasToolPart(childTranscriptEvents, 'tool_call', 'Write')
-          ).toBe(true);
-          expect(
-            transcriptHasToolPart(childTranscriptEvents, 'tool_result', 'Write')
-          ).toBe(true);
-          expect(
-            transcriptHasToolPart(childTranscriptEvents, 'tool_call', 'Bash')
-          ).toBe(true);
-          expect(
-            transcriptHasToolPart(childTranscriptEvents, 'tool_result', 'Bash')
-          ).toBe(true);
           assertParentUnchanged(parentBeforeFork, parentPath);
           assertForkLineage(childTranscriptEvents, {
             childId,

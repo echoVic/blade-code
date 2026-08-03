@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
@@ -27,6 +27,7 @@ import {
   assertParentUnchanged,
   cleanupForkFixture,
   createForkFixture,
+  extractDurableToolTrace,
   findSessionTranscript,
   readSessionEvents,
 } from './sessionForkTrajectoryHarness.js';
@@ -72,36 +73,66 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function transcriptHasToolPart(
-  events: SessionEvent[],
-  partType: 'tool_call' | 'tool_result',
-  toolName: string
-): boolean {
-  return events.some(
-    (event) =>
-      event.type === 'part_created' &&
-      event.data.partType === partType &&
-      isRecord(event.data.payload) &&
-      event.data.payload.toolName === toolName
-  );
+function assertDurableParentTrace(
+  events: readonly SessionEvent[],
+  memoryPath: string
+): void {
+  const trace = extractDurableToolTrace(events);
+  const call = trace[0];
+  if (
+    trace.length !== 1 ||
+    call?.toolName !== 'Read' ||
+    !isRecord(call.input) ||
+    call.input.file_path !== memoryPath ||
+    call.output === null ||
+    call.error !== null
+  ) {
+    throw new Error('TUI parent durable tool trace did not match exact contract');
+  }
 }
 
-function findToolPayload(
-  events: SessionEvent[],
-  partType: 'tool_call' | 'tool_result',
-  toolName: string
-): Record<string, unknown> | undefined {
-  for (const event of events) {
-    if (
-      event.type === 'part_created' &&
-      event.data.partType === partType &&
-      isRecord(event.data.payload) &&
-      event.data.payload.toolName === toolName
-    ) {
-      return event.data.payload;
-    }
+function assertDurableChildTrace(
+  events: readonly SessionEvent[],
+  afterEventCount: number,
+  resultPath: string,
+  expectedBytes: string
+): void {
+  const trace = extractDurableToolTrace(events, { afterEventCount });
+  const write = trace[0];
+  const bash = trace[1];
+  if (
+    trace.length !== 2 ||
+    write?.toolName !== 'Write' ||
+    !isRecord(write.input) ||
+    write.input.file_path !== resultPath ||
+    write.input.content !== expectedBytes ||
+    write.output === null ||
+    write.error !== null ||
+    bash?.toolName !== 'Bash' ||
+    !isRecord(bash.input) ||
+    bash.input.command !== 'wc -c result.txt' ||
+    bash.output === null ||
+    bash.error !== null
+  ) {
+    throw new Error('TUI child durable tool trace did not match exact contract');
   }
-  return undefined;
+}
+
+function assertUiFinal(
+  content: unknown,
+  expected: 'READY' | 'DONE',
+  marker: string,
+  nonce: string
+): void {
+  if (typeof content !== 'string') {
+    throw new Error('TUI final response was not text');
+  }
+  if (content.includes(marker) || content.includes(nonce)) {
+    throw new Error('TUI final response exposed fixture material');
+  }
+  if (content.trim() !== expected) {
+    throw new Error('TUI final response did not match exact contract');
+  }
 }
 
 function createResolvedConfig(
@@ -288,14 +319,16 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
           expect(getState().command.isProcessing).toBe(false);
           const parentPath = findSessionTranscript(fixture.storageRoot, parentId);
           const parentEvents = readSessionEvents(parentPath);
-          expect(transcriptHasToolPart(parentEvents, 'tool_call', 'Read')).toBe(true);
-          expect(transcriptHasToolPart(parentEvents, 'tool_result', 'Read')).toBe(true);
+          assertDurableParentTrace(parentEvents, memoryPath);
           const parentBeforeFork = readFileSync(parentPath, 'utf8');
-          expect(
+          assertUiFinal(
             getState()
               .session.messages.filter((message) => message.role === 'assistant')
-              .at(-1)?.content
-          ).not.toContain(marker);
+              .at(-1)?.content,
+            'READY',
+            marker,
+            fixture.nonce
+          );
           const versionBeforeFork = latest.renderVersion;
           const parentHook = latest.hook;
 
@@ -329,6 +362,10 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
           ).toBe(true);
           const childPath = findSessionTranscript(fixture.storageRoot, childId);
           const childSnapshot = readSessionEvents(childPath);
+          rmSync(memoryPath);
+          if (existsSync(memoryPath)) {
+            throw new Error('Source memory fixture still exists before child turn');
+          }
 
           getState().config.actions.updateConfig({
             allowedTools: ['Write', 'Bash'],
@@ -359,22 +396,22 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
             },
             [modelConfig.apiKey]
           );
-          expect(readFileSync(resultPath, 'utf8')).toBe(expectedBytes);
-          expect(
-            uiMessages.filter((message) => message.role === 'assistant').at(-1)?.content
-          ).not.toContain(marker);
-          expect(transcriptHasToolPart(childEvents, 'tool_call', 'Write')).toBe(true);
-          expect(transcriptHasToolPart(childEvents, 'tool_result', 'Write')).toBe(true);
-          expect(transcriptHasToolPart(childEvents, 'tool_call', 'Bash')).toBe(true);
-          expect(transcriptHasToolPart(childEvents, 'tool_result', 'Bash')).toBe(true);
-          const bashCall = findToolPayload(childEvents, 'tool_call', 'Bash');
-          expect(bashCall?.input).toEqual(
-            expect.objectContaining({ command: 'wc -c result.txt' })
+          if (readFileSync(resultPath, 'utf8') !== expectedBytes) {
+            throw new Error('TUI child result bytes did not match exact contract');
+          }
+          assertUiFinal(
+            uiMessages.filter((message) => message.role === 'assistant').at(-1)
+              ?.content,
+            'DONE',
+            marker,
+            fixture.nonce
           );
-          expect(findToolPayload(childEvents, 'tool_result', 'Write')?.error).toBe(
-            null
+          assertDurableChildTrace(
+            childEvents,
+            childSnapshot.length,
+            resultPath,
+            expectedBytes
           );
-          expect(findToolPayload(childEvents, 'tool_result', 'Bash')?.error).toBe(null);
           assertParentUnchanged(parentBeforeFork, parentPath);
           assertForkLineage(childEvents, {
             childId,

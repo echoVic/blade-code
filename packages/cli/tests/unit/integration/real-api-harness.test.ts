@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { SessionEvent } from '../../../src/context/types.js';
+import type { JsonValue } from '../../../src/store/types.js';
 import {
   buildRealApiConfig,
   parseHeadlessJsonl,
@@ -23,6 +24,7 @@ import {
   assertParentUnchanged,
   cleanupForkFixture,
   createForkFixture,
+  extractDurableToolTrace,
   findSessionTranscript,
   readSessionEvents,
   startHeldProviderProxy,
@@ -162,6 +164,30 @@ function createPartEvent(
       messageId: `${sessionId}-message`,
       partType: 'text',
       payload: { text: 'after fork boundary' },
+      createdAt: CREATED_AT,
+    },
+  };
+}
+
+function createToolPartEvent(
+  sessionId: string,
+  index: number,
+  partType: 'tool_call' | 'tool_result',
+  payload: JsonValue
+): Extract<SessionEvent, { type: 'part_created' }> {
+  return {
+    id: `${sessionId}-${partType}-${index}`,
+    sessionId,
+    timestamp: CREATED_AT,
+    type: 'part_created',
+    cwd: '/tmp/fork-workspace',
+    gitBranch: 'main',
+    version: 'test',
+    data: {
+      partId: `${sessionId}-${partType}-${index}`,
+      messageId: `${sessionId}-message`,
+      partType,
+      payload,
       createdAt: CREATED_AT,
     },
   };
@@ -586,6 +612,89 @@ describe('real API coding-task harness', () => {
 });
 
 describe('real API session-fork trajectory harness', () => {
+  it('pairs durable tool calls and results in call order after a snapshot boundary', () => {
+    const inherited = createToolPartEvent('child', 0, 'tool_call', {
+      toolCallId: 'inherited-read',
+      toolName: 'Read',
+      input: { file_path: '/workspace/memory.txt' },
+    });
+    const events: SessionEvent[] = [
+      inherited,
+      createToolPartEvent('child', 1, 'tool_call', {
+        toolCallId: 'write-1',
+        toolName: 'Write',
+        input: { file_path: '/workspace/result.txt', content: 'marker\n' },
+      }),
+      createToolPartEvent('child', 2, 'tool_result', {
+        toolCallId: 'write-1',
+        toolName: 'Write',
+        output: { success: true },
+        error: null,
+      }),
+      createToolPartEvent('child', 3, 'tool_call', {
+        toolCallId: 'bash-1',
+        toolName: 'Bash',
+        input: { command: 'wc -c result.txt' },
+      }),
+      createToolPartEvent('child', 4, 'tool_result', {
+        toolCallId: 'bash-1',
+        toolName: 'Bash',
+        output: { success: true },
+        error: null,
+      }),
+    ];
+
+    expect(extractDurableToolTrace(events, { afterEventCount: 1 })).toEqual([
+      {
+        toolCallId: 'write-1',
+        toolName: 'Write',
+        input: { file_path: '/workspace/result.txt', content: 'marker\n' },
+        output: { success: true },
+        error: null,
+      },
+      {
+        toolCallId: 'bash-1',
+        toolName: 'Bash',
+        input: { command: 'wc -c result.txt' },
+        output: { success: true },
+        error: null,
+      },
+    ]);
+  });
+
+  it('rejects orphan, duplicate, mismatched, and incomplete durable tool records', () => {
+    const call = createToolPartEvent('child', 1, 'tool_call', {
+      toolCallId: 'call-1',
+      toolName: 'Write',
+      input: {},
+    });
+    const result = createToolPartEvent('child', 2, 'tool_result', {
+      toolCallId: 'call-1',
+      toolName: 'Write',
+      output: {},
+      error: null,
+    });
+
+    expect(() => extractDurableToolTrace([result])).toThrow(/orphan/i);
+    expect(() => extractDurableToolTrace([call, call, result])).toThrow(
+      /duplicate.*call/i
+    );
+    expect(() => extractDurableToolTrace([call, result, result])).toThrow(
+      /duplicate.*result/i
+    );
+    expect(() =>
+      extractDurableToolTrace([
+        call,
+        createToolPartEvent('child', 3, 'tool_result', {
+          toolCallId: 'call-1',
+          toolName: 'Bash',
+          output: {},
+          error: null,
+        }),
+      ])
+    ).toThrow(/name.*mismatch/i);
+    expect(() => extractDurableToolTrace([call])).toThrow(/missing.*result/i);
+  });
   it('creates unique sanitized fixtures and cleans only their registered roots', () => {
     const first = createForkFixture('../../TUI surface', '../DeepSeek/Flash?');
     const second = createForkFixture('../../TUI surface', '../DeepSeek/Flash?');
