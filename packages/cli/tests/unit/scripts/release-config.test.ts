@@ -21,4 +21,13 @@ describe('release ownership contract', () => {
     expect(publishWorkflow).toContain("- 'v*.*.*'");
     expect(publishWorkflow).toContain('npm publish --access public');
   });
+
+  it('does not ship notification credentials in source', () => {
+    const configSource = fs.readFileSync(
+      path.resolve(__dirname, '../../../release.config.js'),
+      'utf8'
+    );
+
+    expect(/https:\/\/discord\.com\/api\/webhooks\//.test(configSource)).toBe(false);
+  });
 });

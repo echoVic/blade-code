@@ -86,7 +86,7 @@ export default {
     methods: ['console', 'discord'],
     // Discord 配置
     discord: {
-      webhookUrl: process.env.DISCORD_WEBHOOK_URL || 'https://discord.com/api/webhooks/1460226980938125387/5fWgMuGmkGtb6j3eoDaz4JtSFfH8LtFtHK9F2srIHGoXp71zm4sHFPCc729PujDbHJ2F',
+      webhookUrl: process.env.DISCORD_WEBHOOK_URL,
     },
     // 通知模板
     templates: {
