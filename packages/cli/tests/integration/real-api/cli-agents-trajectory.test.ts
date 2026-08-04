@@ -52,7 +52,7 @@ function runGit(cwd: string, args: string[]): void {
   }
 }
 
-function createWorkspace(): string {
+function createWorkspace(expectedValue: string): string {
   const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-cli-agents-'));
   mkdirSync(path.join(workspace, 'src'), { recursive: true });
   mkdirSync(path.join(workspace, 'test'), { recursive: true });
@@ -81,7 +81,7 @@ function createWorkspace(): string {
       "import { channel } from '../src/channel.js';",
       '',
       "test('replaces the broken channel', () => {",
-      "  assert.notEqual(channel, 'BROKEN');",
+      `  assert.equal(channel, '${expectedValue}');`,
       '});',
       '',
     ].join('\n')
@@ -189,9 +189,11 @@ function runBlade(
       prompt: [
         '# Invocation policy',
         `The required channel value is exactly '${expectedValue}'.`,
-        'Act as the coding executor. Read src/channel.js, edit only that source file,',
-        'run npm test with Bash, inspect the exit code, and finish only after it passes.',
-        'Do not delegate or merely explain the change.',
+        'Complete the task in exactly three tool calls: Read src/channel.js once,',
+        'Edit it once by replacing BROKEN with the exact required value, then run',
+        'npm test once with Bash. Do not inspect or modify any other file.',
+        'After npm test exits 0, return immediately. Do not repeat any tool, delegate,',
+        'plan, or merely explain the change.',
       ].join('\n'),
       tools: ['Read', 'Edit', 'Bash'],
       permissionMode: 'dontAsk',
@@ -296,9 +298,9 @@ describe.skipIf(!enabled)('CLI custom agents trajectory (real API)', () => {
         );
       }
 
-      const workspace = createWorkspace();
-      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-cli-agents-home-'));
       const expectedValue = `CLI_AGENT_${model.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`;
+      const workspace = createWorkspace(expectedValue);
+      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-cli-agents-home-'));
 
       try {
         const result = await runBlade(workspace, home, model, expectedValue);

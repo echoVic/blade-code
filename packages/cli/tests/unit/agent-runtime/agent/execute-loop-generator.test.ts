@@ -1617,7 +1617,7 @@ describe('executeLoopGenerator', () => {
       );
     });
 
-    it('allows an exactly-once Task delegation to retry after a failed attempt', async () => {
+    it('does not retry an exactly-once Task delegation after a failed attempt', async () => {
       const deps = createMockDeps();
       deps.runtimeOptions = {
         ...deps.runtimeOptions,
@@ -1672,7 +1672,7 @@ describe('executeLoopGenerator', () => {
           llmContent: 'Subagent repaired the project.',
         });
 
-      const { result } = await drainGenerator(
+      const { events, result } = await drainGenerator(
         executeLoopGenerator(
           deps,
           'Delegate this repair with the Task tool.',
@@ -1682,8 +1682,17 @@ describe('executeLoopGenerator', () => {
         )
       );
 
-      expect(result.success).toBe(true);
-      expect(executeMock).toHaveBeenCalledTimes(2);
+      expect(result.success).toBe(false);
+      expect(result.error?.type).toBe('delegation_protocol_failed');
+      expect(executeMock).toHaveBeenCalledTimes(1);
+      expect(
+        events.filter(
+          (event) =>
+            event.kind === 'tool_start' &&
+            'function' in event.toolCall &&
+            event.toolCall.function.name === 'Task'
+        )
+      ).toHaveLength(1);
     });
 
     it('preserves repeated Task calls when no exactly-once contract exists', async () => {

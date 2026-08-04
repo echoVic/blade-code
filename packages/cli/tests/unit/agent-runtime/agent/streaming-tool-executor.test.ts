@@ -270,7 +270,7 @@ describe('StreamingToolExecutor', () => {
       });
       const [result] = await collectAsync(executor.getRemainingResults());
 
-      expect(admitted).toBe(false);
+      expect(admitted).toBe('rejected');
       expect(executeWithPolicy).not.toHaveBeenCalled();
       expect(pipeline.execute).not.toHaveBeenCalled();
       expect(result.toolUseUuid).toBeNull();

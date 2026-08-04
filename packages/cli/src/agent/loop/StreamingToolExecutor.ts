@@ -35,6 +35,7 @@ export type ToolAdmissionPolicy = (
   params: Record<string, unknown>
 ) => ToolResult | undefined;
 export type ToolAdmissionRollback = (toolName: string) => void;
+export type ToolDispatchStatus = 'prelaunched' | 'queued' | 'rejected';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -112,12 +113,15 @@ export class StreamingToolExecutor {
   /**
    * 流式中调用：在 allowlist 中的工具立即执行，否则排队
    */
-  addTool(toolCall: FunctionToolCall, params: Record<string, unknown>): boolean {
+  addTool(
+    toolCall: FunctionToolCall,
+    params: Record<string, unknown>
+  ): ToolDispatchStatus {
     if (this.dispatched.has(toolCall.id)) {
       logger.debug(
         `[StreamingToolExecutor] 跳过已分发工具: ${toolCall.function.name} (${toolCall.id})`
       );
-      return false;
+      return 'rejected';
     }
     this.dispatched.add(toolCall.id);
 
@@ -129,7 +133,7 @@ export class StreamingToolExecutor {
         result: admissionRejection,
         toolUseUuid: null,
       });
-      return false;
+      return 'rejected';
     }
     const canPrelaunch = STREAMING_PRELAUNCH_ALLOWLIST.has(toolCall.function.name);
 
@@ -139,13 +143,18 @@ export class StreamingToolExecutor {
       );
       const promise = this.executeOne(toolCall, params);
       this.pending.set(toolCall.id, promise);
+      return 'prelaunched';
     } else {
       logger.debug(
         `[StreamingToolExecutor] 排队非预启动工具: ${toolCall.function.name}`
       );
       this.queued.push({ toolCall, params });
+      return 'queued';
     }
-    return true;
+  }
+
+  getQueuedToolCalls(): readonly FunctionToolCall[] {
+    return this.queued.map((queued) => queued.toolCall);
   }
 
   /**

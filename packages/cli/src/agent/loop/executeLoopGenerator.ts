@@ -397,7 +397,7 @@ async function* processStreamResponse(
                   | 'execute'
                   | undefined;
                 // 先启动工具执行，再 yield 事件通知消费者
-                if (executor.addTool(toolCall, params)) {
+                if (executor.addTool(toolCall, params) === 'prelaunched') {
                   yield { kind: 'tool_start', toolCall, toolKind };
                 }
               } catch {
@@ -782,7 +782,7 @@ export async function* executeLoopGenerator(
       singleTaskDelegationClaimed = true;
       return undefined;
     };
-    const releaseSingleTaskClaim = (toolName: string): void => {
+    const rollbackSingleTaskAdmission = (toolName: string): void => {
       if (toolName === 'Task' && singleTaskRequired()) {
         singleTaskDelegationClaimed = false;
       }
@@ -791,20 +791,8 @@ export async function* executeLoopGenerator(
       toolName: string,
       params: Record<string, unknown>,
       executionContext: import('../../tools/types/index.js').ExecutionContext
-    ): Promise<import('../../tools/types/index.js').ToolResult> => {
-      try {
-        const result = await deps.toolExecutor.execute(
-          toolName,
-          params,
-          executionContext
-        );
-        if (!result.success) releaseSingleTaskClaim(toolName);
-        return result;
-      } catch (error) {
-        releaseSingleTaskClaim(toolName);
-        throw error;
-      }
-    };
+    ): Promise<import('../../tools/types/index.js').ToolResult> =>
+      deps.toolExecutor.execute(toolName, params, executionContext);
 
     let budgetTracker = createBudgetTracker({
       budget: deps.currentModelMaxContextTokens,
@@ -993,7 +981,7 @@ export async function* executeLoopGenerator(
               context.subagentInfo
             );
             streamingExecutor.setAdmissionPolicy(admitToolWithPolicy);
-            streamingExecutor.setAdmissionRollback(releaseSingleTaskClaim);
+            streamingExecutor.setAdmissionRollback(rollbackSingleTaskAdmission);
             streamingExecutor.setExecutionPolicy(executeAdmittedTool);
 
             turnResult = yield* processStreamResponse(
@@ -1639,6 +1627,15 @@ export async function* executeLoopGenerator(
             `[Loop] 使用 StreamingToolExecutor 收集 ${functionCalls.length} 个工具结果`
           );
           executionResults = [];
+          for (const toolCall of streamingExecutor.getQueuedToolCalls()) {
+            const toolDef = registry.get(toolCall.function.name);
+            const toolKind = toolDef?.kind as
+              | 'readonly'
+              | 'write'
+              | 'execute'
+              | undefined;
+            yield { kind: 'tool_start', toolCall, toolKind };
+          }
           for await (const execResult of streamingExecutor.getRemainingResults()) {
             executionResults.push(execResult);
           }
@@ -1764,7 +1761,6 @@ export async function* executeLoopGenerator(
               });
               return { toolCall, result, toolUseUuid };
             } catch (error) {
-              releaseSingleTaskClaim(toolCall.function.name);
               logger.error(
                 `Tool execution failed for ${toolCall.function.name}:`,
                 error
