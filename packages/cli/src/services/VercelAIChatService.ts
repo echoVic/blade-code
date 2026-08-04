@@ -764,11 +764,24 @@ export class VercelAIChatService implements IChatService {
         `Required tool is unavailable: ${requestOptions.toolChoice.toolName}`
       );
     }
-    const providerOptions = this.getThinkingProviderOptions();
+    const providerOptions = requestOptions?.toolChoice
+      ? this.getRequiredToolProviderOptions()
+      : this.getThinkingProviderOptions();
     if (providerOptions) {
       opts.providerOptions = providerOptions;
     }
     return opts;
+  }
+
+  private getRequiredToolProviderOptions(): Record<string, unknown> | undefined {
+    if (this.config.provider !== 'deepseek' && !/deepseek/i.test(this.config.model)) {
+      return undefined;
+    }
+    return {
+      deepseek: {
+        thinking: { type: 'disabled' },
+      },
+    };
   }
 
   async chat(

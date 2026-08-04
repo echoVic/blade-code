@@ -133,6 +133,63 @@ describe('VercelAIChatService', () => {
       );
     });
 
+    it('disables DeepSeek thinking for an exact tool choice', async () => {
+      generateText.mockResolvedValueOnce({
+        text: '',
+        toolCalls: [],
+        usage: { promptTokens: 10, completionTokens: 1 },
+        finishReason: 'tool-calls',
+        reasoning: undefined,
+        providerMetadata: undefined,
+      });
+      const service = await createService({
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
+        baseUrl: 'https://api.deepseek.com/v1',
+        supportsThinking: true,
+      });
+      const tools = [{ name: 'Bash', description: 'Run a command', parameters: {} }];
+
+      await service.chat(simpleMessages, tools, undefined, {
+        toolChoice: { type: 'tool', toolName: 'Bash' },
+      });
+
+      expect(generateText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolChoice: { type: 'tool', toolName: 'Bash' },
+          providerOptions: {
+            deepseek: { thinking: { type: 'disabled' } },
+          },
+        })
+      );
+    });
+
+    it('does not enable Anthropic thinking for an exact tool choice', async () => {
+      generateText.mockResolvedValueOnce({
+        text: '',
+        toolCalls: [],
+        usage: { promptTokens: 10, completionTokens: 1 },
+        finishReason: 'tool-calls',
+        reasoning: undefined,
+        providerMetadata: undefined,
+      });
+      const service = await createService({
+        provider: 'anthropic',
+        model: 'claude-opus-4-8',
+        baseUrl: 'https://api.anthropic.com/v1',
+        supportsThinking: true,
+      });
+      const tools = [{ name: 'Bash', description: 'Run a command', parameters: {} }];
+
+      await service.chat(simpleMessages, tools, undefined, {
+        toolChoice: { type: 'tool', toolName: 'Bash' },
+      });
+
+      expect(generateText).toHaveBeenCalledWith(
+        expect.not.objectContaining({ providerOptions: expect.anything() })
+      );
+    });
+
     it('preserves an exact tool choice when the provider rejects the request', async () => {
       generateText.mockRejectedValueOnce(new Error('exact tool choice rejected'));
       const service = await createService({ maxRetries: 0 });
