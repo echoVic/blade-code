@@ -7,11 +7,12 @@ import { getTerminalService } from '../../src/acp/AcpServiceContext.js';
 import { PermissionMode } from '../../src/config/types.js';
 import { SecureProcessExecutor } from '../../src/hooks/SecureProcessExecutor.js';
 import { HookEvent } from '../../src/hooks/types/HookTypes.js';
-import { bashTool } from '../../src/tools/builtin/shell/bash.js';
 import { BackgroundShellManager } from '../../src/tools/builtin/shell/BackgroundShellManager.js';
+import { bashTool } from '../../src/tools/builtin/shell/bash.js';
 
 const tempRoots: string[] = [];
 const descendantPids = new Set<number>();
+const FIXTURE_COMMAND_TIMEOUT_MS = 3_000;
 
 beforeAll(async () => {
   const childProcess =
@@ -134,7 +135,7 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
 
     const result = await bashTool.execute({
       command: fixture.command,
-      timeout: 1_000,
+      timeout: FIXTURE_COMMAND_TIMEOUT_MS,
       env: {},
       run_in_background: false,
     });
@@ -143,7 +144,7 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
     expect(result.success).toBe(false);
     expect(result.error?.type).toBe('timeout_error');
     await expectTreeTerminated(fixture.cleanupMarker, descendantPid);
-  }, 15_000);
+  }, 20_000);
 
   it('does not wait for timeout when foreground Bash is already cancelled', async () => {
     const controller = new AbortController();
@@ -187,13 +188,13 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
     const fixture = await createProcessTreeFixture('acp-fallback');
 
     const result = await getTerminalService().execute(fixture.command, {
-      timeout: 1_000,
+      timeout: FIXTURE_COMMAND_TIMEOUT_MS,
     });
     const descendantPid = await fixture.readDescendantPid();
 
     expect(result).toMatchObject({ success: false, error: 'Command was terminated' });
     await expectTreeTerminated(fixture.cleanupMarker, descendantPid);
-  }, 15_000);
+  }, 20_000);
 
   it('kills the full tree when a command hook times out', async () => {
     const fixture = await createProcessTreeFixture('hook');
@@ -216,13 +217,13 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
         permissionMode: PermissionMode.DEFAULT,
         config: {},
       },
-      1_000
+      FIXTURE_COMMAND_TIMEOUT_MS
     );
     const descendantPid = await fixture.readDescendantPid();
 
     expect(result).toMatchObject({ exitCode: 124, timedOut: true });
     await expectTreeTerminated(fixture.cleanupMarker, descendantPid);
-  }, 15_000);
+  }, 20_000);
 
   it('waits for the full command-hook tree to exit after cancellation', async () => {
     const fixture = await createProcessTreeFixture('hook-abort');

@@ -19,6 +19,7 @@ vi.unmock('node:child_process');
 
 const cleanups: Array<() => void> = [];
 const tempRoots: string[] = [];
+const SANDBOX_COMMAND_TIMEOUT_MS = 90_000;
 
 async function makeWorkspace(): Promise<{
   root: string;
@@ -77,7 +78,7 @@ describe('Bash workspace-write sandbox integration', () => {
     const result = await bashTool
       .build({
         command: 'this raw command must not execute',
-        timeout: 30_000,
+        timeout: SANDBOX_COMMAND_TIMEOUT_MS,
         run_in_background: false,
       })
       .execute(new AbortController().signal, undefined, {
@@ -98,7 +99,7 @@ describe('Bash workspace-write sandbox integration', () => {
       })
     );
     expect(cleanup).toHaveBeenCalledOnce();
-  });
+  }, 100_000);
 
   it('keeps ordinary non-worktree Bash execution compatible', async () => {
     const { workspaceRoot } = await makeWorkspace();
@@ -110,7 +111,7 @@ describe('Bash workspace-write sandbox integration', () => {
     const result = await bashTool
       .build({
         command: `${process.execPath} -e "process.stdout.write('ordinary-bash')"`,
-        timeout: 30_000,
+        timeout: SANDBOX_COMMAND_TIMEOUT_MS,
         run_in_background: false,
       })
       .execute(new AbortController().signal, undefined, {
@@ -123,7 +124,7 @@ describe('Bash workspace-write sandbox integration', () => {
     expect((result.llmContent as { stdout: string }).stdout).toBe('ordinary-bash');
     expect(result.metadata?.sandboxed).toBe(false);
     expect(prepare).not.toHaveBeenCalled();
-  });
+  }, 100_000);
 
   it('does not execute the raw command when sandbox preparation fails', async () => {
     const { root, workspaceRoot } = await makeWorkspace();

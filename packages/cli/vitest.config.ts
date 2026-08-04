@@ -84,6 +84,14 @@ export default defineConfig({
         test: {
           name: 'integration',
           ...forkPool,
+          fileParallelism: false,
+          poolOptions: {
+            forks: {
+              singleFork: true,
+              maxForks: 1,
+              minForks: 1,
+            },
+          },
           include: ['tests/integration/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           exclude: ['tests/integration/real-api/**', 'tests/integration/cli/**'],
           setupFiles: ['./tests/support/setup.ts'],

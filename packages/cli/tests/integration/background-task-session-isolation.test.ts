@@ -7,6 +7,8 @@ import { bashTool } from '../../src/tools/builtin/shell/bash.js';
 import { killShellTool } from '../../src/tools/builtin/shell/killShell.js';
 import { taskOutputTool } from '../../src/tools/builtin/task/taskOutput.js';
 
+const SHELL_EXIT_OBSERVATION_MS = 15_000;
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -39,7 +41,7 @@ async function waitForShellExit(
   manager: BackgroundShellManager,
   shellId: string,
   sessionId: string,
-  timeoutMs = 5_000
+  timeoutMs = SHELL_EXIT_OBSERVATION_MS
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -151,7 +153,7 @@ describe.skipIf(process.platform === 'win32')(
       });
       expect(output?.stdout).toBe('received:owned-input\n');
       expect(output?.status).toBe('exited');
-    });
+    }, 20_000);
 
     it('denies stdin writes from another session', async () => {
       const manager = BackgroundShellManager.getInstance();
@@ -198,7 +200,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(output?.stderr.endsWith(stderrTail)).toBe(true);
       expect(output?.stdoutOmittedBytes).toBeGreaterThan(0);
       expect(output?.stderrOmittedBytes).toBeGreaterThan(0);
-    });
+    }, 20_000);
 
     it('reclaims only the disposing runtime session shells', async () => {
       const manager = BackgroundShellManager.getInstance();

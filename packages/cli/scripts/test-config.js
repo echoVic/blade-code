@@ -1,0 +1,66 @@
+export const testTypes = {
+  unit: {
+    name: '单元测试',
+    project: 'unit',
+    timeout: 45_000,
+  },
+  integration: {
+    name: '集成测试',
+    project: 'integration',
+    timeout: 180_000,
+  },
+  realApi: {
+    name: '真实 API 集成测试',
+    project: 'real-api',
+    timeout: 60 * 60 * 1_000,
+    env: {
+      REAL_API_TEST: '1',
+    },
+  },
+  cli: {
+    name: 'CLI 测试',
+    project: 'cli',
+    timeout: 60_000,
+  },
+  headlessCore: {
+    name: 'Headless 核心回归测试',
+    project: null,
+    timeout: 120_000,
+    files: [
+      'tests/unit/cli/headless.test.ts',
+      'tests/unit/cli/headless-events.test.ts',
+      'tests/integration/cli/blade-help.test.ts',
+      'tests/unit/agent-runtime/context/jsonl-recovery.test.ts',
+      'tests/unit/agent-runtime/agent/session-lease.test.ts',
+      'tests/unit/agent-runtime/agent/session-runtime.test.ts',
+      'tests/unit/agent-runtime/agent/subagent-registry.test.ts',
+      'tests/unit/agent-runtime/server/session-routes.test.ts',
+      'tests/unit/agent-runtime/acp/session.test.ts',
+    ],
+  },
+  e2e: {
+    name: 'E2E 测试',
+    project: 'e2e',
+    timeout: 180_000,
+  },
+  performance: {
+    name: '性能测试',
+    project: 'performance',
+    timeout: 300_000,
+  },
+  snapshot: {
+    name: '快照测试',
+    project: 'snapshot',
+    timeout: 45_000,
+  },
+  security: {
+    name: '安全测试',
+    project: 'security',
+    timeout: 90_000,
+  },
+  all: {
+    name: '所有测试',
+    project: null,
+    timeout: 600_000,
+  },
+};

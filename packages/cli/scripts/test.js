@@ -1,78 +1,12 @@
 #!/usr/bin/env node
 
-import { execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { testTypes } from './test-config.js';
+import { runOwnedCommand } from './test-runner.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-const testTypes = {
-  unit: {
-    name: '单元测试',
-    project: 'unit',
-    timeout: 45000,
-  },
-  integration: {
-    name: '集成测试',
-    project: 'integration',
-    timeout: 90000,
-  },
-  realApi: {
-    name: '真实 API 集成测试',
-    project: 'real-api',
-    timeout: 1800000,
-    env: {
-      REAL_API_TEST: '1',
-    },
-  },
-  cli: {
-    name: 'CLI 测试',
-    project: 'cli',
-    timeout: 60000,
-  },
-  headlessCore: {
-    name: 'Headless 核心回归测试',
-    project: null,
-    timeout: 120000,
-    files: [
-      'tests/unit/cli/headless.test.ts',
-      'tests/unit/cli/headless-events.test.ts',
-      'tests/integration/cli/blade-help.test.ts',
-      'tests/unit/agent-runtime/context/jsonl-recovery.test.ts',
-      'tests/unit/agent-runtime/agent/session-lease.test.ts',
-      'tests/unit/agent-runtime/agent/session-runtime.test.ts',
-      'tests/unit/agent-runtime/agent/subagent-registry.test.ts',
-      'tests/unit/agent-runtime/server/session-routes.test.ts',
-      'tests/unit/agent-runtime/acp/session.test.ts',
-    ],
-  },
-  e2e: {
-    name: 'E2E 测试',
-    project: 'e2e',
-    timeout: 180000,
-  },
-  performance: {
-    name: '性能测试',
-    project: 'performance',
-    timeout: 300000,
-  },
-  snapshot: {
-    name: '快照测试',
-    project: 'snapshot',
-    timeout: 45000,
-  },
-  security: {
-    name: '安全测试',
-    project: 'security',
-    timeout: 90000,
-  },
-  all: {
-    name: '所有测试',
-    project: null,
-    timeout: 600000,
-  },
-};
 
 function printUsage() {
   console.log(`
@@ -112,7 +46,7 @@ function printUsage() {
 `);
 }
 
-function runTest(testType, options = {}) {
+async function runTest(testType, options = {}) {
   const config = testTypes[testType];
   if (!config) {
     console.error(`❌ 未知的测试类型: ${testType}`);
@@ -131,7 +65,7 @@ function runTest(testType, options = {}) {
     options.coverage = false;
   }
 
-  const baseArgs = ['vitest'];
+  const baseArgs = [];
   if (options.watch) {
     baseArgs.push('--watch');
   } else {
@@ -164,27 +98,56 @@ function runTest(testType, options = {}) {
     process.env.VERBOSE_TESTS = 'true';
   }
 
-  const command = baseArgs.join(' ');
+  const vitestPath = fileURLToPath(import.meta.resolve('vitest/vitest.mjs'));
+  const displayCommand = ['vitest', ...baseArgs].join(' ');
+  const controller = new AbortController();
+  let interruptedBy;
+  const interrupt = (signal) => {
+    interruptedBy ??= signal;
+    controller.abort();
+  };
+  const onSigint = () => interrupt('SIGINT');
+  const onSigterm = () => interrupt('SIGTERM');
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
 
   try {
-    console.log(`📝 执行命令: ${command}`);
+    console.log(`📝 执行命令: ${displayCommand}`);
 
     const startTime = Date.now();
-    execSync(command, {
-      stdio: 'inherit',
+    const result = await runOwnedCommand({
+      command: process.execPath,
+      args: [vitestPath, ...baseArgs],
       cwd: process.cwd(),
-      timeout: config.timeout,
+      timeoutMs: config.timeout,
+      signal: controller.signal,
     });
+
+    if (interruptedBy) {
+      throw new Error(`测试运行被 ${interruptedBy} 中断`);
+    }
+    if (result.timedOut) {
+      throw new Error(`测试运行超过 ${config.timeout}ms，已终止完整进程树`);
+    }
+    if (result.signal) {
+      throw new Error(`测试进程被 ${result.signal} 终止`);
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(`测试进程退出码: ${result.exitCode ?? 1}`);
+    }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(`✅ ${config.name}完成! 耗时: ${duration}s`);
   } catch (error) {
     console.error(`❌ ${config.name}失败:`, error.message);
-    process.exit(1);
+    process.exitCode = interruptedBy === 'SIGINT' ? 130 : interruptedBy === 'SIGTERM' ? 143 : 1;
+  } finally {
+    process.off('SIGINT', onSigint);
+    process.off('SIGTERM', onSigterm);
   }
 }
 
-function main() {
+async function main() {
   const args = process.argv.slice(2);
   
   if (args.length === 0 || args.includes('--help')) {
@@ -207,7 +170,7 @@ function main() {
     process.exit(1);
   }
   
-  runTest(testType, options);
+  await runTest(testType, options);
 }
 
 process.on('uncaughtException', (error) => {
@@ -220,4 +183,4 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
-main();
+await main();

@@ -573,12 +573,7 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
         const ephemeral = await openSession();
         await sendMessage(
           ephemeral.sessionId,
-          [
-            'Test the permission cache through real tool execution.',
-            `Call Bash with the exact command ${JSON.stringify(command)} and wait for its result.`,
-            `Then call Bash a second time with the same exact command ${JSON.stringify(command)} and wait for its result.`,
-            'Use two separate sequential Bash tool calls. Do not use any other tool.',
-          ].join('\n'),
+          `Call Bash with the exact command ${JSON.stringify(command)} and finish after it succeeds. Do not use any other tool.`,
           'default'
         );
         await ephemeral.collector.waitFor((event) => event.type === 'permission.asked');
@@ -593,17 +588,48 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
         await ephemeral.collector.waitFor(
           (event) => event.type === 'session.completed'
         );
+        const permissionCountAfterFirstTurn = ephemeral.collector.events.filter(
+          (event) => event.type === 'permission.asked'
+        ).length;
+        const bashCountAfterFirstTurn = ephemeral.collector.events.filter(
+          (event) => event.type === 'tool.start' && event.properties.toolName === 'Bash'
+        ).length;
+        const completionCountAfterFirstTurn = ephemeral.collector.events.filter(
+          (event) => event.type === 'session.completed'
+        ).length;
+        expect(permissionCountAfterFirstTurn).toBe(1);
+        expect(bashCountAfterFirstTurn).toBeGreaterThanOrEqual(1);
+
+        await sendMessage(
+          ephemeral.sessionId,
+          `In this new turn, call Bash with the same exact command ${JSON.stringify(command)} and finish after it succeeds. Do not use any other tool.`,
+          'default'
+        );
+        await ephemeral.collector.waitFor(
+          () =>
+            ephemeral.collector.events.filter(
+              (event) => event.type === 'permission.asked'
+            ).length > permissionCountAfterFirstTurn ||
+            ephemeral.collector.events.filter(
+              (event) => event.type === 'session.completed'
+            ).length > completionCountAfterFirstTurn
+        );
         expect(
           ephemeral.collector.events.filter(
             (event) => event.type === 'permission.asked'
           )
-        ).toHaveLength(1);
+        ).toHaveLength(permissionCountAfterFirstTurn);
         expect(
           ephemeral.collector.events.filter(
             (event) =>
               event.type === 'tool.start' && event.properties.toolName === 'Bash'
           ).length
-        ).toBeGreaterThanOrEqual(2);
+        ).toBeGreaterThan(bashCountAfterFirstTurn);
+        expect(
+          ephemeral.collector.events.filter(
+            (event) => event.type === 'session.completed'
+          ).length
+        ).toBeGreaterThan(completionCountAfterFirstTurn);
         expect(existsSync(settingsPath)).toBe(false);
         await ephemeral.collector.close();
         await deleteSession(ephemeral.sessionId);

@@ -3,8 +3,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   createQualificationPlan,
-  resolveQualificationRoot,
   resolveProductionEnvironment,
+  resolveQualificationRoot,
   runQualification,
 } from '../../../scripts/qualification.js';
 

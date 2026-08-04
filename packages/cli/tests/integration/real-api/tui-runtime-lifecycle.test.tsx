@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { act } from 'react';
@@ -137,7 +137,22 @@ describe.skipIf(!enabled)('TUI runtime lifecycle (real API)', () => {
       const root = ReactDOM.createRoot(container);
       let hook: ReturnType<typeof useAgent> | undefined;
       let confirmationCount = 0;
-      const command = "printf 'tui-scope\\n' >> tui-permission-scope.log";
+      const scriptFile = 'tui-permission-scope.mjs';
+      const turnTokenFile = 'tui-permission-turn.txt';
+      const command = `${JSON.stringify(process.execPath)} ${scriptFile}`;
+      writeFileSync(
+        path.join(workspace, scriptFile),
+        [
+          "import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';",
+          `const token = readFileSync(${JSON.stringify(turnTokenFile)}, 'utf8');`,
+          "const previous = existsSync('tui-permission-last.txt') ? readFileSync('tui-permission-last.txt', 'utf8') : '';",
+          'if (token !== previous) {',
+          "  appendFileSync('tui-permission-scope.log', 'tui-scope\\n');",
+          "  writeFileSync('tui-permission-last.txt', token);",
+          '}',
+          '',
+        ].join('\n')
+      );
 
       function Harness() {
         hook = useAgent({ sessionId, modelId, maxTurns: 6 });
@@ -152,13 +167,10 @@ describe.skipIf(!enabled)('TUI runtime lifecycle (real API)', () => {
         const agent = await hook?.createAgent();
         if (!agent) throw new Error('TUI Agent was not created');
 
-        const result = await runWithCwdOverride(workspace, () =>
+        writeFileSync(path.join(workspace, turnTokenFile), 'turn-one');
+        const firstResult = await runWithCwdOverride(workspace, () =>
           agent.chat(
-            [
-              `Call Bash with the exact command ${JSON.stringify(command)} and wait for its result.`,
-              `Then call Bash a second time with the same exact command ${JSON.stringify(command)} and wait for its result.`,
-              'Use two separate sequential Bash tool calls. Do not use any other tool.',
-            ].join('\n'),
+            `Call Bash with the exact command ${JSON.stringify(command)} and finish after it succeeds. Do not use any other tool.`,
             {
               messages: [],
               userId: 'tui-permission-scope-test',
@@ -176,7 +188,34 @@ describe.skipIf(!enabled)('TUI runtime lifecycle (real API)', () => {
           )
         );
 
-        expect(result.success).toBe(true);
+        expect(firstResult.success).toBe(true);
+        expect(confirmationCount).toBe(1);
+        expect(
+          readFileSync(path.join(workspace, 'tui-permission-scope.log'), 'utf8')
+        ).toBe('tui-scope\n');
+
+        writeFileSync(path.join(workspace, turnTokenFile), 'turn-two');
+        const secondResult = await runWithCwdOverride(workspace, () =>
+          agent.chat(
+            `In this new turn, call Bash with the same exact command ${JSON.stringify(command)} and finish after it succeeds. Do not use any other tool.`,
+            {
+              messages: [],
+              userId: 'tui-permission-scope-test',
+              sessionId,
+              workspaceRoot: workspace,
+              permissionMode: PermissionMode.DEFAULT,
+              confirmationHandler: {
+                requestConfirmation: async () => {
+                  confirmationCount += 1;
+                  return { approved: true, scope: 'session' };
+                },
+              },
+            },
+            { maxTurns: 6, stream: true }
+          )
+        );
+
+        expect(secondResult.success).toBe(true);
         expect(confirmationCount).toBe(1);
         expect(
           readFileSync(path.join(workspace, 'tui-permission-scope.log'), 'utf8')
@@ -184,7 +223,7 @@ describe.skipIf(!enabled)('TUI runtime lifecycle (real API)', () => {
         expect(existsSync(path.join(workspace, '.blade', 'settings.local.json'))).toBe(
           false
         );
-        expect(JSON.stringify(result)).not.toContain(apiKey);
+        expect(JSON.stringify([firstResult, secondResult])).not.toContain(apiKey);
       } finally {
         await hook?.cleanupAgent().catch(() => undefined);
         await act(async () => {
