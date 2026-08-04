@@ -1262,7 +1262,7 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
       try {
         const inspection = await runBladeInvocation(workspace, home, model, {
           prompt: createInspectionPrompt(),
-          maxTurns: 4,
+          maxTurns: 8,
           sessionId,
           permissionMode: 'plan',
         });
