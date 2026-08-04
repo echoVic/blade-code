@@ -86,6 +86,7 @@ export type BusEvent = z.infer<typeof BusEventSchema>;
 
 export const SendMessageRequestSchema = z.object({
   content: z.string(),
+  projectPath: z.string().optional(),
   permissionMode: PermissionModeSchema.optional(),
   attachments: z
     .array(

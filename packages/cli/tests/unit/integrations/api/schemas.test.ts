@@ -335,6 +335,19 @@ describe('API Schemas', () => {
       expect(() => SendMessageRequestSchema.parse(requestWithPermission)).not.toThrow();
     });
 
+    it('应该保留用于区分同 ID 跨 workspace 会话的 projectPath', () => {
+      const request: SendMessageRequest = {
+        content: 'Send to workspace B',
+        projectPath: '/tmp/workspace-b',
+      };
+      const parsed = SendMessageRequestSchema.parse(request);
+
+      expect(parsed).toEqual({
+        content: 'Send to workspace B',
+        projectPath: '/tmp/workspace-b',
+      });
+    });
+
     it('应该验证带有附件的请求', () => {
       const requestWithAttachments: SendMessageRequest = {
         content: 'Check this file',

@@ -11,6 +11,7 @@ import type { LoopEvent } from '../../agent/loop/types.js';
 import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
+import { SendMessageRequestSchema } from '../../api/schemas.js';
 import { PermissionMode } from '../../config/types.js';
 import { assertValidSessionId } from '../../context/storage/pathUtils.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
@@ -49,23 +50,7 @@ const CreateSessionSchema = z.object({
   projectPath: z.string().optional(),
 });
 
-const SendMessageSchema = z.object({
-  content: z.string(),
-  attachments: z
-    .array(
-      z.object({
-        type: z.enum(['file', 'image', 'url']),
-        path: z.string().optional(),
-        url: z.string().optional(),
-        content: z.string().optional(),
-        mimeType: z.string().optional(),
-        name: z.string().optional(),
-      })
-    )
-    .optional(),
-  permissionMode: z.enum(['default', 'autoEdit', 'plan', 'yolo']).optional(),
-  projectPath: z.string().optional(),
-});
+const SendMessageSchema = SendMessageRequestSchema;
 
 const UpdateSessionSchema = z.object({
   title: z.string().optional(),
@@ -478,14 +463,20 @@ export const SessionRoutes = () => {
     try {
       const persistedSessions = await SessionService.listSessions();
 
-      const subagentSessionIds = new Set(
+      const subagentSessionKeys = new Set(
         persistedSessions
           .filter((s) => s.relationType === 'subagent')
-          .map((s) => s.sessionId)
+          .map((s) =>
+            sessionRefKey({ sessionId: s.sessionId, projectPath: s.projectPath })
+          )
       );
 
       const activeSessionsList = Array.from(sessions.values())
-        .filter((s) => !subagentSessionIds.has(s.id) && s.relationType !== 'subagent')
+        .filter(
+          (s) =>
+            !subagentSessionKeys.has(sessionRefKey(sessionRefFromSession(s))) &&
+            s.relationType !== 'subagent'
+        )
         .map((s) => projectActiveSession(s));
 
       const activeSessionKeys = new Set(
@@ -748,19 +739,25 @@ export const SessionRoutes = () => {
 
     return streamSSE(c, async (stream) => {
       const HEARTBEAT_INTERVAL = 15000;
+      let unsubscribe: (() => void) | undefined;
+      let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
+      let terminated = false;
+      const cleanup = () => {
+        if (heartbeatInterval !== undefined) {
+          clearInterval(heartbeatInterval);
+          heartbeatInterval = undefined;
+        }
+        unsubscribe?.();
+        unsubscribe = undefined;
+      };
+      const terminate = () => {
+        if (terminated) return;
+        terminated = true;
+        cleanup();
+      };
 
-      await stream.writeSSE({
-        data: JSON.stringify({
-          type: 'connected',
-          properties: {
-            sessionId: ref.sessionId,
-            projectPath: ref.projectPath,
-            timestamp: Date.now(),
-          },
-        }),
-      });
-
-      const unsubscribe = Bus.subscribe((event) => {
+      stream.onAbort(terminate);
+      unsubscribe = Bus.subscribe((event) => {
         if (
           event.sessionId !== ref.sessionId ||
           event.projectPath !== ref.projectPath
@@ -778,41 +775,54 @@ export const SessionRoutes = () => {
               },
             }),
           })
-          .catch(() => {
-            /* ignore write errors on closed streams */
+          .catch(terminate);
+      });
+
+      try {
+        if (stream.aborted || terminated) return;
+
+        await stream
+          .writeSSE({
+            data: JSON.stringify({
+              type: 'connected',
+              properties: {
+                sessionId: ref.sessionId,
+                projectPath: ref.projectPath,
+                timestamp: Date.now(),
+              },
+            }),
+          })
+          .catch((error: unknown) => {
+            terminate();
+            throw error;
           });
-      });
+        if (stream.aborted || terminated) return;
 
-      void resumePendingSession(session).catch((error) => {
-        logger.error(
-          `[SessionRoutes] Failed to resume pending input for ${sessionId}:`,
-          error
-        );
-      });
+        void resumePendingSession(session).catch((error) => {
+          logger.error(
+            `[SessionRoutes] Failed to resume pending input for ${sessionId}:`,
+            error
+          );
+        });
 
-      const heartbeatInterval = setInterval(() => {
-        if (!stream.aborted) {
-          stream
-            .writeSSE({
-              data: JSON.stringify({
-                type: 'heartbeat',
-                properties: { timestamp: Date.now() },
-              }),
-            })
-            .catch(() => {
-              /* ignore write errors on closed streams */
-            });
+        heartbeatInterval = setInterval(() => {
+          if (!stream.aborted) {
+            stream
+              .writeSSE({
+                data: JSON.stringify({
+                  type: 'heartbeat',
+                  properties: { timestamp: Date.now() },
+                }),
+              })
+              .catch(terminate);
+          }
+        }, HEARTBEAT_INTERVAL);
+
+        while (!stream.aborted && !terminated) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
-      }, HEARTBEAT_INTERVAL);
-
-      stream.onAbort(() => {
-        clearInterval(heartbeatInterval);
-        unsubscribe();
-      });
-
-      while (true) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        if (stream.aborted) break;
+      } finally {
+        terminate();
       }
     });
   });

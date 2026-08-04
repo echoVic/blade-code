@@ -117,9 +117,9 @@ const busState = vi.hoisted(() => ({
       }) => void
     ) => {
       busState.subscribers.add(callback);
-      return () => {
+      return vi.fn(() => {
         busState.subscribers.delete(callback);
-      };
+      });
     }
   ),
 }));
@@ -311,6 +311,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.resetModules();
   });
 
@@ -1113,6 +1114,39 @@ describe('SessionRoutes runtime reuse', () => {
     });
   });
 
+  it('keeps an active session visible when another workspace persists the same id as a subagent', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+
+    const app = SessionRoutes();
+    const createResponse = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Workspace B active session',
+        projectPath: '/tmp/workspace-b',
+      }),
+    });
+    const activeSession = await createResponse.json();
+    vi.mocked(SessionService.listSessions).mockResolvedValue([
+      makeSessionMetadata({
+        sessionId: activeSession.sessionId,
+        projectPath: '/tmp/workspace-a',
+        relationType: 'subagent',
+      }),
+    ]);
+
+    const listResponse = await app.request('/');
+
+    expect(listResponse.status).toBe(200);
+    expect(await listResponse.json()).toEqual([
+      expect.objectContaining({
+        sessionId: activeSession.sessionId,
+        projectPath: '/tmp/workspace-b',
+        isActive: true,
+      }),
+    ]);
+  });
+
   it('isolates module-global session state between SessionRoutes instances and aborts ghost runs', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
 
@@ -1507,6 +1541,261 @@ describe('SessionRoutes runtime reuse', () => {
     await Promise.all([firstCollector.cancel(), secondCollector.cancel()]);
   });
 
+  it('subscribes before connected is consumable and cleans up when that write is aborted', async () => {
+    const NativeTransformStream = globalThis.TransformStream;
+    let releaseConnectedWrite: () => void = () => undefined;
+    vi.stubGlobal(
+      'TransformStream',
+      class extends NativeTransformStream<Uint8Array, Uint8Array> {
+        constructor() {
+          super({
+            transform: () =>
+              new Promise<void>((resolve) => {
+                releaseConnectedWrite = resolve;
+              }),
+          });
+        }
+      }
+    );
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('readiness-session', { projectPath: '/tmp/workspace-a' });
+
+    const controller = new AbortController();
+    const response = await SessionRoutes().request(
+      `/readiness-session/events?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      { signal: controller.signal }
+    );
+
+    expect(response.status).toBe(200);
+    expect(busState.subscribers.size).toBe(1);
+    const unsubscribe = busState.subscribe.mock.results.at(-1)?.value;
+
+    controller.abort();
+    await response.body?.cancel().catch(() => undefined);
+    releaseConnectedWrite();
+    await vi.waitFor(() => {
+      expect(busState.subscribers.size).toBe(0);
+    });
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleans up the listener when the connected write rejects', async () => {
+    const { SSEStreamingApi } = await import('hono/streaming');
+    const writeSse = vi
+      .spyOn(SSEStreamingApi.prototype, 'writeSSE')
+      .mockRejectedValueOnce(new Error('connected write failed'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('write-failure-session', {
+      projectPath: '/tmp/workspace-a',
+    });
+
+    const response = await SessionRoutes().request(
+      `/write-failure-session/events?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+    await response.text();
+
+    expect(response.status).toBe(200);
+    expect(busState.subscribers.size).toBe(0);
+    expect(busState.subscribe.mock.results.at(-1)?.value).toHaveBeenCalledTimes(1);
+
+    writeSse.mockRestore();
+    consoleError.mockRestore();
+  });
+
+  it('terminates without abort when a post-connected Bus event write rejects', async () => {
+    vi.useFakeTimers();
+    const { SSEStreamingApi } = await import('hono/streaming');
+    const originalWriteSse = SSEStreamingApi.prototype.writeSSE;
+    const writeSse = vi.spyOn(SSEStreamingApi.prototype, 'writeSSE');
+    writeSse
+      .mockImplementationOnce(function (message) {
+        return originalWriteSse.call(this, message);
+      })
+      .mockRejectedValueOnce(new Error('Bus event write failed'));
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('bus-write-failure', { projectPath: '/tmp/workspace-a' });
+
+    let readSettled = false;
+    let observed:
+      | {
+          subscribers: number;
+          unsubscribeCalls: number;
+          timers: number;
+          ended: boolean;
+        }
+      | undefined;
+    const response = await SessionRoutes().request(
+      `/bus-write-failure/events?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+    if (!response.body) {
+      throw new Error('Expected SSE response body');
+    }
+    const reader = response.body.getReader();
+
+    try {
+      const connected = await reader.read();
+      expect(new TextDecoder().decode(connected.value)).toContain('connected');
+      const unsubscribe = busState.subscribe.mock.results.at(-1)?.value;
+
+      Bus.publish(
+        { sessionId: 'bus-write-failure', projectPath: '/tmp/workspace-a' },
+        'message.created',
+        { messageId: 'failed-write' }
+      );
+      const completion = reader.read().then((result) => {
+        readSettled = true;
+        return result;
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      observed = {
+        subscribers: busState.subscribers.size,
+        unsubscribeCalls: unsubscribe.mock.calls.length,
+        timers: vi.getTimerCount(),
+        ended: readSettled && (await completion).done,
+      };
+    } finally {
+      if (!readSettled) {
+        await reader.cancel();
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+      writeSse.mockRestore();
+      vi.useRealTimers();
+    }
+
+    expect(observed).toEqual({
+      subscribers: 0,
+      unsubscribeCalls: 1,
+      timers: 0,
+      ended: true,
+    });
+  });
+
+  it('terminates without abort when a heartbeat write rejects', async () => {
+    vi.useFakeTimers();
+    const { SSEStreamingApi } = await import('hono/streaming');
+    const originalWriteSse = SSEStreamingApi.prototype.writeSSE;
+    const writeSse = vi.spyOn(SSEStreamingApi.prototype, 'writeSSE');
+    writeSse
+      .mockImplementationOnce(function (message) {
+        return originalWriteSse.call(this, message);
+      })
+      .mockRejectedValueOnce(new Error('heartbeat write failed'));
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('heartbeat-write-failure', {
+      projectPath: '/tmp/workspace-a',
+    });
+
+    let readSettled = false;
+    let observed:
+      | {
+          subscribers: number;
+          unsubscribeCalls: number;
+          timers: number;
+          ended: boolean;
+        }
+      | undefined;
+    const response = await SessionRoutes().request(
+      `/heartbeat-write-failure/events?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+    if (!response.body) {
+      throw new Error('Expected SSE response body');
+    }
+    const reader = response.body.getReader();
+
+    try {
+      const connected = await reader.read();
+      expect(new TextDecoder().decode(connected.value)).toContain('connected');
+      const unsubscribe = busState.subscribe.mock.results.at(-1)?.value;
+      const completion = reader.read().then((result) => {
+        readSettled = true;
+        return result;
+      });
+
+      await vi.advanceTimersByTimeAsync(15000);
+
+      observed = {
+        subscribers: busState.subscribers.size,
+        unsubscribeCalls: unsubscribe.mock.calls.length,
+        timers: vi.getTimerCount(),
+        ended: readSettled && (await completion).done,
+      };
+    } finally {
+      if (!readSettled) {
+        await reader.cancel();
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+      writeSse.mockRestore();
+      vi.useRealTimers();
+    }
+
+    expect(observed).toEqual({
+      subscribers: 0,
+      unsubscribeCalls: 1,
+      timers: 0,
+      ended: true,
+    });
+  });
+
+  it('does not lose an exact Bus event published as soon as connected is consumed', async () => {
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const NativeTransformStream = globalThis.TransformStream;
+    let publishedAtConnectedWrite = false;
+    vi.stubGlobal(
+      'TransformStream',
+      class extends NativeTransformStream<Uint8Array, Uint8Array> {
+        constructor() {
+          super({
+            transform(chunk, streamController) {
+              const payload = new TextDecoder().decode(chunk);
+              if (!publishedAtConnectedWrite && payload.includes('connected')) {
+                publishedAtConnectedWrite = true;
+                Bus.publish(
+                  {
+                    sessionId: 'readiness-session',
+                    projectPath: '/tmp/workspace-a',
+                  },
+                  'message.created',
+                  { messageId: 'first-after-connected' }
+                );
+              }
+              streamController.enqueue(chunk);
+            },
+          });
+        }
+      }
+    );
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('readiness-session', { projectPath: '/tmp/workspace-a' });
+
+    const controller = new AbortController();
+    const response = await SessionRoutes().request(
+      `/readiness-session/events?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      { signal: controller.signal }
+    );
+    const collector = createSseCollector(response);
+    await expect(collector.next()).resolves.toMatchObject({ type: 'connected' });
+
+    await vi.waitFor(() => {
+      expect(busState.subscribers.size).toBe(1);
+    });
+    Bus.publish(
+      { sessionId: 'readiness-session', projectPath: '/tmp/workspace-a' },
+      'test.sentinel',
+      {}
+    );
+
+    await expect(collector.next()).resolves.toMatchObject({
+      type: 'message.created',
+      properties: { messageId: 'first-after-connected' },
+    });
+
+    controller.abort();
+    await collector.cancel();
+  });
+
   it('rejects message posts for an explicit missing workspace without creating runtime state', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { Bus } = await import('../../../../src/server/bus.js');
@@ -1604,6 +1893,33 @@ describe('SessionRoutes runtime reuse', () => {
       workspaceRoot: '/tmp/workspace-a',
     });
     expect(SessionRuntime.create).toHaveBeenNthCalledWith(2, {
+      sessionId: 'shared-session',
+      workspaceRoot: '/tmp/workspace-b',
+    });
+  });
+
+  it('routes a same-id message by projectPath in the shared request payload', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (sessionId === 'shared-session' && projectPath === '/tmp/workspace-b') {
+          return makeSessionMetadata({ sessionId, projectPath });
+        }
+        return undefined;
+      }
+    );
+
+    const response = await SessionRoutes().request('/shared-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'workspace b',
+        projectPath: '/tmp/workspace-b',
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(SessionRuntime.create).toHaveBeenCalledWith({
       sessionId: 'shared-session',
       workspaceRoot: '/tmp/workspace-b',
     });
