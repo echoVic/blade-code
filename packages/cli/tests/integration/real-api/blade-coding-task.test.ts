@@ -395,6 +395,23 @@ function runBladeInvocation(
   });
 }
 
+function formatInvocationFailure(result: CommandResult): string {
+  const parsed = parseHeadlessJsonl(result.stdout);
+  const diagnostic = {
+    error: result.error?.message,
+    status: result.status,
+    runtimeErrors: parsed.events
+      .filter((event) => event.type === 'error')
+      .map((event) => event.message),
+    recentTools: parsed.events
+      .filter((event) => event.type === 'tool_start' || event.type === 'tool_result')
+      .slice(-12),
+    nonJsonLines: parsed.nonJsonLines.slice(-12),
+    stderr: result.stderr.slice(-4_000),
+  };
+  return redactSecrets(JSON.stringify(diagnostic, null, 2), [apiKey]);
+}
+
 async function readRequestBody(request: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
@@ -1249,8 +1266,8 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
           sessionId,
           permissionMode: 'plan',
         });
-        expect(inspection.error).toBeUndefined();
-        expect(inspection.status, redactSecrets(inspection.stderr, [apiKey])).toBe(0);
+        expect(inspection.error, formatInvocationFailure(inspection)).toBeUndefined();
+        expect(inspection.status, formatInvocationFailure(inspection)).toBe(0);
         expect(
           execFileSync('git', ['diff', '--name-only'], {
             cwd: workspace,
@@ -1266,10 +1283,11 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         const toolStarts = parsed.events
           .filter((event) => event.type === 'tool_start')
           .map((event) => event.tool_name);
-        expect(continuation.error).toBeUndefined();
-        expect(continuation.status, redactSecrets(continuation.stderr, [apiKey])).toBe(
-          0
-        );
+        expect(
+          continuation.error,
+          formatInvocationFailure(continuation)
+        ).toBeUndefined();
+        expect(continuation.status, formatInvocationFailure(continuation)).toBe(0);
         expect(parsed.nonJsonLines).toEqual([]);
         expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
         expect(toolStarts).toContain('Edit');
