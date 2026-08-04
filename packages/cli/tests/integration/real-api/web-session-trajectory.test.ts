@@ -76,7 +76,7 @@ interface EventCollector {
   events: SurfaceEvent[];
   waitFor(
     predicate: (event: SurfaceEvent) => boolean,
-    timeoutMs?: number
+    options?: { afterIndex?: number; label?: string; timeoutMs?: number }
   ): Promise<SurfaceEvent>;
   close(): Promise<void>;
 }
@@ -351,16 +351,23 @@ async function collectEvents(
 
   const waitFor = async (
     predicate: (event: SurfaceEvent) => boolean,
-    timeoutMs = 180_000
+    options: { afterIndex?: number; label?: string; timeoutMs?: number } = {}
   ): Promise<SurfaceEvent> => {
-    const existing = events.find(predicate);
+    const afterIndex = options.afterIndex ?? 0;
+    const label = options.label ?? 'event';
+    const timeoutMs = options.timeoutMs ?? 180_000;
+    const scopedPredicate = (event: SurfaceEvent): boolean => {
+      const index = events.indexOf(event);
+      return index >= afterIndex && predicate(event);
+    };
+    const existing = events.slice(afterIndex).find(predicate);
     if (existing) return existing;
-    if (events.some((event) => event.type === 'session.error')) {
+    if (events.slice(afterIndex).some((event) => event.type === 'session.error')) {
       throw new Error('Web session emitted session.error');
     }
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const waiter = {
-      predicate,
+      predicate: scopedPredicate,
       resolve: (_event: SurfaceEvent): void => undefined,
       reject: (_error: Error): void => undefined,
     };
@@ -374,12 +381,16 @@ async function collectEvents(
         new Promise<never>((_resolve, reject) => {
           timeout = setTimeout(() => {
             const recentTypes = events
-              .slice(-20)
-              .map((event) => event.type)
+              .slice(Math.max(afterIndex, events.length - 20))
+              .map((event) =>
+                event.type === 'session.status'
+                  ? `${event.type}:${String(event.properties.status ?? 'unknown')}`
+                  : event.type
+              )
               .join(',');
             reject(
               new Error(
-                `SSE wait timed out after ${timeoutMs}ms; recent event types: ${recentTypes || 'none'}`
+                `SSE wait for ${label} timed out after ${timeoutMs}ms; recent events: ${recentTypes || 'none'}`
               )
             );
           }, timeoutMs);
@@ -396,7 +407,7 @@ async function collectEvents(
       event.type === 'connected' &&
       event.properties.sessionId === ref.sessionId &&
       event.properties.projectPath === ref.projectPath,
-    10_000
+    { label: 'connected', timeoutMs: 10_000 }
   );
   return {
     events,
@@ -413,13 +424,16 @@ async function waitForRunCompletion(
   server: TestServer,
   ref: SessionRef,
   collector: EventCollector,
-  runId: string
+  runId: string,
+  afterIndex: number
 ): Promise<void> {
   await collector.waitFor(
-    (event) => event.type === 'session.completed' && event.properties.runId === runId
+    (event) => event.type === 'session.completed' && event.properties.runId === runId,
+    { afterIndex, label: 'session.completed' }
   );
   await collector.waitFor(
-    (event) => event.type === 'session.status' && event.properties.status === 'idle'
+    (event) => event.type === 'session.status' && event.properties.status === 'idle',
+    { afterIndex, label: 'session.status:idle' }
   );
   expect(await getStatus(server, ref)).toEqual({
     sessionId: ref.sessionId,
@@ -437,6 +451,21 @@ function assertCollectorIdentity(collector: EventCollector, ref: SessionRef): vo
       event.properties.projectPath !== ref.projectPath
     ) {
       throw new Error('SSE event violated the compound session identity');
+    }
+  }
+}
+
+function assertSurfaceEventTypes(
+  collector: EventCollector,
+  afterIndex: number,
+  requiredTypes: readonly string[]
+): void {
+  const observedTypes = new Set(
+    collector.events.slice(afterIndex).map((event) => event.type)
+  );
+  for (const type of requiredTypes) {
+    if (!observedTypes.has(type)) {
+      throw new Error(`Web run completed without required SSE event type: ${type}`);
     }
   }
 }
@@ -534,14 +563,16 @@ async function runChildTurn(
   try {
     const eventBoundary = collector.events.length;
     const accepted = await sendMessage(server, child, childPrompt());
-    await collector.waitFor((event) => event.type === 'turn.started');
-    await collector.waitFor((event) => event.type === 'tool.start');
-    await collector.waitFor((event) => event.type === 'tool.result');
-    await waitForRunCompletion(server, child, collector, accepted.runId);
+    await waitForRunCompletion(server, child, collector, accepted.runId, eventBoundary);
     const childPath = findSessionTranscript(fixture.storageRoot, child.sessionId);
     const events = readSessionEvents(childPath);
     const raw = readFileSync(childPath, 'utf8');
     assertStrictChild(events, childSnapshot.length, resultPath, expectedBytes);
+    assertSurfaceEventTypes(collector, eventBoundary, [
+      'turn.started',
+      'tool.start',
+      'tool.result',
+    ]);
     if (readFileSync(resultPath, 'utf8') !== expectedBytes) {
       throw new Error('Web fork child result bytes violated the exact contract');
     }
@@ -608,15 +639,18 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
         parentCollector = await collectEvents(activeServer, parent);
         const parentEventBoundary = parentCollector.events.length;
         const accepted = await sendMessage(activeServer, parent, parentPrompt());
-        await parentCollector.waitFor((event) => event.type === 'turn.started');
-        await parentCollector.waitFor((event) => event.type === 'tool.start');
-        await parentCollector.waitFor((event) => event.type === 'tool.result');
         await waitForRunCompletion(
           activeServer,
           parent,
           parentCollector,
-          accepted.runId
+          accepted.runId,
+          parentEventBoundary
         );
+        assertSurfaceEventTypes(parentCollector, parentEventBoundary, [
+          'turn.started',
+          'tool.start',
+          'tool.result',
+        ]);
 
         const parentPath = findSessionTranscript(fixture.storageRoot, parent.sessionId);
         const parentEvents = readSessionEvents(parentPath);
@@ -742,8 +776,14 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
           activeServer,
           parent,
           parentCollector,
-          firstAccepted.runId
+          firstAccepted.runId,
+          firstSseBoundary
         );
+        assertSurfaceEventTypes(parentCollector, firstSseBoundary, [
+          'turn.started',
+          'tool.start',
+          'tool.result',
+        ]);
         assertNonEmptyFinalWithoutFixture(
           parentCollector,
           firstSseBoundary,
@@ -771,11 +811,10 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
           parent,
           'Reply with a short acknowledgment. Do not call tools.'
         );
-        await parentCollector.waitFor(
-          (event) =>
-            event.type === 'turn.started' &&
-            parentCollector!.events.indexOf(event) >= secondSseBoundary
-        );
+        await parentCollector.waitFor((event) => event.type === 'turn.started', {
+          afterIndex: secondSseBoundary,
+          label: 'turn.started',
+        });
         await proxy.requestHeld;
         expect(await getStatus(activeServer, parent)).toEqual({
           sessionId: parent.sessionId,
@@ -812,7 +851,8 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
           activeServer,
           parent,
           parentCollector,
-          secondAccepted.runId
+          secondAccepted.runId,
+          secondSseBoundary
         );
         const completedParentRaw = readFileSync(parentPath, 'utf8');
         const completedParentEvents = readSessionEvents(parentPath);
