@@ -132,6 +132,205 @@ class FallbackStreamingChatService implements IChatService {
   }
 }
 
+interface CapturedRequestOptions {
+  toolChoice?: { type: 'tool'; toolName: string };
+}
+
+class RequiredDelegationChatService implements IChatService {
+  readonly toolChoices: Array<CapturedRequestOptions['toolChoice']> = [];
+
+  async chat(): Promise<ChatResponse> {
+    throw new Error('Required delegation test must not use non-streaming chat');
+  }
+
+  async *streamChat(
+    _messages: Message[],
+    tools?: Array<{ name: string; description: string; parameters: unknown }>,
+    _signal?: AbortSignal,
+    options?: CapturedRequestOptions
+  ): AsyncGenerator<StreamChunk, void, unknown> {
+    this.toolChoices.push(options?.toolChoice);
+    if (!(tools ?? []).some((tool) => tool.name === 'Task')) {
+      yield { content: 'Delegation complete.', finishReason: 'stop' };
+      return;
+    }
+    if (options?.toolChoice?.toolName !== 'Task') {
+      yield { content: 'I will delegate after more planning.', finishReason: 'stop' };
+      return;
+    }
+    yield {
+      toolCalls: [
+        {
+          index: 0,
+          id: 'required-task',
+          type: 'function',
+          function: { name: 'Task', arguments: '{"prompt":"repair"}' },
+        },
+      ],
+      finishReason: 'tool_calls',
+    };
+  }
+
+  getConfig(): ChatConfig {
+    return {
+      provider: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'https://example.invalid/v1',
+      model: 'test-model',
+      maxContextTokens: 64_000,
+      maxOutputTokens: 4_096,
+    };
+  }
+
+  updateConfig(_newConfig: Partial<ChatConfig>): void {
+    void _newConfig;
+  }
+}
+
+class RequiredVerificationChatService implements IChatService {
+  readonly toolChoices: Array<CapturedRequestOptions['toolChoice']> = [];
+  private verified = false;
+
+  async chat(): Promise<ChatResponse> {
+    throw new Error('Required verification test must not use non-streaming chat');
+  }
+
+  async *streamChat(
+    _messages: Message[],
+    _tools?: Array<{ name: string; description: string; parameters: unknown }>,
+    _signal?: AbortSignal,
+    options?: CapturedRequestOptions
+  ): AsyncGenerator<StreamChunk, void, unknown> {
+    this.toolChoices.push(options?.toolChoice);
+    if (this.verified) {
+      yield { content: 'Verification complete.', finishReason: 'stop' };
+      return;
+    }
+    if (options?.toolChoice?.toolName !== 'Bash') {
+      yield { content: 'The repair is complete.', finishReason: 'stop' };
+      return;
+    }
+    this.verified = true;
+    yield {
+      toolCalls: [
+        {
+          index: 0,
+          id: 'required-bash',
+          type: 'function',
+          function: { name: 'Bash', arguments: '{"command":"npm test"}' },
+        },
+      ],
+      finishReason: 'tool_calls',
+    };
+  }
+
+  getConfig(): ChatConfig {
+    return {
+      provider: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'https://example.invalid/v1',
+      model: 'test-model',
+      maxContextTokens: 64_000,
+      maxOutputTokens: 4_096,
+    };
+  }
+
+  updateConfig(_newConfig: Partial<ChatConfig>): void {
+    void _newConfig;
+  }
+}
+
+class RequiredFallbackChatService implements IChatService {
+  readonly streamChoices: Array<CapturedRequestOptions['toolChoice']> = [];
+  readonly chatChoices: Array<CapturedRequestOptions['toolChoice']> = [];
+  private completed = false;
+
+  async chat(
+    _messages: Message[],
+    _tools?: Array<{ name: string; description: string; parameters: unknown }>,
+    _signal?: AbortSignal,
+    options?: CapturedRequestOptions
+  ): Promise<ChatResponse> {
+    this.chatChoices.push(options?.toolChoice);
+    this.completed = true;
+    return {
+      content: '',
+      toolCalls: [
+        {
+          id: 'fallback-required-task',
+          type: 'function',
+          function: { name: 'Task', arguments: '{"prompt":"repair"}' },
+        },
+      ],
+      finishReason: 'tool_calls',
+    };
+  }
+
+  async *streamChat(
+    _messages: Message[],
+    _tools?: Array<{ name: string; description: string; parameters: unknown }>,
+    _signal?: AbortSignal,
+    options?: CapturedRequestOptions
+  ): AsyncGenerator<StreamChunk, void, unknown> {
+    this.streamChoices.push(options?.toolChoice);
+    if (this.completed) {
+      yield { content: 'Delegation complete.', finishReason: 'stop' };
+      return;
+    }
+    if (options?.toolChoice?.toolName !== 'Task') {
+      yield { content: 'I will delegate after more planning.', finishReason: 'stop' };
+    }
+  }
+
+  getConfig(): ChatConfig {
+    return {
+      provider: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'https://example.invalid/v1',
+      model: 'test-model',
+      maxContextTokens: 64_000,
+      maxOutputTokens: 4_096,
+    };
+  }
+
+  updateConfig(_newConfig: Partial<ChatConfig>): void {
+    void _newConfig;
+  }
+}
+
+class MissingRequiredTaskChatService implements IChatService {
+  async chat(): Promise<ChatResponse> {
+    throw new Error('Missing required Task test must not use non-streaming chat');
+  }
+
+  async *streamChat(
+    _messages: Message[],
+    _tools?: Array<{ name: string; description: string; parameters: unknown }>,
+    _signal?: AbortSignal,
+    options?: CapturedRequestOptions
+  ): AsyncGenerator<StreamChunk, void, unknown> {
+    if (options?.toolChoice?.toolName === 'Task') {
+      throw new Error('Required tool is unavailable: Task');
+    }
+    yield { content: 'I will delegate later.', finishReason: 'stop' };
+  }
+
+  getConfig(): ChatConfig {
+    return {
+      provider: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'https://example.invalid/v1',
+      model: 'test-model',
+      maxContextTokens: 64_000,
+      maxOutputTokens: 4_096,
+    };
+  }
+
+  updateConfig(_newConfig: Partial<ChatConfig>): void {
+    void _newConfig;
+  }
+}
+
 function createTaskLoopDependencies(
   chatService: IChatService,
   taskExecution: ReturnType<typeof vi.fn>
@@ -163,6 +362,35 @@ function createTaskLoopDependencies(
   };
 }
 
+function createVerificationLoopDependencies(
+  chatService: IChatService,
+  bashExecution: ReturnType<typeof vi.fn>
+): LoopDependencies {
+  const registry = new ToolRegistry();
+  registry.register(
+    createTool({
+      name: 'Bash',
+      displayName: 'Bash',
+      kind: ToolKind.Execute,
+      isConcurrencySafe: false,
+      description: { short: 'Run a command' },
+      schema: z.unknown(),
+      execute: bashExecution,
+    })
+  );
+  return {
+    chatService,
+    toolExecutor: new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+    }),
+    executionEngine: undefined,
+    config: DEFAULT_CONFIG,
+    runtimeOptions: {},
+    currentModelMaxContextTokens: 64_000,
+    applySkillToolRestrictions: (tools) => tools,
+  };
+}
+
 async function drain(
   generator: AsyncGenerator<LoopEvent, LoopResult, void>
 ): Promise<{ events: LoopEvent[]; result: LoopResult }> {
@@ -176,6 +404,152 @@ async function drain(
 }
 
 describe('executeLoopGenerator streaming tool policy', () => {
+  it('requires Task at the provider boundary when delegation is explicit', async () => {
+    const taskExecution = vi.fn(async () => ({
+      success: true,
+      llmContent: 'Subagent completed the repair.',
+    }));
+    const chatService = new RequiredDelegationChatService();
+    const dependencies = createTaskLoopDependencies(chatService, taskExecution);
+    const context: ChatContext = {
+      messages: [],
+      userId: 'required-delegation-user',
+      sessionId: 'required-delegation-session',
+      workspaceRoot: process.cwd(),
+      permissionMode: PermissionMode.YOLO,
+    };
+
+    const { result } = await drain(
+      executeLoopGenerator(
+        dependencies,
+        'Delegate this repair with the Task tool.',
+        context,
+        { stream: true },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(taskExecution).toHaveBeenCalledTimes(1);
+    expect(chatService.toolChoices).toEqual([
+      undefined,
+      { type: 'tool', toolName: 'Task' },
+      undefined,
+    ]);
+  });
+
+  it('requires Bash on the retry after requested verification is omitted', async () => {
+    const bashExecution = vi.fn(async () => ({
+      success: true,
+      llmContent: 'tests passed',
+      metadata: { command: 'npm test', exit_code: 0 },
+    }));
+    const chatService = new RequiredVerificationChatService();
+    const dependencies = createVerificationLoopDependencies(chatService, bashExecution);
+    const context: ChatContext = {
+      messages: [],
+      userId: 'required-verification-user',
+      sessionId: 'required-verification-session',
+      workspaceRoot: process.cwd(),
+      permissionMode: PermissionMode.YOLO,
+    };
+
+    const { result } = await drain(
+      executeLoopGenerator(
+        dependencies,
+        'Repair the project, run npm test, and finish only after it passes.',
+        context,
+        { stream: true },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(bashExecution).toHaveBeenCalledTimes(1);
+    expect(chatService.toolChoices).toEqual([
+      undefined,
+      { type: 'tool', toolName: 'Bash' },
+      undefined,
+    ]);
+  });
+
+  it('preserves a required Task choice during stream-to-chat fallback', async () => {
+    const taskExecution = vi.fn(async () => ({
+      success: true,
+      llmContent: 'Subagent completed the repair.',
+    }));
+    const chatService = new RequiredFallbackChatService();
+    const dependencies = createTaskLoopDependencies(chatService, taskExecution);
+    const context: ChatContext = {
+      messages: [],
+      userId: 'required-fallback-user',
+      sessionId: 'required-fallback-session',
+      workspaceRoot: process.cwd(),
+      permissionMode: PermissionMode.YOLO,
+    };
+
+    const { result } = await drain(
+      executeLoopGenerator(
+        dependencies,
+        'Delegate this repair with the Task tool.',
+        context,
+        { stream: true },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(taskExecution).toHaveBeenCalledTimes(1);
+    expect(chatService.streamChoices).toEqual([
+      undefined,
+      { type: 'tool', toolName: 'Task' },
+      undefined,
+    ]);
+    expect(chatService.chatChoices).toEqual([{ type: 'tool', toolName: 'Task' }]);
+  });
+
+  it('fails closed when an explicitly required Task is not available', async () => {
+    const registry = new ToolRegistry();
+    const dependencies: LoopDependencies = {
+      chatService: new MissingRequiredTaskChatService(),
+      toolExecutor: new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+      }),
+      executionEngine: undefined,
+      config: DEFAULT_CONFIG,
+      runtimeOptions: {
+        appendSystemPrompt: 'Call Task exactly once before returning an answer.',
+      },
+      currentModelMaxContextTokens: 64_000,
+      applySkillToolRestrictions: (tools) => tools,
+    };
+    const context: ChatContext = {
+      messages: [],
+      userId: 'missing-required-task-user',
+      sessionId: 'missing-required-task-session',
+      workspaceRoot: process.cwd(),
+      permissionMode: PermissionMode.YOLO,
+    };
+
+    const { result } = await drain(
+      executeLoopGenerator(
+        dependencies,
+        'Repair the project.',
+        context,
+        { stream: true },
+        undefined
+      )
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        type: 'api_error',
+        message: 'Required tool is unavailable: Task',
+      },
+    });
+  });
+
   it('executes only one Task when the same stream requests two', async () => {
     const taskExecution = vi.fn(async () => ({
       success: true,

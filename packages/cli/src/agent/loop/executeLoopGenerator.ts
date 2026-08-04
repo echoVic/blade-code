@@ -18,6 +18,7 @@ import {
 } from '../../context/ToolResultBudget.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type {
+  ChatRequestOptions,
   ChatResponse,
   Message,
   StreamToolCall,
@@ -326,6 +327,7 @@ async function* processStreamResponse(
   messages: Message[],
   tools: Array<{ name: string; description: string; parameters: unknown }>,
   signal?: AbortSignal,
+  requestOptions?: ChatRequestOptions,
   executor?: StreamingToolExecutor
 ): AsyncGenerator<LoopEvent, StreamResponseResult, void> {
   let fullContent = '';
@@ -338,7 +340,7 @@ async function* processStreamResponse(
   >();
 
   try {
-    const stream = deps.chatService.streamChat(messages, tools, signal);
+    const stream = deps.chatService.streamChat(messages, tools, signal, requestOptions);
     let chunkCount = 0;
 
     for await (const chunk of stream) {
@@ -423,7 +425,12 @@ async function* processStreamResponse(
     ) {
       logger.warn('[Loop] 流式响应返回0个chunk，回退到非流式模式');
       executor?.discard();
-      const fallbackResult = await deps.chatService.chat(messages, tools, signal);
+      const fallbackResult = await deps.chatService.chat(
+        messages,
+        tools,
+        signal,
+        requestOptions
+      );
       return { ...fallbackResult, _nonStreamingFallback: true };
     }
 
@@ -438,7 +445,12 @@ async function* processStreamResponse(
     if (isStreamingNotSupportedError(error)) {
       logger.warn('[Loop] 流式请求失败，降级到非流式模式');
       executor?.discard();
-      const fallbackResult = await deps.chatService.chat(messages, tools, signal);
+      const fallbackResult = await deps.chatService.chat(
+        messages,
+        tools,
+        signal,
+        requestOptions
+      );
       return { ...fallbackResult, _nonStreamingFallback: true };
     }
     throw error;
@@ -727,6 +739,7 @@ export async function* executeLoopGenerator(
     let incompleteIntentRetryCount = 0;
     let delegationRetryCount = 0;
     let verificationRetryCount = 0;
+    let requiredToolName: 'Task' | 'Bash' | undefined;
     let worktreeRetryCount = 0;
     const successfulVerificationCommands = new Set<string>();
     const successfulTools = new Set<string>(
@@ -950,11 +963,24 @@ export async function* executeLoopGenerator(
 
         // 4. 调用 LLM
         const isStreamEnabled = options?.stream !== false;
-        const turnTools =
+        const availableTurnTools =
           singleTaskDelegationClaimed &&
           resolveSingleTaskDelegationRequirement(delegationPolicySources)
             ? tools.filter((tool) => tool.name !== 'Task')
             : tools;
+        const turnRequiredToolName = requiredToolName;
+        requiredToolName = undefined;
+        const turnTools = turnRequiredToolName
+          ? availableTurnTools.filter((tool) => tool.name === turnRequiredToolName)
+          : availableTurnTools;
+        const requestOptions: ChatRequestOptions | undefined = turnRequiredToolName
+          ? {
+              toolChoice: {
+                type: 'tool',
+                toolName: turnRequiredToolName,
+              },
+            }
+          : undefined;
         let turnResult: StreamResponseResult;
         let streamingExecutor: StreamingToolExecutor | undefined;
 
@@ -991,13 +1017,15 @@ export async function* executeLoopGenerator(
               state.toLLMMessages(),
               turnTools,
               options?.signal,
+              requestOptions,
               streamingExecutor
             );
           } else {
             turnResult = await deps.chatService.chat(
               state.toLLMMessages(),
               turnTools,
-              options?.signal
+              options?.signal,
+              requestOptions
             );
           }
         } catch (llmError) {
@@ -1023,6 +1051,7 @@ export async function* executeLoopGenerator(
               context.messages = result.messages;
               // 同步到 state（此时 pending 已被 writeback() commit，为空）
               state.replaceHistory(context.messages);
+              requiredToolName = turnRequiredToolName;
               logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
               turnsCount--;
               continue; // Retry the turn
@@ -1268,6 +1297,7 @@ export async function* executeLoopGenerator(
           );
           if (delegationAction.action === 'retry') {
             delegationRetryCount++;
+            requiredToolName = 'Task';
             state.appendAssistant({
               role: 'assistant',
               content: turnResult.content || '',
@@ -1416,6 +1446,7 @@ export async function* executeLoopGenerator(
           );
           if (verificationAction.action === 'retry') {
             verificationRetryCount++;
+            requiredToolName = 'Bash';
             state.appendAssistant({
               role: 'assistant',
               content: turnResult.content || '',

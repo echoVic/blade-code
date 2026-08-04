@@ -10,6 +10,7 @@ import { createLogger, LogCategory } from '../logging/Logger.js';
 import { abortableSleep } from '../utils/abort.js';
 import type {
   ChatConfig,
+  ChatRequestOptions,
   ChatResponse,
   ContentPart,
   IChatService,
@@ -734,7 +735,8 @@ export class VercelAIChatService implements IChatService {
     model: LanguageModel,
     coreMessages: unknown,
     coreTools: unknown,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    requestOptions?: ChatRequestOptions
   ): Record<string, unknown> {
     let effectiveSignal = signal;
     if (this.config.timeout && this.config.timeout > 0) {
@@ -755,7 +757,13 @@ export class VercelAIChatService implements IChatService {
       temperature: this.config.temperature ?? 0,
       abortSignal: effectiveSignal,
       allowSystemInMessages: true,
+      ...(requestOptions?.toolChoice ? { toolChoice: requestOptions.toolChoice } : {}),
     };
+    if (requestOptions?.toolChoice && !coreTools) {
+      throw new Error(
+        `Required tool is unavailable: ${requestOptions.toolChoice.toolName}`
+      );
+    }
     const providerOptions = this.getThinkingProviderOptions();
     if (providerOptions) {
       opts.providerOptions = providerOptions;
@@ -766,7 +774,8 @@ export class VercelAIChatService implements IChatService {
   async chat(
     messages: Message[],
     tools?: Array<{ name: string; description: string; parameters: unknown }>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    requestOptions?: ChatRequestOptions
   ): Promise<ChatResponse> {
     const startTime = Date.now();
     logger.debug('[VercelAIChatService] Starting chat request');
@@ -777,7 +786,13 @@ export class VercelAIChatService implements IChatService {
 
     const attempt = async (model: LanguageModel): Promise<ChatResponse> => {
       const result = await generateText(
-        this.getStreamTextOptions(model, coreMessages, coreTools, signal) as never
+        this.getStreamTextOptions(
+          model,
+          coreMessages,
+          coreTools,
+          signal,
+          requestOptions
+        ) as never
       );
 
       const toolCalls =
@@ -856,7 +871,8 @@ export class VercelAIChatService implements IChatService {
   async *streamChat(
     messages: Message[],
     tools?: Array<{ name: string; description: string; parameters: unknown }>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    requestOptions?: ChatRequestOptions
   ): AsyncGenerator<StreamChunk, void, unknown> {
     const startTime = Date.now();
     logger.debug('[VercelAIChatService] Starting stream request');
@@ -870,7 +886,13 @@ export class VercelAIChatService implements IChatService {
       model: LanguageModel
     ): AsyncGenerator<StreamChunk, void, unknown> {
       const result = streamText(
-        self.getStreamTextOptions(model, coreMessages, coreTools, signal) as never
+        self.getStreamTextOptions(
+          model,
+          coreMessages,
+          coreTools,
+          signal,
+          requestOptions
+        ) as never
       );
 
       let toolCallIndex = 0;

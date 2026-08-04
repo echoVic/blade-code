@@ -99,6 +99,57 @@ describe('VercelAIChatService', () => {
   // ─── chat() ────────────────────────────────────────────────────────────
 
   describe('chat()', () => {
+    it('rejects an exact tool choice when no matching tools are available', async () => {
+      const service = await createService();
+
+      await expect(
+        service.chat(simpleMessages, [], undefined, {
+          toolChoice: { type: 'tool', toolName: 'Task' },
+        })
+      ).rejects.toThrow('Required tool is unavailable: Task');
+      expect(generateText).not.toHaveBeenCalled();
+    });
+
+    it('forwards an exact tool choice to the provider', async () => {
+      generateText.mockResolvedValueOnce({
+        text: '',
+        toolCalls: [],
+        usage: { promptTokens: 10, completionTokens: 1 },
+        finishReason: 'tool-calls',
+        reasoning: undefined,
+        providerMetadata: undefined,
+      });
+      const service = await createService();
+      const tools = [{ name: 'Task', description: 'Delegate work', parameters: {} }];
+
+      await service.chat(simpleMessages, tools, undefined, {
+        toolChoice: { type: 'tool', toolName: 'Task' },
+      });
+
+      expect(generateText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolChoice: { type: 'tool', toolName: 'Task' },
+        })
+      );
+    });
+
+    it('preserves an exact tool choice when the provider rejects the request', async () => {
+      generateText.mockRejectedValueOnce(new Error('exact tool choice rejected'));
+      const service = await createService({ maxRetries: 0 });
+      const tools = [{ name: 'Task', description: 'Delegate work', parameters: {} }];
+
+      await expect(
+        service.chat(simpleMessages, tools, undefined, {
+          toolChoice: { type: 'tool', toolName: 'Task' },
+        })
+      ).rejects.toThrow('exact tool choice rejected');
+      expect(generateText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolChoice: { type: 'tool', toolName: 'Task' },
+        })
+      );
+    });
+
     it('uses the native DeepSeek provider when provider is deepseek', async () => {
       const { createDeepSeek } = await import('@ai-sdk/deepseek');
 
@@ -292,6 +343,26 @@ describe('VercelAIChatService', () => {
   // ─── streamChat() ─────────────────────────────────────────────────────
 
   describe('streamChat()', () => {
+    it('forwards an exact tool choice to the streaming provider', async () => {
+      streamText.mockReturnValueOnce({
+        fullStream: toAsyncIterable([{ type: 'finish', finishReason: 'tool-calls' }]),
+      });
+      const service = await createService();
+      const tools = [{ name: 'Bash', description: 'Run a command', parameters: {} }];
+
+      for await (const _chunk of service.streamChat(simpleMessages, tools, undefined, {
+        toolChoice: { type: 'tool', toolName: 'Bash' },
+      })) {
+        // drain stream
+      }
+
+      expect(streamText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolChoice: { type: 'tool', toolName: 'Bash' },
+        })
+      );
+    });
+
     it('yields correct chunks on normal success', async () => {
       streamText.mockReturnValueOnce({
         fullStream: toAsyncIterable([

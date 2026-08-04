@@ -14,11 +14,13 @@ vi.mock('../../../../src/context/CompactionService.js', () => ({
   CompactionService: { compact: vi.fn() },
 }));
 
+const reactiveCompactionState = vi.hoisted(() => ({
+  tryReactiveCompact: vi.fn(),
+  reset: vi.fn(),
+}));
+
 vi.mock('../../../../src/context/ReactiveCompaction.js', () => ({
-  ReactiveCompaction: vi.fn().mockImplementation(() => ({
-    tryReactiveCompact: vi.fn().mockResolvedValue({ success: false, messages: [] }),
-    reset: vi.fn(),
-  })),
+  ReactiveCompaction: vi.fn().mockImplementation(() => reactiveCompactionState),
 }));
 
 vi.mock('../../../../src/context/SnipCompaction.js', () => ({
@@ -210,6 +212,10 @@ function createTypedPersistenceHarness(options?: { rejectToolUse?: boolean }) {
 describe('executeLoopGenerator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    reactiveCompactionState.tryReactiveCompact.mockResolvedValue({
+      success: false,
+      messages: [],
+    });
   });
 
   describe('compaction lifecycle', () => {
@@ -1507,6 +1513,73 @@ describe('executeLoopGenerator', () => {
       });
     });
 
+    it('preserves a required Task choice across reactive compaction', async () => {
+      const deps = createMockDeps();
+      deps.runtimeOptions = {
+        ...deps.runtimeOptions,
+        appendSystemPrompt: 'Call Task exactly once before returning an answer.',
+      };
+      const registry = deps.toolExecutor.getRegistry();
+      vi.mocked(registry.getFunctionDeclarationsByMode).mockReturnValue([
+        { name: 'Task', description: 'Delegate work', parameters: {} },
+      ]);
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: 'I will delegate after more planning.',
+          finishReason: 'stop',
+        })
+        .mockRejectedValueOnce(
+          new Error('maximum context length exceeded; status: 413')
+        )
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-required-after-compaction',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'The delegated repair completed.',
+          finishReason: 'stop',
+        });
+      reactiveCompactionState.tryReactiveCompact.mockResolvedValueOnce({
+        success: true,
+        messages: context.messages,
+      });
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        llmContent: 'Subagent repaired the project.',
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Repair the project.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(chatMock.mock.calls[1]?.[3]).toEqual({
+        toolChoice: { type: 'tool', toolName: 'Task' },
+      });
+      expect(chatMock.mock.calls[2]?.[3]).toEqual({
+        toolChoice: { type: 'tool', toolName: 'Task' },
+      });
+    });
+
     it('does not execute Task again after an exactly-once delegation succeeds', async () => {
       const deps = createMockDeps();
       deps.runtimeOptions = {
@@ -1654,6 +1727,7 @@ describe('executeLoopGenerator', () => {
       expect(chatMock).toHaveBeenCalledWith(
         expect.any(Array),
         expect.not.arrayContaining([expect.objectContaining({ name: 'Task' })]),
+        undefined,
         undefined
       );
     });
