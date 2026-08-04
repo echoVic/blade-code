@@ -2,11 +2,27 @@
  * AcpSession 测试
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { AcpSession } from '../../../../src/acp/Session.js';
+import type { LoopEvent } from '../../../../src/agent/loop/types.js';
+import type { LoopResult } from '../../../../src/agent/types.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { createMockACPClient } from '../../../support/mocks/mockACPClient.js';
-import { createMockAgent } from '../../../support/mocks/mockAgent.js';
+import { createMockAgent, type MockAgent } from '../../../support/mocks/mockAgent.js';
+
+type AgentMockInstance = MockAgent & {
+  switchModel: Mock<(modelId: string) => Promise<void>>;
+};
+
+const agentMockState = vi.hoisted((): { current: AgentMockInstance | null } => ({
+  current: null,
+}));
+
+function getMockAgent(): AgentMockInstance {
+  const agent = agentMockState.current;
+  if (!agent) throw new Error('Agent mock has not been created');
+  return agent;
+}
 
 const runtimeState = vi.hoisted(() => ({
   runtime: {
@@ -23,48 +39,20 @@ const runtimeState = vi.hoisted(() => ({
 
 // Mock Agent
 vi.mock('../../../../src/agent/Agent.js', () => {
-  let mockAgentInstance: any = null;
-  const mockChatGen = async function* () {
-    yield { type: 'turn_start', turn: 1, maxTurns: 1 };
-    return {
-      success: true,
-      finalMessage: 'Mock response',
-      metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-    };
+  const createAgent = (): AgentMockInstance => {
+    const mockAgent: AgentMockInstance = Object.assign(createMockAgent(), {
+      switchModel: vi.fn(async (_modelId: string): Promise<void> => undefined),
+    });
+    mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
+    agentMockState.current = mockAgent;
+    return mockAgent;
   };
-  const MockAgentClass = Object.assign(
-    vi.fn().mockImplementation(() => {
-      const mockAgent = createMockAgent();
-      mockAgent.chat = vi.fn().mockImplementation(mockChatGen);
-      mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
-      mockAgentInstance = mockAgent;
-      return mockAgent;
-    }),
-    {
-      create: vi.fn().mockImplementation(async () => {
-        const mockAgent = createMockAgent();
-        mockAgent.chat = vi.fn().mockImplementation(mockChatGen);
-        mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
-        mockAgentInstance = mockAgent;
-        return mockAgent;
-      }),
-      createWithRuntime: vi.fn().mockImplementation(async () => {
-        const mockAgent = createMockAgent() as ReturnType<typeof createMockAgent> & {
-          switchModel: ReturnType<typeof vi.fn>;
-        };
-        mockAgent.chat = vi.fn().mockImplementation(mockChatGen);
-        mockAgent.switchModel = vi.fn().mockResolvedValue(undefined);
-        mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
-        mockAgentInstance = mockAgent;
-        return mockAgent;
-      }),
-    }
-  );
+  const MockAgentClass = Object.assign(vi.fn().mockImplementation(createAgent), {
+    create: vi.fn(async () => createAgent()),
+    createWithRuntime: vi.fn(async () => createAgent()),
+  });
 
-  return {
-    Agent: MockAgentClass,
-    _getMockAgentInstance: () => mockAgentInstance,
-  };
+  return { Agent: MockAgentClass };
 });
 
 vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
@@ -109,6 +97,7 @@ describe('AcpSession', () => {
   let session: AcpSession;
 
   beforeEach(() => {
+    agentMockState.current = null;
     runtimeState.runtime.dispose.mockReset().mockResolvedValue(undefined);
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     // 创建 mock 连接
@@ -174,14 +163,9 @@ describe('AcpSession', () => {
     it('应该在初始化后自动恢复 durable follow-up', async () => {
       runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
       await session.initialize();
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
 
       await vi.waitFor(() => {
-        expect(agentModule._getMockAgentInstance().calls[0]).toMatchObject({
+        expect(getMockAgent().calls[0]).toMatchObject({
           message: '',
           options: { pendingInputOnly: true },
         });
@@ -190,6 +174,62 @@ describe('AcpSession', () => {
   });
 
   describe('replayHistory', () => {
+    it.each([
+      'destroy',
+      'abort',
+    ] as const)('%s 后停止 deferred history replay 且不恢复 pending input', async (stopMethod) => {
+      await session.initialize();
+      getMockAgent().chatStream = async function* (_message, context) {
+        context.messages.push(
+          { role: 'user', content: 'first visible chunk' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'second visible chunk' },
+              { type: 'text', text: 'third visible chunk' },
+            ],
+          }
+        );
+        yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
+        return { success: true, finalMessage: 'history prepared' };
+      };
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'prepare replay history' }],
+      });
+      mockConnection.sessionUpdates = [];
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+
+      let releaseFirstUpdate: (() => void) | undefined;
+      const firstUpdateGate = new Promise<void>((resolve) => {
+        releaseFirstUpdate = resolve;
+      });
+      const originalSessionUpdate = mockConnection.sessionUpdate.bind(mockConnection);
+      let updateCount = 0;
+      vi.spyOn(mockConnection, 'sessionUpdate').mockImplementation(async (params) => {
+        updateCount += 1;
+        await originalSessionUpdate(params);
+        if (updateCount === 1) await firstUpdateGate;
+      });
+
+      const replay = session.replayHistory();
+      await vi.waitFor(() => {
+        expect(mockConnection.sessionUpdates).toHaveLength(1);
+      });
+
+      if (stopMethod === 'destroy') {
+        await session.destroy();
+      } else {
+        connectionAbortController.abort();
+      }
+      releaseFirstUpdate?.();
+      await expect(replay).resolves.toBeUndefined();
+      await Promise.resolve();
+
+      expect(mockConnection.sessionUpdates).toHaveLength(1);
+      expect(getMockAgent().calls).toHaveLength(0);
+    });
+
     it('应该按顺序回放用户和助手历史且隐藏内部消息', async () => {
       const history: Message[] = [
         { role: 'user', content: 'Original question' },
@@ -257,12 +297,7 @@ describe('AcpSession', () => {
         prompt: [{ type: 'text', text: 'What marker did I ask you to remember?' }],
       });
 
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      const call = agentModule._getMockAgentInstance().getLastCall();
+      const call = getMockAgent().getLastCall();
       expect(call?.context.messages).toEqual(history);
     });
   });
@@ -401,12 +436,7 @@ describe('AcpSession', () => {
     });
 
     it('应该通知 IDE 有崩溃后恢复的 steering 指令', async () => {
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      const mockAgent = agentModule._getMockAgentInstance();
+      const mockAgent = getMockAgent();
       mockAgent.chatStream = vi.fn(async function* () {
         yield {
           kind: 'follow_up_started',
@@ -605,16 +635,7 @@ describe('AcpSession', () => {
     it('应该切换会话运行时使用的模型', async () => {
       await session.setModel('gpt-4');
 
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent> & {
-          switchModel: ReturnType<typeof vi.fn>;
-        };
-      };
-      expect(agentModule._getMockAgentInstance().switchModel).toHaveBeenCalledWith(
-        'gpt-4'
-      );
+      expect(getMockAgent().switchModel).toHaveBeenCalledWith('gpt-4');
     });
 
     it('活动回合期间应该拒绝切换模型', async () => {
@@ -627,14 +648,75 @@ describe('AcpSession', () => {
   });
 
   describe('destroy', () => {
+    it('destroy 后丢弃仍在 drain 的旧 generator 产生的更新', async () => {
+      await session.initialize();
+      const mockAgent = getMockAgent();
+      let releaseLateEvents: (() => void) | undefined;
+      const lateEventsReady = new Promise<void>((resolve) => {
+        releaseLateEvents = resolve;
+      });
+      let generatorStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        generatorStarted = resolve;
+      });
+      mockAgent.chatStream = async function* (): AsyncGenerator<
+        LoopEvent,
+        LoopResult,
+        void
+      > {
+        generatorStarted?.();
+        await lateEventsReady;
+        yield { kind: 'content_delta', delta: 'late content' };
+        yield {
+          kind: 'tool_start',
+          toolCall: {
+            id: 'late-tool',
+            type: 'function',
+            function: { name: 'lateTool', arguments: '{}' },
+          },
+          toolKind: 'execute',
+        };
+        yield {
+          kind: 'task_update',
+          tasks: [
+            {
+              id: 'late-task',
+              subject: 'Late task',
+              description: 'Must not escape the old owner',
+              status: 'in_progress',
+              priority: 'medium',
+              blocks: [],
+              blockedBy: [],
+              createdAt: '2026-08-04T00:00:00.000Z',
+            },
+          ],
+        };
+        return { success: true, finalMessage: '' };
+      };
+
+      const prompt = session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'start deferred stream' }],
+      });
+      await started;
+      await session.destroy();
+      releaseLateEvents?.();
+      await prompt;
+
+      expect(mockConnection.sessionUpdates).toEqual([]);
+    });
+
+    it('connection abort 后直接丢弃 session update', async () => {
+      connectionAbortController.abort();
+
+      await session.setMode('yolo');
+
+      expect(mockConnection.sessionUpdates).toEqual([]);
+    });
+
     it('应该完整清理会话且二次 destroy 不重复资源 cleanup', async () => {
       await session.initialize();
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      const mockAgent = agentModule._getMockAgentInstance();
+      const mockAgent = getMockAgent();
       const cancel = vi.spyOn(session, 'cancel');
       await session.destroy();
       await session.destroy();
@@ -677,12 +759,7 @@ describe('AcpSession', () => {
       expectedError,
     }) => {
       await session.initialize();
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      const mockAgent = agentModule._getMockAgentInstance();
+      const mockAgent = getMockAgent();
       if (agentError) mockAgent.destroy = vi.fn().mockRejectedValueOnce(agentError);
       if (runtimeError) {
         runtimeState.runtime.dispose.mockRejectedValueOnce(runtimeError);
@@ -708,12 +785,7 @@ describe('AcpSession', () => {
 
     it('cancel 失败时仍应该清理 Agent、runtime 与 ACP context', async () => {
       await session.initialize();
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      const mockAgent = agentModule._getMockAgentInstance();
+      const mockAgent = getMockAgent();
       vi.spyOn(session, 'cancel').mockImplementationOnce(() => {
         throw new Error('cancel failed first');
       });
@@ -730,12 +802,7 @@ describe('AcpSession', () => {
 
     it('ACP context destroy 失败时应该在其余 cleanup 后重抛且保持幂等', async () => {
       await session.initialize();
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      const mockAgent = agentModule._getMockAgentInstance();
+      const mockAgent = getMockAgent();
       const { AcpServiceContext } = await import(
         '../../../../src/acp/AcpServiceContext.js'
       );

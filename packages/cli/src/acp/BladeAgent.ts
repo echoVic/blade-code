@@ -5,8 +5,8 @@
  *
  */
 
-import type * as acp from '@agentclientprotocol/sdk';
 import path from 'node:path';
+import type * as acp from '@agentclientprotocol/sdk';
 import {
   type Agent as AcpAgentInterface,
   type AgentSideConnection,
@@ -29,7 +29,9 @@ const logger = createLogger(LogCategory.AGENT);
  */
 export class BladeAgent implements AcpAgentInterface {
   private sessions: Map<string, AcpSession> = new Map();
+  private sessionLoadQueues: Map<string, Promise<void>> = new Map();
   private clientCapabilities: acp.ClientCapabilities | undefined;
+  private destroyed = false;
 
   constructor(private connection: AgentSideConnection) {}
 
@@ -82,6 +84,7 @@ export class BladeAgent implements AcpAgentInterface {
    * 创建新会话
    */
   async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
+    this.assertNotDestroyed();
     const sessionId = nanoid();
     logger.info(`[BladeAgent] Creating new session: ${sessionId}`);
     logger.debug(`[BladeAgent] Session cwd: ${params.cwd || getCwd()}`);
@@ -98,6 +101,7 @@ export class BladeAgent implements AcpAgentInterface {
     try {
       // 初始化会话（创建 Agent 等）
       await session.initialize();
+      this.assertNotDestroyed();
     } catch (error) {
       await session.destroy().catch(() => undefined);
       throw error;
@@ -143,6 +147,7 @@ export class BladeAgent implements AcpAgentInterface {
   async unstable_forkSession(
     params: acp.ForkSessionRequest
   ): Promise<acp.ForkSessionResponse> {
+    this.assertNotDestroyed();
     if (!path.isAbsolute(params.cwd)) {
       throw new Error('ACP session fork cwd must be absolute');
     }
@@ -151,6 +156,7 @@ export class BladeAgent implements AcpAgentInterface {
       sourceProjectPath: params.cwd,
       targetProjectPath: params.cwd,
     });
+    this.assertNotDestroyed();
     const session = new AcpSession(
       fork.sessionId,
       params.cwd,
@@ -161,6 +167,7 @@ export class BladeAgent implements AcpAgentInterface {
 
     try {
       await session.initialize();
+      this.assertNotDestroyed();
     } catch (error) {
       await session.destroy().catch(() => undefined);
       throw error;
@@ -175,15 +182,42 @@ export class BladeAgent implements AcpAgentInterface {
    * 恢复持久化会话并在响应前按协议回放历史。
    */
   async loadSession(params: acp.LoadSessionRequest): Promise<acp.LoadSessionResponse> {
+    this.assertNotDestroyed();
     logger.info(`[BladeAgent] Loading session: ${params.sessionId}`);
+    const previousLoad = this.sessionLoadQueues.get(params.sessionId);
+    const load = (previousLoad ?? Promise.resolve()).then(() =>
+      this.replaceSession(params)
+    );
+    const queueTail = load.then(
+      () => undefined,
+      () => undefined
+    );
+    this.sessionLoadQueues.set(params.sessionId, queueTail);
 
-    let messages = await SessionService.loadSession(params.sessionId, params.cwd);
+    try {
+      return await load;
+    } finally {
+      if (this.sessionLoadQueues.get(params.sessionId) === queueTail) {
+        this.sessionLoadQueues.delete(params.sessionId);
+      }
+    }
+  }
+
+  private async replaceSession(
+    params: acp.LoadSessionRequest
+  ): Promise<acp.LoadSessionResponse> {
+    this.assertNotDestroyed();
     const existingSession = this.sessions.get(params.sessionId);
     if (existingSession) {
-      await existingSession.destroy();
-      this.sessions.delete(params.sessionId);
-      messages = await SessionService.loadSession(params.sessionId, params.cwd);
+      try {
+        await existingSession.destroy();
+      } finally {
+        if (this.sessions.get(params.sessionId) === existingSession) {
+          this.sessions.delete(params.sessionId);
+        }
+      }
     }
+    const messages = await SessionService.loadSession(params.sessionId, params.cwd);
 
     const session = new AcpSession(
       params.sessionId,
@@ -196,6 +230,7 @@ export class BladeAgent implements AcpAgentInterface {
     try {
       await session.initialize();
       await session.replayHistory();
+      this.assertNotDestroyed();
     } catch (error) {
       await session.destroy().catch(() => undefined);
       throw error;
@@ -211,6 +246,10 @@ export class BladeAgent implements AcpAgentInterface {
     sessionId: string
   ): acp.NewSessionResponse & acp.ForkSessionResponse {
     return { sessionId, ...this.buildSessionSetup() };
+  }
+
+  private assertNotDestroyed(): void {
+    if (this.destroyed) throw new Error('BladeAgent is destroyed');
   }
 
   private buildSessionSetup(): acp.LoadSessionResponse {
@@ -328,6 +367,10 @@ export class BladeAgent implements AcpAgentInterface {
    * 清理资源
    */
   async destroy(): Promise<void> {
+    this.destroyed = true;
+    await Promise.all([...this.sessionLoadQueues.values()]);
+    this.sessionLoadQueues.clear();
+
     let firstError: unknown;
     for (const session of this.sessions.values()) {
       try {

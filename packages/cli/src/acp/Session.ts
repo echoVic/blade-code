@@ -183,6 +183,7 @@ export class AcpSession {
    */
   async replayHistory(): Promise<void> {
     for (const message of this.messages) {
+      if (!this.canSendUpdates()) return;
       const sessionUpdate =
         message.role === 'user'
           ? 'user_message_chunk'
@@ -192,10 +193,8 @@ export class AcpSession {
       if (!sessionUpdate) continue;
 
       for (const content of historyContentBlocks(message.content)) {
-        await this.connection.sessionUpdate({
-          sessionId: this.id,
-          update: { sessionUpdate, content },
-        });
+        if (!this.canSendUpdates()) return;
+        if (!(await this.sendUpdateAndWait({ sessionUpdate, content }))) return;
       }
     }
     if (this.pendingResumeRequested) {
@@ -595,7 +594,7 @@ export class AcpSession {
     } finally {
       if (this.pendingPrompt === abortController) {
         this.pendingPrompt = null;
-        if (this.pendingResumeRequested) {
+        if (!this.destroyed && this.pendingResumeRequested) {
           this.schedulePendingResume();
         }
       }
@@ -603,6 +602,7 @@ export class AcpSession {
   }
 
   private schedulePendingResume(): void {
+    if (this.destroyed || this.connection.signal.aborted) return;
     this.pendingResumeRequested = true;
     queueMicrotask(() => {
       void this.resumePendingIfIdle();
@@ -610,6 +610,7 @@ export class AcpSession {
   }
 
   private async resumePendingIfIdle(): Promise<void> {
+    if (this.destroyed || this.connection.signal.aborted) return;
     if (this.pendingPrompt || !this.runtime || !this.agent) return;
     if (this.runtime.getPendingSteeringCount() === 0) {
       this.pendingResumeRequested = false;
@@ -789,7 +790,20 @@ export class AcpSession {
   /**
    * 发送会话更新通知
    */
+  private canSendUpdates(): boolean {
+    return !this.destroyed && !this.connection.signal.aborted;
+  }
+
+  private async sendUpdateAndWait(
+    update: SessionNotification['update']
+  ): Promise<boolean> {
+    if (!this.canSendUpdates()) return false;
+    await this.connection.sessionUpdate({ sessionId: this.id, update });
+    return this.canSendUpdates();
+  }
+
   private sendUpdate(update: SessionNotification['update']): void {
+    if (!this.canSendUpdates()) return;
     const params: SessionNotification = {
       sessionId: this.id,
       update,
