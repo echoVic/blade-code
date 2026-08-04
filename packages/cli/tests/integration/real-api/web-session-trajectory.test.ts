@@ -37,7 +37,6 @@ import {
 } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
-  getEnabledModelConfigs,
   isRealApiTestEnabled,
   resolveForkQualificationModels,
   type TestModelConfig,
@@ -52,7 +51,14 @@ if (enabled && !process.env.DEEPSEEK_API_KEY?.trim()) {
 const modelConfigs = enabled
   ? resolveForkQualificationModels(process.env, { requiredDeepSeek: true })
   : [];
-const regressionModelConfigs = enabled ? getEnabledModelConfigs() : [];
+const legacyRegressionModels = modelConfigs.filter(
+  (config) => config.id === 'deepseek' && config.model === 'deepseek-v4-flash'
+);
+if (enabled && legacyRegressionModels.length !== 1) {
+  throw new Error(
+    'Web regression qualification requires exactly one DeepSeek Flash model'
+  );
+}
 
 const SessionListSchema = z.array(SessionSchema);
 const AcceptedMessageSchema = z.object({
@@ -437,13 +443,21 @@ async function waitForRunCompletion(
   afterIndex: number,
   timeoutMs = 180_000
 ): Promise<void> {
-  await collector.waitFor(
+  const completed = await collector.waitFor(
     (event) => event.type === 'session.completed' && event.properties.runId === runId,
     { afterIndex, label: 'session.completed', timeoutMs }
   );
+  const completedIndex = collector.events.indexOf(completed);
+  if (completedIndex < afterIndex) {
+    throw new Error('Completed SSE event is outside the current run boundary');
+  }
   await collector.waitFor(
     (event) => event.type === 'session.status' && event.properties.status === 'idle',
-    { afterIndex, label: 'session.status:idle', timeoutMs }
+    {
+      afterIndex: completedIndex + 1,
+      label: 'session.status:idle after completed',
+      timeoutMs,
+    }
   );
   expect(await getStatus(server, ref)).toEqual({
     sessionId: ref.sessionId,
@@ -756,7 +770,7 @@ async function runChildTurn(
 const describeWebRegression = enabled ? describe.sequential : describe.skip;
 
 describeWebRegression('Web session trajectory regressions (real API)', () => {
-  for (const [modelIndex, modelConfig] of regressionModelConfigs.entries()) {
+  for (const [modelIndex, modelConfig] of legacyRegressionModels.entries()) {
     const modelLabel = safeModelLabel(modelConfig, modelIndex);
 
     it(`${modelLabel} fixes and verifies code through HTTP and SSE`, async () => {
