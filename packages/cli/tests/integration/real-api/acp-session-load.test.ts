@@ -42,10 +42,13 @@ class RecordingClient implements acp.Client {
   }
 }
 
-function createHarness(client: RecordingClient): {
+interface PairedAcpHarness {
   connection: acp.ClientSideConnection;
-  agent: BladeAgent;
-} {
+  agentConnection: acp.AgentSideConnection;
+  close(): Promise<void>;
+}
+
+function createHarness(client: RecordingClient): PairedAcpHarness {
   const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
   const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
   let agent: BladeAgent | undefined;
@@ -53,7 +56,7 @@ function createHarness(client: RecordingClient): {
     () => client,
     acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
   );
-  new acp.AgentSideConnection(
+  const agentConnection = new acp.AgentSideConnection(
     (agentConnection) => {
       agent = new BladeAgent(agentConnection);
       return agent;
@@ -61,7 +64,40 @@ function createHarness(client: RecordingClient): {
     acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
   );
   if (!agent) throw new Error('ACP Agent was not created');
-  return { connection, agent };
+  const productionAgent = agent;
+  let closePromise: Promise<void> | undefined;
+
+  return {
+    connection,
+    agentConnection,
+    close: () => {
+      closePromise ??= (async () => {
+        let firstError: unknown;
+        try {
+          await productionAgent.destroy();
+        } catch (error) {
+          firstError = error;
+        }
+
+        try {
+          const clientWriter = clientToAgent.writable.getWriter();
+          const agentWriter = agentToClient.writable.getWriter();
+          try {
+            await Promise.all([clientWriter.close(), agentWriter.close()]);
+          } finally {
+            clientWriter.releaseLock();
+            agentWriter.releaseLock();
+          }
+          await Promise.all([connection.closed, agentConnection.closed]);
+        } catch (error) {
+          firstError ??= error;
+        }
+
+        if (firstError !== undefined) throw firstError;
+      })();
+      return closePromise;
+    },
+  };
 }
 
 function configureModel(modelConfig: TestModelConfig): string {
@@ -98,6 +134,37 @@ function replayedText(updates: acp.SessionNotification[]): string {
     .join('');
 }
 
+describe('direct ACP session transport fixture', () => {
+  it('exposes transport abort state and suppresses updates after close', async () => {
+    const client = new RecordingClient();
+    const harness = createHarness(client);
+    const session = new AcpSession(
+      'direct-transport-abort',
+      process.cwd(),
+      harness.agentConnection,
+      {},
+      {
+        initialMessages: [{ role: 'user', content: 'transport lifecycle marker' }],
+      }
+    );
+
+    try {
+      await session.replayHistory();
+      expect(replayedText(client.updates)).toContain('transport lifecycle marker');
+
+      client.updates.length = 0;
+      await harness.close();
+      expect(harness.agentConnection.signal.aborted).toBe(true);
+
+      await session.replayHistory();
+      expect(client.updates).toEqual([]);
+    } finally {
+      await session.destroy().catch(() => undefined);
+      await harness.close().catch(() => undefined);
+    }
+  });
+});
+
 beforeAll(() => {
   if (!enabled) return;
   originalConfig = getState().config.config;
@@ -127,13 +194,13 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
       await writeFile(markerPath, `${marker}\n`);
       const modelId = configureModel(modelConfig);
 
-      let firstAgent: BladeAgent | undefined;
-      let secondAgent: BladeAgent | undefined;
+      let firstHarness: PairedAcpHarness | undefined;
+      let secondHarness: PairedAcpHarness | undefined;
       try {
         await runWithCwdOverride(workspace, async () => {
           const firstClient = new RecordingClient();
           const first = createHarness(firstClient);
-          firstAgent = first.agent;
+          firstHarness = first;
           const initialized = await first.connection.initialize({
             protocolVersion: acp.PROTOCOL_VERSION,
             clientCapabilities: {},
@@ -168,8 +235,8 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
             )
           ).toBe(true);
 
-          await first.agent.destroy();
-          firstAgent = undefined;
+          await first.close();
+          firstHarness = undefined;
           const restoredMessages = await SessionService.loadSession(
             session.sessionId,
             workspace
@@ -190,7 +257,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
 
           const secondClient = new RecordingClient();
           const second = createHarness(secondClient);
-          secondAgent = second.agent;
+          secondHarness = second;
           await second.connection.initialize({
             protocolVersion: acp.PROTOCOL_VERSION,
             clientCapabilities: {},
@@ -232,8 +299,8 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
           );
         });
       } finally {
-        await firstAgent?.destroy().catch(() => undefined);
-        await secondAgent?.destroy().catch(() => undefined);
+        await firstHarness?.close().catch(() => undefined);
+        await secondHarness?.close().catch(() => undefined);
         await rm(workspace, { recursive: true, force: true });
       }
     }, 300_000);
@@ -243,10 +310,11 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
       process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
       configureModel(modelConfig);
       const client = new RecordingClient();
+      const harness = createHarness(client);
       const session = new AcpSession(
         `acp-steering-${Date.now()}`,
         workspace,
-        client as unknown as acp.AgentSideConnection,
+        harness.agentConnection,
         {}
       );
 
@@ -292,6 +360,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
         });
       } finally {
         await session.destroy().catch(() => undefined);
+        await harness.close().catch(() => undefined);
         await rm(workspace, { recursive: true, force: true });
       }
     }, 300_000);
@@ -301,6 +370,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
       process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
       configureModel(modelConfig);
       const client = new RecordingClient();
+      const harness = createHarness(client);
       const sessionId = `acp-recovery-${Date.now()}`;
       let firstRuntime: SessionRuntime | undefined;
       let session: AcpSession | undefined;
@@ -333,7 +403,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
           session = new AcpSession(
             sessionId,
             workspace,
-            client as unknown as acp.AgentSideConnection,
+            harness.agentConnection,
             {},
             { initialMessages }
           );
@@ -379,6 +449,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
       } finally {
         await firstRuntime?.dispose().catch(() => undefined);
         await session?.destroy().catch(() => undefined);
+        await harness.close().catch(() => undefined);
         await rm(workspace, { recursive: true, force: true });
       }
     }, 300_000);
