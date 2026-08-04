@@ -1,22 +1,17 @@
 /**
  * Resume Slash Command
- * 恢复历史会话
+ * 恢复当前工作区的历史会话
  */
 
+import path from 'node:path';
 import { SessionService } from '../services/SessionService.js';
-import { sessionActions } from '../store/vanilla.js';
-import {
-  getUI,
-  type SlashCommand,
-  type SlashCommandContext,
-  type SlashCommandResult,
-} from './types.js';
+import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 const resumeCommand: SlashCommand = {
   name: 'resume',
   description: 'Resume a conversation',
   fullDescription:
-    '恢复历史会话。可以指定 sessionId 直接恢复，或不带参数打开会话选择器',
+    '恢复当前工作区的历史会话。可以指定 sessionId 直接恢复，或不带参数打开会话选择器',
   usage: '/resume [sessionId]',
   aliases: ['r'],
   category: 'Session',
@@ -25,80 +20,47 @@ const resumeCommand: SlashCommand = {
     args: string[],
     context: SlashCommandContext
   ): Promise<SlashCommandResult> {
-    const ui = getUI(context);
-    const restoreSession = sessionActions().restoreSession;
-
-    // 情况 1: 提供了 sessionId,直接恢复
-    if (args.length > 0) {
-      const sessionId = args[0];
-
-      try {
-        // 加载会话消息
-        const messages = await SessionService.loadSession(sessionId);
-
-        if (messages.length === 0) {
-          ui.sendMessage(`[FAIL] 会话 \`${sessionId}\` 为空或无法加载`);
-          return {
-            success: false,
-            error: '会话为空',
-          };
-        }
-
-        // 转换为 SessionMessage 格式并恢复会话（共用 UI-safe 归一化，过滤 tool/system 等内部消息）
-        const sessionMessages = SessionService.toUISafeMessages(messages);
-
-        restoreSession(sessionId, sessionMessages, messages);
-
-        ui.sendMessage(
-          `[OK] 已恢复会话 \`${sessionId}\`\n\n共 ${sessionMessages.length} 条消息已加载，可以继续对话`
-        );
-
-        return {
-          success: true,
-          message: 'session_restored',
-          data: {
-            sessionId,
-            messageCount: sessionMessages.length,
-          },
-        };
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : '未知错误';
-        ui.sendMessage(`[FAIL] 加载会话失败: ${errorMessage}`);
-        return {
-          success: false,
-          error: `加载会话失败: ${errorMessage}`,
-        };
-      }
+    if (args.length > 1) {
+      return { success: false, error: 'Usage: /resume [sessionId]' };
     }
 
-    // 情况 2: 没有提供 sessionId,显示会话选择器
     try {
-      const sessions = await SessionService.listSessions();
+      const resolvedWorkspace = path.resolve(context.cwd);
+      const listedSessions = await SessionService.listSessions({
+        cwd: resolvedWorkspace,
+        includeSubagents: false,
+      });
+      const sessions = listedSessions.filter(
+        (session) => path.resolve(session.projectPath) === resolvedWorkspace
+      );
 
-      if (sessions.length === 0) {
-        ui.sendMessage(
-          '**没有找到历史会话**\n\n开始一次对话后,会话历史将自动保存到 `~/.blade/projects/`'
-        );
+      if (args.length === 0) {
+        if (sessions.length === 0) {
+          return {
+            success: false,
+            error: 'No resumable sessions found in current workspace',
+          };
+        }
         return {
           success: true,
-          message: '没有可用会话',
+          data: { action: 'select_session', intent: 'resume', sessions },
         };
       }
 
-      // 返回特殊消息,触发 UI 显示会话选择器
+      const sessionId = args[0]!;
+      const session = sessions.find((candidate) => candidate.sessionId === sessionId);
+      if (!session) {
+        return { success: false, error: `Session not found: ${sessionId}` };
+      }
+
       return {
         success: true,
-        message: 'show_session_selector',
-        data: {
-          sessions,
-        },
+        data: { action: 'activate_session', intent: 'resume', session },
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      ui.sendMessage(`获取会话列表失败: ${errorMessage}`);
       return {
         success: false,
-        error: `获取会话列表失败: ${errorMessage}`,
+        error: error instanceof Error ? error.message : 'Failed to list sessions',
       };
     }
   },

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '../../../../../src/services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../../../../../src/services/SessionService.js';
 import type { SessionMessage } from '../../../../../src/store/types.js';
+import { buildContextMessagesFromSession } from '../../../../../src/ui/utils/sessionContext.js';
 
 const serviceMocks = vi.hoisted(() => ({
   forkSession: vi.fn(),
@@ -91,6 +92,7 @@ describe('activateSessionSelection', () => {
       >(),
     addAssistantMessage: vi.fn<(message: string) => void>(),
   };
+  const cleanupAgent = vi.fn<() => Promise<void>>();
 
   beforeEach(() => {
     serviceMocks.forkSession.mockReset();
@@ -99,9 +101,116 @@ describe('activateSessionSelection', () => {
     serviceMocks.toUISafeMessages.mockReset();
     actions.restoreSession.mockReset();
     actions.addAssistantMessage.mockReset();
+    cleanupAgent.mockReset();
+    cleanupAgent.mockResolvedValue(undefined);
   });
 
-  it('forks inside the current workspace, restores child messages, and announces the fork', async () => {
+  it('does not switch stores or announce when cleanup fails after durable fork creation', async () => {
+    const parentMetadata = createSessionMetadata();
+    serviceMocks.forkSession.mockResolvedValue({
+      sessionId: 'child-session-abcdefgh',
+      parentSessionId: parentMetadata.sessionId,
+      projectPath: '/workspace/parent',
+      messages: childMessages,
+      metadata: createSessionMetadata({
+        sessionId: 'child-session-abcdefgh',
+        relationType: 'fork',
+        parentId: parentMetadata.sessionId,
+      }),
+    });
+    serviceMocks.toUISafeMessages.mockReturnValue(safeMessages);
+    cleanupAgent.mockRejectedValue(new Error('runtime cleanup failed'));
+
+    const { activateSessionSelection } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await expect(
+      activateSessionSelection(
+        { intent: 'fork', session: parentMetadata },
+        '/workspace/parent',
+        actions,
+        cleanupAgent
+      )
+    ).rejects.toThrow('runtime cleanup failed');
+
+    expect(serviceMocks.forkSession).toHaveBeenCalledOnce();
+    expect(serviceMocks.toUISafeMessages).toHaveBeenCalledWith(childMessages);
+    expect(actions.restoreSession).not.toHaveBeenCalled();
+    expect(actions.addAssistantMessage).not.toHaveBeenCalled();
+  });
+
+  it('restores a UI-only fork announcement without adding it to model context', async () => {
+    const parentMetadata = createSessionMetadata();
+    serviceMocks.forkSession.mockResolvedValue({
+      sessionId: 'child-session-abcdefgh',
+      parentSessionId: parentMetadata.sessionId,
+      projectPath: '/workspace/parent',
+      messages: childMessages,
+      metadata: createSessionMetadata({
+        sessionId: 'child-session-abcdefgh',
+        relationType: 'fork',
+        parentId: parentMetadata.sessionId,
+      }),
+    });
+    serviceMocks.toUISafeMessages.mockReturnValue(safeMessages);
+
+    const { activateSessionSelection } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await activateSessionSelection(
+      { intent: 'fork', session: parentMetadata },
+      '/workspace/parent',
+      actions,
+      cleanupAgent
+    );
+
+    expect(actions.restoreSession).toHaveBeenCalledOnce();
+    const [, visibleMessages, restoredContextMessages] =
+      actions.restoreSession.mock.calls[0]!;
+    expect(visibleMessages).toEqual([
+      ...safeMessages,
+      expect.objectContaining({
+        role: 'assistant',
+        content: 'Forked parent-s… → child-se…',
+      }),
+    ]);
+    expect(restoredContextMessages).toBe(childMessages);
+    expect(
+      buildContextMessagesFromSession({
+        messages: visibleMessages,
+        restoredContextMessages,
+        restoredVisibleMessageCount: visibleMessages.length,
+      })
+    ).toEqual(childMessages);
+    expect(actions.addAssistantMessage).not.toHaveBeenCalled();
+  });
+
+  it('rejects resume selections outside the current workspace before durable load', async () => {
+    const resumeMetadata = createSessionMetadata({
+      sessionId: 'resume-session-12345678',
+      projectPath: '/workspace/elsewhere',
+    });
+    const { activateSessionSelection } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await expect(
+      activateSessionSelection(
+        { intent: 'resume', session: resumeMetadata },
+        '/workspace/parent',
+        actions,
+        cleanupAgent
+      )
+    ).rejects.toThrow('current workspace');
+
+    expect(serviceMocks.loadSession).not.toHaveBeenCalled();
+    expect(cleanupAgent).not.toHaveBeenCalled();
+    expect(actions.restoreSession).not.toHaveBeenCalled();
+  });
+
+  it('forks inside the current workspace and restores child messages with a visible announcement', async () => {
     const parentMetadata = createSessionMetadata();
     serviceMocks.forkSession.mockResolvedValue({
       sessionId: 'child-session-abcdefgh',
@@ -124,7 +233,8 @@ describe('activateSessionSelection', () => {
       activateSessionSelection(
         { intent: 'fork', session: parentMetadata },
         '/workspace/parent',
-        actions
+        actions,
+        cleanupAgent
       )
     ).resolves.toEqual({
       sessionId: 'child-session-abcdefgh',
@@ -138,12 +248,16 @@ describe('activateSessionSelection', () => {
     expect(serviceMocks.toUISafeMessages).toHaveBeenCalledWith(childMessages);
     expect(actions.restoreSession).toHaveBeenCalledWith(
       'child-session-abcdefgh',
-      safeMessages,
+      [
+        ...safeMessages,
+        expect.objectContaining({
+          role: 'assistant',
+          content: 'Forked parent-s… → child-se…',
+        }),
+      ],
       childMessages
     );
-    expect(actions.addAssistantMessage).toHaveBeenCalledWith(
-      'Forked parent-s… → child-se…'
-    );
+    expect(actions.addAssistantMessage).not.toHaveBeenCalled();
   });
 
   it('throws before service calls when interactive fork crosses workspaces', async () => {
@@ -158,9 +272,12 @@ describe('activateSessionSelection', () => {
       activateSessionSelection(
         { intent: 'fork', session: parentMetadata },
         '/workspace/parent',
-        actions
+        actions,
+        cleanupAgent
       )
-    ).rejects.toThrow('Interactive session forks are limited to the current workspace');
+    ).rejects.toThrow(
+      'Interactive session activation is limited to the current workspace'
+    );
 
     expect(serviceMocks.forkSession).not.toHaveBeenCalled();
     expect(actions.restoreSession).not.toHaveBeenCalled();
@@ -194,7 +311,8 @@ describe('activateSessionSelection', () => {
         announceFork: false,
       },
       '/workspace/parent',
-      actions
+      actions,
+      cleanupAgent
     );
 
     expect(serviceMocks.forkSession).toHaveBeenCalledWith('parent-session-12345678', {
@@ -218,7 +336,8 @@ describe('activateSessionSelection', () => {
       activateSessionSelection(
         { intent: 'fork', session: parentMetadata },
         '/workspace/parent',
-        actions
+        actions,
+        cleanupAgent
       )
     ).rejects.toThrow('fork failed');
 
@@ -227,10 +346,10 @@ describe('activateSessionSelection', () => {
     expect(actions.addAssistantMessage).not.toHaveBeenCalled();
   });
 
-  it('loads and restores resume selections without current-workspace restrictions or fork announcements', async () => {
+  it('loads and restores resume selections from the current workspace without announcements', async () => {
     const resumeMetadata = createSessionMetadata({
       sessionId: 'resume-session-12345678',
-      projectPath: '/workspace/elsewhere',
+      projectPath: '/workspace/parent',
     });
     serviceMocks.loadSession.mockResolvedValue(childMessages);
     serviceMocks.toUISafeMessages.mockReturnValue(safeMessages);
@@ -243,7 +362,8 @@ describe('activateSessionSelection', () => {
       activateSessionSelection(
         { intent: 'resume', session: resumeMetadata },
         '/workspace/parent',
-        actions
+        actions,
+        cleanupAgent
       )
     ).resolves.toEqual({
       sessionId: 'resume-session-12345678',
@@ -252,7 +372,7 @@ describe('activateSessionSelection', () => {
 
     expect(serviceMocks.loadSession).toHaveBeenCalledWith(
       'resume-session-12345678',
-      '/workspace/elsewhere'
+      '/workspace/parent'
     );
     expect(serviceMocks.forkSession).not.toHaveBeenCalled();
     expect(serviceMocks.toUISafeMessages).toHaveBeenCalledWith(childMessages);
@@ -291,6 +411,9 @@ describe('activateSessionSelection', () => {
     actions.addAssistantMessage.mockImplementation(() => {
       calls.push('announce');
     });
+    cleanupAgent.mockImplementation(async () => {
+      calls.push('cleanup');
+    });
 
     const { activateSessionSelection } = await import(
       '../../../../../src/ui/utils/sessionActivation.js'
@@ -299,10 +422,11 @@ describe('activateSessionSelection', () => {
     await activateSessionSelection(
       { intent: 'fork', session: parentMetadata },
       '/workspace/parent',
-      actions
+      actions,
+      cleanupAgent
     );
 
-    expect(calls).toEqual(['service', 'ui:2', 'restore', 'announce']);
+    expect(calls).toEqual(['service', 'ui:2', 'cleanup', 'restore']);
   });
 });
 
@@ -334,11 +458,11 @@ describe('listSessionCandidatesForIntent', () => {
     });
   });
 
-  it('lists resume candidates from the global catalog without cwd filtering', async () => {
+  it('lists resume candidates from the resolved workspace only and excludes subagents', async () => {
     const candidates = [
       createSessionMetadata({
         sessionId: 'resume-source-1',
-        projectPath: '/workspace/elsewhere',
+        projectPath: '/workspace/project',
       }),
     ];
     serviceMocks.listSessions.mockResolvedValue(candidates);
@@ -351,7 +475,10 @@ describe('listSessionCandidatesForIntent', () => {
       listSessionCandidatesForIntent('resume', '/workspace/project')
     ).resolves.toEqual(candidates);
 
-    expect(serviceMocks.listSessions).toHaveBeenCalledWith();
+    expect(serviceMocks.listSessions).toHaveBeenCalledWith({
+      cwd: '/workspace/project',
+      includeSubagents: false,
+    });
   });
 });
 
@@ -386,5 +513,6 @@ describe('BladeInterface startup routing source contract', () => {
     expect(handleContinueSource).not.toContain('SessionService.listSessions(');
     expect(handleResumeSource).toContain('listSessionCandidatesForIntent(');
     expect(handleResumeSource).not.toContain('SessionService.listSessions({');
+    expect(source).not.toContain('SessionService.findSessionMetadata(sourceSessionId)');
   });
 });

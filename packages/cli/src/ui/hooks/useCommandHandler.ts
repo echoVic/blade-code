@@ -182,6 +182,7 @@ export const useCommandHandler = (
           appActions,
           sessionActions,
           abortController.signal,
+          cleanupAgent,
           sessionId
         );
 

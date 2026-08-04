@@ -26,6 +26,7 @@ import {
 } from '../../../../../src/ui/utils/slashCommandRouter.js';
 import type { ResolvedInput } from '../../../../../src/ui/hooks/useInputBuffer.js';
 import type { SessionMetadata } from '../../../../../src/services/SessionService.js';
+import type { AppActions, SessionActions } from '../../../../../src/store/types.js';
 
 // Mock slash-commands 模块
 vi.mock('../../../../../src/slash-commands/index.js', () => ({
@@ -78,34 +79,69 @@ function createSessionMetadata(
   };
 }
 
-function createMockAppActions() {
+function createMockAppActions(): AppActions {
   return {
+    setInitializationStatus: vi.fn(),
+    setInitializationError: vi.fn(),
     setActiveModal: vi.fn(),
     showSessionSelector: vi.fn(),
+    showModelEditWizard: vi.fn(),
+    closeModal: vi.fn(),
     setTasks: vi.fn(),
-  } as any;
+    updateTask: vi.fn(),
+    setAwaitingSecondCtrlC: vi.fn(),
+    setThinkingModeEnabled: vi.fn(),
+    toggleThinkingMode: vi.fn(),
+    startSubagentProgress: vi.fn(),
+    updateSubagentTool: vi.fn(),
+    completeSubagentProgress: vi.fn(),
+  } satisfies AppActions;
 }
 
-function createMockSessionActions() {
+function createMockSessionActions(): SessionActions {
   return {
+    addMessage: vi.fn(),
     addUserMessage: vi.fn(),
     addAssistantMessage: vi.fn(),
+    addAssistantMessageAndClearThinking: vi.fn(),
+    addToolMessage: vi.fn(),
+    setCompacting: vi.fn(),
+    setCommand: vi.fn(),
     clearMessages: vi.fn(),
     setError: vi.fn(),
+    resetSession: vi.fn(),
+    restoreSession: vi.fn(),
+    updateTokenUsage: vi.fn(),
     resetTokenUsage: vi.fn(),
-  } as any;
+    setCurrentThinkingContent: vi.fn(),
+    appendThinkingContent: vi.fn(),
+    setThinkingExpanded: vi.fn(),
+    toggleThinkingExpanded: vi.fn(),
+    setHistoryExpanded: vi.fn(),
+    toggleHistoryExpanded: vi.fn(),
+    setExpandedMessageCount: vi.fn(),
+    incrementClearCount: vi.fn(),
+    startStreamingAssistantMessage: vi.fn(() => 'streaming-message'),
+    appendAssistantContent: vi.fn(() => 'streaming-content'),
+    finalizeStreamingMessage: vi.fn(),
+    clearFinalizingStreamingMessageId: vi.fn(),
+    discardStreamingMessage: vi.fn(),
+  } satisfies SessionActions;
 }
 
 // ==================== 测试 ====================
 
 describe('processSlashCommand', () => {
   let executeSlashCommand: ReturnType<typeof vi.fn>;
+  const cleanupAgent = vi.fn<() => Promise<void>>();
 
   beforeEach(async () => {
     const slashModule = await import('../../../../../src/slash-commands/index.js');
     executeSlashCommand = vi.mocked(slashModule.executeSlashCommand);
     executeSlashCommand.mockReset();
     activationMocks.activateSessionSelection.mockReset();
+    cleanupAgent.mockReset();
+    cleanupAgent.mockResolvedValue(undefined);
   });
 
   // ==================== 非 slash 命令 ====================
@@ -116,7 +152,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('hello world'),
         createMockAppActions(),
         createMockSessionActions(),
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result.type).toBe('not_slash');
@@ -132,6 +169,7 @@ describe('processSlashCommand', () => {
         createMockAppActions(),
         createMockSessionActions(),
         new AbortController().signal,
+        async () => undefined,
         'session-owner'
       );
 
@@ -161,7 +199,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/deploy staging'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result.type).toBe('continue_as_agent');
@@ -199,7 +238,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/lint src/'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result.type).toBe('continue_as_agent');
@@ -236,7 +276,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/code-review review the last commit'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result.type).toBe('continue_as_agent');
@@ -265,7 +306,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/tdd'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result.type).toBe('continue_as_agent');
@@ -294,7 +336,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/model gpt-4o explain this code'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result.type).toBe('continue_as_agent');
@@ -320,7 +363,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/model'),
         appActions,
         createMockSessionActions(),
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result.type).toBe('handled');
@@ -339,7 +383,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/clear'),
         appActions,
         sessionActions,
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result.type).toBe('handled');
@@ -372,7 +417,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/fork'),
         appActions,
         createMockSessionActions(),
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result).toEqual({
@@ -402,7 +448,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/fork parent-session'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result).toEqual({
@@ -412,7 +459,8 @@ describe('processSlashCommand', () => {
       expect(activationMocks.activateSessionSelection).toHaveBeenCalledWith(
         { action: 'activate_session', intent: 'fork', session },
         process.cwd(),
-        sessionActions
+        sessionActions,
+        cleanupAgent
       );
     });
 
@@ -434,7 +482,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/fork'),
         appActions,
         sessionActions,
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(appActions.showSessionSelector).not.toHaveBeenCalled();
@@ -473,7 +522,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/fork parent-session'),
         appActions,
         sessionActions,
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(appActions.showSessionSelector).not.toHaveBeenCalled();
@@ -512,7 +562,8 @@ describe('processSlashCommand', () => {
           createResolvedInput('/fork parent-session'),
           createMockAppActions(),
           createMockSessionActions(),
-          new AbortController().signal
+          new AbortController().signal,
+          cleanupAgent
         )
       ).rejects.toThrow(expectedError);
     });
@@ -530,7 +581,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/resume'),
         appActions,
         createMockSessionActions(),
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result).toEqual({
@@ -555,7 +607,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/foobar'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result.type).toBe('handled');
@@ -577,7 +630,8 @@ describe('processSlashCommand', () => {
         createResolvedInput('/help'),
         createMockAppActions(),
         sessionActions,
-        new AbortController().signal
+        new AbortController().signal,
+        cleanupAgent
       );
 
       expect(result.type).toBe('handled');

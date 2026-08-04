@@ -11,8 +11,9 @@ export interface SessionActivationActions {
     messages: SessionMessage[],
     rawMessages: Message[]
   ) => void;
-  addAssistantMessage: (message: string) => void;
 }
+
+export type CleanupAgent = () => Promise<void>;
 
 interface SessionSelectionInput {
   intent: SessionSelectionIntent;
@@ -33,45 +34,53 @@ function resolveWorkspace(workspace: string): string {
 }
 
 export async function listSessionCandidatesForIntent(
-  intent: SessionSelectionIntent,
+  _intent: SessionSelectionIntent,
   workspaceRoot: string
 ): Promise<SessionMetadata[]> {
-  if (intent === 'fork') {
-    return SessionService.listSessions({
-      cwd: resolveWorkspace(workspaceRoot),
-      includeSubagents: false,
-    });
-  }
-
-  return SessionService.listSessions();
+  return SessionService.listSessions({
+    cwd: resolveWorkspace(workspaceRoot),
+    includeSubagents: false,
+  });
 }
 
 export async function activateSessionSelection(
   selection: SessionSelectionInput,
   workspaceRoot: string,
-  actions: SessionActivationActions
+  actions: SessionActivationActions,
+  cleanupAgent: CleanupAgent
 ): Promise<{ sessionId: string; messages: Message[] }> {
   const { intent, session, newSessionId, announceFork } = selection;
   const resolvedWorkspace = resolveWorkspace(workspaceRoot);
 
-  if (intent === 'fork') {
-    const sourceWorkspace = resolveWorkspace(session.projectPath);
-    if (sourceWorkspace !== resolvedWorkspace) {
-      throw new Error('Interactive session forks are limited to the current workspace');
-    }
+  const sourceWorkspace = resolveWorkspace(session.projectPath);
+  if (sourceWorkspace !== resolvedWorkspace) {
+    throw new Error(
+      'Interactive session activation is limited to the current workspace'
+    );
+  }
 
+  if (intent === 'fork') {
     const forked = await SessionService.forkSession(session.sessionId, {
       ...(newSessionId ? { newSessionId } : {}),
       sourceProjectPath: resolvedWorkspace,
       targetProjectPath: resolvedWorkspace,
     });
-    const uiMessages = SessionService.toUISafeMessages(forked.messages);
-    actions.restoreSession(forked.sessionId, uiMessages, forked.messages);
+    const visibleMessages = [...SessionService.toUISafeMessages(forked.messages)];
     if (announceFork !== false) {
-      actions.addAssistantMessage(
-        `Forked ${shortSessionId(session.sessionId)} → ${shortSessionId(forked.sessionId)}`
-      );
+      const announcementTimestamp = Date.parse(forked.metadata.lastMessageTime);
+      visibleMessages.push({
+        id: 'fork-announcement-' + forked.sessionId,
+        role: 'assistant',
+        content:
+          'Forked ' +
+          shortSessionId(session.sessionId) +
+          ' → ' +
+          shortSessionId(forked.sessionId),
+        timestamp: Number.isNaN(announcementTimestamp) ? 0 : announcementTimestamp,
+      });
     }
+    await cleanupAgent();
+    actions.restoreSession(forked.sessionId, visibleMessages, forked.messages);
     return {
       sessionId: forked.sessionId,
       messages: forked.messages,
@@ -83,6 +92,7 @@ export async function activateSessionSelection(
     session.projectPath
   );
   const uiMessages = SessionService.toUISafeMessages(messages);
+  await cleanupAgent();
   actions.restoreSession(session.sessionId, uiMessages, messages);
   return {
     sessionId: session.sessionId,

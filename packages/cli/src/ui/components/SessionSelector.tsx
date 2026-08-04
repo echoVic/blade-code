@@ -6,11 +6,12 @@
 import { basename } from 'node:path';
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import { useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
+import { getCwd } from '../../utils/cwd.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 import {
   getSessionCandidateKey,
@@ -21,7 +22,7 @@ import {
 interface SessionSelectorProps {
   intent: SessionSelectionIntent;
   sessions?: SessionMetadata[]; // 可选，如果不提供则自动加载
-  onSelect: (session: SessionMetadata) => void;
+  onSelect: (session: SessionMetadata) => void | Promise<void>;
   onCancel?: () => void; // 可选，用于 --resume CLI 模式，在 /resume 斜杠命令模式下由全局处理器处理
 }
 
@@ -87,6 +88,16 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   const [loadedSessions, setLoadedSessions] = useState<SessionMetadata[]>([]);
   const [loading, setLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
+  const [isActivating, setIsActivating] = useState(false);
+  const isActivatingRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // 使用 Zustand store 管理焦点
   const currentFocus = useCurrentFocus();
@@ -101,6 +112,10 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
       // Ctrl+C 或 Cmd+C: 智能退出应用
       if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
         handleCtrlC();
+        return;
+      }
+
+      if (isActivatingRef.current) {
         return;
       }
 
@@ -139,7 +154,10 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
     const loadSessions = async () => {
       setLoading(true);
       try {
-        const sessions = await SessionService.listSessions();
+        const sessions = await SessionService.listSessions({
+          cwd: getCwd(),
+          includeSubagents: false,
+        });
         setLoadedSessions(sessions);
       } catch (error) {
         console.error('[SessionSelector] Failed to load sessions:', error);
@@ -205,7 +223,23 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   }, [sessions.length]);
 
   const handleSelect = (item: { label: string; value: SessionMetadata }) => {
-    onSelect(item.value);
+    if (isActivatingRef.current) {
+      return;
+    }
+
+    isActivatingRef.current = true;
+    setIsActivating(true);
+    const settle = () => {
+      if (!isMountedRef.current) {
+        return;
+      }
+      isActivatingRef.current = false;
+      setIsActivating(false);
+    };
+
+    void Promise.resolve()
+      .then(() => onSelect(item.value))
+      .then(settle, settle);
   };
 
   if (loading) {
@@ -241,9 +275,14 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
       <SelectInput
         items={paginatedItems}
         onSelect={handleSelect}
+        isFocused={isFocused && !isActivating}
         indicatorComponent={Indicator}
         itemComponent={Item}
       />
+
+      {isActivating && (
+        <Text color="cyan">{intent === 'fork' ? 'Forking…' : 'Resuming…'}</Text>
+      )}
 
       {/* 分页状态栏 */}
       <Box marginTop={1} flexDirection="column">

@@ -16,6 +16,7 @@ import {
 import type { SessionSelectionAction } from '../../slash-commands/types.js';
 import type { useAppActions, useSessionActions } from '../../store/selectors/index.js';
 import { activateSessionSelection } from './sessionActivation.js';
+import type { CleanupAgent } from './sessionActivation.js';
 import type { ResolvedInput } from '../hooks/useInputBuffer.js';
 
 // ==================== 类型定义 ====================
@@ -268,6 +269,7 @@ export async function processSlashCommand(
   appActions: AppActions,
   sessionActions: SessionActions,
   signal: AbortSignal,
+  cleanupAgent: CleanupAgent,
   sessionId?: string
 ): Promise<SlashRouteResult> {
   const { text: command } = resolved;
@@ -293,7 +295,12 @@ export async function processSlashCommand(
       return { type: 'handled', commandResult: { success: true } };
     }
 
-    await activateSessionSelection(slashResult.data, getCwd(), sessionActions);
+    await activateSessionSelection(
+      slashResult.data,
+      getCwd(),
+      sessionActions,
+      cleanupAgent
+    );
     return { type: 'handled', commandResult: { success: true } };
   }
 

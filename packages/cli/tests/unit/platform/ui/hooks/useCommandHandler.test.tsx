@@ -201,6 +201,26 @@ describe('useCommandHandler durable recovery', () => {
     expect(hook?.cleanupAgent).toBe(mocks.cleanupAgent);
   });
 
+  it('passes its runtime cleanup dependency to direct slash activation routing', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    const resolved = {
+      text: '/fork parent-session',
+      displayText: '/fork parent-session',
+      images: [],
+      parts: [{ type: 'text' as const, text: '/fork parent-session' }],
+    };
+    await hook?.executeCommand(resolved);
+
+    expect(mocks.processSlashCommand).toHaveBeenCalledOnce();
+    expect(mocks.processSlashCommand.mock.calls[0]?.[0]).toBe(resolved);
+    expect(mocks.processSlashCommand.mock.calls[0]?.[4]).toBe(mocks.cleanupAgent);
+  });
+
   it('wakes a next-turn input when the rendered processing state is stale', async () => {
     mocks.isProcessing = true;
     mocks.storeProcessing = false;

@@ -1,5 +1,4 @@
 import { useMemoizedFn } from 'ahooks';
-import path from 'node:path';
 import { Box } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import {
@@ -9,7 +8,6 @@ import {
 } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
-import { SessionService } from '../../services/SessionService.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import {
@@ -140,7 +138,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     dismissAll,
   } = useConfirmation();
 
-  const { executeCommand, handleAbort } = useCommandHandler(
+  const { executeCommand, handleAbort, cleanupAgent } = useCommandHandler(
     otherProps.systemPrompt,
     otherProps.appendSystemPrompt,
     confirmationHandler,
@@ -227,7 +225,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           announceFork: options?.announceFork,
         },
         getCwd(),
-        sessionActions
+        sessionActions,
+        cleanupAgent
       );
     }
   );
@@ -238,32 +237,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       intent: SessionSelectionIntent
     ): Promise<SessionMetadata> => {
       const workspace = getCwd();
-      if (intent === 'fork') {
-        const sessions = await SessionService.listSessions({
-          cwd: workspace,
-          includeSubagents: false,
-        });
-        const resolvedWorkspace = path.resolve(workspace);
-        const session = sessions.find(
-          (candidate) =>
-            candidate.sessionId === sourceSessionId &&
-            path.resolve(candidate.projectPath) === resolvedWorkspace &&
-            candidate.relationType !== 'subagent'
-        );
-        if (!session) {
-          throw new Error(`Session not found: ${sourceSessionId}`);
-        }
-        return session;
-      }
-
-      const scoped = await SessionService.findSessionMetadata(
-        sourceSessionId,
-        workspace
+      const sessions = await listSessionCandidatesForIntent(intent, workspace);
+      const session = sessions.find(
+        (candidate) => candidate.sessionId === sourceSessionId
       );
-      if (scoped) {
-        return scoped;
-      }
-      const session = await SessionService.findSessionMetadata(sourceSessionId);
       if (!session) {
         throw new Error(`Session not found: ${sourceSessionId}`);
       }

@@ -370,6 +370,17 @@ async function waitForNextTick(): Promise<void> {
   });
 }
 
+function createDeferred(): {
+  promise: Promise<void>;
+  resolve: () => void;
+} {
+  let resolve: () => void = () => undefined;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 describe('session selector fork integration', () => {
   beforeEach(() => {
     activationMocks.activateSessionSelection.mockReset();
@@ -379,6 +390,125 @@ describe('session selector fork integration', () => {
 
   afterEach(() => {
     resetStore();
+  });
+
+  it('locks selection synchronously while activation is pending and ignores Escape', async () => {
+    const session = createSessionMetadata();
+    const activation = createDeferred();
+    const onSelect = vi.fn(() => activation.promise);
+    const onCancel = vi.fn();
+    const stdin = new TestInputStream();
+    const stdout = new TestOutputStream();
+    const stderr = new TestOutputStream();
+
+    vanillaStore.setState((state) => ({
+      ...state,
+      focus: {
+        ...state.focus,
+        currentFocus: FocusId.SESSION_SELECTOR,
+      },
+    }));
+
+    const app = render(
+      <SessionSelector
+        intent="fork"
+        sessions={[session]}
+        onSelect={onSelect}
+        onCancel={onCancel}
+      />,
+      {
+        stdin,
+        stdout,
+        stderr,
+        debug: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      }
+    );
+    const exitPromise = app.waitUntilExit();
+
+    try {
+      await waitForAssertion(() => {
+        expect(stdout.output).toContain('选择要 fork 的会话:');
+      });
+
+      stdin.write(String.fromCharCode(13));
+      await waitForAssertion(() => {
+        expect(onSelect).toHaveBeenCalledOnce();
+        expect(stdout.output).toContain('Forking…');
+      });
+
+      stdin.write(String.fromCharCode(13));
+      stdin.write(String.fromCharCode(27));
+      await waitForNextTick();
+
+      expect(onSelect).toHaveBeenCalledOnce();
+      expect(onCancel).not.toHaveBeenCalled();
+    } finally {
+      activation.resolve();
+      await waitForNextTick();
+      app.unmount();
+      await exitPromise;
+      app.cleanup();
+      stdin.end();
+      stdout.end();
+      stderr.end();
+    }
+  });
+
+  it('captures synchronous selection errors and unlocks for a retry', async () => {
+    const session = createSessionMetadata();
+    const onSelect = vi.fn(() => {
+      throw new Error('activation failed synchronously');
+    });
+    const stdin = new TestInputStream();
+    const stdout = new TestOutputStream();
+    const stderr = new TestOutputStream();
+
+    vanillaStore.setState((state) => ({
+      ...state,
+      focus: {
+        ...state.focus,
+        currentFocus: FocusId.SESSION_SELECTOR,
+      },
+    }));
+
+    const app = render(
+      <SessionSelector intent="resume" sessions={[session]} onSelect={onSelect} />,
+      {
+        stdin,
+        stdout,
+        stderr,
+        debug: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      }
+    );
+    const exitPromise = app.waitUntilExit();
+
+    try {
+      await waitForAssertion(() => {
+        expect(stdout.output).toContain('选择要恢复的会话:');
+      });
+
+      stdin.write(String.fromCharCode(13));
+      await waitForAssertion(() => {
+        expect(onSelect).toHaveBeenCalledTimes(1);
+      });
+      await waitForNextTick();
+
+      stdin.write(String.fromCharCode(13));
+      await waitForAssertion(() => {
+        expect(onSelect).toHaveBeenCalledTimes(2);
+      });
+    } finally {
+      app.unmount();
+      await exitPromise;
+      app.cleanup();
+      stdin.end();
+      stdout.end();
+      stderr.end();
+    }
   });
 
   it('renders fork-specific copy, filters subagents, and returns the full selected row', async () => {
@@ -493,11 +623,13 @@ describe('session selector fork integration', () => {
 
     const appActions = getState().app.actions;
     const sessionActions = getState().session.actions;
+    const cleanupAgent = vi.fn(async () => undefined);
     const routeResult = await processSlashCommand(
       createResolvedInput('/fork'),
       appActions,
       sessionActions,
-      new AbortController().signal
+      new AbortController().signal,
+      cleanupAgent
     );
 
     expect(routeResult).toEqual({
@@ -524,7 +656,8 @@ describe('session selector fork integration', () => {
       await activationMocks.activateSessionSelection(
         { intent: selectorState.intent, session },
         process.cwd(),
-        sessionActions
+        sessionActions,
+        cleanupAgent
       );
     };
 
@@ -587,7 +720,8 @@ describe('session selector fork integration', () => {
           expect(activationMocks.activateSessionSelection).toHaveBeenCalledWith(
             { intent: 'fork', session: forked },
             process.cwd(),
-            sessionActions
+            sessionActions,
+            cleanupAgent
           );
         },
         () =>
