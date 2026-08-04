@@ -219,7 +219,9 @@ describe('real API coding-task harness', () => {
     const previousCredentials = new Map(
       credentialNames.map((name) => [name, process.env[name]])
     );
+    const previousRealApiTest = process.env.REAL_API_TEST;
     for (const name of credentialNames) delete process.env[name];
+    delete process.env.REAL_API_TEST;
     const readFileSync = vi.fn(() => {
       throw new Error('testConfig import attempted local config I/O');
     });
@@ -239,6 +241,8 @@ describe('real API coding-task harness', () => {
         if (previous === undefined) delete process.env[name];
         else process.env[name] = previous;
       }
+      if (previousRealApiTest === undefined) delete process.env.REAL_API_TEST;
+      else process.env.REAL_API_TEST = previousRealApiTest;
       vi.doUnmock('node:fs');
       vi.resetModules();
     }
