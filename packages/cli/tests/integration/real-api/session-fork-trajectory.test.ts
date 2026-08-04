@@ -334,7 +334,7 @@ describe.skipIf(!enabled)('CLI session fork trajectory (real API)', () => {
             parentBeforeFork,
             childContent,
           },
-          [apiKey, baseUrl]
+          [apiKey]
         );
       } finally {
         rmSync(workspace, { recursive: true, force: true });
