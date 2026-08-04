@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { isValidSessionId } from '../context/storage/pathUtils.js';
 
 export const DEFAULT_SESSION_PAGE_SIZE = 50;
 export const MAX_SESSION_PAGE_SIZE = 100;
@@ -47,10 +48,6 @@ function isValidIsoTime(value: unknown): value is string {
 
 function isValidAbsolutePath(value: unknown): value is string {
   return typeof value === 'string' && path.isAbsolute(value);
-}
-
-function isValidSessionId(value: unknown): value is string {
-  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(value);
 }
 
 function encodeCursor(cursor: SessionCursorV1): string {

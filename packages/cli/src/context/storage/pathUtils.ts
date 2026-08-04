@@ -56,12 +56,17 @@ export function getProjectStoragePath(projectPath: string): string {
   return path.join(getBladeStorageRoot(), 'projects', escaped);
 }
 
+export function isValidSessionId(sessionId: unknown): sessionId is string {
+  return (
+    typeof sessionId === 'string' &&
+    sessionId !== '.' &&
+    sessionId !== '..' &&
+    /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,199}$/.test(sessionId)
+  );
+}
+
 export function assertValidSessionId(sessionId: string): void {
-  if (
-    sessionId === '.' ||
-    sessionId === '..' ||
-    !/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,199}$/.test(sessionId)
-  ) {
+  if (!isValidSessionId(sessionId)) {
     throw new Error(`Invalid session ID: ${sessionId}`);
   }
 }

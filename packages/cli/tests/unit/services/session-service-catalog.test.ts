@@ -326,6 +326,36 @@ describe('SessionService strict session catalog', () => {
     expect(second.nextCursor).toBeUndefined();
   });
 
+  it('continues pagination when a generated Nano ID is the cursor boundary', async () => {
+    await writeTranscript(workspaceA, '_generated-boundary', [
+      makeCreatedEvent('_generated-boundary', workspaceA, '2024-01-02T00:00:00.000Z'),
+    ]);
+    await writeTranscript(workspaceA, '-generated-older', [
+      makeCreatedEvent('-generated-older', workspaceA, '2024-01-01T00:00:00.000Z'),
+    ]);
+
+    const first = await SessionService.listSessionPage({
+      cwd: workspaceA,
+      limit: 1,
+      includeSubagents: false,
+    });
+    expect(first.sessions.map((session) => session.sessionId)).toEqual([
+      '_generated-boundary',
+    ]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    const second = await SessionService.listSessionPage({
+      cwd: workspaceA,
+      cursor: first.nextCursor,
+      limit: 1,
+      includeSubagents: false,
+    });
+    expect(second.sessions.map((session) => session.sessionId)).toEqual([
+      '-generated-older',
+    ]);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
   it('skips transcripts whose committed cwd is relative and keeps pagination stable', async () => {
     await writeTranscript(workspaceA, 'valid-newer', [
       makeCreatedEvent('valid-newer', workspaceA, '2024-01-03T00:00:00.000Z'),
