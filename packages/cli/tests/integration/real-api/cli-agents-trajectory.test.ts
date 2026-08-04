@@ -332,7 +332,11 @@ describe.skipIf(!enabled)('CLI custom agents trajectory (real API)', () => {
         expect(parsed.nonJsonLines).toEqual([]);
         expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
         expect(toolStarts).toContain('Task');
+        expect(toolStarts.filter((toolName) => toolName === 'Task')).toHaveLength(1);
         expect(successfulToolResults).toContain('Task');
+        expect(
+          successfulToolResults.filter((toolName) => toolName === 'Task')
+        ).toHaveLength(1);
         expect(successfulToolResults).not.toContain('Read');
         expect(successfulToolResults).not.toContain('Edit');
         expect(successfulToolResults).not.toContain('Bash');

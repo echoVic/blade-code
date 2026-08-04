@@ -7,12 +7,14 @@ import {
   checkWorktreeRequirement,
   DELEGATION_FAILURE_MESSAGE,
   DELEGATION_RETRY_PROMPT,
+  isSingleTaskDelegationRequired,
   MAX_DELEGATION_RETRIES,
   MAX_INCOMPLETE_INTENT_RETRIES,
   MAX_OUTPUT_RECOVERY_LIMIT,
   MAX_VERIFICATION_RETRIES,
   MAX_WORKTREE_RETRIES,
   RETRY_PROMPT,
+  resolveSingleTaskDelegationRequirement,
   VERIFICATION_FAILURE_MESSAGE,
   VERIFICATION_RETRY_PROMPT,
   WORKTREE_EXIT_RETRY_PROMPT,
@@ -198,6 +200,20 @@ describe('completionPolicy', () => {
       });
     });
 
+    it('requires one Task when other tools and subagents are explicitly forbidden', () => {
+      expect(
+        checkDelegationRequirement(
+          'Call Task exactly once with subagent_type channel-specialist. ' +
+            'Do not call any other subagent or tool.',
+          new Set(),
+          0
+        )
+      ).toEqual({
+        action: 'retry',
+        prompt: DELEGATION_RETRY_PROMPT,
+      });
+    });
+
     it('accepts a successful Task and ignores negated delegation', () => {
       expect(
         checkDelegationRequirement(
@@ -226,6 +242,47 @@ describe('completionPolicy', () => {
         action: 'fail',
         message: DELEGATION_FAILURE_MESSAGE,
       });
+    });
+
+    it('detects only an explicit exactly-once Task delegation contract', () => {
+      expect(
+        isSingleTaskDelegationRequired(
+          'For this request, call Task exactly once with subagent_type reviewer. ' +
+            'Do not call any other subagent or tool.'
+        )
+      ).toBe(true);
+      expect(
+        isSingleTaskDelegationRequired(
+          'Make exactly one Task tool call, then return the final answer.'
+        )
+      ).toBe(true);
+      expect(
+        isSingleTaskDelegationRequired(
+          'Delegate this repair to an agent with the Task tool.'
+        )
+      ).toBe(false);
+      expect(
+        resolveSingleTaskDelegationRequirement([
+          'Task does not need to be called exactly once; multiple Task calls are allowed.',
+          'Call Task exactly once.',
+        ])
+      ).toBe(false);
+      expect(
+        resolveSingleTaskDelegationRequirement([
+          'Use the Task tool if a specialist is needed.',
+          'Review both areas exactly once.',
+        ])
+      ).toBe(false);
+      expect(
+        isSingleTaskDelegationRequired(
+          'Do not call Task exactly once. Explain the implementation directly.'
+        )
+      ).toBe(false);
+      expect(
+        isSingleTaskDelegationRequired(
+          'Task does not need to be called exactly once; multiple Task calls are allowed.'
+        )
+      ).toBe(false);
     });
   });
 

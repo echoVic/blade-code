@@ -24,6 +24,12 @@ import { ToolErrorType } from '../../tools/types/index.js';
 import { combineAbortSignals } from '../../utils/abort.js';
 import type { ToolExecResult } from './types.js';
 
+export type ToolExecutionPolicy = (
+  toolName: string,
+  params: Record<string, unknown>,
+  context: ExecutionContext
+) => Promise<ToolResult>;
+
 const logger = createLogger(LogCategory.AGENT);
 
 /**
@@ -67,6 +73,7 @@ export class StreamingToolExecutor {
   private epoch = 0;
   /** 每个工具执行的独立 AbortController，discard() 时逐一 abort */
   private activeAborts = new Map<string, AbortController>();
+  private executeTool?: ToolExecutionPolicy;
 
   constructor(
     private pipeline: ToolExecutor,
@@ -81,6 +88,10 @@ export class StreamingToolExecutor {
       isSidechain: boolean;
     }
   ) {}
+
+  setExecutionPolicy(executeTool: ToolExecutionPolicy): void {
+    this.executeTool = executeTool;
+  }
 
   /**
    * 流式中调用：在 allowlist 中的工具立即执行，否则排队
@@ -273,11 +284,9 @@ export class StreamingToolExecutor {
         signal: combinedSignal,
       };
 
-      const result = await this.pipeline.execute(
-        toolCall.function.name,
-        params,
-        execContext
-      );
+      const result = this.executeTool
+        ? await this.executeTool(toolCall.function.name, params, execContext)
+        : await this.pipeline.execute(toolCall.function.name, params, execContext);
 
       // Epoch guard: 如果工具执行期间发生了 discard，丢弃结果
       if (startEpoch !== this.epoch) {

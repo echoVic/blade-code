@@ -84,13 +84,13 @@ vi.mock('../../../../src/agent/loop/StreamingToolExecutor.js', () => ({
 
 // ===== Imports (after mocks) =====
 
+import { ExecutionEngine } from '../../../../src/agent/ExecutionEngine.js';
 import { MAX_VERIFICATION_RETRIES } from '../../../../src/agent/loop/completionPolicy.js';
 import {
   checkAndCompactInLoop,
   executeLoopGenerator,
 } from '../../../../src/agent/loop/executeLoopGenerator.js';
 import type { LoopDependencies, LoopEvent } from '../../../../src/agent/loop/types.js';
-import { ExecutionEngine } from '../../../../src/agent/ExecutionEngine.js';
 import type {
   ChatContext,
   LoopOptions,
@@ -1215,6 +1215,60 @@ describe('executeLoopGenerator', () => {
       });
     });
 
+    it('writes successful Task outcome metadata for in-memory recovery', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'task-outcome-metadata',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"reviewer","description":"review","prompt":"review the change"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Review completed.',
+          finishReason: 'stop',
+        });
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        llmContent: 'No findings.',
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Delegate this review with the Task tool.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(context.messages).toContainEqual(
+        expect.objectContaining({
+          role: 'tool',
+          name: 'Task',
+          tool_call_id: 'task-outcome-metadata',
+          metadata: {
+            toolCallId: 'task-outcome-metadata',
+            toolName: 'Task',
+            error: null,
+          },
+        })
+      );
+    });
+
     it('continues until every explicitly requested verification category succeeds', async () => {
       const deps = createMockDeps();
       const context = createMockContext();
@@ -1354,6 +1408,337 @@ describe('executeLoopGenerator', () => {
         role: 'user',
         content: expect.stringContaining('explicitly required delegation'),
       });
+    });
+
+    it('enforces delegation declared only by invocation requirements', async () => {
+      const deps = createMockDeps();
+      deps.runtimeOptions = {
+        ...deps.runtimeOptions,
+        appendSystemPrompt: 'Call Task exactly once before returning an answer.',
+      };
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: 'I completed the work directly.',
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-required-by-invocation',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'The delegated repair completed.',
+          finishReason: 'stop',
+        });
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockResolvedValue({
+        success: true,
+        llmContent: 'Subagent repaired the project.',
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Repair the project.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(executeMock).toHaveBeenCalledTimes(1);
+      expect(context.messages).toContainEqual({
+        role: 'user',
+        content: expect.stringContaining('explicitly required delegation'),
+      });
+    });
+
+    it('does not execute Task again after an exactly-once delegation succeeds', async () => {
+      const deps = createMockDeps();
+      deps.runtimeOptions = {
+        ...deps.runtimeOptions,
+        appendSystemPrompt:
+          'Call Task exactly once. After Task succeeds, return a final answer.',
+      };
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-single-delegation',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-duplicate-delegation',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"channel-specialist","description":"repeat","prompt":"repeat the repair"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'The delegated repair completed.',
+          finishReason: 'stop',
+        });
+
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockResolvedValue({
+        success: true,
+        llmContent: 'Subagent repaired and verified the project.',
+        metadata: {
+          subagentStatus: 'completed',
+          verificationCommands: ['npm test'],
+        },
+      });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Delegate this repair to channel-specialist with the Task tool.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(executeMock).toHaveBeenCalledTimes(1);
+      expect(
+        events.some(
+          (event) =>
+            event.kind === 'tool_result' &&
+            'function' in event.toolCall &&
+            event.toolCall.id === 'tc-duplicate-delegation' &&
+            event.result.error?.type === 'validation_error'
+        )
+      ).toBe(true);
+    });
+
+    it('restores an unfinished successful exactly-once Task from durable history', async () => {
+      const deps = createMockDeps();
+      deps.runtimeOptions = {
+        ...deps.runtimeOptions,
+        appendSystemPrompt: 'Call Task exactly once before returning an answer.',
+      };
+      const context = createMockContext({
+        messages: [
+          {
+            role: 'user',
+            content: 'Delegate the repair.',
+          },
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: 'durable-task-call',
+                type: 'function',
+                function: {
+                  name: 'Task',
+                  arguments: '{"subagent_type":"channel-specialist"}',
+                },
+              },
+            ],
+          },
+          {
+            role: 'tool',
+            name: 'Task',
+            tool_call_id: 'durable-task-call',
+            content: 'Subagent repaired the project.',
+            metadata: {
+              toolCallId: 'durable-task-call',
+              toolName: 'Task',
+              error: null,
+            },
+          },
+        ],
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: 'The previously delegated repair completed.',
+        finishReason: 'stop',
+      });
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Continue after the restored delegation and return the final answer.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(executeMock).not.toHaveBeenCalled();
+      expect(chatMock).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.not.arrayContaining([expect.objectContaining({ name: 'Task' })]),
+        undefined
+      );
+    });
+
+    it('allows an exactly-once Task delegation to retry after a failed attempt', async () => {
+      const deps = createMockDeps();
+      deps.runtimeOptions = {
+        ...deps.runtimeOptions,
+        appendSystemPrompt: 'Call Task exactly once after it succeeds.',
+      };
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-failed-delegation',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-retried-delegation',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"channel-specialist","description":"retry","prompt":"retry the repair"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'The delegated repair completed.',
+          finishReason: 'stop',
+        });
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock
+        .mockResolvedValueOnce({
+          success: false,
+          llmContent: 'Subagent failed.',
+          error: { type: 'execution_error', message: 'Subagent failed' },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: 'Subagent repaired the project.',
+        });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Delegate this repair with the Task tool.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(executeMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('preserves repeated Task calls when no exactly-once contract exists', async () => {
+      const deps = createMockDeps();
+      deps.runtimeOptions = {
+        ...deps.runtimeOptions,
+        appendSystemPrompt: 'Use the Task tool if a specialist is needed.',
+      };
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-first-parallel-task',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"reviewer","description":"review one","prompt":"review the first area"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc-second-parallel-task',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"reviewer","description":"review two","prompt":"review the second area"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Both reviews completed.',
+          finishReason: 'stop',
+        });
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockResolvedValue({
+        success: true,
+        llmContent: 'Review completed.',
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Review both areas exactly once.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(executeMock).toHaveBeenCalledTimes(2);
     });
 
     it('propagates a worktree workspace transition to later tool calls', async () => {

@@ -48,6 +48,7 @@ describe('StreamingToolExecutor', () => {
   let execContext: ExecutionContext;
   let registry: { get: ReturnType<typeof vi.fn> };
   let executor: StreamingToolExecutor;
+  let executeWithPolicy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -61,12 +62,17 @@ describe('StreamingToolExecutor', () => {
     registry = {
       get: vi.fn().mockReturnValue({ isConcurrencySafe: true }),
     };
+    executeWithPolicy = vi.fn(
+      (name: string, params: Record<string, unknown>, context: ExecutionContext) =>
+        pipeline.execute(name, params, context)
+    );
 
     executor = new StreamingToolExecutor(
       pipeline as unknown as ToolExecutor,
       execContext,
       registry as unknown as ToolRegistry
     );
+    executor.setExecutionPolicy(executeWithPolicy);
   });
 
   // ----------------------------------------------------------------
@@ -217,6 +223,30 @@ describe('StreamingToolExecutor', () => {
       expect(callOrder).toEqual(['Edit', 'Write']);
       expect(collected[0].toolCall.id).toBe('q1');
       expect(collected[1].toolCall.id).toBe('q2');
+    });
+
+    it('routes queued tools through the loop execution policy', async () => {
+      executeWithPolicy.mockResolvedValue({
+        success: false,
+        llmContent: 'Task already completed',
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          message: 'Task already completed',
+        },
+      });
+      executor.addTool(makeToolCall('single-task', 'Task'), {
+        subagent_type: 'channel-specialist',
+      });
+
+      const [result] = await collectAsync(executor.getRemainingResults());
+
+      expect(executeWithPolicy).toHaveBeenCalledWith(
+        'Task',
+        { subagent_type: 'channel-specialist' },
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+      expect(pipeline.execute).not.toHaveBeenCalled();
+      expect(result.result.error?.type).toBe(ToolErrorType.VALIDATION_ERROR);
     });
 
     it('yields mixed allowlisted + queued tools in insertion order', async () => {

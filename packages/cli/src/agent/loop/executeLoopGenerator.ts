@@ -34,6 +34,7 @@ import type {
   LoopResult,
   UserMessageContent,
 } from '../types.js';
+import { ConversationState } from './ConversationState.js';
 import {
   checkDelegationRequirement,
   checkIncompleteIntent,
@@ -43,6 +44,7 @@ import {
   checkWorktreeRequirement,
   isExplicitWorktreeRequest,
   recordVerificationEvidence,
+  resolveSingleTaskDelegationRequirement,
 } from './completionPolicy.js';
 import {
   INTERRUPTED_TURN_MARKER,
@@ -53,7 +55,6 @@ import {
   saveToolUse,
   saveUserMessage,
 } from './conversationPersistence.js';
-import { ConversationState } from './ConversationState.js';
 import {
   createStaleLoopDetector,
   createToolFailureTracker,
@@ -131,6 +132,49 @@ function toJsonValue(value: string | object): JsonValue {
   } catch {
     return String(value);
   }
+}
+
+function hasUnfinishedSuccessfulTask(messages: readonly Message[]): boolean {
+  const taskCallIds = new Set<string>();
+  let taskPendingFinalAnswer = false;
+
+  for (const message of messages) {
+    if (message.role === 'assistant') {
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        for (const toolCall of message.tool_calls) {
+          if ('function' in toolCall && toolCall.function.name === 'Task') {
+            taskCallIds.add(toolCall.id);
+          }
+        }
+      } else if (taskPendingFinalAnswer) {
+        taskPendingFinalAnswer = false;
+      }
+      continue;
+    }
+
+    if (
+      message.role !== 'tool' ||
+      message.name !== 'Task' ||
+      !message.tool_call_id ||
+      !taskCallIds.has(message.tool_call_id) ||
+      typeof message.metadata !== 'object' ||
+      message.metadata === null ||
+      Array.isArray(message.metadata)
+    ) {
+      continue;
+    }
+
+    const metadata = message.metadata as Record<string, JsonValue>;
+    if (
+      metadata.toolCallId === message.tool_call_id &&
+      metadata.toolName === 'Task' &&
+      metadata.error === null
+    ) {
+      taskPendingFinalAnswer = true;
+    }
+  }
+
+  return taskPendingFinalAnswer;
 }
 
 function extractApiErrorMessage(error: unknown): string {
@@ -699,8 +743,58 @@ export async function* executeLoopGenerator(
     ]
       .filter(Boolean)
       .join('\n');
+    const delegationUserRequests = activeUserRequest.trim() ? [activeUserRequest] : [];
+    let delegationPolicySources = [
+      deps.runtimeOptions.appendSystemPrompt?.trim(),
+      context.completionRequirements?.trim(),
+      ...delegationUserRequests,
+    ].filter((request): request is string => Boolean(request));
     let worktreeIsolationRequired = isExplicitWorktreeRequest(activeUserRequest);
     let pendingTurnInputApplied = !pendingInputOnly;
+    let singleTaskDelegationClaimed = hasUnfinishedSuccessfulTask(context.messages);
+    if (singleTaskDelegationClaimed) successfulTools.add('Task');
+
+    const executeToolWithPolicy = async (
+      toolName: string,
+      params: Record<string, unknown>,
+      executionContext: import('../../tools/types/index.js').ExecutionContext
+    ): Promise<import('../../tools/types/index.js').ToolResult> => {
+      const singleTaskRequired =
+        toolName === 'Task' &&
+        resolveSingleTaskDelegationRequirement(delegationPolicySources);
+      if (singleTaskRequired && singleTaskDelegationClaimed) {
+        const message =
+          'The exactly-once Task delegation has already been started. ' +
+          'Do not call Task again; return the final answer after its result.';
+        return {
+          success: false,
+          llmContent: message,
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message,
+          },
+          metadata: {
+            summary: 'Blocked duplicate exactly-once Task delegation',
+          },
+        };
+      }
+
+      if (singleTaskRequired) singleTaskDelegationClaimed = true;
+      try {
+        const result = await deps.toolExecutor.execute(
+          toolName,
+          params,
+          executionContext
+        );
+        if (singleTaskRequired && !result.success) {
+          singleTaskDelegationClaimed = false;
+        }
+        return result;
+      } catch (error) {
+        if (singleTaskRequired) singleTaskDelegationClaimed = false;
+        throw error;
+      }
+    };
 
     let budgetTracker = createBudgetTracker({
       budget: deps.currentModelMaxContextTokens,
@@ -753,12 +847,18 @@ export async function* executeLoopGenerator(
                 .join('\n');
         if (steeringText.trim()) {
           activeUserRequest = [activeUserRequest, steeringText].join('\n');
+          delegationUserRequests.push(steeringText);
           verificationPolicyRequest = [
             activeUserRequest,
             context.completionRequirements?.trim(),
           ]
             .filter(Boolean)
             .join('\n');
+          delegationPolicySources = [
+            deps.runtimeOptions.appendSystemPrompt?.trim(),
+            context.completionRequirements?.trim(),
+            ...delegationUserRequests,
+          ].filter((request): request is string => Boolean(request));
           worktreeIsolationRequired =
             worktreeIsolationRequired || isExplicitWorktreeRequest(steeringText);
         }
@@ -850,6 +950,11 @@ export async function* executeLoopGenerator(
 
         // 4. 调用 LLM
         const isStreamEnabled = options?.stream !== false;
+        const turnTools =
+          singleTaskDelegationClaimed &&
+          resolveSingleTaskDelegationRequirement(delegationPolicySources)
+            ? tools.filter((tool) => tool.name !== 'Task')
+            : tools;
         let turnResult: StreamResponseResult;
         let streamingExecutor: StreamingToolExecutor | undefined;
 
@@ -877,18 +982,19 @@ export async function* executeLoopGenerator(
               lastMessageUuid,
               context.subagentInfo
             );
+            streamingExecutor.setExecutionPolicy(executeToolWithPolicy);
 
             turnResult = yield* processStreamResponse(
               deps,
               state.toLLMMessages(),
-              tools,
+              turnTools,
               options?.signal,
               streamingExecutor
             );
           } else {
             turnResult = await deps.chatService.chat(
               state.toLLMMessages(),
-              tools,
+              turnTools,
               options?.signal
             );
           }
@@ -1152,7 +1258,7 @@ export async function* executeLoopGenerator(
           incompleteIntentRetryCount = 0;
 
           const delegationAction = checkDelegationRequirement(
-            activeUserRequest,
+            delegationPolicySources,
             successfulTools,
             delegationRetryCount
           );
@@ -1609,7 +1715,7 @@ export async function* executeLoopGenerator(
                 };
               }
 
-              const result = await deps.toolExecutor.execute(
+              const result = await executeToolWithPolicy(
                 toolCall.function.name,
                 params,
                 {
@@ -1808,6 +1914,15 @@ export async function* executeLoopGenerator(
             tool_call_id: toolCall.id,
             name: toolCall.function.name,
             content: finalContent,
+            ...(toolCall.function.name === 'Task'
+              ? {
+                  metadata: {
+                    toolCallId: toolCall.id,
+                    toolName: toolCall.function.name,
+                    error: result.success ? null : (result.error?.message ?? null),
+                  },
+                }
+              : {}),
           });
 
           // shouldExitLoop 检查
