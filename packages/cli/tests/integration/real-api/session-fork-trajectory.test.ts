@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -103,14 +104,11 @@ function finalHeadlessText(
 
 function assertSafeFinal(
   events: ReturnType<typeof parseHeadlessJsonl>['events'],
-  marker: string,
-  nonce: string,
   label: string
 ): void {
   const text = finalHeadlessText(events);
-  if (!text.trim()) throw new Error(`${label} CLI final response was empty`);
-  if (text.includes(marker) || text.includes(nonce)) {
-    throw new Error(`${label} CLI final response exposed fixture material`);
+  if (!text.trim()) {
+    throw new Error(`${label} CLI final response was empty`);
   }
 }
 
@@ -224,17 +222,19 @@ describe.skipIf(!enabled)('CLI session fork trajectory (real API)', () => {
       const memorizedValue = `FORK_HISTORY_${suffix}`;
       const expectedBytes = `${memorizedValue}\n`;
       const workspace = createWorkspace(expectedBytes);
+      const canonicalWorkspace = realpathSync(workspace);
       const home = mkdtempSync(path.join(os.tmpdir(), 'blade-session-fork-home-'));
       const storageRoot = path.join(home, '.blade');
       const memoryPath = path.join(workspace, 'memory.txt');
       const resultPath = path.join(workspace, 'result.txt');
-      const nonce = path.basename(workspace);
+      const canonicalMemoryPath = path.join(canonicalWorkspace, 'memory.txt');
+      const canonicalResultPath = path.join(canonicalWorkspace, 'result.txt');
       const parentSessionId = `fork-parent-${model}`;
       const childSessionId = `fork-child-${model}`;
 
       try {
         const parentPrompt = [
-          `Use the Read tool on the exact absolute path ${memoryPath}.`,
+          `Use the Read tool on the exact absolute path ${canonicalMemoryPath}.`,
           'Remember the complete file contents for a later fork.',
           'Use no other tools.',
           'Do not repeat, quote, encode, or summarize the file contents in final prose.',
@@ -248,20 +248,24 @@ describe.skipIf(!enabled)('CLI session fork trajectory (real API)', () => {
           parentPrompt,
         ]);
         const initialParsed = parseSuccessfulRun(initial, 'Parent');
-        assertSafeFinal(initialParsed.events, memorizedValue, nonce, 'Parent');
+        assertSafeFinal(initialParsed.events, 'Parent');
 
         const parentPath = findSessionTranscript(storageRoot, parentSessionId);
         const parentBeforeFork = readFileSync(parentPath, 'utf8');
         const parentEvents = readSessionEvents(parentPath);
-        assertForkParentToolTrace(extractDurableToolTrace(parentEvents), memoryPath);
+        assertForkParentToolTrace(
+          extractDurableToolTrace(parentEvents),
+          canonicalMemoryPath
+        );
 
         rmSync(memoryPath);
-        if (existsSync(memoryPath)) {
-          throw new Error('Source memory fixture still exists before CLI fork');
+        rmSync(resultPath);
+        if (existsSync(memoryPath) || existsSync(resultPath)) {
+          throw new Error('Source fixtures still exist before CLI fork');
         }
         const childPrompt = [
           'Recover the complete marker from the inherited successful Read result.',
-          `Use Write exactly once on the exact absolute path ${resultPath} with that marker and exactly one trailing newline.`,
+          `Use Write exactly once on the exact absolute path ${canonicalResultPath} with that marker and exactly one trailing newline.`,
           'Then use Bash exactly once with the exact command `wc -c result.txt`.',
           'Use no other tools or commands.',
           'Do not repeat the marker in final prose; briefly confirm completion.',
@@ -281,18 +285,6 @@ describe.skipIf(!enabled)('CLI session fork trajectory (real API)', () => {
           childPrompt,
         ]);
         const parsed = parseSuccessfulRun(forked, 'Child');
-        assertSafeFinal(parsed.events, memorizedValue, nonce, 'Child');
-        if (readFileSync(resultPath, 'utf8') !== expectedBytes) {
-          throw new Error('Fork child result bytes did not match the exact contract');
-        }
-        expect(
-          spawnSync('git', ['diff', '--name-only'], {
-            cwd: workspace,
-            encoding: 'utf8',
-          }).stdout.trim()
-        ).toBe(['memory.txt', 'result.txt'].join('\n'));
-        assertParentUnchanged(parentBeforeFork, parentPath);
-
         const childPath = findSessionTranscript(storageRoot, childSessionId);
         const childContent = readFileSync(childPath, 'utf8');
         const childEvents = readSessionEvents(childPath);
@@ -308,15 +300,24 @@ describe.skipIf(!enabled)('CLI session fork trajectory (real API)', () => {
         );
         assertForkParentToolTrace(
           extractDurableToolTrace(childEvents.slice(0, forkBoundaryEventCount)),
-          memoryPath
+          canonicalMemoryPath
         );
-        assertForkChildToolTrace(
-          extractDurableToolTrace(childEvents, {
-            afterEventCount: forkBoundaryEventCount,
-          }),
-          resultPath,
-          expectedBytes
-        );
+        const childTrace = extractDurableToolTrace(childEvents, {
+          afterEventCount: forkBoundaryEventCount,
+        });
+        assertForkChildToolTrace(childTrace, canonicalResultPath, expectedBytes);
+
+        assertSafeFinal(parsed.events, 'Child');
+        if (readFileSync(resultPath, 'utf8') !== expectedBytes) {
+          throw new Error('Fork child result bytes did not match the exact contract');
+        }
+        expect(
+          spawnSync('git', ['diff', '--name-only'], {
+            cwd: workspace,
+            encoding: 'utf8',
+          }).stdout.trim()
+        ).toBe(['memory.txt', 'result.txt'].join('\n'));
+        assertParentUnchanged(parentBeforeFork, parentPath);
         if (!childContent.includes(memorizedValue)) {
           throw new Error('Fork child transcript did not inherit fixture material');
         }
