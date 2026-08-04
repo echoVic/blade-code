@@ -1,7 +1,7 @@
-import * as acp from '@agentclientprotocol/sdk';
 import { access, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import * as acp from '@agentclientprotocol/sdk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { AcpSession } from '../../../src/acp/Session.js';
@@ -80,7 +80,6 @@ function configureModel(modelConfig: TestModelConfig): string {
         maxContextTokens: 64_000,
         maxOutputTokens: 4_096,
         timeout: 180_000,
-        maxRetries: 1,
       },
     ],
   });

@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -377,7 +377,6 @@ export function buildRealApiRuntimeConfig(modelConfig: TestModelConfig): BladeCo
         maxContextTokens: 64_000,
         maxOutputTokens: 4_096,
         timeout: 180_000,
-        maxRetries: 1,
       },
     ],
   };

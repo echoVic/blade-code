@@ -268,13 +268,13 @@ describe('real API coding-task harness', () => {
   });
 
   it('builds a project config that keeps the API key outside the file', () => {
-    expect(
-      buildRealApiConfig({
-        modelId: 'deepseek-v4-flash',
-        model: 'deepseek-v4-flash',
-        baseUrl: 'https://api.deepseek.com',
-      })
-    ).toMatchObject({
+    const config = buildRealApiConfig({
+      modelId: 'deepseek-v4-flash',
+      model: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com',
+    });
+
+    expect(config).toMatchObject({
       currentModelId: 'deepseek-v4-flash',
       models: [
         expect.objectContaining({
@@ -285,6 +285,8 @@ describe('real API coding-task harness', () => {
         }),
       ],
     });
+    const [model] = config.models as Array<Record<string, unknown>>;
+    expect(model).not.toHaveProperty('maxRetries');
   });
 
   it('allows a real CLI trajectory to exercise a constrained context window', () => {
@@ -398,6 +400,22 @@ describe('real API coding-task harness', () => {
         provider: 'deepseek',
       }),
     ]);
+    expect(runtimeConfig.models[0]).not.toHaveProperty('maxRetries');
+  });
+
+  it('keeps real API product trajectories on the production retry default', () => {
+    const relativeFiles = [
+      'tests/integration/real-api/acp-session-load.test.ts',
+      'tests/integration/real-api/acp-model-switch.test.ts',
+      'tests/integration/real-api/codingTaskHarness.ts',
+      'tests/integration/real-api/testConfig.ts',
+      'tests/integration/real-api/tui-runtime-lifecycle.test.tsx',
+    ];
+
+    for (const relativeFile of relativeFiles) {
+      const source = readFileSync(path.resolve(relativeFile), 'utf8');
+      expect(source, relativeFile).not.toMatch(/maxRetries\s*:\s*1/);
+    }
   });
 
   it('resolves the required DeepSeek fork qualification matrix in declared order', () => {
