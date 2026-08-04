@@ -306,6 +306,16 @@ export class VercelAIChatService implements IChatService {
     return this.needsThinkingReplayMetadata();
   }
 
+  private hasNonThinkingToolHistory(messages: readonly Message[]): boolean {
+    if (!this.needsThinkingReplayMetadata()) return false;
+    return messages.some(
+      (message) =>
+        message.role === 'assistant' &&
+        Boolean(message.tool_calls?.length) &&
+        !message.reasoningContent?.trim()
+    );
+  }
+
   private flattenDeepSeekThinkingToolHistory(messages: Message[]): Message[] {
     const result: Message[] = [];
     let pendingAssistant: Message | undefined;
@@ -736,7 +746,8 @@ export class VercelAIChatService implements IChatService {
     coreMessages: unknown,
     coreTools: unknown,
     signal?: AbortSignal,
-    requestOptions?: ChatRequestOptions
+    requestOptions?: ChatRequestOptions,
+    disableThinkingForRequest = Boolean(requestOptions?.toolChoice)
   ): Record<string, unknown> {
     let effectiveSignal = signal;
     if (this.config.timeout && this.config.timeout > 0) {
@@ -764,7 +775,7 @@ export class VercelAIChatService implements IChatService {
         `Required tool is unavailable: ${requestOptions.toolChoice.toolName}`
       );
     }
-    const providerOptions = requestOptions?.toolChoice
+    const providerOptions = disableThinkingForRequest
       ? this.getRequiredToolProviderOptions()
       : this.getThinkingProviderOptions();
     if (providerOptions) {
@@ -796,6 +807,9 @@ export class VercelAIChatService implements IChatService {
     const filteredMessages = filterOrphanToolMessages(messages);
     const coreMessages = this.convertMessages(filteredMessages);
     const coreTools = this.convertTools(tools);
+    const requestNeedsThinkingDisabled =
+      Boolean(requestOptions?.toolChoice) ||
+      this.hasNonThinkingToolHistory(filteredMessages);
 
     const attempt = async (model: LanguageModel): Promise<ChatResponse> => {
       const result = await generateText(
@@ -804,7 +818,8 @@ export class VercelAIChatService implements IChatService {
           coreMessages,
           coreTools,
           signal,
-          requestOptions
+          requestOptions,
+          requestNeedsThinkingDisabled
         ) as never
       );
 
@@ -893,6 +908,9 @@ export class VercelAIChatService implements IChatService {
     const filteredMessages = filterOrphanToolMessages(messages);
     const coreMessages = this.convertMessages(filteredMessages);
     const coreTools = this.convertTools(tools);
+    const requestNeedsThinkingDisabled =
+      Boolean(requestOptions?.toolChoice) ||
+      this.hasNonThinkingToolHistory(filteredMessages);
 
     const streamFrom = async function* (
       self: VercelAIChatService,
@@ -904,7 +922,8 @@ export class VercelAIChatService implements IChatService {
           coreMessages,
           coreTools,
           signal,
-          requestOptions
+          requestOptions,
+          requestNeedsThinkingDisabled
         ) as never
       );
 

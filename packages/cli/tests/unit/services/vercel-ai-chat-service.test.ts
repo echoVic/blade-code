@@ -164,6 +164,53 @@ describe('VercelAIChatService', () => {
       );
     });
 
+    it('keeps DeepSeek thinking disabled while replaying a non-thinking tool call', async () => {
+      generateText.mockResolvedValueOnce({
+        text: 'done',
+        toolCalls: [],
+        usage: { promptTokens: 10, completionTokens: 1 },
+        finishReason: 'stop',
+        reasoning: undefined,
+        providerMetadata: undefined,
+      });
+      const service = await createService({
+        provider: 'deepseek',
+        model: 'deepseek-v4-flash',
+        baseUrl: 'https://api.deepseek.com/v1',
+        supportsThinking: true,
+      });
+      const messages = [
+        { role: 'user' as const, content: 'Run the tests.' },
+        {
+          role: 'assistant' as const,
+          content: '',
+          tool_calls: [
+            {
+              id: 'required-bash',
+              type: 'function' as const,
+              function: { name: 'Bash', arguments: '{"command":"npm test"}' },
+            },
+          ],
+        },
+        {
+          role: 'tool' as const,
+          content: 'tests passed',
+          tool_call_id: 'required-bash',
+          name: 'Bash',
+        },
+      ];
+
+      await service.chat(messages);
+
+      expect(generateText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerOptions: {
+            deepseek: { thinking: { type: 'disabled' } },
+          },
+        })
+      );
+    });
+
     it('does not enable Anthropic thinking for an exact tool choice', async () => {
       generateText.mockResolvedValueOnce({
         text: '',
@@ -400,6 +447,53 @@ describe('VercelAIChatService', () => {
   // ─── streamChat() ─────────────────────────────────────────────────────
 
   describe('streamChat()', () => {
+    it('keeps DeepSeek thinking disabled while streaming after a non-thinking tool call', async () => {
+      streamText.mockReturnValueOnce({
+        fullStream: toAsyncIterable([
+          { type: 'text-delta', textDelta: 'done' },
+          { type: 'finish', finishReason: 'stop' },
+        ]),
+      });
+      const service = await createService({
+        provider: 'deepseek',
+        model: 'deepseek-v4-flash',
+        baseUrl: 'https://api.deepseek.com/v1',
+        supportsThinking: true,
+      });
+      const messages = [
+        { role: 'user' as const, content: 'Run the tests.' },
+        {
+          role: 'assistant' as const,
+          content: '',
+          tool_calls: [
+            {
+              id: 'required-bash',
+              type: 'function' as const,
+              function: { name: 'Bash', arguments: '{"command":"npm test"}' },
+            },
+          ],
+        },
+        {
+          role: 'tool' as const,
+          content: 'tests passed',
+          tool_call_id: 'required-bash',
+          name: 'Bash',
+        },
+      ];
+
+      for await (const _chunk of service.streamChat(messages)) {
+        // drain stream
+      }
+
+      expect(streamText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerOptions: {
+            deepseek: { thinking: { type: 'disabled' } },
+          },
+        })
+      );
+    });
+
     it('forwards an exact tool choice to the streaming provider', async () => {
       streamText.mockReturnValueOnce({
         fullStream: toAsyncIterable([{ type: 'finish', finishReason: 'tool-calls' }]),
