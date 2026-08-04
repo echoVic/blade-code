@@ -18,7 +18,7 @@ const PHASE_LABELS = {
 } as const;
 
 export function StatusBar() {
-  const { tokenUsage, isStreaming, agentPhase } = useSessionStore();
+  const { tokenUsage, isStreaming, agentPhase, goal } = useSessionStore();
   const phaseLabel = PHASE_LABELS[agentPhase];
 
   const usagePercent =
@@ -75,6 +75,22 @@ export function StatusBar() {
         </div>
         <span className="text-[#9CA3AF] dark:text-zinc-600">({usagePercent}%)</span>
       </div>
+
+      {goal && (
+        <div
+          className={cn(
+            'max-w-[42%] truncate',
+            goal.status === 'active' && 'text-green-600 dark:text-green-400',
+            (goal.status === 'blocked' || goal.status === 'budget_limited') &&
+              'text-yellow-600 dark:text-yellow-400'
+          )}
+          title={goal.objective}
+        >
+          Goal: {goal.status} · {goal.objective}
+          {goal.tokenBudget !== undefined &&
+            ` · ${formatTokens(goal.tokensUsed)}/${formatTokens(goal.tokenBudget)}`}
+        </div>
+      )}
 
       <div className="flex-1" />
 

@@ -1,7 +1,9 @@
 import { Box, Text } from 'ink';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { getProjectRoot } from '../../bootstrap/state.js';
 import { PermissionMode } from '../../config/types.js';
+import { GoalStore } from '../../goals/GoalStore.js';
+import type { GoalSnapshot } from '../../goals/types.js';
 import {
   useActiveModal,
   useAwaitingSecondCtrlC,
@@ -13,9 +15,11 @@ import {
   usePermissionMode,
   useRecoveredSteeringCount,
   useSessionCost,
+  useSessionId,
   useThinkingModeEnabled,
 } from '../../store/selectors/index.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
+import { getCwd } from '../../utils/cwd.js';
 import { useGitBranch } from '../hooks/useGitBranch.js';
 
 /**
@@ -40,6 +44,34 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const sessionCost = useSessionCost();
   const pendingCommands = usePendingCommands();
   const recoveredSteeringCount = useRecoveredSteeringCount();
+  const sessionId = useSessionId();
+  const [goal, setGoal] = useState<GoalSnapshot | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const store = new GoalStore(getCwd(), sessionId);
+    void store
+      .get()
+      .then((snapshot) => {
+        if (!cancelled) setGoal(snapshot);
+      })
+      .catch(() => {
+        if (!cancelled) setGoal(null);
+      });
+    const unsubscribe = GoalStore.subscribe((event) => {
+      if (
+        !cancelled &&
+        event.sessionId === sessionId &&
+        event.workspaceRoot === getCwd()
+      ) {
+        setGoal(event.goal);
+      }
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [sessionId]);
 
   // 检查当前模型是否支持 thinking
   const supportsThinking = currentModel ? isThinkingModel(currentModel) : false;
@@ -119,6 +151,22 @@ export const ChatStatusBar: React.FC = React.memo(() => {
           )}
           {modeIndicator}
           {hasModeIndicator && <Text color="gray">·</Text>}
+          {goal && (
+            <>
+              <Text
+                color={
+                  goal.status === 'active'
+                    ? 'green'
+                    : goal.status === 'blocked' || goal.status === 'budget_limited'
+                      ? 'yellow'
+                      : 'gray'
+                }
+              >
+                goal:{goal.status} {goal.objective.slice(0, 32)}
+              </Text>
+              <Text color="gray">·</Text>
+            </>
+          )}
           <Text color="gray">? for shortcuts</Text>
         </Box>
       )}

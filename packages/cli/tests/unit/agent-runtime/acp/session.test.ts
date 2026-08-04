@@ -18,6 +18,7 @@ const runtimeState = vi.hoisted(() => ({
       queued: 1,
     })),
     getPendingSteeringCount: vi.fn(() => 0),
+    getGoal: vi.fn().mockResolvedValue(null),
   },
 }));
 
@@ -109,6 +110,7 @@ describe('AcpSession', () => {
 
   beforeEach(() => {
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+    runtimeState.runtime.getGoal.mockResolvedValue(null);
     // 创建 mock 连接
     mockConnection = createMockACPClient();
 
@@ -348,6 +350,34 @@ describe('AcpSession', () => {
         'Use the updated requirement.',
         { allowBeforeTurn: true }
       );
+      expect((session as any).pendingPrompt).toBe(activeController);
+    });
+
+    it('活动 goal 回合中应立即执行 /goal pause 而不是把它当 steering', async () => {
+      const activeController = new AbortController();
+      (session as any).pendingPrompt = activeController;
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      vi.mocked(executeSlashCommand).mockResolvedValueOnce({
+        success: true,
+        message: 'Goal paused',
+      });
+
+      const result = await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: '/goal pause' }],
+      });
+
+      expect(result.stopReason).toBe('end_turn');
+      expect(executeSlashCommand).toHaveBeenCalledWith(
+        '/goal pause',
+        expect.objectContaining({
+          sessionId: 'test-session-id',
+          workspaceRoot: '/tmp/test',
+        })
+      );
+      expect(runtimeState.runtime.enqueueSteering).not.toHaveBeenCalled();
       expect((session as any).pendingPrompt).toBe(activeController);
     });
 
@@ -700,6 +730,54 @@ describe('AcpSession', () => {
 
       const response = await session.prompt(secondPrompt);
       expect(response.stopReason).toBe('end_turn');
+    });
+
+    it('应该在创建 goal 后自动启动 transient continuation', async () => {
+      const activeGoal = {
+        version: 1 as const,
+        sessionId: 'test-session-id',
+        goalId: 'goal-1',
+        objective: 'finish the migration',
+        status: 'active' as const,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        continuationCount: 0,
+        createdAt: '2026-08-04T00:00:00.000Z',
+        updatedAt: '2026-08-04T00:00:00.000Z',
+      };
+      runtimeState.runtime.getGoal
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(activeGoal);
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      vi.mocked(executeSlashCommand).mockResolvedValueOnce({
+        success: true,
+        message: 'Goal started',
+        data: { action: 'start_goal', goal: activeGoal },
+      });
+      await session.initialize();
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: '/goal finish the migration' }],
+      });
+
+      const agentModule = (await import(
+        '../../../../src/agent/Agent.js'
+      )) as unknown as {
+        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
+      };
+      await vi.waitFor(() => {
+        expect(agentModule._getMockAgentInstance().calls).toContainEqual(
+          expect.objectContaining({
+            message: '',
+            options: expect.objectContaining({
+              goalContinuationOnly: true,
+            }),
+          })
+        );
+      });
     });
   });
 

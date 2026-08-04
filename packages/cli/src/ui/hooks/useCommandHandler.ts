@@ -164,6 +164,7 @@ export const useCommandHandler = (
     async (resolved: ResolvedInput): Promise<CommandResult> => {
       let userMessageAlreadyAdded = false;
       let onceModelId: string | undefined;
+      let goalContinuationOnly = false;
       let agentInput = resolved;
 
       try {
@@ -192,6 +193,7 @@ export const useCommandHandler = (
         if (slashResult.type === 'continue_as_agent') {
           userMessageAlreadyAdded = slashResult.result.userMessageAlreadyAdded;
           onceModelId = slashResult.result.onceModelId;
+          goalContinuationOnly = slashResult.result.goalContinuationOnly === true;
           agentInput = slashResult.result.agentInput;
         }
 
@@ -199,39 +201,41 @@ export const useCommandHandler = (
         const hookManager = HookManager.getInstance();
         let hookContextInjection: string | undefined;
 
-        const hookResult = await hookManager.executeUserPromptSubmitHooks(
-          agentInput.text,
-          {
-            projectDir: getCwd(),
-            sessionId: sessionId,
-            permissionMode: permissionMode,
-            hasImages: agentInput.images.length > 0,
-            imageCount: agentInput.images.length,
+        if (!goalContinuationOnly) {
+          const hookResult = await hookManager.executeUserPromptSubmitHooks(
+            agentInput.text,
+            {
+              projectDir: getCwd(),
+              sessionId: sessionId,
+              permissionMode: permissionMode,
+              hasImages: agentInput.images.length > 0,
+              imageCount: agentInput.images.length,
+            }
+          );
+
+          if (!hookResult.proceed) {
+            if (hookResult.warning) {
+              sessionActions.addAssistantMessage(`${hookResult.warning}`);
+            }
+            return { success: false, error: 'blocked by hook' };
           }
-        );
 
-        if (!hookResult.proceed) {
-          if (hookResult.warning) {
-            sessionActions.addAssistantMessage(`${hookResult.warning}`);
+          // hook 只改写 agentInput，不回写已提交的 UI 消息
+          if (hookResult.updatedPrompt) {
+            agentInput = {
+              ...agentInput,
+              text: hookResult.updatedPrompt,
+              displayText: hookResult.updatedPrompt,
+              parts: [
+                { type: 'text', text: hookResult.updatedPrompt },
+                ...agentInput.parts.filter((part) => part.type === 'image'),
+              ],
+            };
           }
-          return { success: false, error: 'blocked by hook' };
-        }
 
-        // hook 只改写 agentInput，不回写已提交的 UI 消息
-        if (hookResult.updatedPrompt) {
-          agentInput = {
-            ...agentInput,
-            text: hookResult.updatedPrompt,
-            displayText: hookResult.updatedPrompt,
-            parts: [
-              { type: 'text', text: hookResult.updatedPrompt },
-              ...agentInput.parts.filter((part) => part.type === 'image'),
-            ],
-          };
-        }
-
-        if (hookResult.contextInjection) {
-          hookContextInjection = hookResult.contextInjection;
+          if (hookResult.contextInjection) {
+            hookContextInjection = hookResult.contextInjection;
+          }
         }
 
         // --- 3. 添加用户消息（如果 slash 路由阶段未添加） ---
@@ -274,6 +278,7 @@ export const useCommandHandler = (
         const { loopResult, stats } = await consumeAgentStream(
           agent.chatStream(userMessageContent, chatContext, {
             stream: true,
+            goalContinuationOnly,
             onTurnLimitReached: confirmationHandler
               ? async (data: { turnsCount: number }) => {
                   const response = await confirmationHandler.requestConfirmation({
@@ -350,7 +355,9 @@ export const useCommandHandler = (
       return;
     }
     const hasPending = await SessionRuntime.hasPendingInbox(getCwd(), sessionId);
-    if (!hasPending) {
+    const hasActiveGoal =
+      !hasPending && (await SessionRuntime.hasActiveGoal(getCwd(), sessionId));
+    if (!hasPending && !hasActiveGoal) {
       pendingResumeRequestedRef.current = false;
       return;
     }
@@ -382,7 +389,8 @@ export const useCommandHandler = (
       const { loopResult } = await consumeAgentStream(
         agent.chatStream('', chatContext, {
           stream: true,
-          pendingInputOnly: true,
+          pendingInputOnly: hasPending,
+          goalContinuationOnly: hasActiveGoal,
         }),
         abortController
       );
@@ -427,6 +435,20 @@ export const useCommandHandler = (
     // Esc/Ctrl+C 仍由 handleAbort 提供真正的中止语义。
     if (isProcessing) {
       if (resolved.text.trimStart().startsWith('/')) {
+        if (/^\/goal(?:\s|$)/i.test(resolved.text.trim())) {
+          await ensureStoreInitialized();
+          const abortController =
+            commandActions.getAbortController() ??
+            commandActions.createAbortController();
+          await processSlashCommand(
+            resolved,
+            appActions,
+            sessionActions,
+            abortController.signal,
+            sessionId
+          );
+          return;
+        }
         sessionActions.addAssistantMessage(
           '活动回合中不能执行 slash command；请先停止任务或等待完成。'
         );
@@ -549,9 +571,12 @@ export const useCommandHandler = (
 
   useEffect(() => {
     let cancelled = false;
-    void SessionRuntime.hasPendingInbox(getCwd(), sessionId)
-      .then((hasPending) => {
-        if (!cancelled && hasPending) {
+    void Promise.all([
+      SessionRuntime.hasPendingInbox(getCwd(), sessionId),
+      SessionRuntime.hasActiveGoal(getCwd(), sessionId),
+    ])
+      .then(([hasPending, hasActiveGoal]) => {
+        if (!cancelled && (hasPending || hasActiveGoal)) {
           return resumePendingInput();
         }
       })

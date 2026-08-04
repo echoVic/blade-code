@@ -54,6 +54,29 @@ export const SessionSchema = z.object({
 });
 export type Session = z.infer<typeof SessionSchema>;
 
+export const GoalSchema = z.object({
+  version: z.literal(1),
+  sessionId: z.string(),
+  goalId: z.string(),
+  objective: z.string(),
+  status: z.enum([
+    'active',
+    'paused',
+    'blocked',
+    'usage_limited',
+    'budget_limited',
+    'complete',
+  ]),
+  tokenBudget: z.number().optional(),
+  tokensUsed: z.number(),
+  timeUsedSeconds: z.number(),
+  continuationCount: z.number(),
+  statusReason: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type Goal = z.infer<typeof GoalSchema>;
+
 export const BusEventSchema = z.object({
   type: z.string(),
   properties: z.record(z.unknown()),

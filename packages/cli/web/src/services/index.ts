@@ -1,4 +1,6 @@
 export type {
+  Goal,
+  GoalRunResponse,
   ImageAttachmentInput,
   Message,
   MessageContent,

@@ -18,7 +18,10 @@ type SlashCommandAction =
   | 'invoke_custom_command'
   | 'invoke_plugin_command'
   | 'invoke_once_model'
-  | 'restore_forked_session';
+  | 'restore_forked_session'
+  | 'start_goal'
+  | 'resume_goal'
+  | 'goal_cleared';
 
 /**
  * Slash command 返回的结构化数据

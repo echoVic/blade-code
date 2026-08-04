@@ -1,4 +1,5 @@
 import type {
+  Goal,
   Message as BaseMessage,
   ImageAttachmentInput,
   MessageContent,
@@ -11,6 +12,7 @@ import type {
 import type { StateCreator } from 'zustand';
 
 export type {
+  Goal,
   ImageAttachmentInput,
   MessageContent,
   MessageContentPart,
@@ -112,6 +114,7 @@ export interface SessionSlice {
   isTemporarySession: boolean;
   isLoading: boolean;
   error: string | null;
+  goal: Goal | null;
 
   setSessions: (sessions: Session[]) => void;
   addSession: (session: Session) => void;
@@ -122,6 +125,7 @@ export interface SessionSlice {
   setError: (error: string | null) => void;
   startTemporarySession: () => void;
   clearError: () => void;
+  setGoal: (goal: Goal | null) => void;
   loadSessions: () => Promise<void>;
   selectSession: (sessionId: string) => Promise<void>;
   forkSession: (sessionId: string) => Promise<void>;

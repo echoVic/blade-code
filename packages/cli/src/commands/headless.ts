@@ -826,6 +826,8 @@ export async function runHeadless(
 
           case 'steering_applied':
           case 'follow_up_started':
+          case 'goal_updated':
+          case 'goal_continuation_started':
             break;
 
           case 'subagent_spawned':

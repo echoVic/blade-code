@@ -164,7 +164,8 @@ export class AcpSession {
     this.agent = await Agent.createWithRuntime(this.runtime, { sessionId: this.id });
 
     logger.debug(`[AcpSession ${this.id}] Agent created successfully`);
-    if (this.runtime.getPendingSteeringCount() > 0) {
+    const activeGoal = await this.runtime.getGoal();
+    if (this.runtime.getPendingSteeringCount() > 0 || activeGoal?.status === 'active') {
       if (this.options.initialMessages === undefined) {
         this.schedulePendingResume();
       } else {
@@ -278,6 +279,10 @@ export class AcpSession {
 
       // 执行 slash command
       const result = await executeSlashCommand(message, context);
+      const action = result.data?.action;
+      if (action === 'start_goal' || action === 'resume_goal') {
+        this.schedulePendingResume();
+      }
 
       // 发送结果给 IDE
       // 优先使用 content（完整内容），否则使用 message（简短状态）
@@ -383,7 +388,10 @@ export class AcpSession {
    */
   async prompt(
     params: PromptRequest,
-    internalOptions: { pendingInputOnly?: boolean } = {}
+    internalOptions: {
+      pendingInputOnly?: boolean;
+      goalContinuationOnly?: boolean;
+    } = {}
   ): Promise<PromptResponse> {
     // 设置当前会话（确保工具使用正确的服务上下文）
     AcpServiceContext.setCurrentSession(this.id);
@@ -394,6 +402,9 @@ export class AcpSession {
 
     const message = this.resolvePrompt(params.prompt);
     if (this.pendingPrompt) {
+      if (/^\/goal(?:\s|$)/i.test(message.trim())) {
+        return this.handleSlashCommand(message, this.pendingPrompt.signal);
+      }
       const steering = await this.runtime.enqueueSteering(message, {
         allowBeforeTurn: true,
       });
@@ -453,6 +464,7 @@ export class AcpSession {
       await drainLoop(
         this.agent.chatStream(message, context, {
           pendingInputOnly: internalOptions.pendingInputOnly,
+          goalContinuationOnly: internalOptions.goalContinuationOnly,
         }),
         async (event: LoopEvent) => {
           switch (event.kind) {
@@ -554,6 +566,19 @@ export class AcpSession {
                 });
               }
               break;
+            case 'goal_updated':
+              if (event.goal && event.goal.status !== 'active') {
+                this.sendUpdate({
+                  sessionUpdate: 'agent_message_chunk',
+                  content: {
+                    type: 'text',
+                    text: `[Goal ${event.goal.status}: ${event.goal.objective}]\n`,
+                  },
+                });
+              }
+              break;
+            case 'goal_continuation_started':
+              break;
 
             // --- 系统事件不外发 ---
             // stream_end: 内部 per-turn 信号，不外发
@@ -603,7 +628,10 @@ export class AcpSession {
 
   private async resumePendingIfIdle(): Promise<void> {
     if (this.pendingPrompt || !this.runtime || !this.agent) return;
-    if (this.runtime.getPendingSteeringCount() === 0) {
+    const hasPending = this.runtime.getPendingSteeringCount() > 0;
+    const goal = hasPending ? null : await this.runtime.getGoal();
+    const hasActiveGoal = goal?.status === 'active';
+    if (!hasPending && !hasActiveGoal) {
       this.pendingResumeRequested = false;
       return;
     }
@@ -611,7 +639,10 @@ export class AcpSession {
     this.pendingResumeRequested = false;
     await this.prompt(
       { sessionId: this.id, prompt: [] },
-      { pendingInputOnly: true }
+      {
+        pendingInputOnly: hasPending,
+        goalContinuationOnly: hasActiveGoal,
+      }
     ).catch((error) => {
       logger.error(`[AcpSession ${this.id}] Failed to resume pending input:`, error);
     });

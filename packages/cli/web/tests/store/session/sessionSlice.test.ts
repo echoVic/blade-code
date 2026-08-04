@@ -8,6 +8,10 @@ vi.mock('../../../src/services', () => ({
     deleteSession: vi.fn(),
     updateSession: vi.fn(),
     getMessages: vi.fn(),
+    getGoal: vi.fn(),
+    createGoal: vi.fn(),
+    updateGoal: vi.fn(),
+    clearGoal: vi.fn(),
     sendMessage: vi.fn(),
     abortSession: vi.fn(),
     subscribeEvents: vi.fn(() => () => {
@@ -24,6 +28,7 @@ import { TEMP_SESSION_ID, useSessionStore } from '../../../src/store/session';
 describe('sessionSlice multimodal sendMessage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(sessionService.getGoal).mockResolvedValue(null);
 
     useConfigStore.setState({
       currentModelId: null,
@@ -44,6 +49,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       isTemporarySession: true,
       isLoading: false,
       error: null,
+      goal: null,
       messages: [],
       isStreaming: false,
       agentPhase: 'idle',
@@ -251,5 +257,86 @@ describe('sessionSlice multimodal sendMessage', () => {
       content: 'Run this after the current answer.',
     });
     expect(useSessionStore.getState().pendingSteeringCount).toBe(1);
+  });
+
+  it('routes /goal commands to the Goal API instead of normal message submission', async () => {
+    const subscribeToEvents = vi.fn();
+    const goal = {
+      version: 1 as const,
+      sessionId: 'goal-session',
+      goalId: 'goal-1',
+      objective: 'finish the migration',
+      status: 'active' as const,
+      tokenBudget: 1200,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      continuationCount: 0,
+      createdAt: '2026-08-04T00:00:00.000Z',
+      updatedAt: '2026-08-04T00:00:00.000Z',
+    };
+    useSessionStore.setState({
+      currentSessionId: 'goal-session',
+      isTemporarySession: false,
+      subscribeToEvents,
+    });
+    vi.mocked(sessionService.createGoal).mockResolvedValue({
+      status: 'running',
+      runId: 'goal-run',
+      goal,
+    });
+
+    await useSessionStore.getState().sendMessage({
+      content: '/goal finish the migration --budget 1200',
+    });
+
+    expect(sessionService.createGoal).toHaveBeenCalledWith(
+      'goal-session',
+      'finish the migration',
+      1200,
+      'default'
+    );
+    expect(sessionService.sendMessage).not.toHaveBeenCalled();
+    expect(useSessionStore.getState()).toMatchObject({
+      goal,
+      currentRunId: 'goal-run',
+      isStreaming: true,
+      agentPhase: 'running',
+    });
+    expect(subscribeToEvents).toHaveBeenCalledWith('goal-session');
+  });
+
+  it('pauses a goal through the Goal API while its run is streaming', async () => {
+    const pausedGoal = {
+      version: 1 as const,
+      sessionId: 'goal-session',
+      goalId: 'goal-1',
+      objective: 'finish the migration',
+      status: 'paused' as const,
+      tokensUsed: 300,
+      timeUsedSeconds: 4,
+      continuationCount: 2,
+      createdAt: '2026-08-04T00:00:00.000Z',
+      updatedAt: '2026-08-04T00:00:04.000Z',
+    };
+    useSessionStore.setState({
+      currentSessionId: 'goal-session',
+      isTemporarySession: false,
+      isStreaming: true,
+      currentRunId: 'goal-run',
+    });
+    vi.mocked(sessionService.updateGoal).mockResolvedValue({
+      status: 'paused',
+      goal: pausedGoal,
+    });
+
+    await useSessionStore.getState().sendMessage({
+      content: '/goal pause',
+    });
+
+    expect(sessionService.updateGoal).toHaveBeenCalledWith('goal-session', {
+      action: 'pause',
+    });
+    expect(sessionService.sendMessage).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().goal).toEqual(pausedGoal);
   });
 });

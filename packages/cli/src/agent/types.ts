@@ -112,6 +112,10 @@ export interface LoopOptions {
   preparedInputTurn?: PreparedInputTurn;
   /** Durable inbox identity attached to the direct user transcript entry. */
   inputMessageId?: string;
+  /** Start or resume work from the persisted goal instead of a user prompt. */
+  goalContinuationOnly?: boolean;
+  /** Model-visible control input that must not remain in transcript history. */
+  transientInput?: 'goal_continuation';
   /** SessionRuntime-owned same-turn user steering source. */
   turnSteering?: {
     drain: () => Promise<SteeringMessage[]>;

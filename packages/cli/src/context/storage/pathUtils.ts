@@ -86,6 +86,11 @@ export function getSessionInboxFilePath(
   return path.join(getProjectStoragePath(projectPath), `${sessionId}.inbox.json`);
 }
 
+export function getSessionGoalFilePath(projectPath: string, sessionId: string): string {
+  assertValidSessionId(sessionId);
+  return path.join(getProjectStoragePath(projectPath), `${sessionId}.goal.json`);
+}
+
 /**
  * 检测当前项目的 Git 分支
  * @param projectPath 项目路径

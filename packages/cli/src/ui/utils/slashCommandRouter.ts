@@ -44,6 +44,8 @@ export interface AgentContinuation {
   userMessageAlreadyAdded: boolean;
   /** 一次性模型 ID（invoke_once_model 场景） */
   onceModelId?: string;
+  /** Continue from the persisted goal without a durable user prompt. */
+  goalContinuationOnly?: boolean;
 }
 
 export type SlashRouteResult =
@@ -92,6 +94,13 @@ interface InvokeOnceModelData {
   prompt: string;
 }
 
+interface GoalContinuationData {
+  action: 'start_goal' | 'resume_goal';
+  goal: {
+    objective: string;
+  };
+}
+
 // ==================== 类型守卫 ====================
 
 export function isInvokeSkillAction(data: unknown): data is InvokeSkillData {
@@ -134,6 +143,17 @@ export function isInvokeOnceModelAction(data: unknown): data is InvokeOnceModelD
     (data as InvokeOnceModelData).action === 'invoke_once_model' &&
     typeof (data as InvokeOnceModelData).modelId === 'string' &&
     typeof (data as InvokeOnceModelData).prompt === 'string'
+  );
+}
+
+export function isGoalContinuationAction(data: unknown): data is GoalContinuationData {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    ['start_goal', 'resume_goal'].includes(
+      String((data as GoalContinuationData).action)
+    ) &&
+    typeof (data as GoalContinuationData).goal?.objective === 'string'
   );
 }
 
@@ -390,6 +410,25 @@ Remember: Follow the above instructions carefully to complete the user's request
         },
         userMessageAlreadyAdded: true,
         onceModelId: modelId,
+      },
+    };
+  }
+
+  if (isGoalContinuationAction(slashResult.data)) {
+    const objective = slashResult.data.goal.objective;
+    sessionActions.addUserMessage(command);
+    return {
+      type: 'continue_as_agent',
+      result: {
+        userDisplayMessage: command,
+        agentInput: {
+          displayText: command,
+          text: objective,
+          images: [],
+          parts: [{ type: 'text', text: objective }],
+        },
+        userMessageAlreadyAdded: true,
+        goalContinuationOnly: true,
       },
     };
   }

@@ -10,6 +10,8 @@ import type { Tool } from '../types/index.js';
 import { configTool } from './config/index.js';
 // 文件操作工具
 import { editTool, readTool, writeTool } from './file/index.js';
+// Goal 工具
+import { createGoalTools } from './goal/index.js';
 // Memory 工具
 import { memoryReadTool, memoryWriteTool } from './memory/index.js';
 // Notebook 工具
@@ -52,9 +54,11 @@ async function getMcpTools(): Promise<Tool[]> {
 export async function getBuiltinTools(opts?: {
   sessionId?: string;
   configDir?: string;
+  workspaceRoot?: string;
 }): Promise<Tool[]> {
   const sessionId = opts?.sessionId || `session_${Date.now()}`;
   const configDir = opts?.configDir || path.join(os.homedir(), '.blade');
+  const workspaceRoot = opts?.workspaceRoot || process.cwd();
 
   const builtinTools = [
     // 文件操作工具: Read, Edit, Write, NotebookEdit
@@ -82,6 +86,9 @@ export async function getBuiltinTools(opts?: {
 
     // 会话任务列表: TaskCreate, TaskGet, TaskUpdate, TaskList
     ...createTaskListTools({ sessionId, configDir }),
+
+    // Goal mode: GetGoal, CreateGoal, UpdateGoal
+    ...createGoalTools({ sessionId, workspaceRoot }),
 
     // Agent Teams: TeamCreate, TeamStatus, TeamDelete
     ...createTeamTools({ sessionId, configDir }),

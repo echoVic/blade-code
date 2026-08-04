@@ -11,6 +11,7 @@ import {
   detectGitBranch,
   getBladeStorageRoot,
   getSessionFilePath,
+  getSessionGoalFilePath,
   unescapeProjectPath,
 } from '../context/storage/pathUtils.js';
 import type { SessionEvent } from '../context/types.js';
@@ -387,6 +388,9 @@ export class SessionService {
           path.join(path.dirname(session.filePath), `${session.sessionId}.inbox.json`),
           { force: true }
         ),
+        rm(getSessionGoalFilePath(session.projectPath, session.sessionId), {
+          force: true,
+        }),
       ])
     );
     return matches.length;

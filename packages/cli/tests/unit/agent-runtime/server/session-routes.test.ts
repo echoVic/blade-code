@@ -31,6 +31,12 @@ const runtimeState = vi.hoisted(() => ({
     finishTurn: vi.fn().mockResolvedValue(undefined),
     getPendingSteeringCount: vi.fn(() => 0),
     hasTurnOwner: vi.fn(() => false),
+    getGoal: vi.fn().mockResolvedValue(null),
+    createGoal: vi.fn(),
+    editGoal: vi.fn(),
+    pauseGoal: vi.fn(),
+    resumeGoal: vi.fn(),
+    clearGoal: vi.fn(),
   },
 }));
 
@@ -42,6 +48,7 @@ vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
   SessionRuntime: {
     create: vi.fn(async () => runtimeState.runtime),
     hasPendingInbox: vi.fn(async () => false),
+    hasActiveGoal: vi.fn(async () => false),
   },
 }));
 
@@ -86,6 +93,19 @@ vi.mock('../../../../src/logging/Logger.js', () => ({
 }));
 
 describe('SessionRoutes runtime reuse', () => {
+  const activeGoal = {
+    version: 1 as const,
+    sessionId: 'goal-session',
+    goalId: 'goal-1',
+    objective: 'finish the migration',
+    status: 'active' as const,
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+    continuationCount: 0,
+    createdAt: '2026-08-04T00:00:00.000Z',
+    updatedAt: '2026-08-04T00:00:00.000Z',
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     runtimeState.runtime.dispose.mockClear();
@@ -109,10 +129,17 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.finishTurn.mockClear();
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.hasTurnOwner.mockReturnValue(false);
+    runtimeState.runtime.getGoal.mockResolvedValue(null);
+    runtimeState.runtime.createGoal.mockReset();
+    runtimeState.runtime.editGoal.mockReset();
+    runtimeState.runtime.pauseGoal.mockReset();
+    runtimeState.runtime.resumeGoal.mockReset();
+    runtimeState.runtime.clearGoal.mockReset();
     vi.mocked(SessionRuntime.create).mockImplementation(
       async () => runtimeState.runtime as never
     );
     vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
+    vi.mocked(SessionRuntime.hasActiveGoal).mockResolvedValue(false);
     agentState.chatStream.mockImplementation(async function* () {
       if (Date.now() < 0) {
         yield undefined;
@@ -127,6 +154,22 @@ describe('SessionRoutes runtime reuse', () => {
 
   afterEach(() => {
     vi.resetModules();
+  });
+
+  it('creates storage-safe session IDs', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const app = SessionRoutes();
+
+    const response = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectPath: '/tmp/session-id-test' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      sessionId: expect.stringMatching(/^session-[A-Za-z0-9_-]+$/),
+    });
   });
 
   it('reuses one SessionRuntime for repeated messages in the same session', async () => {
@@ -1073,5 +1116,72 @@ describe('SessionRoutes runtime reuse', () => {
         success: false,
       })
     );
+  });
+
+  it('durably creates a goal before starting a transient goal run', async () => {
+    runtimeState.runtime.createGoal.mockResolvedValue(activeGoal);
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const app = SessionRoutes();
+
+    const response = await app.request('/goal-session/goal', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        objective: 'finish the migration',
+        tokenBudget: 1200,
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      status: 'running',
+      runId: expect.any(String),
+      goal: activeGoal,
+    });
+    expect(runtimeState.runtime.createGoal).toHaveBeenCalledWith({
+      objective: 'finish the migration',
+      tokenBudget: 1200,
+    });
+    await vi.waitFor(() => {
+      expect(agentState.chatStream).toHaveBeenCalledWith(
+        '',
+        expect.objectContaining({ sessionId: 'goal-session' }),
+        expect.objectContaining({ goalContinuationOnly: true })
+      );
+    });
+    expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
+    expect(Bus.publish).toHaveBeenCalledWith('goal-session', 'goal.updated', {
+      goal: activeGoal,
+    });
+    expect(Bus.publish).not.toHaveBeenCalledWith(
+      'goal-session',
+      'message.created',
+      expect.objectContaining({ role: 'user' })
+    );
+  });
+
+  it('wakes an active persisted goal when Web SSE reconnects', async () => {
+    vi.mocked(SessionRuntime.hasActiveGoal).mockResolvedValue(true);
+    runtimeState.runtime.getGoal.mockResolvedValue(activeGoal);
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const app = SessionRoutes();
+    const controller = new AbortController();
+
+    void app.request('/goal-session/events', {
+      signal: controller.signal,
+    });
+
+    await vi.waitFor(() => {
+      expect(agentState.chatStream).toHaveBeenCalledWith(
+        '',
+        expect.objectContaining({ sessionId: 'goal-session' }),
+        expect.objectContaining({
+          goalContinuationOnly: true,
+          pendingInputOnly: false,
+        })
+      );
+    });
+    controller.abort();
   });
 });

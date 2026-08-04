@@ -14,6 +14,12 @@ const sessionState = vi.hoisted(() => ({
   },
   isStreaming: true,
   agentPhase: 'compacting',
+  goal: null as null | {
+    status: string;
+    objective: string;
+    tokenBudget?: number;
+    tokensUsed: number;
+  },
 }));
 
 vi.mock('@/store/session', () => ({
@@ -29,6 +35,7 @@ describe('StatusBar', () => {
   beforeEach(() => {
     sessionState.isStreaming = true;
     sessionState.agentPhase = 'compacting';
+    sessionState.goal = null;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -48,5 +55,21 @@ describe('StatusBar', () => {
 
     expect(container.textContent).toContain('Compacting context...');
     expect(container.textContent).not.toContain('Generating...');
+  });
+
+  it('renders active goal status and budget', () => {
+    sessionState.goal = {
+      status: 'active',
+      objective: 'finish the migration',
+      tokenBudget: 1200,
+      tokensUsed: 300,
+    };
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain(
+      'Goal: active · finish the migration · 300/1.2K'
+    );
   });
 });

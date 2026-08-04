@@ -39,6 +39,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
   isTemporarySession: false,
   isLoading: false,
   error: null,
+  goal: null,
 
   setSessions: (sessions) => set({ sessions }),
 
@@ -68,6 +69,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
   setError: (error) => set({ error }),
 
   clearError: () => set({ error: null }),
+  setGoal: (goal) => set({ goal }),
 
   startTemporarySession: () =>
     set({
@@ -76,6 +78,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       messages: [],
       tokenUsage: { ...initialTokenUsage },
       error: null,
+      goal: null,
     }),
 
   loadSessions: async () => {
@@ -96,10 +99,14 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       isTemporarySession: false,
     });
     try {
-      const rawMessages = await sessionService.getMessages(sessionId);
+      const [rawMessages, goal] = await Promise.all([
+        sessionService.getMessages(sessionId),
+        sessionService.getGoal(sessionId).catch(() => null),
+      ]);
       const messages = aggregateMessages(rawMessages);
       set({
         messages,
+        goal,
         isLoading: false,
         tokenUsage: { ...initialTokenUsage },
       });
@@ -135,6 +142,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
         currentSessionId:
           state.currentSessionId === sessionId ? null : state.currentSessionId,
         messages: state.currentSessionId === sessionId ? [] : state.messages,
+        goal: state.currentSessionId === sessionId ? null : state.goal,
       }));
     } catch (err) {
       set({ error: (err as Error).message });
@@ -174,6 +182,85 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
 
     if (!sessionId || sessionId === TEMP_SESSION_ID) {
       set({ error: 'Failed to create session' });
+      return;
+    }
+
+    const trimmedInput = payload.content.trim();
+    if (
+      (payload.attachments?.length ?? 0) === 0 &&
+      (trimmedInput === '/goal' || trimmedInput.startsWith('/goal '))
+    ) {
+      addMessage({
+        id: `goal-command-${Date.now()}`,
+        role: 'user',
+        content: trimmedInput,
+        timestamp: Date.now(),
+      });
+      const args = trimmedInput
+        .slice('/goal'.length)
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+      const subcommand = args[0]?.toLowerCase();
+      try {
+        if (!subcommand || subcommand === 'status') {
+          set({ goal: await sessionService.getGoal(sessionId) });
+          return;
+        }
+        if (subcommand === 'clear') {
+          await sessionService.clearGoal(sessionId);
+          set({ goal: null });
+          return;
+        }
+
+        let response;
+        if (subcommand === 'pause') {
+          response = await sessionService.updateGoal(sessionId, {
+            action: 'pause',
+          });
+        } else if (subcommand === 'resume') {
+          response = await sessionService.updateGoal(sessionId, {
+            action: 'resume',
+          });
+        } else if (subcommand === 'edit') {
+          const objective = args.slice(1).join(' ').trim();
+          if (!objective) throw new Error('Usage: /goal edit <objective>');
+          response = await sessionService.updateGoal(sessionId, {
+            action: 'edit',
+            objective,
+          });
+        } else {
+          const budgetIndex = args.lastIndexOf('--budget');
+          let tokenBudget: number | undefined;
+          if (budgetIndex >= 0) {
+            const rawBudget = args[budgetIndex + 1];
+            if (!rawBudget || !/^[1-9]\d*$/.test(rawBudget)) {
+              throw new Error('--budget requires a positive integer');
+            }
+            tokenBudget = Number(rawBudget);
+            args.splice(budgetIndex, 2);
+          }
+          const objective = args.join(' ').trim();
+          if (!objective) throw new Error('Usage: /goal <objective>');
+          const { currentMode } = useConfigStore.getState();
+          response = await sessionService.createGoal(
+            sessionId,
+            objective,
+            tokenBudget,
+            currentMode
+          );
+        }
+
+        set({
+          goal: response.goal,
+          currentRunId: response.runId ?? null,
+          isStreaming: Boolean(response.runId),
+          agentPhase: response.runId ? 'running' : get().agentPhase,
+        });
+        if (response.runId) subscribeToEvents(sessionId);
+      } catch (err) {
+        set({ error: (err as Error).message, isStreaming: false });
+      }
       return;
     }
 

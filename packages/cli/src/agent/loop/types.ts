@@ -6,6 +6,7 @@
 
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { BladeConfig } from '../../config/index.js';
+import type { GoalSnapshot } from '../../goals/types.js';
 import type { IChatService } from '../../services/ChatServiceInterface.js';
 import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
@@ -57,6 +58,12 @@ export type DomainEvent =
       queued: number;
       recovered: number;
       messages: Array<SteeringMessage & { persisted: boolean }>;
+    }
+  | { kind: 'goal_updated'; goal: GoalSnapshot | null }
+  | {
+      kind: 'goal_continuation_started';
+      goal: GoalSnapshot;
+      continuation: number;
     }
   | { kind: 'subagent_spawned'; sessionId: string; type: string; prompt: string }
   | {

@@ -13,6 +13,7 @@ import {
   CustomCommandRegistry,
 } from './custom/index.js';
 import gitCommand from './git.js';
+import goalCommand from './goal.js';
 import hooksCommand from './hooks.js';
 import ideCommand from './ide.js';
 import initCommand from './init.js';
@@ -39,6 +40,7 @@ const slashCommands: SlashCommandRegistry = {
   permissions: permissionsCommand,
   model: modelCommand,
   git: gitCommand,
+  goal: goalCommand,
   ide: ideCommand,
   search: searchCommand,
   skills: skillsCommand,

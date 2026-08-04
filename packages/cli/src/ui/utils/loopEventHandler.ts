@@ -242,6 +242,9 @@ export function createLoopEventHandler(
           deps.commandActions.setRecoveredSteeringCount(event.recovered);
         }
         break;
+      case 'goal_updated':
+      case 'goal_continuation_started':
+        break;
 
       case 'subagent_spawned':
       case 'subagent_completed':

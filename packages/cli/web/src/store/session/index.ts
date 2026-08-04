@@ -18,6 +18,7 @@ export { TEMP_SESSION_ID } from './constants';
 export type {
   AgentResponseContent,
   ConfirmationInfo,
+  Goal,
   ImageAttachmentInput,
   Message,
   MessageContent,

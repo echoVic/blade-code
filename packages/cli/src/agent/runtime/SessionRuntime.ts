@@ -9,6 +9,8 @@ import {
 } from '../../config/index.js';
 import type { McpServerConfig, ModelConfig } from '../../config/types.js';
 import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
+import { GoalStore } from '../../goals/GoalStore.js';
+import type { GoalCreateInput, GoalProgress, GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { loadMcpConfigFromCli } from '../../mcp/loadMcpConfig.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
@@ -97,6 +99,7 @@ export class SessionRuntime {
   private readonly approvalStore = new InMemorySessionApprovalStore();
   private readonly baseRegistry = new ToolRegistry();
   private readonly attachmentCollector: AttachmentCollector;
+  private readonly goalStore: GoalStore;
   private activeTurnMailbox!: ActiveTurnMailbox;
 
   private chatService!: IChatService;
@@ -111,6 +114,7 @@ export class SessionRuntime {
     private readonly config: BladeConfig,
     private readonly options: SessionRuntimeOptions
   ) {
+    this.goalStore = new GoalStore(this.workspaceRoot, this.sessionId);
     this.attachmentCollector = new AttachmentCollector({
       cwd: this.workspaceRoot,
       maxFileSize: 1024 * 1024,
@@ -167,6 +171,13 @@ export class SessionRuntime {
     }
   }
 
+  static async hasActiveGoal(
+    workspaceRoot: string,
+    sessionId: string
+  ): Promise<boolean> {
+    return GoalStore.hasActiveGoal(workspaceRoot, sessionId);
+  }
+
   get sessionId(): string {
     return this.options.sessionId;
   }
@@ -197,6 +208,42 @@ export class SessionRuntime {
 
   getCurrentModelMaxContextTokens(): number {
     return this.currentModelMaxContextTokens;
+  }
+
+  getGoal(): Promise<GoalSnapshot | null> {
+    return this.goalStore.get();
+  }
+
+  createGoal(input: GoalCreateInput): Promise<GoalSnapshot> {
+    return this.goalStore.create(input);
+  }
+
+  editGoal(objective: string): Promise<GoalSnapshot> {
+    return this.goalStore.edit(objective);
+  }
+
+  pauseGoal(reason?: string): Promise<GoalSnapshot> {
+    return this.goalStore.pause(reason);
+  }
+
+  resumeGoal(): Promise<GoalSnapshot> {
+    return this.goalStore.resume();
+  }
+
+  clearGoal(): Promise<boolean> {
+    return this.goalStore.clear();
+  }
+
+  recordGoalProgress(progress: GoalProgress): Promise<GoalSnapshot | null> {
+    return this.goalStore.recordProgress(progress);
+  }
+
+  beginGoalContinuation(): Promise<GoalSnapshot | null> {
+    return this.goalStore.tryBeginContinuation();
+  }
+
+  async pauseActiveGoal(reason: string): Promise<GoalSnapshot | null> {
+    return this.goalStore.pauseIfActive(reason);
   }
 
   beginTurn(): ActiveTurnHandle {
@@ -468,6 +515,7 @@ export class SessionRuntime {
     const builtinTools = await getBuiltinTools({
       sessionId: this.sessionId,
       configDir: path.join(os.homedir(), '.blade'),
+      workspaceRoot: this.workspaceRoot,
     });
 
     const builtin = builtinTools.filter((tool) => !tool.name.startsWith('mcp__'));

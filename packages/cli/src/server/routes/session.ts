@@ -11,6 +11,8 @@ import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
 import { PermissionMode } from '../../config/types.js';
+import { GoalStore } from '../../goals/GoalStore.js';
+import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
@@ -57,6 +59,18 @@ const SendMessageSchema = z.object({
 const UpdateSessionSchema = z.object({
   title: z.string().optional(),
 });
+
+const CreateGoalSchema = z.object({
+  objective: z.string().min(1),
+  tokenBudget: z.number().int().positive().optional(),
+  permissionMode: z.enum(['default', 'autoEdit', 'plan', 'yolo']).optional(),
+});
+
+const UpdateGoalSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('pause') }),
+  z.object({ action: z.literal('resume') }),
+  z.object({ action: z.literal('edit'), objective: z.string().min(1) }),
+]);
 
 export interface RunState {
   id: string;
@@ -293,6 +307,7 @@ export const SessionRoutes = () => {
     options: {
       pendingInputOnly?: boolean;
       preparedInputTurn?: PreparedInputTurn;
+      goalContinuationOnly?: boolean;
     } = {}
   ): RunState => {
     const runId = nanoid(12);
@@ -314,6 +329,7 @@ export const SessionRoutes = () => {
       {
         pendingInputOnly: options.pendingInputOnly,
         preparedInputTurn: options.preparedInputTurn,
+        goalContinuationOnly: options.goalContinuationOnly,
       }
     ).catch((error) => {
       logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
@@ -331,7 +347,14 @@ export const SessionRoutes = () => {
     ) {
       return;
     }
-    if (!(await SessionRuntime.hasPendingInbox(session.projectPath, session.id))) {
+    const hasPending = await SessionRuntime.hasPendingInbox(
+      session.projectPath,
+      session.id
+    );
+    const hasActiveGoal =
+      !hasPending &&
+      (await SessionRuntime.hasActiveGoal(session.projectPath, session.id));
+    if (!hasPending && !hasActiveGoal) {
       return;
     }
 
@@ -346,10 +369,16 @@ export const SessionRoutes = () => {
     ) {
       return;
     }
-    if (runtime.getPendingSteeringCount() === 0 || runtime.hasTurnOwner()) {
+    if (
+      (hasPending && runtime.getPendingSteeringCount() === 0) ||
+      runtime.hasTurnOwner()
+    ) {
       return;
     }
-    startRun(session, '', PermissionMode.DEFAULT, { pendingInputOnly: true });
+    startRun(session, '', PermissionMode.DEFAULT, {
+      pendingInputOnly: hasPending,
+      goalContinuationOnly: hasActiveGoal,
+    });
   };
 
   app.get('/', async (c) => {
@@ -559,6 +588,98 @@ export const SessionRoutes = () => {
     }
   });
 
+  app.get('/:sessionId/goal', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    const session = await getOrHydrateSession(
+      sessionId,
+      c.get('directory') || getCwd()
+    );
+    return c.json({
+      goal: await new GoalStore(session.projectPath, sessionId).get(),
+    });
+  });
+
+  app.put('/:sessionId/goal', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    const parsed = CreateGoalSchema.safeParse(await c.req.json());
+    if (!parsed.success) throw new BadRequestError('Invalid goal request');
+    const session = await getOrHydrateSession(
+      sessionId,
+      c.get('directory') || getCwd()
+    );
+
+    return getMessageSubmissionLock(sessionId).runExclusive(async () => {
+      const currentRun = session.currentRunId
+        ? activeRuns.get(session.currentRunId)
+        : undefined;
+      if (
+        currentRun &&
+        (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
+      ) {
+        return c.json({ status: 'rejected', reason: 'run_active' }, 409);
+      }
+
+      const runtime = await getOrCreateRuntime(session);
+      const goal = await runtime.createGoal(parsed.data);
+      Bus.publish(sessionId, 'goal.updated', { goal });
+      const permissionMode =
+        (parsed.data.permissionMode as PermissionMode | undefined) ??
+        PermissionMode.DEFAULT;
+      const run = startRun(session, '', permissionMode, {
+        goalContinuationOnly: true,
+      });
+      return c.json({ status: 'running', runId: run.id, goal }, 202);
+    });
+  });
+
+  app.patch('/:sessionId/goal', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    const parsed = UpdateGoalSchema.safeParse(await c.req.json());
+    if (!parsed.success) throw new BadRequestError('Invalid goal update');
+    const session = await getOrHydrateSession(
+      sessionId,
+      c.get('directory') || getCwd()
+    );
+    return getMessageSubmissionLock(sessionId).runExclusive(async () => {
+      const runtime = await getOrCreateRuntime(session);
+      let goal: GoalSnapshot;
+      if (parsed.data.action === 'pause') {
+        goal = await runtime.pauseGoal();
+      } else if (parsed.data.action === 'edit') {
+        goal = await runtime.editGoal(parsed.data.objective);
+      } else {
+        goal = await runtime.resumeGoal();
+      }
+      Bus.publish(sessionId, 'goal.updated', { goal });
+
+      if (
+        goal.status === 'active' &&
+        (!session.currentRunId ||
+          !['running', 'waiting_permission'].includes(
+            activeRuns.get(session.currentRunId)?.status ?? ''
+          ))
+      ) {
+        const run = startRun(session, '', PermissionMode.DEFAULT, {
+          goalContinuationOnly: true,
+        });
+        return c.json({ status: 'running', runId: run.id, goal }, 202);
+      }
+      return c.json({ status: goal.status, goal });
+    });
+  });
+
+  app.delete('/:sessionId/goal', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    const session = await getOrHydrateSession(
+      sessionId,
+      c.get('directory') || getCwd()
+    );
+    const runtime = await getOrCreateRuntime(session);
+    const cleared = await runtime.clearGoal();
+    if (cleared) Bus.publish(sessionId, 'goal.cleared', {});
+    return c.json({ cleared });
+  });
+
   app.delete('/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId');
 
@@ -571,6 +692,12 @@ export const SessionRoutes = () => {
         activeRuns.delete(session.currentRunId);
       }
     }
+    const runtime = runtimes.get(sessionId);
+    if (runtime) {
+      await runtime.clearGoal().catch((error) => {
+        logger.warn('[SessionRoutes] Failed to clear session goal:', error);
+      });
+    }
     try {
       await SessionService.deleteSession(sessionId);
     } catch (error) {
@@ -580,7 +707,6 @@ export const SessionRoutes = () => {
     sessionHydrations.delete(sessionId);
     runtimeInitializations.delete(sessionId);
     messageSubmissionLocks.delete(sessionId);
-    const runtime = runtimes.get(sessionId);
     if (runtime) {
       await runtime.dispose();
       runtimes.delete(sessionId);
@@ -838,12 +964,15 @@ async function executeRunAsync(
   options: {
     pendingInputOnly?: boolean;
     preparedInputTurn?: PreparedInputTurn;
+    goalContinuationOnly?: boolean;
   } = {}
 ): Promise<void> {
   const { abortController, sessionId, id: runId } = run;
   const userMessageId = options.preparedInputTurn?.messageId ?? nanoid(12);
   const startsFromPending =
-    options.pendingInputOnly === true || options.preparedInputTurn?.mode === 'pending';
+    options.pendingInputOnly === true ||
+    options.preparedInputTurn?.mode === 'pending' ||
+    options.goalContinuationOnly === true;
   let assistantMessageId: string | undefined = startsFromPending
     ? undefined
     : nanoid(12);
@@ -854,7 +983,7 @@ async function executeRunAsync(
   };
 
   try {
-    if (!options.pendingInputOnly) {
+    if (!options.pendingInputOnly && !options.goalContinuationOnly) {
       emit('message.created', {
         messageId: userMessageId,
         role: 'user',
@@ -1030,6 +1159,16 @@ async function executeRunAsync(
           ensureAssistantMessage();
           break;
         }
+        case 'goal_updated':
+          emit('goal.updated', { goal: event.goal });
+          break;
+        case 'goal_continuation_started':
+          emit('goal.continuation.started', {
+            goal: event.goal,
+            continuation: event.continuation,
+          });
+          ensureAssistantMessage();
+          break;
         case 'compaction':
           emit(
             event.phase === 'start' ? 'compaction.started' : 'compaction.completed',
@@ -1055,6 +1194,7 @@ async function executeRunAsync(
         stream: true,
         pendingInputOnly: options.pendingInputOnly,
         preparedInputTurn: options.preparedInputTurn,
+        goalContinuationOnly: options.goalContinuationOnly,
       }),
       handleLoopEvent
     );

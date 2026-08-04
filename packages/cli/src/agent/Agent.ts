@@ -20,6 +20,8 @@ import {
 } from '../config/index.js';
 import type { ModelConfig } from '../config/types.js';
 import { ContextManager } from '../context/ContextManager.js';
+import { buildGoalContinuationPrompt } from '../goals/prompts.js';
+import type { GoalSnapshot } from '../goals/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { loadMcpConfigFromCli } from '../mcp/loadMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
@@ -223,7 +225,6 @@ export class Agent {
         'Agent.create() does not accept sessionId. Create a SessionRuntime explicitly and use Agent.createWithRuntime().'
       );
     }
-
     // 0. 确保 store 已初始化（防御性检查）
     await ensureStoreInitialized();
 
@@ -405,15 +406,30 @@ export class Agent {
     }
 
     const requestedPendingInputOnly = options?.pendingInputOnly === true;
+    const requestedGoalContinuationOnly = options?.goalContinuationOnly === true;
     if (requestedPendingInputOnly && options?.preparedInputTurn) {
       throw new Error('preparedInputTurn cannot be combined with pendingInputOnly');
+    }
+    if (requestedPendingInputOnly && requestedGoalContinuationOnly) {
+      throw new Error('goalContinuationOnly cannot be combined with pendingInputOnly');
+    }
+    if (requestedGoalContinuationOnly && options?.preparedInputTurn) {
+      throw new Error('preparedInputTurn cannot be combined with goalContinuationOnly');
     }
     if (!context && options?.preparedInputTurn) {
       throw new Error('preparedInputTurn requires a ChatContext');
     }
+    if (requestedGoalContinuationOnly && (!context || !this.sessionRuntime)) {
+      throw new Error('goalContinuationOnly requires a SessionRuntime and ChatContext');
+    }
 
     let preparedInputTurn = options?.preparedInputTurn;
-    if (context && this.sessionRuntime && !requestedPendingInputOnly) {
+    if (
+      context &&
+      this.sessionRuntime &&
+      !requestedPendingInputOnly &&
+      !requestedGoalContinuationOnly
+    ) {
       if (!preparedInputTurn) {
         const preparation = await this.sessionRuntime.prepareInputTurn(message);
         if (!preparation.accepted) {
@@ -428,7 +444,18 @@ export class Agent {
     }
 
     let enhancedMessage = message;
-    if (!requestedPendingInputOnly && preparedInputTurn?.mode !== 'pending') {
+    let initialGoal: GoalSnapshot | null = null;
+    if (requestedGoalContinuationOnly) {
+      initialGoal = await this.sessionRuntime!.beginGoalContinuation();
+      if (!initialGoal) {
+        return {
+          success: true,
+          finalMessage: '',
+          metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
+        };
+      }
+      enhancedMessage = buildGoalContinuationPrompt(initialGoal);
+    } else if (!requestedPendingInputOnly && preparedInputTurn?.mode !== 'pending') {
       try {
         enhancedMessage = await this.processAtMentionsForContent(message);
       } catch (error) {
@@ -447,10 +474,14 @@ export class Agent {
       let currentMessage = enhancedMessage;
       let currentContext = context;
       let pendingInputOnly = requestedPendingInputOnly;
+      let goalContinuation = requestedGoalContinuationOnly;
+      let currentGoal = initialGoal;
       let inputMessageId: string | undefined;
       let turnHandle: ActiveTurnHandle | undefined;
       if (this.sessionRuntime) {
-        if (pendingInputOnly) {
+        if (goalContinuation) {
+          turnHandle = this.sessionRuntime.beginTurn();
+        } else if (pendingInputOnly) {
           turnHandle = await this.sessionRuntime.beginPendingTurn();
         } else {
           const prepared = preparedInputTurn as PreparedInputTurn;
@@ -504,14 +535,24 @@ export class Agent {
             messages: pendingMessagesForEvent(),
           };
         }
+        if (goalContinuation && currentGoal) {
+          yield {
+            kind: 'goal_continuation_started',
+            goal: currentGoal,
+            continuation: currentGoal.continuationCount,
+          };
+          yield { kind: 'goal_updated', goal: currentGoal };
+        }
 
         while (true) {
           const ownedHandle = turnHandle;
           const loopOptions: LoopOptions = {
             ...options,
             pendingInputOnly,
+            goalContinuationOnly: undefined,
             preparedInputTurn: undefined,
             inputMessageId: pendingInputOnly ? undefined : inputMessageId,
+            transientInput: goalContinuation ? 'goal_continuation' : undefined,
             signal: currentContext.signal,
             turnSteering:
               this.sessionRuntime && ownedHandle
@@ -586,24 +627,67 @@ export class Agent {
           if (result.success && !currentContext.signal?.aborted) {
             await this.sessionRuntime.acknowledgeTurn(ownedHandle);
           }
+          let goal = await this.sessionRuntime.recordGoalProgress({
+            tokens: result.metadata?.tokensUsed ?? 0,
+            elapsedMs: result.metadata?.duration ?? 0,
+          });
+          if (goal) {
+            yield { kind: 'goal_updated', goal };
+          }
+          if (!result.success || currentContext.signal?.aborted) {
+            goal = await this.sessionRuntime.pauseActiveGoal(
+              currentContext.signal?.aborted
+                ? 'goal paused after user cancellation'
+                : (result.error?.message ?? 'goal paused after turn failure')
+            );
+            if (goal) {
+              yield { kind: 'goal_updated', goal };
+            }
+          }
           const continuePending =
             result.success && !currentContext.signal?.aborted && chainedFollowUps < 20;
           turnHandle = await this.sessionRuntime.finishTurn(ownedHandle, {
             continuePending,
           });
-          if (!turnHandle) {
+          if (turnHandle) {
+            chainedFollowUps++;
+            pendingInputOnly = true;
+            goalContinuation = false;
+            currentGoal = null;
+            currentMessage = '';
+            inputMessageId = undefined;
+            yield {
+              kind: 'follow_up_started',
+              queued: this.sessionRuntime.getPendingSteeringCount(),
+              recovered: this.sessionRuntime.getRecoveredSteeringCount(),
+              messages: pendingMessagesForEvent(),
+            };
+            continue;
+          }
+
+          if (!result.success || currentContext.signal?.aborted) {
+            return result;
+          }
+          goal = await this.sessionRuntime.getGoal();
+          if (!goal || goal.status !== 'active') {
             return result;
           }
 
-          chainedFollowUps++;
-          pendingInputOnly = true;
-          currentMessage = '';
+          currentGoal = await this.sessionRuntime.beginGoalContinuation();
+          if (!currentGoal) {
+            return result;
+          }
+          turnHandle = this.sessionRuntime.beginTurn();
+          pendingInputOnly = false;
+          goalContinuation = true;
+          currentMessage = buildGoalContinuationPrompt(currentGoal);
+          inputMessageId = undefined;
           yield {
-            kind: 'follow_up_started',
-            queued: this.sessionRuntime.getPendingSteeringCount(),
-            recovered: this.sessionRuntime.getRecoveredSteeringCount(),
-            messages: pendingMessagesForEvent(),
+            kind: 'goal_continuation_started',
+            goal: currentGoal,
+            continuation: currentGoal.continuationCount,
           };
+          yield { kind: 'goal_updated', goal: currentGoal };
         }
       } finally {
         if (this.sessionRuntime && turnHandle) {

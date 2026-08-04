@@ -38,6 +38,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     isTemporarySession: false,
     isLoading: false,
     error: null,
+    goal: null,
     messages,
     isStreaming: false,
     agentPhase: 'idle',
@@ -63,6 +64,9 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     setError: vi.fn(),
     startTemporarySession: vi.fn(),
     clearError: vi.fn(),
+    setGoal: vi.fn((goal) => {
+      state.goal = goal;
+    }),
     loadSessions: vi.fn(),
     selectSession: vi.fn(),
     forkSession: vi.fn(),
@@ -519,5 +523,47 @@ describe('eventHandlers', () => {
 
     expect(state.messages[0]?.agentContent?.textBefore).toBe('from one');
     expect(state.messages[1]?.agentContent?.textBefore).toBe('');
+  });
+
+  test('tracks goal lifecycle events for the active session', () => {
+    const state = createState();
+    const set = vi.fn((update) => {
+      Object.assign(state, typeof update === 'function' ? update(state) : update);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+    const goal = {
+      version: 1 as const,
+      sessionId: 'session-1',
+      goalId: 'goal-1',
+      objective: 'finish the migration',
+      status: 'active' as const,
+      tokensUsed: 100,
+      timeUsedSeconds: 2,
+      continuationCount: 1,
+      createdAt: '2026-08-04T00:00:00.000Z',
+      updatedAt: '2026-08-04T00:00:02.000Z',
+    };
+
+    dispatch({
+      type: 'goal.updated',
+      properties: { sessionId: 'session-1', goal },
+    });
+    expect(state.goal).toEqual(goal);
+
+    dispatch({
+      type: 'goal.continuation.started',
+      properties: { sessionId: 'session-1', goal },
+    });
+    expect(state).toMatchObject({
+      goal,
+      isStreaming: true,
+      agentPhase: 'running',
+    });
+
+    dispatch({
+      type: 'goal.cleared',
+      properties: { sessionId: 'session-1' },
+    });
+    expect(state.goal).toBeNull();
   });
 });

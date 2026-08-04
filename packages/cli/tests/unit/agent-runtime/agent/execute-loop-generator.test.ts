@@ -432,6 +432,44 @@ describe('executeLoopGenerator', () => {
       });
     });
 
+    it('keeps a goal continuation model-visible but removes it from transcript', async () => {
+      const contextManager = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as any,
+      });
+      const context = createMockContext({
+        messages: [{ role: 'assistant', content: 'Previous progress.' }],
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          '<goal-state>Continue the persisted objective.</goal-state>',
+          context,
+          { stream: false, transientInput: 'goal_continuation' },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(chatMock.mock.calls[0]?.[0]).toContainEqual({
+        role: 'user',
+        content: '<goal-state>Continue the persisted objective.</goal-state>',
+        metadata: { transientGoalContinuation: true },
+      });
+      expect(context.messages).not.toContainEqual(
+        expect.objectContaining({
+          metadata: { transientGoalContinuation: true },
+        })
+      );
+      expect(
+        contextManager.saveMessage.mock.calls.some((call) => call[1] === 'user')
+      ).toBe(false);
+    });
+
     it('does not call the model when a direct durable input cannot be persisted', async () => {
       const contextManager = createMockContextManager();
       contextManager.saveMessage.mockReset().mockResolvedValue(null);

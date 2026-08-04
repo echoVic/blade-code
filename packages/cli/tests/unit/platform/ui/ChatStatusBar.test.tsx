@@ -27,6 +27,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   usePermissionMode: () => 'default',
   useRecoveredSteeringCount: () => mockRecoveredSteeringCount(),
   useSessionCost: () => null,
+  useSessionId: () => 'status-bar-session',
   useThinkingModeEnabled: () => false,
 }));
 

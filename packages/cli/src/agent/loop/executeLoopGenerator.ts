@@ -635,13 +635,30 @@ export async function* executeLoopGenerator(
     const state = new ConversationState(context, finalSystemPrompt);
     const pendingInputOnly = options?.pendingInputOnly === true;
     if (!pendingInputOnly) {
-      const metadata = options?.inputMessageId
+      const persistenceMetadata = options?.inputMessageId
         ? { inboxMessageId: options.inputMessageId }
         : undefined;
-      state.appendUser({ role: 'user', content: message, metadata });
+      const messageMetadata: JsonValue | undefined =
+        persistenceMetadata ??
+        (options?.transientInput === 'goal_continuation'
+          ? { transientGoalContinuation: true }
+          : undefined);
+      state.appendUser({
+        role: 'user',
+        content: message,
+        metadata: messageMetadata,
+      });
 
       // 保存用户消息到 JSONL
-      lastMessageUuid = await saveUserMessage(deps, context, message, null, metadata);
+      if (options?.transientInput !== 'goal_continuation') {
+        lastMessageUuid = await saveUserMessage(
+          deps,
+          context,
+          message,
+          null,
+          persistenceMetadata
+        );
+      }
       if (options?.inputMessageId && !lastMessageUuid) {
         throw new Error(
           `Failed to persist durable input before applying it: ${options.inputMessageId}`
@@ -1942,6 +1959,17 @@ export async function* executeLoopGenerator(
       }
     } finally {
       // 确保所有退出路径都将消息回写到 context.messages
+      if (options?.transientInput === 'goal_continuation') {
+        state.removeMessages((message) => {
+          const metadata = message.metadata;
+          return (
+            metadata !== null &&
+            typeof metadata === 'object' &&
+            !Array.isArray(metadata) &&
+            metadata.transientGoalContinuation === true
+          );
+        });
+      }
       state.writeback();
     }
   } catch (error) {

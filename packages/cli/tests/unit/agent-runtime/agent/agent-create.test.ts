@@ -39,6 +39,14 @@ function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
   };
 }
 
+function createGoalRuntimeMocks() {
+  return {
+    recordGoalProgress: vi.fn().mockResolvedValue(null),
+    getGoal: vi.fn().mockResolvedValue(null),
+    pauseActiveGoal: vi.fn().mockResolvedValue(null),
+  };
+}
+
 describe('Agent.create', () => {
   it('rejects session-scoped creation and requires an explicit runtime owner', async () => {
     await expect(Agent.create({ sessionId: 'session-1' })).rejects.toThrow(
@@ -91,6 +99,7 @@ describe('Agent runLoop system prompt injection', () => {
   it('owns the SessionRuntime turn mailbox for the full streamed run', async () => {
     const turnHandle = { id: 'turn-1' };
     const runtime = {
+      ...createGoalRuntimeMocks(),
       prepareInputTurn: vi.fn(async () => ({
         accepted: true,
         handle: turnHandle,
@@ -152,6 +161,7 @@ describe('Agent runLoop system prompt injection', () => {
       mode: 'direct' as const,
     };
     const runtime = {
+      ...createGoalRuntimeMocks(),
       prepareInputTurn: vi.fn(),
       drainSteering: vi.fn(async () => []),
       drainSteeringOrSeal: vi.fn(async () => ({
@@ -254,6 +264,7 @@ describe('Agent runLoop system prompt injection', () => {
   it('leaves failed durable input pending without immediate retry', async () => {
     const turnHandle = { id: 'failed-turn' };
     const runtime = {
+      ...createGoalRuntimeMocks(),
       prepareInputTurn: vi.fn(async () => ({
         accepted: true,
         handle: turnHandle,
@@ -309,6 +320,7 @@ describe('Agent runLoop system prompt injection', () => {
     const firstTurn = { id: 'turn-1' };
     const secondTurn = { id: 'turn-2' };
     const runtime = {
+      ...createGoalRuntimeMocks(),
       prepareInputTurn: vi.fn(async () => ({
         accepted: true,
         handle: firstTurn,
@@ -392,6 +404,7 @@ describe('Agent runLoop system prompt injection', () => {
   it('queues a new prompt behind durable input before starting an idle turn', async () => {
     const pendingTurn = { id: 'pending-turn' };
     const runtime = {
+      ...createGoalRuntimeMocks(),
       prepareInputTurn: vi.fn().mockResolvedValue({
         accepted: true,
         handle: pendingTurn,
@@ -479,5 +492,108 @@ describe('Agent runLoop system prompt injection', () => {
         ]),
       })
     );
+  });
+
+  it('lets the model continue an active goal beyond 20 turns until it reaches a terminal state', async () => {
+    const totalContinuations = 21;
+    const makeGoal = (status: 'active' | 'complete', continuationCount: number) => ({
+      version: 1 as const,
+      sessionId: 'session-1',
+      goalId: 'goal-1',
+      objective: 'finish the migration',
+      status,
+      tokensUsed: continuationCount * 100,
+      timeUsedSeconds: continuationCount,
+      continuationCount,
+      createdAt: '2026-08-04T00:00:00.000Z',
+      updatedAt: '2026-08-04T00:00:00.000Z',
+    });
+    let claimedContinuations = 0;
+    let completedContinuations = 0;
+    const runtime = {
+      beginTurn: vi.fn(() => ({
+        id: `goal-turn-${claimedContinuations + 1}`,
+      })),
+      beginGoalContinuation: vi.fn(async () => {
+        claimedContinuations++;
+        return makeGoal('active', claimedContinuations);
+      }),
+      getGoal: vi.fn(async () =>
+        makeGoal(
+          completedContinuations === totalContinuations ? 'complete' : 'active',
+          completedContinuations
+        )
+      ),
+      recordGoalProgress: vi.fn(async () => {
+        completedContinuations++;
+        return makeGoal(
+          completedContinuations === totalContinuations ? 'complete' : 'active',
+          completedContinuations
+        );
+      }),
+      pauseActiveGoal: vi.fn().mockResolvedValue(null),
+      acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+      drainSteering: vi.fn().mockResolvedValue([]),
+      drainSteeringOrSeal: vi.fn().mockResolvedValue({
+        messages: [],
+        sealed: true,
+      }),
+      prepareInputTurn: vi.fn(),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      { getRegistry: () => ({ getAll: () => [] }) } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    const optionsSeen: Array<Record<string, unknown>> = [];
+    (agent as any).runLoop = vi.fn(async function* (
+      message: string,
+      _context: unknown,
+      options: Record<string, unknown>
+    ) {
+      optionsSeen.push(options);
+      expect(message).toContain('finish the migration');
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: true,
+        finalMessage: 'progress',
+        metadata: {
+          turnsCount: 1,
+          toolCallsCount: 0,
+          duration: 1_000,
+          tokensUsed: 100,
+        },
+      };
+    });
+
+    const events = [];
+    const stream = agent.chatStream(
+      '',
+      {
+        messages: [],
+        userId: 'user-1',
+        sessionId: 'session-1',
+        workspaceRoot: process.cwd(),
+      },
+      { goalContinuationOnly: true }
+    );
+    let next;
+    while (!(next = await stream.next()).done) {
+      events.push(next.value);
+    }
+
+    expect(runtime.prepareInputTurn).not.toHaveBeenCalled();
+    expect(runtime.beginGoalContinuation).toHaveBeenCalledTimes(totalContinuations);
+    expect(optionsSeen).toHaveLength(totalContinuations);
+    expect(
+      optionsSeen.every((options) => options.transientInput === 'goal_continuation')
+    ).toBe(true);
+    expect(
+      events.filter((event) => event.kind === 'goal_continuation_started')
+    ).toHaveLength(totalContinuations);
+    expect(next.value).toMatchObject({ success: true });
   });
 });

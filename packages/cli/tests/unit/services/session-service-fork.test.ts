@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import {
   getSessionFilePath,
+  getSessionGoalFilePath,
   getSessionInboxFilePath,
 } from '../../../src/context/storage/pathUtils.js';
 import type { SessionEvent } from '../../../src/context/types.js';
+import { GoalStore } from '../../../src/goals/GoalStore.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 
 describe('SessionService.forkSession', () => {
@@ -41,6 +43,9 @@ describe('SessionService.forkSession', () => {
     await persistentStore.acknowledgeInboxMessages('parent-session', [
       'parent-only-inbox-id',
     ]);
+    await new GoalStore(projectPath, 'parent-session').create({
+      objective: 'parent-only goal',
+    });
 
     const parentPath = getSessionFilePath(projectPath, 'parent-session');
     const parentBeforeFork = await readFile(parentPath, 'utf-8');
@@ -65,6 +70,12 @@ describe('SessionService.forkSession', () => {
       ],
     });
     expect(await readFile(parentPath, 'utf-8')).toBe(parentBeforeFork);
+    await expect(
+      access(getSessionGoalFilePath(projectPath, 'parent-session'))
+    ).resolves.toBeUndefined();
+    await expect(
+      access(getSessionGoalFilePath(projectPath, 'child-session'))
+    ).rejects.toThrow();
 
     const childPath = getSessionFilePath(projectPath, 'child-session');
     const childEvents = (await readFile(childPath, 'utf-8'))
@@ -181,16 +192,20 @@ describe('SessionService.forkSession', () => {
     ).toContainEqual(expect.objectContaining({ content: 'committed history' }));
   });
 
-  it('deletes the durable inbox together with the session transcript', async () => {
+  it('deletes durable inbox and goal state together with the session transcript', async () => {
     const persistentStore = new PersistentStore(projectPath, 100, 'test');
     await persistentStore.saveMessage('delete-session', 'user', 'committed');
     const transcriptPath = getSessionFilePath(projectPath, 'delete-session');
     const inboxPath = getSessionInboxFilePath(projectPath, 'delete-session');
+    const goalPath = getSessionGoalFilePath(projectPath, 'delete-session');
     await writeFile(
       inboxPath,
       '{"version":1,"sessionId":"delete-session","messages":[]}\n',
       'utf8'
     );
+    await new GoalStore(projectPath, 'delete-session').create({
+      objective: 'delete this goal',
+    });
     expect(
       (await SessionService.listSessions()).find(
         (session) => session.sessionId === 'delete-session'
@@ -200,5 +215,6 @@ describe('SessionService.forkSession', () => {
     expect(await SessionService.deleteSession('delete-session')).toBe(1);
     await expect(access(transcriptPath)).rejects.toThrow();
     await expect(access(inboxPath)).rejects.toThrow();
+    await expect(access(goalPath)).rejects.toThrow();
   });
 });

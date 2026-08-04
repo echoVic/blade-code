@@ -10,7 +10,7 @@ import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 
 const runtimeState = vi.hoisted(() => ({
   runtime: {
-    sessionId: 'session_test-uuid-1234',
+    sessionId: 'agent-session_test-uuid-1234',
     dispose: vi.fn().mockResolvedValue(undefined),
   },
 }));
@@ -50,8 +50,8 @@ const worktreeState = vi.hoisted(() => ({
     worktreePath: '/tmp/agent-worktree',
     worktreeBranch: 'blade-worktree-agent',
     worktree: {
-      sessionId: 'session_test-uuid-1234',
-      name: 'agent/session_test-uuid-1234',
+      sessionId: 'agent-session_test-uuid-1234',
+      name: 'agent/agent-session_test-uuid-1234',
       branch: 'blade-worktree-agent',
       baseCommit: 'abc',
       originalBranch: 'main',

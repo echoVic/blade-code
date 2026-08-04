@@ -1,4 +1,5 @@
 import type {
+  Goal,
   Message as ApiMessage,
   MessageRole,
   PermissionMode,
@@ -15,6 +16,12 @@ export interface SendMessageResponse {
   runId: string;
   status: string;
   queued?: number;
+}
+
+export interface GoalRunResponse {
+  status: string;
+  runId?: string;
+  goal: Goal;
 }
 
 export type MessageContentPart =
@@ -158,6 +165,50 @@ export const sessionService = {
     await fetch(`${API_BASE}/sessions/${sessionId}/abort`, { method: 'POST' });
   },
 
+  getGoal: async (sessionId: string): Promise<Goal | null> => {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/goal`);
+    if (!res.ok) throw new Error('Failed to load goal');
+    return ((await res.json()) as { goal: Goal | null }).goal;
+  },
+
+  createGoal: async (
+    sessionId: string,
+    objective: string,
+    tokenBudget?: number,
+    permissionMode?: PermissionMode
+  ): Promise<GoalRunResponse> => {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/goal`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ objective, tokenBudget, permissionMode }),
+    });
+    if (!res.ok) throw new Error('Failed to create goal');
+    return res.json();
+  },
+
+  updateGoal: async (
+    sessionId: string,
+    update:
+      | { action: 'pause' }
+      | { action: 'resume' }
+      | { action: 'edit'; objective: string }
+  ): Promise<GoalRunResponse> => {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/goal`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(update),
+    });
+    if (!res.ok) throw new Error('Failed to update goal');
+    return res.json();
+  },
+
+  clearGoal: async (sessionId: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/goal`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to clear goal');
+  },
+
   subscribeEvents: (
     sessionId: string,
     onEvent: (event: StreamEvent) => void,
@@ -275,4 +326,4 @@ export const sessionService = {
   },
 };
 
-export type { MessageRole, PermissionMode, PermissionResponse, Session };
+export type { Goal, MessageRole, PermissionMode, PermissionResponse, Session };

@@ -835,6 +835,25 @@ const handleFollowUpStarted: EventHandler = (props, get, set) => {
   });
 };
 
+const handleGoalUpdated: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({ goal: (props.goal as SessionStoreState['goal']) ?? null });
+};
+
+const handleGoalCleared: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({ goal: null });
+};
+
+const handleGoalContinuationStarted: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({
+    goal: (props.goal as SessionStoreState['goal']) ?? get().goal,
+    isStreaming: true,
+    agentPhase: 'running',
+  });
+};
+
 const eventHandlers: Record<string, EventHandler> = {
   'message.created': handleMessageCreated,
   'message.delta': handleMessageDelta,
@@ -867,6 +886,9 @@ const eventHandlers: Record<string, EventHandler> = {
   'follow_up.queued': handleSteeringQueued,
   'follow_up.started': handleFollowUpStarted,
   'steering.applied': handleSteeringApplied,
+  'goal.updated': handleGoalUpdated,
+  'goal.cleared': handleGoalCleared,
+  'goal.continuation.started': handleGoalContinuationStarted,
 };
 
 // 需要缓冲的高频 delta 事件

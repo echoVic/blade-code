@@ -190,6 +190,11 @@ export class ConversationState {
     this._history = newHistory.filter((msg) => !isRootSystemPrompt(msg));
   }
 
+  removeMessages(predicate: (message: Message) => boolean): void {
+    this._history = this._history.filter((message) => !predicate(message));
+    this._pending = this._pending.filter((message) => !predicate(message));
+  }
+
   /**
    * 回写 history 到 context.messages。
    *

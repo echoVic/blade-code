@@ -275,6 +275,34 @@ describe('processSlashCommand', () => {
     });
   });
 
+  describe('goal continuation', () => {
+    it('starts a transient Agent continuation while displaying the slash command', async () => {
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: {
+          action: 'start_goal',
+          goal: { objective: 'finish the migration' },
+        },
+      });
+      const sessionActions = createMockSessionActions();
+
+      const result = await processSlashCommand(
+        createResolvedInput('/goal finish the migration'),
+        createMockAppActions(),
+        sessionActions,
+        new AbortController().signal
+      );
+
+      expect(result.type).toBe('continue_as_agent');
+      if (result.type !== 'continue_as_agent') return;
+      expect(result.result.goalContinuationOnly).toBe(true);
+      expect(result.result.agentInput.text).toBe('finish the migration');
+      expect(sessionActions.addUserMessage).toHaveBeenCalledWith(
+        '/goal finish the migration'
+      );
+    });
+  });
+
   // ==================== UI 消息路由 ====================
 
   describe('UI 消息路由', () => {
