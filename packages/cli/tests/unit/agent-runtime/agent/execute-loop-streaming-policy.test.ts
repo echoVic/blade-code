@@ -75,6 +75,94 @@ class ExactlyOnceStreamingChatService implements IChatService {
   }
 }
 
+class FallbackStreamingChatService implements IChatService {
+  private turn = 0;
+
+  async chat(
+    _messages: Message[],
+    _tools?: Array<{ name: string; description: string; parameters: unknown }>,
+    _signal?: AbortSignal
+  ): Promise<ChatResponse> {
+    throw new Error('Fallback policy test must not use non-streaming chat');
+  }
+
+  async *streamChat(): AsyncGenerator<StreamChunk, void, unknown> {
+    this.turn += 1;
+    if (this.turn === 1) {
+      yield {
+        toolCalls: [
+          {
+            index: 0,
+            id: 'discarded-task',
+            type: 'function',
+            function: { name: 'Task', arguments: '{"prompt":"stale"}' },
+          },
+        ],
+      };
+      yield { modelFallback: true };
+      yield {
+        toolCalls: [
+          {
+            index: 0,
+            id: 'fallback-task',
+            type: 'function',
+            function: { name: 'Task', arguments: '{"prompt":"current"}' },
+          },
+        ],
+        finishReason: 'tool_calls',
+      };
+      return;
+    }
+    yield { content: 'Fallback delegation complete.', finishReason: 'stop' };
+  }
+
+  getConfig(): ChatConfig {
+    return {
+      provider: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'https://example.invalid/v1',
+      model: 'test-model',
+      maxContextTokens: 64_000,
+      maxOutputTokens: 4_096,
+    };
+  }
+
+  updateConfig(_newConfig: Partial<ChatConfig>): void {
+    void _newConfig;
+  }
+}
+
+function createTaskLoopDependencies(
+  chatService: IChatService,
+  taskExecution: ReturnType<typeof vi.fn>
+): LoopDependencies {
+  const registry = new ToolRegistry();
+  registry.register(
+    createTool({
+      name: 'Task',
+      displayName: 'Task',
+      kind: ToolKind.ReadOnly,
+      isConcurrencySafe: false,
+      description: { short: 'Delegate work' },
+      schema: z.unknown(),
+      execute: taskExecution,
+    })
+  );
+  return {
+    chatService,
+    toolExecutor: new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+    }),
+    executionEngine: undefined,
+    config: DEFAULT_CONFIG,
+    runtimeOptions: {
+      appendSystemPrompt: 'Call Task exactly once, then return a final answer.',
+    },
+    currentModelMaxContextTokens: 64_000,
+    applySkillToolRestrictions: (tools) => tools,
+  };
+}
+
 async function drain(
   generator: AsyncGenerator<LoopEvent, LoopResult, void>
 ): Promise<{ events: LoopEvent[]; result: LoopResult }> {
@@ -93,33 +181,8 @@ describe('executeLoopGenerator streaming tool policy', () => {
       success: true,
       llmContent: 'Subagent completed the repair.',
     }));
-    const registry = new ToolRegistry();
-    registry.register(
-      createTool({
-        name: 'Task',
-        displayName: 'Task',
-        kind: ToolKind.ReadOnly,
-        isConcurrencySafe: false,
-        description: { short: 'Delegate work' },
-        schema: z.unknown(),
-        execute: taskExecution,
-      })
-    );
     const chatService = new ExactlyOnceStreamingChatService();
-    const toolExecutor = new ToolExecutor(registry, {
-      permissionMode: PermissionMode.YOLO,
-    });
-    const dependencies: LoopDependencies = {
-      chatService,
-      toolExecutor,
-      executionEngine: undefined,
-      config: DEFAULT_CONFIG,
-      runtimeOptions: {
-        appendSystemPrompt: 'Call Task exactly once, then return a final answer.',
-      },
-      currentModelMaxContextTokens: 64_000,
-      applySkillToolRestrictions: (tools) => tools,
-    };
+    const dependencies = createTaskLoopDependencies(chatService, taskExecution);
     const context: ChatContext = {
       messages: [],
       userId: 'stream-policy-user',
@@ -142,6 +205,14 @@ describe('executeLoopGenerator streaming tool policy', () => {
     expect(taskExecution).toHaveBeenCalledTimes(1);
     expect(chatService.visibleTools).toEqual([['Task'], []]);
     expect(
+      events.filter(
+        (event) =>
+          event.kind === 'tool_start' &&
+          'function' in event.toolCall &&
+          event.toolCall.function.name === 'Task'
+      )
+    ).toHaveLength(1);
+    expect(
       events
         .filter((event) => event.kind === 'tool_result')
         .map((event) => ({
@@ -157,5 +228,41 @@ describe('executeLoopGenerator streaming tool policy', () => {
         errorType: 'validation_error',
       },
     ]);
+  });
+
+  it('releases an unexecuted Task admission when the model stream falls back', async () => {
+    const taskExecution = vi.fn(async () => ({
+      success: true,
+      llmContent: 'Fallback subagent completed the repair.',
+    }));
+    const dependencies = createTaskLoopDependencies(
+      new FallbackStreamingChatService(),
+      taskExecution
+    );
+    const context: ChatContext = {
+      messages: [],
+      userId: 'fallback-policy-user',
+      sessionId: 'fallback-policy-session',
+      workspaceRoot: process.cwd(),
+      permissionMode: PermissionMode.YOLO,
+    };
+
+    const { events, result } = await drain(
+      executeLoopGenerator(
+        dependencies,
+        'Delegate this repair with the Task tool.',
+        context,
+        { stream: true },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(taskExecution).toHaveBeenCalledTimes(1);
+    expect(
+      events
+        .filter((event) => event.kind === 'tool_result')
+        .map((event) => ('function' in event.toolCall ? event.toolCall.id : ''))
+    ).toEqual(['fallback-task']);
   });
 });

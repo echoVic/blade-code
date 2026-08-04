@@ -30,6 +30,12 @@ export type ToolExecutionPolicy = (
   context: ExecutionContext
 ) => Promise<ToolResult>;
 
+export type ToolAdmissionPolicy = (
+  toolName: string,
+  params: Record<string, unknown>
+) => ToolResult | undefined;
+export type ToolAdmissionRollback = (toolName: string) => void;
+
 const logger = createLogger(LogCategory.AGENT);
 
 /**
@@ -74,6 +80,8 @@ export class StreamingToolExecutor {
   /** 每个工具执行的独立 AbortController，discard() 时逐一 abort */
   private activeAborts = new Map<string, AbortController>();
   private executeTool?: ToolExecutionPolicy;
+  private admitTool?: ToolAdmissionPolicy;
+  private rollbackAdmission?: ToolAdmissionRollback;
 
   constructor(
     private pipeline: ToolExecutor,
@@ -93,19 +101,36 @@ export class StreamingToolExecutor {
     this.executeTool = executeTool;
   }
 
+  setAdmissionPolicy(admitTool: ToolAdmissionPolicy): void {
+    this.admitTool = admitTool;
+  }
+
+  setAdmissionRollback(rollbackAdmission: ToolAdmissionRollback): void {
+    this.rollbackAdmission = rollbackAdmission;
+  }
+
   /**
    * 流式中调用：在 allowlist 中的工具立即执行，否则排队
    */
-  addTool(toolCall: FunctionToolCall, params: Record<string, unknown>): void {
+  addTool(toolCall: FunctionToolCall, params: Record<string, unknown>): boolean {
     if (this.dispatched.has(toolCall.id)) {
       logger.debug(
         `[StreamingToolExecutor] 跳过已分发工具: ${toolCall.function.name} (${toolCall.id})`
       );
-      return;
+      return false;
     }
     this.dispatched.add(toolCall.id);
 
     this.order.push(toolCall.id);
+    const admissionRejection = this.admitTool?.(toolCall.function.name, params);
+    if (admissionRejection) {
+      this.completed.set(toolCall.id, {
+        toolCall,
+        result: admissionRejection,
+        toolUseUuid: null,
+      });
+      return false;
+    }
     const canPrelaunch = STREAMING_PRELAUNCH_ALLOWLIST.has(toolCall.function.name);
 
     if (canPrelaunch) {
@@ -120,6 +145,7 @@ export class StreamingToolExecutor {
       );
       this.queued.push({ toolCall, params });
     }
+    return true;
   }
 
   /**
@@ -181,6 +207,9 @@ export class StreamingToolExecutor {
    * 递增 epoch，使旧世代工具返回后被忽略。
    */
   discard(): void {
+    for (const queued of this.queued) {
+      this.rollbackAdmission?.(queued.toolCall.function.name);
+    }
     // 递增 epoch，旧世代的 executeOne() 返回后会被拦截
     this.epoch++;
 

@@ -1534,6 +1534,14 @@ describe('executeLoopGenerator', () => {
       expect(result.success).toBe(true);
       expect(executeMock).toHaveBeenCalledTimes(1);
       expect(
+        events.filter(
+          (event) =>
+            event.kind === 'tool_start' &&
+            'function' in event.toolCall &&
+            event.toolCall.function.name === 'Task'
+        )
+      ).toHaveLength(1);
+      expect(
         events.some(
           (event) =>
             event.kind === 'tool_result' &&

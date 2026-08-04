@@ -397,8 +397,9 @@ async function* processStreamResponse(
                   | 'execute'
                   | undefined;
                 // 先启动工具执行，再 yield 事件通知消费者
-                executor.addTool(toolCall, params);
-                yield { kind: 'tool_start', toolCall, toolKind };
+                if (executor.addTool(toolCall, params)) {
+                  yield { kind: 'tool_start', toolCall, toolKind };
+                }
               } catch {
                 // JSON 解析失败，等流结束后处理
               }
@@ -754,44 +755,53 @@ export async function* executeLoopGenerator(
     let singleTaskDelegationClaimed = hasUnfinishedSuccessfulTask(context.messages);
     if (singleTaskDelegationClaimed) successfulTools.add('Task');
 
-    const executeToolWithPolicy = async (
+    const singleTaskRequired = (): boolean =>
+      resolveSingleTaskDelegationRequirement(delegationPolicySources);
+    const duplicateTaskResult = (): import('../../tools/types/index.js').ToolResult => {
+      const message =
+        'The exactly-once Task delegation has already been started. ' +
+        'Do not call Task again; return the final answer after its result.';
+      return {
+        success: false,
+        llmContent: message,
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          message,
+        },
+        metadata: {
+          summary: 'Blocked duplicate exactly-once Task delegation',
+        },
+      };
+    };
+    const admitToolWithPolicy = (
+      toolName: string,
+      _params: Record<string, unknown>
+    ): import('../../tools/types/index.js').ToolResult | undefined => {
+      if (toolName !== 'Task' || !singleTaskRequired()) return undefined;
+      if (singleTaskDelegationClaimed) return duplicateTaskResult();
+      singleTaskDelegationClaimed = true;
+      return undefined;
+    };
+    const releaseSingleTaskClaim = (toolName: string): void => {
+      if (toolName === 'Task' && singleTaskRequired()) {
+        singleTaskDelegationClaimed = false;
+      }
+    };
+    const executeAdmittedTool = async (
       toolName: string,
       params: Record<string, unknown>,
       executionContext: import('../../tools/types/index.js').ExecutionContext
     ): Promise<import('../../tools/types/index.js').ToolResult> => {
-      const singleTaskRequired =
-        toolName === 'Task' &&
-        resolveSingleTaskDelegationRequirement(delegationPolicySources);
-      if (singleTaskRequired && singleTaskDelegationClaimed) {
-        const message =
-          'The exactly-once Task delegation has already been started. ' +
-          'Do not call Task again; return the final answer after its result.';
-        return {
-          success: false,
-          llmContent: message,
-          error: {
-            type: ToolErrorType.VALIDATION_ERROR,
-            message,
-          },
-          metadata: {
-            summary: 'Blocked duplicate exactly-once Task delegation',
-          },
-        };
-      }
-
-      if (singleTaskRequired) singleTaskDelegationClaimed = true;
       try {
         const result = await deps.toolExecutor.execute(
           toolName,
           params,
           executionContext
         );
-        if (singleTaskRequired && !result.success) {
-          singleTaskDelegationClaimed = false;
-        }
+        if (!result.success) releaseSingleTaskClaim(toolName);
         return result;
       } catch (error) {
-        if (singleTaskRequired) singleTaskDelegationClaimed = false;
+        releaseSingleTaskClaim(toolName);
         throw error;
       }
     };
@@ -982,7 +992,9 @@ export async function* executeLoopGenerator(
               lastMessageUuid,
               context.subagentInfo
             );
-            streamingExecutor.setExecutionPolicy(executeToolWithPolicy);
+            streamingExecutor.setAdmissionPolicy(admitToolWithPolicy);
+            streamingExecutor.setAdmissionRollback(releaseSingleTaskClaim);
+            streamingExecutor.setExecutionPolicy(executeAdmittedTool);
 
             turnResult = yield* processStreamResponse(
               deps,
@@ -1632,8 +1644,21 @@ export async function* executeLoopGenerator(
           }
         } else {
           // 非流式模式或 fallback：传统 Promise.all 执行
-          // Yield tool_start 事件
+          const admissionRejections = new Map<
+            string,
+            import('../../tools/types/index.js').ToolResult
+          >();
+          // Admission happens before tool_start and durable tool-use persistence.
           for (const toolCall of functionCalls) {
+            const parsedParams = parseToolArguments(toolCall.function.arguments);
+            const admissionRejection =
+              parsedParams === null
+                ? undefined
+                : admitToolWithPolicy(toolCall.function.name, parsedParams);
+            if (admissionRejection) {
+              admissionRejections.set(toolCall.id, admissionRejection);
+              continue;
+            }
             const toolDef = registry.get(toolCall.function.name);
             const toolKind = toolDef?.kind as
               | 'readonly'
@@ -1650,6 +1675,14 @@ export async function* executeLoopGenerator(
           // 并行执行所有工具
           const executeToolCall = async (toolCall: (typeof functionCalls)[0]) => {
             try {
+              const admissionRejection = admissionRejections.get(toolCall.id);
+              if (admissionRejection) {
+                return {
+                  toolCall,
+                  result: admissionRejection,
+                  toolUseUuid: null,
+                };
+              }
               const params = parseToolArguments(toolCall.function.arguments);
               if (params === null) {
                 return {
@@ -1715,26 +1748,23 @@ export async function* executeLoopGenerator(
                 };
               }
 
-              const result = await executeToolWithPolicy(
-                toolCall.function.name,
-                params,
-                {
-                  sessionId: context.sessionId,
-                  userId: context.userId || 'default',
-                  workspaceRoot: context.workspaceRoot || getCwd(),
-                  worktreeIsolationRequired,
-                  worktreeActive:
-                    successfulTools.has('EnterWorktree') &&
-                    !successfulTools.has('ExitWorktree'),
-                  signal: options?.signal,
-                  confirmationHandler: context.confirmationHandler,
-                  permissionMode: context.permissionMode,
-                  toolRegistry: registry,
-                  deferredToolManager: registry.deferredToolManager,
-                }
-              );
+              const result = await executeAdmittedTool(toolCall.function.name, params, {
+                sessionId: context.sessionId,
+                userId: context.userId || 'default',
+                workspaceRoot: context.workspaceRoot || getCwd(),
+                worktreeIsolationRequired,
+                worktreeActive:
+                  successfulTools.has('EnterWorktree') &&
+                  !successfulTools.has('ExitWorktree'),
+                signal: options?.signal,
+                confirmationHandler: context.confirmationHandler,
+                permissionMode: context.permissionMode,
+                toolRegistry: registry,
+                deferredToolManager: registry.deferredToolManager,
+              });
               return { toolCall, result, toolUseUuid };
             } catch (error) {
+              releaseSingleTaskClaim(toolCall.function.name);
               logger.error(
                 `Tool execution failed for ${toolCall.function.name}:`,
                 error
