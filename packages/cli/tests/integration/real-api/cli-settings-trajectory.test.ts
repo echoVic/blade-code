@@ -74,7 +74,7 @@ function createWorkspace(): {
         "For this task, src/channel.js must export exactly 'SETTINGS_CHANNEL_VALUE'.",
       ].join('\n'),
       allowedTools: ['Read', 'Edit', 'Bash'],
-      maxTurns: 8,
+      maxTurns: 16,
     },
     null,
     2
@@ -235,8 +235,6 @@ function runBlade(
         'yolo',
         '--model',
         model,
-        '--max-turns',
-        '8',
         '--settings',
         './automation-settings.json',
         [
