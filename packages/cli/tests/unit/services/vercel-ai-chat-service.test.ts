@@ -765,6 +765,69 @@ describe('VercelAIChatService', () => {
       expect(toolMessages[0].content[0].toolCallId).toBe('tc-1');
     });
 
+    it('drops an interrupted assistant tool turn when not every call has a result', async () => {
+      generateText.mockResolvedValueOnce({
+        text: 'resumed',
+        toolCalls: [],
+        usage: { promptTokens: 1, completionTokens: 1 },
+        finishReason: 'stop',
+        reasoning: undefined,
+        providerMetadata: undefined,
+      });
+
+      const service = await createService();
+      await service.chat([
+        { role: 'user', content: 'run both checks' },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'tc-complete',
+              type: 'function',
+              function: { name: 'Read', arguments: '{}' },
+            },
+            {
+              id: 'tc-interrupted',
+              type: 'function',
+              function: { name: 'Bash', arguments: '{}' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'read result',
+          tool_call_id: 'tc-complete',
+          name: 'Read',
+        },
+        {
+          role: 'system',
+          content: '<turn_aborted>interrupted</turn_aborted>',
+        },
+        { role: 'user', content: 'inspect state and resume' },
+      ]);
+
+      const convertedMessages = generateText.mock.calls[0][0].messages;
+      expect(
+        convertedMessages.filter(
+          (message: { role: string }) =>
+            message.role === 'assistant' || message.role === 'tool'
+        )
+      ).toEqual([]);
+      expect(convertedMessages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'system',
+            content: '<turn_aborted>interrupted</turn_aborted>',
+          }),
+          expect.objectContaining({
+            role: 'user',
+            content: 'inspect state and resume',
+          }),
+        ])
+      );
+    });
+
     it('flattens DeepSeek thinking tool history', async () => {
       generateText.mockResolvedValueOnce({
         text: 'ok',

@@ -21,21 +21,49 @@ import type {
 const logger = createLogger(LogCategory.CHAT);
 
 function filterOrphanToolMessages(messages: Message[]): Message[] {
-  const availableToolCallIds = new Set<string>();
-  for (const msg of messages) {
-    if (msg.role === 'assistant' && msg.tool_calls) {
-      for (const tc of msg.tool_calls) {
-        availableToolCallIds.add(tc.id);
-      }
+  const filtered: Message[] = [];
+
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
+    if (message.role === 'tool') continue;
+
+    const toolCalls =
+      message.role === 'assistant' && message.tool_calls?.length
+        ? message.tool_calls
+        : undefined;
+    if (!toolCalls) {
+      filtered.push(message);
+      continue;
     }
+
+    const toolMessages: Message[] = [];
+    let cursor = index + 1;
+    while (cursor < messages.length && messages[cursor].role === 'tool') {
+      toolMessages.push(messages[cursor]);
+      cursor++;
+    }
+
+    const expectedIds = new Set(toolCalls.map((call) => call.id));
+    const matchingToolMessages = toolMessages.filter(
+      (toolMessage) =>
+        toolMessage.tool_call_id && expectedIds.has(toolMessage.tool_call_id)
+    );
+    const receivedIds = new Set(
+      matchingToolMessages.flatMap((toolMessage) =>
+        toolMessage.tool_call_id ? [toolMessage.tool_call_id] : []
+      )
+    );
+    const isCompleteTurn =
+      expectedIds.size === toolCalls.length &&
+      matchingToolMessages.length === expectedIds.size &&
+      receivedIds.size === expectedIds.size &&
+      [...receivedIds].every((id) => expectedIds.has(id));
+
+    if (isCompleteTurn) filtered.push(message, ...matchingToolMessages);
+    index = cursor - 1;
   }
-  return messages.filter((msg) => {
-    if (msg.role === 'tool') {
-      if (!msg.tool_call_id) return false;
-      return availableToolCallIds.has(msg.tool_call_id);
-    }
-    return true;
-  });
+
+  return filtered;
 }
 
 function getTextContent(content: string | ContentPart[]): string {
