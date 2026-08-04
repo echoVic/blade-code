@@ -1,12 +1,3 @@
-import { ScrollArea } from '@/components/ui/ScrollArea';
-import { cn } from '@/lib/utils';
-import { useAppStore } from '@/store/AppStore';
-import { useSessionStore } from '@/store/session';
-import {
-  sameSessionRef,
-  sessionRefFromSession,
-  sessionRefKey,
-} from '@/store/session/sessionIdentity';
 import {
   Check,
   ChevronLeft,
@@ -22,6 +13,15 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
+import { ScrollArea } from '@/components/ui/ScrollArea';
+import { cn } from '@/lib/utils';
+import { useAppStore } from '@/store/AppStore';
+import { useSessionStore } from '@/store/session';
+import {
+  sameSessionRef,
+  sessionRefFromSession,
+  sessionRefKey,
+} from '@/store/session/sessionIdentity';
 
 interface SidebarProps {
   className?: string;
@@ -50,7 +50,6 @@ export function Sidebar({ className }: SidebarProps) {
   } = useSessionStore();
   const [editingSessionKey, setEditingSessionKey] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
-  const [hoveredSessionKey, setHoveredSessionKey] = useState<string | null>(null);
 
   const groupSessionsByDate = () => {
     const today = new Date();
@@ -300,7 +299,6 @@ export function Sidebar({ className }: SidebarProps) {
                 const sessionKey = sessionRefKey(sessionRef);
                 const isActive = sameSessionRef(sessionRef, currentSessionRef);
                 const isEditing = editingSessionKey === sessionKey;
-                const isHovered = hoveredSessionKey === sessionKey;
                 const isForking = sameSessionRef(sessionRef, forkingSessionRef);
                 const anyForking = Boolean(forkingSessionRef);
 
@@ -342,77 +340,82 @@ export function Sidebar({ className }: SidebarProps) {
                 return (
                   <div
                     key={sessionKey}
-                    aria-current={isActive ? 'true' : undefined}
-                    aria-busy={isForking ? 'true' : undefined}
-                    onMouseEnter={() => setHoveredSessionKey(sessionKey)}
-                    onMouseLeave={() => setHoveredSessionKey(null)}
                     className={cn(
-                      'w-full h-[34px] flex items-center gap-2 px-3 transition-colors group cursor-pointer',
+                      'w-full h-[34px] flex items-center transition-colors group',
                       isActive
                         ? 'bg-[#E5E7EB] dark:bg-[#27272a]'
                         : 'hover:bg-[#F3F4F6] dark:hover:bg-[#18181b]'
                     )}
-                    onClick={() => selectSession(sessionRef)}
                   >
-                    <div
-                      className={cn(
-                        'w-1.5 h-1.5 rounded-full shrink-0',
-                        isActive
-                          ? 'bg-[#16A34A] dark:bg-[#22C55E] shadow-[0_0_4px_rgba(34,197,94,0.4)]'
-                          : 'border border-[#D1D5DB] dark:border-[#52525b]'
-                      )}
-                    />
-                    <span
-                      className={cn(
-                        'text-[13px] font-mono truncate text-left flex-1 flex items-center gap-2',
-                        isActive
-                          ? 'text-[#111827] dark:text-[#E5E5E5]'
-                          : 'text-[#6B7280] dark:text-[#a1a1aa]'
-                      )}
+                    <button
+                      type="button"
+                      aria-label={`Select ${getSessionTitle(session)}`}
+                      aria-current={isActive ? 'true' : undefined}
+                      aria-busy={isForking ? 'true' : undefined}
+                      onClick={() => selectSession(sessionRef)}
+                      className="h-full min-w-0 flex-1 flex items-center gap-2 pl-3 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[#22C55E]"
                     >
-                      <span className="truncate">{getSessionTitle(session)}</span>
-                      {session.relationType === 'fork' && session.parentId && (
-                        <span
-                          title={`Forked from ${session.parentId.slice(0, 6)}`}
-                          aria-label={`Forked from ${session.parentId.slice(0, 6)}`}
-                          className="text-[10px] text-[#16A34A] dark:text-[#22C55E] shrink-0"
-                        >
-                          Forked from {session.parentId.slice(0, 6)}
-                        </span>
+                      <span
+                        className={cn(
+                          'w-1.5 h-1.5 rounded-full shrink-0',
+                          isActive
+                            ? 'bg-[#16A34A] dark:bg-[#22C55E] shadow-[0_0_4px_rgba(34,197,94,0.4)]'
+                            : 'border border-[#D1D5DB] dark:border-[#52525b]'
+                        )}
+                      />
+                      <span
+                        className={cn(
+                          'text-[13px] font-mono truncate text-left flex-1 flex items-center gap-2',
+                          isActive
+                            ? 'text-[#111827] dark:text-[#E5E5E5]'
+                            : 'text-[#6B7280] dark:text-[#a1a1aa]'
+                        )}
+                      >
+                        <span className="truncate">{getSessionTitle(session)}</span>
+                        {session.relationType === 'fork' && session.parentId && (
+                          <span
+                            title={`Forked from ${session.parentId.slice(0, 6)}`}
+                            aria-label={`Forked from ${session.parentId.slice(0, 6)}`}
+                            className="text-[10px] text-[#16A34A] dark:text-[#22C55E] shrink-0"
+                          >
+                            Forked from {session.parentId.slice(0, 6)}
+                          </span>
+                        )}
+                      </span>
+                      {isForking && (
+                        <Loader2 className="h-3 w-3 shrink-0 animate-spin text-[#16A34A] dark:text-[#22C55E]" />
                       )}
-                    </span>
-                    {isForking && (
-                      <Loader2 className="h-3 w-3 animate-spin text-[#16A34A] dark:text-[#22C55E]" />
-                    )}
-                    {isHovered && (
-                      <div className="flex items-center gap-1">
-                        <button
-                          aria-label={`Fork ${getSessionTitle(session)}`}
-                          disabled={anyForking}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void forkSession(session);
-                          }}
-                          className="p-1 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] rounded transition-colors disabled:opacity-50"
-                        >
-                          <GitFork className="h-3 w-3" />
-                        </button>
-                        <button
-                          aria-label={`Rename ${getSessionTitle(session)}`}
-                          onClick={(e) => handleStartRename(e, session)}
-                          className="p-1 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] rounded transition-colors"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                        <button
-                          aria-label={`Delete ${getSessionTitle(session)}`}
-                          onClick={(e) => handleDeleteSession(e, session)}
-                          className="p-1 text-[#9CA3AF] hover:text-red-500 hover:bg-[#F3F4F6] dark:text-[#71717a] dark:hover:text-red-400 dark:hover:bg-[#27272a] rounded transition-colors"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    )}
+                    </button>
+                    <div className="flex items-center gap-1 pr-3 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                      <button
+                        type="button"
+                        aria-label={`Fork ${getSessionTitle(session)}`}
+                        disabled={anyForking}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void forkSession(session);
+                        }}
+                        className="p-1 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#22C55E] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <GitFork className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Rename ${getSessionTitle(session)}`}
+                        onClick={(e) => handleStartRename(e, session)}
+                        className="p-1 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#22C55E] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] rounded transition-colors"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${getSessionTitle(session)}`}
+                        onClick={(e) => handleDeleteSession(e, session)}
+                        className="p-1 text-[#9CA3AF] hover:text-red-500 hover:bg-[#F3F4F6] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 dark:text-[#71717a] dark:hover:text-red-400 dark:hover:bg-[#27272a] rounded transition-colors"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
                 );
               })}

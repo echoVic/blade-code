@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
+import type { Session, SessionRef } from '@api/schemas';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { Session, SessionRef } from '@api/schemas';
 import type { SessionStoreState } from '../../../src/store/session';
 
 const sessionActionMocks = vi.hoisted(() => ({
@@ -64,14 +64,63 @@ function createRef(sessionId: string, projectPath: string): SessionRef {
 function findSessionRow(
   container: HTMLDivElement,
   title: string
-): HTMLDivElement | undefined {
-  return Array.from(container.querySelectorAll('div')).find((element) => {
-    return (
-      element instanceof HTMLDivElement &&
-      element.className.includes('cursor-pointer') &&
-      element.textContent?.includes(title)
-    );
-  }) as HTMLDivElement | undefined;
+): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll('button')).find(
+    (element) => element.getAttribute('aria-label') === `Select ${title}`
+  );
+}
+
+const userEvent = {
+  setup() {
+    return {
+      async tab(): Promise<void> {
+        await act(async () => {
+          const focusable = Array.from(
+            document.querySelectorAll<HTMLElement>(
+              'button:not([disabled]), input:not([disabled]), [role="button"][tabindex="0"]'
+            )
+          );
+          const currentIndex = focusable.indexOf(
+            document.activeElement instanceof HTMLElement
+              ? document.activeElement
+              : document.body
+          );
+          focusable[(currentIndex + 1) % focusable.length]?.focus();
+        });
+      },
+      async keyboard(keys: '{Enter}' | '{Space}' | '{Escape}'): Promise<void> {
+        const key = keys === '{Enter}' ? 'Enter' : keys === '{Escape}' ? 'Escape' : ' ';
+        await act(async () => {
+          const target = document.activeElement;
+          if (!(target instanceof HTMLElement)) return;
+          const keyDownAccepted = target.dispatchEvent(
+            new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+          );
+          target.dispatchEvent(
+            new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true })
+          );
+          if (keyDownAccepted && target instanceof HTMLButtonElement) {
+            target.click();
+          }
+        });
+      },
+    };
+  },
+};
+
+async function tabToElement(
+  user: ReturnType<(typeof userEvent)['setup']>,
+  predicate: (element: Element | null) => boolean
+): Promise<Element> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await user.tab();
+    if (predicate(document.activeElement)) {
+      const activeElement = document.activeElement;
+      if (!activeElement) throw new Error('Expected a focused element');
+      return activeElement;
+    }
+  }
+  throw new Error('Unable to reach the expected element with keyboard tabbing');
 }
 
 describe('Sidebar', () => {
@@ -140,7 +189,7 @@ describe('Sidebar', () => {
     expect(container.querySelectorAll('[aria-current="true"]').length).toBe(1);
   });
 
-  test('clicking the fork button stops propagation and calls forkSession with the full source session', async () => {
+  test('tabs to the fork action without hover and activates it without selecting the row', async () => {
     const source = createSession({
       sessionId: 'shared-id',
       projectPath: '/workspace/a',
@@ -157,24 +206,104 @@ describe('Sidebar', () => {
       root.render(<Sidebar />);
     });
 
-    const row = findSessionRow(container, 'Session A');
-    expect(row).toBeTruthy();
-    await act(async () => {
-      row?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-    });
-
-    const forkButton = await vi.waitFor(() =>
-      Array.from(container.querySelectorAll('button')).find(
-        (button) => button.getAttribute('aria-label') === 'Fork Session A'
-      )
+    const user = userEvent.setup();
+    const forkButton = await tabToElement(
+      user,
+      (element) => element?.getAttribute('aria-label') === 'Fork Session A'
     );
-    expect(forkButton).toBeTruthy();
-
-    await act(async () => {
-      forkButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
+    expect(document.activeElement).toBe(forkButton);
+    await user.keyboard('{Enter}');
 
     expect(sessionActionMocks.forkSession).toHaveBeenCalledWith(source);
+    expect(sessionActionMocks.selectSession).not.toHaveBeenCalled();
+  });
+
+  test('tabs to the session row and selects it with Enter and Space', async () => {
+    const session = createSession({ title: 'Keyboard Session' });
+    useSessionStore.setState({ sessions: [session] });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    const row = findSessionRow(container, 'Keyboard Session');
+    expect(row).toBeTruthy();
+    const user = userEvent.setup();
+    await tabToElement(user, (element) => element === row);
+    expect(document.activeElement).toBe(row);
+
+    await user.keyboard('{Enter}');
+    await user.keyboard('{Space}');
+
+    expect(sessionActionMocks.selectSession).toHaveBeenNthCalledWith(
+      1,
+      createRef('session-1', '/workspace/a')
+    );
+    expect(sessionActionMocks.selectSession).toHaveBeenNthCalledWith(
+      2,
+      createRef('session-1', '/workspace/a')
+    );
+  });
+
+  test('renders selection and row actions as sibling native buttons', async () => {
+    const session = createSession({ title: 'Semantic Session' });
+    useSessionStore.setState({ sessions: [session] });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    const selectButton = container.querySelector(
+      'button[aria-label="Select Semantic Session"]'
+    );
+    const forkButton = container.querySelector(
+      'button[aria-label="Fork Semantic Session"]'
+    );
+    const renameButton = container.querySelector(
+      'button[aria-label="Rename Semantic Session"]'
+    );
+    const deleteButton = container.querySelector(
+      'button[aria-label="Delete Semantic Session"]'
+    );
+
+    expect(selectButton).toBeInstanceOf(HTMLButtonElement);
+    expect(forkButton).toBeInstanceOf(HTMLButtonElement);
+    expect(renameButton).toBeInstanceOf(HTMLButtonElement);
+    expect(deleteButton).toBeInstanceOf(HTMLButtonElement);
+    expect(selectButton?.contains(forkButton)).toBe(false);
+    expect(selectButton?.contains(renameButton)).toBe(false);
+    expect(selectButton?.contains(deleteButton)).toBe(false);
+  });
+
+  test('tabs to rename and delete actions without hover and activates each by keyboard', async () => {
+    const session = createSession({ title: 'Keyboard Actions' });
+    useSessionStore.setState({ sessions: [session] });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    const user = userEvent.setup();
+    const renameButton = await tabToElement(
+      user,
+      (element) => element?.getAttribute('aria-label') === 'Rename Keyboard Actions'
+    );
+    expect(document.activeElement).toBe(renameButton);
+    await user.keyboard('{Enter}');
+    expect(document.activeElement).toBe(container.querySelector('input'));
+    expect(sessionActionMocks.selectSession).not.toHaveBeenCalled();
+
+    await user.keyboard('{Escape}');
+    const deleteButton = await tabToElement(
+      user,
+      (element) => element?.getAttribute('aria-label') === 'Delete Keyboard Actions'
+    );
+    expect(document.activeElement).toBe(deleteButton);
+    await user.keyboard('{Enter}');
+
+    expect(sessionActionMocks.deleteSession).toHaveBeenCalledWith(
+      createRef('session-1', '/workspace/a')
+    );
     expect(sessionActionMocks.selectSession).not.toHaveBeenCalled();
   });
 
@@ -203,6 +332,11 @@ describe('Sidebar', () => {
     const rows = Array.from(container.querySelectorAll('[aria-busy]'));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.getAttribute('aria-busy')).toBe('true');
+    const forkButtons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button[aria-label^="Fork "]')
+    );
+    expect(forkButtons).toHaveLength(2);
+    expect(forkButtons.every((button) => button.disabled)).toBe(true);
   });
 
   test('shows fork lineage marker and uses rename/delete actions without raw fetches', async () => {
@@ -220,26 +354,6 @@ describe('Sidebar', () => {
       root.render(<Sidebar />);
     });
 
-    const row = findSessionRow(container, 'Child Session');
-    expect(row).toBeTruthy();
-    await act(async () => {
-      row?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-    });
-
     expect(container.textContent).toContain('Forked from parent');
-
-    const buttons = await vi.waitFor(() =>
-      Array.from(container.querySelectorAll('button')).filter((button) =>
-        Boolean(button.getAttribute('aria-label'))
-      )
-    );
-    const labels = buttons
-      .map((button) => button.getAttribute('aria-label'))
-      .filter(Boolean);
-    expect(labels).toEqual([
-      'Fork Child Session',
-      'Rename Child Session',
-      'Delete Child Session',
-    ]);
   });
 });

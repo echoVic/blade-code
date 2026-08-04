@@ -7,15 +7,24 @@ import {
   FolderOpen,
   X,
 } from 'lucide-react';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { registerMonacoTheme } from '@/lib/monacoTheme';
 import { cn } from '@/lib/utils';
-import { sessionDirectoryHeaders } from '@/services/sessionService';
+import { type SessionRef, sessionDirectoryHeaders } from '@/services/sessionService';
 import { useAppStore } from '@/store/AppStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import { useSessionStore } from '@/store/session';
+import { sameSessionRef } from '@/store/session/sessionIdentity';
 
 type DiffData = {
   patch: string;
@@ -57,6 +66,10 @@ const MonacoEditorLazy = lazy(async () => {
   return { default: module.Editor };
 });
 
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export function FilePreview() {
   const { toggleFilePreview } = useAppStore();
   const { messages, currentSessionRef } = useSessionStore();
@@ -72,65 +85,100 @@ export function FilePreview() {
   const [filePreviewLoading, setFilePreviewLoading] = useState(false);
   const [filePreviewError, setFilePreviewError] = useState<string | null>(null);
   const [filePreviewTruncated, setFilePreviewTruncated] = useState(false);
+  const latestSessionRef = useRef<SessionRef | null>(currentSessionRef);
+  const sessionGeneration = useRef(0);
+  const rootRequestGeneration = useRef(0);
+  const directoryRequestGenerations = useRef<Record<string, number>>({});
+  const fileRequestGeneration = useRef(0);
+  const expandedDirsRef = useRef<Record<string, boolean>>({});
+  const childrenCacheRef = useRef<Record<string, TreeNode[]>>({});
+  const selectedFileRef = useRef<string | null>(null);
 
-  const loadTreeNodes = async (dirPath: string = '') => {
-    if (!currentSessionRef) {
-      return [];
+  useLayoutEffect(() => {
+    if (!sameSessionRef(latestSessionRef.current, currentSessionRef)) {
+      sessionGeneration.current += 1;
     }
-    try {
-      const url = dirPath
-        ? `/suggestions/files/tree?path=${encodeURIComponent(dirPath)}`
-        : '/suggestions/files/tree';
-      const response = await fetch(url, {
-        headers: sessionDirectoryHeaders(currentSessionRef),
-      });
-      if (!response.ok) throw new Error('Failed to load tree');
-      const data = (await response.json()) as Array<{
-        name: string;
-        path: string;
-        type: 'dir' | 'file';
-      }>;
-      return data.map((item) => ({
-        ...item,
-        children: item.type === 'dir' ? [] : undefined,
-      }));
-    } catch {
-      return [];
-    }
+    latestSessionRef.current = currentSessionRef;
+  }, [currentSessionRef]);
+
+  const isCurrentSessionRequest = (
+    requestSessionRef: SessionRef,
+    requestSessionGeneration: number
+  ) =>
+    requestSessionGeneration === sessionGeneration.current &&
+    sameSessionRef(useSessionStore.getState().currentSessionRef, requestSessionRef);
+
+  const loadTreeNodes = async (requestSessionRef: SessionRef, dirPath = '') => {
+    const url = dirPath
+      ? `/suggestions/files/tree?path=${encodeURIComponent(dirPath)}`
+      : '/suggestions/files/tree';
+    const response = await fetch(url, {
+      headers: sessionDirectoryHeaders(requestSessionRef),
+    });
+    if (!response.ok) throw new Error('Failed to load tree');
+    const data = (await response.json()) as Array<{
+      name: string;
+      path: string;
+      type: 'dir' | 'file';
+    }>;
+    return data.map((item) => ({
+      ...item,
+      children: item.type === 'dir' ? [] : undefined,
+    }));
   };
 
   useEffect(() => {
-    let isMounted = true;
+    const requestGeneration = ++rootRequestGeneration.current;
     const loadRoot = async () => {
       if (!currentSessionRef) {
         setRootNodes([]);
+        setFileLoading(false);
+        setFileError(null);
         return;
       }
+      const requestSessionRef = { ...currentSessionRef };
+      const requestSessionGeneration = sessionGeneration.current;
+      const requestIsCurrent = () =>
+        requestGeneration === rootRequestGeneration.current &&
+        isCurrentSessionRequest(requestSessionRef, requestSessionGeneration);
+
+      if (!requestIsCurrent()) return;
+      setRootNodes([]);
       setFileLoading(true);
       setFileError(null);
       try {
-        const nodes = await loadTreeNodes();
-        if (isMounted) setRootNodes(nodes);
+        const nodes = await loadTreeNodes(requestSessionRef);
+        if (requestIsCurrent()) setRootNodes(nodes);
       } catch (err) {
-        if (isMounted) setFileError((err as Error).message);
+        if (requestIsCurrent()) {
+          setFileError(errorMessage(err, 'Failed to load tree'));
+        }
       } finally {
-        if (isMounted) setFileLoading(false);
+        if (requestIsCurrent()) setFileLoading(false);
       }
     };
-    loadRoot();
+    void loadRoot();
     return () => {
-      isMounted = false;
+      if (rootRequestGeneration.current === requestGeneration) {
+        rootRequestGeneration.current += 1;
+      }
     };
-  }, [currentSessionRef]);
+  }, [currentSessionRef?.projectPath, currentSessionRef?.sessionId]);
 
   useEffect(() => {
+    selectedFileRef.current = null;
+    expandedDirsRef.current = {};
+    childrenCacheRef.current = {};
+    directoryRequestGenerations.current = {};
+    fileRequestGeneration.current += 1;
     setSelectedFile(null);
     setFileContent('');
+    setFilePreviewLoading(false);
     setFilePreviewError(null);
     setFilePreviewTruncated(false);
     setExpandedDirs({});
     setChildrenCache({});
-  }, [currentSessionRef?.projectPath]);
+  }, [currentSessionRef?.projectPath, currentSessionRef?.sessionId]);
 
   const allDiffs = useMemo(() => findAllDiffs(messages), [messages]);
   const logs = useMemo(() => buildLogs(messages), [messages]);
@@ -141,9 +189,16 @@ export function FilePreview() {
   };
 
   const openFile = async (path: string) => {
-    if (!currentSessionRef) {
-      return;
-    }
+    const requestSessionRef = useSessionStore.getState().currentSessionRef;
+    if (!requestSessionRef) return;
+    const requestSessionGeneration = sessionGeneration.current;
+    const requestGeneration = ++fileRequestGeneration.current;
+    const requestIsCurrent = () =>
+      requestGeneration === fileRequestGeneration.current &&
+      selectedFileRef.current === path &&
+      isCurrentSessionRequest(requestSessionRef, requestSessionGeneration);
+
+    selectedFileRef.current = path;
     setSelectedFile(path);
     setFileContent('');
     setFilePreviewLoading(true);
@@ -153,29 +208,66 @@ export function FilePreview() {
       const response = await fetch(
         `/suggestions/files/content?path=${encodeURIComponent(path)}`,
         {
-          headers: sessionDirectoryHeaders(currentSessionRef),
+          headers: sessionDirectoryHeaders(requestSessionRef),
         }
       );
       if (!response.ok) {
         throw new Error('Failed to load file');
       }
       const data = (await response.json()) as { content: string; truncated?: boolean };
-      setFileContent(data.content || '');
-      setFilePreviewTruncated(Boolean(data.truncated));
+      if (requestIsCurrent()) {
+        setFileContent(data.content || '');
+        setFilePreviewTruncated(Boolean(data.truncated));
+      }
     } catch (err) {
-      setFilePreviewError((err as Error).message);
+      if (requestIsCurrent()) {
+        setFilePreviewError(errorMessage(err, 'Failed to load file'));
+      }
     } finally {
-      setFilePreviewLoading(false);
+      if (requestIsCurrent()) setFilePreviewLoading(false);
     }
   };
 
   const toggleDir = async (dirPath: string) => {
-    const isExpanding = !expandedDirs[dirPath];
-    setExpandedDirs((prev) => ({ ...prev, [dirPath]: isExpanding }));
+    const requestGeneration = (directoryRequestGenerations.current[dirPath] ?? 0) + 1;
+    directoryRequestGenerations.current[dirPath] = requestGeneration;
+    const isExpanding = !expandedDirsRef.current[dirPath];
+    const nextExpandedDirs = {
+      ...expandedDirsRef.current,
+      [dirPath]: isExpanding,
+    };
+    expandedDirsRef.current = nextExpandedDirs;
+    setExpandedDirs(nextExpandedDirs);
 
-    if (isExpanding && !childrenCache[dirPath]) {
-      const children = await loadTreeNodes(dirPath);
-      setChildrenCache((prev) => ({ ...prev, [dirPath]: children }));
+    if (!isExpanding || childrenCacheRef.current[dirPath]) return;
+
+    const requestSessionRef = useSessionStore.getState().currentSessionRef;
+    if (!requestSessionRef) return;
+    const requestSessionGeneration = sessionGeneration.current;
+    const requestIsCurrent = () =>
+      directoryRequestGenerations.current[dirPath] === requestGeneration &&
+      expandedDirsRef.current[dirPath] === true &&
+      isCurrentSessionRequest(requestSessionRef, requestSessionGeneration);
+
+    try {
+      const children = await loadTreeNodes(requestSessionRef, dirPath);
+      if (requestIsCurrent()) {
+        const nextChildrenCache = {
+          ...childrenCacheRef.current,
+          [dirPath]: children,
+        };
+        childrenCacheRef.current = nextChildrenCache;
+        setChildrenCache(nextChildrenCache);
+      }
+    } catch {
+      if (requestIsCurrent()) {
+        const nextChildrenCache = {
+          ...childrenCacheRef.current,
+          [dirPath]: [],
+        };
+        childrenCacheRef.current = nextChildrenCache;
+        setChildrenCache(nextChildrenCache);
+      }
     }
   };
 
