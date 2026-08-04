@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### ✨ 新功能
+
+- 新增 strict session catalog 与 durable fork contract，并通过 interactive CLI/TUI、
+  Web Sidebar 和 ACP SDK 0.12 unstable `session/list` / `session/fork` 暴露；为 shared
+  Runtime boundary、CLI/TUI、Web、ACP 新增 required DeepSeek Flash/Pro 及显式配置
+  Claude/GPT/domestic provider 的 qualification coverage，最终 production gate 待执行
+
 ## [0.7.5] - 2026-08-03
 
 ### ✨ 新功能

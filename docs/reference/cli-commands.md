@@ -285,6 +285,52 @@ blade mcp reset-project-choices
 - `/` 开头：触发 Slash 命令补全
 - `@` 开头：触发文件路径补全
 
+### 会话 Slash 命令
+
+#### `/resume [sessionId]`
+
+恢复历史会话。不带 ID 时打开会话选择器。
+
+```bash
+# 交互选择历史会话
+/resume
+
+# 恢复已知会话
+/resume parent-session-id
+```
+
+#### `/fork [sessionId]`
+
+从当前工作区的 durable session 创建独立子会话。不带 ID 时打开会话选择器；
+选择器不会显示 subagent session。已知 ID 必须属于当前工作区且不能是 subagent
+session。Agent 正在处理当前回合时，`/fork` 会被拒绝，不会转向或中止活动回合。
+
+```bash
+# Pick a source interactively
+/fork
+
+# Fork a known durable session
+/fork parent-session-id
+```
+
+fork 只复制源会话在边界前已提交的 conversation history：父会话保持不变，子会话
+沿用源 workspace，并等待下一条 user prompt。它不会倒回或复制 workspace 文件，也不会
+创建 Git branch；需要文件隔离时应另外使用 Git worktree 或 branch。
+
+### Web Sidebar Fork
+
+Web Sidebar 的 session 行提供 **Fork** 操作。服务器创建 child 后，Web 会先准备该 child
+的 SSE 订阅，再以 `sessionId + projectPath` 的 compound workspace identity 原子激活
+child，避免同名 session 或迟到事件切换错误。新 child 已继承已提交历史并等待
+下一条 prompt；Fork 不会创建或复制 task dashboard。
+
+### ACP session discovery and fork
+
+ACP SDK 0.12 将 `session/list` 和 `session/fork` 暴露为 unstable wire capabilities；
+TypeScript agent 实现对应的 `unstable_listSessions` 和 `unstable_forkSession` 方法。
+`session/fork` 返回的 child 已初始化并可立即接收 prompt，无需再调用 `session/load`。
+fork 响应不会 replay history；只有显式 `session/load` 使用历史回放协议。
+
 ## 使用示例
 
 ```bash

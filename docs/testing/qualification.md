@@ -10,29 +10,33 @@ Blade Code 将确定性回归与付费模型验证分成两道门禁。两道门
 bun run qualify:local
 ```
 
-命令会按固定顺序执行：
+命令会按固定顺序执行 14 个检查：
 
 1. `type-check`
 2. `format:check`
 3. `lint`
 4. 单元测试
-5. CLI 集成测试
-6. headless/runtime 核心回归
-7. E2E、snapshot 和性能回归
-8. 安全测试
-9. Web 测试和 Web 类型检查
-10. 当前源码构建
+5. 集成测试
+6. CLI 集成测试
+7. headless/runtime 核心回归
+8. E2E
+9. snapshot
+10. 安全测试
+11. Web 测试
+12. Web 类型检查
+13. 当前源码构建
+14. 性能回归
 
 每一步都在独立子进程中执行。第一步非零退出会立即停止，后续步骤不会被计为通过。该门禁不访问付费模型，也不依赖 `~/.blade/config.json`。
 
 ## 真实 API 门禁
 
-真实 API 门禁必须使用当前源码刚构建的 `packages/cli/dist/blade.js`。执行：
+真实 API 门禁必须使用当前源码刚构建的 `packages/cli/dist/blade.js`。provider
+credential 必须由执行编排器或 secret manager 直接注入测试子进程环境；不要把真实值写成
+inline `KEY=value`、执行 `export` 留在 shell history，或复制到证据文档。命令记录只保留
+变量名和是否存在，不记录变量值。环境准备完成后执行：
 
 ```bash
-DEEPSEEK_API_KEY="..." \
-DEEPSEEK_BASE_URL=https://api.deepseek.com \
-DEEPSEEK_MODELS=deepseek-v4-flash,deepseek-v4-pro \
 bun run qualify:production
 ```
 
@@ -68,7 +72,44 @@ bun run qualify:production
 - 单次运行 Subagent：通过 `--agents` 注入只存在于子代理系统提示中的模型专属规则，主代理仅开放 Task；Flash 和 Pro 都必须委派到自定义代理，完成 Read/Edit/Bash、独立测试、精确文件范围和纯 JSONL 校验；
 - 输出协议、工具调用、错误事件和 key 泄漏检查。
 
-仅收到模型文本或 HTTP 200 不算通过。每条轨迹都必须证明文件内容、`git diff --name-only`、测试/类型检查退出码、结构化事件和进程退出状态。
+### Session discovery 与 durable fork 轨迹
+
+Session discovery 与 durable fork 的准出必须覆盖四个相互独立的 production entrypoint：
+一个内部 Runtime boundary，以及 CLI/TUI、Web、ACP 三个用户可见 integration surface。
+每条轨迹都必须从对应 entrypoint 进入，不得以直接调用模型或只验证代理请求代替产品
+边界：
+
+1. **Runtime**：通过真实 `SessionRuntime`、`Agent` 和 public
+   `SessionService.forkSession()` 创建 child。parent 先执行 Read，child 仅依赖继承的
+   Read 结果执行 Write/Bash。证据包括精确文件效果、parent JSONL 字节不变、parent/root
+   lineage、child 独立追加、runtime 清理和 evidence 中无 secret。
+2. **CLI/TUI**：通过真实 `useCommandHandler.executeCommand()` 执行初始 prompt、
+   `/fork <sessionId>` 和 child prompt。证据包括 slash-command routing、child activation、
+   精确文件效果、parent transcript 不变、lineage、active turn 对 `/fork` 的拒绝语义以及
+   evidence 中无 secret。
+3. **Web**：通过 production HTTP session routes 和 SSE 完成；deterministic Web tests
+   另行覆盖 Sidebar action 与 store activation。
+   - completed parent：fork 后 child SSE ready 并以 `sessionId + projectPath` 激活，child
+     仅依赖继承历史产生精确文件效果；parent JSONL 保持不变且 lineage 正确。
+   - active parent：在真实 provider request 保持 active 时 fork 已提交的稳定 JSONL
+     prefix；parent 不被取消并继续追加，child 不包含边界后的 parent 内容且独立运行。
+   两个子项都检查 compound workspace identity、结构化 HTTP/SSE evidence、资源清理和
+   secret absence。
+4. **ACP**：通过真实 ACP SDK NDJSON codec 和 dispatcher 执行 `session/list`、
+   `session/fork`，随后直接向返回的 child prompt，不调用 `session/load`，也不 replay
+   history。证据包括 discovery metadata、精确文件效果、parent immutability、lineage、
+   child 独立追加、session 清理和 evidence 中无 secret。
+
+该组轨迹的 required matrix 固定包含 DeepSeek Flash 和 Pro。若显式配置 Claude、GPT
+或 domestic provider，其配置模型也必须运行四个 production entrypoint；缺少 required Flash/Pro 时
+fail closed。API key 只能通过子进程环境变量注入，不写入配置文件、命令记录、日志、
+快照或原始请求头。实际命令、模型集合、退出码和复跑事实记录在
+[session discovery 与 durable fork 证据账本](./session-discovery-fork-evidence.md)。
+
+仅收到模型文本或 HTTP 200 不算通过。每条轨迹都必须证明预期的文件或持久化
+副作用、结构化事件和进程退出状态；涉及代码修改的轨迹还必须记录
+`git diff --name-only` 以及测试或类型检查退出码。session fork 轨迹改为验证 parent/child
+JSONL、lineage、精确 fixture 文件内容和资源清理，不虚构 Git diff 证据。
 
 ## 准出证据
 
