@@ -13,8 +13,11 @@ import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
+  BOUNDED_OUTPUT_PROOF,
+  BOUNDED_OUTPUT_TAIL,
   buildInteractiveShellCommand,
   buildInteractiveShellPrompt,
+  createBoundedOutputFixture,
   INTERACTIVE_SHELL_INPUT,
 } from './interactiveShellFixture.js';
 import {
@@ -411,6 +414,50 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
             ])
           );
           expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
+        });
+      } finally {
+        await harness.agent.destroy().catch(() => undefined);
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+
+    it(`${modelConfig.model} observes bounded background output through ACP`, async () => {
+      const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-bounded-'));
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      configureModel(modelConfig);
+      const client = new RecordingClient();
+      const harness = createHarness(client);
+      const proofFile = 'acp-bounded-output.txt';
+      const fixture = await createBoundedOutputFixture(workspace, proofFile);
+
+      try {
+        await runWithCwdOverride(workspace, async () => {
+          await harness.connection.initialize({
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientCapabilities: {},
+          });
+          const session = await harness.connection.newSession({
+            cwd: workspace,
+            mcpServers: [],
+          });
+          await harness.connection.setSessionMode?.({
+            sessionId: session.sessionId,
+            modeId: 'yolo',
+          });
+
+          const result = await harness.connection.prompt({
+            sessionId: session.sessionId,
+            prompt: [{ type: 'text', text: fixture.prompt }],
+          });
+
+          expect(result.stopReason).toBe('end_turn');
+          expect(await readFile(path.join(workspace, proofFile), 'utf8')).toBe(
+            BOUNDED_OUTPUT_PROOF
+          );
+          const updates = JSON.stringify(client.updates);
+          expect(updates).toContain('Output truncated');
+          expect(updates).toContain(BOUNDED_OUTPUT_TAIL);
+          expect(updates).not.toContain(modelConfig.apiKey);
         });
       } finally {
         await harness.agent.destroy().catch(() => undefined);

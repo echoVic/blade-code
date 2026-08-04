@@ -190,6 +190,7 @@
 | `task_id` | string | ✅ | 任务 ID |
 
 **类型**: ReadOnly
+**输出边界**: 后台 Shell 的 stdout/stderr 各保留最近 1 MiB；模型和 TUI/Web/ACP 事件中的文本会继续按命令类型截断并保留头尾。返回值通过 `output_truncated`、`stdout_omitted_bytes`、`stderr_omitted_bytes` 和 `truncation_info` 明确报告截断，不会静默丢失边界信息。
 
 ### TaskCreate
 

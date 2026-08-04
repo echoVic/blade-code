@@ -148,6 +148,7 @@ export function shouldShowToolDetail(toolName: string, result: ToolResult): bool
     case 'Glob':
     case 'Grep':
     case 'Bash':
+    case 'TaskOutput':
       // 这些工具总是显示紧凑预览
       return true;
 
@@ -343,9 +344,44 @@ export function generateToolDetail(
     }
 
     case 'TaskOutput': {
-      const content = typeof result.llmContent === 'string' ? result.llmContent : null;
-      if (!content) return null;
-      return content.length > 200 ? `${content.slice(0, 200)}...` : content;
+      if (typeof result.llmContent === 'string') {
+        return result.llmContent.length > 200
+          ? `${result.llmContent.slice(0, 200)}...`
+          : result.llmContent;
+      }
+      if (!result.llmContent || typeof result.llmContent !== 'object') return null;
+
+      const payload = result.llmContent as Record<string, unknown>;
+      const parts: string[] = [];
+      if (typeof payload.status === 'string') {
+        parts.push(`Status: ${payload.status}`);
+      }
+
+      if (payload.output_truncated === true) {
+        const omittedBytes =
+          (typeof payload.stdout_omitted_bytes === 'number'
+            ? payload.stdout_omitted_bytes
+            : 0) +
+          (typeof payload.stderr_omitted_bytes === 'number'
+            ? payload.stderr_omitted_bytes
+            : 0);
+        parts.push(
+          omittedBytes > 0
+            ? `Output truncated: ${omittedBytes} earlier bytes omitted`
+            : 'Output truncated for display'
+        );
+      }
+
+      const appendTail = (label: string, value: unknown) => {
+        if (typeof value !== 'string' || value.length === 0) return;
+        const maxLength = 160;
+        const tail = value.length > maxLength ? `...${value.slice(-maxLength)}` : value;
+        parts.push(`${label}: ${tail}`);
+      };
+      appendTail('stdout', payload.stdout);
+      appendTail('stderr', payload.stderr);
+
+      return parts.join('\n') || null;
     }
 
     case 'Skill': {

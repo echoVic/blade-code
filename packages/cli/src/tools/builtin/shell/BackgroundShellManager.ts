@@ -5,6 +5,7 @@ import {
   type OwnedProcessTree,
   spawnOwnedProcess,
 } from '../../../utils/process/OwnedProcessTree.js';
+import { BoundedOutputBuffer } from './BoundedOutputBuffer.js';
 import {
   isWorkspaceSandboxRuntimeFailure,
   type SandboxedCommand,
@@ -35,8 +36,8 @@ export interface BackgroundShellProcess {
   startTime: number;
   endTime?: number;
   errorMessage?: string;
-  pendingStdout: string;
-  pendingStderr: string;
+  pendingStdout: BoundedOutputBuffer;
+  pendingStderr: BoundedOutputBuffer;
   sandboxed: boolean;
 }
 
@@ -46,6 +47,8 @@ export interface ShellOutputSnapshot {
   status: BackgroundShellStatus;
   stdout: string;
   stderr: string;
+  stdoutOmittedBytes: number;
+  stderrOmittedBytes: number;
   exitCode?: number | null;
   signal?: string | null;
   pid?: number;
@@ -117,8 +120,8 @@ export class BackgroundShellManager {
       pid: child.pid,
       status: 'running',
       startTime: Date.now(),
-      pendingStdout: '',
-      pendingStderr: '',
+      pendingStdout: new BoundedOutputBuffer(),
+      pendingStderr: new BoundedOutputBuffer(),
       sandboxed: Boolean(options.sandboxedCommand),
     };
 
@@ -126,18 +129,21 @@ export class BackgroundShellManager {
     child.stderr?.setEncoding('utf8');
 
     child.stdout?.on('data', (chunk: Buffer | string) => {
-      processInfo.pendingStdout += chunk.toString();
+      processInfo.pendingStdout.append(chunk);
     });
 
     child.stderr?.on('data', (chunk: Buffer | string) => {
-      processInfo.pendingStderr += chunk.toString();
+      processInfo.pendingStderr.append(chunk);
     });
 
     child.on('close', (code, signal) => {
       options.sandboxedCommand?.cleanup();
       const sandboxFailure =
         processInfo.sandboxed &&
-        isWorkspaceSandboxRuntimeFailure(code, processInfo.pendingStderr);
+        isWorkspaceSandboxRuntimeFailure(
+          code,
+          processInfo.pendingStderr.peek().content
+        );
       processInfo.status =
         processInfo.status === 'killed'
           ? 'killed'
@@ -160,7 +166,7 @@ export class BackgroundShellManager {
       processInfo.errorMessage = error.message;
       processInfo.endTime = Date.now();
       processInfo.process = undefined;
-      processInfo.pendingStderr += `\n[error] ${error.message}`;
+      processInfo.pendingStderr.append(`\n[error] ${error.message}`);
     });
 
     this.processes.set(shellId, processInfo);
@@ -173,12 +179,16 @@ export class BackgroundShellManager {
       return undefined;
     }
 
+    const stdout = processInfo.pendingStdout.consume();
+    const stderr = processInfo.pendingStderr.consume();
     const snapshot: ShellOutputSnapshot = {
       id: processInfo.id,
       command: processInfo.command,
       status: processInfo.status,
-      stdout: processInfo.pendingStdout,
-      stderr: processInfo.pendingStderr,
+      stdout: stdout.content,
+      stderr: stderr.content,
+      stdoutOmittedBytes: stdout.omittedBytes,
+      stderrOmittedBytes: stderr.omittedBytes,
       exitCode: processInfo.exitCode,
       signal: processInfo.signal,
       pid: processInfo.pid,
@@ -187,9 +197,6 @@ export class BackgroundShellManager {
       errorMessage: processInfo.errorMessage,
       sandboxed: processInfo.sandboxed,
     };
-
-    processInfo.pendingStdout = '';
-    processInfo.pendingStderr = '';
 
     return snapshot;
   }

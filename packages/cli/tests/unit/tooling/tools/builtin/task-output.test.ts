@@ -108,6 +108,84 @@ describe('TaskOutput Tool', () => {
       });
     });
 
+    it('应向所有客户端暴露后台 shell 输出丢弃计数', async () => {
+      mockShellManager.getProcess.mockReturnValue({
+        id: 'bash_bounded',
+        status: 'exited',
+      });
+      mockShellManager.consumeOutput.mockReturnValue({
+        id: 'bash_bounded',
+        command: 'noisy-command',
+        status: 'exited',
+        stdout: 'latest stdout',
+        stderr: 'latest stderr',
+        stdoutOmittedBytes: 4096,
+        stderrOmittedBytes: 2048,
+        exitCode: 0,
+        pid: 12345,
+        startedAt: 1000,
+        endedAt: 2000,
+      });
+
+      const result = await taskOutputTool.execute({
+        task_id: 'bash_bounded',
+        block: false,
+        timeout: 30000,
+      });
+
+      expect(result.llmContent).toMatchObject({
+        stdout: 'latest stdout',
+        stderr: 'latest stderr',
+        output_truncated: true,
+        stdout_omitted_bytes: 4096,
+        stderr_omitted_bytes: 2048,
+      });
+      expect(result.metadata).toMatchObject({
+        output_truncated: true,
+        stdout_omitted_bytes: 4096,
+        stderr_omitted_bytes: 2048,
+      });
+    });
+
+    it('应限制发送给模型和客户端的后台 shell 输出大小', async () => {
+      const latestMarker = 'LATEST_DIAGNOSTIC';
+      const retainedOutput = `${'x'.repeat(30_000)}${latestMarker}`;
+      mockShellManager.getProcess.mockReturnValue({
+        id: 'bash_context_bounded',
+        status: 'exited',
+      });
+      mockShellManager.consumeOutput.mockReturnValue({
+        id: 'bash_context_bounded',
+        command: 'noisy-command',
+        status: 'exited',
+        stdout: retainedOutput,
+        stderr: '',
+        stdoutOmittedBytes: 0,
+        stderrOmittedBytes: 0,
+        exitCode: 0,
+        pid: 12345,
+        startedAt: 1000,
+        endedAt: 2000,
+      });
+
+      const result = await taskOutputTool.execute({
+        task_id: 'bash_context_bounded',
+        block: false,
+        timeout: 30000,
+      });
+      const payload = result.llmContent as {
+        stdout: string;
+        output_truncated: boolean;
+        truncation_info?: string;
+      };
+
+      expect(Buffer.byteLength(payload.stdout)).toBeLessThanOrEqual(15_000);
+      expect(payload.stdout.endsWith(latestMarker)).toBe(true);
+      expect(payload.output_truncated).toBe(true);
+      expect(payload.truncation_info).toContain('stdout');
+      expect(result.metadata?.stdout).toBe(payload.stdout);
+    });
+
     it('shell 不存在时应返回错误', async () => {
       mockShellManager.getProcess.mockReturnValue(undefined);
 

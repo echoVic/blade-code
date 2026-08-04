@@ -172,6 +172,34 @@ describe.skipIf(process.platform === 'win32')(
       expect(manager.getProcess(shell.id, 'session-owner')?.status).toBe('running');
     });
 
+    it('bounds unread background output while preserving the latest diagnostics', async () => {
+      const manager = BackgroundShellManager.getInstance();
+      const outputBytes = 1_100_000;
+      const stdoutTail = 'STDOUT_TAIL';
+      const stderrTail = 'STDERR_TAIL';
+      const script = [
+        `process.stdout.write('a'.repeat(${outputBytes}))`,
+        `process.stdout.write('${stdoutTail}')`,
+        `process.stderr.write('b'.repeat(${outputBytes}))`,
+        `process.stderr.write('${stderrTail}')`,
+      ].join(';');
+      const shell = manager.startBackgroundProcess({
+        command: `${shellQuote(process.execPath)} -e ${shellQuote(script)}`,
+        sessionId: 'session-bounded-output',
+        cwd: os.tmpdir(),
+      });
+
+      await waitForShellExit(manager, shell.id, 'session-bounded-output');
+      const output = manager.consumeOutput(shell.id, 'session-bounded-output');
+
+      expect(Buffer.byteLength(output?.stdout ?? '')).toBeLessThanOrEqual(1024 * 1024);
+      expect(Buffer.byteLength(output?.stderr ?? '')).toBeLessThanOrEqual(1024 * 1024);
+      expect(output?.stdout.endsWith(stdoutTail)).toBe(true);
+      expect(output?.stderr.endsWith(stderrTail)).toBe(true);
+      expect(output?.stdoutOmittedBytes).toBeGreaterThan(0);
+      expect(output?.stderrOmittedBytes).toBeGreaterThan(0);
+    });
+
     it('reclaims only the disposing runtime session shells', async () => {
       const manager = BackgroundShellManager.getInstance();
       const owned = manager.startBackgroundProcess({

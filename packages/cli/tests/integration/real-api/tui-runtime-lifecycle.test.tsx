@@ -13,8 +13,10 @@ import { getState } from '../../../src/store/vanilla.js';
 import { useAgent } from '../../../src/ui/hooks/useAgent.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
+  BOUNDED_OUTPUT_PROOF,
   buildInteractiveShellCommand,
   buildInteractiveShellPrompt,
+  createBoundedOutputFixture,
   INTERACTIVE_SHELL_INPUT,
 } from './interactiveShellFixture.js';
 import { isRealApiTestEnabled } from './testConfig.js';
@@ -247,6 +249,70 @@ describe.skipIf(!enabled)('TUI runtime lifecycle (real API)', () => {
         expect(result.success, diagnostic).toBe(true);
         expect(existsSync(outputPath), diagnostic).toBe(true);
         expect(readFileSync(outputPath, 'utf8')).toBe(INTERACTIVE_SHELL_INPUT);
+        expect(result.metadata?.toolCallsCount ?? 0).toBeGreaterThanOrEqual(3);
+        expect(JSON.stringify(result)).not.toContain(apiKey);
+      } finally {
+        await hook?.cleanupAgent().catch(() => undefined);
+        await act(async () => {
+          root.unmount();
+          await Promise.resolve();
+        });
+        container.remove();
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 240_000);
+
+    it(`${model} observes bounded background output through the TUI runtime`, async () => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-tui-bounded-'));
+      const sessionId = `tui-bounded-${model}-${Date.now()}`;
+      const modelId = setRuntimeModel(model);
+      const proofFile = 'tui-bounded-output.txt';
+      const fixture = await createBoundedOutputFixture(workspace, proofFile);
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = ReactDOM.createRoot(container);
+      let hook: ReturnType<typeof useAgent> | undefined;
+
+      function Harness() {
+        hook = useAgent({ sessionId, modelId, maxTurns: 8 });
+        return null;
+      }
+
+      try {
+        await act(async () => {
+          root.render(<Harness />);
+          await Promise.resolve();
+        });
+        const agent = await hook?.createAgent();
+        if (!agent) throw new Error('TUI Agent was not created');
+
+        const result = await runWithCwdOverride(workspace, () =>
+          agent.chat(
+            fixture.prompt,
+            {
+              messages: [],
+              userId: 'tui-bounded-output-test',
+              sessionId,
+              workspaceRoot: workspace,
+              permissionMode: PermissionMode.YOLO,
+            },
+            { maxTurns: 8, stream: true }
+          )
+        );
+
+        const proofPath = path.join(workspace, proofFile);
+        const diagnostic = JSON.stringify(
+          {
+            error: result.error,
+            finalMessage: result.finalMessage,
+            metadata: result.metadata,
+            proofExists: existsSync(proofPath),
+          },
+          null,
+          2
+        ).replaceAll(apiKey, '[redacted]');
+        expect(result.success, diagnostic).toBe(true);
+        expect(readFileSync(proofPath, 'utf8'), diagnostic).toBe(BOUNDED_OUTPUT_PROOF);
         expect(result.metadata?.toolCallsCount ?? 0).toBeGreaterThanOrEqual(3);
         expect(JSON.stringify(result)).not.toContain(apiKey);
       } finally {

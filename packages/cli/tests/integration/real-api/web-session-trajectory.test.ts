@@ -17,8 +17,11 @@ import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.
 import { BladeServer } from '../../../src/server/server.js';
 import { getState } from '../../../src/store/vanilla.js';
 import {
+  BOUNDED_OUTPUT_PROOF,
+  BOUNDED_OUTPUT_TAIL,
   buildInteractiveShellCommand,
   buildInteractiveShellPrompt,
+  createBoundedOutputFixture,
   INTERACTIVE_SHELL_INPUT,
 } from './interactiveShellFixture.js';
 import {
@@ -699,6 +702,43 @@ describe.skipIf(!enabled)('Web session trajectory (real API)', () => {
         expect(collector.events.some((event) => event.type === 'session.error')).toBe(
           false
         );
+        expect(JSON.stringify(collector.events)).not.toContain(modelConfig.apiKey);
+      } finally {
+        await collector?.close();
+        if (sessionId) await deleteSession(sessionId);
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 360_000);
+
+    it(`${modelConfig.model} observes bounded background output through Web`, async () => {
+      const workspace = createWorkspace();
+      const proofFile = 'web-bounded-output.txt';
+      const fixture = await createBoundedOutputFixture(workspace, proofFile);
+      let sessionId: string | undefined;
+      let collector: EventCollector | undefined;
+
+      try {
+        setRuntimeModel(modelConfig);
+        sessionId = await createSession(workspace);
+        collector = await collectEvents(sessionId);
+        await sendMessage(sessionId, fixture.prompt);
+        await collector.waitFor((event) => event.type === 'session.completed', 300_000);
+
+        expect(readFileSync(path.join(workspace, proofFile), 'utf8')).toBe(
+          BOUNDED_OUTPUT_PROOF
+        );
+        const taskOutput = collector.events.find(
+          (event) =>
+            event.type === 'tool.result' && event.properties.toolName === 'TaskOutput'
+        );
+        const metadata = taskOutput?.properties.metadata as
+          | Record<string, unknown>
+          | undefined;
+        expect(metadata?.output_truncated).toBe(true);
+        expect(Number(metadata?.stdout_omitted_bytes)).toBeGreaterThan(0);
+        expect(String(metadata?.stdout)).toContain(BOUNDED_OUTPUT_TAIL);
+        expect(String(taskOutput?.properties.output)).toContain('Output truncated');
+        expect(String(taskOutput?.properties.output)).toContain(BOUNDED_OUTPUT_TAIL);
         expect(JSON.stringify(collector.events)).not.toContain(modelConfig.apiKey);
       } finally {
         await collector?.close();

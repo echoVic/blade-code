@@ -12,6 +12,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { BackgroundShellManager } from '../shell/BackgroundShellManager.js';
+import { OutputTruncator } from '../shell/OutputTruncator.js';
 
 /**
  * TaskOutput 工具
@@ -161,6 +162,13 @@ async function handleShellOutput(
     };
   }
 
+  const retainedOutput = OutputTruncator.truncateForLLM(
+    snapshot.stdout,
+    snapshot.stderr,
+    snapshot.command
+  );
+  const stdoutOmittedBytes = snapshot.stdoutOmittedBytes ?? 0;
+  const stderrOmittedBytes = snapshot.stderrOmittedBytes ?? 0;
   const payload = {
     task_id: snapshot.id,
     type: 'shell',
@@ -174,8 +182,15 @@ async function handleShellOutput(
     finished_at: snapshot.endedAt
       ? new Date(snapshot.endedAt).toISOString()
       : undefined,
-    stdout: snapshot.stdout,
-    stderr: snapshot.stderr,
+    stdout: retainedOutput.stdout,
+    stderr: retainedOutput.stderr,
+    output_truncated:
+      stdoutOmittedBytes > 0 ||
+      stderrOmittedBytes > 0 ||
+      Boolean(retainedOutput.truncationInfo),
+    stdout_omitted_bytes: stdoutOmittedBytes,
+    stderr_omitted_bytes: stderrOmittedBytes,
+    truncation_info: retainedOutput.truncationInfo,
   };
 
   return {
