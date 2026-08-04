@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   JSONLStore,
   parseSessionJSONL,
@@ -12,6 +12,7 @@ import {
   getSessionInboxFilePath,
 } from '../../../src/context/storage/pathUtils.js';
 import type { SessionEvent } from '../../../src/context/types.js';
+import { Logger } from '../../../src/logging/Logger.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 
 function makeCreatedEvent(
@@ -104,6 +105,16 @@ async function writeTranscript(
   const filePath = getSessionFilePath(workspace, sessionId);
   await mkdir(path.dirname(filePath), { recursive: true });
   await new JSONLStore(filePath).createExclusive(entries);
+}
+
+async function captureError(operation: () => Promise<unknown>): Promise<Error> {
+  try {
+    await operation();
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw new Error(`Expected Error rejection, received ${String(error)}`);
+  }
+  throw new Error('Expected operation to reject');
 }
 
 describe('SessionService strict session catalog', () => {
@@ -374,6 +385,187 @@ describe('SessionService strict session catalog', () => {
     expect(second.nextCursor).toBeUndefined();
   });
 
+  it('skips a colliding transcript whose committed cwd is outside the scoped catalog', async () => {
+    const dashedWorkspace = path.join(workspaceA, 'team-project');
+    const nestedWorkspace = path.join(workspaceA, 'team', 'project');
+    await Promise.all([
+      mkdir(dashedWorkspace, { recursive: true }),
+      mkdir(nestedWorkspace, { recursive: true }),
+    ]);
+    expect(getSessionFilePath(dashedWorkspace, 'foreign-session')).toBe(
+      getSessionFilePath(nestedWorkspace, 'foreign-session')
+    );
+    await writeTranscript(dashedWorkspace, 'native-session', [
+      makeCreatedEvent('native-session', dashedWorkspace, '2024-01-01T00:00:00.000Z'),
+    ]);
+    await writeTranscript(nestedWorkspace, 'foreign-session', [
+      makeCreatedEvent('foreign-session', nestedWorkspace, '2024-01-02T00:00:00.000Z'),
+    ]);
+
+    const page = await SessionService.listSessionPage({
+      cwd: dashedWorkspace,
+      includeSubagents: true,
+    });
+
+    expect(page.sessions.map((session) => session.sessionId)).toEqual([
+      'native-session',
+    ]);
+  });
+
+  it('fails closed on exact metadata lookup through a colliding scoped path', async () => {
+    const dashedWorkspace = path.join(workspaceA, 'team-project');
+    const nestedWorkspace = path.join(workspaceA, 'team', 'project');
+    await Promise.all([
+      mkdir(dashedWorkspace, { recursive: true }),
+      mkdir(nestedWorkspace, { recursive: true }),
+    ]);
+    await writeTranscript(nestedWorkspace, 'foreign-metadata', [
+      makeCreatedEvent('foreign-metadata', nestedWorkspace, '2024-01-01T00:00:00.000Z'),
+    ]);
+
+    await expect(
+      SessionService.findSessionMetadata('foreign-metadata', dashedWorkspace)
+    ).resolves.toBeUndefined();
+    await expect(
+      SessionService.findSessionMetadata('foreign-metadata', nestedWorkspace)
+    ).resolves.toMatchObject({ projectPath: nestedWorkspace });
+  });
+
+  it('does not load a colliding transcript committed to another scoped workspace', async () => {
+    const dashedWorkspace = path.join(workspaceA, 'team-project');
+    const nestedWorkspace = path.join(workspaceA, 'team', 'project');
+    await Promise.all([
+      mkdir(dashedWorkspace, { recursive: true }),
+      mkdir(nestedWorkspace, { recursive: true }),
+    ]);
+    await writeTranscript(nestedWorkspace, 'foreign-load', [
+      makeCreatedEvent('foreign-load', nestedWorkspace, '2024-01-01T00:00:00.000Z'),
+      ...makeMessageEvents(
+        'foreign-load',
+        nestedWorkspace,
+        '2024-01-01T00:01:00.000Z',
+        'foreign content'
+      ),
+    ]);
+
+    const error = await captureError(() =>
+      SessionService.loadSession('foreign-load', dashedWorkspace)
+    );
+    expect(error.message).toContain('foreign-load');
+    expect(error.message).not.toContain(nestedWorkspace);
+    await expect(
+      SessionService.loadSession('foreign-load', nestedWorkspace)
+    ).resolves.toContainEqual(
+      expect.objectContaining({ role: 'user', content: 'foreign content' })
+    );
+  });
+
+  it('does not delete a colliding transcript committed to another scoped workspace', async () => {
+    const dashedWorkspace = path.join(workspaceA, 'team-project');
+    const nestedWorkspace = path.join(workspaceA, 'team', 'project');
+    await Promise.all([
+      mkdir(dashedWorkspace, { recursive: true }),
+      mkdir(nestedWorkspace, { recursive: true }),
+    ]);
+    await writeTranscript(nestedWorkspace, 'foreign-delete', [
+      makeCreatedEvent('foreign-delete', nestedWorkspace, '2024-01-01T00:00:00.000Z'),
+    ]);
+    const transcriptPath = getSessionFilePath(nestedWorkspace, 'foreign-delete');
+    const inboxPath = getSessionInboxFilePath(nestedWorkspace, 'foreign-delete');
+    await writeFile(
+      inboxPath,
+      '{"version":1,"sessionId":"foreign-delete","messages":[]}\n',
+      'utf8'
+    );
+
+    await expect(
+      SessionService.deleteSession('foreign-delete', dashedWorkspace)
+    ).resolves.toBe(0);
+    await expect(access(transcriptPath)).resolves.toBeUndefined();
+    await expect(access(inboxPath)).resolves.toBeUndefined();
+    await expect(
+      SessionService.deleteSession('foreign-delete', nestedWorkspace)
+    ).resolves.toBe(1);
+  });
+
+  it('deduplicates the same public session identity from different storage directories', async () => {
+    const projectsRoot = path.join(storageRoot, 'projects');
+    const newerStorage = path.join(projectsRoot, 'physical-newer');
+    const olderStorage = path.join(projectsRoot, 'physical-older');
+    const sessionId = 'duplicate-public-identity';
+    await Promise.all([
+      mkdir(newerStorage, { recursive: true }),
+      mkdir(olderStorage, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(
+        path.join(newerStorage, `${sessionId}.jsonl`),
+        `${JSON.stringify(
+          makeCreatedEvent(sessionId, workspaceA, '2024-01-02T00:00:00.000Z')
+        )}\n`,
+        'utf8'
+      ),
+      writeFile(
+        path.join(olderStorage, `${sessionId}.jsonl`),
+        `${JSON.stringify(
+          makeCreatedEvent(sessionId, workspaceA, '2024-01-01T00:00:00.000Z')
+        )}\n`,
+        'utf8'
+      ),
+    ]);
+
+    const sessions = await SessionService.listSessions({ includeSubagents: true });
+
+    expect(sessions).toEqual([
+      expect.objectContaining({
+        sessionId,
+        projectPath: workspaceA,
+        lastMessageTime: '2024-01-02T00:00:00.000Z',
+      }),
+    ]);
+  });
+
+  it('scans, sorts, and warns once without paths for more than one public page', async () => {
+    await Promise.all(
+      Array.from({ length: 101 }, (_, index) => {
+        const sessionId = `warning-${String(index).padStart(3, '0')}`;
+        return writeTranscript(workspaceA, sessionId, [
+          makeCreatedEvent(
+            sessionId,
+            workspaceA,
+            new Date(Date.UTC(2024, 0, 1, 0, 0, index)).toISOString()
+          ),
+        ]);
+      })
+    );
+    const corruptPath = getSessionFilePath(workspaceA, 'warning-corrupt');
+    await writeFile(corruptPath, '{"broken":}\n', 'utf8');
+    const consoleErrorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    Logger.setGlobalDebug('service');
+
+    try {
+      const sessions = await SessionService.listSessions({
+        cwd: workspaceA,
+        includeSubagents: true,
+      });
+      expect(sessions).toHaveLength(101);
+      expect(sessions[0]?.sessionId).toBe('warning-100');
+      expect(sessions.at(-1)?.sessionId).toBe('warning-000');
+      const warnings = consoleErrorSpy.mock.calls
+        .map((args) => args.map((arg) => String(arg)).join(' '))
+        .filter((message) => message.includes('Skipping invalid session transcript'));
+      expect(warnings).toEqual([expect.stringContaining('warning-corrupt')]);
+      expect(warnings[0]).not.toContain(corruptPath);
+      expect(warnings[0]).not.toContain(storageRoot);
+      expect(warnings[0]).not.toContain(workspaceA);
+    } finally {
+      Logger.clearGlobalDebug();
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
   it('loads and deletes hidden subagents even when public listing hides them', async () => {
     const parentStore = new PersistentStore(workspaceA, 100, 'test');
     await parentStore.saveMessage('visible-parent', 'user', 'parent');
@@ -435,9 +627,9 @@ describe('SessionService strict session catalog', () => {
     ).rejects.toThrow();
   });
 
-  it('deletes the inbox from the transcript directory instead of committed cwd', async () => {
+  it('deletes the inbox from the validated transcript directory', async () => {
     await writeTranscript(workspaceA, 'drifted-session', [
-      makeCreatedEvent('drifted-session', workspaceB, '2024-01-01T00:00:00.000Z'),
+      makeCreatedEvent('drifted-session', workspaceA, '2024-01-01T00:00:00.000Z'),
       ...makeMessageEvents(
         'drifted-session',
         workspaceA,
@@ -570,6 +762,20 @@ describe('SessionService strict session catalog', () => {
     await expect(
       SessionService.findSessionMetadata('corrupt-session', workspaceA)
     ).rejects.toThrow(/Invalid session JSONL/);
+    const metadataError = await captureError(() =>
+      SessionService.findSessionMetadata('corrupt-session', workspaceA)
+    );
+    expect(metadataError.message).toContain('corrupt-session');
+    expect(metadataError.message).toContain('line 1');
+    expect(metadataError.message).not.toContain(corruptPath);
+    expect(metadataError.message).not.toContain(storageRoot);
+    const loadError = await captureError(() =>
+      SessionService.loadSession('corrupt-session', workspaceA)
+    );
+    expect(loadError.message).toContain('corrupt-session');
+    expect(loadError.message).toContain('line 1');
+    expect(loadError.message).not.toContain(corruptPath);
+    expect(loadError.message).not.toContain(storageRoot);
     await expect(
       SessionService.findSessionMetadata('missing-created', workspaceA)
     ).rejects.toThrow('Session has no durable creation record: missing-created');
@@ -702,9 +908,29 @@ describe('SessionService strict session catalog', () => {
         title: 'bad',
       })
     ).rejects.toThrow();
+
+    const corruptPath = getSessionFilePath(workspaceA, 'corrupt-update');
+    await writeFile(corruptPath, '{"broken":}\n', 'utf8');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const corruptError = await captureError(() =>
+        SessionService.updateSessionMetadata('corrupt-update', workspaceA, {
+          title: 'bad',
+        })
+      );
+      const logged = consoleError.mock.calls.flat().map(String).join(' ');
+      expect(corruptError.message).toContain('corrupt-update');
+      expect(corruptError.message).toContain('line 1');
+      expect(corruptError.message).not.toContain(corruptPath);
+      expect(corruptError.message).not.toContain(storageRoot);
+      expect(logged).not.toContain(corruptPath);
+      expect(logged).not.toContain(storageRoot);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
-  it('returns persisted metadata when update wins before delete and does not recreate transcripts when delete wins first', async () => {
+  it('serializes update and delete through the same-process per-file queue', async () => {
     await SessionService.createSessionMetadata('race-session', workspaceA, {
       title: 'Initial',
     });

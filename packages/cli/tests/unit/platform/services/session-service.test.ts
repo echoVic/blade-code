@@ -185,6 +185,20 @@ describe('SessionService with mocked filesystem', () => {
     readFileMock.mockResolvedValue(
       [
         JSON.stringify({
+          id: 'e0',
+          sessionId: 'session-x',
+          type: 'session_created',
+          timestamp: '2024-01-01T00:00:00Z',
+          cwd: '/project/demo',
+          version: '0.0.0',
+          data: {
+            sessionId: 'session-x',
+            rootId: 'session-x',
+            createdAt: '2024-01-01T00:00:00Z',
+            updatedAt: '2024-01-01T00:00:00Z',
+          },
+        }),
+        JSON.stringify({
           id: 'e1',
           sessionId: 'session-x',
           type: 'message_created',
@@ -230,13 +244,7 @@ describe('SessionService with mocked filesystem', () => {
       ].join('\n')
     );
 
-    const originalResolver = (SessionService as any).getSessionFilePath;
-    (SessionService as any).getSessionFilePath = () =>
-      '/project/demo/sessions/session-x.jsonl';
-
     const messages = await SessionService.loadSession('session-x', '/project/demo');
-
-    (SessionService as any).getSessionFilePath = originalResolver;
 
     expect(readFileMock).toHaveBeenCalledWith(
       '/project/demo/sessions/session-x.jsonl',

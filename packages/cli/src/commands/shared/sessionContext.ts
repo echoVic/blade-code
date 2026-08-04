@@ -63,7 +63,9 @@ export async function resolveNonInteractiveSession(
   }
 
   if (options.continue) {
-    const sessions = await SessionService.listSessions();
+    const sessions = options.forkSession
+      ? await SessionService.listSessions({ cwd: getCwd() })
+      : await SessionService.listSessions();
     if (sessions.length > 0) {
       const sessionId = sessions[0].sessionId;
       if (options.forkSession) {

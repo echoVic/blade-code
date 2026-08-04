@@ -23,7 +23,6 @@ import type { JsonValue, SessionMessage } from '../store/types.js';
 import { getVersion } from '../utils/packageInfo.js';
 import type { ContentPart, Message } from './ChatServiceInterface.js';
 import {
-  MAX_SESSION_PAGE_SIZE,
   compareSessionCatalogItems,
   normalizeSessionListOptions,
   paginateSessionCatalog,
@@ -180,33 +179,18 @@ export class SessionService {
   static async listSessions(
     options: Omit<SessionListOptions, 'cursor' | 'limit'> = {}
   ): Promise<SessionMetadata[]> {
-    const sessions: SessionMetadata[] = [];
+    const normalized = normalizeSessionListOptions(options);
+    const stored = await this.scanStoredSessions(
+      normalized.cwd ?? undefined,
+      normalized.includeSubagents
+    );
     const seenSessions = new Set<string>();
-    const seenCursors = new Set<string>();
-    let cursor: string | undefined;
-
-    do {
-      if (cursor) {
-        if (seenCursors.has(cursor)) {
-          throw new Error('Session pagination returned duplicate cursor');
-        }
-        seenCursors.add(cursor);
-      }
-      const page = await this.listSessionPage({
-        ...options,
-        cursor,
-        limit: MAX_SESSION_PAGE_SIZE,
-      });
-      for (const session of page.sessions) {
-        const key = `${session.projectPath}\0${session.sessionId}`;
-        if (seenSessions.has(key)) continue;
-        seenSessions.add(key);
-        sessions.push(session);
-      }
-      cursor = page.nextCursor;
-    } while (cursor);
-
-    return sessions;
+    return stored.sort(compareSessionCatalogItems).flatMap((session) => {
+      const key = `${session.projectPath}\0${session.sessionId}`;
+      if (seenSessions.has(key)) return [];
+      seenSessions.add(key);
+      return [this.toPublicMetadata(session)];
+    });
   }
 
   static async findSessionMetadata(
@@ -227,6 +211,9 @@ export class SessionService {
           sessionId,
           resolvedProjectPath
         );
+        if (stored.projectPath !== resolvedProjectPath) {
+          return undefined;
+        }
         return this.toPublicMetadata(stored);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -260,8 +247,20 @@ export class SessionService {
         if (!path.isAbsolute(projectPath)) {
           throw new Error('Session catalog cwd must be absolute');
         }
-        const filePath = this.getSessionFilePath(path.resolve(projectPath), sessionId);
-        return await this.loadSessionFromFile(filePath);
+        const resolvedProjectPath = path.resolve(projectPath);
+        const filePath = this.getSessionFilePath(resolvedProjectPath, sessionId);
+        try {
+          return await this.loadSessionFromFile(
+            filePath,
+            sessionId,
+            resolvedProjectPath
+          );
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            throw new Error(`未找到会话: ${sessionId}`);
+          }
+          throw error;
+        }
       }
 
       const session = (await this.scanStoredSessions(undefined, true)).find(
@@ -272,7 +271,7 @@ export class SessionService {
         throw new Error(`未找到会话: ${sessionId}`);
       }
 
-      return await this.loadSessionFromFile(session.filePath);
+      return await this.loadSessionFromFile(session.filePath, sessionId);
     } catch (error) {
       logger.error(`[SessionService] 加载会话失败 (${sessionId}):`, error);
       throw error;
@@ -297,7 +296,10 @@ export class SessionService {
     }
 
     const sourceFilePath = getSessionFilePath(sourceProjectPath, sourceSessionId);
-    const sourceEntries = await this.readStableSessionSnapshot(sourceFilePath);
+    const sourceEntries = await this.readStableSessionSnapshot(
+      sourceFilePath,
+      sourceSessionId
+    );
     const sourceCreated = this.getSessionCreatedEntry(sourceEntries, sourceSessionId);
     if (sourceCreated.data.sessionId !== sourceSessionId) {
       throw new Error(
@@ -429,7 +431,29 @@ export class SessionService {
       }
       const resolvedProjectPath = path.resolve(projectPath);
       const filePath = this.getSessionFilePath(resolvedProjectPath, sessionId);
-      const deleted = await new JSONLStore(filePath).delete();
+      const store = new JSONLStore(filePath);
+      let deleted: boolean;
+      try {
+        deleted = await store.deleteValidated((entries) => {
+          const stored = this.projectMetadataFromEntries(
+            entries,
+            sessionId,
+            resolvedProjectPath,
+            filePath
+          );
+          return stored.projectPath === resolvedProjectPath;
+        });
+      } catch (error) {
+        if (!this.isCorruptSessionJSONLError(error)) {
+          throw error;
+        }
+        // TODO(storage-v2): Corrupt JSONL has no trustworthy committed cwd. The
+        // legacy exact-delete contract cannot distinguish a requested workspace from
+        // a non-injective storage-key alias. Preserve cleanup for now. Valid
+        // transcripts serialize validation + deletion only within this process; an
+        // injective storage key and cross-process locking remain separate debts.
+        deleted = await store.delete();
+      }
       if (!deleted) {
         return 0;
       }
@@ -506,37 +530,43 @@ export class SessionService {
     const store = new JSONLStore(filePath);
     let persistedEntries: SessionEvent[] = [];
 
-    await store.appendValidated((entries) => {
-      const created = SessionService.getSessionCreatedEntry(entries, sessionId);
-      if (created.data.sessionId !== sessionId) {
-        throw new Error(
-          `Session metadata creation record sessionId mismatch: ${sessionId}`
-        );
-      }
-      if (
-        !path.isAbsolute(created.cwd) ||
-        path.resolve(created.cwd) !== resolvedProjectPath
-      ) {
-        throw new Error(`Session metadata creation record cwd mismatch: ${sessionId}`);
-      }
-      const now = new Date().toISOString();
-      const next: Extract<SessionEvent, { type: 'session_updated' }> = {
-        id: nanoid(),
-        sessionId,
-        timestamp: now,
-        type: 'session_updated',
-        cwd: resolvedProjectPath,
-        gitBranch: detectGitBranch(resolvedProjectPath),
-        version: getVersion(),
-        data: {
+    try {
+      await store.appendValidated((entries) => {
+        const created = SessionService.getSessionCreatedEntry(entries, sessionId);
+        if (created.data.sessionId !== sessionId) {
+          throw new Error(
+            `Session metadata creation record sessionId mismatch: ${sessionId}`
+          );
+        }
+        if (
+          !path.isAbsolute(created.cwd) ||
+          path.resolve(created.cwd) !== resolvedProjectPath
+        ) {
+          throw new Error(
+            `Session metadata creation record cwd mismatch: ${sessionId}`
+          );
+        }
+        const now = new Date().toISOString();
+        const next: Extract<SessionEvent, { type: 'session_updated' }> = {
+          id: nanoid(),
           sessionId,
-          ...(update.title !== undefined ? { title: update.title } : {}),
-          updatedAt: now,
-        },
-      };
-      persistedEntries = [...entries, next];
-      return next;
-    });
+          timestamp: now,
+          type: 'session_updated',
+          cwd: resolvedProjectPath,
+          gitBranch: detectGitBranch(resolvedProjectPath),
+          version: getVersion(),
+          data: {
+            sessionId,
+            ...(update.title !== undefined ? { title: update.title } : {}),
+            updatedAt: now,
+          },
+        };
+        persistedEntries = [...entries, next];
+        return next;
+      });
+    } catch (error) {
+      throw SessionService.sanitizeStoredSessionError(error, sessionId);
+    }
 
     return SessionService.toPublicMetadata(
       SessionService.projectMetadataFromEntries(
@@ -551,9 +581,24 @@ export class SessionService {
   /**
    * 从 JSONL 文件加载并转换消息
    */
-  private static async loadSessionFromFile(filePath: string): Promise<Message[]> {
+  private static async loadSessionFromFile(
+    filePath: string,
+    sessionId: string,
+    projectPath?: string
+  ): Promise<Message[]> {
     const content = await readFile(filePath, 'utf-8');
-    const entries = parseSessionJSONL(content, filePath);
+    const entries = this.parseStoredSession(content, sessionId);
+    if (projectPath !== undefined) {
+      const stored = this.projectMetadataFromEntries(
+        entries,
+        sessionId,
+        projectPath,
+        filePath
+      );
+      if (stored.projectPath !== projectPath) {
+        throw new Error(`未找到会话: ${sessionId}`);
+      }
+    }
     return this.convertJSONLToMessages(entries);
   }
 
@@ -689,11 +734,12 @@ export class SessionService {
     cwd?: string,
     includeSubagents = false
   ): Promise<StoredSessionMetadata[]> {
-    const projectDirs = cwd
+    const scopedProjectPath = cwd ? path.resolve(cwd) : undefined;
+    const projectDirs = scopedProjectPath
       ? [
           {
-            storagePath: getProjectStoragePath(path.resolve(cwd)),
-            projectPath: path.resolve(cwd),
+            storagePath: getProjectStoragePath(scopedProjectPath),
+            projectPath: scopedProjectPath,
           },
         ]
       : await this.listAllProjectStorageDirectories();
@@ -719,6 +765,15 @@ export class SessionService {
             sessionId,
             project.projectPath
           );
+          if (
+            scopedProjectPath !== undefined &&
+            metadata.projectPath !== scopedProjectPath
+          ) {
+            logger.warn(
+              `[SessionService] Skipping out-of-scope session transcript: ${sessionId}`
+            );
+            continue;
+          }
           if (!includeSubagents && metadata.relationType === 'subagent') continue;
           sessions.push(metadata);
         } catch (error) {
@@ -766,7 +821,7 @@ export class SessionService {
     projectPath: string
   ): Promise<StoredSessionMetadata> {
     const content = await readFile(filePath, 'utf-8');
-    const entries = parseSessionJSONL(content, filePath);
+    const entries = this.parseStoredSession(content, sessionId);
     return this.projectMetadataFromEntries(entries, sessionId, projectPath, filePath);
   }
 
@@ -863,14 +918,40 @@ export class SessionService {
     return path.resolve(projectPath);
   }
 
+  private static parseStoredSession(
+    content: string,
+    sessionId: string
+  ): SessionEvent[] {
+    return parseSessionJSONL(content, `session ${sessionId}`);
+  }
+
+  private static isCorruptSessionJSONLError(error: unknown): boolean {
+    return error instanceof Error && error.message.startsWith('Invalid session JSONL ');
+  }
+
+  private static sanitizeStoredSessionError(
+    error: unknown,
+    sessionId: string
+  ): unknown {
+    if (!this.isCorruptSessionJSONLError(error) || !(error instanceof Error)) {
+      return error;
+    }
+    const line = error.message.match(/ at line (\d+)$/)?.[1];
+    return new Error(
+      `Invalid session JSONL in session ${sessionId}${line ? ` at line ${line}` : ''}`,
+      { cause: error.cause }
+    );
+  }
+
   private static async readStableSessionSnapshot(
     filePath: string,
+    sessionId: string,
     maxAttempts = 3
   ): Promise<SessionEvent[]> {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const before = await sessionSnapshotIO.stat(filePath);
       const content = await sessionSnapshotIO.readFile(filePath);
-      const entries = parseSessionJSONL(content, filePath);
+      const entries = this.parseStoredSession(content, sessionId);
       const after = await sessionSnapshotIO.stat(filePath);
       if (
         before.size === after.size &&

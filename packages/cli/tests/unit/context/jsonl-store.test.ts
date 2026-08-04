@@ -1,7 +1,7 @@
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   JSONLStore,
   parseSessionJSONL,
@@ -50,6 +50,16 @@ function createSessionUpdated(
       updatedAt: timestamp,
     },
   };
+}
+
+async function captureError(operation: () => Promise<unknown>): Promise<Error> {
+  try {
+    await operation();
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw new Error(`Expected Error rejection, received ${String(error)}`);
+  }
+  throw new Error('Expected operation to reject');
 }
 
 describe('JSONLStore.appendValidated', () => {
@@ -248,5 +258,136 @@ describe('JSONLStore.appendValidated', () => {
       ])
     ).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(access(filePath)).rejects.toThrow();
+  });
+
+  it('validates after an earlier append in the same-process per-file queue', async () => {
+    const created = createSessionCreated(
+      'session-1',
+      '/workspace',
+      '2024-01-01T00:00:00.000Z'
+    );
+    const appended = createSessionUpdated(
+      'session-1',
+      '/workspace',
+      '2024-01-01T00:00:01.000Z',
+      'queued-before-delete'
+    );
+    await writeFile(filePath, `${JSON.stringify(created)}\n`, 'utf8');
+    const store = new JSONLStore(filePath);
+    let validatedEntries: readonly SessionEvent[] = [];
+
+    const append = store.append(appended);
+    const deletion = store.deleteValidated((entries) => {
+      validatedEntries = entries;
+      return true;
+    });
+
+    await expect(append).resolves.toBeUndefined();
+    await expect(deletion).resolves.toBe(true);
+    expect(validatedEntries).toEqual([created, appended]);
+    await expect(access(filePath)).rejects.toThrow();
+  });
+
+  it('makes a later append fail when delete wins the same-process per-file queue', async () => {
+    const created = createSessionCreated(
+      'session-1',
+      '/workspace',
+      '2024-01-01T00:00:00.000Z'
+    );
+    await writeFile(filePath, `${JSON.stringify(created)}\n`, 'utf8');
+    const store = new JSONLStore(filePath);
+
+    const deletion = store.deleteValidated(() => true);
+    const update = store.appendValidated(() =>
+      createSessionUpdated(
+        'session-1',
+        '/workspace',
+        '2024-01-01T00:00:01.000Z',
+        'must-not-recreate'
+      )
+    );
+
+    await expect(deletion).resolves.toBe(true);
+    await expect(update).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(filePath)).rejects.toThrow();
+  });
+
+  it('keeps the transcript when validated delete is rejected by the validator', async () => {
+    const created = createSessionCreated(
+      'session-1',
+      '/workspace',
+      '2024-01-01T00:00:00.000Z'
+    );
+    const original = `${JSON.stringify(created)}\n`;
+    await writeFile(filePath, original, 'utf8');
+    const store = new JSONLStore(filePath);
+
+    await expect(store.deleteValidated(() => false)).resolves.toBe(false);
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(original);
+  });
+
+  it('keeps the transcript when the validated delete validator throws', async () => {
+    const created = createSessionCreated(
+      'session-1',
+      '/workspace',
+      '2024-01-01T00:00:00.000Z'
+    );
+    const original = `${JSON.stringify(created)}\n`;
+    await writeFile(filePath, original, 'utf8');
+    const store = new JSONLStore(filePath);
+
+    await expect(
+      store.deleteValidated(() => {
+        throw new Error('validator rejected delete');
+      })
+    ).rejects.toThrow('validator rejected delete');
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(original);
+  });
+
+  it('does not expose transcript paths when validated delete finds corrupt JSONL', async () => {
+    await writeFile(filePath, '{"broken":}\n', 'utf8');
+    const store = new JSONLStore(filePath);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const error = await captureError(() => store.deleteValidated(() => true));
+      const logged = consoleError.mock.calls.flat().map(String).join(' ');
+      expect(error.message).toContain('Invalid session JSONL');
+      expect(error.message).toContain('line 1');
+      expect(error.message).not.toContain(filePath);
+      expect(error.message).not.toContain(tempDir);
+      expect(logged).not.toContain(filePath);
+      expect(logged).not.toContain(tempDir);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('does not expose transcript paths when validated append finds corrupt JSONL', async () => {
+    await writeFile(filePath, '{"broken":}\n', 'utf8');
+    const store = new JSONLStore(filePath);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const error = await captureError(() =>
+        store.appendValidated(() =>
+          createSessionUpdated(
+            'session-1',
+            '/workspace',
+            '2024-01-01T00:00:01.000Z',
+            'must-not-append'
+          )
+        )
+      );
+      const logged = consoleError.mock.calls.flat().map(String).join(' ');
+      expect(error.message).toContain('Invalid session JSONL');
+      expect(error.message).toContain('line 1');
+      expect(error.message).not.toContain(filePath);
+      expect(error.message).not.toContain(tempDir);
+      expect(logged).not.toContain(filePath);
+      expect(logged).not.toContain(tempDir);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

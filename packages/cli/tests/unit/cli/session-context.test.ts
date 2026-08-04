@@ -1,27 +1,39 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const sessionState = vi.hoisted(() => ({
-  forkSession: vi.fn(),
-  listSessions: vi.fn(),
-  loadSession: vi.fn(),
-}));
-
-vi.mock('../../../src/services/SessionService.js', () => ({
-  SessionService: sessionState,
-}));
+import type { SessionMetadata } from '../../../src/services/SessionService.js';
+import { SessionService } from '../../../src/services/SessionService.js';
 
 vi.mock('../../../src/utils/cwd.js', () => ({
   getCwd: () => '/workspace',
 }));
 
+function makeMetadata(sessionId: string, projectPath = '/workspace'): SessionMetadata {
+  return {
+    sessionId,
+    projectPath,
+    rootId: sessionId,
+    messageCount: 1,
+    firstMessageTime: '2024-01-01T00:00:00.000Z',
+    lastMessageTime: '2024-01-01T00:00:00.000Z',
+    hasErrors: false,
+  };
+}
+
 describe('resolveNonInteractiveSession', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    sessionState.listSessions.mockResolvedValue([]);
-    sessionState.loadSession.mockResolvedValue([]);
-    sessionState.forkSession.mockResolvedValue({
+    vi.restoreAllMocks();
+    vi.spyOn(SessionService, 'listSessions').mockResolvedValue([]);
+    vi.spyOn(SessionService, 'loadSession').mockResolvedValue([]);
+    vi.spyOn(SessionService, 'forkSession').mockResolvedValue({
       sessionId: 'child-session',
+      parentSessionId: 'parent-session',
+      projectPath: '/workspace',
       messages: [{ role: 'assistant', content: 'inherited history' }],
+      metadata: {
+        ...makeMetadata('child-session'),
+        rootId: 'parent-session',
+        parentId: 'parent-session',
+        relationType: 'fork',
+      },
     });
   });
 
@@ -39,20 +51,23 @@ describe('resolveNonInteractiveSession', () => {
       })
     ).resolves.toEqual({
       sessionId: 'child-session',
+      parentSessionId: 'parent-session',
+      projectPath: '/workspace',
       messages: [{ role: 'assistant', content: 'inherited history' }],
+      metadata: expect.objectContaining({ sessionId: 'child-session' }),
     });
-    expect(sessionState.forkSession).toHaveBeenCalledWith('parent-session', {
+    expect(SessionService.forkSession).toHaveBeenCalledWith('parent-session', {
       newSessionId: 'child-session',
       sourceProjectPath: '/workspace',
       targetProjectPath: '/workspace',
     });
-    expect(sessionState.loadSession).not.toHaveBeenCalled();
+    expect(SessionService.loadSession).not.toHaveBeenCalled();
   });
 
-  it('forks the latest session when used with continue', async () => {
-    sessionState.listSessions.mockResolvedValue([
-      { sessionId: 'latest-session' },
-      { sessionId: 'older-session' },
+  it('scopes forked continue discovery to the current workspace', async () => {
+    vi.mocked(SessionService.listSessions).mockResolvedValue([
+      makeMetadata('latest-session'),
+      makeMetadata('older-session'),
     ]);
     const { resolveNonInteractiveSession } = await import(
       '../../../src/commands/shared/sessionContext.js'
@@ -64,10 +79,37 @@ describe('resolveNonInteractiveSession', () => {
       fallbackSessionPrefix: 'print',
     });
 
-    expect(sessionState.forkSession).toHaveBeenCalledWith('latest-session', {
+    expect(SessionService.listSessions).toHaveBeenCalledWith({ cwd: '/workspace' });
+    expect(SessionService.forkSession).toHaveBeenCalledWith('latest-session', {
       newSessionId: undefined,
       sourceProjectPath: '/workspace',
       targetProjectPath: '/workspace',
     });
+  });
+
+  it('keeps non-fork continue discovery and loading global', async () => {
+    vi.mocked(SessionService.listSessions).mockResolvedValue([
+      makeMetadata('global-latest', '/another-workspace'),
+    ]);
+    vi.mocked(SessionService.loadSession).mockResolvedValue([
+      { role: 'assistant', content: 'global history' },
+    ]);
+    const { resolveNonInteractiveSession } = await import(
+      '../../../src/commands/shared/sessionContext.js'
+    );
+
+    await expect(
+      resolveNonInteractiveSession({
+        continue: true,
+        fallbackSessionPrefix: 'print',
+      })
+    ).resolves.toEqual({
+      sessionId: 'global-latest',
+      messages: [{ role: 'assistant', content: 'global history' }],
+    });
+
+    expect(SessionService.listSessions).toHaveBeenCalledWith();
+    expect(SessionService.loadSession).toHaveBeenCalledWith('global-latest');
+    expect(SessionService.forkSession).not.toHaveBeenCalled();
   });
 });

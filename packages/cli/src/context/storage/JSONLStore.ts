@@ -251,26 +251,61 @@ export class JSONLStore {
     }
   }
 
+  async deleteValidated(
+    validator: (entries: readonly SessionEvent[]) => boolean
+  ): Promise<boolean> {
+    return this.enqueue(async () => {
+      let handle: fs.FileHandle;
+      try {
+        handle = await fs.open(this.filePath, 'r');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return false;
+        }
+        throw error;
+      }
+
+      let entries: SessionEvent[];
+      try {
+        entries = parseSessionJSONL(
+          await handle.readFile('utf8'),
+          'session transcript'
+        );
+      } finally {
+        await handle.close();
+      }
+
+      if (!validator(entries)) return false;
+      try {
+        await fs.unlink(this.filePath);
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return false;
+        }
+        throw error;
+      }
+    });
+  }
+
   async appendValidated(
     buildEntry: (entries: readonly SessionEvent[]) => SessionEvent
   ): Promise<void> {
-    try {
-      await this.enqueue(async () => {
-        const handle = await fs.open(this.filePath, 'r+');
-        try {
-          const { entries, separator, size } = await this.readCommittedState(handle);
-          const entry = buildEntry(entries);
-          const line = `${separator}${JSON.stringify(entry)}\n`;
-          await handle.write(line, size, 'utf8');
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
-      });
-    } catch (error) {
-      console.error(`[JSONLStore] 验证后追加写入失败: ${this.filePath}`, error);
-      throw error;
-    }
+    await this.enqueue(async () => {
+      const handle = await fs.open(this.filePath, 'r+');
+      try {
+        const { entries, separator, size } = await this.readCommittedState(
+          handle,
+          'session transcript'
+        );
+        const entry = buildEntry(entries);
+        const line = `${separator}${JSON.stringify(entry)}\n`;
+        await handle.write(line, size, 'utf8');
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    });
   }
 
   /**
@@ -312,14 +347,17 @@ export class JSONLStore {
     }
   }
 
-  private async readCommittedState(handle: fs.FileHandle): Promise<{
+  private async readCommittedState(
+    handle: fs.FileHandle,
+    source = this.filePath
+  ): Promise<{
     entries: SessionEvent[];
     separator: string;
     size: number;
   }> {
     const separator = await this.repairIncompleteTail(handle);
     const content = await handle.readFile('utf8');
-    const entries = parseSessionJSONL(content, this.filePath);
+    const entries = parseSessionJSONL(content, source);
     const { size } = await handle.stat();
     return { entries, separator, size };
   }
