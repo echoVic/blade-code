@@ -60,7 +60,7 @@ export function assertValidSessionId(sessionId: string): void {
   if (
     sessionId === '.' ||
     sessionId === '..' ||
-    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(sessionId)
+    !/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,199}$/.test(sessionId)
   ) {
     throw new Error(`Invalid session ID: ${sessionId}`);
   }
