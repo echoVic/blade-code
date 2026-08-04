@@ -236,6 +236,9 @@ export class AcpSession {
       // 创建 slash command 上下文，包含 ACP 回调和取消信号
       const context = {
         cwd: this.cwd,
+        workspaceRoot: this.cwd,
+        sessionId: this.id,
+        messages: [...this.messages],
         signal, // 传递取消信号
         acp: {
           // 发送文本消息给 IDE
@@ -285,6 +288,13 @@ export class AcpSession {
 
       // 执行 slash command
       const result = await executeSlashCommand(message, context);
+      if (
+        (result.message === 'compact_completed' ||
+          result.message === 'compact_fallback') &&
+        result.data?.compactedMessages
+      ) {
+        this.messages = [...result.data.compactedMessages];
+      }
 
       // 发送结果给 IDE
       // 优先使用 content（完整内容），否则使用 message（简短状态）

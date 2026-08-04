@@ -45,7 +45,7 @@ describe('FileAccessTracker', () => {
       expect(record!.lastOperation).toBe('read');
     });
 
-    it('应该更新已有记录', async () => {
+    it('应该为同一路径保留独立的会话记录', async () => {
       const filePath = path.join(testDir, 'test.txt');
       await fs.writeFile(filePath, 'content');
 
@@ -53,8 +53,13 @@ describe('FileAccessTracker', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       await tracker.recordFileRead(filePath, 'session-456');
 
-      const record = tracker.getFileRecord(filePath);
-      expect(record!.sessionId).toBe('session-456');
+      expect(tracker.getFileRecord(filePath, 'session-123')?.sessionId).toBe(
+        'session-123'
+      );
+      expect(tracker.getFileRecord(filePath, 'session-456')?.sessionId).toBe(
+        'session-456'
+      );
+      expect(tracker.getTrackedRecords()).toHaveLength(2);
     });
 
     it('应该处理文件不存在的情况', async () => {
@@ -178,6 +183,32 @@ describe('FileAccessTracker', () => {
   });
 
   describe('checkExternalModification', () => {
+    it('应该按 session 使用同一路径的独立 mtime 记录', async () => {
+      const filePath = path.join(testDir, 'shared.txt');
+      await fs.writeFile(filePath, 'content');
+      const originalTime = new Date('2026-01-01T00:00:00.000Z');
+      const editedTime = new Date('2026-01-01T00:00:05.000Z');
+      await fs.utimes(filePath, originalTime, originalTime);
+      await tracker.recordFileRead(filePath, 'session-a');
+      await tracker.recordFileRead(filePath, 'session-b');
+
+      await fs.utimes(filePath, editedTime, editedTime);
+      await tracker.recordFileEdit(filePath, 'session-a', 'edit');
+
+      await expect(
+        tracker.checkExternalModification(filePath, 'session-a')
+      ).resolves.toEqual({ isExternal: false });
+      await expect(
+        tracker.checkExternalModification(filePath, 'session-b')
+      ).resolves.toMatchObject({ isExternal: true });
+      expect(tracker.getFileRecord(filePath, 'session-a')?.mtime).toBe(
+        editedTime.getTime()
+      );
+      expect(tracker.getFileRecord(filePath, 'session-b')?.mtime).toBe(
+        originalTime.getTime()
+      );
+    });
+
     it('应该检测外部修改', async () => {
       const filePath = path.join(testDir, 'test.txt');
       await fs.writeFile(filePath, 'original');
@@ -309,6 +340,24 @@ describe('FileAccessTracker', () => {
 
       expect(record1).toBeUndefined();
       expect(record2).not.toBeUndefined();
+    });
+
+    it('应该只清除指定 workspace 内的同 ID 会话记录', async () => {
+      const workspaceA = path.join(testDir, 'workspace-a');
+      const workspaceB = path.join(testDir, 'workspace-b');
+      await fs.mkdir(workspaceA);
+      await fs.mkdir(workspaceB);
+      const fileA = path.join(workspaceA, 'shared.ts');
+      const fileB = path.join(workspaceB, 'shared.ts');
+      await fs.writeFile(fileA, 'a');
+      await fs.writeFile(fileB, 'b');
+      await tracker.recordFileRead(fileA, 'duplicate-session');
+      await tracker.recordFileRead(fileB, 'duplicate-session');
+
+      tracker.clearSession('duplicate-session', workspaceA);
+
+      expect(tracker.getFileRecord(fileA, 'duplicate-session')).toBeUndefined();
+      expect(tracker.getFileRecord(fileB, 'duplicate-session')).toBeDefined();
     });
   });
 

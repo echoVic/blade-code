@@ -113,6 +113,26 @@ describe('配置系统', () => {
         configManager.validateConfig(invalidConfig);
       }).toThrow();
     });
+
+    it('应该拒绝超过安全上限的 maxTurns', () => {
+      const invalidConfig = {
+        ...DEFAULT_CONFIG,
+        maxTurns: 101,
+        models: [
+          {
+            id: 'test-model',
+            name: 'Test Model',
+            provider: 'openai-compatible' as const,
+            apiKey: 'test-key',
+            baseUrl: 'https://api.test.com',
+            model: 'gpt-4',
+          },
+        ],
+        currentModelId: 'test-model',
+      };
+
+      expect(() => configManager.validateConfig(invalidConfig)).toThrow('maxTurns');
+    });
   });
 
   describe('错误处理', () => {

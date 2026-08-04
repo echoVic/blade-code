@@ -4,6 +4,7 @@
 
 import { sessionActions } from '../store/vanilla.js';
 import type { SessionMetadata } from '../services/SessionService.js';
+import type { Message } from '../services/ChatServiceInterface.js';
 
 export type SessionSelectionIntent = 'resume' | 'fork';
 
@@ -47,7 +48,7 @@ export interface SlashCommandData {
   /** 模式（如 add/edit） */
   mode?: string;
   /** 压缩结果相关 */
-  compactedMessages?: unknown[];
+  compactedMessages?: Message[];
   boundaryMessage?: unknown;
   summaryMessage?: unknown;
   preTokens?: number;
@@ -119,6 +120,8 @@ export interface SlashCommandContext {
   sessionId?: string;
   /** 工作目录（可选，默认为 cwd） */
   workspaceRoot?: string;
+  /** 当前调用方拥有的会话历史；ACP 等非 UI 表面应显式传入 */
+  messages?: Message[];
   /** ACP 模式下的回调（可选） */
   acp?: AcpCallbacks;
   /** 取消信号（可选，用于中止长时间运行的操作） */

@@ -108,6 +108,7 @@ function createMockSessionActions(): SessionActions {
     setCompacting: vi.fn(),
     setCommand: vi.fn(),
     clearMessages: vi.fn(),
+    setCompactedContext: vi.fn(),
     setError: vi.fn(),
     resetSession: vi.fn(),
     restoreSession: vi.fn(),
@@ -163,6 +164,7 @@ describe('processSlashCommand', () => {
   describe('session context', () => {
     it('应将当前 session ID 传给 slash command handler', async () => {
       executeSlashCommand.mockResolvedValue({ success: true });
+      const ownedMessages = [{ role: 'user' as const, content: 'owned history' }];
 
       await processSlashCommand(
         createResolvedInput('/tasks'),
@@ -170,13 +172,48 @@ describe('processSlashCommand', () => {
         createMockSessionActions(),
         new AbortController().signal,
         async () => undefined,
-        'session-owner'
+        'session-owner',
+        ownedMessages
       );
 
       expect(executeSlashCommand).toHaveBeenCalledWith(
         '/tasks',
-        expect.objectContaining({ sessionId: 'session-owner' })
+        expect.objectContaining({
+          sessionId: 'session-owner',
+          workspaceRoot: expect.any(String),
+          messages: ownedMessages,
+        })
       );
+    });
+
+    it('手动压缩后应接管下一轮模型上下文', async () => {
+      const compactedMessages = [
+        { role: 'user' as const, content: 'compacted summary' },
+      ];
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        message: 'compact_completed',
+        data: { compactedMessages },
+      });
+      const sessionActions = createMockSessionActions();
+
+      const result = await processSlashCommand(
+        createResolvedInput('/compact'),
+        createMockAppActions(),
+        sessionActions,
+        new AbortController().signal,
+        async () => undefined,
+        'session-owner'
+      );
+
+      expect(result).toEqual({
+        type: 'handled',
+        commandResult: { success: true },
+      });
+      expect(sessionActions.setCompactedContext).toHaveBeenCalledWith(
+        compactedMessages
+      );
+      expect(sessionActions.resetTokenUsage).toHaveBeenCalledOnce();
     });
   });
 

@@ -37,8 +37,8 @@ async function compactCommandHandler(
 
     // 从 store 获取会话消息和 sessionId
     const sessionState = getState().session;
-    const sessionMessages = sessionState.messages;
-    const sessionId = sessionState.sessionId;
+    const sessionMessages = context.messages ?? sessionState.messages;
+    const sessionId = context.sessionId ?? sessionState.sessionId;
 
     if (!sessionMessages || sessionMessages.length === 0) {
       ui.sendMessage('[WARN] 当前会话没有消息，无需压缩');
@@ -48,11 +48,14 @@ async function compactCommandHandler(
       };
     }
 
-    // 转换 SessionMessage[] 为 Message[] (CompactionService 使用 ChatService 的 Message 类型)
-    const messages = sessionMessages.map((msg) => ({
-      role: msg.role,
-      content: msg.content,
-    }));
+    // 调用方显式提供的 Message[] 已是模型历史，必须保留完整 tool 协议字段。
+    // UI store 的 SessionMessage[] 仍只投影其共有字段。
+    const messages = context.messages
+      ? [...context.messages]
+      : sessionMessages.map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        }));
 
     // 显示压缩前信息
     const preTokens = TokenCounter.countTokens(messages, currentModel.model);
@@ -85,15 +88,17 @@ async function compactCommandHandler(
       maxContextTokens: tokenLimit,
       apiKey: currentModel.apiKey,
       baseURL: currentModel.baseUrl,
+      workspaceRoot: context.workspaceRoot ?? context.cwd,
+      sessionId,
     });
 
     if (result.success) {
       // 保存压缩数据到 JSONL
       try {
         if (sessionId) {
-          // ContextManager 会自动使用 PersistentStore，它会从 cwd 推导项目路径
-          // 这里不需要传参数，使用默认配置即可
-          const contextMgr = new ContextManager();
+          const contextMgr = new ContextManager({
+            projectPath: context.workspaceRoot ?? context.cwd,
+          });
           await contextMgr.saveCompaction(
             sessionId,
             result.summary,

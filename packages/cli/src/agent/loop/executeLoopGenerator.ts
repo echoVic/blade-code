@@ -7,6 +7,7 @@
 
 import { nanoid } from 'nanoid';
 import { type PermissionMode } from '../../config/index.js';
+import { MAX_AGENT_TURNS } from '../../config/maxTurns.js';
 import { CompactionService } from '../../context/CompactionService.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { microCompact, snipCompact } from '../../context/SnipCompaction.js';
@@ -78,7 +79,7 @@ const COMPACTION_FALLBACK_MIN_OUTPUT_TOKENS = 8192;
 const COMPACTION_FALLBACK_MAX_OUTPUT_TOKENS = 32768;
 const COMPACTION_COOLDOWN_TURNS = 2;
 const COMPACTION_EMERGENCY_INPUT_RATIO = 0.95;
-const SAFETY_LIMIT = 100;
+const SAFETY_LIMIT = MAX_AGENT_TURNS;
 
 const PLANNING_DIRECTIVE = `
 
@@ -562,6 +563,8 @@ export async function* checkAndCompactInLoop(
       actualPreTokens: actualPromptTokens,
       signal,
       activeTask,
+      workspaceRoot: context.workspaceRoot || getCwd(),
+      sessionId: context.sessionId,
     });
 
     context.messages = result.compactedMessages;
@@ -697,10 +700,9 @@ export async function* executeLoopGenerator(
     // === Agentic Loop ===
     const isYoloMode = context.permissionMode === ('yolo' as PermissionMode);
     const isSubagent = !!context.subagentInfo;
-    const hasExplicitTurnLimit =
-      deps.runtimeOptions.maxTurns !== undefined || options?.maxTurns !== undefined;
     const configuredMaxTurns =
       deps.runtimeOptions.maxTurns ?? options?.maxTurns ?? deps.config.maxTurns ?? -1;
+    const hasExplicitTurnLimit = configuredMaxTurns >= 0;
 
     if (configuredMaxTurns === 0) {
       return {
@@ -1013,6 +1015,8 @@ export async function* executeLoopGenerator(
                 baseURL: chatConfig.baseUrl,
                 signal: options?.signal,
                 activeTask: activeUserRequest,
+                workspaceRoot: context.workspaceRoot || getCwd(),
+                sessionId: context.sessionId,
               }
             );
             if (result.success) {
@@ -2030,6 +2034,8 @@ export async function* executeLoopGenerator(
                     actualPreTokens: lastPromptTokens,
                     signal: options?.signal,
                     activeTask: activeUserRequest,
+                    workspaceRoot: context.workspaceRoot || getCwd(),
+                    sessionId: context.sessionId,
                   }
                 );
 

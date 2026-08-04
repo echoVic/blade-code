@@ -3,6 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { getOriginalCwd } from '../bootstrap/state.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
+import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
 import { PermissionMode, type RuntimeConfig } from '../config/types.js';
 
 const RUNTIME_SETTING_FIELDS = [
@@ -82,7 +83,7 @@ const RuntimeSettingsSchema = z
     mcpEnabled: z.boolean().optional(),
     mcpServers: z.record(z.record(z.unknown())).optional(),
     permissionMode: z.nativeEnum(PermissionMode).optional(),
-    maxTurns: z.number().int().min(-1).optional(),
+    maxTurns: z.number().int().min(-1).max(MAX_AGENT_TURNS).optional(),
     systemPrompt: z.string().optional(),
     appendSystemPrompt: z.string().optional(),
     initialMessage: z.string().optional(),

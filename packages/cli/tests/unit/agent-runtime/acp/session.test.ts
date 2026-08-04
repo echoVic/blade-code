@@ -413,8 +413,38 @@ describe('AcpSession', () => {
       );
       expect(executeSlashCommand).toHaveBeenCalledWith(
         '/test command',
-        expect.any(Object)
+        expect.objectContaining({
+          cwd: '/tmp/test',
+          workspaceRoot: '/tmp/test',
+          sessionId: 'test-session-id',
+          messages: [],
+        })
       );
+    });
+
+    it('手动压缩后下一轮 prompt 应使用 compacted history', async () => {
+      const compactedMessages: Message[] = [
+        { role: 'user', content: 'compacted ACP history' },
+      ];
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      vi.mocked(executeSlashCommand).mockResolvedValueOnce({
+        success: true,
+        message: 'compact_completed',
+        data: { compactedMessages },
+      });
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: '/compact' }],
+      });
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'continue after compact' }],
+      });
+
+      expect(getMockAgent().getLastCall()?.context.messages).toEqual(compactedMessages);
     });
 
     it('应该发送文本消息给 IDE', async () => {

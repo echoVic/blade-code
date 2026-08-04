@@ -125,7 +125,10 @@ export const editTool = createTool({
         }
 
         // 检查文件是否被外部程序修改
-        const externalModCheck = await tracker.checkExternalModification(file_path);
+        const externalModCheck = await tracker.checkExternalModification(
+          file_path,
+          sessionId
+        );
         if (externalModCheck.isExternal) {
           return {
             success: false,

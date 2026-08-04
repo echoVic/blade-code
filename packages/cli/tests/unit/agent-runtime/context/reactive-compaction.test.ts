@@ -16,6 +16,8 @@ const defaultOptions = {
   maxContextTokens: 128000,
   apiKey: 'test-key',
   baseURL: 'https://api.example.com/v1',
+  workspaceRoot: '/tmp/active-worktree',
+  sessionId: 'active-session',
 };
 
 function makeMessages(count: number, prefix = 'msg'): Message[] {
@@ -63,6 +65,8 @@ describe('ReactiveCompaction', () => {
       maxContextTokens: defaultOptions.maxContextTokens,
       apiKey: defaultOptions.apiKey,
       baseURL: defaultOptions.baseURL,
+      workspaceRoot: defaultOptions.workspaceRoot,
+      sessionId: defaultOptions.sessionId,
     });
   });
 

@@ -30,6 +30,7 @@ import {
 } from '../../store/vanilla.js';
 import { getBuiltinTools } from '../../tools/builtin/index.js';
 import { BackgroundShellManager } from '../../tools/builtin/shell/BackgroundShellManager.js';
+import { FileAccessTracker } from '../../tools/builtin/file/FileAccessTracker.js';
 import { InMemorySessionApprovalStore } from '../../tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
@@ -393,6 +394,9 @@ export class SessionRuntime {
       BackgroundShellManager.getInstance().killSession(this.sessionId)
     );
     await attempt('clear the session approvals', () => this.approvalStore.clear());
+    await attempt('clear the session file access records', () =>
+      FileAccessTracker.getInstance().clearSession(this.sessionId, this.workspaceRoot)
+    );
     await attempt('release the session worktrees', () =>
       worktreeManager.releaseSession(this.sessionId)
     );

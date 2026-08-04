@@ -221,6 +221,16 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       }));
     },
 
+    setCompactedContext: (messages: Message[]) => {
+      set((state) => ({
+        session: {
+          ...state.session,
+          restoredContextMessages: [...messages],
+          restoredVisibleMessageCount: state.session.messages.length,
+        },
+      }));
+    },
+
     /**
      * 重置会话（保持 sessionId 和 actions）
      */

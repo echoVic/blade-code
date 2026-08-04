@@ -17,6 +17,8 @@ export interface ReactiveCompactOptions {
   baseURL?: string;
   signal?: AbortSignal;
   activeTask?: string;
+  workspaceRoot?: string;
+  sessionId?: string;
 }
 
 export class ReactiveCompaction {
@@ -53,6 +55,8 @@ export class ReactiveCompaction {
         baseURL: options.baseURL,
         signal: options.signal,
         activeTask: options.activeTask,
+        workspaceRoot: options.workspaceRoot,
+        sessionId: options.sessionId,
       });
 
       if (compactResult.success) {

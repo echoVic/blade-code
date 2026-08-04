@@ -98,6 +98,7 @@ import type {
 } from '../../../../src/agent/types.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
 import { ContextManager } from '../../../../src/context/ContextManager.js';
+import { PermissionMode } from '../../../../src/config/types.js';
 
 // ===== Helpers =====
 
@@ -300,6 +301,8 @@ describe('executeLoopGenerator', () => {
           expect.any(Array),
           expect.objectContaining({
             activeTask: 'Read package.json before continuing.',
+            workspaceRoot: '/tmp/test',
+            sessionId: 'test-session',
           })
         );
         releaseCompaction();
@@ -318,6 +321,8 @@ describe('executeLoopGenerator', () => {
         expect.any(Array),
         expect.objectContaining({
           activeTask: 'Read package.json before continuing.',
+          workspaceRoot: '/tmp/test',
+          sessionId: 'test-session',
         })
       );
       releaseCompaction();
@@ -875,6 +880,42 @@ describe('executeLoopGenerator', () => {
     expect(result.success).toBe(false);
     expect(result.error?.type).toBe('max_turns_exceeded');
     expect(result.metadata?.turnsCount).toBe(1);
+    expect(chatMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('enforces a positive config turn limit for the main agent in yolo mode', async () => {
+    const deps = createMockDeps();
+    deps.config.maxTurns = 1;
+    const context = createMockContext({ permissionMode: PermissionMode.YOLO });
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    chatMock.mockResolvedValueOnce({
+      content: '',
+      toolCalls: [
+        {
+          id: 'tc-config-turn-limit',
+          type: 'function',
+          function: { name: 'Bash', arguments: '{"command":"echo retry"}' },
+        },
+      ],
+      finishReason: 'tool_calls',
+    });
+    (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      success: false,
+      llmContent: 'blocked',
+    });
+
+    const { result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Run the command once.',
+        context,
+        { stream: false },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('max_turns_exceeded');
     expect(chatMock).toHaveBeenCalledTimes(1);
   });
 

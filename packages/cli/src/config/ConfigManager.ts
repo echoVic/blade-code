@@ -24,6 +24,7 @@ import type { GlobalOptions } from '../cli/types.js';
 import { resolveModelAlias } from '../services/modelAlias.js';
 import { getCwd } from '../utils/cwd.js';
 import { DEFAULT_CONFIG } from './defaults.js';
+import { formatMaxTurnsRange, isValidMaxTurns } from './maxTurns.js';
 import { BladeConfig, PermissionMode, RuntimeConfig } from './types.js';
 
 export class ConfigManager {
@@ -371,6 +372,10 @@ export class ConfigManager {
 
     if (!config.models || config.models.length === 0) {
       errors.push('没有可用的模型配置');
+    }
+
+    if (!isValidMaxTurns(config.maxTurns)) {
+      errors.push(`maxTurns 必须是 ${formatMaxTurnsRange()}`);
     }
 
     if (config.models && config.models.length > 0) {

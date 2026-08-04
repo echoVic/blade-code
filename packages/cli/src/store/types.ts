@@ -112,6 +112,7 @@ export interface SessionActions {
   setCommand: (command: string | null) => void;
   setError: (error: string | null) => void;
   clearMessages: () => void;
+  setCompactedContext: (messages: Message[]) => void;
   resetSession: () => void;
   restoreSession: (
     sessionId: string,

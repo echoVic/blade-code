@@ -8,6 +8,7 @@
 import { safeExit } from '../../services/GracefulShutdown.js';
 import { getCwd } from '../../utils/cwd.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
+import type { Message } from '../../services/ChatServiceInterface.js';
 import {
   executeSlashCommand,
   isSlashCommand,
@@ -240,6 +241,11 @@ function handleSlashMessage(
       return true;
     case 'compact_completed':
     case 'compact_fallback': {
+      const compactedMessages = (data as { compactedMessages?: Message[] } | undefined)
+        ?.compactedMessages;
+      if (compactedMessages) {
+        sessionActions.setCompactedContext(compactedMessages);
+      }
       sessionActions.resetTokenUsage();
       return true;
     }
@@ -270,7 +276,8 @@ export async function processSlashCommand(
   sessionActions: SessionActions,
   signal: AbortSignal,
   cleanupAgent: CleanupAgent,
-  sessionId?: string
+  sessionId?: string,
+  messages?: Message[]
 ): Promise<SlashRouteResult> {
   const { text: command } = resolved;
 
@@ -280,7 +287,9 @@ export async function processSlashCommand(
 
   const slashContext: SlashCommandContext = {
     cwd: getCwd(),
+    workspaceRoot: getCwd(),
     sessionId,
+    messages,
     signal,
   };
 

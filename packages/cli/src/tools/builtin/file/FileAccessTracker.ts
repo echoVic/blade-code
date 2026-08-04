@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import { createLogger, LogCategory } from '../../../logging/Logger.js';
+import { PathSecurity } from '../../../utils/pathSecurity.js';
 import { NodeError } from '../../types/index.js';
 
 // 创建 FileAccessTracker 专用 Logger
@@ -27,8 +28,8 @@ export class FileAccessTracker {
   // 全局单例实例
   private static instance: FileAccessTracker | null = null;
 
-  // 已读文件映射: filePath -> FileAccessRecord
-  private accessedFiles: Map<string, FileAccessRecord> = new Map();
+  // 已读文件映射: filePath -> sessionId -> FileAccessRecord
+  private accessedFiles: Map<string, Map<string, FileAccessRecord>> = new Map();
 
   // 私有构造函数（单例模式）
   private constructor() {}
@@ -62,7 +63,7 @@ export class FileAccessTracker {
         lastOperation: 'read',
       };
 
-      this.accessedFiles.set(filePath, record);
+      this.setRecord(record);
 
       logger.debug(`记录文件读取: ${filePath}`);
     } catch (error) {
@@ -95,7 +96,7 @@ export class FileAccessTracker {
         lastOperation: operation,
       };
 
-      this.accessedFiles.set(filePath, record);
+      this.setRecord(record);
 
       logger.debug(`记录文件${operation === 'edit' ? '编辑' : '写入'}: ${filePath}`);
     } catch (error) {
@@ -114,18 +115,9 @@ export class FileAccessTracker {
    * @returns 是否已读取
    */
   hasFileBeenRead(filePath: string, sessionId?: string): boolean {
-    const record = this.accessedFiles.get(filePath);
-
-    if (!record) {
-      return false;
-    }
-
-    // 如果提供了 sessionId，验证是否是同一会话
-    if (sessionId && record.sessionId !== sessionId) {
-      return false;
-    }
-
-    return true;
+    const sessionRecords = this.accessedFiles.get(filePath);
+    if (!sessionRecords) return false;
+    return sessionId ? sessionRecords.has(sessionId) : sessionRecords.size > 0;
   }
 
   /**
@@ -135,9 +127,10 @@ export class FileAccessTracker {
    * @returns { modified: boolean, message?: string }
    */
   async checkFileModification(
-    filePath: string
+    filePath: string,
+    sessionId?: string
   ): Promise<{ modified: boolean; message?: string }> {
-    const record = this.accessedFiles.get(filePath);
+    const record = this.getFileRecord(filePath, sessionId);
 
     if (!record) {
       return {
@@ -184,9 +177,10 @@ export class FileAccessTracker {
    * @returns { isExternal: boolean, message?: string }
    */
   async checkExternalModification(
-    filePath: string
+    filePath: string,
+    sessionId?: string
   ): Promise<{ isExternal: boolean; message?: string }> {
-    const record = this.accessedFiles.get(filePath);
+    const record = this.getFileRecord(filePath, sessionId);
 
     if (!record) {
       return {
@@ -235,8 +229,21 @@ export class FileAccessTracker {
    * @param filePath 文件绝对路径
    * @returns 访问记录或 undefined
    */
-  getFileRecord(filePath: string): FileAccessRecord | undefined {
-    return this.accessedFiles.get(filePath);
+  getFileRecord(filePath: string, sessionId?: string): FileAccessRecord | undefined {
+    const sessionRecords = this.accessedFiles.get(filePath);
+    if (!sessionRecords) return undefined;
+    if (sessionId) return sessionRecords.get(sessionId);
+
+    return [...sessionRecords.values()].sort(
+      (left, right) => right.accessTime - left.accessTime
+    )[0];
+  }
+
+  /**
+   * 获取所有会话隔离的访问记录。
+   */
+  getTrackedRecords(): FileAccessRecord[] {
+    return [...this.accessedFiles.values()].flatMap((records) => [...records.values()]);
   }
 
   /**
@@ -260,9 +267,13 @@ export class FileAccessTracker {
    *
    * @param sessionId 会话 ID
    */
-  clearSession(sessionId: string): void {
-    for (const [filePath, record] of this.accessedFiles.entries()) {
-      if (record.sessionId === sessionId) {
+  clearSession(sessionId: string, workspaceRoot?: string): void {
+    for (const [filePath, records] of this.accessedFiles.entries()) {
+      if (workspaceRoot && !PathSecurity.isWithinWorkspace(filePath, workspaceRoot)) {
+        continue;
+      }
+      records.delete(sessionId);
+      if (records.size === 0) {
         this.accessedFiles.delete(filePath);
       }
     }
@@ -287,5 +298,14 @@ export class FileAccessTracker {
    */
   static resetInstance(): void {
     FileAccessTracker.instance = null;
+  }
+
+  private setRecord(record: FileAccessRecord): void {
+    let sessionRecords = this.accessedFiles.get(record.filePath);
+    if (!sessionRecords) {
+      sessionRecords = new Map();
+      this.accessedFiles.set(record.filePath, sessionRecords);
+    }
+    sessionRecords.set(record.sessionId, record);
   }
 }

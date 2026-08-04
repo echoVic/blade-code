@@ -5,6 +5,7 @@
 
 import { nanoid } from 'nanoid';
 import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { PermissionMode } from '../config/types.js';
 import { HookManager } from '../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
@@ -16,6 +17,7 @@ import {
 import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { isAbortError } from '../utils/abort.js';
 import { getCwd } from '../utils/cwd.js';
+import { PathSecurity } from '../utils/pathSecurity.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
 import { TokenCounter } from './TokenCounter.js';
 
@@ -45,6 +47,8 @@ export interface CompactionOptions {
   signal?: AbortSignal;
   /** 当前未完成的用户请求；压缩后以有界 checkpoint 确定性保留 */
   activeTask?: string;
+  /** 当前 active workspace；相对文件引用必须按它解析 */
+  workspaceRoot?: string;
 }
 
 /**
@@ -73,6 +77,10 @@ export interface CompactionResult {
 
 const sessionFailures = new Map<string, number>();
 const MAX_CONSECUTIVE_FAILURES = 3;
+
+function compactionSessionKey(workspaceRoot?: string, sessionId?: string): string {
+  return JSON.stringify([path.resolve(workspaceRoot ?? getCwd()), sessionId ?? null]);
+}
 
 /**
  * Compaction Service - 上下文压缩服务
@@ -119,7 +127,7 @@ export class CompactionService {
     try {
       const hookManager = HookManager.getInstance();
       const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
-        projectDir: getCwd(),
+        projectDir: options.workspaceRoot ?? getCwd(),
         sessionId: options.sessionId || 'unknown',
         permissionMode: options.permissionMode || PermissionMode.DEFAULT,
         messagesBefore: messages.length,
@@ -155,11 +163,11 @@ export class CompactionService {
       logger.warn('[CompactionService] Compaction hook execution failed:', hookError);
     }
 
-    const sessionKey = options.sessionId ?? '_default';
+    const sessionKey = compactionSessionKey(options.workspaceRoot, options.sessionId);
     const failures = sessionFailures.get(sessionKey) ?? 0;
     if (failures >= MAX_CONSECUTIVE_FAILURES) {
       logger.warn(
-        `[CompactionService] Circuit breaker open (${failures} consecutive failures for session ${sessionKey}), using fallback`
+        `[CompactionService] Circuit breaker open (${failures} consecutive failures for session ${options.sessionId ?? 'unknown'}), using fallback`
       );
       return this.fallbackCompact(
         messages,
@@ -178,7 +186,10 @@ export class CompactionService {
       const filePaths = fileRefs.map((f) => f.path);
       logger.debug('[CompactionService] 提取重点文件:', filePaths);
 
-      const fileContents = await FileAnalyzer.readFilesContent(filePaths);
+      const fileContents = await FileAnalyzer.readFilesContent(
+        filePaths,
+        options.workspaceRoot
+      );
       logger.debug('[CompactionService] 成功读取文件:', fileContents.length);
 
       // 2. 生成总结
@@ -225,7 +236,10 @@ export class CompactionService {
       const compactedMessages = [summaryMessage, ...retainedMessages];
 
       // === Post-Compact 上下文恢复 ===
-      const restorationMessage = await this.buildFileRestorationMessage();
+      const restorationMessage = await this.buildFileRestorationMessage(
+        options.workspaceRoot,
+        options.sessionId
+      );
       if (restorationMessage) {
         compactedMessages.push(restorationMessage);
       }
@@ -256,7 +270,7 @@ export class CompactionService {
         summary,
         preTokens,
         postTokens,
-        filesIncluded: filePaths,
+        filesIncluded: fileContents.map((file) => file.path),
         compactedMessages,
         boundaryMessage,
         summaryMessage,
@@ -459,20 +473,33 @@ Please provide your summary following the structure specified above, with both <
    * @param limit - 最多返回的文件数量
    * @returns 去重的文件路径列表
    */
-  private static getRecentlyAccessedFiles(limit: number): string[] {
+  private static async getRecentlyAccessedFiles(
+    limit: number,
+    workspaceRoot?: string,
+    sessionId?: string
+  ): Promise<string[]> {
     const tracker = FileAccessTracker.getInstance();
-    const trackedFiles = tracker.getTrackedFiles();
 
     // 按最后访问时间降序排序
-    const sorted = trackedFiles
-      .map((filePath) => ({
-        filePath,
-        record: tracker.getFileRecord(filePath)!,
-      }))
-      .filter((entry) => entry.record !== undefined)
-      .sort((a, b) => b.record.accessTime - a.record.accessTime);
+    const sorted = tracker
+      .getTrackedRecords()
+      .filter((record) => !sessionId || record.sessionId === sessionId)
+      .sort((left, right) => right.accessTime - left.accessTime);
 
-    return sorted.slice(0, limit).map((entry) => entry.filePath);
+    const eligible: string[] = [];
+    for (const record of sorted) {
+      if (
+        workspaceRoot &&
+        !(await PathSecurity.isWithinWorkspaceResolved(record.filePath, workspaceRoot))
+      ) {
+        continue;
+      }
+      if (!eligible.includes(record.filePath)) {
+        eligible.push(record.filePath);
+      }
+      if (eligible.length >= limit) break;
+    }
+    return eligible;
   }
 
   /**
@@ -481,8 +508,15 @@ Please provide your summary following the structure specified above, with both <
    *
    * @returns 恢复消息，如果没有可恢复的文件则返回 null
    */
-  private static async buildFileRestorationMessage(): Promise<Message | null> {
-    const recentFiles = this.getRecentlyAccessedFiles(5);
+  private static async buildFileRestorationMessage(
+    workspaceRoot?: string,
+    sessionId?: string
+  ): Promise<Message | null> {
+    const recentFiles = await this.getRecentlyAccessedFiles(
+      5,
+      workspaceRoot,
+      sessionId
+    );
     if (recentFiles.length === 0) {
       return null;
     }
@@ -635,10 +669,24 @@ Please provide your summary following the structure specified above, with both <
   }
 }
 
-export function resetCompactionCircuitBreaker(sessionId?: string): void {
-  if (sessionId) {
-    sessionFailures.delete(sessionId);
-  } else {
+export function resetCompactionCircuitBreaker(
+  sessionId?: string,
+  workspaceRoot?: string
+): void {
+  if (!sessionId && !workspaceRoot) {
     sessionFailures.clear();
+    return;
+  }
+
+  if (workspaceRoot) {
+    sessionFailures.delete(compactionSessionKey(workspaceRoot, sessionId));
+    return;
+  }
+
+  for (const key of sessionFailures.keys()) {
+    const [, keySessionId] = JSON.parse(key) as [string, string | null];
+    if (keySessionId === sessionId) {
+      sessionFailures.delete(key);
+    }
   }
 }

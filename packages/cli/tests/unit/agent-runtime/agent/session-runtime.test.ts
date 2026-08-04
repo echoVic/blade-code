@@ -11,6 +11,7 @@ import {
   type IChatService,
 } from '../../../../src/services/ChatServiceInterface.js';
 import { BackgroundShellManager } from '../../../../src/tools/builtin/shell/BackgroundShellManager.js';
+import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
 import { InMemorySessionApprovalStore } from '../../../../src/tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 
@@ -415,6 +416,24 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
 
     expect(chatDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears session-scoped file access records on dispose', async () => {
+    const tracker = FileAccessTracker.getInstance();
+    const clearSession = vi.spyOn(tracker, 'clearSession');
+    const runtime = await SessionRuntime.create({
+      sessionId: 'file-access-cleanup',
+    });
+
+    try {
+      await runtime.dispose();
+      expect(clearSession).toHaveBeenCalledWith(
+        'file-access-cleanup',
+        runtime.workspaceRoot
+      );
+    } finally {
+      clearSession.mockRestore();
+    }
   });
 
   it('clears runtime-owned resources before a disposed instance is refreshed', async () => {

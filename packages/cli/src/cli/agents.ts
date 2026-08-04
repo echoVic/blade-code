@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { SubagentConfig } from '../agent/subagents/types.js';
 import { mapClaudeCodePermissionMode } from '../agent/subagents/types.js';
+import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
 
 const AgentNameSchema = z
   .string()
@@ -30,7 +31,7 @@ const CliAgentDefinitionSchema = z
         'ignore',
       ])
       .optional(),
-    maxTurns: z.number().int().positive().max(100).optional(),
+    maxTurns: z.number().int().positive().max(MAX_AGENT_TURNS).optional(),
     isolation: z.enum(['none', 'worktree']).optional(),
   })
   .strict();

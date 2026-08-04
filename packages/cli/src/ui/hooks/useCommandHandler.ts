@@ -183,7 +183,8 @@ export const useCommandHandler = (
           sessionActions,
           abortController.signal,
           cleanupAgent,
-          sessionId
+          sessionId,
+          buildContextMessagesFromSession(getState().session)
         );
 
         if (slashResult.type === 'handled') {
