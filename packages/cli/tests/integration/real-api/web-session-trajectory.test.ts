@@ -1,8 +1,10 @@
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
 import {
   BusEventSchema,
@@ -12,6 +14,7 @@ import {
   SessionSchema,
 } from '../../../src/api/schemas.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
+import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import { HookManager } from '../../../src/hooks/HookManager.js';
 import { BladeServer } from '../../../src/server/server.js';
@@ -34,6 +37,7 @@ import {
 } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
+  getEnabledModelConfigs,
   isRealApiTestEnabled,
   resolveForkQualificationModels,
   type TestModelConfig,
@@ -48,12 +52,17 @@ if (enabled && !process.env.DEEPSEEK_API_KEY?.trim()) {
 const modelConfigs = enabled
   ? resolveForkQualificationModels(process.env, { requiredDeepSeek: true })
   : [];
+const regressionModelConfigs = enabled ? getEnabledModelConfigs() : [];
 
 const SessionListSchema = z.array(SessionSchema);
 const AcceptedMessageSchema = z.object({
   runId: z.string(),
   messageId: z.string(),
-  status: z.literal('running'),
+  status: z.enum(['running', 'steering_queued', 'follow_up_queued']),
+  queued: z.number().optional(),
+});
+const DurableInboxSchema = z.object({
+  messages: z.array(z.object({ id: z.string() })),
 });
 const SessionStatusSchema = z.object({
   sessionId: z.string(),
@@ -425,15 +434,16 @@ async function waitForRunCompletion(
   ref: SessionRef,
   collector: EventCollector,
   runId: string,
-  afterIndex: number
+  afterIndex: number,
+  timeoutMs = 180_000
 ): Promise<void> {
   await collector.waitFor(
     (event) => event.type === 'session.completed' && event.properties.runId === runId,
-    { afterIndex, label: 'session.completed' }
+    { afterIndex, label: 'session.completed', timeoutMs }
   );
   await collector.waitFor(
     (event) => event.type === 'session.status' && event.properties.status === 'idle',
-    { afterIndex, label: 'session.status:idle' }
+    { afterIndex, label: 'session.status:idle', timeoutMs }
   );
   expect(await getStatus(server, ref)).toEqual({
     sessionId: ref.sessionId,
@@ -549,6 +559,156 @@ function childPrompt(): string {
   ].join(' ');
 }
 
+function runGit(cwd: string, args: string[]): void {
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'Blade Web Test',
+      GIT_AUTHOR_EMAIL: 'blade-web-test@example.invalid',
+      GIT_COMMITTER_NAME: 'Blade Web Test',
+      GIT_COMMITTER_EMAIL: 'blade-web-test@example.invalid',
+    },
+  });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(' ')} failed`);
+  }
+}
+
+function initializeCodingWorkspace(fixture: ForkFixture): void {
+  mkdirSync(path.join(fixture.workspace, 'src'), { recursive: true });
+  mkdirSync(path.join(fixture.workspace, 'test'), { recursive: true });
+  writeFileSync(
+    path.join(fixture.workspace, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'blade-web-real-api',
+        private: true,
+        type: 'module',
+        scripts: { test: 'node --test' },
+      },
+      null,
+      2
+    )
+  );
+  writeFileSync(
+    path.join(fixture.workspace, 'src', 'math.js'),
+    'export function add(left, right) {\n  return left - right;\n}\n'
+  );
+  writeFileSync(
+    path.join(fixture.workspace, 'test', 'math.test.js'),
+    [
+      "import test from 'node:test';",
+      "import assert from 'node:assert/strict';",
+      "import { add } from '../src/math.js';",
+      '',
+      "test('add returns the sum', () => {",
+      '  assert.equal(add(2, 3), 5);',
+      '});',
+      '',
+    ].join('\n')
+  );
+  runGit(fixture.workspace, ['init', '-q']);
+  runGit(fixture.workspace, ['add', '.']);
+  runGit(fixture.workspace, ['commit', '-qm', 'fixture']);
+}
+
+function codingPrompt(): string {
+  return [
+    'Work on this repository as a coding agent.',
+    'Read src/math.js and the existing test before editing.',
+    'Fix add(left, right) so it returns the mathematical sum.',
+    'Modify only src/math.js, run npm test, and finish only when it passes.',
+  ].join('\n');
+}
+
+function compactionPrompt(): string {
+  const archivedContext = Array.from(
+    { length: 1_000 },
+    (_, index) =>
+      `Archived diagnostic record ${index}: historical-only context; preserve the active file task.`
+  ).join('\n');
+  return [
+    'Perform a context-compaction continuation audit in this repository.',
+    'First call Read for package.json and wait for its result.',
+    'Then use Write to create compacted.txt containing exactly the single line compacted.',
+    'Do not read or modify any other file. Finish immediately after Write succeeds.',
+    '<archived-context>',
+    archivedContext,
+    '</archived-context>',
+  ].join('\n');
+}
+
+interface RegressionCaseContext {
+  fixture: ForkFixture;
+  server: TestServer;
+  trackRef(ref: SessionRef): void;
+  trackCollector(collector: EventCollector): void;
+  setRuntimeConfig(maxContextTokens?: number): RuntimeConfig;
+}
+
+async function withRegressionCase(
+  modelConfig: TestModelConfig,
+  modelLabel: string,
+  caseLabel: string,
+  run: (context: RegressionCaseContext) => Promise<void>
+): Promise<void> {
+  const fixture = createForkFixture(`web-${caseLabel}`, modelLabel);
+  const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
+  const originalAutoMemory = process.env.BLADE_AUTO_MEMORY;
+  const hookManager = HookManager.getInstance();
+  const hooksWereEnabled = hookManager.isEnabled();
+  const refs: SessionRef[] = [];
+  const collectors: EventCollector[] = [];
+  let originalConfig: RuntimeConfig | null = null;
+  let server: TestServer | undefined;
+  try {
+    process.env.BLADE_STORAGE_ROOT = fixture.storageRoot;
+    process.env.BLADE_AUTO_MEMORY = '0';
+    hookManager.disable();
+    initializeIsolatedExtensions(fixture);
+    await ensureStoreInitialized();
+    originalConfig = getState().config.config;
+    server = await BladeServer.listenAsync({ port: 0, hostname: '127.0.0.1' });
+    const activeServer = server;
+    await run({
+      fixture,
+      server: activeServer,
+      trackRef: (ref) => refs.push(ref),
+      trackCollector: (collector) => collectors.push(collector),
+      setRuntimeConfig: (maxContextTokens = 64_000) => {
+        const config = createResolvedConfig(modelConfig, []);
+        const selected = config.models[0];
+        if (!selected) throw new Error('Regression model config is empty');
+        selected.maxContextTokens = maxContextTokens;
+        getState().config.actions.setConfig(config);
+        return config;
+      },
+    });
+  } finally {
+    for (const collector of collectors.reverse()) {
+      await collector.close().catch(() => undefined);
+    }
+    if (server) {
+      for (const ref of refs.reverse()) {
+        await deleteSession(server, ref).catch(() => undefined);
+      }
+      await server.stop().catch(() => undefined);
+    }
+    if (originalConfig) getState().config.actions.setConfig(originalConfig);
+    SkillRegistry.resetInstance();
+    subagentRegistry.clear();
+    subagentRegistry.loadBuiltinAgents();
+    if (hooksWereEnabled) hookManager.enable();
+    if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+    else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
+    if (originalAutoMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
+    else process.env.BLADE_AUTO_MEMORY = originalAutoMemory;
+    cleanupForkFixture(fixture);
+  }
+}
+
 async function runChildTurn(
   server: TestServer,
   child: SessionRef,
@@ -592,6 +752,287 @@ async function runChildTurn(
     throw error;
   }
 }
+
+const describeWebRegression = enabled ? describe.sequential : describe.skip;
+
+describeWebRegression('Web session trajectory regressions (real API)', () => {
+  for (const [modelIndex, modelConfig] of regressionModelConfigs.entries()) {
+    const modelLabel = safeModelLabel(modelConfig, modelIndex);
+
+    it(`${modelLabel} fixes and verifies code through HTTP and SSE`, async () => {
+      await withRegressionCase(
+        modelConfig,
+        modelLabel,
+        'coding',
+        async ({ fixture, server, trackCollector, trackRef, setRuntimeConfig }) => {
+          initializeCodingWorkspace(fixture);
+          setRuntimeConfig();
+          const ref = await createSession(server, fixture.workspace);
+          trackRef(ref);
+          const collector = await collectEvents(server, ref);
+          trackCollector(collector);
+          const eventBoundary = collector.events.length;
+          const accepted = await sendMessage(server, ref, codingPrompt());
+          expect(accepted).toMatchObject({
+            status: 'running',
+            messageId: expect.any(String),
+          });
+          const durableInbox = DurableInboxSchema.parse(
+            JSON.parse(
+              readFileSync(
+                getSessionInboxFilePath(fixture.workspace, ref.sessionId),
+                'utf8'
+              )
+            )
+          );
+          expect(durableInbox.messages[0]?.id).toBe(accepted.messageId);
+          await waitForRunCompletion(
+            server,
+            ref,
+            collector,
+            accepted.runId,
+            eventBoundary
+          );
+
+          const types = collector.events
+            .slice(eventBoundary)
+            .map((event) => event.type);
+          expect(types).toContain('turn.started');
+          expect(types).toContain('tool.start');
+          expect(types).toContain('tool.result');
+          expect(types).not.toContain('session.error');
+          expect(
+            collector.events
+              .slice(eventBoundary)
+              .filter((event) => event.type === 'tool.result')
+              .every((event) => typeof event.properties.success === 'boolean')
+          ).toBe(true);
+          expect(
+            readFileSync(path.join(fixture.workspace, 'src', 'math.js'), 'utf8')
+          ).toContain('return left + right;');
+          expect(
+            execFileSync('git', ['diff', '--name-only'], {
+              cwd: fixture.workspace,
+              encoding: 'utf8',
+            }).trim()
+          ).toBe('src/math.js');
+          const test = spawnSync('npm', ['test', '--', '--test-reporter=dot'], {
+            cwd: fixture.workspace,
+            encoding: 'utf8',
+          });
+          expect(test.status, test.stderr || test.stdout).toBe(0);
+          expect(
+            existsSync(getSessionInboxFilePath(fixture.workspace, ref.sessionId))
+          ).toBe(false);
+          assertNoSecrets(collector.events, [modelConfig.apiKey]);
+          assertCollectorIdentity(collector, ref);
+        }
+      );
+    }, 300_000);
+
+    it(`${modelLabel} exposes paired compaction events before resumed write`, async () => {
+      await withRegressionCase(
+        modelConfig,
+        modelLabel,
+        'compaction',
+        async ({ fixture, server, trackCollector, trackRef, setRuntimeConfig }) => {
+          initializeCodingWorkspace(fixture);
+          setRuntimeConfig(28_000);
+          const ref = await createSession(server, fixture.workspace);
+          trackRef(ref);
+          const collector = await collectEvents(server, ref);
+          trackCollector(collector);
+          const eventBoundary = collector.events.length;
+          const accepted = await sendMessage(server, ref, compactionPrompt());
+          await waitForRunCompletion(
+            server,
+            ref,
+            collector,
+            accepted.runId,
+            eventBoundary,
+            300_000
+          );
+
+          const scopedEvents = collector.events.slice(eventBoundary);
+          const compactStart = scopedEvents.findIndex(
+            (event) => event.type === 'compaction.started'
+          );
+          const compactEnd = scopedEvents.findIndex(
+            (event) => event.type === 'compaction.completed'
+          );
+          const writeStart = scopedEvents.findIndex(
+            (event) =>
+              event.type === 'tool.start' &&
+              ['Write', 'Edit'].includes(String(event.properties.toolName))
+          );
+          expect(compactStart).toBeGreaterThanOrEqual(0);
+          expect(compactEnd).toBeGreaterThan(compactStart);
+          expect(writeStart).toBeGreaterThan(compactEnd);
+          expect(
+            readFileSync(path.join(fixture.workspace, 'compacted.txt'), 'utf8')
+          ).toMatch(/^compacted\r?\n?$/);
+          assertNoSecrets(collector.events, [modelConfig.apiKey]);
+          assertCollectorIdentity(collector, ref);
+        }
+      );
+    }, 360_000);
+
+    it(`${modelLabel} steers an active Web turn without starting a concurrent run`, async () => {
+      await withRegressionCase(
+        modelConfig,
+        modelLabel,
+        'steering',
+        async ({ fixture, server, trackCollector, trackRef, setRuntimeConfig }) => {
+          setRuntimeConfig();
+          const ref = await createSession(server, fixture.workspace);
+          trackRef(ref);
+          const collector = await collectEvents(server, ref);
+          trackCollector(collector);
+          const eventBoundary = collector.events.length;
+          const initial = await sendMessage(
+            server,
+            ref,
+            'We are choosing a TypeScript identifier before editing code. The current ' +
+              'requested identifier is ALPHA_CANDIDATE_IDENTIFIER. Reply with that ' +
+              'identifier only. Do not call tools.'
+          );
+          await collector.waitFor((event) => event.type === 'turn.started', {
+            afterIndex: eventBoundary,
+            label: 'initial turn.started',
+          });
+          const steered = await sendMessage(
+            server,
+            ref,
+            'Requirement update: use BETA_CANDIDATE_IDENTIFIER instead. Reply with ' +
+              'the newest requested identifier only.'
+          );
+
+          expect(steered).toMatchObject({
+            runId: initial.runId,
+            status: 'steering_queued',
+          });
+          await collector.waitFor((event) => event.type === 'steering.queued', {
+            afterIndex: eventBoundary,
+            label: 'steering.queued',
+          });
+          await collector.waitFor((event) => event.type === 'steering.applied', {
+            afterIndex: eventBoundary,
+            label: 'steering.applied',
+          });
+          await waitForRunCompletion(
+            server,
+            ref,
+            collector,
+            initial.runId,
+            eventBoundary
+          );
+
+          const scopedEvents = collector.events.slice(eventBoundary);
+          const appliedIndex = scopedEvents.findIndex(
+            (event) => event.type === 'steering.applied'
+          );
+          const responseAfterSteering = scopedEvents
+            .slice(appliedIndex + 1)
+            .filter((event) => event.type === 'message.delta')
+            .map((event) => String(event.properties.delta ?? ''))
+            .join('');
+          expect(responseAfterSteering).toContain('BETA_CANDIDATE_IDENTIFIER');
+          expect(
+            scopedEvents.filter((event) => event.type === 'turn.started').length
+          ).toBeGreaterThanOrEqual(2);
+          expect(scopedEvents.map((event) => event.type)).not.toContain(
+            'session.error'
+          );
+          assertNoSecrets(collector.events, [modelConfig.apiKey]);
+          assertCollectorIdentity(collector, ref);
+        }
+      );
+    }, 300_000);
+
+    it(`${modelLabel} auto-resumes durable input when Web SSE reconnects`, async () => {
+      await withRegressionCase(
+        modelConfig,
+        modelLabel,
+        'reconnect',
+        async ({ fixture, server, trackCollector, trackRef, setRuntimeConfig }) => {
+          const runtimeConfig = setRuntimeConfig();
+          const ref = SessionRefSchema.parse({
+            sessionId: `web-recovery-${Date.now()}`,
+            projectPath: fixture.workspace,
+          });
+          trackRef(ref);
+          let runtime: SessionRuntime | undefined;
+          try {
+            runtime = await SessionRuntime.create({
+              sessionId: ref.sessionId,
+              workspaceRoot: ref.projectPath,
+              modelId: runtimeConfig.currentModelId,
+              mcpServers: {},
+              agents: [],
+            });
+            const durablePrompt =
+              'The old value was ALPHA_WEB_RECOVERY. The newest value is ' +
+              'BETA_WEB_RECOVERY. Reply with the newest value only.';
+            const prepared = await runtime.prepareInputTurn(durablePrompt);
+            expect(prepared).toMatchObject({
+              accepted: true,
+              mode: 'direct',
+              queued: 1,
+            });
+            if (!prepared.accepted) {
+              throw new Error('Expected durable input preparation to succeed');
+            }
+            const inboxMessageId = prepared.messageId;
+            await runtime.dispose();
+            runtime = undefined;
+
+            const collector = await collectEvents(server, ref);
+            trackCollector(collector);
+            const eventBoundary = 0;
+            await collector.waitFor((event) => event.type === 'follow_up.started', {
+              afterIndex: eventBoundary,
+              label: 'follow_up.started',
+            });
+            const completion = await collector.waitFor(
+              (event) => event.type === 'session.completed',
+              { afterIndex: eventBoundary, label: 'session.completed' }
+            );
+            const runId = z.string().parse(completion.properties.runId);
+            await waitForRunCompletion(server, ref, collector, runId, eventBoundary);
+
+            const recoveredUser = collector.events.find(
+              (event) =>
+                event.type === 'message.created' &&
+                event.properties.role === 'user' &&
+                event.properties.recovered === true
+            );
+            expect(recoveredUser).toMatchObject({
+              properties: expect.objectContaining({
+                messageId: inboxMessageId,
+                content: durablePrompt,
+              }),
+            });
+            const output = collector.events
+              .filter((event) => event.type === 'message.delta')
+              .map((event) => String(event.properties.delta ?? ''))
+              .join('');
+            expect(output).toContain('BETA_WEB_RECOVERY');
+            expect(collector.events.map((event) => event.type)).not.toContain(
+              'session.error'
+            );
+            expect(
+              existsSync(getSessionInboxFilePath(fixture.workspace, ref.sessionId))
+            ).toBe(false);
+            assertNoSecrets(collector.events, [modelConfig.apiKey]);
+            assertCollectorIdentity(collector, ref);
+          } finally {
+            await runtime?.dispose().catch(() => undefined);
+          }
+        }
+      );
+    }, 300_000);
+  }
+});
 
 const describeWebTrajectory = enabled ? describe.sequential : describe.skip;
 
