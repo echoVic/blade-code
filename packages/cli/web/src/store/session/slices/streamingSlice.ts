@@ -69,10 +69,13 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
 
   unsubscribeFromEvents: () => {
     const { eventUnsubscribe } = get();
-    if (eventUnsubscribe) {
-      globalStreamingBuffer.drainAll();
-      eventUnsubscribe();
-      set({ eventUnsubscribe: null });
+    set({ eventUnsubscribe: null });
+    try {
+      eventUnsubscribe?.();
+    } catch (error) {
+      console.warn('Failed to clean up event subscription', error);
+    } finally {
+      globalStreamingBuffer.reset();
     }
   },
 

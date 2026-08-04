@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session, SessionRef } from '@api/schemas';
-import type { SendMessagePayload } from '../../../src/store/session/types';
+import type { AgentPhase, SendMessagePayload } from '../../../src/store/session/types';
 
 vi.mock('../../../src/services', () => ({
   sessionService: {
@@ -25,7 +25,11 @@ import { useConfigStore } from '../../../src/store/ConfigStore';
 import { TEMP_SESSION_ID, useSessionStore } from '../../../src/store/session';
 import type { Message } from '../../../src/store/session/types';
 import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer';
-import { createStreamingSlice } from '../../../src/store/session/slices/streamingSlice';
+
+const actualReplaceEventSubscription =
+  useSessionStore.getState().replaceEventSubscription;
+const actualSubscribeToEvents = useSessionStore.getState().subscribeToEvents;
+const actualUnsubscribeFromEvents = useSessionStore.getState().unsubscribeFromEvents;
 
 function createSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -48,6 +52,54 @@ function createRef(sessionId: string, projectPath: string): SessionRef {
   return { sessionId, projectPath };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function activeStreamingState(
+  ref: SessionRef,
+  eventUnsubscribe: () => void,
+  agentPhase: AgentPhase = 'running'
+) {
+  return {
+    currentSessionId: ref.sessionId,
+    currentSessionRef: ref,
+    isTemporarySession: false,
+    isStreaming: true,
+    agentPhase,
+    currentRunId: 'run-active',
+    pendingSteeringCount: 2,
+    recoveredSteeringCount: 1,
+    currentAssistantMessageId: 'assistant-active',
+    hasToolCalls: true,
+    eventUnsubscribe,
+  };
+}
+
+function expectStreamingStateReset(): void {
+  expect(useSessionStore.getState()).toMatchObject({
+    isStreaming: false,
+    agentPhase: 'idle',
+    currentRunId: null,
+    pendingSteeringCount: 0,
+    recoveredSteeringCount: 0,
+    currentAssistantMessageId: null,
+    hasToolCalls: false,
+    eventUnsubscribe: null,
+  });
+}
+
 function createMessage(
   overrides: Partial<Message> & Pick<Message, 'role' | 'content'>
 ): Message {
@@ -63,25 +115,6 @@ function createMessage(
     thinkingContent: overrides.thinkingContent,
     agentContent: overrides.agentContent,
   };
-}
-
-function createActualReplaceEventSubscription() {
-  const set = (
-    partial:
-      | Parameters<typeof useSessionStore.setState>[0]
-      | ((
-          state: ReturnType<typeof useSessionStore.getState>
-        ) => Partial<ReturnType<typeof useSessionStore.getState>>)
-  ) => {
-    if (typeof partial === 'function') {
-      useSessionStore.setState(partial(useSessionStore.getState()));
-      return;
-    }
-    useSessionStore.setState(partial);
-  };
-  const get = () => useSessionStore.getState();
-  return createStreamingSlice(set as never, get as never, {} as never)
-    .replaceEventSubscription;
 }
 
 describe('sessionSlice multimodal sendMessage', () => {
@@ -125,7 +158,7 @@ describe('sessionSlice multimodal sendMessage', () => {
         isDefaultMaxTokens: true,
       },
       eventUnsubscribe: null,
-      prepareEventSubscription: vi.fn(),
+      prepareEventSubscription: vi.fn().mockResolvedValue(() => undefined),
       replaceEventSubscription: vi.fn(),
       subscribeToEvents: vi.fn(),
       unsubscribeFromEvents: vi.fn(),
@@ -287,7 +320,10 @@ describe('sessionSlice multimodal sendMessage', () => {
         content: 'persisted assistant',
       }),
     ];
-    const subscribeToEvents = vi.fn().mockRejectedValue(new Error('sse unavailable'));
+    const prepareEventSubscription = vi
+      .fn()
+      .mockRejectedValue(new Error('sse unavailable'));
+    const replaceEventSubscription = vi.fn();
 
     useSessionStore.setState({
       currentSessionId: currentRef.sessionId,
@@ -295,18 +331,142 @@ describe('sessionSlice multimodal sendMessage', () => {
       isTemporarySession: false,
       isStreaming: false,
       messages: existingMessages,
-      subscribeToEvents,
+      prepareEventSubscription,
+      replaceEventSubscription,
     });
 
     await useSessionStore.getState().sendMessage({ content: 'hello' });
 
-    expect(subscribeToEvents).toHaveBeenCalledWith(currentRef);
+    expect(prepareEventSubscription).toHaveBeenCalledWith(currentRef);
+    expect(replaceEventSubscription).not.toHaveBeenCalled();
     expect(sessionService.sendMessage).not.toHaveBeenCalled();
     expect(useSessionStore.getState().messages).toEqual(existingMessages);
     expect(useSessionStore.getState().isStreaming).toBe(false);
     expect(useSessionStore.getState().error).toBe('sse unavailable');
     expect(useSessionStore.getState().currentSessionRef).toEqual(currentRef);
     expect(useSessionStore.getState().currentSessionId).toBe(currentRef.sessionId);
+  });
+
+  it('keeps a created temporary session durable without activating or sending after navigation changes', async () => {
+    const created = createSession({
+      sessionId: 'created-stale',
+      projectPath: '/tmp/created-stale',
+    });
+    const createGate = deferred<Session>();
+    const prepareEventSubscription = vi.fn();
+    const replaceEventSubscription = vi.fn();
+
+    vi.mocked(sessionService.createSession).mockReturnValue(createGate.promise);
+    useSessionStore.setState({
+      prepareEventSubscription,
+      replaceEventSubscription,
+    });
+
+    const send = useSessionStore.getState().sendMessage({ content: 'stale send' });
+    useSessionStore.getState().startTemporarySession();
+    createGate.resolve(created);
+    await send;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [created],
+      currentSessionId: TEMP_SESSION_ID,
+      currentSessionRef: null,
+      isTemporarySession: true,
+      messages: [],
+      isStreaming: false,
+      currentRunId: null,
+      error: null,
+    });
+    expect(prepareEventSubscription).not.toHaveBeenCalled();
+    expect(replaceEventSubscription).not.toHaveBeenCalled();
+    expect(sessionService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('closes a stale prepared send subscription without replacing or posting after selecting another session', async () => {
+    const refA = createRef('session-a', '/tmp/a');
+    const refB = createRef('session-b', '/tmp/b');
+    const preparedA = deferred<() => void>();
+    const unsubscribeA = vi.fn();
+    const unsubscribeB = vi.fn();
+    const replaceEventSubscription = vi.fn();
+    const prepareEventSubscription = vi.fn((ref: SessionRef) =>
+      ref.sessionId === refA.sessionId
+        ? preparedA.promise
+        : Promise.resolve(unsubscribeB)
+    );
+
+    vi.mocked(sessionService.getMessages).mockResolvedValue([
+      createMessage({ id: 'message-b', role: 'user', content: 'B' }),
+    ]);
+    useSessionStore.setState({
+      currentSessionId: refA.sessionId,
+      currentSessionRef: refA,
+      isTemporarySession: false,
+      isStreaming: false,
+      messages: [],
+      prepareEventSubscription,
+      replaceEventSubscription,
+      subscribeToEvents: actualSubscribeToEvents,
+    });
+
+    const send = useSessionStore.getState().sendMessage({ content: 'send A' });
+    await flushMicrotasks();
+    expect(prepareEventSubscription).toHaveBeenCalledWith(refA);
+
+    await useSessionStore.getState().selectSession(refB);
+    preparedA.resolve(unsubscribeA);
+    await send;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: refB,
+      messages: [expect.objectContaining({ id: 'message-b' })],
+      error: null,
+    });
+    expect(replaceEventSubscription).toHaveBeenCalledTimes(1);
+    expect(replaceEventSubscription).toHaveBeenCalledWith(unsubscribeB);
+    expect(unsubscribeA).toHaveBeenCalledTimes(1);
+    expect(sessionService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not apply a stale send response to the newly selected session', async () => {
+    const refA = createRef('session-a', '/tmp/a');
+    const refB = createRef('session-b', '/tmp/b');
+    const response = deferred<{ runId: string; status: string; queued?: number }>();
+    const unsubscribeB = vi.fn();
+
+    vi.mocked(sessionService.sendMessage).mockReturnValue(response.promise);
+    vi.mocked(sessionService.getMessages).mockResolvedValue([
+      createMessage({ id: 'message-b', role: 'user', content: 'B' }),
+    ]);
+    useSessionStore.setState({
+      currentSessionId: refA.sessionId,
+      currentSessionRef: refA,
+      isTemporarySession: false,
+      isStreaming: true,
+      currentRunId: 'run-a',
+      pendingSteeringCount: 0,
+      messages: [],
+      prepareEventSubscription: vi.fn().mockResolvedValue(unsubscribeB),
+      replaceEventSubscription: vi.fn(),
+    });
+
+    const send = useSessionStore.getState().sendMessage({ content: 'send A' });
+    await flushMicrotasks();
+    expect(sessionService.sendMessage).toHaveBeenCalled();
+
+    await useSessionStore.getState().selectSession(refB);
+    const stateAfterSelection = useSessionStore.getState();
+    response.resolve({ runId: 'stale-run-a', status: 'steering_queued', queued: 4 });
+    await send;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: refB,
+      messages: [expect.objectContaining({ id: 'message-b' })],
+      currentRunId: stateAfterSelection.currentRunId,
+      pendingSteeringCount: stateAfterSelection.pendingSteeringCount,
+      isStreaming: stateAfterSelection.isStreaming,
+      error: stateAfterSelection.error,
+    });
   });
 
   it('keeps same-id sessions from different workspaces distinct for selection and deletion', async () => {
@@ -375,6 +535,390 @@ describe('sessionSlice multimodal sendMessage', () => {
       createRef('created-1', '/tmp/project-created')
     );
     expect(useSessionStore.getState().currentSessionId).toBe('created-1');
+  });
+
+  it('closes the active subscription and resets streaming state when starting a temporary session', () => {
+    const unsubscribeFromEvents = vi.fn();
+    useSessionStore.setState({
+      ...activeStreamingState(
+        createRef('active', '/tmp/project-active'),
+        vi.fn(),
+        'waiting_permission'
+      ),
+      unsubscribeFromEvents,
+    });
+
+    useSessionStore.getState().startTemporarySession();
+
+    expect(unsubscribeFromEvents).toHaveBeenCalledTimes(1);
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionId: TEMP_SESSION_ID,
+      currentSessionRef: null,
+      isTemporarySession: true,
+    });
+    expectStreamingStateReset();
+  });
+
+  it('closes the active subscription and resets streaming state when deleting the current session', async () => {
+    const current = createSession({
+      sessionId: 'current',
+      projectPath: '/tmp/current',
+    });
+    const unsubscribeFromEvents = vi.fn();
+    useSessionStore.setState({
+      sessions: [current],
+      ...activeStreamingState(
+        createRef(current.sessionId, current.projectPath),
+        vi.fn()
+      ),
+      unsubscribeFromEvents,
+    });
+
+    await useSessionStore
+      .getState()
+      .deleteSession(createRef(current.sessionId, current.projectPath));
+
+    expect(unsubscribeFromEvents).toHaveBeenCalledTimes(1);
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [],
+      currentSessionId: null,
+      currentSessionRef: null,
+    });
+    expectStreamingStateReset();
+  });
+
+  it('preserves the active subscription and streaming state when deleting another session', async () => {
+    const current = createSession({
+      sessionId: 'current',
+      projectPath: '/tmp/current',
+    });
+    const other = createSession({ sessionId: 'other', projectPath: '/tmp/other' });
+    const activeUnsubscribe = vi.fn();
+    const unsubscribeFromEvents = vi.fn();
+    useSessionStore.setState({
+      sessions: [current, other],
+      currentSessionId: current.sessionId,
+      currentSessionRef: createRef(current.sessionId, current.projectPath),
+      isStreaming: true,
+      agentPhase: 'running',
+      currentRunId: 'run-current',
+      pendingSteeringCount: 3,
+      recoveredSteeringCount: 2,
+      currentAssistantMessageId: 'assistant-current',
+      hasToolCalls: true,
+      eventUnsubscribe: activeUnsubscribe,
+      unsubscribeFromEvents,
+    });
+
+    await useSessionStore
+      .getState()
+      .deleteSession(createRef(other.sessionId, other.projectPath));
+
+    expect(unsubscribeFromEvents).not.toHaveBeenCalled();
+    expect(activeUnsubscribe).not.toHaveBeenCalled();
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [current],
+      currentSessionId: current.sessionId,
+      currentSessionRef: createRef(current.sessionId, current.projectPath),
+      isStreaming: true,
+      agentPhase: 'running',
+      currentRunId: 'run-current',
+      pendingSteeringCount: 3,
+      recoveredSteeringCount: 2,
+      currentAssistantMessageId: 'assistant-current',
+      hasToolCalls: true,
+      eventUnsubscribe: activeUnsubscribe,
+    });
+  });
+
+  it('removes a deleted session without disrupting a newer pending selection', async () => {
+    const sessionA = createSession({ sessionId: 'session-a', projectPath: '/tmp/a' });
+    const sessionB = createSession({ sessionId: 'session-b', projectPath: '/tmp/b' });
+    const refA = createRef(sessionA.sessionId, sessionA.projectPath);
+    const refB = createRef(sessionB.sessionId, sessionB.projectPath);
+    const deleteGate = deferred<void>();
+    const messagesB = deferred<Message[]>();
+    const unsubscribeFromEvents = vi.fn();
+    const unsubscribeB = vi.fn();
+    const replaceEventSubscription = vi.fn();
+    const originalMessages = [
+      createMessage({ id: 'message-a', role: 'user', content: 'A' }),
+    ];
+
+    vi.mocked(sessionService.deleteSession).mockReturnValue(deleteGate.promise);
+    vi.mocked(sessionService.getMessages).mockReturnValue(messagesB.promise);
+    useSessionStore.setState({
+      sessions: [sessionA, sessionB],
+      currentSessionId: sessionA.sessionId,
+      currentSessionRef: refA,
+      isTemporarySession: false,
+      messages: originalMessages,
+      error: null,
+      eventUnsubscribe: vi.fn(),
+      unsubscribeFromEvents,
+      prepareEventSubscription: vi.fn().mockResolvedValue(unsubscribeB),
+      replaceEventSubscription,
+    });
+
+    const deletion = useSessionStore.getState().deleteSession(refA);
+    const selection = useSessionStore.getState().selectSession(refB);
+    deleteGate.resolve();
+    await deletion;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [sessionB],
+      currentSessionRef: refA,
+      messages: originalMessages,
+      isLoading: true,
+      error: null,
+    });
+    expect(unsubscribeFromEvents).not.toHaveBeenCalled();
+
+    messagesB.resolve([createMessage({ id: 'message-b', role: 'user', content: 'B' })]);
+    await selection;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [sessionB],
+      currentSessionRef: refB,
+      messages: [expect.objectContaining({ id: 'message-b' })],
+      isLoading: false,
+      error: null,
+    });
+    expect(replaceEventSubscription).toHaveBeenCalledWith(unsubscribeB);
+  });
+
+  it('does not report a stale current-session deletion failure in a newer selection', async () => {
+    const sessionA = createSession({ sessionId: 'session-a', projectPath: '/tmp/a' });
+    const sessionB = createSession({ sessionId: 'session-b', projectPath: '/tmp/b' });
+    const refA = createRef(sessionA.sessionId, sessionA.projectPath);
+    const refB = createRef(sessionB.sessionId, sessionB.projectPath);
+    const deleteGate = deferred<void>();
+
+    vi.mocked(sessionService.deleteSession).mockReturnValue(deleteGate.promise);
+    vi.mocked(sessionService.getMessages).mockResolvedValue([
+      createMessage({ id: 'message-b', role: 'user', content: 'B' }),
+    ]);
+    useSessionStore.setState({
+      sessions: [sessionA, sessionB],
+      currentSessionId: sessionA.sessionId,
+      currentSessionRef: refA,
+      isTemporarySession: false,
+      error: null,
+      prepareEventSubscription: vi.fn().mockResolvedValue(vi.fn()),
+      replaceEventSubscription: vi.fn(),
+    });
+
+    const deletion = useSessionStore.getState().deleteSession(refA);
+    await useSessionStore.getState().selectSession(refB);
+    deleteGate.reject(new Error('delete A failed'));
+    await deletion;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [sessionA, sessionB],
+      currentSessionRef: refB,
+      messages: [expect.objectContaining({ id: 'message-b' })],
+      isLoading: false,
+      error: null,
+    });
+  });
+
+  it('clears a session selected while its earlier non-current deletion is pending', async () => {
+    const sessionA = createSession({ sessionId: 'session-a', projectPath: '/tmp/a' });
+    const sessionB = createSession({ sessionId: 'session-b', projectPath: '/tmp/b' });
+    const refA = createRef(sessionA.sessionId, sessionA.projectPath);
+    const refB = createRef(sessionB.sessionId, sessionB.projectPath);
+    const deleteGate = deferred<void>();
+    const unsubscribeFromEvents = vi.fn();
+    const unsubscribeA = vi.fn();
+
+    vi.mocked(sessionService.deleteSession).mockReturnValue(deleteGate.promise);
+    vi.mocked(sessionService.getMessages).mockResolvedValue([
+      createMessage({ id: 'message-a', role: 'user', content: 'A' }),
+    ]);
+    useSessionStore.setState({
+      sessions: [sessionA, sessionB],
+      currentSessionId: sessionB.sessionId,
+      currentSessionRef: refB,
+      isTemporarySession: false,
+      prepareEventSubscription: vi.fn().mockResolvedValue(unsubscribeA),
+      replaceEventSubscription: vi.fn(),
+      unsubscribeFromEvents,
+    });
+
+    const deletion = useSessionStore.getState().deleteSession(refA);
+    await useSessionStore.getState().selectSession(refA);
+    useSessionStore.setState({
+      isStreaming: true,
+      agentPhase: 'running',
+      currentRunId: 'run-a',
+      pendingSteeringCount: 2,
+      recoveredSteeringCount: 1,
+      currentAssistantMessageId: 'assistant-a',
+      hasToolCalls: true,
+      eventUnsubscribe: unsubscribeA,
+    });
+
+    deleteGate.resolve();
+    await deletion;
+
+    expect(unsubscribeFromEvents).toHaveBeenCalledTimes(1);
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [sessionB],
+      currentSessionId: null,
+      currentSessionRef: null,
+      messages: [],
+      isStreaming: false,
+      agentPhase: 'idle',
+      currentRunId: null,
+      pendingSteeringCount: 0,
+      recoveredSteeringCount: 0,
+      currentAssistantMessageId: null,
+      hasToolCalls: false,
+      eventUnsubscribe: null,
+    });
+  });
+
+  it('cancels a pending fork when its non-current source is asynchronously deleted', async () => {
+    const source = createSession({ sessionId: 'source', projectPath: '/tmp/source' });
+    const current = createSession({
+      sessionId: 'current',
+      projectPath: '/tmp/current',
+    });
+    const child = createSession({
+      sessionId: 'child',
+      projectPath: source.projectPath,
+      rootId: source.rootId,
+      parentId: source.sessionId,
+      relationType: 'fork',
+    });
+    const sourceRef = createRef(source.sessionId, source.projectPath);
+    const currentRef = createRef(current.sessionId, current.projectPath);
+    const forkGate = deferred<{ session: Session; messages: Message[] }>();
+    const deleteGate = deferred<void>();
+    const prepareEventSubscription = vi.fn();
+    const replaceEventSubscription = vi.fn();
+
+    vi.mocked(sessionService.forkSession).mockReturnValue(forkGate.promise);
+    vi.mocked(sessionService.deleteSession).mockReturnValue(deleteGate.promise);
+    useSessionStore.setState({
+      sessions: [source, current],
+      currentSessionId: current.sessionId,
+      currentSessionRef: currentRef,
+      isTemporarySession: false,
+      prepareEventSubscription,
+      replaceEventSubscription,
+    });
+
+    const fork = useSessionStore.getState().forkSession(source);
+    expect(useSessionStore.getState().forkingSessionRef).toEqual(sourceRef);
+
+    const deletion = useSessionStore.getState().deleteSession(sourceRef);
+    expect(useSessionStore.getState().forkingSessionRef).toBeNull();
+    deleteGate.resolve();
+    await deletion;
+
+    forkGate.resolve({
+      session: child,
+      messages: [
+        createMessage({ id: 'child-message', role: 'user', content: 'child' }),
+      ],
+    });
+    await fork;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [current, child],
+      currentSessionId: current.sessionId,
+      currentSessionRef: currentRef,
+      forkingSessionRef: null,
+    });
+    expect(prepareEventSubscription).not.toHaveBeenCalled();
+    expect(replaceEventSubscription).not.toHaveBeenCalled();
+  });
+
+  it('cancels a pending fork when its non-current source is synchronously removed', async () => {
+    const source = createSession({ sessionId: 'source', projectPath: '/tmp/source' });
+    const current = createSession({
+      sessionId: 'current',
+      projectPath: '/tmp/current',
+    });
+    const child = createSession({
+      sessionId: 'child',
+      projectPath: source.projectPath,
+      rootId: source.rootId,
+      parentId: source.sessionId,
+      relationType: 'fork',
+    });
+    const sourceRef = createRef(source.sessionId, source.projectPath);
+    const currentRef = createRef(current.sessionId, current.projectPath);
+    const forkGate = deferred<{ session: Session; messages: Message[] }>();
+    const prepareEventSubscription = vi.fn();
+    const replaceEventSubscription = vi.fn();
+
+    vi.mocked(sessionService.forkSession).mockReturnValue(forkGate.promise);
+    useSessionStore.setState({
+      sessions: [source, current],
+      currentSessionId: current.sessionId,
+      currentSessionRef: currentRef,
+      isTemporarySession: false,
+      prepareEventSubscription,
+      replaceEventSubscription,
+    });
+
+    const fork = useSessionStore.getState().forkSession(source);
+    expect(useSessionStore.getState().forkingSessionRef).toEqual(sourceRef);
+
+    useSessionStore.getState().removeSession(sourceRef);
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [current],
+      currentSessionRef: currentRef,
+      forkingSessionRef: null,
+    });
+
+    forkGate.resolve({
+      session: child,
+      messages: [
+        createMessage({ id: 'child-message', role: 'user', content: 'child' }),
+      ],
+    });
+    await fork;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [current, child],
+      currentSessionId: current.sessionId,
+      currentSessionRef: currentRef,
+      forkingSessionRef: null,
+    });
+    expect(prepareEventSubscription).not.toHaveBeenCalled();
+    expect(replaceEventSubscription).not.toHaveBeenCalled();
+  });
+
+  it('resets the active subscription and streaming state when synchronously removing the current session', () => {
+    const current = createSession({
+      sessionId: 'current',
+      projectPath: '/tmp/current',
+    });
+    const unsubscribeFromEvents = vi.fn();
+    useSessionStore.setState({
+      sessions: [current],
+      ...activeStreamingState(
+        createRef(current.sessionId, current.projectPath),
+        vi.fn(),
+        'compacting'
+      ),
+      unsubscribeFromEvents,
+    });
+
+    useSessionStore
+      .getState()
+      .removeSession(createRef(current.sessionId, current.projectPath));
+
+    expect(unsubscribeFromEvents).toHaveBeenCalledTimes(1);
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [],
+      currentSessionId: null,
+      currentSessionRef: null,
+    });
+    expectStreamingStateReset();
   });
 
   it('lists sessions through SessionSchema parsing and rejects missing rootId payloads', async () => {
@@ -517,7 +1061,7 @@ describe('sessionSlice multimodal sendMessage', () => {
     try {
       useSessionStore.setState({
         prepareEventSubscription: vi.fn().mockResolvedValue(replacementUnsubscribe),
-        replaceEventSubscription: createActualReplaceEventSubscription(),
+        replaceEventSubscription: actualReplaceEventSubscription,
       });
 
       await useSessionStore.getState().forkSession(source);
@@ -718,7 +1262,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       ],
       eventUnsubscribe: oldUnsubscribe,
       prepareEventSubscription,
-      replaceEventSubscription: createActualReplaceEventSubscription(),
+      replaceEventSubscription: actualReplaceEventSubscription,
     });
     vi.mocked(sessionService.getMessages).mockResolvedValue([
       createMessage({
@@ -751,6 +1295,160 @@ describe('sessionSlice multimodal sendMessage', () => {
     }
   });
 
+  it('keeps the last selected session when an earlier prepared selection finishes later', async () => {
+    const refA = createRef('session-a', '/tmp/project-a');
+    const refB = createRef('session-b', '/tmp/project-b');
+    const messagesA = deferred<Message[]>();
+    const preparedA = deferred<() => void>();
+    const unsubscribeA = vi.fn();
+    const unsubscribeB = vi.fn();
+    const replaceEventSubscription = vi.fn();
+
+    vi.mocked(sessionService.getMessages).mockImplementation((ref) => {
+      if (ref.sessionId === refA.sessionId) return messagesA.promise;
+      return Promise.resolve([
+        createMessage({ id: 'message-b', role: 'user', content: 'B' }),
+      ]);
+    });
+
+    const prepareEventSubscription = vi.fn((ref: SessionRef) => {
+      if (ref.sessionId === refA.sessionId) return preparedA.promise;
+      return Promise.resolve(unsubscribeB);
+    });
+    useSessionStore.setState({
+      prepareEventSubscription,
+      replaceEventSubscription,
+    });
+
+    const selectA = useSessionStore.getState().selectSession(refA);
+    messagesA.resolve([createMessage({ id: 'message-a', role: 'user', content: 'A' })]);
+    await flushMicrotasks();
+    expect(prepareEventSubscription).toHaveBeenCalledWith(refA);
+
+    const selectB = useSessionStore.getState().selectSession(refB);
+    await selectB;
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: refB,
+      messages: [expect.objectContaining({ id: 'message-b' })],
+      isLoading: false,
+      error: null,
+    });
+
+    preparedA.resolve(unsubscribeA);
+    await selectA;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: refB,
+      messages: [expect.objectContaining({ id: 'message-b' })],
+      isLoading: false,
+      error: null,
+    });
+    expect(replaceEventSubscription).toHaveBeenCalledTimes(1);
+    expect(replaceEventSubscription).toHaveBeenCalledWith(unsubscribeB);
+    expect(unsubscribeA).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a stale selection failure clear the latest loading state or error', async () => {
+    const refA = createRef('session-a', '/tmp/project-a');
+    const refB = createRef('session-b', '/tmp/project-b');
+    const messagesA = deferred<Message[]>();
+    const messagesB = deferred<Message[]>();
+    const unsubscribeB = vi.fn();
+
+    vi.mocked(sessionService.getMessages).mockImplementation((ref) =>
+      ref.sessionId === refA.sessionId ? messagesA.promise : messagesB.promise
+    );
+    useSessionStore.setState({
+      prepareEventSubscription: vi.fn().mockResolvedValue(unsubscribeB),
+      replaceEventSubscription: vi.fn(),
+    });
+
+    const selectA = useSessionStore.getState().selectSession(refA);
+    const selectB = useSessionStore.getState().selectSession(refB);
+    messagesA.reject(new Error('stale A failed'));
+    await selectA;
+
+    expect(useSessionStore.getState().isLoading).toBe(true);
+    expect(useSessionStore.getState().error).toBeNull();
+
+    messagesB.resolve([]);
+    await selectB;
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: refB,
+      isLoading: false,
+      error: null,
+    });
+  });
+
+  it('keeps a durable stale fork child without activating it and closes its prepared subscription', async () => {
+    const source = createSession({
+      sessionId: 'source',
+      projectPath: '/tmp/project-a',
+      rootId: 'source',
+    });
+    const target = createSession({
+      sessionId: 'target',
+      projectPath: '/tmp/project-b',
+      rootId: 'target',
+    });
+    const child = createSession({
+      sessionId: 'child',
+      projectPath: '/tmp/project-a',
+      rootId: 'source',
+      parentId: 'source',
+      relationType: 'fork',
+    });
+    const targetRef = createRef(target.sessionId, target.projectPath);
+    const childRef = createRef(child.sessionId, child.projectPath);
+    const forkResult = deferred<{ session: Session; messages: Message[] }>();
+    const preparedChild = deferred<() => void>();
+    const unsubscribeChild = vi.fn();
+    const unsubscribeTarget = vi.fn();
+    const replaceEventSubscription = vi.fn();
+
+    vi.mocked(sessionService.forkSession).mockReturnValue(forkResult.promise);
+    vi.mocked(sessionService.getMessages).mockResolvedValue([
+      createMessage({ id: 'target-message', role: 'user', content: 'target' }),
+    ]);
+    const prepareEventSubscription = vi.fn((ref: SessionRef) => {
+      if (ref.sessionId === childRef.sessionId) return preparedChild.promise;
+      return Promise.resolve(unsubscribeTarget);
+    });
+    useSessionStore.setState({
+      sessions: [source, target],
+      currentSessionId: source.sessionId,
+      currentSessionRef: createRef(source.sessionId, source.projectPath),
+      prepareEventSubscription,
+      replaceEventSubscription,
+    });
+
+    const fork = useSessionStore.getState().forkSession(source);
+    forkResult.resolve({
+      session: child,
+      messages: [
+        createMessage({ id: 'child-message', role: 'user', content: 'child' }),
+      ],
+    });
+    await flushMicrotasks();
+    expect(prepareEventSubscription).toHaveBeenCalledWith(childRef);
+
+    await useSessionStore.getState().selectSession(targetRef);
+    preparedChild.resolve(unsubscribeChild);
+    await fork;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: targetRef,
+      messages: [expect.objectContaining({ id: 'target-message' })],
+      forkingSessionRef: null,
+      isLoading: false,
+      error: null,
+    });
+    expect(useSessionStore.getState().sessions).toEqual([source, target, child]);
+    expect(replaceEventSubscription).toHaveBeenCalledTimes(1);
+    expect(replaceEventSubscription).toHaveBeenCalledWith(unsubscribeTarget);
+    expect(unsubscribeChild).toHaveBeenCalledTimes(1);
+  });
+
   it('replaces subscriptions fail-safely after setting next and resetting the global buffer', () => {
     const next = vi.fn();
     const previous = vi.fn(() => {
@@ -764,7 +1462,7 @@ describe('sessionSlice multimodal sendMessage', () => {
     try {
       useSessionStore.setState({
         eventUnsubscribe: previous,
-        replaceEventSubscription: createActualReplaceEventSubscription(),
+        replaceEventSubscription: actualReplaceEventSubscription,
       });
 
       expect(() =>
@@ -776,6 +1474,37 @@ describe('sessionSlice multimodal sendMessage', () => {
       expect(next).not.toHaveBeenCalled();
       expect(warnSpy).toHaveBeenCalledWith(
         'Failed to clean up previous event subscription',
+        expect.any(Error)
+      );
+    } finally {
+      resetSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('clears a throwing event subscription exactly once and resets buffered streaming data', () => {
+    const close = vi.fn(() => {
+      throw new Error('close failed');
+    });
+    const resetSpy = vi.spyOn(globalStreamingBuffer, 'reset');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {
+      // Suppress expected cleanup warning in this test.
+    });
+
+    try {
+      useSessionStore.setState({
+        eventUnsubscribe: close,
+        unsubscribeFromEvents: actualUnsubscribeFromEvents,
+      });
+
+      expect(() => useSessionStore.getState().unsubscribeFromEvents()).not.toThrow();
+      expect(() => useSessionStore.getState().unsubscribeFromEvents()).not.toThrow();
+
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(useSessionStore.getState().eventUnsubscribe).toBeNull();
+      expect(resetSpy).toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Failed to clean up event subscription',
         expect.any(Error)
       );
     } finally {
@@ -843,7 +1572,7 @@ describe('sessionSlice multimodal sendMessage', () => {
     }
   });
 
-  it('opens event subscriptions only after onopen or connected and rejects pre-ready errors/timeouts', async () => {
+  it('waits for a matching connected event and rejects pre-ready errors/timeouts', async () => {
     class FakeEventSource {
       static instances: FakeEventSource[] = [];
 
@@ -883,49 +1612,69 @@ describe('sessionSlice multimodal sendMessage', () => {
         createRef('shared-id', '/tmp/project-a'),
         onEvent
       );
+      let readiness: 'pending' | 'resolved' = 'pending';
+      void readyPromise.then(() => {
+        readiness = 'resolved';
+      });
       const first = FakeEventSource.instances[0];
       expect(first).toBeDefined();
       expect(first?.url).toContain('projectPath=%2Ftmp%2Fproject-a');
 
       first?.onopen?.();
-      const unsubscribe = await readyPromise;
-      expect(typeof unsubscribe).toBe('function');
+      await Promise.resolve();
+      expect(readiness).toBe('pending');
 
-      const connectedPromise = actualService.openEventSubscription(
-        createRef('shared-id', '/tmp/project-b'),
-        onEvent
-      );
-      const second = FakeEventSource.instances[1];
-      expect(second).toBeDefined();
-      second?.onmessage?.({
+      first?.onmessage?.({
+        data: JSON.stringify({
+          type: 'connected',
+          properties: {
+            sessionId: 'foreign-id',
+            projectPath: '/tmp/project-a',
+          },
+        }),
+      });
+      await Promise.resolve();
+      expect(readiness).toBe('pending');
+
+      first?.onmessage?.({
+        data: JSON.stringify({
+          type: 'connected',
+          properties: { sessionId: 'shared-id' },
+        }),
+      });
+      await Promise.resolve();
+      expect(readiness).toBe('pending');
+
+      first?.onmessage?.({
         data: JSON.stringify({
           type: 'connected',
           properties: {
             sessionId: 'shared-id',
-            projectPath: '/tmp/project-b',
+            projectPath: '/tmp/project-a',
           },
         }),
       });
-      await expect(connectedPromise).resolves.toEqual(expect.any(Function));
+      const unsubscribe = await readyPromise;
+      expect(typeof unsubscribe).toBe('function');
 
       const preReadyError = actualService.openEventSubscription(
         createRef('shared-id', '/tmp/project-c'),
         onEvent
       );
-      const third = FakeEventSource.instances[2];
-      expect(third).toBeDefined();
-      third?.onerror?.();
+      const second = FakeEventSource.instances[1];
+      expect(second).toBeDefined();
+      second?.onerror?.();
       await expect(preReadyError).rejects.toThrow();
-      expect(third?.closed).toBe(true);
+      expect(second?.closed).toBe(true);
 
       const timeoutPromise = actualService.openEventSubscription(
         createRef('shared-id', '/tmp/project-d'),
         onEvent
       );
-      expect(FakeEventSource.instances[3]).toBeDefined();
+      expect(FakeEventSource.instances[2]).toBeDefined();
       vi.advanceTimersByTime(10001);
       await expect(timeoutPromise).rejects.toThrow();
-      expect(FakeEventSource.instances[3]?.closed).toBe(true);
+      expect(FakeEventSource.instances[2]?.closed).toBe(true);
     } finally {
       vi.useRealTimers();
       if (previousDescriptor) {

@@ -321,16 +321,17 @@ export const sessionService = {
         }, SESSION_EVENT_READY_TIMEOUT_MS);
       }
 
-      eventSource.onopen = () => {
-        markReady();
-      };
-
       eventSource.onmessage = (e) => {
         try {
           const event = BusEventSchema.parse(JSON.parse(e.data)) as StreamEvent;
           lastHeartbeat = Date.now();
           if (event.type === 'connected') {
-            markReady();
+            if (
+              event.properties.sessionId === ref.sessionId &&
+              event.properties.projectPath === ref.projectPath
+            ) {
+              markReady();
+            }
             return;
           }
           if (event.type === 'heartbeat') return;
