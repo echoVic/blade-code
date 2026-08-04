@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../../src/agent/Agent.js';
 import { drainLoop } from '../../../src/agent/loop/index.js';
 import type { LoopEvent } from '../../../src/agent/loop/types.js';
@@ -15,8 +15,8 @@ import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
 import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
-  assertForkLineage,
   assertForkChildToolTrace,
+  assertForkLineage,
   assertForkParentToolTrace,
   assertNoSecrets,
   assertParentUnchanged,
@@ -261,6 +261,7 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
       const resultPath = path.join(fixture.workspace, 'result.txt');
       const parentId = `runtime-parent-${Date.now()}-${fixture.nonce.slice(-8)}`;
       const childId = `runtime-child-${Date.now()}-${fixture.nonce.slice(-8)}`;
+      const parentSuffix = `PARENT_POST_FORK_APPEND_${modelIndex + 1}`;
       const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
       const originalAutoMemory = process.env.BLADE_AUTO_MEMORY;
       const hookManager = HookManager.getInstance();
@@ -268,12 +269,29 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
       let originalConfig: RuntimeConfig | null = null;
       const parentOwner: { agent?: Agent; runtime?: SessionRuntime } = {};
       const childOwner: { agent?: Agent; runtime?: SessionRuntime } = {};
-
-      assertNoSecrets({ marker, expectedBytes, parentId, childId }, [
-        modelConfig.apiKey,
-      ]);
+      let trajectoryError: unknown;
+      const cleanupErrors: unknown[] = [];
+      let evidenceError: unknown;
+      const processOutput = { stdout: [] as string[], stderr: [] as string[] };
+      const captureChunk = (chunk: string | Uint8Array): string =>
+        typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk) => {
+          processOutput.stdout.push(captureChunk(chunk));
+          return true;
+        });
+      const stderrSpy = vi
+        .spyOn(process.stderr, 'write')
+        .mockImplementation((chunk) => {
+          processOutput.stderr.push(captureChunk(chunk));
+          return true;
+        });
 
       try {
+        assertNoSecrets({ marker, expectedBytes, parentId, childId }, [
+          modelConfig.apiKey,
+        ]);
         process.env.BLADE_STORAGE_ROOT = fixture.storageRoot;
         process.env.BLADE_AUTO_MEMORY = '0';
         hookManager.disable();
@@ -357,9 +375,58 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
           });
           const childPath = findSessionTranscript(fixture.storageRoot, childId);
           const childSnapshot = readSessionEvents(childPath);
+          const childBeforeParentAppend = readFileSync(childPath, 'utf8');
           assertNoSecrets({ forkMessages: fork.messages, childSnapshot }, [
             modelConfig.apiKey,
           ]);
+          assertParentUnchanged(parentBeforeFork, parentPath);
+
+          parentOwner.runtime = await SessionRuntime.create({
+            sessionId: parentId,
+            workspaceRoot: fixture.workspace,
+            modelId: runtimeConfig.currentModelId,
+            mcpServers: {},
+            agents: [],
+          });
+          parentOwner.agent = await Agent.createWithRuntime(parentOwner.runtime, {
+            sessionId: parentId,
+            modelId: runtimeConfig.currentModelId,
+            permissionMode: PermissionMode.YOLO,
+            toolWhitelist: [],
+            maxTurns: 4,
+            appendSystemPrompt:
+              'This is a deterministic fork qualification. Use no tools and obey the exact response request.',
+          });
+          const parentFollowUpMessages = await SessionService.loadSession(
+            parentId,
+            fixture.workspace
+          );
+          const parentFollowUpResult = await drainLoop(
+            parentOwner.agent.chatStream(
+              `Reply with exactly ${parentSuffix} and no other text.`,
+              {
+                messages: parentFollowUpMessages,
+                userId: 'runtime-fork-qualification',
+                sessionId: parentId,
+                workspaceRoot: fixture.workspace,
+                permissionMode: PermissionMode.YOLO,
+              },
+              { stream: true }
+            )
+          );
+          expect(parentFollowUpResult.success).toBe(true);
+          expect(parentFollowUpResult.finalMessage?.trim()).toBe(parentSuffix);
+          assertFinalContract(parentFollowUpResult.finalMessage, marker, fixture.nonce);
+          const parentAfterIndependentAppend = readFileSync(parentPath, 'utf8');
+          expect(parentAfterIndependentAppend.length).toBeGreaterThan(
+            parentBeforeFork.length
+          );
+          expect(parentAfterIndependentAppend).toContain(parentSuffix);
+          expect(readFileSync(childPath, 'utf8')).toBe(childBeforeParentAppend);
+          expect(childBeforeParentAppend).not.toContain(parentSuffix);
+          expect(JSON.stringify(fork.messages)).not.toContain(parentSuffix);
+          await releaseOwner(parentOwner);
+
           rmSync(memoryPath);
           if (existsSync(memoryPath)) {
             throw new Error('Source memory fixture still exists before child turn');
@@ -433,7 +500,8 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
             resultPath,
             expectedBytes
           );
-          assertParentUnchanged(parentBeforeFork, parentPath);
+          assertParentUnchanged(parentAfterIndependentAppend, parentPath);
+          expect(childRaw).not.toContain(parentSuffix);
           assertForkLineage(childTranscriptEvents, {
             childId,
             parentId,
@@ -456,21 +524,62 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
             runtimeConfig.currentModelId
           );
         });
+      } catch (error) {
+        trajectoryError = error;
       } finally {
-        await runWithCwdOverride(fixture.workspace, async () => {
-          await releaseOwner(childOwner).catch(() => undefined);
-          await releaseOwner(parentOwner).catch(() => undefined);
+        const attemptCleanup = async (cleanup: () => void | Promise<void>) => {
+          try {
+            await cleanup();
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
+        };
+        await attemptCleanup(() =>
+          runWithCwdOverride(fixture.workspace, () => releaseOwner(childOwner))
+        );
+        await attemptCleanup(() =>
+          runWithCwdOverride(fixture.workspace, () => releaseOwner(parentOwner))
+        );
+        await attemptCleanup(() => {
+          if (originalConfig) getState().config.actions.setConfig(originalConfig);
         });
-        if (originalConfig) getState().config.actions.setConfig(originalConfig);
-        SkillRegistry.resetInstance();
-        subagentRegistry.clear();
-        subagentRegistry.loadBuiltinAgents();
-        if (hooksWereEnabled) hookManager.enable();
-        if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
-        else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
-        if (originalAutoMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
-        else process.env.BLADE_AUTO_MEMORY = originalAutoMemory;
-        cleanupForkFixture(fixture);
+        await attemptCleanup(() => {
+          SkillRegistry.resetInstance();
+        });
+        await attemptCleanup(() => {
+          subagentRegistry.clear();
+          subagentRegistry.loadBuiltinAgents();
+        });
+        await attemptCleanup(() => {
+          if (hooksWereEnabled) hookManager.enable();
+        });
+        await attemptCleanup(() => {
+          if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+          else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
+        });
+        await attemptCleanup(() => {
+          if (originalAutoMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
+          else process.env.BLADE_AUTO_MEMORY = originalAutoMemory;
+        });
+        await attemptCleanup(() => {
+          cleanupForkFixture(fixture);
+        });
+        try {
+          assertNoSecrets(processOutput, [modelConfig.apiKey]);
+        } catch (error) {
+          evidenceError = error;
+        } finally {
+          stdoutSpy.mockRestore();
+          stderrSpy.mockRestore();
+        }
+      }
+
+      const failures = [trajectoryError, ...cleanupErrors, evidenceError].filter(
+        (error) => error !== undefined
+      );
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(failures, 'Runtime fork qualification failed');
       }
     }, 360_000);
   }
