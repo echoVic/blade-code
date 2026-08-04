@@ -539,6 +539,8 @@ function parentPrompt(): string {
 
 function childPrompt(): string {
   return [
+    'The immediately preceding pending parent request is superseded by this newer request.',
+    'Do not answer the pending acknowledgment request.',
     'Recover the complete marker only from the inherited Read result.',
     'Use Write to create result.txt with that exact marker and exactly one trailing newline.',
     'Then use Bash with exactly this command: wc -c result.txt',
@@ -809,7 +811,11 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
         const secondAccepted = await sendMessage(
           activeServer,
           parent,
-          'Reply with a short acknowledgment. Do not call tools.'
+          [
+            'If a later user message exists, it supersedes this request completely.',
+            'Otherwise reply with a short acknowledgment.',
+            'Do not call tools.',
+          ].join(' ')
         );
         await parentCollector.waitFor((event) => event.type === 'turn.started', {
           afterIndex: secondSseBoundary,
