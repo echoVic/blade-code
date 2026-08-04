@@ -10,40 +10,56 @@ import { SessionService } from '../../../../src/services/SessionService.js';
 function createEvent(
   id: string,
   type: SessionEvent['type'],
-  data: SessionEvent['data']
+  data: SessionEvent['data'],
+  cwd: string
 ): SessionEvent {
   return {
     id,
     sessionId: 'recoverable-session',
     type,
     timestamp: `2026-08-02T00:00:0${id.slice(-1)}.000Z`,
-    cwd: '/workspace',
+    cwd,
     version: '0.0.0-test',
     data,
   } as SessionEvent;
 }
 
-function createSessionEvents(): SessionEvent[] {
+function createSessionEvents(cwd: string): SessionEvent[] {
   return [
-    createEvent('event-1', 'session_created', {
-      sessionId: 'recoverable-session',
-      rootId: 'recoverable-session',
-      status: 'running',
-      createdAt: '2026-08-02T00:00:01.000Z',
-      updatedAt: '2026-08-02T00:00:01.000Z',
-    }),
-    createEvent('event-2', 'message_created', {
-      messageId: 'message-1',
-      role: 'user',
-      createdAt: '2026-08-02T00:00:02.000Z',
-    }),
-    createEvent('event-3', 'part_created', {
-      partId: 'part-1',
-      messageId: 'message-1',
-      partType: 'text',
-      payload: { text: 'surviving history' },
-      createdAt: '2026-08-02T00:00:03.000Z',
-    }),
+    createEvent(
+      'event-1',
+      'session_created',
+      {
+        sessionId: 'recoverable-session',
+        rootId: 'recoverable-session',
+        status: 'running',
+        createdAt: '2026-08-02T00:00:01.000Z',
+        updatedAt: '2026-08-02T00:00:01.000Z',
+      },
+      cwd
+    ),
+    createEvent(
+      'event-2',
+      'message_created',
+      {
+        messageId: 'message-1',
+        role: 'user',
+        createdAt: '2026-08-02T00:00:02.000Z',
+      },
+      cwd
+    ),
+    createEvent(
+      'event-3',
+      'part_created',
+      {
+        partId: 'part-1',
+        messageId: 'message-1',
+        partType: 'text',
+        payload: { text: 'surviving history' },
+        createdAt: '2026-08-02T00:00:03.000Z',
+      },
+      cwd
+    ),
   ];
 }
 
@@ -67,7 +83,7 @@ describe('JSONL crash-tail recovery', () => {
   });
 
   it('lists and loads the valid prefix when a crash leaves an incomplete final record', async () => {
-    const events = createSessionEvents();
+    const events = createSessionEvents(projectPath);
     writeFileSync(
       sessionFile,
       `${events.map((event) => JSON.stringify(event)).join('\n')}\n{"id":"cut-off`
@@ -84,7 +100,7 @@ describe('JSONL crash-tail recovery', () => {
 
   it('fails closed when a malformed record is newline-terminated', async () => {
     const store = new JSONLStore(sessionFile);
-    const [first, second] = createSessionEvents();
+    const [first, second] = createSessionEvents(projectPath);
     writeFileSync(
       sessionFile,
       `${JSON.stringify(first)}\n{"id":"corrupt"\n${JSON.stringify(second)}\n`
@@ -95,7 +111,7 @@ describe('JSONL crash-tail recovery', () => {
 
   it('removes an incomplete tail before appending the next committed record', async () => {
     const store = new JSONLStore(sessionFile);
-    const [first, second] = createSessionEvents();
+    const [first, second] = createSessionEvents(projectPath);
     writeFileSync(sessionFile, `${JSON.stringify(first)}\n{"id":"cut-off`);
 
     await store.append(second);
@@ -113,7 +129,7 @@ describe('JSONL crash-tail recovery', () => {
 
   it('preserves a valid final record that only lacks its newline', async () => {
     const store = new JSONLStore(sessionFile);
-    const [first, second] = createSessionEvents();
+    const [first, second] = createSessionEvents(projectPath);
     writeFileSync(sessionFile, JSON.stringify(first));
 
     await store.append(second);
