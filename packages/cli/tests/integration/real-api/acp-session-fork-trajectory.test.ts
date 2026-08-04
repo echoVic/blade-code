@@ -227,6 +227,20 @@ function assertStrictParentTrace(
   }
 }
 
+function assertKnownForkNotificationSessions(
+  notifications: readonly acp.SessionNotification[],
+  parentId: string,
+  childId: string
+): void {
+  const foreign = notifications.find(
+    (notification) =>
+      notification.sessionId !== parentId && notification.sessionId !== childId
+  );
+  if (foreign) {
+    throw new Error('ACP fork window contains a foreign session notification');
+  }
+}
+
 describe('ACP recording client lifecycle', () => {
   it('routes initialize through paired SDK streams and closes both connections', async () => {
     const harness = createPairedHarness();
@@ -363,6 +377,54 @@ describe('ACP parent trace diagnostics', () => {
     });
     expect(JSON.stringify(metadata)).not.toContain(secretPath);
     expect(JSON.stringify(metadata)).not.toContain(secretOutput);
+  });
+});
+
+describe('ACP fork notification window', () => {
+  it('accepts empty and known-session synchronous fork windows', () => {
+    expect(() =>
+      assertKnownForkNotificationSessions([], 'parent', 'child')
+    ).not.toThrow();
+    expect(() =>
+      assertKnownForkNotificationSessions(
+        [
+          {
+            sessionId: 'parent',
+            update: {
+              sessionUpdate: 'current_mode_update',
+              currentModeId: 'yolo',
+            },
+          },
+          {
+            sessionId: 'child',
+            update: {
+              sessionUpdate: 'current_mode_update',
+              currentModeId: 'default',
+            },
+          },
+        ],
+        'parent',
+        'child'
+      )
+    ).not.toThrow();
+  });
+
+  it('rejects a synchronous fork notification for a foreign session', () => {
+    expect(() =>
+      assertKnownForkNotificationSessions(
+        [
+          {
+            sessionId: 'foreign',
+            update: {
+              sessionUpdate: 'current_mode_update',
+              currentModeId: 'default',
+            },
+          },
+        ],
+        'parent',
+        'child'
+      )
+    ).toThrow('foreign session');
   });
 });
 
@@ -624,6 +686,11 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
             mcpServers: [],
           });
           const forkNotifications = harness.client.updates.slice(forkNotificationStart);
+          assertKnownForkNotificationSessions(
+            forkNotifications,
+            parentId,
+            forked.sessionId
+          );
           expect(
             forkNotifications.filter(
               (notification) =>
