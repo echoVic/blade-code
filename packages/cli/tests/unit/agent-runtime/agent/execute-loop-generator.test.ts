@@ -2152,8 +2152,9 @@ describe('executeLoopGenerator', () => {
       });
     });
 
-    it('should skip tool_result persistence when tool aborts before launch', async () => {
+    it('should close a durable tool call when the tool aborts before launch', async () => {
       const contextManager = createMockContextManager();
+      contextManager.saveToolUse.mockResolvedValue('durable-aborted-tool-id');
       const deps = createMockDeps({
         executionEngine: {
           getContextManager: vi.fn().mockReturnValue(contextManager),
@@ -2207,7 +2208,16 @@ describe('executeLoopGenerator', () => {
       expect(result.success).toBe(false);
       expect(result.error?.type).toBe('aborted');
       expect(events.some((event) => event.kind === 'tool_result')).toBe(false);
-      expect(contextManager.saveToolResult).not.toHaveBeenCalled();
+      expect(contextManager.saveToolResult).toHaveBeenCalledWith(
+        'test-session',
+        'durable-aborted-tool-id',
+        'Edit',
+        null,
+        'durable-aborted-tool-id',
+        '任务已被用户中止',
+        undefined,
+        undefined
+      );
       expect(
         context.messages.some(
           (message) =>
@@ -2215,7 +2225,63 @@ describe('executeLoopGenerator', () => {
             'tool_call_id' in message &&
             message.tool_call_id === 'tc1'
         )
-      ).toBe(false);
+      ).toBe(true);
+    });
+
+    it('should close only in-memory history when aborted tool-use persistence failed', async () => {
+      const { deps, saveToolResult } = createTypedPersistenceHarness({
+        rejectToolUse: true,
+      });
+      const context = createMockContext();
+      const controller = new AbortController();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'provider-only-tool-id',
+            type: 'function',
+            function: { name: 'Edit', arguments: '{"file_path":"/tmp/demo.ts"}' },
+          },
+        ],
+        finishReason: 'tool_calls',
+      });
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        async () => {
+          controller.abort('user-cancel');
+          return {
+            success: false,
+            llmContent: '任务已被用户中止',
+            error: {
+              type: 'execution_error',
+              message: '任务已被用户中止',
+            },
+            metadata: {
+              abortedBeforeLaunch: true,
+            },
+          };
+        }
+      );
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Edit the file',
+          context,
+          { signal: controller.signal, stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(saveToolResult).not.toHaveBeenCalled();
+      expect(context.messages).toContainEqual(
+        expect.objectContaining({
+          role: 'tool',
+          tool_call_id: 'provider-only-tool-id',
+          name: 'Edit',
+        })
+      );
     });
 
     it('should preserve planContent when a tool exits the loop successfully', async () => {

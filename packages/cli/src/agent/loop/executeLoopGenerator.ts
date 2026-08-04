@@ -1796,11 +1796,30 @@ export async function* executeLoopGenerator(
           };
           allToolResults.push(result);
 
-          // 如果工具未实际执行就被 abort（如排队工具 skip、确认阶段 abort），
-          // 跳过 yield/持久化/appendToolResult，避免在历史中留下无意义的失败记录。
-          // 注意：只检查 abortedBeforeLaunch，不会误伤正常的 shouldExitLoop 结果
-          // （如 ExitPlanModeTool 带 targetMode/planContent 的合法退出）。
+          // Even a pre-launch abort must close the provider-visible assistant
+          // tool call before an interrupted session can be resumed. Persist the
+          // cancellation only when the matching durable tool-use exists; always
+          // close the in-memory provider call with its original ID.
           if (result.metadata?.abortedBeforeLaunch) {
+            const abortMessage = result.error?.message ?? '任务已被用户中止';
+            if (toolUseUuid) {
+              const uuid = await persistToolResult(
+                deps,
+                context,
+                toolUseUuid,
+                toolCall.function.name,
+                null,
+                toolUseUuid,
+                abortMessage
+              );
+              if (uuid) lastMessageUuid = uuid;
+            }
+            state.appendToolResult({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: toolCall.function.name,
+              content: `Error: ${abortMessage}`,
+            });
             return makeInterruptedResult(
               turnsCount,
               allToolResults.length,
