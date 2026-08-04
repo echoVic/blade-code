@@ -241,6 +241,20 @@ function assertKnownForkNotificationSessions(
   }
 }
 
+function assertAllNotificationsForSession(
+  notifications: readonly acp.SessionNotification[],
+  expectedSessionId: string
+): void {
+  if (notifications.length === 0) {
+    throw new Error('ACP notification ownership window must not be empty');
+  }
+  if (
+    notifications.some((notification) => notification.sessionId !== expectedSessionId)
+  ) {
+    throw new Error('ACP notification ownership window contains an unexpected session');
+  }
+}
+
 describe('ACP recording client lifecycle', () => {
   it('routes initialize through paired SDK streams and closes both connections', async () => {
     const harness = createPairedHarness();
@@ -426,6 +440,40 @@ describe('ACP fork notification window', () => {
       )
     ).toThrow('foreign session');
   });
+
+  it('requires a non-empty post-fork window owned by the child', () => {
+    expect(() => assertAllNotificationsForSession([], 'child')).toThrow(
+      'must not be empty'
+    );
+    expect(() =>
+      assertAllNotificationsForSession(
+        [
+          {
+            sessionId: 'child',
+            update: {
+              sessionUpdate: 'available_commands_update',
+              availableCommands: [],
+            },
+          },
+        ],
+        'child'
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertAllNotificationsForSession(
+        [
+          {
+            sessionId: 'parent',
+            update: {
+              sessionUpdate: 'available_commands_update',
+              availableCommands: [],
+            },
+          },
+        ],
+        'child'
+      )
+    ).toThrow('unexpected session');
+  });
 });
 
 const enabled = isRealApiTestEnabled();
@@ -606,6 +654,7 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
             fork: {},
           });
 
+          const newSessionNotificationStart = harness.client.updates.length;
           const created = await harness.connection.newSession({
             cwd: fixture.workspace,
             mcpServers: [],
@@ -627,6 +676,13 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
             },
           });
           const parentId = created.sessionId;
+          const parentCommands = await harness.client.waitForNotification(
+            (notification) =>
+              notification.sessionId === parentId &&
+              notification.update.sessionUpdate === 'available_commands_update',
+            { afterIndex: newSessionNotificationStart, timeoutMs: 10_000 }
+          );
+          expect(parentCommands.sessionId).toBe(parentId);
           const parentNotificationStart = harness.client.updates.length;
           await harness.connection.setSessionMode({
             sessionId: parentId,
@@ -741,6 +797,16 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
           ).toBe(true);
           assertSafeFinal(finalAgentText(childNotifications), marker, fixture.nonce);
           expect(readFileSync(resultPath, 'utf8')).toBe(expectedBytes);
+          const childCommands = await harness.client.waitForNotification(
+            (notification) =>
+              notification.sessionId === childId &&
+              notification.update.sessionUpdate === 'available_commands_update',
+            { afterIndex: forkNotificationStart, timeoutMs: 10_000 }
+          );
+          expect(childCommands.sessionId).toBe(childId);
+          const postForkNotifications =
+            harness.client.updates.slice(forkNotificationStart);
+          assertAllNotificationsForSession(postForkNotifications, childId);
 
           const childEvents = readSessionEvents(childPath);
           const childRaw = readFileSync(childPath);
