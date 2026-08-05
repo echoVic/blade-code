@@ -1,20 +1,37 @@
 import { Hono } from 'hono';
-import { z } from 'zod';
+import type { BladeConfig } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
+import { configActions, getConfig } from '../../store/vanilla.js';
 import { BadRequestError } from '../error.js';
-import { getConfig, configActions } from '../../store/vanilla.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
-const UpdateConfigSchema = z.object({
-  updates: z.record(z.any()),
-  options: z
-    .object({
-      scope: z.enum(['local', 'project', 'global']).optional(),
-      immediate: z.boolean().optional(),
+const UpdateConfigSchema = Type.Object({
+  updates: Type.Record(Type.String(), Type.Any()),
+  options: Type.Optional(
+    Type.Object({
+      scope: Type.Optional(StringEnum(['local', 'project', 'global'])),
+      immediate: Type.Optional(Type.Boolean()),
     })
-    .optional(),
+  ),
 });
+
+export function projectPublicConfig(config: BladeConfig) {
+  return {
+    currentModelId: config.currentModelId,
+    permissionMode: config.permissionMode,
+    language: config.language,
+    theme: config.theme,
+    uiTheme: config.uiTheme,
+    autoSaveSessions: config.autoSaveSessions,
+    notifyBuild: config.notifyBuild,
+    notifyErrors: config.notifyErrors,
+    notifySounds: config.notifySounds,
+    privacyTelemetry: config.privacyTelemetry,
+    privacyCrash: config.privacyCrash,
+  };
+}
 
 export const ConfigRoutes = () => {
   const app = new Hono();
@@ -22,7 +39,7 @@ export const ConfigRoutes = () => {
   app.get('/', async (c) => {
     try {
       const config = getConfig();
-      return c.json(config || {});
+      return c.json(config ? projectPublicConfig(config) : {});
     } catch (error) {
       logger.error('[ConfigRoutes] Failed to get config:', error);
       return c.json({});
@@ -32,7 +49,7 @@ export const ConfigRoutes = () => {
   app.put('/', async (c) => {
     try {
       const body = await c.req.json();
-      const parsed = UpdateConfigSchema.safeParse(body);
+      const parsed = safeParseSchema(UpdateConfigSchema, body);
 
       if (!parsed.success) {
         throw new BadRequestError('Invalid config update format');

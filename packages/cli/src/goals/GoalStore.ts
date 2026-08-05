@@ -3,8 +3,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { nanoid } from 'nanoid';
 import writeFileAtomic from 'write-file-atomic';
-import { z } from 'zod';
 import { getSessionGoalFilePath } from '../context/storage/pathUtils.js';
+import { StringEnum, Type, parseSchema, safeParseSchema } from '../schema/index.js';
 import {
   type GoalChangeEvent,
   type GoalCreateInput,
@@ -16,19 +16,19 @@ import {
 const MAX_GOAL_FILE_BYTES = 1024 * 1024;
 const MAX_OBJECTIVE_CHARS = 100_000;
 
-const GoalSnapshotSchema = z.object({
-  version: z.literal(1),
-  sessionId: z.string().min(1),
-  goalId: z.string().min(1),
-  objective: z.string().min(1).max(MAX_OBJECTIVE_CHARS),
-  status: z.enum(GOAL_STATUSES),
-  tokenBudget: z.number().int().positive().optional(),
-  tokensUsed: z.number().int().nonnegative(),
-  timeUsedSeconds: z.number().int().nonnegative(),
-  continuationCount: z.number().int().nonnegative(),
-  statusReason: z.string().optional(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+const GoalSnapshotSchema = Type.Object({
+  version: Type.Literal(1),
+  sessionId: Type.String({ minLength: 1 }),
+  goalId: Type.String({ minLength: 1 }),
+  objective: Type.String({ minLength: 1, maxLength: MAX_OBJECTIVE_CHARS }),
+  status: StringEnum(GOAL_STATUSES),
+  tokenBudget: Type.Optional(Type.Integer({ minimum: 1 })),
+  tokensUsed: Type.Integer({ minimum: 0 }),
+  timeUsedSeconds: Type.Integer({ minimum: 0 }),
+  continuationCount: Type.Integer({ minimum: 0 }),
+  statusReason: Type.Optional(Type.String()),
+  createdAt: Type.String({ format: 'date-time' }),
+  updatedAt: Type.String({ format: 'date-time' }),
 });
 
 function isNodeError(error: unknown, code: string): boolean {
@@ -280,7 +280,7 @@ export class GoalStore {
     return this.mutex.runExclusive(async () => {
       const existing = await this.readUnlocked();
       if (!existing) throw new Error('Session has no goal');
-      const next = GoalSnapshotSchema.parse(update(existing));
+      const next = parseSchema(GoalSnapshotSchema, update(existing));
       await this.persistUnlocked(next);
       this.emit(next);
       return next;
@@ -294,7 +294,8 @@ export class GoalStore {
         throw new Error(`Goal state exceeds ${MAX_GOAL_FILE_BYTES} bytes`);
       }
       await fs.chmod(this.filePath, 0o600);
-      const parsed = GoalSnapshotSchema.safeParse(
+      const parsed = safeParseSchema(
+        GoalSnapshotSchema,
         JSON.parse(await fs.readFile(this.filePath, 'utf8')) as unknown
       );
       if (!parsed.success || parsed.data.sessionId !== this.sessionId) {

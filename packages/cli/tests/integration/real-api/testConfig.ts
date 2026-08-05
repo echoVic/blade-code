@@ -2,12 +2,9 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createDeepSeek } from '@ai-sdk/deepseek';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import type { LanguageModel } from 'ai';
 import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type { BladeConfig } from '../../../src/config/types.js';
+import { PiAIChatService } from '../../../src/services/PiAIChatService.js';
 
 export type ModelId = 'deepseek' | 'claude' | 'gpt' | 'domestic';
 
@@ -22,7 +19,6 @@ export interface TestModelConfig {
   model: string;
   apiKey: string;
   baseURL?: string;
-  createModel: () => LanguageModel;
 }
 
 export interface BladeModelConfig {
@@ -142,12 +138,25 @@ function resolveNewApiSettings(
   };
 }
 
-function requireApiKey(id: ModelId, settings: ResolvedModelSettings): string {
-  if (settings.apiKey) return settings.apiKey;
+function requireApiKey(config: TestModelConfig): string {
+  if (config.apiKey) return config.apiKey;
   throw new Error(
-    `Missing API credentials for ${id}. Configure the current model in ` +
+    `Missing API credentials for ${config.id}. Configure the current model in ` +
       '~/.blade/config.json or provide the corresponding environment variables.'
   );
+}
+
+export function createTestChatService(config: TestModelConfig): PiAIChatService {
+  return new PiAIChatService({
+    provider: config.provider,
+    model: config.model,
+    apiKey: requireApiKey(config),
+    baseUrl: config.baseURL ?? '',
+    maxOutputTokens: REAL_API_OUTPUT_BUDGET,
+    temperature: 0,
+    timeout: 120_000,
+    maxRetries: 0,
+  });
 }
 
 function createDeepSeekTestConfig(
@@ -163,14 +172,6 @@ function createDeepSeekTestConfig(
     model,
     apiKey: modelSettings.apiKey,
     baseURL: modelSettings.baseURL,
-    createModel: () => {
-      const apiKey = requireApiKey('deepseek', modelSettings);
-      const deepseek = createDeepSeek({
-        apiKey,
-        baseURL: modelSettings.baseURL,
-      });
-      return deepseek(model);
-    },
   };
 }
 
@@ -194,11 +195,6 @@ function createClaudeTestConfig(settings: ResolvedModelSettings): TestModelConfi
     model: settings.model,
     apiKey: settings.apiKey,
     baseURL: settings.baseURL,
-    createModel: () => {
-      const apiKey = requireApiKey('claude', settings);
-      const anthropic = createAnthropic({ apiKey, baseURL: settings.baseURL });
-      return anthropic(settings.model);
-    },
   };
 }
 
@@ -215,15 +211,6 @@ function createCompatibleTestConfig(
     model: settings.model,
     apiKey: settings.apiKey,
     baseURL: settings.baseURL,
-    createModel: () => {
-      const apiKey = requireApiKey(id, settings);
-      const compatible = createOpenAICompatible({
-        name: id,
-        apiKey,
-        baseURL: settings.baseURL,
-      });
-      return compatible(settings.model);
-    },
   };
 }
 
@@ -394,14 +381,14 @@ export function buildRealApiRuntimeConfig(modelConfig: TestModelConfig): BladeCo
     models: [
       {
         id: modelId,
-        name: modelConfig.name,
+        displayName: modelConfig.name,
         provider: modelConfig.provider,
-        apiKey: modelConfig.apiKey,
-        baseUrl: modelConfig.baseURL ?? '',
         model: modelConfig.model,
-        maxContextTokens: 64_000,
-        maxOutputTokens: 4_096,
-        timeout: 180_000,
+        overrides: {
+          maxOutputTokens: 4_096,
+          timeout: 180_000,
+          ...(modelConfig.baseURL ? { baseUrl: modelConfig.baseURL } : {}),
+        },
       },
     ],
   };

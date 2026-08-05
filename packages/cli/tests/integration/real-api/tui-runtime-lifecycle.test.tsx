@@ -41,14 +41,10 @@ function setRuntimeModel(model: string): string {
     models: [
       {
         id: modelId,
-        name: model,
+        displayName: model,
         provider: 'deepseek',
-        apiKey,
-        baseUrl,
         model,
-        maxContextTokens: 64_000,
-        maxOutputTokens: 512,
-        timeout: 180_000,
+        overrides: { baseUrl, maxOutputTokens: 512, timeout: 180_000 },
       },
     ],
   });

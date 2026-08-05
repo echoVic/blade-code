@@ -29,8 +29,8 @@ describe('/model SlashCommand', () => {
     removeModel.mockClear();
     configActions.mockClear();
     getAllModels.mockReturnValueOnce([
-      { id: 'm1', name: 'Model 1' },
-      { id: 'm2', name: 'Model 2' },
+      { id: 'm1', displayName: 'Model 1', provider: 'openai', model: 'gpt-4' },
+      { id: 'm2', displayName: 'Model 2', provider: 'openai', model: 'gpt-4.1' },
     ]);
 
     const result = await modelCommand.handler([], {} as any);
@@ -57,7 +57,14 @@ describe('/model SlashCommand', () => {
   it('remove 未匹配时应返回错误', async () => {
     removeModel.mockClear();
     configActions.mockClear();
-    getAllModels.mockReturnValueOnce([{ id: 'm1', name: 'Qwen' }]);
+    getAllModels.mockReturnValueOnce([
+      {
+        id: 'm1',
+        displayName: 'Qwen',
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
+      },
+    ]);
 
     const result = await modelCommand.handler(['remove', 'Gemini'], {} as any);
     expect(result.success).toBe(false);
@@ -66,8 +73,18 @@ describe('/model SlashCommand', () => {
 
   it('remove 匹配时应调用 removeModel 并返回成功', async () => {
     getAllModels.mockReturnValueOnce([
-      { id: 'm1', name: 'Qwen' },
-      { id: 'm2', name: 'Gemini Pro' },
+      {
+        id: 'm1',
+        displayName: 'Qwen',
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
+      },
+      {
+        id: 'm2',
+        displayName: 'Gemini Pro',
+        provider: 'google',
+        model: 'gemini-2.5-pro',
+      },
     ]);
     removeModel.mockClear();
     configActions.mockClear();

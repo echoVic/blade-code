@@ -51,11 +51,9 @@ describe('ConfigManager 集成', () => {
           models: [
             {
               id: 'test-model',
-              name: 'Test Model',
-              provider: 'openai-compatible',
-              apiKey: 'test-key',
-              baseUrl: 'https://api.example.com',
-              model: 'gpt-4',
+              displayName: 'Test Model',
+              provider: 'deepseek',
+              model: 'deepseek-v4-pro',
             },
           ],
           temperature: 0.7,
@@ -118,11 +116,9 @@ describe('ConfigManager 集成', () => {
         models: [
           {
             id: 'user-model',
-            name: 'User Model',
-            provider: 'openai-compatible',
-            apiKey: 'user-key',
-            baseUrl: 'https://user.example.com',
-            model: 'gpt-4',
+            displayName: 'User Model',
+            provider: 'deepseek',
+            model: 'deepseek-v4-flash',
           },
         ],
         temperature: 0.7,
@@ -155,11 +151,9 @@ describe('ConfigManager 集成', () => {
         models: [
           {
             id: 'project-model',
-            name: 'Project Model',
-            provider: 'openai-compatible',
-            apiKey: 'project-key',
-            baseUrl: 'https://project.example.com',
-            model: 'gpt-3.5-turbo',
+            displayName: 'Project Model',
+            provider: 'deepseek',
+            model: 'deepseek-v4-pro',
           },
         ],
         theme: 'dark',
@@ -175,6 +169,40 @@ describe('ConfigManager 集成', () => {
 
     expect(config.currentModelId).toBe('project-model');
     expect(config.theme).toBe('dark');
+  });
+
+  it('启动时应拒绝旧模型配置字段', async () => {
+    const userConfigPath = path.join(tempHome, '.blade', 'config.json');
+    mkdirSync(path.dirname(userConfigPath), { recursive: true });
+    writeFileSync(
+      userConfigPath,
+      JSON.stringify({
+        currentModelId: 'legacy-model',
+        models: [
+          {
+            id: 'legacy-model',
+            name: 'Legacy Model',
+            provider: 'deepseek',
+            apiKey: 'legacy-secret',
+            baseUrl: 'https://api.deepseek.com',
+            model: 'deepseek-v4-pro',
+          },
+        ],
+      })
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const config = await ConfigManager.getInstance().initialize();
+
+    expect(config.models).toEqual([]);
+    expect(config.currentModelId).toBe('');
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[ConfigManager] Failed to initialize:',
+      expect.objectContaining({
+        message: expect.stringContaining('不再支持旧字段'),
+      })
+    );
+    errorSpy.mockRestore();
   });
 
   it('显式 settings 层应覆盖文件设置并保留运行时字段', async () => {
@@ -323,37 +351,23 @@ describe('ConfigManager 集成', () => {
     }
   });
 
-  it('标准格式的多模型配置应被正确加载，并清理字符串两端的空格和反引号', async () => {
+  it('pi-ai 模型引用和 endpoint override 应被正确加载', async () => {
     const userConfigPath = path.join(tempHome, '.blade', 'config.json');
     mkdirSync(path.dirname(userConfigPath), { recursive: true });
     writeFileSync(
       userConfigPath,
       JSON.stringify({
-        currentModelId: 'claude-via-newapi',
+        currentModelId: 'deepseek-pro',
         models: [
           {
-            id: 'claude-via-newapi',
-            name: 'Claude 3.5 Sonnet',
-            provider: 'openai-compatible',
-            apiKey: 'sk-test-fake-key-claude-00000000000000',
-            baseUrl: ' `https://api.example.com` ',
-            model: 'claude-3.5-sonnet',
-          },
-          {
-            id: 'gpt-via-newapi',
-            name: 'GPT 4o',
-            provider: 'openai-compatible',
-            apiKey: 'sk-test-fake-key-gpt-000000000000000000',
-            baseUrl: '`https://api.example.com`',
-            model: 'gpt-4o',
-          },
-          {
-            id: 'domestic-via-newapi',
-            name: 'Qwen Plus',
-            provider: 'openai-compatible',
-            apiKey: 'sk-test-fake-key-domestic-0000000000000',
-            baseUrl: 'https://api.example.com',
-            model: 'qwen-plus',
+            id: 'deepseek-pro',
+            displayName: 'DeepSeek Pro',
+            provider: 'deepseek',
+            model: 'deepseek-v4-pro',
+            overrides: {
+              baseUrl: ' `https://api.example.com` ',
+              maxOutputTokens: 4096,
+            },
           },
         ],
         temperature: 0.7,
@@ -382,27 +396,14 @@ describe('ConfigManager 集成', () => {
     const manager = ConfigManager.getInstance();
     const config = await manager.initialize();
 
-    const claude = config.models.find((m) => m.id === 'claude-via-newapi');
-    expect(claude).toBeDefined();
-    expect(claude!.apiKey).toBe('sk-test-fake-key-claude-00000000000000');
-    expect(claude!.baseUrl).toBe('https://api.example.com');
-    expect(claude!.provider).toBe('openai-compatible');
-    expect(claude!.name).toBe('Claude 3.5 Sonnet');
-    expect(claude!.model).toBe('claude-3.5-sonnet');
-
-    const gpt = config.models.find((m) => m.id === 'gpt-via-newapi');
-    expect(gpt).toBeDefined();
-    expect(gpt!.apiKey).toBe('sk-test-fake-key-gpt-000000000000000000');
-    expect(gpt!.baseUrl).toBe('https://api.example.com');
-    expect(gpt!.provider).toBe('openai-compatible');
-    expect(gpt!.model).toBe('gpt-4o');
-
-    const domestic = config.models.find((m) => m.id === 'domestic-via-newapi');
-    expect(domestic).toBeDefined();
-    expect(domestic!.apiKey).toBe('sk-test-fake-key-domestic-0000000000000');
-    expect(domestic!.baseUrl).toBe('https://api.example.com');
-    expect(domestic!.provider).toBe('openai-compatible');
-    expect(domestic!.model).toBe('qwen-plus');
+    const model = config.models[0];
+    expect(model.provider).toBe('deepseek');
+    expect(model.displayName).toBe('DeepSeek Pro');
+    expect(model.model).toBe('deepseek-v4-pro');
+    expect(model.overrides).toEqual({
+      baseUrl: 'https://api.example.com',
+      maxOutputTokens: 4096,
+    });
   });
 
   it('mergeRuntimeConfig should reject invalid model overrides', async () => {
@@ -413,11 +414,9 @@ describe('ConfigManager 集成', () => {
       models: [
         {
           id: 'test-model',
-          name: 'Test Model',
-          provider: 'openai-compatible',
-          apiKey: 'test-key',
-          baseUrl: 'https://api.example.com',
-          model: 'gpt-4',
+          displayName: 'Test Model',
+          provider: 'deepseek',
+          model: 'deepseek-v4-pro',
         },
       ],
       temperature: 0.7,

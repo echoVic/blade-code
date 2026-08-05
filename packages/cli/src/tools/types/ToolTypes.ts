@@ -428,8 +428,8 @@ export interface ToolDescription {
 }
 
 /**
- * 工具配置 (泛型接口，用于配合 Zod Schema)
- * TSchema: Schema 类型 (如 z.ZodObject)
+ * 工具配置 (泛型接口，用于配合 TypeBox Schema)
+ * TSchema: TypeBox Schema 类型
  * TParams: 推断的参数类型
  */
 export interface ToolConfig<TSchema = unknown, TParams = unknown> {
@@ -445,7 +445,7 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   isConcurrencySafe?: boolean;
   /** 是否启用 OpenAI Structured Outputs（可选，默认 false） */
   strict?: boolean;
-  /** Schema 定义 (通常是 Zod Schema) */
+  /** TypeBox Schema 定义 */
   schema: TSchema;
   /** 工具描述 */
   description: ToolDescription;

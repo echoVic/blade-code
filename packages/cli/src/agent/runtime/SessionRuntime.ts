@@ -26,6 +26,7 @@ import {
   type SessionRewindCheckpoint,
   SessionService,
 } from '../../services/SessionService.js';
+import { resolveModelConfig as resolvePiModelConfig } from '../../services/pi/resolveModelConfig.js';
 import { discoverSkills } from '../../skills/index.js';
 import {
   ensureStoreInitialized,
@@ -43,7 +44,6 @@ import { InMemorySessionApprovalStore } from '../../tools/execution/SessionAppro
 import { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
 import { getCwd } from '../../utils/cwd.js';
-import { isThinkingModel } from '../../utils/modelDetection.js';
 import { worktreeManager } from '../../worktree/WorktreeManager.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
 import type { LoopEvent } from '../loop/types.js';
@@ -611,30 +611,15 @@ export class SessionRuntime {
     modelConfig: ModelConfig,
     label: string
   ): Promise<void> {
-    logger.debug(`${label} ${modelConfig.name} (${modelConfig.model})`);
-
-    const modelSupportsThinking = isThinkingModel(modelConfig);
     const thinkingModeEnabled = getThinkingModeEnabled();
-    const supportsThinking = modelSupportsThinking && thinkingModeEnabled;
-    const nextModelMaxContextTokens =
-      modelConfig.maxContextTokens ?? this.config.maxContextTokens;
-    const nextChatService = await createChatServiceAsync({
-      provider: modelConfig.provider,
-      apiKey: modelConfig.apiKey,
-      model: modelConfig.model,
-      baseUrl: modelConfig.baseUrl,
-      temperature: modelConfig.temperature ?? this.config.temperature,
-      maxContextTokens: nextModelMaxContextTokens,
-      maxOutputTokens: modelConfig.maxOutputTokens ?? this.config.maxOutputTokens,
-      timeout: modelConfig.timeout ?? this.config.timeout,
-      supportsThinking,
-      thinkingBudget: modelConfig.thinkingBudget,
-      fallbackModels: modelConfig.fallbackModels,
-      enablePromptCaching: modelConfig.enablePromptCaching,
-      customHeaders: modelConfig.customHeaders,
-      apiVersion: modelConfig.apiVersion,
-      maxRetries: modelConfig.maxRetries,
-    });
+    const resolved = resolvePiModelConfig(
+      modelConfig,
+      this.config,
+      thinkingModeEnabled
+    );
+    logger.debug(`${label} ${resolved.displayName} (${modelConfig.model})`);
+    const nextModelMaxContextTokens = resolved.model.contextWindow;
+    const nextChatService = await createChatServiceAsync(resolved.chat);
 
     const previousChatService = this.initialized ? this.chatService : undefined;
     const contextManager = this.executionEngine?.getContextManager();

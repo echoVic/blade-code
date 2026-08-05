@@ -7,9 +7,10 @@
  * - Context retention across multi-turn conversations
  * - Task decomposition and planning
  */
-import { generateText, jsonSchema } from 'ai';
 import { describe, expect, it } from 'vitest';
+import { Type } from '../../../src/schema/index.js';
 import {
+  createTestChatService,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
   REAL_API_OUTPUT_BUDGET,
@@ -17,51 +18,60 @@ import {
 
 const readFileTool = {
   description: 'Read the contents of a file at the given path',
-  inputSchema: jsonSchema({
-    type: 'object' as const,
-    properties: {
-      path: { type: 'string', description: 'Absolute file path to read' },
-    },
-    required: ['path'],
+  inputSchema: Type.Object({
+    path: Type.String({ description: 'Absolute file path to read' }),
   }),
 };
 
 const editFileTool = {
   description:
     'Edit a file by replacing old_string with new_string. The old_string must match exactly.',
-  inputSchema: jsonSchema({
-    type: 'object' as const,
-    properties: {
-      file_path: { type: 'string', description: 'Absolute file path to edit' },
-      old_string: { type: 'string', description: 'Exact text to find' },
-      new_string: { type: 'string', description: 'Replacement text' },
-    },
-    required: ['file_path', 'old_string', 'new_string'],
+  inputSchema: Type.Object({
+    file_path: Type.String({ description: 'Absolute file path to edit' }),
+    old_string: Type.String({ description: 'Exact text to find' }),
+    new_string: Type.String({ description: 'Replacement text' }),
   }),
 };
 
 const grepTool = {
   description: 'Search for a pattern across files in a directory',
-  inputSchema: jsonSchema({
-    type: 'object' as const,
-    properties: {
-      pattern: { type: 'string', description: 'Regex pattern to search for' },
-      path: { type: 'string', description: 'Directory path to search in' },
-    },
-    required: ['pattern', 'path'],
+  inputSchema: Type.Object({
+    pattern: Type.String({ description: 'Regex pattern to search for' }),
+    path: Type.String({ description: 'Directory path to search in' }),
   }),
 };
 
 const bashTool = {
   description: 'Execute a shell command and return its output',
-  inputSchema: jsonSchema({
-    type: 'object' as const,
-    properties: {
-      command: { type: 'string', description: 'Shell command to execute' },
-    },
-    required: ['command'],
+  inputSchema: Type.Object({
+    command: Type.String({ description: 'Shell command to execute' }),
   }),
 };
+
+async function generateText(input: {
+  model: (typeof enabledModels)[number];
+  messages: Parameters<ReturnType<typeof createTestChatService>['chat']>[0];
+  tools: Record<string, { description: string; inputSchema: unknown }>;
+  maxOutputTokens?: number;
+  temperature?: number;
+}) {
+  const response = await createTestChatService(input.model).chat(
+    input.messages,
+    Object.entries(input.tools).map(([name, tool]) => ({
+      name,
+      description: tool.description,
+      parameters: tool.inputSchema,
+    }))
+  );
+  return {
+    toolCalls: response.toolCalls
+      ?.filter((call) => 'function' in call)
+      .map((call) => ({
+        toolName: call.function.name,
+        input: JSON.parse(call.function.arguments) as unknown,
+      })),
+  };
+}
 
 const enabledModels = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
 
@@ -70,7 +80,7 @@ describe.skipIf(enabledModels.length === 0)('Multi-Step Workflow (Real API)', ()
   if (!modelConfig) return;
 
   it('should request reading a file before editing it', async () => {
-    const model = modelConfig.createModel();
+    const model = modelConfig;
     const result = await generateText({
       model,
       messages: [
@@ -97,7 +107,7 @@ describe.skipIf(enabledModels.length === 0)('Multi-Step Workflow (Real API)', ()
   }, 30_000);
 
   it('should use grep to find code before editing', async () => {
-    const model = modelConfig.createModel();
+    const model = modelConfig;
     const result = await generateText({
       model,
       messages: [
@@ -125,7 +135,7 @@ describe.skipIf(enabledModels.length === 0)('Multi-Step Workflow (Real API)', ()
   }, 30_000);
 
   it('should recover from a failed edit by reading the file', async () => {
-    const model = modelConfig.createModel();
+    const model = modelConfig;
     const result = await generateText({
       model,
       messages: [
@@ -157,7 +167,7 @@ describe.skipIf(enabledModels.length === 0)('Multi-Step Workflow (Real API)', ()
   }, 30_000);
 
   it('should run tests after making changes when instructed', async () => {
-    const model = modelConfig.createModel();
+    const model = modelConfig;
     const result = await generateText({
       model,
       messages: [
@@ -184,7 +194,7 @@ describe.skipIf(enabledModels.length === 0)('Multi-Step Workflow (Real API)', ()
   }, 30_000);
 
   it('should maintain context across multi-turn with tool results', async () => {
-    const model = modelConfig.createModel();
+    const model = modelConfig;
     const result = await generateText({
       model,
       messages: [

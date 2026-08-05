@@ -5,7 +5,7 @@
  * AI 通过此工具搜索并获取工具的完整参数定义。
  */
 
-import { z } from 'zod';
+import { Default, Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type {
   ExecutionContext,
@@ -20,17 +20,17 @@ export const toolSearchTool = createTool({
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true,
 
-  schema: z.object({
-    query: z
-      .string()
-      .describe(
-        'Search query. Use "select:Read,Edit,Grep" for exact' +
-          ' selection, or keywords for fuzzy search.'
-      ),
-    max_results: z
-      .number()
-      .default(5)
-      .describe('Maximum results to return (default 5)'),
+  schema: Type.Object({
+    query: Type.String({
+      description:
+        'Search query. Use "select:Read,Edit,Grep" for exact selection, or keywords for fuzzy search.',
+    }),
+    max_results: Default(
+      Type.Number({
+        description: 'Maximum results to return (default 5)',
+      }),
+      5
+    ),
   }),
 
   description: {

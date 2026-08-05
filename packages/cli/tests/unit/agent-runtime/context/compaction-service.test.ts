@@ -34,13 +34,21 @@ describe('CompactionService - 输出协议', () => {
   test('compaction hook 应使用 active workspace', async () => {
     compactChat.mockResolvedValueOnce({
       content: '<summary>Preserve the active workspace.</summary>',
+      usage: {
+        promptTokens: 100,
+        completionTokens: 20,
+        totalTokens: 120,
+        cacheReadInputTokens: 30,
+        cacheCreationInputTokens: 10,
+        costUsd: 0.125,
+      },
     });
     const hookSpy = vi
       .spyOn(HookManager.getInstance(), 'executeCompactionHooks')
       .mockResolvedValueOnce({ blockCompaction: false });
 
     try {
-      await CompactionService.compact(
+      const result = await CompactionService.compact(
         [{ role: 'user', content: 'Continue the worktree task.' }],
         {
           trigger: 'auto',
@@ -60,6 +68,14 @@ describe('CompactionService - 输出协议', () => {
           sessionId: 'hook-workspace-session',
         })
       );
+      expect(result.usage).toEqual({
+        promptTokens: 100,
+        completionTokens: 20,
+        totalTokens: 120,
+        cacheReadInputTokens: 30,
+        cacheCreationInputTokens: 10,
+        costUsd: 0.125,
+      });
     } finally {
       hookSpy.mockRestore();
     }

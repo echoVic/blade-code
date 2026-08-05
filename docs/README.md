@@ -17,9 +17,9 @@ blade web       # Web UI 模式
 blade serve     # 无头服务器模式
 ```
 
-### 📡 80+ Provider 支持
+### 📡 pi-ai Provider Catalog
 
-集成 [models.dev](https://models.dev) API，支持 80+ LLM Provider：
+集成 [pi-ai](https://github.com/earendil-works/pi) catalog，统一管理 LLM Provider、模型元数据和凭证：
 
 | 分类 | Provider |
 |------|----------|
@@ -65,7 +65,7 @@ blade
 # Web UI 模式（0.2.0 新增）
 blade web
 
-# 添加自定义模型（80+ Provider 可选）
+# 从 pi-ai catalog 添加模型
 # 在 Blade 中输入: /model add
 ```
 
@@ -78,7 +78,7 @@ blade web
 
 ### 配置
 
-- [配置系统](configuration/config-system.md) - 80+ Provider 配置
+- [配置系统](configuration/config-system.md) - pi-ai 模型与凭证配置
 - [权限控制](configuration/permissions.md)
 - [主题配置](configuration/themes.md)
 
@@ -105,7 +105,7 @@ blade web
 
 ## 支持的 Provider
 
-Blade 通过 [models.dev](https://models.dev) 集成支持 80+ LLM Provider：
+Blade 通过 pi-ai catalog 提供内置 Provider 和模型目录：
 
 **热门 Provider**:
 - Anthropic (Claude)

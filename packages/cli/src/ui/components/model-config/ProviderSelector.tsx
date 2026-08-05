@@ -1,6 +1,6 @@
 /**
  * ProviderSelector - Provider 选择组件
- * Step 1: 从 80+ Provider 中选择
+ * Step 1: 从 pi-ai Provider catalog 中选择
  * 直接输入即可搜索，类似 fzf
  */
 
@@ -64,7 +64,7 @@ export const ProviderSelector: React.FC<ProviderSelectorProps> = ({
     () =>
       filteredProviders.map((p) => ({
         key: p.id,
-        label: `${p.icon} ${p.name} - ${p.description}`,
+        label: `${p.name} - ${p.modelCount} models${p.configured ? ' [configured]' : ''}`,
         value: p,
       })),
     [filteredProviders]

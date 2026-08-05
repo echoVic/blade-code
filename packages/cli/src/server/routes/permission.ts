@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
-import { z } from 'zod';
 import { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { StringEnum, Type, safeParseSchema } from '../../schema/index.js';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
 import {
   AmbiguousSessionError,
@@ -13,13 +13,15 @@ import { resolveSessionRef, respondToPermission } from './session.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
-const PermissionResponseSchema = z.object({
-  approved: z.boolean(),
-  remember: z.boolean().optional(),
-  scope: z.enum(['once', 'session', 'project']).optional(),
-  targetMode: z.enum(['default', 'autoEdit', 'plan', 'yolo']).optional(),
-  feedback: z.string().optional(),
-  answers: z.record(z.union([z.string(), z.array(z.string())])).optional(),
+const PermissionResponseSchema = Type.Object({
+  approved: Type.Boolean(),
+  remember: Type.Optional(Type.Boolean()),
+  scope: Type.Optional(StringEnum(['once', 'session', 'project'])),
+  targetMode: Type.Optional(StringEnum(['default', 'autoEdit', 'plan', 'yolo'])),
+  feedback: Type.Optional(Type.String()),
+  answers: Type.Optional(
+    Type.Record(Type.String(), Type.Union([Type.String(), Type.Array(Type.String())]))
+  ),
 });
 
 export const PermissionRoutes = () => {
@@ -36,7 +38,7 @@ export const PermissionRoutes = () => {
 
     try {
       const body = await c.req.json();
-      const parsed = PermissionResponseSchema.safeParse(body);
+      const parsed = safeParseSchema(PermissionResponseSchema, body);
 
       if (!parsed.success) {
         throw new BadRequestError('Invalid permission response format');

@@ -1,10 +1,10 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { z } from 'zod';
 import { getOriginalCwd } from '../bootstrap/state.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
 import { PermissionMode, type RuntimeConfig } from '../config/types.js';
+import { StringEnum, Type, safeParseSchema } from '../schema/index.js';
 
 const RUNTIME_SETTING_FIELDS = [
   'systemPrompt',
@@ -32,88 +32,94 @@ const KNOWN_SETTING_FIELDS = new Set([
   ...RUNTIME_SETTING_FIELDS,
 ]);
 
-const RuntimeSettingsSchema = z
-  .object({
-    currentModelId: z.string().optional(),
-    models: z
-      .array(
-        z.object({
-          id: z.string().min(1),
-          name: z.string().min(1),
-          provider: z.string().min(1),
-          apiKey: z.string(),
-          baseUrl: z.string(),
-          model: z.string().min(1),
-          temperature: z.number().optional(),
-          maxContextTokens: z.number().positive().optional(),
-          maxOutputTokens: z.number().positive().optional(),
-          topP: z.number().optional(),
-          topK: z.number().optional(),
-          supportsThinking: z.boolean().optional(),
-          thinkingBudget: z.number().positive().optional(),
-          thinkingMode: z.enum(['off', 'budget', 'adaptive']).optional(),
-          apiVersion: z.string().optional(),
-          projectId: z.string().optional(),
-          fallbackModels: z.array(z.string()).optional(),
-          enablePromptCaching: z.boolean().optional(),
-          customHeaders: z.record(z.string()).optional(),
-          timeout: z.number().positive().optional(),
-          maxRetries: z.number().int().min(0).optional(),
-        })
-      )
-      .optional(),
-    temperature: z.number().optional(),
-    maxContextTokens: z.number().positive().optional(),
-    maxOutputTokens: z.number().positive().optional(),
-    stream: z.boolean().optional(),
-    topP: z.number().optional(),
-    topK: z.number().optional(),
-    timeout: z.number().positive().optional(),
-    theme: z.string().optional(),
-    uiTheme: z.enum(['light', 'dark', 'system']).optional(),
-    language: z.string().optional(),
-    fontSize: z.number().positive().optional(),
-    autoSaveSessions: z.boolean().optional(),
-    notifyBuild: z.boolean().optional(),
-    notifyErrors: z.boolean().optional(),
-    notifySounds: z.boolean().optional(),
-    privacyTelemetry: z.boolean().optional(),
-    privacyCrash: z.boolean().optional(),
-    debug: z.union([z.boolean(), z.string()]).optional(),
-    mcpEnabled: z.boolean().optional(),
-    mcpServers: z.record(z.record(z.unknown())).optional(),
-    permissionMode: z.nativeEnum(PermissionMode).optional(),
-    maxTurns: z.number().int().min(-1).max(MAX_AGENT_TURNS).optional(),
-    systemPrompt: z.string().optional(),
-    appendSystemPrompt: z.string().optional(),
-    initialMessage: z.string().optional(),
-    resumeSessionId: z.string().optional(),
-    forkSession: z.boolean().optional(),
-    allowedTools: z.array(z.string().min(1)).optional(),
-    disallowedTools: z.array(z.string().min(1)).optional(),
-    mcpConfigPaths: z.array(z.string().min(1)).optional(),
-    strictMcpConfig: z.boolean().optional(),
-    model: z.string().min(1).optional(),
-    addDirs: z.array(z.string().min(1)).optional(),
-    outputFormat: z.enum(['text', 'json', 'stream-json', 'jsonl']).optional(),
-    inputFormat: z.enum(['text', 'stream-json']).optional(),
-    print: z.boolean().optional(),
-    includePartialMessages: z.boolean().optional(),
-    replayUserMessages: z.boolean().optional(),
-    agentsConfig: z.string().optional(),
-    settingSources: z.string().optional(),
-    permissions: z
-      .object({
-        allow: z.array(z.string()).optional(),
-        ask: z.array(z.string()).optional(),
-        deny: z.array(z.string()).optional(),
+const PositiveNumber = Type.Number({ exclusiveMinimum: 0 });
+const NonEmptyString = Type.String({ minLength: 1 });
+const StringArray = Type.Array(Type.String());
+
+const RuntimeSettingsSchema = Type.Object({
+  currentModelId: Type.Optional(Type.String()),
+  models: Type.Optional(
+    Type.Array(
+      Type.Object({
+        id: NonEmptyString,
+        displayName: Type.Optional(NonEmptyString),
+        provider: NonEmptyString,
+        model: NonEmptyString,
+        overrides: Type.Optional(
+          Type.Object({
+            baseUrl: Type.Optional(Type.String()),
+            temperature: Type.Optional(Type.Number()),
+            maxOutputTokens: Type.Optional(PositiveNumber),
+            timeout: Type.Optional(PositiveNumber),
+            apiVersion: Type.Optional(Type.String()),
+            customHeaders: Type.Optional(Type.Record(Type.String(), Type.String())),
+            maxRetries: Type.Optional(Type.Integer({ minimum: 0 })),
+            enablePromptCaching: Type.Optional(Type.Boolean()),
+          })
+        ),
+        fallbackModels: Type.Optional(
+          Type.Array(
+            Type.Object({
+              provider: NonEmptyString,
+              model: NonEmptyString,
+            })
+          )
+        ),
       })
-      .optional(),
-    env: z.record(z.string()).optional(),
-    hooks: z.record(z.unknown()).optional(),
-    disableAllHooks: z.boolean().optional(),
-  })
-  .passthrough();
+    )
+  ),
+  temperature: Type.Optional(Type.Number()),
+  maxOutputTokens: Type.Optional(PositiveNumber),
+  stream: Type.Optional(Type.Boolean()),
+  topP: Type.Optional(Type.Number()),
+  topK: Type.Optional(Type.Number()),
+  timeout: Type.Optional(PositiveNumber),
+  theme: Type.Optional(Type.String()),
+  uiTheme: Type.Optional(StringEnum(['light', 'dark', 'system'])),
+  language: Type.Optional(Type.String()),
+  fontSize: Type.Optional(PositiveNumber),
+  autoSaveSessions: Type.Optional(Type.Boolean()),
+  notifyBuild: Type.Optional(Type.Boolean()),
+  notifyErrors: Type.Optional(Type.Boolean()),
+  notifySounds: Type.Optional(Type.Boolean()),
+  privacyTelemetry: Type.Optional(Type.Boolean()),
+  privacyCrash: Type.Optional(Type.Boolean()),
+  debug: Type.Optional(Type.Union([Type.Boolean(), Type.String()])),
+  mcpEnabled: Type.Optional(Type.Boolean()),
+  mcpServers: Type.Optional(
+    Type.Record(Type.String(), Type.Record(Type.String(), Type.Unknown()))
+  ),
+  permissionMode: Type.Optional(Type.Enum(PermissionMode)),
+  maxTurns: Type.Optional(Type.Integer({ minimum: -1, maximum: MAX_AGENT_TURNS })),
+  systemPrompt: Type.Optional(Type.String()),
+  appendSystemPrompt: Type.Optional(Type.String()),
+  initialMessage: Type.Optional(Type.String()),
+  resumeSessionId: Type.Optional(Type.String()),
+  forkSession: Type.Optional(Type.Boolean()),
+  allowedTools: Type.Optional(Type.Array(NonEmptyString)),
+  disallowedTools: Type.Optional(Type.Array(NonEmptyString)),
+  mcpConfigPaths: Type.Optional(Type.Array(NonEmptyString)),
+  strictMcpConfig: Type.Optional(Type.Boolean()),
+  model: Type.Optional(NonEmptyString),
+  addDirs: Type.Optional(Type.Array(NonEmptyString)),
+  outputFormat: Type.Optional(StringEnum(['text', 'json', 'stream-json', 'jsonl'])),
+  inputFormat: Type.Optional(StringEnum(['text', 'stream-json'])),
+  print: Type.Optional(Type.Boolean()),
+  includePartialMessages: Type.Optional(Type.Boolean()),
+  replayUserMessages: Type.Optional(Type.Boolean()),
+  agentsConfig: Type.Optional(Type.String()),
+  settingSources: Type.Optional(Type.String()),
+  permissions: Type.Optional(
+    Type.Object({
+      allow: Type.Optional(StringArray),
+      ask: Type.Optional(StringArray),
+      deny: Type.Optional(StringArray),
+    })
+  ),
+  env: Type.Optional(Type.Record(Type.String(), Type.String())),
+  hooks: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  disableAllHooks: Type.Optional(Type.Boolean()),
+});
 
 const ARGUMENT_MAPPINGS = [
   ['systemPrompt', 'systemPrompt'],
@@ -157,7 +163,7 @@ function parseSettingsJson(content: string, source: string): Partial<RuntimeConf
     }
   }
 
-  const validation = RuntimeSettingsSchema.safeParse(parsed);
+  const validation = safeParseSchema(RuntimeSettingsSchema, parsed);
   if (!validation.success) {
     const detail = validation.error.issues
       .map((issue) => `${issue.path.join('.') || 'settings'}: ${issue.message}`)

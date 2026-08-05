@@ -132,14 +132,14 @@ function configureModel(modelConfig: TestModelConfig): string {
     models: [
       {
         id: modelId,
-        name: modelConfig.name,
+        displayName: modelConfig.name,
         provider: modelConfig.provider,
-        apiKey: modelConfig.apiKey,
-        baseUrl: modelConfig.baseURL ?? '',
         model: modelConfig.model,
-        maxContextTokens: 64_000,
-        maxOutputTokens: 4_096,
-        timeout: 180_000,
+        overrides: {
+          baseUrl: modelConfig.baseURL,
+          maxOutputTokens: 4_096,
+          timeout: 180_000,
+        },
       },
     ],
   });

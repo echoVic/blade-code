@@ -30,11 +30,9 @@ export const createDefaultMockConfig = (
   models: [
     {
       id: 'mock-model',
-      name: 'Mock Model',
-      provider: 'openai-compatible',
-      apiKey: 'mock-api-key',
-      baseUrl: 'https://api.mock.com',
-      model: 'gpt-4',
+      displayName: 'Mock Model',
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
     },
   ],
   temperature: 0.7,

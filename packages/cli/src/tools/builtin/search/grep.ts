@@ -3,13 +3,13 @@ import { existsSync } from 'fs';
 import { readdir, readFile } from 'fs/promises';
 import { join, relative } from 'path';
 import picomatch from 'picomatch';
-import { z } from 'zod';
+import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { DEFAULT_EXCLUDE_DIRS } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, GrepMetadata, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { ToolSchemas } from '../../validation/toolSchemas.js';
 
 /**
  * 搜索策略枚举
@@ -630,73 +630,75 @@ export const grepTool = createTool({
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true, // 纯读操作，无副作用
 
-  // Zod Schema 定义
-  schema: z.object({
+  schema: Type.Object({
     pattern: ToolSchemas.pattern({
       description: 'The regular expression pattern to search for in file contents',
     }),
-    path: z
-      .string()
-      .optional()
-      .describe(
-        'File or directory to search in (rg PATH). Defaults to current working directory'
-      ),
-    glob: z
-      .string()
-      .optional()
-      .describe(
-        'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}") - maps to rg --glob'
-      ),
-    type: z
-      .string()
-      .optional()
-      .describe(
-        'File type to search (rg --type). Common types: js, py, rust, go, java, etc. More efficient than include for standard file types'
-      ),
-    output_mode: z
-      .enum(['content', 'files_with_matches', 'count'])
-      .default('files_with_matches')
-      .describe(
-        'Output mode: "content" shows matching lines (supports -A/-B/-C context, -n line numbers, head_limit), "files_with_matches" shows file paths (supports head_limit), "count" shows match counts (supports head_limit). Defaults to "files_with_matches"'
-      ),
-    '-i': z.boolean().optional().describe('Case insensitive search (rg -i)'),
-    '-n': z
-      .boolean()
-      .default(true)
-      .describe(
-        'Show line numbers in output (rg -n). Requires output_mode: "content", ignored otherwise. Defaults to true'
-      ),
-    '-B': ToolSchemas.nonNegativeInt()
-      .optional()
-      .describe(
-        'Number of lines to show before each match (rg -B). Requires output_mode: "content", ignored otherwise'
-      ),
-    '-A': ToolSchemas.nonNegativeInt()
-      .optional()
-      .describe(
-        'Number of lines to show after each match (rg -A). Requires output_mode: "content", ignored otherwise'
-      ),
-    '-C': ToolSchemas.nonNegativeInt()
-      .optional()
-      .describe(
-        'Number of lines to show before and after each match (rg -C). Requires output_mode: "content", ignored otherwise'
-      ),
-    head_limit: ToolSchemas.positiveInt()
-      .optional()
-      .describe(
-        'Limit output to first N lines/entries, equivalent to "| head -N". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults based on "cap" experiment value: 0 (unlimited), 20, or 100'
-      ),
-    offset: ToolSchemas.nonNegativeInt()
-      .optional()
-      .describe(
-        'Skip first N lines/entries before applying head_limit, equivalent to "| tail -n +N | head -N". Works across all output modes. Defaults to 0'
-      ),
-    multiline: z
-      .boolean()
-      .default(false)
-      .describe(
-        'Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false'
-      ),
+    path: Type.Optional(
+      Type.String({
+        description:
+          'File or directory to search in (rg PATH). Defaults to current working directory',
+      })
+    ),
+    glob: Type.Optional(
+      Type.String({
+        description:
+          'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}") - maps to rg --glob',
+      })
+    ),
+    type: Type.Optional(
+      Type.String({
+        description:
+          'File type to search (rg --type). Common types: js, py, rust, go, java, etc.',
+      })
+    ),
+    output_mode: Default(
+      StringEnum(['content', 'files_with_matches', 'count'], {
+        description:
+          'Output mode: content, files_with_matches, or count. Defaults to files_with_matches.',
+      }),
+      'files_with_matches'
+    ),
+    '-i': Type.Optional(
+      Type.Boolean({ description: 'Case insensitive search (rg -i)' })
+    ),
+    '-n': Default(
+      Type.Boolean({
+        description: 'Show line numbers in content output (rg -n). Defaults to true.',
+      }),
+      true
+    ),
+    '-B': Type.Optional(
+      ToolSchemas.nonNegativeInt({
+        description: 'Lines before each match (rg -B)',
+      })
+    ),
+    '-A': Type.Optional(
+      ToolSchemas.nonNegativeInt({
+        description: 'Lines after each match (rg -A)',
+      })
+    ),
+    '-C': Type.Optional(
+      ToolSchemas.nonNegativeInt({
+        description: 'Lines before and after each match (rg -C)',
+      })
+    ),
+    head_limit: Type.Optional(
+      ToolSchemas.positiveInt({
+        description: 'Limit output to first N lines or entries',
+      })
+    ),
+    offset: Type.Optional(
+      ToolSchemas.nonNegativeInt({
+        description: 'Skip first N lines or entries before applying head_limit',
+      })
+    ),
+    multiline: Default(
+      Type.Boolean({
+        description: 'Enable multiline matching (rg -U --multiline-dotall)',
+      }),
+      false
+    ),
   }),
 
   // 工具描述（对齐 Claude Code 官方）

@@ -149,8 +149,13 @@ vi.mock('../../../../src/mcp/McpRegistry.js', () => ({
 vi.mock('../../../../src/store/vanilla.js', () => ({
   getConfig: vi.fn(() => ({
     models: [
-      { id: 'gpt-4', name: 'GPT-4', provider: 'openai' },
-      { id: 'gpt-3.5', name: 'GPT-3.5', provider: 'openai' },
+      { id: 'gpt-4', displayName: 'GPT-4', provider: 'openai', model: 'gpt-4' },
+      {
+        id: 'gpt-3.5',
+        displayName: 'GPT-3.5',
+        provider: 'openai',
+        model: 'gpt-4.1-mini',
+      },
     ],
     currentModelId: 'gpt-4',
   })),
@@ -757,12 +762,12 @@ describe('BladeAgent', () => {
         {
           modelId: 'gpt-4',
           name: 'GPT-4',
-          description: 'Provider: openai',
+          description: 'openai/gpt-4',
         },
         {
           modelId: 'gpt-3.5',
           name: 'GPT-3.5',
-          description: 'Provider: openai',
+          description: 'openai/gpt-4.1-mini',
         },
       ]);
       expect(response.models?.currentModelId).toBe('gpt-4');

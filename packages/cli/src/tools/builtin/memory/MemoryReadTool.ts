@@ -2,8 +2,8 @@
  * MemoryReadTool - 读取项目记忆文件
  */
 
-import { z } from 'zod';
 import { AutoMemoryManager } from '../../../memory/AutoMemoryManager.js';
+import { Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
@@ -15,12 +15,11 @@ export const memoryReadTool = createTool({
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true, // 纯读操作，无副作用
 
-  schema: z.object({
-    topic: z
-      .string()
-      .describe(
-        'Topic name to read (e.g., "debugging", "patterns", "MEMORY" for the index, "_list" to list all topics). Without .md extension.'
-      ),
+  schema: Type.Object({
+    topic: Type.String({
+      description:
+        'Topic name to read (e.g., "debugging", "patterns", "MEMORY" for the index, "_list" to list all topics). Without .md extension.',
+    }),
   }),
 
   description: {

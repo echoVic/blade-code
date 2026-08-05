@@ -4,61 +4,72 @@
  * The external wire format intentionally uses snake_case so tests and sandbox
  * integrations can consume it without depending on internal TypeScript naming.
  */
-import { z } from 'zod';
+import {
+  Runtime,
+  type Static,
+  StringEnum,
+  type TSchema,
+  Type,
+} from '../schema/index.js';
 import { TaskListItemSchema } from '../tools/builtin/task/taskListTypes.js';
 
 export const HEADLESS_EVENT_VERSION = 1 as const;
 
-const HeadlessEventBaseSchema = z.object({
-  event_version: z.literal(HEADLESS_EVENT_VERSION),
+function event<T extends Record<string, TSchema>>(properties: T) {
+  return Type.Object({
+    event_version: Type.Literal(HEADLESS_EVENT_VERSION),
+    ...properties,
+  });
+}
+
+const ContentDeltaEventSchema = event({
+  type: Type.Literal('content_delta'),
+  delta: Type.String(),
 });
 
-const ContentDeltaEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('content_delta'),
-  delta: z.string(),
+const ThinkingDeltaEventSchema = event({
+  type: Type.Literal('thinking_delta'),
+  delta: Type.String(),
 });
 
-const ThinkingDeltaEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('thinking_delta'),
-  delta: z.string(),
+const ThinkingEventSchema = event({
+  type: Type.Literal('thinking'),
+  content: Type.String(),
 });
 
-const ThinkingEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('thinking'),
-  content: z.string(),
+const StreamEndEventSchema = event({
+  type: Type.Literal('stream_end'),
 });
 
-const StreamEndEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('stream_end'),
+const ContentEventSchema = event({
+  type: Type.Literal('content'),
+  content: Type.String(),
 });
 
-const ContentEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('content'),
-  content: z.string(),
+const ToolKindSchema = StringEnum(['readonly', 'write', 'execute']);
+
+const ToolStartEventSchema = event({
+  type: Type.Literal('tool_start'),
+  tool_name: Type.String(),
+  summary: Type.String(),
+  target: Type.Optional(Type.String()),
+  tool_kind: Type.Optional(ToolKindSchema),
 });
 
-const ToolStartEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('tool_start'),
-  tool_name: z.string(),
-  summary: z.string(),
-  target: z.string().optional(),
-  tool_kind: z.enum(['readonly', 'write', 'execute']).optional(),
+const ToolResultEventSchema = event({
+  type: Type.Literal('tool_result'),
+  tool_name: Type.String(),
+  summary: Type.String(),
+  target: Type.Optional(Type.String()),
+  tool_kind: Type.Optional(ToolKindSchema),
+  success: Type.Optional(Type.Boolean()),
+  error_type: Type.Optional(Type.String()),
+  error_message: Type.Optional(Type.String()),
 });
 
-const ToolResultEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('tool_result'),
-  tool_name: z.string(),
-  summary: z.string(),
-  target: z.string().optional(),
-  tool_kind: z.enum(['readonly', 'write', 'execute']).optional(),
-  success: z.boolean().optional(),
-  error_type: z.string().optional(),
-  error_message: z.string().optional(),
-});
-
-const PhaseEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('phase'),
-  phase: z.enum([
+const PhaseEventSchema = event({
+  type: Type.Literal('phase'),
+  phase: StringEnum([
     'turn',
     'searching',
     'inspecting',
@@ -66,86 +77,91 @@ const PhaseEventSchema = HeadlessEventBaseSchema.extend({
     'executing',
     'completed',
   ]),
-  status: z.enum(['ongoing', 'hit', 'done']),
-  message: z.string(),
-  turn: z.number().optional(),
-  tool_name: z.string().optional(),
-  target: z.string().optional(),
+  status: StringEnum(['ongoing', 'hit', 'done']),
+  message: Type.String(),
+  turn: Type.Optional(Type.Number()),
+  tool_name: Type.Optional(Type.String()),
+  target: Type.Optional(Type.String()),
 });
 
-const ToolDetailEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('tool_detail'),
-  tool_name: z.string(),
-  detail: z.string(),
+const ToolDetailEventSchema = event({
+  type: Type.Literal('tool_detail'),
+  tool_name: Type.String(),
+  detail: Type.String(),
 });
 
-const TaskUpdateEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('task_update'),
-  tasks: z.array(TaskListItemSchema),
+const TaskUpdateEventSchema = event({
+  type: Type.Literal('task_update'),
+  tasks: Type.Array(TaskListItemSchema),
 });
 
-const SubagentEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('subagent'),
-  state: z.enum(['spawned', 'completed']),
-  session_id: z.string(),
-  subagent_type: z.string().optional(),
-  success: z.boolean().optional(),
-  summary: z.string().optional(),
-  resumed_from: z.string().optional(),
-  root_agent_id: z.string().optional(),
-  resume_depth: z.number().int().nonnegative().optional(),
+const SubagentEventSchema = event({
+  type: Type.Literal('subagent'),
+  state: StringEnum(['spawned', 'completed']),
+  session_id: Type.String(),
+  subagent_type: Type.Optional(Type.String()),
+  success: Type.Optional(Type.Boolean()),
+  summary: Type.Optional(Type.String()),
+  resumed_from: Type.Optional(Type.String()),
+  root_agent_id: Type.Optional(Type.String()),
+  resume_depth: Type.Optional(Type.Integer({ minimum: 0 })),
 });
 
-const TokenUsageEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('token_usage'),
-  input_tokens: z.number(),
-  output_tokens: z.number(),
-  total_tokens: z.number(),
-  max_context_tokens: z.number(),
+const TokenUsageEventSchema = event({
+  type: Type.Literal('token_usage'),
+  input_tokens: Type.Number(),
+  output_tokens: Type.Number(),
+  total_tokens: Type.Number(),
+  max_context_tokens: Type.Number(),
+  cache_read_tokens: Type.Optional(Type.Number()),
+  cache_write_tokens: Type.Optional(Type.Number()),
+  cost_usd: Type.Optional(Type.Number()),
 });
 
-const CompactingEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('compacting'),
-  state: z.enum(['started', 'completed']),
+const CompactingEventSchema = event({
+  type: Type.Literal('compacting'),
+  state: StringEnum(['started', 'completed']),
 });
 
-const TurnLimitEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('turn_limit'),
-  turns_count: z.number(),
-  action: z.literal('continue'),
+const TurnLimitEventSchema = event({
+  type: Type.Literal('turn_limit'),
+  turns_count: Type.Number(),
+  action: Type.Literal('continue'),
 });
 
-const OutputEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('output'),
-  content: z.string(),
-  exit_code: z.number(),
+const OutputEventSchema = event({
+  type: Type.Literal('output'),
+  content: Type.String(),
+  exit_code: Type.Number(),
 });
 
-const ErrorEventSchema = HeadlessEventBaseSchema.extend({
-  type: z.literal('error'),
-  message: z.string(),
+const ErrorEventSchema = event({
+  type: Type.Literal('error'),
+  message: Type.String(),
 });
 
-export const HeadlessJsonlEventSchema = z.discriminatedUnion('type', [
-  ContentDeltaEventSchema,
-  ThinkingDeltaEventSchema,
-  ThinkingEventSchema,
-  StreamEndEventSchema,
-  ContentEventSchema,
-  ToolStartEventSchema,
-  ToolResultEventSchema,
-  PhaseEventSchema,
-  ToolDetailEventSchema,
-  TaskUpdateEventSchema,
-  SubagentEventSchema,
-  TokenUsageEventSchema,
-  CompactingEventSchema,
-  TurnLimitEventSchema,
-  OutputEventSchema,
-  ErrorEventSchema,
-]);
+export const HeadlessJsonlEventSchema = Runtime(
+  Type.Union([
+    ContentDeltaEventSchema,
+    ThinkingDeltaEventSchema,
+    ThinkingEventSchema,
+    StreamEndEventSchema,
+    ContentEventSchema,
+    ToolStartEventSchema,
+    ToolResultEventSchema,
+    PhaseEventSchema,
+    ToolDetailEventSchema,
+    TaskUpdateEventSchema,
+    SubagentEventSchema,
+    TokenUsageEventSchema,
+    CompactingEventSchema,
+    TurnLimitEventSchema,
+    OutputEventSchema,
+    ErrorEventSchema,
+  ])
+);
 
-export type HeadlessJsonlEvent = z.infer<typeof HeadlessJsonlEventSchema>;
+export type HeadlessJsonlEvent = Static<typeof HeadlessJsonlEventSchema>;
 export type HeadlessJsonlEventType = HeadlessJsonlEvent['type'];
 export type HeadlessJsonlEventPayload<TType extends HeadlessJsonlEventType> = Omit<
   Extract<HeadlessJsonlEvent, { type: TType }>,

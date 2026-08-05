@@ -179,6 +179,11 @@ describe('sessionSlice multimodal sendMessage', () => {
         totalTokens: 0,
         maxContextTokens: 128000,
         isDefaultMaxTokens: true,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        estimatedCostUsd: 0,
       },
       eventUnsubscribe: null,
       prepareEventSubscription: vi.fn().mockResolvedValue(() => undefined),
@@ -1735,6 +1740,11 @@ describe('sessionSlice multimodal sendMessage', () => {
         totalTokens: 30,
         maxContextTokens: 128000,
         isDefaultMaxTokens: true,
+        totalInputTokens: 10,
+        totalOutputTokens: 20,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        estimatedCostUsd: 0,
       },
     });
 

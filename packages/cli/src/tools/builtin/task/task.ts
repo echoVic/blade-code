@@ -11,7 +11,6 @@
 
 import path from 'node:path';
 import { nanoid } from 'nanoid';
-import { z } from 'zod';
 import type { LoopEvent } from '../../../agent/loop/types.js';
 import {
   type AgentSession,
@@ -34,6 +33,7 @@ import type {
 } from '../../../agent/subagents/types.js';
 import { PermissionMode } from '../../../config/types.js';
 import { HookManager } from '../../../hooks/HookManager.js';
+import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { Bus } from '../../../server/bus.js';
 import { vanillaStore } from '../../../store/vanilla.js';
 import {
@@ -85,7 +85,7 @@ function extractUserFriendlyError(error: Error): string {
 
 /**
  * 验证 subagent 类型是否有效（运行时验证）
- * 不能使用 z.enum() 因为它在模块加载时调用，此时 registry 还未初始化
+ * 不能使用静态 enum，因为 registry 在模块加载时尚未初始化
  */
 function isValidSubagentType(type: string): boolean {
   const types = subagentRegistry.getAllNames();
@@ -152,71 +152,55 @@ export const taskTool = createTool({
   isReadOnly: true,
   isConcurrencySafe: false, // 开子代理，有副作用
 
-  // Zod Schema 定义
-  // 注意：使用 z.string() + refine 而非 z.enum()，因为 enum 在模块加载时求值，
-  // 此时 subagentRegistry 还未初始化，会导致只接受默认值
-  schema: z
-    .object({
-      subagent_type: z
-        .string()
-        .optional()
-        .describe(
-          'Subagent type to use. Required for a fresh run; optional for resume_from.'
-        ),
-      description: z
-        .string()
-        .min(3)
-        .max(100)
-        .describe('Short task description (3-5 words)'),
-      prompt: z.string().min(10).describe('Detailed task instructions'),
-      run_in_background: z
-        .boolean()
-        .default(false)
-        .describe(
-          'Set to true to run this agent in the background. Use TaskOutput to read the output later.'
-        ),
-      isolation: z
-        .enum(['none', 'worktree'])
-        .optional()
-        .describe(
-          'Filesystem isolation for this child. Use "worktree" to prevent edits from affecting the parent workspace.'
-        ),
-      resume: z.string().optional().describe('Deprecated alias for resume_from.'),
-      resume_from: z
-        .string()
-        .optional()
-        .describe(
-          'Completed agent ID to resume. The source type, model, permissions, workspace, and transcript are inherited.'
-        ),
-      subagent_session_id: z
-        .string()
-        .optional()
-        .describe('Internal subagent session id for tracking'),
-    })
-    .superRefine((value, ctx) => {
-      const resumeFrom = value.resume_from ?? value.resume;
-      if (!resumeFrom && !value.subagent_type) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['subagent_type'],
-          message: 'subagent_type is required for a fresh Task run',
-        });
-      }
-      if (value.resume_from && value.resume && value.resume_from !== value.resume) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['resume_from'],
-          message: 'resume_from and resume must reference the same agent',
-        });
-      }
-      if (value.subagent_type && !isValidSubagentType(value.subagent_type)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['subagent_type'],
-          message: `Invalid subagent type: "${value.subagent_type}". Available: ${getAvailableSubagentTypesMessage()}`,
-        });
-      }
+  schema: Type.Object({
+    subagent_type: Type.Optional(
+      Type.Refine(
+        Type.String({
+          description:
+            'Subagent type to use. Required for a fresh run; optional for resume_from.',
+        }),
+        isValidSubagentType,
+        (value) =>
+          `Invalid subagent type: "${value}". Available: ${getAvailableSubagentTypesMessage()}`
+      )
+    ),
+    description: Type.String({
+      minLength: 3,
+      maxLength: 100,
+      description: 'Short task description (3-5 words)',
     }),
+    prompt: Type.String({
+      minLength: 10,
+      description: 'Detailed task instructions',
+    }),
+    run_in_background: Default(
+      Type.Boolean({
+        description:
+          'Set true to run in the background. Use TaskOutput to read output later.',
+      }),
+      false
+    ),
+    isolation: Type.Optional(
+      StringEnum(['none', 'worktree'], {
+        description:
+          'Filesystem isolation. Use worktree to prevent edits affecting the parent workspace.',
+      })
+    ),
+    resume: Type.Optional(
+      Type.String({
+        description: 'Deprecated alias for resume_from.',
+      })
+    ),
+    resume_from: Type.Optional(
+      Type.String({
+        description:
+          'Completed agent ID to resume. The source type, model, permissions, workspace, and transcript are inherited.',
+      })
+    ),
+    subagent_session_id: Type.Optional(
+      Type.String({ description: 'Internal subagent session id for tracking' })
+    ),
+  }),
 
   // 工具描述
   description: {

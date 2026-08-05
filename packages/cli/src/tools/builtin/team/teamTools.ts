@@ -1,6 +1,5 @@
 import * as os from 'os';
 import * as path from 'path';
-import { z } from 'zod';
 import type { AgentSession } from '../../../agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
 import { subagentRegistry } from '../../../agent/subagents/SubagentRegistry.js';
@@ -9,22 +8,26 @@ import {
   type TeamMember,
   TeamStore,
 } from '../../../agent/teams/TeamStore.js';
+import { Default, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 
-const memberSchema = z.object({
-  name: z
-    .string()
-    .min(1)
-    .describe('Human-readable teammate name, e.g. researcher or test-runner'),
-  subagent_type: z
-    .string()
-    .min(1)
-    .describe('Registered subagent type to launch for this teammate'),
-  description: z.string().min(3).max(100).optional(),
-  prompt: z.string().min(10).describe('Detailed assignment for this teammate'),
+const memberSchema = Type.Object({
+  name: Type.String({
+    minLength: 1,
+    description: 'Human-readable teammate name, e.g. researcher or test-runner',
+  }),
+  subagent_type: Type.String({
+    minLength: 1,
+    description: 'Registered subagent type to launch for this teammate',
+  }),
+  description: Type.Optional(Type.String({ minLength: 3, maxLength: 100 })),
+  prompt: Type.String({
+    minLength: 10,
+    description: 'Detailed assignment for this teammate',
+  }),
 });
 
 export function createTeamTools(opts?: { sessionId?: string; configDir?: string }) {
@@ -44,17 +47,23 @@ function createTeamCreateTool(opts: { sessionId: string; configDir: string }) {
     displayName: 'Team Create',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: false,
-    schema: z.object({
-      team_name: z.string().min(1).describe('Name for the new agent team'),
-      description: z.string().optional().describe('Team description or purpose'),
-      agent_type: z
-        .string()
-        .optional()
-        .describe('Optional role/type label for the team lead'),
-      members: z
-        .array(memberSchema)
-        .default([])
-        .describe('Initial teammates to launch as background agents'),
+    schema: Type.Object({
+      team_name: Type.String({
+        minLength: 1,
+        description: 'Name for the new agent team',
+      }),
+      description: Type.Optional(
+        Type.String({ description: 'Team description or purpose' })
+      ),
+      agent_type: Type.Optional(
+        Type.String({ description: 'Optional role/type label for the team lead' })
+      ),
+      members: Default(
+        Type.Array(memberSchema, {
+          description: 'Initial teammates to launch as background agents',
+        }),
+        []
+      ),
     }),
     description: {
       short: 'Create an agent team and optionally launch teammate subagents',
@@ -183,11 +192,12 @@ function createTeamStatusTool(opts: { configDir: string }) {
     displayName: 'Team Status',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: true,
-    schema: z.object({
-      team_name: z
-        .string()
-        .optional()
-        .describe('Team name to inspect. Omit to list all teams.'),
+    schema: Type.Object({
+      team_name: Type.Optional(
+        Type.String({
+          description: 'Team name to inspect. Omit to list all teams.',
+        })
+      ),
     }),
     description: {
       short: 'List agent teams or inspect one team with teammate statuses',
@@ -245,12 +255,17 @@ function createTeamDeleteTool(opts: { configDir: string }) {
     displayName: 'Team Delete',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: false,
-    schema: z.object({
-      team_name: z.string().min(1).describe('Team name to delete'),
-      kill_running: z
-        .boolean()
-        .default(true)
-        .describe('Whether to cancel running teammate agents'),
+    schema: Type.Object({
+      team_name: Type.String({
+        minLength: 1,
+        description: 'Team name to delete',
+      }),
+      kill_running: Default(
+        Type.Boolean({
+          description: 'Whether to cancel running teammate agents',
+        }),
+        true
+      ),
     }),
     description: {
       short: 'Mark an agent team deleted and optionally cancel running teammates',

@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from 'node:path';
-import { z } from 'zod';
 import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
+import { Default, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { spawnOwnedProcess } from '../../../utils/process/OwnedProcessTree.js';
 import {
@@ -16,7 +16,7 @@ import type {
   ToolResult,
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { ToolSchemas } from '../../validation/toolSchemas.js';
 import { BackgroundShellManager } from './BackgroundShellManager.js';
 import { OutputTruncator } from './OutputTruncator.js';
 import {
@@ -42,23 +42,24 @@ export const bashTool = createTool({
   kind: ToolKind.Execute,
   isConcurrencySafe: false, // 命令执行，可能有副作用
 
-  // Zod Schema 定义
-  schema: z.object({
+  schema: Type.Object({
     command: ToolSchemas.command({
       description: 'Bash command to execute',
     }),
     timeout: ToolSchemas.timeout(1000, 300000, 30000),
-    cwd: z
-      .string()
-      .optional()
-      .describe(
-        'Working directory (optional; applies only to this command). To persist, use cd'
-      ),
+    cwd: Type.Optional(
+      Type.String({
+        description:
+          'Working directory (optional; applies only to this command). To persist, use cd',
+      })
+    ),
     env: ToolSchemas.environment(),
-    run_in_background: z
-      .boolean()
-      .default(false)
-      .describe('Run in background (suitable for long-running commands)'),
+    run_in_background: Default(
+      Type.Boolean({
+        description: 'Run in background (suitable for long-running commands)',
+      }),
+      false
+    ),
   }),
 
   // 工具描述

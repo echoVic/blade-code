@@ -2,7 +2,7 @@
  * 统一的错误分类与格式化模块
  *
  * 提供 `classifyError` 作为唯一的错误分类入口，
- * 统一处理 AbortError、Vercel AI SDK RetryError/APICallError、
+ * 统一处理 AbortError、嵌套 provider/API 错误、
  * 视觉模型不支持等所有错误类型，消除内层/外层 catch 的双轨分叉。
  */
 
@@ -20,12 +20,12 @@ export interface ExtractedError {
 
 /**
  * 从 API 错误中提取用户友好的错误信息
- * 处理 Vercel AI SDK 的 RetryError/APICallError 嵌套结构
+ * 处理兼容层和 provider SDK 的嵌套错误结构
  */
 function extractFriendlyErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) return '未知错误';
 
-  // Vercel AI SDK RetryError: 从嵌套的 lastError 中提取根因
+  // 兼容历史错误结构：从嵌套的 lastError 中提取根因
   const retryError = error as Error & { lastError?: Error };
   const rootError = retryError.lastError ?? error;
 

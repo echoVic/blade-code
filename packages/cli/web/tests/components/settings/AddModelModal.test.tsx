@@ -3,7 +3,6 @@
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-
 import { AddModelModal } from '../../../src/components/settings/AddModelModal';
 
 describe('AddModelModal', () => {
@@ -14,193 +13,121 @@ describe('AddModelModal', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
+    global.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const data =
+        url === '/providers'
+          ? [
+              {
+                id: 'deepseek',
+                name: 'DeepSeek',
+                modelCount: 2,
+                supportsApiKey: true,
+                configured: false,
+              },
+            ]
+          : [
+              {
+                id: 'deepseek-v4-pro',
+                name: 'DeepSeek V4 Pro',
+                contextWindow: 128000,
+                reasoning: true,
+                input: ['text'],
+              },
+            ];
+      return Promise.resolve({ ok: true, json: async () => data } as Response);
+    }) as typeof fetch;
   });
 
   afterEach(() => {
-    act(() => {
-      root.unmount();
-    });
+    act(() => root.unmount());
     container.remove();
   });
 
-  const setInputValue = (input: HTMLInputElement, value: string) => {
-    const prototype = Object.getPrototypeOf(input) as HTMLInputElement;
-    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
-    descriptor?.set?.call(input, value);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-  };
-
-  test('keeps manual model id input available for providers with built-in model lists', async () => {
-    global.fetch = vi.fn((input: RequestInfo | URL) => {
-      const url = String(input);
-
-      if (url === '/providers') {
-        return Promise.resolve({
-          ok: true,
-          json: async () => [
-            {
-              id: 'deepseek',
-              name: 'DeepSeek',
-              icon: '',
-              description: '2 个模型',
-              envVars: [],
-              defaultBaseUrl: 'https://api.deepseek.com/v1',
-              bladeProvider: 'openai-compatible',
-            },
-          ],
-        } as Response);
-      }
-
-      if (url === '/providers/deepseek/models') {
-        return Promise.resolve({
-          ok: true,
-          json: async () => [
-            { id: 'deepseek-chat', name: 'DeepSeek Chat' },
-            { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
-          ],
-        } as Response);
-      }
-
-      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
-    }) as typeof fetch;
-
-    await act(async () => {
-      root.render(<AddModelModal open onOpenChange={vi.fn()} onSave={vi.fn()} />);
-      await Promise.resolve();
-    });
-
-    const buttons = Array.from(document.body.querySelectorAll('button'));
-    const providerButton = buttons.find((button) =>
-      button.textContent?.includes('Custom (OpenAI Compatible)')
-    );
-
-    expect(providerButton).toBeTruthy();
-
-    await act(async () => {
-      providerButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    const deepseekOption = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent?.includes('DeepSeek')
-    );
-
-    expect(deepseekOption).toBeTruthy();
-
-    await act(async () => {
-      deepseekOption?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    expect(document.body.textContent).toContain('Select model');
-
-    const modelInputs = Array.from(document.body.querySelectorAll('input')).filter(
-      (input) =>
-        (input as HTMLInputElement).placeholder ===
-        'gpt-4o, claude-3-opus, deepseek-chat, etc.'
-    );
-
-    expect(modelInputs).toHaveLength(1);
-  });
-
-  test('submits a manually entered model id for DeepSeek', async () => {
-    global.fetch = vi.fn((input: RequestInfo | URL) => {
-      const url = String(input);
-
-      if (url === '/providers') {
-        return Promise.resolve({
-          ok: true,
-          json: async () => [
-            {
-              id: 'deepseek',
-              name: 'DeepSeek',
-              icon: '',
-              description: '2 个模型',
-              envVars: [],
-              defaultBaseUrl: 'https://api.deepseek.com/v1',
-              bladeProvider: 'openai-compatible',
-            },
-          ],
-        } as Response);
-      }
-
-      if (url === '/providers/deepseek/models') {
-        return Promise.resolve({
-          ok: true,
-          json: async () => [
-            { id: 'deepseek-chat', name: 'DeepSeek Chat' },
-            { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
-          ],
-        } as Response);
-      }
-
-      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
-    }) as typeof fetch;
-
+  test('submits a pi provider/model reference with a separate credential', async () => {
     const onSave = vi.fn();
-
     await act(async () => {
       root.render(<AddModelModal open onOpenChange={vi.fn()} onSave={onSave} />);
       await Promise.resolve();
     });
 
-    const providerButton = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent?.includes('Custom (OpenAI Compatible)')
-    );
+    await click('Select provider');
+    await click('DeepSeek (2)');
+    await act(async () => await Promise.resolve());
+    await click('Select model');
+    await click('DeepSeek V4 Pro');
 
-    await act(async () => {
-      providerButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      await Promise.resolve();
-    });
+    const saveButton = [...document.querySelectorAll('button')].find((entry) =>
+      entry.textContent?.includes('Save Model')
+    ) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
 
-    const deepseekOption = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent?.includes('DeepSeek')
-    );
-
-    await act(async () => {
-      deepseekOption?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    const apiKeyInput = Array.from(document.body.querySelectorAll('input')).find(
-      (input) =>
-        (input as HTMLInputElement).placeholder === 'sk-........................'
-    ) as HTMLInputElement | undefined;
-
-    const modelIdInput = Array.from(document.body.querySelectorAll('input')).find(
-      (input) =>
-        (input as HTMLInputElement).placeholder ===
-        'gpt-4o, claude-3-opus, deepseek-chat, etc.'
-    ) as HTMLInputElement | undefined;
-
-    expect(apiKeyInput).toBeTruthy();
-    expect(modelIdInput).toBeTruthy();
-
-    await act(async () => {
-      setInputValue(apiKeyInput!, 'sk-test');
-      setInputValue(modelIdInput!, 'deepseek-v4-pro');
-      await Promise.resolve();
-    });
-
-    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent?.includes('Save Model')
-    ) as HTMLButtonElement | undefined;
-
-    expect(saveButton).toBeTruthy();
-    expect(saveButton?.disabled).toBe(false);
-
-    await act(async () => {
-      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      await Promise.resolve();
-    });
+    const apiKey = document.querySelector(
+      'input[placeholder="Stored separately in auth.json"]'
+    ) as HTMLInputElement;
+    await setInput(apiKey, 'test-key');
+    expect(saveButton.disabled).toBe(false);
+    await click('Save Model');
 
     expect(onSave).toHaveBeenCalledWith({
-      bladeProvider: 'openai-compatible',
-      baseUrl: 'https://api.deepseek.com/v1',
-      apiKey: 'sk-test',
-      modelId: 'deepseek-v4-pro',
-      name: 'deepseek-v4-pro',
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
+      displayName: 'DeepSeek V4 Pro',
+      apiKey: 'test-key',
     });
   });
+
+  test('resets stale provider state when reopened', async () => {
+    const props = { onOpenChange: vi.fn(), onSave: vi.fn() };
+    await act(async () => {
+      root.render(<AddModelModal open {...props} />);
+      await Promise.resolve();
+    });
+    await click('Select provider');
+    await click('DeepSeek (2)');
+    expect(
+      document.querySelector('input[placeholder="Stored separately in auth.json"]')
+    ).not.toBeNull();
+
+    await act(async () => {
+      root.render(<AddModelModal open={false} {...props} />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      root.render(<AddModelModal open {...props} />);
+      await Promise.resolve();
+    });
+
+    expect(
+      [...document.querySelectorAll('button')].some(
+        (entry) => entry.textContent?.trim() === 'Select provider'
+      )
+    ).toBe(true);
+    expect(
+      document.querySelector('input[placeholder="Stored separately in auth.json"]')
+    ).toBeNull();
+  });
+
+  async function click(text: string) {
+    const button = [...document.querySelectorAll('button')].find((entry) =>
+      entry.textContent?.includes(text)
+    );
+    expect(button).toBeTruthy();
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+  }
+
+  async function setInput(input: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(input),
+      'value'
+    )?.set;
+    await act(async () => {
+      setter?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
 });

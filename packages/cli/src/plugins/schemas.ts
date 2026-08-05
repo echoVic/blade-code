@@ -1,111 +1,78 @@
-/**
- * Blade Code Plugins System - Zod Validation Schemas
- *
- * This module provides Zod schemas for validating plugin configurations.
- */
+import {
+  type SafeParseResult,
+  type Static,
+  StringEnum,
+  Type,
+  safeParseSchema,
+} from '../schema/index.js';
 
-import { z } from 'zod';
-
-/**
- * Plugin name validation
- * - Must be lowercase letters, numbers, and hyphens only
- * - Must start and end with alphanumeric character
- * - Length: 2-64 characters
- */
-const pluginNameSchema = z
-  .string()
-  .min(2, 'Plugin name must be at least 2 characters')
-  .max(64, 'Plugin name must be at most 64 characters')
-  .regex(/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]{1,2}$/, {
-    message:
-      'Plugin name must be lowercase letters, numbers, and hyphens only, starting and ending with alphanumeric',
-  });
-
-/**
- * Semantic version validation (e.g., "1.0.0", "1.0.0-beta.1")
- */
-const semverSchema = z.string().regex(/^\d+\.\d+\.\d+(-[\w.]+)?(\+[\w.]+)?$/, {
-  message: 'Version must be a valid semantic version (e.g., 1.0.0)',
+const pluginNameSchema = Type.String({
+  minLength: 2,
+  maxLength: 64,
+  pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]{1,2}$',
 });
 
-/**
- * Plugin author schema
- */
-const pluginAuthorSchema = z.object({
-  name: z.string().min(1, 'Author name is required'),
-  email: z.string().email().optional(),
-  url: z.string().url().optional(),
+const semverSchema = Type.String({
+  pattern: '^\\d+\\.\\d+\\.\\d+(-[\\w.]+)?(\\+[\\w.]+)?$',
 });
 
-/**
- * Plugin manifest schema (plugin.json)
- */
-export const pluginManifestSchema = z.object({
+const pluginAuthorSchema = Type.Object({
+  name: Type.String({ minLength: 1 }),
+  email: Type.Optional(Type.String({ format: 'email' })),
+  url: Type.Optional(Type.String({ format: 'uri' })),
+});
+
+export const pluginManifestSchema = Type.Object({
   name: pluginNameSchema,
-  description: z
-    .string()
-    .min(1, 'Description is required')
-    .max(500, 'Description must be at most 500 characters'),
+  description: Type.String({ minLength: 1, maxLength: 500 }),
   version: semverSchema,
-  author: pluginAuthorSchema.optional(),
-  license: z.string().optional(),
-  repository: z.string().url().optional(),
-  homepage: z.string().url().optional(),
-  keywords: z.array(z.string()).optional(),
-  dependencies: z.record(z.string()).optional(),
-  bladeVersion: z.string().optional(),
+  author: Type.Optional(pluginAuthorSchema),
+  license: Type.Optional(Type.String()),
+  repository: Type.Optional(Type.String({ format: 'uri' })),
+  homepage: Type.Optional(Type.String({ format: 'uri' })),
+  keywords: Type.Optional(Type.Array(Type.String())),
+  dependencies: Type.Optional(Type.Record(Type.String(), Type.String())),
+  bladeVersion: Type.Optional(Type.String()),
 });
 
-/**
- * MCP server config schema (for .mcp.json)
- */
-const mcpServerConfigSchema = z.object({
-  type: z.enum(['stdio', 'sse', 'http']),
-  command: z.string().optional(),
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string()).optional(),
-  url: z.string().url().optional(),
-  headers: z.record(z.string()).optional(),
-  timeout: z.number().positive().optional(),
-  oauth: z
-    .object({
-      enabled: z.boolean().optional(),
-      clientId: z.string().optional(),
-      clientSecret: z.string().optional(),
-      authorizationUrl: z.string().url().optional(),
-      tokenUrl: z.string().url().optional(),
-      scopes: z.array(z.string()).optional(),
-      redirectUri: z.string().url().optional(),
+const mcpServerConfigSchema = Type.Object({
+  type: StringEnum(['stdio', 'sse', 'http']),
+  command: Type.Optional(Type.String()),
+  args: Type.Optional(Type.Array(Type.String())),
+  env: Type.Optional(Type.Record(Type.String(), Type.String())),
+  url: Type.Optional(Type.String({ format: 'uri' })),
+  headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+  timeout: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+  oauth: Type.Optional(
+    Type.Object({
+      enabled: Type.Optional(Type.Boolean()),
+      clientId: Type.Optional(Type.String()),
+      clientSecret: Type.Optional(Type.String()),
+      authorizationUrl: Type.Optional(Type.String({ format: 'uri' })),
+      tokenUrl: Type.Optional(Type.String({ format: 'uri' })),
+      scopes: Type.Optional(Type.Array(Type.String())),
+      redirectUri: Type.Optional(Type.String({ format: 'uri' })),
     })
-    .optional(),
-  healthCheck: z
-    .object({
-      enabled: z.boolean().optional(),
-      interval: z.number().positive().optional(),
-      timeout: z.number().positive().optional(),
-      failureThreshold: z.number().positive().optional(),
+  ),
+  healthCheck: Type.Optional(
+    Type.Object({
+      enabled: Type.Optional(Type.Boolean()),
+      interval: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+      timeout: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+      failureThreshold: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
     })
-    .optional(),
+  ),
 });
 
-/**
- * MCP config file schema (.mcp.json)
- * Supports both { serverName: config } and { mcpServers: { serverName: config } }
- */
-const mcpConfigFileSchema = z.union([
-  z.object({
-    mcpServers: z.record(mcpServerConfigSchema),
+const mcpConfigFileSchema = Type.Union([
+  Type.Object({
+    mcpServers: Type.Record(Type.String(), mcpServerConfigSchema),
   }),
-  z.record(mcpServerConfigSchema),
+  Type.Record(Type.String(), mcpServerConfigSchema),
 ]);
 
-type McpConfigFileInput = z.input<typeof mcpConfigFileSchema>;
+type McpConfigFileInput = Static<typeof mcpConfigFileSchema>;
 
-/**
- * Validate MCP config file
- */
-export function validateMcpConfig(
-  data: unknown
-): z.SafeParseReturnType<McpConfigFileInput, McpConfigFileInput> {
-  return mcpConfigFileSchema.safeParse(data);
+export function validateMcpConfig(data: unknown): SafeParseResult<McpConfigFileInput> {
+  return safeParseSchema(mcpConfigFileSchema, data);
 }

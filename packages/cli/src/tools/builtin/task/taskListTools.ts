@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -71,16 +71,23 @@ function createTaskCreateTool(opts: { sessionId: string; configDir: string }) {
     displayName: 'Task Create',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: false,
-    schema: z.object({
-      subject: z.string().min(1).describe('A brief title for the task'),
-      description: z.string().min(1).describe('What needs to be done'),
-      activeForm: z
-        .string()
-        .optional()
-        .describe('Present continuous form shown while in_progress'),
-      owner: z.string().optional().describe('Optional owner for the task'),
-      priority: z.enum(['high', 'medium', 'low']).default('medium'),
-      metadata: z.record(z.unknown()).optional(),
+    schema: Type.Object({
+      subject: Type.String({
+        minLength: 1,
+        description: 'A brief title for the task',
+      }),
+      description: Type.String({
+        minLength: 1,
+        description: 'What needs to be done',
+      }),
+      activeForm: Type.Optional(
+        Type.String({
+          description: 'Present continuous form shown while in_progress',
+        })
+      ),
+      owner: Type.Optional(Type.String({ description: 'Optional owner for the task' })),
+      priority: Default(StringEnum(['high', 'medium', 'low']), 'medium'),
+      metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
     }),
     description: {
       short: 'Create a new task in the task list',
@@ -123,8 +130,11 @@ function createTaskGetTool(opts: { sessionId: string; configDir: string }) {
     displayName: 'Task Get',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: true,
-    schema: z.object({
-      taskId: z.string().min(1).describe('The ID of the task to retrieve'),
+    schema: Type.Object({
+      taskId: Type.String({
+        minLength: 1,
+        description: 'The ID of the task to retrieve',
+      }),
     }),
     description: {
       short: 'Retrieve a task by ID',
@@ -164,20 +174,23 @@ function createTaskUpdateTool(opts: { sessionId: string; configDir: string }) {
     displayName: 'Task Update',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: false,
-    schema: z.object({
-      taskId: z.string().min(1).describe('The ID of the task to update'),
-      subject: z.string().min(1).optional().describe('New subject for the task'),
-      description: z
-        .string()
-        .min(1)
-        .optional()
-        .describe('New description for the task'),
-      activeForm: z.string().min(1).optional(),
-      status: TaskStatusSchema.or(z.literal('deleted')).optional(),
-      owner: z.string().optional(),
-      addBlocks: z.array(z.string()).optional(),
-      addBlockedBy: z.array(z.string()).optional(),
-      metadata: z.record(z.unknown()).optional(),
+    schema: Type.Object({
+      taskId: Type.String({
+        minLength: 1,
+        description: 'The ID of the task to update',
+      }),
+      subject: Type.Optional(
+        Type.String({ minLength: 1, description: 'New subject for the task' })
+      ),
+      description: Type.Optional(
+        Type.String({ minLength: 1, description: 'New description for the task' })
+      ),
+      activeForm: Type.Optional(Type.String({ minLength: 1 })),
+      status: Type.Optional(Type.Union([TaskStatusSchema, Type.Literal('deleted')])),
+      owner: Type.Optional(Type.String()),
+      addBlocks: Type.Optional(Type.Array(Type.String())),
+      addBlockedBy: Type.Optional(Type.Array(Type.String())),
+      metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
     }),
     description: {
       short: 'Update a task in the task list',
@@ -263,7 +276,7 @@ function createTaskListTool(opts: { sessionId: string; configDir: string }) {
     displayName: 'Task List',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: true,
-    schema: z.object({}),
+    schema: Type.Object({}),
     description: {
       short: 'List all tasks',
       long: 'Use this tool to check the current task list and avoid creating duplicate tasks.',

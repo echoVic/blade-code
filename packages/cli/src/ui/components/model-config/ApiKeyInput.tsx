@@ -31,8 +31,6 @@ export const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
     }
   });
 
-  const envHint = provider.envVars.length > 0 ? provider.envVars[0] : null;
-
   return (
     <Box flexDirection="column">
       <Box marginBottom={1}>
@@ -43,29 +41,13 @@ export const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
 
       <Box marginBottom={1}>
         <Text>
-          Provider: {provider.icon} <Text bold>{provider.name}</Text>
+          Provider: <Text bold>{provider.name}</Text>
         </Text>
       </Box>
 
-      {envHint && (
-        <Box marginBottom={1}>
-          <Text dimColor>
-            环境变量: <Text color="cyan">{envHint}</Text>
-          </Text>
-        </Box>
-      )}
-
-      {provider.docUrl && (
-        <Box marginBottom={1}>
-          <Text dimColor>
-            文档: <Text color="blue">{provider.docUrl}</Text>
-          </Text>
-        </Box>
-      )}
-
       <Box marginBottom={1}>
         <Text dimColor>
-          您的 API 密钥将被安全存储在 ~/.blade/config.json (权限 600)
+          API 密钥将存储在 ~/.blade/auth.json（权限 600），不会写入模型配置
         </Text>
       </Box>
 

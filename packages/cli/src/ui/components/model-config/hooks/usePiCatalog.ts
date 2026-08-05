@@ -1,12 +1,12 @@
 /**
- * useModelsDev - 获取 models.dev 数据的 React Hook
+ * 获取 pi-ai catalog 数据的 React Hook
  */
 
 import { useEffect, useState } from 'react';
 import {
   getModelsForProvider,
   getProviders,
-} from '../../../../services/ModelsDevService.js';
+} from '../../../../services/PiCatalogService.js';
 import type { ModelOption, ProviderOption } from '../types.js';
 
 interface UseProvidersResult {
@@ -14,15 +14,6 @@ interface UseProvidersResult {
   isLoading: boolean;
   error: string | null;
 }
-
-const CUSTOM_PROVIDER: ProviderOption = {
-  id: 'openai-compatible',
-  name: '自定义 OpenAI Compatible',
-  icon: '',
-  description: '使用自定义 Base URL 和 API Key',
-  envVars: [],
-  isCustom: true,
-};
 
 export const useProviders = (): UseProvidersResult => {
   const [providers, setProviders] = useState<ProviderOption[]>([]);
@@ -32,15 +23,13 @@ export const useProviders = (): UseProvidersResult => {
   useEffect(() => {
     const load = async () => {
       try {
-        const apiProviders = await getProviders();
-        setProviders([CUSTOM_PROVIDER, ...apiProviders]);
+        setProviders(await getProviders());
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载 Provider 列表失败');
       } finally {
         setIsLoading(false);
       }
     };
-
     load();
   }, []);
 
@@ -63,20 +52,17 @@ export const useModels = (provider: string | undefined): UseModelsResult => {
       setModels([]);
       return;
     }
-
     const load = async () => {
       setIsLoading(true);
       setError(null);
       try {
-        const result = await getModelsForProvider(provider);
-        setModels(result);
+        setModels(await getModelsForProvider(provider));
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载模型列表失败');
       } finally {
         setIsLoading(false);
       }
     };
-
     load();
   }, [provider]);
 

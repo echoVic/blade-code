@@ -3,9 +3,9 @@
  * 负责协调整个压缩流程：分析文件、生成总结、创建压缩消息
  */
 
-import { nanoid } from 'nanoid';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { nanoid } from 'nanoid';
 import { PermissionMode } from '../config/types.js';
 import { HookManager } from '../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
@@ -13,6 +13,7 @@ import { consolidateAfterCompaction } from '../memory/MemoryConsolidation.js';
 import {
   createChatServiceAsync,
   type Message,
+  type UsageInfo,
 } from '../services/ChatServiceInterface.js';
 import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { isAbortError } from '../utils/abort.js';
@@ -31,6 +32,8 @@ export interface CompactionOptions {
   trigger: 'auto' | 'manual';
   /** 模型名称 */
   modelName: string;
+  /** pi-ai provider ID */
+  modelProvider?: string;
   /** 上下文窗口大小（从 config.maxContextTokens 传入） */
   maxContextTokens: number;
   /** API Key（可选，默认使用环境变量） */
@@ -73,6 +76,8 @@ export interface CompactionResult {
   summaryMessage: Message;
   /** 错误信息（如果失败） */
   error?: string;
+  /** 生成压缩摘要所消耗的模型 usage */
+  usage?: UsageInfo;
 }
 
 const sessionFailures = new Map<string, number>();
@@ -193,7 +198,8 @@ export class CompactionService {
       logger.debug('[CompactionService] 成功读取文件:', fileContents.length);
 
       // 2. 生成总结
-      const summary = await this.generateSummary(messages, fileContents, options);
+      const generated = await this.generateSummary(messages, fileContents, options);
+      const { summary } = generated;
       logger.debug('[CompactionService] 生成总结，长度:', summary.length);
 
       // 3. 计算保留范围并过滤孤儿 tool 消息
@@ -274,6 +280,7 @@ export class CompactionService {
         compactedMessages,
         boundaryMessage,
         summaryMessage,
+        usage: generated.usage,
       };
     } catch (error) {
       // AbortError（宽口径）: 用户取消/interrupt，不应计入失败次数也不应走 fallback
@@ -298,7 +305,7 @@ export class CompactionService {
     messages: Message[],
     fileContents: FileContent[],
     options: CompactionOptions
-  ): Promise<string> {
+  ): Promise<{ summary: string; usage?: UsageInfo }> {
     const prompt = this.buildCompactionPrompt(messages, fileContents);
 
     logger.debug('[CompactionService] 使用压缩模型:', options.modelName);
@@ -310,14 +317,13 @@ export class CompactionService {
 
     // 创建 ChatService
     const chatService = await createChatServiceAsync({
-      apiKey: options.apiKey || process.env.BLADE_API_KEY || '',
-      baseUrl:
-        options.baseURL || process.env.BLADE_BASE_URL || 'https://api.openai.com/v1',
+      apiKey: options.apiKey || process.env.BLADE_API_KEY,
+      baseUrl: options.baseURL || process.env.BLADE_BASE_URL,
       model: options.modelName,
       temperature: 0.3,
       maxOutputTokens: 8000, // 压缩输出限制
       timeout: 60000,
-      provider: 'openai-compatible' as const,
+      provider: options.modelProvider ?? 'openai',
     });
 
     const response = await chatService.chat(
@@ -332,11 +338,10 @@ export class CompactionService {
 
     if (!summaryMatch) {
       logger.warn('[CompactionService] 总结格式不正确，使用完整响应');
-      // 如果没有找到标签，返回完整响应
-      return content;
+      return { summary: content, usage: response.usage };
     }
 
-    return summaryMatch[1].trim();
+    return { summary: summaryMatch[1].trim(), usage: response.usage };
   }
 
   /**

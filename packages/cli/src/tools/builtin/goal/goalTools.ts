@@ -1,6 +1,6 @@
-import { z } from 'zod';
 import { GoalStore } from '../../../goals/GoalStore.js';
 import { formatGoalSummary } from '../../../goals/prompts.js';
+import { StringEnum, Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -37,7 +37,7 @@ export function createGoalTools(options: GoalToolOptions) {
     displayName: 'Get Goal',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: true,
-    schema: z.object({}),
+    schema: Type.Object({}),
     description: {
       short: 'Read the persisted goal for the current session',
       long: 'Returns the objective, status, token budget, usage, elapsed time, and continuation count.',
@@ -66,14 +66,17 @@ export function createGoalTools(options: GoalToolOptions) {
     displayName: 'Create Goal',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: false,
-    schema: z.object({
-      objective: z.string().min(1).describe('Concrete objective explicitly requested'),
-      tokenBudget: z
-        .number()
-        .int()
-        .positive()
-        .optional()
-        .describe('Optional positive token budget, only when explicitly requested'),
+    schema: Type.Object({
+      objective: Type.String({
+        minLength: 1,
+        description: 'Concrete objective explicitly requested',
+      }),
+      tokenBudget: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description: 'Optional positive token budget, only when explicitly requested',
+        })
+      ),
     }),
     description: {
       short: 'Create a persisted active goal for the current session',
@@ -106,12 +109,13 @@ export function createGoalTools(options: GoalToolOptions) {
     displayName: 'Update Goal',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: false,
-    schema: z.object({
-      status: z.enum(['complete', 'blocked']),
-      reason: z
-        .string()
-        .optional()
-        .describe('Concrete blocker; required when status is blocked'),
+    schema: Type.Object({
+      status: StringEnum(['complete', 'blocked']),
+      reason: Type.Optional(
+        Type.String({
+          description: 'Concrete blocker; required when status is blocked',
+        })
+      ),
     }),
     description: {
       short: 'Mark the persisted goal complete or blocked',

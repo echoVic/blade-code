@@ -6,9 +6,10 @@
  * - System prompt adherence
  * - Multi-turn conversation context maintenance
  */
-import { generateText, jsonSchema } from 'ai';
 import { describe, expect, it } from 'vitest';
+import { Type } from '../../../src/schema/index.js';
 import {
+  createTestChatService,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
   REAL_API_OUTPUT_BUDGET,
@@ -16,41 +17,54 @@ import {
 
 const calculatorTool = {
   description: 'Calculate a math expression and return the result',
-  inputSchema: jsonSchema({
-    type: 'object' as const,
-    properties: {
-      expression: {
-        type: 'string',
-        description: 'A math expression to evaluate, e.g. "2+3"',
-      },
-    },
-    required: ['expression'],
+  inputSchema: Type.Object({
+    expression: Type.String({
+      description: 'A math expression to evaluate, e.g. "2+3"',
+    }),
   }),
 };
 
 const readFileTool = {
   description: 'Read the contents of a file at the given path',
-  inputSchema: jsonSchema({
-    type: 'object' as const,
-    properties: {
-      path: { type: 'string', description: 'Absolute file path to read' },
-    },
-    required: ['path'],
+  inputSchema: Type.Object({
+    path: Type.String({ description: 'Absolute file path to read' }),
   }),
 };
 
 const editFileTool = {
   description: 'Edit a file by replacing old_string with new_string',
-  inputSchema: jsonSchema({
-    type: 'object' as const,
-    properties: {
-      file_path: { type: 'string', description: 'Absolute file path to edit' },
-      old_string: { type: 'string', description: 'Text to find and replace' },
-      new_string: { type: 'string', description: 'Replacement text' },
-    },
-    required: ['file_path', 'old_string', 'new_string'],
+  inputSchema: Type.Object({
+    file_path: Type.String({ description: 'Absolute file path to edit' }),
+    old_string: Type.String({ description: 'Text to find and replace' }),
+    new_string: Type.String({ description: 'Replacement text' }),
   }),
 };
+
+async function generateText(input: {
+  model: (typeof enabledModels)[number];
+  messages: Parameters<ReturnType<typeof createTestChatService>['chat']>[0];
+  tools: Record<string, { description: string; inputSchema: unknown }>;
+  maxOutputTokens?: number;
+  temperature?: number;
+}) {
+  const response = await createTestChatService(input.model).chat(
+    input.messages,
+    Object.entries(input.tools).map(([name, tool]) => ({
+      name,
+      description: tool.description,
+      parameters: tool.inputSchema,
+    }))
+  );
+  return {
+    text: response.content,
+    toolCalls: response.toolCalls
+      ?.filter((call) => 'function' in call)
+      .map((call) => ({
+        toolName: call.function.name,
+        input: JSON.parse(call.function.arguments) as unknown,
+      })),
+  };
+}
 
 const enabledModels = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
 
@@ -59,7 +73,7 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
   if (!modelConfig) return;
 
   it('should select the correct tool based on user intent', async () => {
-    const model = modelConfig.createModel();
+    const model = modelConfig;
     const result = await generateText({
       model,
       messages: [
@@ -86,7 +100,7 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
   }, 30_000);
 
   it('should generate correct file path in tool arguments', async () => {
-    const model = modelConfig.createModel();
+    const model = modelConfig;
     const result = await generateText({
       model,
       messages: [
@@ -109,7 +123,7 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
   }, 30_000);
 
   it('should generate edit tool calls with correct structure', async () => {
-    const model = modelConfig.createModel();
+    const model = modelConfig;
     const result = await generateText({
       model,
       messages: [
@@ -142,7 +156,7 @@ describe.skipIf(enabledModels.length === 0)('Agent Loop (Real API)', () => {
   }, 30_000);
 
   it('should handle system prompt instructions for output format', async () => {
-    const model = modelConfig.createModel();
+    const model = modelConfig;
     const result = await generateText({
       model,
       messages: [

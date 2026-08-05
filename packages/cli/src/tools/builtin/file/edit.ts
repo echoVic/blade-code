@@ -1,6 +1,6 @@
 import { basename, extname } from 'path';
-import { z } from 'zod';
 import { isAcpMode } from '../../../acp/AcpServiceContext.js';
+import { Default, Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
 import type {
@@ -11,7 +11,7 @@ import type {
   ToolResult,
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { ToolSchemas } from '../../validation/toolSchemas.js';
 import { generateDiffSnippetWithMatch } from './diffUtils.js';
 import {
   blockAnchorMatch,
@@ -27,7 +27,7 @@ import { SnapshotManager, type SnapshotMetadata } from './SnapshotManager.js';
 
 /**
  * EditTool - File edit tool
- * Uses the newer Zod validation design
+ * Uses the TypeBox validation design
  */
 export const editTool = createTool({
   name: 'Edit',
@@ -36,20 +36,23 @@ export const editTool = createTool({
   strict: true, // 启用 OpenAI Structured Outputs
   isConcurrencySafe: false, // 文件编辑不支持并发
 
-  // Zod Schema 定义
-  schema: z.object({
+  schema: Type.Object({
     file_path: ToolSchemas.filePath({
       description: 'Absolute path of the file to edit',
     }),
-    old_string: z
-      .string()
-      .min(1, 'old_string cannot be empty')
-      .describe('String to replace'),
-    new_string: z.string().describe('Replacement string (can be empty)'),
-    replace_all: z
-      .boolean()
-      .default(false)
-      .describe('Replace all matches (default: first only)'),
+    old_string: Type.String({
+      minLength: 1,
+      description: 'String to replace',
+    }),
+    new_string: Type.String({
+      description: 'Replacement string (can be empty)',
+    }),
+    replace_all: Default(
+      Type.Boolean({
+        description: 'Replace all matches (default: first only)',
+      }),
+      false
+    ),
   }),
 
   // 工具描述（对齐 Claude Code 官方）

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { type Static, Type } from '../schema/index.js';
 
 export class BladeServerError extends Error {
   constructor(
@@ -58,11 +58,11 @@ export class InternalServerError extends BladeServerError {
   }
 }
 
-export const ErrorResponse = z.object({
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
+export const ErrorResponse = Type.Object({
+  error: Type.Object({
+    code: Type.String(),
+    message: Type.String(),
   }),
 });
 
-export type ErrorResponse = z.infer<typeof ErrorResponse>;
+export type ErrorResponse = Static<typeof ErrorResponse>;

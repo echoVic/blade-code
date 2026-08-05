@@ -1,31 +1,25 @@
-import { generateText, jsonSchema, streamText } from 'ai';
 import { describe, expect, it } from 'vitest';
+import { StringEnum, Type } from '../../../src/schema/index.js';
 import {
+  createTestChatService,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
-  REAL_API_OUTPUT_BUDGET,
 } from './testConfig.js';
 
 const calculatorTool = {
+  name: 'calculate',
   description: 'Calculate the result of a math expression',
-  inputSchema: jsonSchema({
-    type: 'object' as const,
-    properties: {
-      expression: { type: 'string', description: 'Math expression to calculate' },
-    },
-    required: ['expression'],
+  parameters: Type.Object({
+    expression: Type.String({ description: 'Math expression to calculate' }),
   }),
 };
 
 const weatherTool = {
+  name: 'getWeather',
   description: 'Get the current weather for a given city',
-  inputSchema: jsonSchema({
-    type: 'object' as const,
-    properties: {
-      city: { type: 'string', description: 'City name' },
-      unit: { type: 'string', enum: ['celsius', 'fahrenheit'] },
-    },
-    required: ['city'],
+  parameters: Type.Object({
+    city: Type.String({ description: 'City name' }),
+    unit: Type.Optional(StringEnum(['celsius', 'fahrenheit'])),
   }),
 };
 
@@ -34,10 +28,9 @@ const enabledModels = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
 describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
   describe.each(enabledModels)('$name ($provider)', (modelConfig) => {
     it('should call a tool with generateText', async () => {
-      const model = modelConfig.createModel();
-      const result = await generateText({
-        model,
-        messages: [
+      const service = createTestChatService(modelConfig);
+      const result = await service.chat(
+        [
           {
             role: 'system',
             content:
@@ -45,22 +38,22 @@ describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
           },
           { role: 'user', content: 'What is 15 * 23?' },
         ],
-        tools: { calculate: calculatorTool },
-        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
-        temperature: 0,
-      });
+        [calculatorTool]
+      );
 
       expect(result.toolCalls).toBeDefined();
       expect(result.toolCalls!.length).toBeGreaterThan(0);
-      expect(result.toolCalls![0].toolName).toBe('calculate');
-      expect(result.toolCalls![0].input).toHaveProperty('expression');
+      const call = result.toolCalls![0];
+      expect('function' in call && call.function.name).toBe('calculate');
+      expect(
+        JSON.parse('function' in call ? call.function.arguments : '{}')
+      ).toHaveProperty('expression');
     }, 120000);
 
     it('should call a tool with streamText', async () => {
-      const model = modelConfig.createModel();
-      const result = streamText({
-        model,
-        messages: [
+      const service = createTestChatService(modelConfig);
+      const result = service.streamChat(
+        [
           {
             role: 'system',
             content:
@@ -68,22 +61,23 @@ describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
           },
           { role: 'user', content: 'What is the weather in Beijing?' },
         ],
-        tools: { getWeather: weatherTool },
-        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
-        temperature: 0,
-      });
+        [weatherTool]
+      );
 
       const toolCalls: Array<{
         toolCallId: string;
         toolName: string;
         input: unknown;
       }> = [];
-      for await (const part of result.fullStream) {
-        if (part.type === 'tool-call') {
+      for await (const part of result) {
+        for (const call of part.toolCalls ?? []) {
+          if (!call.id || call.type !== 'function' || !('function' in call)) continue;
+          const fn = call.function;
+          if (!fn?.name) continue;
           toolCalls.push({
-            toolCallId: (part as { toolCallId: string }).toolCallId,
-            toolName: (part as { toolName: string }).toolName,
-            input: (part as { input: unknown }).input,
+            toolCallId: call.id,
+            toolName: fn.name,
+            input: JSON.parse(fn.arguments ?? '{}'),
           });
         }
       }
@@ -94,10 +88,9 @@ describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
     }, 120000);
 
     it('should handle multiple tools', async () => {
-      const model = modelConfig.createModel();
-      const result = await generateText({
-        model,
-        messages: [
+      const service = createTestChatService(modelConfig);
+      const result = await service.chat(
+        [
           {
             role: 'system',
             content:
@@ -108,14 +101,14 @@ describe.skipIf(enabledModels.length === 0)('Real API Tool Calling', () => {
             content: 'What is 15 * 23 and what is the weather in Shanghai?',
           },
         ],
-        tools: { calculate: calculatorTool, getWeather: weatherTool },
-        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
-        temperature: 0,
-      });
+        [calculatorTool, weatherTool]
+      );
 
       expect(result.toolCalls).toBeDefined();
       expect(result.toolCalls!.length).toBeGreaterThanOrEqual(1);
-      const toolNames = result.toolCalls!.map((tc) => tc.toolName);
+      const toolNames = result
+        .toolCalls!.filter((call) => 'function' in call)
+        .map((call) => call.function.name);
       expect(toolNames.includes('calculate') || toolNames.includes('getWeather')).toBe(
         true
       );

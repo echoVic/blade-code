@@ -98,6 +98,9 @@ export interface TokenUsageInfo {
   outputTokens: number;
   totalTokens: number;
   maxContextTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  costUsd?: number;
 }
 
 // ===== Loop Events =====

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
+import { Type } from '../../../../../src/schema/index.js';
 import { createTool } from '../../../../../src/tools/core/createTool.js';
 import { ToolExecutor } from '../../../../../src/tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../../../../src/tools/registry/ToolRegistry.js';
@@ -26,7 +26,7 @@ function createTestTool() {
     displayName: 'ScopedTool',
     kind: ToolKind.Execute,
     description: { short: 'scope test tool' },
-    schema: z.object({ value: z.string() }),
+    schema: Type.Object({ value: Type.String() }),
     async execute(params) {
       return {
         success: true,

@@ -7,7 +7,7 @@
 > 🗡️ 新一代 AI 编程助手（CLI + Web UI）
 
 - 🌐 **双模式界面**：CLI 终端 + Web UI，随心切换
-- 🤖 **80+ Provider**：OpenAI、Anthropic、DeepSeek、Gemini 等
+- 🤖 **pi-ai Provider Catalog**：统一模型元数据、协议和凭证
 - 🛠️ **丰富工具**：20+ 内置工具，文件/搜索/Shell/Git/Web
 - 🔒 **安全可控**：五级权限模式 + 工具白/黑名单
 - 🔗 **MCP 协议**：无限扩展能力

@@ -184,11 +184,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     try {
       // 使用 configActions 统一入口：自动同步内存 + 持久化
       await configActions().addModel({
-        name: newConfig.name,
+        displayName: newConfig.displayName,
         provider: newConfig.provider,
-        apiKey: newConfig.apiKey,
-        baseUrl: newConfig.baseUrl,
         model: newConfig.model,
+        overrides: newConfig.overrides,
       });
 
       // 设置完成后，将状态改为 ready（因为 API Key 已经配置）
@@ -406,13 +405,15 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   const handleModelAddComplete = useMemoizedFn((addedConfig: SetupConfig) => {
     sessionActions.addAssistantMessage(
-      `已添加模型配置: ${addedConfig.name}，并已切换到该模型`
+      `已添加模型配置: ${addedConfig.displayName ?? addedConfig.model}，并已切换到该模型`
     );
     closeModal();
   });
 
   const handleModelEditComplete = useMemoizedFn((updatedConfig: SetupConfig) => {
-    sessionActions.addAssistantMessage(`已更新模型配置: ${updatedConfig.name}`);
+    sessionActions.addAssistantMessage(
+      `已更新模型配置: ${updatedConfig.displayName ?? updatedConfig.model}`
+    );
     closeModal();
   });
 
@@ -595,11 +596,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const pluginsManagerVisible = activeModal === 'pluginsManager';
   const editingInitialConfig = editingModel
     ? {
-        name: editingModel.name,
+        displayName: editingModel.displayName,
         provider: editingModel.provider,
-        baseUrl: editingModel.baseUrl,
-        apiKey: editingModel.apiKey,
         model: editingModel.model,
+        overrides: editingModel.overrides,
       }
     : undefined;
 

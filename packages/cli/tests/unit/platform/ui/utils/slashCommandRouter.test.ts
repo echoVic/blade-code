@@ -113,6 +113,7 @@ function createMockSessionActions(): SessionActions {
     resetSession: vi.fn(),
     restoreSession: vi.fn(),
     updateTokenUsage: vi.fn(),
+    resetContextUsage: vi.fn(),
     resetTokenUsage: vi.fn(),
     setCurrentThinkingContent: vi.fn(),
     appendThinkingContent: vi.fn(),
@@ -193,7 +194,18 @@ describe('processSlashCommand', () => {
       executeSlashCommand.mockResolvedValue({
         success: true,
         message: 'compact_completed',
-        data: { compactedMessages },
+        data: {
+          compactedMessages,
+          maxContextTokens: 128000,
+          usage: {
+            promptTokens: 100,
+            completionTokens: 20,
+            totalTokens: 120,
+            cacheReadInputTokens: 30,
+            cacheCreationInputTokens: 10,
+            costUsd: 0.125,
+          },
+        },
       });
       const sessionActions = createMockSessionActions();
 
@@ -213,7 +225,16 @@ describe('processSlashCommand', () => {
       expect(sessionActions.setCompactedContext).toHaveBeenCalledWith(
         compactedMessages
       );
-      expect(sessionActions.resetTokenUsage).toHaveBeenCalledOnce();
+      expect(sessionActions.updateTokenUsage).toHaveBeenCalledWith({
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 120,
+        maxContextTokens: 128000,
+        cacheReadTokens: 30,
+        cacheWriteTokens: 10,
+        costUsd: 0.125,
+      });
+      expect(sessionActions.resetContextUsage).toHaveBeenCalledOnce();
     });
   });
 

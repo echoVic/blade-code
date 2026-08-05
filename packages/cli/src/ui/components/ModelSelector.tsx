@@ -11,6 +11,8 @@ import { Box, Text, useFocus, useFocusManager, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import { memo, useMemo, useState } from 'react';
 import type { ModelConfig } from '../../config/types.js';
+import { getPiModelCatalog } from '../../services/pi/PiModelCatalog.js';
+import { getModelDisplayName } from '../../services/pi/resolveModelConfig.js';
 import { useAllModels, useCurrentModelId } from '../../store/selectors/index.js';
 import { configActions } from '../../store/vanilla.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
@@ -156,7 +158,7 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
   const items = models.map((model) => {
     const suffix = model.id === currentModelId ? ' (当前)' : '';
     return {
-      label: model.name + suffix,
+      label: getModelDisplayName(model) + suffix,
       value: model.id,
     };
   });
@@ -221,7 +223,7 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
               <Text>
                 <Text dimColor>名称: </Text>
                 <Text bold color="cyan">
-                  {selectedModel.name}
+                  {getModelDisplayName(selectedModel)}
                 </Text>
               </Text>
               <Text>
@@ -232,22 +234,18 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
                 <Text dimColor>Model: </Text>
                 <Text bold>{selectedModel.model}</Text>
               </Text>
+              {selectedModel.overrides?.baseUrl && (
+                <Text>
+                  <Text dimColor>Base URL override: </Text>
+                  <Text color="blueBright">{selectedModel.overrides.baseUrl}</Text>
+                </Text>
+              )}
               <Text>
-                <Text dimColor>Base URL: </Text>
-                <Text color="blueBright">{selectedModel.baseUrl}</Text>
+                <Text dimColor>Context Window: </Text>
+                <Text>
+                  {getPiModelCatalog().resolveConfig(selectedModel).contextWindow}
+                </Text>
               </Text>
-              {selectedModel.temperature !== undefined && (
-                <Text>
-                  <Text dimColor>Temperature: </Text>
-                  <Text>{selectedModel.temperature}</Text>
-                </Text>
-              )}
-              {selectedModel.maxContextTokens !== undefined && (
-                <Text>
-                  <Text dimColor>Context Window: </Text>
-                  <Text>{selectedModel.maxContextTokens}</Text>
-                </Text>
-              )}
             </Box>
           ) : (
             <Text dimColor>请选择一个模型查看详情</Text>

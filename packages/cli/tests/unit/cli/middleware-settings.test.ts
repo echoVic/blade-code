@@ -130,7 +130,7 @@ describe('--settings middleware', () => {
     ).rejects.toThrow('Unknown --settings field: appendSystemPromt');
     await expect(
       loadConfiguration({ settings: '{"maxContextTokens":"many"}' } as never)
-    ).rejects.toThrow('Invalid --settings value: maxContextTokens');
+    ).rejects.toThrow('Unknown --settings field: maxContextTokens');
     await expect(
       loadConfiguration({ settings: '{"maxTurns":101}' } as never)
     ).rejects.toThrow('Invalid --settings value: maxTurns');

@@ -6,6 +6,11 @@ export const initialTokenUsage: TokenUsage = {
   inputTokens: 0,
   outputTokens: 0,
   totalTokens: 0,
-  maxContextTokens: 128000,
+  maxContextTokens: 0,
   isDefaultMaxTokens: true,
+  totalInputTokens: 0,
+  totalOutputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  estimatedCostUsd: 0,
 };

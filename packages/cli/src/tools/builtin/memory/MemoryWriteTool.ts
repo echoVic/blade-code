@@ -2,8 +2,8 @@
  * MemoryWriteTool - 写入项目记忆文件
  */
 
-import { z } from 'zod';
 import { AutoMemoryManager } from '../../../memory/AutoMemoryManager.js';
+import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
@@ -24,19 +24,19 @@ export const memoryWriteTool = createTool({
   kind: ToolKind.Write,
   isConcurrencySafe: false, // 写入操作
 
-  schema: z.object({
-    topic: z
-      .string()
-      .describe(
-        'Topic name to write to (e.g., "debugging", "patterns", "MEMORY" for the index). Without .md extension.'
-      ),
-    content: z.string().describe('Content to write to the memory file'),
-    mode: z
-      .enum(['overwrite', 'append'])
-      .default('append')
-      .describe(
-        'Write mode: "append" adds to existing content, "overwrite" replaces it'
-      ),
+  schema: Type.Object({
+    topic: Type.String({
+      description:
+        'Topic name to write to (e.g., "debugging", "patterns", "MEMORY" for the index). Without .md extension.',
+    }),
+    content: Type.String({ description: 'Content to write to the memory file' }),
+    mode: Default(
+      StringEnum(['overwrite', 'append'], {
+        description:
+          'Write mode: "append" adds to existing content, "overwrite" replaces it',
+      }),
+      'append'
+    ),
   }),
 
   description: {

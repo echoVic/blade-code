@@ -37,7 +37,7 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
   ensureStoreInitialized: vi.fn(async () => {
     /* noop */
   }),
-  getAllModels: vi.fn(() => [{ id: 'model-1' }]),
+  getAllModels: vi.fn(() => [{ id: 'model-1', provider: 'openai', model: 'gpt-4' }]),
   getConfig: vi.fn(() => ({
     permissionMode: 'default',
     permissions: {},
@@ -49,26 +49,18 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
   })),
   getCurrentModel: vi.fn(() => ({
     id: 'model-1',
-    name: 'Model 1',
-    model: 'model-1',
+    displayName: 'Model 1',
+    model: 'gpt-4',
     provider: 'openai',
-    apiKey: 'test',
-    temperature: 0,
-    maxContextTokens: 128000,
-    maxOutputTokens: 8192,
   })),
   getMcpServers: vi.fn(() => ({})),
   getModelById: vi.fn((modelId: string) =>
     modelId === 'model-2'
       ? {
           id: 'model-2',
-          name: 'Model 2',
-          model: 'model-2',
+          displayName: 'Model 2',
+          model: 'gpt-4.1',
           provider: 'openai',
-          apiKey: 'test',
-          temperature: 0,
-          maxContextTokens: 32_000,
-          maxOutputTokens: 4096,
         }
       : undefined
   ),
@@ -536,7 +528,7 @@ describe('SessionRuntime', () => {
     await runtime.refresh({ modelId: 'model-2' });
 
     expect(runtime.getCurrentModelId()).toBe('model-2');
-    expect(runtime.getCurrentModelMaxContextTokens()).toBe(32_000);
+    expect(runtime.getCurrentModelMaxContextTokens()).toBe(1_047_576);
     expect(runtime.getChatService()).toBe(secondService);
     expect(firstDispose).toHaveBeenCalledTimes(1);
     expect(secondDispose).not.toHaveBeenCalled();
@@ -562,7 +554,7 @@ describe('SessionRuntime', () => {
     );
 
     expect(runtime.getCurrentModelId()).toBe('model-1');
-    expect(runtime.getCurrentModelMaxContextTokens()).toBe(128_000);
+    expect(runtime.getCurrentModelMaxContextTokens()).toBe(8_192);
     expect(runtime.getChatService()).toBe(firstService);
 
     await runtime.dispose();

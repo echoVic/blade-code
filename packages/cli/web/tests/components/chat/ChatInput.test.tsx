@@ -41,7 +41,13 @@ describe('ChatInput', () => {
       currentModelId: 'model-1',
       currentMode: 'default',
       configuredModels: [
-        { id: 'model-1', name: 'Test', provider: 'openai', model: 'gpt-test' },
+        {
+          id: 'model-1',
+          displayName: 'Test',
+          provider: 'openai',
+          model: 'gpt-4',
+          contextWindow: 128000,
+        },
       ],
       availableModels: [],
       isLoading: false,
@@ -59,6 +65,11 @@ describe('ChatInput', () => {
         totalTokens: 0,
         maxContextTokens: 128000,
         isDefaultMaxTokens: true,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        estimatedCostUsd: 0,
       },
     }));
   });
@@ -261,5 +272,14 @@ describe('ChatInput', () => {
     );
     expect(container.querySelector('[title="Stop active turn"]')).toBeTruthy();
     expect(container.querySelector('[title="Steer active turn"]')).toBeTruthy();
+  });
+
+  test('uses the configured display name in the model selector', () => {
+    act(() => {
+      root.render(<ChatInput onSend={vi.fn()} />);
+    });
+
+    expect(container.textContent).toContain('Test');
+    expect(container.textContent).not.toContain('gpt-4');
   });
 });

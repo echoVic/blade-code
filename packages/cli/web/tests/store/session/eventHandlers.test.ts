@@ -60,6 +60,11 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
       totalTokens: 0,
       maxContextTokens: 0,
       isDefaultMaxTokens: false,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      estimatedCostUsd: 0,
     },
     setSessions: vi.fn(),
     addSession: vi.fn(),
@@ -186,6 +191,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     }),
     endAgentResponse: vi.fn(),
     updateTokenUsage: vi.fn(),
+    resetContextUsage: vi.fn(),
     setMaxContextTokens: vi.fn(),
     ...overrides,
   } satisfies SessionStoreState;
@@ -197,6 +203,51 @@ describe('eventHandlers', () => {
   afterEach(() => {
     vi.useRealTimers();
     globalStreamingBuffer.reset();
+  });
+
+  test('forwards cache usage and exact cost from token events', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'token.usage',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        inputTokens: 180,
+        outputTokens: 20,
+        totalTokens: 200,
+        maxContextTokens: 128000,
+        cacheReadTokens: 50,
+        cacheWriteTokens: 30,
+        costUsd: 0.0033,
+      },
+    });
+
+    expect(state.updateTokenUsage).toHaveBeenCalledWith({
+      inputTokens: 180,
+      outputTokens: 20,
+      totalTokens: 200,
+      cacheReadTokens: 50,
+      cacheWriteTokens: 30,
+      costUsd: 0.0033,
+    });
+    expect(state.setMaxContextTokens).toHaveBeenCalledWith(128000, false);
+  });
+
+  test('compaction clears only current context usage', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'compaction.completed',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+      },
+    });
+
+    expect(state.resetContextUsage).toHaveBeenCalledOnce();
   });
 
   test('creates stable fallback tool ids for repeated tool.start events with the same payload', () => {

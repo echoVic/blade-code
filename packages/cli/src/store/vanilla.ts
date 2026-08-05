@@ -392,6 +392,12 @@ export const configActions = () => ({
     // 如果没有 id，自动生成
     const model: ModelConfig =
       'id' in modelData ? modelData : { id: nanoid(), ...modelData };
+    const duplicate = config.models.find(
+      (entry) => entry.provider === model.provider && entry.model === model.model
+    );
+    if (duplicate) {
+      throw new Error(`Model already configured: ${model.provider}/${model.model}`);
+    }
 
     const newModels = [...config.models, model];
 

@@ -32,6 +32,15 @@ export interface TokenUsage {
   totalTokens: number;
   maxContextTokens: number;
   isDefaultMaxTokens: boolean;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  estimatedCostUsd: number;
+}
+
+export interface TokenUsageUpdate extends Partial<TokenUsage> {
+  costUsd?: number;
 }
 
 export type AgentPhase =
@@ -197,7 +206,8 @@ export interface StreamingSlice {
 export interface UiSlice {
   tokenUsage: TokenUsage;
 
-  updateTokenUsage: (usage: Partial<TokenUsage>) => void;
+  updateTokenUsage: (usage: TokenUsageUpdate) => void;
+  resetContextUsage: () => void;
   setMaxContextTokens: (tokens: number, isDefault?: boolean) => void;
 }
 

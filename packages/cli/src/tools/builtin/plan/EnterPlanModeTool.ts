@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
@@ -13,7 +13,7 @@ export const enterPlanModeTool = createTool({
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: false, // 模式切换，改变状态
 
-  schema: z.object({}),
+  schema: Type.Object({}),
 
   // 工具描述
   description: {

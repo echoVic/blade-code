@@ -419,6 +419,9 @@ const handleTokenUsage: EventHandler = (props, get) => {
     inputTokens: props.inputTokens as number,
     outputTokens: props.outputTokens as number,
     totalTokens: props.totalTokens as number,
+    cacheReadTokens: (props.cacheReadTokens as number | undefined) ?? 0,
+    cacheWriteTokens: (props.cacheWriteTokens as number | undefined) ?? 0,
+    costUsd: props.costUsd as number | undefined,
   });
 
   if (props.maxContextTokens) {
@@ -748,6 +751,7 @@ const handleCompactionStarted: EventHandler = (props, get, set) => {
 
 const handleCompactionCompleted: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
+  get().resetContextUsage();
   set({ agentPhase: 'running' });
 };
 

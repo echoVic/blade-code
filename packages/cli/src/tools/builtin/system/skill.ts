@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { Type } from '../../../schema/index.js';
 import { getSkillRegistry } from '../../../skills/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
@@ -17,11 +17,13 @@ export const skillTool = createTool({
   kind: ToolKind.Execute,
   isConcurrencySafe: false, // 执行技能，可能有副作用
 
-  schema: z.object({
-    skill: z
-      .string()
-      .describe('The skill name. E.g., "commit-message" or "code-review"'),
-    args: z.string().optional().describe('Optional arguments for the skill'),
+  schema: Type.Object({
+    skill: Type.String({
+      description: 'The skill name. E.g., "commit-message" or "code-review"',
+    }),
+    args: Type.Optional(
+      Type.String({ description: 'Optional arguments for the skill' })
+    ),
   }),
 
   description: {

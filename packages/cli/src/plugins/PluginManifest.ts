@@ -9,6 +9,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { logger } from '../logging/Logger.js';
 import { pluginManifestSchema } from './schemas.js';
+import { safeParseSchema } from '../schema/index.js';
 import type { ManifestSource, PluginManifest } from './types.js';
 
 /**
@@ -69,8 +70,7 @@ export async function parsePluginManifest(
       const content = await fs.readFile(manifestPath, 'utf-8');
       const rawManifest = JSON.parse(content);
 
-      // Validate with Zod schema
-      const result = pluginManifestSchema.safeParse(rawManifest);
+      const result = safeParseSchema(pluginManifestSchema, rawManifest);
 
       if (!result.success) {
         const errors = result.error.issues

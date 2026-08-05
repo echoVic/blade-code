@@ -395,12 +395,14 @@ describe('real API coding-task harness', () => {
     expect(runtimeConfig.models).toEqual([
       expect.objectContaining({
         id: runtimeConfig.currentModelId,
-        apiKey: 'explicit-secret',
-        baseUrl: 'https://api.deepseek.com',
         model: 'deepseek-v4-flash',
         provider: 'deepseek',
+        overrides: expect.objectContaining({
+          baseUrl: 'https://api.deepseek.com',
+        }),
       }),
     ]);
+    expect(JSON.stringify(runtimeConfig)).not.toContain('explicit-secret');
     expect(runtimeConfig.models[0]).not.toHaveProperty('maxRetries');
   });
 
@@ -448,13 +450,8 @@ describe('real API coding-task harness', () => {
         qualificationId: 'deepseek:deepseek-v4-pro',
       },
     ]);
-    const flashModel = configs[0]?.createModel();
-    const proModel = configs[1]?.createModel();
-    if (typeof flashModel === 'string' || typeof proModel === 'string') {
-      throw new Error('Expected provider-backed language models');
-    }
-    expect(flashModel?.modelId).toBe('deepseek-v4-flash');
-    expect(proModel?.modelId).toBe('deepseek-v4-pro');
+    expect(configs[0]?.model).toBe('deepseek-v4-flash');
+    expect(configs[1]?.model).toBe('deepseek-v4-pro');
     expect(new Set(configs.map((config) => config.qualificationId)).size).toBe(2);
     expect(
       JSON.stringify(

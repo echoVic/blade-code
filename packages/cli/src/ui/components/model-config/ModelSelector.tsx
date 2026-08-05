@@ -17,7 +17,6 @@ interface ModelSelectorProps {
   error: string | null;
   onSelect: (model: ModelOption) => void;
   onCancel: () => void;
-  initialModel?: string;
 }
 
 const SelectIndicator: React.FC<{ isSelected?: boolean }> = ({ isSelected }) => (
@@ -39,8 +38,14 @@ const formatModelLabel = (model: ModelOption): string => {
     parts.push(`[${ctx} ctx]`);
   }
 
-  if (model.inputCost !== undefined && model.outputCost !== undefined) {
-    parts.push(`[$${model.inputCost}/$${model.outputCost}]`);
+  if (model.reasoning) {
+    parts.push('[reasoning]');
+  }
+  if (model.input.includes('image')) {
+    parts.push('[vision]');
+  }
+  if (model.cost.input || model.cost.output) {
+    parts.push(`[$${model.cost.input}/$${model.cost.output}]`);
   }
 
   return parts.join(' ');
@@ -62,27 +67,16 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   error,
   onSelect,
   onCancel,
-  initialModel,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const isCustomProvider = provider.isCustom || models.length === 0;
-  const [isCustomMode, setIsCustomMode] = useState(isCustomProvider);
-  const [customModel, setCustomModel] = useState(initialModel || '');
 
-  useInput((input, key) => {
+  useInput((_input, key) => {
     if (key.escape) {
-      if (isCustomMode && !isCustomProvider) {
-        setIsCustomMode(false);
-        setCustomModel(initialModel || '');
-      } else if (searchQuery) {
+      if (searchQuery) {
         setSearchQuery('');
       } else {
         onCancel();
       }
-      return;
-    }
-    if (input === '+' && !isCustomMode) {
-      setIsCustomMode(true);
     }
   });
 
@@ -103,12 +97,6 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       })),
     [filteredModels]
   );
-
-  const handleCustomSubmit = () => {
-    if (customModel.trim()) {
-      onSelect({ id: customModel.trim(), name: customModel.trim() });
-    }
-  };
 
   if (isLoading) {
     return (
@@ -137,64 +125,38 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
       <Box marginBottom={1}>
         <Text>
-          Provider: {provider.icon} <Text bold>{provider.name}</Text>
+          Provider: <Text bold>{provider.name}</Text>
         </Text>
       </Box>
 
-      {isCustomMode ? (
-        <Box flexDirection="column">
-          <Box marginBottom={1}>
-            <Text dimColor>
-              {isCustomProvider
-                ? '输入 Model ID：'
-                : '输入自定义 Model ID（按 Esc 返回列表）：'}
-            </Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text dimColor>例如: deepseek-v4-pro</Text>
-          </Box>
-          <Box>
-            <Text bold color="cyan">
-              {'> '}
-            </Text>
-            <TextInput
-              value={customModel}
-              onChange={setCustomModel}
-              onSubmit={handleCustomSubmit}
-              placeholder="例如: deepseek-v4-pro"
-            />
-          </Box>
+      <>
+        <Box marginBottom={1}>
+          <Text color="cyan">{'> '}</Text>
+          <TextInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder={`搜索 ${models.length} 个模型...`}
+          />
         </Box>
-      ) : (
-        <>
-          <Box marginBottom={1}>
-            <Text color="cyan">{'> '}</Text>
-            <TextInput
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder={`搜索 ${models.length} 个模型，按 + 手动输入 Model ID...`}
-            />
-          </Box>
 
-          <Box marginBottom={1}>
-            <Text dimColor>按 + 手动输入 Model ID，例如: deepseek-v4-pro</Text>
-          </Box>
+        <Box marginBottom={1}>
+          <Text dimColor>模型元数据来自内置 catalog</Text>
+        </Box>
 
-          <Box flexDirection="column" height={12}>
-            <SelectInput
-              items={items}
-              onSelect={(item) => onSelect(item.value)}
-              indicatorComponent={SelectIndicator}
-              itemComponent={SelectItem}
-              limit={10}
-            />
-          </Box>
+        <Box flexDirection="column" height={12}>
+          <SelectInput
+            items={items}
+            onSelect={(item) => onSelect(item.value)}
+            indicatorComponent={SelectIndicator}
+            itemComponent={SelectItem}
+            limit={10}
+          />
+        </Box>
 
-          {filteredModels.length === 0 && (
-            <Text color="yellow">未找到匹配的模型，按 + 输入自定义模型名称</Text>
-          )}
-        </>
-      )}
+        {filteredModels.length === 0 && (
+          <Text color="yellow">内置 catalog 中没有匹配模型</Text>
+        )}
+      </>
     </Box>
   );
 };

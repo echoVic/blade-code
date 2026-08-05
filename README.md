@@ -76,12 +76,18 @@ blade serve --port 3000      # 无头服务器模式
 
 ```json
 {
-  "provider": "openai-compatible",
-  "apiKey": "${BLADE_API_KEY}",
-  "baseUrl": "https://api.openai.com/v1",
-  "model": "gpt-4o-mini"
+  "currentModelId": "primary",
+  "models": [
+    {
+      "id": "primary",
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro"
+    }
+  ]
 }
 ```
+
+Provider 凭证独立存储在 `~/.blade/auth.json`。
 
 ---
 

@@ -87,10 +87,8 @@ describe('配置系统', () => {
         models: [
           {
             id: 'test-model',
-            name: 'Test Model',
-            provider: 'openai-compatible' as const,
-            apiKey: 'test-key',
-            baseUrl: 'https://api.test.com',
+            displayName: 'Test Model',
+            provider: 'openai' as const,
             model: 'gpt-4',
           },
         ],

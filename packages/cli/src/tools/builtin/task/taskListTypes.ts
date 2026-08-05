@@ -1,10 +1,16 @@
-import { z } from 'zod';
+import {
+  Default,
+  Runtime,
+  type Static,
+  StringEnum,
+  Type,
+} from '../../../schema/index.js';
 
-export const TaskStatusSchema = z.enum(['pending', 'in_progress', 'completed']);
-export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+export const TaskStatusSchema = StringEnum(['pending', 'in_progress', 'completed']);
+export type TaskStatus = Static<typeof TaskStatusSchema>;
 
-export const TaskPrioritySchema = z.enum(['high', 'medium', 'low']);
-export type TaskPriority = z.infer<typeof TaskPrioritySchema>;
+export const TaskPrioritySchema = StringEnum(['high', 'medium', 'low']);
+export type TaskPriority = Static<typeof TaskPrioritySchema>;
 
 export interface TaskListItem {
   id: string;
@@ -22,21 +28,23 @@ export interface TaskListItem {
   completedAt?: string;
 }
 
-export const TaskListItemSchema = z.object({
-  id: z.string(),
-  subject: z.string(),
-  description: z.string(),
-  status: TaskStatusSchema,
-  activeForm: z.string().optional(),
-  owner: z.string().optional(),
-  priority: TaskPrioritySchema.default('medium'),
-  blocks: z.array(z.string()).default([]),
-  blockedBy: z.array(z.string()).default([]),
-  metadata: z.record(z.unknown()).optional(),
-  createdAt: z.string(),
-  startedAt: z.string().optional(),
-  completedAt: z.string().optional(),
-});
+export const TaskListItemSchema = Runtime(
+  Type.Object({
+    id: Type.String(),
+    subject: Type.String(),
+    description: Type.String(),
+    status: TaskStatusSchema,
+    activeForm: Type.Optional(Type.String()),
+    owner: Type.Optional(Type.String()),
+    priority: Default(TaskPrioritySchema, 'medium'),
+    blocks: Default(Type.Array(Type.String()), []),
+    blockedBy: Default(Type.Array(Type.String()), []),
+    metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    createdAt: Type.String(),
+    startedAt: Type.Optional(Type.String()),
+    completedAt: Type.Optional(Type.String()),
+  })
+);
 
 export interface TaskStats {
   total: number;

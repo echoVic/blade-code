@@ -5,6 +5,7 @@
 import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { TokenCounter } from '../context/TokenCounter.js';
+import { resolveModelConfig } from '../services/pi/resolveModelConfig.js';
 import { getConfig, getCurrentModel, getState } from '../store/vanilla.js';
 import {
   getUI,
@@ -59,7 +60,8 @@ async function compactCommandHandler(
 
     // 显示压缩前信息
     const preTokens = TokenCounter.countTokens(messages, currentModel.model);
-    const tokenLimit = currentModel.maxContextTokens ?? config.maxContextTokens;
+    const resolvedModel = resolveModelConfig(currentModel, config, false);
+    const tokenLimit = resolvedModel.model.contextWindow;
     const usagePercent = ((preTokens / tokenLimit) * 100).toFixed(1);
 
     ui.sendMessage(`**当前上下文统计**
@@ -85,9 +87,10 @@ async function compactCommandHandler(
     const result = await CompactionService.compact(messages, {
       trigger: 'manual',
       modelName: currentModel.model,
+      modelProvider: currentModel.provider,
       maxContextTokens: tokenLimit,
-      apiKey: currentModel.apiKey,
-      baseURL: currentModel.baseUrl,
+      apiKey: resolvedModel.chat.apiKey,
+      baseURL: resolvedModel.chat.baseUrl,
       workspaceRoot: context.workspaceRoot ?? context.cwd,
       sessionId,
     });
@@ -146,6 +149,8 @@ async function compactCommandHandler(
           preTokens: result.preTokens,
           postTokens: result.postTokens,
           filesIncluded: result.filesIncluded,
+          usage: result.usage,
+          maxContextTokens: tokenLimit,
         },
       };
     } else {

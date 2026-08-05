@@ -1,28 +1,38 @@
-import { z } from 'zod';
 import type { SubagentConfig } from '../agent/subagents/types.js';
 import { mapClaudeCodePermissionMode } from '../agent/subagents/types.js';
 import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
+import { StringEnum, Type, safeParseSchema } from '../schema/index.js';
 
-const AgentNameSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
+const AgentNameSchema = Type.String({
+  minLength: 1,
+  maxLength: 128,
+  pattern: '^[A-Za-z0-9][A-Za-z0-9_-]*$',
+});
 
-const ToolListSchema = z
-  .array(z.string().trim().min(1).max(200))
-  .max(128)
-  .transform((tools) => [...new Set(tools)]);
+const ToolListSchema = Type.Array(
+  Type.String({ minLength: 1, maxLength: 200, pattern: '.*\\S.*' }),
+  { maxItems: 128 }
+);
 
-const CliAgentDefinitionSchema = z
-  .object({
-    description: z.string().trim().min(1).max(4096),
-    prompt: z.string().trim().min(1).max(100_000),
-    tools: ToolListSchema.optional(),
-    disallowedTools: ToolListSchema.optional(),
-    model: z.string().trim().min(1).max(200).optional(),
-    permissionMode: z
-      .enum([
+const CliAgentDefinitionSchema = Type.Object(
+  {
+    description: Type.String({
+      minLength: 1,
+      maxLength: 4096,
+      pattern: '.*\\S.*',
+    }),
+    prompt: Type.String({
+      minLength: 1,
+      maxLength: 100_000,
+      pattern: '.*\\S.*',
+    }),
+    tools: Type.Optional(ToolListSchema),
+    disallowedTools: Type.Optional(ToolListSchema),
+    model: Type.Optional(
+      Type.String({ minLength: 1, maxLength: 200, pattern: '.*\\S.*' })
+    ),
+    permissionMode: Type.Optional(
+      StringEnum([
         'default',
         'acceptEdits',
         'dontAsk',
@@ -30,11 +40,12 @@ const CliAgentDefinitionSchema = z
         'plan',
         'ignore',
       ])
-      .optional(),
-    maxTurns: z.number().int().positive().max(MAX_AGENT_TURNS).optional(),
-    isolation: z.enum(['none', 'worktree']).optional(),
-  })
-  .strict();
+    ),
+    maxTurns: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_AGENT_TURNS })),
+    isolation: Type.Optional(StringEnum(['none', 'worktree'])),
+  },
+  { additionalProperties: false }
+);
 
 /** Parse invocation-scoped agent definitions using the Claude Code JSON shape. */
 export function parseCliAgents(input: string): SubagentConfig[] {
@@ -55,13 +66,13 @@ export function parseCliAgents(input: string): SubagentConfig[] {
   }
 
   return entries.map(([name, definition]) => {
-    if (!AgentNameSchema.safeParse(name).success) {
+    if (!safeParseSchema(AgentNameSchema, name).success) {
       throw new Error(
         `Invalid --agents name "${name}": use letters, numbers, hyphens, or underscores`
       );
     }
 
-    const result = CliAgentDefinitionSchema.safeParse(definition);
+    const result = safeParseSchema(CliAgentDefinitionSchema, definition);
     if (!result.success) {
       throw new Error(`Invalid --agents definition for "${name}"`);
     }
@@ -69,11 +80,15 @@ export function parseCliAgents(input: string): SubagentConfig[] {
     const value = result.data;
     return {
       name,
-      description: value.description,
-      systemPrompt: value.prompt,
-      tools: value.tools,
-      disallowedTools: value.disallowedTools,
-      model: value.model,
+      description: value.description.trim(),
+      systemPrompt: value.prompt.trim(),
+      tools: value.tools
+        ? [...new Set(value.tools.map((tool) => tool.trim()))]
+        : undefined,
+      disallowedTools: value.disallowedTools
+        ? [...new Set(value.disallowedTools.map((tool) => tool.trim()))]
+        : undefined,
+      model: value.model?.trim(),
       permissionMode:
         value.permissionMode === undefined
           ? undefined

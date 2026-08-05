@@ -1,5 +1,5 @@
 import * as fs from 'fs/promises';
-import { z } from 'zod';
+import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
@@ -14,32 +14,30 @@ export const notebookEditTool = createTool({
   kind: ToolKind.Write,
   isConcurrencySafe: false, // 文件写入操作
 
-  schema: z.object({
-    notebook_path: z
-      .string()
-      .describe(
-        'The absolute path to the Jupyter notebook file to edit (must be absolute, not relative)'
-      ),
-    cell_id: z
-      .string()
-      .optional()
-      .describe(
-        'The ID of the cell to edit. When inserting a new cell, the new cell will be inserted after the cell with this ID, or at the beginning if not specified.'
-      ),
-    new_source: z.string().describe('The new source for the cell'),
-    cell_type: z
-      .enum(['code', 'markdown'])
-      .optional()
-      .describe(
-        'The type of the cell (code or markdown). If not specified, it defaults to the current cell type. If using edit_mode=insert, this is required.'
-      ),
-    edit_mode: z
-      .enum(['replace', 'insert', 'delete'])
-      .optional()
-      .default('replace')
-      .describe(
-        'The type of edit to make (replace, insert, delete). Defaults to replace.'
-      ),
+  schema: Type.Object({
+    notebook_path: Type.String({
+      description:
+        'The absolute path to the Jupyter notebook file to edit (must be absolute, not relative)',
+    }),
+    cell_id: Type.Optional(
+      Type.String({
+        description:
+          'The ID of the cell to edit. New cells are inserted after it, or at the beginning when omitted.',
+      })
+    ),
+    new_source: Type.String({ description: 'The new source for the cell' }),
+    cell_type: Type.Optional(
+      StringEnum(['code', 'markdown'], {
+        description:
+          'Cell type. Required for insert; otherwise defaults to the current type.',
+      })
+    ),
+    edit_mode: Default(
+      StringEnum(['replace', 'insert', 'delete'], {
+        description: 'The edit operation. Defaults to replace.',
+      }),
+      'replace'
+    ),
   }),
 
   // 工具描述（对齐 Claude Code 官方）

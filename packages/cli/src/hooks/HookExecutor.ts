@@ -1078,6 +1078,7 @@ export class HookExecutor {
     const { createChatServiceAsync } = await import(
       '../services/ChatServiceInterface.js'
     );
+    const { resolveModelConfig } = await import('../services/pi/resolveModelConfig.js');
 
     await ensureStoreInitialized();
 
@@ -1089,15 +1090,11 @@ export class HookExecutor {
       throw new Error('PromptHook: 无法获取模型配置。请确保至少配置了一个模型。');
     }
 
-    const chatService = await createChatServiceAsync({
-      provider: modelConfig.provider,
-      apiKey: modelConfig.apiKey,
-      baseUrl: modelConfig.baseUrl,
-      model: modelConfig.model,
-      temperature: modelConfig.temperature,
-      maxContextTokens: modelConfig.maxContextTokens,
-      maxOutputTokens: modelConfig.maxOutputTokens,
-    });
+    const appConfig = (await import('../store/vanilla.js')).getConfig();
+    if (!appConfig) throw new Error('PromptHook: 配置未初始化');
+    const chatService = await createChatServiceAsync(
+      resolveModelConfig(modelConfig, appConfig, false).chat
+    );
 
     this.chatServiceCache.set(cacheKey, chatService);
     return chatService;

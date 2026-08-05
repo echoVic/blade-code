@@ -5,15 +5,16 @@
  * 每轮最多尝试一次，作为最后一道防线。
  */
 
-import type { Message } from '../services/ChatServiceInterface.js';
+import type { Message, UsageInfo } from '../services/ChatServiceInterface.js';
 import { isAbortError } from '../utils/abort.js';
 import { CompactionService } from './CompactionService.js';
 import { snipCompact } from './SnipCompaction.js';
 
 export interface ReactiveCompactOptions {
   modelName: string;
+  modelProvider?: string;
   maxContextTokens: number;
-  apiKey: string;
+  apiKey?: string;
   baseURL?: string;
   signal?: AbortSignal;
   activeTask?: string;
@@ -31,7 +32,7 @@ export class ReactiveCompaction {
   async tryReactiveCompact(
     messages: Message[],
     options: ReactiveCompactOptions
-  ): Promise<{ success: boolean; messages: Message[] }> {
+  ): Promise<{ success: boolean; messages: Message[]; usage?: UsageInfo }> {
     if (this.hasAttempted) {
       return { success: false, messages };
     }
@@ -50,6 +51,7 @@ export class ReactiveCompaction {
       const compactResult = await CompactionService.compact(currentMessages, {
         trigger: 'auto',
         modelName: options.modelName,
+        modelProvider: options.modelProvider,
         maxContextTokens: options.maxContextTokens,
         apiKey: options.apiKey,
         baseURL: options.baseURL,
@@ -60,7 +62,11 @@ export class ReactiveCompaction {
       });
 
       if (compactResult.success) {
-        return { success: true, messages: compactResult.compactedMessages };
+        return {
+          success: true,
+          messages: compactResult.compactedMessages,
+          usage: compactResult.usage,
+        };
       }
       if (snipResult.snippedCount > 0) {
         return { success: true, messages: currentMessages };

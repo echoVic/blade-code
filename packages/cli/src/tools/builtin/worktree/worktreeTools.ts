@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import {
   type WorktreeManager,
@@ -36,13 +36,13 @@ export function createWorktreeTools(options: WorktreeToolOptions) {
     kind: ToolKind.Execute,
     isConcurrencySafe: false,
     strict: true,
-    schema: z.object({
-      name: z
-        .string()
-        .optional()
-        .describe(
-          'Optional worktree name. Use letters, digits, dots, underscores, dashes, and optional "/" separators.'
-        ),
+    schema: Type.Object({
+      name: Type.Optional(
+        Type.String({
+          description:
+            'Optional worktree name. Use letters, digits, dots, underscores, dashes, and optional "/" separators.',
+        })
+      ),
     }),
     description: {
       short: 'Create an isolated git worktree and switch this session into it',
@@ -104,18 +104,18 @@ export function createWorktreeTools(options: WorktreeToolOptions) {
     kind: ToolKind.Execute,
     isConcurrencySafe: false,
     strict: true,
-    schema: z.object({
-      action: z
-        .enum(['keep', 'remove'])
-        .describe(
-          '"keep" preserves the worktree and branch; "remove" deletes both when safe.'
-        ),
-      discard_changes: z
-        .boolean()
-        .default(false)
-        .describe(
-          'Required true to remove a worktree with uncommitted files or unmerged commits.'
-        ),
+    schema: Type.Object({
+      action: StringEnum(['keep', 'remove'], {
+        description:
+          '"keep" preserves the worktree and branch; "remove" deletes both when safe.',
+      }),
+      discard_changes: Default(
+        Type.Boolean({
+          description:
+            'Required true to remove a worktree with uncommitted files or unmerged commits.',
+        }),
+        false
+      ),
     }),
     description: {
       short: 'Exit the managed worktree for this session',

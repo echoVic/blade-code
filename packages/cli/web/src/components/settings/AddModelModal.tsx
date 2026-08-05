@@ -1,7 +1,7 @@
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { cn } from '@/lib/utils';
 import { ChevronDown, Eye, EyeOff, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
 
 interface AddModelModalProps {
   open: boolean;
@@ -10,107 +10,73 @@ interface AddModelModalProps {
 }
 
 export interface ModelFormData {
-  bladeProvider: string;
-  baseUrl: string;
-  apiKey: string;
-  modelId: string;
-  name: string;
+  provider: string;
+  model: string;
+  displayName: string;
+  apiKey?: string;
 }
 
 interface ProviderOption {
   id: string;
   name: string;
-  icon: string;
-  description: string;
-  envVars: string[];
-  defaultBaseUrl?: string;
-  bladeProvider: string;
+  modelCount: number;
+  supportsApiKey: boolean;
+  configured: boolean;
 }
 
 interface ModelOption {
   id: string;
   name: string;
-  contextWindow?: number;
+  contextWindow: number;
+  reasoning: boolean;
+  input: string[];
 }
 
-const CUSTOM_PROVIDER: ProviderOption = {
-  id: 'custom',
-  name: 'Custom (OpenAI Compatible)',
-  icon: '🔌',
-  description: 'Any OpenAI-compatible API',
-  envVars: [],
-  bladeProvider: 'openai-compatible',
-};
-
 export function AddModelModal({ open, onOpenChange, onSave }: AddModelModalProps) {
-  const [providers, setProviders] = useState<ProviderOption[]>([CUSTOM_PROVIDER]);
+  const [providers, setProviders] = useState<ProviderOption[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState('custom');
-  const [formData, setFormData] = useState<ModelFormData>({
-    bladeProvider: 'openai-compatible',
-    baseUrl: '',
-    apiKey: '',
-    modelId: '',
-    name: '',
-  });
+  const [provider, setProvider] = useState<ProviderOption>();
+  const [model, setModel] = useState<ModelOption>();
+  const [displayName, setDisplayName] = useState('');
+  const [apiKey, setApiKey] = useState('');
   const [providerOpen, setProviderOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
-    if (open) {
-      fetch('/providers')
-        .then((res) => res.json())
-        .then((data) => setProviders([CUSTOM_PROVIDER, ...data]))
-        .catch((err) => console.error('Failed to load providers:', err));
-    }
+    if (!open) return;
+    setModels([]);
+    setProvider(undefined);
+    setModel(undefined);
+    setDisplayName('');
+    setApiKey('');
+    setProviderOpen(false);
+    setModelOpen(false);
+    setShowApiKey(false);
+    void fetch('/providers')
+      .then((response) => response.json())
+      .then(setProviders);
   }, [open]);
 
   useEffect(() => {
-    if (selectedProviderId && selectedProviderId !== 'custom') {
-      fetch(`/providers/${selectedProviderId}/models`)
-        .then((res) => res.json())
-        .then((data) => setModels(data))
-        .catch((err) => console.error('Failed to load models:', err));
-    } else {
-      setModels([]);
+    if (!provider) return;
+    void fetch(`/providers/${provider.id}/models`)
+      .then((response) => response.json())
+      .then(setModels);
+  }, [provider]);
+
+  const submit = () => {
+    if (!provider || !model || (!provider.configured && !apiKey)) {
+      return;
     }
-  }, [selectedProviderId]);
-
-  const handleProviderSelect = (provider: ProviderOption) => {
-    setSelectedProviderId(provider.id);
-    setFormData({
-      ...formData,
-      bladeProvider: provider.bladeProvider,
-      baseUrl: provider.defaultBaseUrl || '',
-      modelId: '',
-      name: '',
-    });
-    setProviderOpen(false);
-  };
-
-  const handleSubmit = () => {
-    if (!formData.modelId || !formData.apiKey) return;
     onSave({
-      ...formData,
-      name: formData.name || formData.modelId,
+      provider: provider.id,
+      model: model.id,
+      displayName: displayName || model.name,
+      apiKey: apiKey || undefined,
     });
-    setFormData({
-      bladeProvider: 'openai-compatible',
-      baseUrl: '',
-      apiKey: '',
-      modelId: '',
-      name: '',
-    });
-    setSelectedProviderId('custom');
     onOpenChange(false);
   };
-
-  const selectedProvider = providers.find((p) => p.id === selectedProviderId);
-  const selectedModel = models.find((m) => m.id === formData.modelId);
-  const isCustom = selectedProviderId === 'custom';
-  const hasBuiltInModels = !isCustom && models.length > 0;
-  const canSubmit = formData.modelId && formData.apiKey;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -119,196 +85,168 @@ export function AddModelModal({ open, onOpenChange, onSave }: AddModelModalProps
         aria-describedby={undefined}
       >
         <DialogTitle className="sr-only">Add Model</DialogTitle>
-        <div className="p-6 flex flex-col gap-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
-              Add Model
-            </h2>
-            <button
-              onClick={() => onOpenChange(false)}
-              className="text-[#9CA3AF] hover:text-[#111827] dark:text-[#71717a] dark:hover:text-[#E5E5E5] transition-colors"
-            >
-              <X className="h-4 w-4" />
+        <div className="flex flex-col gap-6 p-6">
+          <div className="flex justify-between items-center">
+            <h2 className="font-mono text-base font-semibold">Add Model</h2>
+            <button type="button" onClick={() => onOpenChange(false)}>
+              <X className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-2">
-              <label className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                Provider
-              </label>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setProviderOpen(!providerOpen)}
-                  className="w-full bg-[#F3F4F6] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-md px-3 py-2.5 text-sm text-[#111827] dark:text-[#E5E5E5] font-mono flex items-center justify-between hover:bg-[#E5E7EB] dark:hover:bg-[#27272a] transition-colors"
-                >
-                  <span className="flex items-center gap-2">
-                    <span>{selectedProvider?.icon}</span>
-                    <span>{selectedProvider?.name}</span>
-                  </span>
-                  <ChevronDown className="h-4 w-4 text-[#9CA3AF] dark:text-[#71717a]" />
-                </button>
-                {providerOpen && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-40"
-                      onClick={() => setProviderOpen(false)}
-                    />
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-[#18181b] border border-[#E5E7EB] dark:border-zinc-800 rounded-md py-1 z-50 max-h-64 overflow-y-auto shadow-lg">
-                      {providers.map((provider) => (
-                        <button
-                          key={provider.id}
-                          type="button"
-                          className={cn(
-                            'w-full text-left px-3 py-2 text-sm font-mono hover:bg-[#F3F4F6] dark:hover:bg-[#27272a] transition-colors',
-                            selectedProviderId === provider.id
-                              ? 'text-[#111827] dark:text-[#E5E5E5] bg-[#F3F4F6] dark:bg-[#27272a]'
-                              : 'text-[#6B7280] dark:text-[#a1a1aa]'
-                          )}
-                          onClick={() => handleProviderSelect(provider)}
-                        >
-                          <div className="flex items-center gap-2">
-                            <span>{provider.icon}</span>
-                            <span className="font-medium">{provider.name}</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
+          <SelectField
+            label="Provider"
+            value={provider?.name ?? 'Select provider'}
+            open={providerOpen}
+            setOpen={setProviderOpen}
+            options={providers.map((entry) => ({
+              id: entry.id,
+              label: `${entry.name} (${entry.modelCount})${entry.configured ? ' · configured' : ''}`,
+              selected: provider?.id === entry.id,
+              select: () => {
+                setProvider(entry);
+                setModel(undefined);
+                setProviderOpen(false);
+              },
+            }))}
+          />
 
-            <div className="flex flex-col gap-2">
-              <label className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                Base URL
-              </label>
-              <input
-                type="text"
-                value={formData.baseUrl}
-                onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
-                placeholder={
-                  selectedProvider?.defaultBaseUrl || 'https://api.openai.com/v1'
-                }
-                className="w-full bg-[#F3F4F6] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-md px-3 py-2.5 text-sm text-[#111827] dark:text-[#E5E5E5] font-mono placeholder:text-[#9CA3AF] dark:placeholder:text-[#71717a] focus:outline-none focus:ring-1 focus:ring-[#D1D5DB] dark:focus:ring-zinc-600"
-              />
-            </div>
+          <SelectField
+            label="Model"
+            value={model?.name ?? 'Select model'}
+            open={modelOpen}
+            setOpen={setModelOpen}
+            options={models.map((entry) => ({
+              id: entry.id,
+              label: `${entry.name} · ${Math.round(entry.contextWindow / 1000)}K${entry.reasoning ? ' · reasoning' : ''}${entry.input.includes('image') ? ' · vision' : ''}`,
+              selected: model?.id === entry.id,
+              select: () => {
+                setModel(entry);
+                setDisplayName(entry.name);
+                setModelOpen(false);
+              },
+            }))}
+          />
 
+          <TextField
+            label="Display name"
+            value={displayName}
+            onChange={setDisplayName}
+            placeholder={model?.name ?? 'Optional alias'}
+          />
+
+          {provider?.supportsApiKey && !provider.configured && (
             <div className="flex flex-col gap-2">
-              <label className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                API Key
-              </label>
+              <label className="text-[13px] text-zinc-500 font-mono">API Key</label>
               <div className="relative">
                 <input
                   type={showApiKey ? 'text' : 'password'}
-                  value={formData.apiKey}
-                  onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
-                  placeholder="sk-........................"
-                  className="w-full bg-[#F3F4F6] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-md px-3 py-2.5 pr-10 text-sm text-[#111827] dark:text-[#E5E5E5] font-mono placeholder:text-[#9CA3AF] dark:placeholder:text-[#71717a] focus:outline-none focus:ring-1 focus:ring-[#D1D5DB] dark:focus:ring-zinc-600"
+                  value={apiKey}
+                  onChange={(event) => setApiKey(event.target.value)}
+                  className="pr-10 field"
+                  placeholder="Stored separately in auth.json"
                 />
                 <button
                   type="button"
                   onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9CA3AF] hover:text-[#111827] dark:text-[#71717a] dark:hover:text-[#E5E5E5] transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2"
                 >
                   {showApiKey ? (
-                    <EyeOff className="h-4 w-4" />
+                    <EyeOff className="w-4 h-4" />
                   ) : (
-                    <Eye className="h-4 w-4" />
+                    <Eye className="w-4 h-4" />
                   )}
                 </button>
               </div>
             </div>
+          )}
 
-            <div className="flex flex-col gap-2">
-              <label className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                Model ID
-              </label>
-              {hasBuiltInModels && (
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setModelOpen(!modelOpen)}
-                    className="w-full bg-[#F3F4F6] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-md px-3 py-2.5 text-sm text-[#111827] dark:text-[#E5E5E5] font-mono flex items-center justify-between hover:bg-[#E5E7EB] dark:hover:bg-[#27272a] transition-colors"
-                  >
-                    {selectedModel?.name || formData.modelId || 'Select model'}
-                    <ChevronDown className="h-4 w-4 text-[#9CA3AF] dark:text-[#71717a]" />
-                  </button>
-                  {modelOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-40"
-                        onClick={() => setModelOpen(false)}
-                      />
-                      <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-[#18181b] border border-[#E5E7EB] dark:border-zinc-800 rounded-md py-1 z-50 max-h-48 overflow-y-auto shadow-lg">
-                        {models.map((model) => (
-                          <button
-                            key={model.id}
-                            type="button"
-                            className={cn(
-                              'w-full text-left px-3 py-2 text-sm font-mono hover:bg-[#F3F4F6] dark:hover:bg-[#27272a] transition-colors',
-                              formData.modelId === model.id
-                                ? 'text-[#111827] dark:text-[#E5E5E5] bg-[#F3F4F6] dark:bg-[#27272a]'
-                                : 'text-[#6B7280] dark:text-[#a1a1aa]'
-                            )}
-                            onClick={() => {
-                              setFormData({
-                                ...formData,
-                                modelId: model.id,
-                                name: model.name,
-                              });
-                              setModelOpen(false);
-                            }}
-                          >
-                            {model.name}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-              <input
-                type="text"
-                value={formData.modelId}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    modelId: e.target.value,
-                    name: e.target.value,
-                  })
-                }
-                placeholder="gpt-4o, claude-3-opus, deepseek-chat, etc."
-                className="w-full bg-[#F3F4F6] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-md px-3 py-2.5 text-sm text-[#111827] dark:text-[#E5E5E5] font-mono placeholder:text-[#9CA3AF] dark:placeholder:text-[#71717a] focus:outline-none focus:ring-1 focus:ring-[#D1D5DB] dark:focus:ring-zinc-600"
-              />
-              {hasBuiltInModels && (
-                <p className="text-[12px] text-[#9CA3AF] dark:text-[#71717a] font-mono">
-                  You can select a listed model or type a custom model ID.
-                </p>
-              )}
-            </div>
-          </div>
+          {provider && !provider.configured && !provider.supportsApiKey && (
+            <p className="font-mono text-sm text-amber-600">
+              This provider requires OAuth or ambient credentials. Configure it
+              externally before selecting the model.
+            </p>
+          )}
 
-          <div className="flex items-center gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => onOpenChange(false)}
-              className="flex-1 px-4 py-2 rounded-md text-sm text-[#6B7280] dark:text-[#a1a1aa] font-mono hover:bg-[#F3F4F6] dark:hover:bg-[#18181b] transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={!canSubmit}
-              className="flex-1 px-4 py-2 rounded-md text-sm text-white font-semibold font-mono bg-[#16A34A] hover:bg-[#15803d] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              Save Model
-            </button>
-          </div>
+          <button
+            type="button"
+            disabled={
+              !provider ||
+              !model ||
+              (!provider.configured &&
+                (!provider.supportsApiKey || apiKey.trim().length === 0))
+            }
+            onClick={submit}
+            className="px-4 py-2 font-mono text-sm font-semibold text-white bg-green-600 rounded-md disabled:opacity-50"
+          >
+            Save Model
+          </button>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface SelectOption {
+  id: string;
+  label: string;
+  selected: boolean;
+  select: () => void;
+}
+
+function SelectField(props: {
+  label: string;
+  value: string;
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  options: SelectOption[];
+}) {
+  return (
+    <div className="flex relative flex-col gap-2">
+      <label className="text-[13px] text-zinc-500 font-mono">{props.label}</label>
+      <button
+        type="button"
+        onClick={() => props.setOpen(!props.open)}
+        className="flex justify-between field"
+      >
+        {props.value}
+        <ChevronDown className="w-4 h-4" />
+      </button>
+      {props.open && (
+        <div className="overflow-y-auto absolute right-0 left-0 top-full z-50 max-h-64 bg-white rounded-md border dark:bg-zinc-900">
+          {props.options.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={option.select}
+              className={cn(
+                'w-full text-left px-3 py-2 text-sm font-mono',
+                option.selected && 'bg-zinc-100 dark:bg-zinc-800'
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TextField(props: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <label className="text-[13px] text-zinc-500 font-mono">{props.label}</label>
+      <input
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+        placeholder={props.placeholder}
+        className="field"
+      />
+    </div>
   );
 }

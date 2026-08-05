@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
+import { Type } from '../../../../src/schema/index.js';
 import { executeLoopGenerator } from '../../../../src/agent/loop/executeLoopGenerator.js';
 import type { LoopDependencies, LoopEvent } from '../../../../src/agent/loop/types.js';
 import type { ChatContext, LoopResult } from '../../../../src/agent/types.js';
@@ -343,7 +343,7 @@ function createTaskLoopDependencies(
       kind: ToolKind.ReadOnly,
       isConcurrencySafe: false,
       description: { short: 'Delegate work' },
-      schema: z.unknown(),
+      schema: Type.Unknown(),
       execute: taskExecution,
     })
   );
@@ -374,7 +374,7 @@ function createVerificationLoopDependencies(
       kind: ToolKind.Execute,
       isConcurrencySafe: false,
       description: { short: 'Run a command' },
-      schema: z.unknown(),
+      schema: Type.Unknown(),
       execute: bashExecution,
     })
   );

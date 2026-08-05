@@ -1,5 +1,5 @@
 import { type Dispatcher, ProxyAgent, fetch as undiciFetch } from 'undici';
-import { z } from 'zod';
+import { Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type {
   ExecutionContext,
@@ -367,19 +367,21 @@ export const webSearchTool = createTool({
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true, // 纯读操作，无副作用
 
-  schema: z.object({
-    query: z
-      .string()
-      .min(2, 'Search query must be at least 2 characters')
-      .describe('Search query'),
-    allowed_domains: z
-      .array(z.string().min(1))
-      .optional()
-      .describe('Return results only from these domains (optional)'),
-    blocked_domains: z
-      .array(z.string().min(1))
-      .optional()
-      .describe('Exclude results from these domains (optional)'),
+  schema: Type.Object({
+    query: Type.String({
+      minLength: 2,
+      description: 'Search query',
+    }),
+    allowed_domains: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        description: 'Return results only from these domains (optional)',
+      })
+    ),
+    blocked_domains: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        description: 'Exclude results from these domains (optional)',
+      })
+    ),
   }),
 
   description: {

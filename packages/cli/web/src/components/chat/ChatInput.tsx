@@ -1,5 +1,3 @@
-import { ChevronDown, Paperclip, Send, Square } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,6 +10,8 @@ import {
   useConfigStore,
 } from '@/store/ConfigStore';
 import { useSessionStore } from '@/store/session';
+import { ChevronDown, Paperclip, Send, Square } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SuggestionPopover } from './SuggestionPopover';
 
 export interface ComposerImageAttachment {
@@ -82,8 +82,8 @@ export function ChatInput({
     if (configuredModels.length === 0) return;
     const modelInfo = configuredModels.find((m) => m.id === currentModelId);
     if (modelInfo) {
-      const hasConfiguredTokens = !!modelInfo.maxContextTokens;
-      const maxTokens = modelInfo.maxContextTokens || 128000;
+      const hasConfiguredTokens = !!modelInfo.contextWindow;
+      const maxTokens = modelInfo.contextWindow || 0;
       setMaxContextTokens(maxTokens, !hasConfiguredTokens);
     }
   }, [currentModelId, configuredModels, setMaxContextTokens]);
@@ -335,7 +335,11 @@ export function ChatInput({
   }, [input]);
 
   const currentModelInfo = configuredModels.find((m) => m.id === currentModelId);
-  const displayModelName = currentModelInfo?.model || currentModelId || 'Select Model';
+  const displayModelName =
+    currentModelInfo?.displayName ||
+    currentModelInfo?.model ||
+    currentModelId ||
+    'Select Model';
   const currentModeLabel =
     MODES.find((m) => m.value === currentMode)?.label || 'Default';
   const canSend = !!input.trim() || attachments.length > 0;
@@ -485,7 +489,7 @@ export function ChatInput({
                                 setModelOpen(false);
                               }}
                             >
-                              {model.model}
+                              {model.displayName || model.model}
                             </button>
                           ))}
                         </div>

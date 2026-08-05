@@ -59,7 +59,7 @@ Blade/
 ## Key Design Principles
 
 1. **Stateless Agent**: Agent doesn't store session state; all state passed via context
-2. **Tool System**: Unified tool registration, execution, and validation with Zod schemas
+2. **Tool System**: Unified tool registration, execution, and validation with TypeBox schemas
 3. **Permission Control**: Three-level permission system (allow/ask/deny)
 4. **Session Management**: Multi-session support with resume and fork capabilities
 
@@ -68,7 +68,7 @@ Blade/
 - TypeScript strict mode
 - Biome for linting and formatting (single quotes, semicolons, 88 char line width)
 - Avoid `any` type
-- Use Zod schemas for tool parameters
+- Use TypeBox schemas for tool parameters
 
 ## Testing
 

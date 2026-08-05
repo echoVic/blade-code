@@ -55,22 +55,13 @@ npx blade "帮我分析代码"
 
 ### 向导配置
 
-首次运行 `blade` 时输入 `/model add` 进入模型配置向导，依次填写：
+首次运行 `blade` 时输入 `/model add`，依次选择：
 
-1. **配置名称** - 用于标识此模型配置
-2. **Provider** - 选择提供商类型
-3. **Base URL** - API 端点地址
-4. **API Key** - 密钥（隐藏输入）
-5. **模型名称** - 具体模型标识
+1. pi-ai Provider
+2. pi-ai catalog 中的模型
+3. Provider 凭证（尚未配置时）
 
-### 支持的 Provider
-
-| Provider | 说明 | 示例 |
-|----------|------|------|
-| `openai-compatible` | OpenAI 兼容接口 | Qwen、DeepSeek、Ollama、OpenRouter |
-| `anthropic` | Anthropic Claude | Claude 3.5/4 系列 |
-| `gemini` | Google Gemini | Gemini 1.5/2.0 系列 |
-| `azure-openai` | Azure OpenAI Service | GPT-4o 等 |
+Provider、模型、默认 endpoint、context window 和价格均来自 pi-ai。
 
 ### 手动配置示例
 
@@ -78,21 +69,19 @@ npx blade "帮我分析代码"
 
 ```json
 {
-  "currentModelId": "qwen",
+  "currentModelId": "deepseek",
   "models": [
     {
       "id": "qwen",
-      "name": "Qwen",
-      "provider": "openai-compatible",
-      "apiKey": "${QWEN_API_KEY}",
-      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "model": "qwen-max"
+      "displayName": "DeepSeek Pro",
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro"
     }
   ]
 }
 ```
 
-> 💡 推荐把密钥放在环境变量中，再用 `${VAR}` 插值，避免明文存储。
+API Key 由向导写入 `~/.blade/auth.json`，不会进入 `config.json`。
 
 ### 获取 API 密钥
 

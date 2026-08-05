@@ -1,17 +1,16 @@
+import { ChevronDown, Pencil, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/AppStore';
-import { useConfigStore, type ModelConfig } from '@/store/ConfigStore';
+import { type ModelConfig, useConfigStore } from '@/store/ConfigStore';
 import { useSettingsStore } from '@/store/SettingsStore';
-import { ChevronDown, Pencil, Trash2, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
 import { AddModelModal, type ModelFormData } from './AddModelModal';
 import { EditModelModal } from './EditModelModal';
 
 type TabValue = 'general' | 'models' | 'shortcuts';
 
 const PROVIDER_ICONS: Record<string, { bg: string; label: string }> = {
-  'openai-compatible': { bg: '#10a37f', label: 'OA' },
   anthropic: { bg: '#d97757', label: 'A' },
   gemini: { bg: '#4285f4', label: 'G' },
   'azure-openai': { bg: '#0078d4', label: 'Az' },
@@ -84,11 +83,10 @@ export function SettingsModal() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          provider: formData.bladeProvider,
-          name: formData.name || formData.modelId,
-          model: formData.modelId,
-          baseUrl: formData.baseUrl || undefined,
-          apiKey: formData.apiKey || undefined,
+          provider: formData.provider,
+          displayName: formData.displayName,
+          model: formData.model,
+          apiKey: formData.apiKey,
         }),
       });
       if (!response.ok) throw new Error('Failed to save model');
@@ -181,7 +179,7 @@ export function SettingsModal() {
                           bg: '#71717a',
                           label: '?',
                         };
-                        const isConnected = models.some((m) => m.apiKey);
+                        const isConnected = true;
                         const isExpanded = expandedProvider === provider;
 
                         return (
@@ -239,10 +237,11 @@ export function SettingsModal() {
                                   >
                                     <div className="flex flex-col gap-0.5 flex-1 min-w-0">
                                       <span className="text-sm text-[#111827] dark:text-[#E5E5E5] font-mono truncate">
-                                        {model.model}
+                                        {model.displayName || model.model}
                                       </span>
                                       <span className="text-xs text-[#9CA3AF] dark:text-[#71717a] font-mono truncate">
-                                        {model.baseUrl || 'Default URL'}
+                                        {model.displayName && `${model.model} · `}
+                                        {model.overrides?.baseUrl || 'default endpoint'}
                                       </span>
                                     </div>
                                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">

@@ -1,5 +1,6 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { safeParseSchema } from '../../../schema/index.js';
 import type { NodeError } from '../../types/index.js';
 import type { TaskListItem, TaskStats, TaskStatus } from './taskListTypes.js';
 import { TaskListItemSchema } from './taskListTypes.js';
@@ -274,7 +275,7 @@ function normalizeTaskFile(data: unknown): TaskListFile {
         : [];
 
   const tasks = rawTasks
-    .map((task) => TaskListItemSchema.safeParse(task))
+    .map((task) => safeParseSchema(TaskListItemSchema, task))
     .filter((result): result is { success: true; data: TaskListItem } => result.success)
     .map((result) => result.data);
 

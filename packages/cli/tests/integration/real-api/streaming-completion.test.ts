@@ -1,9 +1,8 @@
-import { streamText } from 'ai';
 import { describe, expect, it } from 'vitest';
 import {
+  createTestChatService,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
-  REAL_API_OUTPUT_BUDGET,
 } from './testConfig.js';
 
 const enabledModels = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
@@ -11,22 +10,15 @@ const enabledModels = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
 describe.skipIf(enabledModels.length === 0)('Real API Streaming Completion', () => {
   describe.each(enabledModels)('$name ($provider)', (modelConfig) => {
     it('should stream text deltas', async () => {
-      const model = modelConfig.createModel();
-      const result = streamText({
-        model,
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant.' },
-          { role: 'user', content: 'Say hello world in one sentence.' },
-        ],
-        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
-        temperature: 0,
-      });
+      const service = createTestChatService(modelConfig);
+      const result = service.streamChat([
+        { role: 'system', content: 'You are a helpful assistant.' },
+        { role: 'user', content: 'Say hello world in one sentence.' },
+      ]);
 
       const chunks: string[] = [];
-      for await (const part of result.fullStream) {
-        if (part.type === 'text-delta') {
-          chunks.push(part.text);
-        }
+      for await (const part of result) {
+        if (part.content) chunks.push(part.content);
       }
 
       expect(chunks.length).toBeGreaterThan(0);
@@ -35,75 +27,52 @@ describe.skipIf(enabledModels.length === 0)('Real API Streaming Completion', () 
     }, 120000);
 
     it('should deliver finish event with usage', async () => {
-      const model = modelConfig.createModel();
-      const result = streamText({
-        model,
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant.' },
-          { role: 'user', content: 'What is 2+2? Reply with just the number.' },
-        ],
-        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
-        temperature: 0,
-      });
+      const service = createTestChatService(modelConfig);
+      const result = service.streamChat([
+        { role: 'system', content: 'You are a helpful assistant.' },
+        { role: 'user', content: 'What is 2+2? Reply with just the number.' },
+      ]);
 
       let finishEvent: {
         finishReason?: string;
-        totalUsage?: {
-          promptTokens?: number;
-          completionTokens?: number;
-          totalTokens?: number;
-        };
+        usage?: { promptTokens?: number; completionTokens?: number };
       } | null = null;
-      for await (const part of result.fullStream) {
-        if (part.type === 'finish') {
-          finishEvent = part as unknown as typeof finishEvent;
-        }
+      for await (const part of result) {
+        if (part.finishReason) finishEvent = part;
       }
 
       expect(finishEvent).not.toBeNull();
       expect(finishEvent!.finishReason).toBe('stop');
-      expect(finishEvent!.totalUsage).toBeDefined();
-      const usage = finishEvent!.totalUsage as Record<string, number>;
-      const inputTokens = usage.promptTokens || usage.inputTokens || 0;
+      expect(finishEvent!.usage).toBeDefined();
+      const inputTokens = finishEvent!.usage?.promptTokens ?? 0;
       expect(inputTokens).toBeGreaterThan(0);
     }, 120000);
 
     it('should collect full text via text stream', async () => {
-      const model = modelConfig.createModel();
-      const result = streamText({
-        model,
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant.' },
-          { role: 'user', content: 'Tell me a short story about a robot.' },
-        ],
-        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
-        temperature: 0.7,
-      });
+      const service = createTestChatService(modelConfig);
+      const result = service.streamChat([
+        { role: 'system', content: 'You are a helpful assistant.' },
+        { role: 'user', content: 'Tell me a short story about a robot.' },
+      ]);
 
-      const collectedText = await result.text;
+      let collectedText = '';
+      for await (const part of result) collectedText += part.content ?? '';
       expect(collectedText).toBeTruthy();
       expect(collectedText.length).toBeGreaterThan(10);
     }, 120000);
 
     it('should handle multi-turn streaming', async () => {
-      const model = modelConfig.createModel();
-      const result = streamText({
-        model,
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant.' },
-          { role: 'user', content: 'What is the capital of France?' },
-          { role: 'assistant', content: 'Paris' },
-          { role: 'user', content: 'And what is its population (approx)?' },
-        ],
-        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
-        temperature: 0,
-      });
+      const service = createTestChatService(modelConfig);
+      const result = service.streamChat([
+        { role: 'system', content: 'You are a helpful assistant.' },
+        { role: 'user', content: 'What is the capital of France?' },
+        { role: 'assistant', content: 'Paris' },
+        { role: 'user', content: 'And what is its population (approx)?' },
+      ]);
 
       const chunks: string[] = [];
-      for await (const part of result.fullStream) {
-        if (part.type === 'text-delta') {
-          chunks.push(part.text);
-        }
+      for await (const part of result) {
+        if (part.content) chunks.push(part.content);
       }
 
       const fullText = chunks.join('');

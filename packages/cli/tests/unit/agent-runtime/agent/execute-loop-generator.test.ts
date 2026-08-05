@@ -98,9 +98,9 @@ import type {
   LoopOptions,
   LoopResult,
 } from '../../../../src/agent/types.js';
+import { PermissionMode } from '../../../../src/config/types.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
 import { ContextManager } from '../../../../src/context/ContextManager.js';
-import { PermissionMode } from '../../../../src/config/types.js';
 
 // ===== Helpers =====
 
@@ -118,7 +118,14 @@ function createMockDeps(overrides: Partial<LoopDependencies> = {}): LoopDependen
       chat: vi.fn().mockResolvedValue({
         content: 'Hello from LLM',
         toolCalls: undefined,
-        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        usage: {
+          promptTokens: 100,
+          completionTokens: 50,
+          totalTokens: 150,
+          cacheReadInputTokens: 20,
+          cacheCreationInputTokens: 10,
+          costUsd: 0.0025,
+        },
         finishReason: 'stop',
       }),
       streamChat: vi.fn(),
@@ -219,6 +226,62 @@ describe('executeLoopGenerator', () => {
   });
 
   describe('compaction lifecycle', () => {
+    it('emits summary generation usage so compaction cost is accumulated', async () => {
+      const deps = createMockDeps();
+      (deps.chatService.getConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+        model: 'test-model',
+        provider: 'test',
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_096,
+      });
+      vi.mocked(CompactionService.compact).mockResolvedValueOnce({
+        success: true,
+        summary: 'summary',
+        preTokens: 90_000,
+        postTokens: 1_000,
+        filesIncluded: [],
+        compactedMessages: [{ role: 'user', content: 'summary' }],
+        boundaryMessage: { role: 'system', content: '' },
+        summaryMessage: { role: 'user', content: 'summary' },
+        usage: {
+          promptTokens: 100,
+          completionTokens: 20,
+          totalTokens: 120,
+          cacheReadInputTokens: 30,
+          cacheCreationInputTokens: 10,
+          costUsd: 0.125,
+        },
+      });
+
+      const generator = checkAndCompactInLoop(
+        deps,
+        createMockContext({
+          messages: [{ role: 'user', content: 'large history' }],
+        }),
+        1,
+        90_000
+      );
+      const events: LoopEvent[] = [];
+      let step = await generator.next();
+      while (!step.done) {
+        events.push(step.value);
+        step = await generator.next();
+      }
+
+      expect(events).toContainEqual({
+        kind: 'token_usage',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+          maxContextTokens: 100_000,
+          cacheReadTokens: 30,
+          cacheWriteTokens: 10,
+          costUsd: 0.125,
+        },
+      });
+    });
+
     it('yields start while the compaction request is still pending', async () => {
       const deps = createMockDeps();
       const context = createMockContext();
@@ -427,6 +490,9 @@ describe('executeLoopGenerator', () => {
           outputTokens: 50,
           totalTokens: 150,
           maxContextTokens: 100000,
+          cacheReadTokens: 20,
+          cacheWriteTokens: 10,
+          costUsd: 0.0025,
         },
       });
 

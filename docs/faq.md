@@ -19,7 +19,7 @@ A: 最低 Node.js 20.0.0。使用 `nvm` 或 `n` 升级。
 
 **Q: API Key / 模型怎么配置？**  
 A: 两种方式：
-1. 运行 `blade`，按向导填写 Provider / Base URL / API Key / 模型
+1. 运行 `blade`，按向导选择 pi-ai Provider / 模型并配置凭证
 2. 手动编辑 `~/.blade/config.json`（或项目级 `.blade/config.json`），密钥可用 `${VAR}` 引用环境变量
 
 **Q: 支持哪些模型提供商？**  

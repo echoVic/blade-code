@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
+import { Type } from '../../src/schema/index.js';
 import { PermissionMode } from '../../src/config/types.js';
 import { HookManager } from '../../src/hooks/HookManager.js';
 import {
@@ -21,7 +21,7 @@ function createTestTool(name = 'TestTool') {
     displayName: name,
     kind: ToolKind.Execute,
     description: { short: 'integration tool' },
-    schema: z.object({ value: z.string() }),
+    schema: Type.Object({ value: Type.String() }),
     async execute(params) {
       return {
         success: true,
@@ -43,7 +43,7 @@ function createTestBashTool() {
     displayName: 'Bash',
     kind: ToolKind.Execute,
     description: { short: 'bash tool' },
-    schema: z.object({ command: z.string() }),
+    schema: Type.Object({ command: Type.String() }),
     async execute(params) {
       return {
         success: true,
@@ -460,7 +460,7 @@ describe('ToolExecutor 权限集成', () => {
       displayName: 'QueuedTool',
       kind: ToolKind.Execute,
       description: { short: 'queued tool' },
-      schema: z.object({}),
+      schema: Type.Object({}),
       execute,
     });
     const registry = new ToolRegistry();

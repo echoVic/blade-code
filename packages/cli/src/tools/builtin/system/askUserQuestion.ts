@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
@@ -6,57 +6,48 @@ import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
 /**
  * Option schema - 选项定义
  */
-const optionSchema = z.object({
-  label: z
-    .string()
-    .describe(
-      'The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.'
-    ),
-  description: z
-    .string()
-    .describe(
-      'Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.'
-    ),
+const optionSchema = Type.Object({
+  label: Type.String({
+    description:
+      'The display text for this option that the user will see and select. Should be concise (1-5 words).',
+  }),
+  description: Type.String({
+    description: 'Explanation of what this option means or what will happen if chosen.',
+  }),
 });
 
 /**
  * Question schema - 问题定义
  */
-const questionSchema = z.object({
-  question: z
-    .string()
-    .describe(
-      'The complete question to ask the user. Should be clear, specific, and end with a question mark. Example: "Which library should we use for date formatting?" If multiSelect is true, phrase it accordingly, e.g. "Which features do you want to enable?"'
-    ),
-  header: z
-    .string()
-    .max(12)
-    .describe(
-      'Very short label displayed as a chip/tag (max 12 chars). Examples: "Auth method", "Library", "Approach".'
-    ),
-  multiSelect: z
-    .boolean()
-    .describe(
-      'Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.'
-    ),
-  options: z
-    .array(optionSchema)
-    .min(2)
-    .max(4)
-    .describe(
-      'The available choices for this question. Must have 2-4 options. Each option should be a distinct, mutually exclusive choice (unless multiSelect is enabled). There should be no "Other" option, that will be provided automatically.'
-    ),
+const questionSchema = Type.Object({
+  question: Type.String({
+    description:
+      'The complete, clear question to ask the user. End it with a question mark.',
+  }),
+  header: Type.String({
+    maxLength: 12,
+    description: 'Very short label displayed as a chip/tag (max 12 chars).',
+  }),
+  multiSelect: Type.Boolean({
+    description:
+      'Allow multiple answers when true. Use only when choices are not mutually exclusive.',
+  }),
+  options: Type.Array(optionSchema, {
+    minItems: 2,
+    maxItems: 4,
+    description: 'The available choices for this question (2-4 options).',
+  }),
 });
 
 /**
  * AskUserQuestion tool schema
  */
-const askUserQuestionSchema = z.object({
-  questions: z
-    .array(questionSchema)
-    .min(1)
-    .max(4)
-    .describe('Questions to ask the user (1-4 questions)'),
+const askUserQuestionSchema = Type.Object({
+  questions: Type.Array(questionSchema, {
+    minItems: 1,
+    maxItems: 4,
+    description: 'Questions to ask the user (1-4 questions)',
+  }),
 });
 
 /**

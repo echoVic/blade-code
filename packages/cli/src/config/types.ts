@@ -3,13 +3,7 @@
  * 合并了 config.json 和 settings.json 的所有配置项
  */
 
-export type ProviderType =
-  | 'openai'
-  | 'openai-compatible'
-  | 'anthropic'
-  | 'gemini'
-  | 'azure-openai'
-  | string;
+export type ProviderType = string;
 
 /**
  * 权限模式枚举
@@ -41,28 +35,29 @@ export enum PermissionMode {
   PLAN = 'plan',
 }
 
+export interface ModelRef {
+  provider: string;
+  model: string;
+}
+
+export interface ModelOverrides {
+  baseUrl?: string;
+  temperature?: number;
+  maxOutputTokens?: number;
+  timeout?: number;
+  apiVersion?: string;
+  customHeaders?: Record<string, string>;
+  maxRetries?: number;
+  enablePromptCaching?: boolean;
+}
+
 export interface ModelConfig {
   id: string;
-  name: string;
+  displayName?: string;
   provider: ProviderType;
-  apiKey: string;
-  baseUrl: string;
   model: string;
-  temperature?: number;
-  maxContextTokens?: number;
-  maxOutputTokens?: number;
-  topP?: number;
-  topK?: number;
-  supportsThinking?: boolean;
-  thinkingBudget?: number;
-  thinkingMode?: 'off' | 'budget' | 'adaptive';
-  apiVersion?: string;
-  projectId?: string;
-  fallbackModels?: string[];
-  enablePromptCaching?: boolean;
-  customHeaders?: Record<string, string>;
-  timeout?: number;
-  maxRetries?: number;
+  overrides?: ModelOverrides;
+  fallbackModels?: ModelRef[];
 }
 
 import { UiTheme } from '@/api/schemas.js';
@@ -84,7 +79,7 @@ export interface BladeConfig {
 
   // 全局默认参数
   temperature: number;
-  maxContextTokens: number; // 上下文窗口大小（用于压缩判断）
+  maxContextTokens?: number; // 已弃用；运行时使用 pi-ai model.contextWindow
   maxOutputTokens?: number; // 输出 token 限制（传给 API 的 max_tokens），undefined 表示让 API 使用默认值
   stream: boolean;
   topP: number;
@@ -223,11 +218,9 @@ export interface McpServerConfig {
  * 注意：这是用于创建第一个模型配置的数据
  */
 export interface SetupConfig {
-  name: string;
+  displayName?: string;
   provider: ProviderType;
-  baseUrl: string;
-  apiKey: string;
   model: string;
-  maxContextTokens?: number;
-  maxOutputTokens?: number;
+  apiKey?: string;
+  overrides?: ModelOverrides;
 }

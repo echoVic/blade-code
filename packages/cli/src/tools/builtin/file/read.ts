@@ -1,6 +1,6 @@
 import { basename, extname } from 'path';
-import { z } from 'zod';
 import { isAcpMode } from '../../../acp/AcpServiceContext.js';
+import { Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
 import type {
@@ -10,12 +10,12 @@ import type {
   ToolResult,
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { ToolSchemas } from '../../validation/toolSchemas.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 
 /**
  * ReadTool - File read tool
- * Uses the newer Zod validation design
+ * Uses the TypeBox validation design
  */
 export const readTool = createTool({
   name: 'Read',
@@ -23,17 +23,20 @@ export const readTool = createTool({
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true, // 纯读操作，无副作用
 
-  // Zod Schema 定义
-  schema: z.object({
+  schema: Type.Object({
     file_path: ToolSchemas.filePath({
       description: 'File path to read (must be absolute)',
     }),
-    offset: ToolSchemas.lineNumber({
-      description: 'Starting line number (0-based, text files only)',
-    }).optional(),
-    limit: ToolSchemas.lineLimit({
-      description: 'Number of lines to read (text files only)',
-    }).optional(),
+    offset: Type.Optional(
+      ToolSchemas.lineNumber({
+        description: 'Starting line number (0-based, text files only)',
+      })
+    ),
+    limit: Type.Optional(
+      ToolSchemas.lineLimit({
+        description: 'Number of lines to read (text files only)',
+      })
+    ),
     encoding: ToolSchemas.encoding(),
   }),
 

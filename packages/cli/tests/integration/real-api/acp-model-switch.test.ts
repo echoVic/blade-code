@@ -224,25 +224,25 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
         models: [
           {
             id: flashModelId,
-            name: flashModel,
+            displayName: flashModel,
             provider: 'deepseek',
-            apiKey,
-            baseUrl: proxy.baseUrl,
             model: flashModel,
-            maxContextTokens: 64_000,
-            maxOutputTokens: 1024,
-            timeout: 180_000,
+            overrides: {
+              baseUrl: proxy.baseUrl,
+              maxOutputTokens: 1024,
+              timeout: 180_000,
+            },
           },
           {
             id: proModelId,
-            name: proModel,
+            displayName: proModel,
             provider: 'deepseek',
-            apiKey,
-            baseUrl: proxy.baseUrl,
             model: proModel,
-            maxContextTokens: 64_000,
-            maxOutputTokens: 1024,
-            timeout: 180_000,
+            overrides: {
+              baseUrl: proxy.baseUrl,
+              maxOutputTokens: 1024,
+              timeout: 180_000,
+            },
           },
         ],
       });

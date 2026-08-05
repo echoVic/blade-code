@@ -56,7 +56,7 @@ blade serve --port 3000 --hostname 0.0.0.0
 │    Groq (🚀) - 超快推理                                 │
 │    OpenRouter (🔀) - 多模型聚合                         │
 │                                                         │
-│  更多 Provider（80+）                                   │
+│  更多 pi-ai Provider                                    │
 │    Azure, AWS Bedrock, Together AI, Fireworks...        │
 │                                                         │
 │  [↑↓] 选择  [/] 搜索  [Enter] 确认                      │
@@ -65,7 +65,7 @@ blade serve --port 3000 --hostname 0.0.0.0
 
 ### 3 步完成配置
 
-1. **选择 Provider** - 从 80+ Provider 中选择（支持搜索）
+1. **选择 Provider** - 从 pi-ai catalog 中选择
 2. **输入 API Key** - 向导会显示环境变量名和文档链接
 3. **选择模型** - 从该 Provider 的内置模型列表中选择
 
@@ -77,7 +77,7 @@ blade serve --port 3000 --hostname 0.0.0.0
 
 1. 选择 "🔧 自定义 OpenAI Compatible"
 2. 输入 API Key
-3. 输入 Base URL（必填，例如 `https://api.example.com/v1`）
+3. 尚未配置时输入 Provider 凭证
 4. 输入模型名称
 
 适用于任何兼容 OpenAI API 格式的服务。
@@ -110,7 +110,7 @@ Blade: 好的，我来帮你创建一个带搜索功能的下拉选择器组件.
 |------|------|
 | `/help` | 显示帮助信息 |
 | `/model` | 切换/管理模型 |
-| `/model add` | 添加新模型（80+ Provider） |
+| `/model add` | 从 pi-ai catalog 添加模型 |
 | `/clear` | 清空对话历史 |
 | `/compact` | 压缩上下文 |
 | `/status` | 查看当前状态 |
@@ -146,7 +146,7 @@ Blade 会在执行敏感操作前请求确认：
 
 ## 配置文件
 
-### 快速配置示例
+### 模型引用示例
 
 创建 `~/.blade/config.json`：
 
@@ -156,54 +156,21 @@ Blade 会在执行敏感操作前请求确认：
   "models": [
     {
       "id": "claude",
-      "name": "Claude Sonnet 4",
+      "displayName": "Claude Sonnet",
       "provider": "anthropic",
-      "apiKey": "sk-ant-api03-xxxxx",
-      "model": "claude-sonnet-4-0"
+      "model": "claude-sonnet-4-5"
     }
   ]
 }
 ```
 
-> **提示**: API Key 直接写在配置文件中。推荐使用 `/model add` 向导配置，会自动处理。
+凭证存储在 `~/.blade/auth.json`，推荐通过 `/model add` 配置。
 
-### 更多 Provider 示例
-
-```json
-{
-  "models": [
-    {
-      "id": "deepseek",
-      "name": "DeepSeek R1",
-      "provider": "openai-compatible",
-      "apiKey": "sk-xxxxx",
-      "baseUrl": "https://api.deepseek.com/v1",
-      "model": "deepseek-reasoner",
-      "supportsThinking": true
-    },
-    {
-      "id": "groq",
-      "name": "Groq Llama 3.3",
-      "provider": "openai-compatible",
-      "apiKey": "gsk_xxxxx",
-      "baseUrl": "https://api.groq.com/openai/v1",
-      "model": "llama-3.3-70b-versatile"
-    },
-    {
-      "id": "openrouter",
-      "name": "OpenRouter Claude",
-      "provider": "openai-compatible",
-      "apiKey": "sk-or-v1-xxxxx",
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "model": "anthropic/claude-sonnet-4"
-    }
-  ]
-}
-```
+更多 Provider 和模型可直接在 TUI 或 Web 的 pi-ai catalog 中选择。
 
 ## 下一步
 
-- [配置系统](../configuration/config-system.md) - 详细配置说明（80+ Provider）
+- [配置系统](../configuration/config-system.md) - pi-ai 模型与凭证配置
 - [权限控制](../configuration/permissions.md) - 权限规则配置
 - [@ 文件引用](../guides/at-file-mentions.md) - 高级文件引用
 - [Slash 命令](../guides/slash-commands.md) - 所有可用命令

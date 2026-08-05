@@ -22,8 +22,9 @@ import {
   SessionSchema,
   type SubagentSession,
   SubagentSessionSchema,
+  Type,
+  parseSchema,
 } from '@api/schemas';
-import { z } from 'zod';
 
 export interface StreamEvent {
   type: string;
@@ -69,9 +70,10 @@ export type { ResumeSubagentResponse, SessionRef, SubagentSession };
 const API_BASE = '';
 const SESSION_EVENT_READY_TIMEOUT_MS = 10000;
 
-const SessionArraySchema = z.array(SessionSchema);
-const SessionRewindCheckpointArraySchema = z.array(SessionRewindCheckpointSchema);
-const SubagentSessionArraySchema = z.array(SubagentSessionSchema);
+const SessionArraySchema = Type.Array(SessionSchema);
+const SessionHistoryMessageArraySchema = Type.Array(SessionHistoryMessageSchema);
+const SessionRewindCheckpointArraySchema = Type.Array(SessionRewindCheckpointSchema);
+const SubagentSessionArraySchema = Type.Array(SubagentSessionSchema);
 
 const normalizeContent = (content: unknown): MessageContent => {
   if (Array.isArray(content)) {
@@ -130,7 +132,7 @@ export const sessionService = {
   listSessions: async (): Promise<Session[]> => {
     const res = await fetch(`${API_BASE}/sessions`);
     if (!res.ok) throw new Error('Failed to load sessions');
-    return SessionArraySchema.parse(await res.json());
+    return parseSchema(SessionArraySchema, await res.json());
   },
 
   createSession: async (projectPath?: string, title?: string): Promise<Session> => {
@@ -167,7 +169,7 @@ export const sessionService = {
       withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/message`, ref)
     );
     if (!res.ok) throw new Error('Failed to load messages');
-    const result = z.array(SessionHistoryMessageSchema).parse(await res.json());
+    const result = parseSchema(SessionHistoryMessageArraySchema, await res.json());
     const now = Date.now();
     return result.map((message, index) => normalizeHistoryMessage(message, index, now));
   },
@@ -259,7 +261,7 @@ export const sessionService = {
     );
     if (!res.ok) throw new Error('Failed to load rewind checkpoints');
     const body = (await res.json()) as { checkpoints: unknown };
-    return SessionRewindCheckpointArraySchema.parse(body.checkpoints);
+    return parseSchema(SessionRewindCheckpointArraySchema, body.checkpoints);
   },
 
   rewindSession: async (
@@ -294,7 +296,7 @@ export const sessionService = {
     );
     if (!res.ok) throw new Error('Failed to load subagents');
     const body = (await res.json()) as { subagents: unknown };
-    return SubagentSessionArraySchema.parse(body.subagents);
+    return parseSchema(SubagentSessionArraySchema, body.subagents);
   },
 
   resumeSubagent: async (
@@ -591,5 +593,6 @@ export type {
   PermissionResponse,
   Session,
   SessionRewindCheckpoint,
-  SessionRewindMode,
+  SessionRewindMode
 };
+

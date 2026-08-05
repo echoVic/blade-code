@@ -4,7 +4,6 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
-import { z } from 'zod';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
@@ -29,6 +28,7 @@ import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
+import { StringEnum, Type, safeParseSchema } from '../../schema/index.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import type { RewoundSession, SessionMetadata } from '../../services/SessionService.js';
 import {
@@ -60,32 +60,35 @@ import { normalizeSessionRef, type SessionRef, sessionRefKey } from '../sessionR
 
 const logger = createLogger(LogCategory.SERVICE);
 
-const CreateSessionSchema = z.object({
-  title: z.string().optional(),
-  projectPath: z.string().optional(),
+const CreateSessionSchema = Type.Object({
+  title: Type.Optional(Type.String()),
+  projectPath: Type.Optional(Type.String()),
 });
 
 const SendMessageSchema = SendMessageRequestSchema;
 
-const UpdateSessionSchema = z.object({
-  title: z.string().optional(),
-  projectPath: z.string().optional(),
+const UpdateSessionSchema = Type.Object({
+  title: Type.Optional(Type.String()),
+  projectPath: Type.Optional(Type.String()),
 });
 
-const ForkSessionSchema = z.object({
-  projectPath: z.string(),
+const ForkSessionSchema = Type.Object({
+  projectPath: Type.String(),
 });
 
-const CreateGoalSchema = z.object({
-  objective: z.string().min(1),
-  tokenBudget: z.number().int().positive().optional(),
-  permissionMode: z.enum(['default', 'autoEdit', 'plan', 'yolo']).optional(),
+const CreateGoalSchema = Type.Object({
+  objective: Type.String({ minLength: 1 }),
+  tokenBudget: Type.Optional(Type.Integer({ minimum: 1 })),
+  permissionMode: Type.Optional(StringEnum(['default', 'autoEdit', 'plan', 'yolo'])),
 });
 
-const UpdateGoalSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('pause') }),
-  z.object({ action: z.literal('resume') }),
-  z.object({ action: z.literal('edit'), objective: z.string().min(1) }),
+const UpdateGoalSchema = Type.Union([
+  Type.Object({ action: Type.Literal('pause') }),
+  Type.Object({ action: Type.Literal('resume') }),
+  Type.Object({
+    action: Type.Literal('edit'),
+    objective: Type.String({ minLength: 1 }),
+  }),
 ]);
 
 export interface RunState {
@@ -661,7 +664,7 @@ export const SessionRoutes = () => {
   app.post('/', async (c) => {
     try {
       const body = await c.req.json();
-      const parsed = CreateSessionSchema.safeParse(body);
+      const parsed = safeParseSchema(CreateSessionSchema, body);
 
       if (!parsed.success) {
         throw new BadRequestError('Invalid request body');
@@ -702,7 +705,7 @@ export const SessionRoutes = () => {
     try {
       validateSessionIdOrThrow(sessionId);
       const body = await c.req.json();
-      const parsed = ForkSessionSchema.safeParse(body);
+      const parsed = safeParseSchema(ForkSessionSchema, body);
       if (!parsed.success) {
         throw new BadRequestError('Invalid request body');
       }
@@ -773,7 +776,7 @@ export const SessionRoutes = () => {
 
     try {
       const body = await c.req.json();
-      const parsed = UpdateSessionSchema.safeParse(body);
+      const parsed = safeParseSchema(UpdateSessionSchema, body);
 
       if (!parsed.success) {
         throw new BadRequestError('Invalid request body');
@@ -820,7 +823,7 @@ export const SessionRoutes = () => {
   });
 
   app.post('/:sessionId/rewind', async (c) => {
-    const parsed = SessionRewindRequestSchema.safeParse(await c.req.json());
+    const parsed = safeParseSchema(SessionRewindRequestSchema, await c.req.json());
     if (!parsed.success) throw new BadRequestError('Invalid rewind request');
     const session = await resolveSessionForWrite(
       c.req.param('sessionId'),
@@ -966,7 +969,7 @@ export const SessionRoutes = () => {
   });
 
   app.put('/:sessionId/goal', async (c) => {
-    const parsed = CreateGoalSchema.safeParse(await c.req.json());
+    const parsed = safeParseSchema(CreateGoalSchema, await c.req.json());
     if (!parsed.success) throw new BadRequestError('Invalid goal request');
     const session = await resolveSessionForWrite(
       c.req.param('sessionId'),
@@ -999,7 +1002,7 @@ export const SessionRoutes = () => {
   });
 
   app.patch('/:sessionId/goal', async (c) => {
-    const parsed = UpdateGoalSchema.safeParse(await c.req.json());
+    const parsed = safeParseSchema(UpdateGoalSchema, await c.req.json());
     if (!parsed.success) throw new BadRequestError('Invalid goal update');
     const session = await resolveSessionForWrite(
       c.req.param('sessionId'),
@@ -1250,7 +1253,7 @@ export const SessionRoutes = () => {
     const sessionId = c.req.param('sessionId');
 
     const body = await c.req.json();
-    const parsed = SendMessageSchema.safeParse(body);
+    const parsed = safeParseSchema(SendMessageSchema, body);
 
     if (!parsed.success) {
       throw new BadRequestError('Invalid message format');

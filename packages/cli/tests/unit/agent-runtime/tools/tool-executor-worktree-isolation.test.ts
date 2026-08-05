@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
+import { Type } from '../../../../src/schema/index.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import { createTool } from '../../../../src/tools/core/createTool.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
@@ -14,7 +14,7 @@ function makeTool(name: string, kind: ToolKind, execute: () => Promise<unknown>)
     name,
     displayName: name,
     kind,
-    schema: z.object({}).passthrough(),
+    schema: Type.Record(Type.String(), Type.Unknown()),
     description: { short: name },
     async execute() {
       await execute();

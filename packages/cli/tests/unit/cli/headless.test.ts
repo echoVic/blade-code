@@ -160,6 +160,9 @@ describe('headless runner', () => {
             outputTokens: 20,
             totalTokens: 30,
             maxContextTokens: 1000,
+            cacheReadTokens: 5,
+            cacheWriteTokens: 3,
+            costUsd: 0.004,
           },
         },
         { kind: 'stream_end' },
@@ -252,6 +255,18 @@ describe('headless runner', () => {
             },
           ],
         },
+        {
+          kind: 'token_usage',
+          usage: {
+            inputTokens: 10,
+            outputTokens: 20,
+            totalTokens: 30,
+            maxContextTokens: 1000,
+            cacheReadTokens: 5,
+            cacheWriteTokens: 3,
+            costUsd: 0.004,
+          },
+        },
         { kind: 'stream_end' },
       ])
     );
@@ -316,6 +331,16 @@ describe('headless runner', () => {
           tasks: expect.arrayContaining([
             expect.objectContaining({ subject: 'Capture jsonl' }),
           ]),
+        }),
+        expect.objectContaining({
+          type: 'token_usage',
+          input_tokens: 10,
+          output_tokens: 20,
+          total_tokens: 30,
+          max_context_tokens: 1000,
+          cache_read_tokens: 5,
+          cache_write_tokens: 3,
+          cost_usd: 0.004,
         }),
         expect.objectContaining({ type: 'stream_end', event_version: 1 }),
       ])

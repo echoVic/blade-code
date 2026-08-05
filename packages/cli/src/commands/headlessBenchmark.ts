@@ -3,6 +3,7 @@ import path from 'node:path';
 import { runHeadless } from './headless.js';
 import type { HeadlessJsonlEvent } from './headlessEvents.js';
 import { HeadlessJsonlEventSchema } from './headlessEvents.js';
+import { parseSchema } from '../schema/index.js';
 import { getCwd } from '../utils/cwd.js';
 
 export interface RealRepoBenchmarkCase {
@@ -240,7 +241,7 @@ export async function runRealRepoBenchmark(
     const events = stdoutBuffer
       .split('\n')
       .filter((line) => line.trim().length > 0)
-      .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      .map((line) => parseSchema(HeadlessJsonlEventSchema, JSON.parse(line)));
 
     results.push(
       collectBenchmarkCaseMetrics({

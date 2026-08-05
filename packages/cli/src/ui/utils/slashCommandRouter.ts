@@ -5,7 +5,7 @@
  * `SlashRouteResult` 联合类型显式分离"UI 展示什么"和"Agent 实际收到什么"。
  */
 
-import type { Message } from '../../services/ChatServiceInterface.js';
+import type { Message, UsageInfo } from '../../services/ChatServiceInterface.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
 import {
@@ -303,12 +303,29 @@ function handleSlashMessage(
       return true;
     case 'compact_completed':
     case 'compact_fallback': {
-      const compactedMessages = (data as { compactedMessages?: Message[] } | undefined)
-        ?.compactedMessages;
+      const compactData = data as
+        | {
+            compactedMessages?: Message[];
+            usage?: UsageInfo;
+            maxContextTokens?: number;
+          }
+        | undefined;
+      const compactedMessages = compactData?.compactedMessages;
       if (compactedMessages) {
         sessionActions.setCompactedContext(compactedMessages);
       }
-      sessionActions.resetTokenUsage();
+      if (compactData?.usage) {
+        sessionActions.updateTokenUsage({
+          inputTokens: compactData.usage.promptTokens,
+          outputTokens: compactData.usage.completionTokens,
+          totalTokens: compactData.usage.totalTokens,
+          maxContextTokens: compactData.maxContextTokens,
+          cacheReadTokens: compactData.usage.cacheReadInputTokens ?? 0,
+          cacheWriteTokens: compactData.usage.cacheCreationInputTokens ?? 0,
+          costUsd: compactData.usage.costUsd,
+        });
+      }
+      sessionActions.resetContextUsage();
       return true;
     }
     case 'exit_application':

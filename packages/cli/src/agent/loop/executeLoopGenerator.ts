@@ -21,6 +21,7 @@ import type {
   ChatResponse,
   Message,
   StreamToolCall,
+  UsageInfo,
 } from '../../services/ChatServiceInterface.js';
 import { injectSkillsMetadata } from '../../skills/index.js';
 import type { JsonValue } from '../../store/types.js';
@@ -71,7 +72,12 @@ import {
 import { StreamingToolExecutor } from './StreamingToolExecutor.js';
 import type { FunctionToolCallRef } from './toolDomainPolicy.js';
 import { applyToolDomainEffects } from './toolDomainPolicy.js';
-import type { LoopDependencies, LoopEvent, ToolCallRef } from './types.js';
+import type {
+  LoopDependencies,
+  LoopEvent,
+  TokenUsageInfo,
+  ToolCallRef,
+} from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -81,6 +87,18 @@ const COMPACTION_FALLBACK_MAX_OUTPUT_TOKENS = 32768;
 const COMPACTION_COOLDOWN_TURNS = 2;
 const COMPACTION_EMERGENCY_INPUT_RATIO = 0.95;
 const SAFETY_LIMIT = MAX_AGENT_TURNS;
+
+function toTokenUsageInfo(usage: UsageInfo, maxContextTokens: number): TokenUsageInfo {
+  return {
+    inputTokens: usage.promptTokens ?? 0,
+    outputTokens: usage.completionTokens ?? 0,
+    totalTokens: usage.totalTokens ?? 0,
+    maxContextTokens,
+    cacheReadTokens: usage.cacheReadInputTokens ?? 0,
+    cacheWriteTokens: usage.cacheCreationInputTokens ?? 0,
+    costUsd: usage.costUsd,
+  };
+}
 
 const PLANNING_DIRECTIVE = `
 
@@ -374,7 +392,7 @@ async function* processStreamResponse(
         for (const tc of chunk.toolCalls) {
           accumulateToolCall(toolCallAccumulator, tc);
 
-          // Vercel AI SDK 的 tool-call 事件包含完整参数
+          // pi-ai 的 toolcall_end 事件包含完整参数
           // 立即通过 StreamingToolExecutor 启动执行
           if (executor) {
             const castTc = tc as {
@@ -504,7 +522,7 @@ export async function* checkAndCompactInLoop(
   // Level 2: LLM compaction — 80% 阈值触发 LLM 摘要压缩
   const chatConfig = deps.chatService.getConfig();
   const modelName = chatConfig.model;
-  const maxContextTokens = chatConfig.maxContextTokens ?? deps.config.maxContextTokens;
+  const maxContextTokens = chatConfig.maxContextTokens ?? 0;
   const maxOutputTokens =
     chatConfig.maxOutputTokens ??
     deps.config.maxOutputTokens ??
@@ -569,6 +587,7 @@ export async function* checkAndCompactInLoop(
     const result = await CompactionService.compact(messagesForCompact, {
       trigger: 'auto',
       modelName,
+      modelProvider: chatConfig.provider,
       maxContextTokens,
       apiKey: chatConfig.apiKey,
       baseURL: chatConfig.baseUrl,
@@ -578,6 +597,12 @@ export async function* checkAndCompactInLoop(
       workspaceRoot: context.workspaceRoot || getCwd(),
       sessionId: context.sessionId,
     });
+    if (result.usage) {
+      yield {
+        kind: 'token_usage',
+        usage: toTokenUsageInfo(result.usage, maxContextTokens),
+      };
+    }
 
     context.messages = result.compactedMessages;
     if (compactionState) {
@@ -1055,8 +1080,8 @@ export async function* executeLoopGenerator(
               context.messages,
               {
                 modelName: chatConfig.model,
-                maxContextTokens:
-                  chatConfig.maxContextTokens ?? deps.config.maxContextTokens,
+                modelProvider: chatConfig.provider,
+                maxContextTokens: chatConfig.maxContextTokens ?? 0,
                 apiKey: chatConfig.apiKey,
                 baseURL: chatConfig.baseUrl,
                 signal: options?.signal,
@@ -1066,6 +1091,15 @@ export async function* executeLoopGenerator(
               }
             );
             if (result.success) {
+              if (result.usage) {
+                yield {
+                  kind: 'token_usage',
+                  usage: toTokenUsageInfo(
+                    result.usage,
+                    chatConfig.maxContextTokens ?? 0
+                  ),
+                };
+              }
               context.messages = result.messages;
               // 同步到 state（此时 pending 已被 writeback() commit，为空）
               state.replaceHistory(context.messages);
@@ -1087,12 +1121,10 @@ export async function* executeLoopGenerator(
           lastPromptTokens = turnResult.usage.promptTokens;
           yield {
             kind: 'token_usage',
-            usage: {
-              inputTokens: turnResult.usage.promptTokens ?? 0,
-              outputTokens: turnResult.usage.completionTokens ?? 0,
-              totalTokens: turnResult.usage.totalTokens ?? 0,
-              maxContextTokens: deps.currentModelMaxContextTokens,
-            },
+            usage: toTokenUsageInfo(
+              turnResult.usage,
+              deps.currentModelMaxContextTokens
+            ),
           };
         }
 
@@ -2086,8 +2118,8 @@ export async function* executeLoopGenerator(
                   {
                     trigger: 'auto',
                     modelName: chatConfig.model,
-                    maxContextTokens:
-                      chatConfig.maxContextTokens ?? deps.config.maxContextTokens,
+                    modelProvider: chatConfig.provider,
+                    maxContextTokens: chatConfig.maxContextTokens ?? 0,
                     apiKey: chatConfig.apiKey,
                     baseURL: chatConfig.baseUrl,
                     actualPreTokens: lastPromptTokens,
@@ -2097,6 +2129,15 @@ export async function* executeLoopGenerator(
                     sessionId: context.sessionId,
                   }
                 );
+                if (compactResult.usage) {
+                  yield {
+                    kind: 'token_usage',
+                    usage: toTokenUsageInfo(
+                      compactResult.usage,
+                      chatConfig.maxContextTokens ?? 0
+                    ),
+                  };
+                }
 
                 context.messages = compactResult.compactedMessages;
                 state.replaceHistory(context.messages);

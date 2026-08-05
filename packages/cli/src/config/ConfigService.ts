@@ -66,12 +66,6 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace',
     persistable: true,
   },
-  maxContextTokens: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
   maxOutputTokens: {
     target: 'config',
     defaultScope: 'global',

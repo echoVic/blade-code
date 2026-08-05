@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
+import { Type } from '../../../../../src/schema/index.js';
 import type { HookManager } from '../../../../../src/hooks/HookManager.js';
 import { createTool } from '../../../../../src/tools/core/createTool.js';
 import { runPreToolUseHooks } from '../../../../../src/tools/execution/ToolExecutionHooks.js';
@@ -11,7 +11,7 @@ function createValueTool() {
     displayName: 'ValueTool',
     kind: ToolKind.Execute,
     description: { short: 'value tool' },
-    schema: z.object({ value: z.string() }),
+    schema: Type.Object({ value: Type.String() }),
     async execute(params) {
       return {
         success: true,

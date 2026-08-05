@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { z } from 'zod';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
 import {
@@ -17,6 +16,12 @@ import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js
 import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import { HookManager } from '../../../src/hooks/HookManager.js';
+import {
+  type Static,
+  StringEnum,
+  Type,
+  parseSchema,
+} from '../../../src/schema/index.js';
 import { BladeServer } from '../../../src/server/server.js';
 import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
 import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js';
@@ -60,21 +65,21 @@ if (enabled && legacyRegressionModels.length !== 1) {
   );
 }
 
-const SessionListSchema = z.array(SessionSchema);
-const AcceptedMessageSchema = z.object({
-  runId: z.string(),
-  messageId: z.string(),
-  status: z.enum(['running', 'steering_queued', 'follow_up_queued']),
-  queued: z.number().optional(),
+const SessionListSchema = Type.Array(SessionSchema);
+const AcceptedMessageSchema = Type.Object({
+  runId: Type.String(),
+  messageId: Type.String(),
+  status: StringEnum(['running', 'steering_queued', 'follow_up_queued']),
+  queued: Type.Optional(Type.Number()),
 });
-const DurableInboxSchema = z.object({
-  messages: z.array(z.object({ id: z.string() })),
+const DurableInboxSchema = Type.Object({
+  messages: Type.Array(Type.Object({ id: Type.String() })),
 });
-const SessionStatusSchema = z.object({
-  sessionId: z.string(),
-  projectPath: z.string(),
-  runId: z.string().optional(),
-  status: z.enum([
+const SessionStatusSchema = Type.Object({
+  sessionId: Type.String(),
+  projectPath: Type.String(),
+  runId: Type.Optional(Type.String()),
+  status: StringEnum([
     'idle',
     'running',
     'waiting_permission',
@@ -83,9 +88,9 @@ const SessionStatusSchema = z.object({
     'cancelled',
   ]),
 });
-const DeleteSessionSchema = z.object({ success: z.literal(true) });
+const DeleteSessionSchema = Type.Object({ success: Type.Literal(true) });
 
-type SurfaceEvent = z.infer<typeof BusEventSchema>;
+type SurfaceEvent = Static<typeof BusEventSchema>;
 
 interface EventCollector {
   events: SurfaceEvent[];
@@ -211,7 +216,8 @@ async function createSession(
 }
 
 async function listSession(server: TestServer, ref: SessionRef): Promise<void> {
-  const sessions = SessionListSchema.parse(
+  const sessions = parseSchema(
+    SessionListSchema,
     await responseJson(
       await fetch(withProjectPath(endpoint(server, '/sessions'), ref.projectPath)),
       'list sessions'
@@ -228,7 +234,7 @@ async function listSession(server: TestServer, ref: SessionRef): Promise<void> {
 async function forkSession(
   server: TestServer,
   parent: SessionRef
-): Promise<{ ref: SessionRef; response: z.infer<typeof ForkSessionResponseSchema> }> {
+): Promise<{ ref: SessionRef; response: Static<typeof ForkSessionResponseSchema> }> {
   const response = await fetch(endpoint(server, `/sessions/${parent.sessionId}/fork`), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -251,7 +257,7 @@ async function sendMessage(
   server: TestServer,
   ref: SessionRef,
   content: string
-): Promise<z.infer<typeof AcceptedMessageSchema>> {
+): Promise<Static<typeof AcceptedMessageSchema>> {
   const response = await fetch(
     withProjectPath(
       endpoint(server, `/sessions/${ref.sessionId}/message`),
@@ -270,14 +276,15 @@ async function sendMessage(
   if (response.status !== 202) {
     throw new Error(`send message failed with HTTP ${response.status}`);
   }
-  return AcceptedMessageSchema.parse(await response.json());
+  return parseSchema(AcceptedMessageSchema, await response.json());
 }
 
 async function getStatus(
   server: TestServer,
   ref: SessionRef
-): Promise<z.infer<typeof SessionStatusSchema>> {
-  return SessionStatusSchema.parse(
+): Promise<Static<typeof SessionStatusSchema>> {
+  return parseSchema(
+    SessionStatusSchema,
     await responseJson(
       await fetch(
         withProjectPath(
@@ -295,7 +302,7 @@ async function deleteSession(server: TestServer, ref: SessionRef): Promise<void>
     withProjectPath(endpoint(server, `/sessions/${ref.sessionId}`), ref.projectPath),
     { method: 'DELETE' }
   );
-  DeleteSessionSchema.parse(await responseJson(response, 'delete session'));
+  parseSchema(DeleteSessionSchema, await responseJson(response, 'delete session'));
 }
 
 async function collectEvents(
@@ -695,7 +702,10 @@ async function withRegressionCase(
         const config = createResolvedConfig(modelConfig, []);
         const selected = config.models[0];
         if (!selected) throw new Error('Regression model config is empty');
-        selected.maxContextTokens = maxContextTokens;
+        selected.overrides = {
+          ...selected.overrides,
+          maxOutputTokens: Math.min(4096, maxContextTokens),
+        };
         getState().config.actions.setConfig(config);
         return config;
       },
@@ -791,7 +801,8 @@ describeWebRegression('Web session trajectory regressions (real API)', () => {
             status: 'running',
             messageId: expect.any(String),
           });
-          const durableInbox = DurableInboxSchema.parse(
+          const durableInbox = parseSchema(
+            DurableInboxSchema,
             JSON.parse(
               readFileSync(
                 getSessionInboxFilePath(fixture.workspace, ref.sessionId),
@@ -1011,7 +1022,7 @@ describeWebRegression('Web session trajectory regressions (real API)', () => {
               (event) => event.type === 'session.completed',
               { afterIndex: eventBoundary, label: 'session.completed' }
             );
-            const runId = z.string().parse(completion.properties.runId);
+            const runId = parseSchema(Type.String(), completion.properties.runId);
             await waitForRunCompletion(server, ref, collector, runId, eventBoundary);
 
             const recoveredUser = collector.events.find(

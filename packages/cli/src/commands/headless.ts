@@ -8,7 +8,6 @@
 import type { Argv } from 'yargs';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { z } from 'zod';
 import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
 import type { LoopEvent } from '../agent/loop/types.js';
@@ -23,6 +22,13 @@ import {
 } from '../cli/middleware.js';
 import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
 import { PermissionMode } from '../config/types.js';
+import {
+  type SchemaValidationError,
+  type Static,
+  StringEnum,
+  safeParseSchema,
+  Type,
+} from '../schema/index.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import type {
@@ -85,34 +91,33 @@ function createHeadlessAbortSignal(control?: HeadlessRunControl): {
 
 type HeadlessOutputFormat = 'text' | 'jsonl';
 
-const HeadlessOutputFormatSchema = z.enum(['text', 'jsonl']);
+const HeadlessOutputFormatSchema = StringEnum(['text', 'jsonl']);
 
-export const HeadlessOptionsSchema = z.object({
-  headless: z.boolean().optional(),
-  message: z.string().optional(),
-  _: z.array(z.union([z.string(), z.number()])).optional(),
-  model: z.string().optional(),
-  systemPrompt: z.string().optional(),
-  appendSystemPrompt: z.string().optional(),
-  maxTurns: z
-    .number()
-    .int()
-    .max(MAX_AGENT_TURNS)
-    .refine((value) => value === -1 || value > 0, {
-      message: 'must be -1 or a positive integer',
-    })
-    .optional(),
-  permissionMode: z.nativeEnum(PermissionMode).optional(),
-  mcpConfig: z.array(z.string()).optional(),
-  strictMcpConfig: z.boolean().optional(),
-  sessionId: z.string().optional(),
-  allowedTools: z.array(z.string()).optional(),
-  disallowedTools: z.array(z.string()).optional(),
-  agents: z.string().optional(),
-  continue: z.boolean().optional(),
-  resume: z.union([z.string(), z.boolean()]).optional(),
-  forkSession: z.boolean().optional(),
-  outputFormat: HeadlessOutputFormatSchema.optional(),
+export const HeadlessOptionsSchema = Type.Object({
+  headless: Type.Optional(Type.Boolean()),
+  message: Type.Optional(Type.String()),
+  _: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Number()]))),
+  model: Type.Optional(Type.String()),
+  systemPrompt: Type.Optional(Type.String()),
+  appendSystemPrompt: Type.Optional(Type.String()),
+  maxTurns: Type.Optional(
+    Type.Refine(
+      Type.Integer({ maximum: MAX_AGENT_TURNS }),
+      (value) => value === -1 || value > 0,
+      () => 'must be -1 or a positive integer'
+    )
+  ),
+  permissionMode: Type.Optional(Type.Enum(PermissionMode)),
+  mcpConfig: Type.Optional(Type.Array(Type.String())),
+  strictMcpConfig: Type.Optional(Type.Boolean()),
+  sessionId: Type.Optional(Type.String()),
+  allowedTools: Type.Optional(Type.Array(Type.String())),
+  disallowedTools: Type.Optional(Type.Array(Type.String())),
+  agents: Type.Optional(Type.String()),
+  continue: Type.Optional(Type.Boolean()),
+  resume: Type.Optional(Type.Union([Type.String(), Type.Boolean()])),
+  forkSession: Type.Optional(Type.Boolean()),
+  outputFormat: Type.Optional(HeadlessOutputFormatSchema),
 });
 
 export interface HeadlessOptions {
@@ -154,7 +159,7 @@ export interface HeadlessOptions {
   outputFormat?: string;
 }
 
-type ValidatedHeadlessOptions = z.infer<typeof HeadlessOptionsSchema>;
+type ValidatedHeadlessOptions = Static<typeof HeadlessOptionsSchema>;
 
 interface HeadlessStreamSnapshot {
   openedThinking: boolean;
@@ -207,14 +212,14 @@ class HeadlessStreamState {
   }
 }
 
-function formatValidationIssues(error: z.ZodError): string {
+function formatValidationIssues(error: SchemaValidationError): string {
   return error.issues
     .map((issue) => `${issue.path.join('.') || 'options'}: ${issue.message}`)
     .join('; ');
 }
 
 function validateHeadlessOptions(options: HeadlessOptions): ValidatedHeadlessOptions {
-  const result = HeadlessOptionsSchema.safeParse(options);
+  const result = safeParseSchema(HeadlessOptionsSchema, options);
   if (!result.success) {
     throw new Error(
       `Invalid headless options: ${formatValidationIssues(result.error)}`
@@ -594,6 +599,9 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
       outputTokens: number;
       totalTokens: number;
       maxContextTokens: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      costUsd?: number;
     }) {
       if (outputFormat === 'jsonl') {
         writeJsonl('token_usage', {
@@ -601,6 +609,9 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
           output_tokens: usage.outputTokens,
           total_tokens: usage.totalTokens,
           max_context_tokens: usage.maxContextTokens,
+          cache_read_tokens: usage.cacheReadTokens,
+          cache_write_tokens: usage.cacheWriteTokens,
+          cost_usd: usage.costUsd,
         });
         return;
       }

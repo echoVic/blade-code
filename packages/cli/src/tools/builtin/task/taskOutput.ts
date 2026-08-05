@@ -7,9 +7,9 @@
  */
 
 import path from 'node:path';
-import { z } from 'zod';
 import type { AgentSessionOwner } from '../../../agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
+import { Default, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
@@ -30,15 +30,23 @@ export const taskOutputTool = createTool({
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true, // 纯读操作，无副作用
 
-  schema: z.object({
-    task_id: z.string().min(1).describe('The task ID to get output from'),
-    block: z.boolean().default(true).describe('Whether to wait for completion'),
-    timeout: z
-      .number()
-      .min(0)
-      .max(600000)
-      .default(30000)
-      .describe('Max wait time in ms'),
+  schema: Type.Object({
+    task_id: Type.String({
+      minLength: 1,
+      description: 'The task ID to get output from',
+    }),
+    block: Default(
+      Type.Boolean({ description: 'Whether to wait for completion' }),
+      true
+    ),
+    timeout: Default(
+      Type.Number({
+        minimum: 0,
+        maximum: 600000,
+        description: 'Max wait time in ms',
+      }),
+      30000
+    ),
   }),
 
   description: {

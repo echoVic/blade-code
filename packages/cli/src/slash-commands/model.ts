@@ -3,6 +3,7 @@
  */
 
 import { configActions, getAllModels } from '../store/vanilla.js';
+import { getModelDisplayName } from '../services/pi/resolveModelConfig.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 
 const modelCommand: SlashCommand = {
@@ -68,7 +69,7 @@ const modelCommand: SlashCommand = {
 
         const models = getAllModels();
         const matchedModel = models.find((m) =>
-          m.name.toLowerCase().includes(nameQuery.toLowerCase())
+          getModelDisplayName(m).toLowerCase().includes(nameQuery.toLowerCase())
         );
 
         if (!matchedModel) {
@@ -82,7 +83,7 @@ const modelCommand: SlashCommand = {
           await configActions().removeModel(matchedModel.id);
           return {
             success: true,
-            message: `[OK] 已删除模型配置: ${matchedModel.name}`,
+            message: `[OK] 已删除模型配置: ${getModelDisplayName(matchedModel)}`,
           };
         } catch (error) {
           return { success: false, message: `${(error as Error).message}` };
@@ -100,7 +101,9 @@ const modelCommand: SlashCommand = {
         const models = getAllModels();
         const matched =
           models.find((m) => m.id === modelQuery) ||
-          models.find((m) => m.name.toLowerCase().includes(modelQuery.toLowerCase()));
+          models.find((m) =>
+            getModelDisplayName(m).toLowerCase().includes(modelQuery.toLowerCase())
+          );
         if (!matched) {
           return {
             success: false,

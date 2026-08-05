@@ -67,6 +67,11 @@ export interface TokenUsage {
   estimatedCostUsd: number;
 }
 
+export interface TokenUsageUpdate extends Partial<TokenUsage> {
+  /** 本次模型调用费用；优先使用 pi-ai 的精确计算结果。 */
+  costUsd?: number;
+}
+
 /**
  * 会话状态
  *
@@ -119,7 +124,8 @@ export interface SessionActions {
     messages: SessionMessage[],
     restoredContextMessages?: Message[]
   ) => void;
-  updateTokenUsage: (usage: Partial<TokenUsage>) => void;
+  updateTokenUsage: (usage: TokenUsageUpdate) => void;
+  resetContextUsage: () => void;
   resetTokenUsage: () => void;
   // Thinking 相关 actions
   setCurrentThinkingContent: (content: string | null) => void;

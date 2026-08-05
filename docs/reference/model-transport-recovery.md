@@ -1,6 +1,6 @@
 # 模型传输恢复
 
-Blade Code 在 `VercelAIChatService` 中统一拥有模型请求的重试策略。底层 AI SDK 的自动重试固定为 `0`，避免 SDK 与 Agent 各自重试导致请求次数相乘，也避免底层在 Blade 不知情时重放流式响应。
+Blade Code 在 `PiAIChatService` 中统一拥有模型请求的重试策略。pi-ai provider 的自动重试固定为 `0`，避免 provider 与 Agent 各自重试导致请求次数相乘，也避免底层在 Blade 不知情时重放流式响应。
 
 ## 可重试错误
 
@@ -30,4 +30,4 @@ Blade 会遍历 `lastError` 和 `cause` 错误链，并把以下错误视为瞬�
 
 该边界综合了 Codex 的集中式 stream retry、Claude Code 的前台有界恢复、Neovate Code 的可取消指数退避，以及 Grok Build 对确定性和瞬时错误的显式分类。Blade 额外把自身的流式工具预启动纳入重放判定，因此以首个对外 chunk 作为提交边界。
 
-单元测试覆盖错误链分类、SDK 重试所有权、部分文本、工具调用和 abort。生产资格门禁还会为每个 DeepSeek 模型启动本地故障注入代理：首个真实 CLI 模型请求返回一次 HTTP `503`，后续请求转发到真实 API；轨迹必须完成代码修改、Bash 验证、diff 范围检查和宿主侧测试。
+单元测试覆盖错误分类、provider 重试所有权、部分文本、工具调用和 abort。生产资格门禁还会为每个 DeepSeek 模型启动本地故障注入代理：首个真实 CLI 模型请求返回一次 HTTP `503`，后续请求转发到真实 API；轨迹必须完成代码修改、Bash 验证、diff 范围检查和宿主侧测试。

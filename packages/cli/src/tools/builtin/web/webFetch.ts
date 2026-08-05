@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type {
   ExecutionContext,
@@ -6,7 +6,7 @@ import type {
   WebFetchMetadata,
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { ToolSchemas } from '../../validation/toolSchemas.js';
 import { isPlainObject } from 'lodash-es';
 
 function getErrorName(error: unknown): string | undefined {
@@ -43,7 +43,7 @@ interface WebResponse {
 
 /**
  * WebFetchTool - Web content fetcher
- * Uses the newer Zod validation design
+ * Uses the TypeBox validation design
  */
 export const webFetchTool = createTool({
   name: 'WebFetch',
@@ -51,50 +51,61 @@ export const webFetchTool = createTool({
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true, // 纯读操作，无副作用
 
-  // Zod Schema 定义
-  schema: z.object({
-    url: z.string().url().describe('URL to request'),
-    method: z
-      .enum(['GET', 'POST', 'PUT', 'DELETE', 'HEAD'])
-      .default('GET')
-      .describe('HTTP method'),
-    extract_content: z
-      .boolean()
-      .default(false)
-      .describe(
-        'Use Jina Reader to extract clean content in Markdown format. Removes HTML clutter, scripts, and styling, returning only the main content.'
-      ),
-    jina_options: z
-      .object({
-        with_generated_alt: z
-          .boolean()
-          .default(false)
-          .describe('Generate alt text for images'),
-        with_links_summary: z
-          .boolean()
-          .default(false)
-          .describe('Include summary of all links'),
-        wait_for_selector: z
-          .string()
-          .optional()
-          .describe('Wait for specific CSS selector to load'),
+  schema: Type.Object({
+    url: Type.String({ format: 'uri', description: 'URL to request' }),
+    method: Default(
+      StringEnum(['GET', 'POST', 'PUT', 'DELETE', 'HEAD'], {
+        description: 'HTTP method',
+      }),
+      'GET'
+    ),
+    extract_content: Default(
+      Type.Boolean({
+        description: 'Use Jina Reader to extract clean Markdown content.',
+      }),
+      false
+    ),
+    jina_options: Type.Optional(
+      Type.Object(
+        {
+          with_generated_alt: Default(
+            Type.Boolean({ description: 'Generate alt text for images' }),
+            false
+          ),
+          with_links_summary: Default(
+            Type.Boolean({ description: 'Include summary of all links' }),
+            false
+          ),
+          wait_for_selector: Type.Optional(
+            Type.String({ description: 'Wait for specific CSS selector to load' })
+          ),
+        },
+        {
+          description:
+            'Jina Reader advanced options (only used when extract_content is true)',
+        }
+      )
+    ),
+    headers: Type.Optional(
+      Type.Record(Type.String(), Type.String(), {
+        description: 'Request headers (optional)',
       })
-      .optional()
-      .describe(
-        'Jina Reader advanced options (only used when extract_content is true)'
-      ),
-    headers: z.record(z.string()).optional().describe('Request headers (optional)'),
-    body: z.string().optional().describe('Request body (optional)'),
+    ),
+    body: Type.Optional(Type.String({ description: 'Request body (optional)' })),
     timeout: ToolSchemas.timeout(1000, 120000, 30000),
-    follow_redirects: z.boolean().default(true).describe('Follow redirects'),
-    max_redirects: z
-      .number()
-      .int()
-      .min(0)
-      .max(10)
-      .default(5)
-      .describe('Maximum redirect hops'),
-    return_headers: z.boolean().default(false).describe('Return response headers'),
+    follow_redirects: Default(Type.Boolean({ description: 'Follow redirects' }), true),
+    max_redirects: Default(
+      Type.Integer({
+        minimum: 0,
+        maximum: 10,
+        description: 'Maximum redirect hops',
+      }),
+      5
+    ),
+    return_headers: Default(
+      Type.Boolean({ description: 'Return response headers' }),
+      false
+    ),
   }),
 
   // 工具描述（对齐 Claude Code 官方）

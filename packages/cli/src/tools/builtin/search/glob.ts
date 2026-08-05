@@ -4,8 +4,8 @@ import type { Stats } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { join, resolve } from 'path';
-import { z } from 'zod';
 
+import { Default, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { FileFilter } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
@@ -16,7 +16,7 @@ import type {
   ToolResult,
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { ToolSchemas } from '../../validation/toolSchemas.js';
 
 /**
  * Create a standard AbortError
@@ -40,7 +40,7 @@ interface FileMatch {
 
 /**
  * GlobTool - File pattern matcher
- * Uses the newer Zod validation design
+ * Uses the TypeBox validation design
  */
 export const globTool = createTool({
   name: 'Glob',
@@ -48,22 +48,31 @@ export const globTool = createTool({
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true, // 纯读操作，无副作用
 
-  // Zod Schema 定义
-  schema: z.object({
+  schema: Type.Object({
     pattern: ToolSchemas.glob({
       description: 'Glob pattern string (supports *, ?, ** wildcards)',
     }),
-    path: z.string().optional().describe('Search path (optional, defaults to cwd)'),
-    max_results: ToolSchemas.positiveInt({
-      description: 'Maximum number of results',
-    })
-      .max(1000, 'At most 1000 results can be returned')
-      .default(100),
-    include_directories: z
-      .boolean()
-      .default(false)
-      .describe('Include directories in results'),
-    case_sensitive: z.boolean().default(false).describe('Case sensitive matching'),
+    path: Type.Optional(
+      Type.String({
+        description: 'Search path (optional, defaults to cwd)',
+      })
+    ),
+    max_results: Default(
+      Type.Integer({
+        minimum: 1,
+        maximum: 1000,
+        description: 'Maximum number of results',
+      }),
+      100
+    ),
+    include_directories: Default(
+      Type.Boolean({ description: 'Include directories in results' }),
+      false
+    ),
+    case_sensitive: Default(
+      Type.Boolean({ description: 'Case sensitive matching' }),
+      false
+    ),
   }),
 
   // 工具描述（对齐 Claude Code 官方）

@@ -34,6 +34,7 @@ import {
   type IChatService,
   type Message,
 } from '../services/ChatServiceInterface.js';
+import { resolveModelConfig as resolvePiModelConfig } from '../services/pi/resolveModelConfig.js';
 import { discoverSkills } from '../skills/index.js';
 import {
   configActions,
@@ -50,7 +51,6 @@ import { ToolExecutor } from '../tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { Tool } from '../tools/types/index.js';
 import { getCwd } from '../utils/cwd.js';
-import { isThinkingModel } from '../utils/modelDetection.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import { executeLoopGenerator } from './loop/index.js';
 import type {
@@ -155,37 +155,22 @@ export class Agent {
     modelConfig: ModelConfig,
     label: string
   ): Promise<void> {
-    this.log(`${label} ${modelConfig.name} (${modelConfig.model})`);
-
-    const modelSupportsThinking = isThinkingModel(modelConfig);
     const thinkingModeEnabled = getThinkingModeEnabled();
-    const supportsThinking = modelSupportsThinking && thinkingModeEnabled;
-    if (modelSupportsThinking && !thinkingModeEnabled) {
+    const resolved = resolvePiModelConfig(
+      modelConfig,
+      this.config,
+      thinkingModeEnabled
+    );
+    this.log(`${label} ${resolved.displayName} (${modelConfig.model})`);
+
+    if (resolved.model.reasoning && !thinkingModeEnabled) {
       this.log(`模型支持 Thinking，但用户未开启（按 Tab 开启）`);
-    } else if (supportsThinking) {
+    } else if (resolved.chat.reasoningEnabled) {
       this.log(`Thinking 模式已启用，启用 reasoning_content 支持`);
     }
 
-    this.currentModelMaxContextTokens =
-      modelConfig.maxContextTokens ?? this.config.maxContextTokens;
-
-    this.chatService = await createChatServiceAsync({
-      provider: modelConfig.provider,
-      apiKey: modelConfig.apiKey,
-      model: modelConfig.model,
-      baseUrl: modelConfig.baseUrl,
-      temperature: modelConfig.temperature ?? this.config.temperature,
-      maxContextTokens: this.currentModelMaxContextTokens,
-      maxOutputTokens: modelConfig.maxOutputTokens ?? this.config.maxOutputTokens,
-      timeout: modelConfig.timeout ?? this.config.timeout,
-      supportsThinking,
-      thinkingBudget: modelConfig.thinkingBudget,
-      fallbackModels: modelConfig.fallbackModels,
-      enablePromptCaching: modelConfig.enablePromptCaching,
-      customHeaders: modelConfig.customHeaders,
-      apiVersion: modelConfig.apiVersion,
-      maxRetries: modelConfig.maxRetries,
-    });
+    this.currentModelMaxContextTokens = resolved.model.contextWindow;
+    this.chatService = await createChatServiceAsync(resolved.chat);
 
     const contextManager = this.executionEngine?.getContextManager();
     this.executionEngine = new ExecutionEngine(this.chatService, contextManager);

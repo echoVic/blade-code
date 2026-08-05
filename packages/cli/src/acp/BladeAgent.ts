@@ -15,6 +15,7 @@ import {
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { SessionService } from '../services/SessionService.js';
+import { getModelDisplayName } from '../services/pi/resolveModelConfig.js';
 import { getConfig } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 import { createSessionId } from '../utils/sessionId.js';
@@ -261,8 +262,8 @@ export class BladeAgent implements AcpAgentInterface {
     // 构建可用模型列表（不稳定 API）
     const availableModels: acp.ModelInfo[] = models.map((m) => ({
       modelId: m.id,
-      name: m.name || m.id,
-      description: m.provider ? `Provider: ${m.provider}` : undefined,
+      name: getModelDisplayName(m),
+      description: `${m.provider}/${m.model}`,
     }));
 
     // 构建可用模式列表（权限模式）

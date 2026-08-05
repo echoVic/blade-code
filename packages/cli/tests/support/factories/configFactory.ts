@@ -9,11 +9,9 @@ import type {
 
 export const createModelConfig = (overrides?: Partial<ModelConfig>): ModelConfig => ({
   id: overrides?.id || nanoid(),
-  name: overrides?.name || 'Test Model',
-  provider: overrides?.provider || 'openai-compatible',
-  apiKey: overrides?.apiKey || 'test-api-key',
-  baseUrl: overrides?.baseUrl || 'https://api.test.com',
-  model: overrides?.model || 'gpt-4',
+  displayName: overrides?.displayName || 'Test Model',
+  provider: overrides?.provider || 'deepseek',
+  model: overrides?.model || 'deepseek-v4-pro',
   ...overrides,
 });
 
@@ -46,51 +44,46 @@ export const createBladeConfig = (overrides?: Partial<BladeConfig>): BladeConfig
 };
 
 export const modelPresets = {
-  openai: (apiKey?: string): ModelConfig =>
+  openai: (_apiKey?: string): ModelConfig =>
     createModelConfig({
       id: 'openai-gpt4',
-      name: 'OpenAI GPT-4',
-      provider: 'openai-compatible' as ProviderType,
-      apiKey: apiKey || 'sk-test-key',
-      model: 'gpt-4',
+      displayName: 'OpenAI GPT',
+      provider: 'openai' as ProviderType,
+      model: 'gpt-5-mini',
     }),
 
-  anthropic: (apiKey?: string): ModelConfig =>
+  anthropic: (_apiKey?: string): ModelConfig =>
     createModelConfig({
       id: 'anthropic-claude',
-      name: 'Anthropic Claude',
+      displayName: 'Anthropic Claude',
       provider: 'anthropic' as ProviderType,
-      apiKey: apiKey || 'sk-ant-test-key',
-      model: 'claude-3-opus-20240229',
+      model: 'claude-sonnet-4-5',
     }),
 
-  azure: (apiKey?: string, endpoint?: string): ModelConfig =>
+  azure: (_apiKey?: string, endpoint?: string): ModelConfig =>
     createModelConfig({
       id: 'azure-openai',
-      name: 'Azure OpenAI',
-      provider: 'azure-openai' as ProviderType,
-      apiKey: apiKey || 'azure-test-key',
-      baseUrl: endpoint || 'https://test.openai.azure.com',
-      model: 'gpt-4',
+      displayName: 'Azure OpenAI',
+      provider: 'azure-openai-responses' as ProviderType,
+      model: 'gpt-5-mini',
+      overrides: { baseUrl: endpoint || 'https://test.openai.azure.com' },
     }),
 
-  gemini: (apiKey?: string): ModelConfig =>
+  gemini: (_apiKey?: string): ModelConfig =>
     createModelConfig({
       id: 'google-gemini',
-      name: 'Google Gemini',
-      provider: 'gemini' as ProviderType,
-      apiKey: apiKey || 'google-test-key',
-      model: 'gemini-pro',
+      displayName: 'Google Gemini',
+      provider: 'google' as ProviderType,
+      model: 'gemini-2.5-flash',
     }),
 
-  custom: (baseUrl: string, apiKey?: string): ModelConfig =>
+  custom: (baseUrl: string, _apiKey?: string): ModelConfig =>
     createModelConfig({
       id: 'custom-model',
-      name: 'Custom Model',
-      provider: 'openai-compatible',
-      apiKey: apiKey || 'custom-key',
-      baseUrl,
-      model: 'custom',
+      displayName: 'Custom Endpoint',
+      provider: 'openai',
+      model: 'gpt-5-mini',
+      overrides: { baseUrl },
     }),
 };
 

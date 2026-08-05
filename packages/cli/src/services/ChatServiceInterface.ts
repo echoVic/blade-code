@@ -7,11 +7,11 @@ import type {
   ChatCompletionChunk,
   ChatCompletionMessageToolCall,
 } from 'openai/resources/chat';
-import type { ProviderType } from '../config/types.js';
+import type { ModelRef, ProviderType } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { JsonValue, MessageRole } from '../store/types.js';
 import { getProviderHeaders } from '../ui/components/model-config/types.js';
-import { VercelAIChatService } from './VercelAIChatService.js';
+import { PiAIChatService } from './PiAIChatService.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -76,20 +76,18 @@ export type Message = {
  */
 export interface ChatConfig {
   provider: ProviderType;
-  apiKey: string;
-  baseUrl: string;
+  apiKey?: string;
+  baseUrl?: string;
   model: string;
   temperature?: number;
   maxContextTokens?: number;
   maxOutputTokens?: number;
   timeout?: number;
   apiVersion?: string;
-  supportsThinking?: boolean;
-  thinkingBudget?: number;
-  thinkingMode?: 'off' | 'budget' | 'adaptive';
+  reasoningEnabled?: boolean;
+  reasoningLevel?: 'low' | 'medium' | 'high';
   customHeaders?: Record<string, string>;
-  fallbackModel?: string;
-  fallbackModels?: string[];
+  fallbackModels?: ModelRef[];
   enablePromptCaching?: boolean;
   maxRetries?: number;
 }
@@ -102,8 +100,9 @@ export interface UsageInfo {
   completionTokens: number;
   totalTokens: number;
   reasoningTokens?: number; // Thinking 模型消耗的推理 tokens
-  cacheCreationInputTokens?: number; // Anthropic: 缓存创建消耗的 tokens
-  cacheReadInputTokens?: number; // Anthropic: 缓存读取的 tokens（节省的部分）
+  cacheCreationInputTokens?: number; // Provider 报告的缓存写入 tokens
+  cacheReadInputTokens?: number; // Provider 报告的缓存读取 tokens
+  costUsd?: number; // pi-ai 根据模型价格、缓存类型和阶梯价格计算的本次调用费用
 }
 
 export interface ChatResponse {
@@ -220,5 +219,5 @@ export async function createChatServiceAsync(
 }
 
 function createChatServiceInternal(config: ChatConfig): IChatService {
-  return new VercelAIChatService(config);
+  return new PiAIChatService(config);
 }

@@ -62,6 +62,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
       addToolMessage: vi.fn(),
       updateTokenUsage: vi.fn(),
       setCompacting: vi.fn(),
+      resetContextUsage: vi.fn(),
       resetTokenUsage: vi.fn(),
     } as any,
     appActions: {
@@ -558,7 +559,7 @@ describe('createLoopEventHandler', () => {
       expect(deps.sessionActions.setCompacting).toHaveBeenCalledWith(true);
     });
 
-    it('compaction end 应该 setCompacting(false) 并 resetTokenUsage', () => {
+    it('compaction end 应该 setCompacting(false) 并 resetContextUsage', () => {
       const deps = createMockDeps();
       const stats = createMockStats();
       const handler = createLoopEventHandler(deps, stats);
@@ -566,7 +567,7 @@ describe('createLoopEventHandler', () => {
       handler({ kind: 'compaction', phase: 'end' } as LoopEvent);
 
       expect(deps.sessionActions.setCompacting).toHaveBeenCalledWith(false);
-      expect(deps.sessionActions.resetTokenUsage).toHaveBeenCalled();
+      expect(deps.sessionActions.resetContextUsage).toHaveBeenCalled();
     });
 
     it('task_update 应该更新 tasks', () => {

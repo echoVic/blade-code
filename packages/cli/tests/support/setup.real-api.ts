@@ -13,6 +13,7 @@ import {
   getEnabledModelConfigs,
   isRealApiTestEnabled,
 } from '../integration/real-api/testConfig.js';
+import { getPiModelCatalog } from '../../src/services/pi/PiModelCatalog.js';
 
 globalThis.TextEncoder = TextEncoder;
 globalThis.TextDecoder = TextDecoder as typeof globalThis.TextDecoder;
@@ -28,6 +29,7 @@ process.env.BLADE_STORAGE_ROOT ??= path.join(
 if (isRealApiTestEnabled()) {
   const [runtimeModel] = getEnabledModelConfigs();
   if (runtimeModel) {
+    await getPiModelCatalog().setApiKey(runtimeModel.provider, runtimeModel.apiKey);
     getState().config.actions.setConfig(buildRealApiRuntimeConfig(runtimeModel));
   }
 }

@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import { basename, dirname, extname } from 'path';
-import { z } from 'zod';
 import { isAcpMode } from '../../../acp/AcpServiceContext.js';
+import { Default, Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
 import type {
@@ -11,14 +11,14 @@ import type {
   WriteMetadata,
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { ToolSchemas } from '../../validation/zodSchemas.js';
+import { ToolSchemas } from '../../validation/toolSchemas.js';
 import { generateDiffSnippet } from './diffUtils.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 import { SnapshotManager, type SnapshotMetadata } from './SnapshotManager.js';
 
 /**
  * WriteTool - File writer
- * Uses the newer Zod validation design
+ * Uses the TypeBox validation design
  */
 export const writeTool = createTool({
   name: 'Write',
@@ -27,17 +27,18 @@ export const writeTool = createTool({
   strict: true, // 启用 OpenAI Structured Outputs
   isConcurrencySafe: false, // 文件写入不支持并发
 
-  // Zod Schema 定义
-  schema: z.object({
+  schema: Type.Object({
     file_path: ToolSchemas.filePath({
       description: 'Absolute file path to write',
     }),
-    content: z.string().describe('Content to write'),
+    content: Type.String({ description: 'Content to write' }),
     encoding: ToolSchemas.encoding(),
-    create_directories: z
-      .boolean()
-      .default(true)
-      .describe('Automatically create missing parent directories'),
+    create_directories: Default(
+      Type.Boolean({
+        description: 'Automatically create missing parent directories',
+      }),
+      true
+    ),
   }),
 
   // 工具描述（对齐 Claude Code 官方）

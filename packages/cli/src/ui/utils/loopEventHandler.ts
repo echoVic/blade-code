@@ -201,7 +201,7 @@ export function createLoopEventHandler(
       case 'compaction':
         deps.sessionActions.setCompacting(event.phase === 'start');
         if (event.phase === 'end') {
-          deps.sessionActions.resetTokenUsage();
+          deps.sessionActions.resetContextUsage();
         }
         break;
 

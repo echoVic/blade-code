@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import type { Static, TSchema } from '../../schema/index.js';
 import type {
   ExecutionContext,
   Tool,
@@ -7,17 +7,17 @@ import type {
   ToolResult,
 } from '../types/index.js';
 import { isReadOnlyKind } from '../types/ToolTypes.js';
-import { parseWithZod } from '../validation/errorFormatter.js';
-import { zodToFunctionSchema } from '../validation/zodToJson.js';
+import { parseToolSchema } from '../validation/schemaErrorFormatter.js';
+import { schemaToFunctionSchema } from '../validation/schemaToJson.js';
 import { UnifiedToolInvocation } from './ToolInvocation.js';
 
 /**
  * 创建工具的工厂函数
  */
-export function createTool<TSchema extends z.ZodSchema>(
-  config: ToolConfig<TSchema, z.infer<TSchema>>
-): Tool<z.infer<TSchema>> {
-  type TParams = z.infer<TSchema>;
+export function createTool<T extends TSchema>(
+  config: ToolConfig<T, Static<T>>
+): Tool<Static<T>> {
+  type TParams = Static<T>;
 
   return {
     name: config.name,
@@ -46,7 +46,7 @@ export function createTool<TSchema extends z.ZodSchema>(
      * 获取函数声明 (用于 LLM function calling)
      */
     getFunctionDeclaration() {
-      const jsonSchema = zodToFunctionSchema(config.schema);
+      const jsonSchema = schemaToFunctionSchema(config.schema);
 
       // 构建完整的描述
       let fullDescription = config.description.short;
@@ -82,7 +82,7 @@ export function createTool<TSchema extends z.ZodSchema>(
         category: config.category,
         tags: config.tags || [],
         description: config.description,
-        schema: zodToFunctionSchema(config.schema),
+        schema: schemaToFunctionSchema(config.schema),
       };
     },
 
@@ -90,8 +90,7 @@ export function createTool<TSchema extends z.ZodSchema>(
      * 构建工具调用
      */
     build(params: TParams): ToolInvocation<TParams> {
-      // 使用 Zod 验证参数
-      const validatedParams = parseWithZod(config.schema, params);
+      const validatedParams = parseToolSchema(config.schema, params);
 
       return new UnifiedToolInvocation<TParams>(
         config.name,

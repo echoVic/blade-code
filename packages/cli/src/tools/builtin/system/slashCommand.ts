@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { CustomCommandRegistry } from '../../../slash-commands/custom/index.js';
 import { createTool } from '../../core/createTool.js';
@@ -50,16 +50,16 @@ export const slashCommandTool = createTool({
   kind: ToolKind.Execute,
   isConcurrencySafe: false, // 执行命令，可能有副作用
 
-  schema: z.object({
-    command: z
-      .string()
-      .describe(
-        'The command name without the leading slash, e.g., "review-pr" or "commit"'
-      ),
-    arguments: z
-      .string()
-      .optional()
-      .describe('Arguments to pass to the command, e.g., "123" or "fix bug"'),
+  schema: Type.Object({
+    command: Type.String({
+      description:
+        'The command name without the leading slash, e.g., "review-pr" or "commit"',
+    }),
+    arguments: Type.Optional(
+      Type.String({
+        description: 'Arguments to pass to the command, e.g., "123" or "fix bug"',
+      })
+    ),
   }),
 
   description: {

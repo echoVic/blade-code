@@ -1,8 +1,8 @@
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
-import { z } from 'zod';
 import { PermissionMode } from '../../../config/types.js';
+import { Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
@@ -17,8 +17,10 @@ export const exitPlanModeTool = createTool({
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: false, // 模式切换，改变状态
 
-  schema: z.object({
-    plan: z.string().describe('The complete implementation plan in markdown format'),
+  schema: Type.Object({
+    plan: Type.String({
+      description: 'The complete implementation plan in markdown format',
+    }),
   }),
 
   // 工具描述

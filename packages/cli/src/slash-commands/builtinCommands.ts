@@ -6,6 +6,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TokenCounter } from '../context/TokenCounter.js';
 import { getConfig, getCurrentModel, getState } from '../store/vanilla.js';
+import {
+  getModelDisplayName,
+  resolveModelConfig,
+} from '../services/pi/resolveModelConfig.js';
 import { getCwd } from '../utils/cwd.js';
 import { getVersion } from '../utils/packageInfo.js';
 import { agentsCommand } from './agents.js';
@@ -212,7 +216,7 @@ const statusCommand: SlashCommand = {
 - 路径: ${cwd}
 
 **模型配置:**
-- 当前模型: ${currentModel?.name ?? 'N/A'} (${currentModel?.model ?? 'N/A'})
+- 当前模型: ${currentModel ? getModelDisplayName(currentModel) : 'N/A'} (${currentModel?.model ?? 'N/A'})
 - Provider: ${currentModel?.provider ?? 'N/A'}
 - 可用模型数: ${config?.models?.length ?? 0}
 
@@ -290,7 +294,9 @@ const contextCommand: SlashCommand = {
     const totalTokens =
       messages.length > 0 ? TokenCounter.countTokens(messages, modelName) : 0;
     const maxTokens =
-      currentModel?.maxContextTokens ?? config?.maxContextTokens ?? 128000;
+      currentModel && config
+        ? resolveModelConfig(currentModel, config, false).model.contextWindow
+        : 128000;
     const usagePercent =
       maxTokens > 0 ? ((totalTokens / maxTokens) * 100).toFixed(1) : '0';
     const remainingPercent = (100 - parseFloat(usagePercent)).toFixed(1);
@@ -402,13 +408,10 @@ const doctorCommand: SlashCommand = {
         const { createChatServiceAsync } = await import(
           '../services/ChatServiceInterface.js'
         );
+        const resolved = resolveModelConfig(model, config!, false);
         const service = await createChatServiceAsync({
-          provider: model.provider,
-          apiKey: model.apiKey,
-          baseUrl: model.baseUrl,
-          model: model.model,
+          ...resolved.chat,
           maxOutputTokens: 10,
-          temperature: 0,
           timeout: 10000,
         });
         const response = await service.chat(
@@ -419,13 +422,15 @@ const doctorCommand: SlashCommand = {
         const latency = Date.now() - startTime;
         const hasContent = !!response.content;
         results.push(
-          `✅ **${model.name}** (${model.model}) — ${latency}ms${hasContent ? '' : ' ⚠️ empty response'}`
+          `✅ **${getModelDisplayName(model)}** (${model.model}) — ${latency}ms${hasContent ? '' : ' ⚠️ empty response'}`
         );
       } catch (error) {
         const latency = Date.now() - startTime;
         const msg =
           error instanceof Error ? error.message.slice(0, 80) : 'Unknown error';
-        results.push(`❌ **${model.name}** (${model.model}) — ${latency}ms — ${msg}`);
+        results.push(
+          `❌ **${getModelDisplayName(model)}** (${model.model}) — ${latency}ms — ${msg}`
+        );
       }
     }
 

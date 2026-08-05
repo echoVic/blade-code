@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -10,8 +10,11 @@ export const killShellTool = createTool({
   kind: ToolKind.Execute,
   isConcurrencySafe: false, // 终止进程，有副作用
 
-  schema: z.object({
-    shell_id: z.string().min(1).describe('Background Shell ID to terminate'),
+  schema: Type.Object({
+    shell_id: Type.String({
+      minLength: 1,
+      description: 'Background Shell ID to terminate',
+    }),
   }),
 
   // 工具描述（对齐 Claude Code 官方）

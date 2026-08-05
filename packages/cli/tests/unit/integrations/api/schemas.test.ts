@@ -524,12 +524,10 @@ describe('API Schemas', () => {
     it('应该验证有效的模型配置', () => {
       const validConfig: ModelConfig = {
         id: 'openai-gpt-4',
-        name: 'GPT-4',
+        displayName: 'GPT-4',
         provider: 'openai',
         model: 'gpt-4',
-        baseUrl: 'https://api.openai.com/v1',
-        apiKey: 'sk-xxx',
-        maxContextTokens: 128000,
+        overrides: { baseUrl: 'https://gateway.example/v1' },
       };
 
       expect(() => ModelConfigSchema.parse(validConfig)).not.toThrow();
@@ -538,9 +536,8 @@ describe('API Schemas', () => {
     it('应该验证最小配置', () => {
       const minimalConfig: ModelConfig = {
         id: 'local-model',
-        name: 'Local Model',
-        provider: 'ollama',
-        model: 'llama2',
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
       };
 
       expect(() => ModelConfigSchema.parse(minimalConfig)).not.toThrow();

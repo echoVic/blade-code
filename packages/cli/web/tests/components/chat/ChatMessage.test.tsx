@@ -73,6 +73,11 @@ describe('ChatMessage', () => {
         totalTokens: 0,
         maxContextTokens: 0,
         isDefaultMaxTokens: false,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        estimatedCostUsd: 0,
       },
     });
   });

@@ -6,12 +6,12 @@
  *
  * 安全约束：
  * - SET 操作仅允许白名单中的字段
- * - 禁止修改 models（防止泄露 apiKey）
+ * - 禁止通过通用工具修改 models（由模型管理 API 维护）
  * - 禁止修改 RuntimeConfig 独有字段
  */
 
-import { z } from 'zod';
 import { getConfigService } from '../../../config/index.js';
+import { StringEnum, Type } from '../../../schema/index.js';
 import { configActions, getConfig } from '../../../store/vanilla.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
@@ -19,12 +19,11 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 
 // ============================================
 // 白名单：仅允许 FIELD_ROUTING_TABLE 中 persistable: true 的安全字段
-// 排除 models / currentModelId（含 apiKey 敏感信息）
+// 排除 models / currentModelId（由模型管理 API 维护）
 // ============================================
 
 const SETTABLE_KEYS = new Set([
   'temperature',
-  'maxContextTokens',
   'maxOutputTokens',
   'timeout',
   'theme',
@@ -66,48 +65,31 @@ const RUNTIME_ONLY_KEYS = new Set([
 // Schema
 // ============================================
 
-const configToolSchema = z.object({
-  operation: z
-    .enum(['get', 'set', 'list'])
-    .describe('操作类型: get（读取）/ set（设置）/ list（列举可配置项）'),
-  key: z
-    .string()
-    .optional()
-    .describe(
-      '配置键名，支持点号嵌套（如 hooks.PreToolUse）。' + ' get 时用 "*" 获取全部配置'
-    ),
-  value: z.unknown().optional().describe('要设置的值（仅 set 操作需要）'),
-  scope: z
-    .enum(['local', 'project', 'global'])
-    .optional()
-    .describe(
-      '持久化范围: local（.blade/settings.local.json）' +
-        '/ project（.blade/settings.json）' +
-        '/ global（~/.blade/）'
-    ),
+const configToolSchema = Type.Object({
+  operation: StringEnum(['get', 'set', 'list'], {
+    description: '操作类型: get（读取）/ set（设置）/ list（列举可配置项）',
+  }),
+  key: Type.Optional(
+    Type.String({
+      description:
+        '配置键名，支持点号嵌套（如 hooks.PreToolUse）。get 时用 "*" 获取全部配置',
+    })
+  ),
+  value: Type.Optional(Type.Unknown({ description: '要设置的值（仅 set 操作需要）' })),
+  scope: Type.Optional(
+    StringEnum(['local', 'project', 'global'], {
+      description:
+        '持久化范围: local（.blade/settings.local.json）/ project（.blade/settings.json）/ global（~/.blade/）',
+    })
+  ),
 });
 
 // ============================================
 // 辅助函数
 // ============================================
 
-/**
- * 脱敏 models 数组中的 apiKey 字段
- */
 function sanitizeConfig(config: Record<string, unknown>): Record<string, unknown> {
-  const result = { ...config };
-  if (Array.isArray(result.models)) {
-    result.models = (result.models as Array<Record<string, unknown>>).map((m) => {
-      const sanitized = { ...m };
-      if (typeof sanitized.apiKey === 'string' && sanitized.apiKey) {
-        const key = sanitized.apiKey as string;
-        sanitized.apiKey =
-          key.length > 8 ? `${key.slice(0, 4)}...${key.slice(-4)}` : '****';
-      }
-      return sanitized;
-    });
-  }
-  return result;
+  return { ...config };
 }
 
 /**
@@ -166,7 +148,7 @@ export const configTool = createTool({
       'Use operation="set" with key and value to update config',
       'Use operation="list" to see all settable keys',
       'The scope option controls persistence: local/project/global',
-      'models and apiKey fields cannot be modified for security',
+      'models and currentModelId must be modified through model management',
     ],
     examples: [
       {

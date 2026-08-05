@@ -22,6 +22,7 @@ import os from 'os';
 import path from 'path';
 import type { GlobalOptions } from '../cli/types.js';
 import { resolveModelAlias } from '../services/modelAlias.js';
+import { getPiModelCatalog } from '../services/pi/PiModelCatalog.js';
 import { getCwd } from '../utils/cwd.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import { formatMaxTurnsRange, isValidMaxTurns } from './maxTurns.js';
@@ -112,25 +113,15 @@ export class ConfigManager {
         }
       }
 
-      if (process.env.BLADE_API_KEY && config.models?.length > 0) {
-        const currentModel = config.models.find((m) => m.id === config.currentModelId);
-        if (currentModel) {
-          currentModel.apiKey = process.env.BLADE_API_KEY;
-        }
-      }
-
-      if (process.env.BLADE_BASE_URL && config.models?.length > 0) {
-        const currentModel = config.models.find((m) => m.id === config.currentModelId);
-        if (currentModel) {
-          currentModel.baseUrl = process.env.BLADE_BASE_URL;
-        }
-      }
-
       if (process.env.BLADE_DEBUG) {
         config.debug =
           process.env.BLADE_DEBUG === '1' ||
           process.env.BLADE_DEBUG === 'true' ||
           process.env.BLADE_DEBUG;
+      }
+
+      if (config.models.length > 0) {
+        this.validateConfig(config);
       }
 
       if (config.debug) {
@@ -462,7 +453,6 @@ export class ConfigManager {
    */
   public validateConfig(config: BladeConfig): void {
     const errors: string[] = [];
-    const warnings: string[] = [];
 
     if (!config.models || config.models.length === 0) {
       errors.push('没有可用的模型配置');
@@ -483,9 +473,21 @@ export class ConfigManager {
       }
 
       for (const model of config.models) {
-        const prefix = `模型 "${model.name || model.id}"`;
-        if (!model.apiKey) {
-          warnings.push(`${prefix}: apiKey 为空`);
+        const prefix = `模型 "${model.displayName || model.id}"`;
+        const legacyFields = [
+          'name',
+          'apiKey',
+          'baseUrl',
+          'maxContextTokens',
+          'maxOutputTokens',
+          'supportsThinking',
+          'thinkingBudget',
+          'thinkingMode',
+        ].filter((field) => field in (model as unknown as Record<string, unknown>));
+        if (legacyFields.length > 0) {
+          errors.push(
+            `${prefix}: 不再支持旧字段 ${legacyFields.join(', ')}；请重新配置模型`
+          );
         }
         if (!model.model) {
           errors.push(`${prefix}: model 字段必填`);
@@ -493,16 +495,19 @@ export class ConfigManager {
         if (!model.provider) {
           errors.push(`${prefix}: provider 字段必填`);
         }
-        if (model.baseUrl && !model.baseUrl.startsWith('http')) {
-          warnings.push(`${prefix}: baseUrl "${model.baseUrl}" 不是有效的 HTTP URL`);
+        if (model.overrides?.baseUrl && !model.overrides.baseUrl.startsWith('http')) {
+          errors.push(
+            `${prefix}: overrides.baseUrl "${model.overrides.baseUrl}" 不是有效的 HTTP URL`
+          );
+        }
+        try {
+          getPiModelCatalog().getModel(model.provider, model.model);
+        } catch {
+          errors.push(
+            `${prefix}: 内置 catalog 中不存在 ${model.provider}/${model.model}`
+          );
         }
       }
-    }
-
-    if (warnings.length > 0) {
-      console.warn(
-        `[ConfigManager] 配置警告:\n${warnings.map((w) => `  ⚠ ${w}`).join('\n')}`
-      );
     }
 
     if (errors.length > 0) {
@@ -518,11 +523,9 @@ export class ConfigManager {
           `  "models": [\n` +
           `    {\n` +
           `      "id": "model-id-123",\n` +
-          `      "name": "默认模型",\n` +
-          `      "provider": "openai-compatible",\n` +
-          `      "apiKey": "your-api-key",\n` +
-          `      "baseUrl": "https://api.example.com/v1",\n` +
-          `      "model": "model-name"\n` +
+          `      "displayName": "默认模型",\n` +
+          `      "provider": "deepseek",\n` +
+          `      "model": "deepseek-v4-pro"\n` +
           `    }\n` +
           `  ]\n` +
           `}\n`

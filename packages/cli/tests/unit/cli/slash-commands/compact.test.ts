@@ -49,7 +49,7 @@ vi.mock('../../../../src/context/CompactionService.js', () => ({
 }));
 
 vi.mock('../../../../src/context/TokenCounter.js', () => ({
-  TokenCounter: { countTokens: () => 6_000 },
+  TokenCounter: { countTokens: () => 600_000 },
 }));
 
 vi.mock('../../../../src/store/vanilla.js', () => ({
@@ -64,12 +64,16 @@ describe('/compact slash command', () => {
     vi.clearAllMocks();
     contextManagerState.constructorOptions.length = 0;
     contextManagerState.saveCompaction.mockResolvedValue('summary-id');
-    storeState.getConfig.mockReturnValue({ maxContextTokens: 10_000 });
-    storeState.getCurrentModel.mockReturnValue({
-      model: 'test-model',
-      apiKey: 'test-key',
-      baseUrl: 'https://example.invalid',
+    storeState.getConfig.mockReturnValue({
       maxContextTokens: 10_000,
+      temperature: 0,
+      timeout: 30_000,
+    });
+    storeState.getCurrentModel.mockReturnValue({
+      id: 'test-model',
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
+      overrides: { baseUrl: 'https://example.invalid' },
     });
     storeState.getState.mockReturnValue({
       session: {
@@ -80,7 +84,7 @@ describe('/compact slash command', () => {
     compactionState.compact.mockResolvedValue({
       success: true,
       summary: 'summary',
-      preTokens: 6_000,
+      preTokens: 600_000,
       postTokens: 1_000,
       filesIncluded: [],
       compactedMessages: [{ role: 'user', content: 'summary' }],

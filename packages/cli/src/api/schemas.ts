@@ -1,7 +1,12 @@
-import { z } from 'zod';
+import { Default, Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 
-export const PermissionModeSchema = z.enum(['default', 'autoEdit', 'yolo', 'plan']);
-export type PermissionMode = z.infer<typeof PermissionModeSchema>;
+export { parseSchema } from '../schema/index.js';
+export { Type };
+
+export const PermissionModeSchema = Runtime(
+  StringEnum(['default', 'autoEdit', 'yolo', 'plan'])
+);
+export type PermissionMode = Static<typeof PermissionModeSchema>;
 
 export const PermissionModeEnum = {
   DEFAULT: 'default',
@@ -10,244 +15,304 @@ export const PermissionModeEnum = {
   PLAN: 'plan',
 } as const;
 
-export const MessageRoleSchema = z.enum(['user', 'assistant', 'system', 'tool']);
-export type MessageRole = z.infer<typeof MessageRoleSchema>;
+export const MessageRoleSchema = Runtime(
+  StringEnum(['user', 'assistant', 'system', 'tool'])
+);
+export type MessageRole = Static<typeof MessageRoleSchema>;
 
-export const MessageContentPartSchema = z.union([
-  z.object({
-    type: z.literal('text'),
-    text: z.string(),
-  }),
-  z.object({
-    type: z.literal('image_url'),
-    image_url: z.object({
-      url: z.string(),
+export const MessageContentPartSchema = Runtime(
+  Type.Union([
+    Type.Object({
+      type: Type.Literal('text'),
+      text: Type.String(),
     }),
-  }),
+    Type.Object({
+      type: Type.Literal('image_url'),
+      image_url: Type.Object({
+        url: Type.String(),
+      }),
+    }),
+  ])
+);
+
+const MessageContentSchema = Type.Union([
+  Type.String(),
+  Type.Array(MessageContentPartSchema),
 ]);
 
-export const MessageSchema = z.object({
-  id: z.string(),
-  role: MessageRoleSchema,
-  content: z.union([z.string(), z.array(MessageContentPartSchema)]),
-  timestamp: z.number(),
-  metadata: z.record(z.unknown()).optional(),
-  thinkingContent: z.string().optional(),
-  tool_call_id: z.string().optional(),
-  name: z.string().optional(),
-  tool_calls: z.unknown().optional(),
-});
-export type Message = z.infer<typeof MessageSchema>;
+export const MessageSchema = Runtime(
+  Type.Object({
+    id: Type.String(),
+    role: MessageRoleSchema,
+    content: MessageContentSchema,
+    timestamp: Type.Number(),
+    metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    thinkingContent: Type.Optional(Type.String()),
+    tool_call_id: Type.Optional(Type.String()),
+    name: Type.Optional(Type.String()),
+    tool_calls: Type.Optional(Type.Unknown()),
+  })
+);
+export type Message = Static<typeof MessageSchema>;
 
-export const SessionSchema = z.object({
-  sessionId: z.string(),
-  projectPath: z.string(),
-  title: z.string().optional(),
-  gitBranch: z.string().optional(),
-  rootId: z.string(),
-  parentId: z.string().optional(),
-  relationType: z.enum(['subagent', 'fork']).optional(),
-  resumedFrom: z.string().optional(),
-  rootAgentId: z.string().optional(),
-  resumeDepth: z.number().int().nonnegative().optional(),
-  messageCount: z.number(),
-  firstMessageTime: z.string(),
-  lastMessageTime: z.string(),
-  hasErrors: z.boolean(),
-});
-export type Session = z.infer<typeof SessionSchema>;
+export const SessionSchema = Runtime(
+  Type.Object({
+    sessionId: Type.String(),
+    projectPath: Type.String(),
+    title: Type.Optional(Type.String()),
+    gitBranch: Type.Optional(Type.String()),
+    rootId: Type.String(),
+    parentId: Type.Optional(Type.String()),
+    relationType: Type.Optional(StringEnum(['subagent', 'fork'])),
+    resumedFrom: Type.Optional(Type.String()),
+    rootAgentId: Type.Optional(Type.String()),
+    resumeDepth: Type.Optional(Type.Integer({ minimum: 0 })),
+    messageCount: Type.Number(),
+    firstMessageTime: Type.String(),
+    lastMessageTime: Type.String(),
+    hasErrors: Type.Boolean(),
+  })
+);
+export type Session = Static<typeof SessionSchema>;
 
-export const GoalSchema = z.object({
-  version: z.literal(1),
-  sessionId: z.string(),
-  goalId: z.string(),
-  objective: z.string(),
-  status: z.enum([
-    'active',
-    'paused',
-    'blocked',
-    'usage_limited',
-    'budget_limited',
-    'complete',
-  ]),
-  tokenBudget: z.number().optional(),
-  tokensUsed: z.number(),
-  timeUsedSeconds: z.number(),
-  continuationCount: z.number(),
-  statusReason: z.string().optional(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-export type Goal = z.infer<typeof GoalSchema>;
+export const GoalSchema = Runtime(
+  Type.Object({
+    version: Type.Literal(1),
+    sessionId: Type.String(),
+    goalId: Type.String(),
+    objective: Type.String(),
+    status: StringEnum([
+      'active',
+      'paused',
+      'blocked',
+      'usage_limited',
+      'budget_limited',
+      'complete',
+    ]),
+    tokenBudget: Type.Optional(Type.Number()),
+    tokensUsed: Type.Number(),
+    timeUsedSeconds: Type.Number(),
+    continuationCount: Type.Number(),
+    statusReason: Type.Optional(Type.String()),
+    createdAt: Type.String(),
+    updatedAt: Type.String(),
+  })
+);
+export type Goal = Static<typeof GoalSchema>;
 
-export const SessionHistoryMessageSchema = z.object({
-  role: MessageRoleSchema,
-  content: z.union([z.string(), z.array(MessageContentPartSchema)]),
-  metadata: z.unknown().optional(),
-  reasoningContent: z.string().optional(),
-  thinkingContent: z.string().optional(),
-  tool_call_id: z.string().optional(),
-  name: z.string().optional(),
-  tool_calls: z.unknown().optional(),
-});
-export type SessionHistoryMessage = z.infer<typeof SessionHistoryMessageSchema>;
+export const SessionHistoryMessageSchema = Runtime(
+  Type.Object({
+    role: MessageRoleSchema,
+    content: MessageContentSchema,
+    metadata: Type.Optional(Type.Unknown()),
+    reasoningContent: Type.Optional(Type.String()),
+    thinkingContent: Type.Optional(Type.String()),
+    tool_call_id: Type.Optional(Type.String()),
+    name: Type.Optional(Type.String()),
+    tool_calls: Type.Optional(Type.Unknown()),
+  })
+);
+export type SessionHistoryMessage = Static<typeof SessionHistoryMessageSchema>;
 
-export const ForkSessionResponseSchema = z.object({
-  session: SessionSchema,
-  messages: z.array(SessionHistoryMessageSchema),
-});
-export type ForkSessionResponse = z.infer<typeof ForkSessionResponseSchema>;
+export const ForkSessionResponseSchema = Runtime(
+  Type.Object({
+    session: SessionSchema,
+    messages: Type.Array(SessionHistoryMessageSchema),
+  })
+);
+export type ForkSessionResponse = Static<typeof ForkSessionResponseSchema>;
 
-export const SessionRewindModeSchema = z.enum(['conversation', 'code', 'both']);
-export type SessionRewindMode = z.infer<typeof SessionRewindModeSchema>;
+export const SessionRewindModeSchema = Runtime(
+  StringEnum(['conversation', 'code', 'both'])
+);
+export type SessionRewindMode = Static<typeof SessionRewindModeSchema>;
 
-export const SessionRewindCheckpointSchema = z.object({
-  messageId: z.string(),
-  preview: z.string(),
-  createdAt: z.string(),
-  fileCount: z.number().int().nonnegative(),
-});
-export type SessionRewindCheckpoint = z.infer<typeof SessionRewindCheckpointSchema>;
+export const SessionRewindCheckpointSchema = Runtime(
+  Type.Object({
+    messageId: Type.String(),
+    preview: Type.String(),
+    createdAt: Type.String(),
+    fileCount: Type.Integer({ minimum: 0 }),
+  })
+);
+export type SessionRewindCheckpoint = Static<typeof SessionRewindCheckpointSchema>;
 
-export const SessionRewindRequestSchema = z.object({
-  targetMessageId: z.string().min(1),
-  mode: SessionRewindModeSchema.default('conversation'),
-});
-export type SessionRewindRequest = z.infer<typeof SessionRewindRequestSchema>;
+export const SessionRewindRequestSchema = Runtime(
+  Type.Object({
+    targetMessageId: Type.String({ minLength: 1 }),
+    mode: Default(SessionRewindModeSchema, 'conversation'),
+  })
+);
+export type SessionRewindRequest = Static<typeof SessionRewindRequestSchema>;
 
-export const SessionRewindResponseSchema = z.object({
-  checkpoint: SessionRewindCheckpointSchema,
-  mode: SessionRewindModeSchema,
-  removedTurns: z.number().int().positive(),
-  restoredFiles: z.array(z.string()),
-  messages: z.array(SessionHistoryMessageSchema),
-});
+export const SessionRewindResponseSchema = Runtime(
+  Type.Object({
+    checkpoint: SessionRewindCheckpointSchema,
+    mode: SessionRewindModeSchema,
+    removedTurns: Type.Integer({ minimum: 1 }),
+    restoredFiles: Type.Array(Type.String()),
+    messages: Type.Array(SessionHistoryMessageSchema),
+  })
+);
+export type SessionRewindResponse = Static<typeof SessionRewindResponseSchema>;
 
-export const SubagentStatusSchema = z.enum([
+export const SubagentStatusSchema = StringEnum([
   'running',
   'completed',
   'failed',
   'cancelled',
 ]);
 
-export const SubagentSessionSchema = z.object({
-  id: z.string(),
-  subagentType: z.string(),
-  description: z.string(),
-  status: SubagentStatusSchema,
-  rootAgentId: z.string(),
-  resumedFrom: z.string().optional(),
-  resumeDepth: z.number().int().nonnegative(),
-  createdAt: z.number(),
-  lastActiveAt: z.number(),
-  completedAt: z.number().optional(),
-  result: z
-    .object({
-      success: z.boolean(),
-      message: z.string(),
-      error: z.string().optional(),
-      verificationCommands: z.array(z.string()).optional(),
-    })
-    .optional(),
-  stats: z
-    .object({
-      tokens: z.number().optional(),
-      toolCalls: z.number().optional(),
-      duration: z.number().optional(),
-    })
-    .optional(),
-});
-export type SubagentSession = z.infer<typeof SubagentSessionSchema>;
-
-export const ResumeSubagentRequestSchema = z.object({
-  prompt: z.string().trim().min(1).max(32_000),
-});
-
-export const ResumeSubagentResponseSchema = z.object({
-  source: SubagentSessionSchema,
-  session: SubagentSessionSchema,
-});
-export type ResumeSubagentResponse = z.infer<typeof ResumeSubagentResponseSchema>;
-export type SessionRewindResponse = z.infer<typeof SessionRewindResponseSchema>;
-
-export const SessionRefSchema = z.object({
-  sessionId: z.string(),
-  projectPath: z.string(),
-});
-export type SessionRef = z.infer<typeof SessionRefSchema>;
-
-export const BusEventSchema = z.object({
-  type: z.string(),
-  properties: z.record(z.unknown()),
-});
-export type BusEvent = z.infer<typeof BusEventSchema>;
-
-export const SendMessageRequestSchema = z.object({
-  content: z.string(),
-  projectPath: z.string().optional(),
-  permissionMode: PermissionModeSchema.optional(),
-  attachments: z
-    .array(
-      z.object({
-        type: z.enum(['file', 'image', 'url']),
-        path: z.string().optional(),
-        url: z.string().optional(),
-        content: z.string().optional(),
-        mimeType: z.string().optional(),
-        name: z.string().optional(),
+export const SubagentSessionSchema = Runtime(
+  Type.Object({
+    id: Type.String(),
+    subagentType: Type.String(),
+    description: Type.String(),
+    status: SubagentStatusSchema,
+    rootAgentId: Type.String(),
+    resumedFrom: Type.Optional(Type.String()),
+    resumeDepth: Type.Integer({ minimum: 0 }),
+    createdAt: Type.Number(),
+    lastActiveAt: Type.Number(),
+    completedAt: Type.Optional(Type.Number()),
+    result: Type.Optional(
+      Type.Object({
+        success: Type.Boolean(),
+        message: Type.String(),
+        error: Type.Optional(Type.String()),
+        verificationCommands: Type.Optional(Type.Array(Type.String())),
       })
-    )
-    .optional(),
-});
-export type SendMessageRequest = z.infer<typeof SendMessageRequestSchema>;
+    ),
+    stats: Type.Optional(
+      Type.Object({
+        tokens: Type.Optional(Type.Number()),
+        toolCalls: Type.Optional(Type.Number()),
+        duration: Type.Optional(Type.Number()),
+      })
+    ),
+  })
+);
+export type SubagentSession = Static<typeof SubagentSessionSchema>;
 
-export const SendMessageResponseSchema = z.object({
-  messageId: z.string(),
-  role: MessageRoleSchema,
-  content: z.string(),
-  timestamp: z.string(),
-});
-export type SendMessageResponse = z.infer<typeof SendMessageResponseSchema>;
+export const ResumeSubagentRequestSchema = Runtime(
+  Type.Object({
+    prompt: Type.String({ minLength: 1, maxLength: 32_000 }),
+  })
+);
 
-export const PermissionResponseSchema = z.object({
-  approved: z.boolean(),
-  remember: z.boolean().optional(),
-  scope: z.enum(['once', 'session', 'project']).optional(),
-  targetMode: PermissionModeSchema.optional(),
-  feedback: z.string().optional(),
-  answers: z.record(z.union([z.string(), z.array(z.string())])).optional(),
-});
-export type PermissionResponse = z.infer<typeof PermissionResponseSchema>;
+export const ResumeSubagentResponseSchema = Runtime(
+  Type.Object({
+    source: SubagentSessionSchema,
+    session: SubagentSessionSchema,
+  })
+);
+export type ResumeSubagentResponse = Static<typeof ResumeSubagentResponseSchema>;
 
-export const ModelConfigSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  provider: z.string(),
-  model: z.string(),
-  baseUrl: z.string().optional(),
-  apiKey: z.string().optional(),
-  maxContextTokens: z.number().optional(),
-});
-export type ModelConfig = z.infer<typeof ModelConfigSchema>;
+export const SessionRefSchema = Runtime(
+  Type.Object({
+    sessionId: Type.String(),
+    projectPath: Type.String(),
+  })
+);
+export type SessionRef = Static<typeof SessionRefSchema>;
 
-export const EditorThemeSchema = z.enum(['vs-dark', 'vs-light', 'hc-black']);
-export type EditorTheme = z.infer<typeof EditorThemeSchema>;
+export const BusEventSchema = Runtime(
+  Type.Object({
+    type: Type.String(),
+    properties: Type.Record(Type.String(), Type.Unknown()),
+  })
+);
+export type BusEvent = Static<typeof BusEventSchema>;
 
-export const UiThemeSchema = z.enum(['light', 'dark', 'system']);
-export type UiTheme = z.infer<typeof UiThemeSchema>;
+export const SendMessageRequestSchema = Runtime(
+  Type.Object({
+    content: Type.String(),
+    projectPath: Type.Optional(Type.String()),
+    permissionMode: Type.Optional(PermissionModeSchema),
+    attachments: Type.Optional(
+      Type.Array(
+        Type.Object({
+          type: StringEnum(['file', 'image', 'url']),
+          path: Type.Optional(Type.String()),
+          url: Type.Optional(Type.String()),
+          content: Type.Optional(Type.String()),
+          mimeType: Type.Optional(Type.String()),
+          name: Type.Optional(Type.String()),
+        })
+      )
+    ),
+  })
+);
+export type SendMessageRequest = Static<typeof SendMessageRequestSchema>;
 
-export const GeneralSettingsSchema = z.object({
-  language: z.string(),
-  theme: z.string(),
-  uiTheme: UiThemeSchema,
-  autoSaveSessions: z.boolean(),
-  notifyBuild: z.boolean(),
-  notifyErrors: z.boolean(),
-  notifySounds: z.boolean(),
-  privacyTelemetry: z.boolean(),
-  privacyCrash: z.boolean(),
-});
-export type GeneralSettings = z.infer<typeof GeneralSettingsSchema>;
+export const SendMessageResponseSchema = Runtime(
+  Type.Object({
+    messageId: Type.String(),
+    role: MessageRoleSchema,
+    content: Type.String(),
+    timestamp: Type.String(),
+  })
+);
+export type SendMessageResponse = Static<typeof SendMessageResponseSchema>;
 
-export const GeneralSettingsUpdateSchema = GeneralSettingsSchema.partial();
-export type GeneralSettingsUpdate = z.infer<typeof GeneralSettingsUpdateSchema>;
+export const PermissionResponseSchema = Runtime(
+  Type.Object({
+    approved: Type.Boolean(),
+    remember: Type.Optional(Type.Boolean()),
+    scope: Type.Optional(StringEnum(['once', 'session', 'project'])),
+    targetMode: Type.Optional(PermissionModeSchema),
+    feedback: Type.Optional(Type.String()),
+    answers: Type.Optional(
+      Type.Record(Type.String(), Type.Union([Type.String(), Type.Array(Type.String())]))
+    ),
+  })
+);
+export type PermissionResponse = Static<typeof PermissionResponseSchema>;
+
+export const ModelConfigSchema = Runtime(
+  Type.Object({
+    id: Type.String(),
+    displayName: Type.Optional(Type.String()),
+    provider: Type.String(),
+    model: Type.String(),
+    contextWindow: Type.Optional(Type.Number()),
+    maxTokens: Type.Optional(Type.Number()),
+    reasoning: Type.Optional(Type.Boolean()),
+    input: Type.Optional(Type.Array(StringEnum(['text', 'image']))),
+    overrides: Type.Optional(
+      Type.Object({
+        baseUrl: Type.Optional(Type.String()),
+        temperature: Type.Optional(Type.Number()),
+        maxOutputTokens: Type.Optional(Type.Number()),
+        timeout: Type.Optional(Type.Number()),
+      })
+    ),
+  })
+);
+export type ModelConfig = Static<typeof ModelConfigSchema>;
+
+export const EditorThemeSchema = Runtime(
+  StringEnum(['vs-dark', 'vs-light', 'hc-black'])
+);
+export type EditorTheme = Static<typeof EditorThemeSchema>;
+
+export const UiThemeSchema = Runtime(StringEnum(['light', 'dark', 'system']));
+export type UiTheme = Static<typeof UiThemeSchema>;
+
+export const GeneralSettingsSchema = Runtime(
+  Type.Object({
+    language: Type.String(),
+    theme: Type.String(),
+    uiTheme: UiThemeSchema,
+    autoSaveSessions: Type.Boolean(),
+    notifyBuild: Type.Boolean(),
+    notifyErrors: Type.Boolean(),
+    notifySounds: Type.Boolean(),
+    privacyTelemetry: Type.Boolean(),
+    privacyCrash: Type.Boolean(),
+  })
+);
+export type GeneralSettings = Static<typeof GeneralSettingsSchema>;
+
+export const GeneralSettingsUpdateSchema = Runtime(Type.Partial(GeneralSettingsSchema));
+export type GeneralSettingsUpdate = Static<typeof GeneralSettingsUpdateSchema>;
