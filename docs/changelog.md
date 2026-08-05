@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### 🐛 问题修复
+
+- tag publish workflow 现在校验 tag/package 版本并幂等处理已发布的 npm
+  版本和已存在的 GitHub Release，失败重试不会因重复资源产生假失败
+
 ## [0.7.7] - 2026-08-05
 
 ### ✨ 新功能
