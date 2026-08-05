@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-08-05
+
 ### ✨ 新功能
 
 - 新增 strict session catalog 与 durable fork contract，并通过 interactive CLI/TUI、
