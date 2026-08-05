@@ -49,9 +49,11 @@ export async function resolveNonInteractiveSession(
 
   if (typeof options.resume === 'string' && options.resume.length > 0) {
     if (options.forkSession) {
+      const workspace = getCwd();
       return SessionService.forkSession(options.resume, {
         newSessionId: options.sessionId,
-        targetProjectPath: getCwd(),
+        sourceProjectPath: workspace,
+        targetProjectPath: workspace,
       });
     }
     return {
@@ -61,13 +63,17 @@ export async function resolveNonInteractiveSession(
   }
 
   if (options.continue) {
-    const sessions = await SessionService.listSessions();
+    const sessions = options.forkSession
+      ? await SessionService.listSessions({ cwd: getCwd() })
+      : await SessionService.listSessions();
     if (sessions.length > 0) {
       const sessionId = sessions[0].sessionId;
       if (options.forkSession) {
+        const workspace = getCwd();
         return SessionService.forkSession(sessionId, {
           newSessionId: options.sessionId,
-          targetProjectPath: getCwd(),
+          sourceProjectPath: workspace,
+          targetProjectPath: workspace,
         });
       }
       return {

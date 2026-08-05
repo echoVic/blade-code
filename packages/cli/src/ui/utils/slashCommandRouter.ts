@@ -8,12 +8,16 @@
 import { safeExit } from '../../services/GracefulShutdown.js';
 import { getCwd } from '../../utils/cwd.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
+import type { Message } from '../../services/ChatServiceInterface.js';
 import {
   executeSlashCommand,
   isSlashCommand,
   type SlashCommandContext,
 } from '../../slash-commands/index.js';
+import type { SessionSelectionAction } from '../../slash-commands/types.js';
 import type { useAppActions, useSessionActions } from '../../store/selectors/index.js';
+import { activateSessionSelection } from './sessionActivation.js';
+import type { CleanupAgent } from './sessionActivation.js';
 import type { ResolvedInput } from '../hooks/useInputBuffer.js';
 
 // ==================== 类型定义 ====================
@@ -101,6 +105,20 @@ interface GoalContinuationData {
   };
 }
 
+function isSessionMetadata(value: unknown): value is SessionMetadata {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as SessionMetadata).sessionId === 'string' &&
+    typeof (value as SessionMetadata).projectPath === 'string' &&
+    typeof (value as SessionMetadata).rootId === 'string' &&
+    typeof (value as SessionMetadata).messageCount === 'number' &&
+    typeof (value as SessionMetadata).firstMessageTime === 'string' &&
+    typeof (value as SessionMetadata).lastMessageTime === 'string' &&
+    typeof (value as SessionMetadata).hasErrors === 'boolean'
+  );
+}
+
 // ==================== 类型守卫 ====================
 
 export function isInvokeSkillAction(data: unknown): data is InvokeSkillData {
@@ -157,6 +175,33 @@ export function isGoalContinuationAction(data: unknown): data is GoalContinuatio
   );
 }
 
+export function isSessionSelectionAction(
+  data: unknown
+): data is SessionSelectionAction {
+  if (typeof data !== 'object' || data === null) {
+    return false;
+  }
+
+  const intent = (data as { intent?: unknown }).intent;
+  if (intent !== 'resume' && intent !== 'fork') {
+    return false;
+  }
+
+  const action = (data as { action?: unknown }).action;
+  if (action === 'select_session') {
+    const sessions = (data as { sessions?: unknown }).sessions;
+    return (
+      Array.isArray(sessions) && sessions.every((session) => isSessionMetadata(session))
+    );
+  }
+
+  if (action === 'activate_session') {
+    return isSessionMetadata((data as { session?: unknown }).session);
+  }
+
+  return false;
+}
+
 // ==================== handleSlashMessage ====================
 
 type AppActions = ReturnType<typeof useAppActions>;
@@ -204,7 +249,7 @@ function handleSlashMessage(
       return true;
     case 'show_session_selector': {
       const sessions = (data as { sessions?: SessionMetadata[] } | undefined)?.sessions;
-      appActions.showSessionSelector(sessions);
+      appActions.showSessionSelector(sessions ?? [], 'resume');
       return true;
     }
     case 'session_forked': {
@@ -240,6 +285,11 @@ function handleSlashMessage(
       return true;
     case 'compact_completed':
     case 'compact_fallback': {
+      const compactedMessages = (data as { compactedMessages?: Message[] } | undefined)
+        ?.compactedMessages;
+      if (compactedMessages) {
+        sessionActions.setCompactedContext(compactedMessages);
+      }
       sessionActions.resetTokenUsage();
       return true;
     }
@@ -269,7 +319,9 @@ export async function processSlashCommand(
   appActions: AppActions,
   sessionActions: SessionActions,
   signal: AbortSignal,
-  sessionId?: string
+  cleanupAgent: CleanupAgent,
+  sessionId?: string,
+  messages?: Message[]
 ): Promise<SlashRouteResult> {
   const { text: command } = resolved;
 
@@ -279,11 +331,31 @@ export async function processSlashCommand(
 
   const slashContext: SlashCommandContext = {
     cwd: getCwd(),
+    workspaceRoot: getCwd(),
     sessionId,
+    messages,
     signal,
   };
 
   const slashResult = await executeSlashCommand(command, slashContext);
+
+  if (slashResult.success && isSessionSelectionAction(slashResult.data)) {
+    if (slashResult.data.action === 'select_session') {
+      appActions.showSessionSelector(
+        slashResult.data.sessions,
+        slashResult.data.intent
+      );
+      return { type: 'handled', commandResult: { success: true } };
+    }
+
+    await activateSessionSelection(
+      slashResult.data,
+      getCwd(),
+      sessionActions,
+      cleanupAgent
+    );
+    return { type: 'handled', commandResult: { success: true } };
+  }
 
   // 处理 UI 消息（show modal / clear / exit 等）
   if (slashResult.message) {

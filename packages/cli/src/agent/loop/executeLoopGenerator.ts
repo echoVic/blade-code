@@ -6,6 +6,7 @@
  */
 
 import { type PermissionMode } from '../../config/index.js';
+import { MAX_AGENT_TURNS } from '../../config/maxTurns.js';
 import { CompactionService } from '../../context/CompactionService.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { microCompact, snipCompact } from '../../context/SnipCompaction.js';
@@ -16,6 +17,7 @@ import {
 } from '../../context/ToolResultBudget.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type {
+  ChatRequestOptions,
   ChatResponse,
   Message,
   StreamToolCall,
@@ -44,6 +46,7 @@ import {
   checkWorktreeRequirement,
   isExplicitWorktreeRequest,
   recordVerificationEvidence,
+  resolveSingleTaskDelegationRequirement,
 } from './completionPolicy.js';
 import {
   INTERRUPTED_TURN_MARKER,
@@ -77,7 +80,7 @@ const COMPACTION_FALLBACK_MIN_OUTPUT_TOKENS = 8192;
 const COMPACTION_FALLBACK_MAX_OUTPUT_TOKENS = 32768;
 const COMPACTION_COOLDOWN_TURNS = 2;
 const COMPACTION_EMERGENCY_INPUT_RATIO = 0.95;
-const SAFETY_LIMIT = 100;
+const SAFETY_LIMIT = MAX_AGENT_TURNS;
 
 const PLANNING_DIRECTIVE = `
 
@@ -131,6 +134,49 @@ function toJsonValue(value: string | object): JsonValue {
   } catch {
     return String(value);
   }
+}
+
+function hasUnfinishedSuccessfulTask(messages: readonly Message[]): boolean {
+  const taskCallIds = new Set<string>();
+  let taskPendingFinalAnswer = false;
+
+  for (const message of messages) {
+    if (message.role === 'assistant') {
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        for (const toolCall of message.tool_calls) {
+          if ('function' in toolCall && toolCall.function.name === 'Task') {
+            taskCallIds.add(toolCall.id);
+          }
+        }
+      } else if (taskPendingFinalAnswer) {
+        taskPendingFinalAnswer = false;
+      }
+      continue;
+    }
+
+    if (
+      message.role !== 'tool' ||
+      message.name !== 'Task' ||
+      !message.tool_call_id ||
+      !taskCallIds.has(message.tool_call_id) ||
+      typeof message.metadata !== 'object' ||
+      message.metadata === null ||
+      Array.isArray(message.metadata)
+    ) {
+      continue;
+    }
+
+    const metadata = message.metadata as Record<string, JsonValue>;
+    if (
+      metadata.toolCallId === message.tool_call_id &&
+      metadata.toolName === 'Task' &&
+      metadata.error === null
+    ) {
+      taskPendingFinalAnswer = true;
+    }
+  }
+
+  return taskPendingFinalAnswer;
 }
 
 function extractApiErrorMessage(error: unknown): string {
@@ -281,6 +327,7 @@ async function* processStreamResponse(
   messages: Message[],
   tools: Array<{ name: string; description: string; parameters: unknown }>,
   signal?: AbortSignal,
+  requestOptions?: ChatRequestOptions,
   executor?: StreamingToolExecutor
 ): AsyncGenerator<LoopEvent, StreamResponseResult, void> {
   let fullContent = '';
@@ -293,7 +340,7 @@ async function* processStreamResponse(
   >();
 
   try {
-    const stream = deps.chatService.streamChat(messages, tools, signal);
+    const stream = deps.chatService.streamChat(messages, tools, signal, requestOptions);
     let chunkCount = 0;
 
     for await (const chunk of stream) {
@@ -353,8 +400,9 @@ async function* processStreamResponse(
                   | 'execute'
                   | undefined;
                 // 先启动工具执行，再 yield 事件通知消费者
-                executor.addTool(toolCall, params);
-                yield { kind: 'tool_start', toolCall, toolKind };
+                if (executor.addTool(toolCall, params) === 'prelaunched') {
+                  yield { kind: 'tool_start', toolCall, toolKind };
+                }
               } catch {
                 // JSON 解析失败，等流结束后处理
               }
@@ -377,7 +425,12 @@ async function* processStreamResponse(
     ) {
       logger.warn('[Loop] 流式响应返回0个chunk，回退到非流式模式');
       executor?.discard();
-      const fallbackResult = await deps.chatService.chat(messages, tools, signal);
+      const fallbackResult = await deps.chatService.chat(
+        messages,
+        tools,
+        signal,
+        requestOptions
+      );
       return { ...fallbackResult, _nonStreamingFallback: true };
     }
 
@@ -392,7 +445,12 @@ async function* processStreamResponse(
     if (isStreamingNotSupportedError(error)) {
       logger.warn('[Loop] 流式请求失败，降级到非流式模式');
       executor?.discard();
-      const fallbackResult = await deps.chatService.chat(messages, tools, signal);
+      const fallbackResult = await deps.chatService.chat(
+        messages,
+        tools,
+        signal,
+        requestOptions
+      );
       return { ...fallbackResult, _nonStreamingFallback: true };
     }
     throw error;
@@ -517,6 +575,8 @@ export async function* checkAndCompactInLoop(
       actualPreTokens: actualPromptTokens,
       signal,
       activeTask,
+      workspaceRoot: context.workspaceRoot || getCwd(),
+      sessionId: context.sessionId,
     });
 
     context.messages = result.compactedMessages;
@@ -669,10 +729,9 @@ export async function* executeLoopGenerator(
     // === Agentic Loop ===
     const isYoloMode = context.permissionMode === ('yolo' as PermissionMode);
     const isSubagent = !!context.subagentInfo;
-    const hasExplicitTurnLimit =
-      deps.runtimeOptions.maxTurns !== undefined || options?.maxTurns !== undefined;
     const configuredMaxTurns =
       deps.runtimeOptions.maxTurns ?? options?.maxTurns ?? deps.config.maxTurns ?? -1;
+    const hasExplicitTurnLimit = configuredMaxTurns >= 0;
 
     if (configuredMaxTurns === 0) {
       return {
@@ -697,6 +756,7 @@ export async function* executeLoopGenerator(
     let incompleteIntentRetryCount = 0;
     let delegationRetryCount = 0;
     let verificationRetryCount = 0;
+    let requiredToolName: 'Task' | 'Bash' | undefined;
     let worktreeRetryCount = 0;
     const successfulVerificationCommands = new Set<string>();
     const successfulTools = new Set<string>(
@@ -716,8 +776,55 @@ export async function* executeLoopGenerator(
     ]
       .filter(Boolean)
       .join('\n');
+    const delegationUserRequests = activeUserRequest.trim() ? [activeUserRequest] : [];
+    let delegationPolicySources = [
+      deps.runtimeOptions.appendSystemPrompt?.trim(),
+      context.completionRequirements?.trim(),
+      ...delegationUserRequests,
+    ].filter((request): request is string => Boolean(request));
     let worktreeIsolationRequired = isExplicitWorktreeRequest(activeUserRequest);
     let pendingTurnInputApplied = !pendingInputOnly;
+    let singleTaskDelegationClaimed = hasUnfinishedSuccessfulTask(context.messages);
+    if (singleTaskDelegationClaimed) successfulTools.add('Task');
+
+    const singleTaskRequired = (): boolean =>
+      resolveSingleTaskDelegationRequirement(delegationPolicySources);
+    const duplicateTaskResult = (): import('../../tools/types/index.js').ToolResult => {
+      const message =
+        'The exactly-once Task delegation has already been started. ' +
+        'Do not call Task again; return the final answer after its result.';
+      return {
+        success: false,
+        llmContent: message,
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          message,
+        },
+        metadata: {
+          summary: 'Blocked duplicate exactly-once Task delegation',
+        },
+      };
+    };
+    const admitToolWithPolicy = (
+      toolName: string,
+      _params: Record<string, unknown>
+    ): import('../../tools/types/index.js').ToolResult | undefined => {
+      if (toolName !== 'Task' || !singleTaskRequired()) return undefined;
+      if (singleTaskDelegationClaimed) return duplicateTaskResult();
+      singleTaskDelegationClaimed = true;
+      return undefined;
+    };
+    const rollbackSingleTaskAdmission = (toolName: string): void => {
+      if (toolName === 'Task' && singleTaskRequired()) {
+        singleTaskDelegationClaimed = false;
+      }
+    };
+    const executeAdmittedTool = async (
+      toolName: string,
+      params: Record<string, unknown>,
+      executionContext: import('../../tools/types/index.js').ExecutionContext
+    ): Promise<import('../../tools/types/index.js').ToolResult> =>
+      deps.toolExecutor.execute(toolName, params, executionContext);
 
     let budgetTracker = createBudgetTracker({
       budget: deps.currentModelMaxContextTokens,
@@ -770,12 +877,18 @@ export async function* executeLoopGenerator(
                 .join('\n');
         if (steeringText.trim()) {
           activeUserRequest = [activeUserRequest, steeringText].join('\n');
+          delegationUserRequests.push(steeringText);
           verificationPolicyRequest = [
             activeUserRequest,
             context.completionRequirements?.trim(),
           ]
             .filter(Boolean)
             .join('\n');
+          delegationPolicySources = [
+            deps.runtimeOptions.appendSystemPrompt?.trim(),
+            context.completionRequirements?.trim(),
+            ...delegationUserRequests,
+          ].filter((request): request is string => Boolean(request));
           worktreeIsolationRequired =
             worktreeIsolationRequired || isExplicitWorktreeRequest(steeringText);
         }
@@ -867,6 +980,24 @@ export async function* executeLoopGenerator(
 
         // 4. 调用 LLM
         const isStreamEnabled = options?.stream !== false;
+        const availableTurnTools =
+          singleTaskDelegationClaimed &&
+          resolveSingleTaskDelegationRequirement(delegationPolicySources)
+            ? tools.filter((tool) => tool.name !== 'Task')
+            : tools;
+        const turnRequiredToolName = requiredToolName;
+        requiredToolName = undefined;
+        const turnTools = turnRequiredToolName
+          ? availableTurnTools.filter((tool) => tool.name === turnRequiredToolName)
+          : availableTurnTools;
+        const requestOptions: ChatRequestOptions | undefined = turnRequiredToolName
+          ? {
+              toolChoice: {
+                type: 'tool',
+                toolName: turnRequiredToolName,
+              },
+            }
+          : undefined;
         let turnResult: StreamResponseResult;
         let streamingExecutor: StreamingToolExecutor | undefined;
 
@@ -894,19 +1025,24 @@ export async function* executeLoopGenerator(
               lastMessageUuid,
               context.subagentInfo
             );
+            streamingExecutor.setAdmissionPolicy(admitToolWithPolicy);
+            streamingExecutor.setAdmissionRollback(rollbackSingleTaskAdmission);
+            streamingExecutor.setExecutionPolicy(executeAdmittedTool);
 
             turnResult = yield* processStreamResponse(
               deps,
               state.toLLMMessages(),
-              tools,
+              turnTools,
               options?.signal,
+              requestOptions,
               streamingExecutor
             );
           } else {
             turnResult = await deps.chatService.chat(
               state.toLLMMessages(),
-              tools,
-              options?.signal
+              turnTools,
+              options?.signal,
+              requestOptions
             );
           }
         } catch (llmError) {
@@ -924,12 +1060,15 @@ export async function* executeLoopGenerator(
                 baseURL: chatConfig.baseUrl,
                 signal: options?.signal,
                 activeTask: activeUserRequest,
+                workspaceRoot: context.workspaceRoot || getCwd(),
+                sessionId: context.sessionId,
               }
             );
             if (result.success) {
               context.messages = result.messages;
               // 同步到 state（此时 pending 已被 writeback() commit，为空）
               state.replaceHistory(context.messages);
+              requiredToolName = turnRequiredToolName;
               logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
               turnsCount--;
               continue; // Retry the turn
@@ -1169,12 +1308,13 @@ export async function* executeLoopGenerator(
           incompleteIntentRetryCount = 0;
 
           const delegationAction = checkDelegationRequirement(
-            activeUserRequest,
+            delegationPolicySources,
             successfulTools,
             delegationRetryCount
           );
           if (delegationAction.action === 'retry') {
             delegationRetryCount++;
+            requiredToolName = 'Task';
             state.appendAssistant({
               role: 'assistant',
               content: turnResult.content || '',
@@ -1323,6 +1463,7 @@ export async function* executeLoopGenerator(
           );
           if (verificationAction.action === 'retry') {
             verificationRetryCount++;
+            requiredToolName = 'Bash';
             state.appendAssistant({
               role: 'assistant',
               content: turnResult.content || '',
@@ -1538,13 +1679,35 @@ export async function* executeLoopGenerator(
             `[Loop] 使用 StreamingToolExecutor 收集 ${functionCalls.length} 个工具结果`
           );
           executionResults = [];
+          for (const toolCall of streamingExecutor.getQueuedToolCalls()) {
+            const toolDef = registry.get(toolCall.function.name);
+            const toolKind = toolDef?.kind as
+              | 'readonly'
+              | 'write'
+              | 'execute'
+              | undefined;
+            yield { kind: 'tool_start', toolCall, toolKind };
+          }
           for await (const execResult of streamingExecutor.getRemainingResults()) {
             executionResults.push(execResult);
           }
         } else {
           // 非流式模式或 fallback：传统 Promise.all 执行
-          // Yield tool_start 事件
+          const admissionRejections = new Map<
+            string,
+            import('../../tools/types/index.js').ToolResult
+          >();
+          // Admission happens before tool_start and durable tool-use persistence.
           for (const toolCall of functionCalls) {
+            const parsedParams = parseToolArguments(toolCall.function.arguments);
+            const admissionRejection =
+              parsedParams === null
+                ? undefined
+                : admitToolWithPolicy(toolCall.function.name, parsedParams);
+            if (admissionRejection) {
+              admissionRejections.set(toolCall.id, admissionRejection);
+              continue;
+            }
             const toolDef = registry.get(toolCall.function.name);
             const toolKind = toolDef?.kind as
               | 'readonly'
@@ -1561,6 +1724,14 @@ export async function* executeLoopGenerator(
           // 并行执行所有工具
           const executeToolCall = async (toolCall: (typeof functionCalls)[0]) => {
             try {
+              const admissionRejection = admissionRejections.get(toolCall.id);
+              if (admissionRejection) {
+                return {
+                  toolCall,
+                  result: admissionRejection,
+                  toolUseUuid: null,
+                };
+              }
               const params = parseToolArguments(toolCall.function.arguments);
               if (params === null) {
                 return {
@@ -1626,24 +1797,20 @@ export async function* executeLoopGenerator(
                 };
               }
 
-              const result = await deps.toolExecutor.execute(
-                toolCall.function.name,
-                params,
-                {
-                  sessionId: context.sessionId,
-                  userId: context.userId || 'default',
-                  workspaceRoot: context.workspaceRoot || getCwd(),
-                  worktreeIsolationRequired,
-                  worktreeActive:
-                    successfulTools.has('EnterWorktree') &&
-                    !successfulTools.has('ExitWorktree'),
-                  signal: options?.signal,
-                  confirmationHandler: context.confirmationHandler,
-                  permissionMode: context.permissionMode,
-                  toolRegistry: registry,
-                  deferredToolManager: registry.deferredToolManager,
-                }
-              );
+              const result = await executeAdmittedTool(toolCall.function.name, params, {
+                sessionId: context.sessionId,
+                userId: context.userId || 'default',
+                workspaceRoot: context.workspaceRoot || getCwd(),
+                worktreeIsolationRequired,
+                worktreeActive:
+                  successfulTools.has('EnterWorktree') &&
+                  !successfulTools.has('ExitWorktree'),
+                signal: options?.signal,
+                confirmationHandler: context.confirmationHandler,
+                permissionMode: context.permissionMode,
+                toolRegistry: registry,
+                deferredToolManager: registry.deferredToolManager,
+              });
               return { toolCall, result, toolUseUuid };
             } catch (error) {
               logger.error(
@@ -1681,11 +1848,30 @@ export async function* executeLoopGenerator(
           };
           allToolResults.push(result);
 
-          // 如果工具未实际执行就被 abort（如排队工具 skip、确认阶段 abort），
-          // 跳过 yield/持久化/appendToolResult，避免在历史中留下无意义的失败记录。
-          // 注意：只检查 abortedBeforeLaunch，不会误伤正常的 shouldExitLoop 结果
-          // （如 ExitPlanModeTool 带 targetMode/planContent 的合法退出）。
+          // Even a pre-launch abort must close the provider-visible assistant
+          // tool call before an interrupted session can be resumed. Persist the
+          // cancellation only when the matching durable tool-use exists; always
+          // close the in-memory provider call with its original ID.
           if (result.metadata?.abortedBeforeLaunch) {
+            const abortMessage = result.error?.message ?? '任务已被用户中止';
+            if (toolUseUuid) {
+              const uuid = await persistToolResult(
+                deps,
+                context,
+                toolUseUuid,
+                toolCall.function.name,
+                null,
+                toolUseUuid,
+                abortMessage
+              );
+              if (uuid) lastMessageUuid = uuid;
+            }
+            state.appendToolResult({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: toolCall.function.name,
+              content: `Error: ${abortMessage}`,
+            });
             return makeInterruptedResult(
               turnsCount,
               allToolResults.length,
@@ -1734,7 +1920,7 @@ export async function* executeLoopGenerator(
             const uuid = await persistToolResult(
               deps,
               context,
-              toolCall.id,
+              toolUseUuid ?? toolCall.id,
               toolCall.function.name,
               result.success ? toJsonValue(result.llmContent) : null,
               toolUseUuid,
@@ -1825,6 +2011,15 @@ export async function* executeLoopGenerator(
             tool_call_id: toolCall.id,
             name: toolCall.function.name,
             content: finalContent,
+            ...(toolCall.function.name === 'Task'
+              ? {
+                  metadata: {
+                    toolCallId: toolCall.id,
+                    toolName: toolCall.function.name,
+                    error: result.success ? null : (result.error?.message ?? null),
+                  },
+                }
+              : {}),
           });
 
           // shouldExitLoop 检查
@@ -1887,6 +2082,8 @@ export async function* executeLoopGenerator(
                     actualPreTokens: lastPromptTokens,
                     signal: options?.signal,
                     activeTask: activeUserRequest,
+                    workspaceRoot: context.workspaceRoot || getCwd(),
+                    sessionId: context.sessionId,
                   }
                 );
 

@@ -74,7 +74,7 @@ function createWorkspace(): {
         "For this task, src/channel.js must export exactly 'SETTINGS_CHANNEL_VALUE'.",
       ].join('\n'),
       allowedTools: ['Read', 'Edit', 'Bash'],
-      maxTurns: 8,
+      maxTurns: 16,
     },
     null,
     2
@@ -235,8 +235,6 @@ function runBlade(
         'yolo',
         '--model',
         model,
-        '--max-turns',
-        '8',
         '--settings',
         './automation-settings.json',
         [
@@ -307,6 +305,23 @@ function extractSettingsPayload(requestBody: string): string {
     .join('\n');
 }
 
+function formatFailure(result: CommandResult): string {
+  const parsed = parseHeadlessJsonl(result.stdout);
+  const diagnostic = {
+    error: result.error?.message,
+    status: result.status,
+    runtimeErrors: parsed.events
+      .filter((event) => event.type === 'error')
+      .map((event) => event.message),
+    recentTools: parsed.events
+      .filter((event) => event.type === 'tool_start' || event.type === 'tool_result')
+      .slice(-12),
+    nonJsonLines: parsed.nonJsonLines.slice(-12),
+    stderr: result.stderr.slice(-4_000),
+  };
+  return redactSecrets(JSON.stringify(diagnostic, null, 2), [apiKey]);
+}
+
 describe.skipIf(!enabled)('CLI settings trajectory (real API)', () => {
   describe.each(models)('%s', (model) => {
     it('applies file settings before the real coding turn', async () => {
@@ -346,8 +361,8 @@ describe.skipIf(!enabled)('CLI settings trajectory (real API)', () => {
           'utf8'
         );
 
-        expect(result.error).toBeUndefined();
-        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(result.error, formatFailure(result)).toBeUndefined();
+        expect(result.status, formatFailure(result)).toBe(0);
         expect(parsed.nonJsonLines).toEqual([]);
         expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
         expect(proxy.requestBodies.length).toBeGreaterThan(0);

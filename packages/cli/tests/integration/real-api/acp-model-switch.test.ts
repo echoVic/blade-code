@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
@@ -232,7 +232,6 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
             maxContextTokens: 64_000,
             maxOutputTokens: 1024,
             timeout: 180_000,
-            maxRetries: 1,
           },
           {
             id: proModelId,
@@ -244,7 +243,6 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
             maxContextTokens: 64_000,
             maxOutputTokens: 1024,
             timeout: 180_000,
-            maxRetries: 1,
           },
         ],
       });

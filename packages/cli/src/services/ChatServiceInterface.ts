@@ -114,6 +114,13 @@ export interface ChatResponse {
   finishReason?: string;
 }
 
+export interface ChatRequestOptions {
+  toolChoice?: {
+    type: 'tool';
+    toolName: string;
+  };
+}
+
 /**
  * 流式 tool_calls 的统一类型：
  * - OpenAI/Azure 流式 delta 期间的 tool call（id 等字段可能是可选的）
@@ -150,7 +157,8 @@ export interface IChatService {
       description: string;
       parameters: unknown;
     }>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: ChatRequestOptions
   ): Promise<ChatResponse>;
 
   /**
@@ -163,7 +171,8 @@ export interface IChatService {
       description: string;
       parameters: unknown;
     }>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: ChatRequestOptions
   ): AsyncGenerator<StreamChunk, void, unknown>;
 
   /**

@@ -320,19 +320,25 @@ export const taskTool = createTool({
         workspaceRoot: worktreeLease.workspaceRoot,
         worktreeActive: Boolean(worktreeLease.worktree),
         onEvent: (event: LoopEvent) => {
+          const parentRef = parentSessionId
+            ? {
+                sessionId: parentSessionId,
+                projectPath: context.workspaceRoot || getCwd(),
+              }
+            : undefined;
           switch (event.kind) {
             case 'tool_start': {
               const toolCall = event.toolCall;
               const toolName =
                 'function' in toolCall ? toolCall.function.name : 'Unknown';
               vanillaStore.getState().app.actions.updateSubagentTool(toolName);
-              if (parentSessionId) {
-                Bus.publish(parentSessionId, 'subagent.update', {
+              if (parentRef) {
+                Bus.publish(parentRef, 'subagent.update', {
                   subagentSessionId,
                   toolName,
                 });
                 if ('function' in toolCall) {
-                  Bus.publish(parentSessionId, 'subagent.tool.start', {
+                  Bus.publish(parentRef, 'subagent.tool.start', {
                     subagentSessionId,
                     toolCallId: toolCall.id,
                     toolName,
@@ -344,10 +350,10 @@ export const taskTool = createTool({
               break;
             }
             case 'tool_result': {
-              if (!parentSessionId) break;
+              if (!parentRef) break;
               const toolCall = event.toolCall;
               if (!('function' in toolCall)) break;
-              Bus.publish(parentSessionId, 'subagent.tool.result', {
+              Bus.publish(parentRef, 'subagent.tool.result', {
                 subagentSessionId,
                 toolCallId: toolCall.id,
                 toolName: toolCall.function.name,
@@ -361,8 +367,8 @@ export const taskTool = createTool({
               break;
             }
             case 'content_delta': {
-              if (parentSessionId) {
-                Bus.publish(parentSessionId, 'subagent.delta', {
+              if (parentRef) {
+                Bus.publish(parentRef, 'subagent.delta', {
                   subagentSessionId,
                   delta: event.delta,
                 });
@@ -370,8 +376,8 @@ export const taskTool = createTool({
               break;
             }
             case 'thinking_delta': {
-              if (parentSessionId) {
-                Bus.publish(parentSessionId, 'subagent.thinking.delta', {
+              if (parentRef) {
+                Bus.publish(parentRef, 'subagent.thinking.delta', {
                   subagentSessionId,
                   delta: event.delta,
                 });
@@ -380,8 +386,8 @@ export const taskTool = createTool({
             }
             case 'stream_end': {
               // stream_end 是 per-turn 语义，映射到 subagent.stream.end
-              if (parentSessionId) {
-                Bus.publish(parentSessionId, 'subagent.stream.end', {
+              if (parentRef) {
+                Bus.publish(parentRef, 'subagent.stream.end', {
                   subagentSessionId,
                 });
               }

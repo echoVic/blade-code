@@ -7,7 +7,11 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { CompactionService } from '../../../../src/context/CompactionService.js';
+import {
+  CompactionService,
+  resetCompactionCircuitBreaker,
+} from '../../../../src/context/CompactionService.js';
+import { HookManager } from '../../../../src/hooks/HookManager.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
 
@@ -27,6 +31,116 @@ vi.mock('../../../../src/services/ChatServiceInterface.js', async (importOrigina
 });
 
 describe('CompactionService - 输出协议', () => {
+  test('compaction hook 应使用 active workspace', async () => {
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>Preserve the active workspace.</summary>',
+    });
+    const hookSpy = vi
+      .spyOn(HookManager.getInstance(), 'executeCompactionHooks')
+      .mockResolvedValueOnce({ blockCompaction: false });
+
+    try {
+      await CompactionService.compact(
+        [{ role: 'user', content: 'Continue the worktree task.' }],
+        {
+          trigger: 'auto',
+          modelName: 'test-model',
+          maxContextTokens: 6_000,
+          apiKey: 'test-key',
+          baseURL: 'https://example.invalid',
+          sessionId: 'hook-workspace-session',
+          workspaceRoot: '/tmp/active-worktree',
+        }
+      );
+
+      expect(hookSpy).toHaveBeenCalledWith(
+        'auto',
+        expect.objectContaining({
+          projectDir: '/tmp/active-worktree',
+          sessionId: 'hook-workspace-session',
+        })
+      );
+    } finally {
+      hookSpy.mockRestore();
+    }
+  });
+
+  test('circuit breaker 应按 workspace 和 session 复合身份隔离', async () => {
+    resetCompactionCircuitBreaker();
+    compactChat
+      .mockRejectedValueOnce(new Error('workspace-a failure 1'))
+      .mockRejectedValueOnce(new Error('workspace-a failure 2'))
+      .mockRejectedValueOnce(new Error('workspace-a failure 3'))
+      .mockResolvedValueOnce({
+        content: '<summary>Workspace B remains independent.</summary>',
+      });
+    const commonOptions = {
+      trigger: 'auto' as const,
+      modelName: 'test-model',
+      maxContextTokens: 6_000,
+      apiKey: 'test-key',
+      baseURL: 'https://example.invalid',
+      sessionId: 'duplicate-session-id',
+    };
+
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const result = await CompactionService.compact(
+          [{ role: 'user', content: `Workspace A attempt ${attempt}` }],
+          { ...commonOptions, workspaceRoot: '/tmp/workspace-a' }
+        );
+        expect(result.success).toBe(false);
+      }
+
+      const workspaceBResult = await CompactionService.compact(
+        [{ role: 'user', content: 'Workspace B attempt' }],
+        { ...commonOptions, workspaceRoot: '/tmp/workspace-b' }
+      );
+
+      expect(workspaceBResult.success).toBe(true);
+      expect(compactChat).toHaveBeenCalledTimes(4);
+    } finally {
+      resetCompactionCircuitBreaker();
+    }
+  });
+
+  test('circuit breaker 应规范化等价的 workspace 路径', async () => {
+    resetCompactionCircuitBreaker();
+    compactChat
+      .mockRejectedValueOnce(new Error('failure 1'))
+      .mockRejectedValueOnce(new Error('failure 2'))
+      .mockRejectedValueOnce(new Error('failure 3'))
+      .mockResolvedValueOnce({ content: '<summary>must not run</summary>' });
+    const options = {
+      trigger: 'auto' as const,
+      modelName: 'test-model',
+      maxContextTokens: 6_000,
+      apiKey: 'test-key',
+      baseURL: 'https://example.invalid',
+      sessionId: 'canonical-session',
+    };
+
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await CompactionService.compact(
+          [{ role: 'user', content: `Attempt ${attempt}` }],
+          { ...options, workspaceRoot: '/tmp/canonical-workspace' }
+        );
+      }
+
+      const result = await CompactionService.compact(
+        [{ role: 'user', content: 'Equivalent path attempt' }],
+        { ...options, workspaceRoot: '/tmp/canonical-workspace/.' }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Circuit breaker open');
+      expect(compactChat).toHaveBeenCalledTimes(3);
+    } finally {
+      resetCompactionCircuitBreaker();
+    }
+  });
+
   test('压缩诊断不应写入 stdout', async () => {
     compactChat.mockResolvedValueOnce({
       content: '<summary>Preserve the active coding task.</summary>',
@@ -96,6 +210,105 @@ describe('CompactionService - 输出协议', () => {
     );
     expect(checkpoint?.content).toContain(activeTask);
     expect(String(checkpoint?.content).length).toBeLessThanOrEqual(7_000);
+  });
+
+  test('应从 active workspace 读取相对路径的重点文件', async () => {
+    const activeWorkspace = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'compaction-worktree-')
+    );
+    await fs.mkdir(path.join(activeWorkspace, 'src'), { recursive: true });
+    await fs.writeFile(
+      path.join(activeWorkspace, 'src', 'clamp.js'),
+      "export const location = 'managed-worktree';\n"
+    );
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>Preserve the managed worktree change.</summary>',
+    });
+
+    try {
+      await CompactionService.compact(
+        [
+          { role: 'user', content: 'Fix src/clamp.js in the managed worktree.' },
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: 'edit-clamp',
+                type: 'function',
+                function: {
+                  name: 'Edit',
+                  arguments: '{\"file_path\":\"src/clamp.js\"}',
+                },
+              },
+            ],
+          },
+        ],
+        {
+          trigger: 'auto',
+          modelName: 'test-model',
+          maxContextTokens: 6_000,
+          apiKey: 'test-key',
+          baseURL: 'https://example.invalid',
+          sessionId: 'managed-worktree-files',
+          workspaceRoot: activeWorkspace,
+        }
+      );
+
+      const prompt = String(compactChat.mock.calls.at(-1)?.[0]?.[0]?.content);
+      expect(prompt).toContain("export const location = 'managed-worktree';");
+    } finally {
+      await fs.rm(activeWorkspace, { recursive: true, force: true });
+    }
+  });
+
+  test('不应读取 active workspace 外的相对路径或符号链接', async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'compaction-boundary-'));
+    const activeWorkspace = path.join(tempRoot, 'worktree');
+    const outsideWorkspace = path.join(tempRoot, 'outside');
+    await fs.mkdir(activeWorkspace, { recursive: true });
+    await fs.mkdir(outsideWorkspace, { recursive: true });
+    await fs.writeFile(
+      path.join(outsideWorkspace, 'lexical-secret.ts'),
+      "export const lexicalSecret = 'must-not-leak';\n"
+    );
+    await fs.writeFile(
+      path.join(outsideWorkspace, 'symlink-secret.ts'),
+      "export const symlinkSecret = 'must-not-leak';\n"
+    );
+    await fs.symlink(outsideWorkspace, path.join(activeWorkspace, 'linked'));
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>Keep worktree isolation.</summary>',
+    });
+
+    try {
+      const result = await CompactionService.compact(
+        [
+          {
+            role: 'user',
+            content:
+              'Do not restore ../outside/lexical-secret.ts or ' +
+              'linked/symlink-secret.ts.',
+          },
+        ],
+        {
+          trigger: 'auto',
+          modelName: 'test-model',
+          maxContextTokens: 6_000,
+          apiKey: 'test-key',
+          baseURL: 'https://example.invalid',
+          sessionId: 'managed-worktree-boundary',
+          workspaceRoot: activeWorkspace,
+        }
+      );
+
+      const prompt = String(compactChat.mock.calls.at(-1)?.[0]?.[0]?.content);
+      expect(prompt).not.toContain("export const lexicalSecret = 'must-not-leak';");
+      expect(prompt).not.toContain("export const symlinkSecret = 'must-not-leak';");
+      expect(result.filesIncluded).toEqual([]);
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });
 
@@ -395,6 +608,89 @@ describe('CompactionService - Post-Compact 文件恢复', () => {
     expect(restorationContent).toContain('Post-compaction file restoration.');
     expect(restorationContent).toContain(`<file path="${testFiles[0]}"`);
     expect(restorationContent).toContain('// line 1 of test-file-0');
+  });
+
+  test('只恢复当前 session 的 active workspace 文件', async () => {
+    const tracker = FileAccessTracker.getInstance();
+    const activeWorkspace = path.join(tmpDir, 'active-worktree');
+    const siblingWorkspace = path.join(tmpDir, 'original-checkout');
+    await fs.mkdir(activeWorkspace, { recursive: true });
+    await fs.mkdir(siblingWorkspace, { recursive: true });
+    const activeFile = path.join(activeWorkspace, 'active.ts');
+    const siblingFile = path.join(siblingWorkspace, 'sibling.ts');
+    const foreignSessionFile = path.join(activeWorkspace, 'foreign.ts');
+    await fs.writeFile(activeFile, 'export const active = true;');
+    await fs.writeFile(siblingFile, "export const sibling = 'must-not-leak';");
+    await fs.writeFile(
+      foreignSessionFile,
+      "export const foreignSession = 'must-not-leak';"
+    );
+    await tracker.recordFileRead(activeFile, 'current-session');
+    await tracker.recordFileRead(siblingFile, 'current-session');
+    await tracker.recordFileRead(foreignSessionFile, 'foreign-session');
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>Preserve only active workspace context.</summary>',
+    });
+
+    const result = await CompactionService.compact(
+      [{ role: 'user', content: 'Continue the active worktree task.' }],
+      {
+        trigger: 'auto',
+        modelName: 'test-model',
+        maxContextTokens: 6_000,
+        apiKey: 'test-key',
+        baseURL: 'https://example.invalid',
+        sessionId: 'current-session',
+        workspaceRoot: activeWorkspace,
+      }
+    );
+
+    const restoration = result.compactedMessages.find(
+      (message) =>
+        (message.metadata as Record<string, unknown> | undefined)
+          ?.isPostCompactRestoration === true
+    );
+    expect(restoration?.content).toContain('export const active = true;');
+    expect(restoration?.content).not.toContain('must-not-leak');
+  });
+
+  test('workspace 过滤应在最近文件上限之前发生', async () => {
+    const tracker = FileAccessTracker.getInstance();
+    const activeWorkspace = path.join(tmpDir, 'limited-active-worktree');
+    const siblingWorkspace = path.join(tmpDir, 'limited-sibling-worktree');
+    await fs.mkdir(activeWorkspace, { recursive: true });
+    await fs.mkdir(siblingWorkspace, { recursive: true });
+    const activeFile = path.join(activeWorkspace, 'active.ts');
+    await fs.writeFile(activeFile, 'export const retained = true;');
+    await tracker.recordFileRead(activeFile, 'shared-session');
+    for (let index = 0; index < 5; index++) {
+      const siblingFile = path.join(siblingWorkspace, `newer-${index}.ts`);
+      await fs.writeFile(siblingFile, `export const sibling${index} = true;`);
+      await tracker.recordFileRead(siblingFile, 'shared-session');
+    }
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>Preserve the active workspace file.</summary>',
+    });
+
+    const result = await CompactionService.compact(
+      [{ role: 'user', content: 'Continue the active task.' }],
+      {
+        trigger: 'auto',
+        modelName: 'test-model',
+        maxContextTokens: 6_000,
+        apiKey: 'test-key',
+        baseURL: 'https://example.invalid',
+        sessionId: 'shared-session',
+        workspaceRoot: activeWorkspace,
+      }
+    );
+
+    const restoration = result.compactedMessages.find(
+      (message) =>
+        (message.metadata as Record<string, unknown> | undefined)
+          ?.isPostCompactRestoration === true
+    );
+    expect(restoration?.content).toContain('export const retained = true;');
   });
 
   test('超过 200 行的文件应被截断', async () => {

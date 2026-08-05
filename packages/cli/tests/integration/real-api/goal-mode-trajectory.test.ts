@@ -135,9 +135,17 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
       process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
       getState().config.actions.setConfig(buildRealApiRuntimeConfig(modelConfig));
       const resultPath = path.join(workspace, 'web-goal-result.txt');
-      const events: Array<{ type: string; sessionId: string }> = [];
+      const events: Array<{
+        type: string;
+        sessionId: string;
+        properties: Record<string, unknown>;
+      }> = [];
       const unsubscribe = Bus.subscribe((event) => {
-        events.push({ type: event.type, sessionId: event.sessionId });
+        events.push({
+          type: event.type,
+          sessionId: event.sessionId,
+          properties: event.properties,
+        });
       });
       const app = SessionRoutes();
       let sessionId = '';
@@ -171,13 +179,23 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
           goal: { status: 'active' },
         });
 
-        await vi.waitFor(
+        await vi.waitUntil(
           async () => {
-            await expect(
-              new GoalStore(workspace, sessionId).get()
-            ).resolves.toMatchObject({
-              status: 'complete',
-            });
+            const goal = await new GoalStore(workspace, sessionId).get();
+            if (goal && goal.status !== 'active' && goal.status !== 'complete') {
+              const tools = events.flatMap((event) =>
+                event.type === 'tool.start' &&
+                typeof event.properties.toolName === 'string'
+                  ? [event.properties.toolName]
+                  : []
+              );
+              throw new Error(
+                `Web goal stopped as ${goal.status} after ` +
+                  `${goal.continuationCount} continuations and ` +
+                  `${goal.tokensUsed} tokens; tools=${tools.join(',')}`
+              );
+            }
+            return goal?.status === 'complete';
           },
           { timeout: 180_000, interval: 100 }
         );

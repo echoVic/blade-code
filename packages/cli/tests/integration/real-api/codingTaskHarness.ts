@@ -56,7 +56,6 @@ export function buildRealApiConfig(
         maxContextTokens: input.maxContextTokens ?? 64_000,
         maxOutputTokens: input.maxOutputTokens ?? 4_096,
         timeout: 180_000,
-        maxRetries: 1,
       },
     ],
   };

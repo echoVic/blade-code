@@ -42,4 +42,13 @@ describe('context storage paths', () => {
       'Invalid session ID'
     );
   });
+
+  it('accepts the complete Nano ID alphabet without weakening path containment', () => {
+    process.env.BLADE_STORAGE_ROOT = '/tmp/blade-isolated';
+    expect(() => assertValidSessionId('_generated-session')).not.toThrow();
+    expect(() => assertValidSessionId('-generated-session')).not.toThrow();
+    expect(getSessionFilePath('/workspace/demo', '_generated-session')).toBe(
+      '/tmp/blade-isolated/projects/-workspace-demo/_generated-session.jsonl'
+    );
+  });
 });

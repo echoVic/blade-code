@@ -67,12 +67,6 @@ const LOCAL_CHECKS: readonly QualificationCheck[] = [
     args: ['run', '--filter', 'blade-code', 'test:snapshot'],
   },
   {
-    id: 'performance',
-    name: 'Performance regression tests',
-    command: 'bun',
-    args: ['run', '--filter', 'blade-code', 'test:performance'],
-  },
-  {
     id: 'security',
     name: 'Security tests',
     command: 'bun',
@@ -86,6 +80,12 @@ const LOCAL_CHECKS: readonly QualificationCheck[] = [
     args: ['run', 'type-check:web'],
   },
   { id: 'build', name: 'Production build', command: 'bun', args: ['run', 'build'] },
+  {
+    id: 'performance',
+    name: 'Performance regression tests',
+    command: 'bun',
+    args: ['run', '--filter', 'blade-code', 'test:performance'],
+  },
 ];
 
 export function resolveQualificationRoot(scriptsDirectory: string): string {

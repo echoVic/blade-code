@@ -12,6 +12,7 @@ import { agentsCommand } from './agents.js';
 import branchCommand from './branch.js';
 import compactCommand from './compact.js';
 import { CustomCommandRegistry } from './custom/index.js';
+import forkCommand from './fork.js';
 import mcpCommand from './mcp.js';
 import memoryCommand from './memory.js';
 import permissionsCommand from './permissions.js';
@@ -45,7 +46,8 @@ const helpCommand: SlashCommand = {
 **/help** - 显示此帮助信息
 **/clear** - 清除屏幕内容
 **/resume** - 恢复历史会话
-**/branch** - 从当前历史创建独立会话分支
+**/branch** - 从当前会话创建独立分支
+**/fork [sessionId]** - 从历史会话创建独立分支
 **/compact** - 手动压缩上下文，生成总结并节省 token
 **/cost** - 显示当前会话 token 消耗和费用估算
 **/doctor** - 诊断 API 连通性和配置健康状况
@@ -444,6 +446,7 @@ export const builtinCommands = {
   doctor: doctorCommand,
   permissions: permissionsCommand,
   resume: resumeCommand,
+  fork: forkCommand,
   rewind: rewindCommand,
   compact: compactCommand,
   mcp: mcpCommand,

@@ -21,6 +21,7 @@ import {
   validateOutput,
   validatePermissions,
 } from '../cli/middleware.js';
+import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
 import { PermissionMode } from '../config/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
@@ -96,6 +97,7 @@ export const HeadlessOptionsSchema = z.object({
   maxTurns: z
     .number()
     .int()
+    .max(MAX_AGENT_TURNS)
     .refine((value) => value === -1 || value > 0, {
       message: 'must be -1 or a positive integer',
     })
@@ -683,6 +685,7 @@ export async function runHeadless(
         ? parseCliAgents(validatedOptions.agents)
         : undefined,
     });
+    const effectiveMaxTurns = validatedOptions.maxTurns ?? runtime.getConfig().maxTurns;
 
     const agent = await Agent.createWithRuntime(runtime, {
       sessionId,
@@ -703,10 +706,14 @@ export async function runHeadless(
         stream: true,
         signal: abortControl.signal,
         maxTurns: validatedOptions.maxTurns,
-        onTurnLimitReached: async (data) => {
-          eventWriter.turnLimit(data.turnsCount);
-          return { continue: true, reason: 'headless-auto-continue' };
-        },
+        ...(effectiveMaxTurns === -1
+          ? {
+              onTurnLimitReached: async (data: { turnsCount: number }) => {
+                eventWriter.turnLimit(data.turnsCount);
+                return { continue: true, reason: 'headless-auto-continue' };
+              },
+            }
+          : {}),
       }),
       async (event: LoopEvent) => {
         switch (event.kind) {

@@ -314,6 +314,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadedToolCalls, setLoadedToolCalls] = useState<ToolCallInfo[] | null>(null);
+  const { currentSessionRef } = useSessionStore();
 
   if (!subagent) return null;
 
@@ -328,6 +329,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
       !expanded ||
       isRunning ||
       !subagent.sessionId ||
+      !currentSessionRef?.projectPath ||
       loadedToolCalls !== null ||
       (subagent.toolCalls && subagent.toolCalls.length > 0)
     )
@@ -335,7 +337,10 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
     let mounted = true;
     setLoading(true);
     sessionService
-      .getMessages(subagent.sessionId)
+      .getMessages({
+        sessionId: subagent.sessionId,
+        projectPath: currentSessionRef.projectPath,
+      })
       .then((rawMessages) => {
         if (!mounted) return;
         const aggregated = aggregateMessages(rawMessages);
@@ -357,7 +362,14 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
     return () => {
       mounted = false;
     };
-  }, [expanded, isRunning, subagent.sessionId, subagent.toolCalls, loadedToolCalls]);
+  }, [
+    expanded,
+    isRunning,
+    subagent.sessionId,
+    subagent.toolCalls,
+    loadedToolCalls,
+    currentSessionRef?.projectPath,
+  ]);
 
   return (
     <div className="bg-[#F9FAFB] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-lg px-3 py-2">
@@ -427,7 +439,7 @@ function ConfirmationSection({
   messageId: string;
 }) {
   const [submitting, setSubmitting] = useState(false);
-  const { currentSessionId, setConfirmation } = useSessionStore();
+  const { currentSessionRef, setConfirmation } = useSessionStore();
 
   if (!confirmation) return null;
 
@@ -435,11 +447,11 @@ function ConfirmationSection({
     approved: boolean,
     scope?: 'once' | 'session' | 'project'
   ) => {
-    if (!currentSessionId || submitting) return;
+    if (!currentSessionRef || submitting) return;
     setSubmitting(true);
     try {
       await sessionService.respondPermission(
-        currentSessionId,
+        currentSessionRef,
         confirmation.toolCallId,
         { approved, scope }
       );
@@ -518,7 +530,7 @@ function QuestionSection({
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-  const { currentSessionId, setQuestion, setError } = useSessionStore();
+  const { currentSessionRef, setQuestion, setError } = useSessionStore();
 
   const resolvedAnswers = useMemo<Record<string, string | string[]>>(() => {
     if (!question) return {};
@@ -545,13 +557,14 @@ function QuestionSection({
   if (!question) return null;
 
   const handleSubmit = async () => {
-    if (!currentSessionId || submitting || !allAnswered) return;
+    if (!currentSessionRef || submitting || !allAnswered) return;
     setSubmitting(true);
     try {
-      await sessionService.respondPermission(currentSessionId, question.toolCallId, {
-        approved: true,
-        answers: resolvedAnswers,
-      });
+      await sessionService.respondToQuestion(
+        currentSessionRef,
+        question.toolCallId,
+        resolvedAnswers
+      );
       setQuestion(messageId, {
         ...question,
         status: 'answered',

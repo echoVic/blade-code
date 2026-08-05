@@ -1,6 +1,12 @@
 import { sessionService } from '@/services';
 import { useConfigStore } from '@/store/ConfigStore';
 import { initialTokenUsage, TEMP_SESSION_ID } from '../constants';
+import {
+  removeSessionByRef,
+  sameSessionRef,
+  sessionRefFromSession,
+  upsertSessionByRef,
+} from '../sessionIdentity';
 import type {
   MessageContentPart,
   SendMessagePayload,
@@ -33,226 +39,482 @@ const buildOptimisticUserContent = (payload: SendMessagePayload) => {
   return parts;
 };
 
-export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
-  sessions: [],
-  currentSessionId: null,
-  isTemporarySession: false,
-  isLoading: false,
-  error: null,
-  goal: null,
+const resetStreamingState = () => ({
+  eventUnsubscribe: null,
+  isStreaming: false,
+  agentPhase: 'idle' as const,
+  currentRunId: null,
+  pendingSteeringCount: 0,
+  recoveredSteeringCount: 0,
+  currentAssistantMessageId: null,
+  hasToolCalls: false,
+});
 
-  setSessions: (sessions) => set({ sessions }),
+export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
+  let navigationGeneration = 0;
 
-  addSession: (session) =>
-    set((state) => ({
-      sessions: [...state.sessions, session],
-    })),
+  const beginNavigation = (): number => {
+    navigationGeneration += 1;
+    return navigationGeneration;
+  };
 
-  removeSession: (sessionId) =>
-    set((state) => ({
-      sessions: state.sessions.filter((s) => s.sessionId !== sessionId),
-      currentSessionId:
-        state.currentSessionId === sessionId ? null : state.currentSessionId,
-      messages: state.currentSessionId === sessionId ? [] : state.messages,
-    })),
+  const isCurrentNavigation = (generation: number): boolean =>
+    generation === navigationGeneration;
 
-  setCurrentSession: (sessionId) =>
-    set({
-      currentSessionId: sessionId,
-      isTemporarySession: false,
-    }),
-
-  setTemporarySession: (isTemp) => set({ isTemporarySession: isTemp }),
-
-  setLoading: (loading) => set({ isLoading: loading }),
-
-  setError: (error) => set({ error }),
-
-  clearError: () => set({ error: null }),
-  setGoal: (goal) => set({ goal }),
-
-  startTemporarySession: () =>
-    set({
-      currentSessionId: TEMP_SESSION_ID,
-      isTemporarySession: true,
-      messages: [],
-      tokenUsage: { ...initialTokenUsage },
-      error: null,
-      goal: null,
-    }),
-
-  loadSessions: async () => {
-    set({ isLoading: true, error: null });
+  const closePreparedSubscription = (unsubscribe: () => void): void => {
     try {
-      const sessions = await sessionService.listSessions();
-      set({ sessions, isLoading: false });
-    } catch (err) {
-      set({ error: (err as Error).message, isLoading: false });
+      unsubscribe();
+    } catch (error) {
+      console.warn('Failed to clean up stale event subscription', error);
     }
-  },
+  };
 
-  selectSession: async (sessionId: string) => {
-    set({
-      isLoading: true,
-      error: null,
-      currentSessionId: sessionId,
-      isTemporarySession: false,
-    });
-    try {
-      const [rawMessages, goal] = await Promise.all([
-        sessionService.getMessages(sessionId),
-        sessionService.getGoal(sessionId).catch(() => null),
-      ]);
-      const messages = aggregateMessages(rawMessages);
-      set({
-        messages,
-        goal,
-        isLoading: false,
-        tokenUsage: { ...initialTokenUsage },
-      });
-      if (get().currentSessionId === sessionId) {
-        get().subscribeToEvents(sessionId);
+  return {
+    sessions: [],
+    currentSessionId: null,
+    currentSessionRef: null,
+    forkingSessionRef: null,
+    isTemporarySession: false,
+    isLoading: false,
+    error: null,
+    goal: null,
+
+    setSessions: (sessions) => set({ sessions }),
+
+    addSession: (session) =>
+      set((state) => ({
+        sessions: upsertSessionByRef(state.sessions, session),
+      })),
+
+    removeSession: (ref) => {
+      const state = get();
+      const isCurrent = sameSessionRef(state.currentSessionRef, ref);
+      const cancelsFork = sameSessionRef(state.forkingSessionRef, ref);
+      if (isCurrent || cancelsFork) {
+        beginNavigation();
       }
-    } catch (err) {
-      set({ error: (err as Error).message, isLoading: false });
-    }
-  },
+      if (isCurrent) {
+        state.unsubscribeFromEvents();
+      }
+      set((currentState) => {
+        return {
+          sessions: removeSessionByRef(currentState.sessions, ref),
+          currentSessionId: isCurrent ? null : currentState.currentSessionId,
+          currentSessionRef: isCurrent ? null : currentState.currentSessionRef,
+          messages: isCurrent ? [] : currentState.messages,
+          goal: isCurrent ? null : currentState.goal,
+          forkingSessionRef: cancelsFork ? null : currentState.forkingSessionRef,
+          ...(isCurrent ? resetStreamingState() : {}),
+        };
+      });
+    },
 
-  forkSession: async (sessionId: string) => {
-    set({ isLoading: true, error: null });
-    try {
-      const child = await sessionService.forkSession(sessionId);
-      set((state) => ({
-        sessions: [
-          ...state.sessions.filter((session) => session.sessionId !== child.sessionId),
-          child,
-        ],
-      }));
-      await get().selectSession(child.sessionId);
-    } catch (err) {
-      set({ error: (err as Error).message, isLoading: false });
-    }
-  },
+    setCurrentSession: (ref) => {
+      beginNavigation();
+      set({
+        currentSessionId: ref?.sessionId ?? null,
+        currentSessionRef: ref,
+        isTemporarySession: false,
+      });
+    },
 
-  deleteSession: async (sessionId: string) => {
-    try {
-      await sessionService.deleteSession(sessionId);
-      set((state) => ({
-        sessions: state.sessions.filter((s) => s.sessionId !== sessionId),
-        currentSessionId:
-          state.currentSessionId === sessionId ? null : state.currentSessionId,
-        messages: state.currentSessionId === sessionId ? [] : state.messages,
-        goal: state.currentSessionId === sessionId ? null : state.goal,
-      }));
-    } catch (err) {
-      set({ error: (err as Error).message });
-    }
-  },
+    setTemporarySession: (isTemp) => set({ isTemporarySession: isTemp }),
 
-  sendMessage: async (payload: SendMessagePayload) => {
-    const {
-      currentSessionId,
-      isTemporarySession,
-      isStreaming,
-      subscribeToEvents,
-      addSession,
-      addMessage,
-    } = get();
+    setLoading: (loading) => set({ isLoading: loading }),
 
-    let sessionId = currentSessionId;
+    setError: (error) => set({ error }),
 
-    if (
-      isTemporarySession ||
-      !currentSessionId ||
-      currentSessionId === TEMP_SESSION_ID
-    ) {
+    clearError: () => set({ error: null }),
+
+    setGoal: (goal) => set({ goal }),
+
+    startTemporarySession: () => {
+      beginNavigation();
+      get().unsubscribeFromEvents();
+      set({
+        currentSessionId: TEMP_SESSION_ID,
+        currentSessionRef: null,
+        isTemporarySession: true,
+        forkingSessionRef: null,
+        isLoading: false,
+        messages: [],
+        goal: null,
+        tokenUsage: { ...initialTokenUsage },
+        error: null,
+        ...resetStreamingState(),
+      });
+    },
+
+    loadSessions: async () => {
+      set({ isLoading: true, error: null });
       try {
-        const session = await sessionService.createSession();
-        addSession(session);
+        const sessions = await sessionService.listSessions();
+        set({ sessions, isLoading: false });
+      } catch (err) {
+        set({ error: (err as Error).message, isLoading: false });
+      }
+    },
+
+    selectSession: async (ref) => {
+      const generation = beginNavigation();
+      set({ isLoading: true, error: null, forkingSessionRef: null });
+      try {
+        const [rawMessages, goal] = await Promise.all([
+          sessionService.getMessages(ref),
+          sessionService.getGoal(ref).catch(() => null),
+        ]);
+        if (!isCurrentNavigation(generation)) return;
+        const messages = aggregateMessages(rawMessages);
+        const unsubscribe = await get().prepareEventSubscription(ref);
+        if (!isCurrentNavigation(generation)) {
+          closePreparedSubscription(unsubscribe);
+          return;
+        }
         set({
-          currentSessionId: session.sessionId,
+          currentSessionId: ref.sessionId,
+          currentSessionRef: ref,
           isTemporarySession: false,
+          messages,
+          goal,
+          isLoading: false,
+          tokenUsage: { ...initialTokenUsage },
         });
-        sessionId = session.sessionId;
+        get().replaceEventSubscription(unsubscribe);
+      } catch (err) {
+        if (!isCurrentNavigation(generation)) return;
+        set({ error: (err as Error).message, isLoading: false });
+      }
+    },
+
+    deleteSession: async (ref) => {
+      const initialState = get();
+      const wasCurrent = sameSessionRef(initialState.currentSessionRef, ref);
+      const cancelsFork = sameSessionRef(initialState.forkingSessionRef, ref);
+      const invalidationGeneration =
+        wasCurrent || cancelsFork ? beginNavigation() : null;
+      const generation = wasCurrent ? invalidationGeneration : null;
+      if (cancelsFork) {
+        set({ forkingSessionRef: null });
+      }
+      try {
+        await sessionService.deleteSession(ref);
+        const state = get();
+        const shouldClearCurrent =
+          sameSessionRef(state.currentSessionRef, ref) &&
+          (generation === null || isCurrentNavigation(generation));
+        if (shouldClearCurrent) {
+          beginNavigation();
+          state.unsubscribeFromEvents();
+        }
+        set((state) => ({
+          sessions: removeSessionByRef(state.sessions, ref),
+          currentSessionId: shouldClearCurrent ? null : state.currentSessionId,
+          currentSessionRef: shouldClearCurrent ? null : state.currentSessionRef,
+          messages: shouldClearCurrent ? [] : state.messages,
+          goal: shouldClearCurrent ? null : state.goal,
+          ...(shouldClearCurrent ? resetStreamingState() : {}),
+        }));
+      } catch (err) {
+        if (
+          generation !== null &&
+          (!isCurrentNavigation(generation) ||
+            !sameSessionRef(get().currentSessionRef, ref))
+        ) {
+          return;
+        }
+        set({ error: (err as Error).message });
+      }
+    },
+
+    updateSession: async (ref, title) => {
+      try {
+        await sessionService.updateSession(ref, title);
+        set((state) => ({
+          sessions: state.sessions.map((session) =>
+            session.sessionId === ref.sessionId &&
+            session.projectPath === ref.projectPath
+              ? { ...session, title }
+              : session
+          ),
+        }));
       } catch (err) {
         set({ error: (err as Error).message });
-        return;
       }
-    }
+    },
 
-    if (!sessionId || sessionId === TEMP_SESSION_ID) {
-      set({ error: 'Failed to create session' });
-      return;
-    }
+    forkSession: async (session) => {
+      const generation = beginNavigation();
+      const sourceRef = sessionRefFromSession(session);
+      set({ forkingSessionRef: sourceRef, isLoading: false, error: null });
 
-    const trimmedInput = payload.content.trim();
-    if (
-      (payload.attachments?.length ?? 0) === 0 &&
-      (trimmedInput === '/goal' || trimmedInput.startsWith('/goal '))
-    ) {
-      addMessage({
-        id: `goal-command-${Date.now()}`,
-        role: 'user',
-        content: trimmedInput,
-        timestamp: Date.now(),
-      });
-      const args = trimmedInput
-        .slice('/goal'.length)
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
-      const subcommand = args[0]?.toLowerCase();
+      let preparedUnsubscribe: (() => void) | null = null;
       try {
-        if (!subcommand || subcommand === 'status') {
-          set({ goal: await sessionService.getGoal(sessionId) });
-          return;
-        }
-        if (subcommand === 'clear') {
-          await sessionService.clearGoal(sessionId);
-          set({ goal: null });
-          return;
-        }
+        const forked = await sessionService.forkSession(session);
+        const childRef = sessionRefFromSession(forked.session);
+        const messages = aggregateMessages(forked.messages);
+        set((state) => ({
+          sessions: upsertSessionByRef(state.sessions, forked.session),
+        }));
+        if (!isCurrentNavigation(generation)) return;
 
-        let response;
-        if (subcommand === 'pause') {
-          response = await sessionService.updateGoal(sessionId, {
-            action: 'pause',
-          });
-        } else if (subcommand === 'resume') {
-          response = await sessionService.updateGoal(sessionId, {
-            action: 'resume',
-          });
-        } else if (subcommand === 'edit') {
-          const objective = args.slice(1).join(' ').trim();
-          if (!objective) throw new Error('Usage: /goal edit <objective>');
-          response = await sessionService.updateGoal(sessionId, {
-            action: 'edit',
-            objective,
-          });
-        } else {
-          const budgetIndex = args.lastIndexOf('--budget');
-          let tokenBudget: number | undefined;
-          if (budgetIndex >= 0) {
-            const rawBudget = args[budgetIndex + 1];
-            if (!rawBudget || !/^[1-9]\d*$/.test(rawBudget)) {
-              throw new Error('--budget requires a positive integer');
-            }
-            tokenBudget = Number(rawBudget);
-            args.splice(budgetIndex, 2);
-          }
-          const objective = args.join(' ').trim();
-          if (!objective) throw new Error('Usage: /goal <objective>');
-          const { currentMode } = useConfigStore.getState();
-          response = await sessionService.createGoal(
-            sessionId,
-            objective,
-            tokenBudget,
-            currentMode
-          );
+        preparedUnsubscribe = await get().prepareEventSubscription(childRef);
+        if (!isCurrentNavigation(generation)) {
+          closePreparedSubscription(preparedUnsubscribe);
+          preparedUnsubscribe = null;
+          return;
         }
 
         set({
+          currentSessionId: childRef.sessionId,
+          currentSessionRef: childRef,
+          isTemporarySession: false,
+          messages,
+          goal: null,
+          tokenUsage: { ...initialTokenUsage },
+          error: null,
+          forkingSessionRef: null,
+        });
+        get().replaceEventSubscription(preparedUnsubscribe);
+        preparedUnsubscribe = null;
+      } catch (err) {
+        if (preparedUnsubscribe) {
+          closePreparedSubscription(preparedUnsubscribe);
+        }
+        if (!isCurrentNavigation(generation)) return;
+        set({
+          error: (err as Error).message,
+          forkingSessionRef: null,
+        });
+      }
+    },
+
+    sendMessage: async (payload: SendMessagePayload) => {
+      const {
+        currentSessionId,
+        currentSessionRef,
+        isTemporarySession,
+        isStreaming,
+        addSession,
+        addMessage,
+      } = get();
+      const generation = navigationGeneration;
+      const originRef = currentSessionRef;
+
+      let sessionRef = currentSessionRef;
+      let sessionId = currentSessionId;
+      let expectedRef = originRef;
+      let preparedUnsubscribe: (() => void) | null = null;
+      const isCurrentSend = (): boolean =>
+        isCurrentNavigation(generation) &&
+        sameSessionRef(get().currentSessionRef, expectedRef);
+
+      if (isTemporarySession || !sessionId || sessionId === TEMP_SESSION_ID) {
+        try {
+          const session = await sessionService.createSession();
+          addSession(session);
+          if (!isCurrentSend()) return;
+          sessionRef = sessionRefFromSession(session);
+          sessionId = session.sessionId;
+          set({
+            currentSessionId: session.sessionId,
+            currentSessionRef: sessionRef,
+            isTemporarySession: false,
+          });
+          expectedRef = sessionRef;
+        } catch (err) {
+          if (!isCurrentSend()) return;
+          set({ error: (err as Error).message });
+          return;
+        }
+      }
+
+      if (!sessionRef || !sessionId || sessionId === TEMP_SESSION_ID) {
+        if (!isCurrentSend()) return;
+        set({ error: 'Failed to create session' });
+        return;
+      }
+
+      try {
+        if (!isStreaming) {
+          preparedUnsubscribe = await get().prepareEventSubscription(sessionRef);
+          if (!isCurrentSend()) {
+            closePreparedSubscription(preparedUnsubscribe);
+            preparedUnsubscribe = null;
+            return;
+          }
+          get().replaceEventSubscription(preparedUnsubscribe);
+          preparedUnsubscribe = null;
+        }
+
+        if (!isCurrentSend()) return;
+        const trimmedInput = payload.content.trim();
+        if (
+          (payload.attachments?.length ?? 0) === 0 &&
+          (trimmedInput === '/goal' || trimmedInput.startsWith('/goal '))
+        ) {
+          addMessage({
+            id: `goal-command-${Date.now()}`,
+            role: 'user',
+            content: trimmedInput,
+            timestamp: Date.now(),
+          });
+          const args = trimmedInput
+            .slice('/goal'.length)
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean);
+          const subcommand = args[0]?.toLowerCase();
+          if (!subcommand || subcommand === 'status') {
+            const goal = await sessionService.getGoal(sessionRef);
+            if (isCurrentSend()) set({ goal });
+            return;
+          }
+          if (subcommand === 'clear') {
+            await sessionService.clearGoal(sessionRef);
+            if (isCurrentSend()) set({ goal: null });
+            return;
+          }
+
+          let response;
+          if (subcommand === 'pause') {
+            response = await sessionService.updateGoal(sessionRef, {
+              action: 'pause',
+            });
+          } else if (subcommand === 'resume') {
+            response = await sessionService.updateGoal(sessionRef, {
+              action: 'resume',
+            });
+          } else if (subcommand === 'edit') {
+            const objective = args.slice(1).join(' ').trim();
+            if (!objective) throw new Error('Usage: /goal edit <objective>');
+            response = await sessionService.updateGoal(sessionRef, {
+              action: 'edit',
+              objective,
+            });
+          } else {
+            const budgetIndex = args.lastIndexOf('--budget');
+            let tokenBudget: number | undefined;
+            if (budgetIndex >= 0) {
+              const rawBudget = args[budgetIndex + 1];
+              if (!rawBudget || !/^[1-9]\d*$/.test(rawBudget)) {
+                throw new Error('--budget requires a positive integer');
+              }
+              tokenBudget = Number(rawBudget);
+              args.splice(budgetIndex, 2);
+            }
+            const objective = args.join(' ').trim();
+            if (!objective) throw new Error('Usage: /goal <objective>');
+            const { currentMode } = useConfigStore.getState();
+            response = await sessionService.createGoal(
+              sessionRef,
+              objective,
+              tokenBudget,
+              currentMode
+            );
+          }
+
+          if (!isCurrentSend()) return;
+          set({
+            goal: response.goal,
+            ...(response.runId
+              ? {
+                  currentRunId: response.runId,
+                  isStreaming: true,
+                  agentPhase: 'running' as const,
+                }
+              : {}),
+          });
+          return;
+        }
+
+        addMessage({
+          id: `temp-${Date.now()}`,
+          role: 'user',
+          content: buildOptimisticUserContent(payload),
+          timestamp: Date.now(),
+        });
+
+        set({
+          isStreaming: true,
+          error: null,
+          recoveredSteeringCount: isStreaming ? get().recoveredSteeringCount : 0,
+        });
+
+        const { currentMode } = useConfigStore.getState();
+        const response = await sessionService.sendMessage(
+          sessionRef,
+          payload,
+          currentMode
+        );
+        if (!isCurrentSend()) return;
+        set({
+          currentRunId: response.runId,
+          pendingSteeringCount:
+            response.status === 'steering_queued' ||
+            response.status === 'follow_up_queued'
+              ? Math.max(0, response.queued ?? 1)
+              : get().pendingSteeringCount,
+        });
+      } catch (err) {
+        if (preparedUnsubscribe) {
+          closePreparedSubscription(preparedUnsubscribe);
+        }
+        if (!isCurrentSend()) return;
+        set({ error: (err as Error).message, isStreaming: false });
+      }
+    },
+
+    abortSession: async () => {
+      const { currentSessionRef, unsubscribeFromEvents } = get();
+
+      unsubscribeFromEvents();
+      set({
+        isStreaming: false,
+        currentRunId: null,
+        pendingSteeringCount: 0,
+      });
+
+      if (currentSessionRef) {
+        try {
+          await sessionService.abortSession(currentSessionRef);
+        } catch {
+          // Ignore abort errors
+        }
+      }
+    },
+
+    pauseGoal: async () => {
+      const { currentSessionRef, isTemporarySession } = get();
+      if (!currentSessionRef || isTemporarySession) {
+        set({ error: 'No persisted session is available for this goal' });
+        return;
+      }
+      try {
+        const response = await sessionService.updateGoal(currentSessionRef, {
+          action: 'pause',
+        });
+        if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return;
+        set({ goal: response.goal, error: null });
+      } catch (err) {
+        if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return;
+        set({ error: (err as Error).message });
+      }
+    },
+
+    resumeGoal: async () => {
+      const { currentSessionRef, isTemporarySession } = get();
+      if (!currentSessionRef || isTemporarySession) {
+        set({ error: 'No persisted session is available for this goal' });
+        return;
+      }
+      try {
+        const response = await sessionService.updateGoal(currentSessionRef, {
+          action: 'resume',
+        });
+        if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return;
+        set({
           goal: response.goal,
+          error: null,
           ...(response.runId
             ? {
                 currentRunId: response.runId,
@@ -261,166 +523,55 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
               }
             : {}),
         });
-        if (response.runId) subscribeToEvents(sessionId);
       } catch (err) {
-        set({ error: (err as Error).message, isStreaming: false });
+        if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return;
+        set({ error: (err as Error).message });
       }
-      return;
-    }
+    },
 
-    addMessage({
-      id: `temp-${Date.now()}`,
-      role: 'user',
-      content: buildOptimisticUserContent(payload),
-      timestamp: Date.now(),
-    });
-
-    set({
-      isStreaming: true,
-      error: null,
-      recoveredSteeringCount: isStreaming ? get().recoveredSteeringCount : 0,
-    });
-    if (!isStreaming) {
-      subscribeToEvents(sessionId);
-    }
-
-    try {
-      const { currentMode } = useConfigStore.getState();
-      const response = await sessionService.sendMessage(
-        sessionId,
-        payload,
-        currentMode
-      );
-      set({
-        currentRunId: response.runId,
-        pendingSteeringCount:
-          response.status === 'steering_queued' ||
-          response.status === 'follow_up_queued'
-            ? Math.max(0, response.queued ?? 1)
-            : get().pendingSteeringCount,
-      });
-    } catch (err) {
-      set({ error: (err as Error).message, isStreaming: false });
-    }
-  },
-
-  abortSession: async () => {
-    const { currentSessionId, unsubscribeFromEvents } = get();
-
-    unsubscribeFromEvents();
-    set({
-      isStreaming: false,
-      currentRunId: null,
-      pendingSteeringCount: 0,
-    });
-
-    if (currentSessionId) {
+    editGoal: async (objective: string) => {
+      const { currentSessionRef, isTemporarySession } = get();
+      if (!currentSessionRef || isTemporarySession) {
+        set({ error: 'No persisted session is available for this goal' });
+        return;
+      }
       try {
-        await sessionService.abortSession(currentSessionId);
-      } catch {
-        // Ignore abort errors
+        const response = await sessionService.updateGoal(currentSessionRef, {
+          action: 'edit',
+          objective,
+        });
+        if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return;
+        set({
+          goal: response.goal,
+          error: null,
+          ...(response.runId
+            ? {
+                currentRunId: response.runId,
+                isStreaming: true,
+                agentPhase: 'running' as const,
+              }
+            : {}),
+        });
+      } catch (err) {
+        if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return;
+        set({ error: (err as Error).message });
       }
-    }
-  },
+    },
 
-  pauseGoal: async () => {
-    const { currentSessionId, isTemporarySession } = get();
-    if (
-      !currentSessionId ||
-      isTemporarySession ||
-      currentSessionId === TEMP_SESSION_ID
-    ) {
-      set({ error: 'No persisted session is available for this goal' });
-      return;
-    }
-    try {
-      const response = await sessionService.updateGoal(currentSessionId, {
-        action: 'pause',
-      });
-      set({ goal: response.goal, error: null });
-    } catch (err) {
-      set({ error: (err as Error).message });
-    }
-  },
-
-  resumeGoal: async () => {
-    const { currentSessionId, isTemporarySession, subscribeToEvents } = get();
-    if (
-      !currentSessionId ||
-      isTemporarySession ||
-      currentSessionId === TEMP_SESSION_ID
-    ) {
-      set({ error: 'No persisted session is available for this goal' });
-      return;
-    }
-    try {
-      const response = await sessionService.updateGoal(currentSessionId, {
-        action: 'resume',
-      });
-      set({
-        goal: response.goal,
-        error: null,
-        ...(response.runId
-          ? {
-              currentRunId: response.runId,
-              isStreaming: true,
-              agentPhase: 'running' as const,
-            }
-          : {}),
-      });
-      if (response.runId) subscribeToEvents(currentSessionId);
-    } catch (err) {
-      set({ error: (err as Error).message });
-    }
-  },
-
-  editGoal: async (objective: string) => {
-    const { currentSessionId, isTemporarySession, subscribeToEvents } = get();
-    if (
-      !currentSessionId ||
-      isTemporarySession ||
-      currentSessionId === TEMP_SESSION_ID
-    ) {
-      set({ error: 'No persisted session is available for this goal' });
-      return;
-    }
-    try {
-      const response = await sessionService.updateGoal(currentSessionId, {
-        action: 'edit',
-        objective,
-      });
-      set({
-        goal: response.goal,
-        error: null,
-        ...(response.runId
-          ? {
-              currentRunId: response.runId,
-              isStreaming: true,
-              agentPhase: 'running' as const,
-            }
-          : {}),
-      });
-      if (response.runId) subscribeToEvents(currentSessionId);
-    } catch (err) {
-      set({ error: (err as Error).message });
-    }
-  },
-
-  clearGoal: async () => {
-    const { currentSessionId, isTemporarySession } = get();
-    if (
-      !currentSessionId ||
-      isTemporarySession ||
-      currentSessionId === TEMP_SESSION_ID
-    ) {
-      set({ error: 'No persisted session is available for this goal' });
-      return;
-    }
-    try {
-      await sessionService.clearGoal(currentSessionId);
-      set({ goal: null, error: null });
-    } catch (err) {
-      set({ error: (err as Error).message });
-    }
-  },
-});
+    clearGoal: async () => {
+      const { currentSessionRef, isTemporarySession } = get();
+      if (!currentSessionRef || isTemporarySession) {
+        set({ error: 'No persisted session is available for this goal' });
+        return;
+      }
+      try {
+        await sessionService.clearGoal(currentSessionRef);
+        if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return;
+        set({ goal: null, error: null });
+      } catch (err) {
+        if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return;
+        set({ error: (err as Error).message });
+      }
+    },
+  };
+};

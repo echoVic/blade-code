@@ -7,7 +7,6 @@ const branchCommand: SlashCommand = {
   description: 'Fork the current session into an independent branch',
   fullDescription: '将当前会话历史分支到一个独立会话',
   usage: '/branch',
-  aliases: ['fork'],
   async handler(_args, context) {
     if (!context.sessionId) {
       return { success: false, error: 'No active session to branch' };

@@ -82,7 +82,7 @@ export const useCommandHandler = (
   const pendingResumeRequestedRef = useRef(false);
 
   // ==================== 子模块组合 ====================
-  const { createAgent, steerActiveTurn } = useAgent({
+  const { createAgent, cleanupAgent, steerActiveTurn } = useAgent({
     sessionId,
     systemPrompt: replaceSystemPrompt,
     appendSystemPrompt: appendSystemPrompt,
@@ -183,7 +183,9 @@ export const useCommandHandler = (
           appActions,
           sessionActions,
           abortController.signal,
-          sessionId
+          cleanupAgent,
+          sessionId,
+          buildContextMessagesFromSession(getState().session)
         );
 
         if (slashResult.type === 'handled') {
@@ -445,6 +447,7 @@ export const useCommandHandler = (
             appActions,
             sessionActions,
             abortController.signal,
+            cleanupAgent,
             sessionId
           );
           return;
@@ -594,5 +597,6 @@ export const useCommandHandler = (
     executeCommand,
     handleAbort,
     isProcessing,
+    cleanupAgent,
   };
 };

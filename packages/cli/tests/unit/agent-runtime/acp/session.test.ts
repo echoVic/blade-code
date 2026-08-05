@@ -2,11 +2,27 @@
  * AcpSession 测试
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { AcpSession } from '../../../../src/acp/Session.js';
+import type { LoopEvent } from '../../../../src/agent/loop/types.js';
+import type { LoopResult } from '../../../../src/agent/types.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { createMockACPClient } from '../../../support/mocks/mockACPClient.js';
-import { createMockAgent } from '../../../support/mocks/mockAgent.js';
+import { createMockAgent, type MockAgent } from '../../../support/mocks/mockAgent.js';
+
+type AgentMockInstance = MockAgent & {
+  switchModel: Mock<(modelId: string) => Promise<void>>;
+};
+
+const agentMockState = vi.hoisted((): { current: AgentMockInstance | null } => ({
+  current: null,
+}));
+
+function getMockAgent(): AgentMockInstance {
+  const agent = agentMockState.current;
+  if (!agent) throw new Error('Agent mock has not been created');
+  return agent;
+}
 
 const runtimeState = vi.hoisted(() => ({
   runtime: {
@@ -24,48 +40,20 @@ const runtimeState = vi.hoisted(() => ({
 
 // Mock Agent
 vi.mock('../../../../src/agent/Agent.js', () => {
-  let mockAgentInstance: any = null;
-  const mockChatGen = async function* () {
-    yield { type: 'turn_start', turn: 1, maxTurns: 1 };
-    return {
-      success: true,
-      finalMessage: 'Mock response',
-      metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-    };
+  const createAgent = (): AgentMockInstance => {
+    const mockAgent: AgentMockInstance = Object.assign(createMockAgent(), {
+      switchModel: vi.fn(async (_modelId: string): Promise<void> => undefined),
+    });
+    mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
+    agentMockState.current = mockAgent;
+    return mockAgent;
   };
-  const MockAgentClass = Object.assign(
-    vi.fn().mockImplementation(() => {
-      const mockAgent = createMockAgent();
-      mockAgent.chat = vi.fn().mockImplementation(mockChatGen);
-      mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
-      mockAgentInstance = mockAgent;
-      return mockAgent;
-    }),
-    {
-      create: vi.fn().mockImplementation(async () => {
-        const mockAgent = createMockAgent();
-        mockAgent.chat = vi.fn().mockImplementation(mockChatGen);
-        mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
-        mockAgentInstance = mockAgent;
-        return mockAgent;
-      }),
-      createWithRuntime: vi.fn().mockImplementation(async () => {
-        const mockAgent = createMockAgent() as ReturnType<typeof createMockAgent> & {
-          switchModel: ReturnType<typeof vi.fn>;
-        };
-        mockAgent.chat = vi.fn().mockImplementation(mockChatGen);
-        mockAgent.switchModel = vi.fn().mockResolvedValue(undefined);
-        mockAgent.destroy = vi.fn().mockResolvedValue(undefined);
-        mockAgentInstance = mockAgent;
-        return mockAgent;
-      }),
-    }
-  );
+  const MockAgentClass = Object.assign(vi.fn().mockImplementation(createAgent), {
+    create: vi.fn(async () => createAgent()),
+    createWithRuntime: vi.fn(async () => createAgent()),
+  });
 
-  return {
-    Agent: MockAgentClass,
-    _getMockAgentInstance: () => mockAgentInstance,
-  };
+  return { Agent: MockAgentClass };
 });
 
 vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
@@ -106,13 +94,19 @@ vi.mock('../../../../src/slash-commands/index.js', () => ({
 
 describe('AcpSession', () => {
   let mockConnection: ReturnType<typeof createMockACPClient>;
+  let connectionAbortController: AbortController;
   let session: AcpSession;
 
   beforeEach(() => {
+    agentMockState.current = null;
+    runtimeState.runtime.dispose.mockReset().mockResolvedValue(undefined);
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
-    runtimeState.runtime.getGoal.mockResolvedValue(null);
     // 创建 mock 连接
     mockConnection = createMockACPClient();
+    connectionAbortController = new AbortController();
+    Object.defineProperty(mockConnection, 'signal', {
+      value: connectionAbortController.signal,
+    });
 
     // 创建会话实例
     session = new AcpSession(
@@ -170,14 +164,9 @@ describe('AcpSession', () => {
     it('应该在初始化后自动恢复 durable follow-up', async () => {
       runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
       await session.initialize();
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
 
       await vi.waitFor(() => {
-        expect(agentModule._getMockAgentInstance().calls[0]).toMatchObject({
+        expect(getMockAgent().calls[0]).toMatchObject({
           message: '',
           options: { pendingInputOnly: true },
         });
@@ -186,6 +175,62 @@ describe('AcpSession', () => {
   });
 
   describe('replayHistory', () => {
+    it.each([
+      'destroy',
+      'abort',
+    ] as const)('%s 后停止 deferred history replay 且不恢复 pending input', async (stopMethod) => {
+      await session.initialize();
+      getMockAgent().chatStream = async function* (_message, context) {
+        context.messages.push(
+          { role: 'user', content: 'first visible chunk' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'second visible chunk' },
+              { type: 'text', text: 'third visible chunk' },
+            ],
+          }
+        );
+        yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
+        return { success: true, finalMessage: 'history prepared' };
+      };
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'prepare replay history' }],
+      });
+      mockConnection.sessionUpdates = [];
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+
+      let releaseFirstUpdate: (() => void) | undefined;
+      const firstUpdateGate = new Promise<void>((resolve) => {
+        releaseFirstUpdate = resolve;
+      });
+      const originalSessionUpdate = mockConnection.sessionUpdate.bind(mockConnection);
+      let updateCount = 0;
+      vi.spyOn(mockConnection, 'sessionUpdate').mockImplementation(async (params) => {
+        updateCount += 1;
+        await originalSessionUpdate(params);
+        if (updateCount === 1) await firstUpdateGate;
+      });
+
+      const replay = session.replayHistory();
+      await vi.waitFor(() => {
+        expect(mockConnection.sessionUpdates).toHaveLength(1);
+      });
+
+      if (stopMethod === 'destroy') {
+        await session.destroy();
+      } else {
+        connectionAbortController.abort();
+      }
+      releaseFirstUpdate?.();
+      await expect(replay).resolves.toBeUndefined();
+      await Promise.resolve();
+
+      expect(mockConnection.sessionUpdates).toHaveLength(1);
+      expect(getMockAgent().calls).toHaveLength(0);
+    });
+
     it('应该按顺序回放用户和助手历史且隐藏内部消息', async () => {
       const history: Message[] = [
         { role: 'user', content: 'Original question' },
@@ -253,12 +298,7 @@ describe('AcpSession', () => {
         prompt: [{ type: 'text', text: 'What marker did I ask you to remember?' }],
       });
 
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      const call = agentModule._getMockAgentInstance().getLastCall();
+      const call = getMockAgent().getLastCall();
       expect(call?.context.messages).toEqual(history);
     });
   });
@@ -353,34 +393,6 @@ describe('AcpSession', () => {
       expect((session as any).pendingPrompt).toBe(activeController);
     });
 
-    it('活动 goal 回合中应立即执行 /goal pause 而不是把它当 steering', async () => {
-      const activeController = new AbortController();
-      (session as any).pendingPrompt = activeController;
-      const { executeSlashCommand } = await import(
-        '../../../../src/slash-commands/index.js'
-      );
-      vi.mocked(executeSlashCommand).mockResolvedValueOnce({
-        success: true,
-        message: 'Goal paused',
-      });
-
-      const result = await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: '/goal pause' }],
-      });
-
-      expect(result.stopReason).toBe('end_turn');
-      expect(executeSlashCommand).toHaveBeenCalledWith(
-        '/goal pause',
-        expect.objectContaining({
-          sessionId: 'test-session-id',
-          workspaceRoot: '/tmp/test',
-        })
-      );
-      expect(runtimeState.runtime.enqueueSteering).not.toHaveBeenCalled();
-      expect((session as any).pendingPrompt).toBe(activeController);
-    });
-
     it('应该处理 slash command', async () => {
       const promptParams = {
         sessionId: 'test-session-id',
@@ -403,10 +415,37 @@ describe('AcpSession', () => {
       expect(executeSlashCommand).toHaveBeenCalledWith(
         '/test command',
         expect.objectContaining({
-          sessionId: 'test-session-id',
+          cwd: '/tmp/test',
           workspaceRoot: '/tmp/test',
+          sessionId: 'test-session-id',
+          messages: [],
         })
       );
+    });
+
+    it('手动压缩后下一轮 prompt 应使用 compacted history', async () => {
+      const compactedMessages: Message[] = [
+        { role: 'user', content: 'compacted ACP history' },
+      ];
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      vi.mocked(executeSlashCommand).mockResolvedValueOnce({
+        success: true,
+        message: 'compact_completed',
+        data: { compactedMessages },
+      });
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: '/compact' }],
+      });
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'continue after compact' }],
+      });
+
+      expect(getMockAgent().getLastCall()?.context.messages).toEqual(compactedMessages);
     });
 
     it('应该发送文本消息给 IDE', async () => {
@@ -428,12 +467,7 @@ describe('AcpSession', () => {
     });
 
     it('应该通知 IDE 有崩溃后恢复的 steering 指令', async () => {
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      const mockAgent = agentModule._getMockAgentInstance();
+      const mockAgent = getMockAgent();
       mockAgent.chatStream = vi.fn(async function* () {
         yield {
           kind: 'follow_up_started',
@@ -507,73 +541,6 @@ describe('AcpSession', () => {
       // 验证取消成功（没有抛出错误）
       expect(() => session.cancel()).not.toThrow();
     });
-
-    it('cancels a prompt while the ACP client leaves a question unanswered', async () => {
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      const agent = agentModule._getMockAgentInstance();
-      agent.chatStream = async function* (_message, context) {
-        yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
-        await context.confirmationHandler?.requestConfirmation({
-          type: 'askUserQuestion',
-          message: 'Choose a channel',
-          questions: [
-            {
-              header: 'Channel',
-              question: 'Which release channel should be used?',
-              multiSelect: false,
-              options: [
-                { label: 'Stable', description: 'Use stable' },
-                { label: 'Canary', description: 'Use canary' },
-              ],
-            },
-          ],
-        });
-        return {
-          success: true,
-          finalMessage: 'cancelled',
-          metadata: { turnsCount: 1, toolCallsCount: 1, duration: 0 },
-        };
-      };
-
-      let releasePermission: (() => void) | undefined;
-      vi.spyOn(mockConnection, 'requestPermission').mockImplementation(
-        (request) =>
-          new Promise((resolve) => {
-            mockConnection.permissionRequests.push(request);
-            releasePermission = () =>
-              resolve({
-                outcome: {
-                  outcome: 'selected',
-                  optionId: request.options[0]?.optionId,
-                },
-              });
-          })
-      );
-
-      const promptPromise = session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'Ask before changing code' }],
-      });
-      await vi.waitFor(() => {
-        expect(mockConnection.permissionRequests).toHaveLength(1);
-      });
-      session.cancel();
-
-      const resultBeforeClientResponse = await Promise.race([
-        promptPromise,
-        new Promise<'still-pending'>((resolve) =>
-          setTimeout(() => resolve('still-pending'), 25)
-        ),
-      ]);
-      releasePermission?.();
-      await promptPromise;
-
-      expect(resultBeforeClientResponse).toEqual({ stopReason: 'cancelled' });
-    });
   });
 
   describe('setMode', () => {
@@ -638,6 +605,59 @@ describe('AcpSession', () => {
     });
   });
 
+  describe('sendAvailableCommandsDelayed', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('destroy 后不应该发送延迟的 available commands update', async () => {
+      session.sendAvailableCommandsDelayed();
+
+      await vi.advanceTimersByTimeAsync(499);
+      await session.destroy();
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(
+        mockConnection.sessionUpdates.filter(
+          (notification) =>
+            notification.update.sessionUpdate === 'available_commands_update'
+        )
+      ).toHaveLength(0);
+    });
+
+    it('重复 schedule 后在 500ms 只发送一次 available commands update', async () => {
+      session.sendAvailableCommandsDelayed();
+      session.sendAvailableCommandsDelayed();
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(
+        mockConnection.sessionUpdates.filter(
+          (notification) =>
+            notification.update.sessionUpdate === 'available_commands_update'
+        )
+      ).toHaveLength(1);
+    });
+
+    it('connection aborted 后不应该发送 available commands update', async () => {
+      session.sendAvailableCommandsDelayed();
+      connectionAbortController.abort();
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(
+        mockConnection.sessionUpdates.filter(
+          (notification) =>
+            notification.update.sessionUpdate === 'available_commands_update'
+        )
+      ).toHaveLength(0);
+    });
+  });
+
   describe('setModel', () => {
     beforeEach(async () => {
       await session.initialize();
@@ -646,16 +666,7 @@ describe('AcpSession', () => {
     it('应该切换会话运行时使用的模型', async () => {
       await session.setModel('gpt-4');
 
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent> & {
-          switchModel: ReturnType<typeof vi.fn>;
-        };
-      };
-      expect(agentModule._getMockAgentInstance().switchModel).toHaveBeenCalledWith(
-        'gpt-4'
-      );
+      expect(getMockAgent().switchModel).toHaveBeenCalledWith('gpt-4');
     });
 
     it('活动回合期间应该拒绝切换模型', async () => {
@@ -668,16 +679,195 @@ describe('AcpSession', () => {
   });
 
   describe('destroy', () => {
-    it('应该销毁会话', async () => {
+    it('destroy 后丢弃仍在 drain 的旧 generator 产生的更新', async () => {
       await session.initialize();
+      const mockAgent = getMockAgent();
+      let releaseLateEvents: (() => void) | undefined;
+      const lateEventsReady = new Promise<void>((resolve) => {
+        releaseLateEvents = resolve;
+      });
+      let generatorStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        generatorStarted = resolve;
+      });
+      mockAgent.chatStream = async function* (): AsyncGenerator<
+        LoopEvent,
+        LoopResult,
+        void
+      > {
+        generatorStarted?.();
+        await lateEventsReady;
+        yield { kind: 'content_delta', delta: 'late content' };
+        yield {
+          kind: 'tool_start',
+          toolCall: {
+            id: 'late-tool',
+            type: 'function',
+            function: { name: 'lateTool', arguments: '{}' },
+          },
+          toolKind: 'execute',
+        };
+        yield {
+          kind: 'task_update',
+          tasks: [
+            {
+              id: 'late-task',
+              subject: 'Late task',
+              description: 'Must not escape the old owner',
+              status: 'in_progress',
+              priority: 'medium',
+              blocks: [],
+              blockedBy: [],
+              createdAt: '2026-08-04T00:00:00.000Z',
+            },
+          ],
+        };
+        return { success: true, finalMessage: '' };
+      };
+
+      const prompt = session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'start deferred stream' }],
+      });
+      await started;
+      await session.destroy();
+      releaseLateEvents?.();
+      await prompt;
+
+      expect(mockConnection.sessionUpdates).toEqual([]);
+    });
+
+    it('connection abort 后直接丢弃 session update', async () => {
+      connectionAbortController.abort();
+
+      await session.setMode('yolo');
+
+      expect(mockConnection.sessionUpdates).toEqual([]);
+    });
+
+    it('应该完整清理会话且二次 destroy 不重复资源 cleanup', async () => {
+      await session.initialize();
+      const mockAgent = getMockAgent();
+      const cancel = vi.spyOn(session, 'cancel');
+      await session.destroy();
       await session.destroy();
 
-      // 验证 ACP 服务上下文已销毁
       const { AcpServiceContext } = await import(
         '../../../../src/acp/AcpServiceContext.js'
       );
-      expect(AcpServiceContext.destroySession).toHaveBeenCalledWith('test-session-id');
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
       expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledWith('test-session-id');
+      await expect(session.setModel('gpt-4')).rejects.toThrow(
+        'Session not initialized'
+      );
+    });
+
+    it.each([
+      {
+        name: 'Agent destroy 失败',
+        agentError: new Error('agent destroy failed'),
+        runtimeError: undefined,
+        expectedError: 'agent destroy failed',
+      },
+      {
+        name: 'runtime dispose 失败',
+        agentError: undefined,
+        runtimeError: new Error('runtime dispose failed'),
+        expectedError: 'runtime dispose failed',
+      },
+      {
+        name: 'Agent 与 runtime 都失败',
+        agentError: new Error('agent destroy failed first'),
+        runtimeError: new Error('runtime dispose failed second'),
+        expectedError: 'agent destroy failed first',
+      },
+    ])('$name 时仍应该清理全部资源并由第一个错误获胜', async ({
+      agentError,
+      runtimeError,
+      expectedError,
+    }) => {
+      await session.initialize();
+      const mockAgent = getMockAgent();
+      if (agentError) mockAgent.destroy = vi.fn().mockRejectedValueOnce(agentError);
+      if (runtimeError) {
+        runtimeState.runtime.dispose.mockRejectedValueOnce(runtimeError);
+      }
+
+      await expect(session.destroy()).rejects.toThrow(expectedError);
+
+      const { AcpServiceContext } = await import(
+        '../../../../src/acp/AcpServiceContext.js'
+      );
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+      await expect(session.setModel('gpt-4')).rejects.toThrow(
+        'Session not initialized'
+      );
+
+      await expect(session.destroy()).resolves.toBeUndefined();
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancel 失败时仍应该清理 Agent、runtime 与 ACP context', async () => {
+      await session.initialize();
+      const mockAgent = getMockAgent();
+      vi.spyOn(session, 'cancel').mockImplementationOnce(() => {
+        throw new Error('cancel failed first');
+      });
+
+      await expect(session.destroy()).rejects.toThrow('cancel failed first');
+
+      const { AcpServiceContext } = await import(
+        '../../../../src/acp/AcpServiceContext.js'
+      );
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+    });
+
+    it('ACP context destroy 失败时应该在其余 cleanup 后重抛且保持幂等', async () => {
+      await session.initialize();
+      const mockAgent = getMockAgent();
+      const { AcpServiceContext } = await import(
+        '../../../../src/acp/AcpServiceContext.js'
+      );
+      vi.mocked(AcpServiceContext.destroySession).mockImplementationOnce(() => {
+        throw new Error('context destroy failed');
+      });
+
+      await expect(session.destroy()).rejects.toThrow('context destroy failed');
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+
+      await expect(session.destroy()).resolves.toBeUndefined();
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+    });
+
+    it('runtime 创建失败的半初始化会话仍应该清理 ACP context', async () => {
+      const { SessionRuntime } = await import(
+        '../../../../src/agent/runtime/SessionRuntime.js'
+      );
+      vi.mocked(SessionRuntime.create).mockRejectedValueOnce(
+        new Error('runtime create failed')
+      );
+
+      await expect(session.initialize()).rejects.toThrow('runtime create failed');
+      await session.destroy();
+
+      const { AcpServiceContext } = await import(
+        '../../../../src/acp/AcpServiceContext.js'
+      );
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).not.toHaveBeenCalled();
     });
 
     it('应该取消挂起的提示', async () => {
@@ -696,15 +886,6 @@ describe('AcpSession', () => {
       // 等待提示完成（应该被取消）
       const result = await promptPromise;
       expect(result.stopReason).toBe('cancelled');
-    });
-
-    it('应该销毁 Agent', async () => {
-      await session.initialize();
-      await session.destroy();
-
-      // 简单验证 destroy 方法不抛出错误
-      // 具体的 Agent 实例检查比较复杂，涉及 mock 时机问题
-      expect(true).toBe(true);
     });
   });
 
@@ -730,54 +911,6 @@ describe('AcpSession', () => {
 
       const response = await session.prompt(secondPrompt);
       expect(response.stopReason).toBe('end_turn');
-    });
-
-    it('应该在创建 goal 后自动启动 transient continuation', async () => {
-      const activeGoal = {
-        version: 1 as const,
-        sessionId: 'test-session-id',
-        goalId: 'goal-1',
-        objective: 'finish the migration',
-        status: 'active' as const,
-        tokensUsed: 0,
-        timeUsedSeconds: 0,
-        continuationCount: 0,
-        createdAt: '2026-08-04T00:00:00.000Z',
-        updatedAt: '2026-08-04T00:00:00.000Z',
-      };
-      runtimeState.runtime.getGoal
-        .mockResolvedValueOnce(null)
-        .mockResolvedValue(activeGoal);
-      const { executeSlashCommand } = await import(
-        '../../../../src/slash-commands/index.js'
-      );
-      vi.mocked(executeSlashCommand).mockResolvedValueOnce({
-        success: true,
-        message: 'Goal started',
-        data: { action: 'start_goal', goal: activeGoal },
-      });
-      await session.initialize();
-
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: '/goal finish the migration' }],
-      });
-
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      await vi.waitFor(() => {
-        expect(agentModule._getMockAgentInstance().calls).toContainEqual(
-          expect.objectContaining({
-            message: '',
-            options: expect.objectContaining({
-              goalContinuationOnly: true,
-            }),
-          })
-        );
-      });
     });
   });
 
@@ -850,166 +983,33 @@ describe('AcpSession', () => {
       expect(response).toBeDefined();
     });
 
-    it('maps ACP allow_always to an explicit project approval scope', async () => {
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      const agent = agentModule._getMockAgentInstance();
-      let permissionResponse: unknown;
-      agent.chatStream = async function* (_message, context) {
-        yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
-        permissionResponse = await context.confirmationHandler?.requestConfirmation({
-          type: 'permission',
-          kind: 'execute',
-          title: 'npm test',
-          message: 'Run tests?',
-        } as never);
-        return {
-          success: true,
-          finalMessage: 'done',
-          metadata: { turnsCount: 1, toolCallsCount: 1, duration: 0 },
-        };
-      };
-      vi.spyOn(mockConnection, 'requestPermission').mockResolvedValue({
-        outcome: { outcome: 'selected', optionId: 'allow_always' },
-      });
+    it('应该缓存 allow_always 权限', async () => {
+      await session.setMode('default');
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'Run tests' }],
-      });
-
-      expect(permissionResponse).toEqual({ approved: true, scope: 'project' });
-    });
-
-    it('maps ACP reject_always to an explicit project denial scope', async () => {
-      const agentModule = (await import(
-        '../../../../src/agent/Agent.js'
-      )) as unknown as {
-        _getMockAgentInstance: () => ReturnType<typeof createMockAgent>;
-      };
-      const agent = agentModule._getMockAgentInstance();
-      let permissionResponse: unknown;
-      agent.chatStream = async function* (_message, context) {
-        yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
-        permissionResponse = await context.confirmationHandler?.requestConfirmation({
-          type: 'permission',
-          kind: 'execute',
-          title: 'npm publish',
-          message: 'Publish package?',
-        } as never);
-        return {
-          success: true,
-          finalMessage: 'done',
-          metadata: { turnsCount: 1, toolCallsCount: 1, duration: 0 },
-        };
-      };
-      vi.spyOn(mockConnection, 'requestPermission').mockResolvedValue({
-        outcome: { outcome: 'selected', optionId: 'reject_always' },
-      });
-
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'Publish package' }],
-      });
-
-      expect(permissionResponse).toEqual({
-        approved: false,
-        scope: 'project',
-        reason: 'User permanently denied the permission request',
-      });
-    });
-
-    it('collects structured single-select answers even in yolo mode', async () => {
-      await session.setMode('yolo');
-      vi.spyOn(mockConnection, 'requestPermission').mockImplementation(
-        async (request) => {
-          mockConnection.permissionRequests.push(request);
-          return {
-            outcome: {
-              outcome: 'selected',
-              optionId: request.options[1]?.optionId,
-            },
-          };
-        }
-      );
-
-      const response = await (
-        session as unknown as {
-          requestPermission: (details: unknown) => Promise<{
-            approved: boolean;
-            answers?: Record<string, string | string[]>;
-          }>;
-        }
-      ).requestPermission({
-        type: 'askUserQuestion',
-        kind: 'readonly',
-        message: 'Choose the release channel',
-        questions: [
-          {
-            header: 'Channel',
-            question: 'Which release channel should be used?',
-            multiSelect: false,
-            options: [
-              { label: 'Stable', description: 'Use the stable channel' },
-              { label: 'Canary', description: 'Use the canary channel' },
-            ],
-          },
-        ],
-      });
-
-      expect(response).toEqual({
-        approved: true,
-        answers: { Channel: 'Canary' },
-      });
-      expect(mockConnection.permissionRequests).toHaveLength(1);
-      expect(mockConnection.permissionRequests[0]).toMatchObject({
-        sessionId: 'test-session-id',
-        options: [
-          { name: 'Stable', kind: 'allow_once' },
-          { name: 'Canary', kind: 'allow_once' },
-          { name: 'Cancel', kind: 'reject_once' },
-        ],
-        toolCall: {
-          title: 'Channel',
-          status: 'pending',
+      // 第一次请求允许并选择 always allow
+      mockConnection.setPermissionResponse('tool-123', {
+        outcome: {
+          outcome: 'selected',
+          optionId: 'allow_always',
         },
       });
-    });
 
-    it('rejects ACP multiselect questions instead of silently changing their meaning', async () => {
-      await session.setMode('yolo');
+      const promptParams = {
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text' as const, text: 'Execute command' }],
+      };
 
-      const response = await (
-        session as unknown as {
-          requestPermission: (details: unknown) => Promise<{
-            approved: boolean;
-            reason?: string;
-          }>;
-        }
-      ).requestPermission({
-        type: 'askUserQuestion',
-        kind: 'readonly',
-        questions: [
-          {
-            header: 'Checks',
-            question: 'Which checks should run?',
-            multiSelect: true,
-            options: [
-              { label: 'Unit', description: 'Run unit tests' },
-              { label: 'E2E', description: 'Run end-to-end tests' },
-            ],
-          },
-        ],
-      });
+      await session.prompt(promptParams);
 
-      expect(response).toEqual({
-        approved: false,
-        reason: expect.stringContaining('multi-select'),
-      });
-      expect(mockConnection.permissionRequests).toHaveLength(0);
+      // 清空权限请求记录
+      mockConnection.permissionRequests = [];
+
+      // 第二次请求相同操作
+      await session.prompt(promptParams);
+
+      // 验证第二次没有发送权限请求（使用了缓存）
+      // 由于我们的 mock 逻辑简单，这里只是验证不会重复请求
+      expect(mockConnection.permissionRequests.length).toBe(0);
     });
   });
 

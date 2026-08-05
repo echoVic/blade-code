@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,6 +16,7 @@ export const REAL_API_OUTPUT_BUDGET = 1024;
 
 export interface TestModelConfig {
   id: ModelId;
+  qualificationId: string;
   name: string;
   provider: 'deepseek' | 'anthropic' | 'openai-compatible';
   model: string;
@@ -98,11 +100,13 @@ export function resolveModelSettings(
   defaultModel: string,
   defaultBaseURL: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
-  bladeModel?: BladeModelConfig
+  bladeModel?: BladeModelConfig | null
 ): ResolvedModelSettings {
   const fallbackModel = hasExplicitProviderCredentials(env)
     ? undefined
-    : (bladeModel ?? getBladeCurrentModel());
+    : bladeModel === null
+      ? undefined
+      : (bladeModel ?? getBladeCurrentModel());
   const matchingBladeModel =
     fallbackModel && matchesModel(id, fallbackModel) ? fallbackModel : undefined;
 
@@ -120,13 +124,17 @@ export function resolveModelSettings(
 function resolveNewApiSettings(
   id: Exclude<ModelId, 'deepseek'>,
   envPrefix: string,
-  defaultModel: string
+  defaultModel: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  bladeModel?: BladeModelConfig | null
 ): ResolvedModelSettings {
   const settings = resolveModelSettings(
     id,
     envPrefix,
     defaultModel,
-    'https://callapi8.com/v1'
+    'https://callapi8.com/v1',
+    env,
+    bladeModel
   );
   return {
     ...settings,
@@ -142,103 +150,215 @@ function requireApiKey(id: ModelId, settings: ResolvedModelSettings): string {
   );
 }
 
-const deepseekSettings = resolveModelSettings(
-  'deepseek',
-  'DEEPSEEK',
-  'deepseek-chat',
-  'https://api.deepseek.com'
-);
+function createDeepSeekTestConfig(
+  model: string,
+  settings: ResolvedModelSettings
+): TestModelConfig {
+  const modelSettings = { ...settings, model };
+  return {
+    id: 'deepseek',
+    qualificationId: `deepseek:${model}`,
+    name: 'DeepSeek',
+    provider: 'deepseek',
+    model,
+    apiKey: modelSettings.apiKey,
+    baseURL: modelSettings.baseURL,
+    createModel: () => {
+      const apiKey = requireApiKey('deepseek', modelSettings);
+      const deepseek = createDeepSeek({
+        apiKey,
+        baseURL: modelSettings.baseURL,
+      });
+      return deepseek(model);
+    },
+  };
+}
 
-const deepseekConfig: TestModelConfig = {
-  id: 'deepseek',
-  name: 'DeepSeek',
-  provider: 'deepseek',
-  model: deepseekSettings.model,
-  apiKey: deepseekSettings.apiKey,
-  baseURL: deepseekSettings.baseURL,
-  createModel: () => {
-    const apiKey = requireApiKey('deepseek', deepseekSettings);
-    const deepseek = createDeepSeek({
-      apiKey,
-      baseURL: deepseekSettings.baseURL,
-    });
-    return deepseek(deepseekSettings.model);
-  },
-};
+function parseModelList(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(',')
+        .map((model) => model.trim())
+        .filter(Boolean)
+    ),
+  ];
+}
 
-const claudeSettings = resolveNewApiSettings('claude', 'CLAUDE', 'claude-opus-4-8');
+function createClaudeTestConfig(settings: ResolvedModelSettings): TestModelConfig {
+  return {
+    id: 'claude',
+    qualificationId: `claude:${settings.model}`,
+    name: 'Claude (via NewAPI)',
+    provider: 'anthropic',
+    model: settings.model,
+    apiKey: settings.apiKey,
+    baseURL: settings.baseURL,
+    createModel: () => {
+      const apiKey = requireApiKey('claude', settings);
+      const anthropic = createAnthropic({ apiKey, baseURL: settings.baseURL });
+      return anthropic(settings.model);
+    },
+  };
+}
 
-const claudeConfig: TestModelConfig = {
-  id: 'claude',
-  name: 'Claude (via NewAPI)',
-  provider: 'anthropic',
-  model: claudeSettings.model,
-  apiKey: claudeSettings.apiKey,
-  baseURL: claudeSettings.baseURL,
-  createModel: () => {
-    const apiKey = requireApiKey('claude', claudeSettings);
-    const anthropic = createAnthropic({ apiKey, baseURL: claudeSettings.baseURL });
-    return anthropic(claudeSettings.model);
-  },
-};
+function createCompatibleTestConfig(
+  id: 'gpt' | 'domestic',
+  name: string,
+  settings: ResolvedModelSettings
+): TestModelConfig {
+  return {
+    id,
+    qualificationId: `${id}:${settings.model}`,
+    name,
+    provider: 'openai-compatible',
+    model: settings.model,
+    apiKey: settings.apiKey,
+    baseURL: settings.baseURL,
+    createModel: () => {
+      const apiKey = requireApiKey(id, settings);
+      const compatible = createOpenAICompatible({
+        name: id,
+        apiKey,
+        baseURL: settings.baseURL,
+      });
+      return compatible(settings.model);
+    },
+  };
+}
 
-const gptSettings = resolveNewApiSettings('gpt', 'GPT', 'gpt-5.5');
+export function resolveForkQualificationModels(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  options: { requiredDeepSeek?: boolean } = {}
+): TestModelConfig[] {
+  const allowBladeFallback = env === process.env;
+  const bladeModel =
+    allowBladeFallback && !hasExplicitProviderCredentials(env)
+      ? getBladeCurrentModel()
+      : null;
+  const deepseekSettings = resolveModelSettings(
+    'deepseek',
+    'DEEPSEEK',
+    'deepseek-chat',
+    'https://api.deepseek.com',
+    env,
+    bladeModel
+  );
+  const configuredDeepSeekModels = Object.hasOwn(env, 'DEEPSEEK_MODELS')
+    ? parseModelList(env.DEEPSEEK_MODELS ?? '')
+    : [deepseekSettings.model];
 
-const gptConfig: TestModelConfig = {
-  id: 'gpt',
-  name: 'GPT (via NewAPI)',
-  provider: 'openai-compatible',
-  model: gptSettings.model,
-  apiKey: gptSettings.apiKey,
-  baseURL: gptSettings.baseURL,
-  createModel: () => {
-    const apiKey = requireApiKey('gpt', gptSettings);
-    const compatible = createOpenAICompatible({
-      name: 'gpt',
-      apiKey,
-      baseURL: gptSettings.baseURL,
-    });
-    return compatible(gptSettings.model);
-  },
-};
+  if (options.requiredDeepSeek) {
+    if (!deepseekSettings.apiKey) {
+      throw new Error(
+        'DeepSeek API key is required for fork qualification; set DEEPSEEK_API_KEY.'
+      );
+    }
+    if (!configuredDeepSeekModels.includes('deepseek-v4-flash')) {
+      throw new Error(
+        'DeepSeek Flash is required for fork qualification; include exact model deepseek-v4-flash in DEEPSEEK_MODELS.'
+      );
+    }
+    if (!configuredDeepSeekModels.includes('deepseek-v4-pro')) {
+      throw new Error(
+        'DeepSeek Pro is required for fork qualification; include exact model deepseek-v4-pro in DEEPSEEK_MODELS.'
+      );
+    }
+  }
 
-const domesticSettings = resolveNewApiSettings('domestic', 'DOMESTIC', 'qwen-plus');
+  const configs: TestModelConfig[] = deepseekSettings.apiKey
+    ? configuredDeepSeekModels.map((model) =>
+        createDeepSeekTestConfig(model, deepseekSettings)
+      )
+    : [];
+  const claudeSettings = resolveNewApiSettings(
+    'claude',
+    'CLAUDE',
+    'claude-opus-4-8',
+    env,
+    bladeModel
+  );
+  if (claudeSettings.apiKey) {
+    configs.push(createClaudeTestConfig(claudeSettings));
+  }
+  const gptSettings = resolveNewApiSettings('gpt', 'GPT', 'gpt-5.5', env, bladeModel);
+  if (gptSettings.apiKey) {
+    configs.push(createCompatibleTestConfig('gpt', 'GPT (via NewAPI)', gptSettings));
+  }
+  const domesticSettings = resolveNewApiSettings(
+    'domestic',
+    'DOMESTIC',
+    'qwen-plus',
+    env,
+    bladeModel
+  );
+  if (domesticSettings.apiKey) {
+    configs.push(
+      createCompatibleTestConfig('domestic', 'Domestic (via NewAPI)', domesticSettings)
+    );
+  }
 
-const domesticConfig: TestModelConfig = {
-  id: 'domestic',
-  name: 'Domestic (via NewAPI)',
-  provider: 'openai-compatible',
-  model: domesticSettings.model,
-  apiKey: domesticSettings.apiKey,
-  baseURL: domesticSettings.baseURL,
-  createModel: () => {
-    const apiKey = requireApiKey('domestic', domesticSettings);
-    const compatible = createOpenAICompatible({
-      name: 'domestic',
-      apiKey,
-      baseURL: domesticSettings.baseURL,
-    });
-    return compatible(domesticSettings.model);
-  },
-};
+  return configs;
+}
 
-export const ALL_MODEL_CONFIGS: TestModelConfig[] = [
-  deepseekConfig,
-  claudeConfig,
-  gptConfig,
-  domesticConfig,
-];
+function resolveLegacyModelConfigs(): TestModelConfig[] {
+  const env = process.env;
+  const bladeModel = hasExplicitProviderCredentials(env)
+    ? null
+    : (getBladeCurrentModel() ?? null);
+  const deepseekSettings = resolveModelSettings(
+    'deepseek',
+    'DEEPSEEK',
+    'deepseek-chat',
+    'https://api.deepseek.com',
+    env,
+    bladeModel
+  );
+  const claudeSettings = resolveNewApiSettings(
+    'claude',
+    'CLAUDE',
+    'claude-opus-4-8',
+    env,
+    bladeModel
+  );
+  const gptSettings = resolveNewApiSettings('gpt', 'GPT', 'gpt-5.5', env, bladeModel);
+  const domesticSettings = resolveNewApiSettings(
+    'domestic',
+    'DOMESTIC',
+    'qwen-plus',
+    env,
+    bladeModel
+  );
+
+  return [
+    createDeepSeekTestConfig(deepseekSettings.model, deepseekSettings),
+    createClaudeTestConfig(claudeSettings),
+    createCompatibleTestConfig('gpt', 'GPT (via NewAPI)', gptSettings),
+    createCompatibleTestConfig('domestic', 'Domestic (via NewAPI)', domesticSettings),
+  ];
+}
 
 export function getModelConfig(id: ModelId): TestModelConfig {
-  const config = ALL_MODEL_CONFIGS.find((c) => c.id === id);
-  if (!config) {
-    throw new Error(`Unknown model: ${id}`);
-  }
+  const config = resolveLegacyModelConfigs().find((candidate) => candidate.id === id);
+  if (!config) throw new Error(`Unknown model: ${id}`);
   return config;
 }
 
 export function getEnabledModelConfigs(): TestModelConfig[] {
-  return ALL_MODEL_CONFIGS.filter((config) => Boolean(config.apiKey));
+  return resolveLegacyModelConfigs().filter((config) => Boolean(config.apiKey));
+}
+
+function sanitizeRuntimeModelId(qualificationId: string): string {
+  const slug = qualificationId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  if (!slug) {
+    throw new Error('Fork qualification model ID must contain letters or numbers');
+  }
+  const hash = createHash('sha256').update(qualificationId).digest('hex').slice(0, 12);
+  return `real-api-${slug}-${hash}`;
 }
 
 export function expandDeepSeekModelMatrix(
@@ -267,7 +387,7 @@ export function expandDeepSeekModelMatrix(
 }
 
 export function buildRealApiRuntimeConfig(modelConfig: TestModelConfig): BladeConfig {
-  const modelId = `real-api-${modelConfig.id}`;
+  const modelId = sanitizeRuntimeModelId(modelConfig.qualificationId);
   return {
     ...DEFAULT_CONFIG,
     currentModelId: modelId,
@@ -282,7 +402,6 @@ export function buildRealApiRuntimeConfig(modelConfig: TestModelConfig): BladeCo
         maxContextTokens: 64_000,
         maxOutputTokens: 4_096,
         timeout: 180_000,
-        maxRetries: 1,
       },
     ],
   };

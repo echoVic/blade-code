@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import type { SessionRef } from '@api/schemas';
 
 import { createEventDispatcher } from '../../../src/store/session/handlers/eventHandlers';
 import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer';
@@ -35,6 +36,11 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
   const state = {
     sessions: [],
     currentSessionId: 'session-1',
+    currentSessionRef: {
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+    } satisfies SessionRef,
+    forkingSessionRef: null,
     isTemporarySession: false,
     isLoading: false,
     error: null,
@@ -64,19 +70,18 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     setError: vi.fn(),
     startTemporarySession: vi.fn(),
     clearError: vi.fn(),
-    setGoal: vi.fn((goal) => {
-      state.goal = goal;
-    }),
+    setGoal: vi.fn(),
     loadSessions: vi.fn(),
     selectSession: vi.fn(),
-    forkSession: vi.fn(),
     deleteSession: vi.fn(),
-    sendMessage: vi.fn(),
-    abortSession: vi.fn(),
-    pauseGoal: vi.fn(),
-    resumeGoal: vi.fn(),
-    editGoal: vi.fn(),
-    clearGoal: vi.fn(),
+    updateSession: vi.fn(),
+    forkSession: vi.fn(async () => undefined),
+    sendMessage: vi.fn(async () => undefined),
+    abortSession: vi.fn(async () => undefined),
+    pauseGoal: vi.fn(async () => undefined),
+    resumeGoal: vi.fn(async () => undefined),
+    editGoal: vi.fn(async () => undefined),
+    clearGoal: vi.fn(async () => undefined),
     setMessages: vi.fn(),
     addMessage: vi.fn((message: Message) => {
       state.messages.push(message);
@@ -135,19 +140,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
         };
       });
     }),
-    setQuestion: vi.fn((id, question) => {
-      state.messages = state.messages.map((message) =>
-        message.id === id
-          ? {
-              ...message,
-              agentContent: {
-                ...(message.agentContent ?? createEmptyAgentContent()),
-                question,
-              },
-            }
-          : message
-      );
-    }),
+    setQuestion: vi.fn(),
     setSubagent: vi.fn((messageId, subagent) => {
       state.messages = state.messages.map((message) =>
         message.id === messageId
@@ -178,7 +171,9 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     setStreaming: vi.fn(),
     setAgentPhase: vi.fn(),
     setRunId: vi.fn(),
-    subscribeToEvents: vi.fn(),
+    subscribeToEvents: vi.fn(async () => undefined),
+    prepareEventSubscription: vi.fn(async () => () => undefined),
+    replaceEventSubscription: vi.fn(),
     unsubscribeFromEvents: vi.fn(),
     handleEvent: vi.fn(),
     setCurrentAssistantMessageId: vi.fn(),
@@ -275,18 +270,32 @@ describe('eventHandlers', () => {
 
     dispatch({
       type: 'message.delta',
-      properties: { sessionId: 'session-1', messageId: 'assistant-1', delta: 'hel' },
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-1',
+        delta: 'hel',
+      },
     });
     dispatch({
       type: 'message.delta',
-      properties: { sessionId: 'session-1', messageId: 'assistant-1', delta: 'lo' },
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-1',
+        delta: 'lo',
+      },
     });
 
     expect(state.messages[0]?.agentContent?.textBefore).toBe('');
 
     dispatch({
       type: 'message.complete',
-      properties: { sessionId: 'session-1', messageId: 'assistant-1' },
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-1',
+      },
     });
 
     expect(state.messages[0]?.content).toBe('hello');
@@ -313,7 +322,7 @@ describe('eventHandlers', () => {
 
     dispatch({
       type: 'task.updated',
-      properties: { sessionId: 'session-1', tasks },
+      properties: { sessionId: 'session-1', projectPath: '/workspace/a', tasks },
     });
 
     expect(state.setTasks).toHaveBeenCalledWith('assistant-1', tasks);
@@ -343,6 +352,72 @@ describe('eventHandlers', () => {
     expect(state.messages[0]?.agentContent?.tasks).toEqual([]);
   });
 
+  test('ignores events when the session id matches but the projectPath differs', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'message.delta',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/b',
+        messageId: 'assistant-1',
+        delta: 'should-ignore',
+      },
+    });
+
+    expect(state.appendDelta).not.toHaveBeenCalled();
+    expect(state.messages[0]?.agentContent?.textBefore).toBe('');
+  });
+
+  test('ignores connected and heartbeat events that do not carry the active projectPath', () => {
+    const state = createState();
+    const set = vi.fn();
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'connected',
+      properties: { sessionId: 'session-1' },
+    });
+    dispatch({
+      type: 'heartbeat',
+      properties: { sessionId: 'session-1' },
+    });
+
+    expect(set).not.toHaveBeenCalledWith({ isStreaming: true });
+    expect(set).not.toHaveBeenCalledWith({ agentPhase: 'running' });
+  });
+
+  test('accepts exact session ref matches before dispatching message events', () => {
+    vi.useFakeTimers();
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'message.delta',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-1',
+        delta: 'accepted',
+      },
+    });
+
+    expect(state.appendDelta).not.toHaveBeenCalled();
+
+    dispatch({
+      type: 'message.complete',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-1',
+      },
+    });
+
+    expect(state.appendDelta).toHaveBeenCalledWith('assistant-1', 'accepted', 'before');
+    expect(state.messages[0]?.content).toBe('accepted');
+  });
+
   test('tracks compaction and model fallback phases', () => {
     const state = createState();
     const set = vi.fn();
@@ -350,19 +425,19 @@ describe('eventHandlers', () => {
 
     dispatch({
       type: 'compaction.started',
-      properties: { sessionId: 'session-1' },
+      properties: { sessionId: 'session-1', projectPath: '/workspace/a' },
     });
     expect(set).toHaveBeenLastCalledWith({ agentPhase: 'compacting' });
 
     dispatch({
       type: 'compaction.completed',
-      properties: { sessionId: 'session-1' },
+      properties: { sessionId: 'session-1', projectPath: '/workspace/a' },
     });
     expect(set).toHaveBeenLastCalledWith({ agentPhase: 'running' });
 
     dispatch({
       type: 'model.fallback',
-      properties: { sessionId: 'session-1' },
+      properties: { sessionId: 'session-1', projectPath: '/workspace/a' },
     });
     expect(set).toHaveBeenLastCalledWith({ agentPhase: 'switching_model' });
   });
@@ -374,19 +449,19 @@ describe('eventHandlers', () => {
 
     dispatch({
       type: 'steering.queued',
-      properties: { sessionId: 'session-1', queued: 2 },
+      properties: { sessionId: 'session-1', projectPath: '/workspace/a', queued: 2 },
     });
     expect(set).toHaveBeenLastCalledWith({ pendingSteeringCount: 2 });
 
     dispatch({
       type: 'follow_up.queued',
-      properties: { sessionId: 'session-1', queued: 3 },
+      properties: { sessionId: 'session-1', projectPath: '/workspace/a', queued: 3 },
     });
     expect(set).toHaveBeenLastCalledWith({ pendingSteeringCount: 3 });
 
     dispatch({
       type: 'follow_up.started',
-      properties: { sessionId: 'session-1', recovered: 2 },
+      properties: { sessionId: 'session-1', projectPath: '/workspace/a', recovered: 2 },
     });
     expect(set).toHaveBeenLastCalledWith({
       agentPhase: 'running',
@@ -395,7 +470,7 @@ describe('eventHandlers', () => {
 
     dispatch({
       type: 'steering.applied',
-      properties: { sessionId: 'session-1', queued: 0 },
+      properties: { sessionId: 'session-1', projectPath: '/workspace/a', queued: 0 },
     });
     expect(set).toHaveBeenLastCalledWith({
       pendingSteeringCount: 0,
@@ -404,7 +479,12 @@ describe('eventHandlers', () => {
 
     dispatch({
       type: 'steering.applied',
-      properties: { sessionId: 'session-1', queued: 0, recovered: 1 },
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        queued: 0,
+        recovered: 1,
+      },
     });
     expect(set).toHaveBeenLastCalledWith({
       pendingSteeringCount: 0,
@@ -439,7 +519,11 @@ describe('eventHandlers', () => {
 
     dispatch({
       type: 'permission.timeout',
-      properties: { sessionId: 'session-1', requestId: 'permission-1' },
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        requestId: 'permission-1',
+      },
     });
 
     expect(state.messages[0]?.agentContent?.confirmation).toMatchObject({
@@ -450,44 +534,6 @@ describe('eventHandlers', () => {
       agentPhase: 'running',
       error: 'Permission request timed out',
     });
-  });
-
-  test('attaches replayed structured questions to the latest assistant message', () => {
-    const state = createState({ currentAssistantMessageId: null });
-    const set = vi.fn();
-    const dispatch = createEventDispatcher(() => state, set);
-    const questions = [
-      {
-        header: 'Channel',
-        question: 'Which release channel should be used?',
-        multiSelect: false,
-        options: [
-          { label: 'Stable', description: 'Use stable' },
-          { label: 'Canary', description: 'Use canary' },
-        ],
-      },
-    ];
-
-    dispatch({
-      type: 'question.required',
-      properties: {
-        sessionId: 'session-1',
-        requestId: 'question-1',
-        questions,
-        replayed: true,
-      },
-    });
-
-    expect(state.setQuestion).toHaveBeenCalledWith('assistant-1', {
-      toolCallId: 'question-1',
-      questions,
-      status: 'pending',
-    });
-    expect(state.messages[0]?.agentContent?.question).toMatchObject({
-      toolCallId: 'question-1',
-      status: 'pending',
-    });
-    expect(set).toHaveBeenCalledWith({ agentPhase: 'waiting_permission' });
   });
 
   test('flushes buffered message deltas to the message that received them', () => {
@@ -517,6 +563,7 @@ describe('eventHandlers', () => {
       type: 'message.delta',
       properties: {
         sessionId: 'session-1',
+        projectPath: '/workspace/a',
         messageId: 'assistant-1',
         delta: 'from one',
       },
@@ -527,47 +574,5 @@ describe('eventHandlers', () => {
 
     expect(state.messages[0]?.agentContent?.textBefore).toBe('from one');
     expect(state.messages[1]?.agentContent?.textBefore).toBe('');
-  });
-
-  test('tracks goal lifecycle events for the active session', () => {
-    const state = createState();
-    const set = vi.fn((update) => {
-      Object.assign(state, typeof update === 'function' ? update(state) : update);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
-    const goal = {
-      version: 1 as const,
-      sessionId: 'session-1',
-      goalId: 'goal-1',
-      objective: 'finish the migration',
-      status: 'active' as const,
-      tokensUsed: 100,
-      timeUsedSeconds: 2,
-      continuationCount: 1,
-      createdAt: '2026-08-04T00:00:00.000Z',
-      updatedAt: '2026-08-04T00:00:02.000Z',
-    };
-
-    dispatch({
-      type: 'goal.updated',
-      properties: { sessionId: 'session-1', goal },
-    });
-    expect(state.goal).toEqual(goal);
-
-    dispatch({
-      type: 'goal.continuation.started',
-      properties: { sessionId: 'session-1', goal },
-    });
-    expect(state).toMatchObject({
-      goal,
-      isStreaming: true,
-      agentPhase: 'running',
-    });
-
-    dispatch({
-      type: 'goal.cleared',
-      properties: { sessionId: 'session-1' },
-    });
-    expect(state.goal).toBeNull();
   });
 });

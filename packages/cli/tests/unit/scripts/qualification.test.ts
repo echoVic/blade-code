@@ -45,10 +45,11 @@ describe('production qualification contract', () => {
     );
   });
 
-  it('keeps the local gate deterministic and excludes paid network tests', () => {
+  it('builds before performance in the deterministic local gate', () => {
     const plan = createQualificationPlan('local');
+    const checkIds = plan.map((check) => check.id);
 
-    expect(plan.map((check) => check.id)).toEqual([
+    expect(checkIds).toEqual([
       'type-check',
       'format-check',
       'lint',
@@ -58,12 +59,14 @@ describe('production qualification contract', () => {
       'headless-core',
       'e2e',
       'snapshot',
-      'performance',
       'security',
       'web-test',
       'web-type-check',
       'build',
+      'performance',
     ]);
+    expect(plan).toHaveLength(14);
+    expect(checkIds.indexOf('build')).toBeLessThan(checkIds.indexOf('performance'));
     expect(plan.some((check) => check.network === 'paid-api')).toBe(false);
   });
 
@@ -78,12 +81,14 @@ describe('production qualification contract', () => {
     );
   });
 
-  it('runs real API trajectories only after building the current source', () => {
+  it('runs production performance and real API checks only after building', () => {
     const plan = createQualificationPlan('production');
     const buildIndex = plan.findIndex((check) => check.id === 'build');
+    const performanceIndex = plan.findIndex((check) => check.id === 'performance');
     const realApiIndex = plan.findIndex((check) => check.id === 'real-api');
 
     expect(buildIndex).toBeGreaterThanOrEqual(0);
+    expect(performanceIndex).toBeGreaterThan(buildIndex);
     expect(realApiIndex).toBeGreaterThan(buildIndex);
     expect(plan[realApiIndex]).toMatchObject({
       command: 'bun',

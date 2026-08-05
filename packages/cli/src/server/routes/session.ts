@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
+import path from 'node:path';
 import { z } from 'zod';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
@@ -10,13 +11,19 @@ import type { LoopEvent } from '../../agent/loop/types.js';
 import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
+import { SendMessageRequestSchema } from '../../api/schemas.js';
 import { PermissionMode } from '../../config/types.js';
+import { assertValidSessionId } from '../../context/storage/pathUtils.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
-import { SessionService } from '../../services/SessionService.js';
+import type { SessionMetadata } from '../../services/SessionService.js';
+import {
+  SessionMissingCreationError,
+  SessionService,
+} from '../../services/SessionService.js';
 import {
   CONFIRMATION_ABORTED_REASON,
   type ConfirmationDetails,
@@ -30,7 +37,15 @@ import {
 import { getCwd } from '../../utils/cwd.js';
 import { createSessionId } from '../../utils/sessionId.js';
 import { Bus } from '../bus.js';
-import { BadRequestError, NotFoundError } from '../error.js';
+import {
+  AmbiguousSessionError,
+  BadRequestError,
+  BladeServerError,
+  ConflictError,
+  InternalServerError,
+  NotFoundError,
+} from '../error.js';
+import { normalizeSessionRef, sessionRefKey, type SessionRef } from '../sessionRef.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -39,25 +54,15 @@ const CreateSessionSchema = z.object({
   projectPath: z.string().optional(),
 });
 
-const SendMessageSchema = z.object({
-  content: z.string(),
-  attachments: z
-    .array(
-      z.object({
-        type: z.enum(['file', 'image', 'url']),
-        path: z.string().optional(),
-        url: z.string().optional(),
-        content: z.string().optional(),
-        mimeType: z.string().optional(),
-        name: z.string().optional(),
-      })
-    )
-    .optional(),
-  permissionMode: z.enum(['default', 'autoEdit', 'plan', 'yolo']).optional(),
-});
+const SendMessageSchema = SendMessageRequestSchema;
 
 const UpdateSessionSchema = z.object({
   title: z.string().optional(),
+  projectPath: z.string().optional(),
+});
+
+const ForkSessionSchema = z.object({
+  projectPath: z.string(),
 });
 
 const CreateGoalSchema = z.object({
@@ -75,6 +80,7 @@ const UpdateGoalSchema = z.discriminatedUnion('action', [
 export interface RunState {
   id: string;
   sessionId: string;
+  projectPath: string;
   status: 'running' | 'waiting_permission' | 'completed' | 'failed' | 'cancelled';
   abortController: AbortController;
   pendingPermission?: {
@@ -92,9 +98,11 @@ interface SessionInfo {
   projectPath: string;
   title: string;
   createdAt: Date;
+  updatedAt: Date;
+  rootId: string;
+  parentId?: string;
   messages: Message[];
   currentRunId?: string;
-  parentId?: string;
   relationType?: 'subagent' | 'fork';
 }
 
@@ -105,11 +113,15 @@ const activeRuns = new LRUCache<string, RunState>({
   ttl: 30 * 60 * 1000,
   dispose: (run: RunState, runId: string) => {
     if (run.status === 'running' || run.status === 'waiting_permission') {
-      cancelRun(run, 'cache-eviction');
+      run.abortController.abort();
       logger.debug(`[SessionRoutes] Run ${runId} disposed due to cache eviction`);
     }
   },
 });
+
+function runRef(run: RunState): SessionRef {
+  return { sessionId: run.sessionId, projectPath: run.projectPath };
+}
 
 function cancelRun(run: RunState, reason = 'user-cancel'): boolean {
   if (
@@ -128,7 +140,7 @@ function cancelRun(run: RunState, reason = 'user-cancel'): boolean {
   });
   run.abortController.abort(reason);
   run.status = 'cancelled';
-  Bus.publish(run.sessionId, 'run.cancelled', { runId: run.id });
+  Bus.publish(runRef(run), 'run.cancelled', { runId: run.id });
   return true;
 }
 
@@ -163,6 +175,14 @@ function buildPendingInteractionEvent(
   };
 }
 
+function resetSharedSessionRouteState(): void {
+  for (const run of activeRuns.values()) {
+    cancelRun(run, 'route-reset');
+  }
+  activeRuns.clear();
+  sessions.clear();
+}
+
 type Variables = {
   directory: string;
 };
@@ -185,6 +205,135 @@ const sanitizeToolMetadata = (metadata: ToolResultMetadata | undefined) => {
   }
   return sanitized as ToolResultMetadata;
 };
+
+function normalizeProjectPathInput(
+  projectPath: string,
+  label: 'projectPath' | 'directory' = 'projectPath'
+): string {
+  if (!path.isAbsolute(projectPath)) {
+    throw new BadRequestError(`${label} must be absolute`);
+  }
+  return path.resolve(projectPath);
+}
+
+function validateSessionIdOrThrow(sessionId: string): void {
+  try {
+    assertValidSessionId(sessionId);
+  } catch (error) {
+    throw new BadRequestError(
+      error instanceof Error ? error.message : `Invalid session ID: ${sessionId}`
+    );
+  }
+}
+
+function sessionRefFromSession(session: SessionInfo): SessionRef {
+  return {
+    sessionId: session.id,
+    projectPath: session.projectPath,
+  };
+}
+
+function sessionInfoFromMetadata(
+  metadata: SessionMetadata,
+  messages: Message[]
+): SessionInfo {
+  return {
+    id: metadata.sessionId,
+    projectPath: metadata.projectPath,
+    title: metadata.title ?? `Session ${metadata.sessionId.slice(0, 6)}`,
+    createdAt: new Date(metadata.firstMessageTime),
+    updatedAt: new Date(metadata.lastMessageTime),
+    rootId: metadata.rootId,
+    parentId: metadata.parentId,
+    relationType: metadata.relationType,
+    messages,
+  };
+}
+
+function projectActiveSession(session: SessionInfo) {
+  return {
+    sessionId: session.id,
+    projectPath: session.projectPath,
+    title: session.title,
+    rootId: session.rootId,
+    parentId: session.parentId,
+    relationType: session.relationType,
+    status: undefined,
+    agentType: undefined,
+    model: undefined,
+    messageCount: session.messages.length,
+    firstMessageTime: session.createdAt.toISOString(),
+    lastMessageTime: session.updatedAt.toISOString(),
+    hasErrors: false,
+    isActive: true,
+  };
+}
+
+export async function resolveSessionRef(
+  sessionId: string,
+  requestedProjectPath?: string
+): Promise<SessionRef> {
+  validateSessionIdOrThrow(sessionId);
+  if (requestedProjectPath !== undefined) {
+    const ref = normalizeSessionRef({
+      sessionId,
+      projectPath: normalizeProjectPathInput(requestedProjectPath),
+    });
+    if (sessions.has(sessionRefKey(ref))) {
+      return ref;
+    }
+    const metadata = await SessionService.findSessionMetadata(
+      ref.sessionId,
+      ref.projectPath
+    );
+    if (!metadata) {
+      throw new NotFoundError('Session', sessionId);
+    }
+    return normalizeSessionRef({
+      sessionId: metadata.sessionId,
+      projectPath: metadata.projectPath,
+    });
+  }
+
+  const matches = new Map<string, SessionRef>();
+  for (const session of sessions.values()) {
+    if (session.id !== sessionId) continue;
+    const ref = sessionRefFromSession(session);
+    matches.set(sessionRefKey(ref), ref);
+  }
+  for (const metadata of await SessionService.listSessions()) {
+    if (metadata.sessionId !== sessionId) continue;
+    const ref = normalizeSessionRef({
+      sessionId: metadata.sessionId,
+      projectPath: metadata.projectPath,
+    });
+    matches.set(sessionRefKey(ref), ref);
+  }
+  if (matches.size === 0) {
+    try {
+      const metadata = await SessionService.findSessionMetadata(sessionId);
+      if (!metadata) {
+        throw new NotFoundError('Session', sessionId);
+      }
+      return normalizeSessionRef({
+        sessionId: metadata.sessionId,
+        projectPath: metadata.projectPath,
+      });
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        throw error;
+      }
+      if (error instanceof Error && error.message.startsWith('Ambiguous session ID:')) {
+        throw new AmbiguousSessionError();
+      }
+      throw error;
+    }
+  }
+  if (matches.size > 1) {
+    throw new AmbiguousSessionError();
+  }
+  return matches.values().next().value as SessionRef;
+}
 
 function getDisplayContent(content: UserMessageContent): string {
   if (typeof content === 'string') return content;
@@ -221,83 +370,103 @@ function buildUserMessageContent(
 }
 
 export const SessionRoutes = () => {
+  resetSharedSessionRouteState();
   const app = new Hono<{ Variables: Variables }>();
+  app.onError((err, c) => {
+    if (err instanceof BladeServerError) {
+      return c.json(err.toObject(), err.statusCode as 400 | 404 | 409 | 500);
+    }
+    logger.error('[SessionRoutes] Unhandled route error:', err);
+    return c.json(
+      {
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Internal server error',
+        },
+      },
+      500
+    );
+  });
   const runtimes = new Map<string, SessionRuntime>();
   const runtimeInitializations = new Map<string, Promise<SessionRuntime>>();
   const sessionHydrations = new Map<string, Promise<SessionInfo>>();
   const messageSubmissionLocks = new Map<string, Mutex>();
 
-  const getMessageSubmissionLock = (sessionId: string): Mutex => {
-    let lock = messageSubmissionLocks.get(sessionId);
+  const getMessageSubmissionLock = (ref: SessionRef): Mutex => {
+    const key = sessionRefKey(ref);
+    let lock = messageSubmissionLocks.get(key);
     if (!lock) {
       lock = new Mutex();
-      messageSubmissionLocks.set(sessionId, lock);
+      messageSubmissionLocks.set(key, lock);
     }
     return lock;
   };
 
   const getOrCreateRuntime = async (session: SessionInfo): Promise<SessionRuntime> => {
-    const existing = runtimes.get(session.id);
+    const key = sessionRefKey(sessionRefFromSession(session));
+    const existing = runtimes.get(key);
     if (existing) return existing;
 
-    let initialization = runtimeInitializations.get(session.id);
+    let initialization = runtimeInitializations.get(key);
     if (!initialization) {
       initialization = SessionRuntime.create({
         sessionId: session.id,
         workspaceRoot: session.projectPath,
       });
-      runtimeInitializations.set(session.id, initialization);
+      runtimeInitializations.set(key, initialization);
     }
     try {
       const runtime = await initialization;
-      runtimes.set(session.id, runtime);
+      runtimes.set(key, runtime);
       return runtime;
     } finally {
-      if (runtimeInitializations.get(session.id) === initialization) {
-        runtimeInitializations.delete(session.id);
+      if (runtimeInitializations.get(key) === initialization) {
+        runtimeInitializations.delete(key);
       }
     }
   };
 
-  const getOrHydrateSession = async (
-    sessionId: string,
-    fallbackDirectory: string
-  ): Promise<SessionInfo> => {
-    const existing = sessions.get(sessionId);
+  const getOrHydrateSession = async (ref: SessionRef): Promise<SessionInfo> => {
+    const key = sessionRefKey(ref);
+    const existing = sessions.get(key);
     if (existing) return existing;
 
-    let hydration = sessionHydrations.get(sessionId);
+    let hydration = sessionHydrations.get(key);
     if (!hydration) {
       hydration = (async () => {
-        const metadata = (await SessionService.listSessions()).find(
-          (candidate) => candidate.sessionId === sessionId
+        const metadata = await SessionService.findSessionMetadata(
+          ref.sessionId,
+          ref.projectPath
         );
-        const projectPath = metadata?.projectPath ?? fallbackDirectory;
-        const messages = metadata
-          ? await SessionService.loadSession(sessionId, projectPath).catch(() => [])
-          : [];
-        const session: SessionInfo = {
-          id: sessionId,
-          projectPath,
-          title: `Session ${sessionId.slice(0, 6)}`,
-          createdAt: metadata ? new Date(metadata.firstMessageTime) : new Date(),
-          messages,
-          parentId: metadata?.parentId,
-          relationType: metadata?.relationType,
-        };
-        sessions.set(sessionId, session);
+        if (!metadata) {
+          throw new NotFoundError('Session', ref.sessionId);
+        }
+        const session = sessionInfoFromMetadata(
+          metadata,
+          await SessionService.loadSession(ref.sessionId, ref.projectPath)
+        );
+        sessions.set(key, session);
         return session;
       })();
-      sessionHydrations.set(sessionId, hydration);
+      sessionHydrations.set(key, hydration);
     }
 
     try {
       return await hydration;
     } finally {
-      if (sessionHydrations.get(sessionId) === hydration) {
-        sessionHydrations.delete(sessionId);
+      if (sessionHydrations.get(key) === hydration) {
+        sessionHydrations.delete(key);
       }
     }
+  };
+
+  const resolveSessionForWrite = async (
+    sessionId: string,
+    requestedProjectPath: string | undefined
+  ): Promise<SessionInfo> => {
+    return getOrHydrateSession(
+      await resolveSessionRef(sessionId, requestedProjectPath)
+    );
   };
 
   const startRun = (
@@ -314,6 +483,7 @@ export const SessionRoutes = () => {
     const run: RunState = {
       id: runId,
       sessionId: session.id,
+      projectPath: session.projectPath,
       status: 'running',
       abortController: new AbortController(),
       createdAt: new Date(),
@@ -347,17 +517,6 @@ export const SessionRoutes = () => {
     ) {
       return;
     }
-    const hasPending = await SessionRuntime.hasPendingInbox(
-      session.projectPath,
-      session.id
-    );
-    const hasActiveGoal =
-      !hasPending &&
-      (await SessionRuntime.hasActiveGoal(session.projectPath, session.id));
-    if (!hasPending && !hasActiveGoal) {
-      return;
-    }
-
     const runtime = await getOrCreateRuntime(session);
     const initializedRun = session.currentRunId
       ? activeRuns.get(session.currentRunId)
@@ -369,10 +528,10 @@ export const SessionRoutes = () => {
     ) {
       return;
     }
-    if (
-      (hasPending && runtime.getPendingSteeringCount() === 0) ||
-      runtime.hasTurnOwner()
-    ) {
+    const hasPending = runtime.getPendingSteeringCount() > 0;
+    const goal = hasPending ? null : await runtime.getGoal();
+    const hasActiveGoal = goal?.status === 'active';
+    if ((!hasPending && !hasActiveGoal) || runtime.hasTurnOwner()) {
       return;
     }
     startRun(session, '', PermissionMode.DEFAULT, {
@@ -385,42 +544,42 @@ export const SessionRoutes = () => {
     try {
       const persistedSessions = await SessionService.listSessions();
 
-      const subagentSessionIds = new Set(
+      const subagentSessionKeys = new Set(
         persistedSessions
           .filter((s) => s.relationType === 'subagent')
-          .map((s) => s.sessionId)
+          .map((s) =>
+            sessionRefKey({ sessionId: s.sessionId, projectPath: s.projectPath })
+          )
       );
 
       const activeSessionsList = Array.from(sessions.values())
-        .filter((s) => !subagentSessionIds.has(s.id) && s.relationType !== 'subagent')
-        .map((s) => ({
-          sessionId: s.id,
-          projectPath: s.projectPath,
-          title: s.title,
-          parentId: s.parentId,
-          relationType: s.relationType,
-          status: undefined,
-          agentType: undefined,
-          model: undefined,
-          messageCount: s.messages.length,
-          firstMessageTime: s.createdAt.toISOString(),
-          lastMessageTime: new Date().toISOString(),
-          hasErrors: false,
-          isActive: true,
-        }));
+        .filter(
+          (s) =>
+            !subagentSessionKeys.has(sessionRefKey(sessionRefFromSession(s))) &&
+            s.relationType !== 'subagent'
+        )
+        .map((s) => projectActiveSession(s));
 
-      const activeSessionIds = new Set(activeSessionsList.map((s) => s.sessionId));
-      const filteredPersisted = persistedSessions.filter(
-        (s) =>
-          !sessions.has(s.sessionId) &&
-          !activeSessionIds.has(s.sessionId) &&
-          s.relationType !== 'subagent'
+      const activeSessionKeys = new Set(
+        activeSessionsList.map((s) =>
+          sessionRefKey({ sessionId: s.sessionId, projectPath: s.projectPath })
+        )
       );
+      const filteredPersisted = persistedSessions.filter((s) => {
+        if (s.relationType === 'subagent') return false;
+        return !activeSessionKeys.has(
+          sessionRefKey({ sessionId: s.sessionId, projectPath: s.projectPath })
+        );
+      });
 
-      const seenSessionIds = new Set(activeSessionIds);
+      const seenSessionKeys = new Set(activeSessionKeys);
       const deduplicatedPersisted = filteredPersisted.filter((s) => {
-        if (seenSessionIds.has(s.sessionId)) return false;
-        seenSessionIds.add(s.sessionId);
+        const key = sessionRefKey({
+          sessionId: s.sessionId,
+          projectPath: s.projectPath,
+        });
+        if (seenSessionKeys.has(key)) return false;
+        seenSessionKeys.add(key);
         return true;
       });
 
@@ -428,7 +587,7 @@ export const SessionRoutes = () => {
       return c.json(allSessions);
     } catch (error) {
       logger.error('[SessionRoutes] Failed to list sessions:', error);
-      return c.json([]);
+      throw new InternalServerError('Failed to list sessions');
     }
   });
 
@@ -443,124 +602,103 @@ export const SessionRoutes = () => {
 
       const { title, projectPath } = parsed.data;
       const sessionId = createSessionId('web', 12);
-      const directory = projectPath || c.get('directory') || getCwd();
-
-      const session: SessionInfo = {
-        id: sessionId,
-        projectPath: directory,
-        title: title || `Session ${sessionId.slice(0, 6)}`,
-        createdAt: new Date(),
-        messages: [],
-      };
-
-      sessions.set(sessionId, session);
+      const directory = normalizeProjectPathInput(
+        projectPath || c.get('directory') || getCwd(),
+        projectPath ? 'projectPath' : 'directory'
+      );
+      const metadata = await SessionService.createSessionMetadata(
+        sessionId,
+        directory,
+        {
+          title,
+        }
+      );
+      const session = sessionInfoFromMetadata(metadata, []);
+      sessions.set(sessionRefKey(sessionRefFromSession(session)), session);
 
       return c.json({
-        sessionId,
-        projectPath: directory,
-        title: session.title,
-        parentId: undefined,
-        relationType: undefined,
+        ...projectActiveSession(session),
         status: undefined,
         agentType: undefined,
         model: undefined,
-        messageCount: 0,
-        firstMessageTime: session.createdAt.toISOString(),
-        lastMessageTime: session.createdAt.toISOString(),
-        hasErrors: false,
       });
     } catch (error) {
       logger.error('[SessionRoutes] Failed to create session:', error);
-      throw error;
+      if (error instanceof BadRequestError) throw error;
+      throw new InternalServerError('Failed to create session');
+    }
+  });
+
+  app.post('/:sessionId/fork', async (c) => {
+    const sessionId = c.req.param('sessionId');
+
+    try {
+      validateSessionIdOrThrow(sessionId);
+      const body = await c.req.json();
+      const parsed = ForkSessionSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new BadRequestError('Invalid request body');
+      }
+      const sourceProjectPath = normalizeProjectPathInput(parsed.data.projectPath);
+      const sourceMetadata = await SessionService.findSessionMetadata(
+        sessionId,
+        sourceProjectPath
+      );
+      if (!sourceMetadata) {
+        throw new NotFoundError('Session', sessionId);
+      }
+      const fork = await SessionService.forkSession(sessionId, {
+        sourceProjectPath: sourceMetadata.projectPath,
+        targetProjectPath: sourceMetadata.projectPath,
+      });
+      const childSession = sessionInfoFromMetadata(fork.metadata, fork.messages);
+      sessions.set(sessionRefKey(sessionRefFromSession(childSession)), childSession);
+      return c.json({ session: fork.metadata, messages: fork.messages }, 201);
+    } catch (error) {
+      if (
+        error instanceof BadRequestError ||
+        error instanceof NotFoundError ||
+        error instanceof ConflictError
+      ) {
+        throw error;
+      }
+      if (error instanceof SessionMissingCreationError) {
+        throw new ConflictError('Session has no durable creation record');
+      }
+      logger.error('[SessionRoutes] Failed to fork session:', error);
+      throw new InternalServerError('Failed to fork session');
     }
   });
 
   app.get('/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId');
 
-    const session = sessions.get(sessionId);
-    if (session) {
-      return c.json({
-        sessionId: session.id,
-        projectPath: session.projectPath,
-        title: session.title,
-        parentId: session.parentId,
-        relationType: session.relationType,
-        messageCount: session.messages.length,
-        firstMessageTime: session.createdAt.toISOString(),
-        lastMessageTime: new Date().toISOString(),
-        hasErrors: false,
-        isActive: true,
-      });
-    }
-
     try {
-      const persistedSessions = await SessionService.listSessions();
-      const persistedSession = persistedSessions.find((s) => s.sessionId === sessionId);
+      const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+      const session = sessions.get(sessionRefKey(ref));
+      if (session) {
+        return c.json(projectActiveSession(session));
+      }
 
+      const persistedSession = await SessionService.findSessionMetadata(
+        ref.sessionId,
+        ref.projectPath
+      );
       if (!persistedSession) {
         throw new NotFoundError('Session', sessionId);
       }
-
       return c.json(persistedSession);
     } catch (error) {
-      if (error instanceof NotFoundError) throw error;
-      logger.error('[SessionRoutes] Failed to get session:', error);
-      throw error;
-    }
-  });
-
-  app.post('/:sessionId/fork', async (c) => {
-    const sourceSessionId = c.req.param('sessionId');
-    const source = await getOrHydrateSession(
-      sourceSessionId,
-      c.get('directory') || getCwd()
-    );
-    return getMessageSubmissionLock(sourceSessionId).runExclusive(async () => {
-      const sourceRun = source.currentRunId
-        ? activeRuns.get(source.currentRunId)
-        : undefined;
       if (
-        sourceRun &&
-        (sourceRun.status === 'running' || sourceRun.status === 'waiting_permission')
+        error instanceof BadRequestError ||
+        error instanceof NotFoundError ||
+        error instanceof AmbiguousSessionError
       ) {
-        return c.json({ error: 'Cannot branch an active session' }, 409);
+        throw error;
       }
-
-      const fork = await SessionService.forkSession(sourceSessionId, {
-        sourceProjectPath: source.projectPath,
-        targetProjectPath: source.projectPath,
-      });
-      const createdAt = new Date();
-      const child: SessionInfo = {
-        id: fork.sessionId,
-        projectPath: fork.projectPath,
-        title: `Session ${fork.sessionId.slice(0, 6)}`,
-        createdAt,
-        messages: fork.messages,
-        parentId: fork.parentSessionId,
-        relationType: 'fork',
-      };
-      sessions.set(child.id, child);
-
-      return c.json(
-        {
-          sessionId: child.id,
-          projectPath: child.projectPath,
-          title: child.title,
-          parentId: child.parentId,
-          relationType: child.relationType,
-          status: undefined,
-          agentType: undefined,
-          model: undefined,
-          messageCount: child.messages.length,
-          firstMessageTime: child.createdAt.toISOString(),
-          lastMessageTime: child.createdAt.toISOString(),
-          hasErrors: false,
-        },
-        201
-      );
-    });
+      logger.error('[SessionRoutes] Failed to get session:', error);
+      throw new InternalServerError('Failed to get session');
+    }
   });
 
   app.patch('/:sessionId', async (c) => {
@@ -574,41 +712,55 @@ export const SessionRoutes = () => {
         throw new BadRequestError('Invalid request body');
       }
 
-      const { title } = parsed.data;
-      const session = sessions.get(sessionId);
-
-      if (session && title) {
-        session.title = title;
+      if (parsed.data.title === undefined) {
+        throw new BadRequestError('title is required');
+      }
+      const ref = await resolveSessionRef(sessionId, parsed.data.projectPath);
+      const metadata = await SessionService.updateSessionMetadata(
+        ref.sessionId,
+        ref.projectPath,
+        { title: parsed.data.title }
+      );
+      const session = sessions.get(sessionRefKey(ref));
+      if (session) {
+        session.title = metadata.title ?? session.title;
+        session.updatedAt = new Date(metadata.lastMessageTime);
       }
 
-      return c.json({ success: true, title });
+      return c.json({ success: true, title: metadata.title });
     } catch (error) {
       logger.error('[SessionRoutes] Failed to update session:', error);
-      throw error;
+      if (
+        error instanceof BadRequestError ||
+        error instanceof NotFoundError ||
+        error instanceof AmbiguousSessionError
+      ) {
+        throw error;
+      }
+      throw new InternalServerError('Failed to update session');
     }
   });
 
   app.get('/:sessionId/goal', async (c) => {
-    const sessionId = c.req.param('sessionId');
-    const session = await getOrHydrateSession(
-      sessionId,
-      c.get('directory') || getCwd()
+    const session = await resolveSessionForWrite(
+      c.req.param('sessionId'),
+      c.req.query('projectPath')
     );
     return c.json({
-      goal: await new GoalStore(session.projectPath, sessionId).get(),
+      goal: await new GoalStore(session.projectPath, session.id).get(),
     });
   });
 
   app.put('/:sessionId/goal', async (c) => {
-    const sessionId = c.req.param('sessionId');
     const parsed = CreateGoalSchema.safeParse(await c.req.json());
     if (!parsed.success) throw new BadRequestError('Invalid goal request');
-    const session = await getOrHydrateSession(
-      sessionId,
-      c.get('directory') || getCwd()
+    const session = await resolveSessionForWrite(
+      c.req.param('sessionId'),
+      c.req.query('projectPath')
     );
+    const ref = sessionRefFromSession(session);
 
-    return getMessageSubmissionLock(sessionId).runExclusive(async () => {
+    return getMessageSubmissionLock(ref).runExclusive(async () => {
       const currentRun = session.currentRunId
         ? activeRuns.get(session.currentRunId)
         : undefined;
@@ -621,7 +773,7 @@ export const SessionRoutes = () => {
 
       const runtime = await getOrCreateRuntime(session);
       const goal = await runtime.createGoal(parsed.data);
-      Bus.publish(sessionId, 'goal.updated', { goal });
+      Bus.publish(ref, 'goal.updated', { goal });
       const permissionMode =
         (parsed.data.permissionMode as PermissionMode | undefined) ??
         PermissionMode.DEFAULT;
@@ -633,14 +785,15 @@ export const SessionRoutes = () => {
   });
 
   app.patch('/:sessionId/goal', async (c) => {
-    const sessionId = c.req.param('sessionId');
     const parsed = UpdateGoalSchema.safeParse(await c.req.json());
     if (!parsed.success) throw new BadRequestError('Invalid goal update');
-    const session = await getOrHydrateSession(
-      sessionId,
-      c.get('directory') || getCwd()
+    const session = await resolveSessionForWrite(
+      c.req.param('sessionId'),
+      c.req.query('projectPath')
     );
-    return getMessageSubmissionLock(sessionId).runExclusive(async () => {
+    const ref = sessionRefFromSession(session);
+
+    return getMessageSubmissionLock(ref).runExclusive(async () => {
       const runtime = await getOrCreateRuntime(session);
       let goal: GoalSnapshot;
       if (parsed.data.action === 'pause') {
@@ -650,7 +803,7 @@ export const SessionRoutes = () => {
       } else {
         goal = await runtime.resumeGoal();
       }
-      Bus.publish(sessionId, 'goal.updated', { goal });
+      Bus.publish(ref, 'goal.updated', { goal });
 
       if (
         goal.status === 'active' &&
@@ -669,87 +822,126 @@ export const SessionRoutes = () => {
   });
 
   app.delete('/:sessionId/goal', async (c) => {
-    const sessionId = c.req.param('sessionId');
-    const session = await getOrHydrateSession(
-      sessionId,
-      c.get('directory') || getCwd()
+    const session = await resolveSessionForWrite(
+      c.req.param('sessionId'),
+      c.req.query('projectPath')
     );
+    const ref = sessionRefFromSession(session);
     const runtime = await getOrCreateRuntime(session);
     const cleared = await runtime.clearGoal();
-    if (cleared) Bus.publish(sessionId, 'goal.cleared', {});
+    if (cleared) Bus.publish(ref, 'goal.cleared', {});
     return c.json({ cleared });
   });
 
   app.delete('/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId');
+    const requestedProjectPath = c.req.query('projectPath');
 
-    const session = sessions.get(sessionId);
-    if (session?.currentRunId) {
-      const run = activeRuns.get(session.currentRunId);
-      if (run) {
-        cancelRun(run);
-        await run.completion;
-        activeRuns.delete(session.currentRunId);
-      }
-    }
-    const runtime = runtimes.get(sessionId);
-    if (runtime) {
-      await runtime.clearGoal().catch((error) => {
-        logger.warn('[SessionRoutes] Failed to clear session goal:', error);
-      });
-    }
     try {
-      await SessionService.deleteSession(sessionId);
-    } catch (error) {
-      logger.warn('[SessionRoutes] Failed to delete session file:', error);
-    }
-    sessions.delete(sessionId);
-    sessionHydrations.delete(sessionId);
-    runtimeInitializations.delete(sessionId);
-    messageSubmissionLocks.delete(sessionId);
-    if (runtime) {
-      await runtime.dispose();
-      runtimes.delete(sessionId);
-      if (runtimes.size === 0) {
-        await McpRegistry.getInstance().disconnectAll();
+      const ref = await resolveSessionRef(sessionId, requestedProjectPath);
+      const key = sessionRefKey(ref);
+      const session = sessions.get(key);
+      const runtime = runtimes.get(key);
+      let cancelledRunId: string | undefined;
+      if (session?.currentRunId) {
+        const run = activeRuns.get(session.currentRunId);
+        if (run) {
+          cancelRun(run);
+          await run.completion;
+          cancelledRunId = run.id;
+        }
       }
-    }
+      if (runtime) {
+        await runtime.clearGoal().catch((error) => {
+          logger.warn('[SessionRoutes] Failed to clear session goal:', error);
+        });
+      }
+      await SessionService.deleteSession(ref.sessionId, ref.projectPath);
+      if (cancelledRunId) {
+        activeRuns.delete(cancelledRunId);
+      }
+      sessions.delete(key);
+      sessionHydrations.delete(key);
+      runtimeInitializations.delete(key);
+      messageSubmissionLocks.delete(key);
+      if (runtime) {
+        await runtime.dispose();
+        runtimes.delete(key);
+        if (runtimes.size === 0) {
+          await McpRegistry.getInstance().disconnectAll();
+        }
+      }
 
-    return c.json({ success: true });
+      return c.json({ success: true });
+    } catch (error) {
+      logger.error('[SessionRoutes] Failed to delete session:', error);
+      if (
+        error instanceof BadRequestError ||
+        error instanceof NotFoundError ||
+        error instanceof AmbiguousSessionError
+      ) {
+        throw error;
+      }
+      throw new InternalServerError('Failed to delete session');
+    }
   });
 
   app.get('/:sessionId/message', async (c) => {
     const sessionId = c.req.param('sessionId');
 
     try {
-      const messages = await SessionService.loadSession(sessionId);
+      const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+      const session = sessions.get(sessionRefKey(ref));
+      const messages = session?.messages
+        ? session.messages
+        : await SessionService.loadSession(ref.sessionId, ref.projectPath);
       return c.json(messages);
     } catch (error) {
       logger.error('[SessionRoutes] Failed to get messages:', error);
-      return c.json([]);
+      if (
+        error instanceof BadRequestError ||
+        error instanceof NotFoundError ||
+        error instanceof AmbiguousSessionError
+      ) {
+        throw error;
+      }
+      throw new InternalServerError('Failed to get messages');
     }
   });
 
   app.get('/:sessionId/events', async (c) => {
     const sessionId = c.req.param('sessionId');
-    const session = await getOrHydrateSession(
-      sessionId,
-      c.get('directory') || getCwd()
-    );
+    const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+    const session = await getOrHydrateSession(ref);
 
     return streamSSE(c, async (stream) => {
       const HEARTBEAT_INTERVAL = 15000;
-
-      await stream.writeSSE({
-        data: JSON.stringify({
-          type: 'connected',
-          properties: { sessionId, timestamp: Date.now() },
-        }),
-      });
-
+      let unsubscribe: (() => void) | undefined;
+      let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
+      let terminated = false;
+      const cleanup = () => {
+        if (heartbeatInterval !== undefined) {
+          clearInterval(heartbeatInterval);
+          heartbeatInterval = undefined;
+        }
+        unsubscribe?.();
+        unsubscribe = undefined;
+      };
+      const terminate = () => {
+        if (terminated) return;
+        terminated = true;
+        cleanup();
+      };
       const deliveredInteractionIds = new Set<string>();
-      const unsubscribe = Bus.subscribe((event) => {
-        if (event.sessionId !== sessionId) return;
+
+      stream.onAbort(terminate);
+      unsubscribe = Bus.subscribe((event) => {
+        if (
+          event.sessionId !== ref.sessionId ||
+          event.projectPath !== ref.projectPath
+        ) {
+          return;
+        }
         const requestId = event.properties.requestId;
         if (
           (event.type === 'permission.asked' || event.type === 'question.required') &&
@@ -762,59 +954,80 @@ export const SessionRoutes = () => {
           .writeSSE({
             data: JSON.stringify({
               type: event.type,
-              properties: { sessionId: event.sessionId, ...event.properties },
+              properties: {
+                ...event.properties,
+                sessionId: event.sessionId,
+                projectPath: event.projectPath,
+              },
             }),
           })
-          .catch(() => {
-            /* ignore write errors on closed streams */
+          .catch(terminate);
+      });
+
+      try {
+        if (stream.aborted || terminated) return;
+
+        await stream
+          .writeSSE({
+            data: JSON.stringify({
+              type: 'connected',
+              properties: {
+                sessionId: ref.sessionId,
+                projectPath: ref.projectPath,
+                timestamp: Date.now(),
+              },
+            }),
+          })
+          .catch((error: unknown) => {
+            terminate();
+            throw error;
           });
-      });
+        if (stream.aborted || terminated) return;
 
-      const currentRun = session.currentRunId
-        ? activeRuns.get(session.currentRunId)
-        : undefined;
-      const pendingInteraction = currentRun?.pendingPermission;
-      if (pendingInteraction) {
-        deliveredInteractionIds.add(pendingInteraction.permissionId);
-        const replay = buildPendingInteractionEvent(pendingInteraction, true);
-        await stream.writeSSE({
-          data: JSON.stringify({
-            type: replay.type,
-            properties: { sessionId, ...replay.properties },
-          }),
-        });
-      }
-
-      void resumePendingSession(session).catch((error) => {
-        logger.error(
-          `[SessionRoutes] Failed to resume pending input for ${sessionId}:`,
-          error
-        );
-      });
-
-      const heartbeatInterval = setInterval(() => {
-        if (!stream.aborted) {
-          stream
-            .writeSSE({
-              data: JSON.stringify({
-                type: 'heartbeat',
-                properties: { timestamp: Date.now() },
-              }),
-            })
-            .catch(() => {
-              /* ignore write errors on closed streams */
-            });
+        const currentRun = session.currentRunId
+          ? activeRuns.get(session.currentRunId)
+          : undefined;
+        const pendingInteraction = currentRun?.pendingPermission;
+        if (pendingInteraction) {
+          deliveredInteractionIds.add(pendingInteraction.permissionId);
+          const replay = buildPendingInteractionEvent(pendingInteraction, true);
+          await stream.writeSSE({
+            data: JSON.stringify({
+              type: replay.type,
+              properties: {
+                ...replay.properties,
+                sessionId: ref.sessionId,
+                projectPath: ref.projectPath,
+              },
+            }),
+          });
         }
-      }, HEARTBEAT_INTERVAL);
 
-      stream.onAbort(() => {
-        clearInterval(heartbeatInterval);
-        unsubscribe();
-      });
+        void resumePendingSession(session).catch((error) => {
+          logger.error(
+            `[SessionRoutes] Failed to resume pending input for ${sessionId}:`,
+            error
+          );
+        });
 
-      while (true) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        if (stream.aborted) break;
+        heartbeatInterval = setInterval(() => {
+          if (!stream.aborted) {
+            stream
+              .writeSSE({
+                data: JSON.stringify({
+                  type: 'heartbeat',
+                  properties: { timestamp: Date.now() },
+                }),
+              })
+              .catch(terminate);
+          }
+        }, HEARTBEAT_INTERVAL);
+
+        while (!stream.aborted && !terminated) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      } finally {
+        terminate();
       }
     });
   });
@@ -829,14 +1042,22 @@ export const SessionRoutes = () => {
       throw new BadRequestError('Invalid message format');
     }
 
-    const { content, attachments, permissionMode: requestedMode } = parsed.data;
+    const {
+      content,
+      attachments,
+      permissionMode: requestedMode,
+      projectPath,
+    } = parsed.data;
     const permissionMode = (requestedMode as PermissionMode) || PermissionMode.DEFAULT;
-    const directory = c.get('directory') || getCwd();
     const userContent = buildUserMessageContent(content, attachments);
 
-    const session = await getOrHydrateSession(sessionId, directory);
+    const session = await resolveSessionForWrite(
+      sessionId,
+      projectPath ?? c.req.query('projectPath')
+    );
+    const sessionRef = sessionRefFromSession(session);
 
-    return getMessageSubmissionLock(sessionId).runExclusive(async () => {
+    return getMessageSubmissionLock(sessionRef).runExclusive(async () => {
       const currentRun = session.currentRunId
         ? activeRuns.get(session.currentRunId)
         : undefined;
@@ -857,14 +1078,14 @@ export const SessionRoutes = () => {
 
         const messageId = steering.messageId ?? nanoid(12);
         const queued = steering.queued;
-        Bus.publish(sessionId, 'message.created', {
+        Bus.publish(sessionRef, 'message.created', {
           messageId,
           role: 'user',
           content: getDisplayContent(userContent),
         });
         const queuedEvent =
           steering.delivery === 'next_turn' ? 'follow_up.queued' : 'steering.queued';
-        Bus.publish(sessionId, queuedEvent, {
+        Bus.publish(sessionRef, queuedEvent, {
           runId: currentRun.id,
           messageId,
           queued,
@@ -923,8 +1144,8 @@ export const SessionRoutes = () => {
 
   app.post('/:sessionId/abort', async (c) => {
     const sessionId = c.req.param('sessionId');
-
-    const session = sessions.get(sessionId);
+    const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+    const session = sessions.get(sessionRefKey(ref));
     if (session?.currentRunId) {
       const run = activeRuns.get(session.currentRunId);
       if (run) {
@@ -938,15 +1159,16 @@ export const SessionRoutes = () => {
 
   app.get('/:sessionId/status', async (c) => {
     const sessionId = c.req.param('sessionId');
-
-    const session = sessions.get(sessionId);
+    const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+    const session = sessions.get(sessionRefKey(ref));
     if (!session?.currentRunId) {
-      return c.json({ sessionId, status: 'idle' });
+      return c.json({ sessionId, projectPath: ref.projectPath, status: 'idle' });
     }
 
     const run = activeRuns.get(session.currentRunId);
     return c.json({
       sessionId,
+      projectPath: ref.projectPath,
       runId: session.currentRunId,
       status: run?.status || 'idle',
     });
@@ -977,9 +1199,10 @@ async function executeRunAsync(
     ? undefined
     : nanoid(12);
   let runtime: SessionRuntime | undefined;
+  const sessionRef = sessionRefFromSession(session);
 
   const emit = (type: string, properties: Record<string, unknown>) => {
-    Bus.publish(sessionId, type, properties);
+    Bus.publish(sessionRef, type, properties);
   };
 
   try {
@@ -1224,6 +1447,7 @@ async function executeRunAsync(
 
     // Phase 4: 使用 chatContext.messages 作为完整历史（不再手工构造）
     session.messages = [...chatContext.messages];
+    session.updatedAt = new Date();
 
     if (abortController.signal.aborted || run.status === 'cancelled') {
       emit('session.status', { status: 'idle' });
@@ -1262,21 +1486,22 @@ async function executeRunAsync(
 }
 
 export function respondToPermission(
-  sessionId: string,
+  ref: SessionRef,
   permissionId: string,
   response: ConfirmationResponse
 ): boolean {
   logger.info(
-    `[SessionRoutes] Looking for permission ${permissionId} in session ${sessionId}`
+    `[SessionRoutes] Looking for permission ${permissionId} in session ${ref.sessionId}`
   );
   logger.info(`[SessionRoutes] Active runs: ${activeRuns.size}`);
 
   for (const [runId, run] of activeRuns.entries()) {
     logger.info(
-      `[SessionRoutes] Checking run ${runId}: sessionId=${run.sessionId}, pendingPermission=${run.pendingPermission?.permissionId}`
+      `[SessionRoutes] Checking run ${runId}: sessionId=${run.sessionId}, projectPath=${run.projectPath}, pendingPermission=${run.pendingPermission?.permissionId}`
     );
     if (
-      run.sessionId === sessionId &&
+      run.sessionId === ref.sessionId &&
+      run.projectPath === ref.projectPath &&
       run.pendingPermission?.permissionId === permissionId
     ) {
       run.pendingPermission.resolve(response);

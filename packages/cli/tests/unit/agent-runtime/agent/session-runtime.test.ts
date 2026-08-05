@@ -3,9 +3,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
+import { PersistentStore } from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
-import { createChatServiceAsync } from '../../../../src/services/ChatServiceInterface.js';
+import {
+  createChatServiceAsync,
+  type IChatService,
+} from '../../../../src/services/ChatServiceInterface.js';
+import { BackgroundShellManager } from '../../../../src/tools/builtin/shell/BackgroundShellManager.js';
+import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
+import { InMemorySessionApprovalStore } from '../../../../src/tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 
 const worktreeMocks = vi.hoisted(() => ({
@@ -104,6 +111,23 @@ vi.mock('../../../../src/services/ChatServiceInterface.js', () => ({
     updateConfig: vi.fn(),
   })),
 }));
+
+function createDisposableChatService(dispose: () => Promise<void>) {
+  return {
+    chat: vi.fn(async () => ({ content: '' })),
+    streamChat: vi.fn(async function* () {
+      yield* [];
+    }),
+    getConfig: vi.fn(() => ({
+      provider: 'openai' as const,
+      apiKey: 'test',
+      baseUrl: '',
+      model: 'model-1',
+    })),
+    updateConfig: vi.fn(),
+    dispose,
+  } satisfies IChatService & { dispose: () => Promise<void> };
+}
 
 describe('SessionRuntime', () => {
   let storageRoot: string;
@@ -221,6 +245,87 @@ describe('SessionRuntime', () => {
     await recovered.dispose();
   });
 
+  it('fully disposes a partially initialized runtime before rejecting create', async () => {
+    const initializationError = new Error('persistent initialization failed');
+    const chatDispose = vi.fn().mockResolvedValue(undefined);
+    const chatService = createDisposableChatService(chatDispose);
+    const killSession = vi
+      .spyOn(BackgroundShellManager.getInstance(), 'killSession')
+      .mockResolvedValue(undefined);
+    const approvalClear = vi.spyOn(InMemorySessionApprovalStore.prototype, 'clear');
+    const disconnectAll = vi
+      .spyOn(McpRegistry.prototype, 'disconnectAll')
+      .mockResolvedValue(undefined);
+    vi.spyOn(McpRegistry.prototype, 'registerServer').mockResolvedValue(undefined);
+    vi.spyOn(McpRegistry.prototype, 'getAvailableTools').mockResolvedValue([]);
+    vi.spyOn(PersistentStore.prototype, 'initSession').mockRejectedValueOnce(
+      initializationError
+    );
+    vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
+    const options = {
+      sessionId: 'partial-initialization',
+      mcpServers: {
+        project: {
+          type: 'stdio' as const,
+          command: 'node',
+          args: ['server.mjs'],
+        },
+      },
+    };
+
+    await expect(SessionRuntime.create(options)).rejects.toBe(initializationError);
+
+    expect(killSession).toHaveBeenCalledWith(options.sessionId);
+    expect(approvalClear).toHaveBeenCalledTimes(1);
+    expect(worktreeMocks.releaseSession).toHaveBeenCalledWith(options.sessionId);
+    expect(chatDispose).toHaveBeenCalledTimes(1);
+    expect(disconnectAll).toHaveBeenCalledTimes(1);
+
+    const recovered = await SessionRuntime.create(options);
+    await recovered.dispose();
+  });
+
+  it('preserves the initialization error and continues cleanup after a cleanup failure', async () => {
+    const initializationError = new Error('persistent initialization failed');
+    const cleanupError = new Error('background cleanup failed');
+    const chatDispose = vi.fn().mockResolvedValue(undefined);
+    const chatService = createDisposableChatService(chatDispose);
+    const killSession = vi
+      .spyOn(BackgroundShellManager.getInstance(), 'killSession')
+      .mockRejectedValueOnce(cleanupError);
+    const approvalClear = vi.spyOn(InMemorySessionApprovalStore.prototype, 'clear');
+    const disconnectAll = vi
+      .spyOn(McpRegistry.prototype, 'disconnectAll')
+      .mockResolvedValue(undefined);
+    vi.spyOn(McpRegistry.prototype, 'registerServer').mockResolvedValue(undefined);
+    vi.spyOn(McpRegistry.prototype, 'getAvailableTools').mockResolvedValue([]);
+    vi.spyOn(PersistentStore.prototype, 'initSession').mockRejectedValueOnce(
+      initializationError
+    );
+    vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
+    const options = {
+      sessionId: 'failed-partial-cleanup',
+      mcpServers: {
+        project: {
+          type: 'stdio' as const,
+          command: 'node',
+          args: ['server.mjs'],
+        },
+      },
+    };
+
+    await expect(SessionRuntime.create(options)).rejects.toBe(initializationError);
+
+    expect(killSession).toHaveBeenCalledWith(options.sessionId);
+    expect(approvalClear).toHaveBeenCalledTimes(1);
+    expect(worktreeMocks.releaseSession).toHaveBeenCalledWith(options.sessionId);
+    expect(chatDispose).toHaveBeenCalledTimes(1);
+    expect(disconnectAll).toHaveBeenCalledTimes(1);
+
+    const recovered = await SessionRuntime.create(options);
+    await recovered.dispose();
+  });
+
   it('atomically switches the session model and disposes the previous service', async () => {
     const firstDispose = vi.fn().mockResolvedValue(undefined);
     const secondDispose = vi.fn().mockResolvedValue(undefined);
@@ -302,6 +407,64 @@ describe('SessionRuntime', () => {
 
     expect(chatDispose).toHaveBeenCalledTimes(1);
     expect((runtime as any).initialized).toBe(false);
+  });
+
+  it('does not dispose an owned chat service twice', async () => {
+    const chatDispose = vi.fn().mockResolvedValue(undefined);
+    const chatService = createDisposableChatService(chatDispose);
+    vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
+    const runtime = await SessionRuntime.create({ sessionId: 'idempotent-dispose' });
+
+    await runtime.dispose();
+    await runtime.dispose();
+
+    expect(chatDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears session-scoped file access records on dispose', async () => {
+    const tracker = FileAccessTracker.getInstance();
+    const clearSession = vi.spyOn(tracker, 'clearSession');
+    const runtime = await SessionRuntime.create({
+      sessionId: 'file-access-cleanup',
+    });
+
+    try {
+      await runtime.dispose();
+      expect(clearSession).toHaveBeenCalledWith(
+        'file-access-cleanup',
+        runtime.workspaceRoot
+      );
+    } finally {
+      clearSession.mockRestore();
+    }
+  });
+
+  it('clears runtime-owned resources before a disposed instance is refreshed', async () => {
+    const runtime = await SessionRuntime.create({
+      sessionId: 'refresh-after-dispose',
+    });
+    const previousEngine = runtime.getExecutionEngine();
+    const previousContextManager = previousEngine.getContextManager();
+
+    await runtime.dispose();
+
+    expect(() => runtime.getChatService()).toThrow(
+      'Session runtime is not initialized'
+    );
+    expect(() => runtime.getExecutionEngine()).toThrow(
+      'Session runtime is not initialized'
+    );
+    expect(() => runtime.getCurrentModelMaxContextTokens()).toThrow(
+      'Session runtime is not initialized'
+    );
+
+    await runtime.refresh({});
+
+    expect(runtime.getExecutionEngine()).not.toBe(previousEngine);
+    expect(runtime.getExecutionEngine().getContextManager()).not.toBe(
+      previousContextManager
+    );
+    await runtime.dispose();
   });
 
   it('clears runtime state even when releasing the session lease fails', async () => {

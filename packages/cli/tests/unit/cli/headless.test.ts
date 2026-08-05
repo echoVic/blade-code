@@ -57,6 +57,7 @@ describe('headless runner', () => {
     runtimeState.dispose.mockResolvedValue(undefined);
     runtimeState.create.mockResolvedValue({
       dispose: runtimeState.dispose,
+      getConfig: () => ({ maxTurns: -1 }),
     });
     agentState.chatStream.mockImplementation(mockChatGenerator([]));
     agentState.createWithRuntime.mockResolvedValue({
@@ -402,6 +403,25 @@ describe('headless runner', () => {
     expect(stderrOutput).toContain('outputFormat');
   });
 
+  it('rejects maxTurns above the documented safety limit', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'inspect this repo',
+        maxTurns: 101,
+      },
+      { stdout, stderr }
+    );
+
+    expect(exitCode).toBe(1);
+    expect(runtimeState.create).not.toHaveBeenCalled();
+    expect(stderr.write.mock.calls.flat().join('')).toContain('maxTurns');
+  });
+
   it('emits compacting markers and resets streamed state across stream cycles', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
@@ -548,6 +568,158 @@ describe('headless runner', () => {
         }),
       ])
     );
+  });
+
+  it('keeps an explicit maxTurns value as a hard headless limit', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    let installedTurnLimitHandler = false;
+
+    agentState.chatStream.mockImplementationOnce(
+      async function* (_message, _context, options) {
+        installedTurnLimitHandler = options?.onTurnLimitReached !== undefined;
+        yield { kind: 'turn_start', turn: 2, maxTurns: 2 };
+        return installedTurnLimitHandler
+          ? {
+              success: true,
+              finalMessage: 'turn-limit callback converted exhaustion to success',
+              metadata: { turnsCount: 2, toolCallsCount: 0, duration: 10 },
+            }
+          : {
+              success: false,
+              error: {
+                type: 'max_turns_exceeded' as const,
+                message: 'explicit turn limit reached',
+              },
+              metadata: { turnsCount: 2, toolCallsCount: 0, duration: 10 },
+            };
+      }
+    );
+
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'inspect this repo',
+        maxTurns: 2,
+      },
+      { stdout, stderr }
+    );
+
+    expect(installedTurnLimitHandler).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  it('keeps auto-continue available when headless maxTurns is not explicit', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    let continued = false;
+
+    agentState.chatStream.mockImplementationOnce(
+      async function* (_message, _context, options) {
+        const decision = await options?.onTurnLimitReached?.({ turnsCount: 100 });
+        continued = decision?.continue === true;
+        yield { kind: 'turn_start', turn: 100, maxTurns: 100 };
+        return {
+          success: true,
+          finalMessage: 'continued',
+          metadata: { turnsCount: 100, toolCallsCount: 0, duration: 10 },
+        };
+      }
+    );
+
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'inspect this repo',
+      },
+      { stdout, stderr }
+    );
+
+    expect(continued).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  it('keeps explicit maxTurns=-1 on the unlimited auto-continue path', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    let continued = false;
+
+    agentState.chatStream.mockImplementationOnce(
+      async function* (_message, _context, options) {
+        const decision = await options?.onTurnLimitReached?.({ turnsCount: 100 });
+        continued = decision?.continue === true;
+        yield { kind: 'turn_start', turn: 100, maxTurns: 100 };
+        return {
+          success: continued,
+          finalMessage: continued ? 'continued' : undefined,
+          error: continued
+            ? undefined
+            : {
+                type: 'max_turns_exceeded' as const,
+                message: 'safety limit reached',
+              },
+          metadata: { turnsCount: 100, toolCallsCount: 0, duration: 10 },
+        };
+      }
+    );
+
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'inspect this repo',
+        maxTurns: -1,
+      },
+      { stdout, stderr }
+    );
+
+    expect(continued).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  it('keeps a positive config maxTurns as a hard headless limit', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    runtimeState.create.mockResolvedValueOnce({
+      dispose: runtimeState.dispose,
+      getConfig: () => ({ maxTurns: 3 }),
+    });
+    let installedTurnLimitHandler = false;
+
+    agentState.chatStream.mockImplementationOnce(
+      async function* (_message, _context, options) {
+        installedTurnLimitHandler = options?.onTurnLimitReached !== undefined;
+        yield { kind: 'turn_start', turn: 3, maxTurns: 3 };
+        return installedTurnLimitHandler
+          ? {
+              success: true,
+              finalMessage: 'continued past configured limit',
+              metadata: { turnsCount: 3, toolCallsCount: 0, duration: 10 },
+            }
+          : {
+              success: false,
+              error: {
+                type: 'max_turns_exceeded' as const,
+                message: 'configured turn limit reached',
+              },
+              metadata: { turnsCount: 3, toolCallsCount: 0, duration: 10 },
+            };
+      }
+    );
+
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'inspect this repo',
+      },
+      { stdout, stderr }
+    );
+
+    expect(installedTurnLimitHandler).toBe(false);
+    expect(exitCode).toBe(1);
   });
 
   it('forwards cancellation to the active turn and disposes runtime before returning', async () => {

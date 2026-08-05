@@ -3,8 +3,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -12,11 +12,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SessionEvent } from '../../../src/context/types.js';
+import { buildRealApiConfig, parseHeadlessJsonl } from './codingTaskHarness.js';
 import {
-  buildRealApiConfig,
-  parseHeadlessJsonl,
-  redactSecrets,
-} from './codingTaskHarness.js';
+  assertForkChildToolTrace,
+  assertForkLineage,
+  assertForkParentToolTrace,
+  assertNoSecrets,
+  assertParentUnchanged,
+  extractDurableToolTrace,
+  findSessionTranscript,
+  readSessionEvents,
+} from './sessionForkTrajectoryHarness.js';
 import { isRealApiTestEnabled } from './testConfig.js';
 
 const cliEntry = path.resolve('dist', 'blade.js');
@@ -52,8 +58,9 @@ function runGit(cwd: string, args: string[]): void {
   }
 }
 
-function createWorkspace(): string {
+function createWorkspace(expectedBytes: string): string {
   const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-session-fork-api-'));
+  writeFileSync(path.join(workspace, 'memory.txt'), expectedBytes);
   writeFileSync(path.join(workspace, 'result.txt'), 'BROKEN\n');
   runGit(workspace, ['init', '-q']);
   runGit(workspace, ['add', '.']);
@@ -61,17 +68,66 @@ function createWorkspace(): string {
   return workspace;
 }
 
-function findSessionFile(storageRoot: string, sessionId: string): string {
-  const projectsDirectory = path.join(storageRoot, 'projects');
-  for (const projectDirectory of readdirSync(projectsDirectory)) {
-    const candidate = path.join(
-      projectsDirectory,
-      projectDirectory,
-      `${sessionId}.jsonl`
-    );
-    if (existsSync(candidate)) return candidate;
+function parseSuccessfulRun(result: CommandResult, label: string) {
+  if (result.error !== undefined || result.status !== 0) {
+    throw new Error(`${label} CLI run failed`);
   }
-  throw new Error(`Missing persisted session ${sessionId}`);
+  const parsed = parseHeadlessJsonl(result.stdout);
+  if (parsed.nonJsonLines.length > 0) {
+    throw new Error(`${label} CLI emitted malformed JSONL`);
+  }
+  if (parsed.events.some((event) => event.type === 'error')) {
+    throw new Error(`${label} CLI emitted an error event`);
+  }
+  return parsed;
+}
+
+function finalHeadlessText(
+  events: ReturnType<typeof parseHeadlessJsonl>['events']
+): string {
+  const streamEnd = events.findLastIndex((event) => event.type === 'stream_end');
+  if (streamEnd < 0) throw new Error('CLI final response has no stream boundary');
+  const previousStreamEnd = events
+    .slice(0, streamEnd)
+    .findLastIndex((event) => event.type === 'stream_end');
+  return events
+    .slice(previousStreamEnd + 1, streamEnd)
+    .flatMap((event) =>
+      event.type === 'content_delta'
+        ? [event.delta]
+        : event.type === 'content'
+          ? [event.content]
+          : []
+    )
+    .join('');
+}
+
+function assertSafeFinal(
+  events: ReturnType<typeof parseHeadlessJsonl>['events'],
+  label: string
+): void {
+  const text = finalHeadlessText(events);
+  if (!text.trim()) {
+    throw new Error(`${label} CLI final response was empty`);
+  }
+}
+
+function findForkBoundaryEventCount(
+  events: readonly SessionEvent[],
+  expected: { childId: string; parentId: string; rootId: string }
+): number {
+  const boundaryIndex = events.findLastIndex(
+    (event) =>
+      event.type === 'session_updated' &&
+      event.data.sessionId === expected.childId &&
+      event.data.parentId === expected.parentId &&
+      event.data.rootId === expected.rootId &&
+      event.data.relationType === 'fork'
+  );
+  if (boundaryIndex < 0) {
+    throw new Error('Fork child transcript has no complete lineage boundary');
+  }
+  return boundaryIndex + 1;
 }
 
 function runBlade(
@@ -162,94 +218,124 @@ describe.skipIf(!enabled)('CLI session fork trajectory (real API)', () => {
         );
       }
 
-      const workspace = createWorkspace();
-      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-session-fork-home-'));
-      const storageRoot = path.join(home, '.blade');
       const suffix = model.replaceAll(/[^A-Za-z0-9]/g, '_').toUpperCase();
       const memorizedValue = `FORK_HISTORY_${suffix}`;
+      const expectedBytes = `${memorizedValue}\n`;
+      const workspace = createWorkspace(expectedBytes);
+      const canonicalWorkspace = realpathSync(workspace);
+      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-session-fork-home-'));
+      const storageRoot = path.join(home, '.blade');
+      const memoryPath = path.join(workspace, 'memory.txt');
+      const resultPath = path.join(workspace, 'result.txt');
+      const canonicalMemoryPath = path.join(canonicalWorkspace, 'memory.txt');
+      const canonicalResultPath = path.join(canonicalWorkspace, 'result.txt');
       const parentSessionId = `fork-parent-${model}`;
       const childSessionId = `fork-child-${model}`;
 
       try {
+        const parentPrompt = [
+          `Use the Read tool on the exact absolute path ${canonicalMemoryPath}.`,
+          'Remember the complete file contents for a later fork.',
+          'Use no other tools.',
+          'Do not repeat, quote, encode, or summarize the file contents in final prose.',
+          'After the successful Read, give a brief completion confirmation.',
+        ].join(' ');
         const initial = await runBlade(workspace, home, model, [
+          '--allowed-tools',
+          'Read',
           '--session-id',
           parentSessionId,
-          [
-            `Memorize the exact token ${memorizedValue}.`,
-            'It will not appear in the next prompt. Do not call tools.',
-            'Reply with exactly READY.',
-          ].join(' '),
+          parentPrompt,
         ]);
-        expect(initial.error).toBeUndefined();
-        expect(initial.status, redactSecrets(initial.stderr, [apiKey])).toBe(0);
-        expect(parseHeadlessJsonl(initial.stdout).nonJsonLines).toEqual([]);
+        const initialParsed = parseSuccessfulRun(initial, 'Parent');
+        assertSafeFinal(initialParsed.events, 'Parent');
 
-        const parentPath = findSessionFile(storageRoot, parentSessionId);
+        const parentPath = findSessionTranscript(storageRoot, parentSessionId);
         const parentBeforeFork = readFileSync(parentPath, 'utf8');
-        const parentEvents = parentBeforeFork
-          .trim()
-          .split(/\r?\n/)
-          .map((line) => JSON.parse(line) as SessionEvent);
+        const parentEvents = readSessionEvents(parentPath);
+        assertForkParentToolTrace(
+          extractDurableToolTrace(parentEvents),
+          canonicalMemoryPath
+        );
+
+        rmSync(memoryPath);
+        rmSync(resultPath);
+        if (existsSync(memoryPath) || existsSync(resultPath)) {
+          throw new Error('Source fixtures still exist before CLI fork');
+        }
+        const childPrompt = [
+          'Recover the complete marker from the inherited successful Read result.',
+          `Use Write exactly once on the exact absolute path ${canonicalResultPath} with that marker and exactly one trailing newline.`,
+          'Then use Bash exactly once with the exact command `wc -c result.txt`.',
+          'Use no other tools or commands.',
+          'Do not repeat the marker in final prose; briefly confirm completion.',
+        ].join(' ');
+        if (childPrompt.includes(memorizedValue)) {
+          throw new Error('Fork child prompt exposed fixture material');
+        }
 
         const forked = await runBlade(workspace, home, model, [
+          '--allowed-tools',
+          'Write,Bash',
           '--resume',
           parentSessionId,
           '--fork-session',
           '--session-id',
           childSessionId,
-          [
-            'Use the exact token I asked you to memorize earlier.',
-            'Read result.txt, replace the entire file with only that token and a newline,',
-            'Do not inspect or modify other files.',
-          ].join(' '),
+          childPrompt,
         ]);
-        const parsed = parseHeadlessJsonl(forked.stdout);
-        const toolStarts = parsed.events
-          .filter((event) => event.type === 'tool_start')
-          .map((event) => event.tool_name);
-
-        expect(forked.error).toBeUndefined();
-        expect(forked.status, redactSecrets(forked.stderr, [apiKey])).toBe(0);
-        expect(parsed.nonJsonLines).toEqual([]);
-        expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
-        expect(toolStarts).toContain('Read');
-        expect(readFileSync(path.join(workspace, 'result.txt'), 'utf8').trim()).toBe(
-          memorizedValue
+        const parsed = parseSuccessfulRun(forked, 'Child');
+        const childPath = findSessionTranscript(storageRoot, childSessionId);
+        const childContent = readFileSync(childPath, 'utf8');
+        const childEvents = readSessionEvents(childPath);
+        const expectedLineage = {
+          childId: childSessionId,
+          parentId: parentSessionId,
+          rootId: parentSessionId,
+        };
+        assertForkLineage(childEvents, expectedLineage);
+        const forkBoundaryEventCount = findForkBoundaryEventCount(
+          childEvents,
+          expectedLineage
         );
+        assertForkParentToolTrace(
+          extractDurableToolTrace(childEvents.slice(0, forkBoundaryEventCount)),
+          canonicalMemoryPath
+        );
+        const childTrace = extractDurableToolTrace(childEvents, {
+          afterEventCount: forkBoundaryEventCount,
+        });
+        assertForkChildToolTrace(childTrace, canonicalResultPath, expectedBytes);
+
+        assertSafeFinal(parsed.events, 'Child');
+        if (readFileSync(resultPath, 'utf8') !== expectedBytes) {
+          throw new Error('Fork child result bytes did not match the exact contract');
+        }
         expect(
           spawnSync('git', ['diff', '--name-only'], {
             cwd: workspace,
             encoding: 'utf8',
           }).stdout.trim()
-        ).toBe('result.txt');
-        expect(readFileSync(parentPath, 'utf8')).toBe(parentBeforeFork);
-
-        const childPath = findSessionFile(storageRoot, childSessionId);
-        const childContent = readFileSync(childPath, 'utf8');
-        const childEvents = childContent
-          .trim()
-          .split(/\r?\n/)
-          .map((line) => JSON.parse(line) as SessionEvent);
-        expect(childEvents[0]).toMatchObject({
-          type: 'session_created',
-          sessionId: childSessionId,
-          data: {
-            parentId: parentSessionId,
-            relationType: 'fork',
-          },
-        });
-        expect(childEvents.every((event) => event.sessionId === childSessionId)).toBe(
-          true
-        );
+        ).toBe(['memory.txt', 'result.txt'].join('\n'));
+        assertParentUnchanged(parentBeforeFork, parentPath);
+        if (!childContent.includes(memorizedValue)) {
+          throw new Error('Fork child transcript did not inherit fixture material');
+        }
+        expect(childEvents.length).toBeGreaterThan(forkBoundaryEventCount);
         expect(
           childEvents.every(
             (event) => !parentEvents.some((parent) => parent.id === event.id)
           )
         ).toBe(true);
-        expect(childContent).toContain(memorizedValue);
-        expect(
-          `${initial.stdout}\n${initial.stderr}\n${forked.stdout}\n${forked.stderr}`
-        ).not.toContain(apiKey);
+        assertNoSecrets(
+          {
+            initial,
+            forked,
+            parentBeforeFork,
+            childContent,
+          },
+          [apiKey]
+        );
       } finally {
         rmSync(workspace, { recursive: true, force: true });
         rmSync(home, { recursive: true, force: true });

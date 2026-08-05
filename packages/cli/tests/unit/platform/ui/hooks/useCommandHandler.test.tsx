@@ -9,10 +9,12 @@ const mocks = vi.hoisted(() => {
   return {
     abortController,
     createAgent: vi.fn(),
+    cleanupAgent: vi.fn(),
     steerActiveTurn: vi.fn(),
+    processSlashCommand: vi.fn(),
+    abort: vi.fn(),
     hasPendingInbox: vi.fn(),
     hasActiveGoal: vi.fn(),
-    processSlashCommand: vi.fn(),
     enqueueCommand: vi.fn(),
     addUserMessage: vi.fn(),
     addAssistantMessage: vi.fn(),
@@ -36,6 +38,7 @@ vi.mock('../../../../../src/agent/runtime/SessionRuntime.js', () => ({
 vi.mock('../../../../../src/ui/hooks/useAgent.js', () => ({
   useAgent: () => ({
     createAgent: mocks.createAgent,
+    cleanupAgent: mocks.cleanupAgent,
     steerActiveTurn: mocks.steerActiveTurn,
   }),
 }));
@@ -62,6 +65,7 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
     setProcessing: mocks.setProcessing,
     setRecoveredSteeringCount: vi.fn(),
     enqueueCommand: mocks.enqueueCommand,
+    abort: mocks.abort,
   }),
 }));
 
@@ -104,12 +108,12 @@ vi.mock('../../../../../src/ui/utils/loopEventHandler.js', () => ({
   createLoopEventHandler: () => vi.fn(),
 }));
 
-vi.mock('../../../../../src/ui/utils/sessionContext.js', () => ({
-  buildContextMessagesFromSession: () => [],
-}));
-
 vi.mock('../../../../../src/ui/utils/slashCommandRouter.js', () => ({
   processSlashCommand: mocks.processSlashCommand,
+}));
+
+vi.mock('../../../../../src/ui/utils/sessionContext.js', () => ({
+  buildContextMessagesFromSession: () => [],
 }));
 
 import { useCommandHandler } from '../../../../../src/ui/hooks/useCommandHandler.js';
@@ -132,17 +136,20 @@ describe('useCommandHandler durable recovery', () => {
       queued: 1,
       delivery: 'next_turn',
     });
-    mocks.hasPendingInbox.mockResolvedValue(true);
-    mocks.hasActiveGoal.mockResolvedValue(false);
     mocks.processSlashCommand.mockResolvedValue({
       type: 'handled',
       commandResult: { success: true },
     });
+    mocks.hasPendingInbox.mockResolvedValue(true);
+    mocks.hasActiveGoal.mockResolvedValue(false);
     mocks.createAgent.mockResolvedValue({
       chatStream: vi.fn(async function* (
         _message: string,
         _context: unknown,
-        options: { pendingInputOnly?: boolean }
+        options: {
+          pendingInputOnly?: boolean;
+          goalContinuationOnly?: boolean;
+        }
       ) {
         if (Date.now() < 0) yield undefined;
         return {
@@ -190,6 +197,64 @@ describe('useCommandHandler durable recovery', () => {
     expect(mocks.setProcessing).toHaveBeenLastCalledWith(false);
   });
 
+  it('auto-starts a goal-only turn when the CLI session mounts with an active goal', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.hasActiveGoal.mockResolvedValue(true);
+
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(mocks.createAgent).toHaveBeenCalledOnce();
+    });
+
+    const agent = await mocks.createAgent.mock.results[0]?.value;
+    expect(agent.chatStream).toHaveBeenCalledWith(
+      '',
+      expect.objectContaining({
+        sessionId: 'recovered-cli-session',
+      }),
+      expect.objectContaining({
+        goalContinuationOnly: true,
+        pendingInputOnly: false,
+        stream: true,
+      })
+    );
+    expect(mocks.setProcessing).toHaveBeenNthCalledWith(1, true);
+    expect(mocks.setProcessing).toHaveBeenLastCalledWith(false);
+  });
+
+  it('exposes agent cleanup to orchestration owners', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    expect(hook?.cleanupAgent).toBe(mocks.cleanupAgent);
+  });
+
+  it('passes its runtime cleanup dependency to direct slash activation routing', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    const resolved = {
+      text: '/fork parent-session',
+      displayText: '/fork parent-session',
+      images: [],
+      parts: [{ type: 'text' as const, text: '/fork parent-session' }],
+    };
+    await hook?.executeCommand(resolved);
+
+    expect(mocks.processSlashCommand).toHaveBeenCalledOnce();
+    expect(mocks.processSlashCommand.mock.calls[0]?.[0]).toBe(resolved);
+    expect(mocks.processSlashCommand.mock.calls[0]?.[4]).toBe(mocks.cleanupAgent);
+  });
+
   it('wakes a next-turn input when the rendered processing state is stale', async () => {
     mocks.isProcessing = true;
     mocks.storeProcessing = false;
@@ -214,58 +279,27 @@ describe('useCommandHandler durable recovery', () => {
     expect(mocks.addUserMessage).toHaveBeenCalledWith('run after the previous answer');
   });
 
-  it('auto-starts a persisted active goal when the CLI session mounts', async () => {
-    mocks.hasPendingInbox.mockResolvedValue(false);
-    mocks.hasActiveGoal.mockResolvedValue(true);
-
-    await act(async () => {
-      root.render(<Harness />);
-      await Promise.resolve();
-    });
-    await vi.waitFor(() => {
-      expect(mocks.createAgent).toHaveBeenCalledOnce();
-    });
-
-    const agent = await mocks.createAgent.mock.results[0]?.value;
-    expect(agent.chatStream).toHaveBeenCalledWith(
-      '',
-      expect.objectContaining({
-        sessionId: 'recovered-cli-session',
-      }),
-      expect.objectContaining({
-        pendingInputOnly: false,
-        goalContinuationOnly: true,
-        stream: true,
-      })
-    );
-  });
-
-  it('executes /goal pause while a goal turn is active', async () => {
+  it('rejects slash commands during an active turn without steering or aborting', async () => {
     mocks.isProcessing = true;
-    mocks.hasPendingInbox.mockResolvedValue(false);
-    mocks.hasActiveGoal.mockResolvedValue(false);
+    mocks.storeProcessing = true;
+
     await act(async () => {
       root.render(<Harness />);
       await Promise.resolve();
     });
 
     await hook?.executeCommand({
-      text: '/goal pause',
-      displayText: '/goal pause',
+      text: '/fork parent-session',
+      displayText: '/fork parent-session',
       images: [],
-      parts: [{ type: 'text', text: '/goal pause' }],
+      parts: [{ type: 'text', text: '/fork parent-session' }],
     });
 
-    expect(mocks.processSlashCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ text: '/goal pause' }),
-      expect.any(Object),
-      expect.any(Object),
-      mocks.abortController.signal,
-      'recovered-cli-session'
-    );
-    expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith(
-      expect.stringContaining('活动回合中不能执行 slash command')
-    );
+    expect(mocks.processSlashCommand).not.toHaveBeenCalled();
     expect(mocks.steerActiveTurn).not.toHaveBeenCalled();
+    expect(mocks.abort).not.toHaveBeenCalled();
+    expect(mocks.addAssistantMessage).toHaveBeenCalledWith(
+      '活动回合中不能执行 slash command；请先停止任务或等待完成。'
+    );
   });
 });

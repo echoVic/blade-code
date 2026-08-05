@@ -928,6 +928,16 @@ const resolveSubagentTargetMessageId = (
 
 export const createEventDispatcher = (get: GetState, set: SetState) => {
   return (event: StreamEvent) => {
+    const ref = get().currentSessionRef;
+    const props = event.properties;
+    if (
+      !ref ||
+      props.sessionId !== ref.sessionId ||
+      props.projectPath !== ref.projectPath
+    ) {
+      return;
+    }
+
     // delta 事件不打印日志，避免大量 console.log 阻塞主线程
     if (!BUFFERED_EVENTS.has(event.type)) {
       console.log('[SSE Event]', event.type, event.properties);
@@ -945,7 +955,6 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
 
     // message.delta 走 buffer
     if (event.type === 'message.delta') {
-      const props = event.properties;
       const { currentSessionId, currentAssistantMessageId, hasToolCalls } = get();
       if (props.sessionId !== currentSessionId) return;
 
@@ -973,7 +982,6 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
 
     // thinking.delta 走 buffer
     if (event.type === 'thinking.delta') {
-      const props = event.properties;
       const { currentSessionId, currentAssistantMessageId } = get();
       if (props.sessionId !== currentSessionId) return;
       if (!currentAssistantMessageId) return;
@@ -993,7 +1001,6 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
 
     // subagent.delta 走 buffer
     if (event.type === 'subagent.delta') {
-      const props = event.properties;
       const { currentSessionId } = get();
       if (props.sessionId !== currentSessionId) return;
 
@@ -1046,7 +1053,6 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
 
     // subagent.thinking.delta 走 buffer
     if (event.type === 'subagent.thinking.delta') {
-      const props = event.properties;
       const { currentSessionId } = get();
       if (props.sessionId !== currentSessionId) return;
 

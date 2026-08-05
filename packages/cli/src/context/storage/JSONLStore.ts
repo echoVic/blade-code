@@ -53,7 +53,7 @@ export function parseSessionJSONL(
  * JSONL 存储类 - 处理 JSONL 格式的读写
  */
 export class JSONLStore {
-  private static readonly appendQueues = new Map<string, Promise<void>>();
+  private static readonly appendQueues = new Map<string, Promise<unknown>>();
   private readonly filePath: string;
 
   constructor(filePath: string) {
@@ -232,15 +232,80 @@ export class JSONLStore {
   /**
    * 删除 JSONL 文件
    */
-  async delete(): Promise<void> {
+  async delete(): Promise<boolean> {
     try {
-      if (await this.exists()) {
-        await fs.unlink(this.filePath);
-      }
+      return await this.enqueue(async () => {
+        try {
+          await fs.unlink(this.filePath);
+          return true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return false;
+          }
+          throw error;
+        }
+      });
     } catch (error) {
       console.error(`[JSONLStore] 删除文件失败: ${this.filePath}`, error);
       throw error;
     }
+  }
+
+  async deleteValidated(
+    validator: (entries: readonly SessionEvent[]) => boolean
+  ): Promise<boolean> {
+    return this.enqueue(async () => {
+      let handle: fs.FileHandle;
+      try {
+        handle = await fs.open(this.filePath, 'r');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return false;
+        }
+        throw error;
+      }
+
+      let entries: SessionEvent[];
+      try {
+        entries = parseSessionJSONL(
+          await handle.readFile('utf8'),
+          'session transcript'
+        );
+      } finally {
+        await handle.close();
+      }
+
+      if (!validator(entries)) return false;
+      try {
+        await fs.unlink(this.filePath);
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return false;
+        }
+        throw error;
+      }
+    });
+  }
+
+  async appendValidated(
+    buildEntry: (entries: readonly SessionEvent[]) => SessionEvent
+  ): Promise<void> {
+    await this.enqueue(async () => {
+      const handle = await fs.open(this.filePath, 'r+');
+      try {
+        const { entries, separator, size } = await this.readCommittedState(
+          handle,
+          'session transcript'
+        );
+        const entry = buildEntry(entries);
+        const line = `${separator}${JSON.stringify(entry)}\n`;
+        await handle.write(line, size, 'utf8');
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    });
   }
 
   /**
@@ -251,61 +316,70 @@ export class JSONLStore {
   }
 
   private async appendSerialized(content: string): Promise<void> {
+    await this.enqueue(async () => {
+      await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o755 });
+      const handle = await fs.open(this.filePath, 'a+', 0o600);
+      try {
+        const { separator } = await this.readCommittedState(handle);
+        await handle.appendFile(separator + content, 'utf8');
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    });
+  }
+
+  private async enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const previous = JSONLStore.appendQueues.get(this.filePath) ?? Promise.resolve();
-    const operation = previous
-      .catch(() => undefined)
-      .then(async () => {
-        await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o755 });
-        const separator = await this.repairIncompleteTail();
-        await fs.appendFile(this.filePath, separator + content, 'utf-8');
-      });
-    JSONLStore.appendQueues.set(this.filePath, operation);
+    const result = previous.catch(() => undefined).then(operation);
+    const barrier = result.then(
+      () => undefined,
+      () => undefined
+    );
+    JSONLStore.appendQueues.set(this.filePath, barrier);
 
     try {
-      await operation;
+      return await result;
     } finally {
-      if (JSONLStore.appendQueues.get(this.filePath) === operation) {
+      if (JSONLStore.appendQueues.get(this.filePath) === barrier) {
         JSONLStore.appendQueues.delete(this.filePath);
       }
     }
   }
 
-  private async repairIncompleteTail(): Promise<string> {
-    let handle: fs.FileHandle;
-    try {
-      handle = await fs.open(this.filePath, 'r+');
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        'code' in error &&
-        (error as NodeJS.ErrnoException).code === 'ENOENT'
-      ) {
-        return '';
-      }
-      throw error;
-    }
+  private async readCommittedState(
+    handle: fs.FileHandle,
+    source = this.filePath
+  ): Promise<{
+    entries: SessionEvent[];
+    separator: string;
+    size: number;
+  }> {
+    const separator = await this.repairIncompleteTail(handle);
+    const content = await handle.readFile('utf8');
+    const entries = parseSessionJSONL(content, source);
+    const { size } = await handle.stat();
+    return { entries, separator, size };
+  }
+
+  private async repairIncompleteTail(handle: fs.FileHandle): Promise<string> {
+    const { size } = await handle.stat();
+    if (size === 0) return '';
+
+    const lastByte = Buffer.allocUnsafe(1);
+    await handle.read(lastByte, 0, 1, size - 1);
+    if (lastByte[0] === 0x0a) return '';
+
+    const tailStart = await this.findTailStart(handle, size);
+    const tail = Buffer.allocUnsafe(size - tailStart);
+    await handle.read(tail, 0, tail.length, tailStart);
 
     try {
-      const { size } = await handle.stat();
-      if (size === 0) return '';
-
-      const lastByte = Buffer.allocUnsafe(1);
-      await handle.read(lastByte, 0, 1, size - 1);
-      if (lastByte[0] === 0x0a) return '';
-
-      const tailStart = await this.findTailStart(handle, size);
-      const tail = Buffer.allocUnsafe(size - tailStart);
-      await handle.read(tail, 0, tail.length, tailStart);
-
-      try {
-        JSON.parse(tail.toString('utf8').trim());
-        return '\n';
-      } catch {
-        await handle.truncate(tailStart);
-        return '';
-      }
-    } finally {
-      await handle.close();
+      JSON.parse(tail.toString('utf8').trim());
+      return '\n';
+    } catch {
+      await handle.truncate(tailStart);
+      return '';
     }
   }
 

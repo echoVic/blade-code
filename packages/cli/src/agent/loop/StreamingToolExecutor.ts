@@ -24,6 +24,19 @@ import { ToolErrorType } from '../../tools/types/index.js';
 import { combineAbortSignals } from '../../utils/abort.js';
 import type { ToolExecResult } from './types.js';
 
+export type ToolExecutionPolicy = (
+  toolName: string,
+  params: Record<string, unknown>,
+  context: ExecutionContext
+) => Promise<ToolResult>;
+
+export type ToolAdmissionPolicy = (
+  toolName: string,
+  params: Record<string, unknown>
+) => ToolResult | undefined;
+export type ToolAdmissionRollback = (toolName: string) => void;
+export type ToolDispatchStatus = 'prelaunched' | 'queued' | 'rejected';
+
 const logger = createLogger(LogCategory.AGENT);
 
 /**
@@ -67,6 +80,9 @@ export class StreamingToolExecutor {
   private epoch = 0;
   /** 每个工具执行的独立 AbortController，discard() 时逐一 abort */
   private activeAborts = new Map<string, AbortController>();
+  private executeTool?: ToolExecutionPolicy;
+  private admitTool?: ToolAdmissionPolicy;
+  private rollbackAdmission?: ToolAdmissionRollback;
 
   constructor(
     private pipeline: ToolExecutor,
@@ -82,19 +98,43 @@ export class StreamingToolExecutor {
     }
   ) {}
 
+  setExecutionPolicy(executeTool: ToolExecutionPolicy): void {
+    this.executeTool = executeTool;
+  }
+
+  setAdmissionPolicy(admitTool: ToolAdmissionPolicy): void {
+    this.admitTool = admitTool;
+  }
+
+  setAdmissionRollback(rollbackAdmission: ToolAdmissionRollback): void {
+    this.rollbackAdmission = rollbackAdmission;
+  }
+
   /**
    * 流式中调用：在 allowlist 中的工具立即执行，否则排队
    */
-  addTool(toolCall: FunctionToolCall, params: Record<string, unknown>): void {
+  addTool(
+    toolCall: FunctionToolCall,
+    params: Record<string, unknown>
+  ): ToolDispatchStatus {
     if (this.dispatched.has(toolCall.id)) {
       logger.debug(
         `[StreamingToolExecutor] 跳过已分发工具: ${toolCall.function.name} (${toolCall.id})`
       );
-      return;
+      return 'rejected';
     }
     this.dispatched.add(toolCall.id);
 
     this.order.push(toolCall.id);
+    const admissionRejection = this.admitTool?.(toolCall.function.name, params);
+    if (admissionRejection) {
+      this.completed.set(toolCall.id, {
+        toolCall,
+        result: admissionRejection,
+        toolUseUuid: null,
+      });
+      return 'rejected';
+    }
     const canPrelaunch = STREAMING_PRELAUNCH_ALLOWLIST.has(toolCall.function.name);
 
     if (canPrelaunch) {
@@ -103,12 +143,18 @@ export class StreamingToolExecutor {
       );
       const promise = this.executeOne(toolCall, params);
       this.pending.set(toolCall.id, promise);
+      return 'prelaunched';
     } else {
       logger.debug(
         `[StreamingToolExecutor] 排队非预启动工具: ${toolCall.function.name}`
       );
       this.queued.push({ toolCall, params });
+      return 'queued';
     }
+  }
+
+  getQueuedToolCalls(): readonly FunctionToolCall[] {
+    return this.queued.map((queued) => queued.toolCall);
   }
 
   /**
@@ -170,6 +216,9 @@ export class StreamingToolExecutor {
    * 递增 epoch，使旧世代工具返回后被忽略。
    */
   discard(): void {
+    for (const queued of this.queued) {
+      this.rollbackAdmission?.(queued.toolCall.function.name);
+    }
     // 递增 epoch，旧世代的 executeOne() 返回后会被拦截
     this.epoch++;
 
@@ -274,11 +323,9 @@ export class StreamingToolExecutor {
         signal: combinedSignal,
       };
 
-      const result = await this.pipeline.execute(
-        toolCall.function.name,
-        params,
-        execContext
-      );
+      const result = this.executeTool
+        ? await this.executeTool(toolCall.function.name, params, execContext)
+        : await this.pipeline.execute(toolCall.function.name, params, execContext);
 
       // Epoch guard: 如果工具执行期间发生了 discard，丢弃结果
       if (startEpoch !== this.epoch) {

@@ -3,8 +3,24 @@
  */
 
 import { sessionActions } from '../store/vanilla.js';
+import type { SessionMetadata } from '../services/SessionService.js';
+import type { Message } from '../services/ChatServiceInterface.js';
 
-type SlashCommandAction =
+export type SessionSelectionIntent = 'resume' | 'fork';
+
+export type SessionSelectionAction =
+  | {
+      action: 'select_session';
+      intent: SessionSelectionIntent;
+      sessions: SessionMetadata[];
+    }
+  | {
+      action: 'activate_session';
+      intent: SessionSelectionIntent;
+      session: SessionMetadata;
+    };
+
+export type SlashCommandAction =
   | 'show_model_selector'
   | 'show_model_add_wizard'
   | 'show_agents_manager'
@@ -21,7 +37,9 @@ type SlashCommandAction =
   | 'restore_forked_session'
   | 'start_goal'
   | 'resume_goal'
-  | 'goal_cleared';
+  | 'goal_cleared'
+  | 'select_session'
+  | 'activate_session';
 
 /**
  * Slash command 返回的结构化数据
@@ -29,18 +47,20 @@ type SlashCommandAction =
 export interface SlashCommandData {
   /** UI 指令（触发特定 UI 组件） */
   action?: SlashCommandAction;
+  /** Session selection intent */
+  intent?: SessionSelectionIntent;
   /** 模式（如 add/edit） */
   mode?: string;
   /** 压缩结果相关 */
-  compactedMessages?: unknown[];
+  compactedMessages?: Message[];
   boundaryMessage?: unknown;
   summaryMessage?: unknown;
   preTokens?: number;
   postTokens?: number;
   filesIncluded?: string[];
   /** Resume 相关 */
-  sessions?: unknown[];
-  selectedSession?: unknown;
+  sessions?: SessionMetadata[];
+  session?: SessionMetadata;
   /** 扩展字段（用于未来新增的数据类型） */
   [key: string]: unknown;
 }
@@ -104,6 +124,8 @@ export interface SlashCommandContext {
   sessionId?: string;
   /** 工作目录（可选，默认为 cwd） */
   workspaceRoot?: string;
+  /** 当前调用方拥有的会话历史；ACP 等非 UI 表面应显式传入 */
+  messages?: Message[];
   /** ACP 模式下的回调（可选） */
   acp?: AcpCallbacks;
   /** 取消信号（可选，用于中止长时间运行的操作） */

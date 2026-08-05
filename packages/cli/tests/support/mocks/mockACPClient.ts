@@ -6,8 +6,8 @@
  */
 
 import type {
-  SessionNotification,
   RequestPermissionRequest,
+  SessionNotification,
 } from '@agentclientprotocol/sdk';
 
 export interface MockPermissionResponse {
@@ -18,6 +18,7 @@ export interface MockPermissionResponse {
 }
 
 export interface MockACPClientInterface {
+  readonly signal: AbortSignal;
   sessionUpdate(params: SessionNotification): Promise<void>;
   requestPermission(params: RequestPermissionRequest): Promise<MockPermissionResponse>;
   readTextFile(path: string): Promise<string>;
@@ -33,6 +34,7 @@ export interface MockACPClientInterface {
 }
 
 export class MockACPClient implements MockACPClientInterface {
+  public readonly signal = new AbortController().signal;
   public sessionUpdates: SessionNotification[] = [];
   public permissionRequests: RequestPermissionRequest[] = [];
   public permissionResponses: Map<string, MockPermissionResponse> = new Map();

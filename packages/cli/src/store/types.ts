@@ -12,6 +12,7 @@ import type { ModelConfig, RuntimeConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../services/SessionService.js';
+import type { SessionSelectionIntent } from '../slash-commands/types.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 
 // ==================== Session Types ====================
@@ -111,6 +112,7 @@ export interface SessionActions {
   setCommand: (command: string | null) => void;
   setError: (error: string | null) => void;
   clearMessages: () => void;
+  setCompactedContext: (messages: Message[]) => void;
   resetSession: () => void;
   restoreSession: (
     sessionId: string,
@@ -212,6 +214,11 @@ export interface SubagentProgress {
   startTime: number;
 }
 
+export interface SessionSelectorState {
+  intent: SessionSelectionIntent;
+  sessions: SessionMetadata[];
+}
+
 /**
  * 应用状态（纯 UI 状态）
  */
@@ -219,7 +226,7 @@ export interface AppState {
   initializationStatus: InitializationStatus;
   initializationError: string | null;
   activeModal: ActiveModal;
-  sessionSelectorData: SessionMetadata[] | undefined;
+  sessionSelectorData: SessionSelectorState | undefined;
   modelEditorTarget: ModelConfig | null;
   tasks: TaskListItem[];
   awaitingSecondCtrlC: boolean; // 是否等待第二次 Ctrl+C 退出
@@ -234,7 +241,10 @@ export interface AppActions {
   setInitializationStatus: (status: InitializationStatus) => void;
   setInitializationError: (error: string | null) => void;
   setActiveModal: (modal: ActiveModal) => void;
-  showSessionSelector: (sessions?: SessionMetadata[]) => void;
+  showSessionSelector: (
+    sessions: SessionMetadata[],
+    intent?: SessionSelectionIntent
+  ) => void;
   showModelEditWizard: (model: ModelConfig) => void;
   closeModal: () => void;
   setTasks: (tasks: TaskListItem[]) => void;

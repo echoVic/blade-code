@@ -4,9 +4,10 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, isAbsolute, resolve } from 'node:path';
 import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { Message } from '../services/ChatServiceInterface.js';
+import { PathSecurity } from '../utils/pathSecurity.js';
 
 /**
  * 文件引用信息
@@ -114,12 +115,23 @@ export class FileAnalyzer {
    * @param filePaths - 文件路径列表
    * @returns 文件内容列表
    */
-  static async readFilesContent(filePaths: string[]): Promise<FileContent[]> {
+  static async readFilesContent(
+    filePaths: string[],
+    workspaceRoot?: string
+  ): Promise<FileContent[]> {
     const results: FileContent[] = [];
 
     for (const path of filePaths) {
       try {
-        const content = await readFile(path, 'utf-8');
+        const resolvedPath =
+          workspaceRoot && !isAbsolute(path) ? resolve(workspaceRoot, path) : path;
+        if (
+          workspaceRoot &&
+          !(await PathSecurity.isWithinWorkspaceResolved(resolvedPath, workspaceRoot))
+        ) {
+          continue;
+        }
+        const content = await readFile(resolvedPath, 'utf-8');
         const lines = content.split('\n');
         const totalLines = lines.length;
 

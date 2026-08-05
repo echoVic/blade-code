@@ -48,6 +48,9 @@ describe('StreamingToolExecutor', () => {
   let execContext: ExecutionContext;
   let registry: { get: ReturnType<typeof vi.fn> };
   let executor: StreamingToolExecutor;
+  let executeWithPolicy: ReturnType<typeof vi.fn>;
+  let admitWithPolicy: ReturnType<typeof vi.fn>;
+  let rollbackAdmission: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -61,12 +64,21 @@ describe('StreamingToolExecutor', () => {
     registry = {
       get: vi.fn().mockReturnValue({ isConcurrencySafe: true }),
     };
+    executeWithPolicy = vi.fn(
+      (name: string, params: Record<string, unknown>, context: ExecutionContext) =>
+        pipeline.execute(name, params, context)
+    );
+    admitWithPolicy = vi.fn();
+    rollbackAdmission = vi.fn();
 
     executor = new StreamingToolExecutor(
       pipeline as unknown as ToolExecutor,
       execContext,
       registry as unknown as ToolRegistry
     );
+    executor.setAdmissionPolicy(admitWithPolicy);
+    executor.setAdmissionRollback(rollbackAdmission);
+    executor.setExecutionPolicy(executeWithPolicy);
   });
 
   // ----------------------------------------------------------------
@@ -233,6 +245,52 @@ describe('StreamingToolExecutor', () => {
       expect(collected[1].toolCall.id).toBe('q2');
     });
 
+    it('routes queued tools through the loop execution policy', async () => {
+      executeWithPolicy.mockResolvedValue({
+        success: false,
+        llmContent: 'Task already completed',
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          message: 'Task already completed',
+        },
+      });
+      executor.addTool(makeToolCall('single-task', 'Task'), {
+        subagent_type: 'channel-specialist',
+      });
+
+      const [result] = await collectAsync(executor.getRemainingResults());
+
+      expect(executeWithPolicy).toHaveBeenCalledWith(
+        'Task',
+        { subagent_type: 'channel-specialist' },
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+      expect(pipeline.execute).not.toHaveBeenCalled();
+      expect(result.result.error?.type).toBe(ToolErrorType.VALIDATION_ERROR);
+    });
+
+    it('returns an admission rejection without launching or persisting a tool', async () => {
+      admitWithPolicy.mockReturnValue({
+        success: false,
+        llmContent: 'Task already completed',
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          message: 'Task already completed',
+        },
+      });
+
+      const admitted = executor.addTool(makeToolCall('duplicate-task', 'Task'), {
+        subagent_type: 'channel-specialist',
+      });
+      const [result] = await collectAsync(executor.getRemainingResults());
+
+      expect(admitted).toBe('rejected');
+      expect(executeWithPolicy).not.toHaveBeenCalled();
+      expect(pipeline.execute).not.toHaveBeenCalled();
+      expect(result.toolUseUuid).toBeNull();
+      expect(result.result.error?.type).toBe(ToolErrorType.VALIDATION_ERROR);
+    });
+
     it('yields mixed allowlisted + queued tools in insertion order', async () => {
       // A = allowlisted (Read), B = non-allowlisted (Edit), C = allowlisted (Glob)
       pipeline.execute
@@ -266,6 +324,14 @@ describe('StreamingToolExecutor', () => {
   // discard
   // ----------------------------------------------------------------
   describe('discard', () => {
+    it('rolls back queued tool admissions before clearing them', () => {
+      executor.addTool(makeToolCall('queued-task', 'Task'), {});
+
+      executor.discard();
+
+      expect(rollbackAdmission).toHaveBeenCalledWith('Task');
+    });
+
     it('resets all internal state and increments epoch', () => {
       pipeline.execute.mockResolvedValue(makeSuccessResult('x'));
 

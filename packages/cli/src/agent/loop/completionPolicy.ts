@@ -261,6 +261,51 @@ const NEGATED_DELEGATION_PATTERNS = [
   /(?:不要|禁止|无需)(?:委派|调用|使用).{0,20}(?:Task|子代理|子智能体)?/,
 ];
 
+const SINGLE_TASK_DELEGATION_PATTERNS = [
+  /\b(?:call|use|invoke)\b[\s\S]{0,30}\bTask(?: tool)?\b[\s\S]{0,30}\bexactly once\b/i,
+  /\bexactly once\b[\s\S]{0,30}\b(?:call|use|invoke)\b[\s\S]{0,30}\bTask(?: tool)?\b/i,
+  /\bexactly one\b[\s\S]{0,30}\bTask(?: tool)? calls?\b/i,
+  /(?:Task|子代理).{0,20}(?:恰好|仅|只)(?:调用|使用)?一次/,
+  /(?:恰好|仅|只)(?:调用|使用)?一次.{0,20}(?:Task|子代理)/,
+];
+
+const NEGATED_SINGLE_TASK_DELEGATION_PATTERNS = [
+  /\b(?:do not|don't|never)\s+(?:call|use|invoke)\s+(?:the\s+)?Task\b[\s\S]{0,30}\bexactly once\b/i,
+  /\bTask\b[\s\S]{0,30}\b(?:does not|doesn't|need not)\b[\s\S]{0,30}\bexactly once\b/i,
+  /\bmultiple\s+Task(?: tool)?\s+calls?\s+(?:are\s+)?allowed\b/i,
+  /(?:不要|禁止).{0,12}(?:Task|子代理).{0,12}(?:恰好|仅|只)(?:调用|使用)?一次/,
+];
+
+type SingleTaskDelegationDirective = 'required' | 'multiple-allowed';
+
+function getSingleTaskDelegationDirective(
+  request: string | undefined
+): SingleTaskDelegationDirective | undefined {
+  if (typeof request !== 'string') return undefined;
+  if (
+    NEGATED_SINGLE_TASK_DELEGATION_PATTERNS.some((pattern) => pattern.test(request))
+  ) {
+    return 'multiple-allowed';
+  }
+  return SINGLE_TASK_DELEGATION_PATTERNS.some((pattern) => pattern.test(request))
+    ? 'required'
+    : undefined;
+}
+
+export function isSingleTaskDelegationRequired(request: string | undefined): boolean {
+  return getSingleTaskDelegationDirective(request) === 'required';
+}
+
+export function resolveSingleTaskDelegationRequirement(
+  requests: readonly (string | undefined)[]
+): boolean {
+  for (const request of requests) {
+    const directive = getSingleTaskDelegationDirective(request);
+    if (directive !== undefined) return directive === 'required';
+  }
+  return false;
+}
+
 export const DELEGATION_RETRY_PROMPT =
   'The user explicitly required delegation, but no Task tool call completed ' +
   'successfully. Do not solve the task directly or explain. Your next action ' +
@@ -277,14 +322,32 @@ export type DelegationRequirementAction =
   | { action: 'none' };
 
 export function checkDelegationRequirement(
-  userRequest: string | undefined,
+  userRequest: string | readonly string[] | undefined,
   successfulTools: ReadonlySet<string>,
   retryCount: number
 ): DelegationRequirementAction {
+  const requests = (
+    typeof userRequest === 'string' ? [userRequest] : (userRequest ?? [])
+  )
+    .map((request) => request.trim())
+    .filter(Boolean);
+  const singleTaskRequired = resolveSingleTaskDelegationRequirement(requests);
+  let generalDelegationRequired = false;
+  if (!singleTaskRequired) {
+    for (const request of requests) {
+      if (NEGATED_DELEGATION_PATTERNS.some((pattern) => pattern.test(request))) {
+        break;
+      }
+      if (EXPLICIT_DELEGATION_PATTERNS.some((pattern) => pattern.test(request))) {
+        generalDelegationRequired = true;
+        break;
+      }
+    }
+  }
+
   if (
-    !userRequest ||
-    NEGATED_DELEGATION_PATTERNS.some((pattern) => pattern.test(userRequest)) ||
-    !EXPLICIT_DELEGATION_PATTERNS.some((pattern) => pattern.test(userRequest)) ||
+    requests.length === 0 ||
+    (!singleTaskRequired && !generalDelegationRequired) ||
     successfulTools.has('Task')
   ) {
     return { action: 'none' };

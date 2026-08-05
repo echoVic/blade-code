@@ -32,6 +32,7 @@ import {
 } from '../../store/vanilla.js';
 import { getBuiltinTools } from '../../tools/builtin/index.js';
 import { BackgroundShellManager } from '../../tools/builtin/shell/BackgroundShellManager.js';
+import { FileAccessTracker } from '../../tools/builtin/file/FileAccessTracker.js';
 import { InMemorySessionApprovalStore } from '../../tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
@@ -97,15 +98,15 @@ export interface SessionRuntimeOptions {
 
 export class SessionRuntime {
   private readonly approvalStore = new InMemorySessionApprovalStore();
-  private readonly baseRegistry = new ToolRegistry();
+  private baseRegistry = new ToolRegistry();
   private readonly attachmentCollector: AttachmentCollector;
   private readonly goalStore: GoalStore;
-  private activeTurnMailbox!: ActiveTurnMailbox;
+  private activeTurnMailbox?: ActiveTurnMailbox;
 
-  private chatService!: IChatService;
-  private executionEngine!: ExecutionEngine;
+  private chatService?: IChatService;
+  private executionEngine?: ExecutionEngine;
   private currentModelId?: string;
-  private currentModelMaxContextTokens!: number;
+  private currentModelMaxContextTokens?: number;
   private initialized = false;
   private sessionLease?: SessionLease;
   private sessionMcpRegistry?: McpRegistry;
@@ -191,10 +192,16 @@ export class SessionRuntime {
   }
 
   getChatService(): IChatService {
+    if (!this.chatService) {
+      throw new Error('Session runtime is not initialized');
+    }
     return this.chatService;
   }
 
   getExecutionEngine(): ExecutionEngine {
+    if (!this.executionEngine) {
+      throw new Error('Session runtime is not initialized');
+    }
     return this.executionEngine;
   }
 
@@ -207,6 +214,9 @@ export class SessionRuntime {
   }
 
   getCurrentModelMaxContextTokens(): number {
+    if (this.currentModelMaxContextTokens === undefined) {
+      throw new Error('Session runtime is not initialized');
+    }
     return this.currentModelMaxContextTokens;
   }
 
@@ -247,69 +257,70 @@ export class SessionRuntime {
   }
 
   beginTurn(): ActiveTurnHandle {
-    return this.activeTurnMailbox.beginTurn();
+    return this.getActiveTurnMailbox().beginTurn();
   }
 
   async prepareInputTurn(content: UserMessageContent): Promise<InputTurnPreparation> {
-    return this.activeTurnMailbox.prepareInputTurn(content);
+    return this.getActiveTurnMailbox().prepareInputTurn(content);
   }
 
   async enqueueSteering(
     content: UserMessageContent,
     options?: { allowBeforeTurn?: boolean }
   ): Promise<SteeringEnqueueResult> {
-    return this.activeTurnMailbox.enqueue(content, options);
+    return this.getActiveTurnMailbox().enqueue(content, options);
   }
 
   async drainSteering(handle: ActiveTurnHandle): Promise<SteeringMessage[]> {
-    return this.activeTurnMailbox.drain(handle);
+    return this.getActiveTurnMailbox().drain(handle);
   }
 
   async drainSteeringOrSeal(handle: ActiveTurnHandle): Promise<{
     messages: SteeringMessage[];
     sealed: boolean;
   }> {
-    return this.activeTurnMailbox.drainOrSeal(handle);
+    return this.getActiveTurnMailbox().drainOrSeal(handle);
   }
 
   async acknowledgeTurn(handle: ActiveTurnHandle): Promise<void> {
-    const ids = await this.activeTurnMailbox.claimedMessageIds(handle);
+    const mailbox = this.getActiveTurnMailbox();
+    const ids = await mailbox.claimedMessageIds(handle);
     if (ids.length === 0) return;
-    await this.executionEngine
+    await this.getExecutionEngine()
       .getContextManager()
       .persistentStore.acknowledgeInboxMessages(this.sessionId, ids);
-    await this.activeTurnMailbox.acknowledge(ids);
+    await mailbox.acknowledge(ids);
   }
 
   async finishTurn(
     handle: ActiveTurnHandle,
     options?: { continuePending?: boolean }
   ): Promise<ActiveTurnHandle | undefined> {
-    return this.activeTurnMailbox.finishTurn(handle, options);
+    return this.getActiveTurnMailbox().finishTurn(handle, options);
   }
 
   async beginPendingTurn(): Promise<ActiveTurnHandle | undefined> {
-    return this.activeTurnMailbox.beginPendingTurn();
+    return this.getActiveTurnMailbox().beginPendingTurn();
   }
 
   hasActiveTurn(): boolean {
-    return this.activeTurnMailbox.isActive();
+    return this.activeTurnMailbox?.isActive() ?? false;
   }
 
   hasTurnOwner(): boolean {
-    return this.activeTurnMailbox.hasTurnOwner();
+    return this.activeTurnMailbox?.hasTurnOwner() ?? false;
   }
 
   getPendingSteeringCount(): number {
-    return this.activeTurnMailbox.pendingCount();
+    return this.activeTurnMailbox?.pendingCount() ?? 0;
   }
 
   getPendingSteeringMessages(): SteeringMessage[] {
-    return this.activeTurnMailbox.pendingMessages();
+    return this.activeTurnMailbox?.pendingMessages() ?? [];
   }
 
   getRecoveredSteeringCount(): number {
-    return this.activeTurnMailbox.recoveredCount();
+    return this.activeTurnMailbox?.recoveredCount() ?? 0;
   }
 
   async initialize(): Promise<void> {
@@ -331,7 +342,7 @@ export class SessionRuntime {
         this.resolveModelConfig(this.options.modelId),
         '使用模型:'
       );
-      await this.executionEngine
+      await this.getExecutionEngine()
         .getContextManager()
         .persistentStore.initSession(this.sessionId);
 
@@ -341,11 +352,12 @@ export class SessionRuntime {
       );
     } catch (error) {
       try {
-        await this.sessionMcpRegistry?.disconnectAll();
-      } finally {
-        this.sessionMcpRegistry = undefined;
-        await this.sessionLease.release();
-        this.sessionLease = undefined;
+        await this.dispose();
+      } catch (cleanupError) {
+        logger.warn(
+          `[SessionRuntime ${this.sessionId}] Failed to clean up after initialization error`,
+          cleanupError
+        );
       }
       throw error;
     }
@@ -409,27 +421,54 @@ export class SessionRuntime {
   }
 
   async dispose(): Promise<void> {
-    try {
-      await BackgroundShellManager.getInstance().killSession(this.sessionId);
-      this.approvalStore.clear();
-      worktreeManager.releaseSession(this.sessionId);
-      const disposableChatService = this.chatService as
-        | (IChatService & { dispose?: () => Promise<void> | void })
-        | undefined;
-      await disposableChatService?.dispose?.();
-    } finally {
+    let firstError: unknown;
+    const attempt = async (label: string, cleanup: () => Promise<void> | void) => {
       try {
-        await this.sessionMcpRegistry?.disconnectAll();
-      } finally {
-        this.sessionMcpRegistry = undefined;
-        try {
-          await this.sessionLease?.release();
-        } finally {
-          this.sessionLease = undefined;
-          this.currentModelId = undefined;
-          this.initialized = false;
-        }
+        await cleanup();
+      } catch (error) {
+        firstError ??= error;
+        logger.warn(
+          `[SessionRuntime ${this.sessionId}] Failed to ${label} during cleanup`,
+          error
+        );
       }
+    };
+    const disposableChatService = this.chatService as
+      | (IChatService & { dispose?: () => Promise<void> | void })
+      | undefined;
+    const sessionMcpRegistry = this.sessionMcpRegistry;
+    const sessionLease = this.sessionLease;
+    this.chatService = undefined;
+    this.executionEngine = undefined;
+    this.activeTurnMailbox = undefined;
+    this.currentModelMaxContextTokens = undefined;
+    this.baseRegistry = new ToolRegistry();
+    this.sessionMcpRegistry = undefined;
+    this.sessionLease = undefined;
+
+    await attempt('kill the session background processes', () =>
+      BackgroundShellManager.getInstance().killSession(this.sessionId)
+    );
+    await attempt('clear the session approvals', () => this.approvalStore.clear());
+    await attempt('clear the session file access records', () =>
+      FileAccessTracker.getInstance().clearSession(this.sessionId, this.workspaceRoot)
+    );
+    await attempt('release the session worktrees', () =>
+      worktreeManager.releaseSession(this.sessionId)
+    );
+    await attempt('dispose the session chat service', () =>
+      disposableChatService?.dispose?.()
+    );
+    await attempt('disconnect the session MCP servers', () =>
+      sessionMcpRegistry?.disconnectAll()
+    );
+    await attempt('release the session lease', () => sessionLease?.release());
+
+    this.currentModelId = undefined;
+    this.initialized = false;
+
+    if (firstError !== undefined) {
+      throw firstError;
     }
   }
 
@@ -441,6 +480,13 @@ export class SessionRuntime {
       throw new Error(`模型配置未找到: ${modelId ?? 'current'}`);
     }
     return modelConfig;
+  }
+
+  private getActiveTurnMailbox(): ActiveTurnMailbox {
+    if (!this.activeTurnMailbox) {
+      throw new Error('Session runtime is not initialized');
+    }
+    return this.activeTurnMailbox;
   }
 
   private async applyModelConfig(

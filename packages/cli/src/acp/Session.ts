@@ -124,6 +124,8 @@ export class AcpSession {
   private runtime: SessionRuntime | null = null;
   private pendingPrompt: AbortController | null = null;
   private pendingResumeRequested = false;
+  private availableCommandsTimer: ReturnType<typeof setTimeout> | null = null;
+  private destroyed = false;
   private messages: Message[];
   private mode: AcpModeId = 'default';
 
@@ -181,6 +183,7 @@ export class AcpSession {
    */
   async replayHistory(): Promise<void> {
     for (const message of this.messages) {
+      if (!this.canSendUpdates()) return;
       const sessionUpdate =
         message.role === 'user'
           ? 'user_message_chunk'
@@ -190,10 +193,8 @@ export class AcpSession {
       if (!sessionUpdate) continue;
 
       for (const content of historyContentBlocks(message.content)) {
-        await this.connection.sessionUpdate({
-          sessionId: this.id,
-          update: { sessionUpdate, content },
-        });
+        if (!this.canSendUpdates()) return;
+        if (!(await this.sendUpdateAndWait({ sessionUpdate, content }))) return;
       }
     }
     if (this.pendingResumeRequested) {
@@ -205,13 +206,20 @@ export class AcpSession {
    * 发送可用的 slash commands 给 IDE（公开方法，由 BladeAgent 调用）
    */
   sendAvailableCommandsDelayed(): void {
+    if (this.destroyed || this.connection.signal.aborted) return;
+    if (this.availableCommandsTimer !== null) {
+      clearTimeout(this.availableCommandsTimer);
+    }
+
     // 延迟发送，确保在 session/new 响应之后
     // 使用较长的延迟确保 Zed 已准备好接收
     logger.debug(
       `[AcpSession ${this.id}] Scheduling available commands update (500ms delay)`
     );
-    setTimeout(() => {
-      this.sendAvailableCommands();
+    this.availableCommandsTimer = setTimeout(() => {
+      this.availableCommandsTimer = null;
+      if (this.destroyed || this.connection.signal.aborted) return;
+      void this.sendAvailableCommands();
     }, 500);
   }
 
@@ -230,6 +238,7 @@ export class AcpSession {
         cwd: this.cwd,
         workspaceRoot: this.cwd,
         sessionId: this.id,
+        messages: [...this.messages],
         signal, // 传递取消信号
         acp: {
           // 发送文本消息给 IDE
@@ -282,6 +291,13 @@ export class AcpSession {
       const action = result.data?.action;
       if (action === 'start_goal' || action === 'resume_goal') {
         this.schedulePendingResume();
+      }
+      if (
+        (result.message === 'compact_completed' ||
+          result.message === 'compact_fallback') &&
+        result.data?.compactedMessages
+      ) {
+        this.messages = [...result.data.compactedMessages];
       }
 
       // 发送结果给 IDE
@@ -612,7 +628,7 @@ export class AcpSession {
     } finally {
       if (this.pendingPrompt === abortController) {
         this.pendingPrompt = null;
-        if (this.pendingResumeRequested) {
+        if (!this.destroyed && this.pendingResumeRequested) {
           this.schedulePendingResume();
         }
       }
@@ -620,6 +636,7 @@ export class AcpSession {
   }
 
   private schedulePendingResume(): void {
+    if (this.destroyed || this.connection.signal.aborted) return;
     this.pendingResumeRequested = true;
     queueMicrotask(() => {
       void this.resumePendingIfIdle();
@@ -627,6 +644,7 @@ export class AcpSession {
   }
 
   private async resumePendingIfIdle(): Promise<void> {
+    if (this.destroyed || this.connection.signal.aborted) return;
     if (this.pendingPrompt || !this.runtime || !this.agent) return;
     const hasPending = this.runtime.getPendingSteeringCount() > 0;
     const goal = hasPending ? null : await this.runtime.getGoal();
@@ -750,18 +768,33 @@ export class AcpSession {
    * 销毁会话
    */
   async destroy(): Promise<void> {
-    this.cancel();
-    if (this.agent) {
-      await this.agent.destroy();
-      this.agent = null;
+    if (this.destroyed) return;
+    this.destroyed = true;
+    if (this.availableCommandsTimer !== null) {
+      clearTimeout(this.availableCommandsTimer);
+      this.availableCommandsTimer = null;
     }
-    if (this.runtime) {
-      await this.runtime.dispose();
-      this.runtime = null;
-    }
-    // 销毁此会话的 ACP 服务（不影响其他会话）
-    AcpServiceContext.destroySession(this.id);
+
+    const agent = this.agent;
+    const runtime = this.runtime;
+    this.agent = null;
+    this.runtime = null;
+    let firstError: unknown;
+    const attempt = async (cleanup: () => void | Promise<void>): Promise<void> => {
+      try {
+        await cleanup();
+      } catch (error) {
+        firstError ??= error;
+      }
+    };
+
+    await attempt(() => this.cancel());
+    if (agent) await attempt(() => agent.destroy());
+    if (runtime) await attempt(() => runtime.dispose());
+    await attempt(() => AcpServiceContext.destroySession(this.id));
     logger.debug(`[AcpSession ${this.id}] Destroyed`);
+
+    if (firstError !== undefined) throw firstError;
   }
 
   /**
@@ -797,7 +830,20 @@ export class AcpSession {
   /**
    * 发送会话更新通知
    */
+  private canSendUpdates(): boolean {
+    return !this.destroyed && !this.connection.signal.aborted;
+  }
+
+  private async sendUpdateAndWait(
+    update: SessionNotification['update']
+  ): Promise<boolean> {
+    if (!this.canSendUpdates()) return false;
+    await this.connection.sessionUpdate({ sessionId: this.id, update });
+    return this.canSendUpdates();
+  }
+
   private sendUpdate(update: SessionNotification['update']): void {
+    if (!this.canSendUpdates()) return;
     const params: SessionNotification = {
       sessionId: this.id,
       update,

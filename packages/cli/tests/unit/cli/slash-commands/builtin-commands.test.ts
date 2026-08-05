@@ -73,6 +73,7 @@ describe('Builtin Slash Commands', () => {
       expect(message).toContain('/init');
       expect(message).toContain('/help');
       expect(message).toContain('/branch');
+      expect(message).toContain('/fork [sessionId]');
     });
   });
 
@@ -80,8 +81,8 @@ describe('Builtin Slash Commands', () => {
     it('should register a session branch command', () => {
       expect(builtinCommands.branch).toMatchObject({
         name: 'branch',
-        aliases: expect.arrayContaining(['fork']),
       });
+      expect(builtinCommands.branch.aliases).toBeUndefined();
     });
   });
 

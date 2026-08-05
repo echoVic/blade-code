@@ -48,7 +48,6 @@ function setRuntimeModel(model: string): string {
         maxContextTokens: 64_000,
         maxOutputTokens: 512,
         timeout: 180_000,
-        maxRetries: 1,
       },
     ],
   });

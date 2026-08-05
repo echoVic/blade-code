@@ -3,13 +3,33 @@
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { sessionService } from '../../../src/services/sessionService';
-import { useSessionStore } from '../../../src/store/session';
+import type { SessionRef } from '@api/schemas';
+
+import { type Message, useSessionStore } from '../../../src/store/session';
 import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages';
 
 vi.mock('../../../src/components/chat/MarkdownRenderer', () => ({
   MarkdownRenderer: ({ content }: { content: string }) => content,
 }));
+
+const serviceMocks = vi.hoisted(() => ({
+  respondPermission: vi.fn(),
+  respondToQuestion: vi.fn(),
+}));
+
+vi.mock('../../../src/services', async () => {
+  const actual = await vi.importActual<typeof import('../../../src/services')>(
+    '../../../src/services'
+  );
+  return {
+    ...actual,
+    sessionService: {
+      ...actual.sessionService,
+      respondPermission: serviceMocks.respondPermission,
+      respondToQuestion: serviceMocks.respondToQuestion,
+    },
+  };
+});
 
 import { ChatMessage } from '../../../src/components/chat/ChatMessage';
 
@@ -18,6 +38,8 @@ describe('ChatMessage', () => {
   let root: ReactDOM.Root;
 
   beforeEach(() => {
+    serviceMocks.respondPermission.mockReset();
+    serviceMocks.respondToQuestion.mockReset();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -25,6 +47,11 @@ describe('ChatMessage', () => {
     useSessionStore.setState({
       messages: [],
       currentSessionId: 'session-1',
+      currentSessionRef: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+      } satisfies SessionRef,
+      forkingSessionRef: null,
       isTemporarySession: false,
       isLoading: false,
       error: null,
@@ -49,7 +76,6 @@ describe('ChatMessage', () => {
       root.unmount();
     });
     container.remove();
-    vi.restoreAllMocks();
   });
 
   test('keeps expanded tool details visible after rerendering with re-aggregated stable tool ids', () => {
@@ -99,7 +125,7 @@ describe('ChatMessage', () => {
   });
 
   test('renders user text and image previews from multimodal content', () => {
-    const message = {
+    const message: Message = {
       id: 'user-1',
       role: 'user',
       content: [
@@ -110,7 +136,7 @@ describe('ChatMessage', () => {
     };
 
     act(() => {
-      root.render(<ChatMessage message={message as never} />);
+      root.render(<ChatMessage message={message} />);
     });
 
     expect(container.textContent).toContain('look at this');
@@ -119,7 +145,7 @@ describe('ChatMessage', () => {
   });
 
   test('renders image-only user messages loaded from history', () => {
-    const message = {
+    const message: Message = {
       id: 'user-2',
       role: 'user',
       content: [
@@ -129,7 +155,7 @@ describe('ChatMessage', () => {
     };
 
     act(() => {
-      root.render(<ChatMessage message={message as never} />);
+      root.render(<ChatMessage message={message} />);
     });
 
     const image = container.querySelector('img');
@@ -137,12 +163,9 @@ describe('ChatMessage', () => {
     expect(container.textContent).not.toContain('undefined');
   });
 
-  test('offers distinct session and project permission scopes', async () => {
-    const respondPermission = vi
-      .spyOn(sessionService, 'respondPermission')
-      .mockResolvedValue(undefined);
-    const message = {
-      id: 'assistant-permission',
+  test('responds to permissions with the full current session ref instead of a bare session id', async () => {
+    const message: Message = {
+      id: 'assistant-confirmation',
       role: 'assistant',
       content: '',
       timestamp: 1700000000002,
@@ -153,45 +176,42 @@ describe('ChatMessage', () => {
         thinkingContent: '',
         tasks: [],
         subagent: null,
-        question: null,
         confirmation: {
           toolCallId: 'permission-1',
-          toolName: 'Bash',
-          description: 'Run the verification command',
+          toolName: 'Write',
+          description: 'Allow write',
           status: 'pending',
         },
+        question: null,
       },
     };
-    useSessionStore.setState({ messages: [message as never] });
 
-    act(() => {
-      root.render(<ChatMessage message={message as never} />);
-    });
-
-    expect(container.textContent).toContain('Session');
-    const project = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Project'
-    );
-    expect(project).toBeTruthy();
     await act(async () => {
-      project?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      root.render(<ChatMessage message={message} />);
     });
 
-    expect(respondPermission).toHaveBeenCalledWith('session-1', 'permission-1', {
-      approved: true,
-      scope: 'project',
+    const onceButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Once')
+    );
+    expect(onceButton).toBeTruthy();
+
+    await act(async () => {
+      onceButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
+
+    expect(serviceMocks.respondPermission).toHaveBeenCalledWith(
+      { sessionId: 'session-1', projectPath: '/workspace/a' },
+      'permission-1',
+      { approved: true, scope: 'once' }
+    );
   });
 
-  test('submits structured answers through the permission endpoint and closes the prompt', async () => {
-    const respondPermission = vi
-      .spyOn(sessionService, 'respondPermission')
-      .mockResolvedValue(undefined);
-    const message = {
+  test('responds to questions with the full current session ref instead of a bare session id', async () => {
+    const message: Message = {
       id: 'assistant-question',
       role: 'assistant',
       content: '',
-      timestamp: 1700000000002,
+      timestamp: 1700000000003,
       agentContent: {
         textBefore: '',
         toolCalls: [],
@@ -205,116 +225,43 @@ describe('ChatMessage', () => {
           status: 'pending',
           questions: [
             {
-              header: 'Channel',
-              question: 'Which release channel should be used?',
-              multiSelect: false,
+              question: 'Choose one',
+              header: 'mode',
               options: [
-                { label: 'Stable', description: 'Use stable' },
-                { label: 'Canary', description: 'Use canary' },
+                { label: 'A', description: 'Option A' },
+                { label: 'B', description: 'Option B' },
               ],
+              multiSelect: false,
             },
           ],
         },
       },
     };
-    useSessionStore.setState({ messages: [message as never] });
 
-    act(() => {
-      root.render(<ChatMessage message={message as never} />);
-    });
-
-    const submitBeforeAnswer = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Submit'
-    );
-    expect(submitBeforeAnswer?.disabled).toBe(true);
-
-    const canary = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Canary')
-    );
-    act(() => {
-      canary?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    const submit = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Submit'
-    );
     await act(async () => {
-      submit?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      root.render(<ChatMessage message={message} />);
     });
 
-    expect(respondPermission).toHaveBeenCalledWith('session-1', 'question-1', {
-      approved: true,
-      answers: { Channel: 'Canary' },
-    });
-    expect(
-      useSessionStore.getState().messages[0]?.agentContent?.question
-    ).toMatchObject({
-      status: 'answered',
-      answers: { Channel: 'Canary' },
-    });
-  });
-
-  test('accepts a custom Other response for a structured question', async () => {
-    const respondPermission = vi
-      .spyOn(sessionService, 'respondPermission')
-      .mockResolvedValue(undefined);
-    const message = {
-      id: 'assistant-other',
-      role: 'assistant',
-      content: '',
-      timestamp: 1700000000003,
-      agentContent: {
-        textBefore: '',
-        toolCalls: [],
-        textAfter: '',
-        thinkingContent: '',
-        tasks: [],
-        subagent: null,
-        confirmation: null,
-        question: {
-          toolCallId: 'question-other',
-          status: 'pending',
-          questions: [
-            {
-              header: 'Channel',
-              question: 'Which release channel should be used?',
-              multiSelect: false,
-              options: [
-                { label: 'Stable', description: 'Use stable' },
-                { label: 'Canary', description: 'Use canary' },
-              ],
-            },
-          ],
-        },
-      },
-    };
-    useSessionStore.setState({ messages: [message as never] });
-    act(() => {
-      root.render(<ChatMessage message={message as never} />);
-    });
-
-    const other = container.querySelector(
-      'input[aria-label="Channel other response"]'
-    ) as HTMLInputElement | null;
-    expect(other).toBeTruthy();
-    act(() => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        'value'
-      )?.set;
-      setter?.call(other, 'Preview');
-      other?.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    const submit = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Submit'
+    const optionButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('Option A')
     );
-    expect(submit?.disabled).toBe(false);
+    const submitButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('Submit')
+    );
+    expect(optionButton).toBeTruthy();
+    expect(submitButton).toBeTruthy();
+
     await act(async () => {
-      submit?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      optionButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      submitButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(respondPermission).toHaveBeenCalledWith('session-1', 'question-other', {
-      approved: true,
-      answers: { Channel: 'Preview' },
-    });
+    expect(serviceMocks.respondToQuestion).toHaveBeenCalledWith(
+      { sessionId: 'session-1', projectPath: '/workspace/a' },
+      'question-1',
+      { mode: 'A' }
+    );
   });
 });

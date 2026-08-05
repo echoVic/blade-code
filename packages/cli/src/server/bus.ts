@@ -1,4 +1,13 @@
 import { EventEmitter } from 'events';
+import type { SessionRef } from './sessionRef.js';
+import { normalizeSessionRef } from './sessionRef.js';
+
+export interface BusEvent {
+  sessionId: string;
+  projectPath: string;
+  type: string;
+  properties: Record<string, unknown>;
+}
 
 class GlobalBus extends EventEmitter {
   private static instance: GlobalBus;
@@ -15,17 +24,17 @@ class GlobalBus extends EventEmitter {
     return GlobalBus.instance;
   }
 
-  publish(sessionId: string, type: string, properties: Record<string, unknown>) {
-    this.emit('event', { sessionId, type, properties });
+  publish(ref: SessionRef, type: string, properties: Record<string, unknown>) {
+    const normalizedRef = normalizeSessionRef(ref);
+    this.emit('event', {
+      sessionId: normalizedRef.sessionId,
+      projectPath: normalizedRef.projectPath,
+      type,
+      properties,
+    } satisfies BusEvent);
   }
 
-  subscribe(
-    callback: (event: {
-      sessionId: string;
-      type: string;
-      properties: Record<string, unknown>;
-    }) => void
-  ) {
+  subscribe(callback: (event: BusEvent) => void) {
     this.on('event', callback);
     return () => this.off('event', callback);
   }
