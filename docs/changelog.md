@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### 🐛 问题修复
+
+- tag workflow 补齐 GitHub Release guard 的 shell 闭合，并新增可指定既有 tag
+  的幂等手动恢复入口；发布契约测试会对所有内嵌 shell 执行语法校验
+
 ## [0.7.8] - 2026-08-05
 
 ### ✨ 新功能
