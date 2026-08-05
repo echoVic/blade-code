@@ -310,7 +310,7 @@ describe('BladeAgent', () => {
 
       expect(response).toBeDefined();
       expect(response.sessionId).toBeDefined();
-      expect(response.sessionId).toMatch(/^session-[A-Za-z0-9_-]+$/);
+      expect(response.sessionId).toMatch(/^acp-[A-Za-z0-9_-]+$/);
       const modes = response.modes;
       expect(modes).toBeDefined();
       if (!modes) {

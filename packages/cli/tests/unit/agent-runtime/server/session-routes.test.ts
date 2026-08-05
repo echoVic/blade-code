@@ -168,7 +168,7 @@ describe('SessionRoutes runtime reuse', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
-      sessionId: expect.stringMatching(/^session-[A-Za-z0-9_-]+$/),
+      sessionId: expect.stringMatching(/^web-[A-Za-z0-9_-]+$/),
     });
   });
 
