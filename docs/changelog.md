@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.6] - 2026-08-05
+
+### ✨ 新功能
+
+- 新增 session 级持久化 Goal Mode：目标、状态、token 预算、用量、耗时与续跑次数通过原子 sidecar 跨进程恢复
+- 新增 `GetGoal`、`CreateGoal`、`UpdateGoal` 模型工具和 `/goal` 命令，模型负责判断目标完成或阻塞，不设置固定自动续跑次数上限
+- CLI、Web 与 ACP 支持 active goal 自动续跑、暂停、恢复、编辑、清除及崩溃后唤醒，并共享同一 Goal lifecycle
+- Web 新增 Goal 可视化控制栏，提供状态摘要、编辑、暂停/继续、删除确认、详情折叠和 token/耗时统计
+- 新增跨 CLI、Web、ACP 的 durable session branch、文件 rewind、结构化用户问答和可取消阻塞交互
+- 后台 shell 支持交互式 stdin、输出截断与跨表面状态展示；权限批准可显式选择 session 或 project scope
+
+### 🐛 问题修复
+
+- 修复中断工具调用历史回放不完整、storage-backed session ID 不安全以及阻塞交互无法可靠取消的问题
+- Goal 编辑保持原状态，暂停目标不会因修改 objective 隐式恢复；按钮操作不再污染聊天 transcript
+- Web Goal 文本命令与可视化按钮在活动 run 中保持一致，不会提前清除 streaming 状态
+
+### ✅ 测试相关
+
+- 新增 Goal 状态机、原子持久化、预算、崩溃恢复、模型工具、CLI/TUI、Web REST/SSE、ACP 和可视化控制栏测试
+- 单元测试 1,581 项、Web 测试 44 项及 production build 通过
+- DeepSeek v4 Flash/Pro 完整生产矩阵获得 99 项真实 API 通过证据；其中 3 项首轮模型轨迹偏差在隔离复跑中通过
+- Goal Core、Web 与 ACP 三条真实 API 轨迹全部通过
+
 ## [0.7.5] - 2026-08-03
 
 ### ✨ 新功能
