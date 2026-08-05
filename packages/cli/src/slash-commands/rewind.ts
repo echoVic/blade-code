@@ -1,10 +1,5 @@
-/**
- * /rewind — 回退文件到 Blade 最近一次成功编辑前的状态
- *
- * 用法：/rewind [file_path]
- */
-
 import path from 'node:path';
+import { SessionService } from '../services/SessionService.js';
 import { getState } from '../store/vanilla.js';
 import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { SnapshotManager } from '../tools/builtin/file/SnapshotManager.js';
@@ -12,80 +7,144 @@ import { PathSecurity } from '../utils/pathSecurity.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 import { getUI } from './types.js';
 
+async function handleFileRewind(
+  pathArgs: string[],
+  context: SlashCommandContext
+): Promise<SlashCommandResult> {
+  const ui = getUI(context);
+  const sessionId = context.sessionId ?? getState().session?.sessionId;
+  if (!sessionId) {
+    ui.sendMessage('No active session is available for file rewind.');
+    return { success: false, error: 'No active session' };
+  }
+  if (pathArgs.length === 0) {
+    return {
+      success: false,
+      error: 'Usage: /rewind file <file_path>',
+    };
+  }
+
+  const workspaceRoot = path.resolve(context.workspaceRoot ?? context.cwd);
+  const targetPath = path.resolve(context.cwd, pathArgs.join(' '));
+  if (!(await PathSecurity.isWithinWorkspaceResolved(targetPath, workspaceRoot))) {
+    const error = `Target path is outside the current workspace: ${targetPath}`;
+    ui.sendMessage(error);
+    return { success: false, error };
+  }
+
+  const snapshotManager = new SnapshotManager({
+    sessionId,
+    workspaceRoot,
+  });
+  await snapshotManager.initialize();
+  const restored = await snapshotManager.rewindLatest(targetPath);
+  FileAccessTracker.getInstance().clearFileRecord(restored.filePath);
+  const displayPath = path.relative(workspaceRoot, targetPath) || '.';
+  ui.sendMessage(
+    `Rewound \`${displayPath}\` to the state before the latest Blade edit (v${restored.version}).`
+  );
+  return { success: true };
+}
+
+function parseTurnRewindArgs(args: string[]): {
+  targetMessageId: string;
+  mode: 'conversation' | 'code' | 'both';
+} {
+  const flags = new Set(args.filter((arg) => arg.startsWith('--')));
+  const targets = args.filter((arg) => !arg.startsWith('--'));
+  const knownFlags = new Set(['--code', '--code-only', '--conversation']);
+  const unknownFlag = [...flags].find((flag) => !knownFlags.has(flag));
+  if (unknownFlag) throw new Error(`Unknown rewind option: ${unknownFlag}`);
+  if (targets.length !== 1) {
+    throw new Error(
+      'Usage: /rewind <checkpointId> [--code|--code-only|--conversation]'
+    );
+  }
+  if (flags.has('--code') && flags.has('--code-only')) {
+    throw new Error('--code and --code-only cannot be combined');
+  }
+  return {
+    targetMessageId: targets[0]!,
+    mode: flags.has('--code-only')
+      ? 'code'
+      : flags.has('--code')
+        ? 'both'
+        : 'conversation',
+  };
+}
+
 const rewindCommand: SlashCommand = {
   name: 'rewind',
-  description: 'Revert a file to its state before the last Blade edit',
+  description: 'Rewind the conversation and optionally restore code',
   fullDescription:
-    '回退文件到 Blade 最近一次成功编辑前的状态。不带参数列出当前工作区可回退文件。',
-  usage: '/rewind [file_path]',
-  aliases: ['undo'],
+    'List durable user-turn checkpoints or rewind to one. Use --code to restore both conversation and code. Legacy single-file rewind remains available through /rewind file <path>.',
+  usage: '/rewind [checkpointId] [--code|--code-only] | /rewind file <file_path>',
+  aliases: ['undo', 'checkpoint'],
   async handler(
     args: string[],
     context: SlashCommandContext
   ): Promise<SlashCommandResult> {
     const ui = getUI(context);
-    const sessionId = context.sessionId ?? getState().session?.sessionId;
-
-    if (!sessionId) {
-      ui.sendMessage('无活跃会话，无法查找快照。');
-      return { success: false, message: 'No active session' };
-    }
-
-    const workspaceRoot = path.resolve(context.workspaceRoot ?? context.cwd);
-    const snapshotManager = new SnapshotManager({ sessionId });
-
     try {
-      await snapshotManager.initialize();
-
+      if (args[0] === 'file' || args[0] === '--file') {
+        return await handleFileRewind(args.slice(1), context);
+      }
+      if (!context.rewind) {
+        return {
+          success: false,
+          error: 'This surface does not own a session runtime for rewind',
+        };
+      }
       if (args.length === 0) {
-        const snapshots = await snapshotManager.listAllSnapshots();
-        const latestByFile = new Map<string, (typeof snapshots)[number]>();
-
-        for (const snapshot of snapshots.slice().reverse()) {
-          if (
-            !latestByFile.has(snapshot.filePath) &&
-            (await PathSecurity.isWithinWorkspaceResolved(
-              snapshot.filePath,
-              workspaceRoot
-            ))
-          ) {
-            latestByFile.set(snapshot.filePath, snapshot);
-          }
+        const checkpoints = await context.rewind.listCheckpoints();
+        if (checkpoints.length === 0) {
+          ui.sendMessage('Nothing to rewind to yet.');
+          return { success: true };
         }
-
-        if (latestByFile.size === 0) {
-          ui.sendMessage('当前会话在这个工作区没有可回退的文件快照。');
-          return { success: true, message: 'No snapshots available' };
-        }
-
-        let output = '**可回退的文件快照：**\n\n';
-        for (const [filePath, snapshot] of latestByFile) {
-          const displayPath = path.relative(workspaceRoot, filePath) || '.';
-          output += `- \`${displayPath}\` (v${snapshot.version}, ${snapshot.timestamp.toLocaleTimeString()})\n`;
-        }
-        output += '\n使用 `/rewind <file_path>` 回退指定文件。';
-        ui.sendMessage(output);
-        return { success: true, message: `${latestByFile.size} snapshots available` };
+        const lines = checkpoints.map((checkpoint) => {
+          const files =
+            checkpoint.fileCount === 0
+              ? ''
+              : `, ${checkpoint.fileCount} file${checkpoint.fileCount === 1 ? '' : 's'}`;
+          return `- \`${checkpoint.messageId}\` ${checkpoint.preview}${files}`;
+        });
+        ui.sendMessage(
+          [
+            '**Rewind checkpoints**',
+            '',
+            ...lines,
+            '',
+            'Use `/rewind <checkpointId>` for conversation only or add `--code` to restore code too.',
+          ].join('\n')
+        );
+        return { success: true };
       }
 
-      const targetPath = path.resolve(context.cwd, args.join(' '));
-      if (!(await PathSecurity.isWithinWorkspaceResolved(targetPath, workspaceRoot))) {
-        const error = `目标路径不在当前工作区内: ${targetPath}`;
-        ui.sendMessage(error);
-        return { success: false, error };
-      }
-
-      const restored = await snapshotManager.rewindLatest(targetPath);
-      FileAccessTracker.getInstance().clearFileRecord(restored.filePath);
-
-      const displayPath = path.relative(workspaceRoot, targetPath) || '.';
+      const options = parseTurnRewindArgs(args);
+      const result = await context.rewind.execute(options);
+      const visibleMessages = SessionService.toUISafeMessages(result.messages);
+      const restored =
+        result.restoredFiles.length === 0
+          ? ''
+          : ` Restored ${result.restoredFiles.length} file${result.restoredFiles.length === 1 ? '' : 's'}.`;
       ui.sendMessage(
-        `已回退 \`${displayPath}\` 到 Blade 编辑前的状态 (v${restored.version})`
+        `Rewound ${result.removedTurns} turn${result.removedTurns === 1 ? '' : 's'} to before: ${result.checkpoint.preview}.${restored}`
       );
-      return { success: true, message: `Reverted ${displayPath}` };
+      return {
+        success: true,
+        data: {
+          action: 'rewind_session',
+          sessionId: context.sessionId,
+          messages: result.messages,
+          visibleMessages,
+          checkpoint: result.checkpoint,
+          mode: result.mode,
+          restoredFiles: result.restoredFiles,
+        },
+      };
     } catch (error) {
-      const message = (error as Error).message;
-      ui.sendMessage(`回退失败: ${message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      ui.sendMessage(`Rewind failed: ${message}`);
       return { success: false, error: message };
     }
   },

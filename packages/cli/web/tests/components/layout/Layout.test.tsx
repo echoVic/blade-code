@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
+import type { Session, SessionRef } from '@api/schemas';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { Session, SessionRef } from '@api/schemas';
 
 const serviceMocks = vi.hoisted(() => ({
   getGitInfo: vi.fn(),
@@ -121,5 +121,47 @@ describe('Layout', () => {
     expect(serviceMocks.getGitInfo).toHaveBeenCalledWith(
       createRef('shared-id', '/workspace/b')
     );
+  });
+
+  test('enables rewind only for an idle persisted session', async () => {
+    const { Layout } = await import('../../../src/components/layout/Layout');
+    const { useSessionStore } = await import('../../../src/store/session');
+    const session = createSession();
+    useSessionStore.setState({
+      sessions: [session],
+      currentSessionId: session.sessionId,
+      currentSessionRef: createRef(session.sessionId, session.projectPath),
+      isTemporarySession: false,
+      isStreaming: false,
+    });
+    serviceMocks.getGitInfo.mockResolvedValue({ branch: 'main' });
+
+    await act(async () => {
+      root.render(
+        <Layout>
+          <div>content</div>
+        </Layout>
+      );
+    });
+
+    const rewind = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Rewind session"]'
+    );
+    expect(rewind?.disabled).toBe(false);
+
+    await act(async () => {
+      useSessionStore.setState({ isStreaming: true });
+      await Promise.resolve();
+    });
+    expect(rewind?.disabled).toBe(true);
+
+    await act(async () => {
+      useSessionStore.setState({
+        isStreaming: false,
+        isTemporarySession: true,
+      });
+      await Promise.resolve();
+    });
+    expect(rewind?.disabled).toBe(true);
   });
 });

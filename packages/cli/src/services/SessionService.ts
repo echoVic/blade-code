@@ -4,7 +4,7 @@
  */
 
 import type { BigIntStats } from 'node:fs';
-import { access, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import { nanoid } from 'nanoid';
 import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
@@ -17,9 +17,11 @@ import {
   getSessionGoalFilePath,
   unescapeProjectPath,
 } from '../context/storage/pathUtils.js';
-import type { SessionEvent } from '../context/types.js';
+import type { SessionEvent, SessionRewindMode } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { JsonValue, SessionMessage } from '../store/types.js';
+import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
+import { SnapshotManager } from '../tools/builtin/file/SnapshotManager.js';
 import { getVersion } from '../utils/packageInfo.js';
 import type { ContentPart, Message } from './ChatServiceInterface.js';
 import {
@@ -28,6 +30,12 @@ import {
   paginateSessionCatalog,
   type SessionListOptions,
 } from './sessionCatalog.js';
+import {
+  listSessionRewindCheckpoints as listProjectedRewindCheckpoints,
+  materializeSessionEvents,
+  type SessionRewindCheckpoint as ProjectedRewindCheckpoint,
+  planSessionRewind,
+} from './sessionRewind.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -101,6 +109,23 @@ export interface ForkedSession {
   projectPath: string;
   messages: Message[];
   metadata: SessionMetadata;
+}
+
+export interface SessionRewindCheckpoint extends ProjectedRewindCheckpoint {
+  fileCount: number;
+}
+
+export interface RewindSessionOptions {
+  targetMessageId: string;
+  mode: SessionRewindMode;
+}
+
+export interface RewoundSession {
+  checkpoint: SessionRewindCheckpoint;
+  mode: SessionRewindMode;
+  removedTurns: number;
+  restoredFiles: string[];
+  messages: Message[];
 }
 
 /**
@@ -278,6 +303,102 @@ export class SessionService {
     }
   }
 
+  static async listRewindCheckpoints(
+    sessionId: string,
+    projectPath: string
+  ): Promise<SessionRewindCheckpoint[]> {
+    assertValidSessionId(sessionId);
+    const resolvedProjectPath = this.resolveCatalogWorkspace(projectPath);
+    const filePath = getSessionFilePath(resolvedProjectPath, sessionId);
+    const entries = await this.readStableSessionSnapshot(filePath, sessionId);
+    this.validateSessionWorkspace(entries, sessionId, resolvedProjectPath);
+
+    const snapshotManager = new SnapshotManager({
+      sessionId,
+      workspaceRoot: resolvedProjectPath,
+    });
+    await snapshotManager.initialize();
+    const checkpoints = listProjectedRewindCheckpoints(entries);
+    const result: SessionRewindCheckpoint[] = [];
+    for (const checkpoint of checkpoints) {
+      const plan = planSessionRewind(entries, checkpoint.messageId);
+      const preview = await snapshotManager.previewRewind(plan.snapshotMessageIds);
+      result.push({
+        ...checkpoint,
+        fileCount: preview.files.length,
+      });
+    }
+    return result;
+  }
+
+  static async rewindSession(
+    sessionId: string,
+    projectPath: string,
+    options: RewindSessionOptions
+  ): Promise<RewoundSession> {
+    assertValidSessionId(sessionId);
+    const resolvedProjectPath = this.resolveCatalogWorkspace(projectPath);
+    const filePath = getSessionFilePath(resolvedProjectPath, sessionId);
+    const store = new JSONLStore(filePath);
+    let result: RewoundSession | undefined;
+
+    try {
+      await store.appendValidatedAsync(async (entries) => {
+        this.validateSessionWorkspace(entries, sessionId, resolvedProjectPath);
+        const plan = planSessionRewind(entries, options.targetMessageId);
+        const snapshotManager = new SnapshotManager({
+          sessionId,
+          workspaceRoot: resolvedProjectPath,
+        });
+        await snapshotManager.initialize();
+        const preview = await snapshotManager.previewRewind(plan.snapshotMessageIds);
+        const snapshotResult =
+          options.mode === 'conversation'
+            ? await snapshotManager.commitSnapshots(plan.snapshotMessageIds)
+            : await snapshotManager.rewindSnapshots(plan.snapshotMessageIds);
+        const now = new Date().toISOString();
+        const rewindEvent: Extract<SessionEvent, { type: 'session_rewound' }> = {
+          id: nanoid(),
+          sessionId,
+          timestamp: now,
+          type: 'session_rewound',
+          cwd: resolvedProjectPath,
+          gitBranch: detectGitBranch(resolvedProjectPath),
+          version: getVersion(),
+          data: {
+            rewindId: nanoid(),
+            targetMessageId: options.targetMessageId,
+            mode: options.mode,
+            restoredFiles: options.mode === 'conversation' ? [] : snapshotResult.files,
+            createdAt: now,
+          },
+        };
+        const projected = materializeSessionEvents([...entries, rewindEvent]);
+        result = {
+          checkpoint: {
+            ...plan.checkpoint,
+            fileCount: preview.files.length,
+          },
+          mode: options.mode,
+          removedTurns: plan.removedTurns,
+          restoredFiles: rewindEvent.data.restoredFiles,
+          messages: this.convertJSONLToMessages(projected),
+        };
+        return rewindEvent;
+      });
+    } catch (error) {
+      throw this.sanitizeStoredSessionError(error, sessionId);
+    }
+
+    if (!result) {
+      throw new Error(`Session rewind did not produce a result: ${sessionId}`);
+    }
+    for (const filePath of result.restoredFiles) {
+      FileAccessTracker.getInstance().clearFileRecord(filePath);
+    }
+    return result;
+  }
+
   /**
    * Fork committed history into a new transcript without mutating the source.
    * Exclusive creation makes an explicit target ID collision fail closed.
@@ -296,11 +417,14 @@ export class SessionService {
     }
 
     const sourceFilePath = getSessionFilePath(sourceProjectPath, sourceSessionId);
-    const sourceEntries = await this.readStableSessionSnapshot(
+    const sourceTranscript = await this.readStableSessionSnapshot(
       sourceFilePath,
       sourceSessionId
     );
-    const sourceCreated = this.getSessionCreatedEntry(sourceEntries, sourceSessionId);
+    const sourceCreated = this.getSessionCreatedEntry(
+      sourceTranscript,
+      sourceSessionId
+    );
     if (sourceCreated.data.sessionId !== sourceSessionId) {
       throw new Error(
         'Fork source session_created.data.sessionId must match the requested session ID'
@@ -314,6 +438,7 @@ export class SessionService {
         'Fork source session_created.cwd must resolve to the requested source workspace'
       );
     }
+    const sourceEntries = materializeSessionEvents(sourceTranscript);
 
     const now = new Date().toISOString();
     const rootId = sourceCreated.data.rootId || sourceSessionId;
@@ -617,7 +742,7 @@ export class SessionService {
     const partMap = new Map<string, ContentPart[]>();
     const recoveredToolAssistants = new Map<string, Message>();
     const toolCallIdByPartId = new Map<string, string>();
-    for (const entry of entries) {
+    for (const entry of materializeSessionEvents(entries)) {
       if (entry.type === 'message_created') {
         const recoveredAssistant =
           entry.data.role === 'assistant' && entry.data.parentMessageId
@@ -848,13 +973,14 @@ export class SessionService {
         entry.type === 'session_updated' ? { ...state, ...entry.data } : state,
       { ...created.data }
     );
+    const projected = materializeSessionEvents(entries);
 
-    const messageCount = entries.filter(
+    const messageCount = projected.filter(
       (entry) =>
         entry.type === 'message_created' &&
         ['user', 'assistant'].includes(entry.data.role)
     ).length;
-    const hasErrors = entries.some(
+    const hasErrors = projected.some(
       (entry) =>
         entry.type === 'part_created' &&
         entry.data.partType === 'tool_result' &&
@@ -915,6 +1041,20 @@ export class SessionService {
       throw new Error('Session catalog cwd must be absolute');
     }
     return path.resolve(projectPath);
+  }
+
+  private static validateSessionWorkspace(
+    entries: readonly SessionEvent[],
+    sessionId: string,
+    projectPath: string
+  ): void {
+    const created = this.getSessionCreatedEntry(entries, sessionId);
+    if (created.data.sessionId !== sessionId) {
+      throw new Error(`Session creation record sessionId mismatch: ${sessionId}`);
+    }
+    if (!path.isAbsolute(created.cwd) || path.resolve(created.cwd) !== projectPath) {
+      throw new Error(`Session creation record cwd mismatch: ${sessionId}`);
+    }
   }
 
   private static resolveForkWorkspace(projectPath: string): string {

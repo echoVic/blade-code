@@ -20,6 +20,12 @@ import {
   createChatServiceAsync,
   type IChatService,
 } from '../../services/ChatServiceInterface.js';
+import {
+  type RewindSessionOptions,
+  type RewoundSession,
+  type SessionRewindCheckpoint,
+  SessionService,
+} from '../../services/SessionService.js';
 import { discoverSkills } from '../../skills/index.js';
 import {
   ensureStoreInitialized,
@@ -30,9 +36,9 @@ import {
   getModelById,
   getThinkingModeEnabled,
 } from '../../store/vanilla.js';
+import { FileAccessTracker } from '../../tools/builtin/file/FileAccessTracker.js';
 import { getBuiltinTools } from '../../tools/builtin/index.js';
 import { BackgroundShellManager } from '../../tools/builtin/shell/BackgroundShellManager.js';
-import { FileAccessTracker } from '../../tools/builtin/file/FileAccessTracker.js';
 import { InMemorySessionApprovalStore } from '../../tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
@@ -40,6 +46,7 @@ import { getCwd } from '../../utils/cwd.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
 import { worktreeManager } from '../../worktree/WorktreeManager.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
+import { BackgroundAgentManager } from '../subagents/BackgroundAgentManager.js';
 import { subagentRegistry } from '../subagents/SubagentRegistry.js';
 import type { SubagentConfig } from '../subagents/types.js';
 import type { AgentOptions, UserMessageContent } from '../types.js';
@@ -254,6 +261,16 @@ export class SessionRuntime {
 
   async pauseActiveGoal(reason: string): Promise<GoalSnapshot | null> {
     return this.goalStore.pauseIfActive(reason);
+  }
+
+  async listRewindCheckpoints(): Promise<SessionRewindCheckpoint[]> {
+    this.assertRewindIdle();
+    return SessionService.listRewindCheckpoints(this.sessionId, this.workspaceRoot);
+  }
+
+  async rewindSession(options: RewindSessionOptions): Promise<RewoundSession> {
+    this.assertRewindIdle();
+    return SessionService.rewindSession(this.sessionId, this.workspaceRoot, options);
   }
 
   beginTurn(): ActiveTurnHandle {
@@ -487,6 +504,29 @@ export class SessionRuntime {
       throw new Error('Session runtime is not initialized');
     }
     return this.activeTurnMailbox;
+  }
+
+  private assertRewindIdle(): void {
+    if (this.hasTurnOwner()) {
+      throw new Error('Cannot rewind while the session has an active turn');
+    }
+    if (this.getPendingSteeringCount() > 0) {
+      throw new Error('Cannot rewind while durable input is pending');
+    }
+    if (
+      BackgroundShellManager.getInstance()
+        .listForSession(this.sessionId)
+        .some((process) => process.status === 'running')
+    ) {
+      throw new Error('Cannot rewind while a background shell is running');
+    }
+    if (
+      BackgroundAgentManager.getInstance()
+        .listForSession(this.sessionId)
+        .some((session) => session.status === 'running')
+    ) {
+      throw new Error('Cannot rewind while a background agent is running');
+    }
   }
 
   private async applyModelConfig(

@@ -1,7 +1,8 @@
-import { nanoid } from 'nanoid';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { nanoid } from 'nanoid';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
+import { materializeSessionEvents } from '../../services/sessionRewind.js';
 import type { JsonValue, MessageRole } from '../../store/types.js';
 import { getCwd } from '../../utils/cwd.js';
 import { getVersion } from '../../utils/packageInfo.js';
@@ -432,7 +433,7 @@ export class PersistentStore {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
       const store = new JSONLStore(filePath);
       const entries = await store.readAll();
-      return entries.length > 0 ? entries : null;
+      return entries.length > 0 ? materializeSessionEvents(entries) : null;
     } catch {
       return null;
     }
@@ -446,7 +447,7 @@ export class PersistentStore {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
       const store = new JSONLStore(filePath);
 
-      const entries = await store.readAll();
+      const entries = materializeSessionEvents(await store.readAll());
       if (entries.length === 0) return null;
       const firstEntry = entries.find((entry) => entry.type === 'session_created');
 
@@ -470,7 +471,7 @@ export class PersistentStore {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
       const store = new JSONLStore(filePath);
 
-      const entries = await store.readAll();
+      const entries = materializeSessionEvents(await store.readAll());
       if (entries.length === 0) return null;
       const messageMap = new Map<
         string,
@@ -547,10 +548,11 @@ export class PersistentStore {
       const stats = await store.getStats();
       if (!stats.exists) return null;
 
-      const entries = await store.readAll();
-      if (entries.length === 0) return null;
+      const rawEntries = await store.readAll();
+      if (rawEntries.length === 0) return null;
+      const entries = materializeSessionEvents(rawEntries);
 
-      const lastEntry = entries[entries.length - 1];
+      const lastEntry = rawEntries[rawEntries.length - 1];
       const messageCount = entries.filter(
         (entry) =>
           entry.type === 'message_created' &&

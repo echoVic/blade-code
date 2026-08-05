@@ -39,6 +39,18 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - session transcript 使用逐行 JSONL，换行符是单条事件的提交边界。加载时只允许忽略最后一个未换行且无法解析的尾片段，它代表进程在 append 过程中退出；任何已换行的坏记录或中间损坏都会 fail closed。
 - 同一进程中的 transcript append 按文件串行。首次恢复写入前会检查文件尾：完整 JSON 记录只缺换行时补齐换行，无法解析的 crash tail 则截回最后一个已提交边界，再追加新事件。
 - `SessionService`、`PersistentStore` 和 runtime resume 使用同一解析语义，避免会话列表可见但 CLI 无法恢复，或读取时跳过坏行而后续写入继续污染历史。
+- user-turn rewind 不截断 transcript，而是追加 `session_rewound` marker。resume、
+  catalog、fork、search 和 ContextManager 通过同一 projector 累积计算有效历史，
+  被回退的原始事件保留用于审计但不会重新进入模型或 UI。
+- conversation rewind 以 user-authored durable message ID 为边界，移除该回合及之后的
+  message/tool/compaction events；session metadata 与 lineage 不受影响。
+- code rewind 只接受每个文件的连续 snapshot 后缀。执行前检查所有文件的写后 hash
+  与 backup 完整性，任一文件被外部修改时整组拒绝，不产生 rewind marker。
+- snapshot manifest 使用 canonical workspace hash 和 session ID 共同分区。同 ID
+  的不同 workspace 不共享快照；旧版未分区 manifest 只有在全部文件都属于当前
+  workspace 时才会原子迁移，混合或不匹配 manifest 保持 fail closed。
+- rewind 必须由 session-owned Runtime 执行。活动 turn、durable pending input、
+  运行中的后台 shell 或后台 agent 都会阻止 rewind，避免恢复过程与写操作竞态。
 
 ## 验证
 

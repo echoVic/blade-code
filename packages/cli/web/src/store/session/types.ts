@@ -1,16 +1,17 @@
 import type { SessionRef } from '@api/schemas';
+import type { StateCreator } from 'zustand';
 import type {
-  Goal,
   Message as BaseMessage,
+  Goal,
   ImageAttachmentInput,
   MessageContent,
   MessageContentPart,
   PermissionMode,
   SendMessagePayload,
   Session,
+  SessionRewindMode,
   StreamEvent,
 } from '@/services';
-import type { StateCreator } from 'zustand';
 
 export type {
   Goal,
@@ -20,9 +21,10 @@ export type {
   PermissionMode,
   SendMessagePayload,
   Session,
+  SessionRef,
+  SessionRewindMode,
   StreamEvent,
 };
-export type { SessionRef };
 
 export interface TokenUsage {
   inputTokens: number;
@@ -135,6 +137,7 @@ export interface SessionSlice {
   deleteSession: (ref: SessionRef) => Promise<void>;
   updateSession: (ref: SessionRef, title: string) => Promise<void>;
   forkSession: (session: Session) => Promise<void>;
+  rewindSession: (targetMessageId: string, mode: SessionRewindMode) => Promise<boolean>;
   sendMessage: (payload: SendMessagePayload) => Promise<void>;
   abortSession: () => Promise<void>;
   pauseGoal: () => Promise<void>;

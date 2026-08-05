@@ -14,19 +14,19 @@
  * - 类型守卫函数
  */
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import {
-  processSlashCommand,
-  isInvokeSkillAction,
-  isInvokeCustomCommandAction,
-  isInvokePluginCommandAction,
-  isInvokeOnceModelAction,
-  isSessionSelectionAction,
-  type SlashRouteResult,
-} from '../../../../../src/ui/utils/slashCommandRouter.js';
-import type { ResolvedInput } from '../../../../../src/ui/hooks/useInputBuffer.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionMetadata } from '../../../../../src/services/SessionService.js';
 import type { AppActions, SessionActions } from '../../../../../src/store/types.js';
+import type { ResolvedInput } from '../../../../../src/ui/hooks/useInputBuffer.js';
+import {
+  isInvokeCustomCommandAction,
+  isInvokeOnceModelAction,
+  isInvokePluginCommandAction,
+  isInvokeSkillAction,
+  isSessionSelectionAction,
+  processSlashCommand,
+  type SlashRouteResult,
+} from '../../../../../src/ui/utils/slashCommandRouter.js';
 
 // Mock slash-commands 模块
 vi.mock('../../../../../src/slash-commands/index.js', () => ({
@@ -428,6 +428,54 @@ describe('processSlashCommand', () => {
       expect(sessionActions.clearMessages).toHaveBeenCalled();
       expect(sessionActions.setError).toHaveBeenCalledWith(null);
       expect(sessionActions.resetTokenUsage).toHaveBeenCalled();
+      expect(appActions.setTasks).toHaveBeenCalledWith([]);
+    });
+
+    it('rewind_session 应该原子替换当前会话历史', async () => {
+      const rawMessages = [{ role: 'user' as const, content: 'kept raw' }];
+      const visibleMessages = [
+        {
+          id: 'visible-1',
+          role: 'user' as const,
+          content: 'kept visible',
+          timestamp: 1,
+        },
+      ];
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: {
+          action: 'rewind_session',
+          sessionId: 'session-owner',
+          messages: rawMessages,
+          visibleMessages,
+        },
+      });
+      const sessionActions = createMockSessionActions();
+      const appActions = createMockAppActions();
+
+      const result = await processSlashCommand(
+        createResolvedInput('/rewind user-2'),
+        appActions,
+        sessionActions,
+        new AbortController().signal,
+        cleanupAgent,
+        'session-owner',
+        [],
+        {
+          listCheckpoints: vi.fn(),
+          execute: vi.fn(),
+        }
+      );
+
+      expect(result).toEqual({
+        type: 'handled',
+        commandResult: { success: true },
+      });
+      expect(sessionActions.restoreSession).toHaveBeenCalledWith(
+        'session-owner',
+        visibleMessages,
+        rawMessages
+      );
       expect(appActions.setTasks).toHaveBeenCalledWith([]);
     });
 

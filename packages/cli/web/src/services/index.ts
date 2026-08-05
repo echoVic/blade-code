@@ -11,6 +11,8 @@ export type {
   SendMessagePayload,
   SendMessageResponse,
   Session,
+  SessionRewindCheckpoint,
+  SessionRewindMode,
   StreamEvent,
 } from './sessionService';
 export { sessionService } from './sessionService';

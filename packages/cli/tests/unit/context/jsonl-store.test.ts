@@ -176,6 +176,52 @@ describe('JSONLStore.appendValidated', () => {
     ]);
   });
 
+  it('holds the file queue while an async validated builder performs side effects', async () => {
+    const created = createSessionCreated(
+      'session-1',
+      '/workspace',
+      '2024-01-01T00:00:00.000Z'
+    );
+    await writeFile(filePath, `${JSON.stringify(created)}\n`, 'utf8');
+    const store = new JSONLStore(filePath);
+    let releaseBuilder!: () => void;
+    const builderGate = new Promise<void>((resolve) => {
+      releaseBuilder = resolve;
+    });
+    const rewind = createSessionUpdated(
+      'session-1',
+      '/workspace',
+      '2024-01-01T00:00:01.000Z',
+      'rewind'
+    );
+    const appended = createSessionUpdated(
+      'session-1',
+      '/workspace',
+      '2024-01-01T00:00:02.000Z',
+      'append'
+    );
+
+    const transaction = store.appendValidatedAsync(async (entries) => {
+      expect(entries).toEqual([created]);
+      await builderGate;
+      return rewind;
+    });
+    const append = store.append(appended);
+    await Promise.resolve();
+
+    expect(parseSessionJSONL(await readFile(filePath, 'utf8'), filePath)).toEqual([
+      created,
+    ]);
+    releaseBuilder();
+    await Promise.all([transaction, append]);
+
+    expect(parseSessionJSONL(await readFile(filePath, 'utf8'), filePath)).toEqual([
+      created,
+      rewind,
+      appended,
+    ]);
+  });
+
   it('lets a queued validated append complete before a queued delete', async () => {
     const created = createSessionCreated(
       'session-1',

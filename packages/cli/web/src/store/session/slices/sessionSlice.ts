@@ -288,6 +288,60 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       }
     },
 
+    rewindSession: async (targetMessageId, mode) => {
+      const { currentSessionRef, isTemporarySession, isStreaming } = get();
+      if (!currentSessionRef || isTemporarySession) {
+        set({ error: 'No persisted session is available for rewind' });
+        return false;
+      }
+      if (isStreaming) {
+        set({ error: 'Stop the active run before rewinding' });
+        return false;
+      }
+      const generation = navigationGeneration;
+      try {
+        const result = await sessionService.rewindSession(
+          currentSessionRef,
+          targetMessageId,
+          mode
+        );
+        if (
+          !isCurrentNavigation(generation) ||
+          !sameSessionRef(get().currentSessionRef, currentSessionRef)
+        ) {
+          return false;
+        }
+        const messages = aggregateMessages(result.messages);
+        set((state) => ({
+          messages,
+          tokenUsage: { ...initialTokenUsage },
+          error: null,
+          currentRunId: null,
+          agentPhase: 'idle',
+          pendingSteeringCount: 0,
+          recoveredSteeringCount: 0,
+          currentAssistantMessageId: null,
+          hasToolCalls: false,
+          sessions: state.sessions.map((session) =>
+            session.sessionId === currentSessionRef.sessionId &&
+            session.projectPath === currentSessionRef.projectPath
+              ? { ...session, messageCount: messages.length }
+              : session
+          ),
+        }));
+        return true;
+      } catch (err) {
+        if (
+          !isCurrentNavigation(generation) ||
+          !sameSessionRef(get().currentSessionRef, currentSessionRef)
+        ) {
+          return false;
+        }
+        set({ error: (err as Error).message });
+        return false;
+      }
+    },
+
     sendMessage: async (payload: SendMessagePayload) => {
       const {
         currentSessionId,

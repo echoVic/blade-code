@@ -74,6 +74,56 @@ describe('SnapshotManager', () => {
       expect(snapshotDir).toContain(sessionId);
       expect(snapshotDir).toContain('file-history');
     });
+
+    it('相同 session ID 在不同工作区应该使用隔离的快照目录', async () => {
+      const workspaceA = path.join(tempDir, 'workspace-a');
+      const workspaceB = path.join(tempDir, 'workspace-b');
+      await fs.mkdir(workspaceA, { recursive: true });
+      await fs.mkdir(workspaceB, { recursive: true });
+      const fileA = path.join(workspaceA, 'fixture.txt');
+      const fileB = path.join(workspaceB, 'fixture.txt');
+      await fs.writeFile(fileA, 'a', 'utf8');
+      await fs.writeFile(fileB, 'b', 'utf8');
+
+      const managerA = new SnapshotManager({ sessionId, workspaceRoot: workspaceA });
+      const managerB = new SnapshotManager({ sessionId, workspaceRoot: workspaceB });
+      await managerA.initialize();
+      await managerB.initialize();
+      expect(managerA.getSnapshotDir()).not.toBe(managerB.getSnapshotDir());
+
+      const metadataA = await managerA.createSnapshot(fileA, 'message-a');
+      await fs.writeFile(fileA, 'changed-a', 'utf8');
+      await managerA.recordPostEditState(fileA, metadataA);
+      const metadataB = await managerB.createSnapshot(fileB, 'message-b');
+      await fs.writeFile(fileB, 'changed-b', 'utf8');
+      await managerB.recordPostEditState(fileB, metadataB);
+
+      await expect(managerA.listAllSnapshots()).resolves.toMatchObject([
+        { messageId: 'message-a' },
+      ]);
+      await expect(managerB.listAllSnapshots()).resolves.toMatchObject([
+        { messageId: 'message-b' },
+      ]);
+    });
+
+    it('应该把只属于当前工作区的旧版快照目录迁移到工作区作用域', async () => {
+      const metadata = await snapshotManager.createSnapshot(testFile, messageId);
+      await fs.writeFile(testFile, 'Changed content', 'utf8');
+      await snapshotManager.recordPostEditState(testFile, metadata);
+      const legacyDir = snapshotManager.getSnapshotDir();
+
+      const scopedManager = new SnapshotManager({
+        sessionId,
+        workspaceRoot: tempDir,
+      });
+      await scopedManager.initialize();
+
+      expect(scopedManager.getSnapshotDir()).not.toBe(legacyDir);
+      await expect(scopedManager.listAllSnapshots()).resolves.toMatchObject([
+        { messageId },
+      ]);
+      await expect(fs.stat(legacyDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
   });
 
   describe('创建快照', () => {
@@ -244,6 +294,65 @@ describe('SnapshotManager', () => {
       await restartedManager.rewindLatest(testFile);
       await expect(fs.readFile(testFile, 'utf-8')).resolves.toBe('Original content');
       await expect(restartedManager.listSnapshots(testFile)).resolves.toHaveLength(0);
+    });
+
+    it('应该按回合原子回退选中的快照后缀', async () => {
+      const first = await snapshotManager.createSnapshot(testFile, 'tool-1');
+      await fs.writeFile(testFile, 'First edit', 'utf-8');
+      await snapshotManager.recordPostEditState(testFile, first);
+
+      const second = await snapshotManager.createSnapshot(testFile, 'tool-2');
+      await fs.writeFile(testFile, 'Second edit', 'utf-8');
+      await snapshotManager.recordPostEditState(testFile, second);
+
+      await expect(snapshotManager.previewRewind(['tool-2'])).resolves.toEqual({
+        files: [await fs.realpath(testFile)],
+        snapshotCount: 1,
+      });
+      await expect(snapshotManager.rewindSnapshots(['tool-2'])).resolves.toEqual({
+        files: [await fs.realpath(testFile)],
+        snapshotCount: 1,
+      });
+      await expect(fs.readFile(testFile, 'utf-8')).resolves.toBe('First edit');
+      await expect(snapshotManager.listSnapshots(testFile)).resolves.toHaveLength(1);
+
+      await snapshotManager.rewindSnapshots(['tool-1']);
+      await expect(fs.readFile(testFile, 'utf-8')).resolves.toBe('Original content');
+    });
+
+    it('非后缀回退应该失败且不修改文件或 manifest', async () => {
+      const first = await snapshotManager.createSnapshot(testFile, 'tool-1');
+      await fs.writeFile(testFile, 'First edit', 'utf-8');
+      await snapshotManager.recordPostEditState(testFile, first);
+
+      const second = await snapshotManager.createSnapshot(testFile, 'tool-2');
+      await fs.writeFile(testFile, 'Second edit', 'utf-8');
+      await snapshotManager.recordPostEditState(testFile, second);
+
+      await expect(snapshotManager.rewindSnapshots(['tool-1'])).rejects.toThrow(
+        '不是文件历史的连续后缀'
+      );
+      await expect(fs.readFile(testFile, 'utf-8')).resolves.toBe('Second edit');
+      await expect(snapshotManager.listSnapshots(testFile)).resolves.toHaveLength(2);
+    });
+
+    it('批量回退前检测外部修改并保持所有文件不变', async () => {
+      const secondFile = path.join(tempDir, 'second.txt');
+      await fs.writeFile(secondFile, 'Second original', 'utf-8');
+
+      const first = await snapshotManager.createSnapshot(testFile, 'tool-1');
+      await fs.writeFile(testFile, 'Blade first', 'utf-8');
+      await snapshotManager.recordPostEditState(testFile, first);
+      const second = await snapshotManager.createSnapshot(secondFile, 'tool-2');
+      await fs.writeFile(secondFile, 'Blade second', 'utf-8');
+      await snapshotManager.recordPostEditState(secondFile, second);
+      await fs.writeFile(secondFile, 'User second', 'utf-8');
+
+      await expect(
+        snapshotManager.rewindSnapshots(['tool-1', 'tool-2'])
+      ).rejects.toThrow('文件在 Blade 编辑后已被修改');
+      await expect(fs.readFile(testFile, 'utf-8')).resolves.toBe('Blade first');
+      await expect(fs.readFile(secondFile, 'utf-8')).resolves.toBe('User second');
     });
 
     it('应该成功恢复文件快照', async () => {

@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
+import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { useAgent } from '../../../src/ui/hooks/useAgent.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
@@ -92,7 +93,7 @@ describe.skipIf(!enabled)('TUI runtime lifecycle (real API)', () => {
           root.render(<Harness />);
           await Promise.resolve();
         });
-        const agent = await hook?.createAgent();
+        const agent = await runWithCwdOverride(workspace, () => hook?.createAgent());
         if (!agent) throw new Error('TUI Agent was not created');
 
         const result = await runWithCwdOverride(workspace, () =>
@@ -123,6 +124,79 @@ describe.skipIf(!enabled)('TUI runtime lifecycle (real API)', () => {
           await Promise.resolve();
         });
         container.remove();
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 240_000);
+
+    it(`${model} rewinds a real edit through the TUI runtime hook`, async () => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-tui-rewind-'));
+      const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      const sessionId = `tui-rewind-${model}-${Date.now()}`;
+      const modelId = setRuntimeModel(model);
+      const targetFile = path.join(workspace, 'fixture.txt');
+      writeFileSync(targetFile, 'BASELINE');
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = ReactDOM.createRoot(container);
+      let hook: ReturnType<typeof useAgent> | undefined;
+
+      function Harness() {
+        hook = useAgent({ sessionId, modelId, maxTurns: 8 });
+        return null;
+      }
+
+      try {
+        await act(async () => {
+          root.render(<Harness />);
+          await Promise.resolve();
+        });
+        const agent = await runWithCwdOverride(workspace, () => hook?.createAgent());
+        if (!agent) throw new Error('TUI Agent was not created');
+        const result = await runWithCwdOverride(workspace, () =>
+          agent.chat(
+            [
+              'Use Read on fixture.txt, then Edit exactly once to replace',
+              'BASELINE with CHANGED, then Read again to verify CHANGED.',
+              'Use no other tools and finish with exactly TUI_REWIND_READY.',
+            ].join(' '),
+            {
+              messages: [],
+              userId: 'tui-rewind-real-api',
+              sessionId,
+              workspaceRoot: workspace,
+              permissionMode: PermissionMode.YOLO,
+            },
+            { maxTurns: 8, stream: true }
+          )
+        );
+        expect(result.success).toBe(true);
+        expect(readFileSync(targetFile, 'utf8')).toBe('CHANGED');
+
+        const checkpoints = await hook?.listRewindCheckpoints();
+        expect(checkpoints?.[0]).toMatchObject({ fileCount: 1 });
+        const rewound = await hook?.rewindSession({
+          targetMessageId: checkpoints![0]!.messageId,
+          mode: 'both',
+        });
+        expect(rewound?.messages).toEqual([]);
+        expect(readFileSync(targetFile, 'utf8')).toBe('BASELINE');
+        await expect(
+          SessionService.listRewindCheckpoints(sessionId, workspace)
+        ).resolves.toEqual([]);
+        expect(JSON.stringify([result, rewound])).not.toContain(apiKey);
+      } finally {
+        await hook?.cleanupAgent().catch(() => undefined);
+        await act(async () => {
+          root.unmount();
+          await Promise.resolve();
+        });
+        container.remove();
+        if (previousStorageRoot === undefined) {
+          delete process.env.BLADE_STORAGE_ROOT;
+        } else {
+          process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+        }
         rmSync(workspace, { recursive: true, force: true });
       }
     }, 240_000);

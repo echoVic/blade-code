@@ -13,6 +13,8 @@ vi.mock('../../../src/services', () => ({
     createGoal: vi.fn(),
     updateGoal: vi.fn(),
     clearGoal: vi.fn(),
+    listRewindCheckpoints: vi.fn(),
+    rewindSession: vi.fn(),
     sendMessage: vi.fn(),
     abortSession: vi.fn(),
     forkSession: vi.fn(),
@@ -1693,6 +1695,119 @@ describe('sessionSlice multimodal sendMessage', () => {
       goal: goalB,
       error: null,
     });
+  });
+
+  it('rewinds the exact workspace and replaces the active history', async () => {
+    const ref = createRef('shared-id', '/tmp/project-b');
+    vi.mocked(sessionService.rewindSession).mockResolvedValue({
+      checkpoint: {
+        messageId: 'user-2',
+        preview: 'rewind this turn',
+        createdAt: '2026-08-05T00:00:00.000Z',
+        fileCount: 1,
+      },
+      mode: 'both',
+      removedTurns: 1,
+      restoredFiles: ['/tmp/project-b/result.txt'],
+      messages: [
+        createMessage({
+          id: 'kept-message',
+          role: 'user',
+          content: 'kept history',
+        }),
+      ],
+    });
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          sessionId: ref.sessionId,
+          projectPath: ref.projectPath,
+          messageCount: 4,
+        }),
+      ],
+      currentSessionId: ref.sessionId,
+      currentSessionRef: ref,
+      isTemporarySession: false,
+      messages: [createMessage({ id: 'old-message', role: 'user', content: 'old' })],
+      tokenUsage: {
+        inputTokens: 10,
+        outputTokens: 20,
+        totalTokens: 30,
+        maxContextTokens: 128000,
+        isDefaultMaxTokens: true,
+      },
+    });
+
+    await useSessionStore.getState().rewindSession('user-2', 'both');
+
+    expect(sessionService.rewindSession).toHaveBeenCalledWith(ref, 'user-2', 'both');
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: ref,
+      messages: [expect.objectContaining({ content: 'kept history' })],
+      tokenUsage: expect.objectContaining({ totalTokens: 0 }),
+      error: null,
+      sessions: [expect.objectContaining({ messageCount: 1 })],
+    });
+  });
+
+  it('ignores a stale rewind response after switching to the same id in another workspace', async () => {
+    const refA = createRef('shared-id', '/tmp/project-a');
+    const refB = createRef('shared-id', '/tmp/project-b');
+    const gate = deferred<Awaited<ReturnType<typeof sessionService.rewindSession>>>();
+    vi.mocked(sessionService.rewindSession).mockReturnValue(gate.promise);
+    const workspaceBMessages = [
+      createMessage({ id: 'workspace-b', role: 'user', content: 'workspace B' }),
+    ];
+    useSessionStore.setState({
+      currentSessionId: refA.sessionId,
+      currentSessionRef: refA,
+      isTemporarySession: false,
+    });
+
+    const rewinding = useSessionStore
+      .getState()
+      .rewindSession('user-a', 'conversation');
+    useSessionStore.setState({
+      currentSessionId: refB.sessionId,
+      currentSessionRef: refB,
+      messages: workspaceBMessages,
+    });
+    gate.resolve({
+      checkpoint: {
+        messageId: 'user-a',
+        preview: 'stale',
+        createdAt: '2026-08-05T00:00:00.000Z',
+        fileCount: 0,
+      },
+      mode: 'conversation',
+      removedTurns: 1,
+      restoredFiles: [],
+      messages: [],
+    });
+    await rewinding;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: refB,
+      messages: workspaceBMessages,
+      error: null,
+    });
+  });
+
+  it('rejects rewind locally while a run is active', async () => {
+    const ref = createRef('session-active', '/tmp/project-active');
+    useSessionStore.setState({
+      currentSessionId: ref.sessionId,
+      currentSessionRef: ref,
+      isTemporarySession: false,
+      isStreaming: true,
+    });
+
+    await useSessionStore.getState().rewindSession('user-active', 'conversation');
+
+    expect(sessionService.rewindSession).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe(
+      'Stop the active run before rewinding'
+    );
   });
 
   it('normalizes raw persisted history without requiring UI ids or timestamps', async () => {

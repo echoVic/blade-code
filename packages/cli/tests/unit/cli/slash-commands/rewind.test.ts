@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
     version: 1,
     timestamp: new Date('2026-08-04T00:00:00.000Z'),
   })),
+  listCheckpoints: vi.fn(),
+  execute: vi.fn(),
 }));
 
 vi.mock('../../../../src/slash-commands/types.js', async () => {
@@ -37,10 +39,30 @@ describe('/rewind Command', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.listCheckpoints.mockResolvedValue([
+      {
+        messageId: 'user-2',
+        preview: 'change the implementation',
+        createdAt: '2026-08-05T00:00:00.000Z',
+        fileCount: 2,
+      },
+    ]);
+    mocks.execute.mockResolvedValue({
+      checkpoint: {
+        messageId: 'user-2',
+        preview: 'change the implementation',
+        createdAt: '2026-08-05T00:00:00.000Z',
+        fileCount: 2,
+      },
+      mode: 'both',
+      removedTurns: 1,
+      restoredFiles: ['/tmp/src/example.ts'],
+      messages: [{ role: 'user', content: 'kept' }],
+    });
   });
 
   it('应该将相对路径精确解析到当前工作区后再回退', async () => {
-    const result = await rewindCommand.handler(['src/example.ts'], {
+    const result = await rewindCommand.handler(['file', 'src/example.ts'], {
       cwd: workspace,
       workspaceRoot: workspace,
       sessionId: 'session-1',
@@ -53,14 +75,57 @@ describe('/rewind Command', () => {
   });
 
   it('应该在访问快照前拒绝工作区外路径', async () => {
-    const result = await rewindCommand.handler(['../outside.txt'], {
+    const result = await rewindCommand.handler(['file', '../outside.txt'], {
       cwd: workspace,
       workspaceRoot: workspace,
       sessionId: 'session-1',
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('工作区');
+    expect(result.error).toContain('workspace');
     expect(mocks.rewindLatest).not.toHaveBeenCalled();
+  });
+
+  it('无参数时应该列出 durable turn checkpoints', async () => {
+    const result = await rewindCommand.handler([], {
+      cwd: workspace,
+      workspaceRoot: workspace,
+      sessionId: 'session-1',
+      rewind: {
+        listCheckpoints: mocks.listCheckpoints,
+        execute: mocks.execute,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mocks.listCheckpoints).toHaveBeenCalledOnce();
+    expect(mocks.sendMessage).toHaveBeenCalledWith(expect.stringContaining('user-2'));
+    expect(mocks.sendMessage).toHaveBeenCalledWith(expect.stringContaining('2 files'));
+  });
+
+  it('应该按 checkpoint 回退会话和代码并返回结构化历史', async () => {
+    const result = await rewindCommand.handler(['user-2', '--code'], {
+      cwd: workspace,
+      workspaceRoot: workspace,
+      sessionId: 'session-1',
+      rewind: {
+        listCheckpoints: mocks.listCheckpoints,
+        execute: mocks.execute,
+      },
+    });
+
+    expect(mocks.execute).toHaveBeenCalledWith({
+      targetMessageId: 'user-2',
+      mode: 'both',
+    });
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        action: 'rewind_session',
+        sessionId: 'session-1',
+        messages: [{ role: 'user', content: 'kept' }],
+        visibleMessages: [expect.objectContaining({ role: 'user', content: 'kept' })],
+      },
+    });
   });
 });

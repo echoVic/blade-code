@@ -34,16 +34,30 @@ interface SnapshotManifest {
 
 export interface SnapshotManagerOptions {
   sessionId: string;
+  workspaceRoot?: string;
   enableCheckpoints?: boolean;
   maxSnapshots?: number;
 }
 
+export interface SnapshotRewindResult {
+  files: string[];
+  snapshotCount: number;
+}
+
+interface FileRewindPlan {
+  filePath: string;
+  selected: Snapshot[];
+  target: Snapshot;
+  latest: Snapshot;
+}
+
 export class SnapshotManager {
   private readonly sessionId: string;
+  private readonly workspaceRoot?: string;
   private readonly enableCheckpoints: boolean;
   private readonly maxSnapshots: number;
-  private readonly snapshotDir: string;
-  private readonly manifestPath: string;
+  private snapshotDir: string;
+  private manifestPath: string;
 
   private trackedFileBackups: Map<string, SnapshotMetadata> = new Map();
   private snapshots: Snapshot[] = [];
@@ -51,6 +65,12 @@ export class SnapshotManager {
   constructor(options: SnapshotManagerOptions) {
     assertValidSessionId(options.sessionId);
     this.sessionId = options.sessionId;
+    if (options.workspaceRoot && !path.isAbsolute(options.workspaceRoot)) {
+      throw new Error('Snapshot workspace root must be absolute');
+    }
+    this.workspaceRoot = options.workspaceRoot
+      ? path.resolve(options.workspaceRoot)
+      : undefined;
     this.enableCheckpoints = options.enableCheckpoints ?? true;
     this.maxSnapshots = options.maxSnapshots ?? 10;
 
@@ -64,8 +84,85 @@ export class SnapshotManager {
       return;
     }
 
+    if (this.workspaceRoot) {
+      await this.selectWorkspaceSnapshotDir();
+    }
     await fs.mkdir(this.snapshotDir, { recursive: true, mode: 0o755 });
     await this.loadManifest();
+  }
+
+  private async selectWorkspaceSnapshotDir(): Promise<void> {
+    const bladeRoot = getBladeStorageRoot();
+    const canonicalWorkspace = await fs
+      .realpath(this.workspaceRoot!)
+      .catch(() => this.workspaceRoot!);
+    const workspaceKey = crypto
+      .createHash('sha256')
+      .update(canonicalWorkspace)
+      .digest('hex')
+      .slice(0, 24);
+    const legacyDir = path.join(bladeRoot, 'file-history', this.sessionId);
+    const scopedDir = path.join(
+      bladeRoot,
+      'file-history',
+      'workspaces',
+      workspaceKey,
+      this.sessionId
+    );
+    const scopedManifest = path.join(scopedDir, 'manifest.json');
+
+    try {
+      await fs.access(scopedManifest);
+    } catch {
+      await this.migrateLegacySnapshotDir(legacyDir, scopedDir, canonicalWorkspace);
+    }
+    this.snapshotDir = scopedDir;
+    this.manifestPath = scopedManifest;
+  }
+
+  private async migrateLegacySnapshotDir(
+    legacyDir: string,
+    scopedDir: string,
+    canonicalWorkspace: string
+  ): Promise<void> {
+    let manifest: SnapshotManifest;
+    try {
+      manifest = JSON.parse(
+        await fs.readFile(path.join(legacyDir, 'manifest.json'), 'utf8')
+      ) as SnapshotManifest;
+    } catch {
+      return;
+    }
+    if (
+      manifest.schemaVersion !== 1 ||
+      !Array.isArray(manifest.snapshots) ||
+      !manifest.snapshots.every((snapshot) =>
+        this.isWithinWorkspace(snapshot.filePath, canonicalWorkspace)
+      )
+    ) {
+      return;
+    }
+
+    await fs.mkdir(path.dirname(scopedDir), { recursive: true, mode: 0o755 });
+    try {
+      await fs.rename(legacyDir, scopedDir);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'EEXIST' && code !== 'ENOTEMPTY') {
+        throw error;
+      }
+    }
+  }
+
+  private isWithinWorkspace(filePath: string, workspaceRoot: string): boolean {
+    if (!path.isAbsolute(filePath)) return false;
+    const relative = path.relative(workspaceRoot, path.resolve(filePath));
+    return (
+      relative === '' ||
+      (relative !== '..' &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative))
+    );
   }
 
   async createSnapshot(filePath: string, messageId: string): Promise<SnapshotMetadata> {
@@ -227,6 +324,168 @@ export class SnapshotManager {
 
   async listAllSnapshots(): Promise<Snapshot[]> {
     return this.snapshots.filter((snapshot) => snapshot.postEditHash !== undefined);
+  }
+
+  async previewRewind(messageIds: readonly string[]): Promise<SnapshotRewindResult> {
+    const plan = this.buildRewindPlan(messageIds);
+    return {
+      files: plan.map((item) => item.filePath),
+      snapshotCount: plan.reduce((count, item) => count + item.selected.length, 0),
+    };
+  }
+
+  async rewindSnapshots(messageIds: readonly string[]): Promise<SnapshotRewindResult> {
+    const plan = this.buildRewindPlan(messageIds);
+    if (plan.length === 0) {
+      return { files: [], snapshotCount: 0 };
+    }
+
+    const currentStates = new Map<string, { existed: boolean; content?: Buffer }>();
+    for (const item of plan) {
+      let content: Buffer;
+      try {
+        content = await fs.readFile(item.filePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        throw new Error(`文件在 Blade 编辑后已被修改，拒绝覆盖: ${item.filePath}`, {
+          cause: error,
+        });
+      }
+      const currentHash = crypto.createHash('sha256').update(content).digest('hex');
+      if (currentHash !== item.latest.postEditHash) {
+        throw new Error(`文件在 Blade 编辑后已被修改，拒绝覆盖: ${item.filePath}`);
+      }
+      currentStates.set(item.filePath, { existed: true, content });
+      if (item.target.existedBefore) {
+        await fs.access(
+          this.getSnapshotPath(item.target.backupFileName, item.target.version)
+        );
+      }
+    }
+
+    const originalSnapshots = [...this.snapshots];
+    try {
+      for (const item of plan) {
+        if (item.target.existedBefore) {
+          const content = await fs.readFile(
+            this.getSnapshotPath(item.target.backupFileName, item.target.version)
+          );
+          await fs.mkdir(path.dirname(item.filePath), { recursive: true });
+          await writeFileAtomic(item.filePath, content);
+        } else {
+          await fs.rm(item.filePath, { force: true });
+        }
+      }
+
+      const selected = new Set(plan.flatMap((item) => item.selected));
+      this.snapshots = this.snapshots.filter((snapshot) => !selected.has(snapshot));
+      this.rebuildTrackedFileBackups();
+      await this.persistManifest();
+
+      await Promise.all(
+        [...selected].map((snapshot) =>
+          fs
+            .rm(this.getSnapshotPath(snapshot.backupFileName, snapshot.version), {
+              force: true,
+            })
+            .catch(() => undefined)
+        )
+      );
+    } catch (error) {
+      this.snapshots = originalSnapshots;
+      this.rebuildTrackedFileBackups();
+      const rollbackErrors: unknown[] = [];
+      for (const [filePath, state] of currentStates) {
+        try {
+          if (state.existed && state.content) {
+            await writeFileAtomic(filePath, state.content);
+          } else {
+            await fs.rm(filePath, { force: true });
+          }
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+      }
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          '快照回退失败且无法完整恢复回退前状态'
+        );
+      }
+      throw error;
+    }
+
+    return {
+      files: plan.map((item) => item.filePath),
+      snapshotCount: plan.reduce((count, item) => count + item.selected.length, 0),
+    };
+  }
+
+  async commitSnapshots(messageIds: readonly string[]): Promise<SnapshotRewindResult> {
+    const plan = this.buildRewindPlan(messageIds);
+    const selected = new Set(plan.flatMap((item) => item.selected));
+    if (selected.size === 0) {
+      return { files: [], snapshotCount: 0 };
+    }
+
+    const originalSnapshots = [...this.snapshots];
+    this.snapshots = this.snapshots.filter((snapshot) => !selected.has(snapshot));
+    this.rebuildTrackedFileBackups();
+    try {
+      await this.persistManifest();
+    } catch (error) {
+      this.snapshots = originalSnapshots;
+      this.rebuildTrackedFileBackups();
+      throw error;
+    }
+    await Promise.all(
+      [...selected].map((snapshot) =>
+        fs
+          .rm(this.getSnapshotPath(snapshot.backupFileName, snapshot.version), {
+            force: true,
+          })
+          .catch(() => undefined)
+      )
+    );
+
+    return {
+      files: plan.map((item) => item.filePath),
+      snapshotCount: selected.size,
+    };
+  }
+
+  private buildRewindPlan(messageIds: readonly string[]): FileRewindPlan[] {
+    const selectedMessageIds = new Set(messageIds);
+    const finalized = this.snapshots.filter(
+      (snapshot): snapshot is Snapshot & { postEditHash: string } =>
+        snapshot.postEditHash !== undefined
+    );
+    const selected = finalized.filter((snapshot) =>
+      selectedMessageIds.has(snapshot.messageId)
+    );
+    const filePaths = [...new Set(selected.map((snapshot) => snapshot.filePath))];
+
+    return filePaths.sort().map((filePath) => {
+      const history = finalized.filter((snapshot) => snapshot.filePath === filePath);
+      const selectedForFile = history.filter((snapshot) =>
+        selectedMessageIds.has(snapshot.messageId)
+      );
+      const firstSelected = history.indexOf(selectedForFile[0]!);
+      const suffix = history.slice(firstSelected);
+      if (
+        suffix.length !== selectedForFile.length ||
+        suffix.some((snapshot) => !selectedMessageIds.has(snapshot.messageId))
+      ) {
+        throw new Error(`请求的快照不是文件历史的连续后缀: ${filePath}`);
+      }
+
+      return {
+        filePath,
+        selected: selectedForFile,
+        target: selectedForFile[0]!,
+        latest: selectedForFile.at(-1)!,
+      };
+    });
   }
 
   private async loadManifest(): Promise<void> {

@@ -104,6 +104,8 @@ const runtimeState = vi.hoisted(() => ({
     pauseGoal: vi.fn(),
     resumeGoal: vi.fn(),
     clearGoal: vi.fn().mockResolvedValue(false),
+    listRewindCheckpoints: vi.fn().mockResolvedValue([]),
+    rewindSession: vi.fn(),
   },
 }));
 
@@ -300,6 +302,9 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.finishTurn.mockClear();
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.hasTurnOwner.mockReturnValue(false);
+    runtimeState.runtime.listRewindCheckpoints.mockReset();
+    runtimeState.runtime.listRewindCheckpoints.mockResolvedValue([]);
+    runtimeState.runtime.rewindSession.mockReset();
     vi.mocked(SessionRuntime.create).mockImplementation(
       async (options: SessionRuntimeOptions) =>
         createRuntimeDouble({
@@ -2877,6 +2882,105 @@ describe('SessionRoutes runtime reuse', () => {
     });
     expect(ambiguous.status).toBe(409);
     expect(createGoalB).not.toHaveBeenCalled();
+  });
+
+  it('lists and rewinds checkpoints in the exact session workspace', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const metadataA = metadataFor('shared-rewind', '/tmp/workspace-a');
+    const metadataB = metadataFor('shared-rewind', '/tmp/workspace-b');
+    const checkpoints = [
+      {
+        messageId: 'user-a',
+        preview: 'rewind workspace A',
+        createdAt: '2026-08-05T00:00:00.000Z',
+        fileCount: 1,
+      },
+    ];
+    const rewoundMessages = makeMessages({
+      role: 'user',
+      content: 'kept message',
+    });
+    const listA = vi.fn().mockResolvedValue(checkpoints);
+    const listB = vi.fn();
+    const rewindA = vi.fn().mockResolvedValue({
+      checkpoint: checkpoints[0],
+      mode: 'both',
+      removedTurns: 1,
+      restoredFiles: ['/tmp/workspace-a/result.txt'],
+      messages: rewoundMessages,
+    });
+    const rewindB = vi.fn();
+    const runtimeA = await createRuntimeDouble({
+      workspaceRoot: '/tmp/workspace-a',
+      listRewindCheckpoints: listA,
+      rewindSession: rewindA,
+    });
+    const runtimeB = await createRuntimeDouble({
+      workspaceRoot: '/tmp/workspace-b',
+      listRewindCheckpoints: listB,
+      rewindSession: rewindB,
+    });
+
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (sessionId !== 'shared-rewind') return undefined;
+        if (projectPath === '/tmp/workspace-a') return metadataA;
+        if (projectPath === '/tmp/workspace-b') return metadataB;
+        return undefined;
+      }
+    );
+    vi.mocked(SessionRuntime.create).mockImplementation(
+      async ({ workspaceRoot }: SessionRuntimeOptions) =>
+        workspaceRoot === '/tmp/workspace-a' ? runtimeA : runtimeB
+    );
+
+    const app = SessionRoutes();
+    const listResponse = await app.request(
+      `/shared-rewind/rewind?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+    expect(listResponse.status).toBe(200);
+    await expect(listResponse.json()).resolves.toEqual({ checkpoints });
+    expect(listA).toHaveBeenCalledOnce();
+    expect(listB).not.toHaveBeenCalled();
+
+    const rewindResponse = await app.request(
+      `/shared-rewind/rewind?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ targetMessageId: 'user-a', mode: 'both' }),
+      }
+    );
+    expect(rewindResponse.status).toBe(200);
+    await expect(rewindResponse.json()).resolves.toMatchObject({
+      checkpoint: checkpoints[0],
+      mode: 'both',
+      removedTurns: 1,
+      restoredFiles: ['/tmp/workspace-a/result.txt'],
+    });
+    expect(rewindA).toHaveBeenCalledWith({
+      targetMessageId: 'user-a',
+      mode: 'both',
+    });
+    expect(rewindB).not.toHaveBeenCalled();
+    expect(busState.publish).toHaveBeenCalledWith(
+      { sessionId: 'shared-rewind', projectPath: '/tmp/workspace-a' },
+      'session.rewound',
+      expect.objectContaining({
+        targetMessageId: 'user-a',
+        mode: 'both',
+      })
+    );
+
+    const messagesResponse = await app.request(
+      `/shared-rewind/message?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+    await expect(messagesResponse.json()).resolves.toEqual(rewoundMessages);
+
+    const ambiguous = await app.request('/shared-rewind/rewind');
+    expect(ambiguous.status).toBe(409);
+    expect(listB).not.toHaveBeenCalled();
   });
 
   it('returns a generic internal error body when an unexpected session route error occurs', async () => {

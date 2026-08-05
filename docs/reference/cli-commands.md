@@ -323,6 +323,33 @@ fork 只复制源会话在边界前已提交的 conversation history：父会话
 session ID；需要从历史会话选择源时使用 `/fork [sessionId]`。ACP 调用 `/branch`
 后会返回可由标准 `session/load` 加载的子会话 ID。
 
+#### `/rewind [checkpointId]`
+
+不带参数时列出当前 session 的 durable user-turn checkpoints。指定 checkpoint
+后默认只回退 conversation；加 `--code` 同时恢复该回合及之后的文件修改，
+加 `--code-only` 只恢复文件并保留 conversation。
+
+```bash
+# 列出可回退的用户回合
+/rewind
+
+# 只回退 conversation
+/rewind <checkpointId>
+
+# 同时回退 conversation 和代码
+/rewind <checkpointId> --code
+
+# 只恢复代码
+/rewind <checkpointId> --code-only
+
+# 兼容旧的单文件最近一次编辑回退
+/rewind file src/example.ts
+```
+
+rewind 只允许在 session idle 且 durable input 队列为空时执行；存在运行中的
+后台 shell 或后台 agent 时也会拒绝。文件在 Blade 编辑后被外部修改时，代码恢复
+整组 fail closed，不覆盖用户的新改动。
+
 ### Web Sidebar Fork
 
 Web Sidebar 的 session 行提供 **Fork** 操作。服务器创建 child 后，Web 会先准备该 child

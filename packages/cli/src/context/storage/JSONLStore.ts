@@ -291,6 +291,12 @@ export class JSONLStore {
   async appendValidated(
     buildEntry: (entries: readonly SessionEvent[]) => SessionEvent
   ): Promise<void> {
+    await this.appendValidatedAsync(async (entries) => buildEntry(entries));
+  }
+
+  async appendValidatedAsync(
+    buildEntry: (entries: readonly SessionEvent[]) => Promise<SessionEvent>
+  ): Promise<void> {
     await this.enqueue(async () => {
       const handle = await fs.open(this.filePath, 'r+');
       try {
@@ -298,7 +304,7 @@ export class JSONLStore {
           handle,
           'session transcript'
         );
-        const entry = buildEntry(entries);
+        const entry = await buildEntry(entries);
         const line = `${separator}${JSON.stringify(entry)}\n`;
         await handle.write(line, size, 'utf8');
         await handle.sync();

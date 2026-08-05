@@ -147,7 +147,10 @@ export const writeTool = createTool({
 
       if (!useAcp && sessionId && messageId) {
         try {
-          snapshotManager = new SnapshotManager({ sessionId });
+          snapshotManager = new SnapshotManager({
+            sessionId,
+            workspaceRoot: context.workspaceRoot,
+          });
           await snapshotManager.initialize();
           snapshotMetadata = await snapshotManager.createSnapshot(file_path, messageId);
         } catch (error) {

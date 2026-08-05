@@ -10,6 +10,11 @@ import type { SteeringEnqueueResult } from '../../agent/runtime/ActiveTurnMailbo
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type { UserMessageContent } from '../../agent/types.js';
 import { registerCleanup } from '../../services/GracefulShutdown.js';
+import type {
+  RewindSessionOptions,
+  RewoundSession,
+  SessionRewindCheckpoint,
+} from '../../services/SessionService.js';
 import { getCwd } from '../../utils/cwd.js';
 
 export interface AgentOptions {
@@ -69,6 +74,22 @@ export function useAgent(options: AgentOptions) {
     }
   });
 
+  const getOrCreateSessionRuntime = useMemoizedFn(
+    async (sessionId: string): Promise<SessionRuntime> => {
+      if (runtimeRef.current && runtimeRef.current.sessionId !== sessionId) {
+        await cleanupAgent();
+      }
+      if (!runtimeRef.current) {
+        runtimeRef.current = await SessionRuntime.create({
+          sessionId,
+          workspaceRoot: getCwd(),
+          modelId: options.modelId,
+        });
+      }
+      return runtimeRef.current;
+    }
+  );
+
   /**
    * 创建并设置 Agent 实例
    */
@@ -80,23 +101,12 @@ export function useAgent(options: AgentOptions) {
 
       let agent: Agent;
       if (!shouldUseEphemeralRuntime && sessionId) {
-        if (runtimeRef.current && runtimeRef.current.sessionId !== sessionId) {
-          await cleanupAgent();
-        }
+        const runtime = await getOrCreateSessionRuntime(sessionId);
+        await runtime.refresh({
+          modelId: overrides?.modelId ?? options.modelId,
+        });
 
-        if (!runtimeRef.current) {
-          runtimeRef.current = await SessionRuntime.create({
-            sessionId,
-            workspaceRoot: getCwd(),
-            modelId: overrides?.modelId ?? options.modelId,
-          });
-        } else {
-          await runtimeRef.current.refresh({
-            modelId: overrides?.modelId ?? options.modelId,
-          });
-        }
-
-        agent = await Agent.createWithRuntime(runtimeRef.current, {
+        agent = await Agent.createWithRuntime(runtime, {
           sessionId,
           systemPrompt: overrides?.systemPrompt ?? options.systemPrompt,
           appendSystemPrompt:
@@ -119,6 +129,29 @@ export function useAgent(options: AgentOptions) {
       // 不再需要设置事件监听器
 
       return agent;
+    }
+  );
+
+  const listRewindCheckpoints = useMemoizedFn(
+    async (): Promise<SessionRewindCheckpoint[]> => {
+      if (!options.sessionId) {
+        throw new Error('No active session to rewind');
+      }
+      return (
+        await getOrCreateSessionRuntime(options.sessionId)
+      ).listRewindCheckpoints();
+    }
+  );
+
+  const rewindSession = useMemoizedFn(
+    async (rewindOptions: RewindSessionOptions): Promise<RewoundSession> => {
+      if (!options.sessionId) {
+        throw new Error('No active session to rewind');
+      }
+      const runtime = await getOrCreateSessionRuntime(options.sessionId);
+      const result = await runtime.rewindSession(rewindOptions);
+      await cleanupAgent();
+      return result;
     }
   );
 
@@ -146,5 +179,7 @@ export function useAgent(options: AgentOptions) {
     createAgent,
     cleanupAgent,
     steerActiveTurn,
+    listRewindCheckpoints,
+    rewindSession,
   };
 }

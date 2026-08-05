@@ -1,9 +1,9 @@
+import path from 'node:path';
 import { Mutex } from 'async-mutex';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
-import path from 'node:path';
 import { z } from 'zod';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
@@ -11,7 +11,10 @@ import type { LoopEvent } from '../../agent/loop/types.js';
 import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
-import { SendMessageRequestSchema } from '../../api/schemas.js';
+import {
+  SendMessageRequestSchema,
+  SessionRewindRequestSchema,
+} from '../../api/schemas.js';
 import { PermissionMode } from '../../config/types.js';
 import { assertValidSessionId } from '../../context/storage/pathUtils.js';
 import { GoalStore } from '../../goals/GoalStore.js';
@@ -45,7 +48,7 @@ import {
   InternalServerError,
   NotFoundError,
 } from '../error.js';
-import { normalizeSessionRef, sessionRefKey, type SessionRef } from '../sessionRef.js';
+import { normalizeSessionRef, type SessionRef, sessionRefKey } from '../sessionRef.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -739,6 +742,60 @@ export const SessionRoutes = () => {
       }
       throw new InternalServerError('Failed to update session');
     }
+  });
+
+  app.get('/:sessionId/rewind', async (c) => {
+    const session = await resolveSessionForWrite(
+      c.req.param('sessionId'),
+      c.req.query('projectPath')
+    );
+    const runtime = await getOrCreateRuntime(session);
+    return c.json({
+      checkpoints: await runtime.listRewindCheckpoints(),
+    });
+  });
+
+  app.post('/:sessionId/rewind', async (c) => {
+    const parsed = SessionRewindRequestSchema.safeParse(await c.req.json());
+    if (!parsed.success) throw new BadRequestError('Invalid rewind request');
+    const session = await resolveSessionForWrite(
+      c.req.param('sessionId'),
+      c.req.query('projectPath')
+    );
+    const ref = sessionRefFromSession(session);
+
+    return getMessageSubmissionLock(ref).runExclusive(async () => {
+      const currentRun = session.currentRunId
+        ? activeRuns.get(session.currentRunId)
+        : undefined;
+      if (
+        currentRun &&
+        (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
+      ) {
+        throw new ConflictError('Cannot rewind while a run is active');
+      }
+
+      const runtime = await getOrCreateRuntime(session);
+      let result;
+      try {
+        result = await runtime.rewindSession(parsed.data);
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('Cannot rewind while')) {
+          throw new ConflictError(error.message);
+        }
+        throw error;
+      }
+      session.messages = [...result.messages];
+      session.updatedAt = new Date();
+      Bus.publish(ref, 'session.rewound', {
+        targetMessageId: result.checkpoint.messageId,
+        mode: result.mode,
+        removedTurns: result.removedTurns,
+        restoredFiles: result.restoredFiles,
+        messages: result.messages,
+      });
+      return c.json(result);
+    });
   });
 
   app.get('/:sessionId/goal', async (c) => {

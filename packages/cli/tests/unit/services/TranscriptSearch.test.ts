@@ -115,6 +115,105 @@ describe('TranscriptSearch', () => {
     expect(results[0].role).toBe('user');
   });
 
+  it('searches current JSONL messages and excludes rewound history', async () => {
+    writeSession('session-rewound', [
+      {
+        id: 'created',
+        sessionId: 'session-rewound',
+        type: 'session_created',
+        timestamp: '2024-01-01T10:00:00Z',
+        cwd: '/workspace',
+        version: 'test',
+        data: {
+          sessionId: 'session-rewound',
+          rootId: 'session-rewound',
+          createdAt: '2024-01-01T10:00:00Z',
+          updatedAt: '2024-01-01T10:00:00Z',
+        },
+      },
+      {
+        id: 'message-1',
+        sessionId: 'session-rewound',
+        type: 'message_created',
+        timestamp: '2024-01-01T10:00:01Z',
+        cwd: '/workspace',
+        version: 'test',
+        data: {
+          messageId: 'user-1',
+          role: 'user',
+          inboxMessageId: 'inbox-1',
+          createdAt: '2024-01-01T10:00:01Z',
+        },
+      },
+      {
+        id: 'part-1',
+        sessionId: 'session-rewound',
+        type: 'part_created',
+        timestamp: '2024-01-01T10:00:01Z',
+        cwd: '/workspace',
+        version: 'test',
+        data: {
+          partId: 'part-user-1',
+          messageId: 'user-1',
+          partType: 'text',
+          payload: { text: 'keep searchable baseline' },
+          createdAt: '2024-01-01T10:00:01Z',
+        },
+      },
+      {
+        id: 'message-2',
+        sessionId: 'session-rewound',
+        type: 'message_created',
+        timestamp: '2024-01-01T10:00:02Z',
+        cwd: '/workspace',
+        version: 'test',
+        data: {
+          messageId: 'user-2',
+          role: 'user',
+          inboxMessageId: 'inbox-2',
+          createdAt: '2024-01-01T10:00:02Z',
+        },
+      },
+      {
+        id: 'part-2',
+        sessionId: 'session-rewound',
+        type: 'part_created',
+        timestamp: '2024-01-01T10:00:02Z',
+        cwd: '/workspace',
+        version: 'test',
+        data: {
+          partId: 'part-user-2',
+          messageId: 'user-2',
+          partType: 'text',
+          payload: { text: 'removed secret keyword' },
+          createdAt: '2024-01-01T10:00:02Z',
+        },
+      },
+      {
+        id: 'rewind',
+        sessionId: 'session-rewound',
+        type: 'session_rewound',
+        timestamp: '2024-01-01T10:00:03Z',
+        cwd: '/workspace',
+        version: 'test',
+        data: {
+          rewindId: 'rewind-1',
+          targetMessageId: 'user-2',
+          mode: 'conversation',
+          restoredFiles: [],
+          createdAt: '2024-01-01T10:00:03Z',
+        },
+      },
+    ]);
+
+    await expect(
+      searchTranscripts('searchable baseline', { storagePath: projectDir })
+    ).resolves.toHaveLength(1);
+    await expect(
+      searchTranscripts('secret keyword', { storagePath: projectDir })
+    ).resolves.toEqual([]);
+  });
+
   describe('formatSearchResults', () => {
     it('should format empty results', () => {
       const result = formatSearchResults([]);

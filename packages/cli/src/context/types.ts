@@ -118,6 +118,7 @@ export interface ContextManagerOptions {
 export type JSONLEventType =
   | 'session_created'
   | 'session_updated'
+  | 'session_rewound'
   | 'inbox_acknowledged'
   | 'message_created'
   | 'part_created'
@@ -165,6 +166,16 @@ export interface InboxAcknowledgementInfo {
   acknowledgedAt: string;
 }
 
+export type SessionRewindMode = 'conversation' | 'code' | 'both';
+
+export interface SessionRewindInfo {
+  rewindId: string;
+  targetMessageId: string;
+  mode: SessionRewindMode;
+  restoredFiles: string[];
+  createdAt: string;
+}
+
 export interface PartInfo {
   partId: string;
   messageId: string;
@@ -186,6 +197,7 @@ export interface SessionEventBase {
 export type SessionEvent =
   | (SessionEventBase & { type: 'session_created'; data: SessionInfo })
   | (SessionEventBase & { type: 'session_updated'; data: Partial<SessionInfo> })
+  | (SessionEventBase & { type: 'session_rewound'; data: SessionRewindInfo })
   | (SessionEventBase & {
       type: 'inbox_acknowledged';
       data: InboxAcknowledgementInfo;

@@ -82,7 +82,13 @@ export const useCommandHandler = (
   const pendingResumeRequestedRef = useRef(false);
 
   // ==================== 子模块组合 ====================
-  const { createAgent, cleanupAgent, steerActiveTurn } = useAgent({
+  const {
+    createAgent,
+    cleanupAgent,
+    steerActiveTurn,
+    listRewindCheckpoints,
+    rewindSession,
+  } = useAgent({
     sessionId,
     systemPrompt: replaceSystemPrompt,
     appendSystemPrompt: appendSystemPrompt,
@@ -185,7 +191,11 @@ export const useCommandHandler = (
           abortController.signal,
           cleanupAgent,
           sessionId,
-          buildContextMessagesFromSession(getState().session)
+          buildContextMessagesFromSession(getState().session),
+          {
+            listCheckpoints: listRewindCheckpoints,
+            execute: rewindSession,
+          }
         );
 
         if (slashResult.type === 'handled') {

@@ -34,6 +34,7 @@ import {
   executeSlashCommand,
   getRegisteredCommands,
   isSlashCommand,
+  type SlashCommandContext,
 } from '../slash-commands/index.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import {
@@ -234,11 +235,27 @@ export class AcpSession {
       logger.debug(`[AcpSession ${this.id}] Executing slash command: ${message}`);
 
       // 创建 slash command 上下文，包含 ACP 回调和取消信号
-      const context = {
+      const context: SlashCommandContext = {
         cwd: this.cwd,
         workspaceRoot: this.cwd,
         sessionId: this.id,
         messages: [...this.messages],
+        rewind: {
+          listCheckpoints: async () => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.listRewindCheckpoints();
+          },
+          execute: async (options) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            const result = await this.runtime.rewindSession(options);
+            this.messages = [...result.messages];
+            await this.agent?.destroy();
+            this.agent = await Agent.createWithRuntime(this.runtime, {
+              sessionId: this.id,
+            });
+            return result;
+          },
+        },
         signal, // 传递取消信号
         acp: {
           // 发送文本消息给 IDE
@@ -291,6 +308,9 @@ export class AcpSession {
       const action = result.data?.action;
       if (action === 'start_goal' || action === 'resume_goal') {
         this.schedulePendingResume();
+      }
+      if (action === 'rewind_session' && Array.isArray(result.data?.messages)) {
+        this.messages = [...(result.data.messages as Message[])];
       }
       if (
         (result.message === 'compact_completed' ||

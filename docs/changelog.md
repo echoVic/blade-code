@@ -10,6 +10,16 @@ All notable changes to this project will be documented in this file.
   Web Sidebar 和 ACP SDK 0.12 unstable `session/list` / `session/fork` 暴露
 - 为 shared Runtime boundary、CLI/TUI、Web、ACP 新增 required DeepSeek Flash/Pro
   及显式配置 Claude/GPT/domestic provider 的 qualification coverage
+- 新增 durable user-turn rewind：append-only `session_rewound` marker 统一驱动
+  resume、catalog、fork、search 与 compaction history projection
+- `/rewind` 支持 conversation-only、code-only、conversation + code 三种模式；
+  Runtime 在活动 turn、pending input、后台 shell/agent 存在时 fail closed
+- 文件快照按 workspace hash + session ID 隔离，避免同 ID 跨 workspace 串线；
+  只属于单一 workspace 的 0.7.6 legacy manifest 会在首次使用时原子迁移
+- Web 新增 checkpoint 选择对话框、代码恢复开关、跨客户端 SSE 同步和 exact
+  `sessionId + projectPath` 路由；ACP rewind 后重建 Agent 并继续使用投影历史
+- 新增 Web GUI 组件测试、真实浏览器恢复流程，以及 DeepSeek Flash/Pro 的
+  Runtime、TUI、Web、ACP 共 8 条真实 API rewind 轨迹
 
 ## [0.7.6] - 2026-08-05
 

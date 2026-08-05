@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { SessionRef } from '@api/schemas';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { createEventDispatcher } from '../../../src/store/session/handlers/eventHandlers';
 import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer';
@@ -76,6 +76,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     deleteSession: vi.fn(),
     updateSession: vi.fn(),
     forkSession: vi.fn(async () => undefined),
+    rewindSession: vi.fn(async () => true),
     sendMessage: vi.fn(async () => undefined),
     abortSession: vi.fn(async () => undefined),
     pauseGoal: vi.fn(async () => undefined),
@@ -350,6 +351,46 @@ describe('eventHandlers', () => {
 
     expect(state.setTasks).not.toHaveBeenCalled();
     expect(state.messages[0]?.agentContent?.tasks).toEqual([]);
+  });
+
+  test('replaces history from a session.rewound event', () => {
+    const state = createState({
+      isStreaming: true,
+      currentRunId: 'run-active',
+      pendingSteeringCount: 2,
+    });
+    const set = vi.fn((partial) => {
+      const update = typeof partial === 'function' ? partial(state) : partial;
+      Object.assign(state, update);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'session.rewound',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        targetMessageId: 'user-2',
+        messages: [
+          { role: 'user', content: 'kept message' },
+          { role: 'assistant', content: 'kept response' },
+        ],
+      },
+    });
+
+    expect(state.messages).toEqual([
+      expect.objectContaining({ role: 'user', content: 'kept message' }),
+      expect.objectContaining({
+        role: 'assistant',
+        content: 'kept response',
+      }),
+    ]);
+    expect(state).toMatchObject({
+      isStreaming: false,
+      currentRunId: null,
+      pendingSteeringCount: 0,
+      currentAssistantMessageId: null,
+    });
   });
 
   test('ignores events when the session id matches but the projectPath differs', () => {

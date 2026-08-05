@@ -12,6 +12,11 @@ import {
   SessionHistoryMessageSchema,
   type SessionRef,
   SessionRefSchema,
+  type SessionRewindCheckpoint,
+  SessionRewindCheckpointSchema,
+  type SessionRewindMode,
+  type SessionRewindResponse,
+  SessionRewindResponseSchema,
   SessionSchema,
 } from '@api/schemas';
 import { z } from 'zod';
@@ -61,6 +66,7 @@ const API_BASE = '';
 const SESSION_EVENT_READY_TIMEOUT_MS = 10000;
 
 const SessionArraySchema = z.array(SessionSchema);
+const SessionRewindCheckpointArraySchema = z.array(SessionRewindCheckpointSchema);
 
 const normalizeContent = (content: unknown): MessageContent => {
   if (Array.isArray(content)) {
@@ -238,6 +244,43 @@ export const sessionService = {
       }
     );
     if (!res.ok) throw new Error('Failed to clear goal');
+  },
+
+  listRewindCheckpoints: async (
+    ref: SessionRef
+  ): Promise<SessionRewindCheckpoint[]> => {
+    const res = await fetch(
+      withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/rewind`, ref)
+    );
+    if (!res.ok) throw new Error('Failed to load rewind checkpoints');
+    const body = (await res.json()) as { checkpoints: unknown };
+    return SessionRewindCheckpointArraySchema.parse(body.checkpoints);
+  },
+
+  rewindSession: async (
+    ref: SessionRef,
+    targetMessageId: string,
+    mode: SessionRewindMode
+  ): Promise<Omit<SessionRewindResponse, 'messages'> & { messages: Message[] }> => {
+    const res = await fetch(
+      withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/rewind`, ref),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetMessageId, mode }),
+      }
+    );
+    if (!res.ok) throw new Error('Failed to rewind session');
+    const parsed = SessionRewindResponseSchema.parse(
+      await res.json()
+    ) as SessionRewindResponse;
+    const now = Date.now();
+    return {
+      ...parsed,
+      messages: parsed.messages.map((message, index) =>
+        normalizeHistoryMessage(message, index, now)
+      ),
+    };
   },
 
   forkSession: async (
@@ -502,4 +545,12 @@ export const sessionService = {
   },
 };
 
-export type { Goal, MessageRole, PermissionMode, PermissionResponse, Session };
+export type {
+  Goal,
+  MessageRole,
+  PermissionMode,
+  PermissionResponse,
+  Session,
+  SessionRewindCheckpoint,
+  SessionRewindMode,
+};

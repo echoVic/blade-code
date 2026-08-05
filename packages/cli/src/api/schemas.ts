@@ -95,6 +95,32 @@ export const ForkSessionResponseSchema = z.object({
 });
 export type ForkSessionResponse = z.infer<typeof ForkSessionResponseSchema>;
 
+export const SessionRewindModeSchema = z.enum(['conversation', 'code', 'both']);
+export type SessionRewindMode = z.infer<typeof SessionRewindModeSchema>;
+
+export const SessionRewindCheckpointSchema = z.object({
+  messageId: z.string(),
+  preview: z.string(),
+  createdAt: z.string(),
+  fileCount: z.number().int().nonnegative(),
+});
+export type SessionRewindCheckpoint = z.infer<typeof SessionRewindCheckpointSchema>;
+
+export const SessionRewindRequestSchema = z.object({
+  targetMessageId: z.string().min(1),
+  mode: SessionRewindModeSchema.default('conversation'),
+});
+export type SessionRewindRequest = z.infer<typeof SessionRewindRequestSchema>;
+
+export const SessionRewindResponseSchema = z.object({
+  checkpoint: SessionRewindCheckpointSchema,
+  mode: SessionRewindModeSchema,
+  removedTurns: z.number().int().positive(),
+  restoredFiles: z.array(z.string()),
+  messages: z.array(SessionHistoryMessageSchema),
+});
+export type SessionRewindResponse = z.infer<typeof SessionRewindResponseSchema>;
+
 export const SessionRefSchema = z.object({
   sessionId: z.string(),
   projectPath: z.string(),

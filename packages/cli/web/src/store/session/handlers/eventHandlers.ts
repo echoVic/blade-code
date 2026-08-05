@@ -1,4 +1,4 @@
-import type { StreamEvent } from '@/services';
+import type { Message as ServiceMessage, StreamEvent } from '@/services';
 import type {
   AgentResponseContent,
   Message,
@@ -7,6 +7,7 @@ import type {
   TaskItem,
   ToolCallInfo,
 } from '../types';
+import { aggregateMessages } from '../utils/aggregateMessages';
 import { makeSubagentId, makeToolCallId } from '../utils/messageIdentity';
 import { globalStreamingBuffer } from './streamingBuffer';
 
@@ -854,6 +855,55 @@ const handleGoalContinuationStarted: EventHandler = (props, get, set) => {
   });
 };
 
+const handleSessionRewound: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId || !Array.isArray(props.messages)) {
+    return;
+  }
+  const now = Date.now();
+  const rawMessages = props.messages.flatMap((value, index): ServiceMessage[] => {
+    if (typeof value !== 'object' || value === null) return [];
+    const raw = value as Record<string, unknown>;
+    if (
+      !['user', 'assistant', 'system', 'tool'].includes(String(raw.role)) ||
+      (!Array.isArray(raw.content) && typeof raw.content !== 'string')
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: `rewind-${index}-${now}`,
+        role: raw.role as ServiceMessage['role'],
+        content: raw.content as ServiceMessage['content'],
+        timestamp: now + index,
+        metadata:
+          typeof raw.metadata === 'object' && raw.metadata !== null
+            ? (raw.metadata as Record<string, unknown>)
+            : undefined,
+        thinkingContent:
+          typeof raw.thinkingContent === 'string'
+            ? raw.thinkingContent
+            : typeof raw.reasoningContent === 'string'
+              ? raw.reasoningContent
+              : undefined,
+        tool_call_id:
+          typeof raw.tool_call_id === 'string' ? raw.tool_call_id : undefined,
+        name: typeof raw.name === 'string' ? raw.name : undefined,
+        tool_calls: raw.tool_calls as ServiceMessage['tool_calls'],
+      },
+    ];
+  });
+  set({
+    messages: aggregateMessages(rawMessages),
+    isStreaming: false,
+    agentPhase: 'idle',
+    currentRunId: null,
+    pendingSteeringCount: 0,
+    recoveredSteeringCount: 0,
+    currentAssistantMessageId: null,
+    hasToolCalls: false,
+  });
+};
+
 const eventHandlers: Record<string, EventHandler> = {
   'message.created': handleMessageCreated,
   'message.delta': handleMessageDelta,
@@ -889,6 +939,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'goal.updated': handleGoalUpdated,
   'goal.cleared': handleGoalCleared,
   'goal.continuation.started': handleGoalContinuationStarted,
+  'session.rewound': handleSessionRewound,
 };
 
 // 需要缓冲的高频 delta 事件

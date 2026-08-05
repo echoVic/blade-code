@@ -1065,10 +1065,13 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         expect(getChangedPaths(workspace)).toEqual(['src/mode.js']);
 
         process.env.BLADE_STORAGE_ROOT = path.join(home, '.blade');
-        const restartedManager = new SnapshotManager({ sessionId });
+        const restartedManager = new SnapshotManager({
+          sessionId,
+          workspaceRoot: workspace,
+        });
         await restartedManager.initialize();
         const snapshots = await restartedManager.listSnapshots(targetFile);
-        const snapshotSessionDir = path.join(home, '.blade', 'file-history', sessionId);
+        const snapshotSessionDir = restartedManager.getSnapshotDir();
         const snapshotFiles = existsSync(snapshotSessionDir)
           ? readdirSync(snapshotSessionDir)
           : [];

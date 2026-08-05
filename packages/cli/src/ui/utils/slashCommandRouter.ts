@@ -5,10 +5,9 @@
  * `SlashRouteResult` 联合类型显式分离"UI 展示什么"和"Agent 实际收到什么"。
  */
 
-import { safeExit } from '../../services/GracefulShutdown.js';
-import { getCwd } from '../../utils/cwd.js';
-import type { SessionMetadata } from '../../services/SessionService.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
+import { safeExit } from '../../services/GracefulShutdown.js';
+import type { SessionMetadata } from '../../services/SessionService.js';
 import {
   executeSlashCommand,
   isSlashCommand,
@@ -16,9 +15,10 @@ import {
 } from '../../slash-commands/index.js';
 import type { SessionSelectionAction } from '../../slash-commands/types.js';
 import type { useAppActions, useSessionActions } from '../../store/selectors/index.js';
-import { activateSessionSelection } from './sessionActivation.js';
-import type { CleanupAgent } from './sessionActivation.js';
+import { getCwd } from '../../utils/cwd.js';
 import type { ResolvedInput } from '../hooks/useInputBuffer.js';
+import type { CleanupAgent } from './sessionActivation.js';
+import { activateSessionSelection } from './sessionActivation.js';
 
 // ==================== 类型定义 ====================
 
@@ -105,6 +105,13 @@ interface GoalContinuationData {
   };
 }
 
+interface RewindSessionData {
+  action: 'rewind_session';
+  sessionId: string;
+  messages: Message[];
+  visibleMessages: Parameters<SessionActions['restoreSession']>[1];
+}
+
 function isSessionMetadata(value: unknown): value is SessionMetadata {
   return (
     typeof value === 'object' &&
@@ -172,6 +179,17 @@ export function isGoalContinuationAction(data: unknown): data is GoalContinuatio
       String((data as GoalContinuationData).action)
     ) &&
     typeof (data as GoalContinuationData).goal?.objective === 'string'
+  );
+}
+
+export function isRewindSessionAction(data: unknown): data is RewindSessionData {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as RewindSessionData).action === 'rewind_session' &&
+    typeof (data as RewindSessionData).sessionId === 'string' &&
+    Array.isArray((data as RewindSessionData).messages) &&
+    Array.isArray((data as RewindSessionData).visibleMessages)
   );
 }
 
@@ -321,7 +339,8 @@ export async function processSlashCommand(
   signal: AbortSignal,
   cleanupAgent: CleanupAgent,
   sessionId?: string,
-  messages?: Message[]
+  messages?: Message[],
+  rewind?: SlashCommandContext['rewind']
 ): Promise<SlashRouteResult> {
   const { text: command } = resolved;
 
@@ -334,6 +353,7 @@ export async function processSlashCommand(
     workspaceRoot: getCwd(),
     sessionId,
     messages,
+    rewind,
     signal,
   };
 
@@ -354,6 +374,16 @@ export async function processSlashCommand(
       sessionActions,
       cleanupAgent
     );
+    return { type: 'handled', commandResult: { success: true } };
+  }
+
+  if (slashResult.success && isRewindSessionAction(slashResult.data)) {
+    sessionActions.restoreSession(
+      slashResult.data.sessionId,
+      slashResult.data.visibleMessages,
+      slashResult.data.messages
+    );
+    appActions.setTasks([]);
     return { type: 'handled', commandResult: { success: true } };
   }
 

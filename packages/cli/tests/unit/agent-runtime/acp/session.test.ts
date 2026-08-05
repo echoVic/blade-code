@@ -35,6 +35,8 @@ const runtimeState = vi.hoisted(() => ({
     })),
     getPendingSteeringCount: vi.fn(() => 0),
     getGoal: vi.fn().mockResolvedValue(null),
+    listRewindCheckpoints: vi.fn().mockResolvedValue([]),
+    rewindSession: vi.fn(),
   },
 }));
 
@@ -101,6 +103,8 @@ describe('AcpSession', () => {
     agentMockState.current = null;
     runtimeState.runtime.dispose.mockReset().mockResolvedValue(undefined);
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+    runtimeState.runtime.listRewindCheckpoints.mockReset().mockResolvedValue([]);
+    runtimeState.runtime.rewindSession.mockReset();
     // 创建 mock 连接
     mockConnection = createMockACPClient();
     connectionAbortController = new AbortController();
@@ -446,6 +450,72 @@ describe('AcpSession', () => {
       });
 
       expect(getMockAgent().getLastCall()?.context.messages).toEqual(compactedMessages);
+    });
+
+    it('rewind 后应该替换 ACP 历史并重建 Agent', async () => {
+      const rewoundMessages: Message[] = [
+        { role: 'user', content: 'kept ACP history' },
+      ];
+      runtimeState.runtime.listRewindCheckpoints.mockResolvedValue([
+        {
+          messageId: 'user-2',
+          preview: 'rewind ACP turn',
+          createdAt: '2026-08-05T00:00:00.000Z',
+          fileCount: 0,
+        },
+      ]);
+      runtimeState.runtime.rewindSession.mockResolvedValue({
+        checkpoint: {
+          messageId: 'user-2',
+          preview: 'rewind ACP turn',
+          createdAt: '2026-08-05T00:00:00.000Z',
+          fileCount: 0,
+        },
+        mode: 'conversation',
+        removedTurns: 1,
+        restoredFiles: [],
+        messages: rewoundMessages,
+      });
+      const originalAgent = getMockAgent();
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      vi.mocked(executeSlashCommand).mockImplementationOnce(
+        async (_message, context) => {
+          await context.rewind?.listCheckpoints();
+          const result = await context.rewind?.execute({
+            targetMessageId: 'user-2',
+            mode: 'conversation',
+          });
+          return {
+            success: true,
+            data: {
+              action: 'rewind_session',
+              messages: result?.messages,
+            },
+          };
+        }
+      );
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: '/rewind user-2' }],
+      });
+
+      expect(runtimeState.runtime.listRewindCheckpoints).toHaveBeenCalledOnce();
+      expect(runtimeState.runtime.rewindSession).toHaveBeenCalledWith({
+        targetMessageId: 'user-2',
+        mode: 'conversation',
+      });
+      expect(originalAgent.destroy).toHaveBeenCalledOnce();
+      const { Agent } = await import('../../../../src/agent/Agent.js');
+      expect(Agent.createWithRuntime).toHaveBeenCalledTimes(2);
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'continue after rewind' }],
+      });
+      expect(getMockAgent().getLastCall()?.context.messages).toEqual(rewoundMessages);
     });
 
     it('应该发送文本消息给 IDE', async () => {

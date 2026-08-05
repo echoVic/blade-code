@@ -10,8 +10,9 @@ import {
   createChatServiceAsync,
   type IChatService,
 } from '../../../../src/services/ChatServiceInterface.js';
-import { BackgroundShellManager } from '../../../../src/tools/builtin/shell/BackgroundShellManager.js';
+import { SessionService } from '../../../../src/services/SessionService.js';
 import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
+import { BackgroundShellManager } from '../../../../src/tools/builtin/shell/BackgroundShellManager.js';
 import { InMemorySessionApprovalStore } from '../../../../src/tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 
@@ -208,6 +209,89 @@ describe('SessionRuntime', () => {
     expect(
       existsSync(getSessionFilePath(workspaceRoot, 'workspace-owned-session'))
     ).toBe(true);
+
+    await runtime.dispose();
+  });
+
+  it('delegates rewind through the idle session runtime boundary', async () => {
+    const workspaceRoot = path.join(storageRoot, 'rewind-project');
+    const runtime = await SessionRuntime.create({
+      sessionId: 'runtime-rewind',
+      workspaceRoot,
+    });
+    const checkpoints = [
+      {
+        messageId: 'user-2',
+        preview: 'rewind this',
+        createdAt: '2026-08-05T00:00:00.000Z',
+        fileCount: 1,
+      },
+    ];
+    const rewindResult = {
+      checkpoint: checkpoints[0]!,
+      mode: 'both' as const,
+      removedTurns: 1,
+      restoredFiles: [path.join(workspaceRoot, 'target.txt')],
+      messages: [{ role: 'user' as const, content: 'kept' }],
+    };
+    const list = vi
+      .spyOn(SessionService, 'listRewindCheckpoints')
+      .mockResolvedValue(checkpoints);
+    const rewind = vi
+      .spyOn(SessionService, 'rewindSession')
+      .mockResolvedValue(rewindResult);
+
+    await expect(runtime.listRewindCheckpoints()).resolves.toEqual(checkpoints);
+    await expect(
+      runtime.rewindSession({
+        targetMessageId: 'user-2',
+        mode: 'both',
+      })
+    ).resolves.toEqual(rewindResult);
+    expect(list).toHaveBeenCalledWith('runtime-rewind', workspaceRoot);
+    expect(rewind).toHaveBeenCalledWith('runtime-rewind', workspaceRoot, {
+      targetMessageId: 'user-2',
+      mode: 'both',
+    });
+
+    await runtime.dispose();
+  });
+
+  it('rejects rewind while a turn owns the session', async () => {
+    const runtime = await SessionRuntime.create({
+      sessionId: 'runtime-rewind-active',
+      workspaceRoot: path.join(storageRoot, 'rewind-active-project'),
+    });
+    const handle = runtime.beginTurn();
+    const rewind = vi.spyOn(SessionService, 'rewindSession');
+
+    await expect(
+      runtime.rewindSession({
+        targetMessageId: 'user-1',
+        mode: 'conversation',
+      })
+    ).rejects.toThrow('active turn');
+    expect(rewind).not.toHaveBeenCalled();
+
+    await runtime.finishTurn(handle);
+    await runtime.dispose();
+  });
+
+  it('rejects rewind while durable input is pending', async () => {
+    const runtime = await SessionRuntime.create({
+      sessionId: 'runtime-rewind-pending',
+      workspaceRoot: path.join(storageRoot, 'rewind-pending-project'),
+    });
+    await runtime.enqueueSteering('queued input', { allowBeforeTurn: true });
+    const rewind = vi.spyOn(SessionService, 'rewindSession');
+
+    await expect(
+      runtime.rewindSession({
+        targetMessageId: 'user-1',
+        mode: 'conversation',
+      })
+    ).rejects.toThrow('durable input is pending');
+    expect(rewind).not.toHaveBeenCalled();
 
     await runtime.dispose();
   });

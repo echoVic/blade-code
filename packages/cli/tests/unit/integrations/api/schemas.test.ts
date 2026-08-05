@@ -29,6 +29,9 @@ import {
   type Session,
   SessionHistoryMessageSchema,
   SessionRefSchema,
+  SessionRewindCheckpointSchema,
+  SessionRewindRequestSchema,
+  SessionRewindResponseSchema,
   SessionSchema,
   type UiTheme,
   UiThemeSchema,
@@ -294,6 +297,42 @@ describe('API Schemas', () => {
       };
 
       expect(() => SessionRefSchema.parse(ref)).not.toThrow();
+    });
+  });
+
+  describe('Session rewind schemas', () => {
+    it('validates checkpoint requests and defaults to conversation-only mode', () => {
+      const checkpoint = SessionRewindCheckpointSchema.parse({
+        messageId: 'user-2',
+        preview: 'rewind this turn',
+        createdAt: '2026-08-05T00:00:00.000Z',
+        fileCount: 2,
+      });
+      const request = SessionRewindRequestSchema.parse({
+        targetMessageId: checkpoint.messageId,
+      });
+
+      expect(request).toEqual({
+        targetMessageId: 'user-2',
+        mode: 'conversation',
+      });
+    });
+
+    it('validates a rewind response without UI-only message fields', () => {
+      expect(() =>
+        SessionRewindResponseSchema.parse({
+          checkpoint: {
+            messageId: 'user-2',
+            preview: 'rewind this turn',
+            createdAt: '2026-08-05T00:00:00.000Z',
+            fileCount: 1,
+          },
+          mode: 'both',
+          removedTurns: 1,
+          restoredFiles: ['/workspace/result.txt'],
+          messages: [{ role: 'user', content: 'kept history' }],
+        })
+      ).not.toThrow();
     });
   });
 

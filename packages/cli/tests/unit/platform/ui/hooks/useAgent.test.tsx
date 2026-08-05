@@ -38,6 +38,8 @@ describe('useAgent runtime ownership', () => {
     refresh: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
     enqueueSteering: ReturnType<typeof vi.fn>;
+    listRewindCheckpoints: ReturnType<typeof vi.fn>;
+    rewindSession: ReturnType<typeof vi.fn>;
   };
   let agent: { destroy: ReturnType<typeof vi.fn> };
 
@@ -56,6 +58,26 @@ describe('useAgent runtime ownership', () => {
         turnId: 'turn-1',
         queued: 1,
       })),
+      listRewindCheckpoints: vi.fn().mockResolvedValue([
+        {
+          messageId: 'user-2',
+          preview: 'rewind this',
+          createdAt: '2026-08-05T00:00:00.000Z',
+          fileCount: 1,
+        },
+      ]),
+      rewindSession: vi.fn().mockResolvedValue({
+        checkpoint: {
+          messageId: 'user-2',
+          preview: 'rewind this',
+          createdAt: '2026-08-05T00:00:00.000Z',
+          fileCount: 1,
+        },
+        mode: 'conversation',
+        removedTurns: 1,
+        restoredFiles: [],
+        messages: [{ role: 'user', content: 'kept' }],
+      }),
     };
     agent = { destroy: vi.fn().mockResolvedValue(undefined) };
     mocks.createRuntime.mockResolvedValue(runtime);
@@ -166,5 +188,34 @@ describe('useAgent runtime ownership', () => {
     expect(runtime.enqueueSteering).toHaveBeenCalledWith('updated requirement', {
       allowBeforeTurn: true,
     });
+  });
+
+  it('rewinds through the owned runtime and releases stale agent state', async () => {
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await hook?.createAgent();
+
+    await expect(hook?.listRewindCheckpoints()).resolves.toEqual([
+      expect.objectContaining({ messageId: 'user-2' }),
+    ]);
+    await expect(
+      hook?.rewindSession({
+        targetMessageId: 'user-2',
+        mode: 'conversation',
+      })
+    ).resolves.toMatchObject({
+      removedTurns: 1,
+      messages: [{ role: 'user', content: 'kept' }],
+    });
+
+    expect(runtime.listRewindCheckpoints).toHaveBeenCalledOnce();
+    expect(runtime.rewindSession).toHaveBeenCalledWith({
+      targetMessageId: 'user-2',
+      mode: 'conversation',
+    });
+    expect(agent.destroy).toHaveBeenCalledOnce();
+    expect(runtime.dispose).toHaveBeenCalledOnce();
   });
 });

@@ -2,9 +2,14 @@
  * Slash Command 类型定义
  */
 
-import { sessionActions } from '../store/vanilla.js';
-import type { SessionMetadata } from '../services/SessionService.js';
 import type { Message } from '../services/ChatServiceInterface.js';
+import type {
+  RewindSessionOptions,
+  RewoundSession,
+  SessionMetadata,
+  SessionRewindCheckpoint,
+} from '../services/SessionService.js';
+import { sessionActions } from '../store/vanilla.js';
 
 export type SessionSelectionIntent = 'resume' | 'fork';
 
@@ -38,6 +43,7 @@ export type SlashCommandAction =
   | 'start_goal'
   | 'resume_goal'
   | 'goal_cleared'
+  | 'rewind_session'
   | 'select_session'
   | 'activate_session';
 
@@ -126,6 +132,11 @@ export interface SlashCommandContext {
   workspaceRoot?: string;
   /** 当前调用方拥有的会话历史；ACP 等非 UI 表面应显式传入 */
   messages?: Message[];
+  /** 当前表面拥有的 session runtime rewind 边界 */
+  rewind?: {
+    listCheckpoints: () => Promise<SessionRewindCheckpoint[]>;
+    execute: (options: RewindSessionOptions) => Promise<RewoundSession>;
+  };
   /** ACP 模式下的回调（可选） */
   acp?: AcpCallbacks;
   /** 取消信号（可选，用于中止长时间运行的操作） */

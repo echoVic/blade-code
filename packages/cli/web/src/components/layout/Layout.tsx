@@ -1,5 +1,6 @@
-import { FileCode, GitBranch } from 'lucide-react';
+import { FileCode, GitBranch, RotateCcw } from 'lucide-react';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { RewindDialog } from '@/components/chat/RewindDialog';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { sessionService } from '@/services';
@@ -58,8 +59,15 @@ export function Layout({ children }: LayoutProps) {
     isTerminalOpen,
     toggleFilePreview,
   } = useAppStore();
-  const { currentSessionId, currentSessionRef, sessions } = useSessionStore();
+  const {
+    currentSessionId,
+    currentSessionRef,
+    sessions,
+    isStreaming,
+    isTemporarySession,
+  } = useSessionStore();
   const [gitBranch, setGitBranch] = useState<string | null>(null);
+  const [isRewindOpen, setIsRewindOpen] = useState(false);
 
   const currentPath = useMemo(() => {
     if (!currentSessionId) return 'No session';
@@ -124,7 +132,18 @@ export function Layout({ children }: LayoutProps) {
               </span>
             )}
           </div>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Rewind session"
+              title="Rewind session"
+              disabled={!currentSessionRef || isTemporarySession || isStreaming}
+              onClick={() => setIsRewindOpen(true)}
+              className="text-[#9CA3AF] hover:text-[#111827] disabled:opacity-35 dark:text-zinc-500 dark:hover:text-zinc-300"
+            >
+              <RotateCcw className="h-4 w-4" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -167,6 +186,7 @@ export function Layout({ children }: LayoutProps) {
           <TerminalPanel />
         </Suspense>
       )}
+      <RewindDialog open={isRewindOpen} onOpenChange={setIsRewindOpen} />
     </div>
   );
 }
