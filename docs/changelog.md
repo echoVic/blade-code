@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-05
+
+### ✨ 新功能
+
+- 新增顶层 Session Task durable 生命周期：`queued`、`running`、`completed`、
+  `failed`、`cancelled`、`interrupted`
+- `Agent.chatStream` 统一驱动 Runtime、Headless CLI、TUI、Web 与 ACP 状态转换，
+  running 状态持久化 owner PID，终态清除 owner
+- 新增仅允许 task lifecycle 字段的全局 `/events` SSE；Web `TaskListSlice`
+  实时同步复合 session identity，不暴露 prompt、工具参数或 owner PID
+- Web Sidebar 改为 RUNNING、QUEUED、INTERRUPTED、FAILED、CANCELLED、DONE
+  任务分组，并显示全局 task feed 连接状态
+- TUI SessionSelector 显示 durable task 状态；ACP `session/list` 与标准
+  `session_info_update` 通过 namespaced `_meta` 暴露同一状态
+
+### 🐛 问题修复
+
+- dead owner 对账使用 `SessionLease` 与新 runtime 跨进程互斥，只在最新 durable
+  状态仍由死亡 PID 持有时原子追加 `interrupted`
+- runtime 初始化失败会将已有顶层 task 标记为 failed；并发 live owner 的
+  `SessionInUseError` 不会误改任务状态
+- fork snapshot 不再复制 parent 的 task owner 或运行态，child 在真正执行前保持
+  completed
+- 旧版零消息 transcript 缺少 task metadata 时按 completed 迁移，避免升级后出现
+  永久 queued 历史任务
+- real API CLI harness 迁移到 pi-ai 模型配置格式和 `DEEPSEEK_API_KEY` 凭证环境变量
+
+### ✅ 测试相关
+
+- CLI 全量测试 1992 通过，Web 测试 121 通过
+- 新增 dead/live owner、跨 workspace 同 ID、stream interruption、取消、初始化失败、
+  fork lifecycle、全局 SSE 字段白名单和 Web subscription 竞态回归
+- 浏览器 GUI 验证 queued task 通过全局 SSE 无刷新出现、任务分组、复合身份选择与
+  task feed 健康状态；console 无应用错误
+- DeepSeek v4 Flash/Pro 的 Runtime、Headless CLI、Web HTTP/SSE 与 ACP
+  task lifecycle 真实 API 资格 8/8 通过
+
 ## [0.8.0] - 2026-08-05
 
 ### ⚠️ BREAKING CHANGES
