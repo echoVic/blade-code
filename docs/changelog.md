@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-08-05
+
 ### ✨ 新功能
 
 - foreground 与 background Task 都会持久化可恢复的 subagent sidecar；每次
