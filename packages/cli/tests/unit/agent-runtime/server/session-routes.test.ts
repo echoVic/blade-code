@@ -394,12 +394,7 @@ describe('SessionRoutes runtime reuse', () => {
   const createRuntimeDouble = async (
     overrides: Partial<typeof runtimeState.runtime> & { workspaceRoot?: string } = {}
   ): Promise<SessionRuntime> => {
-    const actualSessionRuntimeModule = await vi.importActual<
-      typeof import('../../../../src/agent/runtime/SessionRuntime.js')
-    >('../../../../src/agent/runtime/SessionRuntime.js');
-    const runtime = Object.create(
-      actualSessionRuntimeModule.SessionRuntime.prototype
-    ) as SessionRuntime;
+    const runtime = {} as SessionRuntime;
     const sessionId = overrides.sessionId ?? runtimeState.runtime.sessionId;
     const workspaceRoot = overrides.workspaceRoot ?? DEFAULT_PROJECT_PATH;
     const {

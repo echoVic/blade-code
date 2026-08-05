@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 - tag publish workflow 现在校验 tag/package 版本并幂等处理已发布的 npm
   版本和已存在的 GitHub Release，失败重试不会因重复资源产生假失败
+- session route 测试 double 不再递归导入被 mock 的 Runtime，消除 V8 coverage
+  instrumentation 下的模块初始化竞态
 
 ## [0.7.7] - 2026-08-05
 

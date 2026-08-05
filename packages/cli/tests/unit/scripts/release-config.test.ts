@@ -31,7 +31,15 @@ describe('release ownership contract', () => {
     expect(releaseConfig.publish.git).toBe(true);
     expect(npmPublishers).toEqual(['publish.yml']);
     expect(publishWorkflow).toContain("- 'v*.*.*'");
+    expect(publishWorkflow).toContain('oven-sh/setup-bun@v2');
+    expect(publishWorkflow).toContain('bun-version: 1.3.11');
+    expect(publishWorkflow).toContain('bun install --frozen-lockfile');
+    expect(publishWorkflow).toContain('tag_version="${GITHUB_REF_NAME#v}"');
+    expect(publishWorkflow).toContain('npm view "${package_name}@${package_version}"');
     expect(publishWorkflow).toContain('npm publish --access public');
+    expect(publishWorkflow).toContain('gh release view "$GITHUB_REF_NAME"');
+    expect(publishWorkflow).toContain('gh release create "$GITHUB_REF_NAME"');
+    expect(publishWorkflow).not.toContain('actions/create-release');
   });
 
   it('loads notification credentials only from the environment', async () => {
