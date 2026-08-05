@@ -134,6 +134,14 @@ export type PartType =
   | 'summary'
   | 'subtask_ref';
 
+export type SessionTaskStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted';
+
 export interface SessionInfo {
   sessionId: string;
   rootId: string;
@@ -144,6 +152,11 @@ export interface SessionInfo {
   resumeDepth?: number;
   title?: string;
   status?: 'running' | 'completed' | 'failed';
+  taskStatus?: SessionTaskStatus;
+  taskStatusReason?: string | null;
+  taskStartedAt?: string | null;
+  taskCompletedAt?: string | null;
+  taskOwnerPid?: number | null;
   agentType?: string;
   model?: string;
   permission?: JsonValue;

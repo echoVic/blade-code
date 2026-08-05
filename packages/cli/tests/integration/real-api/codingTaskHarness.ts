@@ -45,17 +45,20 @@ export function buildRealApiConfig(
 ): Record<string, unknown> {
   return {
     currentModelId: input.modelId,
+    ...(input.maxContextTokens !== undefined
+      ? { maxContextTokens: input.maxContextTokens }
+      : {}),
     models: [
       {
         id: input.modelId,
-        name: input.model,
+        displayName: input.model,
         provider: 'deepseek',
-        apiKey: '${BLADE_API_KEY}',
-        baseUrl: input.baseUrl,
         model: input.model,
-        maxContextTokens: input.maxContextTokens ?? 64_000,
-        maxOutputTokens: input.maxOutputTokens ?? 4_096,
-        timeout: 180_000,
+        overrides: {
+          baseUrl: input.baseUrl,
+          maxOutputTokens: input.maxOutputTokens ?? 4_096,
+          timeout: 180_000,
+        },
       },
     ],
   };

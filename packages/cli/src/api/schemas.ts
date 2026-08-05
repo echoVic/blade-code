@@ -55,6 +55,11 @@ export const MessageSchema = Runtime(
 );
 export type Message = Static<typeof MessageSchema>;
 
+export const SessionTaskStatusSchema = Runtime(
+  StringEnum(['queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted'])
+);
+export type SessionTaskStatus = Static<typeof SessionTaskStatusSchema>;
+
 export const SessionSchema = Runtime(
   Type.Object({
     sessionId: Type.String(),
@@ -67,6 +72,10 @@ export const SessionSchema = Runtime(
     resumedFrom: Type.Optional(Type.String()),
     rootAgentId: Type.Optional(Type.String()),
     resumeDepth: Type.Optional(Type.Integer({ minimum: 0 })),
+    taskStatus: Default(SessionTaskStatusSchema, 'completed'),
+    taskStatusReason: Type.Optional(Type.String()),
+    taskStartedAt: Type.Optional(Type.String()),
+    taskCompletedAt: Type.Optional(Type.String()),
     messageCount: Type.Number(),
     firstMessageTime: Type.String(),
     lastMessageTime: Type.String(),
@@ -196,7 +205,7 @@ export type SubagentSession = Static<typeof SubagentSessionSchema>;
 
 export const ResumeSubagentRequestSchema = Runtime(
   Type.Object({
-    prompt: Type.String({ minLength: 1, maxLength: 32_000 }),
+    prompt: Type.String({ minLength: 1, maxLength: 32_000, pattern: '\\S' }),
   })
 );
 

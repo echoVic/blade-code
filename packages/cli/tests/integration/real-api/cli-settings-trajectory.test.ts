@@ -250,7 +250,7 @@ function runBlade(
           ...process.env,
           HOME: home,
           BLADE_STORAGE_ROOT: configDirectory,
-          BLADE_API_KEY: apiKey,
+          DEEPSEEK_API_KEY: apiKey,
           BLADE_TELEMETRY_DISABLED: '1',
           BLADE_ALLOW_ROOT: '1',
         },

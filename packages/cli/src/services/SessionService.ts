@@ -7,6 +7,7 @@ import type { BigIntStats } from 'node:fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import { nanoid } from 'nanoid';
+import { SessionInUseError, SessionLease } from '../agent/runtime/SessionLease.js';
 import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import {
   assertValidSessionId,
@@ -17,7 +18,11 @@ import {
   getSessionGoalFilePath,
   unescapeProjectPath,
 } from '../context/storage/pathUtils.js';
-import type { SessionEvent, SessionRewindMode } from '../context/types.js';
+import type {
+  SessionEvent,
+  SessionRewindMode,
+  SessionTaskStatus,
+} from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { JsonValue, SessionMessage } from '../store/types.js';
 import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
@@ -38,6 +43,29 @@ import {
 } from './sessionRewind.js';
 
 const logger = createLogger(LogCategory.SERVICE);
+const SESSION_TASK_STATUSES = new Set<SessionTaskStatus>([
+  'queued',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
+
+class SessionTaskReconciliationSkipped extends Error {}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (
+      error instanceof Error &&
+      'code' in error &&
+      (error as NodeJS.ErrnoException).code === 'EPERM'
+    );
+  }
+}
 
 type SessionSnapshotBigIntStats = BigIntStats;
 
@@ -78,6 +106,10 @@ export interface SessionMetadata {
   title?: string;
   agentType?: string;
   model?: string;
+  taskStatus: SessionTaskStatus;
+  taskStatusReason?: string;
+  taskStartedAt?: string;
+  taskCompletedAt?: string;
   messageCount: number;
   firstMessageTime: string;
   lastMessageTime: string;
@@ -86,6 +118,16 @@ export interface SessionMetadata {
 
 interface StoredSessionMetadata extends SessionMetadata {
   filePath: string;
+  taskOwnerPid?: number;
+}
+
+export interface SessionMetadataUpdate {
+  title?: string;
+  taskStatus?: SessionTaskStatus;
+  taskStatusReason?: string | null;
+  taskStartedAt?: string | null;
+  taskCompletedAt?: string | null;
+  taskOwnerPid?: number | null;
 }
 
 export interface SessionPage {
@@ -447,7 +489,15 @@ export class SessionService {
     const rootId = sourceCreated.data.rootId || sourceSessionId;
     const gitBranch = detectGitBranch(targetProjectPath);
     const version = getVersion();
-    const { status: _sourceStatus, ...sourceCreatedData } = sourceCreated.data;
+    const {
+      status: _sourceStatus,
+      taskStatus: _sourceTaskStatus,
+      taskStatusReason: _sourceTaskStatusReason,
+      taskStartedAt: _sourceTaskStartedAt,
+      taskCompletedAt: _sourceTaskCompletedAt,
+      taskOwnerPid: _sourceTaskOwnerPid,
+      ...sourceCreatedData
+    } = sourceCreated.data;
     const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
       id: nanoid(),
       sessionId: targetSessionId,
@@ -462,6 +512,8 @@ export class SessionService {
         rootId,
         parentId: sourceSessionId,
         relationType: 'fork',
+        taskStatus: 'completed',
+        taskCompletedAt: now,
         createdAt: now,
         updatedAt: now,
       },
@@ -481,7 +533,15 @@ export class SessionService {
           version,
         };
         if (entry.type === 'session_updated') {
-          const { status: _status, ...updatedData } = entry.data;
+          const {
+            status: _status,
+            taskStatus: _taskStatus,
+            taskStatusReason: _taskStatusReason,
+            taskStartedAt: _taskStartedAt,
+            taskCompletedAt: _taskCompletedAt,
+            taskOwnerPid: _taskOwnerPid,
+            ...updatedData
+          } = entry.data;
           return {
             ...base,
             type: 'session_updated',
@@ -517,6 +577,11 @@ export class SessionService {
         rootId,
         parentId: sourceSessionId,
         relationType: 'fork',
+        taskStatus: 'completed',
+        taskStatusReason: null,
+        taskStartedAt: null,
+        taskCompletedAt: now,
+        taskOwnerPid: null,
         updatedAt: now,
       },
     };
@@ -637,6 +702,7 @@ export class SessionService {
         sessionId,
         rootId: sessionId,
         ...(initial.title !== undefined ? { title: initial.title } : {}),
+        taskStatus: 'queued',
         createdAt: now,
         updatedAt: now,
       },
@@ -656,9 +722,22 @@ export class SessionService {
   static async updateSessionMetadata(
     sessionId: string,
     projectPath: string,
-    update: { title?: string }
+    update: SessionMetadataUpdate
   ): Promise<SessionMetadata> {
     assertValidSessionId(sessionId);
+    if (
+      update.taskStatus !== undefined &&
+      !SESSION_TASK_STATUSES.has(update.taskStatus)
+    ) {
+      throw new Error(`Invalid session task status: ${String(update.taskStatus)}`);
+    }
+    if (
+      update.taskOwnerPid !== undefined &&
+      update.taskOwnerPid !== null &&
+      (!Number.isInteger(update.taskOwnerPid) || update.taskOwnerPid <= 0)
+    ) {
+      throw new Error('Session task owner PID must be a positive integer');
+    }
     const resolvedProjectPath = SessionService.resolveCatalogWorkspace(projectPath);
     const filePath = SessionService.getSessionFilePath(resolvedProjectPath, sessionId);
     const store = new JSONLStore(filePath);
@@ -692,6 +771,21 @@ export class SessionService {
           data: {
             sessionId,
             ...(update.title !== undefined ? { title: update.title } : {}),
+            ...(update.taskStatus !== undefined
+              ? { taskStatus: update.taskStatus }
+              : {}),
+            ...(update.taskStatusReason !== undefined
+              ? { taskStatusReason: update.taskStatusReason }
+              : {}),
+            ...(update.taskStartedAt !== undefined
+              ? { taskStartedAt: update.taskStartedAt }
+              : {}),
+            ...(update.taskCompletedAt !== undefined
+              ? { taskCompletedAt: update.taskCompletedAt }
+              : {}),
+            ...(update.taskOwnerPid !== undefined
+              ? { taskOwnerPid: update.taskOwnerPid }
+              : {}),
             updatedAt: now,
           },
         };
@@ -960,7 +1054,93 @@ export class SessionService {
   ): Promise<StoredSessionMetadata> {
     const content = await readFile(filePath, 'utf-8');
     const entries = this.parseStoredSession(content, sessionId);
-    return this.projectMetadataFromEntries(entries, sessionId, projectPath, filePath);
+    return this.reconcileInterruptedTask(
+      this.projectMetadataFromEntries(entries, sessionId, projectPath, filePath)
+    );
+  }
+
+  private static async reconcileInterruptedTask(
+    session: StoredSessionMetadata
+  ): Promise<StoredSessionMetadata> {
+    const ownerPid = session.taskOwnerPid;
+    if (
+      session.taskStatus !== 'running' ||
+      ownerPid === undefined ||
+      isProcessRunning(ownerPid)
+    ) {
+      return session;
+    }
+
+    let lease: SessionLease;
+    try {
+      lease = await SessionLease.acquire(session.sessionId, session.projectPath);
+    } catch (error) {
+      if (!(error instanceof SessionInUseError)) throw error;
+      const content = await readFile(session.filePath, 'utf-8');
+      return this.projectMetadataFromEntries(
+        this.parseStoredSession(content, session.sessionId),
+        session.sessionId,
+        session.projectPath,
+        session.filePath
+      );
+    }
+
+    const store = new JSONLStore(session.filePath);
+    let persistedEntries: readonly SessionEvent[] | undefined;
+    try {
+      try {
+        await store.appendValidated((entries) => {
+          const current = this.projectMetadataFromEntries(
+            entries,
+            session.sessionId,
+            session.projectPath,
+            session.filePath
+          );
+          if (
+            current.taskStatus !== 'running' ||
+            current.taskOwnerPid !== ownerPid ||
+            isProcessRunning(ownerPid)
+          ) {
+            throw new SessionTaskReconciliationSkipped();
+          }
+
+          const now = new Date().toISOString();
+          const next: Extract<SessionEvent, { type: 'session_updated' }> = {
+            id: nanoid(),
+            sessionId: session.sessionId,
+            timestamp: now,
+            type: 'session_updated',
+            cwd: session.projectPath,
+            gitBranch: detectGitBranch(session.projectPath),
+            version: getVersion(),
+            data: {
+              sessionId: session.sessionId,
+              taskStatus: 'interrupted',
+              taskStatusReason: 'Task owner process exited before completion',
+              taskCompletedAt: now,
+              updatedAt: now,
+            },
+          };
+          persistedEntries = [...entries, next];
+          return next;
+        });
+      } catch (error) {
+        if (!(error instanceof SessionTaskReconciliationSkipped)) throw error;
+      }
+
+      if (!persistedEntries) {
+        const content = await readFile(session.filePath, 'utf-8');
+        persistedEntries = this.parseStoredSession(content, session.sessionId);
+      }
+      return this.projectMetadataFromEntries(
+        persistedEntries,
+        session.sessionId,
+        session.projectPath,
+        session.filePath
+      );
+    } finally {
+      await lease.release();
+    }
   }
 
   private static projectMetadataFromEntries(
@@ -993,6 +1173,18 @@ export class SessionService {
         entry.data.partType === 'tool_result' &&
         typeof (entry.data.payload as { error?: unknown }).error === 'string'
     );
+    const storedTaskStatus = SESSION_TASK_STATUSES.has(
+      durable.taskStatus as SessionTaskStatus
+    )
+      ? (durable.taskStatus as SessionTaskStatus)
+      : undefined;
+    const taskStatus = storedTaskStatus ?? (hasErrors ? 'failed' : 'completed');
+    const taskOwnerPid =
+      typeof durable.taskOwnerPid === 'number' &&
+      Number.isInteger(durable.taskOwnerPid) &&
+      durable.taskOwnerPid > 0
+        ? durable.taskOwnerPid
+        : undefined;
     const committedProjectPath = created.cwd;
     if (committedProjectPath !== undefined && !path.isAbsolute(committedProjectPath)) {
       throw new Error(`Session catalog cwd must be absolute: ${sessionId}`);
@@ -1014,16 +1206,32 @@ export class SessionService {
       title: durable.title,
       agentType: durable.agentType,
       model: durable.model,
+      taskStatus,
+      taskStatusReason:
+        typeof durable.taskStatusReason === 'string'
+          ? durable.taskStatusReason
+          : undefined,
+      taskStartedAt:
+        typeof durable.taskStartedAt === 'string' ? durable.taskStartedAt : undefined,
+      taskCompletedAt:
+        typeof durable.taskCompletedAt === 'string'
+          ? durable.taskCompletedAt
+          : undefined,
+      taskOwnerPid,
       messageCount,
       firstMessageTime: entries[0]!.timestamp,
       lastMessageTime: entries.at(-1)!.timestamp,
-      hasErrors,
+      hasErrors: hasErrors || taskStatus === 'failed',
       filePath,
     };
   }
 
   private static toPublicMetadata(session: StoredSessionMetadata): SessionMetadata {
-    const { filePath: _filePath, ...publicSession } = session;
+    const {
+      filePath: _filePath,
+      taskOwnerPid: _taskOwnerPid,
+      ...publicSession
+    } = session;
     return publicSession;
   }
 

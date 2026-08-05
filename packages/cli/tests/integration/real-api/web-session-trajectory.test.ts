@@ -17,10 +17,10 @@ import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.
 import type { SessionEvent } from '../../../src/context/types.js';
 import { HookManager } from '../../../src/hooks/HookManager.js';
 import {
+  parseSchema,
   type Static,
   StringEnum,
   Type,
-  parseSchema,
 } from '../../../src/schema/index.js';
 import { BladeServer } from '../../../src/server/server.js';
 import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
@@ -215,7 +215,10 @@ async function createSession(
   return SessionRefSchema.parse({ sessionId: session.sessionId, projectPath });
 }
 
-async function listSession(server: TestServer, ref: SessionRef): Promise<void> {
+async function listSession(
+  server: TestServer,
+  ref: SessionRef
+): Promise<Static<typeof SessionSchema>> {
   const sessions = parseSchema(
     SessionListSchema,
     await responseJson(
@@ -223,12 +226,13 @@ async function listSession(server: TestServer, ref: SessionRef): Promise<void> {
       'list sessions'
     )
   );
-  expect(
-    sessions.some(
-      (session) =>
-        session.sessionId === ref.sessionId && session.projectPath === ref.projectPath
-    )
-  ).toBe(true);
+  const session = sessions.find(
+    (candidate) =>
+      candidate.sessionId === ref.sessionId && candidate.projectPath === ref.projectPath
+  );
+  expect(session).toBeDefined();
+  if (!session) throw new Error('Session was not projected by the Web catalog');
+  return session;
 }
 
 async function forkSession(
@@ -1103,7 +1107,9 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
         server = activeServer;
 
         parent = await createSession(activeServer, fixture.workspace);
-        await listSession(activeServer, parent);
+        await expect(listSession(activeServer, parent)).resolves.toMatchObject({
+          taskStatus: 'queued',
+        });
         parentCollector = await collectEvents(activeServer, parent);
         const parentEventBoundary = parentCollector.events.length;
         const accepted = await sendMessage(activeServer, parent, parentPrompt());
@@ -1114,6 +1120,15 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
           accepted.runId,
           parentEventBoundary
         );
+        await expect(listSession(activeServer, parent)).resolves.toMatchObject({
+          taskStatus: 'completed',
+        });
+        expect(
+          parentCollector.events
+            .slice(parentEventBoundary)
+            .filter((event) => event.type === 'task.status')
+            .map((event) => event.properties.taskStatus)
+        ).toEqual(expect.arrayContaining(['running', 'completed']));
         assertSurfaceEventTypes(parentCollector, parentEventBoundary, [
           'turn.started',
           'tool.start',

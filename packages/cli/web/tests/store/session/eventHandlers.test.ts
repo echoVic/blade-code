@@ -52,6 +52,8 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     pendingSteeringCount: 0,
     recoveredSteeringCount: 0,
     eventUnsubscribe: null,
+    taskEventsConnected: false,
+    taskEventUnsubscribe: null,
     currentAssistantMessageId: 'assistant-1',
     hasToolCalls: false,
     tokenUsage: {
@@ -178,10 +180,13 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     setAgentPhase: vi.fn(),
     setRunId: vi.fn(),
     subscribeToEvents: vi.fn(async () => undefined),
+    subscribeToTaskEvents: vi.fn(async () => undefined),
     prepareEventSubscription: vi.fn(async () => () => undefined),
     replaceEventSubscription: vi.fn(),
     unsubscribeFromEvents: vi.fn(),
+    unsubscribeFromTaskEvents: vi.fn(),
     handleEvent: vi.fn(),
+    handleTaskEvent: vi.fn(),
     setCurrentAssistantMessageId: vi.fn(),
     setHasToolCalls: vi.fn((has: boolean) => {
       state.hasToolCalls = has;

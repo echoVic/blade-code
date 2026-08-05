@@ -70,6 +70,7 @@ const makeSessionMetadata = (
   projectPath: overrides.projectPath,
   rootId: overrides.rootId ?? overrides.sessionId,
   title: overrides.title ?? `Session ${overrides.sessionId}`,
+  taskStatus: overrides.taskStatus ?? 'completed',
   messageCount: overrides.messageCount ?? 0,
   firstMessageTime: overrides.firstMessageTime ?? new Date(0).toISOString(),
   lastMessageTime: overrides.lastMessageTime ?? new Date(1).toISOString(),
@@ -192,6 +193,7 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
           sessionId,
           projectPath,
           title: initial?.title,
+          taskStatus: 'queued',
           lastMessageTime: new Date(0).toISOString(),
         })
     ),
@@ -328,6 +330,7 @@ describe('SessionRoutes runtime reuse', () => {
           sessionId,
           projectPath,
           title: initial?.title,
+          taskStatus: 'queued',
           lastMessageTime: new Date(0).toISOString(),
         })
     );
@@ -1121,6 +1124,7 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('creates durable metadata before inserting an active session', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
     const { SessionService } = await import(
       '../../../../src/services/SessionService.js'
     );
@@ -1147,7 +1151,19 @@ describe('SessionRoutes runtime reuse', () => {
       sessionId: expect.any(String),
       projectPath: '/tmp/task4-create-workspace',
       rootId: expect.any(String),
+      taskStatus: 'queued',
     });
+    expect(Bus.publish).toHaveBeenCalledWith(
+      {
+        sessionId: body.sessionId,
+        projectPath: '/tmp/task4-create-workspace',
+      },
+      'task.status',
+      {
+        taskStatus: 'queued',
+        updatedAt: new Date(0).toISOString(),
+      }
+    );
   });
 
   it('keeps an active session visible when another workspace persists the same id as a subagent', async () => {

@@ -73,6 +73,26 @@ import type {
 // 创建 Agent 专用 Logger
 const logger = createLogger(LogCategory.AGENT);
 
+function taskStatusReason(error: unknown): string {
+  const message =
+    error instanceof Error
+      ? error.message
+      : error !== null &&
+          typeof error === 'object' &&
+          'message' in error &&
+          typeof error.message === 'string'
+        ? error.message
+        : String(error);
+  return message
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]')
+    .replace(/Bearer\s+[A-Za-z0-9._-]{12,}/gi, 'Bearer [REDACTED]')
+    .replace(
+      /((?:api[_-]?key|token|secret|password)["']?\s*[:=]\s*["']?)[^\s"',;}\]]+/gi,
+      '$1[REDACTED]'
+    )
+    .slice(0, 1000);
+}
+
 /**
  * Skill 执行上下文
  * 用于跟踪当前活动的 Skill 及其工具限制
@@ -378,6 +398,51 @@ export class Agent {
    * @param options  循环控制选项（行为回调 + 控制参数）
    */
   public async *chatStream(
+    message: UserMessageContent,
+    context?: ChatContext,
+    options?: LoopOptions
+  ): AsyncGenerator<import('./loop/types.js').LoopEvent, LoopResult, void> {
+    const runtime = this.sessionRuntime;
+    if (!runtime || !context?.sessionId) {
+      return yield* this.chatStreamInternal(message, context, options);
+    }
+
+    await runtime.setTaskStatus('running');
+    let settled = false;
+    try {
+      const result = yield* this.chatStreamInternal(message, context, options);
+      const status = context.signal?.aborted
+        ? 'cancelled'
+        : result.success
+          ? 'completed'
+          : 'failed';
+      await runtime.setTaskStatus(
+        status,
+        status === 'failed' && result.error ? taskStatusReason(result.error) : undefined
+      );
+      settled = true;
+      return result;
+    } catch (error) {
+      const status = context.signal?.aborted ? 'cancelled' : 'failed';
+      try {
+        await runtime.setTaskStatus(status, taskStatusReason(error));
+      } catch (statusError) {
+        logger.warn('[Agent] Failed to persist terminal task status:', statusError);
+      }
+      settled = true;
+      throw error;
+    } finally {
+      if (!settled) {
+        await runtime
+          .setTaskStatus('interrupted', 'Task stream closed before completion')
+          .catch((error) => {
+            logger.warn('[Agent] Failed to persist interrupted task status:', error);
+          });
+      }
+    }
+  }
+
+  private async *chatStreamInternal(
     message: UserMessageContent,
     context?: ChatContext,
     options?: LoopOptions

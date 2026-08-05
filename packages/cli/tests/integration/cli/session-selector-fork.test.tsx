@@ -1,15 +1,15 @@
-import { PassThrough } from 'node:stream';
 import type { SocketReadyState } from 'node:net';
+import { PassThrough } from 'node:stream';
+import { render } from 'ink';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render } from 'ink';
 import type { Message } from '../../../src/services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../../../src/services/SessionService.js';
-import { SessionSelector } from '../../../src/ui/components/SessionSelector.js';
-import { processSlashCommand } from '../../../src/ui/utils/slashCommandRouter.js';
 import { FocusId } from '../../../src/store/types.js';
 import { getState, vanillaStore } from '../../../src/store/vanilla.js';
+import { SessionSelector } from '../../../src/ui/components/SessionSelector.js';
 import type { ResolvedInput } from '../../../src/ui/hooks/useInputBuffer.js';
+import { processSlashCommand } from '../../../src/ui/utils/slashCommandRouter.js';
 import { getCwd } from '../../../src/utils/cwd.js';
 
 const activationMocks = vi.hoisted(() => ({
@@ -310,6 +310,7 @@ function createSessionMetadata(
     title: 'Ordinary Session',
     agentType: 'default',
     model: 'gpt-5',
+    taskStatus: 'completed',
     messageCount: 12,
     firstMessageTime: '2026-08-01T10:00:00.000Z',
     lastMessageTime: '2026-08-03T11:00:00.000Z',
@@ -524,6 +525,7 @@ describe('session selector fork integration', () => {
       rootId: 'root-fork',
       relationType: 'fork',
       title: 'Forked Session',
+      taskStatus: 'running',
     });
     const selections: SessionMetadata[] = [];
     const stdin = new TestInputStream();
@@ -564,6 +566,8 @@ describe('session selector fork integration', () => {
           expect(output).toContain('选择要 fork 的会话:');
           expect(output).toContain('Enter to confirm');
           expect(output).toContain(workspaceLabel);
+          expect(output).toContain('[DONE]');
+          expect(output).toContain('[RUNNING]');
           expect(output).toContain('↳ fork');
           expect(output).not.toContain('↳ subagent');
         },
@@ -578,6 +582,7 @@ describe('session selector fork integration', () => {
           expect(stdout.output.length).toBeGreaterThan(outputLengthBeforeMove);
           expect(selectedChunk).toContain('> ');
           expect(selectedChunk).toContain(workspaceLabel);
+          expect(selectedChunk).toContain('[RUNNING]');
           expect(selectedChunk).toContain('(main) | 12 条消息 ↳ fork');
         },
         () => `output=${JSON.stringify(stdout.output)}`

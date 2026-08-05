@@ -15,6 +15,7 @@ import {
 import { useState } from 'react';
 import { ScrollArea } from '@/components/ui/ScrollArea';
 import { cn } from '@/lib/utils';
+import type { Session } from '@/services';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
 import {
@@ -26,6 +27,28 @@ import {
 interface SidebarProps {
   className?: string;
 }
+
+const TASK_STATUS_GROUPS: Array<{
+  status: Session['taskStatus'];
+  label: string;
+}> = [
+  { status: 'running', label: 'RUNNING' },
+  { status: 'queued', label: 'QUEUED' },
+  { status: 'interrupted', label: 'INTERRUPTED' },
+  { status: 'failed', label: 'FAILED' },
+  { status: 'cancelled', label: 'CANCELLED' },
+  { status: 'completed', label: 'DONE' },
+];
+
+const TASK_STATUS_DOT: Record<Session['taskStatus'], string> = {
+  running:
+    'bg-blue-500 dark:bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.5)] animate-pulse',
+  queued: 'bg-amber-400 dark:bg-amber-300',
+  interrupted: 'bg-orange-500 dark:bg-orange-400',
+  failed: 'bg-red-500 dark:bg-red-400',
+  cancelled: 'bg-zinc-400 dark:bg-zinc-500',
+  completed: 'bg-emerald-500 dark:bg-emerald-400',
+};
 
 export function Sidebar({ className }: SidebarProps) {
   const {
@@ -47,16 +70,12 @@ export function Sidebar({ className }: SidebarProps) {
     forkSession,
     updateSession,
     loadSessions,
+    taskEventsConnected,
   } = useSessionStore();
   const [editingSessionKey, setEditingSessionKey] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
 
-  const groupSessionsByDate = () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-
+  const groupSessionsByStatus = () => {
     const groups: { label: string; sessions: typeof sessions }[] = [];
     const uniqueSessions = new Map<string, (typeof sessions)[number]>();
     for (const session of sessions) {
@@ -66,40 +85,26 @@ export function Sidebar({ className }: SidebarProps) {
       }
     }
     const validSessions = Array.from(uniqueSessions.values());
-    const getSessionDate = (s: (typeof sessions)[0]) => {
-      const time = s?.lastMessageTime || s?.firstMessageTime || 0;
-      return new Date(time);
-    };
-    const sortByDateDesc = (a: (typeof sessions)[0], b: (typeof sessions)[0]) =>
-      getSessionDate(b).getTime() - getSessionDate(a).getTime();
+    const sortByActivity = (
+      left: (typeof sessions)[number],
+      right: (typeof sessions)[number]
+    ) =>
+      new Date(right.lastMessageTime || right.firstMessageTime).getTime() -
+      new Date(left.lastMessageTime || left.firstMessageTime).getTime();
 
-    const todaySessions = validSessions
-      .filter((s) => getSessionDate(s) >= today)
-      .sort(sortByDateDesc);
-    const yesterdaySessions = validSessions
-      .filter((s) => {
-        const date = getSessionDate(s);
-        return date >= yesterday && date < today;
-      })
-      .sort(sortByDateDesc);
-    const olderSessions = validSessions
-      .filter((s) => getSessionDate(s) < yesterday)
-      .sort(sortByDateDesc);
-
-    if (todaySessions.length > 0) {
-      groups.push({ label: 'TODAY', sessions: todaySessions });
-    }
-    if (yesterdaySessions.length > 0) {
-      groups.push({ label: 'YESTERDAY', sessions: yesterdaySessions });
-    }
-    if (olderSessions.length > 0) {
-      groups.push({ label: 'OLDER', sessions: olderSessions });
+    for (const group of TASK_STATUS_GROUPS) {
+      const matching = validSessions
+        .filter((session) => session.taskStatus === group.status)
+        .sort(sortByActivity);
+      if (matching.length > 0) {
+        groups.push({ label: group.label, sessions: matching });
+      }
     }
 
     return groups;
   };
 
-  const sessionGroups = groupSessionsByDate();
+  const sessionGroups = groupSessionsByStatus();
 
   const getSessionTitle = (session: (typeof sessions)[0]) => {
     if (session.title) return session.title;
@@ -259,7 +264,7 @@ export function Sidebar({ className }: SidebarProps) {
             className="w-full h-10 rounded-md bg-[#16A34A] hover:bg-[#15803D] dark:bg-[#22C55E] dark:hover:bg-[#16A34A] text-white font-semibold text-sm font-mono flex items-center gap-3 px-3 transition-colors"
           >
             <Plus className="h-4 w-4 stroke-[3]" />
-            New Chat
+            New Task
           </button>
 
           <button
@@ -358,10 +363,10 @@ export function Sidebar({ className }: SidebarProps) {
                       <span
                         className={cn(
                           'w-1.5 h-1.5 rounded-full shrink-0',
-                          isActive
-                            ? 'bg-[#16A34A] dark:bg-[#22C55E] shadow-[0_0_4px_rgba(34,197,94,0.4)]'
-                            : 'border border-[#D1D5DB] dark:border-[#52525b]'
+                          TASK_STATUS_DOT[session.taskStatus],
+                          isActive && 'ring-2 ring-emerald-500/25'
                         )}
+                        title={session.taskStatus}
                       />
                       <span
                         className={cn(
@@ -424,7 +429,7 @@ export function Sidebar({ className }: SidebarProps) {
 
           {sessions.length === 0 && (
             <div className="px-3 py-8 text-center text-[13px] text-[#6B7280] dark:text-[#52525b] font-mono">
-              No chat history
+              No tasks yet
             </div>
           )}
         </div>
@@ -463,8 +468,15 @@ export function Sidebar({ className }: SidebarProps) {
             <span className="text-[13px] text-[#111827] dark:text-[#E5E5E5] font-mono">
               User
             </span>
-            <span className="text-[11px] text-[#16A34A] dark:text-[#22C55E] font-mono">
-              Connected
+            <span
+              className={cn(
+                'text-[11px] font-mono',
+                taskEventsConnected
+                  ? 'text-[#16A34A] dark:text-[#22C55E]'
+                  : 'text-[#9CA3AF] dark:text-[#71717a]'
+              )}
+            >
+              {taskEventsConnected ? 'Task feed live' : 'Task feed offline'}
             </span>
           </div>
         </div>

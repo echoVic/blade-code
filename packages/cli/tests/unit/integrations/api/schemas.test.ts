@@ -150,6 +150,7 @@ describe('API Schemas', () => {
         rootId: 'session-123',
         parentId: 'parent-session',
         relationType: 'fork',
+        taskStatus: 'running',
         messageCount: 10,
         firstMessageTime: '2024-01-01T00:00:00Z',
         lastMessageTime: '2024-01-01T01:00:00Z',
@@ -160,7 +161,7 @@ describe('API Schemas', () => {
     });
 
     it('应该验证缺少可选字段的会话', () => {
-      const minimalSession: Session = {
+      const minimalSession = {
         sessionId: 'session-456',
         projectPath: '/path/to/project',
         rootId: 'session-456',
@@ -170,7 +171,10 @@ describe('API Schemas', () => {
         hasErrors: false,
       };
 
-      expect(() => SessionSchema.parse(minimalSession)).not.toThrow();
+      expect(SessionSchema.parse(minimalSession)).toMatchObject({
+        ...minimalSession,
+        taskStatus: 'completed',
+      });
     });
 
     it('应该保留 lineage 字段并剥离未知的 filePath', () => {

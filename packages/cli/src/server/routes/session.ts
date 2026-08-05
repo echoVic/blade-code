@@ -28,7 +28,7 @@ import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
-import { StringEnum, Type, safeParseSchema } from '../../schema/index.js';
+import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import type { RewoundSession, SessionMetadata } from '../../services/SessionService.js';
 import {
@@ -118,6 +118,10 @@ interface SessionInfo {
   messages: Message[];
   currentRunId?: string;
   relationType?: 'subagent' | 'fork';
+  taskStatus: SessionMetadata['taskStatus'];
+  taskStatusReason?: string;
+  taskStartedAt?: string;
+  taskCompletedAt?: string;
 }
 
 const sessions = new Map<string, SessionInfo>();
@@ -316,11 +320,20 @@ function sessionInfoFromMetadata(
     rootId: metadata.rootId,
     parentId: metadata.parentId,
     relationType: metadata.relationType,
+    taskStatus: metadata.taskStatus,
+    taskStatusReason: metadata.taskStatusReason,
+    taskStartedAt: metadata.taskStartedAt,
+    taskCompletedAt: metadata.taskCompletedAt,
     messages,
   };
 }
 
 function projectActiveSession(session: SessionInfo) {
+  const run = session.currentRunId ? activeRuns.get(session.currentRunId) : undefined;
+  const taskStatus =
+    run?.status === 'waiting_permission'
+      ? 'running'
+      : (run?.status ?? session.taskStatus);
   return {
     sessionId: session.id,
     projectPath: session.projectPath,
@@ -329,6 +342,10 @@ function projectActiveSession(session: SessionInfo) {
     parentId: session.parentId,
     relationType: session.relationType,
     status: undefined,
+    taskStatus,
+    taskStatusReason: session.taskStatusReason,
+    taskStartedAt: session.taskStartedAt,
+    taskCompletedAt: session.taskCompletedAt,
     agentType: undefined,
     model: undefined,
     messageCount: session.messages.length,
@@ -684,7 +701,12 @@ export const SessionRoutes = () => {
         }
       );
       const session = sessionInfoFromMetadata(metadata, []);
-      sessions.set(sessionRefKey(sessionRefFromSession(session)), session);
+      const sessionRef = sessionRefFromSession(session);
+      sessions.set(sessionRefKey(sessionRef), session);
+      Bus.publish(sessionRef, 'task.status', {
+        taskStatus: metadata.taskStatus,
+        updatedAt: metadata.lastMessageTime,
+      });
 
       return c.json({
         ...projectActiveSession(session),
@@ -722,7 +744,15 @@ export const SessionRoutes = () => {
         targetProjectPath: sourceMetadata.projectPath,
       });
       const childSession = sessionInfoFromMetadata(fork.metadata, fork.messages);
-      sessions.set(sessionRefKey(sessionRefFromSession(childSession)), childSession);
+      const childRef = sessionRefFromSession(childSession);
+      sessions.set(sessionRefKey(childRef), childSession);
+      Bus.publish(childRef, 'task.status', {
+        taskStatus: fork.metadata.taskStatus,
+        ...(fork.metadata.taskCompletedAt
+          ? { taskCompletedAt: fork.metadata.taskCompletedAt }
+          : {}),
+        updatedAt: fork.metadata.lastMessageTime,
+      });
       return c.json({ session: fork.metadata, messages: fork.messages }, 201);
     } catch (error) {
       if (
@@ -1423,6 +1453,10 @@ async function executeRunAsync(
   };
 
   try {
+    session.taskStatus = 'running';
+    session.taskStatusReason = undefined;
+    session.taskStartedAt = new Date().toISOString();
+    session.taskCompletedAt = undefined;
     if (!options.pendingInputOnly && !options.goalContinuationOnly) {
       emit('message.created', {
         messageId: userMessageId,
@@ -1667,6 +1701,8 @@ async function executeRunAsync(
     session.updatedAt = new Date();
 
     if (abortController.signal.aborted || run.status === 'cancelled') {
+      session.taskStatus = 'cancelled';
+      session.taskCompletedAt = new Date().toISOString();
       emit('session.status', { status: 'idle' });
       return;
     }
@@ -1679,6 +1715,8 @@ async function executeRunAsync(
     emit('thinking.completed', {});
 
     run.status = 'completed';
+    session.taskStatus = 'completed';
+    session.taskCompletedAt = new Date().toISOString();
     emit('session.completed', {
       runId,
       outputTruncated: loopResult.metadata?.outputTruncated ?? false,
@@ -1690,11 +1728,16 @@ async function executeRunAsync(
     }
     if (abortController.signal.aborted || run.status === 'cancelled') {
       cancelRun(run, 'runtime-abort');
+      session.taskStatus = 'cancelled';
+      session.taskCompletedAt = new Date().toISOString();
       emit('session.status', { status: 'idle' });
       return;
     }
     logger.error('[SessionRoutes] Agent execution error:', error);
     run.status = 'failed';
+    session.taskStatus = 'failed';
+    session.taskStatusReason = 'Agent execution failed';
+    session.taskCompletedAt = new Date().toISOString();
     emit('session.error', {
       error: error instanceof Error ? error.message : 'Unknown error',
     });

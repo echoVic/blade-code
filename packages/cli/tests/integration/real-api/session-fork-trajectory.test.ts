@@ -130,6 +130,18 @@ function findForkBoundaryEventCount(
   return boundaryIndex + 1;
 }
 
+function latestTaskStatus(events: readonly SessionEvent[]): string | undefined {
+  return events.reduce<string | undefined>((status, event) => {
+    if (
+      (event.type === 'session_created' || event.type === 'session_updated') &&
+      typeof event.data.taskStatus === 'string'
+    ) {
+      return event.data.taskStatus;
+    }
+    return status;
+  }, undefined);
+}
+
 function runBlade(
   workspace: string,
   home: string,
@@ -169,7 +181,7 @@ function runBlade(
           ...process.env,
           HOME: home,
           BLADE_STORAGE_ROOT: storageRoot,
-          BLADE_API_KEY: apiKey,
+          DEEPSEEK_API_KEY: apiKey,
           BLADE_TELEMETRY_DISABLED: '1',
           BLADE_ALLOW_ROOT: '1',
         },
@@ -253,6 +265,7 @@ describe.skipIf(!enabled)('CLI session fork trajectory (real API)', () => {
         const parentPath = findSessionTranscript(storageRoot, parentSessionId);
         const parentBeforeFork = readFileSync(parentPath, 'utf8');
         const parentEvents = readSessionEvents(parentPath);
+        expect(latestTaskStatus(parentEvents)).toBe('completed');
         assertForkParentToolTrace(
           extractDurableToolTrace(parentEvents),
           canonicalMemoryPath
@@ -288,6 +301,7 @@ describe.skipIf(!enabled)('CLI session fork trajectory (real API)', () => {
         const childPath = findSessionTranscript(storageRoot, childSessionId);
         const childContent = readFileSync(childPath, 'utf8');
         const childEvents = readSessionEvents(childPath);
+        expect(latestTaskStatus(childEvents)).toBe('completed');
         const expectedLineage = {
           childId: childSessionId,
           parentId: parentSessionId,

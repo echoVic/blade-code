@@ -11,6 +11,7 @@ function makeMetadata(sessionId: string, projectPath = '/workspace'): SessionMet
     sessionId,
     projectPath,
     rootId: sessionId,
+    taskStatus: 'completed',
     messageCount: 1,
     firstMessageTime: '2024-01-01T00:00:00.000Z',
     lastMessageTime: '2024-01-01T00:00:00.000Z',

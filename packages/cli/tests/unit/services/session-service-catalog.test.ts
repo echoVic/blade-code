@@ -2,6 +2,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SessionLease } from '../../../src/agent/runtime/SessionLease.js';
 import {
   JSONLStore,
   parseSessionJSONL,
@@ -292,6 +293,19 @@ describe('SessionService strict session catalog', () => {
     });
     expect('filePath' in (projected ?? {})).toBe(false);
     expect('status' in (projected ?? {})).toBe(false);
+  });
+
+  it('treats legacy empty transcripts without task metadata as completed', async () => {
+    await writeTranscript(workspaceA, 'legacy-empty-session', [
+      makeCreatedEvent('legacy-empty-session', workspaceA, '2024-01-01T00:00:00.000Z'),
+    ]);
+
+    await expect(
+      SessionService.findSessionMetadata('legacy-empty-session', workspaceA)
+    ).resolves.toMatchObject({
+      taskStatus: 'completed',
+      messageCount: 0,
+    });
   });
 
   it('paginates with valid non-canonical ISO timestamps in cursors', async () => {
@@ -827,6 +841,7 @@ describe('SessionService strict session catalog', () => {
       projectPath: workspaceA,
       rootId: 'created-session',
       title: 'Created title',
+      taskStatus: 'queued',
       messageCount: 0,
     });
     expect(created).not.toHaveProperty('filePath');
@@ -843,6 +858,7 @@ describe('SessionService strict session catalog', () => {
         sessionId: 'created-session',
         rootId: 'created-session',
         title: 'Created title',
+        taskStatus: 'queued',
       },
     });
 
@@ -911,7 +927,73 @@ describe('SessionService strict session catalog', () => {
     ).resolves.toMatchObject({ title: 'Updated' });
   });
 
+  it('reconciles only a dead exact-workspace task owner and appends interrupted once', async () => {
+    const sessionId = 'task-owner-session';
+    await Promise.all([
+      SessionService.createSessionMetadata(sessionId, workspaceA),
+      SessionService.createSessionMetadata(sessionId, workspaceB),
+    ]);
+    await Promise.all([
+      SessionService.updateSessionMetadata(sessionId, workspaceA, {
+        taskStatus: 'running',
+        taskOwnerPid: process.pid,
+        taskStartedAt: '2026-08-05T10:00:00.000Z',
+      }),
+      SessionService.updateSessionMetadata(sessionId, workspaceB, {
+        taskStatus: 'running',
+        taskOwnerPid: 2_147_483_647,
+        taskStartedAt: '2026-08-05T10:00:00.000Z',
+      }),
+    ]);
+
+    await expect(
+      SessionService.findSessionMetadata(sessionId, workspaceA)
+    ).resolves.toMatchObject({
+      projectPath: workspaceA,
+      taskStatus: 'running',
+    });
+    const recoveryLease = await SessionLease.acquire(sessionId, workspaceB);
+    try {
+      await expect(
+        SessionService.findSessionMetadata(sessionId, workspaceB)
+      ).resolves.toMatchObject({
+        projectPath: workspaceB,
+        taskStatus: 'running',
+      });
+    } finally {
+      await recoveryLease.release();
+    }
+    const interrupted = await SessionService.findSessionMetadata(sessionId, workspaceB);
+    expect(interrupted).toMatchObject({
+      projectPath: workspaceB,
+      taskStatus: 'interrupted',
+      taskStatusReason: 'Task owner process exited before completion',
+      taskCompletedAt: expect.any(String),
+    });
+    expect(interrupted).not.toHaveProperty('taskOwnerPid');
+
+    const interruptedPath = getSessionFilePath(workspaceB, sessionId);
+    const firstEntries = parseSessionJSONL(
+      await readFile(interruptedPath, 'utf8'),
+      interruptedPath
+    );
+    await SessionService.findSessionMetadata(sessionId, workspaceB);
+    const secondEntries = parseSessionJSONL(
+      await readFile(interruptedPath, 'utf8'),
+      interruptedPath
+    );
+    expect(
+      firstEntries.filter((entry) => entry.type === 'session_updated')
+    ).toHaveLength(2);
+    expect(secondEntries).toHaveLength(firstEntries.length);
+  });
+
   it('fails closed when metadata update input is invalid or the transcript is missing or mismatched', async () => {
+    await expect(
+      SessionService.updateSessionMetadata('invalid-owner-pid', workspaceA, {
+        taskOwnerPid: 0,
+      })
+    ).rejects.toThrow('Session task owner PID must be a positive integer');
     await expect(
       SessionService.updateSessionMetadata('unsafe/../id', workspaceA, {
         title: 'bad',

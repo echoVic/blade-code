@@ -1,16 +1,17 @@
-import { Hono } from 'hono';
-import { cors } from 'hono/cors';
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer, type Server as NodeServer } from 'node:http';
 import { networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { WebSocketServer } from 'ws';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { getCwd } from '../utils/cwd.js';
 import { getVersion } from '../utils/packageInfo.js';
 import { BladeServerError } from './error.js';
 import { ConfigRoutes } from './routes/config.js';
+import { EventRoutes } from './routes/events.js';
 import { GlobalRoutes } from './routes/global.js';
 import { McpRoutes } from './routes/mcp.js';
 import { ModelsRoutes } from './routes/models.js';
@@ -171,6 +172,7 @@ function createApp(): Hono<{ Variables: Variables }> {
   });
 
   app.route('/global', GlobalRoutes());
+  app.route('/events', EventRoutes());
   app.route('/sessions', SessionRoutes());
   app.route('/configs', ConfigRoutes());
   app.route('/permissions', PermissionRoutes());

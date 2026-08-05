@@ -8,6 +8,7 @@ import { BackgroundAgentManager } from '../../../../src/agent/subagents/Backgrou
 import { PersistentStore } from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
+import { Bus } from '../../../../src/server/bus.js';
 import {
   createChatServiceAsync,
   type IChatService,
@@ -207,6 +208,89 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
+  it('persists and publishes the top-level task lifecycle without exposing its owner PID', async () => {
+    const workspaceRoot = path.join(storageRoot, 'task-lifecycle-project');
+    const sessionId = 'runtime-task-lifecycle';
+    const events: Array<{
+      type: string;
+      properties: Record<string, unknown>;
+    }> = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (event.sessionId === sessionId && event.projectPath === workspaceRoot) {
+        events.push(event);
+      }
+    });
+    const runtime = await SessionRuntime.create({
+      sessionId,
+      workspaceRoot,
+    });
+
+    try {
+      await expect(
+        SessionService.findSessionMetadata(sessionId, workspaceRoot)
+      ).resolves.toMatchObject({ taskStatus: 'queued' });
+
+      const running = await runtime.setTaskStatus('running');
+      expect(running).toMatchObject({
+        taskStatus: 'running',
+        taskStartedAt: expect.any(String),
+      });
+      expect(running).not.toHaveProperty('taskOwnerPid');
+
+      const failed = await runtime.setTaskStatus('failed', 'Model unavailable');
+      expect(failed).toMatchObject({
+        taskStatus: 'failed',
+        taskStatusReason: 'Model unavailable',
+        taskCompletedAt: expect.any(String),
+      });
+
+      const rerunning = await runtime.setTaskStatus('running');
+      expect(rerunning).toMatchObject({
+        taskStatus: 'running',
+        taskStartedAt: expect.any(String),
+      });
+      expect(rerunning?.taskStatusReason).toBeUndefined();
+      expect(rerunning?.taskCompletedAt).toBeUndefined();
+
+      const completed = await runtime.setTaskStatus('completed');
+      expect(completed).toMatchObject({
+        taskStatus: 'completed',
+        taskStartedAt: rerunning?.taskStartedAt,
+        taskCompletedAt: expect.any(String),
+      });
+      expect(events).toEqual([
+        expect.objectContaining({
+          type: 'task.status',
+          properties: expect.objectContaining({
+            taskStatus: 'running',
+          }),
+        }),
+        expect.objectContaining({
+          type: 'task.status',
+          properties: expect.objectContaining({
+            taskStatus: 'failed',
+            taskStatusReason: 'Model unavailable',
+          }),
+        }),
+        expect.objectContaining({
+          type: 'task.status',
+          properties: expect.objectContaining({
+            taskStatus: 'running',
+          }),
+        }),
+        expect.objectContaining({
+          type: 'task.status',
+          properties: expect.objectContaining({
+            taskStatus: 'completed',
+          }),
+        }),
+      ]);
+    } finally {
+      unsubscribe();
+      await runtime.dispose();
+    }
+  });
+
   it('delegates rewind through the idle session runtime boundary', async () => {
     const workspaceRoot = path.join(storageRoot, 'rewind-project');
     const runtime = await SessionRuntime.create({
@@ -390,20 +474,69 @@ describe('SessionRuntime', () => {
   });
 
   it('exclusively owns a session until the runtime is disposed', async () => {
-    const first = await SessionRuntime.create({ sessionId: 'exclusive-session' });
+    const workspaceRoot = path.join(storageRoot, 'exclusive-project');
+    const first = await SessionRuntime.create({
+      sessionId: 'exclusive-session',
+      workspaceRoot,
+    });
+    await first.setTaskStatus('running');
 
     await expect(
-      SessionRuntime.create({ sessionId: 'exclusive-session' })
+      SessionRuntime.create({
+        sessionId: 'exclusive-session',
+        workspaceRoot,
+      })
     ).rejects.toMatchObject({
       name: 'SessionInUseError',
       code: 'BLADE_SESSION_IN_USE',
     });
+    await expect(
+      SessionService.findSessionMetadata('exclusive-session', workspaceRoot)
+    ).resolves.toMatchObject({ taskStatus: 'running' });
 
     await first.dispose();
 
-    const resumed = await SessionRuntime.create({ sessionId: 'exclusive-session' });
+    const resumed = await SessionRuntime.create({
+      sessionId: 'exclusive-session',
+      workspaceRoot,
+    });
     expect(resumed.sessionId).toBe('exclusive-session');
     await resumed.dispose();
+  });
+
+  it('marks an existing top-level task failed when runtime initialization fails', async () => {
+    const workspaceRoot = path.join(storageRoot, 'failed-runtime-project');
+    const sessionId = 'failed-runtime-task';
+    await SessionService.createSessionMetadata(sessionId, workspaceRoot);
+    const events: string[] = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (
+        event.sessionId === sessionId &&
+        event.projectPath === workspaceRoot &&
+        event.type === 'task.status'
+      ) {
+        events.push(String(event.properties.taskStatus));
+      }
+    });
+    vi.mocked(createChatServiceAsync).mockRejectedValueOnce(
+      new Error('provider initialization failed')
+    );
+
+    try {
+      await expect(SessionRuntime.create({ sessionId, workspaceRoot })).rejects.toThrow(
+        'provider initialization failed'
+      );
+      await expect(
+        SessionService.findSessionMetadata(sessionId, workspaceRoot)
+      ).resolves.toMatchObject({
+        taskStatus: 'failed',
+        taskStatusReason: 'Session runtime initialization failed',
+        taskCompletedAt: expect.any(String),
+      });
+      expect(events).toEqual(['failed']);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('releases the session lease when initialization fails', async () => {

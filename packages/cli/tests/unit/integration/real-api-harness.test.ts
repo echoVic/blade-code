@@ -279,14 +279,18 @@ describe('real API coding-task harness', () => {
       currentModelId: 'deepseek-v4-flash',
       models: [
         expect.objectContaining({
-          apiKey: '${BLADE_API_KEY}',
-          baseUrl: 'https://api.deepseek.com',
+          displayName: 'deepseek-v4-flash',
           model: 'deepseek-v4-flash',
           provider: 'deepseek',
+          overrides: expect.objectContaining({
+            baseUrl: 'https://api.deepseek.com',
+          }),
         }),
       ],
     });
     const [model] = config.models as Array<Record<string, unknown>>;
+    expect(model).not.toHaveProperty('apiKey');
+    expect(model).not.toHaveProperty('baseUrl');
     expect(model).not.toHaveProperty('maxRetries');
   });
 
@@ -300,10 +304,12 @@ describe('real API coding-task harness', () => {
         maxOutputTokens: 1_024,
       })
     ).toMatchObject({
+      maxContextTokens: 24_000,
       models: [
         expect.objectContaining({
-          maxContextTokens: 24_000,
-          maxOutputTokens: 1_024,
+          overrides: expect.objectContaining({
+            maxOutputTokens: 1_024,
+          }),
         }),
       ],
     });

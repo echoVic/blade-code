@@ -167,6 +167,11 @@ describe('SessionService.forkSession', () => {
     await persistentStore.acknowledgeInboxMessages('parent-session', [
       'parent-only-inbox-id',
     ]);
+    await SessionService.updateSessionMetadata('parent-session', projectPath, {
+      taskStatus: 'running',
+      taskOwnerPid: process.pid,
+      taskStartedAt: '2026-08-05T10:00:00.000Z',
+    });
 
     const parentPath = getSessionFilePath(projectPath, 'parent-session');
     const parentBeforeFork = await readFile(parentPath, 'utf-8');
@@ -196,7 +201,9 @@ describe('SessionService.forkSession', () => {
       parentId: 'parent-session',
       relationType: 'fork',
       projectPath,
+      taskStatus: 'completed',
     });
+    expect(fork.metadata).not.toHaveProperty('taskOwnerPid');
     expect('filePath' in fork.metadata).toBe(false);
     expect(await readFile(parentPath, 'utf-8')).toBe(parentBeforeFork);
 
@@ -215,8 +222,11 @@ describe('SessionService.forkSession', () => {
         rootId: 'parent-session',
         parentId: 'parent-session',
         relationType: 'fork',
+        taskStatus: 'completed',
+        taskCompletedAt: expect.any(String),
       },
     });
+    expect(created?.data).not.toHaveProperty('taskOwnerPid');
     expect(childEvents.every((event) => event.sessionId === 'child-session')).toBe(
       true
     );
@@ -234,6 +244,8 @@ describe('SessionService.forkSession', () => {
       data: {
         parentId: 'parent-session',
         relationType: 'fork',
+        taskStatus: 'completed',
+        taskOwnerPid: null,
       },
     });
 

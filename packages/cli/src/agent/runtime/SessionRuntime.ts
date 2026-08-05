@@ -9,6 +9,7 @@ import {
 } from '../../config/index.js';
 import type { McpServerConfig, ModelConfig } from '../../config/types.js';
 import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
+import type { SessionTaskStatus } from '../../context/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalCreateInput, GoalProgress, GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
@@ -16,17 +17,19 @@ import { loadMcpConfigFromCli } from '../../mcp/loadMcpConfig.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
 import { buildSystemPrompt } from '../../prompts/index.js';
 import { AttachmentCollector } from '../../prompts/processors/AttachmentCollector.js';
+import { Bus } from '../../server/bus.js';
 import {
   createChatServiceAsync,
   type IChatService,
 } from '../../services/ChatServiceInterface.js';
+import { resolveModelConfig as resolvePiModelConfig } from '../../services/pi/resolveModelConfig.js';
 import {
   type RewindSessionOptions,
   type RewoundSession,
+  type SessionMetadata,
   type SessionRewindCheckpoint,
   SessionService,
 } from '../../services/SessionService.js';
-import { resolveModelConfig as resolvePiModelConfig } from '../../services/pi/resolveModelConfig.js';
 import { discoverSkills } from '../../skills/index.js';
 import {
   ensureStoreInitialized,
@@ -66,7 +69,7 @@ import {
   type SteeringEnqueueResult,
   type SteeringMessage,
 } from './ActiveTurnMailbox.js';
-import { SessionLease } from './SessionLease.js';
+import { SessionInUseError, SessionLease } from './SessionLease.js';
 
 const logger = createLogger(LogCategory.AGENT);
 const staleWorktreeCleanupRuns = new Map<string, Promise<void>>();
@@ -154,39 +157,58 @@ export class SessionRuntime {
   }
 
   static async create(options: SessionRuntimeOptions): Promise<SessionRuntime> {
-    await ensureStoreInitialized();
-    await cleanupStaleWorktreesOnce(options.workspaceRoot ?? getCwd());
-
-    const models = getAllModels();
-    if (models.length === 0) {
-      throw new Error(
-        '没有可用的模型配置\n\n' +
-          '请先使用以下命令添加模型：\n' +
-          '  /model add\n\n' +
-          '或运行初始化向导：\n' +
-          '  /init'
-      );
-    }
-
-    const config = getConfig();
-    if (!config) {
-      throw new Error('配置未初始化，请确保应用已正确启动');
-    }
-
     const workspaceRoot = options.workspaceRoot ?? getCwd();
-    const configManager = ConfigManager.getInstance();
-    const runtimeConfig: BladeConfig = {
-      ...config,
-      permissions: await configManager.loadWorkspacePermissions(
-        workspaceRoot,
-        config.permissions
-      ),
-    };
-    configManager.validateConfig(runtimeConfig);
+    try {
+      await ensureStoreInitialized();
+      await cleanupStaleWorktreesOnce(workspaceRoot);
 
-    const runtime = new SessionRuntime(runtimeConfig, options);
-    await runtime.initialize();
-    return runtime;
+      const models = getAllModels();
+      if (models.length === 0) {
+        throw new Error(
+          '没有可用的模型配置\n\n' +
+            '请先使用以下命令添加模型：\n' +
+            '  /model add\n\n' +
+            '或运行初始化向导：\n' +
+            '  /init'
+        );
+      }
+
+      const config = getConfig();
+      if (!config) {
+        throw new Error('配置未初始化，请确保应用已正确启动');
+      }
+
+      const configManager = ConfigManager.getInstance();
+      const runtimeConfig: BladeConfig = {
+        ...config,
+        permissions: await configManager.loadWorkspacePermissions(
+          workspaceRoot,
+          config.permissions
+        ),
+      };
+      configManager.validateConfig(runtimeConfig);
+
+      const runtime = new SessionRuntime(runtimeConfig, options);
+      await runtime.initialize();
+      return runtime;
+    } catch (error) {
+      if (!options.subagentInfo && !(error instanceof SessionInUseError)) {
+        await SessionRuntime.persistTaskStatus(
+          options.sessionId,
+          workspaceRoot,
+          'failed',
+          'Session runtime initialization failed'
+        ).catch((statusError) => {
+          if ((statusError as NodeJS.ErrnoException).code !== 'ENOENT') {
+            logger.warn(
+              `[SessionRuntime ${options.sessionId}] Failed to persist initialization failure`,
+              statusError
+            );
+          }
+        });
+      }
+      throw error;
+    }
   }
 
   static async hasPendingInbox(
@@ -251,6 +273,60 @@ export class SessionRuntime {
 
   getGoal(): Promise<GoalSnapshot | null> {
     return this.goalStore.get();
+  }
+
+  async setTaskStatus(
+    taskStatus: SessionTaskStatus,
+    taskStatusReason?: string
+  ): Promise<SessionMetadata | undefined> {
+    if (this.options.subagentInfo) return undefined;
+
+    return SessionRuntime.persistTaskStatus(
+      this.sessionId,
+      this.workspaceRoot,
+      taskStatus,
+      taskStatusReason
+    );
+  }
+
+  private static async persistTaskStatus(
+    sessionId: string,
+    workspaceRoot: string,
+    taskStatus: SessionTaskStatus,
+    taskStatusReason?: string
+  ): Promise<SessionMetadata> {
+    const now = new Date().toISOString();
+    const metadata = await SessionService.updateSessionMetadata(
+      sessionId,
+      workspaceRoot,
+      {
+        taskStatus,
+        taskStatusReason: taskStatusReason ?? null,
+        ...(taskStatus === 'running'
+          ? {
+              taskStartedAt: now,
+              taskCompletedAt: null,
+              taskOwnerPid: process.pid,
+            }
+          : taskStatus === 'queued'
+            ? {
+                taskStartedAt: null,
+                taskCompletedAt: null,
+                taskOwnerPid: null,
+              }
+            : { taskCompletedAt: now, taskOwnerPid: null }),
+      }
+    );
+    Bus.publish({ sessionId, projectPath: workspaceRoot }, 'task.status', {
+      taskStatus: metadata.taskStatus,
+      ...(taskStatusReason ? { taskStatusReason } : {}),
+      ...(metadata.taskStartedAt ? { taskStartedAt: metadata.taskStartedAt } : {}),
+      ...(metadata.taskCompletedAt
+        ? { taskCompletedAt: metadata.taskCompletedAt }
+        : {}),
+      updatedAt: metadata.lastMessageTime,
+    });
+    return metadata;
   }
 
   createGoal(input: GoalCreateInput): Promise<GoalSnapshot> {

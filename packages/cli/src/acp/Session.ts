@@ -29,6 +29,7 @@ import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
 import type { ChatContext } from '../agent/types.js';
 import { type McpServerConfig, PermissionMode } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+import { Bus } from '../server/bus.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import {
   executeSlashCommand,
@@ -126,6 +127,7 @@ export class AcpSession {
   private pendingPrompt: AbortController | null = null;
   private pendingResumeRequested = false;
   private availableCommandsTimer: ReturnType<typeof setTimeout> | null = null;
+  private taskStatusUnsubscribe?: () => void;
   private destroyed = false;
   private messages: Message[];
   private mode: AcpModeId = 'default';
@@ -167,6 +169,39 @@ export class AcpSession {
     this.agent = await Agent.createWithRuntime(this.runtime, { sessionId: this.id });
 
     logger.debug(`[AcpSession ${this.id}] Agent created successfully`);
+    this.taskStatusUnsubscribe?.();
+    this.taskStatusUnsubscribe = Bus.subscribe((event) => {
+      if (
+        event.type !== 'task.status' ||
+        event.sessionId !== this.id ||
+        event.projectPath !== this.cwd
+      ) {
+        return;
+      }
+      this.sendUpdate({
+        sessionUpdate: 'session_info_update',
+        updatedAt:
+          typeof event.properties.updatedAt === 'string'
+            ? event.properties.updatedAt
+            : new Date().toISOString(),
+        _meta: {
+          'blade/taskStatus': event.properties.taskStatus,
+          ...(typeof event.properties.taskStatusReason === 'string'
+            ? {
+                'blade/taskStatusReason': event.properties.taskStatusReason,
+              }
+            : {}),
+          ...(typeof event.properties.taskStartedAt === 'string'
+            ? { 'blade/taskStartedAt': event.properties.taskStartedAt }
+            : {}),
+          ...(typeof event.properties.taskCompletedAt === 'string'
+            ? {
+                'blade/taskCompletedAt': event.properties.taskCompletedAt,
+              }
+            : {}),
+        },
+      });
+    });
     const activeGoal = await this.runtime.getGoal();
     if (this.runtime.getPendingSteeringCount() > 0 || activeGoal?.status === 'active') {
       if (this.options.initialMessages === undefined) {
@@ -873,6 +908,8 @@ export class AcpSession {
       clearTimeout(this.availableCommandsTimer);
       this.availableCommandsTimer = null;
     }
+    this.taskStatusUnsubscribe?.();
+    this.taskStatusUnsubscribe = undefined;
 
     const agent = this.agent;
     const runtime = this.runtime;

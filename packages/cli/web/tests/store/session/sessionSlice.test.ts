@@ -46,6 +46,7 @@ function createSession(overrides: Partial<Session> = {}): Session {
     rootId: 'root-session-1',
     parentId: undefined,
     relationType: undefined,
+    taskStatus: 'completed',
     messageCount: 0,
     firstMessageTime: '2026-03-31T00:00:00.000Z',
     lastMessageTime: '2026-03-31T00:00:00.000Z',

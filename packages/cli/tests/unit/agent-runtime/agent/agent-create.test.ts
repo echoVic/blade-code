@@ -41,6 +41,7 @@ function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
 
 function createGoalRuntimeMocks() {
   return {
+    setTaskStatus: vi.fn().mockResolvedValue(undefined),
     recordGoalProgress: vi.fn().mockResolvedValue(null),
     getGoal: vi.fn().mockResolvedValue(null),
     pauseActiveGoal: vi.fn().mockResolvedValue(null),
@@ -150,6 +151,8 @@ describe('Agent runLoop system prompt injection', () => {
       continuePending: true,
     });
     expect(runtime.acknowledgeTurn).toHaveBeenCalledWith(turnHandle);
+    expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
+    expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(2, 'completed', undefined);
   });
 
   it('uses a caller-prepared durable input without enqueueing it twice', async () => {
@@ -229,6 +232,7 @@ describe('Agent runLoop system prompt injection', () => {
           mode: 'direct',
         };
       }),
+      setTaskStatus: vi.fn().mockResolvedValue(undefined),
       finishTurn: vi.fn().mockResolvedValue(undefined),
     };
     const agent = new Agent(
@@ -259,6 +263,12 @@ describe('Agent runLoop system prompt injection', () => {
     expect(order).toEqual(['prepare', 'expand']);
     expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle);
     expect((agent as any).runLoop).not.toHaveBeenCalled();
+    expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
+    expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(
+      2,
+      'failed',
+      'attachment unavailable'
+    );
   });
 
   it('leaves failed durable input pending without immediate retry', async () => {
@@ -294,7 +304,10 @@ describe('Agent runLoop system prompt injection', () => {
       if (Date.now() < 0) yield undefined;
       return {
         success: false,
-        error: { type: 'api_error', message: 'temporary outage' },
+        error: {
+          type: 'api_error',
+          message: 'temporary outage apiKey=supersecretvalue123',
+        },
         metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
       };
     });
@@ -314,6 +327,124 @@ describe('Agent runLoop system prompt injection', () => {
     expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
       continuePending: false,
     });
+    expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
+    expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(
+      2,
+      'failed',
+      'temporary outage apiKey=[REDACTED]'
+    );
+  });
+
+  it('persists cancellation when the active signal is aborted', async () => {
+    const turnHandle = { id: 'cancelled-turn' };
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: turnHandle,
+        messageId: 'cancelled-input',
+        queued: 1,
+        mode: 'direct',
+      })),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({
+        messages: [],
+        sealed: true,
+      })),
+      acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      { getRegistry: () => ({ getAll: () => [] }) } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).processAtMentionsForContent = vi.fn().mockResolvedValue('stop');
+    (agent as any).runLoop = vi.fn(async function* () {
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: true,
+        finalMessage: '',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await agent
+      .chatStream('stop', {
+        messages: [],
+        userId: 'user-1',
+        sessionId: 'session-1',
+        workspaceRoot: process.cwd(),
+        signal: controller.signal,
+      })
+      .next();
+
+    expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
+    expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(2, 'cancelled', undefined);
+  });
+
+  it('persists interruption when a stream consumer closes before completion', async () => {
+    const turnHandle = { id: 'interrupted-turn' };
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: turnHandle,
+        messageId: 'interrupted-input',
+        queued: 1,
+        mode: 'direct',
+      })),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({
+        messages: [],
+        sealed: true,
+      })),
+      acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      { getRegistry: () => ({ getAll: () => [] }) } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).processAtMentionsForContent = vi.fn().mockResolvedValue('partial');
+    (agent as any).runLoop = vi.fn(async function* () {
+      yield { kind: 'content_delta' as const, delta: 'partial' };
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const stream = agent.chatStream('partial', {
+      messages: [],
+      userId: 'user-1',
+      sessionId: 'session-1',
+      workspaceRoot: process.cwd(),
+    });
+
+    await expect(stream.next()).resolves.toMatchObject({
+      done: false,
+      value: { kind: 'content_delta', delta: 'partial' },
+    });
+    await stream.return({
+      success: true,
+      finalMessage: '',
+      metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
+    });
+
+    expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
+    expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(
+      2,
+      'interrupted',
+      'Task stream closed before completion'
+    );
   });
 
   it('starts a durable follow-up turn without a synthetic user message', async () => {
@@ -514,6 +645,7 @@ describe('Agent runLoop system prompt injection', () => {
       beginTurn: vi.fn(() => ({
         id: `goal-turn-${claimedContinuations + 1}`,
       })),
+      setTaskStatus: vi.fn().mockResolvedValue(undefined),
       beginGoalContinuation: vi.fn(async () => {
         claimedContinuations++;
         return makeGoal('active', claimedContinuations);

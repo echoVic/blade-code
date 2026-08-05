@@ -74,6 +74,7 @@ describe('Layout', () => {
       rootId: 'root-a',
       parentId: undefined,
       relationType: undefined,
+      taskStatus: 'completed',
       messageCount: 3,
       firstMessageTime: '2026-08-01T10:00:00.000Z',
       lastMessageTime: '2026-08-03T11:00:00.000Z',

@@ -14,8 +14,8 @@ import {
 } from '@agentclientprotocol/sdk';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
-import { SessionService } from '../services/SessionService.js';
 import { getModelDisplayName } from '../services/pi/resolveModelConfig.js';
+import { SessionService } from '../services/SessionService.js';
 import { getConfig } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 import { createSessionId } from '../utils/sessionId.js';
@@ -140,6 +140,18 @@ export class BladeAgent implements AcpAgentInterface {
         cwd: session.projectPath,
         title: session.title ?? null,
         updatedAt: session.lastMessageTime,
+        _meta: {
+          'blade/taskStatus': session.taskStatus,
+          ...(session.taskStatusReason
+            ? { 'blade/taskStatusReason': session.taskStatusReason }
+            : {}),
+          ...(session.taskStartedAt
+            ? { 'blade/taskStartedAt': session.taskStartedAt }
+            : {}),
+          ...(session.taskCompletedAt
+            ? { 'blade/taskCompletedAt': session.taskCompletedAt }
+            : {}),
+        },
       })),
       nextCursor: page.nextCursor,
     };

@@ -3,12 +3,14 @@ import {
   createMessageSlice,
   createSessionSlice,
   createStreamingSlice,
+  createTaskListSlice,
   createUiSlice,
 } from './slices';
 import type { SessionStoreState } from './types';
 
 export const useSessionStore = create<SessionStoreState>()((...a) => ({
   ...createSessionSlice(...a),
+  ...createTaskListSlice(...a),
   ...createMessageSlice(...a),
   ...createStreamingSlice(...a),
   ...createUiSlice(...a),
@@ -32,6 +34,7 @@ export type {
   StreamEvent,
   SubagentProgress,
   TaskItem,
+  TaskListSlice,
   TokenUsage,
   ToolCallInfo,
 } from './types';

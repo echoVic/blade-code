@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vite
 import { AcpSession } from '../../../../src/acp/Session.js';
 import type { LoopEvent } from '../../../../src/agent/loop/types.js';
 import type { LoopResult } from '../../../../src/agent/types.js';
+import { Bus } from '../../../../src/server/bus.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { createMockACPClient } from '../../../support/mocks/mockACPClient.js';
 import { createMockAgent, type MockAgent } from '../../../support/mocks/mockAgent.js';
@@ -179,6 +180,48 @@ describe('AcpSession', () => {
           options: { pendingInputOnly: true },
         });
       });
+    });
+
+    it('应该实时推送 task lifecycle metadata 并在 destroy 后取消订阅', async () => {
+      await session.initialize();
+      mockConnection.sessionUpdates = [];
+      const updatedAt = '2026-08-05T12:00:00.000Z';
+
+      Bus.publish(
+        { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+        'task.status',
+        {
+          taskStatus: 'running',
+          taskStartedAt: updatedAt,
+          updatedAt,
+        }
+      );
+      await vi.waitFor(() => {
+        expect(mockConnection.sessionUpdates).toContainEqual({
+          sessionId: 'test-session-id',
+          update: {
+            sessionUpdate: 'session_info_update',
+            updatedAt,
+            _meta: {
+              'blade/taskStatus': 'running',
+              'blade/taskStartedAt': updatedAt,
+            },
+          },
+        });
+      });
+
+      await session.destroy();
+      const countAfterDestroy = mockConnection.sessionUpdates.length;
+      Bus.publish(
+        { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+        'task.status',
+        {
+          taskStatus: 'completed',
+          updatedAt,
+        }
+      );
+      await Promise.resolve();
+      expect(mockConnection.sessionUpdates).toHaveLength(countAfterDestroy);
     });
   });
 

@@ -55,6 +55,23 @@ function formatProjectPath(projectPath: string): string {
   return basename(projectPath);
 }
 
+function formatTaskStatus(status: SessionMetadata['taskStatus']): string {
+  switch (status) {
+    case 'queued':
+      return 'QUEUED';
+    case 'running':
+      return 'RUNNING';
+    case 'failed':
+      return 'FAILED';
+    case 'cancelled':
+      return 'CANCELLED';
+    case 'interrupted':
+      return 'INTERRUPTED';
+    case 'completed':
+      return 'DONE';
+  }
+}
+
 /**
  * 自定义指示器组件 - 青色高亮
  */
@@ -181,6 +198,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
     return sessions.map((session) => {
       const projectName = formatProjectPath(session.projectPath);
       const timeStr = formatTimestamp(session.lastMessageTime);
+      const statusStr = `[${formatTaskStatus(session.taskStatus)}]`;
       const branchStr = session.gitBranch ? ` (${session.gitBranch})` : '';
       const errorStr = session.hasErrors ? ' [!]' : '';
       const relationStr =
@@ -192,7 +210,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
 
       return {
         key: getSessionCandidateKey(session),
-        label: `${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${errorStr}${relationStr}`,
+        label: `${statusStr} ${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${errorStr}${relationStr}`,
         value: session,
       };
     });

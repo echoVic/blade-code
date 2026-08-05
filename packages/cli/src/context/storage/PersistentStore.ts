@@ -80,6 +80,7 @@ export class PersistentStore {
       resumeDepth: subagentInfo?.resumeDepth,
       title: undefined,
       status: 'running',
+      taskStatus: subagentInfo ? 'running' : 'queued',
       agentType: subagentInfo?.subagentType,
       model: undefined,
       permission: undefined,

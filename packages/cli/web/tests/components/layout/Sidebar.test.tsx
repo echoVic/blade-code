@@ -49,6 +49,7 @@ function createSession(overrides: Partial<Session> = {}): Session {
     rootId: 'root-a',
     parentId: undefined,
     relationType: undefined,
+    taskStatus: 'completed',
     messageCount: 3,
     firstMessageTime: '2026-08-01T10:00:00.000Z',
     lastMessageTime: '2026-08-03T11:00:00.000Z',
@@ -187,6 +188,42 @@ describe('Sidebar', () => {
     expect(container.textContent).toContain('Session A');
     expect(container.textContent).toContain('Session B');
     expect(container.querySelectorAll('[aria-current="true"]').length).toBe(1);
+  });
+
+  test('groups sessions as tasks by durable status and exposes feed health', () => {
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          sessionId: 'done-task',
+          title: 'Done task',
+          taskStatus: 'completed',
+        }),
+        createSession({
+          sessionId: 'failed-task',
+          title: 'Failed task',
+          taskStatus: 'failed',
+        }),
+        createSession({
+          sessionId: 'running-task',
+          title: 'Running task',
+          taskStatus: 'running',
+        }),
+      ],
+      taskEventsConnected: true,
+    });
+
+    act(() => {
+      root.render(<Sidebar />);
+    });
+
+    const content = container.textContent ?? '';
+    expect(content.indexOf('RUNNING')).toBeLessThan(content.indexOf('FAILED'));
+    expect(content.indexOf('FAILED')).toBeLessThan(content.indexOf('DONE'));
+    expect(content).toContain('New Task');
+    expect(content).toContain('Task feed live');
+    expect(container.querySelector('[title="running"]')).not.toBeNull();
+    expect(container.querySelector('[title="failed"]')).not.toBeNull();
+    expect(container.querySelector('[title="completed"]')).not.toBeNull();
   });
 
   test('tabs to the fork action without hover and activates it without selecting the row', async () => {

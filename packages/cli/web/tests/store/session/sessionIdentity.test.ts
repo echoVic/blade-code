@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import type { Session, SessionRef } from '@api/schemas';
+import { describe, expect, it } from 'vitest';
 
 function createSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -10,6 +10,7 @@ function createSession(overrides: Partial<Session> = {}): Session {
     rootId: 'root-session-1',
     parentId: undefined,
     relationType: undefined,
+    taskStatus: 'completed',
     messageCount: 3,
     firstMessageTime: '2026-08-01T10:00:00.000Z',
     lastMessageTime: '2026-08-03T11:00:00.000Z',

@@ -262,6 +262,23 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
                 notification.update.title.includes('Bash')
             )
           ).toBe(true);
+          expect(
+            client.updates
+              .filter(
+                (notification) =>
+                  notification.update.sessionUpdate === 'session_info_update'
+              )
+              .map((notification) => notification.update._meta?.['blade/taskStatus'])
+          ).toEqual(expect.arrayContaining(['running', 'completed']));
+          const listed = await harness.connection.unstable_listSessions({
+            cwd: workspace,
+            cursor: undefined,
+          });
+          expect(
+            listed.sessions.find(
+              (candidate) => candidate.sessionId === session.sessionId
+            )?._meta?.['blade/taskStatus']
+          ).toBe('completed');
           expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
           expect(JSON.stringify(client.permissionRequests)).not.toContain(
             modelConfig.apiKey

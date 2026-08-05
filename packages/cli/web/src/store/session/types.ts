@@ -158,6 +158,15 @@ export interface SessionSlice {
   clearGoal: () => Promise<void>;
 }
 
+export interface TaskListSlice {
+  taskEventsConnected: boolean;
+  taskEventUnsubscribe: (() => void) | null;
+
+  subscribeToTaskEvents: () => Promise<void>;
+  unsubscribeFromTaskEvents: () => void;
+  handleTaskEvent: (event: StreamEvent) => void;
+}
+
 export interface MessageSlice {
   messages: Message[];
 
@@ -211,6 +220,10 @@ export interface UiSlice {
   setMaxContextTokens: (tokens: number, isDefault?: boolean) => void;
 }
 
-export type SessionStoreState = SessionSlice & MessageSlice & StreamingSlice & UiSlice;
+export type SessionStoreState = SessionSlice &
+  TaskListSlice &
+  MessageSlice &
+  StreamingSlice &
+  UiSlice;
 
 export type SliceCreator<T> = StateCreator<SessionStoreState, [], [], T>;

@@ -72,6 +72,10 @@ export default defineConfig(({ mode }) => {
           target: apiTarget,
           changeOrigin: true,
         },
+        '/events': {
+          target: apiTarget,
+          changeOrigin: true,
+        },
         '/configs': {
           target: apiTarget,
           changeOrigin: true,

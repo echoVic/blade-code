@@ -357,6 +357,9 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
             [modelConfig.apiKey]
           );
           expect(parentResult.success).toBe(true);
+          await expect(
+            SessionService.findSessionMetadata(parentId, fixture.workspace)
+          ).resolves.toMatchObject({ taskStatus: 'completed' });
           assertFinalContract(parentResult.finalMessage, marker, fixture.nonce);
           assertForkParentToolTrace(parentTrace, memoryPath);
           assertDurableParentTrace(parentTranscriptEvents, memoryPath);
@@ -489,6 +492,9 @@ describeRuntimeTrajectory('Runtime durable fork trajectory (real API)', () => {
             [modelConfig.apiKey]
           );
           expect(childResult.success).toBe(true);
+          await expect(
+            SessionService.findSessionMetadata(childId, fixture.workspace)
+          ).resolves.toMatchObject({ taskStatus: 'completed' });
           assertFinalContract(childResult.finalMessage, marker, fixture.nonce);
           if (readFileSync(resultPath, 'utf8') !== expectedBytes) {
             throw new Error('Runtime child result bytes did not match exact contract');

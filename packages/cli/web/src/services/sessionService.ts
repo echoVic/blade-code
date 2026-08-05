@@ -7,6 +7,7 @@ import {
   MessageRole,
   PermissionMode,
   type PermissionResponse,
+  parseSchema,
   type ResumeSubagentResponse,
   ResumeSubagentResponseSchema,
   type Session,
@@ -23,7 +24,6 @@ import {
   type SubagentSession,
   SubagentSessionSchema,
   Type,
-  parseSchema,
 } from '@api/schemas';
 
 export interface StreamEvent {
@@ -519,6 +519,71 @@ export const sessionService = {
     };
   },
 
+  openTaskEventSubscription: async (
+    onEvent: (event: StreamEvent) => void,
+    options?: { onConnectionChange?: (connected: boolean) => void }
+  ): Promise<() => void> => {
+    const onConnectionChange = options?.onConnectionChange;
+    const eventSource = new EventSource(`${API_BASE}/events`);
+    let isClosed = false;
+    let isReady = false;
+    let readinessTimeout: ReturnType<typeof setTimeout> | undefined;
+    let resolveReady!: () => void;
+    let rejectReady!: (error: Error) => void;
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    const close = () => {
+      if (isClosed) return;
+      isClosed = true;
+      if (readinessTimeout !== undefined) {
+        clearTimeout(readinessTimeout);
+        readinessTimeout = undefined;
+      }
+      eventSource.close();
+      onConnectionChange?.(false);
+    };
+
+    readinessTimeout = setTimeout(() => {
+      if (isReady || isClosed) return;
+      close();
+      rejectReady(new Error('Timed out waiting for global task events'));
+    }, SESSION_EVENT_READY_TIMEOUT_MS);
+
+    eventSource.onmessage = (message) => {
+      try {
+        const event = BusEventSchema.parse(JSON.parse(message.data)) as StreamEvent;
+        if (event.type === 'connected') {
+          if (!isReady) {
+            isReady = true;
+            if (readinessTimeout !== undefined) {
+              clearTimeout(readinessTimeout);
+              readinessTimeout = undefined;
+            }
+            resolveReady();
+          }
+          onConnectionChange?.(true);
+          return;
+        }
+        if (event.type === 'heartbeat') return;
+        onEvent(event);
+      } catch (error) {
+        console.error('Failed to parse global task event:', message.data, error);
+      }
+    };
+    eventSource.onerror = () => {
+      onConnectionChange?.(false);
+      if (!isReady && !isClosed) {
+        close();
+        rejectReady(new Error('Failed to open global task events'));
+      }
+    };
+
+    await readyPromise;
+    return close;
+  },
+
   respondPermission: async (
     ref: SessionRef,
     permissionId: string,
@@ -593,6 +658,5 @@ export type {
   PermissionResponse,
   Session,
   SessionRewindCheckpoint,
-  SessionRewindMode
+  SessionRewindMode,
 };
-
