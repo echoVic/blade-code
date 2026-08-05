@@ -2,120 +2,131 @@
 
 # 🗡️ Blade Code
 
-**Next-Generation AI Coding Assistant (CLI + Web UI)**
+**Next-generation AI coding assistant — CLI + Web + Headless**
 
 [![npm version](https://img.shields.io/npm/v/blade-code.svg?style=flat-square)](https://www.npmjs.com/package/blade-code)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Node.js Version](https://img.shields.io/node/v/blade-code.svg?style=flat-square)](https://nodejs.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
 
-English | [简体中文](README.md)
+[简体中文](README.md) | English
 
-</div>
-
----
-
-## 📸 Screenshots
-
-<div align="center">
-  <img src="./assets/screenshots/startup.png" alt="Blade Code CLI" width="800" />
-  <p><em>CLI Terminal Interface</em></p>
-</div>
-
-<div align="center">
-  <img src="./assets/screenshots/web.png" alt="Blade Code Web UI" width="800" />
-  <p><em>Web UI Interface (new in 0.2.0)</em></p>
 </div>
 
 ---
 
 ## ✨ Key Features
 
-- 🤖 **Smart Chat** - Context-aware, multi-turn collaboration with session continuity
-- 🌐 **Dual Interface** - CLI terminal + Web UI, switch as you like
-- 🛠️ **Rich Tooling** - 20+ built-in tools: file/search/shell/git/web and more
-- 🔍 **Smart Search** - WebSearch with multi-provider fallback (Exa → DuckDuckGo → SearXNG)
-- 🔗 **Extensible** - MCP, plugins, and Skills system
-- 📋 **Structured Workflows** - Spec / Plan / Subagents
-- 🔒 **Secure Control** - Permission modes: default/autoEdit/plan/yolo/spec + allow/deny lists
-- 🎨 **Modern UI** - React + Ink TUI / React + Vite Web UI
+- 🤖 **Unified Multi-Model Runtime** — Powered by [pi-ai](https://github.com/nicepkg/pi-ai), supports 38+ providers (OpenAI, Anthropic, DeepSeek, Google, Bedrock…) with auto-fetched model metadata
+- 🧠 **Auto Memory** — Persistent project knowledge across sessions; learns build commands, code patterns, and debugging insights
+- 🌐 **Three Runtime Modes** — CLI terminal / Web UI / Headless JSONL for flexible deployment
+- 🛠️ **20+ Built-in Tools** — File editing, code search, shell execution, git operations, web fetching, and more
+- 📋 **Structured Workflows** — Task delegation, Goal mode, Spec/Plan, Subagent orchestration
+- 🔗 **Extensible** — MCP protocol, plugin system, Skills, Hooks
+- 🔒 **Secure & Controllable** — Four permission modes (default/autoEdit/plan/yolo) + tool allow/deny lists
+- 💰 **Precise Cost Tracking** — Per-call token accumulation with cache pricing; check with `/cost`
+- 🎨 **Modern UI** — React + Ink terminal / React + Vite web, with Thinking mode support
 
 ---
 
 ## 🚀 Quick Start
 
 ```bash
-# Quick try
+# Try instantly (requires Node.js >= 22.19.0)
 npx blade-code
 
 # Global install
 npm install -g blade-code
-# or
-pnpm add -g blade-code
 
-# CLI mode
+# Start CLI
 blade
-blade "Help me analyze this project"
-blade --print "Write a quicksort"
-blade --headless "Analyze this repo and propose a refactor"
-blade --headless --output-format jsonl "Run the full agent loop in CI"
 
-# Web UI mode (new in 0.2.0)
-blade web                    # Start and open browser
-blade serve --port 3000      # Headless server mode
+# Start Web UI
+blade web
+
+# Headless mode (for CI / sandbox)
+blade --headless --output-format jsonl "analyze this repo"
 ```
 
-> Run `blade` and type `/model add` to configure your model on first launch.
+On first launch, a setup wizard guides you: **Pick Provider → Select Model → Enter API Key**.
 
 ---
 
-## ⚙️ Optional Configuration
+## ⚙️ Configuration
 
-Config supports global and project scope: `~/.blade/config.json` or `.blade/config.json`.
-See docs for the full schema.
+Config file: `~/.blade/config.json` (global) or `.blade/config.json` (project-level).
 
 ```json
 {
-  "provider": "openai-compatible",
-  "apiKey": "${BLADE_API_KEY}",
-  "baseUrl": "https://api.openai.com/v1",
-  "model": "gpt-4o-mini"
+  "currentModelId": "primary",
+  "models": [
+    {
+      "id": "primary",
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro"
+    }
+  ]
 }
 ```
 
+- **Credentials stored separately**: `~/.blade/auth.json` (mode `0600`), never committed to version control
+- **Model metadata** (contextWindow, maxTokens, pricing) fetched automatically from the pi-ai catalog
+- Provider Base URL only needed in `overrides.baseUrl` when using a custom proxy
+
 ---
 
-## 🧰 CLI At a Glance
+## 🧰 Commands
 
-**Common Commands**
+| Command | Description |
+|---------|-------------|
+| `blade` | Interactive CLI |
+| `blade web` | Web UI (browser) |
+| `blade serve` | Headless HTTP server |
+| `blade mcp` | Manage MCP servers |
+| `blade doctor` | Environment diagnostics |
+| `blade --headless "..."` | Full agent loop (non-interactive) |
+| `blade --print "..."` | Single-turn print mode |
 
-- `blade` start interactive CLI
-- `blade web` start Web UI (new in 0.2.0)
-- `blade serve` start headless server (new in 0.2.0)
-- `blade mcp` manage MCP servers
-- `blade doctor` environment check
-- `blade update` check for updates
+**In-session commands**
 
-**Common Options**
+| Command | Description |
+|---------|-------------|
+| `/model add` | Add a new model |
+| `/model switch` | Switch active model |
+| `/cost` | Show session cost |
+| `/compact` | Manually compact context |
+| `/memory list` | List memory files |
+| `/tasks` | View task list |
+| `/goal "..."` | Start Goal mode |
 
-- `--print/-p` print mode (pipe-friendly)
-- `--headless` full agent mode without Ink UI, prints streamed events to the terminal
-- `--output-format` output: text/json/stream-json/jsonl
-- `--permission-mode` permission mode
-- `--resume/-r` resume session / `--session-id` set session
+---
 
-**Headless Mode**
+## 🏗️ Architecture
 
-- `blade --headless "..."` runs the full agent loop without the interactive Ink UI
-- default permission mode is `yolo`, unless explicitly overridden with `--permission-mode`
-- `--output-format jsonl` emits a stable machine-friendly event stream for CI, sandbox runs, and tests
+```
+Blade/
+├── packages/cli/          # blade-code core (npm package)
+│   ├── src/
+│   │   ├── agent/         # Stateless Agent core + execution loop
+│   │   ├── services/pi/   # pi-ai runtime adapter layer
+│   │   ├── tools/         # Tool system (TypeBox schemas)
+│   │   ├── server/        # Web server (Hono)
+│   │   ├── context/       # Context compaction & token management
+│   │   ├── config/        # Configuration system
+│   │   ├── store/         # State management (Zustand)
+│   │   ├── ui/            # Terminal UI (React + Ink)
+│   │   └── schema/        # TypeBox runtime wrapper
+│   └── web/               # Web UI (React + Vite)
+└── docs/                  # User documentation (Docsify)
+```
 
 ---
 
 ## 📖 Documentation
 
-- **[User Docs](https://echovic.github.io/blade-doc/#/)**
-- **[Docs entry in repo](docs/README.md)**
+- **[Online Docs](https://echovic.github.io/blade-doc/#/)**
+- **[Configuration Guide](docs/configuration/config-system.md)**
+- **[Quick Start](docs/getting-started/quick-start.md)**
 - **[Contributing Guide](CONTRIBUTING.md)**
 
 ---
@@ -131,15 +142,9 @@ cd blade-code && bun install && bun run dev
 
 ## 💬 Community
 
-Add WeChat **VIc-Forever**, remark "Blade" to join the group.
-
----
-
-## 🔗 Related Resources
-
-- [NPM Package](https://www.npmjs.com/package/blade-code)
-- [Discord Community](https://discord.gg/utXDVcv6) - Join our Discord server
-- [Report Issues](https://github.com/echoVic/blade-code/issues)
+- WeChat: Add **VIc-Forever**, note "Blade"
+- [Discord](https://discord.gg/utXDVcv6)
+- [Issues](https://github.com/echoVic/blade-code/issues)
 
 ---
 
@@ -157,4 +162,4 @@ Add WeChat **VIc-Forever**, remark "Blade" to join the group.
 
 ## 📄 License
 
-[MIT](LICENSE) - Made with ❤️ by [echoVic](https://github.com/echoVic)
+[MIT](LICENSE) — Made with ❤️ by [echoVic](https://github.com/echoVic)

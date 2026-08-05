@@ -1,12 +1,12 @@
 # Blade
 
-**Blade** 是一个强大的 AI 编程助手，支持 CLI 终端和 Web UI 双模式，帮助你高效完成编码任务。
+**Blade** 是一个强大的 AI 编程助手，支持 CLI 终端、Web UI 和 Headless 三种模式，帮助你高效完成编码任务。
 
-> **当前版本**: 0.2.0 | [更新日志](changelog.md)
+> **当前版本**: 0.8.0 | [更新日志](changelog.md)
 
 ## 核心特性
 
-### 🌐 双模式界面（0.2.0 新增）
+### 🌐 三种运行模式
 
 - **CLI 模式**: 在终端中使用，支持 Markdown 渲染和语法高亮
 - **Web UI 模式**: 在浏览器中使用，完整的图形界面体验
@@ -62,7 +62,7 @@ npm install -g blade-code
 # CLI 模式
 blade
 
-# Web UI 模式（0.2.0 新增）
+# Web UI 模式
 blade web
 
 # 从 pi-ai catalog 添加模型

@@ -4,10 +4,49 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-05
+
+### ⚠️ BREAKING CHANGES
+
+- **模型配置格式变更**：旧字段 `apiKey`、`baseUrl`、`name`、`maxContextTokens`、
+  `supportsThinking` 在启动时会被拒绝；需重新通过 `/model add` 配置
+- **凭证独立存储**：API Key 移至 `~/.blade/auth.json`（权限 0600），不再写入
+  `config.json`
+- **Node.js 最低版本**：提升至 22.19.0（pi-ai 依赖要求）
+
+### ✨ 新功能
+
+- **pi-ai 运行时**：`@earendil-works/pi-ai` 替代 Vercel AI SDK 作为唯一 LLM
+  抽象层，统一 38+ Provider 的模型调用、流式、工具、缓存与重试
+- **TypeBox Schema**：替代 Zod，工具参数原生生成 JSON Schema，零转换直出
+- **pi catalog 元数据**：contextWindow、maxTokens、cost、reasoning 等从 pi-ai
+  动态获取，不再硬编码
+- **Provider → Model → Credential 流程**：TUI、Web、ACP 统一新配置向导
+- **精确费用追踪**：每次 API 调用直接累加 token（非做差），优先使用 pi-ai 精确
+  `usage.cost.total`；支持阶梯价格与 Anthropic 1h 缓存写入
+- **缓存定价端到端**：cacheRead/cacheWrite tokens 从 pi 响应 → Agent 事件 →
+  Store → `/cost` → headless JSONL 全链路透传
+- **压缩费用计入会话**：自动/手动/紧急压缩的 LLM 调用费用计入 `estimatedCostUsd`
+- **resetContextUsage**：压缩仅重置当前上下文占用，保留累计 token 与费用
+- Web `/configs` API 过滤敏感字段，不再返回模型数组和环境变量
+- Web `/models` API 显式投影公开字段，杜绝凭证泄露
+- Add Model 弹窗在凭证为空时真正禁用保存；重打开时清空旧状态
+- Edit Model 修复 undefined model 字段导致配置破坏
+- FileCredentialStore 写入前强制父目录 0700
+
 ### 🐛 问题修复
 
-- tag workflow 补齐 GitHub Release guard 的 shell 闭合，并新增可指定既有 tag
-  的幂等手动恢复入口；发布契约测试会对所有内嵌 shell 执行语法校验
+- 费用累计从"与上次做差"改为每次 API 调用直接相加，修复多轮低估
+- 缓存 token（cacheRead/cacheWrite）不再丢失，正确参与价格计算
+- 压缩后不再清空会话累计费用（仅重置 inputTokens/outputTokens/totalTokens）
+- 启动时校验旧模型配置字段，明确报错而非静默加载
+
+### 🧪 测试
+
+- CLI 单元测试 1832 通过，Web 功能测试 115 通过
+- 新增：pi-request-options、session-token-usage、models-routes、config-routes、
+  file-credential-store、pi-model-catalog、compaction-cost
+- 浏览器自动化验证完整 Provider→Model→Credential→Edit→Delete 流程
 
 ## [0.7.8] - 2026-08-05
 

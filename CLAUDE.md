@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Blade Code is a modern AI-powered coding assistant with CLI + Web UI, built with React + Ink (CLI) and React + Vite (Web), using TypeScript. Current version: **0.2.0**.
+Blade Code is a modern AI-powered coding assistant with CLI + Web UI, built with React + Ink (CLI) and React + Vite (Web), using TypeScript. Current version: **0.8.0**.
 
 ## Quick Commands
 
@@ -45,6 +45,8 @@ Blade/
 │   │       ├── ui/             # Terminal UI (React + Ink)
 │   │       ├── store/          # State management (Zustand)
 │   │       ├── services/       # Service layer (Chat, Session, etc.)
+│   │       ├── services/pi/    # pi-ai runtime adapter
+│   │       ├── schema/         # TypeBox runtime wrapper
 │   │       ├── commands/       # CLI subcommands (serve, web, mcp, etc.)
 │   │       ├── prompts/        # Prompt templates
 │   │       ├── slash-commands/ # Slash commands
@@ -62,13 +64,14 @@ Blade/
 2. **Tool System**: Unified tool registration, execution, and validation with TypeBox schemas
 3. **Permission Control**: Three-level permission system (allow/ask/deny)
 4. **Session Management**: Multi-session support with resume and fork capabilities
+5. **pi-ai Runtime**: Single LLM abstraction layer; model metadata from catalog, not hardcoded
 
 ## Code Style
 
 - TypeScript strict mode
 - Biome for linting and formatting (single quotes, semicolons, 88 char line width)
 - Avoid `any` type
-- Use TypeBox schemas for tool parameters
+- Use TypeBox schemas for tool parameters (not Zod)
 
 ## Testing
 
