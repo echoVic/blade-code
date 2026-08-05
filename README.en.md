@@ -15,6 +15,20 @@
 
 ---
 
+## 📸 Screenshots
+
+<div align="center">
+  <img src="./assets/screenshots/startup.png" alt="Blade Code CLI" width="800" />
+  <p><em>CLI Terminal</em></p>
+</div>
+
+<div align="center">
+  <img src="./assets/screenshots/web.png" alt="Blade Code Web UI" width="800" />
+  <p><em>Web UI</em></p>
+</div>
+
+---
+
 ## ✨ Key Features
 
 - 🤖 **Unified Multi-Model Runtime** — Powered by [pi-ai](https://github.com/nicepkg/pi-ai), supports 38+ providers (OpenAI, Anthropic, DeepSeek, Google, Bedrock…) with auto-fetched model metadata

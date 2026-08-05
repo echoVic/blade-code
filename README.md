@@ -15,6 +15,20 @@
 
 ---
 
+## 📸 界面预览
+
+<div align="center">
+  <img src="./assets/screenshots/startup.png" alt="Blade Code CLI 界面" width="800" />
+  <p><em>CLI 终端界面</em></p>
+</div>
+
+<div align="center">
+  <img src="./assets/screenshots/web.png" alt="Blade Code Web UI" width="800" />
+  <p><em>Web UI 界面</em></p>
+</div>
+
+---
+
 ## ✨ 核心特性
 
 - 🤖 **多模型统一运行时** — 基于 [pi-ai](https://github.com/nicepkg/pi-ai) 统一 38+ Provider（OpenAI/Anthropic/DeepSeek/Google/Bedrock…），模型元数据动态获取
