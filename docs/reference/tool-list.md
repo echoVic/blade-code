@@ -174,12 +174,22 @@
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `subagent_type` | string | ✅ | 子代理类型 |
-| `query` | string | ✅ | 任务描述 |
-| `description` | string | | 简短描述 |
+| `subagent_type` | string | 新任务必填 | 子代理类型；resume 时省略或与源类型一致 |
+| `description` | string | ✅ | 3-100 字符的简短描述 |
+| `prompt` | string | ✅ | 至少 10 字符的详细任务指令 |
+| `run_in_background` | boolean | | 后台运行；默认 `false` |
+| `isolation` | string | | `none` 或 `worktree` |
+| `resume_from` | string | | 要继续的已结束 agent ID |
+| `resume` | string | | `resume_from` 的 deprecated alias |
 
 **类型**: ReadOnly  
-**特性**: 使用 `.blade/agents` 或 `~/.blade/agents` 中的配置
+**特性**: 使用 `.blade/agents` 或 `~/.blade/agents` 中的配置。foreground 与
+background 运行都会持久化；每次 resume 创建新的不可变 child ID，并冻结继承源运行的
+模型、权限、工具、系统提示、workspace 和隔离配置。结果中的
+`resume_from_hint` 可直接用于下一次 follow-up。
+
+**Lineage**: 返回和持久化 `resumed_from`、`root_agent_id`、`resume_depth`。
+读取和恢复按 `parent sessionId + projectPath` 隔离，跨 workspace ID 按不存在处理。
 
 ### TaskOutput
 
@@ -191,6 +201,8 @@
 
 **类型**: ReadOnly
 **输出边界**: 后台 Shell 的 stdout/stderr 各保留最近 1 MiB；模型和 TUI/Web/ACP 事件中的文本会继续按命令类型截断并保留头尾。返回值通过 `output_truncated`、`stdout_omitted_bytes`、`stderr_omitted_bytes` 和 `truncation_info` 明确报告截断，不会静默丢失边界信息。
+**Agent 输出**: 包含 `resumed_from`、`root_agent_id`、`resume_depth` 和
+`resume_from_hint`，可在进程重启后继续同一 lineage。
 
 ### TaskCreate
 

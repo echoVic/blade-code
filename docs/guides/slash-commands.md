@@ -18,6 +18,7 @@ Slash 命令是 Blade 的快捷操作入口，输入 `/` 触发建议，`Tab` �
 | `/permissions` | - | 管理权限规则 |
 | `/mcp` | - | 显示 MCP 状态 |
 | `/agents` | - | 管理子代理 |
+| `/tasks` | - | 查看后台任务并恢复已结束的子代理 |
 | `/skills` | - | 管理 Skills |
 | `/plugins` | - | 管理插件 |
 | `/hooks` | - | 管理 Hooks |
@@ -88,6 +89,20 @@ Git 仓库查询和 AI 辅助：
 ```bash
 /resume         # 打开会话选择器
 ```
+
+### /tasks
+
+查看当前 parent session 与 workspace 拥有的后台 Shell 和 Subagents：
+
+```bash
+/tasks
+/tasks resume <agentId> <follow-up prompt>
+/tasks clean
+```
+
+`resume` 只接受已结束的 agent。Blade 会保留源运行并创建新的 child ID，继承源
+transcript、模型、权限、工具与隔离配置；列表中的 `Lineage` 列显示来源和恢复深度。
+parent session 正在执行回合或存在 durable pending input 时，直接恢复会被拒绝。
 
 ### /compact
 

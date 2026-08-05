@@ -2,6 +2,8 @@
  * Slash Command 类型定义
  */
 
+import type { ResumedSubagent } from '../agent/runtime/SessionRuntime.js';
+import type { AgentSession } from '../agent/subagents/AgentSessionStore.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type {
   RewindSessionOptions,
@@ -44,6 +46,7 @@ export type SlashCommandAction =
   | 'resume_goal'
   | 'goal_cleared'
   | 'rewind_session'
+  | 'subagent_resumed'
   | 'select_session'
   | 'activate_session';
 
@@ -136,6 +139,11 @@ export interface SlashCommandContext {
   rewind?: {
     listCheckpoints: () => Promise<SessionRewindCheckpoint[]>;
     execute: (options: RewindSessionOptions) => Promise<RewoundSession>;
+  };
+  /** 当前表面拥有的 durable subagent 控制边界 */
+  subagents?: {
+    list: () => Promise<AgentSession[]>;
+    resume: (agentId: string, prompt: string) => Promise<ResumedSubagent>;
   };
   /** ACP 模式下的回调（可选） */
   acp?: AcpCallbacks;

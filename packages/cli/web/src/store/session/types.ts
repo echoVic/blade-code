@@ -59,6 +59,9 @@ export interface SubagentProgress {
   currentTool?: string;
   startTime: number;
   sessionId?: string;
+  resumedFrom?: string;
+  rootAgentId?: string;
+  resumeDepth?: number;
   output?: string;
   thinking?: string;
   toolCalls?: ToolCallInfo[];

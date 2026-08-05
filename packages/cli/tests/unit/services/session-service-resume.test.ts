@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { SessionEvent } from '../../../src/context/types.js';
 import type { Message } from '../../../src/services/ChatServiceInterface.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 
@@ -42,5 +43,88 @@ describe('SessionService.toUISafeMessages', () => {
       { role: 'user', content: 'same prompt' },
       { role: 'assistant', content: 'same answer' },
     ]);
+  });
+});
+
+describe('SessionService subagent history projection', () => {
+  it('attaches subtask lineage stored under the tool-call identity', () => {
+    const base = {
+      sessionId: 'parent-session',
+      timestamp: '2026-08-05T00:00:00.000Z',
+      cwd: '/workspace',
+      version: 'test',
+    };
+    const entries: SessionEvent[] = [
+      {
+        ...base,
+        id: 'created',
+        type: 'session_created',
+        data: {
+          sessionId: 'parent-session',
+          rootId: 'parent-session',
+          createdAt: base.timestamp,
+          updatedAt: base.timestamp,
+        },
+      },
+      {
+        ...base,
+        id: 'assistant-created',
+        type: 'message_created',
+        data: {
+          messageId: 'assistant-message',
+          role: 'assistant',
+          createdAt: base.timestamp,
+        },
+      },
+      {
+        ...base,
+        id: 'tool-call',
+        type: 'part_created',
+        data: {
+          partId: 'tool-call-id',
+          messageId: 'assistant-message',
+          partType: 'tool_call',
+          payload: {
+            toolCallId: 'tool-call-id',
+            toolName: 'Task',
+            input: { subagent_type: 'Explore' },
+          },
+          createdAt: base.timestamp,
+        },
+      },
+      {
+        ...base,
+        id: 'subtask-ref',
+        type: 'part_created',
+        data: {
+          partId: 'subtask-ref-id',
+          messageId: 'tool-call-id',
+          partType: 'subtask_ref',
+          payload: {
+            childSessionId: 'agent-child',
+            agentType: 'Explore',
+            status: 'completed',
+            resumedFrom: 'agent-source',
+            rootAgentId: 'agent-root',
+            resumeDepth: 2,
+          },
+          createdAt: base.timestamp,
+        },
+      },
+    ];
+
+    expect(SessionService.convertJSONLToMessages(entries)).toContainEqual(
+      expect.objectContaining({
+        role: 'assistant',
+        metadata: {
+          subtaskRef: expect.objectContaining({
+            childSessionId: 'agent-child',
+            resumedFrom: 'agent-source',
+            rootAgentId: 'agent-root',
+            resumeDepth: 2,
+          }),
+        },
+      })
+    );
   });
 });

@@ -340,7 +340,8 @@ export async function processSlashCommand(
   cleanupAgent: CleanupAgent,
   sessionId?: string,
   messages?: Message[],
-  rewind?: SlashCommandContext['rewind']
+  rewind?: SlashCommandContext['rewind'],
+  subagents?: SlashCommandContext['subagents']
 ): Promise<SlashRouteResult> {
   const { text: command } = resolved;
 
@@ -354,6 +355,7 @@ export async function processSlashCommand(
     sessionId,
     messages,
     rewind,
+    subagents,
     signal,
   };
 

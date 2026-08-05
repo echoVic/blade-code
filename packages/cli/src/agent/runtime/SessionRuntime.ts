@@ -46,10 +46,19 @@ import { getCwd } from '../../utils/cwd.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
 import { worktreeManager } from '../../worktree/WorktreeManager.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
-import { BackgroundAgentManager } from '../subagents/BackgroundAgentManager.js';
+import type { LoopEvent } from '../loop/types.js';
+import type { AgentSession } from '../subagents/AgentSessionStore.js';
+import {
+  BackgroundAgentManager,
+  type ResumeAgentResult,
+} from '../subagents/BackgroundAgentManager.js';
 import { subagentRegistry } from '../subagents/SubagentRegistry.js';
 import type { SubagentConfig } from '../subagents/types.js';
-import type { AgentOptions, UserMessageContent } from '../types.js';
+import type {
+  AgentOptions,
+  SubagentInfoForContext,
+  UserMessageContent,
+} from '../types.js';
 import {
   type ActiveTurnHandle,
   ActiveTurnMailbox,
@@ -101,6 +110,19 @@ export interface SessionRuntimeOptions {
   mcpServers?: Record<string, McpServerConfig>;
   strictMcpConfig?: boolean;
   agents?: SubagentConfig[];
+  subagentInfo?: SubagentInfoForContext;
+}
+
+export interface ResumeSubagentOptions {
+  agentId: string;
+  prompt: string;
+  onEvent?: (event: LoopEvent, agentId: string) => void | Promise<void>;
+  onCompleted?: (session: AgentSession) => void | Promise<void>;
+}
+
+export interface ResumedSubagent {
+  source: AgentSession;
+  session: AgentSession;
 }
 
 export class SessionRuntime {
@@ -273,6 +295,50 @@ export class SessionRuntime {
     return SessionService.rewindSession(this.sessionId, this.workspaceRoot, options);
   }
 
+  listSubagents(): AgentSession[] {
+    return BackgroundAgentManager.getInstance().listForSession({
+      sessionId: this.sessionId,
+      projectPath: this.workspaceRoot,
+    });
+  }
+
+  resumeSubagent(options: ResumeSubagentOptions): ResumedSubagent {
+    this.assertSubagentControlIdle();
+    const manager = BackgroundAgentManager.getInstance();
+    const owner = {
+      sessionId: this.sessionId,
+      projectPath: this.workspaceRoot,
+    };
+    const source = manager.getAgent(options.agentId, owner);
+    if (!source) {
+      throw new Error(`Subagent not found in this session: ${options.agentId}`);
+    }
+    const registered = subagentRegistry.getSubagent(source.subagentType);
+    const config = source.configSnapshot
+      ? ({ ...source.configSnapshot } as SubagentConfig)
+      : registered;
+    if (!config) {
+      throw new Error(`Subagent configuration is unavailable: ${source.subagentType}`);
+    }
+    const resumed: ResumeAgentResult | undefined = manager.resumeAgent({
+      agentId: source.id,
+      prompt: options.prompt,
+      config,
+      owner,
+      permissionMode: config.permissionMode,
+      onEvent: options.onEvent,
+      onCompleted: options.onCompleted,
+    });
+    if (!resumed) {
+      throw new Error(`Subagent cannot be resumed: ${source.id}`);
+    }
+    const session = manager.getAgent(resumed.agentId, owner);
+    if (!session) {
+      throw new Error(`Resumed subagent was not persisted: ${resumed.agentId}`);
+    }
+    return { source: resumed.source, session };
+  }
+
   beginTurn(): ActiveTurnHandle {
     return this.getActiveTurnMailbox().beginTurn();
   }
@@ -361,7 +427,7 @@ export class SessionRuntime {
       );
       await this.getExecutionEngine()
         .getContextManager()
-        .persistentStore.initSession(this.sessionId);
+        .persistentStore.initSession(this.sessionId, this.options.subagentInfo);
 
       this.initialized = true;
       logger.debug(
@@ -522,10 +588,22 @@ export class SessionRuntime {
     }
     if (
       BackgroundAgentManager.getInstance()
-        .listForSession(this.sessionId)
+        .listForSession({
+          sessionId: this.sessionId,
+          projectPath: this.workspaceRoot,
+        })
         .some((session) => session.status === 'running')
     ) {
       throw new Error('Cannot rewind while a background agent is running');
+    }
+  }
+
+  private assertSubagentControlIdle(): void {
+    if (this.hasTurnOwner()) {
+      throw new Error('Cannot resume a subagent while the session has an active turn');
+    }
+    if (this.getPendingSteeringCount() > 0) {
+      throw new Error('Cannot resume a subagent while durable input is pending');
     }
   }
 

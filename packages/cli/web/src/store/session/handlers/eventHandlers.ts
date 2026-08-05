@@ -214,6 +214,7 @@ const handleToolStart: EventHandler = (props, get, set) => {
   let subagentType: string | undefined;
   let description = '';
   let subagentSessionId: string | undefined;
+  let resumedFrom: string | undefined;
 
   if (toolName === 'Task') {
     try {
@@ -221,6 +222,7 @@ const handleToolStart: EventHandler = (props, get, set) => {
       subagentType = parsed.subagent_type;
       description = parsed.description || parsed.query || subagentType || '';
       subagentSessionId = parsed.subagent_session_id;
+      resumedFrom = parsed.resume_from || parsed.resume;
     } catch {
       // ignore
     }
@@ -240,6 +242,7 @@ const handleToolStart: EventHandler = (props, get, set) => {
       status: 'running',
       startTime: Date.now(),
       sessionId: subagentSessionId,
+      resumedFrom,
       output: '',
       thinking: '',
     });
@@ -353,6 +356,18 @@ const handleToolResult: EventHandler = (props, get, set) => {
     metadata && typeof metadata.subagentSummary === 'string'
       ? metadata.subagentSummary
       : undefined;
+  const subagentResumedFrom =
+    metadata && typeof metadata.subagentResumedFrom === 'string'
+      ? metadata.subagentResumedFrom
+      : undefined;
+  const subagentRootId =
+    metadata && typeof metadata.subagentRootId === 'string'
+      ? metadata.subagentRootId
+      : undefined;
+  const subagentResumeDepth =
+    metadata && typeof metadata.subagentResumeDepth === 'number'
+      ? metadata.subagentResumeDepth
+      : undefined;
 
   if (subagentSessionId && subagentStatus) {
     set((state) => ({
@@ -370,6 +385,19 @@ const handleToolResult: EventHandler = (props, get, set) => {
           summary:
             subagentSummary ||
             (typeof existing?.summary === 'string' ? existing.summary : ''),
+          resumedFrom:
+            subagentResumedFrom ||
+            (typeof existing?.resumedFrom === 'string'
+              ? existing.resumedFrom
+              : undefined),
+          rootAgentId:
+            subagentRootId ||
+            (typeof existing?.rootAgentId === 'string'
+              ? existing.rootAgentId
+              : subagentSessionId),
+          resumeDepth:
+            subagentResumeDepth ??
+            (typeof existing?.resumeDepth === 'number' ? existing.resumeDepth : 0),
         };
         return {
           ...m,
@@ -424,6 +452,10 @@ const handleSubagentStart: EventHandler = (props, get) => {
     description: (props.description as string) || '',
     status: 'running',
     startTime: Date.now(),
+    sessionId: props.subagentSessionId as string | undefined,
+    resumedFrom: props.resumedFrom as string | undefined,
+    rootAgentId: props.rootAgentId as string | undefined,
+    resumeDepth: typeof props.resumeDepth === 'number' ? props.resumeDepth : undefined,
   };
   setSubagent(currentAssistantMessageId, subagent);
 };

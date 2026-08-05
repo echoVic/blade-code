@@ -4,6 +4,7 @@ import { Agent } from '../Agent.js';
 import { recordVerificationEvidence } from '../loop/completionPolicy.js';
 import { drainLoop } from '../loop/index.js';
 import type { LoopEvent } from '../loop/types.js';
+import type { ChatContext } from '../types.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
 
 /**
@@ -26,6 +27,8 @@ export class SubagentExecutor {
   async execute(context: SubagentContext): Promise<SubagentResult> {
     const startTime = Date.now();
     const agentId = context.subagentSessionId ?? createSessionId('agent');
+    let agent: Agent | undefined;
+    let chatContext: ChatContext | undefined;
 
     try {
       const appendSystemPrompt = this.getAppendSystemPrompt();
@@ -35,7 +38,7 @@ export class SubagentExecutor {
           ? this.config.model
           : undefined;
       const permissionMode = this.config.permissionMode ?? context.permissionMode;
-      const agent = await Agent.create({
+      agent = await Agent.create({
         toolWhitelist: this.config.tools,
         toolBlacklist: [
           'EnterWorktree',
@@ -57,6 +60,19 @@ export class SubagentExecutor {
         parentSessionId: context.parentSessionId || '',
         subagentType: this.config.name,
         isSidechain: false,
+        resumedFrom: context.resumedFrom,
+        rootAgentId: context.rootAgentId ?? agentId,
+        resumeDepth: context.resumeDepth ?? 0,
+      };
+      chatContext = {
+        messages: [...(context.existingMessages ?? [])],
+        userId: 'subagent',
+        sessionId: agentId,
+        workspaceRoot: context.workspaceRoot || getCwd(),
+        completionRequirements: appendSystemPrompt,
+        worktreeActive: context.worktreeActive,
+        permissionMode,
+        subagentInfo,
       };
 
       /**
@@ -74,16 +90,7 @@ export class SubagentExecutor {
       };
 
       const loopResult = await drainLoop(
-        agent.chatStream(context.prompt, {
-          messages: [],
-          userId: 'subagent',
-          sessionId: agentId,
-          workspaceRoot: context.workspaceRoot || getCwd(),
-          completionRequirements: appendSystemPrompt,
-          worktreeActive: context.worktreeActive,
-          permissionMode,
-          subagentInfo,
-        }),
+        agent.chatStream(context.prompt, chatContext),
         onEvent
       );
 
@@ -101,6 +108,7 @@ export class SubagentExecutor {
         success: true,
         message: finalMessage,
         agentId,
+        messages: chatContext.messages,
         verificationCommands: [...verificationCommands],
         stats: {
           tokens: tokensUsed,
@@ -114,11 +122,16 @@ export class SubagentExecutor {
         success: false,
         message: '',
         agentId,
+        messages: chatContext?.messages ?? [...(context.existingMessages ?? [])],
         error: error instanceof Error ? error.message : String(error),
         stats: {
           duration,
         },
       };
+    } finally {
+      if (agent && typeof agent.destroy === 'function') {
+        await agent.destroy().catch(() => undefined);
+      }
     }
   }
 

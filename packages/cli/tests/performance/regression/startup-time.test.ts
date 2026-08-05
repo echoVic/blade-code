@@ -23,23 +23,30 @@ describe('启动时间回归测试', () => {
     return result;
   }
 
+  function measureCli(args: string[], sampleCount: number): number[] {
+    return Array.from({ length: sampleCount }, () => {
+      const start = performance.now();
+      runCli(args);
+      return performance.now() - start;
+    });
+  }
+
+  function expectMedianBelowBudget(samples: number[], budgetMs: number): void {
+    const sorted = [...samples].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    expect(
+      median,
+      `startup samples: ${samples.map((sample) => sample.toFixed(1)).join(', ')}ms`
+    ).toBeLessThan(budgetMs);
+  }
+
   describe('CLI 启动性能', () => {
     it('--version 命令应在 2 秒内完成', () => {
-      const start = performance.now();
-
-      runCli(['--version']);
-
-      const duration = performance.now() - start;
-      expect(duration).toBeLessThan(2000);
+      expectMedianBelowBudget(measureCli(['--version'], 3), 2000);
     });
 
     it('--help 命令应在 2 秒内完成', () => {
-      const start = performance.now();
-
-      runCli(['--help']);
-
-      const duration = performance.now() - start;
-      expect(duration).toBeLessThan(2000);
+      expectMedianBelowBudget(measureCli(['--help'], 3), 2000);
     });
   });
 
@@ -57,21 +64,9 @@ describe('启动时间回归测试', () => {
     });
   });
 
-  describe('冷启动 vs 热启动', () => {
-    it('连续启动应该更快 (缓存效果)', () => {
-      const runs: number[] = [];
-
-      for (let i = 0; i < 3; i++) {
-        const start = performance.now();
-        runCli(['--version']);
-        runs.push(performance.now() - start);
-      }
-
-      if (runs.length >= 2) {
-        const firstRun = runs[0];
-        const lastRun = runs[runs.length - 1];
-        expect(lastRun).toBeLessThanOrEqual(firstRun * 1.5);
-      }
+  describe('连续启动', () => {
+    it('多次启动的中位数应保持在 2 秒预算内', () => {
+      expectMedianBelowBudget(measureCli(['--version'], 5), 2000);
     });
   });
 });

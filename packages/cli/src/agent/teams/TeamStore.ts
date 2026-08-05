@@ -80,12 +80,12 @@ export class TeamStore {
       description: input.description,
       createdAt: now,
       updatedAt: now,
-      leadAgentId: `team-lead@${name}`,
+      leadAgentId: `team-lead-${name}`,
       leadSessionId: input.leadSessionId,
       teamFilePath,
       members: [
         {
-          id: `team-lead@${name}`,
+          id: `team-lead-${name}`,
           name: 'team-lead',
           subagentType: input.leadAgentType || 'team-lead',
           description: 'Team lead for coordinating the agent team',

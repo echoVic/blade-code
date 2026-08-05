@@ -40,6 +40,8 @@ describe('useAgent runtime ownership', () => {
     enqueueSteering: ReturnType<typeof vi.fn>;
     listRewindCheckpoints: ReturnType<typeof vi.fn>;
     rewindSession: ReturnType<typeof vi.fn>;
+    listSubagents: ReturnType<typeof vi.fn>;
+    resumeSubagent: ReturnType<typeof vi.fn>;
   };
   let agent: { destroy: ReturnType<typeof vi.fn> };
 
@@ -78,6 +80,20 @@ describe('useAgent runtime ownership', () => {
         restoredFiles: [],
         messages: [{ role: 'user', content: 'kept' }],
       }),
+      listSubagents: vi.fn(() => [
+        {
+          id: 'agent-source',
+          status: 'completed',
+        },
+      ]),
+      resumeSubagent: vi.fn(() => ({
+        source: { id: 'agent-source' },
+        session: {
+          id: 'agent-child',
+          resumedFrom: 'agent-source',
+          resumeDepth: 1,
+        },
+      })),
     };
     agent = { destroy: vi.fn().mockResolvedValue(undefined) };
     mocks.createRuntime.mockResolvedValue(runtime);
@@ -217,5 +233,34 @@ describe('useAgent runtime ownership', () => {
     });
     expect(agent.destroy).toHaveBeenCalledOnce();
     expect(runtime.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('lists and resumes subagents without releasing the parent runtime', async () => {
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await hook?.createAgent();
+
+    await expect(hook?.listSubagents()).resolves.toEqual([
+      expect.objectContaining({ id: 'agent-source' }),
+    ]);
+    await expect(
+      hook?.resumeSubagent('agent-source', 'Check the follow-up')
+    ).resolves.toMatchObject({
+      source: { id: 'agent-source' },
+      session: { id: 'agent-child', resumeDepth: 1 },
+    });
+    expect(runtime.listSubagents).toHaveBeenCalledOnce();
+    expect(runtime.resumeSubagent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'agent-source',
+        prompt: 'Check the follow-up',
+        onEvent: expect.any(Function),
+        onCompleted: expect.any(Function),
+      })
+    );
+    expect(agent.destroy).not.toHaveBeenCalled();
+    expect(runtime.dispose).not.toHaveBeenCalled();
   });
 });

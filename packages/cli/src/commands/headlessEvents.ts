@@ -84,6 +84,18 @@ const TaskUpdateEventSchema = HeadlessEventBaseSchema.extend({
   tasks: z.array(TaskListItemSchema),
 });
 
+const SubagentEventSchema = HeadlessEventBaseSchema.extend({
+  type: z.literal('subagent'),
+  state: z.enum(['spawned', 'completed']),
+  session_id: z.string(),
+  subagent_type: z.string().optional(),
+  success: z.boolean().optional(),
+  summary: z.string().optional(),
+  resumed_from: z.string().optional(),
+  root_agent_id: z.string().optional(),
+  resume_depth: z.number().int().nonnegative().optional(),
+});
+
 const TokenUsageEventSchema = HeadlessEventBaseSchema.extend({
   type: z.literal('token_usage'),
   input_tokens: z.number(),
@@ -125,6 +137,7 @@ export const HeadlessJsonlEventSchema = z.discriminatedUnion('type', [
   PhaseEventSchema,
   ToolDetailEventSchema,
   TaskUpdateEventSchema,
+  SubagentEventSchema,
   TokenUsageEventSchema,
   CompactingEventSchema,
   TurnLimitEventSchema,

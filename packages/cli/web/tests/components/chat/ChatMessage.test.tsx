@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
+import type { SessionRef } from '@api/schemas';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { SessionRef } from '@api/schemas';
 
 import { type Message, useSessionStore } from '../../../src/store/session';
 import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages';
@@ -15,6 +15,8 @@ vi.mock('../../../src/components/chat/MarkdownRenderer', () => ({
 const serviceMocks = vi.hoisted(() => ({
   respondPermission: vi.fn(),
   respondToQuestion: vi.fn(),
+  listSubagents: vi.fn(),
+  resumeSubagent: vi.fn(),
 }));
 
 vi.mock('../../../src/services', async () => {
@@ -27,6 +29,8 @@ vi.mock('../../../src/services', async () => {
       ...actual.sessionService,
       respondPermission: serviceMocks.respondPermission,
       respondToQuestion: serviceMocks.respondToQuestion,
+      listSubagents: serviceMocks.listSubagents,
+      resumeSubagent: serviceMocks.resumeSubagent,
     },
   };
 });
@@ -40,6 +44,8 @@ describe('ChatMessage', () => {
   beforeEach(() => {
     serviceMocks.respondPermission.mockReset();
     serviceMocks.respondToQuestion.mockReset();
+    serviceMocks.listSubagents.mockReset().mockResolvedValue([]);
+    serviceMocks.resumeSubagent.mockReset();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -263,5 +269,229 @@ describe('ChatMessage', () => {
       'question-1',
       { mode: 'A' }
     );
+  });
+
+  test('renders durable lineage and resumes a completed subagent from the GUI', async () => {
+    serviceMocks.listSubagents.mockResolvedValue([
+      {
+        id: 'agent-root',
+        subagentType: 'Explore',
+        description: 'Inspect code',
+        status: 'completed',
+        rootAgentId: 'agent-root',
+        resumeDepth: 0,
+        createdAt: 0,
+        lastActiveAt: 1,
+      },
+    ]);
+    serviceMocks.resumeSubagent.mockResolvedValue({
+      source: {
+        id: 'agent-source',
+        subagentType: 'Explore',
+        description: 'Inspect code',
+        status: 'completed',
+        rootAgentId: 'agent-root',
+        resumedFrom: 'agent-root',
+        resumeDepth: 1,
+        createdAt: 1,
+        lastActiveAt: 2,
+      },
+      session: {
+        id: 'agent-child',
+        subagentType: 'Explore',
+        description: 'Inspect code',
+        status: 'completed',
+        rootAgentId: 'agent-root',
+        resumedFrom: 'agent-source',
+        resumeDepth: 2,
+        createdAt: 3,
+        lastActiveAt: 4,
+        completedAt: 4,
+        result: {
+          success: true,
+          message: 'Follow-up complete',
+        },
+      },
+    });
+    const message: Message = {
+      id: 'assistant-subagent',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000004,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: {
+          id: 'subagent-card',
+          type: 'Explore',
+          description: 'Inspect code',
+          status: 'completed',
+          startTime: 1,
+          sessionId: 'agent-source',
+          resumedFrom: 'agent-root',
+          rootAgentId: 'agent-root',
+          resumeDepth: 1,
+        },
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+    expect(container.textContent).toContain('resumed · depth 1');
+
+    const cardToggle = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Explore: Inspect code')
+    );
+    await act(async () => {
+      cardToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const openButton = container.querySelector('button[aria-label="Resume subagent"]');
+    expect(openButton).toBeTruthy();
+    await act(async () => {
+      openButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="Subagent follow-up"]'
+    ) as HTMLTextAreaElement | null;
+    expect(textarea).toBeTruthy();
+    await act(async () => {
+      if (!textarea) return;
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value'
+      )?.set;
+      setter?.call(textarea, 'Check the follow-up');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const submitButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('Resume agent')
+    );
+    expect(submitButton).toBeTruthy();
+    await act(async () => {
+      submitButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(serviceMocks.resumeSubagent).toHaveBeenCalledWith(
+      { sessionId: 'session-1', projectPath: '/workspace/a' },
+      'agent-source',
+      'Check the follow-up'
+    );
+    expect(container.textContent).toContain(
+      'Resumed as agent-child · completed · depth 2'
+    );
+    expect(container.textContent).toContain('Follow-up complete');
+  });
+
+  test('keeps a failed GUI resume recoverable', async () => {
+    serviceMocks.resumeSubagent.mockRejectedValue(
+      new Error('Source agent is still running')
+    );
+    const message: Message = {
+      id: 'assistant-subagent-error',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000005,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: {
+          id: 'subagent-card',
+          type: 'Explore',
+          description: 'Inspect code',
+          status: 'failed',
+          startTime: 1,
+          sessionId: 'agent-source',
+        },
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+    const cardToggle = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Explore: Inspect code')
+    );
+    await act(async () => {
+      cardToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      container
+        .querySelector('button[aria-label="Resume subagent"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const textarea = container.querySelector(
+      'textarea[aria-label="Subagent follow-up"]'
+    ) as HTMLTextAreaElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value'
+      )?.set;
+      setter?.call(textarea, 'Retry safely');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.includes('Resume agent'))
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Source agent is still running'
+    );
+    expect(container.querySelector('textarea')).toBeTruthy();
+  });
+
+  test('hides subagent resume controls while the parent session is streaming', async () => {
+    useSessionStore.setState({ isStreaming: true, agentPhase: 'running' });
+    const message: Message = {
+      id: 'assistant-subagent-streaming',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000006,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: {
+          id: 'subagent-card',
+          type: 'Explore',
+          description: 'Inspect code',
+          status: 'completed',
+          startTime: 1,
+          sessionId: 'agent-source',
+        },
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+    const cardToggle = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Explore: Inspect code')
+    );
+    await act(async () => {
+      cardToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.querySelector('button[aria-label="Resume subagent"]')).toBeNull();
   });
 });

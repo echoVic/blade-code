@@ -107,6 +107,10 @@ export function formatToolCallSummary(
     case 'Task': {
       const description = params.description as string;
       const subagentType = params.subagent_type as string;
+      const resumedFrom = (params.resume_from || params.resume) as string | undefined;
+      if (resumedFrom) {
+        return `Resuming ${subagentType || 'agent'} from ${resumedFrom}`;
+      }
       if (description) {
         return `${subagentType || 'Agent'}: ${description}`;
       }
@@ -339,8 +343,13 @@ export function generateToolDetail(
       const summary =
         (result.metadata?.subagentSummary as string) ||
         (typeof result.llmContent === 'string' ? result.llmContent : null);
-      if (!summary) return null;
-      return summary.length > 200 ? `${summary.slice(0, 200)}...` : summary;
+      const resumedFrom = result.metadata?.subagentResumedFrom as string | undefined;
+      const lineage = resumedFrom
+        ? `Resumed from ${resumedFrom} (depth ${String(result.metadata?.subagentResumeDepth ?? 1)})`
+        : undefined;
+      if (!summary) return lineage ?? null;
+      const bounded = summary.length > 200 ? `${summary.slice(0, 200)}...` : summary;
+      return lineage ? `${lineage}\n${bounded}` : bounded;
     }
 
     case 'TaskOutput': {
@@ -355,6 +364,11 @@ export function generateToolDetail(
       const parts: string[] = [];
       if (typeof payload.status === 'string') {
         parts.push(`Status: ${payload.status}`);
+      }
+      if (typeof payload.resumed_from === 'string') {
+        parts.push(
+          `Resumed from: ${payload.resumed_from} (depth ${String(payload.resume_depth ?? 1)})`
+        );
       }
 
       if (payload.output_truncated === true) {

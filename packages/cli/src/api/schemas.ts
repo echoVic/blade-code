@@ -47,6 +47,9 @@ export const SessionSchema = z.object({
   rootId: z.string(),
   parentId: z.string().optional(),
   relationType: z.enum(['subagent', 'fork']).optional(),
+  resumedFrom: z.string().optional(),
+  rootAgentId: z.string().optional(),
+  resumeDepth: z.number().int().nonnegative().optional(),
   messageCount: z.number(),
   firstMessageTime: z.string(),
   lastMessageTime: z.string(),
@@ -119,6 +122,52 @@ export const SessionRewindResponseSchema = z.object({
   restoredFiles: z.array(z.string()),
   messages: z.array(SessionHistoryMessageSchema),
 });
+
+export const SubagentStatusSchema = z.enum([
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+
+export const SubagentSessionSchema = z.object({
+  id: z.string(),
+  subagentType: z.string(),
+  description: z.string(),
+  status: SubagentStatusSchema,
+  rootAgentId: z.string(),
+  resumedFrom: z.string().optional(),
+  resumeDepth: z.number().int().nonnegative(),
+  createdAt: z.number(),
+  lastActiveAt: z.number(),
+  completedAt: z.number().optional(),
+  result: z
+    .object({
+      success: z.boolean(),
+      message: z.string(),
+      error: z.string().optional(),
+      verificationCommands: z.array(z.string()).optional(),
+    })
+    .optional(),
+  stats: z
+    .object({
+      tokens: z.number().optional(),
+      toolCalls: z.number().optional(),
+      duration: z.number().optional(),
+    })
+    .optional(),
+});
+export type SubagentSession = z.infer<typeof SubagentSessionSchema>;
+
+export const ResumeSubagentRequestSchema = z.object({
+  prompt: z.string().trim().min(1).max(32_000),
+});
+
+export const ResumeSubagentResponseSchema = z.object({
+  source: SubagentSessionSchema,
+  session: SubagentSessionSchema,
+});
+export type ResumeSubagentResponse = z.infer<typeof ResumeSubagentResponseSchema>;
 export type SessionRewindResponse = z.infer<typeof SessionRewindResponseSchema>;
 
 export const SessionRefSchema = z.object({

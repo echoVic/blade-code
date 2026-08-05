@@ -1008,6 +1008,7 @@ export async function* executeLoopGenerator(
               {
                 sessionId: context.sessionId,
                 userId: context.userId || 'default',
+                modelId: deps.config.currentModelId,
                 workspaceRoot: context.workspaceRoot || getCwd(),
                 worktreeIsolationRequired,
                 worktreeActive:
@@ -1753,10 +1754,7 @@ export async function* executeLoopGenerator(
                 (typeof params.subagent_session_id !== 'string' ||
                   params.subagent_session_id.length === 0)
               ) {
-                params.subagent_session_id =
-                  typeof params.resume === 'string' && params.resume.length > 0
-                    ? params.resume
-                    : createSessionId('agent');
+                params.subagent_session_id = createSessionId('agent');
               }
               let toolUseUuid: string | null = null;
               toolUseUuid = await saveToolUse(
@@ -1800,6 +1798,7 @@ export async function* executeLoopGenerator(
               const result = await executeAdmittedTool(toolCall.function.name, params, {
                 sessionId: context.sessionId,
                 userId: context.userId || 'default',
+                modelId: deps.config.currentModelId,
                 workspaceRoot: context.workspaceRoot || getCwd(),
                 worktreeIsolationRequired,
                 worktreeActive:
@@ -1914,6 +1913,18 @@ export async function* executeLoopGenerator(
                     subagentSummary:
                       typeof metadata.subagentSummary === 'string'
                         ? metadata.subagentSummary
+                        : undefined,
+                    subagentResumedFrom:
+                      typeof metadata.subagentResumedFrom === 'string'
+                        ? metadata.subagentResumedFrom
+                        : undefined,
+                    subagentRootId:
+                      typeof metadata.subagentRootId === 'string'
+                        ? metadata.subagentRootId
+                        : undefined,
+                    subagentResumeDepth:
+                      typeof metadata.subagentResumeDepth === 'number'
+                        ? metadata.subagentResumeDepth
                         : undefined,
                   }
                 : undefined;

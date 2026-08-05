@@ -65,7 +65,21 @@ const worktreeState = vi.hoisted(() => ({
 }));
 
 // Mock 所有依赖
-vi.mock('../../../../src/agent/subagents/AgentSessionStore.js');
+vi.mock(
+  '../../../../src/agent/subagents/AgentSessionStore.js',
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import('../../../../src/agent/subagents/AgentSessionStore.js')
+      >();
+    return {
+      ...actual,
+      AgentSessionStore: {
+        getInstance: vi.fn(),
+      },
+    };
+  }
+);
 vi.mock('../../../../src/agent/Agent.js', () => ({
   Agent: {
     create: vi.fn(),
@@ -154,6 +168,77 @@ describe('BackgroundAgentManager', () => {
       const instance1 = BackgroundAgentManager.getInstance();
       const instance2 = BackgroundAgentManager.getInstance();
       expect(instance1).toBe(instance2);
+    });
+  });
+
+  describe('orphan cleanup', () => {
+    it('保留仍由存活 Blade 进程拥有的 running sidecar', () => {
+      (BackgroundAgentManager as any).instance = null;
+      const mockStore = AgentSessionStore.getInstance();
+      vi.mocked(mockStore.listSessions).mockReturnValue([
+        {
+          id: 'agent_live',
+          status: 'running',
+          processId: process.pid,
+          lastActiveAt: Date.now() - 60 * 60 * 1000,
+        },
+      ] as any);
+
+      manager = BackgroundAgentManager.getInstance();
+
+      expect(mockStore.updateSession).not.toHaveBeenCalled();
+    });
+
+    it('只把 owner PID 已退出的 running sidecar 标记为失败', () => {
+      const missingPid = 42424242;
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (pid === missingPid && signal === 0) {
+          throw Object.assign(new Error('process not found'), { code: 'ESRCH' });
+        }
+        return true;
+      });
+      try {
+        (BackgroundAgentManager as any).instance = null;
+        const mockStore = AgentSessionStore.getInstance();
+        vi.mocked(mockStore.listSessions).mockReturnValue([
+          {
+            id: 'agent_orphan',
+            status: 'running',
+            processId: missingPid,
+            lastActiveAt: Date.now(),
+          },
+        ] as any);
+
+        manager = BackgroundAgentManager.getInstance();
+
+        expect(mockStore.updateSession).toHaveBeenCalledWith(
+          'agent_orphan',
+          expect.objectContaining({
+            status: 'failed',
+            result: expect.objectContaining({
+              error: 'Session was orphaned (process restart or timeout)',
+            }),
+          })
+        );
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
+
+    it('为没有 PID 的近期 legacy sidecar 保留兼容窗口', () => {
+      (BackgroundAgentManager as any).instance = null;
+      const mockStore = AgentSessionStore.getInstance();
+      vi.mocked(mockStore.listSessions).mockReturnValue([
+        {
+          id: 'agent_legacy',
+          status: 'running',
+          lastActiveAt: Date.now(),
+        },
+      ] as any);
+
+      manager = BackgroundAgentManager.getInstance();
+
+      expect(mockStore.updateSession).not.toHaveBeenCalled();
     });
   });
 
@@ -419,13 +504,114 @@ describe('BackgroundAgentManager', () => {
   });
 
   describe('resumeAgent', () => {
+    it('creates an immutable child lineage with the source identity and transcript', () => {
+      const mockStore = AgentSessionStore.getInstance();
+      const source = {
+        schemaVersion: 2,
+        id: 'agent-source',
+        subagentType: 'Explore',
+        description: 'Original task',
+        prompt: 'Inspect the code',
+        messages: [
+          { role: 'user', content: 'Inspect the code' },
+          { role: 'assistant', content: 'Initial finding' },
+        ],
+        status: 'completed',
+        createdAt: 1,
+        lastActiveAt: 2,
+        parentSessionId: 'parent-owner',
+        parentProjectPath: '/workspace',
+        rootAgentId: 'agent-root',
+        resumeDepth: 2,
+        workspaceRoot: '/workspace',
+        isolation: 'none',
+        configSnapshot: {
+          name: 'Explore',
+          description: 'Original config',
+          model: 'source-model',
+          tools: ['Read'],
+        },
+      } as const;
+      vi.mocked(mockStore.loadSession).mockImplementation((id: string) =>
+        id === source.id ? (source as any) : undefined
+      );
+
+      const resumed = manager.resumeAgent({
+        agentId: source.id,
+        prompt: 'Check the follow-up',
+        config: {
+          name: 'Explore',
+          description: 'Changed registry config',
+          model: 'different-model',
+        },
+        owner: {
+          sessionId: 'parent-owner',
+          projectPath: '/workspace',
+        },
+      });
+
+      expect(resumed).toMatchObject({
+        agentId: 'agent-session_test-uuid-1234',
+        source: { id: source.id },
+      });
+      expect(mockStore.saveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'agent-session_test-uuid-1234',
+          resumedFrom: source.id,
+          rootAgentId: 'agent-root',
+          resumeDepth: 3,
+          messages: source.messages,
+          configSnapshot: expect.objectContaining({
+            name: 'Explore',
+            model: 'source-model',
+            tools: ['Read'],
+          }),
+        })
+      );
+      expect(mockStore.updateSession).not.toHaveBeenCalledWith(
+        source.id,
+        expect.anything()
+      );
+    });
+
+    it('rejects a conflicting subagent type', () => {
+      const mockStore = AgentSessionStore.getInstance();
+      vi.mocked(mockStore.loadSession).mockReturnValue({
+        id: 'agent-source',
+        subagentType: 'Explore',
+        status: 'completed',
+        parentSessionId: 'parent-owner',
+        parentProjectPath: '/workspace',
+      } as any);
+
+      expect(
+        manager.resumeAgent({
+          agentId: 'agent-source',
+          prompt: 'Continue',
+          config: { name: 'Plan', description: 'Wrong type' },
+          owner: {
+            sessionId: 'parent-owner',
+            projectPath: '/workspace',
+          },
+        })
+      ).toBeUndefined();
+    });
+
     it('会话不存在时应返回 undefined', () => {
       const mockStore = AgentSessionStore.getInstance();
       vi.mocked(mockStore.loadSession).mockReturnValue(undefined);
 
-      const result = manager.resumeAgent('agent_nonexistent', 'Continue', {
-        name: 'Explore',
-        description: 'Test',
+      const result = manager.resumeAgent({
+        agentId: 'agent_nonexistent',
+        prompt: 'Continue',
+        config: {
+          name: 'Explore',
+          description: 'Test',
+        },
+        owner: {
+          sessionId: 'parent-owner',
+          projectPath: '/workspace',
+        },
       });
 
       expect(result).toBeUndefined();
@@ -439,9 +625,17 @@ describe('BackgroundAgentManager', () => {
       });
 
       // isRunning 检查的是内存中的 runningAgents
-      const result = manager.resumeAgent(agentId, 'Try to resume', {
-        name: 'Explore',
-        description: 'Test',
+      const result = manager.resumeAgent({
+        agentId,
+        prompt: 'Try to resume',
+        config: {
+          name: 'Explore',
+          description: 'Test',
+        },
+        owner: {
+          sessionId: 'parent-owner',
+          projectPath: '/workspace',
+        },
       });
 
       expect(result).toBeUndefined();
@@ -452,17 +646,21 @@ describe('BackgroundAgentManager', () => {
       vi.mocked(mockStore.loadSession).mockReturnValue({
         id: 'agent_private',
         parentSessionId: 'parent-owner',
+        parentProjectPath: '/workspace',
         status: 'completed',
         description: 'Private task',
         messages: [],
       } as any);
 
-      const result = manager.resumeAgent(
-        'agent_private',
-        'Continue',
-        { name: 'Explore', description: 'Test' },
-        'parent-other'
-      );
+      const result = manager.resumeAgent({
+        agentId: 'agent_private',
+        prompt: 'Continue',
+        config: { name: 'Explore', description: 'Test' },
+        owner: {
+          sessionId: 'parent-other',
+          projectPath: '/workspace',
+        },
+      });
 
       expect(result).toBeUndefined();
     });

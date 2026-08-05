@@ -104,7 +104,7 @@ describe('agent team tools', () => {
       expect(mockManager.startBackgroundAgent).toHaveBeenCalledTimes(2);
       expect(mockManager.startBackgroundAgent).toHaveBeenCalledWith(
         expect.objectContaining({
-          agentId: 'researcher@checkout-refactor',
+          agentId: 'team-researcher-checkout-refactor',
           parentSessionId: 'session-a',
           taskListId: 'checkout-refactor',
         })
@@ -118,7 +118,7 @@ describe('agent team tools', () => {
       );
       expect(stored).toMatchObject({
         name: 'checkout-refactor',
-        leadAgentId: 'team-lead@checkout-refactor',
+        leadAgentId: 'team-lead-checkout-refactor',
       });
       expect(stored.members).toEqual(
         expect.arrayContaining([
@@ -129,7 +129,7 @@ describe('agent team tools', () => {
           }),
           expect.objectContaining({
             name: 'researcher',
-            agentId: 'researcher@checkout-refactor',
+            agentId: 'team-researcher-checkout-refactor',
             status: 'running',
           }),
         ])
@@ -158,8 +158,8 @@ describe('agent team tools', () => {
         { sessionId: 'session-a' }
       );
 
-      mockSessions.set('researcher@search-work', {
-        ...mockSessions.get('researcher@search-work'),
+      mockSessions.set('team-researcher-search-work', {
+        ...mockSessions.get('team-researcher-search-work'),
         status: 'completed',
         result: { success: true, message: 'Found modules' },
         completedAt: Date.now(),
@@ -176,7 +176,7 @@ describe('agent team tools', () => {
           expect.objectContaining({
             name: 'researcher',
             status: 'completed',
-            task_output_id: 'researcher@search-work',
+            task_output_id: 'team-researcher-search-work',
             result: { success: true, message: 'Found modules' },
           }),
         ])
@@ -210,7 +210,7 @@ describe('agent team tools', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(mockManager.killAgent).toHaveBeenCalledWith('researcher@stop-me');
+      expect(mockManager.killAgent).toHaveBeenCalledWith('team-researcher-stop-me');
 
       const stored = JSON.parse(
         await fs.readFile(

@@ -12,6 +12,7 @@ export type SubagentIsolationMode = 'none' | 'worktree';
 export interface SubagentWorktreeLease {
   isolation: SubagentIsolationMode;
   workspaceRoot: string;
+  ownerAgentId?: string;
   worktree?: WorktreeSession;
 }
 
@@ -52,6 +53,7 @@ export class SubagentWorktreeLifecycle {
       return {
         isolation: 'none',
         workspaceRoot: input.sourceWorkspaceRoot,
+        ownerAgentId: input.agentId,
       };
     }
 
@@ -66,6 +68,7 @@ export class SubagentWorktreeLifecycle {
     return {
       isolation,
       workspaceRoot: worktree.workspaceRoot,
+      ownerAgentId: input.restoredWorktree?.sessionId ?? input.agentId,
       worktree,
     };
   }
@@ -76,10 +79,11 @@ export class SubagentWorktreeLifecycle {
       return { preserved: false, removed: false };
     }
 
-    const summary = await this.manager.getChangeSummary(input.agentId);
+    const ownerAgentId = input.lease.ownerAgentId ?? input.agentId;
+    const summary = await this.manager.getChangeSummary(ownerAgentId);
     if (input.success && this.isClean(summary)) {
       await this.manager.exit({
-        sessionId: input.agentId,
+        sessionId: ownerAgentId,
         action: 'remove',
       });
       return {
@@ -91,7 +95,7 @@ export class SubagentWorktreeLifecycle {
     }
 
     await this.manager.exit({
-      sessionId: input.agentId,
+      sessionId: ownerAgentId,
       action: 'keep',
     });
     return {

@@ -4,6 +4,7 @@ export interface TestTypeConfig {
   timeout: number;
   env?: NodeJS.ProcessEnv;
   files?: string[];
+  coverageExcludedProjects?: string[];
 }
 
 export const testTypes: Record<string, TestTypeConfig> & {

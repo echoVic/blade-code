@@ -26,6 +26,9 @@ export interface SubagentInfoForContext {
   parentSessionId: string;
   subagentType: string;
   isSidechain: boolean;
+  resumedFrom?: string;
+  rootAgentId?: string;
+  resumeDepth?: number;
 }
 
 /**

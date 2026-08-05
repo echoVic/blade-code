@@ -4,12 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### ✨ 新功能
+
+- foreground 与 background Task 都会持久化可恢复的 subagent sidecar；每次
+  `resume_from` 创建新的不可变 child run，并记录 `rootAgentId`、`resumedFrom`
+  和 `resumeDepth`
+- resume 冻结源运行的模型、权限、工具、系统提示和隔离配置，并以
+  `parent sessionId + projectPath` 复合身份鉴权；原子 sidecar 使用 `0600`
+  权限和 `fsync`，运行中 owner 通过 PID 跨进程判活
+- TUI `/tasks resume`、Web REST/SSE 与消息卡片、ACP tool lifecycle 和
+  headless JSONL 共享同一 durable lineage 协议
+- Web subagent 卡片新增 follow-up 输入、恢复中/失败状态、child 结果轮询及
+  刷新后的 lineage 重建
+
 ### 🐛 问题修复
 
 - tag publish workflow 现在校验 tag/package 版本并幂等处理已发布的 npm
   版本和已存在的 GitHub Release，失败重试不会因重复资源产生假失败
 - session route 测试 double 不再递归导入被 mock 的 Runtime，消除 V8 coverage
   instrumentation 下的模块初始化竞态
+- foreground subagent 现在持久化 Agent 实际替换后的 ChatContext，不再保存
+  空的初始消息数组
+- session history 通过 tool-call ID 关联 `subtask_ref`，刷新后不会丢失
+  subagent 卡片或 resume lineage
+- Agent Team session ID 改为严格合法格式，避免被 session path 校验拒绝
+- 新进程不再把其他存活 Blade 进程中的 running subagent 误判为 orphan
+
+### ✅ 测试相关
+
+- 新增 root → child → grandchild、重启恢复、冻结执行身份、compound owner、
+  worktree lease、TUI、Web、ACP 与 headless lineage 的确定性回归
+- 新增 Web GUI 恢复、重试、活动回合禁用和刷新后继续恢复测试
+- DeepSeek v4 Flash/Pro 的 Runtime、TUI、Web、ACP durable subagent resume
+  真实 API 矩阵全部通过
+- CLI 启动性能改用重复样本中位数守住 2 秒预算；V8 coverage 编排排除
+  wall-clock performance project，性能仍由 production build 后的独立门禁执行
 
 ## [0.7.7] - 2026-08-05
 

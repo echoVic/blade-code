@@ -264,6 +264,64 @@ describe('eventHandlers', () => {
     expect(secondId).toBe(firstId);
   });
 
+  test('preserves resumed subagent lineage across start and completion events', () => {
+    const state = createState();
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'subagent.start',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        subagentSessionId: 'agent-child',
+        type: 'Explore',
+        description: 'Check follow-up',
+        resumedFrom: 'agent-source',
+        rootAgentId: 'agent-root',
+        resumeDepth: 2,
+      },
+    });
+
+    expect(state.messages[0]?.agentContent?.subagent).toMatchObject({
+      sessionId: 'agent-child',
+      type: 'Explore',
+      status: 'running',
+      resumedFrom: 'agent-source',
+      rootAgentId: 'agent-root',
+      resumeDepth: 2,
+    });
+
+    dispatch({
+      type: 'subagent.complete',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        subagentSessionId: 'agent-child',
+        success: true,
+        resumedFrom: 'agent-source',
+        rootAgentId: 'agent-root',
+        resumeDepth: 2,
+      },
+    });
+
+    expect(state.messages[0]?.agentContent?.subagent).toMatchObject({
+      sessionId: 'agent-child',
+      status: 'completed',
+      resumedFrom: 'agent-source',
+      rootAgentId: 'agent-root',
+      resumeDepth: 2,
+    });
+  });
+
   test('drains buffered message deltas before message.complete updates message content', () => {
     vi.useFakeTimers();
     const state = createState();

@@ -8,12 +8,18 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { join } from 'pathe';
-import { getBladeStorageRoot } from '../../context/storage/pathUtils.js';
+import writeFileAtomic from 'write-file-atomic';
+import {
+  assertValidSessionId,
+  getBladeStorageRoot,
+} from '../../context/storage/pathUtils.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import type { SubagentIsolationMode } from './SubagentWorktreeLifecycle.js';
+import type { SubagentConfig } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -22,10 +28,49 @@ const logger = createLogger(LogCategory.AGENT);
  */
 export type AgentSessionStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
+export interface AgentSessionOwner {
+  sessionId: string;
+  projectPath: string;
+}
+
+export type AgentSessionConfigSnapshot = Pick<
+  SubagentConfig,
+  | 'name'
+  | 'description'
+  | 'systemPrompt'
+  | 'tools'
+  | 'disallowedTools'
+  | 'model'
+  | 'permissionMode'
+  | 'maxTurns'
+  | 'skills'
+  | 'isolation'
+>;
+
+export function createAgentSessionConfigSnapshot(
+  config: SubagentConfig
+): AgentSessionConfigSnapshot {
+  return {
+    name: config.name,
+    description: config.description,
+    systemPrompt: config.systemPrompt,
+    tools: config.tools ? [...config.tools] : undefined,
+    disallowedTools: config.disallowedTools ? [...config.disallowedTools] : undefined,
+    model: config.model,
+    permissionMode: config.permissionMode,
+    maxTurns: config.maxTurns,
+    skills: config.skills ? [...config.skills] : undefined,
+    isolation: config.isolation,
+  };
+}
+
 /**
  * Agent 会话数据
  */
 export interface AgentSession {
+  /** 持久化 schema。旧 sidecar 在读取时规范化为 v2。 */
+  schemaVersion: 2;
+
   /** 会话 ID (agent_{uuid}) */
   id: string;
 
@@ -65,11 +110,29 @@ export interface AgentSession {
   /** 最后活跃时间 */
   lastActiveAt: number;
 
+  /** 写入 running sidecar 的 Blade 进程，用于跨进程 orphan 判定 */
+  processId?: number;
+
   /** 完成时间（如果已完成） */
   completedAt?: number;
 
   /** 父会话 ID（可选） */
   parentSessionId?: string;
+
+  /** 父会话 canonical workspace，用于 compound owner 鉴权 */
+  parentProjectPath?: string;
+
+  /** lineage 根 agent ID */
+  rootAgentId: string;
+
+  /** 本次运行从哪个已完成 agent 恢复 */
+  resumedFrom?: string;
+
+  /** 从根运行开始的恢复深度 */
+  resumeDepth: number;
+
+  /** 启动时冻结的执行身份，resume 不受后续配置漂移影响 */
+  configSnapshot?: AgentSessionConfigSnapshot;
 
   /** 共享任务列表 ID（用于 Agent Team 协作） */
   taskListId?: string;
@@ -82,6 +145,71 @@ export interface AgentSession {
 
   /** 保留并可供 resume 的 worktree lease */
   worktree?: WorktreeSession;
+}
+
+export type PublicAgentSession = Pick<
+  AgentSession,
+  | 'id'
+  | 'subagentType'
+  | 'description'
+  | 'status'
+  | 'rootAgentId'
+  | 'resumedFrom'
+  | 'resumeDepth'
+  | 'createdAt'
+  | 'lastActiveAt'
+  | 'completedAt'
+  | 'result'
+  | 'stats'
+>;
+
+export function toPublicAgentSession(session: AgentSession): PublicAgentSession {
+  return {
+    id: session.id,
+    subagentType: session.subagentType,
+    description: session.description,
+    status: session.status,
+    rootAgentId: session.rootAgentId,
+    resumedFrom: session.resumedFrom,
+    resumeDepth: session.resumeDepth,
+    createdAt: session.createdAt,
+    lastActiveAt: session.lastActiveAt,
+    completedAt: session.completedAt,
+    result: session.result,
+    stats: session.stats,
+  };
+}
+
+const SESSION_STATUSES = new Set<AgentSessionStatus>([
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+
+export function normalizeAgentSessionOwner(
+  owner: AgentSessionOwner
+): AgentSessionOwner {
+  assertValidSessionId(owner.sessionId);
+  if (!path.isAbsolute(owner.projectPath)) {
+    throw new Error('Subagent owner projectPath must be absolute');
+  }
+  return {
+    sessionId: owner.sessionId,
+    projectPath: path.resolve(owner.projectPath),
+  };
+}
+
+export function isAgentSessionOwnedBy(
+  session: AgentSession,
+  owner: AgentSessionOwner
+): boolean {
+  const normalized = normalizeAgentSessionOwner(owner);
+  return (
+    session.parentSessionId === normalized.sessionId &&
+    session.parentProjectPath !== undefined &&
+    path.resolve(session.parentProjectPath) === normalized.projectPath
+  );
 }
 
 /**
@@ -113,7 +241,9 @@ export class AgentSessionStore {
    */
   private ensureDirectory(): void {
     if (!fs.existsSync(this.sessionsDir)) {
-      fs.mkdirSync(this.sessionsDir, { recursive: true, mode: 0o755 });
+      fs.mkdirSync(this.sessionsDir, { recursive: true, mode: 0o700 });
+    } else {
+      fs.chmodSync(this.sessionsDir, 0o700);
     }
   }
 
@@ -121,27 +251,24 @@ export class AgentSessionStore {
    * 获取会话文件路径
    */
   private getSessionPath(agentId: string): string {
-    // 安全处理 ID，避免路径遍历
-    const safeId = agentId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    return join(this.sessionsDir, `${safeId}.json`);
+    assertValidSessionId(agentId);
+    return join(this.sessionsDir, `${agentId}.json`);
   }
 
   /**
    * 保存会话
    */
   saveSession(session: AgentSession): void {
-    try {
-      const filePath = this.getSessionPath(session.id);
-      const data = JSON.stringify(session, null, 2);
-      fs.writeFileSync(filePath, data, 'utf-8');
-
-      // 更新缓存
-      this.cache.set(session.id, session);
-
-      logger.debug(`Session saved: ${session.id}`);
-    } catch (error) {
-      logger.warn(`Failed to save session ${session.id}:`, error);
-    }
+    const normalized = this.normalizeSession(session, session.id);
+    const filePath = this.getSessionPath(normalized.id);
+    const data = `${JSON.stringify(normalized, null, 2)}\n`;
+    writeFileAtomic.sync(filePath, data, {
+      encoding: 'utf8',
+      mode: 0o600,
+      fsync: true,
+    });
+    this.cache.set(normalized.id, normalized);
+    logger.debug(`Session saved: ${normalized.id}`);
   }
 
   /**
@@ -160,7 +287,7 @@ export class AgentSessionStore {
       }
 
       const data = fs.readFileSync(filePath, 'utf-8');
-      const session = JSON.parse(data) as AgentSession;
+      const session = this.normalizeSession(JSON.parse(data), agentId);
 
       // 更新缓存
       this.cache.set(agentId, session);
@@ -170,6 +297,83 @@ export class AgentSessionStore {
       logger.warn(`Failed to load session ${agentId}:`, error);
       return undefined;
     }
+  }
+
+  private normalizeSession(input: unknown, expectedId: string): AgentSession {
+    if (!input || typeof input !== 'object') {
+      throw new Error(`Invalid agent session payload: ${expectedId}`);
+    }
+    const value = input as Partial<AgentSession> & Record<string, unknown>;
+    if (value.id !== expectedId) {
+      throw new Error(`Agent session ID mismatch: ${expectedId}`);
+    }
+    assertValidSessionId(expectedId);
+    if (typeof value.subagentType !== 'string' || value.subagentType.length === 0) {
+      throw new Error(`Invalid subagent type: ${expectedId}`);
+    }
+    if (typeof value.description !== 'string' || typeof value.prompt !== 'string') {
+      throw new Error(`Invalid agent session description: ${expectedId}`);
+    }
+    if (!Array.isArray(value.messages)) {
+      throw new Error(`Invalid agent session messages: ${expectedId}`);
+    }
+    if (
+      typeof value.status !== 'string' ||
+      !SESSION_STATUSES.has(value.status as AgentSessionStatus)
+    ) {
+      throw new Error(`Invalid agent session status: ${expectedId}`);
+    }
+    if (
+      typeof value.createdAt !== 'number' ||
+      !Number.isFinite(value.createdAt) ||
+      typeof value.lastActiveAt !== 'number' ||
+      !Number.isFinite(value.lastActiveAt)
+    ) {
+      throw new Error(`Invalid agent session timestamps: ${expectedId}`);
+    }
+    if (value.parentSessionId !== undefined) {
+      assertValidSessionId(value.parentSessionId);
+    }
+    if (value.resumedFrom !== undefined) {
+      assertValidSessionId(value.resumedFrom);
+    }
+    const rootAgentId =
+      typeof value.rootAgentId === 'string' ? value.rootAgentId : expectedId;
+    assertValidSessionId(rootAgentId);
+    const workspaceRoot =
+      typeof value.workspaceRoot === 'string' && path.isAbsolute(value.workspaceRoot)
+        ? path.resolve(value.workspaceRoot)
+        : undefined;
+    const parentProjectPath =
+      typeof value.parentProjectPath === 'string' &&
+      path.isAbsolute(value.parentProjectPath)
+        ? path.resolve(value.parentProjectPath)
+        : value.parentSessionId && workspaceRoot
+          ? workspaceRoot
+          : undefined;
+    const resumeDepth =
+      typeof value.resumeDepth === 'number' &&
+      Number.isInteger(value.resumeDepth) &&
+      value.resumeDepth >= 0
+        ? value.resumeDepth
+        : 0;
+    const processId =
+      typeof value.processId === 'number' &&
+      Number.isInteger(value.processId) &&
+      value.processId > 0
+        ? value.processId
+        : undefined;
+
+    return {
+      ...(value as unknown as AgentSession),
+      schemaVersion: 2,
+      id: expectedId,
+      rootAgentId,
+      resumeDepth,
+      processId,
+      workspaceRoot,
+      parentProjectPath,
+    };
   }
 
   /**

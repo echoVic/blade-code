@@ -144,6 +144,16 @@ export function handleSubagentLifecycle(
   const sessionId = metadata.subagentSessionId as string;
   const subagentType = (metadata.subagentType as string) || 'Task';
   const status = metadata.subagentStatus as string | undefined;
+  const resumedFrom =
+    typeof metadata.subagentResumedFrom === 'string'
+      ? metadata.subagentResumedFrom
+      : undefined;
+  const rootAgentId =
+    typeof metadata.subagentRootId === 'string' ? metadata.subagentRootId : undefined;
+  const resumeDepth =
+    typeof metadata.subagentResumeDepth === 'number'
+      ? metadata.subagentResumeDepth
+      : undefined;
 
   if (status === 'completed' || status === 'failed' || status === 'cancelled') {
     return {
@@ -151,6 +161,9 @@ export function handleSubagentLifecycle(
       sessionId,
       success: status === 'completed',
       summary: metadata.subagentSummary as string | undefined,
+      resumedFrom,
+      rootAgentId,
+      resumeDepth,
     };
   }
 
@@ -167,6 +180,9 @@ export function handleSubagentLifecycle(
       sessionId,
       type: subagentType,
       prompt,
+      resumedFrom,
+      rootAgentId,
+      resumeDepth,
     };
   }
 

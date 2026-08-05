@@ -350,6 +350,21 @@ rewind 只允许在 session idle 且 durable input 队列为空时执行；存�
 后台 shell 或后台 agent 时也会拒绝。文件在 Blade 编辑后被外部修改时，代码恢复
 整组 fail closed，不覆盖用户的新改动。
 
+#### `/tasks [clean | resume <agentId> <prompt>]`
+
+列出当前 `sessionId + projectPath` 拥有的后台 Shell 与 Subagents，并显示 agent
+lineage。`resume` 从已结束的 agent 创建新的 durable child run：
+
+```bash
+/tasks
+/tasks resume agent-source-id 检查修复并运行相关测试
+/tasks clean
+```
+
+恢复不会修改源运行。child 继承源 transcript、模型、权限、工具、系统提示和隔离
+配置，并记录新的 agent ID、`resumedFrom`、`rootAgentId` 和 `resumeDepth`。
+活动 parent turn 或 durable pending input 存在时，恢复会 fail closed。
+
 ### Web Sidebar Fork
 
 Web Sidebar 的 session 行提供 **Fork** 操作。服务器创建 child 后，Web 会先准备该 child

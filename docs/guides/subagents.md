@@ -171,10 +171,43 @@ AI 会通过 Task 工具调用子代理：
   "name": "Task",
   "arguments": {
     "subagent_type": "code-reviewer",
-    "query": "审查 src/agent/Agent.ts 的错误处理逻辑"
+    "description": "审查错误处理",
+    "prompt": "审查 src/agent/Agent.ts 的错误处理逻辑"
   }
 }
 ```
+
+### Durable resume
+
+foreground 和 background Task 都会生成 durable agent ID。完成结果中的
+`resume_from_hint` 可用于后续工作：
+
+```json
+{
+  "name": "Task",
+  "arguments": {
+    "description": "继续错误处理审查",
+    "prompt": "检查上轮发现是否已经修复，并运行相关测试。",
+    "resume_from": "agent-source-id"
+  }
+}
+```
+
+每次恢复都会创建新的不可变 child run，不会覆盖源 sidecar。Blade 持久化
+`rootAgentId`、`resumedFrom` 和 `resumeDepth`，因此 root → child → grandchild
+链路可在进程重启后继续。恢复时：
+
+- `subagent_type` 可以省略；如果提供，必须与源运行一致；
+- 模型、权限、工具白名单/黑名单、系统提示、最大回合数和隔离方式使用源快照，
+  不受之后配置文件变化影响；
+- 只能由相同 `parent sessionId + projectPath` 的 Runtime 读取或恢复；
+- source 必须已经结束，且 parent session 必须 idle、没有 durable pending input；
+- worktree resume 复用原 lease，新的 child ID 不改变 worktree owner；
+- `resume` 仍可作为兼容别名，新调用应使用 `resume_from`。
+
+用户也可以通过 TUI/ACP 的 `/tasks resume <agentId> <prompt>` 或 Web subagent
+卡片中的 **Resume** 操作执行同一协议。Web 刷新后会从持久化 lineage 找到最新
+descendant，不会从旧 ancestor 创建 sibling。
 
 ## Agent Teams
 

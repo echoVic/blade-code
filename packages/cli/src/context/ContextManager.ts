@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import { nanoid } from 'nanoid';
+import type { SubagentInfoForContext } from '../agent/types.js';
 import type { ContentPart } from '../services/ChatServiceInterface.js';
 import type { JsonObject, JsonValue } from '../store/types.js';
 import { getCwd } from '../utils/cwd.js';
@@ -17,6 +18,7 @@ import {
   ContextManagerOptions,
   ContextMessage,
   ContextFilter as FilterOptions,
+  SubagentRunRef,
   SystemContext,
   ToolCall,
   WorkspaceContext,
@@ -259,11 +261,7 @@ export class ContextManager {
       usage?: { input_tokens: number; output_tokens: number };
       inboxMessageId?: string;
     },
-    subagentInfo?: {
-      parentSessionId: string;
-      subagentType: string;
-      isSidechain: boolean;
-    }
+    subagentInfo?: SubagentInfoForContext
   ): Promise<string> {
     return this.persistent.saveMessage(
       sessionId,
@@ -283,11 +281,7 @@ export class ContextManager {
     toolName: string,
     toolInput: JsonValue,
     parentUuid: string | null = null,
-    subagentInfo?: {
-      parentSessionId: string;
-      subagentType: string;
-      isSidechain: boolean;
-    }
+    subagentInfo?: SubagentInfoForContext
   ): Promise<string> {
     return this.persistent.saveToolUse(
       sessionId,
@@ -308,17 +302,8 @@ export class ContextManager {
     toolOutput: JsonValue,
     parentUuid: string | null = null,
     error?: string,
-    subagentInfo?: {
-      parentSessionId: string;
-      subagentType: string;
-      isSidechain: boolean;
-    },
-    subagentRef?: {
-      subagentSessionId: string;
-      subagentType: string;
-      subagentStatus: 'running' | 'completed' | 'failed' | 'cancelled';
-      subagentSummary?: string;
-    }
+    subagentInfo?: SubagentInfoForContext,
+    subagentRef?: SubagentRunRef
   ): Promise<string> {
     return this.persistent.saveToolResult(
       sessionId,

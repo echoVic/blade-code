@@ -229,8 +229,8 @@ describe('TaskOutput Tool', () => {
   describe('agent output (agent_xxx)', () => {
     it('拒绝读取其他 parent session 的 agent 输出', async () => {
       mockAgentManager.getAgent.mockImplementation(
-        (_taskId: string, parentSessionId?: string) =>
-          parentSessionId === 'parent-owner'
+        (_taskId: string, owner?: { sessionId?: string; projectPath?: string }) =>
+          owner?.sessionId === 'parent-owner'
             ? { id: 'agent_private', status: 'completed' }
             : undefined
       );
@@ -242,14 +242,14 @@ describe('TaskOutput Tool', () => {
           timeout: 30000,
         },
         new AbortController().signal,
-        { sessionId: 'parent-other' }
+        { sessionId: 'parent-other', workspaceRoot: '/workspace/other' }
       );
 
       expect(result.success).toBe(false);
-      expect(mockAgentManager.getAgent).toHaveBeenCalledWith(
-        'agent_private',
-        'parent-other'
-      );
+      expect(mockAgentManager.getAgent).toHaveBeenCalledWith('agent_private', {
+        sessionId: 'parent-other',
+        projectPath: '/workspace/other',
+      });
     });
 
     it('应获取后台 agent 输出', async () => {
@@ -273,11 +273,15 @@ describe('TaskOutput Tool', () => {
       };
       mockAgentManager.getAgent.mockReturnValue(mockSession);
 
-      const result = await taskOutputTool.execute({
-        task_id: 'agent_xyz789',
-        block: false,
-        timeout: 30000,
-      });
+      const result = await taskOutputTool.execute(
+        {
+          task_id: 'agent_xyz789',
+          block: false,
+          timeout: 30000,
+        },
+        new AbortController().signal,
+        { sessionId: 'parent-default', workspaceRoot: '/workspace/default' }
+      );
 
       expect(result.success).toBe(true);
       expect(result.llmContent).toMatchObject({
@@ -330,14 +334,17 @@ describe('TaskOutput Tool', () => {
           timeout: 5000,
         },
         new AbortController().signal,
-        { sessionId: 'parent-wait' }
+        { sessionId: 'parent-wait', workspaceRoot: '/workspace/wait' }
       );
 
       expect(result.success).toBe(true);
       expect(mockAgentManager.waitForCompletion).toHaveBeenCalledWith(
         'agent_wait',
         5000,
-        'parent-wait'
+        {
+          sessionId: 'parent-wait',
+          projectPath: '/workspace/wait',
+        }
       );
     });
   });
@@ -396,11 +403,15 @@ describe('TaskOutput Tool', () => {
         lastActiveAt: 2000,
       });
 
-      const result = await taskOutputTool.execute({
-        task_id: 'custom_agent',
-        block: false,
-        timeout: 30000,
-      });
+      const result = await taskOutputTool.execute(
+        {
+          task_id: 'custom_agent',
+          block: false,
+          timeout: 30000,
+        },
+        new AbortController().signal,
+        { sessionId: 'parent-default', workspaceRoot: '/workspace/default' }
+      );
 
       expect(result.success).toBe(true);
       expect(result.llmContent).toMatchObject({
@@ -420,11 +431,15 @@ describe('TaskOutput Tool', () => {
         lastActiveAt: Date.now(),
       });
 
-      const result = await taskOutputTool.execute({
-        task_id: 'agent_running',
-        block: false,
-        timeout: 30000,
-      });
+      const result = await taskOutputTool.execute(
+        {
+          task_id: 'agent_running',
+          block: false,
+          timeout: 30000,
+        },
+        new AbortController().signal,
+        { sessionId: 'parent-default', workspaceRoot: '/workspace/default' }
+      );
 
       expect(result.success).toBe(true);
       expect(result.llmContent).toMatchObject({ status: 'running' });
@@ -441,11 +456,15 @@ describe('TaskOutput Tool', () => {
         completedAt: 2000,
       });
 
-      const result = await taskOutputTool.execute({
-        task_id: 'agent_done',
-        block: false,
-        timeout: 30000,
-      });
+      const result = await taskOutputTool.execute(
+        {
+          task_id: 'agent_done',
+          block: false,
+          timeout: 30000,
+        },
+        new AbortController().signal,
+        { sessionId: 'parent-default', workspaceRoot: '/workspace/default' }
+      );
 
       expect(result.success).toBe(true);
       expect(result.llmContent).toMatchObject({ status: 'completed' });
@@ -462,11 +481,15 @@ describe('TaskOutput Tool', () => {
         result: { success: false, message: '', error: 'Something broke' },
       });
 
-      const result = await taskOutputTool.execute({
-        task_id: 'agent_failed',
-        block: false,
-        timeout: 30000,
-      });
+      const result = await taskOutputTool.execute(
+        {
+          task_id: 'agent_failed',
+          block: false,
+          timeout: 30000,
+        },
+        new AbortController().signal,
+        { sessionId: 'parent-default', workspaceRoot: '/workspace/default' }
+      );
 
       expect(result.success).toBe(true);
       expect(result.llmContent).toMatchObject({ status: 'failed' });

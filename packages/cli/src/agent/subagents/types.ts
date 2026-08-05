@@ -3,6 +3,7 @@
  */
 
 import { PermissionMode } from '../../config/types.js';
+import type { Message } from '../../services/ChatServiceInterface.js';
 import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import type { LoopEvent } from '../loop/types.js';
 import type { SubagentIsolationMode } from './SubagentWorktreeLifecycle.js';
@@ -141,11 +142,23 @@ export interface SubagentContext {
   /** 子代理会话 ID（用于与主会话关联） */
   subagentSessionId?: string;
 
+  /** Source agent ID for resumed runs */
+  resumedFrom?: string;
+
+  /** Root agent ID for the lineage */
+  rootAgentId?: string;
+
+  /** Resume depth from the root */
+  resumeDepth?: number;
+
   /** 子代理执行目录（默认继承父 Agent） */
   workspaceRoot?: string;
 
   /** 子代理是否已位于预创建的 managed worktree */
   worktreeActive?: boolean;
+
+  /** Resume 时继承的完整模型历史 */
+  existingMessages?: Message[];
 
   /**
    * 统一事件回调
@@ -169,6 +182,9 @@ export interface SubagentResult {
 
   /** 子代理会话 ID（用于关联独立 JSONL 文件） */
   agentId?: string;
+
+  /** 执行结束后的完整模型历史，用于 durable resume */
+  messages?: Message[];
 
   /** 保留的隔离 worktree 路径（无改动自动清理时为空） */
   worktreePath?: string;

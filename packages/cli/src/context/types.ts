@@ -139,6 +139,9 @@ export interface SessionInfo {
   rootId: string;
   parentId?: string;
   relationType?: 'subagent' | 'fork';
+  resumedFrom?: string;
+  rootAgentId?: string;
+  resumeDepth?: number;
   title?: string;
   status?: 'running' | 'completed' | 'failed';
   agentType?: string;
@@ -174,6 +177,16 @@ export interface SessionRewindInfo {
   mode: SessionRewindMode;
   restoredFiles: string[];
   createdAt: string;
+}
+
+export interface SubagentRunRef {
+  subagentSessionId: string;
+  subagentType: string;
+  subagentStatus: 'running' | 'completed' | 'failed' | 'cancelled';
+  subagentSummary?: string;
+  subagentResumedFrom?: string;
+  subagentRootId?: string;
+  subagentResumeDepth?: number;
 }
 
 export interface PartInfo {

@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
+import type { AgentSession } from '../../../../src/agent/subagents/AgentSessionStore.js';
+import { BackgroundAgentManager } from '../../../../src/agent/subagents/BackgroundAgentManager.js';
 import { PersistentStore } from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
@@ -293,6 +295,105 @@ describe('SessionRuntime', () => {
     ).rejects.toThrow('durable input is pending');
     expect(rewind).not.toHaveBeenCalled();
 
+    await runtime.dispose();
+  });
+
+  it('lists and resumes subagents through the exact runtime owner', async () => {
+    const workspaceRoot = path.join(storageRoot, 'subagent-project');
+    const runtime = await SessionRuntime.create({
+      sessionId: 'runtime-subagent-owner',
+      workspaceRoot,
+    });
+    const source: AgentSession = {
+      schemaVersion: 2,
+      id: 'agent-source',
+      subagentType: 'Explore',
+      description: 'Inspect code',
+      prompt: 'Inspect code and report',
+      messages: [{ role: 'assistant', content: 'Initial result' }],
+      status: 'completed',
+      createdAt: 1,
+      lastActiveAt: 2,
+      parentSessionId: 'runtime-subagent-owner',
+      parentProjectPath: workspaceRoot,
+      rootAgentId: 'agent-source',
+      resumeDepth: 0,
+      workspaceRoot,
+      configSnapshot: {
+        name: 'Explore',
+        description: 'Inspect code',
+        model: 'model-1',
+      },
+    };
+    const child: AgentSession = {
+      ...source,
+      id: 'agent-child',
+      status: 'running',
+      rootAgentId: source.id,
+      resumedFrom: source.id,
+      resumeDepth: 1,
+      createdAt: 3,
+      lastActiveAt: 3,
+    };
+    const manager = {
+      listForSession: vi.fn(() => [source]),
+      getAgent: vi.fn((id: string) =>
+        id === source.id ? source : id === child.id ? child : undefined
+      ),
+      resumeAgent: vi.fn(() => ({
+        agentId: child.id,
+        source,
+      })),
+    };
+    vi.spyOn(BackgroundAgentManager, 'getInstance').mockReturnValue(
+      manager as unknown as BackgroundAgentManager
+    );
+
+    expect(runtime.listSubagents()).toEqual([source]);
+    expect(
+      runtime.resumeSubagent({
+        agentId: source.id,
+        prompt: 'Check the follow-up',
+      })
+    ).toEqual({ source, session: child });
+    const owner = {
+      sessionId: 'runtime-subagent-owner',
+      projectPath: workspaceRoot,
+    };
+    expect(manager.listForSession).toHaveBeenCalledWith(owner);
+    expect(manager.getAgent).toHaveBeenCalledWith(source.id, owner);
+    expect(manager.resumeAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: source.id,
+        prompt: 'Check the follow-up',
+        owner,
+        config: expect.objectContaining({
+          name: 'Explore',
+          model: 'model-1',
+        }),
+      })
+    );
+
+    await runtime.dispose();
+  });
+
+  it('rejects direct subagent resume while the parent turn is active', async () => {
+    const runtime = await SessionRuntime.create({
+      sessionId: 'runtime-subagent-active',
+      workspaceRoot: path.join(storageRoot, 'subagent-active-project'),
+    });
+    const handle = runtime.beginTurn();
+    const getManager = vi.spyOn(BackgroundAgentManager, 'getInstance');
+
+    expect(() =>
+      runtime.resumeSubagent({
+        agentId: 'agent-source',
+        prompt: 'Continue',
+      })
+    ).toThrow('active turn');
+    expect(getManager).not.toHaveBeenCalled();
+
+    await runtime.finishTurn(handle);
     await runtime.dispose();
   });
 

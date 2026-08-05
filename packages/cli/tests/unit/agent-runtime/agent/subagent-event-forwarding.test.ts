@@ -404,6 +404,22 @@ describe('Task tool subagent event publishing', () => {
     const subagentExecutorState = {
       execute: vi.fn(),
     };
+    const sessionStoreState = {
+      saveSession: vi.fn(),
+      updateSession: vi.fn(),
+      loadSession: vi.fn(),
+      listSessions: vi.fn(() => []),
+      markCompleted: vi.fn(
+        (
+          id: string,
+          result: { success: boolean; message: string; error?: string }
+        ) => ({
+          id,
+          status: result.success ? 'completed' : 'failed',
+          result,
+        })
+      ),
+    };
     vi.doMock('../../../../src/server/bus.js', () => ({
       Bus: {
         publish: busState.publish,
@@ -429,6 +445,12 @@ describe('Task tool subagent event publishing', () => {
       SubagentExecutor: vi.fn(() => ({
         execute: subagentExecutorState.execute,
       })),
+    }));
+    vi.doMock('../../../../src/agent/subagents/AgentSessionStore.js', () => ({
+      AgentSessionStore: {
+        getInstance: () => sessionStoreState,
+      },
+      createAgentSessionConfigSnapshot: (config: unknown) => config,
     }));
     const toolStart: LoopEvent = {
       kind: 'tool_start',
@@ -503,7 +525,7 @@ describe('Task tool subagent event publishing', () => {
     );
 
     expect(result.success).toBe(true);
-    expect(busState.publish).toHaveBeenCalledTimes(6);
+    expect(busState.publish).toHaveBeenCalledTimes(8);
     const ref = {
       sessionId: 'parent-session',
       projectPath: path.resolve('/tmp/parent-workspace/../parent-workspace'),
@@ -511,42 +533,58 @@ describe('Task tool subagent event publishing', () => {
     expect(busState.publish).toHaveBeenNthCalledWith(
       1,
       ref,
+      'subagent.start',
+      expect.objectContaining({
+        type: 'test-worker',
+        resumeDepth: 0,
+      })
+    );
+    expect(busState.publish).toHaveBeenNthCalledWith(
+      2,
+      ref,
       'subagent.update',
       expect.objectContaining({ toolName: 'Read' })
     );
     expect(busState.publish).toHaveBeenNthCalledWith(
-      2,
+      3,
       ref,
       'subagent.tool.start',
       expect.objectContaining({ toolName: 'Read', toolCallId: 'tool-1' })
     );
     expect(busState.publish).toHaveBeenNthCalledWith(
-      3,
+      4,
       ref,
       'subagent.tool.result',
       expect.objectContaining({ toolName: 'Read', toolCallId: 'tool-1' })
     );
     expect(busState.publish).toHaveBeenNthCalledWith(
-      4,
+      5,
       ref,
       'subagent.delta',
       expect.objectContaining({ delta: 'hello' })
     );
     expect(busState.publish).toHaveBeenNthCalledWith(
-      5,
+      6,
       ref,
       'subagent.thinking.delta',
       expect.objectContaining({ delta: 'hmm' })
     );
     expect(busState.publish).toHaveBeenNthCalledWith(
-      6,
+      7,
       ref,
       'subagent.stream.end',
       expect.objectContaining({})
+    );
+    expect(busState.publish).toHaveBeenNthCalledWith(
+      8,
+      ref,
+      'subagent.complete',
+      expect.objectContaining({ success: true, resumeDepth: 0 })
     );
     vi.doUnmock('../../../../src/server/bus.js');
     vi.doUnmock('../../../../src/agent/subagents/SubagentWorktreeLifecycle.js');
     vi.doUnmock('../../../../src/store/vanilla.js');
     vi.doUnmock('../../../../src/agent/subagents/SubagentExecutor.js');
+    vi.doUnmock('../../../../src/agent/subagents/AgentSessionStore.js');
   });
 });

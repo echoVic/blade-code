@@ -29,6 +29,11 @@ bun run qualify:local
 
 每一步都在独立子进程中执行。第一步非零退出会立即停止，后续步骤不会被计为通过。该门禁不访问付费模型，也不依赖 `~/.blade/config.json`。
 
+V8 coverage 通过 `bun run --filter blade-code test:coverage` 单独执行。coverage
+编排覆盖 unit、integration、CLI、E2E、snapshot、security 和不需凭证的 real-api
+fixtures，但显式排除 wall-clock `performance` project；instrumentation 与并行项目负载
+会使启动耗时失去可比性。性能回归仍是 `qualify:local` 在 production build 之后的必需项。
+
 ## 真实 API 门禁
 
 真实 API 门禁必须使用当前源码刚构建的 `packages/cli/dist/blade.js`。provider
@@ -84,7 +89,37 @@ bun run qualify:production
 - ACP session/load：通过真实 ACP SDK NDJSON 连接新建并销毁会话，删除原始 marker 文件后加载持久化历史，在响应前回放用户/助手消息，并仅依赖恢复上下文继续 Write/Bash；客户端传入的 MCP server 使用会话私有注册表，初始化失败或退出时独立回收；
 - ACP 会话模型切换：会话以 Flash 初始化后通过真实 `session/set_model` 切换到 Pro，透明代理必须只观察到 Pro 的后续采样请求；切换期间原子更新 provider 与上下文窗口、回收旧 provider，并完成 Read、源码修改、Bash、独立测试与 Git diff 校验；
 - 单次运行 Subagent：通过 `--agents` 注入只存在于子代理系统提示中的模型专属规则，主代理仅开放 Task；Flash 和 Pro 都必须委派到自定义代理，完成 Read/Edit/Bash、独立测试、精确文件范围和纯 JSONL 校验；
+- durable Subagent resume：Flash 和 Pro 都必须先由真实 Task 产生只存在于 child
+  transcript 的上下文，再从 Runtime、TUI、Web 和 ACP 四个入口恢复。follow-up prompt
+  不得包含目标值；child 必须只依赖恢复历史给出正确结果，并证明 source sidecar 不变、
+  child ID 新建、lineage 深度递增、冻结模型/权限生效及无密钥泄漏。Web 还要通过真实
+  浏览器验证 depth 1 → 2、刷新后 2 → 3、禁用态和零 console error。实际结果记录在
+  [durable subagent resume 证据账本](./durable-subagent-resume-evidence.md)；
 - 输出协议、工具调用、错误事件和 key 泄漏检查。
+
+### Durable Subagent resume 轨迹
+
+该能力必须覆盖相同的 immutable lineage 契约：
+
+1. **Runtime**：foreground root 先持久化完整 ChatContext，销毁并重建 manager/runtime
+   后恢复为 child，再恢复为 grandchild。每条边使用新 ID，源 sidecar 字节和终态不变，
+   `rootAgentId` 稳定，`resumeDepth` 单调递增。
+2. **CLI/TUI**：真实 `useAgent` owner 通过 `/tasks resume` 继续已结束 agent，更新
+   subagent progress，但不释放 parent Runtime。退出后必须正常释放 Runtime lease。
+3. **Web**：通过 exact `sessionId + projectPath` 的 GET/POST routes 和 SSE 发布
+   `subagent.start/update/tool/complete`。消息卡片支持 follow-up、running polling、
+   recoverable error 和刷新重建；不得把 ancestor 误选为最新 descendant。
+4. **ACP**：通过真实 ACP SDK lifecycle 执行 `/tasks resume`，使用标准 `tool_call`
+   和 `tool_call_update` 暴露新 child ID、状态和结果。不得用私有文本事件代替工具协议。
+
+sidecar 必须使用原子写、`fsync`、`0600` 文件权限和 `0700` 目录权限。公共 Web
+schema 只返回状态、lineage、结果与统计，不得返回 prompt、messages、配置快照、
+workspace、owner PID 或 provider credential。跨 workspace、类型冲突、running source、
+active parent turn 和 durable pending input 都必须 fail closed。
+
+required matrix 固定包含 `deepseek-v4-flash` 和 `deepseek-v4-pro`。每个模型都要通过
+Runtime、TUI、Web、ACP 四条真实产品入口；worktree resume 另行验证新的 child ID
+继续使用源 lease owner 并保留失败或有改动的 worktree。
 
 ### Session discovery 与 durable fork 轨迹
 

@@ -22,6 +22,8 @@ import {
   PermissionModeSchema,
   type PermissionResponse,
   PermissionResponseSchema,
+  ResumeSubagentRequestSchema,
+  ResumeSubagentResponseSchema,
   type SendMessageRequest,
   SendMessageRequestSchema,
   type SendMessageResponse,
@@ -333,6 +335,48 @@ describe('API Schemas', () => {
           messages: [{ role: 'user', content: 'kept history' }],
         })
       ).not.toThrow();
+    });
+  });
+
+  describe('Subagent resume schemas', () => {
+    it('validates immutable lineage and rejects blank follow-up prompts', () => {
+      expect(
+        ResumeSubagentRequestSchema.parse({ prompt: 'Check the follow-up' })
+      ).toEqual({ prompt: 'Check the follow-up' });
+      expect(() => ResumeSubagentRequestSchema.parse({ prompt: '   ' })).toThrow();
+
+      expect(
+        ResumeSubagentResponseSchema.parse({
+          source: {
+            id: 'agent-source',
+            subagentType: 'Explore',
+            description: 'Inspect code',
+            status: 'completed',
+            rootAgentId: 'agent-root',
+            resumeDepth: 1,
+            createdAt: 1,
+            lastActiveAt: 2,
+          },
+          session: {
+            id: 'agent-child',
+            subagentType: 'Explore',
+            description: 'Inspect code',
+            status: 'running',
+            rootAgentId: 'agent-root',
+            resumedFrom: 'agent-source',
+            resumeDepth: 2,
+            createdAt: 3,
+            lastActiveAt: 3,
+          },
+        })
+      ).toMatchObject({
+        source: { id: 'agent-source', resumeDepth: 1 },
+        session: {
+          id: 'agent-child',
+          resumedFrom: 'agent-source',
+          resumeDepth: 2,
+        },
+      });
     });
   });
 

@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { nanoid } from 'nanoid';
+import type { SubagentInfoForContext } from '../../agent/types.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import { materializeSessionEvents } from '../../services/sessionRewind.js';
 import type { JsonValue, MessageRole } from '../../store/types.js';
@@ -13,6 +14,7 @@ import type {
   SessionContext,
   SessionEvent,
   SessionInfo,
+  SubagentRunRef,
 } from '../types.js';
 import { JSONLStore } from './JSONLStore.js';
 import {
@@ -61,11 +63,7 @@ export class PersistentStore {
 
   private async ensureSessionCreated(
     sessionId: string,
-    subagentInfo?: {
-      parentSessionId: string;
-      subagentType: string;
-      isSidechain: boolean;
-    }
+    subagentInfo?: SubagentInfoForContext
   ): Promise<void> {
     const filePath = getSessionFilePath(this.projectPath, sessionId);
     const store = new JSONLStore(filePath);
@@ -77,6 +75,9 @@ export class PersistentStore {
       rootId: subagentInfo?.parentSessionId ?? sessionId,
       parentId: subagentInfo?.parentSessionId,
       relationType: subagentInfo ? 'subagent' : undefined,
+      resumedFrom: subagentInfo?.resumedFrom,
+      rootAgentId: subagentInfo?.rootAgentId,
+      resumeDepth: subagentInfo?.resumeDepth,
       title: undefined,
       status: 'running',
       agentType: subagentInfo?.subagentType,
@@ -130,11 +131,7 @@ export class PersistentStore {
       usage?: { input_tokens: number; output_tokens: number };
       inboxMessageId?: string;
     },
-    subagentInfo?: {
-      parentSessionId: string;
-      subagentType: string;
-      isSidechain: boolean;
-    }
+    subagentInfo?: SubagentInfoForContext
   ): Promise<string> {
     try {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
@@ -212,11 +209,7 @@ export class PersistentStore {
     toolName: string,
     toolInput: JsonValue,
     parentUuid: string | null = null,
-    subagentInfo?: {
-      parentSessionId: string;
-      subagentType: string;
-      isSidechain: boolean;
-    }
+    subagentInfo?: SubagentInfoForContext
   ): Promise<string> {
     try {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
@@ -294,17 +287,8 @@ export class PersistentStore {
     toolOutput: JsonValue,
     parentUuid: string | null = null,
     error?: string,
-    subagentInfo?: {
-      parentSessionId: string;
-      subagentType: string;
-      isSidechain: boolean;
-    },
-    subagentRef?: {
-      subagentSessionId: string;
-      subagentType: string;
-      subagentStatus: 'running' | 'completed' | 'failed' | 'cancelled';
-      subagentSummary?: string;
-    }
+    subagentInfo?: SubagentInfoForContext,
+    subagentRef?: SubagentRunRef
   ): Promise<string> {
     try {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
@@ -346,6 +330,9 @@ export class PersistentStore {
             agentType: subagentRef.subagentType,
             status: subagentRef.subagentStatus,
             summary: subagentRef.subagentSummary ?? '',
+            resumedFrom: subagentRef.subagentResumedFrom ?? null,
+            rootAgentId: subagentRef.subagentRootId ?? subagentRef.subagentSessionId,
+            resumeDepth: subagentRef.subagentResumeDepth ?? 0,
             startedAt: now,
             finishedAt,
           },
@@ -421,8 +408,11 @@ export class PersistentStore {
    * 保存会话初始化事件到 JSONL
    * 仅创建 session_created 事件，不写入空消息
    */
-  async initSession(sessionId: string): Promise<void> {
-    await this.ensureSessionCreated(sessionId);
+  async initSession(
+    sessionId: string,
+    subagentInfo?: SubagentInfoForContext
+  ): Promise<void> {
+    await this.ensureSessionCreated(sessionId, subagentInfo);
   }
 
   /**

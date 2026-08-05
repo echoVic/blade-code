@@ -1,7 +1,7 @@
-import { ChevronDown, ChevronRight, FileText, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, Loader2, RotateCcw } from 'lucide-react';
 import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { sessionService } from '@/services';
+import { type SubagentSession, sessionService } from '@/services';
 import { useAppStore } from '@/store/AppStore';
 import type {
   AgentResponseContent,
@@ -314,7 +314,12 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadedToolCalls, setLoadedToolCalls] = useState<ToolCallInfo[] | null>(null);
-  const { currentSessionRef } = useSessionStore();
+  const [resumeOpen, setResumeOpen] = useState(false);
+  const [resumePrompt, setResumePrompt] = useState('');
+  const [resumeSubmitting, setResumeSubmitting] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const [resumedChild, setResumedChild] = useState<SubagentSession | null>(null);
+  const { currentSessionRef, isStreaming, isTemporarySession } = useSessionStore();
 
   if (!subagent) return null;
 
@@ -323,6 +328,16 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   const toolCalls = subagent.toolCalls || loadedToolCalls || [];
   const hasContent =
     subagent.output || subagent.thinking || toolCalls.length > 0 || subagent.sessionId;
+  const resumeTarget =
+    resumedChild && resumedChild.status !== 'running'
+      ? resumedChild.id
+      : subagent.sessionId;
+  const canResume =
+    !isRunning &&
+    !isStreaming &&
+    !isTemporarySession &&
+    resumedChild?.status !== 'running' &&
+    Boolean(resumeTarget && currentSessionRef);
 
   useEffect(() => {
     if (
@@ -371,6 +386,94 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
     currentSessionRef?.projectPath,
   ]);
 
+  useEffect(() => {
+    if (!subagent.sessionId || !currentSessionRef) return;
+    let mounted = true;
+    const lineageRoot = subagent.rootAgentId ?? subagent.sessionId;
+    const currentDepth = subagent.resumeDepth ?? 0;
+    sessionService
+      .listSubagents(currentSessionRef)
+      .then((sessions) => {
+        if (!mounted) return;
+        const latest = sessions
+          .filter(
+            (session) =>
+              session.id !== subagent.sessionId &&
+              session.rootAgentId === lineageRoot &&
+              session.resumeDepth > currentDepth
+          )
+          .sort(
+            (left, right) =>
+              right.resumeDepth - left.resumeDepth ||
+              right.lastActiveAt - left.lastActiveAt
+          )[0];
+        if (latest) setResumedChild(latest);
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+  }, [
+    currentSessionRef?.sessionId,
+    currentSessionRef?.projectPath,
+    subagent.sessionId,
+    subagent.rootAgentId,
+    subagent.resumeDepth,
+  ]);
+
+  useEffect(() => {
+    if (!resumedChild || resumedChild.status !== 'running' || !currentSessionRef) {
+      return;
+    }
+    let mounted = true;
+    const refresh = async () => {
+      try {
+        const sessions = await sessionService.listSubagents(currentSessionRef);
+        const current = sessions.find((session) => session.id === resumedChild.id);
+        if (mounted && current) setResumedChild(current);
+      } catch {
+        // The live SSE card remains usable when status polling is unavailable.
+      }
+    };
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 1000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, [currentSessionRef, resumedChild?.id, resumedChild?.status]);
+
+  const handleResume = async () => {
+    if (
+      !currentSessionRef ||
+      !resumeTarget ||
+      !resumePrompt.trim() ||
+      resumeSubmitting
+    ) {
+      return;
+    }
+    setResumeSubmitting(true);
+    setResumeError(null);
+    try {
+      const result = await sessionService.resumeSubagent(
+        currentSessionRef,
+        resumeTarget,
+        resumePrompt.trim()
+      );
+      setResumedChild(result.session);
+      setResumePrompt('');
+      setResumeOpen(false);
+      setManualToggle(true);
+    } catch (error) {
+      setResumeError(
+        error instanceof Error ? error.message : 'Failed to resume subagent'
+      );
+    } finally {
+      setResumeSubmitting(false);
+    }
+  };
+
   return (
     <div className="bg-[#F9FAFB] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-lg px-3 py-2">
       <button
@@ -392,6 +495,14 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
                   : 'running'
             }
           />
+          {subagent.resumedFrom && (
+            <span
+              className="rounded bg-[#EDE9FE] px-1.5 py-0.5 text-[10px] font-mono text-[#6D28D9] dark:bg-[#2E1065] dark:text-[#C4B5FD]"
+              title={`Resumed from ${subagent.resumedFrom}`}
+            >
+              resumed · depth {subagent.resumeDepth ?? 1}
+            </span>
+          )}
         </div>
         {hasContent && (
           <ChevronDown
@@ -425,6 +536,71 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
             </div>
           )}
           {!loading && toolCalls.length > 0 && <ToolCallsList toolCalls={toolCalls} />}
+          {resumedChild && (
+            <div className="rounded-md border border-[#DDD6FE] bg-[#F5F3FF] p-2 text-[11px] font-mono text-[#5B21B6] dark:border-[#4C1D95] dark:bg-[#1E1B4B] dark:text-[#C4B5FD]">
+              <div>
+                Resumed as {resumedChild.id} · {resumedChild.status} · depth{' '}
+                {resumedChild.resumeDepth}
+              </div>
+              {(resumedChild.result?.message || resumedChild.result?.error) && (
+                <div className="mt-1 whitespace-pre-wrap text-[#374151] dark:text-[#d4d4d8]">
+                  {resumedChild.result.message || resumedChild.result.error}
+                </div>
+              )}
+            </div>
+          )}
+          {canResume && (
+            <div className="space-y-2">
+              {!resumeOpen ? (
+                <button
+                  type="button"
+                  aria-label="Resume subagent"
+                  onClick={() => setResumeOpen(true)}
+                  className="flex items-center gap-1.5 rounded-md border border-[#D1D5DB] px-2 py-1 text-[11px] font-medium text-[#374151] transition-colors hover:bg-[#F3F4F6] dark:border-[#3f3f46] dark:text-[#d4d4d8] dark:hover:bg-[#27272a]"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  Resume
+                </button>
+              ) : (
+                <div className="space-y-2 rounded-md border border-[#E5E7EB] bg-white p-2 dark:border-[#27272a] dark:bg-[#111113]">
+                  <textarea
+                    aria-label="Subagent follow-up"
+                    value={resumePrompt}
+                    onChange={(event) => setResumePrompt(event.target.value)}
+                    placeholder="Describe the follow-up work"
+                    rows={3}
+                    className="w-full resize-y rounded border border-[#D1D5DB] bg-white p-2 text-[11px] text-[#111827] outline-none focus:border-[#8B5CF6] dark:border-[#3f3f46] dark:bg-[#18181b] dark:text-[#f4f4f5]"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResumeOpen(false);
+                        setResumeError(null);
+                      }}
+                      className="rounded px-2 py-1 text-[11px] text-[#6B7280] hover:bg-[#F3F4F6] dark:hover:bg-[#27272a]"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleResume()}
+                      disabled={!resumePrompt.trim() || resumeSubmitting}
+                      className="flex items-center gap-1 rounded bg-[#7C3AED] px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+                    >
+                      {resumeSubmitting && <Loader2 className="h-3 w-3 animate-spin" />}
+                      Resume agent
+                    </button>
+                  </div>
+                </div>
+              )}
+              {resumeError && (
+                <div role="alert" className="text-[11px] text-red-600">
+                  {resumeError}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

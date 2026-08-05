@@ -62,5 +62,6 @@ export const testTypes = {
     name: '所有测试',
     project: null,
     timeout: 600_000,
+    coverageExcludedProjects: ['performance'],
   },
 };

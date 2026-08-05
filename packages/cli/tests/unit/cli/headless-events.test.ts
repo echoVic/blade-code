@@ -51,4 +51,27 @@ describe('headless event contract', () => {
       target: 'packages/cli/src/commands/headless.ts',
     });
   });
+
+  it('validates durable subagent lineage events', async () => {
+    const { HEADLESS_EVENT_VERSION, HeadlessJsonlEventSchema } = await import(
+      '../../../src/commands/headlessEvents.js'
+    );
+    expect(
+      HeadlessJsonlEventSchema.parse({
+        event_version: HEADLESS_EVENT_VERSION,
+        type: 'subagent',
+        state: 'spawned',
+        session_id: 'agent-child',
+        subagent_type: 'Explore',
+        resumed_from: 'agent-source',
+        root_agent_id: 'agent-root',
+        resume_depth: 2,
+      })
+    ).toMatchObject({
+      state: 'spawned',
+      session_id: 'agent-child',
+      resumed_from: 'agent-source',
+      resume_depth: 2,
+    });
+  });
 });

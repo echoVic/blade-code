@@ -71,7 +71,10 @@ describe('/tasks Command', () => {
       await tasksCommand.handler([], mockContext);
 
       expect(mockShellManager.listForSession).toHaveBeenCalledWith('session-owner');
-      expect(mockAgentManager.listForSession).toHaveBeenCalledWith('session-owner');
+      expect(mockAgentManager.listForSession).toHaveBeenCalledWith({
+        sessionId: 'session-owner',
+        projectPath: '/test/project',
+      });
     });
 
     it('无任务时应显示空列表', async () => {
@@ -190,7 +193,10 @@ describe('/tasks Command', () => {
 
       expect(result.success).toBe(true);
       expect(mockAgentManager.cleanupExpiredSessionsForParent).toHaveBeenCalledWith(
-        'session-owner',
+        {
+          sessionId: 'session-owner',
+          projectPath: '/test/project',
+        },
         0
       );
       const message = mockSendMessage.mock.calls[0][0];
@@ -276,7 +282,49 @@ describe('/tasks Command', () => {
 
       const message = mockSendMessage.mock.calls[0][0];
       expect(message).toContain('/tasks');
+      expect(message).toContain('/tasks resume');
       expect(message).toContain('/tasks clean');
+    });
+  });
+
+  describe('resume subcommand', () => {
+    it('resumes through the surface-owned runtime and reports lineage', async () => {
+      const list = vi.fn().mockResolvedValue([]);
+      const resume = vi.fn().mockResolvedValue({
+        source: { id: 'agent-source' },
+        session: {
+          id: 'agent-child',
+          resumeDepth: 2,
+        },
+      });
+
+      const result = await tasksCommand.handler(
+        ['resume', 'agent-source', 'check', 'the', 'fix'],
+        {
+          ...mockContext,
+          subagents: { list, resume },
+        }
+      );
+
+      expect(result.success).toBe(true);
+      expect(resume).toHaveBeenCalledWith('agent-source', 'check the fix');
+      expect(result.data).toMatchObject({
+        action: 'subagent_resumed',
+        sourceAgentId: 'agent-source',
+        subagent: { id: 'agent-child', resumeDepth: 2 },
+      });
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        expect.stringContaining('agent-child')
+      );
+    });
+
+    it('rejects malformed resume commands before touching the runtime', async () => {
+      await expect(
+        tasksCommand.handler(['resume', 'agent-source'], mockContext)
+      ).resolves.toEqual({
+        success: false,
+        error: 'Usage: /tasks resume <agentId> <prompt>',
+      });
     });
   });
 });

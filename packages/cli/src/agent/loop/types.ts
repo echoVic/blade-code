@@ -65,12 +65,23 @@ export type DomainEvent =
       goal: GoalSnapshot;
       continuation: number;
     }
-  | { kind: 'subagent_spawned'; sessionId: string; type: string; prompt: string }
+  | {
+      kind: 'subagent_spawned';
+      sessionId: string;
+      type: string;
+      prompt: string;
+      resumedFrom?: string;
+      rootAgentId?: string;
+      resumeDepth?: number;
+    }
   | {
       kind: 'subagent_completed';
       sessionId: string;
       success: boolean;
       summary?: string;
+      resumedFrom?: string;
+      rootAgentId?: string;
+      resumeDepth?: number;
     };
 
 // ===== Tool Call Reference =====

@@ -6,8 +6,11 @@
  * - 后台 agent 输出
  */
 
+import path from 'node:path';
 import { z } from 'zod';
+import type { AgentSessionOwner } from '../../../agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
+import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -77,6 +80,12 @@ export const taskOutputTool = createTool({
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const { task_id, block, timeout } = params;
     const sessionId = context.sessionId ?? '';
+    const owner: AgentSessionOwner | undefined = context.sessionId
+      ? {
+          sessionId: context.sessionId,
+          projectPath: path.resolve(context.workspaceRoot || getCwd()),
+        }
+      : undefined;
 
     // 根据 task_id 前缀判断类型
     if (task_id.startsWith('bash_')) {
@@ -88,8 +97,8 @@ export const taskOutputTool = createTool({
     if (shellManager.getProcess(task_id, sessionId)) {
       return handleShellOutput(task_id, block, timeout, sessionId);
     }
-    if (agentManager.getAgent(task_id, sessionId)) {
-      return handleAgentOutput(task_id, block, timeout, sessionId);
+    if (owner && agentManager.getAgent(task_id, owner)) {
+      return handleAgentOutput(task_id, block, timeout, owner);
     }
 
     return {
@@ -210,12 +219,12 @@ async function handleAgentOutput(
   taskId: string,
   block: boolean,
   timeout: number,
-  parentSessionId: string
+  owner: AgentSessionOwner
 ): Promise<ToolResult> {
   const manager = BackgroundAgentManager.getInstance();
 
   // 获取会话信息
-  let session = manager.getAgent(taskId, parentSessionId);
+  let session = manager.getAgent(taskId, owner);
   if (!session) {
     return {
       success: false,
@@ -232,7 +241,7 @@ async function handleAgentOutput(
 
   // 如果需要阻塞等待且 agent 仍在运行
   if (block && session.status === 'running') {
-    session = await manager.waitForCompletion(taskId, timeout, parentSessionId);
+    session = await manager.waitForCompletion(taskId, timeout, owner);
     if (!session) {
       return {
         success: false,
@@ -264,6 +273,10 @@ async function handleAgentOutput(
     isolation: session.isolation,
     worktree_path: session.worktree?.worktreeRoot,
     worktree_branch: session.worktree?.branch,
+    resumed_from: session.resumedFrom,
+    root_agent_id: session.rootAgentId,
+    resume_depth: session.resumeDepth,
+    resume_from_hint: session.id,
   };
 
   const subagentStatus =
@@ -282,6 +295,9 @@ async function handleAgentOutput(
       subagentSessionId: session.id,
       subagentType: session.subagentType,
       subagentStatus,
+      subagentResumedFrom: session.resumedFrom,
+      subagentRootId: session.rootAgentId,
+      subagentResumeDepth: session.resumeDepth,
       subagentSummary:
         typeof session.result?.message === 'string'
           ? session.result.message.slice(0, 500)

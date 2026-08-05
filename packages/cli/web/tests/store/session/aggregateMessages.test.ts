@@ -115,4 +115,32 @@ describe('aggregateMessages', () => {
       first[0]?.agentContent?.subagent?.id
     );
   });
+
+  test('restores durable subagent lineage from subtask metadata', () => {
+    const [message] = aggregateMessages([
+      {
+        id: 'assistant-lineage',
+        role: 'assistant',
+        content: '',
+        metadata: {
+          subtaskRef: {
+            childSessionId: 'agent-child',
+            agentType: 'Explore',
+            status: 'completed',
+            summary: 'Follow-up complete',
+            resumedFrom: 'agent-source',
+            rootAgentId: 'agent-root',
+            resumeDepth: 2,
+          },
+        },
+      },
+    ] as never);
+
+    expect(message?.agentContent?.subagent).toMatchObject({
+      sessionId: 'agent-child',
+      resumedFrom: 'agent-source',
+      rootAgentId: 'agent-root',
+      resumeDepth: 2,
+    });
+  });
 });

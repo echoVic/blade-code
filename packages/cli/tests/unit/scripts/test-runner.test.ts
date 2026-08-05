@@ -54,6 +54,10 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     expect(testTypes.integration.timeout).toBe(180_000);
   });
 
+  it('keeps wall-clock performance tests out of the coverage matrix', () => {
+    expect(testTypes.all.coverageExcludedProjects).toEqual(['performance']);
+  });
+
   it('returns a normal exit without reporting timeout or abort', async () => {
     const result = await runOwnedCommand({
       command: process.execPath,

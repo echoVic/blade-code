@@ -31,7 +31,20 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - 每个后台 Bash 的 stdout 和 stderr 分别只保留自上次 `TaskOutput` 消费以来最近 1 MiB 的原始字节，持续输出不会让 runtime 内存无界增长。被丢弃的更早输出按 stream 累计字节数，保留内容从合法 UTF-8 边界开始。
 - `TaskOutput` 会在 1 MiB 运行时边界之上再次按命令类型限制模型和事件表面的文本（3,000-20,000 字符，默认 15,000），保留头尾并返回 `output_truncated`、`stdout_omitted_bytes`、`stderr_omitted_bytes` 和 `truncation_info`。TUI、headless、Web SSE 与 ACP 使用同一结果和展示摘要。
 - `SessionRuntime.dispose()` 会等待当前 session 的所有后台 shell 进程树完成回收，不影响其他活跃 session。
-- 后台 agent 会话保留在 session store 中，允许同一 parent session 跨 CLI 进程读取和恢复。列举、输出、恢复和清理都按 `parentSessionId` 隔离。
+- foreground 与后台 agent 都会写入 durable sidecar。sidecar 通过原子 rename、
+  `fsync` 和 `0600` 文件权限提交，存储目录使用 `0700`；公开 API 不返回 prompt、
+  messages、配置快照、workspace 或 owner PID。
+- agent 的列举、输出、恢复和清理按 `parent sessionId + canonical projectPath`
+  复合身份隔离。相同 parent ID 在不同 workspace 中不能读取或恢复彼此的 agent。
+- running sidecar 记录 owner PID。新 Blade 进程只会把 PID 已退出的记录立即标记为
+  orphan；没有 PID 的 legacy sidecar 保留 30 分钟兼容窗口，不会误伤另一个仍存活
+  进程中的 agent。
+- 每次 resume 创建新的不可变 child ID，并记录 `rootAgentId`、`resumedFrom` 和
+  `resumeDepth`。child 继承源 transcript 和冻结的模型、权限、工具、系统提示与隔离
+  配置；worktree lease 继续由原 owner ID 管理，不会被 child ID 错误接管。
+- 直接从 TUI、Web 或 ACP 恢复 subagent 只允许在 parent turn idle 且 durable input
+  队列为空时执行；模型在自己的活动 turn 中调用 Task `resume_from` 仍走同一持久化和
+  owner 校验。
 - 缺失 session 上下文时，后台 Bash 和后台 agent 启动会 fail closed，不会退化为全局可见任务。
 
 ## Transcript 提交与恢复

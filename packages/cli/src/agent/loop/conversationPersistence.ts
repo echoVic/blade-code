@@ -5,6 +5,7 @@
  * 统一 contextMgr 获取与错误日志处理。
  */
 
+import type { SubagentRunRef } from '../../context/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import type { JsonValue } from '../../store/types.js';
@@ -147,12 +148,7 @@ export async function saveToolResult(
   toolOutput: JsonValue,
   parentUuid: string | null,
   error?: string,
-  subagentRef?: {
-    subagentSessionId: string;
-    subagentType: string;
-    subagentStatus: 'running' | 'completed' | 'failed' | 'cancelled';
-    subagentSummary?: string;
-  }
+  subagentRef?: SubagentRunRef
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);

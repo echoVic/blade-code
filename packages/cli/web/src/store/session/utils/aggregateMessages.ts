@@ -47,6 +47,9 @@ const parseSubtaskRef = (
     status: normalizeSubagentStatus(ref.status),
     startTime: Date.now(),
     sessionId: ref.childSessionId as string | undefined,
+    resumedFrom: ref.resumedFrom as string | undefined,
+    rootAgentId: ref.rootAgentId as string | undefined,
+    resumeDepth: typeof ref.resumeDepth === 'number' ? ref.resumeDepth : undefined,
   };
 };
 

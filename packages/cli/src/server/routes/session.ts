@@ -9,9 +9,17 @@ import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
 import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js';
-import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
+import {
+  type ResumedSubagent,
+  SessionRuntime,
+} from '../../agent/runtime/SessionRuntime.js';
+import {
+  type AgentSession,
+  toPublicAgentSession,
+} from '../../agent/subagents/AgentSessionStore.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
 import {
+  ResumeSubagentRequestSchema,
   SendMessageRequestSchema,
   SessionRewindRequestSchema,
 } from '../../api/schemas.js';
@@ -22,7 +30,7 @@ import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
-import type { SessionMetadata } from '../../services/SessionService.js';
+import type { RewoundSession, SessionMetadata } from '../../services/SessionService.js';
 import {
   SessionMissingCreationError,
   SessionService,
@@ -208,6 +216,62 @@ const sanitizeToolMetadata = (metadata: ToolResultMetadata | undefined) => {
   }
   return sanitized as ToolResultMetadata;
 };
+
+function publishSubagentLoopEvent(
+  ref: SessionRef,
+  subagentSessionId: string,
+  event: LoopEvent
+): void {
+  switch (event.kind) {
+    case 'tool_start':
+      if ('function' in event.toolCall) {
+        Bus.publish(ref, 'subagent.update', {
+          subagentSessionId,
+          toolName: event.toolCall.function.name,
+        });
+        Bus.publish(ref, 'subagent.tool.start', {
+          subagentSessionId,
+          toolCallId: event.toolCall.id,
+          toolName: event.toolCall.function.name,
+          arguments: event.toolCall.function.arguments,
+          toolKind: event.toolKind,
+        });
+      }
+      break;
+    case 'tool_result':
+      if ('function' in event.toolCall) {
+        Bus.publish(ref, 'subagent.tool.result', {
+          subagentSessionId,
+          toolCallId: event.toolCall.id,
+          toolName: event.toolCall.function.name,
+          success: !event.result.error,
+          summary: event.result.metadata?.summary,
+          output: renderToolDisplayToString(
+            formatToolDisplay(event.toolCall.function.name, event.result)
+          ),
+          metadata: sanitizeToolMetadata(event.result.metadata),
+        });
+      }
+      break;
+    case 'content_delta':
+      Bus.publish(ref, 'subagent.delta', {
+        subagentSessionId,
+        delta: event.delta,
+      });
+      break;
+    case 'thinking_delta':
+      Bus.publish(ref, 'subagent.thinking.delta', {
+        subagentSessionId,
+        delta: event.delta,
+      });
+      break;
+    case 'stream_end':
+      Bus.publish(ref, 'subagent.stream.end', { subagentSessionId });
+      break;
+    default:
+      break;
+  }
+}
 
 function normalizeProjectPathInput(
   projectPath: string,
@@ -776,7 +840,7 @@ export const SessionRoutes = () => {
       }
 
       const runtime = await getOrCreateRuntime(session);
-      let result;
+      let result: RewoundSession;
       try {
         result = await runtime.rewindSession(parsed.data);
       } catch (error) {
@@ -795,6 +859,99 @@ export const SessionRoutes = () => {
         messages: result.messages,
       });
       return c.json(result);
+    });
+  });
+
+  app.get('/:sessionId/subagents', async (c) => {
+    const session = await resolveSessionForWrite(
+      c.req.param('sessionId'),
+      c.req.query('projectPath')
+    );
+    const runtime = await getOrCreateRuntime(session);
+    return c.json({
+      subagents: runtime.listSubagents().map(toPublicAgentSession),
+    });
+  });
+
+  app.post('/:sessionId/subagents/:agentId/resume', async (c) => {
+    validateSessionIdOrThrow(c.req.param('agentId'));
+    const parsed = ResumeSubagentRequestSchema.safeParse(await c.req.json());
+    if (!parsed.success) {
+      throw new BadRequestError('Invalid subagent resume request');
+    }
+    const session = await resolveSessionForWrite(
+      c.req.param('sessionId'),
+      c.req.query('projectPath')
+    );
+    const ref = sessionRefFromSession(session);
+
+    return getMessageSubmissionLock(ref).runExclusive(async () => {
+      const currentRun = session.currentRunId
+        ? activeRuns.get(session.currentRunId)
+        : undefined;
+      if (
+        currentRun &&
+        (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
+      ) {
+        throw new ConflictError(
+          'Cannot resume a subagent while a parent run is active'
+        );
+      }
+
+      const runtime = await getOrCreateRuntime(session);
+      let announced = false;
+      let pendingCompletion: AgentSession | undefined;
+      const publishCompletion = (child: AgentSession) => {
+        Bus.publish(ref, 'subagent.complete', {
+          subagentSessionId: child.id,
+          success: child.status === 'completed',
+          status: child.status,
+          summary: child.result?.message?.slice(0, 500),
+          resumedFrom: child.resumedFrom,
+          rootAgentId: child.rootAgentId,
+          resumeDepth: child.resumeDepth,
+        });
+      };
+      let result: ResumedSubagent;
+      try {
+        result = runtime.resumeSubagent({
+          agentId: c.req.param('agentId'),
+          prompt: parsed.data.prompt,
+          onEvent: (event, childId) => {
+            publishSubagentLoopEvent(ref, childId, event);
+          },
+          onCompleted: (child) => {
+            if (announced) publishCompletion(child);
+            else pendingCompletion = child;
+          },
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.startsWith('Cannot resume') ||
+            error.message.startsWith('Subagent cannot'))
+        ) {
+          throw new ConflictError(error.message);
+        }
+        if (error instanceof Error && error.message.startsWith('Subagent not found')) {
+          throw new NotFoundError(error.message);
+        }
+        throw error;
+      }
+      Bus.publish(ref, 'subagent.start', {
+        subagentSessionId: result.session.id,
+        type: result.session.subagentType,
+        description: result.session.description,
+        resumedFrom: result.source.id,
+        rootAgentId: result.session.rootAgentId,
+        resumeDepth: result.session.resumeDepth,
+      });
+      announced = true;
+      if (pendingCompletion) publishCompletion(pendingCompletion);
+      return c.json({
+        source: toPublicAgentSession(result.source),
+        session: toPublicAgentSession(result.session),
+      });
     });
   });
 

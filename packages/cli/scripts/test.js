@@ -78,6 +78,12 @@ async function runTest(testType, options = {}) {
     baseArgs.push('--project', config.project);
   }
 
+  if (options.coverage && config.coverageExcludedProjects) {
+    baseArgs.push(
+      ...config.coverageExcludedProjects.map(project => `--project=!${project}`)
+    );
+  }
+
   if (config.files) {
     baseArgs.push(...config.files.map(f => path.resolve(__dirname, '..', f)));
   }

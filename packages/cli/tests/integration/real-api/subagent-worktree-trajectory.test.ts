@@ -4,6 +4,8 @@ import os from 'node:os';
 import { promisify } from 'node:util';
 import { join } from 'pathe';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AgentSessionStore } from '../../../src/agent/subagents/AgentSessionStore.js';
+import { BackgroundAgentManager } from '../../../src/agent/subagents/BackgroundAgentManager.js';
 import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
 import { PermissionMode } from '../../../src/config/types.js';
 import {
@@ -38,6 +40,7 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
   let originalSource = '';
   let restoreSandboxBackend: (() => void) | undefined;
   let sandboxPreparations = 0;
+  let previousStorageRoot: string | undefined;
 
   beforeAll(async () => {
     const testSandboxBackend: WorkspaceSandboxBackend = {
@@ -55,6 +58,8 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
     restoreSandboxBackend = installWorkspaceSandboxBackendForTests(testSandboxBackend);
 
     tempRoot = await mkdtemp(join(os.tmpdir(), 'blade-subagent-trajectory-'));
+    previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+    process.env.BLADE_STORAGE_ROOT = join(tempRoot, 'storage');
     repoRoot = join(tempRoot, 'repo');
     await mkdir(join(repoRoot, 'src'), { recursive: true });
     await mkdir(join(repoRoot, 'test'), { recursive: true });
@@ -115,6 +120,17 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
   });
 
   afterAll(async () => {
+    (AgentSessionStore as unknown as { instance: unknown }).instance = null;
+    (
+      BackgroundAgentManager as unknown as {
+        instance: unknown;
+      }
+    ).instance = null;
+    if (previousStorageRoot === undefined) {
+      delete process.env.BLADE_STORAGE_ROOT;
+    } else {
+      process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+    }
     restoreSandboxBackend?.();
     if (repoRoot) {
       try {
@@ -213,6 +229,7 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
       })
       .execute(new AbortController().signal, undefined, {
         sessionId: 'parent-background-worktree-eval',
+        workspaceRoot: repoRoot,
       });
 
     expect(firstOutput.success).toBe(true);
@@ -235,7 +252,8 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
           '"npm test" with Bash, inspect the exit code, and report the result. ' +
           'Do not change any files.',
         run_in_background: false,
-        resume: agentId,
+        resume_from: agentId,
+        subagent_session_id: 'resumed-worktree-eval',
       })
       .execute(new AbortController().signal, undefined, {
         sessionId: 'parent-background-worktree-eval',
@@ -244,14 +262,22 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
       });
 
     expect(resumed.success).toBe(true);
+    expect(resumed.metadata).toMatchObject({
+      subagentSessionId: 'resumed-worktree-eval',
+      subagentResumedFrom: agentId,
+      subagentRootId: agentId,
+      subagentResumeDepth: 1,
+      subagentStatus: 'completed',
+    });
     const resumedOutput = await taskOutputTool
       .build({
-        task_id: agentId,
+        task_id: 'resumed-worktree-eval',
         block: true,
         timeout: 300_000,
       })
       .execute(new AbortController().signal, undefined, {
         sessionId: 'parent-background-worktree-eval',
+        workspaceRoot: repoRoot,
       });
 
     expect(resumedOutput.success).toBe(true);
@@ -260,6 +286,26 @@ describe.skipIf(!shouldRun)('Subagent Worktree Trajectory (Real API)', () => {
     expect(await realpath(String(resumedOutput.metadata?.worktree_path))).toBe(
       await realpath(firstWorktreePath)
     );
+    expect(resumedOutput.metadata).toMatchObject({
+      resumed_from: agentId,
+      root_agent_id: agentId,
+      resume_depth: 1,
+    });
+
+    const sourceAfterResume = await taskOutputTool
+      .build({
+        task_id: agentId,
+        block: false,
+        timeout: 0,
+      })
+      .execute(new AbortController().signal, undefined, {
+        sessionId: 'parent-background-worktree-eval',
+        workspaceRoot: repoRoot,
+      });
+    expect(sourceAfterResume.metadata).toMatchObject({
+      status: 'completed',
+      resume_depth: 0,
+    });
 
     const verification = await execFileAsync(process.execPath, ['--test'], {
       cwd: firstWorktreePath,

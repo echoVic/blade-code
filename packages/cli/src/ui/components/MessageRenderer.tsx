@@ -20,9 +20,9 @@ import {
   type ParsedBlock,
   parseMarkdown,
 } from '../utils/markdownParser.js';
+import { BlockquoteRenderer } from './BlockquoteRenderer.js';
 import { CodeHighlighter } from './CodeHighlighter.js';
 import { DiffRenderer } from './DiffRenderer.js';
-import { BlockquoteRenderer } from './BlockquoteRenderer.js';
 import { InlineRenderer } from './InlineRenderer.js';
 import { ListItem } from './ListItem.js';
 import { TableRenderer } from './TableRenderer.js';
@@ -777,6 +777,14 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
               {typeof subtaskRef.childSessionId === 'string' && (
                 <Text color={theme.colors.text.muted}>
                   Session {subtaskRef.childSessionId}
+                </Text>
+              )}
+              {typeof subtaskRef.resumedFrom === 'string' && (
+                <Text color={theme.colors.text.muted}>
+                  Resumed from {subtaskRef.resumedFrom}
+                  {typeof subtaskRef.resumeDepth === 'number'
+                    ? ` · depth ${subtaskRef.resumeDepth}`
+                    : ''}
                 </Text>
               )}
             </Box>

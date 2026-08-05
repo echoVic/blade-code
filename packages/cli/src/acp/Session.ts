@@ -256,6 +256,70 @@ export class AcpSession {
             return result;
           },
         },
+        subagents: {
+          list: async () => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.listSubagents();
+          },
+          resume: async (agentId, prompt) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            let announced = false;
+            let pendingCompletion:
+              | import('../agent/subagents/AgentSessionStore.js').AgentSession
+              | undefined;
+            const sendCompletion = (
+              session: import('../agent/subagents/AgentSessionStore.js').AgentSession
+            ) => {
+              this.sendUpdate({
+                sessionUpdate: 'tool_call_update',
+                toolCallId: session.id,
+                status:
+                  session.status === 'completed'
+                    ? ('completed' as ToolCallStatus)
+                    : ('failed' as ToolCallStatus),
+                content: [
+                  {
+                    type: 'content',
+                    content: {
+                      type: 'text',
+                      text:
+                        session.result?.message ||
+                        session.result?.error ||
+                        `Subagent ${session.status}`,
+                    },
+                  },
+                ],
+              });
+            };
+            const result = this.runtime.resumeSubagent({
+              agentId,
+              prompt,
+              onCompleted: (session) => {
+                if (announced) sendCompletion(session);
+                else pendingCompletion = session;
+              },
+            });
+            this.sendUpdate({
+              sessionUpdate: 'tool_call',
+              toolCallId: result.session.id,
+              status: 'in_progress' as ToolCallStatus,
+              title: `Resuming ${result.session.subagentType} subagent`,
+              content: [
+                {
+                  type: 'content',
+                  content: {
+                    type: 'text',
+                    text: `Resumed from ${result.source.id} at depth ${result.session.resumeDepth}`,
+                  },
+                },
+              ],
+              kind: this.mapToolKind('readonly'),
+            });
+            announced = true;
+            if (pendingCompletion) sendCompletion(pendingCompletion);
+            return result;
+          },
+        },
         signal, // 传递取消信号
         acp: {
           // 发送文本消息给 IDE
@@ -524,11 +588,26 @@ export class AcpSession {
               const toolName =
                 'function' in toolCall ? toolCall.function.name : toolCall.type;
               const acpKind = this.mapToolKind(event.toolKind);
+              let title = `Executing ${toolName}`;
+              if (toolName === 'Task' && 'function' in toolCall) {
+                try {
+                  const args = JSON.parse(toolCall.function.arguments) as Record<
+                    string,
+                    unknown
+                  >;
+                  const resumedFrom = args.resume_from ?? args.resume;
+                  if (typeof resumedFrom === 'string') {
+                    title = `Resuming ${String(args.subagent_type || 'subagent')} from ${resumedFrom}`;
+                  }
+                } catch {
+                  // Keep the generic tool title for malformed arguments.
+                }
+              }
               this.sendUpdate({
                 sessionUpdate: 'tool_call',
                 toolCallId: toolCall.id,
                 status: 'in_progress' as ToolCallStatus,
-                title: `Executing ${toolName}`,
+                title,
                 content: [],
                 kind: acpKind,
               });

@@ -8,11 +8,13 @@ export type {
   MessageRole,
   PermissionMode,
   PermissionResponse,
+  ResumeSubagentResponse,
   SendMessagePayload,
   SendMessageResponse,
   Session,
   SessionRewindCheckpoint,
   SessionRewindMode,
   StreamEvent,
+  SubagentSession,
 } from './sessionService';
 export { sessionService } from './sessionService';

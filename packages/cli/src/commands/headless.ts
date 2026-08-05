@@ -567,6 +567,28 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
         writeLine(io.stderr, formatTask(task));
       }
     },
+    subagent(
+      event: Extract<LoopEvent, { kind: 'subagent_spawned' | 'subagent_completed' }>
+    ) {
+      const spawned = event.kind === 'subagent_spawned';
+      if (outputFormat === 'jsonl') {
+        writeJsonl('subagent', {
+          state: spawned ? 'spawned' : 'completed',
+          session_id: event.sessionId,
+          subagent_type: spawned ? event.type : undefined,
+          success: spawned ? undefined : event.success,
+          summary: spawned ? undefined : event.summary,
+          resumed_from: event.resumedFrom,
+          root_agent_id: event.rootAgentId,
+          resume_depth: event.resumeDepth,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[subagent:${spawned ? 'spawned' : 'completed'}] ${event.sessionId}${event.resumedFrom ? ` resumed from ${event.resumedFrom}` : ''}`
+      );
+    },
     tokenUsage(usage: {
       inputTokens: number;
       outputTokens: number;
@@ -839,6 +861,7 @@ export async function runHeadless(
 
           case 'subagent_spawned':
           case 'subagent_completed':
+            eventWriter.subagent(event);
             break;
 
           // --- 模型降级 ---

@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { LoopEvent } from '../../../../src/agent/loop/types.js';
 import type {
   InputTurnPreparation,
   SteeringEnqueueResult,
@@ -106,6 +107,8 @@ const runtimeState = vi.hoisted(() => ({
     clearGoal: vi.fn().mockResolvedValue(false),
     listRewindCheckpoints: vi.fn().mockResolvedValue([]),
     rewindSession: vi.fn(),
+    listSubagents: vi.fn(() => []),
+    resumeSubagent: vi.fn(),
   },
 }));
 
@@ -305,6 +308,9 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.listRewindCheckpoints.mockReset();
     runtimeState.runtime.listRewindCheckpoints.mockResolvedValue([]);
     runtimeState.runtime.rewindSession.mockReset();
+    runtimeState.runtime.listSubagents.mockReset();
+    runtimeState.runtime.listSubagents.mockReturnValue([]);
+    runtimeState.runtime.resumeSubagent.mockReset();
     vi.mocked(SessionRuntime.create).mockImplementation(
       async (options: SessionRuntimeOptions) =>
         createRuntimeDouble({
@@ -2974,6 +2980,151 @@ describe('SessionRoutes runtime reuse', () => {
     await expect(messagesResponse.json()).resolves.toEqual(rewoundMessages);
 
     const ambiguous = await app.request('/shared-rewind/rewind');
+    expect(ambiguous.status).toBe(409);
+    expect(listB).not.toHaveBeenCalled();
+  });
+
+  it('lists and resumes durable subagents in the exact session workspace', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const metadataA = metadataFor('shared-subagents', '/tmp/workspace-a');
+    const metadataB = metadataFor('shared-subagents', '/tmp/workspace-b');
+    const source = {
+      schemaVersion: 2 as const,
+      id: 'agent-source',
+      subagentType: 'Explore',
+      description: 'Inspect code',
+      prompt: 'Inspect code',
+      messages: [],
+      status: 'completed' as const,
+      createdAt: 1,
+      lastActiveAt: 2,
+      completedAt: 2,
+      parentSessionId: 'shared-subagents',
+      parentProjectPath: '/tmp/workspace-a',
+      rootAgentId: 'agent-source',
+      resumeDepth: 0,
+      workspaceRoot: '/tmp/workspace-a',
+      result: { success: true, message: 'Initial finding' },
+    };
+    const child = {
+      ...source,
+      id: 'agent-child',
+      status: 'running' as const,
+      createdAt: 3,
+      lastActiveAt: 3,
+      completedAt: undefined,
+      resumedFrom: source.id,
+      rootAgentId: source.id,
+      resumeDepth: 1,
+      result: undefined,
+    };
+    const completedChild = {
+      ...child,
+      status: 'completed' as const,
+      completedAt: 4,
+      result: { success: true, message: 'Follow-up complete' },
+    };
+    const listA = vi.fn(() => [source]);
+    const listB = vi.fn(() => []);
+    const resumeA = vi.fn(
+      (options: {
+        agentId: string;
+        prompt: string;
+        onEvent?: (event: LoopEvent, agentId: string) => void;
+        onCompleted?: (session: typeof completedChild) => void;
+      }) => {
+        options.onEvent?.({ kind: 'content_delta', delta: 'follow-up' }, child.id);
+        options.onCompleted?.(completedChild);
+        return { source, session: child };
+      }
+    );
+    const resumeB = vi.fn();
+    const runtimeA = await createRuntimeDouble({
+      workspaceRoot: '/tmp/workspace-a',
+      listSubagents: listA,
+      resumeSubagent: resumeA,
+    });
+    const runtimeB = await createRuntimeDouble({
+      workspaceRoot: '/tmp/workspace-b',
+      listSubagents: listB,
+      resumeSubagent: resumeB,
+    });
+
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) => {
+        if (sessionId !== 'shared-subagents') return undefined;
+        if (projectPath === '/tmp/workspace-a') return metadataA;
+        if (projectPath === '/tmp/workspace-b') return metadataB;
+        return undefined;
+      }
+    );
+    vi.mocked(SessionRuntime.create).mockImplementation(
+      async ({ workspaceRoot }: SessionRuntimeOptions) =>
+        workspaceRoot === '/tmp/workspace-a' ? runtimeA : runtimeB
+    );
+
+    const app = SessionRoutes();
+    const listed = await app.request(
+      `/shared-subagents/subagents?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
+    );
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toEqual({
+      subagents: [
+        expect.objectContaining({
+          id: source.id,
+          rootAgentId: source.id,
+          resumeDepth: 0,
+        }),
+      ],
+    });
+    expect(listA).toHaveBeenCalledOnce();
+    expect(listB).not.toHaveBeenCalled();
+
+    const resumed = await app.request(
+      `/shared-subagents/subagents/${source.id}/resume?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'Check the follow-up' }),
+      }
+    );
+    expect(resumed.status).toBe(200);
+    await expect(resumed.json()).resolves.toMatchObject({
+      source: { id: source.id },
+      session: {
+        id: child.id,
+        resumedFrom: source.id,
+        rootAgentId: source.id,
+        resumeDepth: 1,
+      },
+    });
+    expect(resumeA).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: source.id,
+        prompt: 'Check the follow-up',
+      })
+    );
+    expect(resumeB).not.toHaveBeenCalled();
+    expect(busState.publish).toHaveBeenCalledWith(
+      { sessionId: 'shared-subagents', projectPath: '/tmp/workspace-a' },
+      'subagent.start',
+      expect.objectContaining({
+        subagentSessionId: child.id,
+        resumedFrom: source.id,
+        resumeDepth: 1,
+      })
+    );
+    expect(busState.publish).toHaveBeenCalledWith(
+      { sessionId: 'shared-subagents', projectPath: '/tmp/workspace-a' },
+      'subagent.complete',
+      expect.objectContaining({
+        subagentSessionId: child.id,
+        success: true,
+      })
+    );
+
+    const ambiguous = await app.request('/shared-subagents/subagents');
     expect(ambiguous.status).toBe(409);
     expect(listB).not.toHaveBeenCalled();
   });

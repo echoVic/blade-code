@@ -6,8 +6,13 @@
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useRef } from 'react';
 import { Agent } from '../../agent/Agent.js';
+import type { LoopEvent } from '../../agent/loop/types.js';
 import type { SteeringEnqueueResult } from '../../agent/runtime/ActiveTurnMailbox.js';
-import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
+import {
+  type ResumedSubagent,
+  SessionRuntime,
+} from '../../agent/runtime/SessionRuntime.js';
+import type { AgentSession } from '../../agent/subagents/AgentSessionStore.js';
 import type { UserMessageContent } from '../../agent/types.js';
 import { registerCleanup } from '../../services/GracefulShutdown.js';
 import type {
@@ -15,6 +20,7 @@ import type {
   RewoundSession,
   SessionRewindCheckpoint,
 } from '../../services/SessionService.js';
+import { vanillaStore } from '../../store/vanilla.js';
 import { getCwd } from '../../utils/cwd.js';
 
 export interface AgentOptions {
@@ -155,6 +161,54 @@ export function useAgent(options: AgentOptions) {
     }
   );
 
+  const listSubagents = useMemoizedFn(async (): Promise<AgentSession[]> => {
+    if (!options.sessionId) {
+      throw new Error('No active session for subagent control');
+    }
+    return (await getOrCreateSessionRuntime(options.sessionId)).listSubagents();
+  });
+
+  const resumeSubagent = useMemoizedFn(
+    async (agentId: string, prompt: string): Promise<ResumedSubagent> => {
+      if (!options.sessionId) {
+        throw new Error('No active session for subagent control');
+      }
+      const runtime = await getOrCreateSessionRuntime(options.sessionId);
+      let announced = false;
+      let pendingCompletion: AgentSession | undefined;
+      const complete = (session: AgentSession) => {
+        vanillaStore
+          .getState()
+          .app.actions.completeSubagentProgress(session.status === 'completed');
+      };
+      const result = runtime.resumeSubagent({
+        agentId,
+        prompt,
+        onEvent: (event: LoopEvent) => {
+          if (event.kind === 'tool_start' && 'function' in event.toolCall) {
+            vanillaStore
+              .getState()
+              .app.actions.updateSubagentTool(event.toolCall.function.name);
+          }
+        },
+        onCompleted: (session) => {
+          if (announced) complete(session);
+          else pendingCompletion = session;
+        },
+      });
+      vanillaStore
+        .getState()
+        .app.actions.startSubagentProgress(
+          result.session.id,
+          result.session.subagentType,
+          `Resumed from ${result.source.id}: ${result.session.description}`
+        );
+      announced = true;
+      if (pendingCompletion) complete(pendingCompletion);
+      return result;
+    }
+  );
+
   const steerActiveTurn = useMemoizedFn(
     async (content: UserMessageContent): Promise<SteeringEnqueueResult> => {
       if (!runtimeRef.current) {
@@ -181,5 +235,7 @@ export function useAgent(options: AgentOptions) {
     steerActiveTurn,
     listRewindCheckpoints,
     rewindSession,
+    listSubagents,
+    resumeSubagent,
   };
 }

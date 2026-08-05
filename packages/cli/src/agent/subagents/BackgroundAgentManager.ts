@@ -16,8 +16,16 @@ import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import { Agent } from '../Agent.js';
 import { recordVerificationEvidence } from '../loop/completionPolicy.js';
 import { drainLoop } from '../loop/index.js';
+import type { LoopEvent } from '../loop/types.js';
 import { SessionRuntime } from '../runtime/SessionRuntime.js';
-import { type AgentSession, AgentSessionStore } from './AgentSessionStore.js';
+import {
+  type AgentSession,
+  type AgentSessionOwner,
+  AgentSessionStore,
+  createAgentSessionConfigSnapshot,
+  isAgentSessionOwnedBy,
+  normalizeAgentSessionOwner,
+} from './AgentSessionStore.js';
 import {
   type SubagentIsolationMode,
   type SubagentWorktreeLease,
@@ -26,6 +34,19 @@ import {
 import type { SubagentConfig, SubagentResult } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (
+      error instanceof Error &&
+      'code' in error &&
+      (error as NodeJS.ErrnoException).code === 'EPERM'
+    );
+  }
+}
 
 /**
  * 后台 Agent 运行时信息
@@ -60,6 +81,9 @@ export interface StartBackgroundAgentOptions {
   /** 父会话 ID */
   parentSessionId?: string;
 
+  /** 父会话 canonical workspace */
+  parentProjectPath?: string;
+
   /** 权限模式 */
   permissionMode?: PermissionMode;
 
@@ -80,6 +104,37 @@ export interface StartBackgroundAgentOptions {
 
   /** Persisted lease used when resuming an isolated child */
   restoredWorktree?: WorktreeSession;
+
+  /** Resume lineage root */
+  rootAgentId?: string;
+
+  /** Source run for this resume */
+  resumedFrom?: string;
+
+  /** Number of resume edges from the root run */
+  resumeDepth?: number;
+
+  /** Forward child loop events to the owning surface */
+  onEvent?: (event: LoopEvent, agentId: string) => void | Promise<void>;
+
+  /** Notify the owning surface after durable completion */
+  onCompleted?: (session: AgentSession) => void | Promise<void>;
+}
+
+export interface ResumeAgentOptions {
+  agentId: string;
+  prompt: string;
+  config: SubagentConfig;
+  owner: AgentSessionOwner;
+  permissionMode?: PermissionMode;
+  newAgentId?: string;
+  onEvent?: (event: LoopEvent, agentId: string) => void | Promise<void>;
+  onCompleted?: (session: AgentSession) => void | Promise<void>;
+}
+
+export interface ResumeAgentResult {
+  agentId: string;
+  source: AgentSession;
 }
 
 /**
@@ -114,8 +169,12 @@ export class BackgroundAgentManager {
       if (session.status === 'running') {
         const isInMemory = this.runningAgents.has(session.id);
         const age = now - session.lastActiveAt;
+        const ownerProcessRunning =
+          session.processId !== undefined && isProcessRunning(session.processId);
+        const legacySessionMayBeRunning =
+          session.processId === undefined && age <= maxOrphanAge;
 
-        if (!isInMemory || age > maxOrphanAge) {
+        if (!isInMemory && !ownerProcessRunning && !legacySessionMayBeRunning) {
           logger.warn(`Cleaning up orphaned agent session: ${session.id}`);
           this.sessionStore.updateSession(session.id, {
             status: 'failed',
@@ -141,6 +200,7 @@ export class BackgroundAgentManager {
       description,
       prompt,
       parentSessionId,
+      parentProjectPath,
       permissionMode,
       agentId,
       existingMessages,
@@ -148,16 +208,25 @@ export class BackgroundAgentManager {
       workspaceRoot = getCwd(),
       isolation = config.isolation ?? 'none',
       restoredWorktree,
+      rootAgentId,
+      resumedFrom,
+      resumeDepth = 0,
+      onEvent,
+      onCompleted,
     } = options;
 
     // 生成或使用已有的 agent ID
     const id = agentId || createSessionId('agent');
+    if (this.runningAgents.has(id) || this.sessionStore.loadSession(id)) {
+      throw new Error(`Subagent session already exists: ${id}`);
+    }
 
     // 创建 AbortController 用于取消
     const abortController = new AbortController();
 
     // 创建会话记录
     const session: AgentSession = {
+      schemaVersion: 2,
       id,
       subagentType: config.name,
       description,
@@ -166,7 +235,13 @@ export class BackgroundAgentManager {
       status: 'running',
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
+      processId: process.pid,
       parentSessionId,
+      parentProjectPath,
+      rootAgentId: rootAgentId ?? id,
+      resumedFrom,
+      resumeDepth,
+      configSnapshot: createAgentSessionConfigSnapshot(config),
       taskListId,
       workspaceRoot,
       isolation,
@@ -189,7 +264,9 @@ export class BackgroundAgentManager {
       taskListId,
       workspaceRoot,
       isolation,
-      restoredWorktree
+      restoredWorktree,
+      onEvent,
+      onCompleted
     );
 
     // 记录运行时信息
@@ -201,9 +278,10 @@ export class BackgroundAgentManager {
     });
 
     // 执行完成后清理
-    promise.finally(() => {
-      this.runningAgents.delete(id);
-    });
+    void promise.then(
+      () => this.runningAgents.delete(id),
+      () => this.runningAgents.delete(id)
+    );
 
     logger.info(`Background agent started: ${id} (${config.name})`);
     return id;
@@ -223,10 +301,13 @@ export class BackgroundAgentManager {
     taskListId?: string,
     workspaceRoot: string = getCwd(),
     isolation: SubagentIsolationMode = 'none',
-    restoredWorktree?: WorktreeSession
+    restoredWorktree?: WorktreeSession,
+    onEvent?: (event: LoopEvent, agentId: string) => void | Promise<void>,
+    onCompleted?: (session: AgentSession) => void | Promise<void>
   ): Promise<SubagentResult> {
     const startTime = Date.now();
     let runtime: SessionRuntime | undefined;
+    let agent: Agent | undefined;
     let lease: SubagentWorktreeLease | undefined;
     let worktreeFinalized = false;
 
@@ -263,12 +344,23 @@ export class BackgroundAgentManager {
       const modelId =
         config.model && config.model !== 'inherit' ? config.model : undefined;
       const effectivePermissionMode = config.permissionMode ?? permissionMode;
+      const persistedSession = this.sessionStore.loadSession(agentId);
       runtime = await SessionRuntime.create({
         sessionId: agentId,
         workspaceRoot: lease.workspaceRoot,
         modelId,
+        subagentInfo: parentSessionId
+          ? {
+              parentSessionId,
+              subagentType: config.name,
+              isSidechain: false,
+              resumedFrom: persistedSession?.resumedFrom,
+              rootAgentId: persistedSession?.rootAgentId ?? agentId,
+              resumeDepth: persistedSession?.resumeDepth ?? 0,
+            }
+          : undefined,
       });
-      const agent = await Agent.createWithRuntime(runtime, {
+      agent = await Agent.createWithRuntime(runtime, {
         sessionId: agentId,
         toolWhitelist: config.tools,
         toolBlacklist: [
@@ -294,6 +386,9 @@ export class BackgroundAgentManager {
           parentSessionId: parentSessionId || '',
           subagentType: config.name,
           isSidechain: false,
+          resumedFrom: persistedSession?.resumedFrom,
+          rootAgentId: persistedSession?.rootAgentId ?? agentId,
+          resumeDepth: persistedSession?.resumeDepth ?? 0,
         },
       };
 
@@ -302,13 +397,18 @@ export class BackgroundAgentManager {
         agent.chatStream(prompt, context, {
           signal,
         }),
-        (event) => {
+        async (event) => {
           if (event.kind === 'tool_result' && 'function' in event.toolCall) {
             recordVerificationEvidence(
               verificationCommands,
               event.toolCall.function.name,
               event.result
             );
+          }
+          try {
+            await onEvent?.(event, agentId);
+          } catch (eventError) {
+            logger.warn(`Subagent event observer failed: ${agentId}`, eventError);
           }
         }
       );
@@ -344,7 +444,7 @@ export class BackgroundAgentManager {
         result.worktree = worktreeOutcome.worktree;
       }
 
-      this.sessionStore.markCompleted(
+      const completedSession = this.sessionStore.markCompleted(
         agentId,
         {
           success: result.success,
@@ -354,6 +454,16 @@ export class BackgroundAgentManager {
         },
         result.stats
       );
+      if (completedSession) {
+        try {
+          await onCompleted?.(completedSession);
+        } catch (notificationError) {
+          logger.warn(
+            `Subagent completion observer failed: ${agentId}`,
+            notificationError
+          );
+        }
+      }
 
       logger.info(`Background agent completed: ${agentId} (success=${result.success})`);
       return result;
@@ -370,7 +480,7 @@ export class BackgroundAgentManager {
         );
       }
 
-      this.sessionStore.markCompleted(
+      const completedSession = this.sessionStore.markCompleted(
         agentId,
         {
           success: false,
@@ -379,6 +489,16 @@ export class BackgroundAgentManager {
         },
         { duration }
       );
+      if (completedSession) {
+        try {
+          await onCompleted?.(completedSession);
+        } catch (notificationError) {
+          logger.warn(
+            `Subagent completion observer failed: ${agentId}`,
+            notificationError
+          );
+        }
+      }
 
       logger.warn(`Background agent failed: ${agentId}`, error);
 
@@ -393,19 +513,29 @@ export class BackgroundAgentManager {
         worktree: worktreeOutcome?.worktree,
       };
     } finally {
-      await runtime?.dispose();
+      try {
+        if (agent && typeof agent.destroy === 'function') {
+          await agent.destroy();
+        }
+      } finally {
+        await runtime?.dispose();
+      }
     }
   }
 
   /**
    * 获取 Agent 状态
    */
-  getAgent(agentId: string, parentSessionId?: string): AgentSession | undefined {
+  getAgent(
+    agentId: string,
+    owner?: AgentSessionOwner | string
+  ): AgentSession | undefined {
     const session = this.sessionStore.loadSession(agentId);
-    if (parentSessionId !== undefined && session?.parentSessionId !== parentSessionId) {
-      return undefined;
+    if (!session || owner === undefined) return session;
+    if (typeof owner === 'string') {
+      return session.parentSessionId === owner ? session : undefined;
     }
-    return session;
+    return isAgentSessionOwnedBy(session, owner) ? session : undefined;
   }
 
   /**
@@ -424,16 +554,16 @@ export class BackgroundAgentManager {
   async waitForCompletion(
     agentId: string,
     timeout: number = 30000,
-    parentSessionId?: string
+    owner?: AgentSessionOwner | string
   ): Promise<AgentSession | undefined> {
-    if (parentSessionId !== undefined && !this.getAgent(agentId, parentSessionId)) {
+    if (owner !== undefined && !this.getAgent(agentId, owner)) {
       return undefined;
     }
     const runtime = this.runningAgents.get(agentId);
 
     if (!runtime) {
       // 不在运行中，直接返回会话
-      return this.getAgent(agentId, parentSessionId);
+      return this.getAgent(agentId, owner);
     }
 
     // 等待执行完成或超时
@@ -446,7 +576,7 @@ export class BackgroundAgentManager {
 
       if (result === 'timeout') {
         // 返回当前状态（仍在运行）
-        return this.getAgent(agentId, parentSessionId);
+        return this.getAgent(agentId, owner);
       }
     } else {
       // 无限等待
@@ -454,7 +584,7 @@ export class BackgroundAgentManager {
     }
 
     // 返回最终状态
-    return this.getAgent(agentId, parentSessionId);
+    return this.getAgent(agentId, owner);
   }
 
   /**
@@ -464,51 +594,72 @@ export class BackgroundAgentManager {
    * @param config Subagent 配置
    * @returns 新的 agent ID（如果创建了新 agent）或原 ID（如果继续执行）
    */
-  resumeAgent(
-    agentId: string,
-    newPrompt: string,
-    config: SubagentConfig,
-    parentSessionId?: string,
-    permissionMode?: PermissionMode
-  ): string | undefined {
-    const session = this.sessionStore.loadSession(agentId);
+  resumeAgent(options: ResumeAgentOptions): ResumeAgentResult | undefined {
+    const {
+      agentId,
+      prompt,
+      config,
+      permissionMode,
+      newAgentId = createSessionId('agent'),
+      onEvent,
+      onCompleted,
+    } = options;
+    const owner = normalizeAgentSessionOwner(options.owner);
+    const session = this.getAgent(agentId, owner);
 
     if (!session) {
       logger.warn(`Cannot resume agent ${agentId}: session not found`);
       return undefined;
     }
 
-    if (parentSessionId !== undefined && session.parentSessionId !== parentSessionId) {
-      logger.warn(`Cannot resume agent ${agentId}: parent session mismatch`);
+    if (session.subagentType !== config.name) {
+      logger.warn(
+        `Cannot resume agent ${agentId}: requested type ${config.name} does not match ${session.subagentType}`
+      );
       return undefined;
     }
 
     // 如果仍在运行，不能恢复
-    if (this.isRunning(agentId)) {
+    if (this.isRunning(agentId) || session.status === 'running') {
       logger.warn(`Cannot resume agent ${agentId}: still running`);
       return undefined;
     }
 
-    // 使用原有消息历史启动新执行
-    return this.startBackgroundAgent({
-      config,
+    if (newAgentId === agentId) {
+      logger.warn(`Cannot resume agent ${agentId}: new run must use a new ID`);
+      return undefined;
+    }
+
+    const effectiveConfig: SubagentConfig = session.configSnapshot
+      ? { ...session.configSnapshot }
+      : config;
+    const resumedId = this.startBackgroundAgent({
+      config: effectiveConfig,
       description: session.description,
-      prompt: newPrompt,
-      parentSessionId: parentSessionId || session.parentSessionId,
+      prompt,
+      parentSessionId: owner.sessionId,
+      parentProjectPath: owner.projectPath,
       permissionMode,
-      agentId, // 复用原 ID
+      agentId: newAgentId,
       existingMessages: session.messages,
       taskListId: session.taskListId,
       workspaceRoot: session.workspaceRoot,
       isolation: session.isolation,
       restoredWorktree: session.worktree,
+      rootAgentId: session.rootAgentId,
+      resumedFrom: session.id,
+      resumeDepth: session.resumeDepth + 1,
+      onEvent,
+      onCompleted,
     });
+    return { agentId: resumedId, source: session };
   }
 
   /**
    * 取消/终止 Agent
    */
-  killAgent(agentId: string): boolean {
+  killAgent(agentId: string, owner?: AgentSessionOwner): boolean {
+    if (owner && !this.getAgent(agentId, owner)) return false;
     const runtime = this.runningAgents.get(agentId);
 
     if (!runtime) {
@@ -538,10 +689,14 @@ export class BackgroundAgentManager {
     return this.sessionStore.listSessions();
   }
 
-  listForSession(parentSessionId: string): AgentSession[] {
+  listForSession(owner: AgentSessionOwner | string): AgentSession[] {
     return this.sessionStore
       .listSessions()
-      .filter((session) => session.parentSessionId === parentSessionId);
+      .filter((session) =>
+        typeof owner === 'string'
+          ? session.parentSessionId === owner
+          : isAgentSessionOwnedBy(session, owner)
+      );
   }
 
   /**
@@ -575,12 +730,12 @@ export class BackgroundAgentManager {
   }
 
   cleanupExpiredSessionsForParent(
-    parentSessionId: string,
+    owner: AgentSessionOwner | string,
     maxAgeMs: number = 7 * 24 * 60 * 60 * 1000
   ): number {
     const now = Date.now();
     let cleaned = 0;
-    for (const session of this.listForSession(parentSessionId)) {
+    for (const session of this.listForSession(owner)) {
       if (session.status === 'running') continue;
       if (now - session.lastActiveAt <= maxAgeMs) continue;
       if (this.sessionStore.deleteSession(session.id)) cleaned++;

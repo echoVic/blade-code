@@ -72,6 +72,9 @@ export interface SessionMetadata {
   rootId: string;
   parentId?: string;
   relationType?: 'subagent' | 'fork';
+  resumedFrom?: string;
+  rootAgentId?: string;
+  resumeDepth?: number;
   title?: string;
   agentType?: string;
   model?: string;
@@ -742,6 +745,7 @@ export class SessionService {
     const partMap = new Map<string, ContentPart[]>();
     const recoveredToolAssistants = new Map<string, Message>();
     const toolCallIdByPartId = new Map<string, string>();
+    const assistantMessageByToolCallId = new Map<string, Message>();
     for (const entry of materializeSessionEvents(entries)) {
       if (entry.type === 'message_created') {
         const recoveredAssistant =
@@ -804,6 +808,7 @@ export class SessionService {
             };
             const toolCallId = payload.toolCallId ?? entry.data.partId;
             toolCallIdByPartId.set(entry.data.partId, toolCallId);
+            assistantMessageByToolCallId.set(toolCallId, message);
             message.tool_calls ??= [];
             message.tool_calls.push({
               id: toolCallId,
@@ -848,7 +853,9 @@ export class SessionService {
           });
         }
         if (entry.data.partType === 'subtask_ref') {
-          const message = messageMap.get(entry.data.messageId);
+          const message =
+            messageMap.get(entry.data.messageId) ??
+            assistantMessageByToolCallId.get(entry.data.messageId);
           if (message) {
             const metadata = entry.data.payload as unknown as JsonValue;
             const base = (message.metadata ?? {}) as Record<string, JsonValue>;
@@ -1001,6 +1008,9 @@ export class SessionService {
       rootId: durable.rootId || sessionId,
       parentId: durable.parentId,
       relationType: durable.relationType,
+      resumedFrom: durable.resumedFrom,
+      rootAgentId: durable.rootAgentId,
+      resumeDepth: durable.resumeDepth,
       title: durable.title,
       agentType: durable.agentType,
       model: durable.model,

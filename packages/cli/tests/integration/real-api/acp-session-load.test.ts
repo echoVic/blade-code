@@ -212,20 +212,25 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
       process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
       configureModel(modelConfig);
       const client = new RecordingClient();
-      const session = new AcpSession(
-        `acp-question-${Date.now()}`,
-        workspace,
-        client as unknown as acp.AgentSideConnection,
-        {}
-      );
+      const harness = createHarness(client);
       const resultPath = path.join(workspace, 'selected-channel.txt');
 
       try {
         await runWithCwdOverride(workspace, async () => {
-          await session.initialize();
-          await session.setMode('yolo');
-          const response = await session.prompt({
-            sessionId: 'ignored-by-session',
+          await harness.connection.initialize({
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientCapabilities: {},
+          });
+          const session = await harness.connection.newSession({
+            cwd: workspace,
+            mcpServers: [],
+          });
+          await harness.connection.setSessionMode({
+            sessionId: session.sessionId,
+            modeId: 'yolo',
+          });
+          const response = await harness.connection.prompt({
+            sessionId: session.sessionId,
             prompt: [
               {
                 type: 'text',
@@ -263,7 +268,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
           );
         });
       } finally {
-        await session.destroy().catch(() => undefined);
+        await harness.close().catch(() => undefined);
         await rm(workspace, { recursive: true, force: true });
       }
     }, 360_000);

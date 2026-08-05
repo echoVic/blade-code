@@ -37,6 +37,8 @@ const runtimeState = vi.hoisted(() => ({
     getGoal: vi.fn().mockResolvedValue(null),
     listRewindCheckpoints: vi.fn().mockResolvedValue([]),
     rewindSession: vi.fn(),
+    listSubagents: vi.fn(() => []),
+    resumeSubagent: vi.fn(),
   },
 }));
 
@@ -105,6 +107,8 @@ describe('AcpSession', () => {
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.listRewindCheckpoints.mockReset().mockResolvedValue([]);
     runtimeState.runtime.rewindSession.mockReset();
+    runtimeState.runtime.listSubagents.mockReset().mockReturnValue([]);
+    runtimeState.runtime.resumeSubagent.mockReset();
     // 创建 mock 连接
     mockConnection = createMockACPClient();
     connectionAbortController = new AbortController();
@@ -516,6 +520,85 @@ describe('AcpSession', () => {
         prompt: [{ type: 'text', text: 'continue after rewind' }],
       });
       expect(getMockAgent().getLastCall()?.context.messages).toEqual(rewoundMessages);
+    });
+
+    it('通过标准 ACP tool updates 暴露 durable subagent resume', async () => {
+      const source = {
+        id: 'agent-source',
+        subagentType: 'Explore',
+        resumeDepth: 0,
+      };
+      const child = {
+        id: 'agent-child',
+        subagentType: 'Explore',
+        resumeDepth: 1,
+        resumedFrom: source.id,
+        status: 'running',
+      };
+      runtimeState.runtime.listSubagents.mockReturnValue([source] as never[]);
+      runtimeState.runtime.resumeSubagent.mockImplementation(
+        (options: { onCompleted?: (session: Record<string, unknown>) => void }) => {
+          options.onCompleted?.({
+            ...child,
+            status: 'completed',
+            result: { success: true, message: 'Follow-up complete' },
+          });
+          return { source, session: child };
+        }
+      );
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      vi.mocked(executeSlashCommand).mockImplementationOnce(
+        async (_message, context) => {
+          await context.subagents?.list();
+          const resumed = await context.subagents?.resume(
+            source.id,
+            'Check the follow-up'
+          );
+          return {
+            success: true,
+            message: `Resumed ${resumed?.session.id}`,
+          };
+        }
+      );
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [
+          {
+            type: 'text',
+            text: '/tasks resume agent-source Check the follow-up',
+          },
+        ],
+      });
+
+      expect(runtimeState.runtime.listSubagents).toHaveBeenCalledOnce();
+      expect(runtimeState.runtime.resumeSubagent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: source.id,
+          prompt: 'Check the follow-up',
+        })
+      );
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'tool_call',
+            toolCallId: child.id,
+            status: 'in_progress',
+            title: 'Resuming Explore subagent',
+          }),
+        })
+      );
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'tool_call_update',
+            toolCallId: child.id,
+            status: 'completed',
+          }),
+        })
+      );
     });
 
     it('应该发送文本消息给 IDE', async () => {

@@ -121,7 +121,7 @@ describe('SubagentWorktreeLifecycle integration', () => {
     });
 
     const resumed = await lifecycle.prepare({
-      agentId: 'agent-resume',
+      agentId: 'agent-resumed-child',
       sourceWorkspaceRoot: repoRoot,
       isolation: 'worktree',
       restoredWorktree: firstLease.worktree,
@@ -133,5 +133,13 @@ describe('SubagentWorktreeLifecycle integration', () => {
     expect(await readFile(join(resumed.workspaceRoot, 'resume.txt'), 'utf-8')).toBe(
       'state\n'
     );
+    expect(resumed.ownerAgentId).toBe('agent-resume');
+
+    const outcome = await lifecycle.finalize({
+      agentId: 'agent-resumed-child',
+      lease: resumed,
+      success: false,
+    });
+    expect(outcome.preserved).toBe(true);
   });
 });

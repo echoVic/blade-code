@@ -88,6 +88,8 @@ export const useCommandHandler = (
     steerActiveTurn,
     listRewindCheckpoints,
     rewindSession,
+    listSubagents,
+    resumeSubagent,
   } = useAgent({
     sessionId,
     systemPrompt: replaceSystemPrompt,
@@ -195,6 +197,10 @@ export const useCommandHandler = (
           {
             listCheckpoints: listRewindCheckpoints,
             execute: rewindSession,
+          },
+          {
+            list: listSubagents,
+            resume: resumeSubagent,
           }
         );
 

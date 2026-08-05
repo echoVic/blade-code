@@ -98,8 +98,16 @@ function createTeamCreateTool(opts: { sessionId: string; configDir: string }) {
         for (const member of params.members) {
           const config = subagentRegistry.getSubagent(member.subagent_type);
           if (!config) continue;
+          const effectiveConfig = {
+            ...config,
+            model:
+              config.model && config.model !== 'inherit'
+                ? config.model
+                : (context.modelId ?? config.model),
+            permissionMode: config.permissionMode ?? context.permissionMode,
+          };
 
-          const memberId = `${TeamStore.sanitizeName(member.name)}@${team.name}`;
+          const memberId = `team-${TeamStore.sanitizeName(member.name)}-${team.name}`;
           const prompt = buildMemberPrompt({
             teamName: team.name,
             teamDescription: params.description,
@@ -108,15 +116,16 @@ function createTeamCreateTool(opts: { sessionId: string; configDir: string }) {
             teamFileHint: team.teamFilePath,
           });
           const agentId = manager.startBackgroundAgent({
-            config,
+            config: effectiveConfig,
             description: member.description || member.name,
             prompt,
             parentSessionId: context.sessionId || opts.sessionId,
+            parentProjectPath: context.workspaceRoot || getCwd(),
             permissionMode: context.permissionMode,
             agentId: memberId,
             taskListId: team.name,
             workspaceRoot: context.workspaceRoot || getCwd(),
-            isolation: config.isolation,
+            isolation: effectiveConfig.isolation,
           });
 
           members.push({

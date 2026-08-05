@@ -7,6 +7,8 @@ import {
   MessageRole,
   PermissionMode,
   type PermissionResponse,
+  type ResumeSubagentResponse,
+  ResumeSubagentResponseSchema,
   type Session,
   type SessionHistoryMessage,
   SessionHistoryMessageSchema,
@@ -18,6 +20,8 @@ import {
   type SessionRewindResponse,
   SessionRewindResponseSchema,
   SessionSchema,
+  type SubagentSession,
+  SubagentSessionSchema,
 } from '@api/schemas';
 import { z } from 'zod';
 
@@ -60,13 +64,14 @@ export interface Message extends Omit<ApiMessage, 'content'> {
   content: MessageContent;
 }
 
-export type { SessionRef };
+export type { ResumeSubagentResponse, SessionRef, SubagentSession };
 
 const API_BASE = '';
 const SESSION_EVENT_READY_TIMEOUT_MS = 10000;
 
 const SessionArraySchema = z.array(SessionSchema);
 const SessionRewindCheckpointArraySchema = z.array(SessionRewindCheckpointSchema);
+const SubagentSessionArraySchema = z.array(SubagentSessionSchema);
 
 const normalizeContent = (content: unknown): MessageContent => {
   if (Array.isArray(content)) {
@@ -281,6 +286,40 @@ export const sessionService = {
         normalizeHistoryMessage(message, index, now)
       ),
     };
+  },
+
+  listSubagents: async (ref: SessionRef): Promise<SubagentSession[]> => {
+    const res = await fetch(
+      withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/subagents`, ref)
+    );
+    if (!res.ok) throw new Error('Failed to load subagents');
+    const body = (await res.json()) as { subagents: unknown };
+    return SubagentSessionArraySchema.parse(body.subagents);
+  },
+
+  resumeSubagent: async (
+    ref: SessionRef,
+    agentId: string,
+    prompt: string
+  ): Promise<ResumeSubagentResponse> => {
+    const res = await fetch(
+      withSessionRef(
+        `${API_BASE}/sessions/${ref.sessionId}/subagents/${encodeURIComponent(agentId)}/resume`,
+        ref
+      ),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { message?: string }
+        | undefined;
+      throw new Error(body?.message || 'Failed to resume subagent');
+    }
+    return ResumeSubagentResponseSchema.parse(await res.json());
   },
 
   forkSession: async (
