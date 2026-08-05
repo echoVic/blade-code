@@ -16,5 +16,7 @@ export type {
   SessionRewindMode,
   StreamEvent,
   SubagentSession,
+  TaskDispatchInput,
+  WorkspaceInfo,
 } from './sessionService';
 export { sessionService } from './sessionService';

@@ -78,7 +78,7 @@ export function Layout({ children }: LayoutProps) {
       )
     );
     if (!session?.projectPath) return 'New session';
-    return formatPath(session.projectPath);
+    return formatPath(session.taskSourceProjectPath || session.projectPath);
   }, [currentSessionId, currentSessionRef, sessions]);
 
   useEffect(() => {

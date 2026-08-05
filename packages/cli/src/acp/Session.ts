@@ -28,6 +28,7 @@ import type { LoopEvent } from '../agent/loop/types.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
 import type { ChatContext } from '../agent/types.js';
 import { type McpServerConfig, PermissionMode } from '../config/types.js';
+import type { SessionTaskWorktree } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { Bus } from '../server/bus.js';
 import type { Message } from '../services/ChatServiceInterface.js';
@@ -65,6 +66,7 @@ type AcpModeId = 'default' | 'auto-edit' | 'yolo' | 'plan';
 export interface AcpSessionOptions {
   initialMessages?: Message[];
   mcpServers?: McpServer[];
+  taskWorktree?: SessionTaskWorktree;
 }
 
 function entriesToRecord(
@@ -142,6 +144,18 @@ export class AcpSession {
     this.messages = [...(options.initialMessages ?? [])];
   }
 
+  private createAgent(): Promise<Agent> {
+    if (!this.runtime) {
+      throw new Error('Session runtime is unavailable');
+    }
+    return Agent.createWithRuntime(this.runtime, {
+      sessionId: this.id,
+      ...(this.options.taskWorktree
+        ? { toolBlacklist: ['EnterWorktree', 'ExitWorktree'] }
+        : {}),
+    });
+  }
+
   /**
    * 初始化会话
    * 创建 Blade Agent 实例并初始化 ACP 服务
@@ -165,8 +179,9 @@ export class AcpSession {
       sessionId: this.id,
       workspaceRoot: this.cwd,
       ...(mcpServers ? { mcpServers } : {}),
+      ...(this.options.taskWorktree ? { taskWorktree: this.options.taskWorktree } : {}),
     });
-    this.agent = await Agent.createWithRuntime(this.runtime, { sessionId: this.id });
+    this.agent = await this.createAgent();
 
     logger.debug(`[AcpSession ${this.id}] Agent created successfully`);
     this.taskStatusUnsubscribe?.();
@@ -198,6 +213,10 @@ export class AcpSession {
             ? {
                 'blade/taskCompletedAt': event.properties.taskCompletedAt,
               }
+            : {}),
+          ...(event.properties.taskDiffStat &&
+          typeof event.properties.taskDiffStat === 'object'
+            ? { 'blade/taskDiffStat': event.properties.taskDiffStat }
             : {}),
         },
       });
@@ -285,9 +304,7 @@ export class AcpSession {
             const result = await this.runtime.rewindSession(options);
             this.messages = [...result.messages];
             await this.agent?.destroy();
-            this.agent = await Agent.createWithRuntime(this.runtime, {
-              sessionId: this.id,
-            });
+            this.agent = await this.createAgent();
             return result;
           },
         },
@@ -584,6 +601,7 @@ export class AcpSession {
         signal: abortController.signal,
         // 根据 ACP 模式映射到 Blade 权限模式
         permissionMode: this.mapModeToPermissionMode(),
+        ...(this.options.taskWorktree ? { worktreeActive: true } : {}),
         // 确认处理器：转发给 IDE 请求权限
         confirmationHandler: {
           requestConfirmation: async (

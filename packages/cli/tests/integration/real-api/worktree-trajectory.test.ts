@@ -15,16 +15,31 @@ import { join } from 'pathe';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runHeadless } from '../../../src/commands/headless.js';
 import { HeadlessJsonlEventSchema } from '../../../src/commands/headlessEvents.js';
+import type { RuntimeConfig } from '../../../src/config/types.js';
+import { SessionService } from '../../../src/services/SessionService.js';
+import { getState } from '../../../src/store/vanilla.js';
 import {
   installWorkspaceSandboxBackendForTests,
   type WorkspaceSandboxBackend,
 } from '../../../src/tools/builtin/shell/WorkspaceWriteSandbox.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import { WorktreeManager } from '../../../src/worktree/WorktreeManager.js';
-import { isRealApiTestEnabled } from './testConfig.js';
+import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
+import {
+  buildRealApiRuntimeConfig,
+  isRealApiTestEnabled,
+  resolveForkQualificationModels,
+} from './testConfig.js';
 
 const execFileAsync = promisify(execFile);
 const shouldRun = isRealApiTestEnabled();
+const taskModelConfigs = shouldRun
+  ? resolveForkQualificationModels(process.env, { requiredDeepSeek: true }).filter(
+      (config) =>
+        config.id === 'deepseek' &&
+        ['deepseek-v4-flash', 'deepseek-v4-pro'].includes(config.model)
+    )
+  : [];
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const result = await execFileAsync('git', args, {
@@ -47,8 +62,10 @@ describe.skipIf(!shouldRun)('Worktree Agent Trajectory (Real API)', () => {
   let originalSource = '';
   let restoreSandboxBackend: (() => void) | undefined;
   let sandboxPreparations = 0;
+  let originalConfig: RuntimeConfig | null = null;
 
   beforeAll(async () => {
+    originalConfig = getState().config.config;
     const testSandboxBackend: WorkspaceSandboxBackend = {
       async prepare(input) {
         sandboxPreparations++;
@@ -117,6 +134,9 @@ describe.skipIf(!shouldRun)('Worktree Agent Trajectory (Real API)', () => {
 
   afterAll(async () => {
     restoreSandboxBackend?.();
+    if (originalConfig) {
+      getState().config.actions.setConfig(originalConfig);
+    }
     if (repoRoot) {
       try {
         const canonicalRepoRoot = await realpath(repoRoot);
@@ -232,4 +252,103 @@ describe.skipIf(!shouldRun)('Worktree Agent Trajectory (Real API)', () => {
     });
     expect(verification.stdout).toContain('pass 1');
   }, 300_000);
+
+  for (const modelConfig of taskModelConfigs) {
+    it(`${modelConfig.model} dispatches the headless task directly into a durable worktree`, async () => {
+      getState().config.actions.setConfig(buildRealApiRuntimeConfig(modelConfig));
+      let output = '';
+      let diagnostics = '';
+      const stdout = {
+        write(chunk: string) {
+          output += chunk;
+          return true;
+        },
+      };
+      const stderr = {
+        write(chunk: string) {
+          diagnostics += chunk;
+          return true;
+        },
+      };
+
+      const exitCode = await runWithCwdOverride(repoRoot, () =>
+        runHeadless(
+          {
+            headless: true,
+            outputFormat: 'jsonl',
+            permissionMode: 'yolo',
+            taskIsolation: 'worktree',
+            maxTurns: 12,
+            allowedTools: ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash'],
+            appendSystemPrompt: [
+              'You are already running inside the isolated task workspace.',
+              'Do not create or enter another worktree.',
+              'Read src/clamp.js and test/clamp.test.js.',
+              'Fix only src/clamp.js, run exactly "npm test", and finish only after it passes.',
+            ].join(' '),
+            message:
+              'Fix the clamp implementation and verify it with the existing test suite.',
+          },
+          { stdout, stderr }
+        )
+      );
+
+      const events = output
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      const taskSession = events.find((event) => event.type === 'task_session');
+      if (!taskSession || taskSession.type !== 'task_session') {
+        throw new Error('Headless task_session event is missing');
+      }
+      const toolNames = events
+        .filter((event) => event.type === 'tool_start')
+        .map((event) => event.tool_name);
+
+      expect(exitCode, diagnostics).toBe(0);
+      expect(taskSession.source_project_path).toBe(repoRoot);
+      expect(taskSession.project_path).not.toBe(repoRoot);
+      expect(taskSession.isolation).toBe('worktree');
+      expect(taskSession.worktree_branch).toMatch(/^blade-worktree-task\+/);
+      expect(taskSession.base_commit).toMatch(/^[a-f0-9]{40}$/);
+      expect(toolNames.some((name) => name === 'Edit' || name === 'Write')).toBe(true);
+      expect(toolNames).toContain('Bash');
+      expect(toolNames).not.toContain('EnterWorktree');
+      expect(toolNames).not.toContain('ExitWorktree');
+      expect(await readFile(join(repoRoot, 'src', 'clamp.js'), 'utf-8')).toBe(
+        originalSource
+      );
+
+      const isolatedSource = await readFile(
+        join(taskSession.project_path, 'src', 'clamp.js'),
+        'utf-8'
+      );
+      expect(isolatedSource).not.toContain('Math.max(max, Math.min(min, value))');
+      const verification = await execFileAsync(process.execPath, ['--test'], {
+        cwd: taskSession.project_path,
+        timeout: 30_000,
+      });
+      expect(verification.stdout).toContain('pass 1');
+
+      const metadata = await SessionService.findSessionMetadata(
+        taskSession.session_id,
+        taskSession.project_path
+      );
+      expect(metadata).toMatchObject({
+        taskStatus: 'completed',
+        taskIsolation: 'worktree',
+        taskSourceProjectPath: repoRoot,
+        taskWorktreePath: taskSession.project_path,
+        taskWorktreeBranch: taskSession.worktree_branch,
+        taskBaseCommit: taskSession.base_commit,
+        taskDiffStat: {
+          changedFiles: 1,
+          commits: 0,
+        },
+      });
+      expect(metadata?.taskDiffStat?.additions).toBeGreaterThan(0);
+      expect(metadata?.taskDiffStat?.deletions).toBeGreaterThan(0);
+      assertNoSecrets({ output, diagnostics, metadata }, [modelConfig.apiKey]);
+    }, 360_000);
+  }
 });

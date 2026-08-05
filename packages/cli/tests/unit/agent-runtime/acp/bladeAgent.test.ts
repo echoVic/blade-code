@@ -21,6 +21,10 @@ const sessionServiceMocks = vi.hoisted(() => ({
   loadSession: vi.fn(),
 }));
 
+const sessionTaskServiceMocks = vi.hoisted(() => ({
+  createSessionTask: vi.fn(),
+}));
+
 type AcpSessionConstructorArgs = ConstructorParameters<typeof AcpSession>;
 interface MockAcpSessionInstance {
   id: string;
@@ -139,6 +143,10 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
   },
 }));
 
+vi.mock('../../../../src/services/SessionTaskService.js', () => ({
+  SessionTaskService: sessionTaskServiceMocks,
+}));
+
 vi.mock('../../../../src/mcp/McpRegistry.js', () => ({
   McpRegistry: {
     getInstance: vi.fn(() => mcpRegistryMocks),
@@ -200,6 +208,7 @@ describe('BladeAgent', () => {
       messages: [],
     });
     sessionServiceMocks.loadSession.mockResolvedValue([]);
+    sessionTaskServiceMocks.createSessionTask.mockReset();
     acpSessionMocks.destroyErrors = [];
     acpSessionMocks.initializeGates = [];
     acpSessionMocks.nextInitializeError = null;
@@ -278,6 +287,16 @@ describe('BladeAgent', () => {
             title: 'Persisted title',
             taskStatus: 'running',
             taskStartedAt: '2026-08-04T01:02:00.000Z',
+            taskIsolation: 'worktree',
+            taskSourceProjectPath: '/tmp/source',
+            taskWorktreeBranch: 'blade-worktree-task',
+            taskBaseCommit: 'abc123',
+            taskDiffStat: {
+              changedFiles: 2,
+              additions: 7,
+              deletions: 1,
+              commits: 0,
+            },
             lastMessageTime: '2026-08-04T01:02:03.000Z',
           },
           {
@@ -312,6 +331,16 @@ describe('BladeAgent', () => {
             _meta: {
               'blade/taskStatus': 'running',
               'blade/taskStartedAt': '2026-08-04T01:02:00.000Z',
+              'blade/taskIsolation': 'worktree',
+              'blade/taskSourceProjectPath': '/tmp/source',
+              'blade/taskWorktreeBranch': 'blade-worktree-task',
+              'blade/taskBaseCommit': 'abc123',
+              'blade/taskDiffStat': {
+                changedFiles: 2,
+                additions: 7,
+                deletions: 1,
+                commits: 0,
+              },
             },
           },
           {
@@ -804,6 +833,79 @@ describe('BladeAgent', () => {
         undefined,
         { mcpServers }
       );
+    });
+
+    it('应该通过 namespaced metadata 创建隔离 task session', async () => {
+      sessionTaskServiceMocks.createSessionTask.mockImplementationOnce(
+        async (input: { sessionId: string }) => {
+          const taskWorktree = {
+            sessionId: input.sessionId,
+            name: `task/${input.sessionId}`,
+            branch: 'blade-worktree-acp-task',
+            baseCommit: 'abc123',
+            originalBranch: 'main',
+            repositoryRoot: '/tmp/project',
+            originalWorkspaceRoot: '/tmp/project',
+            worktreeRoot: '/tmp/task-worktree',
+            workspaceRoot: '/tmp/task-worktree',
+            sourceHadChanges: false,
+          };
+          return {
+            metadata: {
+              sessionId: input.sessionId,
+              projectPath: '/tmp/task-worktree',
+              rootId: input.sessionId,
+              taskStatus: 'queued',
+              taskIsolation: 'worktree',
+              taskSourceProjectPath: '/tmp/project',
+              taskWorktreePath: '/tmp/task-worktree',
+              taskWorktreeBranch: taskWorktree.branch,
+              taskBaseCommit: taskWorktree.baseCommit,
+              messageCount: 0,
+              firstMessageTime: '2026-08-06T00:00:00.000Z',
+              lastMessageTime: '2026-08-06T00:00:00.000Z',
+              hasErrors: false,
+            },
+            taskWorktree,
+          };
+        }
+      );
+
+      const response = await agent.newSession({
+        cwd: '/tmp/project',
+        mcpServers: [],
+        _meta: {
+          'blade/taskIsolation': 'worktree',
+          'blade/taskPrompt': 'Implement ACP task dispatch',
+        },
+      });
+
+      expect(sessionTaskServiceMocks.createSessionTask).toHaveBeenCalledWith({
+        sessionId: response.sessionId,
+        prompt: 'Implement ACP task dispatch',
+        sourceProjectPath: '/tmp/project',
+        isolation: 'worktree',
+      });
+      expect(AcpSession).toHaveBeenCalledWith(
+        response.sessionId,
+        '/tmp/task-worktree',
+        mockConnection,
+        undefined,
+        {
+          mcpServers: [],
+          taskWorktree: expect.objectContaining({
+            sessionId: response.sessionId,
+            branch: 'blade-worktree-acp-task',
+          }),
+        }
+      );
+      expect(response._meta).toMatchObject({
+        'blade/taskIsolation': 'worktree',
+        'blade/taskSourceProjectPath': '/tmp/project',
+        'blade/taskProjectPath': '/tmp/task-worktree',
+        'blade/taskWorktreeBranch': 'blade-worktree-acp-task',
+        'blade/taskBaseCommit': 'abc123',
+      });
     });
 
     it('初始化失败时应该销毁未注册的 session', async () => {

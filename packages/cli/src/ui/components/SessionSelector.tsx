@@ -196,7 +196,9 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   // 转换为 SelectInput 的 items 格式
   const items = useMemo(() => {
     return sessions.map((session) => {
-      const projectName = formatProjectPath(session.projectPath);
+      const projectName = formatProjectPath(
+        session.taskSourceProjectPath ?? session.projectPath
+      );
       const timeStr = formatTimestamp(session.lastMessageTime);
       const statusStr = `[${formatTaskStatus(session.taskStatus)}]`;
       const branchStr = session.gitBranch ? ` (${session.gitBranch})` : '';
@@ -207,10 +209,19 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
           : session.relationType === 'fork'
             ? ' ↳ fork'
             : '';
+      const isolationStr =
+        session.taskIsolation === 'worktree'
+          ? ` | wt:${session.taskWorktreeBranch ?? 'managed'}`
+          : session.taskIsolation === 'local'
+            ? ' | local'
+            : '';
+      const diffStr = session.taskDiffStat
+        ? ` | ${session.taskDiffStat.changedFiles} files +${session.taskDiffStat.additions} -${session.taskDiffStat.deletions}`
+        : '';
 
       return {
         key: getSessionCandidateKey(session),
-        label: `${statusStr} ${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${errorStr}${relationStr}`,
+        label: `${statusStr} ${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${isolationStr}${diffStr}${errorStr}${relationStr}`,
         value: session,
       };
     });

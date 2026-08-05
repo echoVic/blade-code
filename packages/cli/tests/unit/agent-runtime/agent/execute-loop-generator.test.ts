@@ -1977,6 +1977,33 @@ describe('executeLoopGenerator', () => {
       expect(executeMock).toHaveBeenCalledTimes(2);
     });
 
+    it('treats a pre-isolated task worktree as externally managed', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext({
+        workspaceRoot: '/worktrees/task',
+        worktreeActive: true,
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: 'The isolated task workspace is ready.',
+        finishReason: 'stop',
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Work inside the existing worktree, then leave the worktree managed by the task.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(chatMock).toHaveBeenCalledTimes(1);
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+    });
+
     it('propagates a worktree workspace transition to later tool calls', async () => {
       const deps = createMockDeps();
       const context = createMockContext({ workspaceRoot: '/repo' });

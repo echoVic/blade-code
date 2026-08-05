@@ -121,6 +121,72 @@ describe('FilePreview', () => {
     });
   }
 
+  test('loads a durable worktree artifact for a completed task', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    useSessionStore.setState({
+      sessions: [
+        {
+          sessionId: 'shared-id',
+          projectPath: '/workspace/a',
+          rootId: 'shared-id',
+          title: 'Task artifact',
+          taskStatus: 'completed',
+          taskIsolation: 'worktree',
+          taskSourceProjectPath: '/source',
+          taskDiffStat: {
+            changedFiles: 1,
+            additions: 1,
+            deletions: 0,
+            commits: 0,
+          },
+          messageCount: 1,
+          firstMessageTime: '2026-08-06T00:00:00.000Z',
+          lastMessageTime: '2026-08-06T00:01:00.000Z',
+          hasErrors: false,
+        },
+      ],
+    });
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith('/tasks/shared-id/diff')) {
+        return createJsonResponse({
+          sessionId: 'shared-id',
+          projectPath: '/workspace/a',
+          baseCommit: 'abc123',
+          files: [
+            {
+              path: 'gui-task-proof.txt',
+              patch:
+                'diff --git a/gui-task-proof.txt b/gui-task-proof.txt\n' +
+                'new file mode 100644\n--- /dev/null\n' +
+                '+++ b/gui-task-proof.txt\n@@ -0,0 +1 @@\n+GUI_TASK_PROOF\n',
+              additions: 1,
+              deletions: 0,
+              binary: false,
+              truncated: false,
+            },
+          ],
+          truncated: false,
+        });
+      }
+      return createJsonResponse([]);
+    });
+
+    await act(async () => {
+      root.render(<FilePreview />);
+    });
+
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain('gui-task-proof.txt')
+    );
+    expect(container.textContent).toContain('+1 -0');
+    expect(container.textContent).toContain('GUI_TASK_PROOF');
+    expect(container.textContent).not.toContain('No patch yet');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/tasks/shared-id/diff?projectPath=%2Fworkspace%2Fa'
+    );
+  });
+
   test('reloads the tree when only the current session projectPath changes and sends exact directory headers', async () => {
     const { FilePreview } = await import('../../../src/components/preview/FilePreview');
 

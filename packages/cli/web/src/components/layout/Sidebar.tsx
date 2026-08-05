@@ -123,6 +123,19 @@ export function Sidebar({ className }: SidebarProps) {
     return `Session ${session.sessionId.slice(0, 6)}`;
   };
 
+  const getTaskContext = (session: (typeof sessions)[number]) => {
+    const sourcePath = session.taskSourceProjectPath || session.projectPath;
+    const project = sourcePath.split('/').filter(Boolean).at(-1) || sourcePath;
+    const environment =
+      session.taskIsolation === 'worktree'
+        ? session.taskWorktreeBranch || 'worktree'
+        : 'local';
+    const diff = session.taskDiffStat
+      ? `${session.taskDiffStat.changedFiles} files +${session.taskDiffStat.additions} -${session.taskDiffStat.deletions}`
+      : undefined;
+    return { project, environment, diff };
+  };
+
   const handleNewChat = () => {
     startTemporarySession();
   };
@@ -306,6 +319,7 @@ export function Sidebar({ className }: SidebarProps) {
                 const isEditing = editingSessionKey === sessionKey;
                 const isForking = sameSessionRef(sessionRef, forkingSessionRef);
                 const anyForking = Boolean(forkingSessionRef);
+                const taskContext = getTaskContext(session);
 
                 if (isEditing) {
                   return (
@@ -346,7 +360,7 @@ export function Sidebar({ className }: SidebarProps) {
                   <div
                     key={sessionKey}
                     className={cn(
-                      'w-full h-[34px] flex items-center transition-colors group',
+                      'w-full min-h-[52px] flex items-center transition-colors group',
                       isActive
                         ? 'bg-[#E5E7EB] dark:bg-[#27272a]'
                         : 'hover:bg-[#F3F4F6] dark:hover:bg-[#18181b]'
@@ -358,7 +372,7 @@ export function Sidebar({ className }: SidebarProps) {
                       aria-current={isActive ? 'true' : undefined}
                       aria-busy={isForking ? 'true' : undefined}
                       onClick={() => selectSession(sessionRef)}
-                      className="h-full min-w-0 flex-1 flex items-center gap-2 pl-3 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[#22C55E]"
+                      className="min-h-[52px] min-w-0 flex-1 flex items-center gap-2 pl-3 py-1.5 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[#22C55E]"
                     >
                       <span
                         className={cn(
@@ -368,24 +382,39 @@ export function Sidebar({ className }: SidebarProps) {
                         )}
                         title={session.taskStatus}
                       />
-                      <span
-                        className={cn(
-                          'text-[13px] font-mono truncate text-left flex-1 flex items-center gap-2',
-                          isActive
-                            ? 'text-[#111827] dark:text-[#E5E5E5]'
-                            : 'text-[#6B7280] dark:text-[#a1a1aa]'
-                        )}
-                      >
-                        <span className="truncate">{getSessionTitle(session)}</span>
-                        {session.relationType === 'fork' && session.parentId && (
-                          <span
-                            title={`Forked from ${session.parentId.slice(0, 6)}`}
-                            aria-label={`Forked from ${session.parentId.slice(0, 6)}`}
-                            className="text-[10px] text-[#16A34A] dark:text-[#22C55E] shrink-0"
-                          >
-                            Forked from {session.parentId.slice(0, 6)}
-                          </span>
-                        )}
+                      <span className="min-w-0 flex-1 font-mono">
+                        <span
+                          className={cn(
+                            'flex items-center gap-2 truncate text-left text-[12px]',
+                            isActive
+                              ? 'text-[#111827] dark:text-[#E5E5E5]'
+                              : 'text-[#6B7280] dark:text-[#a1a1aa]'
+                          )}
+                        >
+                          <span className="truncate">{getSessionTitle(session)}</span>
+                          {session.relationType === 'fork' && session.parentId && (
+                            <span
+                              title={`Forked from ${session.parentId.slice(0, 6)}`}
+                              aria-label={`Forked from ${session.parentId.slice(0, 6)}`}
+                              className="shrink-0 text-[9px] text-[#16A34A] dark:text-[#22C55E]"
+                            >
+                              Forked from {session.parentId.slice(0, 6)}
+                            </span>
+                          )}
+                        </span>
+                        <span className="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-[9px] text-zinc-400 dark:text-zinc-600">
+                          <span className="truncate">{taskContext.project}</span>
+                          <span>·</span>
+                          <span className="truncate">{taskContext.environment}</span>
+                          {taskContext.diff && (
+                            <>
+                              <span>·</span>
+                              <span className="truncate text-emerald-700 dark:text-emerald-500">
+                                {taskContext.diff}
+                              </span>
+                            </>
+                          )}
+                        </span>
                       </span>
                       {isForking && (
                         <Loader2 className="h-3 w-3 shrink-0 animate-spin text-[#16A34A] dark:text-[#22C55E]" />

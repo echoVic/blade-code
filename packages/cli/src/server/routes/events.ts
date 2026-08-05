@@ -13,6 +13,23 @@ const TASK_STATUSES = new Set([
   'interrupted',
 ]);
 
+function projectTaskDiffStat(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const stat = value as Record<string, unknown>;
+  const fields = ['changedFiles', 'additions', 'deletions', 'commits'] as const;
+  if (
+    fields.some(
+      (field) =>
+        typeof stat[field] !== 'number' ||
+        !Number.isInteger(stat[field]) ||
+        stat[field] < 0
+    )
+  ) {
+    return undefined;
+  }
+  return Object.fromEntries(fields.map((field) => [field, stat[field] as number]));
+}
+
 export const EventRoutes = () => {
   const app = new Hono();
 
@@ -40,6 +57,7 @@ export const EventRoutes = () => {
         if (!GLOBAL_TASK_EVENT_TYPES.has(event.type)) return;
         const taskStatus = event.properties.taskStatus;
         if (typeof taskStatus !== 'string' || !TASK_STATUSES.has(taskStatus)) return;
+        const taskDiffStat = projectTaskDiffStat(event.properties.taskDiffStat);
         stream
           .writeSSE({
             data: JSON.stringify({
@@ -62,6 +80,7 @@ export const EventRoutes = () => {
                 ...(typeof event.properties.updatedAt === 'string'
                   ? { updatedAt: event.properties.updatedAt }
                   : {}),
+                ...(taskDiffStat ? { taskDiffStat } : {}),
               },
             }),
           })

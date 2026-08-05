@@ -9,12 +9,25 @@ import {
   SessionRuntime,
   type SessionRuntimeOptions,
 } from '../../../../src/agent/runtime/SessionRuntime.js';
+import { PermissionMode } from '../../../../src/config/types.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
-import type { SessionMetadata } from '../../../../src/services/SessionService.js';
+import type {
+  SessionMetadata,
+  SessionMetadataUpdate,
+} from '../../../../src/services/SessionService.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 
 const DEFAULT_PROJECT_PATH =
   '/Users/bytedance/Documents/GitHub/Blade/.worktrees/session-discovery-fork/packages/cli';
+
+type CreateMetadataInitial = Pick<
+  SessionMetadataUpdate,
+  | 'title'
+  | 'taskPromptSummary'
+  | 'taskIsolation'
+  | 'taskSourceProjectPath'
+  | 'taskWorktree'
+>;
 
 const makePreparedInputTurn = (): InputTurnPreparation => ({
   accepted: true,
@@ -71,6 +84,16 @@ const makeSessionMetadata = (
   rootId: overrides.rootId ?? overrides.sessionId,
   title: overrides.title ?? `Session ${overrides.sessionId}`,
   taskStatus: overrides.taskStatus ?? 'completed',
+  taskStatusReason: overrides.taskStatusReason,
+  taskStartedAt: overrides.taskStartedAt,
+  taskCompletedAt: overrides.taskCompletedAt,
+  taskPromptSummary: overrides.taskPromptSummary,
+  taskIsolation: overrides.taskIsolation,
+  taskSourceProjectPath: overrides.taskSourceProjectPath,
+  taskWorktreePath: overrides.taskWorktreePath,
+  taskWorktreeBranch: overrides.taskWorktreeBranch,
+  taskBaseCommit: overrides.taskBaseCommit,
+  taskDiffStat: overrides.taskDiffStat,
   messageCount: overrides.messageCount ?? 0,
   firstMessageTime: overrides.firstMessageTime ?? new Date(0).toISOString(),
   lastMessageTime: overrides.lastMessageTime ?? new Date(1).toISOString(),
@@ -160,6 +183,15 @@ const busState = vi.hoisted(() => ({
   ),
 }));
 
+const worktreeState = vi.hoisted(() => ({
+  enter: vi.fn(),
+  exit: vi.fn().mockResolvedValue({
+    action: 'remove',
+    workspaceRoot: '/tmp/source',
+    removed: true,
+  }),
+}));
+
 vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
   SessionRuntime: {
     create: vi.fn(async () => runtimeState.runtime),
@@ -182,18 +214,29 @@ vi.mock('../../../../src/server/bus.js', () => ({
   },
 }));
 
+vi.mock('../../../../src/worktree/WorktreeManager.js', () => ({
+  worktreeManager: worktreeState,
+}));
+
 vi.mock('../../../../src/services/SessionService.js', () => ({
   SessionService: {
     listSessions: vi.fn(async () => []),
     findSessionMetadata: vi.fn(async () => undefined),
+    findSessionTaskWorktree: vi.fn(async () => undefined),
     loadSession: vi.fn(async () => []),
     createSessionMetadata: vi.fn(
-      async (sessionId: string, projectPath: string, initial?: { title?: string }) =>
+      async (sessionId: string, projectPath: string, initial?: CreateMetadataInitial) =>
         makeSessionMetadata({
           sessionId,
           projectPath,
           title: initial?.title,
           taskStatus: 'queued',
+          taskPromptSummary: initial?.taskPromptSummary ?? undefined,
+          taskIsolation: initial?.taskIsolation ?? undefined,
+          taskSourceProjectPath: initial?.taskSourceProjectPath ?? undefined,
+          taskWorktreePath: initial?.taskWorktree?.worktreeRoot,
+          taskWorktreeBranch: initial?.taskWorktree?.branch,
+          taskBaseCommit: initial?.taskWorktree?.baseCommit,
           lastMessageTime: new Date(0).toISOString(),
         })
     ),
@@ -313,6 +356,12 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.listSubagents.mockReset();
     runtimeState.runtime.listSubagents.mockReturnValue([]);
     runtimeState.runtime.resumeSubagent.mockReset();
+    worktreeState.enter.mockReset();
+    worktreeState.exit.mockReset().mockResolvedValue({
+      action: 'remove',
+      workspaceRoot: '/tmp/source',
+      removed: true,
+    });
     vi.mocked(SessionRuntime.create).mockImplementation(
       async (options: SessionRuntimeOptions) =>
         createRuntimeDouble({
@@ -325,12 +374,18 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(undefined);
     vi.mocked(SessionService.loadSession).mockResolvedValue(makeMessages());
     vi.mocked(SessionService.createSessionMetadata).mockImplementation(
-      async (sessionId: string, projectPath: string, initial?: { title?: string }) =>
+      async (sessionId: string, projectPath: string, initial?: CreateMetadataInitial) =>
         makeSessionMetadata({
           sessionId,
           projectPath,
           title: initial?.title,
           taskStatus: 'queued',
+          taskPromptSummary: initial?.taskPromptSummary ?? undefined,
+          taskIsolation: initial?.taskIsolation ?? undefined,
+          taskSourceProjectPath: initial?.taskSourceProjectPath ?? undefined,
+          taskWorktreePath: initial?.taskWorktree?.worktreeRoot,
+          taskWorktreeBranch: initial?.taskWorktree?.branch,
+          taskBaseCommit: initial?.taskWorktree?.baseCommit,
           lastMessageTime: new Date(0).toISOString(),
         })
     );
@@ -1164,6 +1219,149 @@ describe('SessionRoutes runtime reuse', () => {
         updatedAt: new Date(0).toISOString(),
       }
     );
+  });
+
+  it.each([
+    { isolation: 'local' as const, executionPath: '/tmp/task-source' },
+    { isolation: 'worktree' as const, executionPath: '/tmp/task-worktree' },
+  ])('dispatches a durable $isolation task after prompt fsync', async ({
+    isolation,
+    executionPath,
+  }) => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    if (isolation === 'worktree') {
+      worktreeState.enter.mockImplementationOnce(
+        async (input: { sessionId: string; workspaceRoot: string; name: string }) => ({
+          sessionId: input.sessionId,
+          name: input.name,
+          branch: `blade-worktree-${input.sessionId}`,
+          baseCommit: 'abc123',
+          originalBranch: 'main',
+          repositoryRoot: '/tmp/repo',
+          originalWorkspaceRoot: input.workspaceRoot,
+          worktreeRoot: '/tmp/task-worktree',
+          workspaceRoot: '/tmp/task-worktree',
+          sourceHadChanges: false,
+        })
+      );
+    }
+    const controller = createSessionRouteController();
+
+    const result = await controller.dispatchTask({
+      prompt: 'Implement the durable task dispatcher',
+      sourceProjectPath: '/tmp/task-source',
+      isolation,
+      permissionMode: PermissionMode.DEFAULT,
+    });
+
+    expect(result).toMatchObject({
+      session: {
+        sessionId: expect.any(String),
+        projectPath: executionPath,
+        taskStatus: 'running',
+        taskIsolation: isolation,
+        taskSourceProjectPath: '/tmp/task-source',
+      },
+      runId: expect.any(String),
+      messageId: 'prepared-input',
+      status: 'running',
+    });
+    const sessionId = result.session.sessionId;
+    expect(SessionService.createSessionMetadata).toHaveBeenCalledWith(
+      sessionId,
+      executionPath,
+      expect.objectContaining({
+        taskPromptSummary: 'Implement the durable task dispatcher',
+        taskIsolation: isolation,
+        taskSourceProjectPath: '/tmp/task-source',
+        ...(isolation === 'worktree'
+          ? {
+              taskWorktree: expect.objectContaining({
+                sessionId,
+                workspaceRoot: executionPath,
+              }),
+            }
+          : { taskWorktree: undefined }),
+      })
+    );
+    expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith(
+      'Implement the durable task dispatcher'
+    );
+    expect(SessionRuntime.create).toHaveBeenCalledWith({
+      sessionId,
+      workspaceRoot: executionPath,
+      ...(isolation === 'worktree'
+        ? {
+            taskWorktree: expect.objectContaining({
+              sessionId,
+              workspaceRoot: executionPath,
+            }),
+          }
+        : {}),
+    });
+    expect(worktreeState.enter).toHaveBeenCalledTimes(isolation === 'worktree' ? 1 : 0);
+    if (isolation === 'worktree') {
+      const { Agent } = await import('../../../../src/agent/Agent.js');
+      await vi.waitFor(() => {
+        expect(Agent.createWithRuntime).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            toolBlacklist: ['EnterWorktree', 'ExitWorktree'],
+          })
+        );
+        expect(agentState.chatStream).toHaveBeenCalledWith(
+          'Implement the durable task dispatcher',
+          expect.objectContaining({
+            workspaceRoot: executionPath,
+            worktreeActive: true,
+          }),
+          expect.any(Object)
+        );
+      });
+    }
+  });
+
+  it('rolls back a clean worktree when durable task creation fails', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    worktreeState.enter.mockImplementationOnce(
+      async (input: { sessionId: string; workspaceRoot: string; name: string }) => ({
+        sessionId: input.sessionId,
+        name: input.name,
+        branch: `blade-worktree-${input.sessionId}`,
+        baseCommit: 'abc123',
+        originalBranch: 'main',
+        repositoryRoot: '/tmp/repo',
+        originalWorkspaceRoot: input.workspaceRoot,
+        worktreeRoot: '/tmp/task-worktree',
+        workspaceRoot: '/tmp/task-worktree',
+        sourceHadChanges: false,
+      })
+    );
+    vi.mocked(SessionService.createSessionMetadata).mockRejectedValueOnce(
+      new Error('durable creation failed')
+    );
+    const controller = createSessionRouteController();
+
+    await expect(
+      controller.dispatchTask({
+        prompt: 'Dispatch atomically',
+        sourceProjectPath: '/tmp/task-source',
+        isolation: 'worktree',
+        permissionMode: PermissionMode.DEFAULT,
+      })
+    ).rejects.toThrow('durable creation failed');
+
+    const sessionId = worktreeState.enter.mock.calls[0]?.[0].sessionId;
+    expect(worktreeState.exit).toHaveBeenCalledWith({
+      sessionId,
+      action: 'remove',
+      discardChanges: true,
+    });
+    expect(SessionRuntime.create).not.toHaveBeenCalled();
   });
 
   it('keeps an active session visible when another workspace persists the same id as a subagent', async () => {

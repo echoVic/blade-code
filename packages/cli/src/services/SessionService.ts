@@ -21,7 +21,10 @@ import {
 import type {
   SessionEvent,
   SessionRewindMode,
+  SessionTaskDiffStat,
+  SessionTaskIsolation,
   SessionTaskStatus,
+  SessionTaskWorktree,
 } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { JsonValue, SessionMessage } from '../store/types.js';
@@ -51,6 +54,7 @@ const SESSION_TASK_STATUSES = new Set<SessionTaskStatus>([
   'cancelled',
   'interrupted',
 ]);
+const SESSION_TASK_ISOLATION = new Set<SessionTaskIsolation>(['local', 'worktree']);
 
 class SessionTaskReconciliationSkipped extends Error {}
 
@@ -65,6 +69,48 @@ function isProcessRunning(pid: number): boolean {
       (error as NodeJS.ErrnoException).code === 'EPERM'
     );
   }
+}
+
+function parseTaskWorktree(value: unknown): SessionTaskWorktree | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const worktree = value as Record<string, unknown>;
+  const stringFields = [
+    'sessionId',
+    'name',
+    'branch',
+    'baseCommit',
+    'originalBranch',
+    'repositoryRoot',
+    'originalWorkspaceRoot',
+    'worktreeRoot',
+    'workspaceRoot',
+  ] as const;
+  if (
+    stringFields.some(
+      (field) => typeof worktree[field] !== 'string' || !worktree[field]
+    ) ||
+    typeof worktree.sourceHadChanges !== 'boolean'
+  ) {
+    return undefined;
+  }
+  return worktree as unknown as SessionTaskWorktree;
+}
+
+function parseTaskDiffStat(value: unknown): SessionTaskDiffStat | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const stat = value as Record<string, unknown>;
+  const fields = ['changedFiles', 'additions', 'deletions', 'commits'] as const;
+  if (
+    fields.some(
+      (field) =>
+        typeof stat[field] !== 'number' ||
+        !Number.isInteger(stat[field]) ||
+        stat[field] < 0
+    )
+  ) {
+    return undefined;
+  }
+  return stat as unknown as SessionTaskDiffStat;
 }
 
 type SessionSnapshotBigIntStats = BigIntStats;
@@ -110,6 +156,13 @@ export interface SessionMetadata {
   taskStatusReason?: string;
   taskStartedAt?: string;
   taskCompletedAt?: string;
+  taskPromptSummary?: string;
+  taskIsolation?: SessionTaskIsolation;
+  taskSourceProjectPath?: string;
+  taskWorktreePath?: string;
+  taskWorktreeBranch?: string;
+  taskBaseCommit?: string;
+  taskDiffStat?: SessionTaskDiffStat;
   messageCount: number;
   firstMessageTime: string;
   lastMessageTime: string;
@@ -119,6 +172,7 @@ export interface SessionMetadata {
 interface StoredSessionMetadata extends SessionMetadata {
   filePath: string;
   taskOwnerPid?: number;
+  taskWorktree?: SessionTaskWorktree;
 }
 
 export interface SessionMetadataUpdate {
@@ -128,6 +182,11 @@ export interface SessionMetadataUpdate {
   taskStartedAt?: string | null;
   taskCompletedAt?: string | null;
   taskOwnerPid?: number | null;
+  taskPromptSummary?: string | null;
+  taskIsolation?: SessionTaskIsolation | null;
+  taskSourceProjectPath?: string | null;
+  taskWorktree?: SessionTaskWorktree | null;
+  taskDiffStat?: SessionTaskDiffStat | null;
 }
 
 export interface SessionPage {
@@ -496,6 +555,11 @@ export class SessionService {
       taskStartedAt: _sourceTaskStartedAt,
       taskCompletedAt: _sourceTaskCompletedAt,
       taskOwnerPid: _sourceTaskOwnerPid,
+      taskPromptSummary: _sourceTaskPromptSummary,
+      taskIsolation: _sourceTaskIsolation,
+      taskSourceProjectPath: _sourceTaskSourceProjectPath,
+      taskWorktree: _sourceTaskWorktree,
+      taskDiffStat: _sourceTaskDiffStat,
       ...sourceCreatedData
     } = sourceCreated.data;
     const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
@@ -514,6 +578,8 @@ export class SessionService {
         relationType: 'fork',
         taskStatus: 'completed',
         taskCompletedAt: now,
+        taskIsolation: 'local',
+        taskSourceProjectPath: targetProjectPath,
         createdAt: now,
         updatedAt: now,
       },
@@ -540,6 +606,11 @@ export class SessionService {
             taskStartedAt: _taskStartedAt,
             taskCompletedAt: _taskCompletedAt,
             taskOwnerPid: _taskOwnerPid,
+            taskPromptSummary: _taskPromptSummary,
+            taskIsolation: _taskIsolation,
+            taskSourceProjectPath: _taskSourceProjectPath,
+            taskWorktree: _taskWorktree,
+            taskDiffStat: _taskDiffStat,
             ...updatedData
           } = entry.data;
           return {
@@ -582,6 +653,10 @@ export class SessionService {
         taskStartedAt: null,
         taskCompletedAt: now,
         taskOwnerPid: null,
+        taskIsolation: 'local',
+        taskSourceProjectPath: targetProjectPath,
+        taskWorktree: null,
+        taskDiffStat: null,
         updatedAt: now,
       },
     };
@@ -682,13 +757,78 @@ export class SessionService {
     return matches.length;
   }
 
+  private static validateTaskMetadataUpdate(
+    update: SessionMetadataUpdate,
+    sessionId: string
+  ): void {
+    if (
+      update.taskPromptSummary !== undefined &&
+      update.taskPromptSummary !== null &&
+      (!update.taskPromptSummary.trim() || update.taskPromptSummary.length > 1000)
+    ) {
+      throw new Error('Session task prompt summary must contain 1-1000 characters');
+    }
+    if (
+      update.taskIsolation !== undefined &&
+      update.taskIsolation !== null &&
+      !SESSION_TASK_ISOLATION.has(update.taskIsolation)
+    ) {
+      throw new Error(
+        `Invalid session task isolation: ${String(update.taskIsolation)}`
+      );
+    }
+    if (
+      update.taskSourceProjectPath !== undefined &&
+      update.taskSourceProjectPath !== null &&
+      !path.isAbsolute(update.taskSourceProjectPath)
+    ) {
+      throw new Error('Session task source project path must be absolute');
+    }
+    if (update.taskWorktree !== undefined && update.taskWorktree !== null) {
+      const worktree = parseTaskWorktree(update.taskWorktree);
+      if (
+        !worktree ||
+        worktree.sessionId !== sessionId ||
+        ![
+          worktree.repositoryRoot,
+          worktree.originalWorkspaceRoot,
+          worktree.worktreeRoot,
+          worktree.workspaceRoot,
+        ].every((candidate) => path.isAbsolute(candidate))
+      ) {
+        throw new Error('Invalid session task worktree metadata');
+      }
+    }
+    if (
+      update.taskDiffStat !== undefined &&
+      update.taskDiffStat !== null &&
+      !parseTaskDiffStat(update.taskDiffStat)
+    ) {
+      throw new Error('Invalid session task diff stat');
+    }
+  }
+
   static async createSessionMetadata(
     sessionId: string,
     projectPath: string,
-    initial: { title?: string } = {}
+    initial: Pick<
+      SessionMetadataUpdate,
+      | 'title'
+      | 'taskPromptSummary'
+      | 'taskIsolation'
+      | 'taskSourceProjectPath'
+      | 'taskWorktree'
+    > = {}
   ): Promise<SessionMetadata> {
     assertValidSessionId(sessionId);
+    SessionService.validateTaskMetadataUpdate(initial, sessionId);
     const resolvedProjectPath = SessionService.resolveCatalogWorkspace(projectPath);
+    if (
+      initial.taskWorktree &&
+      path.resolve(initial.taskWorktree.workspaceRoot) !== resolvedProjectPath
+    ) {
+      throw new Error('Session task worktree must match the catalog workspace');
+    }
     const now = new Date().toISOString();
     const entry: Extract<SessionEvent, { type: 'session_created' }> = {
       id: nanoid(),
@@ -703,6 +843,18 @@ export class SessionService {
         rootId: sessionId,
         ...(initial.title !== undefined ? { title: initial.title } : {}),
         taskStatus: 'queued',
+        ...(initial.taskPromptSummary !== undefined
+          ? { taskPromptSummary: initial.taskPromptSummary }
+          : {}),
+        ...(initial.taskIsolation !== undefined
+          ? { taskIsolation: initial.taskIsolation }
+          : {}),
+        ...(initial.taskSourceProjectPath !== undefined
+          ? { taskSourceProjectPath: initial.taskSourceProjectPath }
+          : {}),
+        ...(initial.taskWorktree !== undefined
+          ? { taskWorktree: initial.taskWorktree }
+          : {}),
         createdAt: now,
         updatedAt: now,
       },
@@ -725,6 +877,7 @@ export class SessionService {
     update: SessionMetadataUpdate
   ): Promise<SessionMetadata> {
     assertValidSessionId(sessionId);
+    SessionService.validateTaskMetadataUpdate(update, sessionId);
     if (
       update.taskStatus !== undefined &&
       !SESSION_TASK_STATUSES.has(update.taskStatus)
@@ -739,6 +892,12 @@ export class SessionService {
       throw new Error('Session task owner PID must be a positive integer');
     }
     const resolvedProjectPath = SessionService.resolveCatalogWorkspace(projectPath);
+    if (
+      update.taskWorktree &&
+      path.resolve(update.taskWorktree.workspaceRoot) !== resolvedProjectPath
+    ) {
+      throw new Error('Session task worktree must match the catalog workspace');
+    }
     const filePath = SessionService.getSessionFilePath(resolvedProjectPath, sessionId);
     const store = new JSONLStore(filePath);
     let persistedEntries: SessionEvent[] = [];
@@ -786,6 +945,21 @@ export class SessionService {
             ...(update.taskOwnerPid !== undefined
               ? { taskOwnerPid: update.taskOwnerPid }
               : {}),
+            ...(update.taskPromptSummary !== undefined
+              ? { taskPromptSummary: update.taskPromptSummary }
+              : {}),
+            ...(update.taskIsolation !== undefined
+              ? { taskIsolation: update.taskIsolation }
+              : {}),
+            ...(update.taskSourceProjectPath !== undefined
+              ? { taskSourceProjectPath: update.taskSourceProjectPath }
+              : {}),
+            ...(update.taskWorktree !== undefined
+              ? { taskWorktree: update.taskWorktree }
+              : {}),
+            ...(update.taskDiffStat !== undefined
+              ? { taskDiffStat: update.taskDiffStat }
+              : {}),
             updatedAt: now,
           },
         };
@@ -804,6 +978,27 @@ export class SessionService {
         filePath
       )
     );
+  }
+
+  static async findSessionTaskWorktree(
+    sessionId: string,
+    projectPath: string
+  ): Promise<SessionTaskWorktree | undefined> {
+    assertValidSessionId(sessionId);
+    const resolvedProjectPath = SessionService.resolveCatalogWorkspace(projectPath);
+    const filePath = SessionService.getSessionFilePath(resolvedProjectPath, sessionId);
+    try {
+      return (
+        await SessionService.readStoredSessionMetadata(
+          filePath,
+          sessionId,
+          resolvedProjectPath
+        )
+      ).taskWorktree;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw SessionService.sanitizeStoredSessionError(error, sessionId);
+    }
   }
 
   /**
@@ -1185,17 +1380,35 @@ export class SessionService {
       durable.taskOwnerPid > 0
         ? durable.taskOwnerPid
         : undefined;
+    const taskIsolation = SESSION_TASK_ISOLATION.has(
+      durable.taskIsolation as SessionTaskIsolation
+    )
+      ? (durable.taskIsolation as SessionTaskIsolation)
+      : undefined;
+    const taskSourceProjectPath =
+      typeof durable.taskSourceProjectPath === 'string' &&
+      path.isAbsolute(durable.taskSourceProjectPath)
+        ? path.resolve(durable.taskSourceProjectPath)
+        : undefined;
     const committedProjectPath = created.cwd;
     if (committedProjectPath !== undefined && !path.isAbsolute(committedProjectPath)) {
       throw new Error(`Session catalog cwd must be absolute: ${sessionId}`);
     }
+    const resolvedProjectPath =
+      committedProjectPath === undefined
+        ? projectPath
+        : path.resolve(committedProjectPath);
+    const parsedTaskWorktree = parseTaskWorktree(durable.taskWorktree);
+    const taskWorktree =
+      parsedTaskWorktree?.sessionId === sessionId &&
+      path.resolve(parsedTaskWorktree.workspaceRoot) === resolvedProjectPath
+        ? parsedTaskWorktree
+        : undefined;
+    const taskDiffStat = parseTaskDiffStat(durable.taskDiffStat);
 
     return {
       sessionId,
-      projectPath:
-        committedProjectPath === undefined
-          ? projectPath
-          : path.resolve(committedProjectPath),
+      projectPath: resolvedProjectPath,
       gitBranch: created.gitBranch,
       rootId: durable.rootId || sessionId,
       parentId: durable.parentId,
@@ -1217,7 +1430,18 @@ export class SessionService {
         typeof durable.taskCompletedAt === 'string'
           ? durable.taskCompletedAt
           : undefined,
+      taskPromptSummary:
+        typeof durable.taskPromptSummary === 'string'
+          ? durable.taskPromptSummary
+          : undefined,
+      taskIsolation,
+      taskSourceProjectPath,
+      taskWorktreePath: taskWorktree?.worktreeRoot,
+      taskWorktreeBranch: taskWorktree?.branch,
+      taskBaseCommit: taskWorktree?.baseCommit,
+      taskDiffStat,
       taskOwnerPid,
+      taskWorktree,
       messageCount,
       firstMessageTime: entries[0]!.timestamp,
       lastMessageTime: entries.at(-1)!.timestamp,
@@ -1230,6 +1454,7 @@ export class SessionService {
     const {
       filePath: _filePath,
       taskOwnerPid: _taskOwnerPid,
+      taskWorktree: _taskWorktree,
       ...publicSession
     } = session;
     return publicSession;

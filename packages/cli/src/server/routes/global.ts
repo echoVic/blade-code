@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { detectGitBranch } from '../../context/storage/pathUtils.js';
 import { getCwd } from '../../utils/cwd.js';
 import { getVersion } from '../../utils/packageInfo.js';
 
@@ -17,12 +18,14 @@ export const GlobalRoutes = (): Hono<{ Variables: Variables }> => {
   });
 
   app.get('/info', (c) => {
+    const cwd = getCwd();
     return c.json({
       version: getVersion(),
       platform: process.platform,
       arch: process.arch,
       nodeVersion: process.version,
-      cwd: getCwd(),
+      cwd,
+      gitBranch: detectGitBranch(cwd),
     });
   });
 

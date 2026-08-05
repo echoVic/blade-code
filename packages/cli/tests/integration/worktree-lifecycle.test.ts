@@ -113,6 +113,49 @@ describe('WorktreeManager integration', () => {
     expect(manager.getActiveSession('session-a')).toBeUndefined();
   });
 
+  it('summarizes tracked and untracked task artifacts against the base commit', async () => {
+    const session = await manager.enter({
+      sessionId: 'task-summary',
+      workspaceRoot: sourceCwd,
+      name: 'task/task-summary',
+    });
+    await writeFile(join(session.workspaceRoot, 'value.txt'), 'updated\nsecond line\n');
+    await writeFile(join(session.workspaceRoot, 'new-file.txt'), 'first\nsecond\n');
+
+    await expect(manager.getChangeSummary(session.sessionId)).resolves.toEqual({
+      changedFiles: 2,
+      additions: 4,
+      deletions: 1,
+      commits: 0,
+    });
+
+    const artifact = await manager.getDiffArtifact(session.sessionId);
+    expect(artifact).toMatchObject({
+      baseCommit: session.baseCommit,
+      truncated: false,
+      files: [
+        {
+          path: 'packages/demo/new-file.txt',
+          additions: 2,
+          deletions: 0,
+          binary: false,
+          truncated: false,
+        },
+        {
+          path: 'packages/demo/value.txt',
+          additions: 2,
+          deletions: 1,
+          binary: false,
+          truncated: false,
+        },
+      ],
+    });
+    expect(artifact?.files[0]?.patch).toContain('new file mode');
+    expect(artifact?.files[0]?.patch).toContain('+first');
+    expect(artifact?.files[1]?.patch).toContain('-original');
+    expect(artifact?.files[1]?.patch).toContain('+updated');
+  });
+
   it('refuses to remove dirty work unless discard_changes is explicit', async () => {
     const session = await manager.enter({
       sessionId: 'session-dirty',
@@ -252,12 +295,15 @@ describe('WorktreeManager integration', () => {
     });
   });
 
-  it('removes stale clean agent worktrees after an interrupted process', async () => {
+  it.each([
+    'agent',
+    'task',
+  ] as const)('removes stale clean %s worktrees after an interrupted process', async (kind) => {
     await publishMainBranch();
     const session = await manager.enter({
-      sessionId: 'agent-clean',
+      sessionId: `${kind}-clean`,
       workspaceRoot: repoRoot,
-      name: 'agent/agent-clean',
+      name: `${kind}/${kind}-clean`,
     });
     manager.releaseSession(session.sessionId);
     await makeStale(session.worktreeRoot);

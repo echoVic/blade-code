@@ -9,7 +9,11 @@ import {
 } from '../../config/index.js';
 import type { McpServerConfig, ModelConfig } from '../../config/types.js';
 import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
-import type { SessionTaskStatus } from '../../context/types.js';
+import type {
+  SessionTaskDiffStat,
+  SessionTaskStatus,
+  SessionTaskWorktree,
+} from '../../context/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalCreateInput, GoalProgress, GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
@@ -114,6 +118,7 @@ export interface SessionRuntimeOptions {
   strictMcpConfig?: boolean;
   agents?: SubagentConfig[];
   subagentInfo?: SubagentInfoForContext;
+  taskWorktree?: SessionTaskWorktree;
 }
 
 export interface ResumeSubagentOptions {
@@ -158,9 +163,22 @@ export class SessionRuntime {
 
   static async create(options: SessionRuntimeOptions): Promise<SessionRuntime> {
     const workspaceRoot = options.workspaceRoot ?? getCwd();
+    let taskWorktree = options.taskWorktree;
     try {
       await ensureStoreInitialized();
       await cleanupStaleWorktreesOnce(workspaceRoot);
+      if (!options.subagentInfo && !taskWorktree) {
+        taskWorktree = await SessionService.findSessionTaskWorktree(
+          options.sessionId,
+          workspaceRoot
+        );
+      }
+      if (taskWorktree) {
+        if (path.resolve(taskWorktree.workspaceRoot) !== path.resolve(workspaceRoot)) {
+          throw new Error('Task worktree workspace does not match runtime workspace');
+        }
+        await worktreeManager.restoreSession(taskWorktree);
+      }
 
       const models = getAllModels();
       if (models.length === 0) {
@@ -188,16 +206,25 @@ export class SessionRuntime {
       };
       configManager.validateConfig(runtimeConfig);
 
-      const runtime = new SessionRuntime(runtimeConfig, options);
+      const runtime = new SessionRuntime(runtimeConfig, {
+        ...options,
+        ...(taskWorktree ? { taskWorktree } : {}),
+      });
       await runtime.initialize();
       return runtime;
     } catch (error) {
       if (!options.subagentInfo && !(error instanceof SessionInUseError)) {
+        const taskDiffStat = taskWorktree
+          ? await worktreeManager
+              .getChangeSummary(options.sessionId)
+              .catch(() => undefined)
+          : undefined;
         await SessionRuntime.persistTaskStatus(
           options.sessionId,
           workspaceRoot,
           'failed',
-          'Session runtime initialization failed'
+          'Session runtime initialization failed',
+          taskDiffStat ?? undefined
         ).catch((statusError) => {
           if ((statusError as NodeJS.ErrnoException).code !== 'ENOENT') {
             logger.warn(
@@ -281,11 +308,16 @@ export class SessionRuntime {
   ): Promise<SessionMetadata | undefined> {
     if (this.options.subagentInfo) return undefined;
 
+    const taskDiffStat =
+      this.options.taskWorktree && !['queued', 'running'].includes(taskStatus)
+        ? await worktreeManager.getChangeSummary(this.sessionId)
+        : undefined;
     return SessionRuntime.persistTaskStatus(
       this.sessionId,
       this.workspaceRoot,
       taskStatus,
-      taskStatusReason
+      taskStatusReason,
+      taskDiffStat ?? undefined
     );
   }
 
@@ -293,7 +325,8 @@ export class SessionRuntime {
     sessionId: string,
     workspaceRoot: string,
     taskStatus: SessionTaskStatus,
-    taskStatusReason?: string
+    taskStatusReason?: string,
+    taskDiffStat?: SessionTaskDiffStat
   ): Promise<SessionMetadata> {
     const now = new Date().toISOString();
     const metadata = await SessionService.updateSessionMetadata(
@@ -302,6 +335,11 @@ export class SessionRuntime {
       {
         taskStatus,
         taskStatusReason: taskStatusReason ?? null,
+        ...(taskDiffStat !== undefined
+          ? { taskDiffStat }
+          : taskStatus === 'running'
+            ? { taskDiffStat: null }
+            : {}),
         ...(taskStatus === 'running'
           ? {
               taskStartedAt: now,
@@ -324,6 +362,7 @@ export class SessionRuntime {
       ...(metadata.taskCompletedAt
         ? { taskCompletedAt: metadata.taskCompletedAt }
         : {}),
+      ...(metadata.taskDiffStat ? { taskDiffStat: metadata.taskDiffStat } : {}),
       updatedAt: metadata.lastMessageTime,
     });
     return metadata;

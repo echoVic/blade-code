@@ -21,9 +21,11 @@ import {
   ResumeSubagentRequestSchema,
   SendMessageRequestSchema,
   SessionRewindRequestSchema,
+  type SessionTaskDiffArtifact,
 } from '../../api/schemas.js';
 import { PermissionMode } from '../../config/types.js';
 import { assertValidSessionId } from '../../context/storage/pathUtils.js';
+import type { SessionTaskWorktree } from '../../context/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
@@ -35,6 +37,7 @@ import {
   SessionMissingCreationError,
   SessionService,
 } from '../../services/SessionService.js';
+import { SessionTaskService } from '../../services/SessionTaskService.js';
 import {
   CONFIRMATION_ABORTED_REASON,
   type ConfirmationDetails,
@@ -47,6 +50,7 @@ import {
 } from '../../ui/utils/toolFormatters.js';
 import { getCwd } from '../../utils/cwd.js';
 import { createSessionId } from '../../utils/sessionId.js';
+import { worktreeManager } from '../../worktree/WorktreeManager.js';
 import { Bus } from '../bus.js';
 import {
   AmbiguousSessionError,
@@ -122,6 +126,14 @@ interface SessionInfo {
   taskStatusReason?: string;
   taskStartedAt?: string;
   taskCompletedAt?: string;
+  taskPromptSummary?: string;
+  taskIsolation?: SessionMetadata['taskIsolation'];
+  taskSourceProjectPath?: string;
+  taskWorktreePath?: string;
+  taskWorktreeBranch?: string;
+  taskBaseCommit?: string;
+  taskDiffStat?: SessionMetadata['taskDiffStat'];
+  taskWorktree?: SessionTaskWorktree;
 }
 
 const sessions = new Map<string, SessionInfo>();
@@ -309,7 +321,8 @@ function sessionRefFromSession(session: SessionInfo): SessionRef {
 
 function sessionInfoFromMetadata(
   metadata: SessionMetadata,
-  messages: Message[]
+  messages: Message[],
+  taskWorktree?: SessionTaskWorktree
 ): SessionInfo {
   return {
     id: metadata.sessionId,
@@ -324,8 +337,42 @@ function sessionInfoFromMetadata(
     taskStatusReason: metadata.taskStatusReason,
     taskStartedAt: metadata.taskStartedAt,
     taskCompletedAt: metadata.taskCompletedAt,
+    taskPromptSummary: metadata.taskPromptSummary,
+    taskIsolation: metadata.taskIsolation,
+    taskSourceProjectPath: metadata.taskSourceProjectPath,
+    taskWorktreePath: metadata.taskWorktreePath,
+    taskWorktreeBranch: metadata.taskWorktreeBranch,
+    taskBaseCommit: metadata.taskBaseCommit,
+    taskDiffStat: metadata.taskDiffStat,
+    taskWorktree,
     messages,
   };
+}
+
+function syncSessionTaskMetadata(
+  session: SessionInfo,
+  metadata: SessionMetadata
+): void {
+  session.taskStatus = metadata.taskStatus;
+  session.taskStatusReason = metadata.taskStatusReason;
+  session.taskStartedAt = metadata.taskStartedAt;
+  session.taskCompletedAt = metadata.taskCompletedAt;
+  session.taskPromptSummary = metadata.taskPromptSummary;
+  session.taskIsolation = metadata.taskIsolation;
+  session.taskSourceProjectPath = metadata.taskSourceProjectPath;
+  session.taskWorktreePath = metadata.taskWorktreePath;
+  session.taskWorktreeBranch = metadata.taskWorktreeBranch;
+  session.taskBaseCommit = metadata.taskBaseCommit;
+  session.taskDiffStat = metadata.taskDiffStat;
+  session.updatedAt = new Date(metadata.lastMessageTime);
+}
+
+async function refreshSessionTaskMetadata(session: SessionInfo): Promise<void> {
+  const metadata = await SessionService.findSessionMetadata(
+    session.id,
+    session.projectPath
+  );
+  if (metadata) syncSessionTaskMetadata(session, metadata);
 }
 
 function projectActiveSession(session: SessionInfo) {
@@ -346,6 +393,13 @@ function projectActiveSession(session: SessionInfo) {
     taskStatusReason: session.taskStatusReason,
     taskStartedAt: session.taskStartedAt,
     taskCompletedAt: session.taskCompletedAt,
+    taskPromptSummary: session.taskPromptSummary,
+    taskIsolation: session.taskIsolation,
+    taskSourceProjectPath: session.taskSourceProjectPath,
+    taskWorktreePath: session.taskWorktreePath,
+    taskWorktreeBranch: session.taskWorktreeBranch,
+    taskBaseCommit: session.taskBaseCommit,
+    taskDiffStat: session.taskDiffStat,
     agentType: undefined,
     model: undefined,
     messageCount: session.messages.length,
@@ -456,7 +510,32 @@ function buildUserMessageContent(
   return parts;
 }
 
-export const SessionRoutes = () => {
+export interface DispatchTaskInput {
+  prompt: string;
+  title?: string;
+  sourceProjectPath: string;
+  isolation: 'local' | 'worktree';
+  permissionMode: PermissionMode;
+  attachments?: Array<{ type: 'file' | 'image' | 'url'; content?: string }>;
+}
+
+export interface DispatchTaskResult {
+  session: SessionMetadata & { isActive: boolean };
+  runId: string;
+  messageId: string;
+  status: 'running';
+}
+
+export interface SessionRouteController {
+  app: Hono<{ Variables: Variables }>;
+  dispatchTask(input: DispatchTaskInput): Promise<DispatchTaskResult>;
+  getTaskDiff(
+    sessionId: string,
+    projectPath?: string
+  ): Promise<SessionTaskDiffArtifact>;
+}
+
+export const createSessionRouteController = (): SessionRouteController => {
   resetSharedSessionRouteState();
   const app = new Hono<{ Variables: Variables }>();
   app.onError((err, c) => {
@@ -499,6 +578,7 @@ export const SessionRoutes = () => {
       initialization = SessionRuntime.create({
         sessionId: session.id,
         workspaceRoot: session.projectPath,
+        ...(session.taskWorktree ? { taskWorktree: session.taskWorktree } : {}),
       });
       runtimeInitializations.set(key, initialization);
     }
@@ -528,10 +608,11 @@ export const SessionRoutes = () => {
         if (!metadata) {
           throw new NotFoundError('Session', ref.sessionId);
         }
-        const session = sessionInfoFromMetadata(
-          metadata,
-          await SessionService.loadSession(ref.sessionId, ref.projectPath)
-        );
+        const [messages, taskWorktree] = await Promise.all([
+          SessionService.loadSession(ref.sessionId, ref.projectPath),
+          SessionService.findSessionTaskWorktree(ref.sessionId, ref.projectPath),
+        ]);
+        const session = sessionInfoFromMetadata(metadata, messages, taskWorktree);
         sessions.set(key, session);
         return session;
       })();
@@ -592,6 +673,103 @@ export const SessionRoutes = () => {
       logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
     });
     return run;
+  };
+
+  const dispatchTask = async (
+    input: DispatchTaskInput
+  ): Promise<DispatchTaskResult> => {
+    const sessionId = createSessionId('task', 12);
+    const sourceProjectPath = normalizeProjectPathInput(input.sourceProjectPath);
+    let taskWorktree: SessionTaskWorktree | undefined;
+    let session: SessionInfo | undefined;
+
+    try {
+      const created = await SessionTaskService.createSessionTask({
+        sessionId,
+        prompt: input.prompt,
+        title: input.title,
+        sourceProjectPath,
+        isolation: input.isolation,
+      });
+      const { metadata } = created;
+      taskWorktree = created.taskWorktree;
+      session = sessionInfoFromMetadata(metadata, [], taskWorktree);
+      const sessionRef = sessionRefFromSession(session);
+      sessions.set(sessionRefKey(sessionRef), session);
+      Bus.publish(sessionRef, 'task.status', {
+        taskStatus: metadata.taskStatus,
+        updatedAt: metadata.lastMessageTime,
+      });
+
+      const userContent = buildUserMessageContent(input.prompt, input.attachments);
+      const runtime = await getOrCreateRuntime(session);
+      const preparation = await runtime.prepareInputTurn(userContent);
+      if (!preparation.accepted) {
+        throw new ConflictError(`Task prompt was not accepted: ${preparation.reason}`);
+      }
+      const run = startRun(session, userContent, input.permissionMode, {
+        preparedInputTurn: preparation,
+      });
+      return {
+        session: projectActiveSession(session),
+        runId: run.id,
+        messageId: preparation.messageId,
+        status: 'running',
+      };
+    } catch (error) {
+      if (session) {
+        const latest = await SessionService.findSessionMetadata(
+          session.id,
+          session.projectPath
+        ).catch(() => undefined);
+        if (!latest || latest.taskStatus === 'queued') {
+          const failed = await SessionService.updateSessionMetadata(
+            session.id,
+            session.projectPath,
+            {
+              taskStatus: 'failed',
+              taskStatusReason: 'Task dispatch failed',
+              taskCompletedAt: new Date().toISOString(),
+              taskOwnerPid: null,
+            }
+          ).catch(() => undefined);
+          session.taskStatus = failed?.taskStatus ?? 'failed';
+          session.taskStatusReason = failed?.taskStatusReason ?? 'Task dispatch failed';
+          session.taskCompletedAt = failed?.taskCompletedAt;
+        } else {
+          session.taskStatus = latest.taskStatus;
+          session.taskStatusReason = latest.taskStatusReason;
+          session.taskCompletedAt = latest.taskCompletedAt;
+        }
+      }
+      throw error;
+    }
+  };
+
+  const getTaskDiff = async (
+    sessionId: string,
+    projectPath?: string
+  ): Promise<SessionTaskDiffArtifact> => {
+    const session = await resolveSessionForWrite(sessionId, projectPath);
+    if (!session.taskWorktree) {
+      throw new BadRequestError('Session does not have a task worktree');
+    }
+    try {
+      await worktreeManager.restoreSession(session.taskWorktree);
+      const artifact = await worktreeManager.getDiffArtifact(session.id);
+      if (!artifact) {
+        throw new ConflictError('Task diff artifact is unavailable');
+      }
+      return {
+        sessionId: session.id,
+        projectPath: session.projectPath,
+        ...artifact,
+      };
+    } catch (error) {
+      if (error instanceof ConflictError) throw error;
+      logger.error('[SessionRoutes] Failed to load task diff artifact:', error);
+      throw new ConflictError('Task diff artifact is unavailable');
+    }
   };
 
   const resumePendingSession = async (session: SessionInfo): Promise<void> => {
@@ -1421,8 +1599,10 @@ export const SessionRoutes = () => {
     });
   });
 
-  return app;
+  return { app, dispatchTask, getTaskDiff };
 };
+
+export const SessionRoutes = () => createSessionRouteController().app;
 
 async function executeRunAsync(
   run: RunState,
@@ -1475,7 +1655,12 @@ async function executeRunAsync(
 
     runtime = await getOrCreateRuntime(session);
     const runtimeOwner = runtime;
-    const agent = await Agent.createWithRuntime(runtimeOwner, { sessionId });
+    const agent = await Agent.createWithRuntime(runtimeOwner, {
+      sessionId,
+      ...(session.taskWorktree
+        ? { toolBlacklist: ['EnterWorktree', 'ExitWorktree'] }
+        : {}),
+    });
 
     const requestConfirmation = async (
       details: ConfirmationDetails
@@ -1536,6 +1721,7 @@ async function executeRunAsync(
       workspaceRoot: session.projectPath,
       signal: abortController.signal,
       permissionMode,
+      ...(session.taskWorktree ? { worktreeActive: true } : {}),
       confirmationHandler: { requestConfirmation },
     };
     const ensureAssistantMessage = (): string => {
@@ -1699,10 +1885,11 @@ async function executeRunAsync(
     // Phase 4: 使用 chatContext.messages 作为完整历史（不再手工构造）
     session.messages = [...chatContext.messages];
     session.updatedAt = new Date();
+    await refreshSessionTaskMetadata(session);
 
     if (abortController.signal.aborted || run.status === 'cancelled') {
       session.taskStatus = 'cancelled';
-      session.taskCompletedAt = new Date().toISOString();
+      session.taskCompletedAt ??= new Date().toISOString();
       emit('session.status', { status: 'idle' });
       return;
     }
@@ -1716,7 +1903,7 @@ async function executeRunAsync(
 
     run.status = 'completed';
     session.taskStatus = 'completed';
-    session.taskCompletedAt = new Date().toISOString();
+    session.taskCompletedAt ??= new Date().toISOString();
     emit('session.completed', {
       runId,
       outputTruncated: loopResult.metadata?.outputTruncated ?? false,
@@ -1726,18 +1913,19 @@ async function executeRunAsync(
     if (runtime && options.preparedInputTurn) {
       await runtime.finishTurn(options.preparedInputTurn.handle).catch(() => undefined);
     }
+    await refreshSessionTaskMetadata(session).catch(() => undefined);
     if (abortController.signal.aborted || run.status === 'cancelled') {
       cancelRun(run, 'runtime-abort');
       session.taskStatus = 'cancelled';
-      session.taskCompletedAt = new Date().toISOString();
+      session.taskCompletedAt ??= new Date().toISOString();
       emit('session.status', { status: 'idle' });
       return;
     }
     logger.error('[SessionRoutes] Agent execution error:', error);
     run.status = 'failed';
     session.taskStatus = 'failed';
-    session.taskStatusReason = 'Agent execution failed';
-    session.taskCompletedAt = new Date().toISOString();
+    session.taskStatusReason ??= 'Agent execution failed';
+    session.taskCompletedAt ??= new Date().toISOString();
     emit('session.error', {
       error: error instanceof Error ? error.message : 'Unknown error',
     });

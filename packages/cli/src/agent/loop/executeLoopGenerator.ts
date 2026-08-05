@@ -785,7 +785,7 @@ export async function* executeLoopGenerator(
     let worktreeRetryCount = 0;
     const successfulVerificationCommands = new Set<string>();
     const successfulTools = new Set<string>(
-      context.worktreeActive ? ['EnterWorktree'] : []
+      context.worktreeActive ? ['EnterWorktree', 'TaskWorktree'] : []
     );
     const originalUserRequest =
       typeof message === 'string'

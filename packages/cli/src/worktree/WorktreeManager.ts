@@ -1,15 +1,19 @@
 import { type ExecFileException, execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import type { Dirent } from 'node:fs';
-import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { Mutex } from 'async-mutex';
 import { basename, isAbsolute, join, relative, resolve } from 'pathe';
 import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
+import type { SessionTaskDiffStat, SessionTaskWorktree } from '../context/types.js';
 
 const MAX_WORKTREE_NAME_LENGTH = 64;
 const VALID_NAME_SEGMENT = /^[a-zA-Z0-9._-]+$/;
-const EPHEMERAL_AGENT_WORKTREE = /^agent\+[a-zA-Z0-9_-]{1,40}$/;
+const EPHEMERAL_MANAGED_WORKTREE = /^(?:agent|task)\+[a-zA-Z0-9_-]{1,40}$/;
 const DEFAULT_STALE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_DIFF_FILES = 100;
+const MAX_DIFF_FILE_BYTES = 1024 * 1024;
+const MAX_DIFF_TOTAL_BYTES = 2 * 1024 * 1024;
 
 interface GitResult {
   code: number;
@@ -17,18 +21,7 @@ interface GitResult {
   stderr: string;
 }
 
-export interface WorktreeSession {
-  sessionId: string;
-  name: string;
-  branch: string;
-  baseCommit: string;
-  originalBranch: string;
-  repositoryRoot: string;
-  originalWorkspaceRoot: string;
-  worktreeRoot: string;
-  workspaceRoot: string;
-  sourceHadChanges: boolean;
-}
+export interface WorktreeSession extends SessionTaskWorktree {}
 
 export interface WorktreeExitResult {
   action: 'keep' | 'remove';
@@ -41,9 +34,21 @@ export interface WorktreeExitResult {
   discardedCommits?: number;
 }
 
-export interface WorktreeChangeSummary {
-  changedFiles: number;
-  commits: number;
+export interface WorktreeChangeSummary extends SessionTaskDiffStat {}
+
+export interface WorktreeDiffFile {
+  path: string;
+  patch: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  truncated: boolean;
+}
+
+export interface WorktreeDiffArtifact {
+  baseCommit: string;
+  files: WorktreeDiffFile[];
+  truncated: boolean;
 }
 
 export interface WorktreeCleanupOptions {
@@ -99,6 +104,38 @@ function shortHash(value: string, length = 12): string {
 
 function flattenName(name: string): string {
   return name.replaceAll('/', '+');
+}
+
+function isSafeRelativePath(filePath: string): boolean {
+  if (!filePath || isAbsolute(filePath) || filePath.includes('\0')) return false;
+  return !filePath.split('/').some((segment) => segment === '..');
+}
+
+function patchStats(patch: string): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('+') && !line.startsWith('+++')) additions++;
+    if (line.startsWith('-') && !line.startsWith('---')) deletions++;
+  }
+  return { additions, deletions };
+}
+
+function truncatePatch(
+  patch: string,
+  maxBytes: number
+): { patch: string; truncated: boolean } {
+  const encoded = Buffer.from(patch);
+  if (encoded.byteLength <= maxBytes) return { patch, truncated: false };
+  const suffix = '\n[diff truncated]\n';
+  if (maxBytes <= Buffer.byteLength(suffix)) {
+    return { patch: '', truncated: true };
+  }
+  const bodyLimit = Math.max(0, maxBytes - Buffer.byteLength(suffix));
+  return {
+    patch: `${encoded.subarray(0, bodyLimit).toString('utf8')}${suffix}`,
+    truncated: true,
+  };
 }
 
 async function runGit(cwd: string, args: string[]): Promise<GitResult> {
@@ -286,6 +323,14 @@ export class WorktreeManager {
     return this.inspectChanges(session);
   }
 
+  async getDiffArtifact(
+    sessionId: string
+  ): Promise<WorktreeDiffArtifact | null | undefined> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return undefined;
+    return this.inspectDiffArtifact(session);
+  }
+
   async cleanupStaleAgentWorktrees(
     input: WorktreeCleanupOptions
   ): Promise<WorktreeCleanupResult> {
@@ -346,7 +391,7 @@ export class WorktreeManager {
     const cutoff = (input.now ?? Date.now()) - maxAgeMs;
 
     for (const entry of entries) {
-      if (!entry.isDirectory() || !EPHEMERAL_AGENT_WORKTREE.test(entry.name)) {
+      if (!entry.isDirectory() || !EPHEMERAL_MANAGED_WORKTREE.test(entry.name)) {
         result.skipped++;
         continue;
       }
@@ -415,7 +460,7 @@ export class WorktreeManager {
       }
       if (
         canonicalWorktreeRoot !== canonicalResolvedRoot ||
-        !branch.startsWith('blade-worktree-agent+')
+        !/^blade-worktree-(?:agent|task)\+/.test(branch)
       ) {
         result.errors.push(`Managed worktree identity mismatch for "${entry.name}"`);
         continue;
@@ -558,25 +603,190 @@ export class WorktreeManager {
     return lock;
   }
 
+  private async inspectDiffArtifact(
+    session: WorktreeSession
+  ): Promise<WorktreeDiffArtifact | null> {
+    const [trackedResult, untrackedResult] = await Promise.all([
+      runGit(session.worktreeRoot, [
+        'diff',
+        '--name-only',
+        '-z',
+        session.baseCommit,
+        '--',
+      ]),
+      runGit(session.worktreeRoot, [
+        'ls-files',
+        '--others',
+        '--exclude-standard',
+        '-z',
+      ]),
+    ]);
+    if (trackedResult.code !== 0 || untrackedResult.code !== 0) return null;
+
+    const trackedPaths = new Set(
+      trackedResult.stdout.split('\0').filter(isSafeRelativePath)
+    );
+    const untrackedPaths = new Set(
+      untrackedResult.stdout.split('\0').filter(isSafeRelativePath)
+    );
+    const allPaths = [...new Set([...trackedPaths, ...untrackedPaths])].sort();
+    const selectedPaths = allPaths.slice(0, MAX_DIFF_FILES);
+    const generated = await Promise.all(
+      selectedPaths.map(async (filePath): Promise<WorktreeDiffFile> => {
+        const isUntracked = !trackedPaths.has(filePath) && untrackedPaths.has(filePath);
+        try {
+          const fileStat = await lstat(join(session.worktreeRoot, filePath));
+          if (fileStat.size > MAX_DIFF_FILE_BYTES) {
+            return {
+              path: filePath,
+              patch: '',
+              additions: 0,
+              deletions: 0,
+              binary: false,
+              truncated: true,
+            };
+          }
+          if (isUntracked && !fileStat.isFile()) {
+            return {
+              path: filePath,
+              patch: '',
+              additions: 0,
+              deletions: 0,
+              binary: true,
+              truncated: false,
+            };
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+
+        const diffResult = isUntracked
+          ? await runGit(session.worktreeRoot, [
+              'diff',
+              '--no-index',
+              '--no-ext-diff',
+              '--no-color',
+              '--unified=3',
+              '--',
+              '/dev/null',
+              filePath,
+            ])
+          : await runGit(session.worktreeRoot, [
+              'diff',
+              '--no-ext-diff',
+              '--no-color',
+              '--unified=3',
+              session.baseCommit,
+              '--',
+              filePath,
+            ]);
+        if (
+          (!isUntracked && diffResult.code !== 0) ||
+          (isUntracked && ![0, 1].includes(diffResult.code))
+        ) {
+          throw new Error(`Generate task diff failed for ${filePath}`);
+        }
+
+        const rawPatch =
+          isUntracked && diffResult.stdout.length === 0
+            ? [
+                `diff --git a/${filePath} b/${filePath}`,
+                'new file mode 100644',
+                '--- /dev/null',
+                `+++ b/${filePath}`,
+                '',
+              ].join('\n')
+            : diffResult.stdout;
+        const binary =
+          /^Binary files .+ differ$/m.test(rawPatch) ||
+          rawPatch.includes('GIT binary patch');
+        const stats = binary ? { additions: 0, deletions: 0 } : patchStats(rawPatch);
+        const limited = truncatePatch(rawPatch, MAX_DIFF_FILE_BYTES);
+        return {
+          path: filePath,
+          patch: limited.patch,
+          ...stats,
+          binary,
+          truncated: limited.truncated,
+        };
+      })
+    );
+
+    let remainingBytes = MAX_DIFF_TOTAL_BYTES;
+    let truncated = allPaths.length > selectedPaths.length;
+    const files = generated.map((file) => {
+      const limited = truncatePatch(file.patch, remainingBytes);
+      remainingBytes = Math.max(0, remainingBytes - Buffer.byteLength(limited.patch));
+      truncated ||= limited.truncated;
+      return limited.truncated
+        ? { ...file, patch: limited.patch, truncated: true }
+        : file;
+    });
+
+    return {
+      baseCommit: session.baseCommit,
+      files,
+      truncated,
+    };
+  }
+
   private async inspectChanges(
     session: WorktreeSession
   ): Promise<WorktreeChangeSummary | null> {
-    const [statusResult, commitsResult] = await Promise.all([
-      runGit(session.worktreeRoot, ['status', '--porcelain']),
-      runGit(session.worktreeRoot, [
-        'rev-list',
-        '--count',
-        `${session.baseCommit}..HEAD`,
-      ]),
-    ]);
-    if (statusResult.code !== 0 || commitsResult.code !== 0) {
+    const [statusResult, commitsResult, diffResult, untrackedResult] =
+      await Promise.all([
+        runGit(session.worktreeRoot, ['status', '--porcelain']),
+        runGit(session.worktreeRoot, [
+          'rev-list',
+          '--count',
+          `${session.baseCommit}..HEAD`,
+        ]),
+        runGit(session.worktreeRoot, ['diff', '--numstat', session.baseCommit, '--']),
+        runGit(session.worktreeRoot, [
+          'ls-files',
+          '--others',
+          '--exclude-standard',
+          '-z',
+        ]),
+      ]);
+    if (
+      statusResult.code !== 0 ||
+      commitsResult.code !== 0 ||
+      diffResult.code !== 0 ||
+      untrackedResult.code !== 0
+    ) {
       return null;
+    }
+
+    let additions = 0;
+    let deletions = 0;
+    for (const line of diffResult.stdout.split('\n')) {
+      const [added, deleted] = line.split('\t');
+      if (/^\d+$/.test(added ?? '')) additions += Number(added);
+      if (/^\d+$/.test(deleted ?? '')) deletions += Number(deleted);
+    }
+    for (const file of untrackedResult.stdout.split('\0').filter(Boolean)) {
+      try {
+        const filePath = join(session.worktreeRoot, file);
+        const fileStat = await lstat(filePath);
+        if (!fileStat.isFile() || fileStat.size > 10 * 1024 * 1024) continue;
+        const content = await readFile(filePath);
+        if (content.includes(0)) continue;
+        const text = content.toString('utf8');
+        if (text.length > 0) {
+          additions += text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+        }
+      } catch {
+        // Git may report a path that changes before inspection completes.
+      }
     }
 
     return {
       changedFiles: statusResult.stdout
         .split('\n')
         .filter((line) => line.trim().length > 0).length,
+      additions,
+      deletions,
       commits: Number.parseInt(commitsResult.stdout.trim(), 10) || 0,
     };
   }

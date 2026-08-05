@@ -170,6 +170,48 @@ describe('AcpSession', () => {
       });
     });
 
+    it('应该将 durable task worktree 作为外部托管隔离传入 Agent', async () => {
+      const taskWorktree = {
+        sessionId: 'task-session',
+        name: 'task/task-session',
+        branch: 'blade-worktree-task+session',
+        baseCommit: 'abc123',
+        originalBranch: 'main',
+        repositoryRoot: '/tmp/source',
+        originalWorkspaceRoot: '/tmp/source',
+        worktreeRoot: '/tmp/task-worktree',
+        workspaceRoot: '/tmp/task-worktree',
+        sourceHadChanges: false,
+      };
+      const taskSession = new AcpSession(
+        'task-session',
+        '/tmp/task-worktree',
+        mockConnection as any,
+        undefined,
+        { taskWorktree }
+      );
+
+      try {
+        await taskSession.initialize();
+        const { Agent } = await import('../../../../src/agent/Agent.js');
+        expect(Agent.createWithRuntime).toHaveBeenCalledWith(runtimeState.runtime, {
+          sessionId: 'task-session',
+          toolBlacklist: ['EnterWorktree', 'ExitWorktree'],
+        });
+
+        await taskSession.prompt({
+          sessionId: 'task-session',
+          prompt: [{ type: 'text', text: 'continue isolated task' }],
+        });
+        expect(getMockAgent().getLastCall()?.context).toMatchObject({
+          workspaceRoot: '/tmp/task-worktree',
+          worktreeActive: true,
+        });
+      } finally {
+        await taskSession.destroy();
+      }
+    });
+
     it('应该在初始化后自动恢复 durable follow-up', async () => {
       runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
       await session.initialize();
@@ -209,6 +251,36 @@ describe('AcpSession', () => {
           },
         });
       });
+      const taskDiffStat = {
+        changedFiles: 2,
+        additions: 7,
+        deletions: 1,
+        commits: 0,
+      };
+      Bus.publish(
+        { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+        'task.status',
+        {
+          taskStatus: 'completed',
+          taskCompletedAt: updatedAt,
+          taskDiffStat,
+          updatedAt,
+        }
+      );
+      await vi.waitFor(() => {
+        expect(mockConnection.sessionUpdates).toContainEqual({
+          sessionId: 'test-session-id',
+          update: {
+            sessionUpdate: 'session_info_update',
+            updatedAt,
+            _meta: {
+              'blade/taskStatus': 'completed',
+              'blade/taskCompletedAt': updatedAt,
+              'blade/taskDiffStat': taskDiffStat,
+            },
+          },
+        });
+      });
 
       await session.destroy();
       const countAfterDestroy = mockConnection.sessionUpdates.length;
@@ -216,7 +288,7 @@ describe('AcpSession', () => {
         { sessionId: 'test-session-id', projectPath: '/tmp/test' },
         'task.status',
         {
-          taskStatus: 'completed',
+          taskStatus: 'failed',
           updatedAt,
         }
       );

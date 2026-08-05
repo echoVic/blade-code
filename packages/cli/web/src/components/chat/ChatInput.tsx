@@ -1,3 +1,5 @@
+import { ChevronDown, Paperclip, Send, Square } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
@@ -10,8 +12,6 @@ import {
   useConfigStore,
 } from '@/store/ConfigStore';
 import { useSessionStore } from '@/store/session';
-import { ChevronDown, Paperclip, Send, Square } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import { SuggestionPopover } from './SuggestionPopover';
 
 export interface ComposerImageAttachment {
@@ -31,6 +31,9 @@ interface ChatInputProps {
   isStreaming?: boolean;
   pendingSteeringCount?: number;
   recoveredSteeringCount?: number;
+  variant?: 'chat' | 'task';
+  draft?: string;
+  placeholder?: string;
 }
 
 const MODES: { value: PermissionMode; label: string }[] = [
@@ -46,6 +49,9 @@ export function ChatInput({
   isStreaming,
   pendingSteeringCount = 0,
   recoveredSteeringCount = 0,
+  variant = 'chat',
+  draft,
+  placeholder,
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<ComposerImageAttachment[]>([]);
@@ -77,6 +83,14 @@ export function ChatInput({
   useEffect(() => {
     loadModels();
   }, [loadModels]);
+
+  useEffect(() => {
+    if (draft !== undefined) {
+      setInput(draft);
+      setCursorPosition(draft.length);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+  }, [draft]);
 
   useEffect(() => {
     if (configuredModels.length === 0) return;
@@ -345,9 +359,21 @@ export function ChatInput({
   const canSend = !!input.trim() || attachments.length > 0;
 
   return (
-    <div className="py-4 border-t border-[#E5E7EB] dark:border-zinc-800 bg-white dark:bg-[#09090b]">
-      <div className="px-4 w-full md:px-6">
-        <div className="relative border border-[#E5E7EB] dark:border-zinc-800 rounded-lg shadow-sm bg-white dark:bg-zinc-950/50 focus-within:border-[#D1D5DB] dark:focus-within:border-zinc-600 focus-within:ring-1 focus-within:ring-[#D1D5DB] dark:focus-within:ring-zinc-600 transition-all duration-200 flex flex-col min-h-[88px]">
+    <div
+      className={
+        variant === 'task'
+          ? 'bg-transparent'
+          : 'py-4 border-t border-[#E5E7EB] dark:border-zinc-800 bg-white dark:bg-[#09090b]'
+      }
+    >
+      <div className={variant === 'task' ? 'w-full' : 'px-4 w-full md:px-6'}>
+        <div
+          className={`relative border rounded-lg bg-white dark:bg-zinc-950/70 transition-all duration-200 flex flex-col ${
+            variant === 'task'
+              ? 'min-h-[168px] border-zinc-300 shadow-[0_18px_60px_rgba(0,0,0,0.08)] focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500/30 dark:border-zinc-700'
+              : 'min-h-[88px] border-[#E5E7EB] shadow-sm focus-within:border-[#D1D5DB] focus-within:ring-1 focus-within:ring-[#D1D5DB] dark:border-zinc-800 dark:focus-within:border-zinc-600 dark:focus-within:ring-zinc-600'
+          }`}
+        >
           <SuggestionPopover
             type="command"
             suggestions={slashCommand.suggestions}
@@ -377,11 +403,14 @@ export function ChatInput({
             onSelect={handleSelect}
             onClick={handleSelect}
             placeholder={
-              isStreaming
+              placeholder ??
+              (isStreaming
                 ? 'Add guidance to steer the active turn...'
-                : 'Type @ for files, / for commands...'
+                : 'Type @ for files, / for commands...')
             }
-            className="flex-1 w-full resize-none border-0 bg-transparent py-4 px-4 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none text-[#111827] dark:text-zinc-300 placeholder:text-[#9CA3AF] dark:placeholder:text-zinc-600"
+            className={`flex-1 w-full resize-none border-0 bg-transparent px-4 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none text-[#111827] dark:text-zinc-300 placeholder:text-[#9CA3AF] dark:placeholder:text-zinc-600 ${
+              variant === 'task' ? 'min-h-[104px] py-5 text-[15px]' : 'py-4'
+            }`}
             disabled={disabled}
           />
 
@@ -554,9 +583,11 @@ export function ChatInput({
             </div>
           </div>
         </div>
-        <div className="text-center text-xs text-[#6B7280] dark:text-zinc-600 mt-3 font-mono">
-          Blade can make mistakes. Please check important information.
-        </div>
+        {variant === 'chat' && (
+          <div className="text-center text-xs text-[#6B7280] dark:text-zinc-600 mt-3 font-mono">
+            Blade can make mistakes. Please check important information.
+          </div>
+        )}
       </div>
     </div>
   );

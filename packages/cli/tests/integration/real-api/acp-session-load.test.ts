@@ -1,6 +1,16 @@
-import { access, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import * as acp from '@agentclientprotocol/sdk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
@@ -30,6 +40,7 @@ import {
 const modelConfigs = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
 const questionModelConfigs = expandDeepSeekModelMatrix(modelConfigs);
 const enabled = modelConfigs.length > 0;
+const execFileAsync = promisify(execFile);
 let originalConfig: RuntimeConfig | null = null;
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 
@@ -146,6 +157,19 @@ function configureModel(modelConfig: TestModelConfig): string {
   return modelId;
 }
 
+async function initializeGitWorkspace(workspace: string): Promise<void> {
+  await writeFile(path.join(workspace, 'baseline.txt'), 'source-checkout\n');
+  await execFileAsync('git', ['init', '-q'], { cwd: workspace });
+  await execFileAsync('git', ['config', 'user.email', 'blade@example.test'], {
+    cwd: workspace,
+  });
+  await execFileAsync('git', ['config', 'user.name', 'Blade Test'], {
+    cwd: workspace,
+  });
+  await execFileAsync('git', ['add', '.'], { cwd: workspace });
+  await execFileAsync('git', ['commit', '-qm', 'fixture'], { cwd: workspace });
+}
+
 function replayedText(updates: acp.SessionNotification[]): string {
   return updates
     .map((notification) => notification.update)
@@ -207,13 +231,15 @@ afterAll(() => {
 
 describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
   for (const modelConfig of questionModelConfigs) {
-    it(`${modelConfig.model} collects a structured answer in yolo mode and continues the coding loop`, async () => {
-      const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-question-'));
-      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+    it(`${modelConfig.model} runs a structured coding turn in a durable task worktree`, async () => {
+      const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-question-'));
+      const workspace = path.join(fixtureRoot, 'workspace');
+      await mkdir(workspace, { recursive: true });
+      await initializeGitWorkspace(workspace);
+      process.env.BLADE_STORAGE_ROOT = path.join(fixtureRoot, 'storage');
       configureModel(modelConfig);
       const client = new RecordingClient();
       const harness = createHarness(client);
-      const resultPath = path.join(workspace, 'selected-channel.txt');
 
       try {
         await runWithCwdOverride(workspace, async () => {
@@ -224,7 +250,17 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
           const session = await harness.connection.newSession({
             cwd: workspace,
             mcpServers: [],
+            _meta: {
+              'blade/taskIsolation': 'worktree',
+              'blade/taskPrompt': 'Select and verify the release channel',
+            },
           });
+          const taskProjectPath = session._meta?.['blade/taskProjectPath'];
+          expect(taskProjectPath).toEqual(expect.any(String));
+          if (typeof taskProjectPath !== 'string') {
+            throw new Error('ACP task worktree path is missing');
+          }
+          const resultPath = path.join(taskProjectPath, 'selected-channel.txt');
           await harness.connection.setSessionMode({
             sessionId: session.sessionId,
             modeId: 'yolo',
@@ -255,6 +291,16 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
             client.permissionRequests[0]?.options.map((option) => option.name)
           ).toEqual(['Stable', 'Canary', 'Cancel']);
           expect((await readFile(resultPath, 'utf8')).trim()).toBe('Canary');
+          await expect(
+            access(path.join(workspace, 'selected-channel.txt'))
+          ).rejects.toThrow();
+          expect(session._meta).toMatchObject({
+            'blade/taskIsolation': 'worktree',
+            'blade/taskSourceProjectPath': workspace,
+            'blade/taskProjectPath': taskProjectPath,
+            'blade/taskWorktreeBranch': expect.stringMatching(/^blade-worktree-task\+/),
+            'blade/taskBaseCommit': expect.any(String),
+          });
           expect(
             client.updates.some(
               (notification) =>
@@ -271,14 +317,26 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
               .map((notification) => notification.update._meta?.['blade/taskStatus'])
           ).toEqual(expect.arrayContaining(['running', 'completed']));
           const listed = await harness.connection.unstable_listSessions({
-            cwd: workspace,
+            cwd: taskProjectPath,
             cursor: undefined,
           });
-          expect(
-            listed.sessions.find(
-              (candidate) => candidate.sessionId === session.sessionId
-            )?._meta?.['blade/taskStatus']
-          ).toBe('completed');
+          const listedTask = listed.sessions.find(
+            (candidate) => candidate.sessionId === session.sessionId
+          );
+          expect(listedTask).toMatchObject({
+            cwd: taskProjectPath,
+            _meta: {
+              'blade/taskStatus': 'completed',
+              'blade/taskIsolation': 'worktree',
+              'blade/taskSourceProjectPath': workspace,
+              'blade/taskDiffStat': {
+                changedFiles: 1,
+                additions: 1,
+                deletions: 0,
+                commits: 0,
+              },
+            },
+          });
           expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
           expect(JSON.stringify(client.permissionRequests)).not.toContain(
             modelConfig.apiKey
@@ -286,7 +344,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
         });
       } finally {
         await harness.close().catch(() => undefined);
-        await rm(workspace, { recursive: true, force: true });
+        await rm(fixtureRoot, { recursive: true, force: true });
       }
     }, 360_000);
 

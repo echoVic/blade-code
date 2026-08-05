@@ -54,6 +54,8 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     eventUnsubscribe: null,
     taskEventsConnected: false,
     taskEventUnsubscribe: null,
+    taskWorkspaceInfo: null,
+    isDispatchingTask: false,
     currentAssistantMessageId: 'assistant-1',
     hasToolCalls: false,
     tokenUsage: {
@@ -181,6 +183,8 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     setRunId: vi.fn(),
     subscribeToEvents: vi.fn(async () => undefined),
     subscribeToTaskEvents: vi.fn(async () => undefined),
+    loadTaskWorkspaceInfo: vi.fn(async () => undefined),
+    dispatchTask: vi.fn(async () => undefined),
     prepareEventSubscription: vi.fn(async () => () => undefined),
     replaceEventSubscription: vi.fn(),
     unsubscribeFromEvents: vi.fn(),

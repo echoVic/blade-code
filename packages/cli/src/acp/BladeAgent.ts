@@ -15,7 +15,8 @@ import {
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import { getModelDisplayName } from '../services/pi/resolveModelConfig.js';
-import { SessionService } from '../services/SessionService.js';
+import { type SessionMetadata, SessionService } from '../services/SessionService.js';
+import { SessionTaskService } from '../services/SessionTaskService.js';
 import { getConfig } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 import { createSessionId } from '../utils/sessionId.js';
@@ -87,16 +88,40 @@ export class BladeAgent implements AcpAgentInterface {
   async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
     this.assertNotDestroyed();
     const sessionId = createSessionId('acp');
+    const sourceCwd = params.cwd || getCwd();
+    const requestedIsolation = params._meta?.['blade/taskIsolation'];
+    const taskIsolation =
+      requestedIsolation === 'local' || requestedIsolation === 'worktree'
+        ? requestedIsolation
+        : undefined;
+    const requestedPrompt = params._meta?.['blade/taskPrompt'];
+    const createdTask = taskIsolation
+      ? await SessionTaskService.createSessionTask({
+          sessionId,
+          prompt:
+            typeof requestedPrompt === 'string' && requestedPrompt.trim()
+              ? requestedPrompt
+              : 'ACP task session',
+          sourceProjectPath: sourceCwd,
+          isolation: taskIsolation,
+        })
+      : undefined;
+    const sessionCwd = createdTask?.metadata.projectPath ?? sourceCwd;
     logger.info(`[BladeAgent] Creating new session: ${sessionId}`);
-    logger.debug(`[BladeAgent] Session cwd: ${params.cwd || getCwd()}`);
+    logger.debug(`[BladeAgent] Session cwd: ${sessionCwd}`);
 
     // 创建会话实例
     const session = new AcpSession(
       sessionId,
-      params.cwd || getCwd(),
+      sessionCwd,
       this.connection,
       this.clientCapabilities,
-      { mcpServers: params.mcpServers }
+      {
+        mcpServers: params.mcpServers,
+        ...(createdTask?.taskWorktree
+          ? { taskWorktree: createdTask.taskWorktree }
+          : {}),
+      }
     );
 
     try {
@@ -117,7 +142,7 @@ export class BladeAgent implements AcpAgentInterface {
     // 延迟发送 available_commands_update，确保在响应后
     session.sendAvailableCommandsDelayed();
 
-    return this.buildChildSessionResponse(sessionId);
+    return this.buildChildSessionResponse(sessionId, createdTask?.metadata);
   }
 
   async unstable_listSessions(
@@ -150,6 +175,21 @@ export class BladeAgent implements AcpAgentInterface {
             : {}),
           ...(session.taskCompletedAt
             ? { 'blade/taskCompletedAt': session.taskCompletedAt }
+            : {}),
+          ...(session.taskIsolation
+            ? { 'blade/taskIsolation': session.taskIsolation }
+            : {}),
+          ...(session.taskSourceProjectPath
+            ? { 'blade/taskSourceProjectPath': session.taskSourceProjectPath }
+            : {}),
+          ...(session.taskWorktreeBranch
+            ? { 'blade/taskWorktreeBranch': session.taskWorktreeBranch }
+            : {}),
+          ...(session.taskBaseCommit
+            ? { 'blade/taskBaseCommit': session.taskBaseCommit }
+            : {}),
+          ...(session.taskDiffStat
+            ? { 'blade/taskDiffStat': session.taskDiffStat }
             : {}),
         },
       })),
@@ -256,9 +296,30 @@ export class BladeAgent implements AcpAgentInterface {
   }
 
   private buildChildSessionResponse(
-    sessionId: string
+    sessionId: string,
+    taskMetadata?: SessionMetadata
   ): acp.NewSessionResponse & acp.ForkSessionResponse {
-    return { sessionId, ...this.buildSessionSetup() };
+    return {
+      sessionId,
+      ...this.buildSessionSetup(),
+      ...(taskMetadata
+        ? {
+            _meta: {
+              'blade/taskIsolation': taskMetadata.taskIsolation,
+              'blade/taskSourceProjectPath': taskMetadata.taskSourceProjectPath,
+              'blade/taskProjectPath': taskMetadata.projectPath,
+              ...(taskMetadata.taskWorktreeBranch
+                ? {
+                    'blade/taskWorktreeBranch': taskMetadata.taskWorktreeBranch,
+                  }
+                : {}),
+              ...(taskMetadata.taskBaseCommit
+                ? { 'blade/taskBaseCommit': taskMetadata.taskBaseCommit }
+                : {}),
+            },
+          }
+        : {}),
+    };
   }
 
   private assertNotDestroyed(): void {

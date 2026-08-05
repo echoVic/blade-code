@@ -11,6 +11,8 @@ import type {
   Session,
   SessionRewindMode,
   StreamEvent,
+  TaskDispatchInput,
+  WorkspaceInfo,
 } from '@/services';
 
 export type {
@@ -24,6 +26,8 @@ export type {
   SessionRef,
   SessionRewindMode,
   StreamEvent,
+  TaskDispatchInput,
+  WorkspaceInfo,
 };
 
 export interface TokenUsage {
@@ -161,10 +165,14 @@ export interface SessionSlice {
 export interface TaskListSlice {
   taskEventsConnected: boolean;
   taskEventUnsubscribe: (() => void) | null;
+  taskWorkspaceInfo: WorkspaceInfo | null;
+  isDispatchingTask: boolean;
 
   subscribeToTaskEvents: () => Promise<void>;
   unsubscribeFromTaskEvents: () => void;
   handleTaskEvent: (event: StreamEvent) => void;
+  loadTaskWorkspaceInfo: () => Promise<void>;
+  dispatchTask: (input: TaskDispatchInput) => Promise<void>;
 }
 
 export interface MessageSlice {

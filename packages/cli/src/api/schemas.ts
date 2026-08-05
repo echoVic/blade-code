@@ -60,6 +60,42 @@ export const SessionTaskStatusSchema = Runtime(
 );
 export type SessionTaskStatus = Static<typeof SessionTaskStatusSchema>;
 
+export const SessionTaskIsolationSchema = Runtime(StringEnum(['local', 'worktree']));
+export type SessionTaskIsolation = Static<typeof SessionTaskIsolationSchema>;
+
+export const SessionTaskDiffStatSchema = Runtime(
+  Type.Object({
+    changedFiles: Type.Integer({ minimum: 0 }),
+    additions: Type.Integer({ minimum: 0 }),
+    deletions: Type.Integer({ minimum: 0 }),
+    commits: Type.Integer({ minimum: 0 }),
+  })
+);
+export type SessionTaskDiffStat = Static<typeof SessionTaskDiffStatSchema>;
+
+export const SessionTaskDiffFileSchema = Runtime(
+  Type.Object({
+    path: Type.String({ minLength: 1 }),
+    patch: Type.String({ maxLength: 2 * 1024 * 1024 }),
+    additions: Type.Integer({ minimum: 0 }),
+    deletions: Type.Integer({ minimum: 0 }),
+    binary: Type.Boolean(),
+    truncated: Type.Boolean(),
+  })
+);
+export type SessionTaskDiffFile = Static<typeof SessionTaskDiffFileSchema>;
+
+export const SessionTaskDiffArtifactSchema = Runtime(
+  Type.Object({
+    sessionId: Type.String(),
+    projectPath: Type.String(),
+    baseCommit: Type.String(),
+    files: Type.Array(SessionTaskDiffFileSchema, { maxItems: 100 }),
+    truncated: Type.Boolean(),
+  })
+);
+export type SessionTaskDiffArtifact = Static<typeof SessionTaskDiffArtifactSchema>;
+
 export const SessionSchema = Runtime(
   Type.Object({
     sessionId: Type.String(),
@@ -76,6 +112,13 @@ export const SessionSchema = Runtime(
     taskStatusReason: Type.Optional(Type.String()),
     taskStartedAt: Type.Optional(Type.String()),
     taskCompletedAt: Type.Optional(Type.String()),
+    taskPromptSummary: Type.Optional(Type.String()),
+    taskIsolation: Type.Optional(SessionTaskIsolationSchema),
+    taskSourceProjectPath: Type.Optional(Type.String()),
+    taskWorktreePath: Type.Optional(Type.String()),
+    taskWorktreeBranch: Type.Optional(Type.String()),
+    taskBaseCommit: Type.Optional(Type.String()),
+    taskDiffStat: Type.Optional(SessionTaskDiffStatSchema),
     messageCount: Type.Number(),
     firstMessageTime: Type.String(),
     lastMessageTime: Type.String(),
@@ -233,23 +276,47 @@ export const BusEventSchema = Runtime(
 );
 export type BusEvent = Static<typeof BusEventSchema>;
 
+export const TaskAttachmentSchema = Type.Object({
+  type: StringEnum(['file', 'image', 'url']),
+  path: Type.Optional(Type.String()),
+  url: Type.Optional(Type.String()),
+  content: Type.Optional(Type.String()),
+  mimeType: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
+});
+
+export const CreateTaskRequestSchema = Runtime(
+  Type.Object({
+    prompt: Type.String({
+      minLength: 1,
+      maxLength: 32_000,
+      pattern: '\\S',
+    }),
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+    projectPath: Type.Optional(Type.String()),
+    isolation: Default(SessionTaskIsolationSchema, 'worktree'),
+    permissionMode: Default(PermissionModeSchema, 'default'),
+    attachments: Type.Optional(Type.Array(TaskAttachmentSchema)),
+  })
+);
+export type CreateTaskRequest = Static<typeof CreateTaskRequestSchema>;
+
+export const CreateTaskResponseSchema = Runtime(
+  Type.Object({
+    session: SessionSchema,
+    runId: Type.String(),
+    messageId: Type.String(),
+    status: Type.Literal('running'),
+  })
+);
+export type CreateTaskResponse = Static<typeof CreateTaskResponseSchema>;
+
 export const SendMessageRequestSchema = Runtime(
   Type.Object({
     content: Type.String(),
     projectPath: Type.Optional(Type.String()),
     permissionMode: Type.Optional(PermissionModeSchema),
-    attachments: Type.Optional(
-      Type.Array(
-        Type.Object({
-          type: StringEnum(['file', 'image', 'url']),
-          path: Type.Optional(Type.String()),
-          url: Type.Optional(Type.String()),
-          content: Type.Optional(Type.String()),
-          mimeType: Type.Optional(Type.String()),
-          name: Type.Optional(Type.String()),
-        })
-      )
-    ),
+    attachments: Type.Optional(Type.Array(TaskAttachmentSchema)),
   })
 );
 export type SendMessageRequest = Static<typeof SendMessageRequestSchema>;

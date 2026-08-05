@@ -22,6 +22,7 @@ import {
 } from '../cli/middleware.js';
 import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
 import { PermissionMode } from '../config/types.js';
+import type { SessionTaskIsolation } from '../context/types.js';
 import {
   type SchemaValidationError,
   type Static,
@@ -30,6 +31,7 @@ import {
   Type,
 } from '../schema/index.js';
 import type { Message } from '../services/ChatServiceInterface.js';
+import { SessionTaskService } from '../services/SessionTaskService.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import type {
   ConfirmationDetails,
@@ -117,6 +119,7 @@ export const HeadlessOptionsSchema = Type.Object({
   continue: Type.Optional(Type.Boolean()),
   resume: Type.Optional(Type.Union([Type.String(), Type.Boolean()])),
   forkSession: Type.Optional(Type.Boolean()),
+  taskIsolation: Type.Optional(StringEnum(['local', 'worktree'])),
   outputFormat: Type.Optional(HeadlessOutputFormatSchema),
 });
 
@@ -155,6 +158,8 @@ export interface HeadlessOptions {
   resume?: string | boolean;
   /** Fork resumed history into an independent session. */
   forkSession?: boolean;
+  /** Run a new top-level task in the local workspace or an isolated worktree. */
+  taskIsolation?: SessionTaskIsolation;
   /** Terminal output format. */
   outputFormat?: string;
 }
@@ -264,6 +269,12 @@ function headlessCommand(yargs: Argv) {
           alias: ['outputFormat'],
           choices: ['text', 'jsonl'],
           describe: 'Headless output format',
+          type: 'string',
+        })
+        .option('task-isolation', {
+          alias: ['taskIsolation'],
+          choices: ['local', 'worktree'] as const,
+          describe: 'Dispatch a new durable task in the selected workspace mode',
           type: 'string',
         }),
     async (argv: HeadlessOptions) => {
@@ -642,6 +653,30 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
       }
       writeLine(io.stderr, `[turn-limit] continuing after ${turnsCount} turns`);
     },
+    taskSession(task: {
+      sessionId: string;
+      projectPath: string;
+      sourceProjectPath: string;
+      isolation: SessionTaskIsolation;
+      worktreeBranch?: string;
+      baseCommit?: string;
+    }) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('task_session', {
+          session_id: task.sessionId,
+          project_path: task.projectPath,
+          source_project_path: task.sourceProjectPath,
+          isolation: task.isolation,
+          worktree_branch: task.worktreeBranch,
+          base_commit: task.baseCommit,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[task:${task.isolation}] ${task.sessionId} ${task.sourceProjectPath} -> ${task.projectPath}${task.worktreeBranch ? ` (${task.worktreeBranch})` : ''}`
+      );
+    },
     output(content: string, exitCode = 0) {
       if (outputFormat === 'jsonl') {
         writeJsonl('output', { content, exit_code: exitCode });
@@ -690,6 +725,16 @@ export async function runHeadless(
     const permissionMode =
       (validatedOptions.permissionMode as PermissionMode | undefined) ??
       PermissionMode.YOLO;
+    if (
+      validatedOptions.taskIsolation &&
+      (validatedOptions.continue ||
+        validatedOptions.resume ||
+        validatedOptions.forkSession)
+    ) {
+      throw new Error(
+        '--task-isolation cannot be combined with --continue, --resume, or --fork-session'
+      );
+    }
     const { sessionId, messages } = await resolveNonInteractiveSession({
       sessionId: validatedOptions.sessionId,
       continue: validatedOptions.continue,
@@ -697,28 +742,58 @@ export async function runHeadless(
       forkSession: validatedOptions.forkSession,
       fallbackSessionPrefix: 'headless',
     });
+    const createdTask = validatedOptions.taskIsolation
+      ? await SessionTaskService.createSessionTask({
+          sessionId,
+          prompt: normalized.content,
+          sourceProjectPath: getCwd(),
+          isolation: validatedOptions.taskIsolation,
+        })
+      : undefined;
+    const workspaceRoot = createdTask?.metadata.projectPath ?? getCwd();
+    if (createdTask) {
+      eventWriter.taskSession({
+        sessionId,
+        projectPath: workspaceRoot,
+        sourceProjectPath: createdTask.metadata.taskSourceProjectPath ?? getCwd(),
+        isolation: validatedOptions.taskIsolation!,
+        worktreeBranch: createdTask.metadata.taskWorktreeBranch,
+        baseCommit: createdTask.metadata.taskBaseCommit,
+      });
+    }
     const contextMessages: Message[] = [...messages];
     const chatContext: ChatContext = {
       messages: contextMessages,
       userId: 'cli-user',
       sessionId,
-      workspaceRoot: getCwd(),
+      workspaceRoot,
       permissionMode,
       signal: abortControl.signal,
+      ...(createdTask?.taskWorktree ? { worktreeActive: true } : {}),
       confirmationHandler: createConfirmationHandler(),
     };
 
     runtime = await SessionRuntime.create({
       sessionId,
-      workspaceRoot: getCwd(),
+      workspaceRoot,
       modelId: validatedOptions.model,
       mcpConfig: validatedOptions.mcpConfig,
       strictMcpConfig: validatedOptions.strictMcpConfig,
       agents: validatedOptions.agents
         ? parseCliAgents(validatedOptions.agents)
         : undefined,
+      ...(createdTask?.taskWorktree ? { taskWorktree: createdTask.taskWorktree } : {}),
     });
     const effectiveMaxTurns = validatedOptions.maxTurns ?? runtime.getConfig().maxTurns;
+    const toolBlacklist = createdTask?.taskWorktree
+      ? [
+          ...new Set([
+            ...(validatedOptions.disallowedTools ?? []),
+            'EnterWorktree',
+            'ExitWorktree',
+          ]),
+        ]
+      : validatedOptions.disallowedTools;
 
     const agent = await Agent.createWithRuntime(runtime, {
       sessionId,
@@ -728,7 +803,7 @@ export async function runHeadless(
       modelId: validatedOptions.model,
       permissionMode,
       toolWhitelist: validatedOptions.allowedTools,
-      toolBlacklist: validatedOptions.disallowedTools,
+      toolBlacklist,
       mcpConfig: validatedOptions.mcpConfig,
       strictMcpConfig: validatedOptions.strictMcpConfig,
     });

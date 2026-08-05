@@ -76,6 +76,10 @@ export default defineConfig(({ mode }) => {
           target: apiTarget,
           changeOrigin: true,
         },
+        '/tasks': {
+          target: apiTarget,
+          changeOrigin: true,
+        },
         '/configs': {
           target: apiTarget,
           changeOrigin: true,

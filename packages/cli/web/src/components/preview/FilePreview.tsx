@@ -20,7 +20,11 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { registerMonacoTheme } from '@/lib/monacoTheme';
 import { cn } from '@/lib/utils';
-import { type SessionRef, sessionDirectoryHeaders } from '@/services/sessionService';
+import {
+  type SessionRef,
+  sessionDirectoryHeaders,
+  sessionService,
+} from '@/services/sessionService';
 import { useAppStore } from '@/store/AppStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import { useSessionStore } from '@/store/session';
@@ -72,7 +76,7 @@ function errorMessage(error: unknown, fallback: string): string {
 
 export function FilePreview() {
   const { toggleFilePreview } = useAppStore();
-  const { messages, currentSessionRef } = useSessionStore();
+  const { messages, currentSessionRef, sessions } = useSessionStore();
   const [activeTab, setActiveTab] = useState<'diff' | 'files' | 'logs'>('diff');
   const [rootNodes, setRootNodes] = useState<TreeNode[]>([]);
   const [childrenCache, setChildrenCache] = useState<Record<string, TreeNode[]>>({});
@@ -90,6 +94,7 @@ export function FilePreview() {
   const rootRequestGeneration = useRef(0);
   const directoryRequestGenerations = useRef<Record<string, number>>({});
   const fileRequestGeneration = useRef(0);
+  const taskDiffRequestGeneration = useRef(0);
   const expandedDirsRef = useRef<Record<string, boolean>>({});
   const childrenCacheRef = useRef<Record<string, TreeNode[]>>({});
   const selectedFileRef = useRef<string | null>(null);
@@ -180,9 +185,86 @@ export function FilePreview() {
     setChildrenCache({});
   }, [currentSessionRef?.projectPath, currentSessionRef?.sessionId]);
 
-  const allDiffs = useMemo(() => findAllDiffs(messages), [messages]);
+  const currentSession = useMemo(
+    () =>
+      sessions.find((session) =>
+        sameSessionRef(
+          { sessionId: session.sessionId, projectPath: session.projectPath },
+          currentSessionRef
+        )
+      ),
+    [currentSessionRef, sessions]
+  );
+  const messageDiffs = useMemo(() => findAllDiffs(messages), [messages]);
+  const [taskDiffs, setTaskDiffs] = useState<FullDiffPayload[] | null>(null);
+  const [taskDiffLoading, setTaskDiffLoading] = useState(false);
+  const [taskDiffError, setTaskDiffError] = useState<string | null>(null);
+  const allDiffs = taskDiffs ?? messageDiffs;
   const logs = useMemo(() => buildLogs(messages), [messages]);
   const [expandedDiffs, setExpandedDiffs] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const requestGeneration = ++taskDiffRequestGeneration.current;
+    setTaskDiffs(null);
+    setTaskDiffError(null);
+    setTaskDiffLoading(false);
+    if (
+      !currentSessionRef ||
+      currentSession?.taskIsolation !== 'worktree' ||
+      !currentSession.taskDiffStat ||
+      currentSession.taskDiffStat.changedFiles === 0
+    ) {
+      return;
+    }
+
+    const requestSessionRef = { ...currentSessionRef };
+    setTaskDiffLoading(true);
+    void sessionService
+      .getTaskDiff(requestSessionRef)
+      .then((artifact) => {
+        if (
+          requestGeneration !== taskDiffRequestGeneration.current ||
+          !sameSessionRef(
+            useSessionStore.getState().currentSessionRef,
+            requestSessionRef
+          )
+        ) {
+          return;
+        }
+        setTaskDiffs(
+          artifact.files.map((file) => ({
+            filePath: file.path,
+            diff: { patch: file.patch },
+            summary: file.binary
+              ? 'binary'
+              : `+${file.additions} -${file.deletions}${
+                  file.truncated ? ' (truncated)' : ''
+                }`,
+          }))
+        );
+      })
+      .catch((error) => {
+        if (requestGeneration === taskDiffRequestGeneration.current) {
+          setTaskDiffError(errorMessage(error, 'Failed to load task diff'));
+        }
+      })
+      .finally(() => {
+        if (requestGeneration === taskDiffRequestGeneration.current) {
+          setTaskDiffLoading(false);
+        }
+      });
+
+    return () => {
+      if (taskDiffRequestGeneration.current === requestGeneration) {
+        taskDiffRequestGeneration.current += 1;
+      }
+    };
+  }, [
+    currentSession?.taskCompletedAt,
+    currentSession?.taskDiffStat,
+    currentSession?.taskIsolation,
+    currentSessionRef,
+  ]);
 
   const toggleDiffExpand = (filePath: string) => {
     setExpandedDiffs((prev) => ({ ...prev, [filePath]: !prev[filePath] }));
@@ -321,7 +403,14 @@ export function FilePreview() {
 
         <TabsContent value="diff" className="overflow-hidden flex-1 mt-0">
           <div className="overflow-y-auto px-4 py-4 space-y-3 h-full">
-            {allDiffs.length === 0 ? (
+            {taskDiffLoading && allDiffs.length === 0 ? (
+              <EmptyState
+                title="Loading task diff…"
+                subtitle="Reading the durable worktree artifact."
+              />
+            ) : taskDiffError && allDiffs.length === 0 ? (
+              <EmptyState title="Failed to load task diff" subtitle={taskDiffError} />
+            ) : allDiffs.length === 0 ? (
               <EmptyState
                 title="No patch yet"
                 subtitle="Run a tool that changes files to see diffs here."

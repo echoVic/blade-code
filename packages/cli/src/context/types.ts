@@ -142,6 +142,28 @@ export type SessionTaskStatus =
   | 'cancelled'
   | 'interrupted';
 
+export type SessionTaskIsolation = 'local' | 'worktree';
+
+export interface SessionTaskDiffStat {
+  changedFiles: number;
+  additions: number;
+  deletions: number;
+  commits: number;
+}
+
+export interface SessionTaskWorktree {
+  sessionId: string;
+  name: string;
+  branch: string;
+  baseCommit: string;
+  originalBranch: string;
+  repositoryRoot: string;
+  originalWorkspaceRoot: string;
+  worktreeRoot: string;
+  workspaceRoot: string;
+  sourceHadChanges: boolean;
+}
+
 export interface SessionInfo {
   sessionId: string;
   rootId: string;
@@ -157,6 +179,11 @@ export interface SessionInfo {
   taskStartedAt?: string | null;
   taskCompletedAt?: string | null;
   taskOwnerPid?: number | null;
+  taskPromptSummary?: string | null;
+  taskIsolation?: SessionTaskIsolation | null;
+  taskSourceProjectPath?: string | null;
+  taskWorktree?: SessionTaskWorktree | null;
+  taskDiffStat?: SessionTaskDiffStat | null;
   agentType?: string;
   model?: string;
   permission?: JsonValue;

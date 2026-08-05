@@ -889,6 +889,67 @@ describe('SessionService strict session catalog', () => {
     ).rejects.toThrow('Session catalog cwd must be absolute');
   });
 
+  it('keeps the durable worktree lease private while projecting task artifacts', async () => {
+    const taskWorktree = {
+      sessionId: 'artifact-session',
+      name: 'task/artifact-session',
+      branch: 'blade-worktree-task-artifact',
+      baseCommit: 'abc123',
+      originalBranch: 'main',
+      repositoryRoot: workspaceB,
+      originalWorkspaceRoot: workspaceB,
+      worktreeRoot: workspaceA,
+      workspaceRoot: workspaceA,
+      sourceHadChanges: false,
+    };
+    const created = await SessionService.createSessionMetadata(
+      'artifact-session',
+      workspaceA,
+      {
+        title: 'Artifact task',
+        taskPromptSummary: 'Implement artifact projection',
+        taskIsolation: 'worktree',
+        taskSourceProjectPath: workspaceB,
+        taskWorktree,
+      }
+    );
+
+    expect(created).toMatchObject({
+      projectPath: workspaceA,
+      taskPromptSummary: 'Implement artifact projection',
+      taskIsolation: 'worktree',
+      taskSourceProjectPath: workspaceB,
+      taskWorktreePath: workspaceA,
+      taskWorktreeBranch: 'blade-worktree-task-artifact',
+      taskBaseCommit: 'abc123',
+    });
+    expect(created).not.toHaveProperty('taskWorktree');
+    await expect(
+      SessionService.findSessionTaskWorktree('artifact-session', workspaceA)
+    ).resolves.toEqual(taskWorktree);
+
+    const completed = await SessionService.updateSessionMetadata(
+      'artifact-session',
+      workspaceA,
+      {
+        taskStatus: 'completed',
+        taskDiffStat: {
+          changedFiles: 2,
+          additions: 8,
+          deletions: 3,
+          commits: 1,
+        },
+      }
+    );
+    expect(completed.taskDiffStat).toEqual({
+      changedFiles: 2,
+      additions: 8,
+      deletions: 3,
+      commits: 1,
+    });
+    expect(completed).not.toHaveProperty('taskWorktree');
+  });
+
   it('updates existing metadata with exactly one durable session_updated and hides private fields', async () => {
     await SessionService.createSessionMetadata('update-session', workspaceA, {
       title: 'Initial',

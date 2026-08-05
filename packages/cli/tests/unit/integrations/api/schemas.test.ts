@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
   type BusEvent,
   BusEventSchema,
+  CreateTaskRequestSchema,
+  CreateTaskResponseSchema,
   type EditorTheme,
   EditorThemeSchema,
   ForkSessionResponseSchema,
@@ -401,6 +403,56 @@ describe('API Schemas', () => {
       };
 
       expect(() => BusEventSchema.parse(eventWithEmptyProps)).not.toThrow();
+    });
+  });
+
+  describe('Task dispatch schemas', () => {
+    it('defaults task isolation and permission mode while rejecting blank prompts', () => {
+      expect(
+        CreateTaskRequestSchema.parse({
+          prompt: 'Implement task dispatch',
+          projectPath: '/workspace/source',
+        })
+      ).toEqual({
+        prompt: 'Implement task dispatch',
+        projectPath: '/workspace/source',
+        isolation: 'worktree',
+        permissionMode: 'default',
+      });
+      expect(() => CreateTaskRequestSchema.parse({ prompt: '   ' })).toThrow();
+    });
+
+    it('projects accepted task metadata without private worktree lease fields', () => {
+      const response = CreateTaskResponseSchema.parse({
+        session: {
+          sessionId: 'task-1',
+          projectPath: '/workspace/worktree',
+          rootId: 'task-1',
+          taskStatus: 'running',
+          taskIsolation: 'worktree',
+          taskSourceProjectPath: '/workspace/source',
+          taskWorktreePath: '/workspace/worktree',
+          taskWorktreeBranch: 'blade-worktree-task-1',
+          taskBaseCommit: 'abc123',
+          taskDiffStat: {
+            changedFiles: 2,
+            additions: 4,
+            deletions: 1,
+            commits: 0,
+          },
+          taskWorktree: { private: true },
+          messageCount: 0,
+          firstMessageTime: '2026-08-06T00:00:00.000Z',
+          lastMessageTime: '2026-08-06T00:00:00.000Z',
+          hasErrors: false,
+        },
+        runId: 'run-1',
+        messageId: 'message-1',
+        status: 'running',
+      });
+
+      expect(response.session.taskDiffStat?.additions).toBe(4);
+      expect(response.session).not.toHaveProperty('taskWorktree');
     });
   });
 

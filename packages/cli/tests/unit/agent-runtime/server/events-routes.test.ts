@@ -51,6 +51,12 @@ describe('EventRoutes global task feed', () => {
         {
           taskStatus: 'running',
           taskStartedAt: '2026-08-05T12:00:00.000Z',
+          taskDiffStat: {
+            changedFiles: 2,
+            additions: 7,
+            deletions: 1,
+            commits: 0,
+          },
           prompt: 'private prompt in task event',
           arguments: { secret: 'private task arguments' },
         }
@@ -61,6 +67,9 @@ describe('EventRoutes global task feed', () => {
       expect(taskEvent).toContain('"sessionId":"session-1"');
       expect(taskEvent).toContain('"projectPath":"/workspace/a"');
       expect(taskEvent).toContain('"taskStatus":"running"');
+      expect(taskEvent).toContain(
+        '"taskDiffStat":{"changedFiles":2,"additions":7,"deletions":1,"commits":0}'
+      );
       expect(taskEvent).not.toContain('private prompt');
       expect(taskEvent).not.toContain('private tool arguments');
       expect(taskEvent).not.toContain('private task arguments');

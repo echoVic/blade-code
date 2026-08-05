@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { TaskArtifactBar } from '@/components/tasks/TaskArtifactBar';
 import { useSessionStore } from '@/store/session';
 import type { ComposerImageAttachment } from './ChatInput';
 import { ChatInput } from './ChatInput';
@@ -71,6 +72,7 @@ export function ChatView() {
           </button>
         </div>
       )}
+      <TaskArtifactBar />
       <GoalControlBar />
       <ChatList messages={messages} isLoading={isLoading} />
       <ChatInput

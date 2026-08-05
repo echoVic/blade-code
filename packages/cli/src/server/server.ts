@@ -17,9 +17,10 @@ import { McpRoutes } from './routes/mcp.js';
 import { ModelsRoutes } from './routes/models.js';
 import { PermissionRoutes } from './routes/permission.js';
 import { ProviderRoutes } from './routes/provider.js';
-import { SessionRoutes } from './routes/session.js';
+import { createSessionRouteController } from './routes/session.js';
 import { SkillsRoutes } from './routes/skills.js';
 import { SuggestionsRoutes } from './routes/suggestions.js';
+import { TaskRoutes } from './routes/task.js';
 import {
   setupNodeWebSocket,
   TerminalRoutes,
@@ -171,9 +172,11 @@ function createApp(): Hono<{ Variables: Variables }> {
     return next();
   });
 
+  const sessionController = createSessionRouteController();
   app.route('/global', GlobalRoutes());
   app.route('/events', EventRoutes());
-  app.route('/sessions', SessionRoutes());
+  app.route('/sessions', sessionController.app);
+  app.route('/tasks', TaskRoutes(sessionController));
   app.route('/configs', ConfigRoutes());
   app.route('/permissions', PermissionRoutes());
   app.route('/providers', ProviderRoutes());

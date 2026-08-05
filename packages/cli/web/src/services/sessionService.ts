@@ -1,6 +1,8 @@
 import {
   type Message as ApiMessage,
   BusEventSchema,
+  type CreateTaskResponse,
+  CreateTaskResponseSchema,
   type ForkSessionResponse,
   ForkSessionResponseSchema,
   type Goal,
@@ -21,6 +23,9 @@ import {
   type SessionRewindResponse,
   SessionRewindResponseSchema,
   SessionSchema,
+  type SessionTaskDiffArtifact,
+  SessionTaskDiffArtifactSchema,
+  type SessionTaskIsolation,
   type SubagentSession,
   SubagentSessionSchema,
   Type,
@@ -61,6 +66,20 @@ export interface SendMessagePayload {
   attachments?: ImageAttachmentInput[];
 }
 
+export interface TaskDispatchInput {
+  prompt: string;
+  title?: string;
+  projectPath?: string;
+  isolation: SessionTaskIsolation;
+  permissionMode?: PermissionMode;
+  attachments?: ImageAttachmentInput[];
+}
+
+export interface WorkspaceInfo {
+  cwd: string;
+  gitBranch?: string;
+}
+
 export interface Message extends Omit<ApiMessage, 'content'> {
   content: MessageContent;
 }
@@ -74,6 +93,10 @@ const SessionArraySchema = Type.Array(SessionSchema);
 const SessionHistoryMessageArraySchema = Type.Array(SessionHistoryMessageSchema);
 const SessionRewindCheckpointArraySchema = Type.Array(SessionRewindCheckpointSchema);
 const SubagentSessionArraySchema = Type.Array(SubagentSessionSchema);
+const WorkspaceInfoSchema = Type.Object({
+  cwd: Type.String(),
+  gitBranch: Type.Optional(Type.String()),
+});
 
 const normalizeContent = (content: unknown): MessageContent => {
   if (Array.isArray(content)) {
@@ -143,6 +166,35 @@ export const sessionService = {
     });
     if (!res.ok) throw new Error('Failed to create session');
     return SessionSchema.parse(await res.json());
+  },
+
+  getWorkspaceInfo: async (): Promise<WorkspaceInfo> => {
+    const res = await fetch(`${API_BASE}/global/info`);
+    if (!res.ok) throw new Error('Failed to load workspace info');
+    return parseSchema(WorkspaceInfoSchema, await res.json());
+  },
+
+  createTask: async (input: TaskDispatchInput): Promise<CreateTaskResponse> => {
+    const res = await fetch(`${API_BASE}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || 'Failed to dispatch task');
+    }
+    return CreateTaskResponseSchema.parse(await res.json());
+  },
+
+  getTaskDiff: async (ref: SessionRef): Promise<SessionTaskDiffArtifact> => {
+    const res = await fetch(
+      withSessionRef(`${API_BASE}/tasks/${ref.sessionId}/diff`, ref)
+    );
+    if (!res.ok) throw new Error('Failed to load task diff');
+    return SessionTaskDiffArtifactSchema.parse(await res.json());
   },
 
   deleteSession: async (ref: SessionRef): Promise<void> => {

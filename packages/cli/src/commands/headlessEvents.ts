@@ -129,6 +129,16 @@ const TurnLimitEventSchema = event({
   action: Type.Literal('continue'),
 });
 
+const TaskSessionEventSchema = event({
+  type: Type.Literal('task_session'),
+  session_id: Type.String(),
+  project_path: Type.String(),
+  source_project_path: Type.String(),
+  isolation: StringEnum(['local', 'worktree']),
+  worktree_branch: Type.Optional(Type.String()),
+  base_commit: Type.Optional(Type.String()),
+});
+
 const OutputEventSchema = event({
   type: Type.Literal('output'),
   content: Type.String(),
@@ -156,6 +166,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     TokenUsageEventSchema,
     CompactingEventSchema,
     TurnLimitEventSchema,
+    TaskSessionEventSchema,
     OutputEventSchema,
     ErrorEventSchema,
   ])

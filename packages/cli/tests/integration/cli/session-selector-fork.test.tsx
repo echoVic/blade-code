@@ -526,6 +526,15 @@ describe('session selector fork integration', () => {
       relationType: 'fork',
       title: 'Forked Session',
       taskStatus: 'running',
+      taskIsolation: 'worktree',
+      taskSourceProjectPath: getCwd(),
+      taskWorktreeBranch: 'blade-worktree-task-demo',
+      taskDiffStat: {
+        changedFiles: 2,
+        additions: 7,
+        deletions: 1,
+        commits: 0,
+      },
     });
     const selections: SessionMetadata[] = [];
     const stdin = new TestInputStream();
@@ -568,6 +577,8 @@ describe('session selector fork integration', () => {
           expect(output).toContain(workspaceLabel);
           expect(output).toContain('[DONE]');
           expect(output).toContain('[RUNNING]');
+          expect(output).toContain('wt:blade-worktree-task-demo');
+          expect(output).toContain('2 files +7 -1');
           expect(output).toContain('↳ fork');
           expect(output).not.toContain('↳ subagent');
         },
@@ -583,7 +594,10 @@ describe('session selector fork integration', () => {
           expect(selectedChunk).toContain('> ');
           expect(selectedChunk).toContain(workspaceLabel);
           expect(selectedChunk).toContain('[RUNNING]');
-          expect(selectedChunk).toContain('(main) | 12 条消息 ↳ fork');
+          expect(selectedChunk).toContain('wt:blade-worktree-task-demo');
+          expect(selectedChunk).toContain(
+            '(main) | 12 条消息 | wt:blade-worktree-task-demo | 2 files +7 -1 ↳ fork'
+          );
         },
         () => `output=${JSON.stringify(stdout.output)}`
       );

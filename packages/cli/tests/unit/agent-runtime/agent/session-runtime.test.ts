@@ -27,6 +27,13 @@ const worktreeMocks = vi.hoisted(() => ({
     skipped: 0,
     errors: [],
   })),
+  restoreSession: vi.fn(async (session) => session),
+  getChangeSummary: vi.fn(async () => ({
+    changedFiles: 0,
+    additions: 0,
+    deletions: 0,
+    commits: 0,
+  })),
   releaseSession: vi.fn(),
 }));
 
@@ -287,6 +294,65 @@ describe('SessionRuntime', () => {
       ]);
     } finally {
       unsubscribe();
+      await runtime.dispose();
+    }
+  });
+
+  it('restores a task worktree and archives its diff stat with the terminal status', async () => {
+    const workspaceRoot = path.join(storageRoot, 'managed-task-worktree');
+    const sourceProjectPath = path.join(storageRoot, 'source-project');
+    const sessionId = 'runtime-task-artifact';
+    const taskWorktree = {
+      sessionId,
+      name: 'task/runtime-task-artifact',
+      branch: 'blade-worktree-task-runtime',
+      baseCommit: 'abc123',
+      originalBranch: 'main',
+      repositoryRoot: sourceProjectPath,
+      originalWorkspaceRoot: sourceProjectPath,
+      worktreeRoot: workspaceRoot,
+      workspaceRoot,
+      sourceHadChanges: false,
+    };
+    await SessionService.createSessionMetadata(sessionId, workspaceRoot, {
+      taskPromptSummary: 'Archive the task diff',
+      taskIsolation: 'worktree',
+      taskSourceProjectPath: sourceProjectPath,
+      taskWorktree,
+    });
+    worktreeMocks.getChangeSummary.mockResolvedValueOnce({
+      changedFiles: 3,
+      additions: 12,
+      deletions: 4,
+      commits: 1,
+    });
+    const runtime = await SessionRuntime.create({
+      sessionId,
+      workspaceRoot,
+    });
+
+    try {
+      expect(worktreeMocks.restoreSession).toHaveBeenCalledWith(taskWorktree);
+      await runtime.setTaskStatus('running');
+      const completed = await runtime.setTaskStatus('completed');
+      expect(completed?.taskDiffStat).toEqual({
+        changedFiles: 3,
+        additions: 12,
+        deletions: 4,
+        commits: 1,
+      });
+      await expect(
+        SessionService.findSessionMetadata(sessionId, workspaceRoot)
+      ).resolves.toMatchObject({
+        taskStatus: 'completed',
+        taskDiffStat: {
+          changedFiles: 3,
+          additions: 12,
+          deletions: 4,
+          commits: 1,
+        },
+      });
+    } finally {
       await runtime.dispose();
     }
   });

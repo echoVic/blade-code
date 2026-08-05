@@ -14,6 +14,10 @@ const sessionState = vi.hoisted(() => ({
   resolveNonInteractiveSession: vi.fn(),
 }));
 
+const taskState = vi.hoisted(() => ({
+  createSessionTask: vi.fn(),
+}));
+
 vi.mock('../../../src/agent/Agent.js', () => ({
   Agent: {
     createWithRuntime: agentState.createWithRuntime,
@@ -28,6 +32,12 @@ vi.mock('../../../src/agent/runtime/SessionRuntime.js', () => ({
 
 vi.mock('../../../src/commands/shared/sessionContext.js', () => ({
   resolveNonInteractiveSession: sessionState.resolveNonInteractiveSession,
+}));
+
+vi.mock('../../../src/services/SessionTaskService.js', () => ({
+  SessionTaskService: {
+    createSessionTask: taskState.createSessionTask,
+  },
 }));
 
 describe('headless runner', () => {
@@ -55,6 +65,7 @@ describe('headless runner', () => {
       messages: [],
     });
     runtimeState.dispose.mockResolvedValue(undefined);
+    taskState.createSessionTask.mockReset();
     runtimeState.create.mockResolvedValue({
       dispose: runtimeState.dispose,
       getConfig: () => ({ maxTurns: -1 }),
@@ -97,6 +108,114 @@ describe('headless runner', () => {
         ],
       })
     );
+  });
+
+  it('dispatches a worktree task and emits its stable JSONL identity', async () => {
+    const taskWorktree = {
+      sessionId: 'headless-session',
+      name: 'task/headless-session',
+      branch: 'blade-worktree-headless',
+      baseCommit: 'abc123',
+      originalBranch: 'main',
+      repositoryRoot: '/tmp/source',
+      originalWorkspaceRoot: '/tmp/source',
+      worktreeRoot: '/tmp/task-worktree',
+      workspaceRoot: '/tmp/task-worktree',
+      sourceHadChanges: false,
+    };
+    taskState.createSessionTask.mockResolvedValueOnce({
+      metadata: {
+        sessionId: 'headless-session',
+        projectPath: '/tmp/task-worktree',
+        rootId: 'headless-session',
+        taskStatus: 'queued',
+        taskIsolation: 'worktree',
+        taskSourceProjectPath: '/tmp/source',
+        taskWorktreePath: '/tmp/task-worktree',
+        taskWorktreeBranch: taskWorktree.branch,
+        taskBaseCommit: taskWorktree.baseCommit,
+        messageCount: 0,
+        firstMessageTime: '2026-08-06T00:00:00.000Z',
+        lastMessageTime: '2026-08-06T00:00:00.000Z',
+        hasErrors: false,
+      },
+      taskWorktree,
+    });
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'Implement isolated task dispatch',
+        taskIsolation: 'worktree',
+        outputFormat: 'jsonl',
+      },
+      { stdout, stderr }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(taskState.createSessionTask).toHaveBeenCalledWith({
+      sessionId: 'headless-session',
+      prompt: 'Implement isolated task dispatch',
+      sourceProjectPath: expect.any(String),
+      isolation: 'worktree',
+    });
+    expect(runtimeState.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'headless-session',
+        workspaceRoot: '/tmp/task-worktree',
+        taskWorktree,
+      })
+    );
+    expect(agentState.createWithRuntime).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        toolBlacklist: ['EnterWorktree', 'ExitWorktree'],
+      })
+    );
+    expect(agentState.chatStream).toHaveBeenCalledWith(
+      'Implement isolated task dispatch',
+      expect.objectContaining({
+        workspaceRoot: '/tmp/task-worktree',
+        worktreeActive: true,
+      }),
+      expect.any(Object)
+    );
+    const events = stdout.write.mock.calls
+      .map(([line]) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'task_session',
+        session_id: 'headless-session',
+        project_path: '/tmp/task-worktree',
+        isolation: 'worktree',
+        worktree_branch: 'blade-worktree-headless',
+      })
+    );
+  });
+
+  it('rejects task isolation when resuming an existing session', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'continue',
+        taskIsolation: 'worktree',
+        resume: 'existing-session',
+      },
+      { stdout, stderr }
+    );
+
+    expect(exitCode).toBe(1);
+    expect(taskState.createSessionTask).not.toHaveBeenCalled();
+    expect(runtimeState.create).not.toHaveBeenCalled();
   });
 
   it('defaults to yolo permissions and prints streamed frontend events', async () => {
