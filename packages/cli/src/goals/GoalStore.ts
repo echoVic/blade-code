@@ -130,8 +130,6 @@ export class GoalStore {
       return {
         ...goal,
         objective: normalizeObjective(objective),
-        status: 'active',
-        statusReason: undefined,
         updatedAt: new Date().toISOString(),
       };
     });

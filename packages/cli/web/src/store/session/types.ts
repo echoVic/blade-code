@@ -132,6 +132,10 @@ export interface SessionSlice {
   deleteSession: (sessionId: string) => Promise<void>;
   sendMessage: (payload: SendMessagePayload) => Promise<void>;
   abortSession: () => Promise<void>;
+  pauseGoal: () => Promise<void>;
+  resumeGoal: () => Promise<void>;
+  editGoal: (objective: string) => Promise<void>;
+  clearGoal: () => Promise<void>;
 }
 
 export interface MessageSlice {

@@ -53,18 +53,17 @@ describe('/goal', () => {
       success: true,
       data: { goal: { status: 'paused' } },
     });
-    await expect(goalCommand.handler(['resume'], context)).resolves.toMatchObject({
-      success: true,
-      data: { action: 'resume_goal', goal: { status: 'active' } },
-    });
     await expect(
       goalCommand.handler(['edit', 'revised', 'objective'], context)
     ).resolves.toMatchObject({
       success: true,
       data: {
-        action: 'resume_goal',
-        goal: { objective: 'revised objective', status: 'active' },
+        goal: { objective: 'revised objective', status: 'paused' },
       },
+    });
+    await expect(goalCommand.handler(['resume'], context)).resolves.toMatchObject({
+      success: true,
+      data: { action: 'resume_goal', goal: { status: 'active' } },
     });
     await expect(goalCommand.handler(['clear'], context)).resolves.toMatchObject({
       success: true,

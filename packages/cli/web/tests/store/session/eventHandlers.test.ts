@@ -73,6 +73,10 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     deleteSession: vi.fn(),
     sendMessage: vi.fn(),
     abortSession: vi.fn(),
+    pauseGoal: vi.fn(),
+    resumeGoal: vi.fn(),
+    editGoal: vi.fn(),
+    clearGoal: vi.fn(),
     setMessages: vi.fn(),
     addMessage: vi.fn((message: Message) => {
       state.messages.push(message);

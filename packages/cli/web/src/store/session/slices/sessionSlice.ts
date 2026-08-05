@@ -253,9 +253,13 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
 
         set({
           goal: response.goal,
-          currentRunId: response.runId ?? null,
-          isStreaming: Boolean(response.runId),
-          agentPhase: response.runId ? 'running' : get().agentPhase,
+          ...(response.runId
+            ? {
+                currentRunId: response.runId,
+                isStreaming: true,
+                agentPhase: 'running' as const,
+              }
+            : {}),
         });
         if (response.runId) subscribeToEvents(sessionId);
       } catch (err) {
@@ -316,6 +320,107 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => ({
       } catch {
         // Ignore abort errors
       }
+    }
+  },
+
+  pauseGoal: async () => {
+    const { currentSessionId, isTemporarySession } = get();
+    if (
+      !currentSessionId ||
+      isTemporarySession ||
+      currentSessionId === TEMP_SESSION_ID
+    ) {
+      set({ error: 'No persisted session is available for this goal' });
+      return;
+    }
+    try {
+      const response = await sessionService.updateGoal(currentSessionId, {
+        action: 'pause',
+      });
+      set({ goal: response.goal, error: null });
+    } catch (err) {
+      set({ error: (err as Error).message });
+    }
+  },
+
+  resumeGoal: async () => {
+    const { currentSessionId, isTemporarySession, subscribeToEvents } = get();
+    if (
+      !currentSessionId ||
+      isTemporarySession ||
+      currentSessionId === TEMP_SESSION_ID
+    ) {
+      set({ error: 'No persisted session is available for this goal' });
+      return;
+    }
+    try {
+      const response = await sessionService.updateGoal(currentSessionId, {
+        action: 'resume',
+      });
+      set({
+        goal: response.goal,
+        error: null,
+        ...(response.runId
+          ? {
+              currentRunId: response.runId,
+              isStreaming: true,
+              agentPhase: 'running' as const,
+            }
+          : {}),
+      });
+      if (response.runId) subscribeToEvents(currentSessionId);
+    } catch (err) {
+      set({ error: (err as Error).message });
+    }
+  },
+
+  editGoal: async (objective: string) => {
+    const { currentSessionId, isTemporarySession, subscribeToEvents } = get();
+    if (
+      !currentSessionId ||
+      isTemporarySession ||
+      currentSessionId === TEMP_SESSION_ID
+    ) {
+      set({ error: 'No persisted session is available for this goal' });
+      return;
+    }
+    try {
+      const response = await sessionService.updateGoal(currentSessionId, {
+        action: 'edit',
+        objective,
+      });
+      set({
+        goal: response.goal,
+        error: null,
+        ...(response.runId
+          ? {
+              currentRunId: response.runId,
+              isStreaming: true,
+              agentPhase: 'running' as const,
+            }
+          : {}),
+      });
+      if (response.runId) subscribeToEvents(currentSessionId);
+    } catch (err) {
+      set({ error: (err as Error).message });
+    }
+  },
+
+  clearGoal: async () => {
+    const { currentSessionId, isTemporarySession } = get();
+    if (
+      !currentSessionId ||
+      isTemporarySession ||
+      currentSessionId === TEMP_SESSION_ID
+    ) {
+      set({ error: 'No persisted session is available for this goal' });
+      return;
+    }
+    try {
+      await sessionService.clearGoal(currentSessionId);
+      set({ goal: null, error: null });
+    } catch (err) {
+      set({ error: (err as Error).message });
     }
   },
 });

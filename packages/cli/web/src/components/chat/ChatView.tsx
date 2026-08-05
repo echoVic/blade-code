@@ -3,6 +3,7 @@ import { useSessionStore } from '@/store/session';
 import type { ComposerImageAttachment } from './ChatInput';
 import { ChatInput } from './ChatInput';
 import { ChatList } from './ChatList';
+import { GoalControlBar } from './GoalControlBar';
 import { StatusBar } from './StatusBar';
 
 export function ChatView() {
@@ -70,6 +71,7 @@ export function ChatView() {
           </button>
         </div>
       )}
+      <GoalControlBar />
       <ChatList messages={messages} isLoading={isLoading} />
       <ChatInput
         onSend={handleSend}

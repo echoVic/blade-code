@@ -87,7 +87,7 @@ async function goalHandler(
     if (subcommand === 'edit') {
       const objective = args.slice(1).join(' ').trim();
       if (!objective) throw new Error('Usage: /goal edit <objective>');
-      return goalResult(await store.edit(objective), 'resume_goal');
+      return goalResult(await store.edit(objective));
     }
 
     return goalResult(await store.create(parseCreateArgs(args)), 'start_goal');

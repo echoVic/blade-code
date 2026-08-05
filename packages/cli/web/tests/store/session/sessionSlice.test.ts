@@ -338,5 +338,61 @@ describe('sessionSlice multimodal sendMessage', () => {
     });
     expect(sessionService.sendMessage).not.toHaveBeenCalled();
     expect(useSessionStore.getState().goal).toEqual(pausedGoal);
+    expect(useSessionStore.getState()).toMatchObject({
+      currentRunId: 'goal-run',
+      isStreaming: true,
+    });
+  });
+
+  it('drives edit, resume, and delete from visual goal controls', async () => {
+    const subscribeToEvents = vi.fn();
+    const pausedGoal = {
+      version: 1 as const,
+      sessionId: 'goal-session',
+      goalId: 'goal-1',
+      objective: 'revised objective',
+      status: 'paused' as const,
+      tokensUsed: 300,
+      timeUsedSeconds: 4,
+      continuationCount: 2,
+      createdAt: '2026-08-04T00:00:00.000Z',
+      updatedAt: '2026-08-04T00:00:04.000Z',
+    };
+    const activeGoal = { ...pausedGoal, status: 'active' as const };
+    useSessionStore.setState({
+      currentSessionId: 'goal-session',
+      isTemporarySession: false,
+      subscribeToEvents,
+    });
+    vi.mocked(sessionService.updateGoal)
+      .mockResolvedValueOnce({ status: 'paused', goal: pausedGoal })
+      .mockResolvedValueOnce({
+        status: 'running',
+        runId: 'resumed-goal-run',
+        goal: activeGoal,
+      });
+
+    await useSessionStore.getState().editGoal('revised objective');
+    expect(sessionService.updateGoal).toHaveBeenNthCalledWith(1, 'goal-session', {
+      action: 'edit',
+      objective: 'revised objective',
+    });
+    expect(useSessionStore.getState().goal?.status).toBe('paused');
+
+    await useSessionStore.getState().resumeGoal();
+    expect(sessionService.updateGoal).toHaveBeenNthCalledWith(2, 'goal-session', {
+      action: 'resume',
+    });
+    expect(useSessionStore.getState()).toMatchObject({
+      goal: activeGoal,
+      currentRunId: 'resumed-goal-run',
+      isStreaming: true,
+      agentPhase: 'running',
+    });
+    expect(subscribeToEvents).toHaveBeenCalledWith('goal-session');
+
+    await useSessionStore.getState().clearGoal();
+    expect(sessionService.clearGoal).toHaveBeenCalledWith('goal-session');
+    expect(useSessionStore.getState().goal).toBeNull();
   });
 });

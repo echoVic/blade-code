@@ -75,11 +75,12 @@ describe('GoalStore', () => {
       statusReason: 'paused by user',
     });
     await expect(store.tryBeginContinuation()).resolves.toBeNull();
-    await expect(store.resume()).resolves.toMatchObject({ status: 'active' });
     await expect(store.edit('revised objective')).resolves.toMatchObject({
       objective: 'revised objective',
-      status: 'active',
+      status: 'paused',
+      statusReason: 'paused by user',
     });
+    await expect(store.resume()).resolves.toMatchObject({ status: 'active' });
     await expect(store.block('waiting for credentials')).resolves.toMatchObject({
       status: 'blocked',
       statusReason: 'waiting for credentials',
