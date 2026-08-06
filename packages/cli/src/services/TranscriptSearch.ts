@@ -9,6 +9,10 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import { getProjectStoragePath } from '../context/storage/pathUtils.js';
+import {
+  getProjectionDb,
+  searchProjectionText,
+} from '../context/storage/sqlite/projection.js';
 import { getCwd } from '../utils/cwd.js';
 import { materializeSessionEvents } from './sessionRewind.js';
 
@@ -34,6 +38,19 @@ export async function searchTranscripts(
 ): Promise<TranscriptMatch[]> {
   const { maxResults = 20, caseSensitive = false, projectPath, storagePath } = options;
   const scanPath = storagePath ?? getProjectStoragePath(projectPath ?? getCwd());
+
+  // Fast path: SQLite FTS candidate retrieval + existing substring/snippet
+  // matching for exact parity. Fail-open to the JSONL scan below on any issue.
+  // Only used for the default project-scoped search (not a custom storagePath).
+  if (!storagePath) {
+    const ftsMatches = await searchTranscriptsViaProjection(
+      query,
+      projectPath ?? getCwd(),
+      maxResults,
+      caseSensitive
+    );
+    if (ftsMatches) return ftsMatches;
+  }
 
   let files: string[];
   try {
@@ -78,6 +95,49 @@ export async function searchTranscripts(
   }
 
   return matches;
+}
+
+/**
+ * SQLite FTS 快速路径。返回 null 表示投影不可用（调用方回退 JSONL 全扫）。
+ * FTS 仅缩小候选集，最终匹配沿用 createMatch 的 substring/snippet 语义以保持一致。
+ */
+async function searchTranscriptsViaProjection(
+  query: string,
+  projectPath: string,
+  maxResults: number,
+  caseSensitive: boolean
+): Promise<TranscriptMatch[] | null> {
+  try {
+    const { syncAll } = await import('../context/storage/sqlite/projection.js');
+    const db = await getProjectionDb();
+    if (!db) return null;
+    // 复用 SessionService 的聚合器保证 sessions/parts 与 JSONL 一致。
+    const { SessionService } = await import('./SessionService.js');
+    await syncAll(db, SessionService.projectionDeriverForSearch());
+
+    const resolved = path.resolve(projectPath);
+    // 取足够多候选（FTS 命中可能被 createMatch 二次过滤），再截断到 maxResults。
+    const rows = searchProjectionText(db, query, resolved, maxResults * 4);
+    const searchStr = caseSensitive ? query : query.toLowerCase();
+    const matches: TranscriptMatch[] = [];
+    for (const row of rows) {
+      if (row.role !== 'user' && row.role !== 'assistant') continue;
+      const match = createMatch(
+        row.text,
+        searchStr,
+        caseSensitive,
+        row.session_id,
+        row.role,
+        row.timestamp ?? undefined,
+        0
+      );
+      if (match) matches.push(match);
+      if (matches.length >= maxResults) break;
+    }
+    return matches;
+  } catch {
+    return null;
+  }
 }
 
 async function searchFile(

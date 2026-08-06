@@ -571,6 +571,16 @@ export class PersistentStore {
         .catch((error) => {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         });
+      // Best-effort：同步清理 SQLite 投影行（派生缓存，失败不影响 JSONL 真相）。
+      try {
+        const { getProjectionDb, removeSessionFromProjection } = await import(
+          './sqlite/projection.js'
+        );
+        const db = await getProjectionDb();
+        if (db) removeSessionFromProjection(db, sessionId, this.projectPath);
+      } catch {
+        // 忽略：下次 syncAll 会 GC。
+      }
     } catch (error) {
       console.warn(`[PersistentStore] 删除会话失败 (session: ${sessionId}):`, error);
     }

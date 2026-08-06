@@ -35,7 +35,10 @@ export interface GlobalOptions {
   pluginDir?: string[];
 }
 
-export interface DoctorOptions extends GlobalOptions {}
+export interface DoctorOptions extends GlobalOptions {
+  /** 删除并从 JSONL 全量重建 SQLite 读侧投影索引。 */
+  rebuildIndex?: boolean;
+}
 
 export interface UpdateOptions extends GlobalOptions {}
 

@@ -75,6 +75,7 @@
   },
   "trustedDependencies": [
     "@vscode/ripgrep",
+    "better-sqlite3",
     "esbuild",
     "node-pty"
   ],

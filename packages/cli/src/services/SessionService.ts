@@ -10,6 +10,12 @@ import { nanoid } from 'nanoid';
 import { SessionInUseError, SessionLease } from '../agent/runtime/SessionLease.js';
 import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import {
+  getProjectionDb,
+  syncAll,
+  removeSessionFromProjection,
+  type MetadataDeriver,
+} from '../context/storage/sqlite/projection.js';
+import {
   assertValidSessionId,
   detectGitBranch,
   getBladeStorageRoot,
@@ -746,6 +752,7 @@ export class SessionService {
       await rm(getSessionGoalFilePath(resolvedProjectPath, sessionId), {
         force: true,
       });
+      await this.removeFromProjection(sessionId, resolvedProjectPath);
       return 1;
     }
 
@@ -767,9 +774,23 @@ export class SessionService {
         await rm(getSessionGoalFilePath(session.projectPath, session.sessionId), {
           force: true,
         });
+        await this.removeFromProjection(session.sessionId, session.projectPath);
       })
     );
     return matches.length;
+  }
+
+  /** Best-effort：删除会话后同步清理 SQLite 投影行（失败仅忽略，syncAll 会兜底 GC）。 */
+  private static async removeFromProjection(
+    sessionId: string,
+    projectPath: string
+  ): Promise<void> {
+    try {
+      const db = await getProjectionDb();
+      if (db) removeSessionFromProjection(db, sessionId, projectPath);
+    } catch {
+      // 投影是派生缓存，删除失败不影响 JSONL 真相；下次 syncAll GC。
+    }
   }
 
   private static validateTaskMetadataUpdate(
@@ -1210,11 +1231,91 @@ export class SessionService {
     return messages;
   }
 
+  /**
+   * 元数据聚合器（注入投影层，复用 projectMetadataFromEntries 保证与 JSONL 逐条一致）。
+   */
+  private static projectionDeriver(): MetadataDeriver {
+    return (entries, sessionId, projectPath) => {
+      try {
+        const filePath = getSessionFilePath(projectPath, sessionId);
+        const stored = this.projectMetadataFromEntries(
+          entries,
+          sessionId,
+          projectPath,
+          filePath
+        );
+        return stored as unknown as ReturnType<MetadataDeriver>;
+      } catch {
+        return null;
+      }
+    };
+  }
+
+  /** 公开给 TranscriptSearch 的聚合器（同 projectionDeriver，避免跨模块重实现）。 */
+  static projectionDeriverForSearch(): MetadataDeriver {
+    return this.projectionDeriver();
+  }
+
+  /**
+   * 从 SQLite 投影读取会话列表。返回 null 表示投影不可用（调用方回退 JSONL 扫描）。
+   * 读取前先 syncAll（内部 mtime 门控，未变近乎零成本）保证与磁盘一致。
+   */
+  private static async scanStoredSessionsFromProjection(
+    scopedProjectPath: string | undefined,
+    includeSubagents: boolean
+  ): Promise<StoredSessionMetadata[] | null> {
+    try {
+      const db = await getProjectionDb();
+      if (!db) return null;
+      await syncAll(db, this.projectionDeriver());
+
+      const rows = scopedProjectPath
+        ? db
+            .prepare(
+              'SELECT metadata_json, is_subagent FROM sessions WHERE project_path=?'
+            )
+            .all<{ metadata_json: string; is_subagent: number }>(scopedProjectPath)
+        : db
+            .prepare('SELECT metadata_json, is_subagent FROM sessions')
+            .all<{ metadata_json: string; is_subagent: number }>();
+
+      const sessions: StoredSessionMetadata[] = [];
+      for (const row of rows) {
+        if (!includeSubagents && row.is_subagent === 1) continue;
+        try {
+          const meta = JSON.parse(row.metadata_json) as StoredSessionMetadata;
+          if (
+            scopedProjectPath !== undefined &&
+            meta.projectPath !== scopedProjectPath
+          ) {
+            continue;
+          }
+          sessions.push(meta);
+        } catch {
+          // 损坏行跳过；下次 syncAll 会重建。
+        }
+      }
+      return sessions;
+    } catch {
+      return null;
+    }
+  }
+
   private static async scanStoredSessions(
     cwd?: string,
     includeSubagents = false
   ): Promise<StoredSessionMetadata[]> {
     const scopedProjectPath = cwd ? path.resolve(cwd) : undefined;
+
+    // Fast path: serve from the SQLite read-model projection. Fail-open — any
+    // problem (db unavailable, native module missing) falls through to the
+    // authoritative JSONL scan below, so SQLite stays an optional accelerator.
+    const projected = await this.scanStoredSessionsFromProjection(
+      scopedProjectPath,
+      includeSubagents
+    );
+    if (projected) return projected;
+
     const projectDirs = scopedProjectPath
       ? [
           {

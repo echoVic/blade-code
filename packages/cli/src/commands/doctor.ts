@@ -10,7 +10,38 @@ import { getCwd } from '../utils/cwd.js';
 export const doctorCommands: CommandModule<{}, DoctorOptions> = {
   command: 'doctor',
   describe: 'Check the health of your Blade installation',
-  handler: async () => {
+  builder: (yargs) =>
+    yargs.option('rebuild-index', {
+      type: 'boolean',
+      default: false,
+      describe: 'Rebuild the SQLite session index from JSONL transcripts',
+    }),
+  handler: async (argv) => {
+    if (argv.rebuildIndex) {
+      console.log('Rebuilding session index from JSONL transcripts...\n');
+      try {
+        const { rebuildProjectionIndex } = await import(
+          '../context/storage/sqlite/projection.js'
+        );
+        const { SessionService } = await import('../services/SessionService.js');
+        const count = await rebuildProjectionIndex(
+          SessionService.projectionDeriverForSearch()
+        );
+        if (count === null) {
+          console.log(
+            '[WARN] Session index unavailable (SQLite driver missing); reads fall back to JSONL scan.'
+          );
+        } else {
+          console.log(`[OK] Session index rebuilt: ${count} session(s) indexed.`);
+        }
+      } catch (error) {
+        console.log('[FAIL] Session index rebuild failed');
+        console.log(`   Error: ${error instanceof Error ? error.message : '未知错误'}`);
+        process.exit(1);
+      }
+      return;
+    }
+
     console.log('Running Blade health check...\n');
 
     let issues = 0;
