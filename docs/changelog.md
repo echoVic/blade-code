@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-08-06
+
+### ✨ 新功能
+
+- 新增进程级顶层 Task Admission Scheduler：默认同时运行 3 个任务、最多排队
+  100 个任务，支持全局 FIFO、bounded queue、动态并发上限、排队取消和幂等 permit
+  释放
+- `Agent.chatStream` 成为 Web、Headless、TUI 与 ACP 的统一 admission 门禁；
+  `POST /tasks` 准确返回 `running` 或 `queued`，队列满时返回可重试 HTTP 429
+- queue position、queue depth 与 concurrency limit 写入 durable session metadata；
+  server 启动时按稳定 FIFO 顺序恢复仍有 inbox 的 queued task
+- Web Sidebar 显示 `#N/M queued`，Task Home 显示全局 running/queued 容量；
+  TUI、Headless `task_admission` JSONL 与 ACP namespaced `_meta` 投影同一状态
+- 新增 `maxConcurrentTasks`、`maxQueuedTasks` 配置与
+  `--max-concurrent-tasks`、`--max-queued-tasks` CLI override
+
+### 🐛 问题修复
+
+- active run 不再受 100 条历史 LRU 上限驱逐；running task 收到 abort 后会持有 permit
+  直到清理完成，避免 provider 尚未退出时提前超发
+- queued/running/terminal 的 durable metadata、SSE 容量尾事件与内存 projection
+  保持一致，终态不再残留 `taskQueueDepth: 0`
+- CLI override 现在在统一 middleware 中应用，Web、Serve 与 Headless 不再忽略任务
+  并发参数
+- Web 切换回等待权限的空 transcript task 时，会缓冲 SSE replay、重建 assistant
+  容器并恢复 permission/question 卡片
+- 否定式 worktree 指令（如 `Do not enter another worktree`）不再误触发强制
+  lifecycle completion policy
+- 删除 task session 后同步回收其 worktree 和临时分支，避免遗留孤儿 workspace
+
+### ✅ 测试相关
+
+- CLI 全量测试：2030 passed，56 skipped；Web 全量测试：129 passed
+- DeepSeek v4 Flash/Pro 的 Web FIFO admission、Headless coding turn 与 ACP durable
+  worktree 真实 API 资格 6/6 通过
+- 浏览器 GUI 验证 `1/1 running · 1 queued`、Sidebar `#1/1 queued`、权限切换
+  replay、queued promotion、最终 `0/1 running`，fresh tab console 为空且网络请求无失败
+- 新增 102 个同时 accepted run 的压力回归，以及 queue full、queued cancel、permit
+  cleanup、稳定重启恢复计数和 task worktree 删除回收测试
+
 ## [0.8.2] - 2026-08-06
 
 ### ✨ 新功能
