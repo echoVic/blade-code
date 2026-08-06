@@ -27,6 +27,9 @@ function parseCommittedLine(
 /**
  * Parses committed JSONL records while tolerating one unterminated crash tail.
  * A malformed newline-terminated record is durable corruption and fails closed.
+ *
+ * Backfills a monotonic `seq` (1-based, by parse order) for legacy records that
+ * predate sequence numbers, so replay and Last-Event-ID resume stay well-defined.
  */
 export function parseSessionJSONL(
   content: string,
@@ -39,7 +42,12 @@ export function parseSessionJSONL(
   for (const [index, line] of lines.entries()) {
     try {
       const entry = parseCommittedLine(line, index + 1, source);
-      if (entry) entries.push(entry);
+      if (entry) {
+        if (typeof entry.seq !== 'number') {
+          entry.seq = entries.length + 1;
+        }
+        entries.push(entry);
+      }
     } catch (error) {
       if (finalLineIsUnterminated && index === lines.length - 1) break;
       throw error;
@@ -60,14 +68,44 @@ export class JSONLStore {
     this.filePath = filePath;
   }
 
+  /** Highest seq among committed entries, or 0 for an empty transcript. */
+  private static maxSeq(entries: readonly SessionEvent[]): number {
+    let max = 0;
+    for (const entry of entries) {
+      if (typeof entry.seq === 'number' && entry.seq > max) max = entry.seq;
+    }
+    return max;
+  }
+
+  /**
+   * Stamps a monotonic seq onto entries that lack one, continuing after the
+   * committed tail. Assigning inside the per-file write lock keeps seq
+   * consistent with on-disk order across every JSONLStore instance.
+   */
+  private static stampSeq(
+    entries: readonly SessionEvent[],
+    committed: readonly SessionEvent[]
+  ): SessionEvent[] {
+    let next = JSONLStore.maxSeq(committed);
+    return entries.map((entry) => {
+      if (typeof entry.seq === 'number') {
+        if (entry.seq > next) next = entry.seq;
+        return entry;
+      }
+      next += 1;
+      return { ...entry, seq: next } as SessionEvent;
+    });
+  }
+
   /**
    * 追加一条 JSONL 记录到文件
    * @param entry JSONL 条目
+   * @returns 落盘后的条目（已分配 seq）
    */
-  async append(entry: SessionEvent): Promise<void> {
+  async append(entry: SessionEvent): Promise<SessionEvent> {
     try {
-      const line = JSON.stringify(entry) + '\n';
-      await this.appendSerialized(line);
+      const [stamped] = await this.appendEntries([entry]);
+      return stamped;
     } catch (error) {
       console.error(`[JSONLStore] 追加写入失败: ${this.filePath}`, error);
       throw error;
@@ -77,15 +115,37 @@ export class JSONLStore {
   /**
    * 批量追加多条 JSONL 记录
    * @param entries JSONL 条目数组
+   * @returns 落盘后的条目数组（已分配 seq）
    */
-  async appendBatch(entries: SessionEvent[]): Promise<void> {
+  async appendBatch(entries: SessionEvent[]): Promise<SessionEvent[]> {
     try {
-      const lines = entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
-      await this.appendSerialized(lines);
+      return await this.appendEntries(entries);
     } catch (error) {
       console.error(`[JSONLStore] 批量追加写入失败: ${this.filePath}`, error);
       throw error;
     }
+  }
+
+  /**
+   * 在 per-file 写锁内读取已提交尾部、分配 seq、序列化并落盘。
+   * 是所有追加写入分配序列号的唯一入口。
+   */
+  private async appendEntries(entries: SessionEvent[]): Promise<SessionEvent[]> {
+    if (entries.length === 0) return [];
+    return this.enqueue(async () => {
+      await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o755 });
+      const handle = await fs.open(this.filePath, 'a+', 0o600);
+      try {
+        const { separator, entries: committed } = await this.readCommittedState(handle);
+        const stamped = JSONLStore.stampSeq(entries, committed);
+        const content = `${stamped.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+        await handle.appendFile(separator + content, 'utf8');
+        await handle.sync();
+        return stamped;
+      } finally {
+        await handle.close();
+      }
+    });
   }
 
   /** Create a complete transcript without replacing an existing session. */
@@ -98,7 +158,8 @@ export class JSONLStore {
     let handle: fs.FileHandle | undefined;
     try {
       handle = await fs.open(this.filePath, 'wx', 0o600);
-      const content = `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+      const stamped = JSONLStore.stampSeq(entries, []);
+      const content = `${stamped.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
       await handle.writeFile(content, 'utf-8');
       await handle.sync();
     } catch (error) {
@@ -142,12 +203,17 @@ export class JSONLStore {
         crlfDelay: Number.POSITIVE_INFINITY,
       });
 
+      let lineOrdinal = 0;
       rl.on('line', async (line) => {
         const trimmed = line.trim();
         if (trimmed.length === 0) return;
 
         try {
           const entry = JSON.parse(trimmed) as SessionEvent;
+          lineOrdinal += 1;
+          if (typeof entry.seq !== 'number') {
+            entry.seq = lineOrdinal;
+          }
           await callback(entry);
         } catch (error) {
           console.warn(`[JSONLStore] 解析 JSON 行失败: ${trimmed}`, error);
@@ -183,6 +249,16 @@ export class JSONLStore {
   async readLast(count: number): Promise<SessionEvent[]> {
     const all = await this.readAll();
     return all.slice(-count);
+  }
+
+  /**
+   * 读取 seq >= fromSeq 的所有记录，用于 Last-Event-ID 断点续传的 JSONL 兜底补发。
+   * seq 由 {@link parseSessionJSONL} 统一保证（新事件显式携带，旧事件按行号回填）。
+   * @param fromSeq 起始序列号（含）
+   */
+  async readFromSeq(fromSeq: number): Promise<SessionEvent[]> {
+    const all = await this.readAll();
+    return all.filter((entry) => (entry.seq ?? 0) >= fromSeq);
   }
 
   /**
@@ -305,7 +381,8 @@ export class JSONLStore {
           'session transcript'
         );
         const entry = await buildEntry(entries);
-        const line = `${separator}${JSON.stringify(entry)}\n`;
+        const [stamped] = JSONLStore.stampSeq([entry], entries);
+        const line = `${separator}${JSON.stringify(stamped)}\n`;
         await handle.write(line, size, 'utf8');
         await handle.sync();
       } finally {
@@ -319,20 +396,6 @@ export class JSONLStore {
    */
   getFilePath(): string {
     return this.filePath;
-  }
-
-  private async appendSerialized(content: string): Promise<void> {
-    await this.enqueue(async () => {
-      await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o755 });
-      const handle = await fs.open(this.filePath, 'a+', 0o600);
-      try {
-        const { separator } = await this.readCommittedState(handle);
-        await handle.appendFile(separator + content, 'utf8');
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-    });
   }
 
   private async enqueue<T>(operation: () => Promise<T>): Promise<T> {

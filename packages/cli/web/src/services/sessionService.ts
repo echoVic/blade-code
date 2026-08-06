@@ -426,6 +426,9 @@ export const sessionService = {
     let readinessTimeout: ReturnType<typeof setTimeout> | null = null;
     let isManualClose = false;
     let isSubscriptionReady = false;
+    // Durable-resume cursor: the seq of the last committed event we observed.
+    // Sent on reconnect so the server replays only what we missed (no dup, no gap).
+    let lastSeq = 0;
 
     let resolveReady!: () => void;
     let rejectReady!: (error: Error) => void;
@@ -522,9 +525,16 @@ export const sessionService = {
       if (isManualClose) return;
 
       closeCurrentConnection();
-      eventSource = new EventSource(
-        withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/events`, ref)
+      const eventsUrl = withSessionRef(
+        `${API_BASE}/sessions/${ref.sessionId}/events`,
+        ref
       );
+      // Resume from our cursor so the server replays only missed committed events.
+      const resumableUrl =
+        lastSeq > 0
+          ? `${eventsUrl}${eventsUrl.includes('?') ? '&' : '?'}lastEventId=${lastSeq}`
+          : eventsUrl;
+      eventSource = new EventSource(resumableUrl);
 
       if (!isSubscriptionReady) {
         clearReadinessTimeout();
@@ -535,7 +545,12 @@ export const sessionService = {
 
       eventSource.onmessage = (e) => {
         try {
-          const event = BusEventSchema.parse(JSON.parse(e.data)) as StreamEvent;
+          const parsed = JSON.parse(e.data) as { seq?: number };
+          // Advance the durable-resume cursor on any seq-carrying committed event.
+          if (typeof parsed.seq === 'number' && parsed.seq > lastSeq) {
+            lastSeq = parsed.seq;
+          }
+          const event = BusEventSchema.parse(parsed) as StreamEvent;
           lastHeartbeat = Date.now();
           if (event.type === 'connected') {
             if (

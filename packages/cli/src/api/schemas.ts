@@ -274,6 +274,8 @@ export type SessionRef = Static<typeof SessionRefSchema>;
 export const BusEventSchema = Runtime(
   Type.Object({
     type: Type.String(),
+    // Monotonic seq for durable committed events; absent for ephemeral events.
+    seq: Type.Optional(Type.Number()),
     properties: Type.Record(Type.String(), Type.Unknown()),
   })
 );

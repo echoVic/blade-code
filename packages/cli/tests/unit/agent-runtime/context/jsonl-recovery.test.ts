@@ -119,12 +119,14 @@ describe('JSONL crash-tail recovery', () => {
     const content = readFileSync(sessionFile, 'utf8');
     expect(content).not.toContain('cut-off');
     expect(content.endsWith('\n')).toBe(true);
+    // The appended record is stamped with a seq that continues after the
+    // committed tail (first backfills to seq 1, so second becomes seq 2).
     expect(
       content
         .trim()
         .split('\n')
         .map((line) => JSON.parse(line))
-    ).toEqual([first, second]);
+    ).toEqual([first, { ...second, seq: 2 }]);
   });
 
   it('preserves a valid final record that only lacks its newline', async () => {
@@ -139,6 +141,6 @@ describe('JSONL crash-tail recovery', () => {
         .trim()
         .split('\n')
         .map((line) => JSON.parse(line))
-    ).toEqual([first, second]);
+    ).toEqual([first, { ...second, seq: 2 }]);
   });
 });

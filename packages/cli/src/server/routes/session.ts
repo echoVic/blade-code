@@ -30,6 +30,7 @@ import {
 } from '../../api/schemas.js';
 import { PermissionMode } from '../../config/types.js';
 import { assertValidSessionId } from '../../context/storage/pathUtils.js';
+import { SessionEventLog } from '../../context/events/SessionEventLog.js';
 import type { SessionTaskWorktree } from '../../context/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
@@ -1548,6 +1549,20 @@ export const createSessionRouteController = (): SessionRouteController => {
     const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
     const session = await getOrHydrateSession(ref);
 
+    // Last-Event-ID enables durable resume: the client's cursor is the seq of
+    // the last committed event it saw. Replay everything after it before live
+    // delivery. The browser EventSource cannot set request headers on a fresh
+    // connection (e.g. after a page reload), so a `lastEventId` query param is
+    // accepted as an equivalent fallback. Absent/invalid means a fresh stream.
+    const lastEventIdHeader =
+      c.req.header('Last-Event-ID') ?? c.req.query('lastEventId');
+    const parsedLastEventId = lastEventIdHeader
+      ? Number.parseInt(lastEventIdHeader, 10)
+      : Number.NaN;
+    const resumeFromSeq = Number.isInteger(parsedLastEventId)
+      ? parsedLastEventId + 1
+      : undefined;
+
     return streamSSE(c, async (stream) => {
       const HEARTBEAT_INTERVAL = 15000;
       let unsubscribe: (() => void) | undefined;
@@ -1586,8 +1601,13 @@ export const createSessionRouteController = (): SessionRouteController => {
         }
         stream
           .writeSSE({
+            // Only committed events carry a seq; stamping the SSE id lets the
+            // browser's EventSource advance Last-Event-ID. Ephemeral events
+            // (deltas, heartbeats) omit id so they never move the cursor.
+            ...(typeof event.seq === 'number' ? { id: String(event.seq) } : {}),
             data: JSON.stringify({
               type: event.type,
+              ...(typeof event.seq === 'number' ? { seq: event.seq } : {}),
               properties: {
                 ...event.properties,
                 sessionId: event.sessionId,
@@ -1617,6 +1637,36 @@ export const createSessionRouteController = (): SessionRouteController => {
             throw error;
           });
         if (stream.aborted || terminated) return;
+
+        // Durable resume: replay committed events after the client's cursor
+        // straight from the authoritative JSONL transcript, each stamped with
+        // its seq so the cursor advances correctly.
+        if (resumeFromSeq !== undefined) {
+          const log = SessionEventLog.for(ref.sessionId, ref.projectPath);
+          await log.replay(
+            {
+              onCommitted: (event) => {
+                if (stream.aborted || terminated) return;
+                void stream.writeSSE({
+                  ...(typeof event.seq === 'number'
+                    ? { id: String(event.seq) }
+                    : {}),
+                  data: JSON.stringify({
+                    type: `committed.${event.type}`,
+                    ...(typeof event.seq === 'number' ? { seq: event.seq } : {}),
+                    properties: {
+                      event,
+                      sessionId: ref.sessionId,
+                      projectPath: ref.projectPath,
+                    },
+                  }),
+                });
+              },
+            },
+            resumeFromSeq
+          );
+          if (stream.aborted || terminated) return;
+        }
 
         const currentRun = getRun(session.currentRunId);
         const pendingInteraction = currentRun?.pendingPermission;

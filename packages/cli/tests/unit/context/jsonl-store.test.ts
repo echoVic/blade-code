@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  JSONLStore,
-  parseSessionJSONL,
+    JSONLStore,
+    parseSessionJSONL,
 } from '../../../src/context/storage/JSONLStore.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 
@@ -62,6 +62,14 @@ async function captureError(operation: () => Promise<unknown>): Promise<Error> {
   throw new Error('Expected operation to reject');
 }
 
+/**
+ * parseSessionJSONL 会为缺失 seq 的记录按解析顺序（1-based）回填 seq。
+ * 断言解析/已提交结果时用它给期望值补上对应 seq。
+ */
+function withSeq<T extends SessionEvent>(event: T, seq: number): T {
+  return { ...event, seq };
+}
+
 describe('JSONLStore.appendValidated', () => {
   let tempDir: string;
   let filePath: string;
@@ -111,16 +119,19 @@ describe('JSONLStore.appendValidated', () => {
       );
     });
 
-    expect(callbackEntries).toEqual([created]);
+    expect(callbackEntries).toEqual([withSeq(created, 1)]);
     const content = await readFile(filePath, 'utf8');
     const entries = parseSessionJSONL(content, filePath);
     expect(entries).toEqual([
-      created,
-      createSessionUpdated(
-        'session-1',
-        '/workspace',
-        '2024-01-01T00:00:01.000Z',
-        'renamed'
+      withSeq(created, 1),
+      withSeq(
+        createSessionUpdated(
+          'session-1',
+          '/workspace',
+          '2024-01-01T00:00:01.000Z',
+          'renamed'
+        ),
+        2
       ),
     ]);
     expect(content.endsWith('\n')).toBe(true);
@@ -170,9 +181,9 @@ describe('JSONLStore.appendValidated', () => {
     const content = await readFile(filePath, 'utf8');
     expect(() => parseSessionJSONL(content, filePath)).not.toThrow();
     expect(parseSessionJSONL(content, filePath)).toEqual([
-      created,
-      appended,
-      validated,
+      withSeq(created, 1),
+      withSeq(appended, 2),
+      withSeq(validated, 3),
     ]);
   });
 
@@ -202,7 +213,7 @@ describe('JSONLStore.appendValidated', () => {
     );
 
     const transaction = store.appendValidatedAsync(async (entries) => {
-      expect(entries).toEqual([created]);
+      expect(entries).toEqual([withSeq(created, 1)]);
       await builderGate;
       return rewind;
     });
@@ -210,15 +221,15 @@ describe('JSONLStore.appendValidated', () => {
     await Promise.resolve();
 
     expect(parseSessionJSONL(await readFile(filePath, 'utf8'), filePath)).toEqual([
-      created,
+      withSeq(created, 1),
     ]);
     releaseBuilder();
     await Promise.all([transaction, append]);
 
     expect(parseSessionJSONL(await readFile(filePath, 'utf8'), filePath)).toEqual([
-      created,
-      rewind,
-      appended,
+      withSeq(created, 1),
+      withSeq(rewind, 2),
+      withSeq(appended, 3),
     ]);
   });
 
@@ -328,9 +339,9 @@ describe('JSONLStore.appendValidated', () => {
       return true;
     });
 
-    await expect(append).resolves.toBeUndefined();
+    await expect(append).resolves.toEqual(withSeq(appended, 2));
     await expect(deletion).resolves.toBe(true);
-    expect(validatedEntries).toEqual([created, appended]);
+    expect(validatedEntries).toEqual([withSeq(created, 1), withSeq(appended, 2)]);
     await expect(access(filePath)).rejects.toThrow();
   });
 
@@ -435,5 +446,59 @@ describe('JSONLStore.appendValidated', () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+});
+
+describe('JSONLStore sequence numbers', () => {
+  let tempDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), 'blade-jsonl-seq-'));
+    filePath = path.join(tempDir, 'session.jsonl');
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('backfills a 1-based monotonic seq for legacy records that lack one', async () => {
+    const created = createSessionCreated('s', '/w', '2024-01-01T00:00:00.000Z');
+    const updated = createSessionUpdated('s', '/w', '2024-01-01T00:00:01.000Z', 't');
+    await writeFile(
+      filePath,
+      `${JSON.stringify(created)}\n${JSON.stringify(updated)}\n`,
+      'utf8'
+    );
+
+    const entries = await new JSONLStore(filePath).readAll();
+    expect(entries.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it('preserves an explicit seq and does not overwrite it', async () => {
+    const created = withSeq(
+      createSessionCreated('s', '/w', '2024-01-01T00:00:00.000Z'),
+      7
+    );
+    await writeFile(filePath, `${JSON.stringify(created)}\n`, 'utf8');
+
+    const [entry] = await new JSONLStore(filePath).readAll();
+    expect(entry.seq).toBe(7);
+  });
+
+  it('readFromSeq returns only records at or after the cursor', async () => {
+    const created = createSessionCreated('s', '/w', '2024-01-01T00:00:00.000Z');
+    const a = createSessionUpdated('s', '/w', '2024-01-01T00:00:01.000Z', 'a');
+    const b = createSessionUpdated('s', '/w', '2024-01-01T00:00:02.000Z', 'b');
+    await writeFile(
+      filePath,
+      `${JSON.stringify(created)}\n${JSON.stringify(a)}\n${JSON.stringify(b)}\n`,
+      'utf8'
+    );
+
+    const store = new JSONLStore(filePath);
+    expect((await store.readFromSeq(2)).map((e) => e.seq)).toEqual([2, 3]);
+    expect((await store.readFromSeq(1)).map((e) => e.seq)).toEqual([1, 2, 3]);
+    expect(await store.readFromSeq(4)).toEqual([]);
   });
 });

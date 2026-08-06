@@ -10,6 +10,8 @@
 
 import type { ModelConfig, RuntimeConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
+import type { EphemeralDelta } from '../context/events/EphemeralDelta.js';
+import type { SessionEvent } from '../context/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../services/SessionService.js';
 import type { SessionSelectionIntent } from '../slash-commands/types.js';
@@ -144,6 +146,10 @@ export interface SessionActions {
   finalizeStreamingMessage: (extraContent?: string, extraThinking?: string) => void; // 完成流式消息（可追加缓冲区剩余内容）
   clearFinalizingStreamingMessageId: () => void; // 清理最终渲染标记
   discardStreamingMessage: () => void; // 丢弃流式消息（不提交，用于模型降级场景）
+  // 事件溯源投影 actions (CQRS read-model)
+  applyCommittedEvent: (event: SessionEvent) => void; // 折叠 committed 事件到投影
+  applyStreamingDelta: (delta: EphemeralDelta) => void; // 叠加 ephemeral streaming delta
+  resetConversationProjection: () => void; // 重置投影中间态
 }
 
 /**

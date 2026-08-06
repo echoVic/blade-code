@@ -10,6 +10,13 @@
  */
 
 import type { StateCreator } from 'zustand';
+import {
+  applyCommittedEvent,
+  applyDelta,
+  type ConversationState,
+} from '../../context/events/reducers/conversationReducer.js';
+import type { EphemeralDelta } from '../../context/events/EphemeralDelta.js';
+import type { SessionEvent } from '../../context/types.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { estimateCostUsd } from '../../services/pricing.js';
 import { clearAllMarkdownCache } from '../../ui/utils/markdownIncremental.js';
@@ -38,6 +45,20 @@ export function drainStreamingChunksBuffer(): string[] {
   const chunks = streamingChunksBuffer;
   streamingChunksBuffer = [];
   return chunks;
+}
+
+// ==================== 事件溯源投影 (CQRS read-model) ====================
+// 会话 store 作为统一事件流的投影：committed 事件与 ephemeral delta 通过
+// 共享的 conversationReducer 折叠进 messages，实现 store「从事件派生」而非
+// 命令式 mutate。投影中间态保存在模块级，避免污染可序列化的 SessionState。
+let conversationProjection: ConversationState = {
+  messages: [],
+  streamingText: new Map(),
+};
+
+/** 测试/重置 seam：清空投影中间态。 */
+export function resetConversationProjection(): void {
+  conversationProjection = { messages: [], streamingText: new Map() };
 }
 
 /**
@@ -622,6 +643,44 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
           finalizingStreamingMessageId: null,
         },
       }));
+    },
+
+    // ==================== 事件溯源投影 actions (CQRS) ====================
+
+    /**
+     * 应用一条 committed 事件到会话投影。
+     * store 作为统一事件流的读模型：通过共享 conversationReducer 折叠事件，
+     * 派生出 messages，而非由 UI 命令式 mutate。
+     */
+    applyCommittedEvent: (event: SessionEvent) => {
+      applyCommittedEvent(conversationProjection, event);
+      set((state) => ({
+        session: {
+          ...state.session,
+          messages: [...conversationProjection.messages],
+          error: null,
+        },
+      }));
+    },
+
+    /**
+     * 应用一条 ephemeral streaming delta 到会话投影。
+     * delta 不落盘、不占 seq，仅叠加在 anchor part 上，待 committed
+     * part_updated 幂等覆盖。
+     */
+    applyStreamingDelta: (delta: EphemeralDelta) => {
+      applyDelta(conversationProjection, delta);
+      set((state) => ({
+        session: {
+          ...state.session,
+          messages: [...conversationProjection.messages],
+        },
+      }));
+    },
+
+    /** 重置会话投影中间态（切换/清空会话时调用）。 */
+    resetConversationProjection: () => {
+      resetConversationProjection();
     },
   },
 });

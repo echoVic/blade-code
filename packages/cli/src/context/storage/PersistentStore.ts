@@ -7,6 +7,7 @@ import { materializeSessionEvents } from '../../services/sessionRewind.js';
 import type { JsonValue, MessageRole } from '../../store/types.js';
 import { getCwd } from '../../utils/cwd.js';
 import { getVersion } from '../../utils/packageInfo.js';
+import { SessionEventLog } from '../events/SessionEventLog.js';
 import type {
   ConversationContext,
   MessageInfo,
@@ -52,6 +53,7 @@ export class PersistentStore {
     return {
       id: nanoid(),
       sessionId,
+      projectPath: this.projectPath,
       timestamp: new Date().toISOString(),
       type,
       cwd: this.projectPath,
@@ -59,6 +61,11 @@ export class PersistentStore {
       version: this.version,
       data,
     } as SessionEvent;
+  }
+
+  /** The single writer for a session's stream: persists + fans out atomically. */
+  private log(sessionId: string): SessionEventLog {
+    return SessionEventLog.for(sessionId, this.projectPath);
   }
 
   private async ensureSessionCreated(
@@ -88,7 +95,7 @@ export class PersistentStore {
       updatedAt: now,
     };
     const entry = this.createEvent('session_created', sessionId, sessionInfo);
-    await store.append(entry);
+    await this.log(sessionId).commit(entry);
   }
 
   private buildCompactionMetadata(metadata: {
@@ -135,8 +142,6 @@ export class PersistentStore {
     subagentInfo?: SubagentInfoForContext
   ): Promise<string> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
-      const store = new JSONLStore(filePath);
       await this.ensureSessionCreated(sessionId, subagentInfo);
       const now = new Date().toISOString();
       const messageId = nanoid();
@@ -177,7 +182,7 @@ export class PersistentStore {
                 createdAt: now,
               })
             );
-      await store.appendBatch([messageEntry, ...partEntries]);
+      await this.log(sessionId).commitBatch([messageEntry, ...partEntries]);
       return messageId;
     } catch (error) {
       console.error(`[PersistentStore] 保存消息失败 (session: ${sessionId}):`, error);
@@ -190,11 +195,9 @@ export class PersistentStore {
     messageIds: readonly string[]
   ): Promise<void> {
     if (messageIds.length === 0) return;
-    const filePath = getSessionFilePath(this.projectPath, sessionId);
-    const store = new JSONLStore(filePath);
     await this.ensureSessionCreated(sessionId);
     const acknowledgedAt = new Date().toISOString();
-    await store.append(
+    await this.log(sessionId).commit(
       this.createEvent('inbox_acknowledged', sessionId, {
         messageIds: [...messageIds],
         acknowledgedAt,
@@ -213,8 +216,6 @@ export class PersistentStore {
     subagentInfo?: SubagentInfoForContext
   ): Promise<string> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
-      const store = new JSONLStore(filePath);
       await this.ensureSessionCreated(sessionId, subagentInfo);
       const now = new Date().toISOString();
       const messageId = parentUuid ?? nanoid();
@@ -267,7 +268,7 @@ export class PersistentStore {
           entries.push(this.createEvent('part_created', sessionId, subtaskPart));
         }
       }
-      await store.appendBatch(entries);
+      await this.log(sessionId).commitBatch(entries);
       return toolCallId;
     } catch (error) {
       console.error(
@@ -292,8 +293,6 @@ export class PersistentStore {
     subagentRef?: SubagentRunRef
   ): Promise<string> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
-      const store = new JSONLStore(filePath);
       await this.ensureSessionCreated(sessionId, subagentInfo);
       const now = new Date().toISOString();
       const messageId = parentUuid ?? nanoid();
@@ -341,7 +340,7 @@ export class PersistentStore {
         };
         entries.push(this.createEvent('part_created', sessionId, subtaskPart));
       }
-      await store.appendBatch(entries);
+      await this.log(sessionId).commitBatch(entries);
       return toolId;
     } catch (error) {
       console.error(
@@ -374,8 +373,6 @@ export class PersistentStore {
     parentUuid: string | null = null
   ): Promise<string> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
-      const store = new JSONLStore(filePath);
       await this.ensureSessionCreated(sessionId);
       const now = new Date().toISOString();
       const messageId = nanoid();
@@ -397,7 +394,7 @@ export class PersistentStore {
         this.createEvent('message_created', sessionId, messageInfo),
         this.createEvent('part_created', sessionId, partInfo),
       ];
-      await store.appendBatch(entries);
+      await this.log(sessionId).commitBatch(entries);
       return messageId;
     } catch (error) {
       console.error(`[PersistentStore] 保存压缩失败 (session: ${sessionId}):`, error);

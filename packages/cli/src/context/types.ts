@@ -241,8 +241,15 @@ export interface PartInfo {
 }
 
 export interface SessionEventBase {
+  /**
+   * 单调递增的序列号，每个 session 独立。由 SessionEventLog 在 commit 时分配。
+   * 旧 transcript 缺失该字段时，读取路径按行号（1-based）回填，保证 replay/续传可用。
+   */
+  seq?: number;
   id: string;
   sessionId: string;
+  /** 事件所属项目路径。新事件写入，旧 transcript 可缺省。 */
+  projectPath?: string;
   timestamp: string;
   type: JSONLEventType;
   cwd: string;
